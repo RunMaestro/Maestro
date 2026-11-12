@@ -309,6 +309,25 @@ describe('models endpoints command', () => {
 			expect(lines[1]).toBe('bge');
 		});
 
+		it('prints the context a model holds when the server reports it', async () => {
+			mockSend({
+				success: true,
+				result: {
+					ok: true,
+					models: [
+						{ id: 'deepseek-v4.1-flash:cloud', contextTokens: 1_048_576 },
+						{ id: 'qwen3:4b', sizeBytes: 1024, contextTokens: 40_960 },
+					],
+				},
+			});
+
+			await modelsEndpointsModels('ollama', {});
+
+			const lines = logSpy.mock.calls.map((call) => call[0] as string);
+			expect(lines[0]).toBe('deepseek-v4.1-flash:cloud  context 1,048,576');
+			expect(lines[1]).toMatch(/^qwen3:4b {2}\S+ \S+ {2}context 40,960$/);
+		});
+
 		it('passes the failure kind through and exits non-zero', async () => {
 			mockSend({
 				success: true,

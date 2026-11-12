@@ -22,6 +22,8 @@ import {
 	RUN_ON_PLACEHOLDER_KEY,
 	agentRunOnSupport,
 	formatRunOnSpec,
+	RUN_ON_CONTEXT_PRESETS,
+	runOnContextChoices,
 	runOnContextProblem,
 	runOnOutputTokens,
 	runOnPillLabel,
@@ -934,6 +936,61 @@ describe('runOnDefaultContextTokens', () => {
 		expect(
 			runOnDefaultContextTokens({ endpointId: MODEL_SERVER_ENDPOINT_ID, model: 'not-a-model' })
 		).toBe(RUN_ON_DEFAULT_CONTEXT_TOKENS);
+	});
+
+	it('starts a model on another source at the context its source reports', () => {
+		expect(runOnDefaultContextTokens(QWEN, 1_048_576)).toBe(1_048_576);
+		// Never under the agent minimum, whatever the source says.
+		expect(runOnDefaultContextTokens(QWEN, 8192)).toBe(RUN_ON_MIN_CONTEXT_TOKENS);
+	});
+
+	it("keeps the catalog's context on the Maestro model server over a reported one", () => {
+		const catalog = getLocalModel(GPT_OSS_20B_ID)?.defaultContext ?? RUN_ON_DEFAULT_CONTEXT_TOKENS;
+
+		expect(
+			runOnDefaultContextTokens(
+				{ endpointId: MODEL_SERVER_ENDPOINT_ID, model: GPT_OSS_20B_ID },
+				1_048_576
+			)
+		).toBe(Math.max(catalog, RUN_ON_MIN_CONTEXT_TOKENS));
+	});
+});
+
+describe('runOnContextChoices', () => {
+	it('offers every preset, smallest first, with the minimum named, when nothing says how much the model holds', () => {
+		const choices = runOnContextChoices();
+
+		expect(choices.map((choice) => choice.tokens)).toEqual([...RUN_ON_CONTEXT_PRESETS]);
+		expect(choices[0].label).toBe('40K (40,960), minimum');
+		expect(choices.map((choice) => choice.label)).toContain('128K (131,072)');
+		expect(choices.at(-1)?.label).toBe('1M (1,048,576)');
+	});
+
+	it('names a maximum that is a preset', () => {
+		const choices = runOnContextChoices(1_048_576);
+
+		expect(choices.at(-1)).toEqual({ tokens: 1_048_576, label: '1M (1,048,576), model maximum' });
+	});
+
+	it('drops presets past the maximum and adds the maximum itself', () => {
+		expect(runOnContextChoices(160_000).map((choice) => choice.label)).toEqual([
+			'40K (40,960), minimum',
+			'64K (65,536)',
+			'128K (131,072)',
+			'160K (160,000), model maximum',
+		]);
+	});
+
+	it('offers only the minimum for a model that holds less than a harness needs', () => {
+		expect(runOnContextChoices(8192)).toEqual([
+			{ tokens: RUN_ON_MIN_CONTEXT_TOKENS, label: '40K (40,960), minimum' },
+		]);
+	});
+
+	it('names a maximum that is the minimum both ways', () => {
+		expect(runOnContextChoices(RUN_ON_MIN_CONTEXT_TOKENS)).toEqual([
+			{ tokens: RUN_ON_MIN_CONTEXT_TOKENS, label: '40K (40,960), minimum, model maximum' },
+		]);
 	});
 });
 

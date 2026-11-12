@@ -37,7 +37,12 @@ vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { configureCliRunOn, prepareCliRunOn, readRunOnFlags } from '../../../cli/services/run-on';
+import {
+	configureCliRunOn,
+	prepareCliRunOn,
+	readRunOnFlags,
+	reportedRunOnFlagContext,
+} from '../../../cli/services/run-on';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { isAgentRunOnConfigured, resetAgentRunOnForTests } from '../../../main/local-models/run-on';
 import { GPT_OSS_20B_ID, getLocalModel } from '../../../shared/local-models/model-catalog';
@@ -271,6 +276,13 @@ describe('readRunOnFlags', () => {
 		});
 	});
 
+	it('starts a newly named target at the context its source reports', () => {
+		expect(readRunOnFlags({ runOn: 'ep-ws:big-model' }, CLAUDE, 1_048_576)).toEqual({
+			kind: 'set',
+			target: { ...BIG, contextTokens: 1_048_576 },
+		});
+	});
+
 	it('stores the context it is given', () => {
 		expect(readRunOnFlags({ runOn: 'ep-ws:big-model', runOnContext: ' 131072 ' }, CLAUDE)).toEqual({
 			kind: 'set',
@@ -377,5 +389,50 @@ describe('readRunOnFlags', () => {
 
 		expect(endpointClient.listEndpointModels).not.toHaveBeenCalled();
 		expect(withMaestroClient).not.toHaveBeenCalled();
+	});
+});
+
+describe('reportedRunOnFlagContext', () => {
+	it("asks the running app what the named source lists, and takes that model's context", async () => {
+		bridge.sendCommand.mockResolvedValue({
+			success: true,
+			result: { ok: true, models: [{ id: 'big-model', contextTokens: 262_144 }, { id: 'other' }] },
+		});
+
+		expect(await reportedRunOnFlagContext({ runOn: 'ep-ws:big-model' })).toBe(262_144);
+		expect(bridge.sendCommand).toHaveBeenCalledWith(
+			{ type: 'local_models_endpoint_models', endpoint: 'ep-ws' },
+			'local_models_endpoint_models_result'
+		);
+	});
+
+	it.each([
+		['no --run-on', {}],
+		['a context already given', { runOn: 'ep-ws:big-model', runOnContext: '65536' }],
+		['the provider', { runOn: 'provider' }],
+		[
+			'the Maestro model server, whose catalog answers',
+			{ runOn: `${MODEL_SERVER_ENDPOINT_ID}:${GPT_OSS_20B_ID}` },
+		],
+	])('asks nothing for %s', async (_label, flags) => {
+		expect(await reportedRunOnFlagContext(flags)).toBeUndefined();
+		expect(bridge.sendCommand).not.toHaveBeenCalled();
+	});
+
+	it('leaves the size unknown when the source does not state it or cannot be listed', async () => {
+		bridge.sendCommand.mockResolvedValue({
+			success: true,
+			result: { ok: true, models: [{ id: 'big-model' }] },
+		});
+		expect(await reportedRunOnFlagContext({ runOn: 'ep-ws:big-model' })).toBeUndefined();
+
+		bridge.sendCommand.mockResolvedValue({
+			success: true,
+			result: { ok: false, error: { kind: 'network', message: 'down' } },
+		});
+		expect(await reportedRunOnFlagContext({ runOn: 'ep-ws:big-model' })).toBeUndefined();
+
+		bridge.connectError = new Error('Maestro is not running');
+		expect(await reportedRunOnFlagContext({ runOn: 'ep-ws:big-model' })).toBeUndefined();
 	});
 });

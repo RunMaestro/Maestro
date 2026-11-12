@@ -108,6 +108,13 @@ export interface EndpointModel {
 	id: string;
 	/** On-disk size, when the server reports it (Ollama does; `/v1/models` does not). */
 	sizeBytes?: number;
+	/**
+	 * The most context the model holds, in tokens, when the server says. Ollama
+	 * states it per model in `/api/tags` (not for every model); an
+	 * OpenAI-compatible server may (see {@link readReportedContextTokens}).
+	 * Absent means the server did not say.
+	 */
+	contextTokens?: number;
 }
 
 export interface EndpointChatMessage {
@@ -188,13 +195,24 @@ export async function listEndpointModels(
 		const body = await requestJson(endpoint, 'GET', '/api/tags', undefined, call);
 		const models = (body as { models?: unknown }).models;
 		if (!Array.isArray(models)) throw malformed(endpoint, '/api/tags', 'no "models" list');
-		return models.map((entry) => {
-			const record = entry as { name?: unknown; model?: unknown; size?: unknown };
+		// Ollama states each model's context in the listing (`details.context_length`).
+		return models.map((entry): EndpointModel => {
+			const record = entry as {
+				name?: unknown;
+				model?: unknown;
+				size?: unknown;
+				details?: { context_length?: unknown };
+			};
 			const id = typeof record.name === 'string' ? record.name : record.model;
 			if (typeof id !== 'string' || id === '') {
 				throw malformed(endpoint, '/api/tags', 'a model with no name');
 			}
-			return typeof record.size === 'number' ? { id, sizeBytes: record.size } : { id };
+			const contextTokens = positiveInteger(record.details?.context_length);
+			return {
+				id,
+				...(typeof record.size === 'number' ? { sizeBytes: record.size } : {}),
+				...(contextTokens !== undefined ? { contextTokens } : {}),
+			};
 		});
 	}
 
@@ -206,8 +224,30 @@ export async function listEndpointModels(
 		if (typeof id !== 'string' || id === '') {
 			throw malformed(endpoint, '/v1/models', 'a model with no id');
 		}
-		return { id };
+		const contextTokens = readReportedContextTokens(entry);
+		return contextTokens === undefined ? { id } : { id, contextTokens };
 	});
+}
+
+/**
+ * The context one `/v1/models` entry states, under the field its server uses:
+ * `context_length` (OpenRouter), `max_model_len` (vLLM),
+ * `max_context_length` (LM Studio), `context_window` (Groq), or llama-server's
+ * `meta.n_ctx_train`. The spec has none of these, so most servers say nothing.
+ */
+function readReportedContextTokens(entry: unknown): number | undefined {
+	if (typeof entry !== 'object' || entry === null) return undefined;
+	const record = entry as Record<string, unknown>;
+	for (const field of [
+		'context_length',
+		'max_model_len',
+		'max_context_length',
+		'context_window',
+	] as const) {
+		const tokens = positiveInteger(record[field]);
+		if (tokens !== undefined) return tokens;
+	}
+	return positiveInteger((record.meta as { n_ctx_train?: unknown } | undefined)?.n_ctx_train);
 }
 
 /** One non-streaming chat completion. */
@@ -627,6 +667,10 @@ function malformed(
 
 function isEndpointStatus(error: unknown, status: number): boolean {
 	return error instanceof LocalModelEndpointError && error.httpStatus === status;
+}
+
+function positiveInteger(value: unknown): number | undefined {
+	return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
 function stringOr(value: unknown, fallback: string): string {

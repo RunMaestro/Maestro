@@ -19,7 +19,10 @@ import {
 	MODEL_SERVER_NAME,
 } from '../../../shared/local-models/model-server';
 import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
-import type { RunOnPickerSource } from '../../../shared/local-models/run-on-picker';
+import {
+	toRunOnPickerSource,
+	type RunOnPickerSource,
+} from '../../../shared/local-models/run-on-picker';
 import { useLocalModelEndpoints, type EndpointModelsState } from './useLocalModelEndpoints';
 
 export interface RunOnSourceProblem {
@@ -38,9 +41,9 @@ export interface RunOnSourcesState {
 	problems: RunOnSourceProblem[];
 }
 
-function listed(state: EndpointModelsState | undefined): string[] | null {
+function listed(state: EndpointModelsState | undefined) {
 	if (!state || !('ok' in state) || !state.ok) return null;
-	return state.models.map((model) => model.id);
+	return state.models;
 }
 
 function problemOf(state: EndpointModelsState | undefined): string | null {
@@ -88,9 +91,9 @@ export function useRunOnSources(): RunOnSourcesState {
 		const problems: RunOnSourceProblem[] = [];
 		let loading = false;
 		for (const { endpointId, name, state } of all) {
-			const ids = listed(state);
-			if (ids) {
-				if (ids.length > 0) sources.push({ endpointId, name, models: ids });
+			const served = listed(state);
+			if (served) {
+				if (served.length > 0) sources.push(toRunOnPickerSource(endpointId, name, served));
 				continue;
 			}
 			const message = problemOf(state);

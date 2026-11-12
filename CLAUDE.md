@@ -65,7 +65,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **ID generation:** `generateId()` in `src/renderer/utils/ids.ts`, `generateUUID()` in `src/shared/uuid.ts`
 - **Browser relay text chunks:** `chunkBrowserRelayText()` in `src/shared/browserRelay.ts`
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
-- **Format numbers:** `formatNumber()` (compact), `formatCount()` (exact), `formatCountNoun()` (exact count and its noun) in `src/shared/formatters.ts`
+- **Format numbers:** `formatNumber()` (compact), `formatCount()` (exact), `formatCountNoun()` (exact count and its noun), `formatContextWindow()` (`128K`, `1M`) in `src/shared/formatters.ts`
 - **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()`, `estimateTokensFromBytes()` in `src/shared/formatters.ts`
 - **Truncate prose without splitting a word:** `truncateAtWordBoundary()` in `src/shared/formatters.ts`
 - **Format elapsed time:** `formatElapsedTimeColon()` in `src/shared/formatters.ts`
@@ -573,7 +573,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **An agent's Local Models gateway (per-agent proxy URL):** `agentGatewaySupport()`, `parseGatewayUrl()`, `isLoopbackGatewayUrl()`, `resolveAgentGateway()`, `gatewayEnvVarsFor()`, `parseGatewayUrlEdit()` in `src/shared/local-models/gateway.ts`; applied by `buildAgentLaunchPlan({ gateway })`
 - **OpenCode's inline config document (`OPENCODE_CONFIG_CONTENT`):** `withOpenCodeGateway()`, `withOpenCodeProvider()`, `parseOpenCodeConfig()`, `OPENCODE_CONFIG_ENV_VAR` in `src/shared/local-models/opencode-config.ts`
 - **An agent's Run on target (the model behind its harness):** `resolveRunOnLaunch()`, `agentRunOnSupport()`, `parseRunOnTarget()` in `src/shared/local-models/run-on.ts`; `prepareLaunchRunOn()`, `applyAgentRunOnToSpawn()` in `src/main/local-models/run-on.ts`
-- **Setting and testing an agent's Run on target:** `parseRunOnEdit()`, `formatRunOnSpec()` in `src/shared/local-models/run-on.ts`; `readRunOnFlags()` in `src/cli/services/run-on.ts`; `testAgentRunOn()` in `src/main/local-models/run-on-test.ts`; `<RunOnField>`
+- **Setting and testing an agent's Run on target:** `parseRunOnEdit()`, `formatRunOnSpec()`, `runOnContextChoices()` in `src/shared/local-models/run-on.ts`; `readRunOnFlags()` in `src/cli/services/run-on.ts`; `testAgentRunOn()` in `src/main/local-models/run-on-test.ts`; `<RunOnField>`
 - **The Maestro token proxy (address, routing, lifecycle):** `TOKEN_PROXY_ROUTES`, `resolveTokenProxyTarget()`, `tokenProxyGatewayUrl()`, `gatewayPointsAtTokenProxy()` in `src/shared/local-models/token-proxy.ts`; `createTokenProxyServer()` in `src/main/local-models/proxy/server.ts`; `syncTokenProxy()`
 - **Compressing tool results in a model request (token proxy):** `compressRequestBody(kind, body, options)`, `findToolResultSpans()`, `summarizeToolResult()`, `formatCompressionMarker()` / `parseCompressionMarker()` in `src/main/local-models/proxy/compress.ts`; `compressWithHeuristics()`, `compressJson()`
 - **The token proxy's retrieve tool:** `TOKEN_PROXY_RETRIEVE_TOOL_NAME`, `TOKEN_PROXY_RETRIEVE_TOOL_ID` in `src/shared/local-models/token-proxy-retrieve-tool.ts`; `coreBridgeToolsFor()`, `callTokenProxyRetrieveTool()` in `src/main/local-models/proxy/retrieve-tool.ts`

@@ -2266,7 +2266,7 @@ program
 	)
 	.option(
 		'--run-on-context <tokens>',
-		"Context size the harness is told a --run-on source has (at least 40960; default: the model's catalog context on the Maestro model server, 40960 elsewhere)"
+		"Context size the harness is told a --run-on source has (at least 40960; default: the model's catalog context on the Maestro model server, elsewhere the context the source reports for the model, else 40960)"
 	)
 	// The Peers tab of the New Agent dialog, spelled as on update-agent.
 	.option(

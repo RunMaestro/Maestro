@@ -50,6 +50,7 @@
 import { isEnvVarSet, type EnvVarMerge } from '../agentEnvironment';
 import type { AgentId } from '../agentIds';
 import { getAgentDisplayName } from '../agentMetadata';
+import { formatContextWindow, formatCount } from '../formatters';
 import type { LocalModelEndpoint } from './endpoints';
 import { isLoopbackGatewayUrl } from './gateway';
 import { getLocalModel } from './model-catalog';
@@ -500,19 +501,71 @@ export function parseRunOnSpec(spec: string, contextTokens?: number): RunOnTarge
 /**
  * The context a target starts at when its writer names none: the catalog's
  * context for a model on the Maestro model server (the server runs it at that
- * size), and the smallest agent context for a model on any other source, which
- * does not report one. Never under {@link RUN_ON_MIN_CONTEXT_TOKENS}. The
- * picker's field and the CLI's `--run-on` both start here.
+ * size), the most the source says the model holds (`reportedContextTokens`,
+ * from its model listing), and otherwise the smallest agent context. Never
+ * under {@link RUN_ON_MIN_CONTEXT_TOKENS}. The picker's field and the CLI's
+ * `--run-on` both start here.
  */
 export function runOnDefaultContextTokens(
-	target: Pick<RunOnSourceTarget, 'endpointId' | 'model'>
+	target: Pick<RunOnSourceTarget, 'endpointId' | 'model'>,
+	reportedContextTokens?: number
 ): number {
 	const entry =
 		target.endpointId === MODEL_SERVER_ENDPOINT_ID ? getLocalModel(target.model) : undefined;
 	return Math.max(
-		entry?.defaultContext ?? RUN_ON_DEFAULT_CONTEXT_TOKENS,
+		entry?.defaultContext ?? reportedContextTokens ?? RUN_ON_DEFAULT_CONTEXT_TOKENS,
 		RUN_ON_MIN_CONTEXT_TOKENS
 	);
+}
+
+/**
+ * The context sizes the picker offers before "Custom". Model cards state most
+ * windows in binary units, so "128K" is 131,072 and "1M" is 1,048,576; 200K is
+ * the one decimal window in common use.
+ */
+export const RUN_ON_CONTEXT_PRESETS: readonly number[] = [
+	RUN_ON_MIN_CONTEXT_TOKENS,
+	65_536,
+	131_072,
+	200_000,
+	262_144,
+	524_288,
+	1_048_576,
+];
+
+export interface RunOnContextChoice {
+	tokens: number;
+	/** `128K (131,072)`, with `minimum` or `model maximum` when it is one. */
+	label: string;
+}
+
+/**
+ * The sizes the context picker offers for a model that holds `maxTokens`
+ * (undefined when nothing says): every preset the model can hold, and the
+ * model's own maximum, so a 1,048,576-token model offers exactly that. A model
+ * that holds less than an agent harness needs still offers the minimum, which
+ * is the only size a target may store.
+ */
+export function runOnContextChoices(maxTokens?: number): RunOnContextChoice[] {
+	const known = maxTokens !== undefined && maxTokens >= RUN_ON_MIN_CONTEXT_TOKENS;
+	const ceiling =
+		maxTokens === undefined ? Infinity : Math.max(maxTokens, RUN_ON_MIN_CONTEXT_TOKENS);
+	const sizes = new Set(
+		RUN_ON_CONTEXT_PRESETS.filter(
+			(tokens) => tokens >= RUN_ON_MIN_CONTEXT_TOKENS && tokens <= ceiling
+		)
+	);
+	if (known) sizes.add(maxTokens);
+	return [...sizes]
+		.sort((a, b) => a - b)
+		.map((tokens) => {
+			const notes = [
+				...(tokens === RUN_ON_MIN_CONTEXT_TOKENS ? ['minimum'] : []),
+				...(known && tokens === maxTokens ? ['model maximum'] : []),
+			];
+			const base = `${formatContextWindow(tokens)} (${formatCount(tokens)})`;
+			return { tokens, label: notes.length > 0 ? `${base}, ${notes.join(', ')}` : base };
+		});
 }
 
 /**

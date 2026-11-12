@@ -23,7 +23,7 @@ import {
 	type LocalModelEndpoint,
 } from '../../../../../shared/local-models/endpoints';
 import { tasksUsingEndpoint } from '../../../../../shared/local-models/tasks';
-import { formatSize } from '../../../../../shared/formatters';
+import { formatContextWindow, formatCount, formatSize } from '../../../../../shared/formatters';
 import type { EndpointModelsState, LocalModelEndpointsState } from '../../../../hooks/localModels';
 import { useSettingsStore } from '../../../../stores/settingsStore';
 import type { Theme } from '../../../../types';
@@ -377,6 +377,15 @@ function EndpointModelList({
 					{model.id}
 					{model.sizeBytes !== undefined && (
 						<span className="opacity-70"> {formatSize(model.sizeBytes)}</span>
+					)}
+					{model.contextTokens !== undefined && (
+						<span
+							className="opacity-70"
+							title={`Holds up to ${formatCount(model.contextTokens)} tokens of context`}
+						>
+							{' '}
+							{formatContextWindow(model.contextTokens)} context
+						</span>
 					)}
 				</span>
 			))}

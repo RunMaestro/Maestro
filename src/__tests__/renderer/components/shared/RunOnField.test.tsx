@@ -255,21 +255,90 @@ describe('RunOnField: what it says about a chosen model', () => {
 });
 
 describe('RunOnField: the context size', () => {
+	const contextSelect = () =>
+		screen.getByTestId('run-on-field-context-select') as HTMLSelectElement;
+	const contextLabels = () =>
+		Array.from(contextSelect().options).map((option) => option.textContent);
 	const contextInput = () =>
 		screen.getByTestId('run-on-field-context').querySelector('input') as HTMLInputElement;
 
-	it('shows the size the target holds', () => {
+	it("offers the common sizes by name, then Custom, with the target's size chosen", () => {
 		renderField({ value: QWEN });
 
-		expect(contextInput().value).toBe('65536');
+		expect(contextLabels()).toEqual([
+			'40K (40,960), minimum',
+			'64K (65,536)',
+			'128K (131,072)',
+			'200K (200,000)',
+			'256K (262,144)',
+			'512K (524,288)',
+			'1M (1,048,576)',
+			'Custom...',
+		]);
+		expect(contextSelect().value).toBe('65536');
+		expect(screen.queryByTestId('run-on-field-context')).not.toBeInTheDocument();
 	});
 
-	it('hands up a whole number as it is typed', () => {
+	it('hands up a size picked from the list', () => {
 		const { onChange } = renderField({ value: QWEN });
 
-		fireEvent.change(contextInput(), { target: { value: '131072' } });
+		fireEvent.change(contextSelect(), { target: { value: '131072' } });
 
 		expect(onChange).toHaveBeenCalledWith({ ...QWEN, contextTokens: 131_072 });
+	});
+
+	it('offers no size past what the source says the model holds, and names its maximum', async () => {
+		vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+			async (endpoint) =>
+				typeof endpoint === 'string'
+					? { ok: true, models: [] }
+					: { ok: true, models: [{ id: 'qwen3:latest', contextTokens: 160_000 }] }
+		);
+		renderField({ value: QWEN });
+
+		await waitFor(() => expect(contextLabels()).toContain('160K (160,000), model maximum'));
+		expect(contextLabels()).not.toContain('200K (200,000)');
+		expect(screen.getByText(/This model holds up to 160,000 tokens/)).toBeInTheDocument();
+	});
+
+	it('starts a picked model at the size its source reports', async () => {
+		vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+			async (endpoint) =>
+				typeof endpoint === 'string'
+					? { ok: true, models: [] }
+					: { ok: true, models: [{ id: 'deepseek-v4.1-flash:cloud', contextTokens: 1_048_576 }] }
+		);
+		const { onChange } = renderField();
+		await sourcesListed();
+
+		fireEvent.change(picker(), {
+			target: { value: `${OLLAMA.id}:deepseek-v4.1-flash:cloud` },
+		});
+
+		expect(onChange).toHaveBeenCalledWith({
+			type: 'source',
+			endpointId: OLLAMA.id,
+			model: 'deepseek-v4.1-flash:cloud',
+			contextTokens: 1_048_576,
+		});
+	});
+
+	it('shows a size no choice names in the Custom field', () => {
+		renderField({ value: { ...QWEN, contextTokens: 1_000_000 } });
+
+		expect(contextSelect().value).toBe('custom');
+		expect(contextInput().value).toBe('1000000');
+	});
+
+	it('opens the Custom field from the list and hands up a whole number as it is typed', () => {
+		const { onChange } = renderField({ value: QWEN });
+
+		fireEvent.change(contextSelect(), { target: { value: 'custom' } });
+		expect(contextInput().value).toBe('65536');
+		expect(onChange).not.toHaveBeenCalled();
+
+		fireEvent.change(contextInput(), { target: { value: '100000' } });
+		expect(onChange).toHaveBeenCalledWith({ ...QWEN, contextTokens: 100_000 });
 	});
 
 	it('says so under the field when the size is under the agent minimum', () => {
@@ -280,15 +349,31 @@ describe('RunOnField: the context size', () => {
 		);
 	});
 
+	it('warns when a custom size is more than the model holds', async () => {
+		vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+			async (endpoint) =>
+				typeof endpoint === 'string'
+					? { ok: true, models: [] }
+					: { ok: true, models: [{ id: 'qwen3:latest', contextTokens: 131_072 }] }
+		);
+		renderField({ value: { ...QWEN, contextTokens: 150_000 } });
+
+		await waitFor(() =>
+			expect(screen.getByTestId('run-on-field-context-past-model')).toHaveTextContent(
+				'More than the 131,072 tokens this model holds'
+			)
+		);
+	});
+
 	it('does not hand up text that is not a number, and puts the stored size back on blur', () => {
-		const { onChange } = renderField({ value: QWEN });
+		const { onChange } = renderField({ value: { ...QWEN, contextTokens: 100_000 } });
 
 		fireEvent.change(contextInput(), { target: { value: 'lots' } });
 		expect(onChange).not.toHaveBeenCalled();
 		expect(screen.getByTestId('run-on-field-context')).toHaveTextContent('whole number');
 
 		fireEvent.blur(contextInput());
-		expect(contextInput().value).toBe('65536');
+		expect(contextInput().value).toBe('100000');
 	});
 });
 

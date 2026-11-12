@@ -388,6 +388,40 @@ describe('create-agent command', () => {
 			expect(processExitSpy).not.toHaveBeenCalled();
 		});
 
+		it('starts the target at the context its source reports for the model', async () => {
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload) => {
+						if (payload.type === 'local_models_endpoint_models') {
+							expect(payload.endpoint).toBe('ep-ollama');
+							return Promise.resolve({
+								success: true,
+								result: {
+									ok: true,
+									models: [{ id: 'qwen3:latest', contextTokens: 262_144 }],
+								},
+							});
+						}
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_session_result',
+							success: true,
+							sessionId: 'ro-1',
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'claude-code',
+				runOn: 'ep-ollama:qwen3:latest',
+			});
+
+			expect(sentPayload.runOn).toEqual({ ...QWEN, contextTokens: 262_144 });
+		});
+
 		it('sends the context it is given, and reports the target in JSON', async () => {
 			await createAgent('Agent', {
 				cwd: '/tmp',

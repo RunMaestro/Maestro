@@ -200,6 +200,21 @@ export function formatTokensCompact(tokens: number): string {
 }
 
 /**
+ * A model's context window the way a model card states it: `128K` for 131,072,
+ * `1M` for 1,048,576, `200K` for 200,000, and the exact count for anything
+ * else. Binary sizes are named in binary units, so it is not
+ * {@link formatTokensCompact}, which would print 131,072 as `131.1K`.
+ */
+export function formatContextWindow(tokens: number): string {
+	const mebi = 1024 * 1024;
+	if (tokens % mebi === 0) return `${tokens / mebi}M`;
+	if (tokens % 1024 === 0) return `${tokens / 1024}K`;
+	if (tokens % 1_000_000 === 0) return `${tokens / 1_000_000}M`;
+	if (tokens % 1000 === 0) return `${tokens / 1000}K`;
+	return formatCount(tokens);
+}
+
+/**
  * Format a tokens-per-second rate: one decimal below 100 (`42.7`), whole
  * numbers below 1,000 (`412`), then compact (`38.4K`). A rate of zero means
  * "not measured" on every surface that shows one, so it renders as a dash.

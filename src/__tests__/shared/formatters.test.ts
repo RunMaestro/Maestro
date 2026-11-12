@@ -7,6 +7,7 @@ import {
 	formatSize,
 	formatTokensPerSecond,
 	formatNumber,
+	formatContextWindow,
 	formatCount,
 	formatCountNoun,
 	formatTokens,
@@ -187,6 +188,23 @@ describe('shared/formatters', () => {
 			expect(formatTokensPerSecond(0)).toBe('-');
 			expect(formatTokensPerSecond(-1)).toBe('-');
 			expect(formatTokensPerSecond(Number.NaN)).toBe('-');
+		});
+	});
+
+	describe('formatContextWindow', () => {
+		it('names binary windows in binary units, as model cards do', () => {
+			expect(formatContextWindow(131_072)).toBe('128K');
+			expect(formatContextWindow(1_048_576)).toBe('1M');
+			expect(formatContextWindow(40_960)).toBe('40K');
+		});
+
+		it('names decimal windows in decimal units', () => {
+			expect(formatContextWindow(200_000)).toBe('200K');
+			expect(formatContextWindow(2_000_000)).toBe('2M');
+		});
+
+		it('gives the exact count for any other size', () => {
+			expect(formatContextWindow(100_001)).toBe('100,001');
 		});
 	});
 

@@ -24,7 +24,9 @@ import {
 import {
 	RUN_ON_PROVIDER_OPTION_LABEL,
 	buildRunOnOptionGroups,
+	reportedRunOnContextTokens,
 	runOnModelFacts,
+	toRunOnPickerSource,
 	type RunOnPickerSource,
 } from '../../../shared/local-models/run-on-picker';
 
@@ -114,6 +116,41 @@ describe('runOnModelFacts', () => {
 		});
 	});
 
+	it('starts a model on another source at the context the source reports, and keeps it as the maximum', () => {
+		expect(
+			runOnModelFacts(
+				'claude-code',
+				{ endpointId: OLLAMA.id, model: 'deepseek-v4.1-flash:cloud' },
+				ROOMY,
+				1_048_576
+			)
+		).toEqual({
+			displayName: 'deepseek-v4.1-flash:cloud',
+			qualified: false,
+			defaultContextTokens: 1_048_576,
+			maxContextTokens: 1_048_576,
+		});
+	});
+
+	it('never starts under the agent minimum, even when the source reports less', () => {
+		const facts = runOnModelFacts(
+			'claude-code',
+			{ endpointId: OLLAMA.id, model: 'tiny:7b' },
+			ROOMY,
+			8192
+		);
+
+		expect(facts.defaultContextTokens).toBe(RUN_ON_MIN_CONTEXT_TOKENS);
+		expect(facts.maxContextTokens).toBe(8192);
+	});
+
+	it("takes a Maestro server model's maximum from the catalog, not the source", () => {
+		const facts = runOnModelFacts('claude-code', onServer(GPT_OSS_20B_ID), ROOMY, 1_048_576);
+
+		expect(facts.maxContextTokens).toBe(getLocalModel(GPT_OSS_20B_ID)?.contextLength);
+		expect(facts.defaultContextTokens).toBe(getLocalModel(GPT_OSS_20B_ID)?.defaultContext);
+	});
+
 	it('does not read a catalog id on another source as the catalog model', () => {
 		const facts = runOnModelFacts(
 			'claude-code',
@@ -134,6 +171,42 @@ describe('runOnModelFacts', () => {
 		expect(runOnModelFacts('claude-code', onServer(GPT_OSS_20B_ID), SMALL).fit?.fit).toBe(
 			'too-large'
 		);
+	});
+});
+
+describe('toRunOnPickerSource and reportedRunOnContextTokens', () => {
+	it('keeps the model ids in order and the contexts the listing stated', () => {
+		const source = toRunOnPickerSource(OLLAMA.id, 'Ollama', [
+			{ id: 'deepseek-v4.1-flash:cloud', contextTokens: 1_048_576 },
+			{ id: 'gemma4:latest' },
+		]);
+
+		expect(source).toEqual({
+			endpointId: OLLAMA.id,
+			name: 'Ollama',
+			models: ['deepseek-v4.1-flash:cloud', 'gemma4:latest'],
+			contextTokens: { 'deepseek-v4.1-flash:cloud': 1_048_576 },
+		});
+		expect(
+			reportedRunOnContextTokens([source], {
+				endpointId: OLLAMA.id,
+				model: 'deepseek-v4.1-flash:cloud',
+			})
+		).toBe(1_048_576);
+		expect(
+			reportedRunOnContextTokens([source], { endpointId: OLLAMA.id, model: 'gemma4:latest' })
+		).toBeUndefined();
+		expect(
+			reportedRunOnContextTokens([source], { endpointId: 'other', model: 'gemma4:latest' })
+		).toBeUndefined();
+	});
+
+	it('leaves the context map out when the listing stated none', () => {
+		expect(toRunOnPickerSource(OLLAMA.id, 'Ollama', [{ id: 'qwen3:latest' }])).toEqual({
+			endpointId: OLLAMA.id,
+			name: 'Ollama',
+			models: ['qwen3:latest'],
+		});
 	});
 });
 

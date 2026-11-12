@@ -21,7 +21,7 @@ import {
 	runOnGatewayEditProblem,
 	type RunOnSourceTarget,
 } from '../../shared/local-models/run-on';
-import { readRunOnFlags } from '../services/run-on';
+import { readRunOnFlags, reportedRunOnFlagContext } from '../services/run-on';
 import {
 	hasPeerFlags,
 	readPeerFlags,
@@ -280,7 +280,11 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 	// store, and checked against the provider and the saved sources, so a create
 	// never stores a target the agent's first launch would refuse.
 	let runOn: RunOnSourceTarget | undefined;
-	const runOnEdit = readRunOnFlags(options, { toolType: type });
+	const runOnEdit = readRunOnFlags(
+		options,
+		{ toolType: type },
+		await reportedRunOnFlagContext(options)
+	);
 	if (runOnEdit.kind === 'refused') {
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: runOnEdit.error }));

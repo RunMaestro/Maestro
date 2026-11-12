@@ -36,6 +36,7 @@ import {
 	formatRunOnSpec,
 	parseRunOnSpec,
 	resolveRunOnLaunch,
+	runOnContextChoices,
 	runOnContextProblem,
 	RUN_ON_MIN_CONTEXT_TOKENS,
 	type RunOnLaunchResolution,
@@ -45,6 +46,7 @@ import {
 } from '../../../shared/local-models/run-on';
 import {
 	buildRunOnOptionGroups,
+	reportedRunOnContextTokens,
 	runOnModelFacts,
 	RUN_ON_UNTESTED_WARNING,
 } from '../../../shared/local-models/run-on-picker';
@@ -118,6 +120,18 @@ const HARNESS_MODE_NOTES: Readonly<Record<string, string>> = {
 		'While a source is chosen, Codex runs as codex exec. The transport on the Provider tab does not apply.',
 };
 
+/** The context dropdown's last option, which opens the number field. */
+const CUSTOM_CONTEXT_VALUE = 'custom';
+
+/** What the context size is for, and how much the model holds when that is known. */
+function contextHelpText(maxContextTokens: number | undefined): string {
+	const holds =
+		maxContextTokens !== undefined
+			? ` This model holds up to ${formatCount(maxContextTokens)} tokens.`
+			: '';
+	return `What the harness is told it has. At least ${formatCount(RUN_ON_MIN_CONTEXT_TOKENS)}; a project with large instruction files needs more, because the harness sends them on every turn.${holds}`;
+}
+
 type TestState =
 	| { status: 'idle' }
 	| { status: 'testing' }
@@ -152,9 +166,12 @@ export function RunOnField({
 	);
 
 	const source = value.type === 'source' ? value : null;
+	// What the source's listing says the model holds, so the picker starts there
+	// and offers no size past it.
+	const reportedContext = source ? reportedRunOnContextTokens(sources, source) : undefined;
 	const facts = useMemo(
-		() => (source ? runOnModelFacts(toolType, source, hardware.profile) : null),
-		[toolType, source, hardware.profile]
+		() => (source ? runOnModelFacts(toolType, source, hardware.profile, reportedContext) : null),
+		[toolType, source, hardware.profile, reportedContext]
 	);
 
 	const status = useMemo(() => {
@@ -183,6 +200,19 @@ export function RunOnField({
 		setContextDraft(String(storedContext ?? ''));
 	}, [storedContext, source?.endpointId, source?.model]);
 
+	// The sizes the dropdown offers. "Custom" opens the number field, and a size
+	// no choice names (one typed earlier, or set from the CLI) shows there too.
+	const contextChoices = useMemo(
+		() => runOnContextChoices(facts?.maxContextTokens),
+		[facts?.maxContextTokens]
+	);
+	const [customContextChosen, setCustomContextChosen] = useState(false);
+	useEffect(() => {
+		setCustomContextChosen(false);
+	}, [source?.endpointId, source?.model]);
+	const customContext =
+		customContextChosen || !contextChoices.some((choice) => choice.tokens === storedContext);
+
 	const [test, setTest] = useState<TestState>({ status: 'idle' });
 	const targetKey = source ? `${formatRunOnSpec(source)}@${source.contextTokens ?? ''}` : '';
 	// A verdict describes the target it ran on. Any other target has none yet.
@@ -201,8 +231,12 @@ export function RunOnField({
 		// target so the harness and the server are told the same size.
 		onChange({
 			...parsed.target,
-			contextTokens: runOnModelFacts(toolType, parsed.target, hardware.profile)
-				.defaultContextTokens,
+			contextTokens: runOnModelFacts(
+				toolType,
+				parsed.target,
+				hardware.profile,
+				reportedRunOnContextTokens(sources, parsed.target)
+			).defaultContextTokens,
 		});
 	};
 
@@ -222,6 +256,20 @@ export function RunOnField({
 	const contextProblem = source
 		? runOnContextProblem(contextDraft.trim() === '' ? undefined : contextNumber)
 		: null;
+	const contextPastModel =
+		facts?.maxContextTokens !== undefined &&
+		contextProblem === null &&
+		contextNumber > facts.maxContextTokens;
+
+	const chooseContext = (choice: string) => {
+		if (choice === CUSTOM_CONTEXT_VALUE) {
+			setCustomContextChosen(true);
+			return;
+		}
+		setCustomContextChosen(false);
+		commitContext(choice);
+	};
+	const contextSelectId = `${testId}-context-select`;
 
 	const runTest = async () => {
 		if (!source || !onTest) return;
@@ -323,22 +371,67 @@ export function RunOnField({
 						</p>
 					)}
 
+					<div>
+						<FormFieldLabel theme={theme} htmlFor={contextSelectId}>
+							Context size
+						</FormFieldLabel>
+						<select
+							id={contextSelectId}
+							value={customContext ? CUSTOM_CONTEXT_VALUE : String(storedContext)}
+							onChange={(e) => chooseContext(e.target.value)}
+							className="w-full p-2 text-sm rounded border bg-transparent outline-none"
+							style={{
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+								backgroundColor: theme.colors.bgMain,
+							}}
+							data-testid={contextSelectId}
+						>
+							{contextChoices.map((choice) => (
+								<option key={choice.tokens} value={String(choice.tokens)}>
+									{choice.label}
+								</option>
+							))}
+							<option value={CUSTOM_CONTEXT_VALUE}>Custom...</option>
+						</select>
+						{!customContext && (
+							<p className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
+								{contextHelpText(facts.maxContextTokens)}
+							</p>
+						)}
+					</div>
+
 					{/* Text that is not a number is never handed up, so leaving the field
 					    puts back the size the target holds: what is shown is what is saved. */}
-					<div onBlur={() => setContextDraft(String(storedContext ?? ''))}>
-						<FormInput
-							theme={theme}
-							label="Context size (tokens)"
-							value={contextDraft}
-							onChange={commitContext}
-							placeholder={String(facts.defaultContextTokens)}
-							error={contextProblem ?? undefined}
-							helperText={`What the harness is told it has. At least ${formatCount(RUN_ON_MIN_CONTEXT_TOKENS)}; a project with large instruction files needs more, because the harness sends them on every turn.`}
-							monospace
-							heightClass="!p-2"
-							testId={`${testId}-context`}
-						/>
-					</div>
+					{customContext && (
+						<div onBlur={() => setContextDraft(String(storedContext ?? ''))}>
+							<FormInput
+								theme={theme}
+								label="Custom context size (tokens)"
+								value={contextDraft}
+								onChange={commitContext}
+								placeholder={String(facts.defaultContextTokens)}
+								error={contextProblem ?? undefined}
+								helperText={contextHelpText(facts.maxContextTokens)}
+								monospace
+								heightClass="!p-2"
+								testId={`${testId}-context`}
+							/>
+						</div>
+					)}
+					{contextPastModel && (
+						<p
+							className="flex items-start gap-1.5 text-xs"
+							style={{ color: theme.colors.warning }}
+							data-testid={`${testId}-context-past-model`}
+						>
+							<AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+							<span>
+								More than the {formatCount(facts.maxContextTokens ?? 0)} tokens this model holds. A
+								turn past that fails.
+							</span>
+						</p>
+					)}
 
 					{HARNESS_MODE_NOTES[toolType] && (
 						<p className="text-xs" style={{ color: theme.colors.textDim }}>

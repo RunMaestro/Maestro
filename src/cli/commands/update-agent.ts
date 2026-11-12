@@ -33,7 +33,7 @@ import {
 	runOnGatewayEditProblem,
 	type RunOnSourceTarget,
 } from '../../shared/local-models/run-on';
-import { readRunOnFlags } from '../services/run-on';
+import { readRunOnFlags, reportedRunOnFlagContext } from '../services/run-on';
 import {
 	formatBackgroundRequestsSpec,
 	parseBackgroundRequestsEdit,
@@ -213,7 +213,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		if (!session) {
 			failCommand(`Agent "${sessionId}" could not be read from the agent store.`, options.json);
 		}
-		const runOnEdit = readRunOnFlags(options, session);
+		const runOnEdit = readRunOnFlags(options, session, await reportedRunOnFlagContext(options));
 		if (runOnEdit.kind === 'refused') failCommand(runOnEdit.error, options.json);
 		if (runOnEdit.kind === 'set') {
 			configPatch = { ...configPatch, runOn: runOnEdit.target ?? null };

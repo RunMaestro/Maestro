@@ -40,7 +40,7 @@ import {
 	updateLocalModelEndpoint,
 	type LocalModelEndpoint,
 } from '../../shared/local-models/endpoints';
-import { formatSize } from '../../shared/formatters';
+import { formatCount, formatSize } from '../../shared/formatters';
 import type {
 	DetectedEndpoint,
 	EndpointModelsResult,
@@ -308,9 +308,11 @@ export async function modelsEndpointsModels(ref: string, options: JsonOption): P
 		return;
 	}
 	for (const model of result.models) {
-		console.log(
-			model.sizeBytes === undefined ? model.id : `${model.id}  ${formatSize(model.sizeBytes)}`
-		);
+		const facts = [
+			...(model.sizeBytes !== undefined ? [formatSize(model.sizeBytes)] : []),
+			...(model.contextTokens !== undefined ? [`context ${formatCount(model.contextTokens)}`] : []),
+		];
+		console.log([model.id, ...facts].join('  '));
 	}
 }
 

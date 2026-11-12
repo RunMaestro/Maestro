@@ -16,8 +16,12 @@
  *     name: it never runs on the provider's model instead.
  */
 
+import type { EndpointModelsResult } from '../../main/local-models/endpoint-client';
 import type { AgentRunOnPreparation, RunOnModelServer } from '../../main/local-models/run-on';
-import { MODEL_SERVER_NAME } from '../../shared/local-models/model-server';
+import {
+	MODEL_SERVER_ENDPOINT_ID,
+	MODEL_SERVER_NAME,
+} from '../../shared/local-models/model-server';
 import {
 	parseRunOnEdit,
 	parseRunOnSpec,
@@ -137,9 +141,11 @@ export type RunOnFlagsEdit =
  *
  * - `--run-on provider` clears the target.
  * - `--run-on <source id>:<model>` names one. With no `--run-on-context` the
- *   context is the one the picker's field starts at (`runOnDefaultContextTokens`),
- *   unless the agent already runs on that source and model: naming the same
- *   target again keeps the context it has, as re-picking it in the dialog does.
+ *   context is the one the picker's field starts at (`runOnDefaultContextTokens`,
+ *   given what the source reports through `reportedContextTokens`, which
+ *   {@link reportedRunOnFlagContext} asks for), unless the agent already runs on
+ *   that source and model: naming the same target again keeps the context it
+ *   has, as re-picking it in the dialog does.
  * - `--run-on-context <n>` alone changes the context of the target the agent
  *   already has, which is the picker's context field on its own.
  *
@@ -150,7 +156,8 @@ export type RunOnFlagsEdit =
  */
 export function readRunOnFlags(
 	flags: RunOnFlags,
-	agent: { toolType: string; runOn?: unknown }
+	agent: { toolType: string; runOn?: unknown },
+	reportedContextTokens?: number
 ): RunOnFlagsEdit {
 	if (flags.runOn === undefined && flags.runOnContext === undefined) return { kind: 'unchanged' };
 
@@ -209,10 +216,41 @@ export function readRunOnFlags(
 			contextTokens:
 				contextTokens ??
 				(sameAsStored ? stored.contextTokens : undefined) ??
-				runOnDefaultContextTokens(named),
+				runOnDefaultContextTokens(named, reportedContextTokens),
 		},
 		readLocalModelEndpoints()
 	);
 	if (!edit.ok) return { kind: 'refused', error: `--run-on: ${edit.error}` };
 	return { kind: 'set', target: edit.target };
+}
+
+/**
+ * The context the source named by `--run-on` states for its model, so a target
+ * named without `--run-on-context` starts where the picker starts it. Asked
+ * only when it can matter: a source other than the Maestro model server (whose
+ * catalog already answers) and no context given. The running app lists the
+ * source, as the picker's listing does; any failure leaves the size unknown and
+ * the target starts at the smallest agent context, as the picker does with a
+ * source that did not answer.
+ */
+export async function reportedRunOnFlagContext(flags: RunOnFlags): Promise<number | undefined> {
+	if (flags.runOn === undefined || flags.runOnContext !== undefined) return undefined;
+	const spec = parseRunOnSpec(flags.runOn);
+	if (!spec.ok || spec.target.type !== 'source') return undefined;
+	if (spec.target.endpointId === MODEL_SERVER_ENDPOINT_ID) return undefined;
+	const { endpointId, model } = spec.target;
+	try {
+		const reply = await withMaestroClient((client) =>
+			client.sendCommand<{ success: boolean; result?: EndpointModelsResult }>(
+				{ type: 'local_models_endpoint_models', endpoint: endpointId },
+				'local_models_endpoint_models_result'
+			)
+		);
+		if (!reply.success || !reply.result?.ok) return undefined;
+		return reply.result.models.find((entry) => entry.id === model)?.contextTokens;
+	} catch {
+		// The listing is a convenience for the default only: an app that cannot
+		// answer leaves the size at the minimum, which the caller can change.
+		return undefined;
+	}
 }

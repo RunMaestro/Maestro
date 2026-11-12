@@ -125,6 +125,52 @@ describe('endpoint-client', () => {
 			expect(mock.mock.calls[0][0]).toBe('http://127.0.0.1:11434/api/tags');
 		});
 
+		it('reads the context Ollama states for each model, and leaves it out where it states none', async () => {
+			routeFetch({
+				'/api/tags': jsonResponse(200, {
+					models: [
+						{
+							name: 'deepseek-v4.1-flash:cloud',
+							size: 293,
+							details: { context_length: 1_048_576 },
+						},
+						{ name: 'gemma4:latest', details: {} },
+						{ name: 'odd:1b', details: { context_length: 'lots' } },
+					],
+				}),
+			});
+
+			expect(await listEndpointModels(endpoint('ollama'))).toEqual([
+				{ id: 'deepseek-v4.1-flash:cloud', sizeBytes: 293, contextTokens: 1_048_576 },
+				{ id: 'gemma4:latest' },
+				{ id: 'odd:1b' },
+			]);
+		});
+
+		it('reads the context an OpenAI-compatible server states, under any field it uses', async () => {
+			routeFetch({
+				'/v1/models': jsonResponse(200, {
+					data: [
+						{ id: 'openrouter', context_length: 200_000 },
+						{ id: 'vllm', max_model_len: 131_072 },
+						{ id: 'lmstudio', max_context_length: 32_768 },
+						{ id: 'groq', context_window: 262_144 },
+						{ id: 'llama-server', meta: { n_ctx_train: 40_960 } },
+						{ id: 'silent' },
+					],
+				}),
+			});
+
+			expect(await listEndpointModels(endpoint('openai-compatible'))).toEqual([
+				{ id: 'openrouter', contextTokens: 200_000 },
+				{ id: 'vllm', contextTokens: 131_072 },
+				{ id: 'lmstudio', contextTokens: 32_768 },
+				{ id: 'groq', contextTokens: 262_144 },
+				{ id: 'llama-server', contextTokens: 40_960 },
+				{ id: 'silent' },
+			]);
+		});
+
 		it.each(['lmstudio', 'openai-compatible'] as const)(
 			'lists %s models from /v1/models',
 			async (kind) => {

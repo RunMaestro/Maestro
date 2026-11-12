@@ -23,7 +23,10 @@ import {
 	MODEL_SERVER_NAME,
 } from '../../shared/local-models/model-server';
 import { agentRunOnSupport } from '../../shared/local-models/run-on';
-import type { RunOnPickerSource } from '../../shared/local-models/run-on-picker';
+import {
+	toRunOnPickerSource,
+	type RunOnPickerSource,
+} from '../../shared/local-models/run-on-picker';
 import type { HarnessTierOptions, TierSourceProblem } from '../../shared/local-models/tier-options';
 import {
 	tierHarnessIds,
@@ -80,8 +83,9 @@ async function listRunOnSources(): Promise<{
 			problems.push({ endpointId, name, message: result.error.message });
 			continue;
 		}
-		const models = result.models.map((model) => model.id);
-		if (models.length > 0) sources.push({ endpointId, name, models });
+		if (result.models.length > 0) {
+			sources.push(toRunOnPickerSource(endpointId, name, result.models));
+		}
 	}
 	return { sources, problems };
 }

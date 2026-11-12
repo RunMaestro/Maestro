@@ -44,6 +44,39 @@ export interface RunOnPickerSource {
 	endpointId: string;
 	name: string;
 	models: readonly string[];
+	/** The most context each model holds, by model id, for the models the source states it for. */
+	contextTokens?: Readonly<Record<string, number>>;
+}
+
+/**
+ * One source as the picker reads it, from what its listing answered. The one
+ * builder for the renderer's sources and the main process's tier options.
+ */
+export function toRunOnPickerSource(
+	endpointId: string,
+	name: string,
+	models: readonly { id: string; contextTokens?: number }[]
+): RunOnPickerSource {
+	const contextTokens: Record<string, number> = {};
+	for (const model of models) {
+		if (model.contextTokens !== undefined) contextTokens[model.id] = model.contextTokens;
+	}
+	return {
+		endpointId,
+		name,
+		models: models.map((model) => model.id),
+		...(Object.keys(contextTokens).length > 0 ? { contextTokens } : {}),
+	};
+}
+
+/** The context a source states for a target's model, or undefined when it does not. */
+export function reportedRunOnContextTokens(
+	sources: readonly RunOnPickerSource[],
+	target: Pick<RunOnSourceTarget, 'endpointId' | 'model'>
+): number | undefined {
+	return sources.find((source) => source.endpointId === target.endpointId)?.contextTokens?.[
+		target.model
+	];
 }
 
 export interface RunOnOption {
@@ -68,6 +101,11 @@ export interface RunOnModelFacts {
 	fit?: ModelFit;
 	/** The context the picker's field starts at. */
 	defaultContextTokens: number;
+	/**
+	 * The most context the model holds: the catalog's for a model on the Maestro
+	 * server, the source's own word for any other. Absent when nothing says.
+	 */
+	maxContextTokens?: number;
 	/** Its size in billions of parameters, when the Library states one. */
 	parametersB?: number;
 }
@@ -75,24 +113,32 @@ export interface RunOnModelFacts {
 /**
  * What the Library says about a target's model for one harness. Only a model on
  * the Maestro model server is a catalog model; any other is named as its source
- * names it, is not qualified, and starts at the smallest agent context.
+ * names it, is not qualified, and starts at the context its source reports
+ * (`reportedContextTokens`), or the smallest agent context when it reports none.
  */
 export function runOnModelFacts(
 	toolType: string,
 	target: Pick<RunOnSourceTarget, 'endpointId' | 'model'>,
-	hardware?: HardwareProfile | null
+	hardware?: HardwareProfile | null,
+	reportedContextTokens?: number
 ): RunOnModelFacts {
 	const entry =
 		target.endpointId === MODEL_SERVER_ENDPOINT_ID ? getLocalModel(target.model) : undefined;
-	const defaultContextTokens = runOnDefaultContextTokens(target);
+	const defaultContextTokens = runOnDefaultContextTokens(target, reportedContextTokens);
 	if (!entry) {
-		return { displayName: target.model, qualified: false, defaultContextTokens };
+		return {
+			displayName: target.model,
+			qualified: false,
+			defaultContextTokens,
+			...(reportedContextTokens !== undefined ? { maxContextTokens: reportedContextTokens } : {}),
+		};
 	}
 	return {
 		displayName: entry.displayName,
 		qualified: (entry.agentHarnesses ?? []).includes(toolType as LocalModelAgentHarness),
 		...(hardware ? { fit: modelFit(entry, hardware) } : {}),
 		defaultContextTokens,
+		maxContextTokens: entry.contextLength,
 		...(entry.parameters ? { parametersB: entry.parameters.totalB } : {}),
 	};
 }
