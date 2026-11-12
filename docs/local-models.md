@@ -6,7 +6,9 @@ icon: hard-drive
 
 Maestro does a lot of small model work besides your agents' own turns: it names new tabs, writes context summaries, turns a plain-English request into a shell command, and more. By default most of that runs through the **Utility Agent**, an ordinary agent spawn. **Local Models** lets you point each of those jobs somewhere else: a small model Maestro downloads and runs itself, or a model server you already run, such as Ollama or LM Studio. A model on one of those can also be the model behind one of your agents: see [Run on](#run-on).
 
-Open it from **Settings -> Models**, or run **Open Models Settings** from the command palette. From a terminal, `maestro-cli open settings --tab models` opens it, and `--sub-tab system-one` (or `overview`, `library`, `sources`, `system-two`, `gateway`) lands on one of its panels. A Library section takes a path: `--sub-tab library/speech` (or `library/engines`, `library/agents`, `library/housekeeping`, `library/search`, `library/custom`). The old name still works: `--tab local-models` opens the same tab. It is a core part of Maestro, not an Encore Feature, and it starts empty. The whole tab also works from the web interface: downloads, endpoints, the model server, System One, and every task run on the computer running Maestro, whichever screen you press the button on.
+Open it from **Settings -> Models**, or run **Open Models Settings** from the command palette. From a terminal, `maestro-cli open settings --tab models` opens it, and `--sub-tab system-one` (or `overview`, `library`, `sources`, `system-two`, `gateway`) lands on one of its panels. A Library section takes a path: `--sub-tab library/speech` (or `library/engines`, `library/agents`, `library/housekeeping`, `library/search`, `library/custom`). The old name still works: `--tab local-models` opens the same tab. It is a core part of Maestro, not an Encore Feature, and it starts empty. The whole tab also works from the web interface: downloads, endpoints, the model server, System One, and every task run on the computer running Maestro, whichever screen you press the button on. The fit labels and the **Memory** tile describe that computer too, not the device the browser runs on, and download progress shows on every screen that has the tab open.
+
+The tab has no shortcut of its own: **Open Settings** (`Cmd+,` / `Ctrl+,`) opens Settings, and the command palette entry opens the Models tab directly. Settings search also finds **Models overview**, **Library**, **Agent Models**, **Housekeeping models**, **Speech models**, **Search & Safety models**, **Engines**, and **Add from Hugging Face**, and lands on that place.
 
 <Note>
 	**Nothing downloads on its own.** Opening the tab, or enabling anything else in Maestro, fetches
@@ -15,9 +17,9 @@ Open it from **Settings -> Models**, or run **Open Models Settings** from the co
 	there, and every new task starts **Off**.
 </Note>
 
-Clicking **Models** in the Settings sidebar opens the **Overview**. A row of tiles across the top shows where this computer stands: disk in use, models installed, engines installed and current, **active tasks**, endpoints, and the memory every model's fit is judged against. A **task** is one of Maestro's background jobs (naming a tab, screening text, routing a voice request); it is active once you give it a source, and the rest are off. A model that failed verification shows a warning under the tiles, and clicking it opens the Library section that lists it. Below the tiles, a card for each panel says what it is for; click one to open it.
+Clicking **Models** in the Settings sidebar opens the **Overview**. A row of tiles across the top shows where this computer stands: **On disk** (downloaded model files), **Installed**, **Engines** (installed and current), **Active tasks**, **Endpoints**, and **Memory**, the memory every model's fit is judged against. The Overview only reads: it downloads, probes, and calls nothing. A **task** is one of Maestro's background jobs (naming a tab, screening text, routing a voice request); it is active once you give it a source, and the rest are off. A model that failed verification shows a warning under the tiles, and clicking it opens the Library section that lists it. Below the tiles, a card for each panel says what it is for; click one to open it.
 
-The five panels are listed under **Models** in the sidebar; click one to open it. The list stays expanded while the sidebar has room for every row, and collapses to show only under an open **Models** when it would make the sidebar scroll. **Cmd+Shift+[** and **]** walk the Overview and the panels too. Maestro remembers the panel you used last.
+The five panels are listed under **Models** in the sidebar; click one to open it. The list stays expanded while the sidebar has room for every row, and collapses to show only under an open **Models** when it would make the sidebar scroll. **Cmd+Shift+[** and **]** walk the Overview and the panels too. Maestro remembers the panel you used last, separately on the desktop and in each browser.
 
 | Panel          | What lives there                                                                                                                                    |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -39,9 +41,9 @@ A task's assignment row sits on the panel of its system. Every message in Maestr
 
 ## Models
 
-Models are files Maestro downloads, checks, and runs on this machine. They live in **Models -> Library**. One line at the top says how much disk the installed models use, how many are installed, and what this computer has to run a model on, for example "32.0 GB of unified memory (Apple Silicon)" or "32.0 GB of RAM, NVIDIA GeForce RTX 4060 (8.0 GB)". A model whose files failed verification is called out under it, and the section it sits in carries a red dot.
+Models are files Maestro downloads, checks, and runs on this machine. They live in **Models -> Library**. One line at the top says how much disk the installed models use, how many are installed, and what this computer has to run a model on, for example "32.0 GB of unified memory (Apple Silicon)" or "32.0 GB of RAM, NVIDIA GeForce RTX 4060 (8.0 GB)". A card whose memory Maestro cannot read shows "(memory not reported)". A model whose files failed verification is called out under it, and the section it sits in carries a red dot. **Engines** carries the dot too when an engine needs an update.
 
-Below that line is a strip of sections, one shown at a time. Maestro remembers the one you used last.
+Below that line is a strip of sections, one shown at a time. **Cmd+[** and **Cmd+]** step through them. Maestro remembers the one you used last; the first time, it opens **Engines**.
 
 | Section             | What it lists                                                                                                          |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -52,7 +54,7 @@ Below that line is a strip of sections, one shown at a time. Maestro remembers t
 | **Search & Safety** | Embeddings for search by meaning, and the classifiers that screen text for prompt injection. One card per kind.        |
 | **Custom**          | The models you [added from Hugging Face](#add-from-hugging-face), and the form that adds one.                          |
 
-A text model is listed once. Its other roles are badges on its row: **Judge** for the fastest small judgments, **Vision** for a model that reads images.
+A text model is listed once: in **Agent Models** when it can drive an agent, otherwise in **Housekeeping**. Every role it has is a badge on its row: **Agent-ready**, **Housekeeping**, **Judge** for the fastest small judgments, and **Vision** for a model that reads images. In **Speech** and **Search & Safety**, each card says which tasks can use that kind of model, or "Nothing uses this kind of model yet."
 
 **Recommended** marks a curated starting point for each job that fits this computer comfortably. Hover over the badge for the reason. It is a memory-fit recommendation, not a speed benchmark. No badge appears without a hardware reading, and custom models are not recommended.
 
@@ -87,11 +89,26 @@ The text models are all Apache-2.0. The licenses of the others are under [Licens
 
 **Agent Models** is not a claim from a model card. A model is in that section only after it fixed a bug in a scratch repository through a real harness (Claude Code, Codex, or OpenCode driving the model), and its **Agent-ready** badge names the harnesses it passed with ("Agent-ready: Claude Code, Codex"). That is what makes it a safe [Run on](#run-on) target: the agent keeps its harness and its tools, and the model behind it is the local one.
 
-Each row shows what the model is good at, its size, its license, and what uses it right now: the tasks assigned to it, and the A Cappella voice slot when voice can use it. Each row has **Download**, **Pause**, **Cancel**, **Re-verify**, and **Remove**.
+Each row shows what the model is good at, its size, the repo and revision it comes from, its license, where its files are on disk, and what uses it right now ("In use by ..."): the tasks assigned to it, and the A Cappella voice slot when voice uses it. A status badge says **Not installed**, **Downloading**, **Verifying**, **Paused**, **Installed**, or **Corrupt**. A model this build cannot run shows the reason in place of a **Download** button.
 
-Every file comes from a pinned revision and is checked against a SHA-256 recorded in the app, so a file altered in transit fails to install rather than running. **Re-verify** hashes the files again and never deletes or re-downloads anything.
+The buttons on a row follow its state:
 
-**Removing a model a task uses warns first.** The warning names the tasks that would stop working, and you choose **Remove anyway** or **Keep it**.
+| Button                  | When it shows                       | What it does                                                                                          | From a terminal                     |
+| ----------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| **Download (size)**     | Not installed                       | Fetches the model, and its engine beside it when that is missing ("Download (1.1 GB + 41 MB engine)") | `maestro-cli models install <id>`   |
+| **Pause**               | Downloading or verifying            | Stops the transfer and keeps what has arrived                                                         | `maestro-cli models pause <id>`     |
+| **Resume**              | Paused                              | Continues from the partial file                                                                       | `maestro-cli models install <id>`   |
+| **Cancel**              | Downloading or paused               | Stops the transfer and deletes the partial files. It never touches an installed model                 | `maestro-cli models cancel <id>`    |
+| **Re-download (size)**  | Corrupt                             | Downloads the model again                                                                             | `maestro-cli models install <id>`   |
+| **Re-verify**           | Installed or corrupt, no download   | Hashes the files again. It never deletes or re-downloads anything                                     | `maestro-cli models verify <id>`    |
+| **Remove (size)**       | Files on disk                       | Deletes the files and frees that much disk                                                            | `maestro-cli models remove <id>`    |
+| **Remove from Library** | A model you added from Hugging Face | Deletes its files and takes it out of the list (see [Add from Hugging Face](#add-from-hugging-face))  | `maestro-cli models remove-hf <id>` |
+
+While a model downloads, the row shows a bar and a line such as "1.2 GB of 2.6 GB at 24.0 MB/s, 1m 5s left", with the file it is on. Up to two models download at once, and a dropped connection is retried a few times before the download fails. `maestro-cli models list` prints the model ids, grouped as the Library groups them. `models install` waits until the download is done and says whether the engine came with it.
+
+Every file comes from a pinned revision and is checked against a SHA-256 recorded in the app while it downloads, so a file altered in transit fails to install rather than running. A failed check names the file and both hashes. A corrupt model says "Re-verify to confirm, or re-download to replace it."
+
+**Removing a model a task uses warns first.** The warning names the tasks that would be left unavailable, and you choose **Remove anyway** or **Keep it**. A model that only A Cappella uses is removed without the warning. From a terminal, `maestro-cli models remove <id>` refuses a model a task uses and names the tasks; add `--force` to remove it anyway.
 
 ### Will it run on this computer
 
@@ -107,13 +124,17 @@ A model needs its file, plus memory for its context, plus room for the system. T
 
 - **Apple Silicon.** The GPU can use about 75% of memory by default. A model fits when its file, its context and 2 GB for the system are within that. It is tight up to 90%.
 - **A PC with a graphics card.** A model fits when its file and its context are within the card's memory. A mixture-of-experts model that does not fit can keep part of itself in RAM, and is tight. A dense model that does not fit is too large.
-- **No GPU.** A model is never better than tight, and only models under 10B active parameters are offered.
+- **No GPU.** A model is never better than tight, because it replies slowly on the CPU. A model of 10B active parameters or more is too large, and so is one whose file, context and 4 GB for the system exceed the RAM.
+
+The speech, embedding, classifier and wake word models run on the CPU on every machine: each fits when its file and 4 GB for the system are within the RAM. Hover over a label for the numbers behind it. A model you added has no measured context size, so its share is an estimate ("about ...").
 
 As examples, on a Mac: Qwen3.5 4B fits in 8 GB; Gemma 4 E4B, Qwen3.5 9B and Gemma 4 12B fit in 16 GB; the 20B to 35B models fit in 32 GB; Qwen3-Coder-Next is tight in 64 GB, and it and gpt-oss 120B fit in 128 GB.
 
-Models that are too large are hidden. **Show models too large for this machine** at the bottom of the list shows them. A model with files on disk is never hidden.
+Models that are too large are hidden. **Show models too large for this machine** at the bottom of a section shows them, with the count; **Hide models too large for this machine** hides them again, and Maestro remembers the choice. A model with files on disk, or with a download running or paused, is never hidden.
 
-On a PC, Maestro reads the graphics card's memory from the model server's engine. Until that engine is installed, the Library says so and judges each model as if it ran on the CPU. Install the engine under [Model server](#model-server) for an accurate answer.
+`maestro-cli models list --fit` prints each model's label and the reason, and `--json` adds the hardware reading.
+
+On a PC, Maestro reads the graphics card's memory from the model server's engine. Until that engine is installed, the Overview, the Library and `models list --fit` say so, and each model is judged as if it ran on the CPU. With more than one card, the one with the most memory counts. Install the engine under [Model server](#model-server) for an accurate answer.
 
 ### Cloud only
 
@@ -121,20 +142,23 @@ DeepSeek V4, Kimi K3, Kimi K2.7 Code and GLM-5.3 are too large to run on a deskt
 
 ### Add from Hugging Face
 
-**Add from Hugging Face**, on **Models -> Library -> Custom**, adds a GGUF text model the Library does not offer. Enter the repo id (`unsloth/Qwen3.5-2B-GGUF`) and the file name (`Qwen3.5-2B-Q4_K_M.gguf`), then:
+**Add from Hugging Face**, on **Models -> Library -> Custom**, adds a GGUF text model the Library does not offer. Enter the **Repo id** (`unsloth/Qwen3.5-2B-GGUF`; a pasted `https://huggingface.co/` prefix is dropped) and the **File name** (`Qwen3.5-2B-Q4_K_M.gguf`), then:
 
-1. **Look up** asks Hugging Face about the repo and shows the model's license (from its model card), its size, and its fit. Nothing is saved or downloaded yet.
-2. **Add to Library** saves the model. It appears in **Custom** with its own **Download** button.
+1. **Look up** (or Enter) asks Hugging Face about the repo and shows the model's license (from its model card), its size, its revision, and its fit, or "This model is already in the Library." Nothing is saved or downloaded yet. Changing either field clears the answer.
+2. **Add to Library** saves the model. It appears in **Custom** with its own **Download** button, and nothing downloads until you press it.
 
 A model you add is labeled **Not verified by Maestro**. Maestro pins the revision the repo was at when you added it, and checks the download against the hash Hugging Face reports for that revision, so a damaged download still fails to install. Nobody at Maestro has tested the model, so it has no role and no "good at" line, and its fit is an estimate from its size.
 
 - Naming one part of a split GGUF (`-00001-of-00003.gguf`) adds every part.
-- A gated or private repo cannot be added: Maestro downloads without an account.
-- **Remove from Library** on the row deletes the model's files and takes it out of the list. **Remove** deletes only the files.
+- Only GGUF text models can be added. A vision projector file is refused: name the model's own GGUF file.
+- A gated or private repo cannot be added: Maestro downloads without an account. A repo Hugging Face reports no hash or no GGUF metadata for is refused too, because Maestro could not check the download or tell the model's context length.
+- **Remove from Library** on the row deletes the model's files and takes it out of the list. **Remove** deletes only the files. It warns first when a task uses the model, as **Remove** does. A model Maestro ships cannot be taken out of the Library, only have its files removed.
+
+From a terminal, `maestro-cli models add-hf <repo> <file>` adds a model (`--dry-run` looks it up and saves nothing) and prints the id to install it with, and `maestro-cli models remove-hf <model-id>` takes one out (`--force` when a task uses it).
 
 ### Download source
 
-Models download from Hugging Face. If your network blocks it, use `maestro-cli models config set download-base <url>` to set a mirror: a base URL that serves the same paths as Hugging Face (`/<repo>/resolve/<revision>/<file>` and `/api/models/<repo>`). Downloads and **Add from Hugging Face** then request from the mirror. `maestro-cli models config set download-base default` restores Hugging Face.
+Models download from Hugging Face. If your network blocks it, use `maestro-cli models config set download-base <url>` to set a mirror: a base URL that serves the same paths as Hugging Face (`/<repo>/resolve/<revision>/<file>` and `/api/models/<repo>`). Downloads and **Add from Hugging Face** then request from the mirror. `maestro-cli models config set download-base default` restores Hugging Face, and `maestro-cli models config show` prints the source in force. The mirror has no field in the app: it is set only from a terminal (or with `maestro-cli settings set localModelsDownloadBase <url>`). `models config show` and `models config set` work with Maestro closed.
 
 The mirror covers model files and **Add from Hugging Face**; engines download from npm and do not use it. It changes the host and nothing else. Every file is still checked against the hash Maestro pins (or, for a model you added, the hash Hugging Face reported), so a mirror that serves different bytes fails the download. Only `http` and `https` URLs with a host are accepted, and credentials in the URL are refused. A change applies to the next request, so a download already running keeps its host; pause and resume it to move it to the new one.
 
@@ -172,7 +196,17 @@ Kokoro reads text through espeak-ng, which turns words into the sounds the model
 
 A model is a file of weights. An **engine** is the library that reads it: ONNX Runtime for the speech, embedding, classifier, and wake word models, and llama.cpp for the text model. Engines are not bundled in the installer. A model's **Download** button fetches its engine with it when that is missing, and says so on the button ("Download (1.1 GB + 41 MB engine)").
 
-**Models -> Library -> Engines** shows each engine on its own: installed, not installed, needs update (a newer build expects a newer engine), or not available on this platform. Press **Install** or **Update** there if an engine did not arrive with its model.
+**Models -> Library -> Engines** shows each engine on its own, **llama.cpp (text generation)** and **ONNX Runtime (speech, wake word, and classifiers)**, with the models it runs:
+
+| State         | What you see                                                                                          |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| Installed     | **Installed**                                                                                         |
+| Not installed | **Install (size)**                                                                                    |
+| Needs update  | **Update (size)**, and "This build expects a newer version. Update it before these models will load." |
+| Not available | **Not available**, and "No build is published for this platform, so these models cannot run here."    |
+| Installing    | **Downloading N%**, then **Verifying**, then **Installing**                                           |
+
+Press **Install** or **Update** there if an engine did not arrive with its model. From a terminal, `maestro-cli models runtimes list` prints the same states, and `maestro-cli models runtimes install <onnx|llama>` installs or updates one and waits until it is usable. A second install of the same engine joins the one already running.
 
 These engines run models inside Maestro. Serving text models to agents over HTTP also needs **llama-server**, installed separately under **Models -> Sources**.
 
