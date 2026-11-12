@@ -58,3 +58,10 @@ The shared Obsidian-style vault the Dataview tests run against. Its own
 `README.md` maps each note to the requirement it covers, lists the expected
 results of the spec's two motivating queries, and explains why every note
 carries a frontmatter `created` date.
+
+## `playbook-launch/`
+
+The Research/Market Exchange playbook as it ships. `research-market.prompt.txt` is its manifest
+`prompt` byte for byte, and `research-market.launch.json` is its `launch` block. The playbook launch
+tests run the real schema against both. The prompt is a `.txt` on purpose: the commit hook formats
+every `.md` file, which would rewrite the exact text the tests compare.

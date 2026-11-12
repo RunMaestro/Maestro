@@ -1,0 +1,107 @@
+{
+	"intro": "Builds an Obsidian-ready vault on one market: entity cards, a market map, an event ledger, and a review of borderline entries.",
+	"preconditions": {
+		"requires": ["Web search on the agent", "Python 3 with PyYAML"]
+	},
+	"inputs": [
+		{
+			"name": "MARKET_TOPIC",
+			"label": "Market",
+			"type": "text",
+			"required": true,
+			"placeholder": "Agentic coding tools",
+			"help": "Three to six words. This names the vault and anchors every search."
+		},
+		{
+			"name": "SCOPE_IN",
+			"label": "In scope",
+			"type": "textarea",
+			"help": "One sentence: what belongs in this market."
+		},
+		{
+			"name": "SCOPE_OUT",
+			"label": "Out of scope",
+			"type": "textarea",
+			"help": "One sentence: the adjacent market that does not belong."
+		},
+		{
+			"name": "DOMAIN_ENTITY",
+			"label": "Main entity type",
+			"type": "text",
+			"placeholder": "Company",
+			"help": "For example Regulation, Standard, Trial. Leave empty for companies only."
+		},
+		{
+			"name": "SEED_SOURCE",
+			"label": "Seed sources",
+			"type": "text",
+			"placeholder": "A URL, a file path, or a comma-separated list of names"
+		},
+		{
+			"name": "OUTPUT_FOLDER",
+			"label": "Vault folder",
+			"type": "path",
+			"default": "{{AUTORUN_FOLDER}}/vault",
+			"help": "A folder Obsidian can open as a vault."
+		},
+		{
+			"name": "MAX_ENTITIES",
+			"label": "Max entity cards",
+			"type": "number",
+			"default": 60,
+			"min": 1,
+			"advanced": true
+		},
+		{
+			"name": "DEPTH_BATCH",
+			"label": "Entities per depth loop",
+			"type": "number",
+			"default": 3,
+			"min": 1,
+			"advanced": true
+		},
+		{
+			"name": "SWEEP_EVERY",
+			"label": "Breadth sweep every N loops",
+			"type": "number",
+			"default": 4,
+			"min": 1,
+			"advanced": true
+		},
+		{
+			"name": "COVERAGE_TARGET",
+			"label": "Field coverage to exit",
+			"type": "number",
+			"default": 90,
+			"min": 1,
+			"max": 100,
+			"advanced": true,
+			"help": "Percent of cards that must carry each tracked field."
+		}
+	],
+	"maxLoops": 30,
+	"outro": {
+		"title": "Market vault is ready",
+		"summary": "The vault on **{{MARKET_TOPIC}}** is in `{{OUTPUT_FOLDER}}`. Open the folder in Obsidian, or browse it in the Document Graph.",
+		"nextSteps": [
+			"Start with `INDEX.md` and `Resources/Market Map.md`.",
+			"Keep or reject the cards in `Resources/Relevance Review.md`.",
+			"Keep it current with `/health-check`, `/scope-audit` and `/research <entity>`."
+		],
+		"files": [
+			{
+				"label": "Index",
+				"path": "{{OUTPUT_FOLDER}}/INDEX.md"
+			},
+			{
+				"label": "Market map",
+				"path": "{{OUTPUT_FOLDER}}/Resources/Market Map.md"
+			},
+			{
+				"label": "Relevance review",
+				"path": "{{OUTPUT_FOLDER}}/Resources/Relevance Review.md"
+			}
+		],
+		"reportFile": "{{OUTPUT_FOLDER}}/INDEX.md"
+	}
+}
