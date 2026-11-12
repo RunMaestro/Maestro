@@ -97,7 +97,7 @@ An applied translation **changes the source agent's active provider**. Return sw
 | Model selection    | ❌ Configured via Anthropic account                                            |
 | Context operations | ✅ Merge, export, and transfer                                                 |
 | Thinking display   | ✅ Streaming assistant messages                                                |
-| Mid-turn input     | ❌ Batch mode only ([details](#mid-turn-input))                                |
+| Mid-turn input     | ❌ Batch mode only (see the notes below)                                       |
 
 **Notes**:
 
