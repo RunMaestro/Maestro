@@ -1082,6 +1082,11 @@ export type {
 	GetReadmeResponse,
 	ImportPlaybookResponse,
 	MarketplaceErrorResponse,
+	PlaybookLaunchSpec,
+	PlaybookLaunchInput,
+	PlaybookLaunchValues,
+	PlaybookLaunchCompletion,
+	PlaybookLaunchRecord,
 } from './marketplace-types';
 
 export {

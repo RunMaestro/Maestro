@@ -86,6 +86,14 @@ export interface MarketplacePlaybook {
 	 * value (false, "yes", 1, absent) is treated as not-beta. Does not affect install.
 	 */
 	beta?: boolean;
+	/**
+	 * Optional Launch block: the typed questions, preconditions and outro that let the Playbook
+	 * Exchange offer a one-click Launch next to Download. Builds that predate the field ignore it,
+	 * so the playbook keeps Download everywhere. The block carries its own minMaestroVersion;
+	 * never raise the top-level one for it. An invalid block is dropped (with a logged warning)
+	 * and the playbook stays download-only.
+	 */
+	launch?: PlaybookLaunchSpec;
 }
 
 /**
@@ -96,6 +104,147 @@ export interface MarketplaceDocument {
 	filename: string;
 	/** Whether to reset checkboxes on completion */
 	resetOnCompletion: boolean;
+}
+
+// ============================================================================
+// Playbook Launch Types (the optional `launch` block on a manifest entry)
+// ============================================================================
+
+/**
+ * Typed questions, preconditions and an outro that turn an Exchange playbook into a one-click
+ * Launch. Each input's `name` matches a `**NAME:** value` line in the playbook's `prompt` (the
+ * value sits between backticks); launching rewrites only that value, never the task documents.
+ */
+export interface PlaybookLaunchSpec {
+	/**
+	 * Lowest Maestro version whose launch flow understands this block.
+	 * Older builds show Download only.
+	 */
+	minMaestroVersion?: string;
+	/** Markdown shown at the top of the launch modal. */
+	intro?: string;
+	preconditions?: {
+		/** Launch is disabled on other platforms, with the reason shown. */
+		platforms?: Array<'darwin' | 'linux' | 'win32'>;
+		/** Human-readable needs, shown as a list ("gh logged in", "React web project"). */
+		requires?: string[];
+		/**
+		 * Text of a checkbox the user must tick before Launch enables
+		 * (security-sensitive playbooks).
+		 */
+		confirm?: string;
+		/** The playbook's tasks call maestro-cli from the agent's shell. */
+		maestroCli?: 'required' | 'optional';
+	};
+	/** May be empty: launch is then "pick agent and go". */
+	inputs: PlaybookLaunchInput[];
+	/** Overrides the playbook's maxLoops for launched runs. */
+	maxLoops?: number | null;
+	/** What happens to the imported task documents once the run finishes. Default 'remove-docs'. */
+	cleanup?: 'remove-docs' | 'keep';
+	outro: {
+		title?: string;
+		/** Markdown. `{{INPUT_NAME}}` and built-in template variables are substituted. */
+		summary: string;
+		/** Markdown bullets, same substitution as `summary`. */
+		nextSteps: string[];
+		/** Outputs to offer as "Open" buttons. Same substitution as `summary`. */
+		files?: Array<{ label: string; path: string }>;
+		/** A file the run writes; its first heading section is shown as the verdict. */
+		reportFile?: string;
+	};
+}
+
+/**
+ * One typed question in a launch modal.
+ */
+export interface PlaybookLaunchInput {
+	/** UPPER_SNAKE_CASE. Must not collide with any built-in in TEMPLATE_VARIABLES. */
+	name: string;
+	label: string;
+	type: 'text' | 'textarea' | 'url' | 'path' | 'number' | 'boolean' | 'select' | 'multiselect';
+	default?: string | number | boolean | string[];
+	required?: boolean;
+	help?: string;
+	placeholder?: string;
+	/** `select` and `multiselect` only. */
+	options?: Array<{ value: string; label?: string }>;
+	/**
+	 * `number` only. Appended when written (80 with unit "%" is written "80%"). Set it only where
+	 * the shipped value carries the unit.
+	 */
+	unit?: string;
+	/** `multiselect` only. Written when nothing is picked (for example "none"). */
+	emptyValue?: string;
+	/** `number` only. */
+	min?: number;
+	/** `number` only. */
+	max?: number;
+	/** `text` and `url` only. A JS regex source. */
+	pattern?: string;
+	/** Rendered inside a collapsed "Advanced" section. */
+	advanced?: boolean;
+}
+
+/**
+ * Answers to a playbook's launch inputs, keyed by input `name`. An optional input the user left
+ * empty has no key.
+ */
+export type PlaybookLaunchValues = Record<string, string | number | boolean | string[]>;
+
+// ============================================================================
+// Playbook Launch Records (persisted in userData/playbook-launches.json)
+// ============================================================================
+
+/**
+ * How a launched Auto Run ended. Mirrors the fields of the renderer's BatchCompleteInfo that a
+ * launch record keeps.
+ */
+export interface PlaybookLaunchCompletion {
+	completedTasks: number;
+	totalTasks: number;
+	elapsedTimeMs: number;
+	/** Total estimated cost in USD across all tasks, when the run reported one. */
+	totalCostUsd?: number;
+	/** True when the user stopped the run before it finished. */
+	wasStopped: boolean;
+}
+
+/**
+ * One launch of a marketplace playbook. Persisted in main so the CLI can read status, and the
+ * outro can be shown, after a restart.
+ */
+export interface PlaybookLaunchRecord {
+	/** Unique id of this launch */
+	launchId: string;
+	/** Id of the marketplace playbook that was launched */
+	playbookId: string;
+	/** Title of the playbook at launch time, so the outro survives a later manifest change */
+	playbookTitle: string;
+	/** Id of the agent the Auto Run executes in */
+	sessionId: string;
+	/**
+	 * Name of the launch folder inside the agent's Auto Run folder. Cleanup may delete this one
+	 * folder and nothing else.
+	 */
+	folderRelativePath: string;
+	/** Id of the saved-playbook record the import created */
+	savedPlaybookId: string;
+	/** True when the user chose to save the playbook as reusable; cleanup then keeps the record */
+	keepSavedPlaybook: boolean;
+	/** The answers the user gave */
+	values: PlaybookLaunchValues;
+	status: 'running' | 'completed' | 'stopped' | 'failed';
+	/** Epoch milliseconds (Date.now()) when the launch started */
+	startedAt: number;
+	/** Epoch milliseconds (Date.now()) when the launch ended */
+	finishedAt?: number;
+	completion?: PlaybookLaunchCompletion;
+	/**
+	 * What cleanup did: removed the launch folder ('done'), kept it because the spec says to
+	 * ('kept'), or left it because the run was stopped ('skipped-stopped').
+	 */
+	cleanup?: 'done' | 'kept' | 'skipped-stopped';
 }
 
 // ============================================================================
