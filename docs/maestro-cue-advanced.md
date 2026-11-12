@@ -192,22 +192,22 @@ A "no" starts nothing. The event is recorded as **gated** in the Cue modal's Act
 
 The point is cost. Most events a busy subscription sees do not need an agent turn, and a small model on your own machine can tell which ones do.
 
-**Setup.** The gate runs on the **Cue gate** task in Settings > Models > System One. Assign it a local model or an endpoint (Ollama, LM Studio). The task is off by default.
+**Setup.** The gate runs on the **Cue gate** task in Settings > Models > System One. Assign it a local model, an endpoint (Ollama, LM Studio), or [System One](./local-models#system-one). The task is off by default. From the command line: `maestro-cli models assign cue-gate <source>`.
 
 **Where to set it.** You do not have to edit YAML:
 
 | Surface                           | How                                                                                               |
 | --------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Pipeline editor                   | Select the trigger node. The **Gate** field is under the trigger's own settings.                  |
-| Scheduled Tasks tab               | **New Task**, or the edit button on a task. The **Gate** field is at the bottom of the form.      |
+| Pipeline editor                   | Select the trigger node. The **Gate (optional)** field is under the trigger's own settings.       |
+| Scheduled Tasks tab               | **New Task**, or the edit button on a task. The **Gate (optional)** field is at the bottom.       |
 | `maestro-cli cue gate <sub>`      | `--set "<condition>"`, `--on-unavailable run\|skip`, `--clear`. With no flag, it prints the gate. |
 | `maestro-cli cue schedule --gate` | Sets the gate when the scheduled task is created.                                                 |
 
-Under the field, the editor tells you if the Cue gate task is ready. If it is not, it tells you what is missing and what happens to events until it is. `maestro-cli cue gate` prints the same note after a write.
+Under the field, **If no model can answer** sets `gate_on_unavailable`: **Start the run and warn me** or **Skip the event**. Below it the editor tells you if the Cue gate task is ready ("Checked by" and the model). If it is not, it tells you what is missing and what happens to events until it is. `maestro-cli cue gate` prints the same note after a write.
 
 A trigger that fans out to several agents or commands is several subscriptions in `cue.yaml`. The Gate field and `maestro-cli cue gate` both set the gate on all of them, so every branch is gated together. A CLI trigger has no Gate field, because it only fires from a manual run and manual runs are not gated.
 
-**When the model cannot answer** (the task is off, the model is not downloaded, the server is down, the reply is not a yes or no), the default is to start the run anyway and warn you with a sticky notice. A missing gate model must not silently stop your automation. To skip instead, set the policy on the subscription:
+**When the model cannot answer** (the task is off, the model is not downloaded, the server is down, the reply is not a yes or no), the default is to start the run anyway and warn you with a sticky notice, **Cue gate not checked** (or **Cue gate skipped a run** under `skip`), at most once per agent every 30 minutes. A missing gate model must not silently stop your automation. To skip instead, set the policy on the subscription:
 
 ```yaml
 gate: the change touches the public API
@@ -218,6 +218,8 @@ gate_on_unavailable: skip # default is run
 | --------------------- | ----------------------------------------------------- |
 | `run` (default)       | The run starts. You get a warning.                    |
 | `skip`                | No run. A gated event is recorded. You get a warning. |
+
+On [System One](./local-models#when-there-is-no-answer), a subscription without `gate_on_unavailable` follows the Cue gate task's fail policy instead (`open` by default, so the run starts).
 
 Things to know:
 
@@ -244,9 +246,9 @@ Some triggers carry text that other people wrote: a GitHub comment, an issue or 
   prompt: Reply to the new comments on issue {{CUE_GH_NUMBER}}. {{CUE_NEW_COMMENTS}}
 ```
 
-A score at or above the threshold starts nothing. The event is recorded as **blocked** in the Cue modal's Activity Log, with the variable and the score, and you get a red notice that stays until you dismiss it. A blocked run counts as a failure for the pipeline, appears in History, and does not fire downstream chain steps.
+A score at or above the threshold starts nothing. The event is recorded as **blocked** in the Cue modal's Activity Log, with the variable and the score, and you get a red notice, **Cue blocked a run**, that stays until you dismiss it. A blocked run counts as a failure for the pipeline, appears in History, and does not fire downstream chain steps.
 
-**Setup.** The screen runs on the **Prompt-injection screen** task in Settings > Models > System One. Assign it a classifier model from the catalog. The task is off by default.
+**Setup.** The screen runs on the **Prompt-injection screen** task in Settings > Models > System One. Assign it a classifier model from the catalog, or [System One](./local-models#system-one). The task is off by default. From the command line: `maestro-cli models assign injection-screen <source>`.
 
 **What is screened.** Only the untrusted variables your prompt or command uses, and only the ones the event filled:
 
@@ -268,20 +270,22 @@ The output of your own upstream agent (`{{CUE_SOURCE_OUTPUT}}`) is not screened.
 
 **Where to set it.**
 
-| Surface                        | How                                                                                                                      |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| Pipeline editor                | Select the trigger node. The **Prompt-injection screen** field is under the Gate, on triggers that carry untrusted text. |
-| `maestro-cli cue screen <sub>` | `--mode on\|off\|auto`, `--threshold <score>`. With no flag, it prints the screen.                                       |
+| Surface                        | How                                                                                                                                                                                                                                                                |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Pipeline editor                | Select the trigger node. The **Prompt-injection screen** field is under the Gate, on triggers that carry untrusted text: **Automatic: screen commands that use this text**, **Always screen**, or **Never screen**, and **Block at a score of** for the threshold. |
+| `maestro-cli cue screen <sub>` | `--mode on\|off\|auto`, `--threshold <score>`. With no flag, it prints the screen.                                                                                                                                                                                 |
 
 **When the classifier cannot run** (the task is off, the model is not downloaded, it takes too long), what happens depends on what the subscription does:
 
-| Subscription                                               | Classifier cannot run                                                  |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------- |
-| A command, and you asked for the screen                    | The run is **blocked**. A command does not start with unscreened text. |
-| A command, `screen_injection` not set, and the task is off | The run starts, marked as not screened in the Activity Log.            |
-| A prompt with `screen_injection: true`                     | The run starts. You get a warning.                                     |
+| Subscription                                               | Classifier cannot run                                                         |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| A command, and you asked for the screen                    | The run is **blocked**. A command does not start with unscreened text.        |
+| A command, `screen_injection` not set, and the task is off | The run starts, marked as not screened in the Activity Log.                   |
+| A prompt with `screen_injection: true`                     | The run starts. You get the **Cue ran without the injection screen** warning. |
 
 "You asked for the screen" means `screen_injection: true`, or a model assigned to the Prompt-injection screen task. If you assign a model and it stops working, every command that uses untrusted text is blocked until you fix it or set `screen_injection: false`.
+
+On [System One](./local-models#when-there-is-no-answer), the Prompt-injection screen task fails closed by default: when the engine gives no answer, every screened run is blocked, prompts included. Change it in the **If no answer** column or with `maestro-cli s1 set fail-policy injection-screen open`.
 
 Things to know:
 
