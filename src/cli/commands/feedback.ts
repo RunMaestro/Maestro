@@ -446,9 +446,7 @@ export async function feedbackSubmit(options: SubmitOptions): Promise<void> {
 
 	const warnings = result.warnings ?? [];
 	if (options.json) {
-		console.log(
-			JSON.stringify({ success: true, issueUrl: result.issueUrl ?? null, warnings })
-		);
+		console.log(JSON.stringify({ success: true, issueUrl: result.issueUrl ?? null, warnings }));
 	} else {
 		console.log(`Feedback filed: ${result.issueUrl ?? '(GitHub did not return a URL)'}`);
 		for (const warning of warnings) {

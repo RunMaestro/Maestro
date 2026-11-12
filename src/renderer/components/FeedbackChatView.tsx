@@ -697,7 +697,14 @@ export function FeedbackChatView({
 			// No query available - create directly
 			await createNewIssue();
 		}
-	}, [submission, matchingIssues, searchingIssues, runIssueSearch, createNewIssue, currentFingerprint]);
+	}, [
+		submission,
+		matchingIssues,
+		searchingIssues,
+		runIssueSearch,
+		createNewIssue,
+		currentFingerprint,
+	]);
 
 	// --- Auto-proceed from matching step when search completes with no results ---
 	useEffect(() => {

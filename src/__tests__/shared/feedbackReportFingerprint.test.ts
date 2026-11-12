@@ -38,8 +38,8 @@ describe('feedbackReportFingerprint', () => {
 			attachments: [{ name: 'shot.png' }],
 		});
 		expect(withScreenshot).not.toBe(feedbackReportFingerprint(base));
-		expect(
-			feedbackReportFingerprint({ ...base, attachments: [{ name: 'shot.png' }] })
-		).toBe(withScreenshot);
+		expect(feedbackReportFingerprint({ ...base, attachments: [{ name: 'shot.png' }] })).toBe(
+			withScreenshot
+		);
 	});
 });
