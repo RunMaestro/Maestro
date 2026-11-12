@@ -156,8 +156,13 @@ function sentenceList(value: unknown): string[] {
  * receiver does not trust the sender to have cleaned it: control characters are
  * removed, every size is bounded, and a shape that is not a preview is dropped
  * (the caller then reports a desktop that answered without one).
+ *
+ * Exported so every surface that shows a preview reads it through this one
+ * function: `maestro-cli tab continuity` (through `normalizeTabContextOpResult`)
+ * and the Preview Continuity modal show the same text because they clean it the
+ * same way.
  */
-function normalizeContinuity(raw: unknown): TabContinuityPreview | undefined {
+export function normalizeContinuity(raw: unknown): TabContinuityPreview | undefined {
 	if (!raw || typeof raw !== 'object') return undefined;
 	const candidate = raw as Record<string, unknown>;
 	const synopses = candidate.synopses as Record<string, unknown> | null | undefined;

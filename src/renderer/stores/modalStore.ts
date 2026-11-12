@@ -153,6 +153,16 @@ export interface ModelEffortModalData {
 	tabId: string;
 }
 
+/**
+ * Continuity preview modal data: which tab to preview, and nothing else. The
+ * preview itself is never stored here. The modal reads it when it opens and
+ * keeps it in its own state, so closing the modal leaves nothing behind.
+ */
+export interface ContinuityPreviewModalData {
+	sessionId: string;
+	tabId: string;
+}
+
 /** Terminal tab startup command modal data */
 export interface TerminalStartupCommandModalData {
 	sessionId: string;
@@ -423,6 +433,7 @@ export type ModalId =
 	| 'terminalStartupCommand'
 	| 'snoozeTab'
 	| 'modelEffort'
+	| 'continuityPreview'
 	| 'snoozedTabs'
 	| 'tabCleanup'
 	// Group Management
@@ -618,6 +629,7 @@ export interface ModalDataMap {
 	renameTab: RenameTabModalData;
 	snoozeTab: SnoozeTabModalData;
 	modelEffort: ModelEffortModalData;
+	continuityPreview: ContinuityPreviewModalData;
 	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
 	groupSettings: GroupSettingsModalData;

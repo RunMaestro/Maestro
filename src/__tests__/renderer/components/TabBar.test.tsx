@@ -3205,6 +3205,151 @@ describe('TabBar', () => {
 		});
 	});
 
+	describe('Preview Continuity', () => {
+		const mockOnPreviewContinuity = vi.fn();
+		const mockOnSummarizeAndContinue = vi.fn();
+		const mockOnMergeWith = vi.fn();
+		const mockOnSendToAgent = vi.fn();
+		const entry = (id: string) => ({
+			id,
+			timestamp: Date.now(),
+			source: 'user' as const,
+			text: `Entry ${id}`,
+		});
+
+		beforeEach(() => {
+			mockOnPreviewContinuity.mockClear();
+			mockOnSummarizeAndContinue.mockClear();
+			mockOnMergeWith.mockClear();
+			mockOnSendToAgent.mockClear();
+		});
+
+		function openMenu(tabs: ReturnType<typeof createTab>[], name: string, withHandlers = true) {
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					{...(withHandlers
+						? {
+								onPreviewContinuity: mockOnPreviewContinuity,
+								onSummarizeAndContinue: mockOnSummarizeAndContinue,
+								onMergeWith: mockOnMergeWith,
+								onSendToAgent: mockOnSendToAgent,
+							}
+						: {})}
+				/>
+			);
+			fireEvent.mouseEnter(screen.getByText(name).closest('[data-tab-id]')!);
+			act(() => {
+				vi.advanceTimersByTime(450);
+			});
+		}
+
+		it('shows Context: Preview Continuity for a tab with entries when the handler is provided', () => {
+			openMenu([createTab({ id: 'tab-1', name: 'Tab 1', logs: [entry('1')] })], 'Tab 1');
+			expect(screen.getByText('Context: Preview Continuity')).toBeInTheDocument();
+		});
+
+		it('is hidden when the handler is not provided', () => {
+			openMenu(
+				[createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'abc', logs: [entry('1')] })],
+				'Tab 1',
+				false
+			);
+			expect(screen.queryByText('Context: Preview Continuity')).not.toBeInTheDocument();
+		});
+
+		it('is hidden for a tab with no entries: there is nothing to read', () => {
+			openMenu(
+				[createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'abc', logs: [] })],
+				'Tab 1'
+			);
+			expect(screen.queryByText('Context: Preview Continuity')).not.toBeInTheDocument();
+		});
+
+		it('does not use the compaction gate: one entry is enough, and Compact stays hidden', () => {
+			openMenu([createTab({ id: 'tab-1', name: 'Tab 1', logs: [entry('1')] })], 'Tab 1');
+			expect(screen.getByText('Context: Preview Continuity')).toBeInTheDocument();
+			expect(screen.queryByText('Context: Compact')).not.toBeInTheDocument();
+		});
+
+		it('sits beside Context: Compact, before Merge Into and Send to Agent', () => {
+			openMenu(
+				[
+					createTab({
+						id: 'tab-1',
+						name: 'Tab 1',
+						logs: [entry('1'), entry('2'), entry('3'), entry('4'), entry('5')],
+					}),
+				],
+				'Tab 1'
+			);
+			const labels = [
+				'Context: Compact',
+				'Context: Preview Continuity',
+				'Context: Merge Into',
+				'Context: Send to Agent',
+			];
+			const position = (label: string) => {
+				const node = screen.getByText(label);
+				return Array.from(document.querySelectorAll('button')).indexOf(
+					node.closest('button') as HTMLButtonElement
+				);
+			};
+			const order = labels.map(position);
+			expect(order.every((index) => index >= 0)).toBe(true);
+			expect(order).toEqual([...order].sort((a, b) => a - b));
+			// Adjacent in the menu: nothing sits between Compact and Preview Continuity.
+			expect(order[1] - order[0]).toBe(1);
+		});
+
+		it('calls onPreviewContinuity with the tab id and nothing else, then closes the menu', () => {
+			openMenu(
+				[createTab({ id: 'tab-1', name: 'Tab 1', logs: [entry('1'), entry('2')] })],
+				'Tab 1'
+			);
+			fireEvent.click(screen.getByText('Context: Preview Continuity'));
+
+			expect(mockOnPreviewContinuity).toHaveBeenCalledTimes(1);
+			expect(mockOnPreviewContinuity).toHaveBeenCalledWith('tab-1');
+			// A read-only preview triggers no compaction, merge or transfer.
+			expect(mockOnSummarizeAndContinue).not.toHaveBeenCalled();
+			expect(mockOnMergeWith).not.toHaveBeenCalled();
+			expect(mockOnSendToAgent).not.toHaveBeenCalled();
+			expect(screen.queryByText('Context: Preview Continuity')).not.toBeInTheDocument();
+		});
+
+		it('previews the tab the menu was opened on, not the active one', () => {
+			render(
+				<TabBar
+					tabs={[
+						createTab({ id: 'tab-1', name: 'Tab 1', logs: [entry('1')] }),
+						createTab({ id: 'tab-2', name: 'Tab 2', logs: [entry('2')] }),
+					]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onPreviewContinuity={mockOnPreviewContinuity}
+				/>
+			);
+			fireEvent.mouseEnter(screen.getByText('Tab 2').closest('[data-tab-id]')!);
+			act(() => {
+				vi.advanceTimersByTime(450);
+			});
+			fireEvent.click(screen.getByText('Context: Preview Continuity'));
+
+			expect(mockOnPreviewContinuity).toHaveBeenCalledWith('tab-2');
+			// Opening the preview does not select the tab.
+			expect(mockOnTabSelect).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('Publish as GitHub Gist', () => {
 		const mockOnPublishGist = vi.fn();
 

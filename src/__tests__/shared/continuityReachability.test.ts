@@ -75,10 +75,13 @@ describe('who reaches the continuity digest', () => {
 		]);
 	});
 
-	it('is previewed only by the explicit action and the remote request that runs it', () => {
+	it('is previewed only by the explicit action and the two requests that run it', () => {
 		expect(filesWhere(naming('previewContinuity'))).toEqual([
 			// App hands the hook's function to the remote-request listener.
 			'renderer/App.tsx',
+			// The Preview Continuity modal: the person's own request, from the tab menu
+			// or the palette. It draws the answer and offers no way to send it on.
+			'renderer/components/ContinuityPreviewModal.tsx',
 			'renderer/hooks/agent/useSummarizeAndContinue.ts',
 			'renderer/services/contextSummarizer.ts',
 			// `maestro-cli tab continuity`'s renderer end.
@@ -99,6 +102,47 @@ describe('who reaches the continuity digest', () => {
 			'renderer/hooks/agent/useSummarizeAndContinue.ts',
 			'shared/continuityPreview.ts',
 		]);
+	});
+
+	describe('the Preview Continuity modal', () => {
+		const MODAL = 'renderer/components/ContinuityPreviewModal.tsx';
+		const modalText = () => FILES.find((file) => file.relative === MODAL)?.text ?? '';
+
+		it('is opened only from the tab menu and the palette, each a click or a chosen command', () => {
+			// A new opener (on a tab switch, on a send, on an event) fails here until
+			// someone decides it should exist. The tab menu and the tiled pane menu
+			// reach the first one through MainPanel; the palette is the second.
+			expect(filesWhere((text) => /openModal\(\s*'continuityPreview'/.test(text))).toEqual([
+				'renderer/components/MainPanel/MainPanel.tsx',
+				'renderer/components/QuickActionsModal/commands/featureCommands.ts',
+			]);
+		});
+
+		it('carries a tab to the modal and never the preview', () => {
+			// The store holds the target. The text lives in the modal's own state.
+			const store = FILES.find((file) => file.relative === 'renderer/stores/modalStore.ts')?.text;
+			const data = /interface ContinuityPreviewModalData \{([\s\S]*?)\}/.exec(store ?? '')?.[1];
+			expect(data).toBeDefined();
+			expect(data).toMatch(/sessionId: string/);
+			expect(data).toMatch(/tabId: string/);
+			expect(data).not.toMatch(/text|preview|continuity|digest/i);
+		});
+
+		it('has no way to send, continue, compact, merge or start anything', () => {
+			const text = modalText();
+			expect(text.length).toBeGreaterThan(0);
+			expect(text).not.toMatch(
+				/\b(?:startSummarize|summarizeTab|handleSummarizeAndContinue|mergeTabContext|transferTabContext|enqueuePromptForTab|sendQueuedItemNow|spawn|notifyToast)\b/
+			);
+			expect(text).not.toMatch(/window\.maestro\.(?:process|agents|history)\b/);
+			expect(text).not.toMatch(/\b(?:setSessions|updateSessionWith|updateAiTab|useTabStore)\b/);
+		});
+
+		it('draws the text as text: no Markdown renderer and no raw HTML', () => {
+			const text = modalText();
+			expect(text).not.toMatch(/dangerouslySetInnerHTML|innerHTML|react-markdown|remark|rehype/);
+			expect(text).not.toMatch(/from\s+['"][^'"]*\/Markdown['"]/);
+		});
 	});
 
 	// The paths where automatic injection would do harm. They are named so that

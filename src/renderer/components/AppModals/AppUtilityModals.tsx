@@ -34,6 +34,7 @@ import { CrossTabSearchModal } from '../CrossTabSearchModal';
 import type { CrossTabSearchJumpTarget } from '../CrossTabSearchModal';
 import { SnoozeTabModal } from '../SnoozeTabModal';
 import { ModelEffortModal } from '../ModelEffortModal';
+import { ContinuityPreviewModal } from '../ContinuityPreviewModal';
 import { SnoozedTabsModal } from '../SnoozedTabsModal';
 import { TabCleanupModal } from '../TabCleanupModal';
 import { snoozeTabWithMirror } from '../../services/snoozeActions';
@@ -584,6 +585,14 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 		() => useModalStore.getState().closeModal('modelEffort'),
 		[]
 	);
+	// Continuity preview: it reads the tab it was opened for and draws it, so it
+	// needs only the theme and the target the opener put in the store.
+	const continuityPreviewOpen = useModalStore(selectModalOpen('continuityPreview'));
+	const continuityPreviewData = useModalStore(selectModalData('continuityPreview'));
+	const closeContinuityPreview = useCallback(
+		() => useModalStore.getState().closeModal('continuityPreview'),
+		[]
+	);
 	const closeSnoozeTab = useCallback(() => useModalStore.getState().closeModal('snoozeTab'), []);
 	const closeSnoozedTabs = useCallback(
 		() => useModalStore.getState().closeModal('snoozedTabs'),
@@ -930,6 +939,17 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 			{/* --- MODEL & EFFORT (keyboard-only per-tab tuning) --- */}
 			{modelEffortOpen && modelEffortData && (
 				<ModelEffortModal theme={theme} tabId={modelEffortData.tabId} onClose={closeModelEffort} />
+			)}
+
+			{/* --- CONTINUITY PREVIEW (read-only evidence digest of one tab) --- */}
+			{continuityPreviewOpen && continuityPreviewData && (
+				<ContinuityPreviewModal
+					key={`${continuityPreviewData.sessionId}:${continuityPreviewData.tabId}`}
+					theme={theme}
+					sessionId={continuityPreviewData.sessionId}
+					tabId={continuityPreviewData.tabId}
+					onClose={closeContinuityPreview}
+				/>
 			)}
 
 			{/* --- SNOOZED TABS (list across all agents) --- */}

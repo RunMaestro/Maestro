@@ -23,6 +23,8 @@ export interface TabBarProps {
 	onUnifiedTabReorder?: (sourceTabId: string, targetTabId: string) => void;
 	onTabStar?: (tabId: string, starred: boolean) => void;
 	onTabMarkUnread?: (tabId: string) => void;
+	/** Handler to open the read-only continuity preview of this tab */
+	onPreviewContinuity?: (tabId: string) => void;
 	/** Handler to open merge session modal with this tab as source */
 	onMergeWith?: (tabId: string) => void;
 	/** Handler to open send to agent modal with this tab as source */

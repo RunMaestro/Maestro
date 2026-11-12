@@ -596,6 +596,15 @@ export const MainPanel = React.memo(
 			useModalStore.getState().openModal('snoozeTab', target);
 		}, []);
 
+		// "Context: Preview Continuity" on a tab chip or a tiled pane menu. The modal
+		// carries the agent and the tab it was opened for, so nothing is selected or
+		// switched here: the preview is read only and leaves the tab as it was.
+		const handleOpenContinuityPreview = useCallback((tabId: string) => {
+			const session = selectActiveSession(useSessionStore.getState());
+			if (!session) return;
+			useModalStore.getState().openModal('continuityPreview', { sessionId: session.id, tabId });
+		}, []);
+
 		// Expose methods to parent via ref
 		// Holds the latest terminal/browser buffer-action handlers. The imperative
 		// handle only rebuilds on session-id change, so it reads these through a ref
@@ -920,6 +929,7 @@ export const MainPanel = React.memo(
 				onCopyContext,
 				onExportHtml,
 				onPublishGist: props.onPublishTabGist,
+				onPreviewContinuity: handleOpenContinuityPreview,
 				onMergeWith,
 				onSendToAgent,
 				onSummarizeAndContinue,
@@ -948,6 +958,7 @@ export const MainPanel = React.memo(
 				onCopyContext,
 				onExportHtml,
 				props.onPublishTabGist,
+				handleOpenContinuityPreview,
 				onMergeWith,
 				onSendToAgent,
 				onSummarizeAndContinue,
@@ -1239,6 +1250,7 @@ export const MainPanel = React.memo(
 									onUnifiedTabReorder={onUnifiedTabReorder}
 									onTabStar={onTabStar}
 									onTabMarkUnread={onTabMarkUnread}
+									onPreviewContinuity={handleOpenContinuityPreview}
 									onMergeWith={onMergeWith}
 									onSendToAgent={onSendToAgent}
 									onSummarizeAndContinue={onSummarizeAndContinue}
@@ -1326,6 +1338,7 @@ export const MainPanel = React.memo(
 									onUnifiedTabReorder={onUnifiedTabReorder}
 									onTabStar={onTabStar}
 									onTabMarkUnread={onTabMarkUnread}
+									onPreviewContinuity={handleOpenContinuityPreview}
 									onMergeWith={onMergeWith}
 									onSendToAgent={onSendToAgent}
 									onSummarizeAndContinue={onSummarizeAndContinue}

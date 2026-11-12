@@ -57,6 +57,8 @@ export interface AITabProps {
 	/** Stable callback - receives tabId */
 	onMarkUnread?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
+	onPreviewContinuity?: (tabId: string) => void;
+	/** Stable callback - receives tabId */
 	onMergeWith?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onSendToAgent?: (tabId: string) => void;
@@ -126,6 +128,7 @@ export const AITab = memo(function AITab({
 	onRename,
 	onStar,
 	onMarkUnread,
+	onPreviewContinuity,
 	onMergeWith,
 	onSendToAgent,
 	onSummarizeAndContinue,
@@ -259,6 +262,15 @@ export const AITab = memo(function AITab({
 			setOverlayOpen(false);
 		},
 		[onMarkUnread, tabId, setOverlayOpen]
+	);
+
+	const handlePreviewContinuityClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onPreviewContinuity?.(tabId);
+			setOverlayOpen(false);
+		},
+		[onPreviewContinuity, tabId, setOverlayOpen]
 	);
 
 	const handleMergeWithClick = useCallback(
@@ -670,6 +682,7 @@ export const AITab = memo(function AITab({
 					onCopyContextClick={handleCopyContextClick}
 					onCopyContextWithReasoningClick={handleCopyContextWithReasoningClick}
 					onSummarizeAndContinueClick={handleSummarizeAndContinueClick}
+					onPreviewContinuityClick={handlePreviewContinuityClick}
 					onMergeWithClick={handleMergeWithClick}
 					onSendToAgentClick={handleSendToAgentClick}
 					onPublishGistClick={handlePublishGistClick}
@@ -679,6 +692,7 @@ export const AITab = memo(function AITab({
 					onCloseOtherTabsClick={handleCloseOtherTabsClick}
 					onCloseTabsLeftClick={handleCloseTabsLeftClick}
 					onCloseTabsRightClick={handleCloseTabsRightClick}
+					onPreviewContinuity={onPreviewContinuity}
 					onMergeWith={onMergeWith}
 					onSendToAgent={onSendToAgent}
 					onSummarizeAndContinue={onSummarizeAndContinue}

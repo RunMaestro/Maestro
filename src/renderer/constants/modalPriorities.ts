@@ -101,6 +101,13 @@ export const MODAL_PRIORITIES = {
 	 */
 	MODEL_EFFORT: 872,
 
+	/**
+	 * Read-only continuity preview of one AI tab (Context: Preview Continuity).
+	 * Another per-tab dialog. It sits just below MODEL_EFFORT: it opens from the
+	 * tab menu or the palette and nothing opens on top of it.
+	 */
+	CONTINUITY_PREVIEW: 871,
+
 	/** Director's Notes modal - unified history and AI overview */
 	DIRECTOR_NOTES: 848,
 

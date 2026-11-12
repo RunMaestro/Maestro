@@ -1496,3 +1496,132 @@ describe('buildDelegationGraphCommands', () => {
 		});
 	});
 });
+
+describe('Context: Preview Continuity palette entry', () => {
+	const logEntry = (id: string) => ({
+		id,
+		timestamp: 1_000,
+		source: 'user' as const,
+		text: `Entry ${id}`,
+	});
+
+	function sessionWith(tabs = [createMockAITab({ id: 'tab-1', logs: [logEntry('1')] })]) {
+		return createMockSession({ id: 'agent-1', aiTabs: tabs, activeTabId: tabs[0].id });
+	}
+
+	function buildArgs(overrides: Record<string, unknown> = {}) {
+		return {
+			activeSession: sessionWith(),
+			activeTabType: 'ai' as const,
+			setQuickActionOpen: vi.fn(),
+			setSuccessFlashNotification: vi.fn(),
+			setAgentSessionsOpen: vi.fn(),
+			setActiveAgentSessionId: vi.fn(),
+			bionifyReadingMode: false,
+			setBionifyReadingMode: vi.fn(),
+			audioFeedbackEnabled: false,
+			setAudioFeedbackEnabled: vi.fn(),
+			idleNotificationEnabled: false,
+			setIdleNotificationEnabled: vi.fn(),
+			showStarredSessionsSection: true,
+			setShowStarredSessionsSection: vi.fn(),
+			shortcuts: {},
+			...overrides,
+		};
+	}
+
+	const find = (overrides: Record<string, unknown> = {}) =>
+		buildFeatureCommands(buildArgs(overrides)).find((a) => a.id === 'continuityPreview');
+
+	beforeEach(() => {
+		useModalStore.getState().closeModal('continuityPreview');
+	});
+
+	it('is offered for an AI tab that has an entry to read, with no hotkey', () => {
+		const command = find();
+		expect(command).toMatchObject({
+			id: 'continuityPreview',
+			label: 'Context: Preview Continuity',
+		});
+		// A tab-scoped Context action: Compact, Merge Into and Send to Agent have no chord either.
+		expect(command?.shortcut).toBeUndefined();
+	});
+
+	it('sits right after Context: Compact, before Merge Into and Send to Agent', () => {
+		const ids = buildFeatureCommands(
+			buildArgs({
+				canSummarizeActiveTab: true,
+				hasActiveSessionCapability: () => true,
+				onSummarizeAndContinue: vi.fn(),
+				onOpenMergeSession: vi.fn(),
+				onOpenSendToAgent: vi.fn(),
+			})
+		).map((a) => a.id);
+		const at = (id: string) => ids.indexOf(id);
+
+		expect(at('summarizeAndContinue')).toBeGreaterThanOrEqual(0);
+		expect(at('continuityPreview')).toBe(at('summarizeAndContinue') + 1);
+		expect(at('mergeSession')).toBe(at('continuityPreview') + 1);
+		expect(at('sendToAgent')).toBe(at('mergeSession') + 1);
+	});
+
+	it('does not borrow the compaction or merge gates: it asks no provider anything', () => {
+		expect(
+			find({
+				canSummarizeActiveTab: false,
+				hasActiveSessionCapability: () => false,
+				onSummarizeAndContinue: undefined,
+				onOpenMergeSession: undefined,
+				onOpenSendToAgent: undefined,
+			})
+		).toBeDefined();
+	});
+
+	it.each(['file', 'terminal', 'browser'] as const)('is not offered on a %s tab', (type) => {
+		expect(find({ activeTabType: type })).toBeUndefined();
+	});
+
+	it('is not offered for a tab with no entries, or with no active agent', () => {
+		expect(
+			find({ activeSession: sessionWith([createMockAITab({ id: 'tab-1', logs: [] })]) })
+		).toBeUndefined();
+		expect(find({ activeSession: undefined })).toBeUndefined();
+	});
+
+	it('closes the palette first, then opens the modal for the active tab and no other', () => {
+		const tabs = [
+			createMockAITab({ id: 'tab-1', logs: [logEntry('1')] }),
+			createMockAITab({ id: 'tab-2', logs: [logEntry('2')] }),
+		];
+		const activeSession = createMockSession({
+			id: 'agent-1',
+			aiTabs: tabs,
+			activeTabId: 'tab-2',
+		});
+		let openWhenPaletteClosed: boolean | undefined;
+		const setQuickActionOpen = vi.fn((open: boolean) => {
+			if (!open) {
+				openWhenPaletteClosed = useModalStore.getState().modals.get('continuityPreview')?.open;
+			}
+		});
+
+		find({ activeSession, setQuickActionOpen })!.action();
+
+		expect(setQuickActionOpen).toHaveBeenCalledTimes(1);
+		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+		// The palette was already closed when the modal opened, so closing it cannot take the modal's layer down.
+		expect(openWhenPaletteClosed).toBeFalsy();
+		expect(useModalStore.getState().modals.get('continuityPreview')).toMatchObject({
+			open: true,
+			data: { sessionId: 'agent-1', tabId: 'tab-2' },
+		});
+	});
+
+	it('stores the tab it was opened for and nothing else', () => {
+		find()!.action();
+		expect(useModalStore.getState().getData('continuityPreview')).toEqual({
+			sessionId: 'agent-1',
+			tabId: 'tab-1',
+		});
+	});
+});
