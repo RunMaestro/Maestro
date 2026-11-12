@@ -1082,6 +1082,8 @@ The verb only reads. To change an edge, use `update-agent <source> --peer <targe
 | Add a GGUF model from Hugging Face           | `models add-hf <repo> <file> [--dry-run]`, `models remove-hf <id>`                                                                 |
 | Install or update an engine                  | `models runtimes list`, `models runtimes install onnx\|llama`                                                                      |
 | Point a task at a model                      | `models assign <task> off\|utility-agent\|system-one\|local:<id>\|endpoint:<endpoint>:<model>`                                     |
+| Choose the Utility source                    | `settings set utilitySource '<json>'`, `settings set utilityAgentId\|utilityModelId <value>`                                       |
+| Choose what a task does with no answer       | `s1 set fail-policy <task> open\|closed\|default`                                                                                  |
 | Set the language a speech model dictates in  | `models assign dictation local:<id>?language=de`                                                                                   |
 | See what each task runs on, and if it can    | `models tasks`, `models status [<task>]`                                                                                           |
 | Run a task now                               | `models run <task> --input "<text>"`, `models run git-drafts --cwd <repo>`, `models run dictation --audio <wav>`                   |
@@ -1124,6 +1126,7 @@ Notes:
 - **Which verbs need the app.** Reads and writes of the settings file (`models assign`, `models tasks`, `models endpoints list|add|update|remove`, `models tiers list|set|reset`, `models config`) work with Maestro closed, and the watcher reloads the running app. Anything that downloads, starts, or probes needs the app and exits `3` without it.
 - **Endpoints.** `models endpoints remove` removes at once, even when a task is assigned to the endpoint; the card names those tasks and asks first. `models endpoints test` tests a saved endpoint only; there is no verb for testing the form before you save it. `detect` and `test` run on the computer running Maestro. See [Endpoints](/local-models#endpoints) and [Model server](/local-models#model-server).
 - **Dictation.** `models run dictation --audio <file.wav>` transcribes a 16-bit PCM WAV file (at most 512 MB) with the same [Dictation](/local-models#dictation) assignment the microphone uses, and prints the transcript. `--audio` is refused for every other task, and it cannot be combined with `--input`, `--system`, `--max-tokens`, `--cwd` or `--base`. Dictating live from the microphone has no verb.
+- **Housekeeping tasks.** `models assign <task> utility-agent` only points a task at the [Utility source](/local-models#utility-source); the source itself is the three settings above. Some tasks have their own verbs: `tab suggest-cleanup` (Tab cleanup suggestions), `cue gate` and `cue schedule --gate` (Cue gate), `cue screen` (Prompt-injection screen), `computer-history config --digest-source` (Computer History digests), and `--allow-secrets` on `gist create`, `support-package`, `feedback submit` and `feedback subscribe` (Secret screen). See [The tasks](/local-models#the-tasks).
 - **Agents.** Point one agent at a model with `update-agent --run-on`, `--tier`, `--background-requests` and `--proxy-mode` (see [Creating, Updating, and Removing Agents](#creating-updating-and-removing-agents)), and test the target with `agent test-run-on <agent-id>`.
 
 ### System One (`s1`)
@@ -1291,6 +1294,10 @@ maestro-cli tab reopen -a <agent-id>
 maestro-cli tab reopen -a <agent-id> --index 2
 maestro-cli tab reopen -a <agent-id> --tab <closed-tab-id> --background
 
+# Ask the Tab cleanup model which tabs to close, snooze, or wake (read-only;
+# prints the verb that applies each suggestion)
+maestro-cli tab suggest-cleanup
+
 # Pinned messages of an AI tab (default: the active tab; --tab names another).
 maestro-cli tab pins                                  # list, in transcript order
 maestro-cli tab pins add --last agent                 # pin the newest agent reply
@@ -1311,6 +1318,8 @@ maestro-cli unbookmark <agent-id>
 ```
 
 `tab reopen` prints the restored tab's new ID; without `-a` it acts on the agent selected in the desktop, and an empty stack or a bad `--index` / `--tab` exits 1 with a message. The closed-tab stack is kept across restarts, capped at 25 entries per agent.
+
+`tab suggest-cleanup` is the CLI half of **Tab Cleanup Suggestions** (see [The tasks](/local-models#the-tasks)). It reads tabs across every agent, changes none, and never suggests a tab that is busy, starred, or holding an unsent draft. Each suggestion comes with the `tab close`, `snooze tab`, or `snooze wake` command that applies it. An empty list exits 0; a task that is off, a model that cannot answer, or an unusable reply exits 1 with the reason. It needs the desktop app.
 
 ### Message Pins
 
@@ -3155,33 +3164,35 @@ maestro-cli cue schedule --resume standup
 maestro-cli cue schedule --cancel standup
 ```
 
-| Flag                       | Description                                                              |
-| -------------------------- | ------------------------------------------------------------------------ |
-| `--in <duration>`          | One-shot, relative (`30s`, `20m`, `2h`, `1d`)                            |
-| `--at <timestamp>`         | One-shot, absolute (ISO-8601 with offset, or `"YYYY-MM-DD HH:MM"` local) |
-| `--daily-at <times>`       | Repeating at `HH:MM` times, comma separated                              |
-| `--days <days>`            | Restrict `--daily-at` to certain days (`mon,tue,...`)                    |
-| `--every <duration>`       | Repeating on an interval (1 minute to 7 days)                            |
-| `--list`                   | List scheduled tasks across agents                                       |
-| `--kind <kind>`            | Filter `--list`: `once`, `daily`, `interval`, `all`                      |
-| `--reschedule <name>`      | Change when an existing task fires                                       |
-| `--pause` / `--resume`     | Flip `enabled` without deleting the task                                 |
-| `--cancel <name>`          | Delete a task                                                            |
-| `-a, --agent <id-or-name>` | Target agent (required when creating; scopes the other modes)            |
-| `-p, --prompt <text>`      | Prompt to send when the task fires                                       |
-| `--tab <tab-id>`           | Deliver the prompt into this AI tab of `--agent` (id or unique prefix)   |
-| `--here`                   | Deliver into the AI tab this command runs from; `--agent` defaults to it |
-| `--notify` / `--sticky`    | Also raise a toast; `--sticky` keeps it up until dismissed               |
-| `-m, --message <text>`     | Toast body (defaults to the label, then the prompt)                      |
-| `-n, --name <name>`        | Custom subscription name (auto-generated when omitted)                   |
-| `-l, --label <text>`       | Human-readable label shown in the app                                    |
-| `--pipeline <name>`        | Pipeline to file the task under (default: `Tasks`)                       |
-| `--grace-minutes <n>`      | One-shot only: how late a missed fire may still run (default 360)        |
-| `--keep-on-failure`        | One-shot only: keep the task on disk after a failed run                  |
-| `--tier <level>`           | Model tier for the prompt run: `low`, `medium`, `high`                   |
-| `--model <id>`             | Exact model id for the prompt run (instead of `--tier`)                  |
-| `--effort <level>`         | Effort for the prompt run: `low`, `medium`, `high`                       |
-| `--json`                   | Output as JSON (for scripting)                                           |
+| Flag                             | Description                                                              |
+| -------------------------------- | ------------------------------------------------------------------------ |
+| `--in <duration>`                | One-shot, relative (`30s`, `20m`, `2h`, `1d`)                            |
+| `--at <timestamp>`               | One-shot, absolute (ISO-8601 with offset, or `"YYYY-MM-DD HH:MM"` local) |
+| `--daily-at <times>`             | Repeating at `HH:MM` times, comma separated                              |
+| `--days <days>`                  | Restrict `--daily-at` to certain days (`mon,tue,...`)                    |
+| `--every <duration>`             | Repeating on an interval (1 minute to 7 days)                            |
+| `--list`                         | List scheduled tasks across agents                                       |
+| `--kind <kind>`                  | Filter `--list`: `once`, `daily`, `interval`, `all`                      |
+| `--reschedule <name>`            | Change when an existing task fires                                       |
+| `--pause` / `--resume`           | Flip `enabled` without deleting the task                                 |
+| `--cancel <name>`                | Delete a task                                                            |
+| `-a, --agent <id-or-name>`       | Target agent (required when creating; scopes the other modes)            |
+| `-p, --prompt <text>`            | Prompt to send when the task fires                                       |
+| `--tab <tab-id>`                 | Deliver the prompt into this AI tab of `--agent` (id or unique prefix)   |
+| `--here`                         | Deliver into the AI tab this command runs from; `--agent` defaults to it |
+| `--notify` / `--sticky`          | Also raise a toast; `--sticky` keeps it up until dismissed               |
+| `-m, --message <text>`           | Toast body (defaults to the label, then the prompt)                      |
+| `-n, --name <name>`              | Custom subscription name (auto-generated when omitted)                   |
+| `-l, --label <text>`             | Human-readable label shown in the app                                    |
+| `--pipeline <name>`              | Pipeline to file the task under (default: `Tasks`)                       |
+| `--grace-minutes <n>`            | One-shot only: how late a missed fire may still run (default 360)        |
+| `--keep-on-failure`              | One-shot only: keep the task on disk after a failed run                  |
+| `--tier <level>`                 | Model tier for the prompt run: `low`, `medium`, `high`                   |
+| `--model <id>`                   | Exact model id for the prompt run (instead of `--tier`)                  |
+| `--effort <level>`               | Effort for the prompt run: `low`, `medium`, `high`                       |
+| `--gate <condition>`             | Only run when the Cue gate model says the fire meets this condition      |
+| `--gate-on-unavailable <policy>` | With `--gate`, when no model can answer: `run` (default) or `skip`       |
+| `--json`                         | Output as JSON (for scripting)                                           |
 
 Notes:
 
@@ -3190,6 +3201,7 @@ Notes:
 - `--agent` is a hard scope on `--cancel`, `--reschedule`, `--pause`, and `--resume`. When one name exists on two agents the command refuses to guess and lists the candidates.
 - One-shot tasks delete themselves from the YAML after they fire. Repeating tasks stay until you cancel them.
 - `--tier`, `--model`, and `--effort` apply to the prompt run and need `--prompt`. To change them on a task that already exists, use `cue model` below.
+- `--gate` writes the same gate `cue gate` edits; see [Gating and Screening a Subscription](#gating-and-screening-a-subscription).
 
 ### Setting a Subscription's Model
 
@@ -3227,6 +3239,40 @@ Notes:
 - `--tier` and `--model` are two spellings of one choice. Setting one removes the other.
 - When the agent's provider cannot honor a tier or an effort, the command still saves it and prints a warning. The run then uses the agent's own value.
 - Subscriptions with `action: command` or `action: notify` run no agent, so the command refuses to set a model on them.
+
+### Gating and Screening a Subscription
+
+`cue gate` and `cue screen` are the CLI half of the **Gate (optional)** and **Prompt-injection screen** fields on a trigger in the pipeline editor. The gate is a plain-language condition the **Cue gate** task checks before an event starts a run. The screen scores the untrusted text a subscription substitutes (a comment, an issue body, a webhook payload) with the **Prompt-injection screen** task. Assign a model to each in **Settings -> Models -> System One** (`maestro-cli models assign cue-gate <source>`, `maestro-cli models assign injection-screen <source>`). The concepts are in [Gating with a local model](./maestro-cue-advanced#gating-with-a-local-model) and [Screening for prompt injection](./maestro-cue-advanced#screening-for-prompt-injection).
+
+```bash
+# Show the gate, set it, change only its policy, or remove it
+maestro-cli cue gate "PR opened"
+maestro-cli cue gate "PR opened" --set "The PR touches the auth module"
+maestro-cli cue gate "PR opened" --on-unavailable skip
+maestro-cli cue gate "PR opened" --clear
+
+# Show the screen, always screen at a stricter score, or go back to automatic
+maestro-cli cue screen "PR opened"
+maestro-cli cue screen "PR opened" --mode on --threshold 0.9
+maestro-cli cue screen "PR opened" --mode auto
+```
+
+| Verb         | Flag                        | Description                                                                                       |
+| ------------ | --------------------------- | ------------------------------------------------------------------------------------------------- |
+| `cue gate`   | `--set <condition>`         | Set the gate: a condition the event must meet, in plain language (at most 1000 characters)        |
+| `cue gate`   | `--on-unavailable <policy>` | When no model can answer: `run` (start the run and warn; default) or `skip`                       |
+| `cue gate`   | `--clear`                   | Remove the gate (cannot be combined with `--set` or `--on-unavailable`)                           |
+| `cue screen` | `--mode <mode>`             | `on` (always screen), `off` (never), or `auto` (screen commands that use untrusted text; default) |
+| `cue screen` | `--threshold <score>`       | Block at or above this score, above 0 and at most 1 (default 0.8); refused with `--mode off`      |
+| both         | `-a, --agent <id>`          | Disambiguate a name several agents share                                                          |
+| both         | `--json`                    | Output as JSON (for scripting)                                                                    |
+
+Notes:
+
+- With no flag, each verb only reads. A write changes only what you pass, and lands on every subscription of the same trigger (a trigger that fans out is several subscriptions); the output names each one it changed.
+- After a write, the output says when the task cannot answer yet, and what then happens to every event until it can.
+- Both verbs need the desktop app.
+- `--on-unavailable` alone needs a gate already set; otherwise pass `--set` too.
 
 ### Triggering a Subscription
 
@@ -3315,11 +3361,12 @@ maestro-cli gist create <agent-id> --public -d "Repro for issue #1234"
 maestro-cli gist create <agent-id> --session <session-id>
 ```
 
-| Flag                       | Description                                                        | Default        |
-| -------------------------- | ------------------------------------------------------------------ | -------------- |
-| `-d, --description <text>` | Gist description                                                   | -              |
-| `-p, --public`             | Create a public gist (default private)                             | private        |
-| `-s, --session <id>`       | Publish one provider session's transcript instead of the open tabs | the agent tabs |
+| Flag                       | Description                                                                                        | Default                      |
+| -------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `-d, --description <text>` | Gist description                                                                                   | -                            |
+| `-p, --public`             | Create a public gist (default private)                                                             | private                      |
+| `-s, --session <id>`       | Publish one provider session's transcript instead of the open tabs                                 | the agent tabs               |
+| `--allow-secrets`          | Publish even when the [secret screen](/local-models#the-secret-screen) finds a possible credential | refuse and list them, masked |
 
 Output is JSON with the gist URL on success:
 

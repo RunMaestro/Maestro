@@ -288,8 +288,8 @@ On a local model or an endpoint, context grooming and transfer still use the ses
 The card has no `models` verb. It is three settings:
 
 ```bash
-maestro-cli settings set utilitySource --raw '{"type":"local","modelId":"<model-id>"}'
-maestro-cli settings set utilitySource --raw '{"type":"utility-agent"}'   # a provider, or Default (same as session)
+maestro-cli settings set utilitySource '{"type":"local","modelId":"<model-id>"}'
+maestro-cli settings set utilitySource '{"type":"utility-agent"}'         # a provider, or Default (same as session)
 maestro-cli settings set utilityAgentId claude-code                       # the provider; reset it for Default (same as session)
 maestro-cli settings set utilityModelId haiku                             # the Model override
 maestro-cli settings reset utilityAgentId
