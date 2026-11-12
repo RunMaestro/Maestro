@@ -279,8 +279,8 @@ export function resultDeliveries(
 // Preview text
 // ---------------------------------------------------------------------------
 
-/** Hex characters of a SHA-256 that a marker names a version by. */
-const MARKER_HASH_CHARS = 12;
+/** Hex characters of a SHA-256 that a marker names a version by. Shared by every preview kind. */
+export const MARKER_HASH_CHARS = 12;
 
 /** A call id a marker may carry as it stands; anything else is left out of the marker. */
 const SAFE_CALL_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -359,7 +359,12 @@ function lineDelta(
 	};
 }
 
-function potentialReduction(full: string, preview: string): PotentialReduction {
+/**
+ * The figure for one preview: the text it could stand in for, measured against
+ * the preview with every marker line counted. Every kind of preview builds its
+ * figure here, so the figures are measured the same way and mean the same thing.
+ */
+export function potentialReduction(full: string, preview: string): PotentialReduction {
 	const fullTokens = estimateTokenCount(full);
 	const previewTokens = estimateTokenCount(preview);
 	return {
