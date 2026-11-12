@@ -6,7 +6,7 @@ icon: hard-drive
 
 Maestro does a lot of small model work besides your agents' own turns: it names new tabs, writes context summaries, turns a plain-English request into a shell command, and more. By default most of that runs through the **Utility Agent**, an ordinary agent spawn. **Local Models** lets you point each of those jobs somewhere else: a small model Maestro downloads and runs itself, or a model server you already run, such as Ollama or LM Studio. A model on one of those can also be the model behind one of your agents: see [Run on](#run-on).
 
-Open it from **Settings -> Models**, or run **Open Models Settings** from the command palette. From a terminal, `maestro-cli open settings --tab models` opens it, and `--sub-tab system-one` (or `overview`, `library`, `sources`, `system-two`, `gateway`) lands on one of its panels. A Library section takes a path: `--sub-tab library/speech` (or `library/engines`, `library/agents`, `library/housekeeping`, `library/search`, `library/custom`). The old name still works: `--tab local-models` opens the same tab. It is a core part of Maestro, not an Encore Feature, and it starts empty. The whole tab also works from the web interface: downloads, endpoints, the model server, System One, and every task run on the computer running Maestro, whichever screen you press the button on. The fit labels and the **Memory** tile describe that computer too, not the device the browser runs on, and download progress shows on every screen that has the tab open.
+Open it from **Settings -> Models**, or run **Open Models Settings** from the command palette. From a terminal, `maestro-cli open settings --tab models` opens it, and `--sub-tab system-one` (or `overview`, `library`, `sources`, `system-two`, `gateway`) lands on one of its panels. A Library section takes a path: `--sub-tab library/speech` (or `library/engines`, `library/agents`, `library/housekeeping`, `library/search`, `library/custom`). The old name still works: `--tab local-models` opens the same tab. It is a core part of Maestro, not an Encore Feature, and it starts empty. The whole tab also works from the web interface: downloads, endpoints, the model server, System One, and every task run on the computer running Maestro, whichever screen you press the button on. Two controls stay in the desktop app: the model server key's **Copy** and VoiceStudio's **Check connection** (see [Sources in the web interface](#sources-in-the-web-interface)). The fit labels and the **Memory** tile describe that computer too, not the device the browser runs on, and download progress shows on every screen that has the tab open.
 
 The tab has no shortcut of its own: **Open Settings** (`Cmd+,` / `Ctrl+,`) opens Settings, and the command palette entry opens the Models tab directly. Settings search also finds **Models overview**, **Library**, **Agent Models**, **Housekeeping models**, **Speech models**, **Search & Safety models**, **Engines**, and **Add from Hugging Face**, and lands on that place.
 
@@ -24,7 +24,7 @@ The five panels are listed under **Models** in the sidebar; click one to open it
 | Panel          | What lives there                                                                                                                                    |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Library**    | The [models](#models) Maestro downloads, in sections, and the [engines](#engines) that run them.                                                    |
-| **Sources**    | The [endpoints](#endpoints) you have added, the [Maestro model server](#model-server), and the local VoiceStudio speech service.                    |
+| **Sources**    | The [endpoints](#endpoints) you have added, the [Maestro model server](#model-server), and the local [VoiceStudio](#voicestudio) speech service.    |
 | **System One** | The tasks whose answer is a judgment: a decision, label, score, vector, or transcript. See [System One and System Two](#system-one-and-system-two). |
 | **System Two** | The tasks that write text for someone to read or run, plus the shared Utility source settings.                                                      |
 | **Gateway**    | Per-agent gateway URLs, the token proxy mode for each agent, and what the token proxy carried and saved. See [Gateway](#gateway).                   |
@@ -222,11 +222,25 @@ An endpoint is a model server you run yourself. Endpoints live in **Models -> So
 | LM Studio         | `http://127.0.0.1:1234`  |                                           |
 | OpenAI-compatible | none, you enter it       | Any `/v1` server, such as LiteLLM or vLLM |
 
-- **Detect local servers** looks for Ollama and LM Studio on this machine and offers each one it finds with an **Add** button. It runs only when you click it.
-- **Add** and **Edit** open a small form: name, kind, base URL, and an optional API key variable. **Test** sends a one-token request and shows the latency or the error before you save.
-- Each endpoint has an **enabled** switch, the list of models it serves, and **Test**, **Refresh models**, **Edit**, and **Remove**. A disabled endpoint stays configured and is never called.
+An endpoint serves text generation and embeddings, and on some servers speech-to-text. Endpoints are a core part of Maestro, not an Encore Feature. They have no shortcut; Settings search finds **Endpoints** and lands on the list.
 
-**The API key is never stored in the endpoint.** You give the NAME of an environment variable, and Maestro reads its value from **Settings -> Environment** at the moment it sends a request. Settings files end up in backups and debug packages, so a key written into one would leak through all of them. To rotate a key, change it in one place.
+- **Detect local servers** looks for Ollama and LM Studio at their default addresses on this machine, skipping any you already added, and offers each one it finds with its model count and an **Add** button. It runs only when you click it, and adds nothing on its own. When it finds none: "No new Ollama or LM Studio server is running on this machine." (`maestro-cli models endpoints detect`)
+- **Add endpoint** and **Edit** open a small form: the kind (Ollama, LM Studio, or OpenAI-compatible), **Name**, **Base URL**, and **API key variable (optional)**. Choosing a kind fills in its default name and address unless you typed your own. **Test** sends a one-token request to the first model the server lists and shows which model answered and how many milliseconds it took, or the error, before you save. **Add endpoint** or **Save** stores it, and **Cancel** discards it. (`maestro-cli models endpoints add --kind <ollama|lmstudio|openai-compatible> [--url <url>] [--name <name>] [--api-key-env <VAR>] [--disabled]`, and `models endpoints update <endpoint>` with the same fields)
+- Each endpoint has an **enabled** switch, the list of models it serves, and **Test**, **Refresh models**, **Edit**, and **Remove**. A disabled endpoint stays configured and is never called; a task assigned to it is unavailable until you enable it again. (`maestro-cli models endpoints update <endpoint> --enable` or `--disable`, `models endpoints models <endpoint>`, `models endpoints test <endpoint> [--model <model>]`)
+- **Remove** warns first when a task is assigned to the endpoint. It names the task, which stays unavailable until you add the endpoint again or assign another source. Choose **Remove anyway** or **Keep it**. `maestro-cli models endpoints remove <endpoint>` removes it at once, without that warning.
+
+**The API key is never stored in the endpoint.** You give the NAME of an environment variable, and Maestro reads its value from **Settings -> Environment** at the moment it sends a request. A variable with a blank value counts as unset, and `maestro-cli models endpoints add` warns when the variable is not set yet. Settings files end up in backups and debug packages, so a key written into one would leak through all of them. To rotate a key, change it in one place. A local server usually needs no key.
+
+Maestro refuses an endpoint it cannot use, and says why:
+
+- A base URL that is not `http` or `https`, has no host, or has a query string or fragment.
+- A base URL with credentials in it: "Do not put credentials in the URL. Name an environment variable for the API key instead."
+- An address that is already configured. Every loopback spelling (`localhost`, `127.0.0.1`, `[::1]`) counts as the same host.
+- An empty name, or an API key variable that is not a valid environment variable name.
+
+When a call fails, the message names the endpoint and the cause: the server could not be reached ("Check that the server is running."), did not answer in time, rejected the key (HTTP 401 or 403), returned an answer Maestro could not read ("Check that its kind is right."), or serves no models ("Load or pull one, then test again.").
+
+`list`, `add`, `update`, and `remove` edit the settings file and work with Maestro closed. `models`, `test`, and `detect` need the app running. There is no CLI test of an endpoint you have not saved yet.
 
 ## Assignments
 
@@ -750,22 +764,28 @@ The verbs an agent asks with (`yes`, `pick`, `rate`, `ask`, `rank`, `batch`, `co
 
 The Maestro model server shares the models in your Library over HTTP, so an agent harness such as Claude Code, Codex, or OpenCode can use them. It is llama.cpp's own `llama-server`, which Maestro downloads as an [engine](#engines), starts, and watches. It speaks the three protocols a harness uses: OpenAI Chat Completions (`/v1/chat/completions`), OpenAI Responses (`/v1/responses`), and Anthropic Messages (`/v1/messages`). It serves text generation models only.
 
-The card is on **Models -> Sources**, below the endpoints. It shows the state, the build in use and its accelerator (**Metal**, **Vulkan (NVIDIA ...)**, or **CPU**), the address, the key, and the models loaded now with the memory their weights take.
+The card is on **Models -> Sources**, below the endpoints. It is a core part of Maestro, not an Encore Feature, and it has no shortcut; Settings search finds **Model server**. The card shows the state (**Stopped**, **Starting**, **Running**, **Restarting**, **Stopping**, or **Failed**), the build in use and what it **Runs on** (for example **Metal**, **Vulkan (NVIDIA ...)**, or **CPU**), the address, the key, and the models loaded now with the memory their weights take. `maestro-cli models server status` prints the same, plus the log path, and exits non-zero when the server is **Failed**.
 
-- **It never starts on its own.** Press **Start**. It also starts when something you turned on needs it, such as a task you assigned to it. It stops when you press **Stop** and when Maestro quits.
-- **Install the engine first.** The card has an **Install** button and a build choice. The default build is Metal on a Mac and Vulkan on Windows and Linux, which runs on any GPU vendor. **Advanced** offers the CPU build, and on Windows and Linux x64 the CUDA and ROCm builds. Those are large downloads and need a matching driver. If the accelerator check finds no GPU, or finds the Vulkan loader missing, the card says so and offers the CPU build. Maestro never swaps a build without telling you.
-- **The port is chosen once and kept.** An address you gave a harness keeps working across restarts. If another program holds the port, the start fails and names the address; the server does not move.
-- **One model is loaded at a time.** The server loads a model the first time a request names it and unloads the least recently used one when another arrives. A second copy of a 20 GB model is a real cost, so the default is one. **Models loaded at once** raises it.
+- **It never starts on its own.** Press **Start** (`maestro-cli models server start`, which waits until the server answers). It also starts when something you turned on needs it, such as a task you assigned to it. It stops when you press **Stop** (`maestro-cli models server stop`) and when Maestro quits. **Start** stays disabled until the engine is installed, and a start with no text model downloaded is refused: "No text model is downloaded for the Maestro model server to serve. Download one in Settings > Models > Library."
+- **Install the engine first.** Under **Hosting engine (llama-server)**, pick a build in **Engine build** and press **Install hosting engine** (**Install again** once one is installed). This is a separate install from the llama.cpp engine in **Models -> Library -> Engines**; both use the same downloaded model files. The default build is Metal on an Apple Silicon Mac, CPU on an Intel Mac, and Vulkan on Windows and Linux, which runs on any GPU vendor. Windows and Linux also offer the CPU build, and on x64 the CUDA and ROCm builds; those are large downloads and need a matching driver. Progress shows on the card in every window. A running server keeps serving while a new build installs, then restarts on it. (`maestro-cli models server set --build default|cpu|cuda|rocm`)
+- **The card says what the build runs on.** After an install Maestro checks the build on this computer. If it finds no GPU, only a software renderer, or the Vulkan loader missing, the card says so and offers **Install the CPU build**. Maestro never swaps a build without telling you. A build older than the one Maestro expects shows "This build is older than the one Maestro expects. Install it again to update it."
+- **The port is chosen once and kept.** The **Address** row shows `http://127.0.0.1:<port>` with a **Copy address** button; before the first start it says the port is chosen then. An address you gave a harness keeps working across restarts. If another program holds the port, the start fails and names the address; the server does not move.
+- **One model is loaded at a time.** The server loads a model the first time a request names it and unloads the least recently used one when another arrives. A second copy of a 20 GB model is a real cost, so the default is one. **Models loaded at once** raises it, from 1 to 16. (`maestro-cli models server set --max-models <n>`)
 - **Context is at least 40,960 tokens.** An agent's first prompt is about 14,000 tokens, and a smaller context fails with "Prompt is too long". Maestro sets this for each model.
+- **Changes restart it.** The bind mode, the model count, and the key are read at launch, so changing one restarts a running server.
+- **It is watched.** If the server stops answering, Maestro restarts it, up to 3 times in a row. After that it is left **Failed**, and a red "Maestro model server stopped" notification says why. A start that does not answer within 60 seconds is stopped.
+- **Open log** opens `model-server.log` in Maestro's `logs` folder. From a terminal, `maestro-cli models server status` prints the path, and `maestro-cli open-file <path>` opens it.
 
 ### Local only or Network
+
+**Who can reach it** on the card switches between the two modes. The default is **Local only**. (`maestro-cli models server set --bind local|network`)
 
 | Mode           | Listens on  | Who can reach it                         |
 | -------------- | ----------- | ---------------------------------------- |
 | **Local only** | `127.0.0.1` | This machine                             |
 | **Network**    | `0.0.0.0`   | Any machine that can reach this computer |
 
-**Both modes require the key.** Local only uses it too, so another program on this machine, or a web page your browser has open, cannot use your models without it. Maestro generates the key, stores it sealed with the operating system's key store, and never writes it to a log. On a system with no key store (Linux with no keyring) the key is stored obscured, not encrypted, and the card and `maestro-cli models server status` say so. **Copy** puts it on the clipboard and **Rotate** makes a new one (every harness you set up by hand then needs the new key). Network mode refuses to start without a key, and the card warns that anyone on the network who has the key can use the models and the memory they take.
+**Both modes require the key.** Local only uses it too, so another program on this machine, or a web page your browser has open, cannot use your models without it. Maestro generates the key, stores it sealed with the operating system's key store, and never writes it to a log. On a system with no key store (Linux with no keyring) the key is stored obscured, not encrypted, and the card and `maestro-cli models server status` say so. The key is made the first time you copy it or start the server. A harness sends it as `Authorization: Bearer` or `x-api-key`. **Copy** under **API key** puts it on the clipboard (`maestro-cli models server key` prints it). **Rotate** makes a new one after you confirm, because "Rotating makes the current key stop working. Anything set up with it needs the new key." (`maestro-cli models server set --rotate-key`). Network mode refuses to start without a key, and the card warns that anyone on the network who has the key can use the models and the memory they take.
 
 Choose Network only on a network you trust. The key travels in clear text over plain HTTP.
 
@@ -793,7 +813,7 @@ Both were tested with Claude Code 2.1.296 and Codex CLI 0.162.1 on macOS. A smal
 
 ### Using the server for housekeeping tasks
 
-The server is also an endpoint named **Maestro model server**. It is built in: it cannot be edited or removed, and only this card controls it. Pick it in an [assignment](#assignments) to run a task on it. Assigning a task to it starts the server and loads the model when the task runs.
+The server is also an endpoint named **Maestro model server**. It is built in: it cannot be edited or removed, and only this card controls it. Pick it in an [assignment](#assignments) to run a task on it. Assigning a task to it starts the server and loads the model when the task runs. It serves text generation only, so a task that needs embeddings or speech is refused there, with a message to assign a local model or another endpoint.
 
 You never pay for a second copy. If the server is running with a model loaded, a task assigned to that same local model goes to the server instead of loading the model inside Maestro.
 
@@ -806,6 +826,31 @@ maestro-cli models server stop
 maestro-cli models server set --bind local      # or network; --max-models <n>; --rotate-key; --build default|cpu|cuda|rocm
 maestro-cli models server key                   # prints only the key, for $(...)
 ```
+
+Every verb takes `--json`. `status` and `start` print the address, and `key` makes the key if none exists yet.
+
+### Sources in the web interface
+
+Everything on **Models -> Sources** runs on the computer running Maestro, whichever screen you press the button on. **Detect local servers** looks for Ollama and LM Studio on that computer, not on the device the browser runs on, and **Test** calls the endpoint from there.
+
+- **The model server key stays on the host.** From a browser you can start, stop, install, change the bind mode and the model count, and **Rotate** the key, but **Copy** is refused. Read the key in the desktop app or with `maestro-cli models server key` on that computer.
+- **Open log** downloads the log file to the browser's device.
+- **VoiceStudio's Check connection** works only in the desktop app. Set its fields there, or with `maestro-cli settings set` (see [VoiceStudio](#voicestudio)).
+
+## VoiceStudio
+
+The last section of **Models -> Sources** points Maestro at VoiceStudio, a speech service you run on this computer that speaks with cloned voices. Maestro connects to it and never starts it. Choose VoiceStudio as the A Cappella Text-to-Speech provider to use its voices; [VoiceStudio voices](./voice-mode#voicestudio-voices) covers that part. The section is not behind an Encore Feature, and Settings search finds **VoiceStudio**.
+
+| Field                 | Default                 | What it is                                                                     |
+| --------------------- | ----------------------- | ------------------------------------------------------------------------------ |
+| **Local service URL** | `http://127.0.0.1:3900` | Where VoiceStudio listens. Only `localhost` or a loopback address is accepted. |
+| **Speech engine**     | `voxcpm2`               | The engine id installed in VoiceStudio, such as `voxcpm2` or `omnivoice`.      |
+| **Sampling seed**     | `11`                    | Keeps the voice repeatable. A whole number from 0 to 2147483647.               |
+
+- **Check connection** reports the VoiceStudio version and its voice profiles, or "No voice profiles available. Create a profile in VoiceStudio.", or what went wrong. It has no `maestro-cli` verb.
+- **Save source** stores the fields. With A Cappella on, a change made during a voice session applies after the session ends, and the card says "Saved. End the current voice session to apply these settings."
+
+From a terminal, set the same fields with `maestro-cli settings set acappella.voiceStudio.baseUrl <url>`, `acappella.voiceStudio.engine <id>`, and `acappella.voiceStudio.seed <n>`. They are checked by the same rules as the card.
 
 ## Run on
 
@@ -1338,7 +1383,7 @@ maestro-cli models runtimes install <onnx|llama> # install or update one engine 
 
 maestro-cli models endpoints list
 maestro-cli models endpoints detect              # probe for Ollama and LM Studio; adds nothing
-maestro-cli models endpoints add --kind ollama [--url <url>] [--name <name>] [--api-key-env <VAR>]
+maestro-cli models endpoints add --kind ollama [--url <url>] [--name <name>] [--api-key-env <VAR>] [--disabled]
 maestro-cli models endpoints update <endpoint> [--name <name>] [--url <url>] [--kind <kind>] [--api-key-env <VAR> | --clear-api-key-env] [--enable | --disable]
 maestro-cli models endpoints models <endpoint>   # the models the server lists now, for `assign endpoint:...`
 maestro-cli models endpoints test <endpoint> [--model <model>]
