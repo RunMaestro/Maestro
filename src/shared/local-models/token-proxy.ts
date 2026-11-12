@@ -21,7 +21,20 @@
 
 import { classifyCredentialKind } from '../providerAuthIdentity';
 import { formatCount } from '../formatters';
-import type { ProxyCompressionEntry, ProxyRequestTotals, ProxyRequestUsage } from '../stats-types';
+import type {
+	ProxyCompressionEntry,
+	ProxyCoverage,
+	ProxyEvidenceKind,
+	ProxyFigure,
+	ProxyFigureUnit,
+	ProxyProviderClassStatus,
+	ProxyProviderReportedness,
+	ProxyProviderUsageClass,
+	ProxyRequest,
+	ProxyRequestTotals,
+	ProxyRequestUsage,
+	ProxyUnknownReason,
+} from '../stats-types';
 import { agentGatewaySupport, isLoopbackGatewayUrl } from './gateway';
 
 /** The only interface the proxy listens on. Never a wildcard address. */
@@ -615,12 +628,18 @@ export interface TokenProxyBlockDetail {
  * What the provider counted for one request, from the `usage` in its answer.
  * Input is uncached input; OpenAI's cached tokens are moved out of its prompt
  * total into `cacheReadTokens`, and it reports no cache writes (0).
+ *
+ * The four numbers are always present for compatibility, and a class the answer
+ * did not name is 0. `reportedness` says which numbers the provider gave. It is
+ * absent from usage a producer did not track, and readers then treat every
+ * class as unknown (see `proxyProviderClassReading()`).
  */
 export interface TokenProxyProviderUsage {
 	inputTokens: number;
 	cacheReadTokens: number;
 	cacheWriteTokens: number;
 	outputTokens: number;
+	reportedness?: ProxyProviderReportedness;
 }
 
 // ---------------------------------------------------------------------------
@@ -818,6 +837,272 @@ export function describeOpportunityReasons(reasons: Record<string, number>): str
 		.sort(([a, countA], [b, countB]) => countB - countA || a.localeCompare(b))
 		.map(([reason, count]) => `${reason} ${formatCount(count)}`)
 		.join(', ');
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry vocabulary: what a request's row says, and how sure each number is
+// ---------------------------------------------------------------------------
+
+/**
+ * Why compress mode forwarded a request's body without reading it: the values
+ * `ProxyRequest.skipReason` holds. The server's log names them as
+ * `TokenProxyCompressionSkip`, so a new reason reaches the row, the labels
+ * below and the report together.
+ */
+export const TOKEN_PROXY_SKIP_REASONS = ['encoding', 'not-text', 'too-large', 'failed'] as const;
+export type TokenProxySkipReason = (typeof TOKEN_PROXY_SKIP_REASONS)[number];
+
+export const TOKEN_PROXY_SKIP_LABELS: Record<TokenProxySkipReason, string> = {
+	encoding: 'a content encoding the proxy cannot decode',
+	'not-text': 'a body that is not UTF-8 text',
+	'too-large': 'a body past the read limit',
+	failed: 'decoding or compressing failed, and the original was forwarded',
+};
+
+/** The skip reason a stored string names, or null for a value this build does not know. */
+export function asTokenProxySkipReason(value: unknown): TokenProxySkipReason | null {
+	return (TOKEN_PROXY_SKIP_REASONS as readonly unknown[]).includes(value)
+		? (value as TokenProxySkipReason)
+		: null;
+}
+
+export const TOKEN_PROXY_EVIDENCE_LABELS: Record<ProxyEvidenceKind, string> = {
+	measured: 'measured',
+	estimate: 'estimate',
+	opportunity: 'opportunity, not applied',
+};
+
+export const TOKEN_PROXY_EVIDENCE_NOTES: Record<ProxyEvidenceKind, string> = {
+	measured: 'Counted by Maestro on a request, or reported by the provider.',
+	estimate: 'Characters divided by 4, on text the proxy read. Not a count a provider billed.',
+	opportunity: 'What a preview showed could be removed. Nothing was removed and nothing was saved.',
+};
+
+/** Said wherever figures of more than one kind are shown together. */
+export const TOKEN_PROXY_EVIDENCE_SEPARATION_NOTE =
+	'Measured counts, estimates and opportunities are different kinds of figure. They are shown apart and never added into one savings number.';
+
+export const TOKEN_PROXY_UNKNOWN_LABELS: Record<ProxyUnknownReason, string> = {
+	'not-recorded': 'not recorded (the request predates this measure)',
+	'not-read': 'not read (the proxy did not read the body)',
+	'not-observed': 'not observed (it happened where Maestro cannot see)',
+	'insufficient-samples': 'too few samples to report',
+	'on-demand-only': 'computed only on request, for one tab',
+	'identity-unavailable': 'needs an identity the proxy cannot see',
+	'not-evaluated': 'not evaluated',
+};
+
+/** A figure with no value. Unknown is never zero. */
+export function unknownProxyFigure<K extends ProxyEvidenceKind>(
+	kind: K,
+	unit: ProxyFigureUnit,
+	unknown: ProxyUnknownReason
+): ProxyFigure<K> {
+	return { kind, unit, value: null, unknown };
+}
+
+/**
+ * A figure with a value. A range in which no request supplied the value has no
+ * value: the figure comes back unknown, for `whenNone`, instead of a zero (or a
+ * division by it). A value that is not a finite number, or a count that exceeds
+ * its range, is a bug in the caller and throws.
+ */
+export function proxyFigure<K extends ProxyEvidenceKind>(
+	kind: K,
+	unit: ProxyFigureUnit,
+	value: number,
+	coverage: ProxyCoverage,
+	whenNone: ProxyUnknownReason
+): ProxyFigure<K> {
+	if (!Number.isFinite(value)) {
+		throw new RangeError(`A ${kind} figure needs a finite number, not ${value}.`);
+	}
+	if (coverage.scope === 'range') {
+		const { counted, of } = coverage;
+		if (
+			!Number.isSafeInteger(counted) ||
+			!Number.isSafeInteger(of) ||
+			counted < 0 ||
+			counted > of
+		) {
+			throw new RangeError(`Coverage needs 0 <= counted <= of, not ${counted} of ${of}.`);
+		}
+		if (counted === 0) return unknownProxyFigure(kind, unit, whenNone);
+	}
+	return { kind, unit, value, coverage };
+}
+
+/**
+ * Add two figures of the same kind and unit: the one way to total figures. A
+ * figure of another kind or unit throws, because the sum would be a number that
+ * means nothing (an estimate plus an opportunity is not a saving). An unknown
+ * operand makes the sum unknown. Coverage adds with the values; a range cannot
+ * be added to the process lifetime.
+ */
+export function addProxyFigures<K extends ProxyEvidenceKind>(
+	a: ProxyFigure<K>,
+	b: ProxyFigure<K>
+): ProxyFigure<K> {
+	if (a.kind !== b.kind) {
+		throw new TypeError(`Figures of different kinds cannot be added: ${a.kind} and ${b.kind}.`);
+	}
+	if (a.unit !== b.unit) {
+		throw new TypeError(`Figures in different units cannot be added: ${a.unit} and ${b.unit}.`);
+	}
+	if (a.value === null) return a;
+	if (b.value === null) return b;
+	const value = a.value + b.value;
+	const left = a.coverage;
+	const right = b.coverage;
+	if (left.scope === 'range' && right.scope === 'range') {
+		return {
+			kind: a.kind,
+			unit: a.unit,
+			value,
+			coverage: {
+				scope: 'range',
+				counted: left.counted + right.counted,
+				of: left.of + right.of,
+			},
+		};
+	}
+	if (left.scope === 'process-lifetime' && right.scope === 'process-lifetime') {
+		const since =
+			left.since !== undefined && right.since !== undefined
+				? Math.min(left.since, right.since)
+				: undefined;
+		return {
+			kind: a.kind,
+			unit: a.unit,
+			value,
+			coverage:
+				since === undefined ? { scope: 'process-lifetime' } : { scope: 'process-lifetime', since },
+		};
+	}
+	throw new TypeError('A figure for a range cannot be added to one for the process lifetime.');
+}
+
+/**
+ * The first rule a request's block counts break, or null when they hold or are
+ * absent (absent is unknown, which breaks nothing). It checks that every count
+ * is a non-negative integer, that `candidates` equals `belowThreshold +
+ * storeFailed + kept + blocksCompressed`, and that `cacheHits` and `modelFailed`
+ * do not exceed the blocks decided (`kept + blocksCompressed`). It does not
+ * check what the producer derives the recognized total from (`protected +
+ * vetoed.* + candidates`), because no independent total is stored. A writer that
+ * finds a problem stores no counts at all: counts that disagree are worse than
+ * none.
+ */
+export function proxyBlockCountsProblem(
+	request: Pick<ProxyRequest, 'blockCounts' | 'blocksCompressed' | 'cacheHits'>
+): string | null {
+	const counts = request.blockCounts;
+	if (counts === undefined) return null;
+	const { vetoed, ...own } = counts;
+	const all = [
+		...Object.values(own),
+		...Object.values(vetoed),
+		request.blocksCompressed,
+		request.cacheHits,
+	];
+	if (!all.every((count) => Number.isSafeInteger(count) && count >= 0)) {
+		return 'Every count must be a non-negative integer.';
+	}
+	const shortened = request.blocksCompressed;
+	if (counts.candidates !== counts.belowThreshold + counts.storeFailed + counts.kept + shortened) {
+		return 'candidates must equal belowThreshold + storeFailed + kept + blocksCompressed.';
+	}
+	const decided = counts.kept + shortened;
+	if (request.cacheHits > decided) return 'cacheHits cannot exceed kept + blocksCompressed.';
+	if (counts.modelFailed > decided) return 'modelFailed cannot exceed kept + blocksCompressed.';
+	return null;
+}
+
+/**
+ * What one stored provider count is, as a reader may use it:
+ *
+ * - a {@link ProxyProviderClassStatus}: the row records how the class got its
+ *   number.
+ * - `legacy`: the row has provider numbers and no record of how they were
+ *   given, because it was written before that was tracked. A class the answer
+ *   never named reads as 0 in it, so no class is claimed as reported.
+ * - `absent`: the row has no provider usage at all (the answer named none, or a
+ *   background target answered).
+ */
+export type ProxyProviderClassReading = ProxyProviderClassStatus | 'legacy' | 'absent';
+
+export const TOKEN_PROXY_PROVIDER_CLASS_LABELS: Record<ProxyProviderClassReading, string> = {
+	reported: 'reported by the provider',
+	derived: 'derived from what the provider reported',
+	'not-applicable': 'not a class this provider has (zero by definition)',
+	unreported: 'not reported in the answer (unknown, not zero)',
+	legacy: 'recorded before reporting was tracked (unknown)',
+	absent: 'the answer named no usage (unknown)',
+};
+
+const PROVIDER_COUNT_FIELD = {
+	input: 'providerInputTokens',
+	cacheRead: 'providerCacheReadTokens',
+	cacheWrite: 'providerCacheWriteTokens',
+	output: 'providerOutputTokens',
+} as const satisfies Record<ProxyProviderUsageClass, keyof ProxyRequest>;
+
+/**
+ * How a row's provider count for one class got its number. Every reader of a
+ * stored provider number goes through this, because the number alone cannot
+ * tell a zero the provider reported from a default for a class it never named.
+ */
+export function proxyProviderClassReading(
+	row: Pick<ProxyRequest, (typeof PROVIDER_COUNT_FIELD)[ProxyProviderUsageClass]> &
+		Pick<ProxyRequest, 'providerUsageReportedness'>,
+	usageClass: ProxyProviderUsageClass
+): ProxyProviderClassReading {
+	const named = Object.values(PROVIDER_COUNT_FIELD).some((field) => row[field] !== undefined);
+	if (!named) return 'absent';
+	return row.providerUsageReportedness?.[usageClass] ?? 'legacy';
+}
+
+/** Whether a reading's number says something: reported, derived, or zero by definition. */
+export function proxyProviderClassHasValue(reading: ProxyProviderClassReading): boolean {
+	return reading === 'reported' || reading === 'derived' || reading === 'not-applicable';
+}
+
+/**
+ * What the canonical block reader (`readTokenProxyBlock`) has returned since
+ * the app started: a snapshot of eight saturating counters and what they leave
+ * unknown. Process lifetime, not a time range, and in memory only.
+ *
+ * Bytes and counts are measured. `returnedOriginalTokenEstimate` is an estimate
+ * (`tokenCountKind`). Returned archive text is not proof that a model received
+ * it: `modelExposure` and `unobservedRetrievals` say so, and `cliInvocations`
+ * is null because the reader serves inspection and the CLI alike. Forwarding
+ * historical tool text never increments a counter (`ProxyVetoCounts.retrieval`
+ * counts retrieved text carried forward in history).
+ */
+export interface TokenProxyRecoveryObservations {
+	/** Reads whose hash and range passed validation. */
+	invocations: number;
+	/** Reads that asked for a line range. */
+	rangedInvocations: number;
+	/** Reads that returned original text. */
+	recoveredOriginals: number;
+	/** Reads of a hash with no compressed verdict: never shortened, kept whole, or unknown. */
+	unavailableBlocks: number;
+	/** Reads of a shortened block whose original text is no longer stored. */
+	missingOriginals: number;
+	/** Reads that failed in the archive and rethrew. */
+	failedReads: number;
+	/** UTF-8 bytes of the original text returned. */
+	returnedOriginalBytes: number;
+	returnedOriginalTokenEstimate: number;
+	scope: 'process-lifetime';
+	coverage: 'canonical-block-reader';
+	tokenCountKind: 'character-estimate';
+	cliInvocations: null;
+	modelExposure: 'unknown';
+	unobservedRetrievals: 'unknown';
+	/** A counter reached the largest safe integer. */
+	saturated: boolean;
 }
 
 /** What the compression cache directory holds (`maestro-cli models proxy cache`). */

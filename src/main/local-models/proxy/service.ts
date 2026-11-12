@@ -75,6 +75,7 @@ import {
 	type TokenProxyAgentRow,
 	type TokenProxyBlockDetail,
 	type TokenProxyOriginalLineRange,
+	type TokenProxyRecoveryObservations,
 	type TokenProxyReport,
 	type TokenProxyRequestMode,
 	type TokenProxyRouteId,
@@ -166,7 +167,7 @@ function countRecoveryRead(counter: keyof typeof recoveryReadCounters, amount = 
 }
 
 /** Read-only snapshot for phase 06; forwarding historical tool text never increments it. */
-export function getTokenProxyRecoveryObservations() {
+export function getTokenProxyRecoveryObservations(): TokenProxyRecoveryObservations {
 	return {
 		...recoveryReadCounters,
 		scope: 'process-lifetime' as const,

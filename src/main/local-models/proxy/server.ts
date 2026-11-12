@@ -76,6 +76,7 @@ import {
 	type TokenProxyProviderUsage,
 	type TokenProxyRequestKind,
 	type TokenProxyRequestMode,
+	type TokenProxySkipReason,
 	type TokenProxyTarget,
 	type TokenProxyUpstreams,
 } from '../../../shared/local-models/token-proxy';
@@ -99,16 +100,17 @@ import type {
  */
 export const MAX_COMPRESS_BODY_BYTES = 64 * 1024 * 1024;
 
-/** Why a `compress` mode request was forwarded without being read. */
-export type TokenProxyCompressionSkip =
-	/** A `Content-Encoding` this module cannot decode. */
-	| 'encoding'
-	/** The decoded body is not UTF-8 text. */
-	| 'not-text'
-	/** The body is past {@link MAX_COMPRESS_BODY_BYTES}. */
-	| 'too-large'
-	/** Decoding or the compressor threw. */
-	| 'failed';
+/**
+ * Why a `compress` mode request was forwarded without being read. The reasons
+ * and their labels are the shared contract's (`TOKEN_PROXY_SKIP_REASONS`), the
+ * values the stats row stores:
+ *
+ * - `encoding`: a `Content-Encoding` this module cannot decode.
+ * - `not-text`: the decoded body is not UTF-8 text.
+ * - `too-large`: the body is past {@link MAX_COMPRESS_BODY_BYTES}.
+ * - `failed`: decoding or the compressor threw.
+ */
+export type TokenProxyCompressionSkip = TokenProxySkipReason;
 
 /** What `compress` mode did with one request. */
 export interface TokenProxyCompressionLog {

@@ -2495,6 +2495,130 @@ describe('compressRequestBody: a cache that cannot be used', () => {
 	});
 });
 
+describe('compressRequestBody: the block counts the telemetry contract reads', () => {
+	type Counted = Awaited<ReturnType<typeof compressRequestBody>>['stats'];
+
+	/** Each result is answered in its own message; `fresh` is the last, still unanswered. */
+	function manyResults(
+		answered: Array<{ content: string; failed?: boolean }>,
+		fresh: string
+	): string {
+		const messages: unknown[] = [{ role: 'user', content: 'run the checks' }];
+		[...answered, { content: fresh }].forEach((result, index) => {
+			messages.push(
+				{
+					role: 'assistant',
+					content: [{ type: 'tool_use', id: `t${index}`, name: 'Bash', input: {} }],
+				},
+				{
+					role: 'user',
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: `t${index}`,
+							content: result.content,
+							...(result.failed ? { is_error: true } : {}),
+						},
+					],
+				}
+			);
+		});
+		return JSON.stringify({ model: 'claude-opus-5-5', messages });
+	}
+
+	/** The two rules `proxyBlockCountsProblem` states, read off what the compressor counted. */
+	function expectBlocksAddUp(stats: Counted): void {
+		expect(stats.candidates).toBe(
+			stats.belowThreshold + stats.storeFailures + stats.kept + stats.compressed
+		);
+		expect(stats.cacheHits).toBeLessThanOrEqual(stats.kept + stats.compressed);
+		expect(stats.modelFailures).toBeLessThanOrEqual(stats.kept + stats.compressed);
+	}
+
+	const MIXED = manyResults(
+		[
+			{ content: LOG },
+			{ content: SOURCE_FILE },
+			{ content: 'a short answer' },
+			{ content: OTHER_LOG, failed: true },
+		],
+		'fresh result'
+	);
+
+	it('adds up: each candidate is under the threshold, store-failed, kept or shortened', async () => {
+		const first = await compressRequestBody('anthropic-messages', MIXED, options());
+		// The failed result is set aside before any lookup, and the fresh one is protected:
+		// neither is a candidate.
+		expect(first.stats).toMatchObject({
+			candidates: 3,
+			belowThreshold: 1,
+			kept: 1,
+			compressed: 1,
+			storeFailures: 0,
+			cacheHits: 0,
+			eligibilityVetoes: { failed: 1 },
+		});
+		expectBlocksAddUp(first.stats);
+
+		// The same request again reads the two decided verdicts from the cache. A block
+		// under the threshold is never hashed, so it is never reused.
+		const second = await compressRequestBody('anthropic-messages', MIXED, options());
+		expect(second.stats).toMatchObject({
+			candidates: 3,
+			belowThreshold: 1,
+			kept: 1,
+			compressed: 1,
+			cacheHits: 2,
+		});
+		expectBlocksAddUp(second.stats);
+	});
+
+	it('counts the fresh result as a candidate once early mode lifts its protection', async () => {
+		const early = await compressRequestBody('anthropic-messages', MIXED, options({ early: true }));
+		expect(early.stats).toMatchObject({
+			candidates: 4,
+			belowThreshold: 2,
+			kept: 1,
+			compressed: 1,
+			eligibilityVetoes: { failed: 1 },
+		});
+		expectBlocksAddUp(early.stats);
+	});
+
+	it('counts a block the cache could not decide as store-failed, apart from kept and shortened', async () => {
+		const cache = newCache();
+		vi.spyOn(cache, 'write').mockRejectedValue(
+			Object.assign(new Error('archive full'), { code: 'ENOSPC' })
+		);
+		const result = await compressRequestBody(
+			'anthropic-messages',
+			manyResults([{ content: LOG }, { content: 'a short answer' }], 'fresh result'),
+			options({ cache })
+		);
+		expect(result.stats).toMatchObject({
+			candidates: 2,
+			belowThreshold: 1,
+			storeFailures: 1,
+			kept: 0,
+			compressed: 0,
+		});
+		expectBlocksAddUp(result.stats);
+	});
+
+	it('counts a failed model summary on a block that is still kept or shortened', async () => {
+		const result = await compressRequestBody(
+			'anthropic-messages',
+			manyResults([{ content: SOURCE_FILE }, { content: LOG }], 'fresh result'),
+			options({
+				modelMinTokens: 500,
+				summarize: async () => ({ status: 'failed', code: 'model-not-installed' }),
+			})
+		);
+		expect(result.stats).toMatchObject({ candidates: 2, kept: 1, compressed: 1, modelFailures: 1 });
+		expectBlocksAddUp(result.stats);
+	});
+});
+
 describe('summarizeToolResult', () => {
 	const mockedRun = vi.mocked(runLocalTask);
 

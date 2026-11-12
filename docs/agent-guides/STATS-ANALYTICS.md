@@ -370,6 +370,21 @@ interface StatsAggregation {
 }
 ```
 
+### Token Proxy Telemetry Types
+
+`ProxyRequest` is one `proxy_requests` row. The telemetry contract adds optional facts that older rows do not have. **Absent means unknown, never zero.**
+
+| Field                       | Meaning                                                                                                                                                                                                                                                                                                          |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`                      | Whether the proxy read and shortened the body. Both compress modes are stored as `compress` (the column and its CHECK constraint are unchanged).                                                                                                                                                                 |
+| `effectiveMode`             | The mode in force: `passthrough`, `compress` or `compress-early`. Absent on a row written before it existed. Never inferred from the agent's current setting.                                                                                                                                                    |
+| `blockCounts`               | What compress mode did with each block of tool-result text: `protected`, `vetoed` (`failed`, `recovery`, `retrieval`), `candidates`, `belowThreshold`, `kept`, `storeFailed`, `modelFailed`. Counts only.                                                                                                        |
+| `skipReason`                | Why the body was forwarded unread. One of `TOKEN_PROXY_SKIP_REASONS`.                                                                                                                                                                                                                                            |
+| `cacheHits`                 | Verdict reuse from Maestro's compression cache. Not provider prompt-cache usage (`providerCacheReadTokens`).                                                                                                                                                                                                     |
+| `providerUsageReportedness` | How each provider count got its number: `reported`, `derived`, `not-applicable` or `unreported`, per class (`input`, `cacheRead`, `cacheWrite`, `output`). Absent on a row written before it was tracked: its provider numbers are `legacy` (unknown), not reported. Read it with `proxyProviderClassReading()`. |
+
+A figure drawn from rows is one of three kinds (`ProxyEvidenceKind`): `measured`, `estimate` (characters / 4: `originalTokens`, `sentTokens`) or `opportunity` (never stored). The kinds are never added into one savings number. Build figures with `proxyFigure()` and total them only with `addProxyFigures()`; see "How sure a token proxy figure is" in [CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md).
+
 ## IPC Handlers
 
 Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollectionEnabled` in settings before recording data.

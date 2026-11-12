@@ -4,6 +4,7 @@
  * These types are shared between main process (stats/) and renderer (dashboard).
  */
 
+import type { TokenProxyRequestMode } from './local-models/token-proxy';
 import type { DurationPercentiles } from './percentiles';
 import type { ModelTier } from './tierLevels';
 import type { PromptCadence } from './promptCadence';
@@ -395,6 +396,160 @@ export interface LocalModelRun {
 	tokensOut?: number;
 }
 
+// ---------------------------------------------------------------------------
+// Token proxy telemetry: what a request's row says, and how sure each number is
+// ---------------------------------------------------------------------------
+
+/**
+ * How a figure about the token proxy was obtained. The kind decides what the
+ * figure may be added to: nothing of another kind. None of them is a dollar
+ * saving.
+ *
+ * - `measured`: counted by Maestro on a request (requests, blocks, bytes, time
+ *   held), or reported by the provider in its answer.
+ * - `estimate`: characters divided by 4, on text the proxy read. It is not a
+ *   count a provider billed.
+ * - `opportunity`: what a preview showed could be removed, when nothing was
+ *   removed. Observation only.
+ *
+ * A stored row holds `measured` and `estimate` numbers (`originalTokens` and
+ * `sentTokens` are the estimates). It never holds an opportunity.
+ */
+export const PROXY_EVIDENCE_KINDS = ['measured', 'estimate', 'opportunity'] as const;
+export type ProxyEvidenceKind = (typeof PROXY_EVIDENCE_KINDS)[number];
+
+/**
+ * Why a figure has no value. A figure with no value is unknown, which is not
+ * zero: zero is a count that was made and found nothing.
+ *
+ * - `not-recorded`: the row was written before the fact was tracked.
+ * - `not-read`: the proxy never read the body (passthrough, or forwarded unread).
+ * - `not-observed`: it happened where Maestro cannot see, or the answer did not say.
+ * - `insufficient-samples`: too few samples to report a distribution.
+ * - `on-demand-only`: computed only when a user asks, for one tab. No range holds it.
+ * - `identity-unavailable`: needs a tab, native session, subagent or window the proxy cannot name.
+ * - `not-evaluated`: no counterfactual, quality check or dollar basis exists.
+ */
+export const PROXY_UNKNOWN_REASONS = [
+	'not-recorded',
+	'not-read',
+	'not-observed',
+	'insufficient-samples',
+	'on-demand-only',
+	'identity-unavailable',
+	'not-evaluated',
+] as const;
+export type ProxyUnknownReason = (typeof PROXY_UNKNOWN_REASONS)[number];
+
+/** What a figure counts. */
+export type ProxyFigureUnit = 'requests' | 'blocks' | 'bytes' | 'tokens' | 'ms';
+
+/** How much of the traffic a figure speaks for. */
+export type ProxyCoverage =
+	/** `counted` requests supplied the value, out of the `of` requests in the range that could have. */
+	| { scope: 'range'; counted: number; of: number }
+	/** Everything since the app started (`since`, epoch ms, when known). Not a time range. */
+	| { scope: 'process-lifetime'; since?: number };
+
+/**
+ * One number, with how it was obtained, what it counts and how much traffic it
+ * covers; or the reason it is unknown. The value is wrapped on purpose: figures
+ * of different kinds cannot be added with `+`, and `addProxyFigures()` refuses
+ * to. Build one with `proxyFigure()` or `unknownProxyFigure()`.
+ */
+export type ProxyFigure<K extends ProxyEvidenceKind = ProxyEvidenceKind> = {
+	kind: K;
+	unit: ProxyFigureUnit;
+} & ({ value: number; coverage: ProxyCoverage } | { value: null; unknown: ProxyUnknownReason });
+
+/**
+ * The mode a request was carried as: the policy the proxy applied to it. The
+ * stored `ProxyRequest.mode` cannot say it, because that column records only
+ * whether the body was read and shortened, which `compress` and
+ * `compress-early` both do. It is the proxy's own `TokenProxyRequestMode`, so a
+ * mode added there reaches the row's type with it (a type-only import: the
+ * proxy contract imports its types from this file as well).
+ */
+export type ProxyEffectiveMode = TokenProxyRequestMode;
+
+/**
+ * Tool-result blocks set aside before any cached verdict was looked up, by why.
+ * Each goes out whole.
+ */
+export interface ProxyVetoCounts {
+	/** The tool result reports that it failed. */
+	failed: number;
+	/** The result is the output of an original-recovery command. */
+	recovery: number;
+	/**
+	 * The result is the output of the retrieval tool: text the model asked for.
+	 * A later request that sends it again in its history counts it again here, so
+	 * this is the count of retrieved text carried forward, not of retrievals.
+	 */
+	retrieval: number;
+}
+
+/**
+ * What compress mode did with the tool-result text of one request, in blocks (a
+ * block is one text part of a tool result). Present only where the proxy read
+ * the body and the compressor returned. Absent is unknown, never zero.
+ *
+ * Two sums describe the blocks:
+ *
+ *   recognized = protected + vetoed.* + candidates
+ *   candidates = belowThreshold + storeFailed + kept + (the request's) blocksCompressed
+ *
+ * The first is how the producer derives the number of blocks it recognized. No
+ * independent total is stored, so nothing checks it. `proxyBlockCountsProblem()`
+ * checks the second sum, and that `cacheHits` and `modelFailed` do not exceed the
+ * blocks decided (`kept + blocksCompressed`). The blocks shortened are the
+ * request's `blocksCompressed`, so they are not repeated here. Counts only: no
+ * tool name, command, path or text.
+ */
+export interface ProxyBlockCounts {
+	/**
+	 * Left out because the result is recent or carries the cache breakpoint.
+	 * `compress-early` lifts both rules, so it is 0 there.
+	 */
+	protected: number;
+	vetoed: ProxyVetoCounts;
+	/** Blocks the proxy could look a verdict up for. */
+	candidates: number;
+	/** Candidates under the size threshold, left alone without being hashed. */
+	belowThreshold: number;
+	/** Candidates evaluated and sent as they were. */
+	kept: number;
+	/** Candidates left alone because the cache could not be read or written. */
+	storeFailed: number;
+	/**
+	 * Blocks whose model summary was tried in this request and failed. They still
+	 * got a verdict from the heuristics, so they are also kept or shortened.
+	 */
+	modelFailed: number;
+}
+
+/** The classes of tokens a provider's answer can name, in the order a row stores them. */
+export const PROXY_PROVIDER_USAGE_CLASSES = ['input', 'cacheRead', 'cacheWrite', 'output'] as const;
+export type ProxyProviderUsageClass = (typeof PROXY_PROVIDER_USAGE_CLASSES)[number];
+
+/**
+ * How one class of a provider's usage got its number. The number alone cannot
+ * say, because a class the answer did not name is stored as 0.
+ *
+ * - `reported`: the answer named it. A zero it named is a real zero.
+ * - `derived`: computed from reported classes under the provider's own
+ *   accounting. OpenAI's uncached input is its prompt total minus its cached
+ *   tokens, so it needs both.
+ * - `not-applicable`: the provider has no such class, so 0 is true by
+ *   definition (OpenAI reports no cache writes).
+ * - `unreported`: the answer did not name it and it cannot be derived. The
+ *   stored number is a default 0 and says nothing.
+ */
+export type ProxyProviderClassStatus = 'reported' | 'derived' | 'not-applicable' | 'unreported';
+
+/** The status of every class of one answer's usage. */
+export type ProxyProviderReportedness = Record<ProxyProviderUsageClass, ProxyProviderClassStatus>;
+
 /** One block the token proxy shortened for the first time in a request. */
 export interface ProxyCompressedBlock {
 	/** SHA-256 of the original text: the key of the content-addressed cache. */
@@ -418,6 +573,10 @@ export interface ProxyRequest {
 	route: string;
 	/** The API the request spoke ('anthropic-messages', ...). */
 	kind: string;
+	/**
+	 * Whether the proxy read and shortened the body. Both compress modes are
+	 * stored as `compress`, so this cannot tell them apart: see `effectiveMode`.
+	 */
 	mode: 'passthrough' | 'compress';
 	/** Epoch ms the request arrived. */
 	startedAt: number;
@@ -438,18 +597,42 @@ export interface ProxyRequest {
 	 */
 	originalTokens?: number;
 	sentTokens?: number;
-	/** Time the proxy held the request to read and shorten it. `compress` only. */
+	/**
+	 * Time the proxy held the request to read and shorten it, measured. Absent
+	 * means the proxy did not read the body, or the row predates the measure:
+	 * unknown, and left out of any mean or percentile.
+	 */
 	addedLatencyMs?: number;
 	/** Tool results sent shortened in this request, cached ones included. */
 	blocksCompressed: number;
-	/** Verdicts that came from the cache: no compressor ran for them. */
+	/**
+	 * Verdicts that came from Maestro's compression cache: no compressor ran for
+	 * them. This is verdict reuse. It is not provider prompt-cache usage, which
+	 * is `providerCacheReadTokens`.
+	 */
 	cacheHits: number;
 	/** Compressed blocks per compressor. Absent when nothing was compressed. */
 	compressorCounts?: Record<string, number>;
 	/** Blocks shortened for the first time in this request. */
 	newBlocks?: ProxyCompressedBlock[];
-	/** Why the body was forwarded unread in `compress` mode, when it was. */
+	/**
+	 * Why the body was forwarded unread in `compress` mode, when it was. One of
+	 * `TOKEN_PROXY_SKIP_REASONS` for a row this build wrote. The column stays
+	 * open text, so a value from another build reads as an unrecognized reason.
+	 */
 	skipReason?: string;
+	/**
+	 * The mode the request was carried as. Absent on a row recorded before this
+	 * field existed: unknown, and never inferred from the agent's current setting
+	 * or from `mode`. When present, `passthrough` goes with `mode: 'passthrough'`
+	 * and either compress mode goes with `mode: 'compress'`.
+	 */
+	effectiveMode?: ProxyEffectiveMode;
+	/**
+	 * What compress mode did with each block of tool-result text. Absent when the
+	 * proxy did not read the body, and on a row that predates it.
+	 */
+	blockCounts?: ProxyBlockCounts;
 	/**
 	 * The Local Models target a background request was sent to in place of the
 	 * provider, as `<source id>:<model>`. Absent for a request that went to the
@@ -460,12 +643,22 @@ export interface ProxyRequest {
 	/**
 	 * What the provider counted for the request, from the `usage` in its answer
 	 * (migration v21). Absent when the answer named none or could not be read,
-	 * and for a request a background target answered.
+	 * and for a request a background target answered. When present, the four
+	 * numbers are written together, and a class the answer did not name is 0: only
+	 * `providerUsageReportedness` says which numbers the provider gave.
 	 */
 	providerInputTokens?: number;
 	providerCacheReadTokens?: number;
 	providerCacheWriteTokens?: number;
 	providerOutputTokens?: number;
+	/**
+	 * How each provider count above got its number. Absent on a row written before
+	 * this was tracked: its numbers are normalized values of unknown provenance (a
+	 * class the answer never named reads as 0), and no class is claimed as
+	 * reported. Read a class through `proxyProviderClassReading()`, never from the
+	 * number alone.
+	 */
+	providerUsageReportedness?: ProxyProviderReportedness;
 }
 
 /**
