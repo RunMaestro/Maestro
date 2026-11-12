@@ -45,6 +45,7 @@ import { captureException, captureMessage } from '../utils/sentry';
 import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { generateUUID } from '../../shared/uuid';
 import { isMacOS, isWindows } from '../../shared/platformDetection';
+import { formatPlatformName } from '../../shared/formatters';
 import type { MaestroCliManager } from '../maestro-cli-manager';
 import {
 	isFeedbackCategory,
@@ -498,19 +499,6 @@ function normalizeDraft(raw: unknown): FeedbackDraft {
 	};
 }
 
-function getPlatformLabel(platform: NodeJS.Platform): string {
-	switch (platform) {
-		case 'darwin':
-			return 'macOS';
-		case 'win32':
-			return 'Windows';
-		case 'linux':
-			return 'Linux';
-		default:
-			return platform;
-	}
-}
-
 function inferInstallSource(): string {
 	if (!app.isPackaged) {
 		return 'Dev build';
@@ -525,7 +513,7 @@ function inferInstallSource(): string {
 }
 
 function buildEnvironmentSummary(payload: FeedbackSubmitPayload): FeedbackEnvironmentSummary {
-	const platformLabel = getPlatformLabel(process.platform);
+	const platformLabel = formatPlatformName(process.platform);
 	const osVersion = typeof os.version === 'function' ? os.version() : '';
 	const release = os.release();
 	const operatingSystem = osVersion
@@ -1345,7 +1333,7 @@ export async function buildFeedbackConversationPrompt(
 ): Promise<{ prompt: string; environment: string; cwd: string }> {
 	const promptTemplate = getPrompt('feedback-conversation');
 
-	const platformLabel = getPlatformLabel(process.platform);
+	const platformLabel = formatPlatformName(process.platform);
 	const osVersion = typeof os.version === 'function' ? os.version() : '';
 	const release = os.release();
 	const operatingSystem = osVersion

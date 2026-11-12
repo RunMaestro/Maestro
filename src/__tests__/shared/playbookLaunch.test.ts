@@ -1,6 +1,7 @@
 /**
  * Tests for the playbook launch module: parsing a manifest `launch` block, resolving and
- * validating answers, serializing values, and rewriting a playbook prompt.
+ * validating answers, serializing values, rewriting a playbook prompt, deciding whether Launch is
+ * offered, and rendering the outro.
  *
  * The Research/Market fixtures under src/__tests__/fixtures/playbook-launch/ are the shipped
  * prompt and launch block of that Exchange playbook, copied from Maestro-Playbooks manifest.json.
@@ -11,13 +12,20 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
 	applyLaunchInputs,
+	isLaunchAvailable,
 	parseLaunchSpec,
+	renderLaunchOutro,
 	resolveLaunchValues,
 	serializeLaunchValue,
 	validateLaunchValues,
+	type PlaybookLaunchTarget,
 } from '../../shared/playbookLaunch';
 import { TEMPLATE_VARIABLES } from '../../shared/templateVariables';
-import type { PlaybookLaunchInput, PlaybookLaunchSpec } from '../../shared/marketplace-types';
+import type {
+	MarketplacePlaybook,
+	PlaybookLaunchInput,
+	PlaybookLaunchSpec,
+} from '../../shared/marketplace-types';
 
 type Raw = Record<string, unknown>;
 
@@ -1220,6 +1228,525 @@ describe('Research/Market prompt', () => {
 	it('asks for the market topic and nothing else when launched with defaults', () => {
 		expect(validateLaunchValues(spec, resolveLaunchValues(spec))).toEqual({
 			MARKET_TOPIC: 'This field is required',
+		});
+	});
+});
+
+// ----------------------------------------------------------------------------
+// isLaunchAvailable
+// ----------------------------------------------------------------------------
+
+describe('isLaunchAvailable', () => {
+	const RUNNING = '0.17.0';
+	const MAC = 'darwin';
+	const REMOTE_REASON =
+		'This playbook drives Maestro through maestro-cli, which is not available on remote agents.';
+
+	/** A playbook entry whose launch block carries the given raw overrides. */
+	function launchable(overrides: Raw = {}): Pick<MarketplacePlaybook, 'launch'> {
+		return { launch: parseSpec(rawLaunch(overrides)) };
+	}
+
+	function withCli(maestroCli: 'required' | 'optional', extra: Raw = {}) {
+		return launchable({ preconditions: { maestroCli, ...extra } });
+	}
+
+	const localInstalled: PlaybookLaunchTarget = { sshRemote: false, maestroCliInstalled: true };
+	const localMissing: PlaybookLaunchTarget = { sshRemote: false, maestroCliInstalled: false };
+	const remoteWithCli: PlaybookLaunchTarget = { sshRemote: true, maestroCliInstalled: true };
+	const remoteWithoutCli: PlaybookLaunchTarget = { sshRemote: true, maestroCliInstalled: false };
+
+	describe('the launch block', () => {
+		it('is unavailable without one, with a reason and no notes', () => {
+			expect(isLaunchAvailable({}, RUNNING, MAC)).toEqual({
+				available: false,
+				reason: 'This playbook does not support Launch.',
+				notes: [],
+			});
+		});
+
+		it('is available with a bare block, with no reason', () => {
+			const result = isLaunchAvailable(launchable(), RUNNING, MAC);
+			expect(result).toStrictEqual({ available: true, notes: [] });
+		});
+
+		it('asks nothing of a bare block on any platform or target', () => {
+			const playbook = launchable();
+			for (const platform of ['darwin', 'linux', 'win32', 'freebsd']) {
+				expect(isLaunchAvailable(playbook, RUNNING, platform).available).toBe(true);
+				expect(isLaunchAvailable(playbook, RUNNING, platform, remoteWithoutCli).available).toBe(
+					true
+				);
+			}
+		});
+
+		it('returns a fresh notes array on every call', () => {
+			const playbook = launchable();
+			const first = isLaunchAvailable(playbook, RUNNING, MAC);
+			first.notes.push('mutated');
+			expect(isLaunchAvailable(playbook, RUNNING, MAC).notes).toEqual([]);
+		});
+	});
+
+	describe('the launch block minimum version', () => {
+		const playbook = launchable({ minMaestroVersion: '0.17.0' });
+
+		it('blocks an older build and names both versions', () => {
+			const result = isLaunchAvailable(playbook, '0.16.17', MAC);
+			expect(result.available).toBe(false);
+			expect(result.reason).toBe('Launch needs Maestro 0.17.0 or newer (this is 0.16.17).');
+			expect(result.notes).toEqual([]);
+		});
+
+		it('allows the exact version and anything newer', () => {
+			expect(isLaunchAvailable(playbook, '0.17.0', MAC).available).toBe(true);
+			expect(isLaunchAvailable(playbook, '0.17.1', MAC).available).toBe(true);
+			expect(isLaunchAvailable(playbook, '1.0.0', MAC).available).toBe(true);
+		});
+
+		it('compares a prerelease tag without regard to case', () => {
+			const rc = launchable({ minMaestroVersion: '0.16.17-rc' });
+			expect(isLaunchAvailable(rc, '0.16.17-RC', MAC).available).toBe(true);
+			expect(isLaunchAvailable(rc, '0.16.16', MAC).available).toBe(false);
+		});
+
+		it('fails open on a running or minimum version that is not semver', () => {
+			expect(isLaunchAvailable(playbook, 'unknown', MAC).available).toBe(true);
+			expect(
+				isLaunchAvailable(launchable({ minMaestroVersion: 'soon' }), '0.1.0', MAC).available
+			).toBe(true);
+		});
+
+		it('reads the block minimum, never the playbook top-level one', () => {
+			const topLevelOnly = {
+				...launchable(),
+				minMaestroVersion: '99.0.0',
+			} as Pick<MarketplacePlaybook, 'launch'>;
+			expect(isLaunchAvailable(topLevelOnly, '0.1.0', MAC).available).toBe(true);
+		});
+	});
+
+	describe('platforms', () => {
+		it('blocks a platform outside the list and says which are supported', () => {
+			const playbook = launchable({ preconditions: { platforms: ['darwin'] } });
+			expect(isLaunchAvailable(playbook, RUNNING, 'darwin').available).toBe(true);
+			for (const platform of ['linux', 'win32', 'freebsd']) {
+				const result = isLaunchAvailable(playbook, RUNNING, platform);
+				expect(result.available, platform).toBe(false);
+				expect(result.reason, platform).toBe('This playbook runs on macOS only.');
+			}
+		});
+
+		it('lists every supported platform by its display name, in the order given', () => {
+			const two = launchable({ preconditions: { platforms: ['darwin', 'linux'] } });
+			expect(isLaunchAvailable(two, RUNNING, 'darwin').available).toBe(true);
+			expect(isLaunchAvailable(two, RUNNING, 'linux').available).toBe(true);
+			expect(isLaunchAvailable(two, RUNNING, 'win32').reason).toBe(
+				'This playbook runs on macOS and Linux only.'
+			);
+
+			const all = launchable({ preconditions: { platforms: ['darwin', 'linux', 'win32'] } });
+			expect(isLaunchAvailable(all, RUNNING, 'freebsd').reason).toBe(
+				'This playbook runs on macOS, Linux and Windows only.'
+			);
+		});
+
+		it('treats an empty list as no restriction', () => {
+			const playbook = launchable({ preconditions: { platforms: [] } });
+			expect(isLaunchAvailable(playbook, RUNNING, 'win32').available).toBe(true);
+		});
+	});
+
+	describe('maestroCli', () => {
+		it.each([
+			{
+				name: 'required, no target yet: not judged, available',
+				mode: 'required',
+				target: undefined,
+				available: true,
+				notes: [],
+			},
+			{
+				name: 'required, local, installed: available',
+				mode: 'required',
+				target: localInstalled,
+				available: true,
+				notes: [],
+			},
+			{
+				name: 'required, local, not installed: blocked until it is installed',
+				mode: 'required',
+				target: localMissing,
+				available: false,
+				reason:
+					'This playbook drives Maestro through maestro-cli, which is not installed. Install maestro-cli to launch it.',
+			},
+			{
+				name: 'required, SSH remote: blocked',
+				mode: 'required',
+				target: remoteWithCli,
+				available: false,
+				reason: REMOTE_REASON,
+			},
+			{
+				name: 'required, SSH remote, nothing installed here either: blocked for the remote',
+				mode: 'required',
+				target: remoteWithoutCli,
+				available: false,
+				reason: REMOTE_REASON,
+			},
+			{
+				name: 'optional, no target yet: available',
+				mode: 'optional',
+				target: undefined,
+				available: true,
+				notes: [],
+			},
+			{
+				name: 'optional, local, installed: available, nothing to say',
+				mode: 'optional',
+				target: localInstalled,
+				available: true,
+				notes: [],
+			},
+			{
+				name: 'optional, local, not installed: available with a note',
+				mode: 'optional',
+				target: localMissing,
+				available: true,
+				notes: [
+					'maestro-cli is not installed, so any step that calls it is skipped or uses a fallback.',
+				],
+			},
+			{
+				name: 'optional, SSH remote: available with a note',
+				mode: 'optional',
+				target: remoteWithCli,
+				available: true,
+				notes: [
+					'maestro-cli is not available on remote agents, so any step that calls it is skipped or uses a fallback.',
+				],
+			},
+			{
+				name: 'optional, SSH remote, nothing installed here either: the remote note, once',
+				mode: 'optional',
+				target: remoteWithoutCli,
+				available: true,
+				notes: [
+					'maestro-cli is not available on remote agents, so any step that calls it is skipped or uses a fallback.',
+				],
+			},
+		] as Array<{
+			name: string;
+			mode: 'required' | 'optional';
+			target: PlaybookLaunchTarget | undefined;
+			available: boolean;
+			reason?: string;
+			notes?: string[];
+		}>)('$name', ({ mode, target, available, reason, notes }) => {
+			const result = isLaunchAvailable(withCli(mode), RUNNING, MAC, target);
+			expect(result.available).toBe(available);
+			expect(result.reason).toBe(reason);
+			expect(result.notes).toEqual(notes ?? []);
+		});
+
+		it('ignores the install state and target of a playbook that does not use the CLI', () => {
+			const playbook = launchable();
+			for (const target of [localInstalled, localMissing, remoteWithCli, remoteWithoutCli]) {
+				expect(isLaunchAvailable(playbook, RUNNING, MAC, target)).toStrictEqual({
+					available: true,
+					notes: [],
+				});
+			}
+		});
+	});
+
+	describe('which problem is reported first', () => {
+		const everythingWrong = launchable({
+			minMaestroVersion: '9.0.0',
+			preconditions: { platforms: ['darwin'], maestroCli: 'required' },
+		});
+
+		it('puts the version before the platform and the CLI', () => {
+			expect(isLaunchAvailable(everythingWrong, RUNNING, 'linux', remoteWithCli).reason).toMatch(
+				/^Launch needs Maestro 9\.0\.0/
+			);
+		});
+
+		it('puts the platform before the CLI', () => {
+			const playbook = launchable({
+				preconditions: { platforms: ['darwin'], maestroCli: 'required' },
+			});
+			expect(isLaunchAvailable(playbook, RUNNING, 'linux', remoteWithCli).reason).toBe(
+				'This playbook runs on macOS only.'
+			);
+		});
+
+		it('drops the optional-CLI note when something else blocks the launch', () => {
+			const playbook = launchable({
+				preconditions: { platforms: ['darwin'], maestroCli: 'optional' },
+			});
+			expect(isLaunchAvailable(playbook, RUNNING, 'linux', localMissing)).toEqual({
+				available: false,
+				reason: 'This playbook runs on macOS only.',
+				notes: [],
+			});
+		});
+	});
+
+	describe('a macOS-only playbook that drives maestro-cli (Message Bus)', () => {
+		const playbook = launchable({
+			minMaestroVersion: '0.16.17-rc',
+			preconditions: {
+				platforms: ['darwin'],
+				maestroCli: 'required',
+				confirm: 'I understand this turns on Maestro Cue and reads my Messages database.',
+			},
+		});
+
+		it('launches on a local agent once maestro-cli is installed', () => {
+			expect(isLaunchAvailable(playbook, '0.17.0', 'darwin', localInstalled)).toStrictEqual({
+				available: true,
+				notes: [],
+			});
+		});
+
+		it('does not launch on Windows, on a remote agent or without the CLI', () => {
+			expect(isLaunchAvailable(playbook, '0.17.0', 'win32', localInstalled).available).toBe(false);
+			expect(isLaunchAvailable(playbook, '0.17.0', 'darwin', remoteWithCli).reason).toBe(
+				REMOTE_REASON
+			);
+			expect(isLaunchAvailable(playbook, '0.17.0', 'darwin', localMissing).available).toBe(false);
+		});
+	});
+});
+
+// ----------------------------------------------------------------------------
+// renderLaunchOutro
+// ----------------------------------------------------------------------------
+
+describe('renderLaunchOutro', () => {
+	const BUILTINS = { AGENT_NAME: 'Research Bot', AUTORUN_FOLDER: '/work/.maestro/playbooks' };
+
+	/** A parsed spec with the given inputs and a raw outro. */
+	function specWithOutro(inputs: Raw[], outro: Raw): PlaybookLaunchSpec {
+		return parseSpec(rawLaunch({ inputs, outro: { nextSteps: [], summary: 'Done.', ...outro } }));
+	}
+
+	describe('substitution', () => {
+		it('fills input values in every outro string', () => {
+			const spec = specWithOutro([rawInput({ name: 'TOPIC' })], {
+				title: 'Report on {{TOPIC}}',
+				summary: 'The report on **{{TOPIC}}** is ready.',
+				nextSteps: ['Read the {{TOPIC}} summary.', 'Share it.'],
+				files: [{ label: '{{TOPIC}} report', path: '/out/{{TOPIC}}.md' }],
+				reportFile: '/out/{{TOPIC}}.md',
+			});
+			expect(renderLaunchOutro(spec, { TOPIC: 'Edge AI' }, {})).toStrictEqual({
+				title: 'Report on Edge AI',
+				summary: 'The report on **Edge AI** is ready.',
+				nextSteps: ['Read the Edge AI summary.', 'Share it.'],
+				files: [{ label: 'Edge AI report', path: '/out/Edge AI.md' }],
+				reportFile: '/out/Edge AI.md',
+			});
+		});
+
+		it('fills the built-ins the caller gives', () => {
+			const spec = specWithOutro([], {
+				summary: '{{AGENT_NAME}} wrote to {{AUTORUN_FOLDER}}.',
+				files: [{ label: 'Log', path: '{{AUTORUN_FOLDER}}/LOG.md' }],
+			});
+			const outro = renderLaunchOutro(spec, {}, BUILTINS);
+			expect(outro.summary).toBe('Research Bot wrote to /work/.maestro/playbooks.');
+			expect(outro.files).toEqual([{ label: 'Log', path: '/work/.maestro/playbooks/LOG.md' }]);
+		});
+
+		it('matches token names and built-in keys without regard to case', () => {
+			const spec = specWithOutro([rawInput({ name: 'TOPIC' })], {
+				summary: '{{topic}} by {{Agent_Name}}',
+			});
+			const outro = renderLaunchOutro(spec, { TOPIC: 'x' }, { agent_name: 'Ann' });
+			expect(outro.summary).toBe('x by Ann');
+		});
+
+		it('writes each value the way the prompt line carries it', () => {
+			const spec = specWithOutro(
+				[
+					rawInput({ name: 'WIRE', type: 'boolean' }),
+					rawInput({ name: 'NO', type: 'boolean' }),
+					rawInput({ name: 'LEVELS', type: 'multiselect', options: choices }),
+					rawInput({ name: 'NONE', type: 'multiselect', options: choices, emptyValue: 'none' }),
+					rawInput({ name: 'COVERAGE', type: 'number', unit: '%' }),
+					rawInput({ name: 'LIMIT', type: 'number' }),
+					rawInput({ name: 'NOTE', type: 'textarea' }),
+				],
+				{
+					summary: '{{WIRE}}|{{NO}}|{{LEVELS}}|{{NONE}}|{{COVERAGE}}|{{LIMIT}}|{{NOTE}}',
+				}
+			);
+			const outro = renderLaunchOutro(
+				spec,
+				{
+					WIRE: true,
+					NO: false,
+					LEVELS: ['a', 'b'],
+					NONE: [],
+					COVERAGE: 80,
+					LIMIT: 0,
+					NOTE: 'one\ntwo',
+				},
+				{}
+			);
+			expect(outro.summary).toBe('yes|no|a,b|none|80%|0|one two');
+		});
+
+		it('fills an input that has no value with empty text', () => {
+			const spec = specWithOutro([rawInput({ name: 'SCOPE' })], { summary: 'Scope: [{{SCOPE}}]' });
+			expect(renderLaunchOutro(spec, {}, {}).summary).toBe('Scope: []');
+			expect(renderLaunchOutro(spec, { SCOPE: '   ' }, {}).summary).toBe('Scope: []');
+		});
+
+		it('leaves a token that is not an input and not a given built-in as written', () => {
+			const spec = specWithOutro([rawInput({ name: 'TOPIC' })], {
+				summary: '{{TOPIC}} {{AGENT_NAME}} {{TYPO}}',
+			});
+			expect(renderLaunchOutro(spec, { TOPIC: 'x' }, {}).summary).toBe('x {{AGENT_NAME}} {{TYPO}}');
+		});
+
+		it('ignores a value for a name the spec does not declare', () => {
+			const spec = specWithOutro([], { summary: '{{EXTRA}}' });
+			expect(renderLaunchOutro(spec, { EXTRA: 'smuggled' }, {}).summary).toBe('{{EXTRA}}');
+		});
+	});
+
+	describe('built-ins inside a value', () => {
+		it('expands them, so an outro path names the folder the run really used', () => {
+			const spec = specWithOutro(
+				[rawInput({ name: 'OUT', type: 'path', default: '{{AUTORUN_FOLDER}}/vault' })],
+				{ summary: 'In `{{OUT}}`.', files: [{ label: 'Index', path: '{{OUT}}/INDEX.md' }] }
+			);
+			const outro = renderLaunchOutro(spec, resolveLaunchValues(spec), BUILTINS);
+			expect(outro.summary).toBe('In `/work/.maestro/playbooks/vault`.');
+			expect(outro.files[0].path).toBe('/work/.maestro/playbooks/vault/INDEX.md');
+		});
+
+		it('leaves one the caller did not give, as the run would have', () => {
+			const spec = specWithOutro(
+				[rawInput({ name: 'OUT', type: 'path', default: '{{AUTORUN_FOLDER}}/vault' })],
+				{ summary: '{{OUT}}' }
+			);
+			expect(renderLaunchOutro(spec, resolveLaunchValues(spec), {}).summary).toBe(
+				'{{AUTORUN_FOLDER}}/vault'
+			);
+		});
+
+		it('does not expand an input token inside another input value', () => {
+			const spec = specWithOutro([rawInput({ name: 'A' }), rawInput({ name: 'B' })], {
+				summary: '{{A}}|{{B}}',
+			});
+			expect(renderLaunchOutro(spec, { A: '{{B}}', B: 'bee' }, {}).summary).toBe('{{B}}|bee');
+		});
+
+		it('inserts $ sequences in a value as typed', () => {
+			const spec = specWithOutro([rawInput({ name: 'TOPIC' })], { summary: '[{{TOPIC}}]' });
+			expect(renderLaunchOutro(spec, { TOPIC: 'cost $& or $1 or $$' }, {}).summary).toBe(
+				'[cost $& or $1 or $$]'
+			);
+		});
+
+		it('lets a built-in win over an input that shares its name', () => {
+			// parseLaunchSpec rejects such a spec; a hand-built one must still render predictably.
+			const spec = {
+				inputs: [{ name: 'AGENT_NAME', label: 'Name', type: 'text' }],
+				outro: { summary: '{{AGENT_NAME}}', nextSteps: [] },
+			} as PlaybookLaunchSpec;
+			expect(renderLaunchOutro(spec, { AGENT_NAME: 'typed' }, { AGENT_NAME: 'real' }).summary).toBe(
+				'real'
+			);
+		});
+	});
+
+	describe('the result', () => {
+		it('omits the title and the report file when the spec has none, and lists no files', () => {
+			const spec = specWithOutro([], { summary: 'Done.', nextSteps: ['Next.'] });
+			expect(renderLaunchOutro(spec, {}, {})).toStrictEqual({
+				summary: 'Done.',
+				nextSteps: ['Next.'],
+				files: [],
+			});
+		});
+
+		it('keeps next steps and files in their order', () => {
+			const spec = specWithOutro([], {
+				nextSteps: ['one', 'two', 'three'],
+				files: [
+					{ label: 'B', path: '/b' },
+					{ label: 'A', path: '/a' },
+				],
+			});
+			const outro = renderLaunchOutro(spec, {}, {});
+			expect(outro.nextSteps).toEqual(['one', 'two', 'three']);
+			expect(outro.files.map((file) => file.label)).toEqual(['B', 'A']);
+		});
+
+		it('changes neither the spec nor the values nor the built-ins', () => {
+			const spec = specWithOutro([rawInput({ name: 'TOPIC' })], {
+				title: '{{TOPIC}}',
+				summary: '{{TOPIC}} {{AGENT_NAME}}',
+				nextSteps: ['{{TOPIC}}'],
+				files: [{ label: '{{TOPIC}}', path: '/{{TOPIC}}' }],
+			});
+			const values = { TOPIC: 'x' };
+			const before = JSON.stringify([spec, values, BUILTINS]);
+			renderLaunchOutro(spec, values, BUILTINS);
+			expect(JSON.stringify([spec, values, BUILTINS])).toBe(before);
+		});
+	});
+
+	describe('the shipped Research/Market outro', () => {
+		const spec = parseSpec(marketLaunch);
+		const builtins = { AUTORUN_FOLDER: '/runs/playbooks', AGENT_NAME: 'Research Bot' };
+
+		it('names the topic and the vault folder the run wrote to', () => {
+			const values = resolveLaunchValues(spec, { MARKET_TOPIC: 'Edge AI chips' });
+			expect(renderLaunchOutro(spec, values, builtins)).toStrictEqual({
+				title: 'Market vault is ready',
+				summary:
+					'The vault on **Edge AI chips** is in `/runs/playbooks/vault`. Open the folder in Obsidian, or browse it in the Document Graph.',
+				nextSteps: [
+					'Start with `INDEX.md` and `Resources/Market Map.md`.',
+					'Keep or reject the cards in `Resources/Relevance Review.md`.',
+					'Keep it current with `/health-check`, `/scope-audit` and `/research <entity>`.',
+				],
+				files: [
+					{ label: 'Index', path: '/runs/playbooks/vault/INDEX.md' },
+					{ label: 'Market map', path: '/runs/playbooks/vault/Resources/Market Map.md' },
+					{
+						label: 'Relevance review',
+						path: '/runs/playbooks/vault/Resources/Relevance Review.md',
+					},
+				],
+				reportFile: '/runs/playbooks/vault/INDEX.md',
+			});
+		});
+
+		it('follows a vault folder the user chose', () => {
+			const values = resolveLaunchValues(spec, {
+				MARKET_TOPIC: 'Edge AI chips',
+				OUTPUT_FOLDER: '~/vaults/edge',
+			});
+			const outro = renderLaunchOutro(spec, values, builtins);
+			expect(outro.reportFile).toBe('~/vaults/edge/INDEX.md');
+			expect(outro.files.map((file) => file.path)).toEqual([
+				'~/vaults/edge/INDEX.md',
+				'~/vaults/edge/Resources/Market Map.md',
+				'~/vaults/edge/Resources/Relevance Review.md',
+			]);
+		});
+
+		it('leaves no template syntax behind once the topic and folder are known', () => {
+			const values = resolveLaunchValues(spec, { MARKET_TOPIC: 'Edge AI chips' });
+			expect(JSON.stringify(renderLaunchOutro(spec, values, builtins))).not.toContain('{{');
 		});
 	});
 });

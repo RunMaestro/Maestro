@@ -16,14 +16,20 @@
  * `serializeLaunchValue` is a port of `serializeDefault()` in Maestro-Playbooks
  * `scripts/validate-manifest.mjs`. That script promises that launching with every default writes
  * the exact prompt Download ships, so the two must stay byte-identical in behavior.
+ *
+ * Two more helpers decide what the user sees around a launch: `isLaunchAvailable` says whether
+ * Launch is offered (and why not), and `renderLaunchOutro` fills the outro the run ends with.
  */
 
+import { formatPlatformName } from './formatters';
+import { meetsMinVersion } from './marketplace-compatibility';
 import type {
+	MarketplacePlaybook,
 	PlaybookLaunchInput,
 	PlaybookLaunchSpec,
 	PlaybookLaunchValues,
 } from './marketplace-types';
-import { TEMPLATE_VARIABLES } from './templateVariables';
+import { substituteTemplateTokens, TEMPLATE_VARIABLES } from './templateVariables';
 
 type LaunchInputType = PlaybookLaunchInput['type'];
 type LaunchOption = NonNullable<PlaybookLaunchInput['options']>[number];
@@ -45,6 +51,37 @@ export interface ParsedLaunchSpec {
 	spec?: PlaybookLaunchSpec;
 	/** Why the block was rejected, one entry per problem. Empty when `spec` is set. */
 	errors: string[];
+}
+
+/** The agent a launch would run on, as far as {@link isLaunchAvailable} needs to know. */
+export interface PlaybookLaunchTarget {
+	/** The agent works on an SSH remote. The `maestro-cli` on this machine cannot reach it. */
+	sshRemote: boolean;
+	/** `maestro-cli` is installed on this machine. Not asked of an SSH-remote agent. */
+	maestroCliInstalled: boolean;
+}
+
+/** The outcome of {@link isLaunchAvailable}. */
+export interface PlaybookLaunchAvailability {
+	available: boolean;
+	/** Why Launch is off, as a sentence for a tooltip. Set only when `available` is false. */
+	reason?: string;
+	/** Things to tell the user that do not stop the launch. Always empty when `available` is false. */
+	notes: string[];
+}
+
+/** The outro of a launch with every `{{TOKEN}}` filled in. See {@link renderLaunchOutro}. */
+export interface RenderedLaunchOutro {
+	/** The spec's title, or `undefined` when it has none (the caller falls back to the playbook title). */
+	title?: string;
+	/** Markdown. */
+	summary: string;
+	/** Markdown bullets, one per entry. */
+	nextSteps: string[];
+	/** Outputs to offer as Open buttons. Empty when the spec lists none. */
+	files: Array<{ label: string; path: string }>;
+	/** The file whose first heading section is the verdict, when the spec names one. */
+	reportFile?: string;
 }
 
 // ============================================================================
@@ -706,5 +743,163 @@ export function applyLaunchInputs(
 	return prompt.replace(CONFIGURATION_LINE, (line, head: string, name: string, tail: string) => {
 		const text = written.get(name);
 		return text === undefined ? line : `${head}${text}${tail}`;
+	});
+}
+
+// ============================================================================
+// isLaunchAvailable
+// ============================================================================
+
+const MAESTRO_CLI_REMOTE_REASON =
+	'This playbook drives Maestro through maestro-cli, which is not available on remote agents.';
+const MAESTRO_CLI_MISSING_REASON =
+	'This playbook drives Maestro through maestro-cli, which is not installed. Install maestro-cli to launch it.';
+const MAESTRO_CLI_REMOTE_NOTE =
+	'maestro-cli is not available on remote agents, so any step that calls it is skipped or uses a fallback.';
+const MAESTRO_CLI_MISSING_NOTE =
+	'maestro-cli is not installed, so any step that calls it is skipped or uses a fallback.';
+
+function unavailable(reason: string): PlaybookLaunchAvailability {
+	return { available: false, reason, notes: [] };
+}
+
+/** "macOS", "macOS and Linux", "macOS, Linux and Windows". */
+function joinWithAnd(items: readonly string[]): string {
+	return items.length < 2
+		? items.join('')
+		: `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/**
+ * What a `maestroCli` precondition means for one target. A playbook that needs the CLI cannot run
+ * on a remote agent (the CLI is on this machine only) or before the CLI is installed; one that
+ * only prefers it still runs, so the user is told what they lose instead.
+ */
+function checkMaestroCli(
+	mode: NonNullable<LaunchPreconditions['maestroCli']>,
+	target: PlaybookLaunchTarget
+): { reason?: string; note?: string } {
+	if (target.sshRemote) {
+		return mode === 'required'
+			? { reason: MAESTRO_CLI_REMOTE_REASON }
+			: { note: MAESTRO_CLI_REMOTE_NOTE };
+	}
+	if (target.maestroCliInstalled) return {};
+	return mode === 'required'
+		? { reason: MAESTRO_CLI_MISSING_REASON }
+		: { note: MAESTRO_CLI_MISSING_NOTE };
+}
+
+/**
+ * Whether the Launch button is offered for a playbook, and if not, why.
+ *
+ * Unavailable when the playbook has no `launch` block (one that `parseLaunchSpec` rejected counts
+ * as none, because the caller drops it); the block's own `minMaestroVersion`
+ * is above the running version (the same fail-open comparison as the Exchange's compatibility
+ * gate, {@link meetsMinVersion}); `preconditions.platforms` lists platforms and `platform` is not
+ * one (an empty list restricts nothing); or `preconditions.maestroCli` is `required` and the target
+ * is an SSH-remote agent or `maestro-cli` is not installed. An `optional` `maestroCli` that is
+ * missing never blocks: it adds a note instead. The first problem found is the one reported.
+ *
+ * Without a `target` (the Exchange tile, before an agent is picked) only the spec, version and
+ * platform are checked. The launch modal asks again, with a target, each time its Run on choice
+ * changes. The playbook's own top-level `minMaestroVersion` is not read here: Download is gated on
+ * it by `isCompatible`, and a caller offering Launch applies that gate too.
+ *
+ * `platform` is the OS Maestro runs on (`process.platform`, or `window.maestro.platform` in the
+ * renderer), not the OS of an SSH remote.
+ */
+export function isLaunchAvailable(
+	playbook: Pick<MarketplacePlaybook, 'launch'>,
+	runningVersion: string,
+	platform: string,
+	target?: PlaybookLaunchTarget
+): PlaybookLaunchAvailability {
+	const spec = playbook.launch;
+	if (!spec) return unavailable('This playbook does not support Launch.');
+
+	const minVersion = spec.minMaestroVersion;
+	if (!meetsMinVersion(minVersion, runningVersion)) {
+		return unavailable(`Launch needs Maestro ${minVersion} or newer (this is ${runningVersion}).`);
+	}
+
+	const platforms: readonly string[] = spec.preconditions?.platforms ?? [];
+	if (platforms.length > 0 && !platforms.includes(platform)) {
+		return unavailable(
+			`This playbook runs on ${joinWithAnd(platforms.map(formatPlatformName))} only.`
+		);
+	}
+
+	const notes: string[] = [];
+	const maestroCli = spec.preconditions?.maestroCli;
+	if (target && maestroCli) {
+		const { reason, note } = checkMaestroCli(maestroCli, target);
+		if (reason !== undefined) return unavailable(reason);
+		if (note !== undefined) notes.push(note);
+	}
+	return { available: true, notes };
+}
+
+// ============================================================================
+// renderLaunchOutro
+// ============================================================================
+
+/**
+ * The `{{NAME}}` values an outro can use: every built-in the caller supplied, and every declared
+ * input at its serialized value (empty when it has none, so no template syntax leaks into the
+ * text). Names are uppercased because the substitution engine matches case-insensitively.
+ *
+ * A built-in inside an input's value (`{{AUTORUN_FOLDER}}/vault`) is expanded here, because the
+ * substitution runs once and would otherwise paste the raw token into the outro. That matches the
+ * run, where the Auto Run engine expands the same token in the prompt, so an outro path names the
+ * folder the run really wrote to. A built-in that shares an input's name wins; a valid spec has
+ * none, because `parseLaunchSpec` rejects the collision.
+ */
+function buildOutroReplacements(
+	spec: PlaybookLaunchSpec,
+	values: PlaybookLaunchAnswers,
+	builtins: Readonly<Record<string, string>>
+): Record<string, string> {
+	const known: Record<string, string> = {};
+	for (const [name, value] of Object.entries(builtins)) known[name.toUpperCase()] = value;
+
+	const fromInputs: Record<string, string> = {};
+	for (const input of spec.inputs) {
+		const value = readOwn(values, input.name);
+		fromInputs[input.name] = hasAnswer(value)
+			? substituteTemplateTokens(serializeLaunchValue(input, value), known)
+			: '';
+	}
+	return { ...fromInputs, ...known };
+}
+
+/**
+ * Fill the outro a launch ends with. Every string of `spec.outro` (title, summary, each next step,
+ * each file's label and path, the report file) has its `{{NAME}}` tokens replaced: an input's name
+ * with the value it was launched with, in the form it was written to the prompt (see
+ * {@link serializeLaunchValue}), and a built-in such as `{{AGENT_NAME}}` or `{{AUTORUN_FOLDER}}`
+ * with the value the caller gives in `builtins`. The caller owns those values because they depend on
+ * the agent the run used and on when the outro is drawn.
+ *
+ * A declared input with no value fills as empty text. A token that is neither an input nor in
+ * `builtins` is left as written, so a typo stays visible. Values go in as typed: the result is
+ * markdown, and a path is not checked here, so open one only through the usual file-open path.
+ *
+ * `values` is what the launch record holds (the output of {@link resolveLaunchValues}).
+ */
+export function renderLaunchOutro(
+	spec: PlaybookLaunchSpec,
+	values: PlaybookLaunchAnswers,
+	builtins: Readonly<Record<string, string>>
+): RenderedLaunchOutro {
+	const replacements = buildOutroReplacements(spec, values, builtins);
+	const fill = (text: string): string => substituteTemplateTokens(text, replacements);
+	const { outro } = spec;
+	return definedOnly({
+		title: outro.title === undefined ? undefined : fill(outro.title),
+		summary: fill(outro.summary),
+		nextSteps: outro.nextSteps.map(fill),
+		files: (outro.files ?? []).map((file) => ({ label: fill(file.label), path: fill(file.path) })),
+		reportFile: outro.reportFile === undefined ? undefined : fill(outro.reportFile),
 	});
 }

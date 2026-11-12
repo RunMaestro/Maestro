@@ -11,6 +11,7 @@ import {
 	cueEventCarriesUntrustedText,
 	TEMPLATE_VARIABLES,
 	TEMPLATE_VARIABLES_GENERAL,
+	substituteTemplateTokens,
 	substituteTemplateVariables,
 	TemplateContext,
 	TemplateSessionInfo,
@@ -1105,5 +1106,55 @@ Please complete the tasks in {{DOCUMENT_NAME}}.`;
 
 			expect(result).toBe('LOG_Logger_2025-03-15_loop00007.md');
 		});
+	});
+});
+
+describe('substituteTemplateTokens', () => {
+	it('replaces every occurrence of a known token', () => {
+		expect(substituteTemplateTokens('{{A}} and {{A}}', { A: 'one' })).toBe('one and one');
+	});
+
+	it('matches token names case-insensitively against uppercase keys', () => {
+		expect(substituteTemplateTokens('{{topic}} {{Topic}}', { TOPIC: 'Edge AI' })).toBe(
+			'Edge AI Edge AI'
+		);
+	});
+
+	it('leaves a token with no entry exactly as written', () => {
+		expect(substituteTemplateTokens('{{KNOWN}} {{unknown}} {{ SPACED }}', { KNOWN: 'x' })).toBe(
+			'x {{unknown}} {{ SPACED }}'
+		);
+	});
+
+	it('substitutes in one pass, so a replacement that holds a token stays literal', () => {
+		expect(
+			substituteTemplateTokens('{{OUT}}/INDEX.md', {
+				OUT: '{{AUTORUN_FOLDER}}/vault',
+				AUTORUN_FOLDER: '/x',
+			})
+		).toBe('{{AUTORUN_FOLDER}}/vault/INDEX.md');
+	});
+
+	it('inserts replacement patterns such as $& and $1 literally', () => {
+		expect(substituteTemplateTokens('[{{V}}]', { V: 'cost $& or $1 or $$' })).toBe(
+			'[cost $& or $1 or $$]'
+		);
+	});
+
+	it('replaces a token with an empty string when that is the entry', () => {
+		expect(substituteTemplateTokens('a{{GONE}}b', { GONE: '' })).toBe('ab');
+	});
+
+	it('returns a template with no tokens unchanged', () => {
+		expect(substituteTemplateTokens('plain text', { A: 'x' })).toBe('plain text');
+	});
+
+	it('is the engine under substituteTemplateVariables (same unknown-token and $ behavior)', () => {
+		const context = createTestContext({ session: createTestSession({ name: 'cost $&' }) });
+		const template = '{{AGENT_NAME}} {{NOT_A_VARIABLE}}';
+		expect(substituteTemplateVariables(template, context)).toBe('cost $& {{NOT_A_VARIABLE}}');
+		expect(substituteTemplateTokens(template, { AGENT_NAME: 'cost $&' })).toBe(
+			'cost $& {{NOT_A_VARIABLE}}'
+		);
 	});
 });

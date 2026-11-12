@@ -77,6 +77,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Format an hour of day:** `formatHourOfDay()` in `src/shared/formatters.ts`
 - **Format cost:** `formatCost()` in `src/shared/formatters.ts`
 - **Timestamp for a generated file name:** `fileTimestampSlug(dateOrTimestamp?)` in `src/shared/formatters.ts`
+- **Display name of a platform id (macOS, Windows, Linux):** `formatPlatformName(platform)` in `src/shared/formatters.ts`
 - **Token pricing and Codex token totals:** `resolveModelPricing()` / `calculateModelCost()` in `src/shared/modelPricing.ts`, and `CodexTokenCounts` in `src/shared/codexTokenUsage.ts`
 - **Summing a Codex session's tokens:** `CodexTokenCounts` in `src/shared/codexTokenUsage.ts`
 - **Claude's cost and per-model usage for one turn:** `claudeTurnCost()`, `readClaudeTurnBaseline()`, `parseCostStateRow()` in `src/shared/claudeCostTracker.ts`
@@ -147,6 +148,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
 - **Yielding to the event loop during long main-process work:** `yieldToEventLoop()` in `src/main/utils/concurrency.ts`
 - **Platform detection:** `isWindows()`, `isMacOS()`, `isLinux()` in `src/shared/platformDetection.ts`; renderer-only `isWindowsPlatform()` and siblings in `src/renderer/utils/platformUtils.ts` (never `process.platform` in the renderer)
+- **Whether the running Maestro meets a minimum version:** `meetsMinVersion(minVersion, runningVersion)`, `isCompatible(playbook, runningVersion)` in `src/shared/marketplace-compatibility.ts`
 - **Encore Feature flags and their defaults:** `ENCORE_FEATURE_DEFAULTS`, `resolveEncoreFeatures(raw)`, `isEncoreFeatureEnabled()`, `requireEncoreFeature()` in `src/shared/encoreFeatureDefaults.ts`; background services follow the flag via `createEncoreFeatureLifecycle()` in `src/main/encore-feature-lifecycle.ts`
 - **Whether a stored agent is live (a switched-off Pianola is dormant):** `filterLiveAgents()`, `isAgentDormant()` in `src/shared/agentVisibility.ts`; per process `getLiveSessions()` (main getters), `readLiveSessions()` (CLI storage), `useLiveSessions()` in `src/renderer/hooks/session/useLiveSessions.ts`
 - **A maestro-cli verb that belongs to an Encore Feature:** `encoreCommand()`, `requireEncore()`, `requireEncoreForOptions()` in `src/cli/utils/encore-gate.ts`
@@ -195,6 +197,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A loopback port for an SSH local forward:** `availableLocalPort()`, `waitForLocalPort()` in `src/shared/maestro-lib/client/local-port.ts`
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`
 - **Expanding `{{INCLUDE:name}}` in a prompt:** `resolvePromptIncludes()`, `findPromptIncludeNames()` in `src/shared/promptIncludes.ts`
+- **Filling `{{TOKEN}}`s from a map of values (no session to build a context from):** `substituteTemplateTokens(template, replacements)` in `src/shared/templateVariables.ts`
 - **The system-prompt envelope for a provider with no `--append-system-prompt`:** `embedSystemPromptInPrompt()`, `stripEmbeddedSystemPrompt()`, `hasEmbeddedSystemPrompt()` in `src/shared/embeddedSystemPrompt.ts` (a wire format; never template it inline)
 - **Who asked for this turn (interactive vs automation):** `QUERY_SOURCE_ENV_VAR`, `QuerySource`, `DEFAULT_QUERY_SOURCE` in `src/shared/querySource.ts` (`MAESTRO_QUERY_SOURCE`)
 - **Prefixing an agent's New Session Message:** `prependNewSessionMessageOnFirstTurn()`, `prependNewSessionMessage()` in `src/shared/newSessionMessage.ts`

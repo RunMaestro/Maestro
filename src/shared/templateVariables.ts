@@ -898,6 +898,21 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		}
 	}
 
+	return substituteTemplateTokens(template, replacements);
+}
+
+/**
+ * Replace each `{{NAME}}` in `template` with `replacements[NAME]`. This is the engine under
+ * {@link substituteTemplateVariables}; call it directly when the values are already in hand and
+ * there is no session to build a {@link TemplateContext} from (a Playbook Launch outro does).
+ *
+ * Names are matched case-insensitively, so the keys of `replacements` must be UPPERCASE. A token
+ * with no entry is left exactly as written, so a typo stays visible instead of vanishing.
+ */
+export function substituteTemplateTokens(
+	template: string,
+	replacements: Readonly<Record<string, string>>
+): string {
 	// Match the original template once: inserted context is literal data, even
 	// when it contains another placeholder or a replacement pattern like `$&`.
 	// Looking up the whole name also keeps dynamic Cue names literal instead

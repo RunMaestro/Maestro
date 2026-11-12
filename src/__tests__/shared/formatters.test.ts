@@ -27,6 +27,7 @@ import {
 	getBasename,
 	joinPath,
 	formatSshTarget,
+	formatPlatformName,
 	formatTimestamp,
 } from '../../shared/formatters';
 
@@ -883,6 +884,23 @@ describe('shared/formatters', () => {
 
 		it('defaults the port to 22 when omitted', () => {
 			expect(formatSshTarget({ host: 'host', username: 'me' })).toBe('me@host:22');
+		});
+	});
+
+	describe('formatPlatformName', () => {
+		it('names the three platforms Maestro ships on', () => {
+			expect(formatPlatformName('darwin')).toBe('macOS');
+			expect(formatPlatformName('win32')).toBe('Windows');
+			expect(formatPlatformName('linux')).toBe('Linux');
+		});
+
+		it('returns an unknown platform id as given, never blank', () => {
+			expect(formatPlatformName('freebsd')).toBe('freebsd');
+			expect(formatPlatformName('')).toBe('');
+		});
+
+		it('is case-sensitive, like the ids Node reports', () => {
+			expect(formatPlatformName('Darwin')).toBe('Darwin');
 		});
 	});
 

@@ -542,6 +542,28 @@ export function formatSshTarget(remote: {
 }
 
 /**
+ * Display name of an operating system, from a Node platform id.
+ *
+ * `darwin` is "macOS", `win32` is "Windows" and `linux` is "Linux". An id this does not know
+ * (`freebsd`, a platform added later) comes back as given, so a label is never blank.
+ *
+ * @param platform - A `process.platform` value, or the renderer's `window.maestro.platform`
+ * @returns Display name (e.g. "macOS")
+ */
+export function formatPlatformName(platform: string): string {
+	switch (platform) {
+		case 'darwin':
+			return 'macOS';
+		case 'win32':
+			return 'Windows';
+		case 'linux':
+			return 'Linux';
+		default:
+			return platform;
+	}
+}
+
+/**
  * Truncate command text for display.
  * Replaces newlines with spaces, trims whitespace, and adds ellipsis if truncated.
  *

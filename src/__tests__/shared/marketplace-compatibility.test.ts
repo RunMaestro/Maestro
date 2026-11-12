@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { isCompatible, isBeta } from '../../shared/marketplace-compatibility';
+import { isCompatible, isBeta, meetsMinVersion } from '../../shared/marketplace-compatibility';
 import type { MarketplacePlaybook } from '../../shared/marketplace-types';
 
 function makePlaybook(overrides: Partial<MarketplacePlaybook>): MarketplacePlaybook {
@@ -78,6 +78,48 @@ describe('isCompatible', () => {
 
 	it('older release blocked by newer min', () => {
 		expect(isCompatible(makePlaybook({ minMaestroVersion: '99.0.0' }), '0.16.0')).toBe(false);
+	});
+});
+
+describe('meetsMinVersion', () => {
+	it('is true when no minimum is given', () => {
+		expect(meetsMinVersion(undefined, '0.1.0')).toBe(true);
+		expect(meetsMinVersion('', '0.1.0')).toBe(true);
+	});
+
+	it('is true when the running version equals or exceeds the minimum', () => {
+		expect(meetsMinVersion('0.17.0', '0.17.0')).toBe(true);
+		expect(meetsMinVersion('0.17.0', '0.17.1')).toBe(true);
+		expect(meetsMinVersion('0.17.0', '1.0.0')).toBe(true);
+	});
+
+	it('is false when the running version is below the minimum', () => {
+		expect(meetsMinVersion('0.17.0', '0.16.99')).toBe(false);
+		expect(meetsMinVersion('99.0.0', '0.16.0')).toBe(false);
+	});
+
+	it('fails open on a minimum or running version that is not semver', () => {
+		expect(meetsMinVersion('not-a-version', '1.0.0')).toBe(true);
+		expect(meetsMinVersion('1.0.0', 'unknown')).toBe(true);
+	});
+
+	it('compares prerelease tags case-insensitively', () => {
+		expect(meetsMinVersion('0.16.17-rc', '0.16.17-RC')).toBe(true);
+		expect(meetsMinVersion('0.16.17-RC', '0.16.17-rc')).toBe(true);
+		expect(meetsMinVersion('0.16.17-rc', '0.16.16')).toBe(false);
+	});
+
+	it('is the comparison isCompatible applies to the playbook minimum', () => {
+		for (const [min, running] of [
+			['0.17.0', '0.16.0'],
+			['0.17.0', '0.17.0'],
+			['0.16.17-rc', '0.16.17'],
+			['junk', '1.0.0'],
+		]) {
+			expect(isCompatible(makePlaybook({ minMaestroVersion: min }), running)).toBe(
+				meetsMinVersion(min, running)
+			);
+		}
 	});
 });
 

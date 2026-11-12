@@ -25,24 +25,39 @@ function normalize(version: string): string {
 }
 
 /**
- * Is this playbook installable on the given running Maestro version?
+ * Does the running Maestro version meet a minimum version?
  *
- * Returns true (compatible) when:
- * - No `minMaestroVersion` is set, OR
+ * The one comparison behind every version gate in the Exchange: a playbook's own
+ * `minMaestroVersion` ({@link isCompatible}) and the one inside its `launch` block
+ * (`isLaunchAvailable` in `playbookLaunch.ts`). Both gates fail open, so a bad version string
+ * can never lock a user out of the Exchange.
+ *
+ * Returns true when:
+ * - No minimum is set, OR
  * - The minimum is not valid semver (treat as no minimum, don't crash exchange), OR
  * - The running version is not valid semver (defensive: don't brick exchange on bad app version), OR
- * - `runningVersion >= minMaestroVersion` per semver.gte().
+ * - `runningVersion >= minVersion` per semver.gte().
  */
-export function isCompatible(playbook: MarketplacePlaybook, runningVersion: string): boolean {
-	if (!playbook.minMaestroVersion) return true;
+export function meetsMinVersion(minVersion: string | undefined, runningVersion: string): boolean {
+	if (!minVersion) return true;
 
-	const min = normalize(playbook.minMaestroVersion);
+	const min = normalize(minVersion);
 	const running = normalize(runningVersion);
 
 	if (!semver.valid(min)) return true;
 	if (!semver.valid(running)) return true;
 
 	return semver.gte(running, min);
+}
+
+/**
+ * Is this playbook installable on the given running Maestro version?
+ *
+ * Compatible when the running version meets the playbook's `minMaestroVersion`
+ * (see {@link meetsMinVersion} for the fail-open rules).
+ */
+export function isCompatible(playbook: MarketplacePlaybook, runningVersion: string): boolean {
+	return meetsMinVersion(playbook.minMaestroVersion, runningVersion);
 }
 
 /**
