@@ -44,7 +44,7 @@ import {
 	analyzeReadOpportunities,
 	READ_OPPORTUNITY_LIMITS,
 	readEventsFromDescriptors,
-	type ReadEvent,
+	withoutLineNumbers,
 	type ReadFinding,
 	type ReadOpportunityLimits,
 	type ReadOpportunityReport,
@@ -59,100 +59,19 @@ import {
 	getCompressionCache,
 } from '../../../../main/local-models/proxy/compression-cache';
 import { parseJsonSpans } from '../../../../main/local-models/proxy/json-spans';
-import type { TokenProxyRequestKind } from '../../../../shared/local-models/token-proxy';
-
-type ApiKind = Exclude<TokenProxyRequestKind, 'other'>;
-
-const ROOT = '/work/app';
-const FILE = `${ROOT}/src/a.ts`;
-const LINES = ['export const a = 1;', 'export const b = 2;', 'export const c = 3;'];
-const EDITED = ['export const a = 1;', 'export const b = 22;', 'export const c = 3;'];
-
-/** What Claude Code's Read prints: right-aligned number, an arrow, the line. */
-function numbered(lines: readonly string[], from = 1, separator = '→'): string {
-	return lines
-		.map((line, index) => `${String(from + index).padStart(6)}${separator}${line}`)
-		.join('\n');
-}
-
-/** One tool call and its result. `output` is whatever the result carries. */
-interface Step {
-	id?: string;
-	tool?: string;
-	/** An object, or a raw string for arguments that are not JSON. */
-	input: Record<string, unknown> | string;
-	output: unknown;
-	isError?: boolean;
-}
-
-/** A step, or the marker a provider writes where it replaced the history before it. */
-type Item = Step | 'compaction';
-
-function read(output: string, input: Record<string, unknown> = { file_path: FILE }, tool = 'Read') {
-	return { tool, input, output } satisfies Step;
-}
-
-function body(kind: ApiKind, items: Item[], extra: Record<string, unknown> = {}): string {
-	if (kind === 'anthropic-messages') {
-		const messages: unknown[] = [{ role: 'user', content: 'Look at the file.' }];
-		items.forEach((item, index) => {
-			if (item === 'compaction') {
-				messages.push({ role: 'assistant', content: [{ type: 'compaction', content: 'summary' }] });
-				return;
-			}
-			const id = item.id ?? `toolu_${index}`;
-			messages.push({
-				role: 'assistant',
-				content: [{ type: 'tool_use', id, name: item.tool, input: item.input }],
-			});
-			messages.push({
-				role: 'user',
-				content: [
-					{
-						type: 'tool_result',
-						tool_use_id: id,
-						content: item.output,
-						...(item.isError ? { is_error: true } : {}),
-					},
-				],
-			});
-		});
-		return JSON.stringify({ model: 'claude-test', max_tokens: 64, messages, ...extra });
-	}
-	const args = (input: Step['input']) =>
-		typeof input === 'string' ? input : JSON.stringify(input);
-	if (kind === 'openai-chat-completions') {
-		const messages: unknown[] = [{ role: 'user', content: 'Look at the file.' }];
-		items.forEach((item, index) => {
-			if (item === 'compaction') return;
-			const id = item.id ?? `call_${index}`;
-			messages.push({
-				role: 'assistant',
-				tool_calls: [
-					{ id, type: 'function', function: { name: item.tool, arguments: args(item.input) } },
-				],
-			});
-			messages.push({ role: 'tool', tool_call_id: id, content: item.output });
-		});
-		return JSON.stringify({ model: 'gpt-test', messages, ...extra });
-	}
-	const input: unknown[] = [{ role: 'user', content: 'Look at the file.' }];
-	items.forEach((item, index) => {
-		if (item === 'compaction') {
-			input.push({ type: 'compaction', id: 'cmp_1', encrypted_content: 'opaque' });
-			return;
-		}
-		const id = item.id ?? `call_${index}`;
-		input.push({
-			type: 'function_call',
-			call_id: id,
-			name: item.tool,
-			arguments: args(item.input),
-		});
-		input.push({ type: 'function_call_output', call_id: id, output: item.output });
-	});
-	return JSON.stringify({ model: 'gpt-test', input, ...extra });
-}
+import {
+	body,
+	deepFreeze,
+	EDITED,
+	event,
+	FILE,
+	LINES,
+	numbered,
+	read,
+	ROOT,
+	type ApiKind,
+	type Item,
+} from '../../../helpers/proxyReadRequests';
 
 /** Both steps of the analyzer, over a request body, the way a caller composes them. */
 function analyze(
@@ -192,35 +111,6 @@ function only<S extends ReadFinding['status']>(
 		(finding): finding is Extract<ReadFinding, { status: S }> => finding.status === status
 	);
 	return matches[index];
-}
-
-/** A directly supplied event, for the cases the descriptor path cannot produce. */
-function event(
-	order: number,
-	over: Partial<Extract<ReadEvent, { status: 'read' }>> = {}
-): ReadEvent {
-	return {
-		status: 'read',
-		order,
-		context: 'main',
-		epoch: 0,
-		callId: `c${order}`,
-		tool: 'Read',
-		path: FILE,
-		offset: null,
-		limit: null,
-		text: numbered(LINES),
-		...over,
-	};
-}
-
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
-	if (typeof value === 'object' && value !== null && !seen.has(value)) {
-		seen.add(value);
-		Object.values(value).forEach((child) => deepFreeze(child, seen));
-		Object.freeze(value);
-	}
-	return value;
 }
 
 describe('read opportunities: pairing through the descriptor path', () => {
@@ -944,5 +834,35 @@ describe('read opportunities: observation only', () => {
 			unsupported: 3,
 			unsupportedByReason: { 'partial-range': 1, 'unresolved-path': 1, 'outside-workspace': 1 },
 		});
+	});
+});
+
+describe('read opportunities: withoutLineNumbers', () => {
+	it('removes the printed number and arrow from every line and keeps the rest', () => {
+		expect(withoutLineNumbers(numbered(LINES))).toBe(LINES.join('\n'));
+	});
+
+	it('keeps a final line break, and a final line without one', () => {
+		expect(withoutLineNumbers(`${numbered(LINES)}\n`)).toBe(`${LINES.join('\n')}\n`);
+		expect(withoutLineNumbers('    12→only')).toBe('only');
+	});
+
+	it('reads the older tab separator and any width of padding', () => {
+		expect(withoutLineNumbers('1\tone\n 22\ttwo\n')).toBe('one\ntwo\n');
+		expect(withoutLineNumbers(numbered(['a', 'b'], 99, '\t'))).toBe('a\nb');
+	});
+
+	it('keeps carriage returns and empty numbered lines', () => {
+		expect(withoutLineNumbers('     1→a\r\n     2→\r\n     3→c\r\n')).toBe('a\r\n\r\nc\r\n');
+		expect(withoutLineNumbers('     1→\n     2→\n')).toBe('\n\n');
+	});
+
+	it('removes only the first number of a line, not a number the file itself starts a line with', () => {
+		expect(withoutLineNumbers('     1→12→twelve\n     2→3\tthree')).toBe('12→twelve\n3\tthree');
+	});
+
+	it('returns the text unchanged when no line carries a number', () => {
+		expect(withoutLineNumbers('plain\ntext\n')).toBe('plain\ntext\n');
+		expect(withoutLineNumbers('')).toBe('');
 	});
 });

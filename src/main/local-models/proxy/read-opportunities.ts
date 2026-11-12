@@ -490,6 +490,26 @@ function scanLines(text: string): LineScan {
 	};
 }
 
+/**
+ * The text of a numbered read without the numbers it printed: each line's
+ * leading spaces, digits and arrow (or tab) removed, every line break kept.
+ * Call it only when {@link ReadVersion.numbered} is set, so each line has its
+ * number. Two numbered reads whose lines moved differ in every number after the
+ * move; compared without the numbers they differ only where the file does.
+ */
+export function withoutLineNumbers(text: string): string {
+	const lines: string[] = [];
+	for (let at = 0; at < text.length; ) {
+		NUMBER_PREFIX.lastIndex = at;
+		const match = NUMBER_PREFIX.exec(text);
+		const lineFeed = text.indexOf('\n', at);
+		const end = lineFeed === -1 ? text.length : lineFeed + 1;
+		lines.push(text.slice(match ? at + match[0].length : at, end));
+		at = end;
+	}
+	return lines.join('');
+}
+
 interface Seen {
 	version: ReadVersion;
 	context: string;
