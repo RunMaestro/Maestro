@@ -6,6 +6,8 @@ import {
 	buildSshConnectionArgs,
 	buildSshProbeCommand,
 	describeSshConnectionError,
+	describeSshUnreachable,
+	isSshConnectionFailure,
 	readSshProbeOutput,
 } from '../../shared/sshConnection';
 import type { SshRemoteConfig } from '../../shared/types';
@@ -129,5 +131,42 @@ describe('describeSshConnectionError', () => {
 
 	it('returns undefined for empty stderr', () => {
 		expect(describeSshConnectionError('   \n ')).toBeUndefined();
+	});
+});
+
+describe('isSshConnectionFailure', () => {
+	it("is true only for ssh's own exit code 255", () => {
+		expect(isSshConnectionFailure(255)).toBe(true);
+		expect(isSshConnectionFailure(1)).toBe(false);
+		expect(isSshConnectionFailure(0)).toBe(false);
+		expect(isSshConnectionFailure('ETIMEDOUT')).toBe(false);
+	});
+});
+
+describe('describeSshUnreachable', () => {
+	it('names the remote and maps a known ssh failure', () => {
+		expect(
+			describeSshUnreachable(
+				{ name: 'pedtome', host: 'h' },
+				'ssh: connect to host h: Connection refused'
+			)
+		).toBe('Unable to connect to "pedtome" over SSH. Connection refused. Check host and port.');
+	});
+
+	it('keeps an unknown transport error verbatim, on one line', () => {
+		expect(
+			describeSshUnreachable(
+				{ name: 'pedtome', host: 'h' },
+				'tailcat Ping: context deadline exceeded\n\nConnection closed by UNKNOWN port 65535\n'
+			)
+		).toBe(
+			'Unable to connect to "pedtome" over SSH. tailcat Ping: context deadline exceeded; Connection closed by UNKNOWN port 65535'
+		);
+	});
+
+	it('falls back to the host when the remote has no name, and to no detail on empty stderr', () => {
+		expect(describeSshUnreachable({ name: ' ', host: 'box.lan' }, '')).toBe(
+			'Unable to connect to "box.lan" over SSH.'
+		);
 	});
 });

@@ -124,6 +124,39 @@ export function describeSshConnectionError(stderr: string): string | undefined {
 	return trimmed || undefined;
 }
 
+/**
+ * The exit code `ssh` uses for its OWN failures: it could not reach the host,
+ * the tunnel (`ProxyCommand`) died, or authentication failed. A remote command
+ * that ran and failed exits with its own code, so 255 means "never got there".
+ */
+export const SSH_CONNECTION_FAILED_EXIT_CODE = 255;
+
+/**
+ * True when an ssh run failed to CONNECT, as opposed to the remote command
+ * running and failing.
+ */
+export function isSshConnectionFailure(exitCode: number | string): boolean {
+	return exitCode === SSH_CONNECTION_FAILED_EXIT_CODE;
+}
+
+/**
+ * The message for an ssh run that never reached the host, naming the remote so
+ * the user knows which link is down: `Unable to connect to "pedtome" over SSH.
+ * tailcat Ping: context deadline exceeded; Connection closed by ...`.
+ */
+export function describeSshUnreachable(
+	remote: Pick<SshRemoteConfig, 'name' | 'host'>,
+	stderr: string
+): string {
+	const label = remote.name?.trim() || remote.host;
+	const detail = describeSshConnectionError(stderr)
+		?.split('\n')
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.join('; ');
+	return `Unable to connect to "${label}" over SSH.${detail ? ` ${detail}` : ''}`;
+}
+
 /** Parsed form of a probe's stdout. */
 export interface SshProbeReading {
 	/** True when the remote echoed the marker as its first line. */

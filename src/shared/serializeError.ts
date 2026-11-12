@@ -1,5 +1,5 @@
 /**
- * Make an Error survive JSON and IPC.
+ * Error text that survives JSON and IPC, and reads well when shown.
  *
  * `JSON.stringify(new Error('x'))` is `{}`: `name`, `message` and `stack` are
  * not enumerable. A log entry that carries a raw Error therefore reaches the
@@ -48,4 +48,26 @@ export function toLoggableData(data: unknown): unknown {
 		}
 	}
 	return copy ?? data;
+}
+
+const IPC_PREFIX = /^Error invoking remote method '[^']+':\s*/;
+const ERROR_PREFIX = /^Error:\s*/;
+
+/**
+ * The message to SHOW for a rejected `window.maestro.*` call.
+ *
+ * Electron wraps a main-process throw as `Error invoking remote method
+ * 'fs:writeFile': Error: <message>`, and a handler that re-throws with its own
+ * prefix adds another `: Error: ` layer (`Failed to write file: Error: Unable
+ * to connect to "pedtome" over SSH.`). The innermost message is the one that
+ * names the cause, so that is what comes back.
+ */
+export function ipcErrorMessage(error: unknown, fallback = 'Unknown error'): string {
+	const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+	const message = raw.replace(IPC_PREFIX, '').replace(ERROR_PREFIX, '');
+	const innermost = message
+		.split(/:\s*Error:\s*/)
+		.pop()
+		?.trim();
+	return innermost || fallback;
 }

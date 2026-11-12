@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { serializeError, toLoggableData } from '../../shared/serializeError';
+import { ipcErrorMessage, serializeError, toLoggableData } from '../../shared/serializeError';
 
 describe('serializeError', () => {
 	it('keeps name, message and stack, which JSON.stringify drops', () => {
@@ -49,5 +49,29 @@ describe('toLoggableData', () => {
 		expect(toLoggableData(arr)).toBe(arr);
 		expect(toLoggableData(undefined)).toBeUndefined();
 		expect(toLoggableData('s')).toBe('s');
+	});
+});
+
+describe('ipcErrorMessage', () => {
+	it('strips the Electron IPC wrapper and every re-thrown Error: layer', () => {
+		const err = new Error(
+			'Error invoking remote method \'fs:writeFile\': Error: Failed to write file: Error: Unable to connect to "pedtome" over SSH.'
+		);
+		expect(ipcErrorMessage(err)).toBe('Unable to connect to "pedtome" over SSH.');
+	});
+
+	it('handles a wrapper with no inner Error: prefix', () => {
+		expect(
+			ipcErrorMessage(
+				new Error("Error invoking remote method 'groupChat:create': Invalid moderator agent ID")
+			)
+		).toBe('Invalid moderator agent ID');
+	});
+
+	it('passes a plain message through and falls back when there is none', () => {
+		expect(ipcErrorMessage(new Error('plain'))).toBe('plain');
+		expect(ipcErrorMessage('as string')).toBe('as string');
+		expect(ipcErrorMessage(undefined, 'Could not save file.')).toBe('Could not save file.');
+		expect(ipcErrorMessage(new Error(''), 'fallback')).toBe('fallback');
 	});
 });
