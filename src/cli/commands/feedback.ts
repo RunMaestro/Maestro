@@ -76,12 +76,17 @@ interface SubscribeOptions extends JsonOption {
 }
 
 /** Print a failure in the caller's format and exit with `code`. */
-function fail(message: string, options: JsonOption, code: ExitCode, extra?: object): never {
+function fail(
+	message: string,
+	options: JsonOption,
+	code: ExitCode,
+	extra?: Pick<FeedbackSubmitResponse, 'warnings'>
+): never {
 	if (options.json) {
 		console.log(JSON.stringify({ success: false, error: message, ...extra }));
 	} else {
 		console.error(`Error: ${message}`);
-		const warnings = (extra as { warnings?: unknown } | undefined)?.warnings;
+		const warnings = extra?.warnings;
 		if (Array.isArray(warnings)) {
 			for (const warning of warnings) {
 				console.error(`Warning: ${String(warning)}`);
