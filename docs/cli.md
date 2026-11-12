@@ -680,6 +680,10 @@ maestro-cli update-agent <agent-id> --gateway-url none
 
 # Or use Maestro's own proxy: off | passthrough | compress | compress-early (it sets the gateway URL for you)
 maestro-cli update-agent <agent-id> --proxy-mode compress
+maestro-cli update-agent <agent-id> --proxy-retrieval on  # let the model read back a shortened block (compress modes only)
+maestro-cli models proxy status              # what it carried, saved, and shortened
+maestro-cli models proxy block <hash>        # a diff of one block it shortened
+maestro-cli models proxy cache prune         # prune the compression cache now
 
 # Run the agent's model on a Local Models source, behind the same provider CLI
 maestro-cli models endpoints list                                          # source ids
@@ -688,8 +692,6 @@ maestro-cli update-agent <agent-id> --run-on <source-id>:qwen3:latest --run-on-c
 maestro-cli update-agent <agent-id> --run-on-context 131072                # the context alone
 maestro-cli agent test-run-on <agent-id>                                   # one short turn on the target
 maestro-cli update-agent <agent-id> --run-on provider                      # back to the provider's model
-maestro-cli models proxy status              # what it carried, saved, and shortened
-maestro-cli models proxy block <hash>        # a diff of one block it shortened
 
 # Tiers: where a low, medium or high task of this agent launches (repeatable; =default follows the harness again)
 maestro-cli update-agent <agent-id> --tier low=maestro-server:<model-id> --tier high=provider:opus
@@ -799,6 +801,7 @@ The rest of the Models tab, and the settings the Edit Agent form groups under Re
 | `--json`                                | Machine-readable JSON output                                                                                                                                                                    | -       |
 | `--gateway-url <url\|none>`             | Local Models gateway: a proxy this agent's provider traffic goes through. `none` clears                                                                                                         | -       |
 | `--proxy-mode <mode>`                   | [Maestro's own proxy](/local-models#the-maestro-proxy) for this agent: `off`, `passthrough`, `compress` or `compress-early`. Not with `--gateway-url`                                           | -       |
+| `--proxy-retrieval <on\|off>`           | Whether the model may ask the proxy for the original lines of a block it shortened. Compress modes only; turned off with the proxy                                                              | -       |
 | `--run-on <target>`                     | [Run on](/local-models): `provider` (clears a target), or `<source id>:<model>` on a Local Models source                                                                                        | -       |
 | `--run-on-context <tokens>`             | Context size for the Run on source (at least 40960). Alone, it changes the current target's context                                                                                             | -       |
 | `--tier <tier=target>`                  | Where a `low`, `medium` or `high` task of this agent launches (repeatable): `low=<source id>:<model>`, `high=provider:<model>`, `medium=provider`, or `low=default` to follow the harness again | -       |
@@ -1000,7 +1003,7 @@ maestro-cli update-group-settings <group-id> --model sonnet --publish --yes
 
 `group-settings` prints the group's defaults, or **no defaults** when it holds none, and its pill label. When the group has no label of its own, the abbreviation Maestro derives from the name is printed and marked as automatic. It reads the stored group and does not need the app to be running. `--json` returns `group` with `defaults`, `shortLabel`, `badgeLabel` and `badgeLabelSource` (`custom` or `automatic`).
 
-`update-group-settings` needs the desktop app. It accepts the settings flags of [`update-agent`](#creating-updating-and-removing-agents) that map to a default (`--provider`, `--cwd`, `--nudge`, `--new-session-message`, `--custom-path`, `--custom-args`, `--env`, `--clear-env`, `--model`, `--effort`, `--context-window`, `--gateway-url`, `--proxy-mode`, `--run-on`, `--tier`, `--system-one`, the five peer flags, `--ssh-remote`, `--ssh-cwd`, and the rest), and it builds the profile with the same validation the dialog uses, so a flag and a click store the same thing. A provider-bound value for a group with no provider, or for another provider, is refused by name.
+`update-group-settings` needs the desktop app. It accepts the settings flags of [`update-agent`](#creating-updating-and-removing-agents) that map to a default (`--provider`, `--cwd`, `--nudge`, `--new-session-message`, `--custom-path`, `--custom-args`, `--env`, `--clear-env`, `--model`, `--effort`, `--context-window`, `--gateway-url`, `--proxy-mode`, `--background-requests`, `--run-on`, `--tier`, `--system-one`, the five peer flags, `--ssh-remote`, `--ssh-cwd`, and the rest), and it builds the profile with the same validation the dialog uses, so a flag and a click store the same thing. A provider-bound value for a group with no provider, or for another provider, is refused by name.
 
 Notes on behavior:
 
@@ -1092,7 +1095,9 @@ The verb only reads. To change an edge, use `update-agent <source> --peer <targe
 | Read the model server log                    | `models server status` prints the path, then `open-file <path>`                                                                    |
 | Point Maestro at VoiceStudio                 | `settings set acappella.voiceStudio.baseUrl\|engine\|seed <value>` (no verb checks the connection)                                 |
 | Set tier defaults per harness                | `models tiers list\|options\|suggest\|set\|reset`                                                                                  |
-| See what the token proxy did                 | `models proxy status`, `models proxy block <hash>`                                                                                 |
+| See what the token proxy did                 | `models proxy status`, `models proxy block <hash> [--original\|--compressed] [--lines <start:end>]`                                |
+| Inspect or prune the compression cache       | `models proxy cache`, `models proxy cache prune [--older-than <duration>]`                                                         |
+| Set the proxy mode for new agents            | `settings set defaultTokenProxyMode off\|passthrough\|compress\|compress-early` (existing agents keep theirs)                      |
 | Check the semantic index                     | `models index`                                                                                                                     |
 | Index Cue runs for Semantic search           | `settings set semanticIndexCue true\|false`                                                                                        |
 | Search past work by meaning                  | `search "<query>" --semantic` (see [Searching Past Work](#searching-past-work-search))                                             |
