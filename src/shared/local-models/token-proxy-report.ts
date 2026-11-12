@@ -25,6 +25,7 @@ import {
 	formatCount,
 	formatCountNoun,
 	formatDurationDecimal,
+	formatRelativeTime,
 	formatSize,
 	formatTokensCompact,
 } from '../formatters';
@@ -43,13 +44,19 @@ import {
 	type ProxyTrendDay,
 } from '../stats-types';
 import {
+	describeOpportunityReasons,
 	describeTokensSaved,
 	PROXY_LATENCY_MIN_SAMPLES,
 	TOKEN_PROXY_MODE_LABELS,
+	TOKEN_PROXY_OBSERVATION_SKIP_LABELS,
+	TOKEN_PROXY_OPPORTUNITY_KIND_LABELS,
 	TOKEN_PROXY_PROVIDER_CLASS_LABELS,
 	TOKEN_PROXY_ROUTES,
 	TOKEN_PROXY_SKIP_LABELS,
 	TOKEN_PROXY_UNKNOWN_LABELS,
+	type TokenProxyObservationSkip,
+	type TokenProxyOpportunity,
+	type TokenProxyReadOpportunities,
 	type TokenProxyRecoveryObservations,
 	type TokenProxyRecoveryReadCounts,
 	type TokenProxyRouteId,
@@ -91,6 +98,13 @@ export const TOKEN_PROXY_TREND_NOTE =
 
 /** How many of the latest days the text report lists. The JSON record holds every day. */
 export const PROXY_TREND_TEXT_DAYS = 7;
+
+/**
+ * Said where the handling of a range would be: an older desktop sent the totals and
+ * not the counts behind them, so those surfaces have nothing to show and say why.
+ */
+export const TOKEN_PROXY_TOTALS_ONLY_NOTE =
+	'This desktop sent only the totals. Block counts, skips, the trend by day and the per-algorithm figures need a newer desktop.';
 
 /** The heading of the recovery lines: what span they cover, and what they are not part of. */
 export const TOKEN_PROXY_RECOVERY_HEADING =
@@ -403,5 +417,142 @@ export function describeProxyRecovery(
 			text: 'a counter reached its largest value, so these figures are lower bounds',
 		});
 	}
+	return lines;
+}
+
+/**
+ * A stored name this build may not know, said as stored. The table is read by own
+ * property only: a name such as `constructor` is not a label.
+ */
+function labelOr(labels: Readonly<Record<string, string>>, name: string): string {
+	return Object.prototype.hasOwnProperty.call(labels, name) ? labels[name] : name;
+}
+
+/** ` (partial-range 3, outside-workspace 5)`, or nothing when no read was refused. */
+function reasonSuffix(reasons: Record<string, number>): string {
+	const text = describeOpportunityReasons(reasons);
+	return text ? ` (${text})` : '';
+}
+
+/**
+ * What the proxy could have shortened and did not, since the app started: the
+ * requests it examined and could not, then the newest reads, re-read previews and
+ * source outlines it found, each with the reasons it refused one. Potential only:
+ * nothing here was applied and none of it is a saving, so a surface says it apart
+ * from the range and beside {@link TOKEN_PROXY_OPPORTUNITY_NOTE}. A reason a newer
+ * build recorded is named as it was stored.
+ */
+export function describeProxyOpportunities(
+	opportunities: TokenProxyReadOpportunities
+): ProxyReportLine[] {
+	const { coverage, reads, previews, outlines } = opportunities;
+	const lines: ProxyReportLine[] = [
+		{
+			label: `Since ${formatRelativeTime(opportunities.since)}`,
+			text: `${formatCountNoun(coverage.observed, 'request')} examined, ${formatCount(coverage.withReads)} with a read among their newest results. Passthrough requests are not read.`,
+		},
+	];
+	const notExamined = (Object.keys(coverage.skipped) as TokenProxyObservationSkip[])
+		.filter((reason) => coverage.skipped[reason] > 0)
+		.map(
+			(reason) =>
+				`${formatCount(coverage.skipped[reason])} ${labelOr(TOKEN_PROXY_OBSERVATION_SKIP_LABELS, reason)}`
+		);
+	if (notExamined.length > 0) lines.push({ label: 'Not examined', text: notExamined.join('; ') });
+	if (coverage.incomplete > 0) {
+		lines.push({
+			label: 'Work bound',
+			text: `${formatCountNoun(coverage.incomplete, 'request')} hit a work bound; older reads went unexamined.`,
+		});
+	}
+	lines.push(
+		{
+			label: 'Newest reads',
+			text: `${formatCount(reads.examined)} examined: ${formatCount(reads.first)} first, ${formatCount(reads.identical)} identical re-reads, ${formatCount(reads.changed)} changed re-reads, ${formatCount(reads.unsupported)} not comparable${reasonSuffix(reads.unsupportedByReason)}`,
+		},
+		{
+			label: 'Re-read previews',
+			text: `${formatCount(previews.unchanged)} unchanged, ${formatCount(previews.delta)} delta, ${formatCount(previews.unsupported)} refused${reasonSuffix(previews.unsupportedByReason)}; potential reduction ${formatCount(previews.potentialTokens)} tokens`,
+		},
+		{
+			label: 'Source outlines',
+			text: `${formatCount(outlines.outlined)} outlined, ${formatCount(outlines.unsupported)} refused${reasonSuffix(outlines.unsupportedByReason)}; potential reduction ${formatCount(outlines.potentialTokens)} tokens`,
+		}
+	);
+	return lines;
+}
+
+/** The identities the proxy cannot see, with why: no opportunity is attributed to one. */
+export function describeOpportunityIdentity(
+	identity: TokenProxyReadOpportunities['identity']
+): string {
+	return `${identity.unavailable.join(', ')}. ${identity.note}`;
+}
+
+/** What a preview is called (`Unchanged re-read`); a kind a newer build recorded is named as stored. */
+export function describeOpportunityKind(kind: TokenProxyOpportunity['kind']): string {
+	return labelOr(TOKEN_PROXY_OPPORTUNITY_KIND_LABELS, kind);
+}
+
+const OPPORTUNITY_DELIVERY_TEXT: Record<TokenProxyOpportunity['delivery'], string> = {
+	whole: 'The result went to the provider unchanged.',
+	replaced:
+		'The proxy also shortened this result, so the potential overlaps the reduction already counted.',
+	unproven:
+		'What the proxy forwarded for this result could not be lined up with the request, so the potential may overlap the reduction already counted.',
+};
+
+/** What the model was shown for the result a preview would stand in for, and what that does to its figure. */
+export function describeOpportunityDelivery(delivery: TokenProxyOpportunity['delivery']): string {
+	return labelOr(OPPORTUNITY_DELIVERY_TEXT, delivery);
+}
+
+/**
+ * One preview the proxy built and did not use, fact by fact: what it would have
+ * replaced, the potential reduction (an estimate, and never realized), what the
+ * model was shown, and how the preview text on screen differs from the preview.
+ */
+export function describeOpportunityPreview(entry: TokenProxyOpportunity): ProxyReportLine[] {
+	const { potential } = entry;
+	const lines: ProxyReportLine[] = [
+		{ label: 'Kind', text: describeOpportunityKind(entry.kind) },
+		{ label: 'File', text: entry.path },
+		{
+			label: 'Request',
+			text: `${describeProxyRoute(entry.route)}, ${entry.requestKind}; ${entry.tool ?? 'unknown tool'}${entry.callId === null ? '' : `, call ${entry.callId}`}`,
+		},
+		{
+			label: 'Text as sent',
+			text: `sha ${entry.sourceHash}: the leading hex of the SHA-256 of the exact text the agent sent`,
+		},
+		{
+			label: 'Potential',
+			text: `${formatCount(potential.fullTokens)} to ${formatCount(potential.previewTokens)} tokens, so ${formatCount(potential.reducibleTokens)} tokens could be removed (an estimate at 4 characters per token). Nothing was removed.`,
+		},
+		{ label: 'Delivery', text: describeOpportunityDelivery(entry.delivery) },
+	];
+	if (entry.baseline !== null) {
+		lines.push({
+			label: 'Compared with',
+			text: `${entry.baseline.callId === null ? 'an earlier read' : `the read of call ${entry.baseline.callId}`} (sha ${entry.baseline.hash})${entry.baselineBasis === null ? '' : ', delivered whole in the same request'}`,
+		});
+	}
+	if (entry.parser !== null) {
+		lines.push({
+			label: 'Outline',
+			text: `parsed as ${entry.parser.name}${entry.parser.dialect === null ? '' : ` (${entry.parser.dialect})`}`,
+		});
+	}
+	if (entry.changes !== null) {
+		const { hunks, added, removed } = entry.changes;
+		lines.push({
+			label: 'Changes',
+			text: `${formatCountNoun(hunks, 'hunk')}, ${formatCountNoun(added, 'line')} added, ${formatCountNoun(removed, 'line')} removed`,
+		});
+	}
+	lines.push({
+		label: 'Preview text',
+		text: `${entry.cut ? `cut at a line break for display; the whole preview is ${formatCountNoun(entry.textChars, 'character')}` : formatCountNoun(entry.textChars, 'character')}${entry.redacted ? '; text shaped like a secret was replaced' : ''}`,
+	});
 	return lines;
 }

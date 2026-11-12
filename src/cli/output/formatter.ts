@@ -2,7 +2,6 @@
 // Provides beautiful, colored terminal output
 
 import {
-	formatCount,
 	formatCountNoun,
 	formatDurationDecimal,
 	formatRelativeTime,
@@ -55,25 +54,24 @@ import {
 } from '../../shared/local-models/work-search';
 import {
 	describeAddedLatency,
-	describeOpportunityReasons,
 	describeTokensSaved,
 	TOKEN_PROXY_ESTIMATE_NOTE,
 	TOKEN_PROXY_EVIDENCE_SEPARATION_NOTE,
 	TOKEN_PROXY_HOST,
-	TOKEN_PROXY_OBSERVATION_SKIP_LABELS,
 	TOKEN_PROXY_OPPORTUNITY_KIND_LABELS,
 	TOKEN_PROXY_OPPORTUNITY_NOTE,
 	type TokenProxyBlockDetail,
-	type TokenProxyObservationSkip,
 	type TokenProxyReadOpportunities,
 	type TokenProxyRecoveryObservations,
 	type TokenProxyReport,
 } from '../../shared/local-models/token-proxy';
 import {
+	describeOpportunityIdentity,
 	describeProviderUsage,
 	describeProviderUsageNote,
 	describeProxyEffectiveness,
 	describeProxyMode,
+	describeProxyOpportunities,
 	describeProxyRecovery,
 	describeProxyRoute,
 	describeProxyTrend,
@@ -1465,38 +1463,20 @@ export function formatTokenProxyReport(report: TokenProxyReport): string {
 	return lines.join('\n');
 }
 
-/** ` (partial-range 3, outside-workspace 5)`, or nothing. */
-function reasonSuffix(reasons: Record<string, number>): string {
-	const text = describeOpportunityReasons(reasons);
-	return text ? ` (${text})` : '';
-}
-
 /**
  * The read opportunities of `models proxy status`: what the proxy could have
  * shortened and did not. Potential only, so it is printed apart from the
- * realized totals above and never adds to them.
+ * realized totals above and never adds to them. The counts are worded by
+ * `describeProxyOpportunities()`, the sentences Settings shows.
  */
 export function formatTokenProxyOpportunities(opportunities: TokenProxyReadOpportunities): string[] {
-	const { coverage, reads, previews, outlines } = opportunities;
-	const skipped = (Object.keys(coverage.skipped) as TokenProxyObservationSkip[])
-		.filter((reason) => coverage.skipped[reason] > 0)
-		.map((reason) => `${coverage.skipped[reason]} ${TOKEN_PROXY_OBSERVATION_SKIP_LABELS[reason]}`);
 	const lines = [
 		'',
 		`${bold('Read opportunities')}  ${dim('observation only: none of this was applied')}`,
-		`  Since ${formatRelativeTime(opportunities.since)}: ${plural(coverage.observed, 'request')} examined, ${coverage.withReads} with a read among their newest results. Passthrough requests are not read.`,
-	];
-	if (skipped.length > 0) lines.push(`  Not examined: ${skipped.join('; ')}`);
-	if (coverage.incomplete > 0) {
-		lines.push(`  ${plural(coverage.incomplete, 'request')} hit a work bound; older reads went unexamined.`);
-	}
-	lines.push(
-		`  Newest reads: ${reads.examined} examined: ${reads.first} first, ${reads.identical} identical re-reads, ${reads.changed} changed re-reads, ${reads.unsupported} not comparable${reasonSuffix(reads.unsupportedByReason)}`,
-		`  Re-read previews: ${previews.unchanged} unchanged, ${previews.delta} delta, ${previews.unsupported} refused${reasonSuffix(previews.unsupportedByReason)}; potential reduction ${formatCount(previews.potentialTokens)} tokens`,
-		`  Source outlines: ${outlines.outlined} outlined, ${outlines.unsupported} refused${reasonSuffix(outlines.unsupportedByReason)}; potential reduction ${formatCount(outlines.potentialTokens)} tokens`,
+		...describeProxyOpportunities(opportunities).map((line) => `  ${line.label}: ${line.text}`),
 		dim(`  ${TOKEN_PROXY_OPPORTUNITY_NOTE}`),
-		dim(`  Not available: ${opportunities.identity.unavailable.join(', ')}. ${opportunities.identity.note}`)
-	);
+		dim(`  Not available: ${describeOpportunityIdentity(opportunities.identity)}`),
+	];
 	if (opportunities.recent.length > 0) {
 		lines.push('', bold('Recent previews'));
 		for (const entry of opportunities.recent) {

@@ -25,14 +25,29 @@ import {
 	type ProxyProviderCoverage,
 	type ProxyRequest,
 } from '../../shared/stats-types';
-import type {
-	TokenProxyRecoveryObservations,
-	TokenProxyRecoveryReadCounts,
-	TokenProxySkipReason,
+import {
+	TOKEN_PROXY_OPPORTUNITY_NOTE,
+	TOKEN_PROXY_UNAVAILABLE_IDENTITY,
+	type TokenProxyReadOpportunities,
+	type TokenProxyReport,
+	type TokenProxyRecoveryObservations,
+	type TokenProxyRecoveryReadCounts,
+	type TokenProxySkipReason,
 } from '../../shared/local-models/token-proxy';
 
 /** A row as the recorder takes it: everything but the generated id. */
 export type ProxyRow = Omit<ProxyRequest, 'id'>;
+
+/** An empty listener/usage report, shared by Gateway and Models inspection tests. */
+export function proxyReport(overrides: Partial<TokenProxyReport> = {}): TokenProxyReport {
+	return {
+		status: { port: null, running: false, agentIds: [], lastError: null, gatewayUrls: null },
+		agents: [],
+		usage: null,
+		recentCompressions: [],
+		...overrides,
+	};
+}
 
 /**
  * Block counts that hold every rule of the contract: 9 candidates are 3 below
@@ -292,6 +307,108 @@ export function recoveryObservations(
 		...total,
 		byCaller: { mcpRetrieveTool, otherReads },
 		saturated,
+	};
+}
+
+/**
+ * What the read-opportunity observer reports after an hour: 412 requests
+ * examined, 38 with a read among their newest results, and the reads, re-read
+ * previews and outlines it related (with the reasons it refused some), plus one
+ * unchanged re-read preview that was never applied. Consistent in the ways the
+ * contract demands: observation only, nothing realized, an estimate at 4
+ * characters per token. A fresh object each call, so a test may change it.
+ */
+export function readOpportunities(
+	overrides: Partial<TokenProxyReadOpportunities> = {}
+): TokenProxyReadOpportunities {
+	return {
+		version: 1,
+		mode: 'observation',
+		note: TOKEN_PROXY_OPPORTUNITY_NOTE,
+		realized: false,
+		tokenCountKind: 'character-estimate',
+		since: Date.now() - 3_600_000,
+		coverage: {
+			scope: 'process-lifetime',
+			attribution: 'newest-tool-results',
+			observed: 412,
+			withReads: 38,
+			incomplete: 0,
+			skipped: { busy: 2, 'too-large': 1, unreadable: 0, 'no-workspace': 0, failed: 0 },
+		},
+		identity: {
+			known: ['agent'],
+			unavailable: [...TOKEN_PROXY_UNAVAILABLE_IDENTITY],
+			note: 'The proxy knows an agent, not a tab.',
+		},
+		limits: {
+			bodyChars: 8388608,
+			readsPerRequest: 256,
+			previewPairs: 64,
+			outlineSources: 32,
+			recentPreviews: 25,
+			previewTextChars: 8192,
+		},
+		reads: {
+			examined: 41,
+			first: 20,
+			identical: 9,
+			changed: 4,
+			unsupported: 8,
+			unsupportedByReason: { 'partial-range': 3, 'outside-workspace': 5 },
+		},
+		previews: {
+			examined: 13,
+			unchanged: 9,
+			delta: 3,
+			unsupported: 1,
+			unsupportedByReason: { 'insufficient-reduction': 1 },
+			potentialChars: 16800,
+			potentialTokens: 4200,
+		},
+		outlines: {
+			examined: 13,
+			outlined: 11,
+			unsupported: 2,
+			unsupportedByReason: { 'parse-error': 2 },
+			potentialChars: 124000,
+			potentialTokens: 31000,
+		},
+		recent: [
+			{
+				kind: 'unchanged-read',
+				observedAt: Date.now() - 120_000,
+				agentId: 'agent-1',
+				route: 'anthropic',
+				requestKind: 'anthropic-messages',
+				tool: 'Read',
+				callId: 'toolu_02',
+				path: '/work/app/src/a.ts',
+				sourceHash: '3fa2c1d9e0b1',
+				baseline: { callId: 'toolu_01', hash: '3fa2c1d9e0b1' },
+				baselineBasis: 'same-request-delivered-whole',
+				delivery: 'whole',
+				potential: {
+					kind: 'potential-reduction',
+					realized: false,
+					basis: 'text-as-sent',
+					tokenCountKind: 'character-estimate',
+					fullChars: 4800,
+					fullTokens: 1200,
+					previewChars: 160,
+					previewTokens: 40,
+					reducibleChars: 4640,
+					reducibleTokens: 1160,
+				},
+				parser: null,
+				changes: null,
+				text: '[maestro-preview unchanged-read baseline=toolu_01 sha256=3fa2c1d9e0b1 lines=120]',
+				textChars: 80,
+				cut: false,
+				redacted: false,
+			},
+		],
+		...overrides,
 	};
 }
 

@@ -18,6 +18,10 @@ import {
 	TOKEN_PROXY_UNKNOWN_LABELS,
 } from '../../../shared/local-models/token-proxy';
 import {
+	describeOpportunityDelivery,
+	describeOpportunityIdentity,
+	describeOpportunityKind,
+	describeOpportunityPreview,
 	describeProviderUsage,
 	describeProviderUsageNote,
 	describeProxyAlgorithmCohort,
@@ -25,6 +29,7 @@ import {
 	describeProxyHandling,
 	describeProxyLatency,
 	describeProxyMode,
+	describeProxyOpportunities,
 	describeProxyRecovery,
 	describeProxyRoute,
 	describeProxyTrend,
@@ -33,6 +38,7 @@ import {
 	TOKEN_PROXY_PROVIDER_USAGE_NOTE,
 	TOKEN_PROXY_RECOVERY_HEADING,
 	TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE,
+	TOKEN_PROXY_TOTALS_ONLY_NOTE,
 	TOKEN_PROXY_TREND_NOTE,
 	type ProxyReportLine,
 } from '../../../shared/local-models/token-proxy-report';
@@ -46,6 +52,7 @@ import {
 import {
 	busyProxyEffectiveness,
 	emptyProxyEffectiveness,
+	readOpportunities,
 	recoveryObservations,
 } from '../../helpers/proxyTelemetryFixtures';
 
@@ -726,6 +733,227 @@ describe('describeProxyRecovery', () => {
 	});
 });
 
+describe('describeProxyOpportunities', () => {
+	it('says the coverage, then the reads, the re-read previews and the outlines, each with its refusals', () => {
+		const lines = describeProxyOpportunities(readOpportunities());
+
+		expect(lines.map((line) => line.label)).toEqual([
+			'Since 1h ago',
+			'Not examined',
+			'Newest reads',
+			'Re-read previews',
+			'Source outlines',
+		]);
+		expect(textOf(lines, 'Since 1h ago')).toBe(
+			'412 requests examined, 38 with a read among their newest results. Passthrough requests are not read.'
+		);
+		expect(textOf(lines, 'Not examined')).toBe(
+			'2 an earlier request was still being examined; 1 the body is past the examination limit'
+		);
+		expect(textOf(lines, 'Newest reads')).toBe(
+			'41 examined: 20 first, 9 identical re-reads, 4 changed re-reads, 8 not comparable (outside-workspace 5, partial-range 3)'
+		);
+		expect(textOf(lines, 'Re-read previews')).toBe(
+			'9 unchanged, 3 delta, 1 refused (insufficient-reduction 1); potential reduction 4,200 tokens'
+		);
+		expect(textOf(lines, 'Source outlines')).toBe(
+			'11 outlined, 2 refused (parse-error 2); potential reduction 31,000 tokens'
+		);
+	});
+
+	it('groups the digits of a long-running count and says one request in the singular', () => {
+		const base = readOpportunities();
+		const lines = describeProxyOpportunities({
+			...base,
+			coverage: { ...base.coverage, observed: 1, withReads: 1_204 },
+			previews: { ...base.previews, potentialTokens: 1_250_000 },
+		});
+
+		expect(textOf(lines, 'Since 1h ago')).toContain('1 request examined, 1,204 with a read');
+		expect(textOf(lines, 'Re-read previews')).toContain('potential reduction 1,250,000 tokens');
+	});
+
+	it('says a work bound only when a request hit one', () => {
+		const base = readOpportunities();
+		const none = describeProxyOpportunities(base);
+		const hit = describeProxyOpportunities({
+			...base,
+			coverage: { ...base.coverage, incomplete: 2 },
+		});
+
+		expect(none.some((line) => line.label === 'Work bound')).toBe(false);
+		expect(textOf(hit, 'Work bound')).toBe(
+			'2 requests hit a work bound; older reads went unexamined.'
+		);
+	});
+
+	it('names a skip reason a newer build recorded as stored, and not as a missing label', () => {
+		const base = readOpportunities();
+		const lines = describeProxyOpportunities({
+			...base,
+			coverage: {
+				...base.coverage,
+				skipped: { ...base.coverage.skipped, 'newer-reason': 4, constructor: 1 } as never,
+			},
+		});
+
+		const text = textOf(lines, 'Not examined');
+		expect(text).toContain('4 newer-reason');
+		expect(text).toContain('1 constructor');
+		expect(text).not.toMatch(/undefined|function/);
+	});
+
+	it('says no coverage as counts, with no empty parentheses and no row invented', () => {
+		const base = readOpportunities();
+		const lines = describeProxyOpportunities({
+			...base,
+			coverage: {
+				...base.coverage,
+				observed: 0,
+				withReads: 0,
+				skipped: { busy: 0, 'too-large': 0, unreadable: 0, 'no-workspace': 0, failed: 0 },
+			},
+			reads: {
+				examined: 0,
+				first: 0,
+				identical: 0,
+				changed: 0,
+				unsupported: 0,
+				unsupportedByReason: {},
+			},
+		});
+
+		expect(textOf(lines, 'Since 1h ago')).toContain('0 requests examined, 0 with a read');
+		expect(lines.some((line) => line.label === 'Not examined')).toBe(false);
+		expect(textOf(lines, 'Newest reads')).toBe(
+			'0 examined: 0 first, 0 identical re-reads, 0 changed re-reads, 0 not comparable'
+		);
+	});
+
+	it('says what the proxy cannot see, and why', () => {
+		expect(describeOpportunityIdentity(readOpportunities().identity)).toBe(
+			'tab, native-session, subagent, window. The proxy knows an agent, not a tab.'
+		);
+	});
+});
+
+describe('describeOpportunityPreview', () => {
+	const entry = () => readOpportunities().recent[0];
+
+	it('says an unchanged re-read: what it compares with, the potential and what the model was shown', () => {
+		const lines = describeOpportunityPreview(entry());
+
+		expect(lines.map((line) => line.label)).toEqual([
+			'Kind',
+			'File',
+			'Request',
+			'Text as sent',
+			'Potential',
+			'Delivery',
+			'Compared with',
+			'Preview text',
+		]);
+		expect(textOf(lines, 'Kind')).toBe('Unchanged re-read');
+		expect(textOf(lines, 'File')).toBe('/work/app/src/a.ts');
+		expect(textOf(lines, 'Request')).toBe('Claude Code, anthropic-messages; Read, call toolu_02');
+		expect(textOf(lines, 'Potential')).toBe(
+			'1,200 to 40 tokens, so 1,160 tokens could be removed (an estimate at 4 characters per token). Nothing was removed.'
+		);
+		expect(textOf(lines, 'Delivery')).toBe('The result went to the provider unchanged.');
+		expect(textOf(lines, 'Compared with')).toBe(
+			'the read of call toolu_01 (sha 3fa2c1d9e0b1), delivered whole in the same request'
+		);
+		expect(textOf(lines, 'Preview text')).toBe('80 characters');
+	});
+
+	it('says a changed re-read by its hunks and an outline by its grammar, and neither compares with a read it lacks', () => {
+		const delta = describeOpportunityPreview({
+			...entry(),
+			kind: 'read-delta',
+			changes: { hunks: 2, added: 5, removed: 1 },
+		});
+		const outline = describeOpportunityPreview({
+			...entry(),
+			kind: 'code-outline',
+			baseline: null,
+			baselineBasis: null,
+			parser: { name: 'typescript', dialect: 'tsx' },
+		});
+
+		expect(textOf(delta, 'Kind')).toBe('Changed re-read');
+		expect(textOf(delta, 'Changes')).toBe('2 hunks, 5 lines added, 1 line removed');
+		expect(textOf(outline, 'Kind')).toBe('Source outline');
+		expect(textOf(outline, 'Outline')).toBe('parsed as typescript (tsx)');
+		expect(outline.some((line) => line.label === 'Compared with')).toBe(false);
+		expect(
+			textOf(
+				describeOpportunityPreview({ ...entry(), parser: { name: 'python', dialect: null } }),
+				'Outline'
+			)
+		).toBe('parsed as python');
+	});
+
+	it('says how the text on screen differs from the preview', () => {
+		const lines = describeOpportunityPreview({
+			...entry(),
+			cut: true,
+			redacted: true,
+			textChars: 20_000,
+		});
+
+		expect(textOf(lines, 'Preview text')).toBe(
+			'cut at a line break for display; the whole preview is 20,000 characters; text shaped like a secret was replaced'
+		);
+	});
+
+	it('keeps a route, a kind and a tool this build does not know as they were stored', () => {
+		const lines = describeOpportunityPreview({
+			...entry(),
+			kind: 'future-kind' as never,
+			route: 'zeta',
+			tool: null,
+			callId: null,
+			baseline: { callId: null, hash: 'abc123' },
+		});
+
+		expect(textOf(lines, 'Kind')).toBe('future-kind');
+		expect(textOf(lines, 'Request')).toBe('zeta, anthropic-messages; unknown tool');
+		expect(textOf(lines, 'Compared with')).toBe(
+			'an earlier read (sha abc123), delivered whole in the same request'
+		);
+	});
+
+	it('says that a shortened or unlined result overlaps the reduction already counted', () => {
+		expect(describeOpportunityDelivery('replaced')).toContain(
+			'overlaps the reduction already counted'
+		);
+		expect(describeOpportunityDelivery('unproven')).toContain('could not be lined up');
+		expect(describeOpportunityDelivery('unproven')).toContain('may overlap');
+		// A delivery a newer build wrote, and a name that is on every object, stay as stored.
+		expect(describeOpportunityDelivery('future' as never)).toBe('future');
+		expect(describeOpportunityDelivery('constructor' as never)).toBe('constructor');
+		expect(describeOpportunityKind('toString' as never)).toBe('toString');
+	});
+});
+
+describe('describeProxyEffectiveness for a range the proxy only partly counted', () => {
+	it('says the share of read requests that carry counts, and unknown when none does', () => {
+		const partial = busyProxyEffectiveness();
+		const none = busyProxyEffectiveness();
+		none.blocks = { coverage: { scope: 'range', counted: 0, of: 100 }, counts: null };
+
+		expect(textOf(describeProxyEffectiveness(partial), 'Blocks')).toContain(
+			'90 of 100 read requests counted'
+		);
+		expect(textOf(describeProxyEffectiveness(none), 'Blocks')).toBe(
+			`${TOKEN_PROXY_UNKNOWN_LABELS['not-recorded']}; none of 100 read requests carries counts`
+		);
+		expect(textOf(describeProxyEffectiveness(emptyProxyEffectiveness()), 'Blocks')).toBe(
+			TOKEN_PROXY_UNKNOWN_LABELS['not-read']
+		);
+	});
+});
+
 describe('every sentence the report says', () => {
 	const all = (): string[] => {
 		const effectiveness = busyProxyEffectiveness();
@@ -739,6 +967,13 @@ describe('every sentence the report says', () => {
 					recoveryObservations({ mcpRetrieveTool: { invocations: 1, failedReads: 1 } }, true)
 				)
 			),
+			...everyString(describeProxyOpportunities(readOpportunities())),
+			...everyString(describeOpportunityPreview(readOpportunities().recent[0])),
+			describeOpportunityIdentity(readOpportunities().identity),
+			describeOpportunityDelivery('whole'),
+			describeOpportunityDelivery('replaced'),
+			describeOpportunityDelivery('unproven'),
+			TOKEN_PROXY_TOTALS_ONLY_NOTE,
 			describeProxyMode(null),
 			describeProxyRoute('anthropic'),
 			describeProxyRoute(''),

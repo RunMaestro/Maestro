@@ -3251,6 +3251,13 @@ answers `null` for a block that was kept or is gone. The Gateway section draws t
 Git Diff viewer uses. The report is read on mount, on Refresh and after a mode change; nothing is
 pushed, because the proxy handles a request every few seconds while an agent works.
 
+The card reads nothing else. Its Diagnostics (the same lines `models proxy status` prints), the
+recovery counts and the read opportunities (`<TokenProxyObservations>`) are drawn from the report it
+already holds, each disclosure titled with its scope (the last 30 days, or since the app started),
+so opening one makes no read and Refresh is the only way a figure changes. An opened row of "Recent
+compressions" names its cache key and, when the original is gone, shows the replacement text where
+the diff would be.
+
 ### Read opportunities
 
 The report also says what the proxy could have shortened and did not: files read again, and source
@@ -3295,8 +3302,8 @@ flowchart LR
 - **Text leaves the process redacted.** A preview holds lines of the file. It goes through
   `redactSecrets()` and is cut at a line break before it is kept, so the report that reaches Settings
   or the CLI never carries the raw text.
-- **Nothing is persisted.** The tallies restart with the app. Stats rows, a migration and the Gateway
-  panel belong to phases 06 and 07.
+- **Nothing is persisted.** The tallies restart with the app. Stats rows and a migration are phase 06;
+  the Gateway card and the Models record draw these tallies with `<TokenProxyObservations>`.
 
 ### Lifecycle
 
