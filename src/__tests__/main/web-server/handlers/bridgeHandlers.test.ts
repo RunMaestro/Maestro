@@ -951,6 +951,12 @@ describe('notification history over the bridge', () => {
 		}
 		expect(isRemoteEventAllowed('notification:activateAction')).toBe(false);
 	});
+
+	it("keeps the host's Cue visibility flag out of a browser's reach", () => {
+		// One host-wide flag: a phone locking would pause the host's scanners.
+		expect(isRemoteMethodAllowed('cue:setActive')).toBe(false);
+		expect(isRemoteMethodAllowed('cue:getStatus')).toBe(true);
+	});
 });
 
 /**

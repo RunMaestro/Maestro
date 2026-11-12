@@ -34,10 +34,11 @@ import {
 	writeClientViewState,
 } from '../renderer/utils/activeSessionPersistence';
 
-// v2: earlier builds stored alerts for refused channels and lost autosaves,
-// which this build no longer raises. A phone tab still holding one would show
-// it again on every reload until dismissed, so the old key is not read.
-const UNCERTAIN_SUBMISSION_KEY = 'maestro:web-desktop:uncertain-submission:v2';
+// v3: earlier builds stored alerts for refused channels, lost autosaves, and
+// background traffic (cue:setActive on every phone lock), which this build no
+// longer raises. A phone tab still holding one would show it again on every
+// reload until dismissed, so the old keys are not read.
+const UNCERTAIN_SUBMISSION_KEY = 'maestro:web-desktop:uncertain-submission:v3';
 
 // IPC queries follow the preload getter/list/read naming convention. The
 // non-prefixed query methods below are explicit exceptions, not error filters.
@@ -82,13 +83,84 @@ const READ_ONLY_CHANNELS = new Set([
 	'cue:validateYaml',
 	'cue:loadPipelineLayout',
 	'dataview:status',
+	'maestroRun:readyPath',
 ]);
 
+/**
+ * Traffic the renderer sends on its own, never because the user submitted
+ * something: diagnostics, the User Journey log, visibility flips, watcher
+ * (un)registration on mount, terminal resizes on layout, state echoes, and
+ * telemetry. Each is idempotent or best-effort, so it is not a submission:
+ * it never raises a banner, never marks persistence uncertain, and is not
+ * held back while host state is restored. A phone suspends the socket on
+ * every lock and app switch, so any of these in flight at that moment put a
+ * "Submission uncertainty" banner up for work the user never did.
+ */
+const BACKGROUND_CHANNELS = new Set([
+	'logger:log',
+	'journey:append',
+	'cue:setActive',
+	'process:resize',
+	'autorun:watchFolder',
+	'autorun:unwatchFolder',
+	'autorun:watchStatus',
+	'autorun:unwatchStatus',
+	'documentGraph:watchFolder',
+	'documentGraph:unwatchFolder',
+	'git:watchWorktreeDirectory',
+	'git:unwatchWorktreeDirectory',
+	'web:broadcastSessionState',
+	'web:broadcastTabsChange',
+	'claude:usage:refresh-all',
+	'codex:usage:refresh-all',
+	'stats:record-image-annotation',
+	'stats:record-query',
+	'stats:record-resilience',
+	'stats:record-session-closed',
+	'stats:record-session-created',
+	'stats:record-shortcut-usage',
+	'stats:record-task',
+	'stats:record-wizard-run',
+]);
+
+/**
+ * Writes the renderer makes on its own that are NOT idempotent or that run
+ * long, so they keep submission handling (held back during a restore, the
+ * longer mutation timeout). The user never submitted them, so a lost or
+ * refused acknowledgement is not news to them and raises no banner.
+ */
+const UNPROMPTED_SUBMISSION_CHANNELS = new Set([
+	'tabNaming:generateTabName',
+	'claude:registerSessionOrigin',
+	'stats:start-autorun',
+	'stats:end-autorun',
+]);
+
+/**
+ * Settings the renderer writes from timers and counters (hands-on time on
+ * every visibility change, usage peaks, achievement stats). A user toggling a
+ * setting still gets the banner; these do not.
+ */
+const UNPROMPTED_SETTING_KEYS = new Set([
+	'totalActiveTimeMs',
+	'usageStats',
+	'autoRunStats',
+	'onboardingStats',
+	'keyboardMasteryStats',
+	'delegationMilestone',
+]);
+
+function isUnpromptedInvoke(channel: string, args: readonly unknown[]): boolean {
+	if (UNPROMPTED_SUBMISSION_CHANNELS.has(channel)) return true;
+	return (
+		channel === 'settings:set' &&
+		typeof args[0] === 'string' &&
+		UNPROMPTED_SETTING_KEYS.has(args[0])
+	);
+}
+
 function isSubmissionChannel(channel: string): boolean {
-	// Diagnostics are not user work and must never create submission alerts.
-	// Nor is the User Journey log, which records in the background on every
-	// file open and page load.
-	if (channel === 'logger:log' || channel === 'journey:append') return false;
+	if (BACKGROUND_CHANNELS.has(channel)) return false;
 	const operation = channel.slice(channel.indexOf(':') + 1);
 	return (
 		!READ_ONLY_CHANNELS.has(channel) &&
@@ -165,10 +237,25 @@ function isPersistenceChannel(channel: string): boolean {
  * Whether a lost acknowledgement needs the user's attention. Autosaves do not:
  * the bridge marks persistence uncertain and restores host state on reconnect,
  * and the user never submitted them. A phone suspends the socket on every lock
- * and app switch, so alerting on them put the banner up constantly.
+ * and app switch, so alerting on them put the banner up constantly. Nor do
+ * writes the renderer made on its own (`isUnpromptedInvoke`).
  */
-function alertsOnUncertainty(channel: string): boolean {
-	return isSubmissionChannel(channel) && !isPersistenceChannel(channel);
+function alertsOnUncertainty(channel: string, args: readonly unknown[]): boolean {
+	return (
+		isSubmissionChannel(channel) &&
+		!isPersistenceChannel(channel) &&
+		!isUnpromptedInvoke(channel, args)
+	);
+}
+/** Whether the host refusing this request is news to the user. */
+function alertsOnRejection(channel: string, args: readonly unknown[], error: string): boolean {
+	// A channel this interface does not offer never ran on the host; there is
+	// no submission to warn about.
+	return (
+		isSubmissionChannel(channel) &&
+		!isUnpromptedInvoke(channel, args) &&
+		!isUnsupportedInvokeError(error)
+	);
 }
 function requestTimeoutMs(channel: string): number {
 	// Repository transfers and recursive filesystem reads legitimately outlast ordinary UI requests.
@@ -180,6 +267,8 @@ interface PendingInvoke {
 	resolve: (value: unknown) => void;
 	reject: (reason: unknown) => void;
 	channel: string;
+	/** The invoke's arguments, kept so banner rules can read a settings key. */
+	args: readonly unknown[];
 	timer: ReturnType<typeof setTimeout>;
 	recoveryController?: AbortController;
 }
@@ -429,9 +518,7 @@ class BridgeClient {
 				if (msg.ok) pending.resolve(msg.result);
 				else {
 					const error = String(msg.error ?? 'bridge error');
-					// A channel this interface does not offer never ran on the host. The
-					// caller gets the rejection; there is no submission to warn about.
-					if (isSubmissionChannel(pending.channel) && !isUnsupportedInvokeError(error))
+					if (alertsOnRejection(pending.channel, pending.args, error))
 						showSubmissionNotice(
 							'Submission rejected for ' +
 								pending.channel +
@@ -490,7 +577,7 @@ class BridgeClient {
 					pending.channel +
 					'. The host may have accepted it. Check host state before submitting again; it was not automatically retried.'
 				: reason + ' before response to ' + pending.channel;
-			if (alertsOnUncertainty(pending.channel)) showSubmissionNotice(message);
+			if (alertsOnUncertainty(pending.channel, pending.args)) showSubmissionNotice(message);
 			if (isPersistenceChannel(pending.channel)) this.uncertainPersistence = true;
 			pending.reject(
 				new BridgeTransportError(
@@ -845,7 +932,7 @@ class BridgeClient {
 						channel +
 						' timed out before acknowledgement. Check host state before submitting again; it was not automatically retried.'
 					: 'Bridge request timed out: ' + channel;
-				if (alertsOnUncertainty(channel)) showSubmissionNotice(message);
+				if (alertsOnUncertainty(channel, args)) showSubmissionNotice(message);
 				reject(
 					new BridgeTransportError(
 						message,
@@ -863,6 +950,7 @@ class BridgeClient {
 				resolve,
 				reject,
 				channel,
+				args,
 				timer,
 				recoveryController: this.invalidState ? this.recoveryController : undefined,
 			});
@@ -871,7 +959,7 @@ class BridgeClient {
 			} catch (error) {
 				this.pending.delete(requestId);
 				clearTimeout(timer);
-				if (alertsOnUncertainty(channel))
+				if (alertsOnUncertainty(channel, args))
 					showSubmissionNotice(
 						'Submission uncertainty: transport failed while sending ' +
 							channel +

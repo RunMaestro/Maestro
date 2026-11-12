@@ -700,13 +700,13 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		expect(
 			next.sent.map((data) => JSON.parse(data)).some((packet) => packet.channel === 'process:spawn')
 		).toBe(false);
-		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v2')).toContain(
+		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v3')).toContain(
 			'process:spawn'
 		);
 	});
 	it('preserves capability-read rejection without showing a submission banner while mutation rejection remains visible', async () => {
 		document.getElementById('maestro-submission-notice')?.remove();
-		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v2');
+		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
 		const socket = InertWebSocket.instances.at(-1)!;
 		socket.readyState = InertWebSocket.OPEN;
 		socket.emit('open');
@@ -726,7 +726,7 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		);
 		await queryRejected;
 		expect(document.getElementById('maestro-submission-notice')).toBeNull();
-		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v2')).toBeNull();
+		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v3')).toBeNull();
 		const mutation = ipcRenderer.invoke('agentRun:event', { runId: 'rejected', type: 'note' });
 		const mutationRejected = expect(mutation).rejects.toThrow('Permission denied');
 		await Promise.resolve();
@@ -748,7 +748,7 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 
 	it('rejects a channel the web interface does not offer without a submission banner', async () => {
 		document.getElementById('maestro-submission-notice')?.remove();
-		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v2');
+		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
 		const socket = InertWebSocket.instances.at(-1)!;
 		socket.readyState = InertWebSocket.OPEN;
 		socket.emit('open');
@@ -764,12 +764,12 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		);
 		await rejected;
 		expect(document.getElementById('maestro-submission-notice')).toBeNull();
-		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v2')).toBeNull();
+		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v3')).toBeNull();
 	});
 
 	it('restores state after a lost autosave acknowledgement without a submission banner', async () => {
 		document.getElementById('maestro-submission-notice')?.remove();
-		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v2');
+		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
 		const socket = InertWebSocket.instances.at(-1)!;
 		socket.readyState = InertWebSocket.OPEN;
 		socket.emit('open');
@@ -780,7 +780,7 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		const next = reconnect(socket);
 		await uncertain;
 		expect(document.getElementById('maestro-submission-notice')).toBeNull();
-		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v2')).toBeNull();
+		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v3')).toBeNull();
 		next.readyState = InertWebSocket.OPEN;
 		next.emit('open');
 		next.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
@@ -804,8 +804,17 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		await import('../../web-desktop/electron-shim');
 		expect(document.getElementById('maestro-submission-notice')).toBeNull();
 
+		// v2 builds stored a cue:setActive banner on every phone lock.
 		sessionStorage.setItem(
 			'maestro:web-desktop:uncertain-submission:v2',
+			'Submission uncertainty: connection lost before acknowledgement of cue:setActive.'
+		);
+		vi.resetModules();
+		await import('../../web-desktop/electron-shim');
+		expect(document.getElementById('maestro-submission-notice')).toBeNull();
+
+		sessionStorage.setItem(
+			'maestro:web-desktop:uncertain-submission:v3',
 			'Submission uncertainty: connection lost before acknowledgement of process:spawn.'
 		);
 		vi.resetModules();
@@ -816,11 +825,85 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		document.getElementById('maestro-submission-notice')?.remove();
 		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission');
 		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v2');
+		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
+	});
+
+	it('raises no banner when background traffic loses its acknowledgement to a phone lock', async () => {
+		document.getElementById('maestro-submission-notice')?.remove();
+		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
+		const socket = InertWebSocket.instances.at(-1)!;
+		socket.readyState = InertWebSocket.OPEN;
+		socket.emit('open');
+		socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		// Fired by the renderer on visibility, mount, layout, timers, and counters.
+		const background = [
+			ipcRenderer.invoke('cue:setActive', false),
+			ipcRenderer.invoke('process:resize', 'agent-1', 80, 24),
+			ipcRenderer.invoke('autorun:watchFolder', '/docs'),
+			ipcRenderer.invoke('stats:record-shortcut-usage', 'newTab'),
+			ipcRenderer.invoke('tabNaming:generateTabName', { userMessage: 'hi' }),
+			ipcRenderer.invoke('settings:set', 'totalActiveTimeMs', 1234),
+		].map((call) => call.catch((error: unknown) => error));
+		await Promise.resolve();
+		const next = reconnect(socket);
+		const errors = await Promise.all(background);
+		expect(errors.every((error) => error instanceof Error)).toBe(true);
+		expect(document.getElementById('maestro-submission-notice')).toBeNull();
+		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v3')).toBeNull();
+		next.readyState = InertWebSocket.OPEN;
+		next.emit('open');
+		next.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		await Promise.resolve();
+		// None of them touched persistence, so the resume is trusted as-is.
+		expect((window as any).__MAESTRO_BRIDGE_STATE__).toBe('connected');
+	});
+
+	it('still raises the banner for a setting the user changed', async () => {
+		document.getElementById('maestro-submission-notice')?.remove();
+		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
+		const socket = InertWebSocket.instances.at(-1)!;
+		socket.readyState = InertWebSocket.OPEN;
+		socket.emit('open');
+		socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		const toggle = ipcRenderer.invoke('settings:set', 'fontSize', 16);
+		const uncertain = expect(toggle).rejects.toThrow('Submission uncertainty');
+		await Promise.resolve();
+		reconnect(socket);
+		await uncertain;
+		expect(document.getElementById('maestro-submission-notice')?.textContent).toContain(
+			'settings:set'
+		);
+		document.getElementById('maestro-submission-notice')?.remove();
+		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
+	});
+
+	it('raises no rejection banner for a write the renderer made on its own', async () => {
+		document.getElementById('maestro-submission-notice')?.remove();
+		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
+		const socket = InertWebSocket.instances.at(-1)!;
+		socket.readyState = InertWebSocket.OPEN;
+		socket.emit('open');
+		socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		const call = ipcRenderer.invoke('settings:set', 'usageStats', { maxAgents: 3 });
+		const rejected = expect(call).rejects.toThrow('Permission denied');
+		await Promise.resolve();
+		const request = JSON.parse(socket.sent.at(-1)!);
+		socket.emit(
+			'message',
+			frame({
+				type: 'bridge.response',
+				requestId: request.requestId,
+				ok: false,
+				error: 'Permission denied',
+			})
+		);
+		await rejected;
+		expect(document.getElementById('maestro-submission-notice')).toBeNull();
 	});
 
 	it('rejects disconnected reads without claiming a submission was lost and without replaying them', async () => {
 		document.getElementById('maestro-submission-notice')?.remove();
-		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v2');
+		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
 		const socket = InertWebSocket.instances.at(-1)!;
 		socket.readyState = InertWebSocket.OPEN;
 		socket.emit('open');
@@ -830,7 +913,7 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		const next = reconnect(socket);
 		await queryRejected;
 		expect(document.getElementById('maestro-submission-notice')).toBeNull();
-		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v2')).toBeNull();
+		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v3')).toBeNull();
 		await expect(ipcRenderer.invoke('plugins:contributions')).rejects.toThrow(/reconnect/i);
 		expect(document.getElementById('maestro-submission-notice')).toBeNull();
 		next.readyState = InertWebSocket.OPEN;
@@ -842,7 +925,7 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 	});
 	it('records disconnected diagnostics locally without rejection, replay, or a submission warning', async () => {
 		document.getElementById('maestro-submission-notice')?.remove();
-		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v2');
+		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission:v3');
 		const socket = InertWebSocket.instances.at(-1)!;
 		socket.readyState = InertWebSocket.OPEN;
 		socket.emit('open');
@@ -857,7 +940,7 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 				true
 			);
 			expect(document.getElementById('maestro-submission-notice')).toBeNull();
-			expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v2')).toBeNull();
+			expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission:v3')).toBeNull();
 			next.readyState = InertWebSocket.OPEN;
 			next.emit('open');
 			next.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
