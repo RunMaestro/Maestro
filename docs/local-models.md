@@ -73,6 +73,8 @@ A text model is listed once. Its other roles are badges on its row: **Judge** fo
 | Housekeeping    | Qwen3.8 27B (Q4_K_M)              | 17.7 GB  | Hard reasoning and coding                                                 |
 | Speech          | Parakeet TDT 0.6B (English)       | 630.7 MB | Dictated English: names, casing and punctuation                           |
 | Speech          | Whisper Base (English)            | 198.8 MB | Plain English dictation on modest hardware                                |
+| Speech          | Whisper Base (German / English)   | 198.9 MB | Explicit German and English transcription                                 |
+| Speech          | Whisper Small (German / English)  | 561.2 MB | A larger alternative for German and English dictation                     |
 | Speech          | Kokoro 82M                        | 311.0 MB | Reading replies and notices aloud                                         |
 | Speech          | openWakeWord Base                 | 2.3 MB   | Hearing the wake and stop words with little CPU                           |
 | Speech          | Wake phrase: "Hey Jarvis"         | 1.2 MB   | Hearing "hey jarvis" to start a hands-free session                        |
@@ -201,7 +203,7 @@ The picker only offers sources that can do the job:
 - **Off**: the feature does not use a model.
 - **Utility source**: inherit the shared source on **System Two**, which can be a provider, an installed text model, or an endpoint. Each task can override it. The default keeps using each session's provider. The General tab keeps only the switch for automatic tab naming, with a link to System Two for the model choice.
 - **An installed model** of the kind the task needs.
-- **A model on an enabled endpoint**, for tasks an endpoint can serve (text generation and embeddings).
+- **A model on an enabled endpoint**, for tasks an endpoint can serve (text generation, embeddings, and speech-to-text).
 - **System One**, for a task that asks typed questions, while an [engine](#system-one-engines) is chosen. See [System One](#system-one).
 
 The readiness line shows a green **Ready**, or names what is wrong and offers the fix: **Download** or **Resume** for a missing model, **Enable** for a switched-off endpoint, or **Check again** when a server did not answer. Some fixes are outside Maestro (for example, starting Ollama), and the line tells you what to do.
@@ -242,22 +244,94 @@ Once the task is ready, two search boxes gain a **Semantic** toggle (a sparkle i
 
 ### Dictation
 
-Dictation types what you say into a text box. It is off until you assign the **Dictation** task a speech-to-text model (a local model such as Parakeet, or an endpoint that offers `/v1/audio/transcriptions`).
+Dictation types what you say into a text box. It is off until you assign the **Dictation** task a speech-to-text source on **Settings -> Models -> System One**: a local model, or a model on an enabled endpoint that offers `/v1/audio/transcriptions`. Dictation is part of Local Models, not an Encore Feature, so it works with A Cappella switched off.
 
-**Dictation vocabulary correction** is a separate, optional text generation task, off by default. Assign a model or endpoint to correct misheard names against agent names, tab titles, and custom voice vocabulary. It also applies to A Cappella transcripts. Only validated dictionary replacements are accepted; other words stay unchanged. A failed, ambiguous, or timed-out correction keeps the recognizer's original text. Recognition hints and correction use their selected sources, so an assigned endpoint can receive the transcript and vocabulary.
+Download a local model in **Settings -> Models -> Library**, under **Speech**:
 
-Once the task is ready, a small microphone appears in the AI composer, the group chat composer, the file editor, and the Auto Run editor. There are two ways to use it:
+| Model                            | Languages       | Good at                                                                                     |
+| -------------------------------- | --------------- | ------------------------------------------------------------------------------------------- |
+| Parakeet TDT 0.6B (English)      | English         | Dictated English: names, casing and punctuation, quickly, on the CPU                        |
+| Whisper Base (English)           | English         | Plain English dictation on modest hardware                                                  |
+| Whisper Base (German / English)  | German, English | Explicit German and English transcription                                                   |
+| Whisper Small (German / English) | German, English | A larger alternative to Whisper Base. It uses more memory and can take longer to transcribe |
+
+When the Dictation row points at a German / English model, a **Transcription language (never translation)** toggle appears under it, with **Deutsch** and **English** (the default). The model writes down what you said in that language. It never translates. The toggle is not shown for an endpoint.
+
+From the command line:
+
+```bash
+maestro-cli models install whisper-small                                 # download a speech model
+maestro-cli models assign dictation local:parakeet-tdt-0.6b-v2           # dictate on a local model
+maestro-cli models assign dictation 'local:whisper-small?language=de'    # German; quote it, the shell reads ? as a wildcard
+maestro-cli models assign dictation endpoint:<endpoint>:<model>          # dictate on an endpoint
+maestro-cli models assign dictation off
+maestro-cli models status dictation                                      # would it run, and if not, why and what to do
+```
+
+A language the model does not have is refused, for example `Parakeet TDT 0.6B (English) does not support transcription language "de".`
+
+#### Using it
+
+Once the task is ready, a small microphone appears in the AI composer (not in terminal mode), the group chat composer, and the bottom corner of every markdown editor you can type in: the file editor, the Auto Run editor, the memory viewer, and the prompt editors. While the task is off, no microphone is drawn. There are two ways to use it:
 
 - **Tap** the microphone to start, speak, and tap it again to stop.
 - **Hold** the microphone down while you speak, and release it when you are done.
 
-The words land where the caret is, replacing any selected text. A pill at the bottom of the window shows that a microphone is recording, with **Stop** and a button that discards the recording.
+How long a press must last to count as a hold is the A Cappella **Tap vs hold** setting (300 ms by default). That slider is shown only while A Cappella is on. With A Cappella off, change it from the command line: `maestro-cli settings set acappella.controls.holdThresholdMs 400`.
 
-You can also dictate from the keyboard. Open **Settings**, then **Shortcuts**, and give **Dictate into Text Box** a chord (it ships with none). The chord works the same way, tap or hold, and it dictates into whichever text box holds the caret, including text boxes that have no microphone button of their own.
+The words land where the caret is, replacing any selected text, with a space added where one is needed. They land in the box you started in, even if you click somewhere else while you speak. If that box is gone by the time the words arrive, a toast titled **Dictation: the text box is gone** shows what you said so you can copy it.
+
+A pill at the bottom of the window shows what dictation is doing: **Opening the microphone...**, **Dictating**, then **Transcribing...**. While it records, the pill has a **Stop** button. The X button beside it (**Discard this dictation**) throws the recording away. Only one dictation records at a time; while one is recording, the other microphones say **Dictation is recording into another text box**. If the recording held no speech, Maestro flashes **No speech heard**.
+
+You can also dictate from the keyboard. Open **Settings**, then **Shortcuts**, and give **Dictate into Text Box** a chord (it ships with none). The chord works the same way, tap or hold, and it dictates into whichever text box holds the caret, including text boxes that have no microphone button of their own. It never types into a terminal. If no text box holds the caret, Maestro flashes **Nowhere to dictate** and **Click into a text box first.**
 
 Dictation is not a voice session. Nothing is sent to an agent, nothing is spoken back, and the text is not submitted for you: it is typed into the box and you send it when you are ready. In the AI composer, dictated text never changes the command mode, so a sentence cannot become a shell command by accident.
 
-If the microphone is dimmed, its tooltip says why (the model is not downloaded, the endpoint is not reachable) and what to do. Dictation does not run on a different source instead. The first time you dictate, your operating system asks for microphone access; if access is denied, Maestro says so and offers to open the system setting. A recording stops by itself after 5 minutes and keeps what it captured. From the web interface, dictation records on the microphone of the device you are using (your browser asks for access the first time) and the computer running Maestro transcribes it with the same assigned model. A browser opens its microphone only over HTTPS, so over a plain `http://` address the microphone stays dimmed and says so: open Maestro through Remote Control instead. Dictation also cannot start while an A Cappella voice session is open, since speech is already going to that session.
+Dictation records through the microphone you picked for A Cappella (**Voice setup**, then **Microphone**), so there is one microphone setting, not two. Until you pick one there, it uses the system default. The picker is shown only while A Cappella is on.
+
+#### Vocabulary
+
+Dictation passes a vocabulary to the recognizer as hints: the current agent, every agent name, every tab title, the word "Maestro", and your custom voice terms. Custom terms have no field in Settings; add them from the command line, for example `maestro-cli settings set acappella.providers.vocabulary '["Kubernetes","Postgres"]'`.
+
+**Dictation vocabulary correction** is a separate, optional text generation task on the same tab, off by default. Assign a model or endpoint to correct misheard names against that vocabulary. It also applies to A Cappella transcripts. Only validated dictionary replacements are accepted: at most four whole words, each replaced by an exact vocabulary term that sounds close to it, and never a number. Other words stay unchanged. A failed, ambiguous, or timed-out correction (it gets 1.5 seconds) keeps the recognizer's original text. Recognition hints and correction use their selected sources, so an assigned endpoint can receive the transcript and vocabulary.
+
+```bash
+maestro-cli models assign dictation-cleanup local:<model-id>
+maestro-cli models assign dictation-cleanup off
+```
+
+#### Limits and refusals
+
+A recording stops by itself after 5 minutes and keeps what it captured. A yellow toast titled **Dictation stopped early** says so. The same toast appears when the microphone stops while you speak: what was said up to then is kept and transcribed.
+
+Dictation checks its model before it opens the microphone. If something is wrong, the microphone is dimmed and its tooltip starts with **Dictation is unavailable:** and names the problem and the fix, for example a model that is not downloaded or an endpoint that is not reachable. Pressing a dimmed microphone checks again. Dictation does not run on a different source instead.
+
+| What you see                                                                                     | What to do                                                                                              |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| Dictation is off. Assign it a local model or an endpoint in Settings > Models > System One.      | Assign the **Dictation** task a source.                                                                 |
+| A voice session is using the microphone. End it, then dictate.                                   | End the A Cappella session. Speech is already going to it.                                              |
+| The wake word Test is using the microphone. Stop it, then dictate.                               | Stop the wake word **Test** in the A Cappella settings.                                                 |
+| A wake phrase is being recorded. Finish that, then dictate.                                      | Finish recording the wake phrase.                                                                       |
+| **Microphone access denied**                                                                     | Allow Maestro to use the microphone. Where the system has a setting for it, click the toast to open it. |
+| No microphone is available to record a dictation through.                                        | Connect a microphone.                                                                                   |
+| The microphone did not open. Try again.                                                          | Try again.                                                                                              |
+| Dictation was switched off while recording. Assign it a model in Settings > Models > System One. | Assign the task again, then dictate again.                                                              |
+
+The first time you dictate, your operating system asks for microphone access. A transcription that fails shows a red **Dictation** toast with the reason.
+
+#### In the web interface
+
+From the [web interface](./remote-control), dictation records on the microphone of the device you are using (your browser asks for access the first time) and the computer running Maestro transcribes it with the same assigned model. A clip from a browser may be at most 5 minutes long. A browser opens its microphone only over HTTPS, so over a plain `http://` address the microphone stays dimmed and its tooltip says: **A browser opens its microphone only over HTTPS. Open Maestro through Remote Control, or at localhost on the computer running it, to dictate.** If you deny the browser access, the **Microphone access denied** toast tells you to allow the microphone for the site in your browser's settings.
+
+#### Dictating from the command line
+
+Live dictation needs a microphone, so it has no command. An agent brings the audio as a file instead and gets the same transcript from the same model:
+
+```bash
+maestro-cli models run dictation --audio <file.wav> [--json]
+```
+
+The file must be a 16-bit PCM WAV, at most 512 MB. The desktop app must be running. The command prints the transcript, and exits with code 6 when the task is off and 7 when it is not ready, with the same reason the dimmed microphone shows.
 
 ### Spoken notices
 
