@@ -89,10 +89,6 @@ class NodeSqliteDatabaseShim {
 		return this.db.prepare(sql);
 	}
 
-	exec(sql: string): void {
-		this.db.exec(sql);
-	}
-
 	/**
 	 * better-sqlite3's `transaction(fn)` returns a function that runs `fn`
 	 * between BEGIN and COMMIT and rolls back when it throws. Nesting (which
