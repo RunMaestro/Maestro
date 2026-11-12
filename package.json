@@ -449,7 +449,7 @@
 		"canvas": "^3.2.0",
 		"concurrently": "^8.2.2",
 		"cross-env": "^7.0.3",
-		"electron": "^42.11.16",
+		"electron": "^41.5.0",
 		"electron-builder": "^26.8.1",
 		"electron-devtools-installer": "^4.0.0",
 		"electron-rebuild": "^3.2.9",
