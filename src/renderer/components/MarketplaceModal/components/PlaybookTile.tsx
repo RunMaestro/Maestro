@@ -1,5 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { isBeta, isCompatible } from '../../../../shared/marketplace-compatibility';
+import { hostPlatform } from '../../../utils/platformUtils';
+import { MiniBadge } from '../../ui/MiniBadge';
+import { getLaunchOffer } from '../launch/launchOffer';
 import type { PlaybookTileProps } from '../types';
 import {
 	BADGE_FG,
@@ -26,6 +29,8 @@ export function PlaybookTile({
 
 	const compatible = isCompatible(playbook, runningVersion);
 	const beta = isBeta(playbook);
+	const launchable =
+		getLaunchOffer(playbook, runningVersion, hostPlatform()).status === 'available';
 	const bodyOpacity = compatible ? 1 : 0.4;
 	const iconFilter = compatible ? undefined : 'grayscale(100%)';
 
@@ -101,6 +106,14 @@ export function PlaybookTile({
 						>
 							Local
 						</span>
+					)}
+					{launchable && (
+						<MiniBadge
+							label="Launch"
+							theme={theme}
+							title="Launch runs this playbook on an agent after a few questions."
+							testId="playbook-tile-launch-badge"
+						/>
 					)}
 				</div>
 

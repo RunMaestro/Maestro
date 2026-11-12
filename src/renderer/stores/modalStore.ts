@@ -17,6 +17,7 @@
 import { create } from 'zustand';
 import type { Session, SettingsTab, AgentError } from '../types';
 import type { GitStreamingOperation } from '../../shared/gitUtils';
+import type { MarketplacePlaybook } from '../../shared/marketplace-types';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
 import { UI_SURFACES } from '../../shared/uiSurfaces';
@@ -363,6 +364,15 @@ export interface BatchRunnerModalData {
 	presetDocuments?: string[];
 }
 
+/**
+ * Playbook Launch dialog data: the Exchange playbook the person pressed Launch on. The whole
+ * playbook travels, not its id, so the dialog shows exactly the `launch` block the Exchange list
+ * showed, and so it still has a playbook to draw if the Exchange refreshes underneath it.
+ */
+export interface PlaybookLaunchModalData {
+	playbook: MarketplacePlaybook;
+}
+
 // ============================================================================
 // Modal ID Registry
 // ============================================================================
@@ -416,6 +426,8 @@ export type ModalId =
 	| 'batchRunner'
 	| 'autoRunSetup'
 	| 'marketplace'
+	// A dialog layered on the Exchange, not a destination (see DESTINATION_MODALS)
+	| 'playbookLaunch'
 	// Worktree
 	| 'worktreeConfig'
 	| 'createWorktree'
@@ -496,7 +508,7 @@ export type ModalId =
  * or `maestro-cli open`? Dialogs that answer a question ABOUT the surface
  * beneath them are not members and are meant to layer: confirmations, rename
  * prompts, the Cue YAML editor, the Playbook name box, the Usage Dashboard's
- * per-agent detail, the Symphony agent picker.
+ * per-agent detail, the Symphony agent picker, the Playbook Launch dialog.
  *
  * `documentGraph` is a destination too but lives in `fileExplorerStore`, so it
  * registers itself through `registerExternalDestination` instead of appearing
@@ -595,6 +607,7 @@ export interface ModalDataMap {
 	renameGroup: RenameGroupModalData;
 	agentSessions: AgentSessionsModalData;
 	batchRunner: BatchRunnerModalData;
+	playbookLaunch: PlaybookLaunchModalData;
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
 	reauth: ReauthModalData;
@@ -1142,6 +1155,12 @@ export function getModalActions() {
 		// Marketplace Modal
 		setMarketplaceModalOpen: (open: boolean) =>
 			open ? openModal('marketplace') : closeModal('marketplace'),
+
+		// Playbook Launch dialog (opened from the Exchange's detail view). Not a destination:
+		// it layers on the Exchange and leaves it open beneath.
+		openPlaybookLaunch: (playbook: MarketplacePlaybook) =>
+			openModal('playbookLaunch', { playbook }),
+		closePlaybookLaunch: () => closeModal('playbookLaunch'),
 
 		// Wizard Resume Modal
 		setWizardResumeModalOpen: (open: boolean) =>

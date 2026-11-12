@@ -35,6 +35,7 @@ const baseProps = (overrides: Partial<React.ComponentProps<typeof PlaybookDetail
 	onTargetFolderChange: vi.fn(),
 	onBrowseFolder: vi.fn(),
 	onImport: vi.fn(),
+	onLaunch: vi.fn(),
 	...overrides,
 });
 
@@ -162,5 +163,32 @@ describe('PlaybookDetailView', () => {
 
 		rerender(<PlaybookDetailView {...baseProps({ isRemoteSession: true })} />);
 		expect(getByTitle('Browse is not available for remote sessions')).toBeDisabled();
+	});
+
+	it('offers Launch beside Download for a playbook that can launch, and hands the click up', () => {
+		const onLaunch = vi.fn();
+		const onImport = vi.fn();
+		const playbook = makePlaybook({
+			launch: { inputs: [], outro: { summary: 'Done.', nextSteps: [] } },
+		});
+		const { getByText, queryByText } = render(
+			<PlaybookDetailView {...baseProps({ playbook, onLaunch, onImport })} />
+		);
+
+		expect(queryByText('Import Playbook')).toBeNull();
+
+		fireEvent.click(getByText('Launch'));
+		expect(onLaunch).toHaveBeenCalledTimes(1);
+		expect(onImport).not.toHaveBeenCalled();
+
+		fireEvent.click(getByText('Download'));
+		expect(onImport).toHaveBeenCalledTimes(1);
+	});
+
+	it('offers no Launch for a playbook without a launch block', () => {
+		const { queryByText, getByText } = render(<PlaybookDetailView {...baseProps()} />);
+
+		expect(queryByText('Launch')).toBeNull();
+		expect(getByText('Import Playbook')).toBeTruthy();
 	});
 });

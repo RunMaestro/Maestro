@@ -21,6 +21,7 @@ import type { NewAgentDraft } from '../../../renderer/components/NewInstanceModa
 import { registerNewAgentCreator } from '../../../renderer/services/newAgentCreation';
 import {
 	launchPlaybook,
+	notifyLaunchStarted,
 	PlaybookLaunchTargetError,
 	resolveLaunchTarget,
 	type LaunchTarget,
@@ -520,6 +521,91 @@ describe('launchPlaybook', () => {
 		});
 	});
 
+	describe('a launch whose answers main refuses', () => {
+		// What `createIpcHandler` answers for a `MarketplaceLaunchValuesError`: the class name, then the list.
+		const valuesRefusal = (list: string) => ({
+			success: false as const,
+			error: `MarketplaceLaunchValuesError: Launch values are not valid: ${list}`,
+		});
+
+		it('maps the refusal back onto the form fields, with no toast and no fault report', async () => {
+			launch.mockResolvedValue(
+				valuesRefusal('PR_URL: This field is required; BASE_BRANCH: Pick one of the listed options')
+			);
+
+			const outcome = await launchPlaybook(
+				submission({ target: { kind: 'existing', sessionId: 'other' } })
+			);
+
+			expect(outcome).toStrictEqual({
+				status: 'invalid',
+				fieldErrors: {
+					PR_URL: 'This field is required',
+					BASE_BRANCH: 'Pick one of the listed options',
+				},
+			});
+			expect(notifyToast).not.toHaveBeenCalled();
+			expect(captureException).not.toHaveBeenCalled();
+		});
+
+		it('keeps the agent it created and names it, because the form still has to be fixed', async () => {
+			registerStoringCreator();
+			launch.mockResolvedValue(valuesRefusal('PR_URL: Enter a full http:// or https:// URL'));
+
+			const outcome = await launchPlaybook(submission({ target: { kind: 'new', draft } }));
+
+			expect(outcome).toStrictEqual({
+				status: 'invalid',
+				fieldErrors: { PR_URL: 'Enter a full http:// or https:// URL' },
+				createdSessionId: 'new-agent',
+			});
+			expect(storeIds()).toEqual(['current', 'other', 'new-agent']);
+			expect(notifyToast).toHaveBeenCalledTimes(1);
+			expect(notifyToast).toHaveBeenCalledWith({
+				color: 'red',
+				title: 'Launch did not start',
+				message:
+					'Launch values are not valid: PR_URL: Enter a full http:// or https:// URL Maestro kept the new agent "Market Research", so you can launch on it again.',
+				project: 'Market Research',
+				sessionId: 'new-agent',
+			});
+			expect(captureException).not.toHaveBeenCalled();
+		});
+
+		it('stays a failure with its text when main names a field the form does not have', async () => {
+			launch.mockResolvedValue(
+				valuesRefusal('PR_URL: This field is required; NEW_INPUT: This field is required')
+			);
+
+			await expect(launchPlaybook(submission())).resolves.toStrictEqual({
+				status: 'failed',
+				error:
+					'Launch values are not valid: PR_URL: This field is required; NEW_INPUT: This field is required',
+			});
+		});
+
+		it('stays a failure when the text lists no field', async () => {
+			launch.mockResolvedValue(valuesRefusal(''));
+
+			await expect(launchPlaybook(submission())).resolves.toStrictEqual({
+				status: 'failed',
+				error: 'Launch values are not valid:',
+			});
+		});
+
+		it('does not read a field list out of any other refusal', async () => {
+			launch.mockResolvedValue({
+				success: false,
+				error: 'MarketplaceImportError: Playbook PR_URL: not found',
+			});
+
+			await expect(launchPlaybook(submission())).resolves.toStrictEqual({
+				status: 'failed',
+				error: 'Playbook PR_URL: not found',
+			});
+		});
+	});
+
 	describe('a launch that fails with no agent created', () => {
 		it("leaves main's refusal to the caller: no toast, no fault report", async () => {
 			launch.mockResolvedValue({
@@ -582,5 +668,62 @@ describe('launchPlaybook', () => {
 			'No agent creator is registered'
 		);
 		expect(launch).not.toHaveBeenCalled();
+	});
+});
+
+describe('notifyLaunchStarted', () => {
+	it('names the playbook and the agent it runs on, and goes to that agent when clicked', () => {
+		notifyLaunchStarted('Code Review', {
+			target: { sessionId: 'other', autoRunFolderPath: OTHER_FOLDER },
+		});
+
+		expect(notifyToast).toHaveBeenCalledTimes(1);
+		expect(notifyToast).toHaveBeenCalledWith({
+			color: 'green',
+			title: 'Playbook launched',
+			message: '"Code Review" is running on "Other".',
+			project: 'Other',
+			sessionId: 'other',
+		});
+	});
+
+	it('says a new agent was created, using the name the store holds now', () => {
+		useSessionStore.setState((state) => ({
+			sessions: [
+				...state.sessions,
+				agent({
+					id: 'new-agent',
+					name: 'Market Research (2)',
+					autoRunFolderPath: NEW_AGENT_FOLDER,
+				}),
+			],
+		}));
+
+		notifyLaunchStarted('Market Research', {
+			target: { sessionId: 'new-agent', autoRunFolderPath: NEW_AGENT_FOLDER },
+			createdSessionId: 'new-agent',
+		});
+
+		expect(notifyToast).toHaveBeenCalledWith({
+			color: 'green',
+			title: 'Playbook launched',
+			message: 'Created "Market Research (2)" and started "Market Research" on it.',
+			project: 'Market Research (2)',
+			sessionId: 'new-agent',
+		});
+	});
+
+	it('still points at the agent when the store no longer holds it', () => {
+		notifyLaunchStarted('Code Review', {
+			target: { sessionId: 'deleted', autoRunFolderPath: OTHER_FOLDER },
+		});
+
+		expect(notifyToast).toHaveBeenCalledWith({
+			color: 'green',
+			title: 'Playbook launched',
+			message: '"Code Review" is running on the agent.',
+			project: undefined,
+			sessionId: 'deleted',
+		});
 	});
 });

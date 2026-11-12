@@ -71,4 +71,6 @@ export interface PlaybookDetailViewProps {
 	onTargetFolderChange: (name: string) => void;
 	onBrowseFolder: () => void;
 	onImport: () => void;
+	/** Open the launch dialog for `playbook`. Offered only when the playbook can launch here. */
+	onLaunch: () => void;
 }

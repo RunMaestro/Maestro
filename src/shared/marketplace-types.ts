@@ -400,21 +400,54 @@ export class MarketplaceImportError extends Error {
 	}
 }
 
+/** The text a {@link MarketplaceLaunchValuesError} message starts with, before its field list. */
+const LAUNCH_VALUES_ERROR_PREFIX = 'Launch values are not valid: ';
+
 /**
  * Launch values that failed `validateLaunchValues` (`src/shared/playbookLaunch.ts`). It is an import
  * error, so a caller that handles `MarketplaceImportError` keeps working. `fieldErrors` holds the
  * message for each failing input, keyed by input name. The error message lists them too, so a
  * caller that shows only `message` (IPC, the web bridge, the CLI) still names every field.
+ * {@link launchFieldErrorsFromMessage} reads that list back for a caller that has only the text.
  */
 export class MarketplaceLaunchValuesError extends MarketplaceImportError {
 	constructor(public readonly fieldErrors: Readonly<Record<string, string>>) {
 		super(
-			`Launch values are not valid: ${Object.entries(fieldErrors)
+			`${LAUNCH_VALUES_ERROR_PREFIX}${Object.entries(fieldErrors)
 				.map(([name, message]) => `${name}: ${message}`)
 				.join('; ')}`
 		);
 		this.name = 'MarketplaceLaunchValuesError';
 	}
+}
+
+/**
+ * Where a field name starts in a {@link MarketplaceLaunchValuesError} message: at the start of the
+ * list or after a `; `, written as an input name (`parseLaunchSpec`'s `UPPER_SNAKE_CASE` rule)
+ * and a `: `. Anchoring on the name, not on every `; `, keeps a message that contains one whole.
+ */
+const LAUNCH_VALUES_FIELD_MARK = /(?:^|; )([A-Z][A-Z0-9_]*): /g;
+
+/**
+ * The field errors a {@link MarketplaceLaunchValuesError} message lists, keyed by input name, or
+ * `null` when the text is not such a message. For a caller that gets the error as text only: the
+ * IPC answer of `marketplace:launch` is `{ success: false, error: String(error) }`, which has lost
+ * `fieldErrors`. Pass the message without the error class name (`ipcResultErrorMessage()` drops it).
+ */
+export function launchFieldErrorsFromMessage(message: string): Record<string, string> | null {
+	if (!message.startsWith(LAUNCH_VALUES_ERROR_PREFIX)) return null;
+	const list = message.slice(LAUNCH_VALUES_ERROR_PREFIX.length);
+	const marks = [...list.matchAll(LAUNCH_VALUES_FIELD_MARK)];
+	// The list must open with a field name; anything else is not the shape this class writes.
+	if (marks.length === 0 || marks[0].index !== 0) return null;
+
+	const fieldErrors: Record<string, string> = {};
+	marks.forEach((mark, position) => {
+		const textStart = mark.index + mark[0].length;
+		const textEnd = position + 1 < marks.length ? marks[position + 1].index : list.length;
+		fieldErrors[mark[1]] = list.slice(textStart, textEnd);
+	});
+	return fieldErrors;
 }
 
 /**

@@ -1,7 +1,7 @@
 import { NotificationCenterHost } from './NotificationCenter';
 import { useSettingsStore } from '../stores/settingsStore';
 import { lazy, memo, Suspense, useMemo } from 'react';
-import { useModalActions, useModalStore } from '../stores/modalStore';
+import { selectModalOpen, useModalActions, useModalStore } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useTabStore } from '../stores/tabStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
@@ -60,6 +60,9 @@ const SettingsModal = lazy(() =>
 );
 const MarketplaceModal = lazy(() =>
 	import('./MarketplaceModal').then((m) => ({ default: m.MarketplaceModal }))
+);
+const PlaybookLaunchModalHost = lazy(() =>
+	import('./MarketplaceModal').then((m) => ({ default: m.PlaybookLaunchModalHost }))
 );
 const SymphonyModal = lazy(() =>
 	import('./SymphonyModal').then((m) => ({ default: m.SymphonyModal }))
@@ -291,6 +294,9 @@ function AppStandaloneModalsInner({
 		tourFromWizard,
 	} = useModalActions();
 
+	// The Playbook Launch dialog layers on the Exchange. Its host reads the playbook from the store.
+	const playbookLaunchOpen = useModalStore(selectModalOpen('playbookLaunch'));
+
 	// Self-source file explorer state
 	const isGraphViewOpen = useFileExplorerStore((s) => s.isGraphViewOpen);
 	const graphFocusFilePath = useFileExplorerStore((s) => s.graphFocusFilePath);
@@ -417,6 +423,13 @@ function AppStandaloneModalsInner({
 						}
 						onImportComplete={onMarketplaceImportComplete}
 					/>
+				</Suspense>
+			)}
+
+			{/* --- PLAYBOOK LAUNCH DIALOG (lazy-loaded; layered on the Exchange) --- */}
+			{playbookLaunchOpen && (
+				<Suspense fallback={null}>
+					<PlaybookLaunchModalHost theme={theme} />
 				</Suspense>
 			)}
 

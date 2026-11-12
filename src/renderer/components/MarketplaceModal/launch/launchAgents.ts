@@ -4,7 +4,8 @@
  * Pure functions over `Session` and `NewAgentDraft`; `PlaybookLaunchModal` owns the state. The
  * dialog never edits an agent, so everything here only READS one: the card that names it, the
  * list of agents "Existing agent" offers, the first draft the New Agent modal opens with, and
- * whether the playbook may launch on it.
+ * whether the playbook may launch on it. The half of the gate that needs no agent (Maestro
+ * version and OS) is in `launchOffer.ts`, which the Exchange asks before it offers Launch at all.
  */
 
 import { getAgentDisplayName } from '../../../../shared/agentMetadata';
@@ -15,6 +16,7 @@ import type { Session } from '../../../types';
 import { isRemoteNewAgent } from '../../../utils/newAgentSession';
 import { getSessionSshRemoteId, isSessionRemote } from '../../../utils/sessionHelpers';
 import type { NewAgentDraft } from '../../NewInstanceModal/types';
+import { specForPlatform } from './launchOffer';
 
 /** What the read-only agent card shows. */
 export interface LaunchAgentSummary {
@@ -114,12 +116,6 @@ export interface LaunchGate {
 	notes: string[];
 }
 
-/** The same spec with the platform list emptied, which restricts nothing. */
-function withoutPlatformList(spec: PlaybookLaunchSpec): PlaybookLaunchSpec {
-	if (!spec.preconditions?.platforms) return spec;
-	return { ...spec, preconditions: { ...spec.preconditions, platforms: [] } };
-}
-
 /**
  * Ask `isLaunchAvailable` twice, once for this machine and once for the chosen agent, so the
  * dialog can tell a playbook that cannot launch here (its platform or version, shown with the
@@ -132,8 +128,7 @@ export function evaluateLaunchGate(
 	context: LaunchGateContext
 ): LaunchGate {
 	const { runningVersion, platform, sshRemote, maestroCliInstalled } = context;
-	const checked = platform === '' ? withoutPlatformList(spec) : spec;
-	const playbook = { launch: checked };
+	const playbook = { launch: specForPlatform(spec, platform) };
 
 	const machine = isLaunchAvailable(playbook, runningVersion, platform);
 	if (!machine.available) return { available: false, blockedReason: machine.reason, notes: [] };

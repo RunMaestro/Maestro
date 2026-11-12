@@ -1,7 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { PlaybookTile } from '../../../../../renderer/components/MarketplaceModal/components';
+import type { PlaybookLaunchSpec } from '../../../../../shared/marketplace-types';
 import { makePlaybook, mockTheme } from '../_fixtures';
+
+const launchSpec = (overrides: Partial<PlaybookLaunchSpec> = {}): PlaybookLaunchSpec => ({
+	inputs: [],
+	outro: { summary: 'Done.', nextSteps: [] },
+	...overrides,
+});
+
+function renderTile(playbook = makePlaybook(), runningVersion = '1.0.0') {
+	return render(
+		<PlaybookTile
+			playbook={playbook}
+			theme={mockTheme}
+			isSelected={false}
+			runningVersion={runningVersion}
+			onSelect={vi.fn()}
+		/>
+	);
+}
 
 describe('PlaybookTile', () => {
 	it('renders playbook metadata and fires onSelect', () => {
@@ -64,5 +83,58 @@ describe('PlaybookTile', () => {
 		expect(button.getAttribute('class')).toContain('ring-2');
 		expect(button.getAttribute('style')).toContain('box-shadow');
 		expect(scrollSpy).toHaveBeenCalledTimes(1);
+	});
+
+	describe('Launch badge', () => {
+		it('marks a playbook whose launch can run here', () => {
+			const { getByTestId } = renderTile(makePlaybook({ launch: launchSpec() }));
+
+			const badge = getByTestId('playbook-tile-launch-badge');
+			expect(badge.textContent).toBe('Launch');
+			expect(badge.getAttribute('title')).toBe(
+				'Launch runs this playbook on an agent after a few questions.'
+			);
+		});
+
+		it('sits with the category row, not in the top-right corner of BETA and version badges', () => {
+			const { getByTestId, getByText } = renderTile(
+				makePlaybook({ launch: launchSpec(), beta: true, source: 'local' })
+			);
+
+			expect(getByTestId('playbook-tile-launch-badge').parentElement).toBe(
+				getByText('Development').parentElement
+			);
+		});
+
+		it('is absent for a playbook without a launch block', () => {
+			const { queryByTestId } = renderTile();
+
+			expect(queryByTestId('playbook-tile-launch-badge')).toBeNull();
+		});
+
+		it('is absent when the launch cannot run on this platform', () => {
+			// The test setup reports the host platform as darwin.
+			const { queryByTestId } = renderTile(
+				makePlaybook({ launch: launchSpec({ preconditions: { platforms: ['win32'] } }) })
+			);
+
+			expect(queryByTestId('playbook-tile-launch-badge')).toBeNull();
+		});
+
+		it('is absent when the block needs a newer Maestro', () => {
+			const { queryByTestId } = renderTile(
+				makePlaybook({ launch: launchSpec({ minMaestroVersion: '9.0.0' }) })
+			);
+
+			expect(queryByTestId('playbook-tile-launch-badge')).toBeNull();
+		});
+
+		it('is absent when the playbook itself needs a newer Maestro', () => {
+			const { queryByTestId } = renderTile(
+				makePlaybook({ launch: launchSpec(), minMaestroVersion: '9.0.0' })
+			);
+
+			expect(queryByTestId('playbook-tile-launch-badge')).toBeNull();
+		});
 	});
 });

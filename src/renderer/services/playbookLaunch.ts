@@ -13,7 +13,11 @@
  */
 
 import type { NewAgentDraft } from '../components/NewInstanceModal/types';
-import type { PlaybookLaunchRequest, PlaybookLaunchSpec } from '../../shared/marketplace-types';
+import {
+	launchFieldErrorsFromMessage,
+	type PlaybookLaunchRequest,
+	type PlaybookLaunchSpec,
+} from '../../shared/marketplace-types';
 import {
 	resolveLaunchValues,
 	validateLaunchValues,
@@ -147,19 +151,22 @@ export interface PlaybookLaunchSubmission {
 /**
  * How a submitted launch ended.
  *
- * - `invalid`: the answers failed validation, one message per input name. No
- *   agent was created and nothing was launched.
+ * - `invalid`: the answers failed validation, one message per input name.
+ *   Normally this is the renderer's own check, before any agent is created and
+ *   before main is asked. Main checks the answers again against its own copy of
+ *   the playbook, which can have changed since the form opened; then the same
+ *   outcome carries main's messages, and `createdSessionId` may be set.
  * - `failed`: there was no agent to run on, or main did not start the launch.
  *   `error` is written for the person.
  * - `started`: the Auto Run started on `target`.
  *
  * `createdSessionId` names the agent this launch created, when it created one.
- * That agent is kept whatever happened next, so retry a failed launch on it
- * (`{ kind: 'existing', sessionId: createdSessionId }`) instead of creating
- * another.
+ * That agent is kept whatever happened next, so retry a failed or refused
+ * launch on it (`{ kind: 'existing', sessionId: createdSessionId }`) instead of
+ * creating another.
  */
 export type PlaybookLaunchOutcome =
-	| { status: 'invalid'; fieldErrors: Record<string, string> }
+	| { status: 'invalid'; fieldErrors: Record<string, string>; createdSessionId?: string }
 	| { status: 'failed'; error: string; createdSessionId?: string }
 	| { status: 'started'; target: ResolvedLaunchTarget; createdSessionId?: string };
 
@@ -190,8 +197,12 @@ function reportKeptAgent(sessionId: string, error: string): void {
  * Never deletes an agent. A launch that fails after it created its agent keeps
  * the agent, raises a red toast naming it, and names it in the outcome. A call
  * to main that rejects is reported to Sentry and comes back as `failed`; a
- * refusal from main is the person's to read and is only logged. Faults other
- * than these reject.
+ * refusal from main is the person's to read and is only logged. When main
+ * refuses the answers themselves (its copy of the playbook can differ from the
+ * one the form was built from) and every field it names is one of the spec's
+ * inputs, the refusal comes back as `invalid`, so the form can mark those
+ * fields; otherwise it is a `failed` with main's text. Faults other than these
+ * reject.
  */
 export async function launchPlaybook(
 	submission: PlaybookLaunchSubmission
@@ -217,6 +228,7 @@ export async function launchPlaybook(
 	const createdSessionId = target.kind === 'new' ? resolved.sessionId : undefined;
 
 	let error: string;
+	let refusedFields: Record<string, string> | null = null;
 	try {
 		const result = await window.maestro.marketplace.launch({
 			playbookId,
@@ -228,6 +240,7 @@ export async function launchPlaybook(
 			return definedOnly({ status: 'started' as const, target: resolved, createdSessionId });
 		}
 		error = ipcResultErrorMessage(result.error, 'The launch did not start.');
+		refusedFields = refusedInputsOf(spec, error);
 	} catch (thrown) {
 		captureException(thrown, {
 			extra: { operation: 'playbookLaunch:launch', playbookId, sessionId: resolved.sessionId },
@@ -239,5 +252,51 @@ export async function launchPlaybook(
 		LOG_CONTEXT
 	);
 	if (createdSessionId) reportKeptAgent(createdSessionId, error);
+	if (refusedFields) {
+		return definedOnly({
+			status: 'invalid' as const,
+			fieldErrors: refusedFields,
+			createdSessionId,
+		});
+	}
 	return definedOnly({ status: 'failed' as const, error, createdSessionId });
+}
+
+/**
+ * The field errors in main's refusal of the answers, when main refused them and every field it
+ * names is an input of `spec`; `null` otherwise. A refusal that names a field the form does not
+ * have cannot be shown on the form, so it stays a plain failure with main's text.
+ */
+function refusedInputsOf(spec: PlaybookLaunchSpec, error: string): Record<string, string> | null {
+	const fieldErrors = launchFieldErrorsFromMessage(error);
+	if (!fieldErrors) return null;
+	const known = new Set(spec.inputs.map((input) => input.name));
+	return Object.keys(fieldErrors).every((name) => known.has(name)) ? fieldErrors : null;
+}
+
+/**
+ * Tell the person a launch started and where it runs: a green toast naming the playbook and the
+ * agent, and a click on it goes to that agent. For the host that closes the launch dialog and the
+ * Exchange once {@link launchPlaybook} answers `started`. The agent's name is read from the session
+ * store, so it is the name now, not the one in the draft; a new agent is said to have been created.
+ */
+export function notifyLaunchStarted(
+	playbookTitle: string,
+	started: Pick<
+		Extract<PlaybookLaunchOutcome, { status: 'started' }>,
+		'target' | 'createdSessionId'
+	>
+): void {
+	const { sessionId } = started.target;
+	const name = selectSessionById(sessionId)(useSessionStore.getState())?.name;
+	const agent = name ? `"${name}"` : 'the agent';
+	notifyToast({
+		color: 'green',
+		title: 'Playbook launched',
+		message: started.createdSessionId
+			? `Created ${agent} and started "${playbookTitle}" on it.`
+			: `"${playbookTitle}" is running on ${agent}.`,
+		project: name,
+		sessionId,
+	});
 }

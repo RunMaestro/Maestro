@@ -22,6 +22,7 @@ import {
 	registerExternalDestination,
 } from '../../../renderer/stores/modalStore';
 import type { Session } from '../../../renderer/types';
+import type { MarketplacePlaybook } from '../../../shared/marketplace-types';
 
 describe('modalStore', () => {
 	beforeEach(() => {
@@ -419,6 +420,7 @@ describe('modalStore', () => {
 				'batchRunner',
 				'autoRunSetup',
 				'marketplace',
+				'playbookLaunch',
 				'wizardResume',
 				'agentError',
 				'worktreeConfig',
@@ -1180,6 +1182,76 @@ describe('modalStore', () => {
 		});
 	});
 
+	describe('integration: playbook launch dialog flow', () => {
+		const playbook = {
+			id: 'development-code-review',
+			title: 'Code Review',
+			launch: { inputs: [], outro: { summary: 'Done.', nextSteps: [] } },
+		} as unknown as MarketplacePlaybook;
+
+		it('openPlaybookLaunch opens the dialog with the whole playbook', () => {
+			getModalActions().openPlaybookLaunch(playbook);
+
+			const state = useModalStore.getState();
+			expect(state.isOpen('playbookLaunch')).toBe(true);
+			expect(state.getData('playbookLaunch')?.playbook).toBe(playbook);
+		});
+
+		it('closePlaybookLaunch closes the dialog and clears the playbook', () => {
+			const actions = getModalActions();
+
+			actions.openPlaybookLaunch(playbook);
+			actions.closePlaybookLaunch();
+
+			const state = useModalStore.getState();
+			expect(state.isOpen('playbookLaunch')).toBe(false);
+			expect(state.getData('playbookLaunch')).toBeUndefined();
+		});
+
+		it('layers on the Exchange without closing it', () => {
+			const actions = getModalActions();
+			actions.setMarketplaceModalOpen(true);
+
+			actions.openPlaybookLaunch(playbook);
+
+			expect(useModalStore.getState().isOpen('marketplace')).toBe(true);
+			expect(useModalStore.getState().isOpen('playbookLaunch')).toBe(true);
+
+			actions.closePlaybookLaunch();
+			expect(useModalStore.getState().isOpen('marketplace')).toBe(true);
+		});
+
+		it('is not a destination, so opening another destination does not close it', () => {
+			expect(DESTINATION_MODALS.has('playbookLaunch')).toBe(false);
+
+			getModalActions().openPlaybookLaunch(playbook);
+			useModalStore.getState().openModal('settings');
+
+			expect(useModalStore.getState().isOpen('playbookLaunch')).toBe(true);
+		});
+
+		it('is closed with everything else by closeAll', () => {
+			const actions = getModalActions();
+			actions.setMarketplaceModalOpen(true);
+			actions.openPlaybookLaunch(playbook);
+
+			useModalStore.getState().closeAll();
+
+			expect(useModalStore.getState().isOpen('marketplace')).toBe(false);
+			expect(useModalStore.getState().isOpen('playbookLaunch')).toBe(false);
+		});
+
+		it('is read through a granular selector', () => {
+			const { result } = renderHook(() => useModalStore(selectModalData('playbookLaunch')));
+			expect(result.current).toBeUndefined();
+
+			act(() => {
+				getModalActions().openPlaybookLaunch(playbook);
+			});
+			expect(result.current?.playbook.title).toBe('Code Review');
+		});
+	});
+
 	describe('Prompt Composer full-screen cycle', () => {
 		it('togglePromptComposerFullscreen flips the persisted flag', () => {
 			const store = useModalStore.getState();
@@ -1338,7 +1410,13 @@ describe('modalStore', () => {
 		});
 
 		it('does not list dialogs as destinations', () => {
-			for (const id of ['confirm', 'renameTab', 'cueYamlEditor', 'shortcutsHelp'] as ModalId[]) {
+			for (const id of [
+				'confirm',
+				'renameTab',
+				'cueYamlEditor',
+				'shortcutsHelp',
+				'playbookLaunch',
+			] as ModalId[]) {
 				expect(DESTINATION_MODALS.has(id)).toBe(false);
 			}
 		});

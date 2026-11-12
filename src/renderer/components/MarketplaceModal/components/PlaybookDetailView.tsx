@@ -31,6 +31,7 @@ export function PlaybookDetailView({
 	onTargetFolderChange,
 	onBrowseFolder,
 	onImport,
+	onLaunch,
 }: PlaybookDetailViewProps) {
 	const compatible = isCompatible(playbook, runningVersion);
 	const beta = isBeta(playbook);
@@ -177,6 +178,7 @@ export function PlaybookDetailView({
 				onTargetFolderChange={onTargetFolderChange}
 				onBrowseFolder={onBrowseFolder}
 				onImport={onImport}
+				onLaunch={onLaunch}
 			/>
 		</div>
 	);

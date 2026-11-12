@@ -11,6 +11,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useMarketplace } from '../../hooks/batch/useMarketplace';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { getModalActions, selectModalOpen, useModalStore } from '../../stores/modalStore';
 import { MarketplaceBrowseTab, MarketplaceHeader, PlaybookDetailView } from './components';
 import { partitionPlaybooksByCompatibility } from './helpers';
 import {
@@ -99,6 +100,13 @@ export function MarketplaceModal({
 		setTargetFolderName,
 	});
 
+	// The launch dialog layers on this modal and leaves it open beneath. While it is up, keys belong
+	// to the dialog, so the Exchange's own key handlers stand down.
+	const launchDialogOpen = useModalStore(selectModalOpen('playbookLaunch'));
+	const handleLaunch = useCallback(() => {
+		if (selectedPlaybook) getModalActions().openPlaybookLaunch(selectedPlaybook);
+	}, [selectedPlaybook]);
+
 	const handleCategoryChange = useCallback(
 		(category: string) => {
 			setSelectedCategory(category);
@@ -152,7 +160,7 @@ export function MarketplaceModal({
 	);
 
 	useMarketplaceListKeyboardNav({
-		isOpen,
+		isOpen: isOpen && !launchDialogOpen,
 		showDetailView,
 		orderedPlaybooks,
 		selectedTileIndex,
@@ -162,7 +170,7 @@ export function MarketplaceModal({
 	});
 
 	useMarketplaceCategoryDocumentCycle({
-		isOpen,
+		isOpen: isOpen && !launchDialogOpen,
 		categories,
 		selectedCategory,
 		showDetailView,
@@ -223,6 +231,7 @@ export function MarketplaceModal({
 						onTargetFolderChange={setTargetFolderName}
 						onBrowseFolder={handleBrowseFolder}
 						onImport={handleImport}
+						onLaunch={handleLaunch}
 					/>
 				) : (
 					<>

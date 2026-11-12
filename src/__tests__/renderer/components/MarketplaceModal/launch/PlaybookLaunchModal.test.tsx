@@ -1265,6 +1265,85 @@ describe('PlaybookLaunchModal', () => {
 				);
 			});
 
+			it('puts the refusal of the answers by main on the fields, from the text main sends', async () => {
+				// The renderer's own check passes; main checks again against its own copy of the playbook.
+				vi.mocked(window.maestro.marketplace.launch).mockResolvedValue({
+					success: false,
+					error:
+						'MarketplaceLaunchValuesError: Launch values are not valid: PR_URL: Enter a full http:// or https:// URL; MAX_FILE_LOC: Must be at most 100',
+				});
+				const { onLaunched } = renderModal();
+				answerUrl();
+
+				fireEvent.click(launchButton());
+
+				await waitFor(() =>
+					expect(
+						field('PR_URL').getByText('Enter a full http:// or https:// URL')
+					).toBeInTheDocument()
+				);
+				expect(field('MAX_FILE_LOC').getByText('Must be at most 100')).toBeInTheDocument();
+				expect(status()).toHaveTextContent(
+					'Some answers are not valid. Fix them and launch again.'
+				);
+				expect(screen.getByTestId('launch-advanced-toggle')).toHaveAttribute(
+					'aria-expanded',
+					'true'
+				);
+				expect(onLaunched).not.toHaveBeenCalled();
+				expect(launchButton()).toBeEnabled();
+			});
+
+			it('keeps a new agent when main refuses the answers after it was created', async () => {
+				renderModal();
+				answerUrl();
+				chooseRunOn('new');
+				fireEvent.click(screen.getByTestId('launch-setup-new-agent'));
+				fireEvent.click(screen.getByRole('button', { name: 'Use these settings' }));
+				launchPlaybook.mockImplementationOnce(async (): Promise<PlaybookLaunchOutcome> => {
+					useSessionStore.setState((state) => ({
+						sessions: [
+							...state.sessions,
+							createMockSession({
+								id: 'new-agent',
+								name: 'Market Research',
+								toolType: 'codex',
+								cwd: '/work/market',
+								autoRunFolderPath: '/work/market/.maestro/playbooks',
+							}),
+						],
+					}));
+					return {
+						status: 'invalid',
+						fieldErrors: { PR_URL: 'Main did not like this one.' },
+						createdSessionId: 'new-agent',
+					};
+				});
+
+				fireEvent.click(launchButton());
+
+				await waitFor(() =>
+					expect(field('PR_URL').getByText('Main did not like this one.')).toBeInTheDocument()
+				);
+				expect(status()).toHaveTextContent(
+					'Some answers are not valid. Fix them and launch again. The new agent was kept, so you can launch on it again.'
+				);
+				// The fix is a new answer; the retry runs on the agent that exists, not on a second one.
+				expect(screen.getByTestId('launch-run-on-choice-existing')).toHaveAttribute(
+					'aria-checked',
+					'true'
+				);
+				expect(launchButton()).toHaveTextContent('Launch on Market Research');
+
+				answerUrl('https://github.com/acme/app/pull/8');
+				fireEvent.click(launchButton());
+
+				await waitFor(() => expect(launchPlaybook).toHaveBeenCalledTimes(2));
+				expect(launchPlaybook).toHaveBeenLastCalledWith(
+					expect.objectContaining({ target: { kind: 'existing', sessionId: 'new-agent' } })
+				);
+			});
+
 			it('reports a fault, and tells the person to try again', async () => {
 				const fault = new Error('boom');
 				launchPlaybook.mockRejectedValueOnce(fault);

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MarketplaceManifest, MarketplacePlaybook } from '../../../shared/marketplace-types';
 import { MarketplaceModal } from '../../../renderer/components/MarketplaceModal';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import { makeManifest, makePlaybook, mockTheme } from './MarketplaceModal/_fixtures';
 
 const mocks = vi.hoisted(() => ({
@@ -105,6 +106,7 @@ function renderMarketplace(
 describe('MarketplaceModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useModalStore.setState({ modals: new Map() });
 		mocks.escapeHandler = null;
 		vi.stubGlobal('__APP_VERSION__', '1.0.0');
 		vi.mocked(window.maestro.dialog.selectFolder).mockResolvedValue('/picked/folder');
@@ -324,6 +326,104 @@ describe('MarketplaceModal', () => {
 				'session-1',
 				'remote-1'
 			);
+		});
+	});
+
+	describe('Launch', () => {
+		const launchable = makePlaybook({
+			id: 'launchable',
+			title: 'Launchable Playbook',
+			launch: { inputs: [], outro: { summary: 'Done.', nextSteps: [] } },
+		});
+
+		/** An Exchange whose only playbook can launch, opened on its detail view. */
+		async function openLaunchableDetail() {
+			const manifest = makeManifest([launchable]);
+			const view = renderMarketplace(
+				{},
+				{ manifest, playbooks: manifest.playbooks, filteredPlaybooks: manifest.playbooks }
+			);
+			fireEvent.click(screen.getByText('Launchable Playbook'));
+			await waitFor(() => expect(screen.getByDisplayValue('launchable-playbook')).toBeTruthy());
+			return view;
+		}
+
+		it('marks the tile of a launchable playbook and leaves the others alone', () => {
+			const manifest = makeManifest([launchable, makePlaybook({ id: 'plain', title: 'Plain' })]);
+			renderMarketplace(
+				{},
+				{ manifest, playbooks: manifest.playbooks, filteredPlaybooks: manifest.playbooks }
+			);
+
+			expect(screen.getAllByTestId('playbook-tile-launch-badge')).toHaveLength(1);
+		});
+
+		it('offers Launch on the detail view and opens the launch dialog for that playbook', async () => {
+			const { onClose } = await openLaunchableDetail();
+			expect(useModalStore.getState().isOpen('playbookLaunch')).toBe(false);
+
+			fireEvent.click(screen.getByTestId('playbook-launch-button'));
+
+			expect(useModalStore.getState().isOpen('playbookLaunch')).toBe(true);
+			expect(useModalStore.getState().getData('playbookLaunch')?.playbook.id).toBe('launchable');
+			// The dialog layers on the Exchange; the Exchange stays where it was.
+			expect(onClose).not.toHaveBeenCalled();
+			expect(screen.getByDisplayValue('launchable-playbook')).toBeTruthy();
+		});
+
+		it('offers no Launch for a playbook without a launch block', async () => {
+			renderMarketplace();
+			fireEvent.click(screen.getByText('Alpha Playbook'));
+			await waitFor(() => expect(screen.getByDisplayValue('alpha-playbook')).toBeTruthy());
+
+			expect(screen.queryByTestId('playbook-launch-button')).toBeNull();
+			expect(screen.getByText('Import Playbook')).toBeTruthy();
+		});
+
+		it('downloads a launchable playbook through the same import as before', async () => {
+			const { state, onImportComplete } = await openLaunchableDetail();
+
+			fireEvent.click(screen.getByText('Download'));
+
+			await waitFor(() => {
+				expect(state.importPlaybook).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'launchable' }),
+					'launchable-playbook',
+					'/autorun',
+					'session-1',
+					undefined
+				);
+				expect(onImportComplete).toHaveBeenCalledWith('launchable-playbook');
+			});
+			expect(useModalStore.getState().isOpen('playbookLaunch')).toBe(false);
+		});
+
+		it('leaves keys to the launch dialog while it is up, and takes them back when it closes', async () => {
+			const { state } = await openLaunchableDetail();
+			const cycleDocument = () =>
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: ']',
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+
+			act(() => {
+				useModalStore.getState().openModal('playbookLaunch', { playbook: launchable });
+			});
+			cycleDocument();
+			expect(state.fetchDocument).not.toHaveBeenCalled();
+
+			act(() => {
+				useModalStore.getState().closeModal('playbookLaunch');
+			});
+			cycleDocument();
+			await waitFor(() => {
+				expect(state.fetchDocument).toHaveBeenCalledWith('playbooks/test-playbook', 'phase-1');
+			});
 		});
 	});
 });

@@ -246,13 +246,19 @@ function LaunchDialog({ theme, playbook, spec, onClose, onLaunched }: LaunchDial
 		}
 		submittingRef.current = false;
 		setSubmitting(false);
+		// The service already raised a toast for an agent it kept; the dialog moves onto it, so a
+		// retry runs there instead of creating a second agent. Main can refuse the answers after
+		// the agent exists (its copy of the playbook can differ), so `invalid` may carry one too.
+		if (outcome.createdSessionId) choice.switchToExistingAgent(outcome.createdSessionId);
 		if (outcome.status === 'invalid') {
 			setServerErrors(outcome.fieldErrors);
-			setFailure(INVALID_ANSWERS_MESSAGE);
+			setFailure(
+				outcome.createdSessionId
+					? `${INVALID_ANSWERS_MESSAGE} ${KEPT_AGENT_NOTE}`
+					: INVALID_ANSWERS_MESSAGE
+			);
 			return;
 		}
-		// The service already raised a toast for an agent it kept; the dialog moves onto it.
-		if (outcome.createdSessionId) choice.switchToExistingAgent(outcome.createdSessionId);
 		setFailure(outcome.createdSessionId ? `${outcome.error} ${KEPT_AGENT_NOTE}` : outcome.error);
 	};
 
