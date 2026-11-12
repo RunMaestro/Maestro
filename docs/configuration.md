@@ -480,9 +480,11 @@ Maestro can say one line aloud when an agent finishes a turn, for example "Backe
 - **When Maestro is not focused** speaks only while no Maestro window is in front, which is when a toast cannot reach you.
 - **Always** speaks about every finished turn.
 
-The line is spoken on the computer that runs Maestro, with a local voice, and nothing is sent anywhere. Notices never overlap: when several agents finish together, each line waits its turn. Nothing is spoken while an A Cappella voice session is open.
+From the command line, `maestro-cli settings set spokenNotices <off|unfocused|always>` sets the mode, and `maestro-cli notify speak "<text>"` speaks a line the way **Test** does.
 
-By default the line is the agent's name and "finished". To add a short summary of what the agent did ("Backend finished: tests pass, two files changed"), assign a model to the **Spoken notices** task in **Settings**, then **Local Models**. See [Spoken notices](./local-models#spoken-notices).
+The line is spoken on the computer that runs Maestro, with a local voice. This works with A Cappella switched off. Notices never overlap: when several agents finish together, each line waits its turn. Nothing is spoken while an A Cappella voice session is live.
+
+By default the line is the agent's name and "finished", and nothing is sent anywhere. To add a short summary of what the agent did ("Backend finished: tests pass, two files changed"), assign a model to the **Spoken notices** task in **Settings -> Models -> System Two** (`maestro-cli models assign spoken-notices local:<model-id>`). An endpoint you assign receives the end of the agent's reply. See [Spoken notices](./local-models#spoken-notices).
 
 ### Toast Notifications
 
