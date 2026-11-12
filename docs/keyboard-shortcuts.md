@@ -639,6 +639,23 @@ chord of its own: open it with **Open Models Settings** in Quick Actions
 has no shortcut either: step to its panel with `Cmd+Shift+[` / `]`, or open it
 with `maestro-cli open settings --tab models --sub-tab system-one`.
 
+## Agent Settings Tabs
+
+These work while a tabbed agent form is open: **Edit Agent**, **Create New
+Agent**, **Group Settings**, and the moderator's **Customize** form in a new
+group chat. None has an entry in **Settings -> Shortcuts**, so none can be
+rebound.
+
+| Action                                | macOS               | Windows/Linux        |
+| ------------------------------------- | ------------------- | -------------------- |
+| Previous / next tab                   | `Cmd+Shift+[` / `]` | `Ctrl+Shift+[` / `]` |
+| Previous / next tab (Edit Agent only) | `Cmd+[` / `]`       | `Ctrl+[` / `]`       |
+
+Both chords wrap at the ends. See
+[Editing Agents](./general-usage#editing-agents), [Group Settings](./features#groups),
+and [Group Chat](./group-chat). From the command line, `maestro-cli show agent`
+and `maestro-cli update-agent` read and write the same fields.
+
 ## Maestro Prompts (Settings)
 
 Settings -> Maestro Prompts edits the system prompts Maestro sends to agents.
