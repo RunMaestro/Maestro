@@ -31,6 +31,7 @@ import {
 	type FeedbackConversationSubmitPayload,
 	type FeedbackGhLoginCommand,
 	type FeedbackIssueMatch,
+	type FeedbackSubmitResponse,
 } from '../../shared/feedback';
 import {
 	describeFeedbackAccountStatus,
@@ -425,7 +426,7 @@ export async function feedbackSubmit(options: SubmitOptions): Promise<void> {
 		includeDebugPackage: options.supportPackage === true,
 	};
 
-	let result: { success: boolean; issueUrl?: string; error?: string };
+	let result: FeedbackSubmitResponse;
 	try {
 		result = await withMaestroClient((client) =>
 			client.sendCommand(
@@ -438,13 +439,21 @@ export async function feedbackSubmit(options: SubmitOptions): Promise<void> {
 		failFromError(error, options);
 	}
 	if (!result.success) {
-		fail(result.error || 'Failed to file feedback', options, ExitCode.GeneralError);
+		fail(result.error || 'Failed to file feedback', options, ExitCode.GeneralError, {
+			warnings: result.warnings,
+		});
 	}
 
+	const warnings = result.warnings ?? [];
 	if (options.json) {
-		console.log(JSON.stringify({ success: true, issueUrl: result.issueUrl ?? null }));
+		console.log(
+			JSON.stringify({ success: true, issueUrl: result.issueUrl ?? null, warnings })
+		);
 	} else {
 		console.log(`Feedback filed: ${result.issueUrl ?? '(GitHub did not return a URL)'}`);
+		for (const warning of warnings) {
+			console.log(`Warning: ${warning}`);
+		}
 	}
 }
 

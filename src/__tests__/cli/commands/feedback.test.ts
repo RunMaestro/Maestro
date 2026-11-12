@@ -347,6 +347,36 @@ describe('feedback commands', () => {
 			expect(sent.map((s) => s.payload.type)).toEqual(['feedback_submit']);
 		});
 
+		it('says what was left out of a filed issue', async () => {
+			mockBridge({
+				feedback_submit: {
+					success: true,
+					issueUrl: 'https://github.com/x/1',
+					warnings: ['Screenshot "shot.png" could not be uploaded.'],
+				},
+			});
+			await feedbackSubmit({ ...baseSubmit, force: true });
+			const out = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+			expect(out).toContain('Feedback filed: https://github.com/x/1');
+			expect(out).toContain('Warning: Screenshot "shot.png" could not be uploaded.');
+		});
+
+		it('keeps warnings in the --json result', async () => {
+			mockBridge({
+				feedback_submit: {
+					success: true,
+					issueUrl: 'https://github.com/x/1',
+					warnings: ['The support package could not be built.'],
+				},
+			});
+			await feedbackSubmit({ ...baseSubmit, force: true, json: true });
+			expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+				success: true,
+				issueUrl: 'https://github.com/x/1',
+				warnings: ['The support package could not be built.'],
+			});
+		});
+
 		it('rejects an unknown category before connecting', async () => {
 			const sent = mockBridge({});
 			await expect(feedbackSubmit({ ...baseSubmit, category: 'rant' })).rejects.toThrow('__exit__');
