@@ -55,6 +55,15 @@ const VERB_WROTE = 'Wrote';
 const VERB_EDITED = 'Edited';
 const VERB_EDITED_NOTEBOOK = 'Edited notebook';
 const VERB_TASK_LIST = 'Updated the task list';
+const VERB_READ = 'Read';
+const VERB_SEARCHED = 'Searched for';
+const VERB_FOUND_FILES = 'Looked for files matching';
+const VERB_LISTED = 'Listed';
+const VERB_FETCHED = 'Fetched';
+const VERB_SEARCHED_WEB = 'Searched the web for';
+const VERB_CHECKED_OUTPUT = 'Checked background output';
+const VERB_ASKED = 'Asked you a question';
+const VERB_PLANNED = 'Presented a plan';
 const FILE_EDIT_VERBS: ReadonlySet<string> = new Set([
 	VERB_WROTE,
 	VERB_EDITED,
@@ -211,7 +220,7 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		case 'readfile':
 		case 'viewfile':
 		case 'catfile':
-			return { verb: 'Read', target: shorten(filePath, true), targetIsCode: true };
+			return { verb: VERB_READ, target: shorten(filePath, true), targetIsCode: true };
 
 		case 'write':
 		case 'writefile':
@@ -254,7 +263,7 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 			return { verb: VERB_RAN, target: shorten(command, false), targetIsCode: true };
 
 		case 'bashoutput':
-			return { verb: 'Checked background output', target: '', targetIsCode: false };
+			return { verb: VERB_CHECKED_OUTPUT, target: '', targetIsCode: false };
 
 		case 'killshell':
 		case 'killbash':
@@ -265,7 +274,7 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		case 'ripgrep':
 		case 'searchfiles':
 		case 'grepsearch':
-			return { verb: 'Searched for', target: shorten(pattern, false), targetIsCode: true };
+			return { verb: VERB_SEARCHED, target: shorten(pattern, false), targetIsCode: true };
 
 		case 'glob':
 		case 'find':
@@ -273,7 +282,7 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		case 'globfilesearch':
 		case 'findbyname':
 			return {
-				verb: 'Looked for files matching',
+				verb: VERB_FOUND_FILES,
 				target: shorten(pattern, false),
 				targetIsCode: true,
 			};
@@ -282,14 +291,14 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		case 'list':
 		case 'listdirectory':
 		case 'listdir':
-			return { verb: 'Listed', target: shorten(filePath, true), targetIsCode: true };
+			return { verb: VERB_LISTED, target: shorten(filePath, true), targetIsCode: true };
 
 		case 'webfetch':
 		case 'fetch':
-			return { verb: 'Fetched', target: shorten(url, false), targetIsCode: true };
+			return { verb: VERB_FETCHED, target: shorten(url, false), targetIsCode: true };
 
 		case 'websearch':
-			return { verb: 'Searched the web for', target: shorten(pattern, false), targetIsCode: false };
+			return { verb: VERB_SEARCHED_WEB, target: shorten(pattern, false), targetIsCode: false };
 
 		case 'task':
 		case 'agent':
@@ -310,10 +319,10 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 			};
 
 		case 'askuserquestion':
-			return { verb: 'Asked you a question', target: '', targetIsCode: false };
+			return { verb: VERB_ASKED, target: '', targetIsCode: false };
 
 		case 'exitplanmode':
-			return { verb: 'Presented a plan', target: '', targetIsCode: false };
+			return { verb: VERB_PLANNED, target: '', targetIsCode: false };
 
 		default: {
 			// Unknown tool: still emit a line. Prefer whichever recognizable field
@@ -426,6 +435,49 @@ export function describeToolTaskList(toolName: string, input: unknown): ToolTask
 /** Whether a tool call writes or edits a file (Edit, Write, apply_patch, NotebookEdit, ...). */
 export function describesFileEdit(toolName: string, input: unknown): boolean {
 	return FILE_EDIT_VERBS.has(describeToolActivity(toolName, input).verb);
+}
+
+/**
+ * What kind of thing a tool call does, answered from the verb the feed chose:
+ *
+ *  - `file-read`: reads one file.
+ *  - `search`: looks through files or a directory without changing them.
+ *  - `live-read`: reads something that changes on its own (a background command's
+ *    output, a web page), so asking again is how one waits, not a repeat.
+ *  - `file-edit`: writes or edits a file.
+ *  - `shell`: runs a command; what it does is the command's business.
+ *  - `plan`: keeps a task list or talks to the user. It touches no file.
+ *  - `other`: a subagent, an MCP tool, a tool Maestro has no name for, stopping a
+ *    background command. Its effect cannot be read from its name.
+ */
+export type ToolKind =
+	| 'file-read'
+	| 'search'
+	| 'live-read'
+	| 'file-edit'
+	| 'shell'
+	| 'plan'
+	| 'other';
+
+const TOOL_KIND_BY_VERB: ReadonlyMap<string, ToolKind> = new Map([
+	[VERB_READ, 'file-read'],
+	[VERB_SEARCHED, 'search'],
+	[VERB_FOUND_FILES, 'search'],
+	[VERB_LISTED, 'search'],
+	[VERB_CHECKED_OUTPUT, 'live-read'],
+	[VERB_FETCHED, 'live-read'],
+	[VERB_SEARCHED_WEB, 'live-read'],
+	[VERB_WROTE, 'file-edit'],
+	[VERB_EDITED, 'file-edit'],
+	[VERB_EDITED_NOTEBOOK, 'file-edit'],
+	[VERB_RAN, 'shell'],
+	[VERB_TASK_LIST, 'plan'],
+	[VERB_ASKED, 'plan'],
+	[VERB_PLANNED, 'plan'],
+]);
+
+export function describeToolKind(toolName: string, input: unknown): ToolKind {
+	return TOOL_KIND_BY_VERB.get(describeToolActivity(toolName, input).verb) ?? 'other';
 }
 
 /**

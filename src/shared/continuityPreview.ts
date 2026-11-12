@@ -30,6 +30,11 @@
  *    request or constraint can be missing, and a synopsis of that early work
  *    is refused like one from a cleared tab (older than the first entry held).
  *    From 100 entries up the preview says so.
+ *  - Signals. The digest says what a continuation must keep; the signals say what
+ *    the tab's transcript shows about repetition and readiness (see
+ *    `contextSignals`). They are read from the same entries, with the usage and
+ *    routing facts the caller supplies, are observations with their uncertainty,
+ *    and are appended to the text. Nothing acts on them.
  *  - Provider window. The provider may have compacted a session on its own
  *    (Claude Code does when its window fills). The transcript Maestro holds does
  *    not show that, and no projection of the provider's own transcript with a
@@ -43,6 +48,14 @@
  */
 
 import { buildContextDigest, type ContextDigest, type DigestEntry } from './contextDigest';
+import type { ContinuationRouting } from './continuationRouting';
+import {
+	buildContextSignals,
+	formatContextSignals,
+	signalsToWire,
+	type ContextReading,
+	type ContextSignals,
+} from './contextSignals';
 import { MAX_PERSISTED_SESSION_LOGS } from './deferredSessionContent';
 import {
 	matchesNativeSessionBinding,
@@ -104,6 +117,12 @@ export interface ContinuityPreviewInput {
 	historyTruncated?: boolean;
 	/** Characters the digest's listed items may use. */
 	maxChars?: number;
+	/**
+	 * What the caller knows beyond the transcript: the provider's usage record for
+	 * the tab (read as the context gauge reads it) and where a continuation would
+	 * run (`describeContinuationRouting`). Either absent reads as unknown.
+	 */
+	facts?: { context?: ContextReading | null; routing?: ContinuationRouting | null };
 }
 
 /** Why a History entry was kept out of the digest. */
@@ -127,6 +146,8 @@ export interface ContinuityPreview {
 	digest: ContextDigest;
 	/** What the gates found about the evidence, one plain sentence each. */
 	notices: string[];
+	/** Repetition and readiness, read from the same entries. */
+	signals: ContextSignals;
 	synopses: {
 		/** Entries that passed every gate. The digest may still skip a failed or empty one. */
 		admitted: number;
@@ -302,6 +323,14 @@ function listNotices(
 	return notices;
 }
 
+/** The 1-based position of the newest entry among listed items, or undefined when none is listed. */
+function newestOrdinal(items: readonly { ref: { ordinal?: number } }[]): number | undefined {
+	const ordinals = items.flatMap((item) =>
+		item.ref.ordinal === undefined ? [] : [item.ref.ordinal]
+	);
+	return ordinals.length ? Math.max(...ordinals) : undefined;
+}
+
 /**
  * Plan the preview of one tab, or refuse. Deterministic: the same input gives
  * the same output, and the input is never changed.
@@ -342,6 +371,19 @@ export function planContinuityPreview(input: ContinuityPreviewInput): Continuity
 		maxChars: input.maxChars,
 	});
 	const notices = listNotices(input, synopses);
+	const signals = buildContextSignals({
+		entries: tab.entries,
+		tabState: tab.state,
+		context: input.facts?.context,
+		routing: input.facts?.routing,
+		digest: {
+			openFailures: digest.unresolvedFailures.length + (digest.omitted.unresolvedFailures ?? 0),
+			lastVerifiedOrdinal: newestOrdinal(digest.verifiedObservations),
+			...(digest.verifiedObservations.length === 0 && digest.omitted.verifiedObservations
+				? { verifiedOmitted: true as const }
+				: {}),
+		},
+	});
 	const text = [
 		`Continuity preview of tab ${shown(tab.id)} (${shown(tab.provider)}). Read only: nothing was sent, compacted, saved or changed.`,
 		'',
@@ -349,6 +391,8 @@ export function planContinuityPreview(input: ContinuityPreviewInput): Continuity
 		...notices.map((notice) => `- ${notice}`),
 		'',
 		digest.preview,
+		'',
+		formatContextSignals(signals),
 	].join('\n');
 
 	return {
@@ -356,6 +400,7 @@ export function planContinuityPreview(input: ContinuityPreviewInput): Continuity
 		preview: {
 			digest,
 			notices,
+			signals,
 			synopses: {
 				admitted: synopses.admitted.length,
 				basis: synopses.basis,
@@ -378,5 +423,6 @@ export function continuityWire(preview: ContinuityPreview): TabContinuityPreview
 		},
 		notices: preview.notices,
 		unknowns: preview.digest.unknowns.map((unknown) => `${unknown.field}: ${unknown.reason}`),
+		signals: signalsToWire(preview.signals),
 	};
 }

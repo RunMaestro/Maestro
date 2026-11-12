@@ -230,6 +230,12 @@ The preview lists, with the transcript entry each item came from:
 - Checks that passed, and failures that no later run corrected
 - Earlier synopses from History, only when they belong to this tab (written by a model, not verified)
 
+Below the digest, a **Signals** section reports what the transcript shows about repetition and about how ready the conversation is to continue. Every line is an observation with the entries it rests on and what it cannot establish. It is not a score and not a prediction, and nothing acts on it: Maestro does not block a call, change a prompt, switch a model or send anything.
+
+- **Repetition.** The same call, with the same arguments, that failed three or more times in a row, or the same file read that returned the same text three or more times. Test, edit, retest does not count, and neither does a retry after a file edit, a new message from you, a compaction or a wait. Checks of live state, such as `git status`, `curl`, `kubectl get` or `gh run view`, are never counted, because repeating them is how you wait. Other polling can look like a repeat, and the section says so.
+- **Readiness.** Whether a turn is running, whether file edits come after the last passing check, how many failures are open, where the last compaction is, and how full the provider says the context is. A reading with no evidence says **unknown**, never clear: a tab with no usage record is not a tab with low use.
+- **Configured routing.** The model, Run on target, tier targets and background-request setting as they stand now. They are your settings, not a launch: Maestro does not check that a source is enabled or reachable or that the token proxy is on for this agent, and they are not a record of where earlier turns ran. The section lists what was not checked.
+
 Anything Maestro cannot establish is listed under **Unknown**. The notices say which History entries were left out and why. The preview reads Maestro's transcript, not the provider's. If the provider compacted the conversation by itself, the preview cannot see that.
 
 An agent or a script can read the same preview with `maestro-cli tab continuity`.

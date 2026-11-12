@@ -747,6 +747,51 @@ describe('tab commands', () => {
 			});
 		});
 
+		it('tab continuity --json carries the signals as data, cleaned again on this side', async () => {
+			const escape = String.fromCharCode(27);
+			const signals = {
+				repetition: [
+					{
+						kind: 'repeated-failure',
+						call: `npm test${escape}[2J`,
+						count: 3,
+						ongoing: true,
+						outputs: 'identical',
+						refs: ['tool #2', 'tool #3', 'tool #4'],
+						uncertainty: ['one limit'],
+					},
+				],
+				readiness: [
+					{ id: 'pressure', status: 'unknown', statement: 'No record.', uncertainty: [] },
+				],
+				routing: ['Run on: Provider.'],
+				advice: ['A sentence.'],
+				unknowns: ['pressure: No record.'],
+			};
+			mockContextOp({ success: true, continuity: { ...PREVIEW, signals } });
+			await tabContinuity('tab-cc', { json: true });
+
+			const printed = lastJson() as { signals?: typeof signals; text?: string };
+			expect(printed.signals?.repetition[0]).toMatchObject({ call: 'npm test[2J', count: 3 });
+			expect(printed.signals?.readiness).toEqual(signals.readiness);
+			expect(printed.signals?.advice).toEqual(['A sentence.']);
+			expect(JSON.stringify(printed)).not.toContain(escape);
+		});
+
+		it('tab continuity prints the text only: the signals are already part of it', async () => {
+			mockContextOp({
+				success: true,
+				continuity: {
+					...PREVIEW,
+					text: `${PREVIEW.text}\n\nSignals: observations`,
+					signals: { repetition: [], readiness: [], routing: [], advice: [], unknowns: [] },
+				},
+			});
+			await tabContinuity(undefined, { agent: 'agent-2' });
+			expect(consoleSpy).toHaveBeenCalledTimes(1);
+			expect(consoleSpy).toHaveBeenCalledWith(`${PREVIEW.text}\n\nSignals: observations`);
+		});
+
 		it('tab continuity refuses a tab that belongs to another agent than -a, sending nothing', async () => {
 			const sent = mockContextOp({ success: true, continuity: PREVIEW });
 			await expect(tabContinuity('tab-bbbb', { agent: 'agent-1' })).rejects.toThrow('__exit__');

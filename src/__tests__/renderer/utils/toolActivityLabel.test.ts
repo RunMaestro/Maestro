@@ -13,6 +13,7 @@ import {
 	describeToolActivityStatus,
 	describeToolCommand,
 	describeToolTaskList,
+	describeToolKind,
 	describesFileEdit,
 	normalizeToolName,
 } from '../../../renderer/utils/toolActivityLabel';
@@ -598,5 +599,50 @@ describe('describesFileEdit', () => {
 		expect(describesFileEdit('Grep', { pattern: 'x' })).toBe(false);
 		expect(describesFileEdit('Bash', { command: 'sed -i s/a/b/ a.ts' })).toBe(false);
 		expect(describesFileEdit('TodoWrite', { todos: [] })).toBe(false);
+	});
+});
+
+describe('describeToolKind', () => {
+	it.each([
+		['Read', { file_path: 'a.ts' }, 'file-read'],
+		['read_file', { path: 'a.ts' }, 'file-read'],
+		['Grep', { pattern: 'x' }, 'search'],
+		['Glob', { pattern: '*.ts' }, 'search'],
+		['LS', { path: '.' }, 'search'],
+		['BashOutput', { bash_id: 'b1' }, 'live-read'],
+		['WebFetch', { url: 'http://x' }, 'live-read'],
+		['WebSearch', { query: 'q' }, 'live-read'],
+		['Edit', { file_path: 'a.ts' }, 'file-edit'],
+		['Write', { file_path: 'a.ts' }, 'file-edit'],
+		['apply_patch', '*** Begin Patch', 'file-edit'],
+		['NotebookEdit', { notebook_path: 'n.ipynb' }, 'file-edit'],
+		['Bash', { command: 'ls' }, 'shell'],
+		['exec_command', { cmd: 'ls' }, 'shell'],
+		['TodoWrite', { todos: [] }, 'plan'],
+		['AskUserQuestion', {}, 'plan'],
+		['ExitPlanMode', {}, 'plan'],
+		['Task', { description: 'd' }, 'other'],
+		['KillShell', {}, 'other'],
+		['mcp__issues__create_issue', { title: 't' }, 'other'],
+		['SomethingNew', { path: 'x' }, 'other'],
+		['', undefined, 'other'],
+	])('%s is %s', (name, input, kind) => {
+		expect(describeToolKind(name, input as never)).toBe(kind);
+	});
+
+	it('agrees with the activity feed: a tool the feed calls an edit is a file-edit, and nothing else is', () => {
+		const calls: Array<[string, unknown]> = [
+			['Edit', { file_path: 'a' }],
+			['Bash', { command: 'sed -i s/a/b/ a' }],
+			['Read', { file_path: 'a' }],
+			['TodoWrite', { todos: [] }],
+		];
+		for (const [name, input] of calls) {
+			expect(describeToolKind(name, input) === 'file-edit').toBe(describesFileEdit(name, input));
+		}
+	});
+
+	it('does not read a shell command that edits a file as an edit', () => {
+		expect(describeToolKind('Bash', { command: 'sed -i s/a/b/ a.ts' })).toBe('shell');
 	});
 });

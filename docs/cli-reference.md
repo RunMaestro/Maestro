@@ -3062,7 +3062,7 @@ maestro-cli tab compact active --agent <agent-id> --background
 
 ## `maestro-cli tab continuity [tab-id]`
 
-Preview what a continuation of a tab must keep (default: the active tab): its constraints, pending work, verified results and failures with sources, and what is unknown. Read only: starts no turn and changes nothing
+Preview what a continuation of a tab must keep (default: the active tab): its constraints, pending work, verified results and failures with sources, what is unknown, and signals (repeated calls, readiness). Read only: starts no turn and changes nothing
 
 | Option             | Description                                    | Default |
 | ------------------ | ---------------------------------------------- | ------- |

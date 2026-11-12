@@ -95,6 +95,36 @@ export interface TabContinuityPreview {
 	notices: string[];
 	/** What could not be established, as `field: reason`. */
 	unknowns: string[];
+	/**
+	 * The preview's repetition and readiness signals, as data. Absent from a desktop
+	 * that predates them. Observations only: nothing in it is a score or a saving.
+	 */
+	signals?: TabContinuitySignals;
+}
+
+/** The signals of a continuity preview, as strings and counts a script can read without `contextSignals`. */
+export interface TabContinuitySignals {
+	/** Calls repeated with nothing between that could change the outcome. */
+	repetition: {
+		kind: string;
+		call: string;
+		count: number;
+		ongoing: boolean;
+		outputs: string;
+		/** The entries of the run, as `tool #5`. */
+		refs: string[];
+		/** `reason at entry`, when something ended the run. */
+		endedBy?: string;
+		uncertainty: string[];
+	}[];
+	/** One reading each: `clear`, `open`, `info` or `unknown`. */
+	readiness: { id: string; status: string; statement: string; uncertainty: string[] }[];
+	/** The routing a continuation is configured with (settings, not a launch). Empty: not read. */
+	routing: string[];
+	/** Sentences in a report. Nothing acts on them. */
+	advice: string[];
+	/** What the signals could not establish, as `field: reason`. */
+	unknowns: string[];
 }
 
 /** What the renderer answers a context operation with. */
@@ -137,6 +167,7 @@ export const MAX_CONTINUITY_TEXT_CHARS = 64_000;
 const MAX_CONTINUITY_LINES = 50;
 const MAX_CONTINUITY_LINE_CHARS = 1_000;
 const MAX_CONTINUITY_REASONS = 20;
+const MAX_SIGNAL_ITEMS = 40;
 
 function wholeCount(value: unknown): number | undefined {
 	return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
@@ -149,6 +180,65 @@ function sentenceList(value: unknown): string[] {
 		.filter((item): item is string => typeof item === 'string')
 		.slice(0, MAX_CONTINUITY_LINES)
 		.map((item) => stripControlCharacters(item).slice(0, MAX_CONTINUITY_LINE_CHARS));
+}
+
+/** One short string from outside: controls removed, bounded. Anything else is dropped. */
+function cleanLine(value: unknown): string | undefined {
+	return typeof value === 'string'
+		? stripControlCharacters(value).slice(0, MAX_CONTINUITY_LINE_CHARS)
+		: undefined;
+}
+
+function recordList(value: unknown): Record<string, unknown>[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+		.slice(0, MAX_SIGNAL_ITEMS);
+}
+
+/**
+ * Narrow the signals of a preview from the wire, item by item: an item that is
+ * not shaped as one is dropped, never repaired. Absent or not an object: no signals.
+ */
+export function normalizeContinuitySignals(raw: unknown): TabContinuitySignals | undefined {
+	if (!raw || typeof raw !== 'object') return undefined;
+	const candidate = raw as Record<string, unknown>;
+	const repetition: TabContinuitySignals['repetition'] = [];
+	for (const item of recordList(candidate.repetition)) {
+		const kind = cleanLine(item.kind);
+		const call = cleanLine(item.call);
+		const outputs = cleanLine(item.outputs);
+		const count = wholeCount(item.count);
+		if (kind === undefined || call === undefined || outputs === undefined || count === undefined) {
+			continue;
+		}
+		const endedBy = cleanLine(item.endedBy);
+		repetition.push({
+			kind,
+			call,
+			count,
+			ongoing: item.ongoing === true,
+			outputs,
+			refs: sentenceList(item.refs),
+			...(endedBy !== undefined ? { endedBy } : {}),
+			uncertainty: sentenceList(item.uncertainty),
+		});
+	}
+	const readiness: TabContinuitySignals['readiness'] = [];
+	for (const item of recordList(candidate.readiness)) {
+		const id = cleanLine(item.id);
+		const status = cleanLine(item.status);
+		const statement = cleanLine(item.statement);
+		if (id === undefined || status === undefined || statement === undefined) continue;
+		readiness.push({ id, status, statement, uncertainty: sentenceList(item.uncertainty) });
+	}
+	return {
+		repetition,
+		readiness,
+		routing: sentenceList(candidate.routing),
+		advice: sentenceList(candidate.advice),
+		unknowns: sentenceList(candidate.unknowns),
+	};
 }
 
 /**
@@ -179,6 +269,7 @@ export function normalizeContinuity(raw: unknown): TabContinuityPreview | undefi
 		}
 	}
 	const text = stripControlCharacters(candidate.text);
+	const signals = normalizeContinuitySignals(candidate.signals);
 	return {
 		text:
 			text.length > MAX_CONTINUITY_TEXT_CHARS
@@ -188,6 +279,7 @@ export function normalizeContinuity(raw: unknown): TabContinuityPreview | undefi
 		synopses: { shown, refused },
 		notices: sentenceList(candidate.notices),
 		unknowns: sentenceList(candidate.unknowns),
+		...(signals ? { signals } : {}),
 	};
 }
 

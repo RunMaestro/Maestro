@@ -11,11 +11,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getContextColor } from '../utils/theme';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/formatters';
-import {
-	calculateContextDisplay,
-	calculateDisplayInputTokens,
-	resolveGaugeTokenStats,
-} from '../utils/contextUsage';
+import { calculateDisplayInputTokens, readTabContextUsage } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getTabDisplayName, visibleAiTabs } from '../utils/tabHelpers';
 import { useWizardActiveTabs } from '../contexts/InlineWizardContext';
@@ -103,7 +99,7 @@ function getTabLastActivity(tab: AITab): number | undefined {
 
 /**
  * Get context usage percentage from usage stats.
- * Uses calculateContextDisplay() which handles accumulated multi-tool token overflow.
+ * Uses readTabContextUsage() (calculateContextDisplay underneath), which handles accumulated multi-tool token overflow.
  *
  * Returns `null` when no trustworthy reading is available (no usage yet, or
  * accumulated tokens overflow the window without a preserved fallback). Callers
@@ -111,15 +107,7 @@ function getTabLastActivity(tab: AITab): number | undefined {
  * 0% - see issue #762.
  */
 function getContextPercentage(tab: AITab, agentId?: ToolType): number | null {
-	if (!tab.usageStats) return null;
-	const { contextWindow } = tab.usageStats;
-	if (!contextWindow || contextWindow === 0) return null;
-	const result = calculateContextDisplay(
-		resolveGaugeTokenStats(tab.usageStats, agentId),
-		contextWindow,
-		agentId
-	);
-	return result.trustworthy ? result.percentage : null;
+	return readTabContextUsage(tab.usageStats, agentId)?.percent ?? null;
 }
 
 /**

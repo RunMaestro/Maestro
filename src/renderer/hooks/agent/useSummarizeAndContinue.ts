@@ -21,7 +21,7 @@ import {
 	resolveTabProvider,
 } from '../../utils/providerTabSessions';
 import { useRef, useCallback } from 'react';
-import type { Session, LogEntry, AITab } from '../../types';
+import type { Session, LogEntry, AITab, ToolType } from '../../types';
 import type { SummarizeProgress, SummarizeResult } from '../../types/contextMerge';
 import { contextSummarizationService } from '../../services/contextSummarizer';
 import { createTabAtPosition } from '../../utils/tabHelpers';
@@ -32,6 +32,9 @@ import type { SummarizeState, TabSummarizeState } from '../../stores/operationSt
 import { logger } from '../../utils/logger';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 import { continuityWire } from '../../../shared/continuityPreview';
+import { describeContinuationRouting } from '../../../shared/continuationRouting';
+import { readTabContextUsage } from '../../utils/contextUsage';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { TabContextOpResult } from '../../../shared/tabContextOps';
 
 // Re-export types from the canonical store location
@@ -532,6 +535,8 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 			const current = resolve();
 			if ('error' in current) return { success: false, error: current.error, ...subject };
 			const { session, tab } = current;
+			const provider = resolveTabProvider(tab, session);
+			const settings = useSettingsStore.getState();
 			const planned = contextSummarizationService.previewContinuity({
 				target: { agentId: sessionId, tabId },
 				agentId: session.id,
@@ -539,7 +544,7 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 					id: tab.id,
 					agentSessionId: tab.agentSessionId,
 					nativeSessionBinding: tab.nativeSessionBinding,
-					provider: resolveTabProvider(tab, session),
+					provider,
 					state: tab.state,
 					consultOrigin: tab.consultOrigin,
 					documentOrigin: tab.documentOrigin,
@@ -547,6 +552,21 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 				},
 				history: history?.records ?? null,
 				historyTruncated: history?.truncated,
+				facts: {
+					context: readTabContextUsage(tab.usageStats, provider),
+					routing: describeContinuationRouting({
+						toolType: provider as ToolType,
+						tabModel: tab.customModel,
+						agentModel: session.customModel,
+						tabEffort: tab.customEffort,
+						agentEffort: session.customEffort,
+						runOn: session.runOn,
+						tierTargets: session.tierTargets,
+						backgroundRequests: session.backgroundRequests,
+						harnessTierDefaults: settings.harnessTierDefaults,
+						endpoints: settings.localModelEndpoints,
+					}),
+				},
 			});
 			if (!planned.ok) return { success: false, error: planned.error, ...subject };
 			return { success: true, ...subject, continuity: continuityWire(planned.preview) };

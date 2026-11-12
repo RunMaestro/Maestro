@@ -20,6 +20,7 @@ import { useSummarizeAndContinue } from '../../../renderer/hooks/agent/useSummar
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { useOperationStore } from '../../../renderer/stores/operationStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { AITab, LogEntry, Session } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
@@ -370,6 +371,126 @@ describe('previewContinuity', () => {
 
 			expect(useSessionStore.getState().activeSessionId).toBe('agent-2');
 			expect(useSessionStore.getState().sessions[0].activeTabId).toBe('tab-1');
+		});
+	});
+	describe('signals', () => {
+		const toolLog = (id: string, command: string, timestamp: number): LogEntry => ({
+			id,
+			source: 'tool',
+			text: 'Bash',
+			timestamp,
+			metadata: { toolState: { status: 'failed', input: { command }, output: 'FAIL boom' } },
+		});
+
+		it('appends repetition and readiness to the text and carries them on the wire', async () => {
+			seed([
+				agentOf({
+					aiTabs: [
+						tabOf({
+							logs: [
+								log('u1', 'user', 'Make the tests pass please.', 1_000),
+								toolLog('t1', 'npm test', 1_100),
+								toolLog('t2', 'npm test', 1_200),
+								toolLog('t3', 'npm test', 1_300),
+							],
+						}),
+					],
+				}),
+			]);
+			const result = await preview()('agent-1', 'tab-1');
+
+			expect(text(result)).toMatch(/\nSignals: Direct observations from this tab's transcript/);
+			expect(text(result)).toMatch(
+				/- repeated failure x3, not yet ended: `npm test` \(tool #2, tool #3, tool #4\)/
+			);
+			const { signals } = result.continuity ?? {};
+			expect(signals?.repetition[0]).toMatchObject({
+				kind: 'repeated-failure',
+				count: 3,
+				ongoing: true,
+			});
+			expect(signals?.readiness.map((r) => r.id)).toEqual([
+				'activity',
+				'repetition',
+				'unverified-edits',
+				'open-failures',
+				'since-compaction',
+				'pressure',
+			]);
+			// The digest and the signals agree that the failure is open.
+			expect(signals?.readiness.find((r) => r.id === 'open-failures')?.status).toBe('open');
+		});
+
+		it('reads the context fill from the tab usage record, as the gauge reads it', async () => {
+			seed([
+				agentOf({
+					aiTabs: [
+						tabOf({
+							usageStats: {
+								inputTokens: 40_000,
+								outputTokens: 2_000,
+								cacheReadInputTokens: 50_000,
+								cacheCreationInputTokens: 10_000,
+								totalCostUsd: 0,
+								contextWindow: 200_000,
+							},
+						}),
+					],
+				}),
+			]);
+			const result = await preview()('agent-1', 'tab-1');
+			expect(text(result)).toContain(
+				'The provider reported about 50% of a 200,000-token window in use (100,000 tokens)'
+			);
+		});
+
+		it('says the fill is unknown when the tab has no usage record', async () => {
+			const result = await preview()('agent-1', 'tab-1');
+			expect(text(result)).toMatch(/pressure \[unknown\]: This tab has no usable usage record/);
+			expect(result.continuity?.signals?.unknowns.join('\n')).toMatch(/pressure: /);
+		});
+
+		it('names where a continuation would run from the stored settings, tab model first', async () => {
+			useSettingsStore.setState({
+				localModelEndpoints: [
+					{ id: 'ep-1', name: 'Workstation', kind: 'ollama', baseUrl: 'http://w:11434' },
+				],
+				harnessTierDefaults: {},
+			} as never);
+			seed([
+				agentOf({
+					customModel: 'agent-model',
+					runOn: { type: 'source', endpointId: 'ep-1', model: 'qwen3' },
+					backgroundRequests: { target: { type: 'source', endpointId: 'ep-1', model: 'tiny' } },
+					aiTabs: [tabOf({ customModel: 'tab-model' })],
+				}),
+			]);
+			const result = await preview()('agent-1', 'tab-1');
+
+			expect(text(result)).toContain(
+				'Configured routing (read from the settings as they stand now'
+			);
+			expect(text(result)).toContain('model tab-model (set on the tab)');
+			expect(text(result)).toMatch(/Run on: .*qwen3/);
+			expect(text(result)).toMatch(/Background requests: configured to go to .*tiny/);
+			expect(result.continuity?.signals?.routing).toHaveLength(5);
+			expect(text(result)).toMatch(/Not checked: whether a source is enabled, reachable/);
+		});
+
+		it('changes nothing it reads: no setting, no tab, no agent', async () => {
+			const sessions = JSON.stringify(useSessionStore.getState().sessions);
+			const settings = JSON.stringify({
+				e: useSettingsStore.getState().localModelEndpoints,
+				h: useSettingsStore.getState().harnessTierDefaults,
+			});
+			await preview()('agent-1', 'tab-1');
+			expect(JSON.stringify(useSessionStore.getState().sessions)).toBe(sessions);
+			expect(
+				JSON.stringify({
+					e: useSettingsStore.getState().localModelEndpoints,
+					h: useSettingsStore.getState().harnessTierDefaults,
+				})
+			).toBe(settings);
 		});
 	});
 });

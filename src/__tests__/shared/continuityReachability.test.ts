@@ -145,6 +145,73 @@ describe('who reaches the continuity digest', () => {
 		});
 	});
 
+	describe('the context signals', () => {
+		it('are built only by the preview planner, from the same explicit request', () => {
+			expect(filesWhere(importing('contextSignals'))).toEqual(['shared/continuityPreview.ts']);
+			expect(filesWhere(naming('buildContextSignals'))).toEqual([
+				'shared/contextSignals.ts',
+				'shared/continuityPreview.ts',
+			]);
+		});
+
+		it('are turned into wire data in one place and into text in one place', () => {
+			expect(filesWhere(naming('signalsToWire'))).toEqual([
+				'shared/contextSignals.ts',
+				'shared/continuityPreview.ts',
+			]);
+			expect(filesWhere(naming('formatContextSignals'))).toEqual([
+				'shared/contextSignals.ts',
+				'shared/continuityPreview.ts',
+			]);
+		});
+
+		it('read the routing facts through one reader, which only the explicit hook and the preview use', () => {
+			expect(filesWhere(importing('continuationRouting'))).toEqual([
+				'renderer/hooks/agent/useSummarizeAndContinue.ts',
+				'shared/contextSignals.ts',
+				'shared/continuityPreview.ts',
+			]);
+			expect(filesWhere(naming('describeContinuationRouting'))).toEqual([
+				'renderer/hooks/agent/useSummarizeAndContinue.ts',
+				'shared/continuationRouting.ts',
+			]);
+		});
+
+		const MODULES = ['shared/contextSignals.ts', 'shared/continuationRouting.ts'];
+
+		it.each(MODULES)('%s imports no store, no IPC, no process and no network', (file) => {
+			const text = FILES.find((candidate) => candidate.relative === file)?.text ?? '';
+			expect(text.length).toBeGreaterThan(0);
+			expect(text).not.toMatch(
+				/from\s+['"](?:electron|node:[a-z:/]+|react|zustand)['"]|\bwindow\.maestro\b|\buse[A-Z]\w*Store\b|\bfetch\(|\bsetTimeout\(|\bsetInterval\(|\bDate\.now\(|\bnew Date\(|\bspawn\(/
+			);
+		});
+
+		it('never block, rewrite, route or send: no name for any of those appears in the signals module', () => {
+			const text = FILES.find((file) => file.relative === 'shared/contextSignals.ts')?.text ?? '';
+			expect(text).not.toMatch(
+				/\b(?:blockToolCall|denyTool|rewritePrompt|appendSystemPrompt|setModel|switchModel|routeTurn|planBackgroundRoute|enqueuePromptForTab|keepWarm|keepalive)\b/i
+			);
+		});
+
+		it('are not counted by any savings counter, and no counter reads them', () => {
+			const counters = filesWhere(
+				(text) =>
+					importing('contextSignals')(text) ||
+					importing('continuationRouting')(text) ||
+					naming('ContextSignals')(text)
+			).filter(
+				(file) =>
+					file.startsWith('main/local-models/proxy/') ||
+					file.startsWith('main/stats/') ||
+					file === 'shared/local-models/token-proxy.ts' ||
+					file === 'shared/local-models/model-usage.ts' ||
+					file.startsWith('renderer/components/UsageDashboard/')
+			);
+			expect(counters).toEqual([]);
+		});
+	});
+
 	// The paths where automatic injection would do harm. They are named so that
 	// a rename or a move cannot quietly take one out of this check.
 	const GUARDED = [
@@ -183,6 +250,9 @@ describe('who reaches the continuity digest', () => {
 		expect(/\b(?:previewContinuity|buildContinuityDigest|buildContextDigest)\b/.test(text)).toBe(
 			false
 		);
+		expect(importing('contextSignals')(text)).toBe(false);
+		expect(importing('continuationRouting')(text)).toBe(false);
+		expect(/\b(?:buildContextSignals|describeContinuationRouting)\b/.test(text)).toBe(false);
 	});
 
 	it('keeps the summarization prompt builders from naming the digest', () => {

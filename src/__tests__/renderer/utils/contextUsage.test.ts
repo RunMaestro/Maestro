@@ -11,6 +11,7 @@ import {
 	calculateDisplayInputTokens,
 	estimateAccumulatedGrowth,
 	resolveGaugeTokenStats,
+	readTabContextUsage,
 	DEFAULT_CONTEXT_WINDOWS,
 	resolveGrokContextSelection,
 	__resetGrokContextSelectionForTests,
@@ -913,5 +914,65 @@ describe('Grok context percentage from an account-scoped snapshot', () => {
 		expect(other?.accountKey).toBeTruthy();
 		expect(other?.accountKey).not.toBe(accountKey);
 		expect(estimateContextUsage(stats, 'grok', undefined, other)).toBeNull();
+	});
+});
+
+describe('readTabContextUsage', () => {
+	const ONE_M = 1_000_000;
+
+	it('reads a tab usage record the way the gauge does and keeps the window it measured against', () => {
+		expect(
+			readTabContextUsage(
+				{
+					inputTokens: 40_000,
+					outputTokens: 2_000,
+					cacheReadInputTokens: 50_000,
+					cacheCreationInputTokens: 10_000,
+					contextWindow: 200_000,
+				},
+				'claude-code'
+			)
+		).toEqual({ tokens: 100_000, window: 200_000, percent: 50 });
+	});
+
+	it('measures the occupancy snapshot, not the summed spend of a multi-call turn (issue #1782)', () => {
+		const reading = readTabContextUsage(
+			{
+				inputTokens: 22,
+				outputTokens: 4_100,
+				cacheReadInputTokens: 437_222,
+				cacheCreationInputTokens: 89_297,
+				contextWindow: ONE_M,
+				absoluteUsage: {
+					inputTokens: 3,
+					outputTokens: 600,
+					cacheReadInputTokens: 78_900,
+					cacheCreationInputTokens: 4_500,
+				},
+			},
+			'claude-code'
+		);
+		expect(reading).toEqual({ tokens: 83_403, window: ONE_M, percent: 8 });
+	});
+
+	it.each([
+		['no usage record', undefined],
+		['a null record', null],
+		['no window', { inputTokens: 5 }],
+		['a zero window', { inputTokens: 5, contextWindow: 0 }],
+		[
+			'accumulated tokens that overflow the window with no fallback',
+			{ inputTokens: 900_000, cacheReadInputTokens: 900_000, contextWindow: 200_000 },
+		],
+	])('returns null, never 0%, for %s', (_label, stats) => {
+		expect(readTabContextUsage(stats, 'claude-code')).toBeNull();
+	});
+
+	it('is the Tab Switcher reading: one function, so the two cannot disagree', () => {
+		const stats = { inputTokens: 30_000, contextWindow: 100_000 };
+		expect(readTabContextUsage(stats, 'claude-code')?.percent).toBe(
+			calculateContextDisplay(resolveGaugeTokenStats(stats, 'claude-code'), 100_000, 'claude-code')
+				.percentage
+		);
 	});
 });

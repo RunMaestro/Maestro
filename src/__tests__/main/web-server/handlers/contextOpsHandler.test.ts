@@ -482,6 +482,148 @@ describe('tabContextOps wire helpers', () => {
 			});
 		});
 
+		describe('the signals of a preview', () => {
+			const signals = (overrides: Record<string, unknown> = {}) => ({
+				repetition: [
+					{
+						kind: 'repeated-failure',
+						call: 'npm test',
+						count: 3,
+						ongoing: true,
+						outputs: 'identical',
+						refs: ['tool #2', 'tool #3', 'tool #4'],
+						endedBy: 'edit at tool #5',
+						uncertainty: ['one limit'],
+					},
+				],
+				readiness: [
+					{ id: 'activity', status: 'clear', statement: 'Idle.', uncertainty: [] },
+					{ id: 'pressure', status: 'unknown', statement: 'No record.', uncertainty: ['x'] },
+				],
+				routing: ['Run on: Provider.'],
+				advice: ['A sentence.'],
+				unknowns: ['pressure: No record.'],
+				...overrides,
+			});
+
+			it('keeps well-formed signals as they are', () => {
+				expect(received(wire({ signals: signals() }))?.signals).toEqual(signals());
+			});
+
+			it('is absent from a preview whose desktop predates it, and from one that sent a non-object', () => {
+				expect(received(wire())?.signals).toBeUndefined();
+				expect(received(wire({ signals: 'text' }))?.signals).toBeUndefined();
+				expect(received(wire({ signals: null }))?.signals).toBeUndefined();
+				expect(received(wire({ signals: 5 }))?.signals).toBeUndefined();
+			});
+
+			it('removes control characters from every string it will print', () => {
+				const cleaned = received(
+					wire({
+						signals: signals({
+							repetition: [
+								{
+									kind: 'repeated-failure',
+									call: 'np\u001b[2Jm test',
+									count: 3,
+									ongoing: true,
+									outputs: 'identical',
+									refs: ['to\u0007ol #2'],
+									uncertainty: ['u\u0000nc'],
+								},
+							],
+							readiness: [
+								{ id: 'a\u001bb', status: 's', statement: 'st\u202eate', uncertainty: [] },
+							],
+							routing: ['r\u0007'],
+							advice: ['a\u001b'],
+							unknowns: ['k\u0000: v'],
+						}),
+					})
+				)?.signals;
+				expect(cleaned?.repetition[0]).toMatchObject({
+					call: 'np[2Jm test',
+					refs: ['tool #2'],
+					uncertainty: ['unc'],
+				});
+				expect(cleaned?.readiness[0]).toMatchObject({ id: 'ab', statement: 'state' });
+				expect(cleaned).toMatchObject({ routing: ['r'], advice: ['a'], unknowns: ['k: v'] });
+			});
+
+			it('bounds the items and every line, and keeps only strings in the lists', () => {
+				const row = (n: number) => ({
+					kind: 'repeated-failure',
+					call: `c${n}`,
+					count: 3,
+					ongoing: false,
+					outputs: 'identical',
+					refs: [],
+					uncertainty: [],
+				});
+				const bounded = received(
+					wire({
+						signals: signals({
+							repetition: Array.from({ length: 90 }, (_, n) => row(n)),
+							advice: ['x'.repeat(5_000), 1, null, 'kept'],
+						}),
+					})
+				)?.signals;
+				expect(bounded?.repetition).toHaveLength(40);
+				expect(bounded?.advice).toHaveLength(2);
+				expect(bounded?.advice[0]).toHaveLength(1_000);
+				expect(bounded?.advice[1]).toBe('kept');
+			});
+
+			it.each([
+				['no kind', { call: 'c', count: 3, outputs: 'identical' }],
+				['no call', { kind: 'k', count: 3, outputs: 'identical' }],
+				['no outputs', { kind: 'k', call: 'c', count: 3 }],
+				['a fractional count', { kind: 'k', call: 'c', count: 2.5, outputs: 'identical' }],
+				['a negative count', { kind: 'k', call: 'c', count: -1, outputs: 'identical' }],
+				['a count that is a string', { kind: 'k', call: 'c', count: '3', outputs: 'identical' }],
+			])('drops a repetition item with %s and does not repair it', (_label, bad) => {
+				const kept = received(
+					wire({ signals: signals({ repetition: [bad, signals().repetition[0]] }) })
+				)?.signals?.repetition;
+				expect(kept).toEqual(signals().repetition);
+			});
+
+			it('drops a readiness item that lacks an id, a status or a statement', () => {
+				const kept = received(
+					wire({
+						signals: signals({
+							readiness: [
+								{ status: 's', statement: 'x' },
+								{ id: 'a', statement: 'x' },
+								{ id: 'a', status: 's' },
+								{ id: 'ok', status: 'clear', statement: 'fine' },
+							],
+						}),
+					})
+				)?.signals?.readiness;
+				expect(kept).toEqual([{ id: 'ok', status: 'clear', statement: 'fine', uncertainty: [] }]);
+			});
+
+			it('treats ongoing as true only when it is exactly true', () => {
+				const item = { ...signals().repetition[0] };
+				for (const ongoing of ['true', 1, null, undefined]) {
+					const kept = received(wire({ signals: signals({ repetition: [{ ...item, ongoing }] }) }))
+						?.signals?.repetition[0];
+					expect(kept?.ongoing).toBe(false);
+				}
+			});
+
+			it('fills missing lists with empty ones', () => {
+				expect(received(wire({ signals: {} }))?.signals).toEqual({
+					repetition: [],
+					readiness: [],
+					routing: [],
+					advice: [],
+					unknowns: [],
+				});
+			});
+		});
+
 		it('keeps a refusal and a preview apart: a failed result may still carry neither', () => {
 			expect(
 				normalizeTabContextOpResult({ success: false, error: 'Tab x is not an AI tab of agent a' })

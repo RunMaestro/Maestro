@@ -113,6 +113,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Encoding answers to provider questions:** `encodeQuestionAnswer()`, `hasAnswer()`, `QuestionForAnswer`, `QuestionSelection` in `src/shared/questionAnswer.ts`
 - **Strip ANSI / collapse progress overwrites:** `stripAnsiCodes()`, `processCarriageReturns()` in `src/shared/stringUtils.ts`
 - **Making untrusted text safe to print or show verbatim:** `stripControlCharacters()` in `src/shared/stringUtils.ts` (escapes, CR, C0/C1 controls, bidirectional overrides)
+- **One line of untrusted text, safe to show:** `safeExcerpt()`, `EXCERPT_SCAN_CHARS` in `src/shared/safeExcerpt.ts` (controls and bidi removed, secrets redacted, backticks stripped for data, line breaks marked)
 - **Normalized edit similarity:** `normalizedEditSimilarity()` in `src/shared/stringUtils.ts`
 - **Preparing text for speech:** `prepareSpeechText()` in `src/shared/acappella/speech-text.ts`
 - **Speech recognition vocabulary:** `normalizeSpeechVocabulary()`, `buildSpeechVocabulary()` in `src/shared/acappella/speech-vocabulary.ts`; `correctSpeechVocabulary()` in `src/main/local-models/speech-vocabulary.ts`
@@ -266,7 +267,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
 - **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()` in `src/shared/maestro-lib/providers/capabilities.ts`
-- **Recognizing a tool across providers by its name:** `normalizeToolName()`, `describeToolCommand()`, `describeToolTaskList()`, `describesFileEdit()` in `src/shared/toolActivityLabel.ts` (`read_file`, `readFile` and `ReadFile` collapse to one key)
+- **Recognizing a tool across providers by its name:** `normalizeToolName()`, `describeToolCommand()`, `describeToolTaskList()`, `describesFileEdit()`, `describeToolKind()` in `src/shared/toolActivityLabel.ts` (`read_file`, `readFile` and `ReadFile` collapse to one key)
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
 - **An agent's model list, and refreshing it:** `discoverAgentModels()` in `src/main/agents/model-discovery.ts`; `refreshModels()` on `useAgentModelEffortOptions()`; `MODELS_REFRESHED_CHANNEL` in `src/shared/agentModelsRefresh.ts`
 - **Which account dirs exist for a provider (main):** `getProviderAccountDirs(toolType, options?)` in `src/main/agents/provider-account-dirs.ts`
@@ -345,6 +346,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Creating a tab straight into a tile:** `tileNewTab()` / `canTileNewTab()` in `src/renderer/hooks/tabs/tileNewTab.ts`
 - **Restoring an AI tab's scroll position:** `initialScrollTop` + `initialIsAtBottom`, consumed by `useTerminalOutputScroll()` in `src/renderer/components/TerminalOutput/hooks/useTerminalOutputScroll.ts`
 - **How big a tab's conversation is and how long it ran:** `computeTabConversationStats()`, `formatConversationDuration()` in `src/shared/tabConversationStats.ts`
+- **A tab's context fill from its stored usage:** `readTabContextUsage(usageStats, agentId)` in `src/renderer/utils/contextUsage.ts` (the Tab Switcher gauge and the continuity preview; null is no reading, never 0%)
 - **What a snooze opener was handed:** `resolveSnoozeTarget(session, id)` in `src/renderer/utils/snoozeHelpers.ts`
 - **Parking, waking, dismissing, or rescheduling ONE snooze:** `snoozeTabWithMirror()`, `wakeSnoozeNow()`, `dismissSnoozeNow()`, `rescheduleSnoozeNow()` in `src/renderer/services/snoozeActions.ts`
 
@@ -379,6 +381,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Recovering a turn refused on the context limit:** `getContextCompactCommand()` in `src/shared/contextCompaction.ts`; `compactTabContext()`, `recordContextCompaction()` in `src/renderer/services/contextCompaction.ts`; driven by `scheduleRetryForError()` in `src/renderer/stores/retryStore.ts`
 - **Evidence digest of a conversation, for a continuation:** `buildContextDigest()`, `DEFAULT_DIGEST_CHARS` in `src/shared/contextDigest.ts`; `buildContinuityDigest()` on `contextSummarizationService` in `src/renderer/services/contextSummarizer.ts`
 - **The explicit continuity preview of ONE tab (gates, wire form, who may call it):** `planContinuityPreview()`, `continuityWire()` in `src/shared/continuityPreview.ts`, reached by `useSummarizeAndContinue().previewContinuity()`, `maestro-cli tab continuity` and `<ContinuityPreviewModal>`
+- **What a transcript shows about repetition and readiness (the context signals):** `buildContextSignals()`, `formatContextSignals()`, `signalsToWire()`, `SIGNAL_LIMITS` in `src/shared/contextSignals.ts`; shown only by the continuity preview
+- **The routing a tab's next turn is configured with:** `describeContinuationRouting()`, `describeRoutingLines()` in `src/shared/continuationRouting.ts` (settings, not a launch; owner gates first)
 - **Whether a Force Send control exists at all:** `shouldOfferForceSend()`, `getForceSendEligibility()`, `getForceSendTitle()` in `src/renderer/utils/executionQueue.ts`
 - **Model/effort badges on a finished turn:** `<TurnSettingPills>` in `src/renderer/components/ui/TurnSettingPills.tsx`; settings are stamped at SEND by `codifyTurnSettings()` in `src/renderer/utils/providerTabSessions.ts`
 - **Thinking mode (`'off' | 'on' | 'sticky'`):** `THINKING_MODES`, `nextThinkingMode()`, `asThinkingMode()` in `src/shared/types.ts`

@@ -20,6 +20,7 @@ import {
 	type SynopsisRefusal,
 } from '../../shared/continuityPreview';
 import { normalizeTabContextOpResult } from '../../shared/tabContextOps';
+import { describeContinuationRouting } from '../../shared/continuationRouting';
 import type { NativeSessionBinding } from '../../shared/maestro-lib/agents/providerSwap';
 
 let sequence = 0;
@@ -616,6 +617,142 @@ describe('planContinuityPreview', () => {
 		});
 	});
 
+	describe('signals', () => {
+		const toolEntry = (name: string, input: unknown, status: string, output: string) =>
+			entry('tool', name, { metadata: { toolState: { status, input, output } } });
+		const failingTest = () =>
+			toolEntry('Bash', { command: 'npm test' }, 'failed', 'FAIL src/a.test.ts');
+		const passingTest = () =>
+			toolEntry('Bash', { command: 'npx vitest run' }, 'completed', 'Tests 5 passed (5)');
+		const editFile = () =>
+			toolEntry('Edit', { file_path: 'a.ts', old_string: 'a', new_string: 'b' }, 'completed', 'ok');
+		const reading = (id: string, preview: ContinuityPreview) => {
+			const found = preview.signals.readiness.find((signal) => signal.id === id);
+			if (!found) throw new Error(`no signal ${id}`);
+			return found;
+		};
+
+		it('appends them to the text after the digest and leaves the digest text as it was', () => {
+			const preview = plan();
+			const digestAt = preview.text.indexOf(preview.digest.preview);
+			expect(digestAt).toBeGreaterThan(0);
+			expect(preview.text.indexOf('\nSignals: Direct observations', digestAt)).toBeGreaterThan(
+				digestAt
+			);
+			expect(
+				preview.text.startsWith('Continuity preview of tab tab-1 (claude-code). Read only')
+			).toBe(true);
+			expect(preview.signals.mode).toBe('observation');
+			expect(preview.signals.accounting).toEqual({ countsAsSavings: false });
+		});
+
+		it('names a repeated failure of the tab with the entries it rests on', () => {
+			const tab = tabOf({
+				entries: [user('Make the suite pass'), failingTest(), failingTest(), failingTest()],
+			});
+			const preview = plan({ tab });
+			expect(preview.signals.repetition).toHaveLength(1);
+			expect(preview.signals.repetition[0]).toMatchObject({
+				kind: 'repeated-failure',
+				count: 3,
+				ongoing: true,
+			});
+			expect(preview.text).toMatch(
+				/repeated failure x3, not yet ended: `npm test` \(tool #2, tool #3, tool #4\)/
+			);
+		});
+
+		it('takes open failures and the last passing check from the digest it built', () => {
+			const failing = plan({
+				tab: tabOf({ entries: [user('Make the suite pass'), failingTest()] }),
+			});
+			expect(reading('open-failures', failing).status).toBe('open');
+			expect(reading('open-failures', failing).statement).toMatch(/1 unresolved failure/);
+
+			const verifiedAfterEdit = plan({
+				tab: tabOf({ entries: [user('Change a.ts'), editFile(), passingTest(), ai('Done.')] }),
+			});
+			expect(reading('unverified-edits', verifiedAfterEdit).status).toBe('clear');
+			expect(reading('unverified-edits', verifiedAfterEdit).statement).toMatch(
+				/entry #3, after the last file edit \(entry #2\)/
+			);
+
+			const editedAfterCheck = plan({
+				tab: tabOf({ entries: [user('Change a.ts'), passingTest(), editFile(), ai('Done.')] }),
+			});
+			expect(reading('unverified-edits', editedAfterCheck).status).toBe('open');
+			expect(reading('unverified-edits', editedAfterCheck).statement).toMatch(
+				/1 file edit since the last passing check \(entry #2\)/
+			);
+		});
+
+		it('does not call an edit unverified when the digest budget cut every passing check it found', () => {
+			const tab = tabOf({ entries: [user('Change a.ts'), editFile(), passingTest(), ai('Done.')] });
+			const cut = plan({ tab, maxChars: 1 });
+			expect(cut.digest.verifiedObservations).toEqual([]);
+			expect(cut.digest.omitted.verifiedObservations).toBe(1);
+			expect(reading('unverified-edits', cut).status).toBe('unknown');
+			expect(reading('unverified-edits', cut).statement).toMatch(
+				/size budget left out the passing checks/
+			);
+			// With room, the same tab is clear.
+			expect(reading('unverified-edits', plan({ tab })).status).toBe('clear');
+		});
+
+		it('reads the tab state, and says a running turn leaves the activity open', () => {
+			expect(reading('activity', plan({ tab: tabOf({ state: 'busy' }) })).status).toBe('open');
+			expect(reading('activity', plan()).status).toBe('clear');
+		});
+
+		it('uses the usage and routing facts it is given, and calls both unknown or absent when it is not', () => {
+			const given = plan({
+				facts: {
+					context: { tokens: 60_000, window: 200_000, percent: 30 },
+					routing: describeContinuationRouting({ toolType: 'claude-code' }),
+				},
+			});
+			expect(reading('pressure', given).status).toBe('info');
+			expect(reading('pressure', given).statement).toContain('about 30% of a 200,000-token window');
+			expect(given.text).toContain('Configured routing (read from the settings as they stand now');
+			expect(given.signals.routing?.basis).toBe('configured-now');
+
+			const absent = plan();
+			expect(reading('pressure', absent).status).toBe('unknown');
+			expect(absent.signals.routing).toBeNull();
+			expect(absent.text).not.toContain('Configured routing');
+		});
+
+		it('is built from this tab alone: History is not a source of calls or edits', () => {
+			const preview = plan({
+				tab: tabOf({ entries: [user('Nothing has run yet here')] }),
+				history: [record(), record({ id: 'h2' })],
+			});
+			expect(preview.signals.counts).toMatchObject({ entries: 1, toolCalls: 0 });
+			expect(preview.signals.repetition).toEqual([]);
+		});
+
+		it('adds nothing to a refusal', () => {
+			const result = planContinuityPreview(
+				input({ tab: tabOf({ consultOrigin: { agentId: 'x' } }) })
+			);
+			expect(result.ok).toBe(false);
+			expect(JSON.stringify(result)).not.toMatch(/Signals/);
+		});
+
+		it('stays plain text safe to print, with no control character from a tool call', () => {
+			const hostile = `npm test ${String.fromCharCode(27)}[31m`;
+			const tab = tabOf({
+				entries: [
+					user('Make the suite pass'),
+					...Array.from({ length: 3 }, () =>
+						toolEntry('Bash', { command: hostile }, 'failed', 'x')
+					),
+				],
+			});
+			expect(plan({ tab }).text).not.toMatch(UNSAFE);
+		});
+	});
+
 	describe('the wire form', () => {
 		it('carries the text, the counts and the unknowns, and nothing that is not plain data', () => {
 			const preview = plan({
@@ -630,7 +767,44 @@ describe('planContinuityPreview', () => {
 			expect(wire.unknowns).toEqual(
 				preview.digest.unknowns.map((unknown) => `${unknown.field}: ${unknown.reason}`)
 			);
+			expect(wire.signals?.readiness.map((signal) => signal.id)).toEqual([
+				'activity',
+				'repetition',
+				'unverified-edits',
+				'open-failures',
+				'since-compaction',
+				'pressure',
+			]);
 			expect(JSON.parse(JSON.stringify(wire))).toEqual(wire);
+		});
+
+		it('carries the repetition observations as strings and counts', () => {
+			const tab = tabOf({
+				entries: [
+					user('Make the suite pass'),
+					...Array.from({ length: 3 }, () =>
+						entry('tool', 'Bash', {
+							metadata: {
+								toolState: { status: 'failed', input: { command: 'npm test' }, output: 'FAIL' },
+							},
+						})
+					),
+				],
+			});
+			const wire = continuityWire(plan({ tab }));
+			expect(wire.signals?.repetition).toEqual([
+				expect.objectContaining({
+					kind: 'repeated-failure',
+					call: 'npm test',
+					count: 3,
+					ongoing: true,
+					outputs: 'identical',
+					refs: ['tool #2', 'tool #3', 'tool #4'],
+				}),
+			]);
+			expect(normalizeTabContextOpResult({ success: true, continuity: wire }).continuity).toEqual(
+				wire
+			);
 		});
 
 		it('survives the receiver normalizer unchanged', () => {

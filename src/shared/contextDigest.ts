@@ -41,11 +41,11 @@
  * keep fresh and nothing to restore. The caller decides when to build one.
  */
 
-import { getBasename, truncateAtWordBoundary } from './formatters';
+import { getBasename } from './formatters';
 import { readCommandCall, type CommandCall } from './literalCommand';
 import { forEachMarkdownLine } from './markdownTaskScan';
-import { redactSecrets } from './redactSecrets';
-import { stripAnsiCodes, stripControlCharacters } from './stringUtils';
+import { EXCERPT_SCAN_CHARS, safeExcerpt as safeText } from './safeExcerpt';
+import { stripAnsiCodes } from './stringUtils';
 import { isFailedSynopsisResponse, parseSynopsis } from './synopsis';
 import {
 	describeToolActivityStatus,
@@ -155,7 +155,7 @@ const DETAIL_CHARS = 160;
 const MAX_ITEMS = 40;
 const MAX_EXCERPTS = 4;
 /** Longest stretch of one message or output the digest reads. */
-const SCAN_CHARS = 20_000;
+const SCAN_CHARS = EXCERPT_SCAN_CHARS;
 /** What a listed item costs beyond its text: the marker and the reference tag. */
 const ITEM_OVERHEAD = 40;
 const MIN_OBJECTIVE_WORDS = 3;
@@ -257,25 +257,6 @@ interface RunHistory {
 
 const lastIndexWhere = <T>(items: readonly T[], test: (item: T) => boolean): number =>
 	items.map(test).lastIndexOf(true);
-
-/**
- * Text safe to show on one line: control characters removed (an escape or a
- * bidirectional override in a pasted line or a model's reply must not act on a
- * terminal or reorder what a reader sees), secret-shaped spans redacted, each
- * line break shown as ⏎, cut at a word. Spacing inside a line is NOT touched: a
- * path with two spaces or a quoted argument is the user's or the command's own.
- * Tool and agent text (`data`) also loses backticks, so nothing it holds can
- * close the code span the preview wraps it in.
- */
-function safeText(text: string, limit: number, data: boolean): { text: string; truncated?: true } {
-	let shown = redactSecrets(stripControlCharacters(text.slice(0, SCAN_CHARS)).trim())
-		.text.replace(/[ \t]*\n+\s*/g, ' ⏎ ')
-		.trim();
-	if (data) shown = shown.replace(/`/g, "'");
-	return shown.length > limit
-		? { text: truncateAtWordBoundary(shown, limit), truncated: true }
-		: { text: shown };
-}
 
 const wordCount = (text: string): number => text.trim().split(/\s+/).filter(Boolean).length;
 
