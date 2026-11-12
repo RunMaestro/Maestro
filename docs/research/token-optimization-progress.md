@@ -742,3 +742,9 @@ LSP was exposed as a deferred tool and used: `findReferences` for `withoutLineNu
 - Hunks of a plain read count lines of the returned text, not file lines. Token figures are 4-characters-per-token estimates that err low (`TOKEN_PROXY_ESTIMATE_NOTE`).
 - This is the first runtime `require('diff')` in the Electron main process. It is a production dependency, but no packaged build was made here; the final phase owns the build.
 - Exercised with synthetic bodies only; no provider workload was run, and nothing here measures what a model retained or what a replacement would cost in quality.
+
+## Supervisor repair: provider targets and blanket proxy defaults, 2026-11-11
+
+`applyDefaultAgentTokenProxy()` in `src/renderer/services/agentGateway.ts` treated every stored `runOn` object as an explicit source override. A valid `{ type: 'provider' }` therefore bypassed the global proxy default. Reused `storedRunOnNamesSource()` from `src/shared/local-models/run-on.ts`: explicit provider targets now inherit the default, while source and malformed targets, explicit proxy modes (including `off`), gateways and ineligible agents retain their previous protection. No live settings were changed.
+
+Executed `npm test -- src/__tests__/renderer/services/agentGateway.test.ts` with Node 24. The three new provider-target cases failed before the fix; the complete file passed all 65 tests afterward, including new explicit-off and malformed-source cases. `npx tsc -p tsconfig.lint.json`, targeted ESLint, Prettier and `npm run docs:verify` passed. LSP definition/references resolved the canonical source-target validator, and both production files returned no syntactic or semantic diagnostics; the test file's inferred LSP project lacked the existing `window.maestro` ambient declaration, so no clean test-file LSP claim is made. Logs: `.maestro/scratch/token-completion-20261111/supervisor-agent-default-*`. Final phase still owns full-suite and integration validation.

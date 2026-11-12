@@ -34,6 +34,7 @@ import {
 	type BackgroundRequests,
 } from '../../shared/local-models/background-requests';
 import { agentGatewaySupport, parseGatewayUrlEdit } from '../../shared/local-models/gateway';
+import { storedRunOnNamesSource } from '../../shared/local-models/run-on';
 import {
 	gatewayPointsAtTokenProxy,
 	holdsTokenProxyFields,
@@ -213,7 +214,7 @@ export async function applyDefaultAgentTokenProxy(sessionId: string): Promise<vo
 		!session ||
 		session.gatewayUrl ||
 		session.tokenProxyMode ||
-		session.runOn ||
+		storedRunOnNamesSource(session.runOn) ||
 		session.sessionSshRemoteConfig?.enabled ||
 		!agentGatewaySupport(session.toolType).supported
 	)

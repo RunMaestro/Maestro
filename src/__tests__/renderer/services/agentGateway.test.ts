@@ -103,10 +103,30 @@ describe('applyDefaultAgentTokenProxy', () => {
 		}
 	);
 
+	it.each(['passthrough', 'compress', 'compress-early'] as const)(
+		'applies %s when the provider is explicitly selected',
+		async (mode) => {
+			seed({ runOn: { type: 'provider' } });
+			useSettingsStore.setState({ defaultTokenProxyMode: mode });
+			await applyDefaultAgentTokenProxy('agent-1');
+			expect(stored()).toMatchObject({
+				runOn: { type: 'provider' },
+				gatewayUrl: proxyUrl('/anthropic'),
+				tokenProxyMode: mode,
+			});
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+				[expect.objectContaining({ tokenProxyMode: mode, gatewayUrl: proxyUrl('/anthropic') })],
+				[]
+			);
+		}
+	);
+
 	it.each<Partial<Session>>([
 		{ gatewayUrl: 'https://external.example.com' },
+		{ tokenProxyMode: 'off' },
 		{ tokenProxyMode: 'passthrough', gatewayUrl: proxyUrl('/anthropic') },
 		{ runOn: QWEN },
+		{ runOn: { type: 'source' } as Session['runOn'] },
 		{ sessionSshRemoteConfig: { enabled: true, remoteId: 'box' } },
 		{ toolType: 'copilot-cli' },
 		{ toolType: 'terminal' },
