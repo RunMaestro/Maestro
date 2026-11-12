@@ -23,6 +23,7 @@ import {
 } from '../../../renderer/stores/modalStore';
 import type { Session } from '../../../renderer/types';
 import type { MarketplacePlaybook } from '../../../shared/marketplace-types';
+import { createMockLaunchRecord } from '../../helpers/mockLaunchRecord';
 
 describe('modalStore', () => {
 	beforeEach(() => {
@@ -421,6 +422,7 @@ describe('modalStore', () => {
 				'autoRunSetup',
 				'marketplace',
 				'playbookLaunch',
+				'playbookOutro',
 				'wizardResume',
 				'agentError',
 				'worktreeConfig',
@@ -1279,6 +1281,88 @@ describe('modalStore', () => {
 				getModalActions().openPlaybookLaunch(playbook);
 			});
 			expect(result.current?.playbook.title).toBe('Code Review');
+		});
+	});
+
+	describe('integration: playbook outro flow', () => {
+		const launch = createMockLaunchRecord({
+			launchId: 'launch-7',
+			status: 'completed',
+			cleanup: 'done',
+		});
+
+		it('openPlaybookOutro opens the outro with the launch record as it is', () => {
+			getModalActions().openPlaybookOutro(launch);
+
+			const state = useModalStore.getState();
+			expect(state.isOpen('playbookOutro')).toBe(true);
+			expect(state.getData('playbookOutro')).toEqual({ launch });
+			expect(state.getData('playbookOutro')?.launch).toBe(launch);
+		});
+
+		it('openPlaybookOutro replaces the launch of an outro that is already open', () => {
+			const other = createMockLaunchRecord({ launchId: 'launch-8', status: 'stopped' });
+			getModalActions().openPlaybookOutro(launch);
+
+			getModalActions().openPlaybookOutro(other);
+
+			expect(useModalStore.getState().getData('playbookOutro')?.launch).toBe(other);
+		});
+
+		it('closePlaybookOutro closes the outro and clears the launch', () => {
+			const actions = getModalActions();
+
+			actions.openPlaybookOutro(launch);
+			actions.closePlaybookOutro();
+
+			const state = useModalStore.getState();
+			expect(state.isOpen('playbookOutro')).toBe(false);
+			expect(state.getData('playbookOutro')).toBeUndefined();
+		});
+
+		it('layers over the Exchange and the launch dialog without closing either', () => {
+			const actions = getModalActions();
+			actions.setMarketplaceModalOpen(true);
+			actions.openPlaybookLaunch({ id: 'p', title: 'P' } as unknown as MarketplacePlaybook);
+
+			actions.openPlaybookOutro(launch);
+
+			expect(useModalStore.getState().isOpen('marketplace')).toBe(true);
+			expect(useModalStore.getState().isOpen('playbookLaunch')).toBe(true);
+			expect(useModalStore.getState().isOpen('playbookOutro')).toBe(true);
+
+			actions.closePlaybookOutro();
+			expect(useModalStore.getState().isOpen('marketplace')).toBe(true);
+			expect(useModalStore.getState().isOpen('playbookLaunch')).toBe(true);
+		});
+
+		it('is not a destination, so opening one does not close it and it does not close one', () => {
+			expect(DESTINATION_MODALS.has('playbookOutro')).toBe(false);
+
+			getModalActions().openPlaybookOutro(launch);
+			useModalStore.getState().openModal('settings');
+			expect(useModalStore.getState().isOpen('playbookOutro')).toBe(true);
+
+			useModalStore.getState().closeModal('playbookOutro');
+			expect(useModalStore.getState().isOpen('settings')).toBe(true);
+		});
+
+		it('is closed with everything else by closeAll', () => {
+			getModalActions().openPlaybookOutro(launch);
+
+			useModalStore.getState().closeAll();
+
+			expect(useModalStore.getState().isOpen('playbookOutro')).toBe(false);
+		});
+
+		it('is read through a granular selector', () => {
+			const { result } = renderHook(() => useModalStore(selectModalData('playbookOutro')));
+			expect(result.current).toBeUndefined();
+
+			act(() => {
+				getModalActions().openPlaybookOutro(launch);
+			});
+			expect(result.current?.launch.launchId).toBe('launch-7');
 		});
 	});
 

@@ -123,4 +123,46 @@ describe('parseToastClickAction', () => {
 			expect(parseToastClickAction({ kind: 'open-url' }).error).toContain('requires url');
 		});
 	});
+
+	describe('open-playbook-outro', () => {
+		it('accepts the agent and the launch', () => {
+			expect(
+				parseToastClickAction({
+					kind: 'open-playbook-outro',
+					sessionId: 's1',
+					launchId: 'launch-1',
+				}).action
+			).toEqual({ kind: 'open-playbook-outro', sessionId: 's1', launchId: 'launch-1' });
+		});
+
+		it('drops fields it does not know', () => {
+			expect(
+				parseToastClickAction({
+					kind: 'open-playbook-outro',
+					sessionId: 's1',
+					launchId: 'launch-1',
+					path: '/tmp/a.ts',
+				}).action
+			).toEqual({ kind: 'open-playbook-outro', sessionId: 's1', launchId: 'launch-1' });
+		});
+
+		it('requires sessionId and launchId, each non-empty', () => {
+			expect(
+				parseToastClickAction({ kind: 'open-playbook-outro', launchId: 'launch-1' }).error
+			).toBe("clickAction kind 'open-playbook-outro' requires sessionId");
+			expect(parseToastClickAction({ kind: 'open-playbook-outro', sessionId: 's1' }).error).toBe(
+				"clickAction kind 'open-playbook-outro' requires launchId"
+			);
+			expect(
+				parseToastClickAction({ kind: 'open-playbook-outro', sessionId: 's1', launchId: '' }).error
+			).toBe("clickAction kind 'open-playbook-outro' requires launchId");
+			expect(
+				parseToastClickAction({ kind: 'open-playbook-outro', sessionId: 's1', launchId: 7 }).error
+			).toBe("clickAction kind 'open-playbook-outro' requires launchId");
+		});
+
+		it('is one of the kinds an unknown kind is told about', () => {
+			expect(TOAST_CLICK_ACTION_KINDS).toContain('open-playbook-outro');
+		});
+	});
 });

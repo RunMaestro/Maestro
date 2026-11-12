@@ -25,6 +25,7 @@
  *   open-terminal - switch to the agent and focus one of its terminal tabs
  *   open-browser  - focus an existing in-app browser tab, or open `url` in a new one
  *   open-url      - open a URL in the system browser (no agent involved)
+ *   open-playbook-outro - switch to the agent a Playbook Launch ran on and open that launch's outro
  */
 export type ToastClickAction =
 	| { kind: 'jump-session'; sessionId: string; tabId?: string }
@@ -50,7 +51,16 @@ export type ToastClickAction =
 			 */
 			url?: string;
 	  }
-	| { kind: 'open-url'; url: string };
+	| { kind: 'open-url'; url: string }
+	| {
+			kind: 'open-playbook-outro';
+			sessionId: string;
+			/**
+			 * The launch whose outro to open. Only the id travels: the renderer reads the record from
+			 * main when the toast is clicked, so a restored notification still opens the same outro.
+			 */
+			launchId: string;
+	  };
 
 /** Every valid `kind`, for validation messages and CLI help. */
 export const TOAST_CLICK_ACTION_KINDS = [
@@ -59,6 +69,7 @@ export const TOAST_CLICK_ACTION_KINDS = [
 	'open-terminal',
 	'open-browser',
 	'open-url',
+	'open-playbook-outro',
 ] as const;
 
 export type ToastClickActionKind = (typeof TOAST_CLICK_ACTION_KINDS)[number];
@@ -118,6 +129,13 @@ export function parseToastClickAction(raw: unknown): {
 			const url = str(obj, 'url');
 			if (!url) return { error: "clickAction kind 'open-url' requires url" };
 			return { action: { kind, url } };
+		}
+		case 'open-playbook-outro': {
+			const sessionId = str(obj, 'sessionId');
+			if (!sessionId) return { error: "clickAction kind 'open-playbook-outro' requires sessionId" };
+			const launchId = str(obj, 'launchId');
+			if (!launchId) return { error: "clickAction kind 'open-playbook-outro' requires launchId" };
+			return { action: { kind, sessionId, launchId } };
 		}
 		default:
 			return {

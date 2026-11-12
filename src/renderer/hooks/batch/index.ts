@@ -81,6 +81,9 @@ export type { BatchCompleteInfo, PRResultInfo } from './useBatchProcessor';
 export { useBatchHandlers } from './useBatchHandlers';
 export type { UseBatchHandlersDeps, UseBatchHandlersReturn } from './useBatchHandlers';
 
+// Showing what a launched Auto Run did, once main says the launch is over
+export { useLaunchEndAnnouncement } from './useLaunchEndAnnouncement';
+
 // Auto Run event handlers
 export { useAutoRunHandlers } from './useAutoRunHandlers';
 export type {

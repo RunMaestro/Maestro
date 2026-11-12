@@ -17,7 +17,11 @@
 import { create } from 'zustand';
 import type { Session, SettingsTab, AgentError } from '../types';
 import type { GitStreamingOperation } from '../../shared/gitUtils';
-import type { MarketplacePlaybook, PlaybookLaunchValues } from '../../shared/marketplace-types';
+import type {
+	MarketplacePlaybook,
+	PlaybookLaunchRecord,
+	PlaybookLaunchValues,
+} from '../../shared/marketplace-types';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
 import { UI_SURFACES } from '../../shared/uiSurfaces';
@@ -375,6 +379,15 @@ export interface PlaybookLaunchModalData {
 	initialValues?: PlaybookLaunchValues;
 }
 
+/**
+ * Playbook outro data: the launch that ended, exactly as main broadcast it. The outro is drawn from
+ * this record alone (it keeps the playbook's `launch` block, the answers and the completion), so it
+ * does not depend on the Exchange or on a manifest that changed since.
+ */
+export interface PlaybookOutroModalData {
+	launch: PlaybookLaunchRecord;
+}
+
 // ============================================================================
 // Modal ID Registry
 // ============================================================================
@@ -430,6 +443,8 @@ export type ModalId =
 	| 'marketplace'
 	// A dialog layered on the Exchange, not a destination (see DESTINATION_MODALS)
 	| 'playbookLaunch'
+	// What a launched run did, opened by an event when the run ends; not a destination either
+	| 'playbookOutro'
 	// Worktree
 	| 'worktreeConfig'
 	| 'createWorktree'
@@ -510,7 +525,7 @@ export type ModalId =
  * or `maestro-cli open`? Dialogs that answer a question ABOUT the surface
  * beneath them are not members and are meant to layer: confirmations, rename
  * prompts, the Cue YAML editor, the Playbook name box, the Usage Dashboard's
- * per-agent detail, the Symphony agent picker, the Playbook Launch dialog.
+ * per-agent detail, the Symphony agent picker, the Playbook Launch dialog and its outro.
  *
  * `documentGraph` is a destination too but lives in `fileExplorerStore`, so it
  * registers itself through `registerExternalDestination` instead of appearing
@@ -610,6 +625,7 @@ export interface ModalDataMap {
 	agentSessions: AgentSessionsModalData;
 	batchRunner: BatchRunnerModalData;
 	playbookLaunch: PlaybookLaunchModalData;
+	playbookOutro: PlaybookOutroModalData;
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
 	reauth: ReauthModalData;
@@ -1164,6 +1180,12 @@ export function getModalActions() {
 		openPlaybookLaunch: (playbook: MarketplacePlaybook, initialValues?: PlaybookLaunchValues) =>
 			openModal('playbookLaunch', initialValues ? { playbook, initialValues } : { playbook }),
 		closePlaybookLaunch: () => closeModal('playbookLaunch'),
+
+		// Playbook outro (opened when a launched run ends: `announceLaunchEnd()` directly when the
+		// run's agent is on screen, else after a click on its toast). Not a destination: it layers
+		// over whatever the person is looking at, the Exchange and the launch dialog included.
+		openPlaybookOutro: (launch: PlaybookLaunchRecord) => openModal('playbookOutro', { launch }),
+		closePlaybookOutro: () => closeModal('playbookOutro'),
 
 		// Wizard Resume Modal
 		setWizardResumeModalOpen: (open: boolean) =>

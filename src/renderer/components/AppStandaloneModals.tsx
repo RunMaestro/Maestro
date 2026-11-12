@@ -64,6 +64,9 @@ const MarketplaceModal = lazy(() =>
 const PlaybookLaunchModalHost = lazy(() =>
 	import('./MarketplaceModal').then((m) => ({ default: m.PlaybookLaunchModalHost }))
 );
+const PlaybookOutroModalHost = lazy(() =>
+	import('./MarketplaceModal').then((m) => ({ default: m.PlaybookOutroModalHost }))
+);
 const SymphonyModal = lazy(() =>
 	import('./SymphonyModal').then((m) => ({ default: m.SymphonyModal }))
 );
@@ -296,6 +299,8 @@ function AppStandaloneModalsInner({
 
 	// The Playbook Launch dialog layers on the Exchange. Its host reads the playbook from the store.
 	const playbookLaunchOpen = useModalStore(selectModalOpen('playbookLaunch'));
+	// The outro opens when a launched run ends, over whatever is on screen. Its host reads the launch.
+	const playbookOutroOpen = useModalStore(selectModalOpen('playbookOutro'));
 
 	// Self-source file explorer state
 	const isGraphViewOpen = useFileExplorerStore((s) => s.isGraphViewOpen);
@@ -430,6 +435,18 @@ function AppStandaloneModalsInner({
 			{playbookLaunchOpen && (
 				<Suspense fallback={null}>
 					<PlaybookLaunchModalHost theme={theme} />
+				</Suspense>
+			)}
+
+			{/* --- PLAYBOOK OUTRO (lazy-loaded; opened when a launched run ends) --- */}
+			{playbookOutroOpen && (
+				<Suspense fallback={null}>
+					<PlaybookOutroModalHost
+						theme={theme}
+						onOpenFile={(path: string) =>
+							onFileClick({ name: getBasename(path), type: 'file' }, path)
+						}
+					/>
 				</Suspense>
 			)}
 

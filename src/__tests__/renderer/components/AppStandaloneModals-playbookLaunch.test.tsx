@@ -1,11 +1,15 @@
 /**
- * Tests for how AppStandaloneModals mounts the Playbook Launch dialog.
+ * Tests for how AppStandaloneModals mounts the Playbook Launch dialog and the outro a launched run
+ * ends with.
  *
- * The dialog and its host have their own suites (`MarketplaceModal/launch/`). What only this mount
- * decides is covered here: the host is drawn while the store entry the Exchange's Launch button
- * opens is open and not before, opening the Exchange alone does not draw it, it is drawn whether or
- * not the active agent has an Auto Run folder (the dialog picks its own agent), and it layers on
- * the Exchange without taking the Exchange down.
+ * The dialog, the outro and their hosts have their own suites (`MarketplaceModal/launch/`). What
+ * only this mount decides is covered here. For the dialog: the host is drawn while the store entry
+ * the Exchange's Launch button opens is open and not before, opening the Exchange alone does not
+ * draw it, it is drawn whether or not the active agent has an Auto Run folder (the dialog picks its
+ * own agent), and it layers on the Exchange without taking the Exchange down. For the outro: the
+ * host is drawn while the entry a finished launch opens is open and not before, whatever agent (or
+ * none) is active, over the Exchange and the dialog, and the app's open-file path is what it opens
+ * a file with.
  *
  * Every other child of AppStandaloneModals draws nothing, and the lazy Exchange chunk resolves to
  * stand-ins that record the props they were given.
@@ -17,9 +21,10 @@ import { act, render, screen } from '@testing-library/react';
 const exchange = vi.hoisted(() => ({
 	exchangeProps: null as Record<string, any> | null,
 	hostProps: null as Record<string, any> | null,
+	outroProps: null as Record<string, any> | null,
 }));
 
-// The Exchange chunk is lazy. These are what its two lazy imports resolve to.
+// The Exchange chunk is lazy. These are what its three lazy imports resolve to.
 vi.mock('../../../renderer/components/MarketplaceModal', () => ({
 	MarketplaceModal: (props: Record<string, any>) => {
 		exchange.exchangeProps = props;
@@ -28,6 +33,10 @@ vi.mock('../../../renderer/components/MarketplaceModal', () => ({
 	PlaybookLaunchModalHost: (props: Record<string, any>) => {
 		exchange.hostProps = props;
 		return <div data-testid="launch-host-stub" />;
+	},
+	PlaybookOutroModalHost: (props: Record<string, any>) => {
+		exchange.outroProps = props;
+		return <div data-testid="outro-host-stub" />;
 	},
 }));
 
@@ -87,7 +96,7 @@ import type { AppStandaloneModalsProps } from '../../../renderer/components/AppS
 import { getModalActions } from '../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { resolveEncoreFeatures } from '../../../shared/encoreFeatureDefaults';
-import { createMockSession, resetAllStores } from '../../helpers';
+import { createMockLaunchRecord, createMockSession, resetAllStores } from '../../helpers';
 import { mockTheme } from '../../helpers/mockTheme';
 import { makePlaybook } from './MarketplaceModal/_fixtures';
 
@@ -180,6 +189,7 @@ beforeEach(() => {
 	resetAllStores();
 	exchange.exchangeProps = null;
 	exchange.hostProps = null;
+	exchange.outroProps = null;
 	useSessionStore.setState({
 		sessions: [WITH_FOLDER, WITHOUT_FOLDER],
 		activeSessionId: 'with-folder',
@@ -234,5 +244,83 @@ describe('AppStandaloneModals: the Playbook Launch dialog', () => {
 
 		expect(screen.queryByTestId('launch-host-stub')).toBeNull();
 		expect(screen.getByTestId('exchange-stub')).toBeInTheDocument();
+	});
+});
+
+describe('AppStandaloneModals: the Playbook outro', () => {
+	const ended = createMockLaunchRecord({ status: 'completed', cleanup: 'done' });
+
+	it('draws no outro until a launch ends, then gives the host the theme and an open-file path', async () => {
+		render(<AppStandaloneModals {...makeProps()} />);
+		expect(screen.queryByTestId('outro-host-stub')).toBeNull();
+
+		act(() => getModalActions().openPlaybookOutro(ended));
+
+		expect(await screen.findByTestId('outro-host-stub')).toBeInTheDocument();
+		expect(exchange.outroProps).toEqual({ theme: mockTheme, onOpenFile: expect.any(Function) });
+	});
+
+	it('does not draw the outro when only the launch dialog or the Exchange is open', async () => {
+		render(<AppStandaloneModals {...makeProps()} />);
+
+		act(() => {
+			getModalActions().setMarketplaceModalOpen(true);
+			getModalActions().openPlaybookLaunch(playbook);
+		});
+
+		expect(await screen.findByTestId('launch-host-stub')).toBeInTheDocument();
+		expect(screen.queryByTestId('outro-host-stub')).toBeNull();
+	});
+
+	it('opens an output file through the app open-file path, named from the path', async () => {
+		const props = makeProps();
+		render(<AppStandaloneModals {...props} />);
+		act(() => getModalActions().openPlaybookOutro(ended));
+		await screen.findByTestId('outro-host-stub');
+
+		exchange.outroProps?.onOpenFile('/work/alpha/Docs/vault/INDEX.md');
+
+		expect(props.onFileClick).toHaveBeenCalledTimes(1);
+		expect(props.onFileClick).toHaveBeenCalledWith(
+			{ name: 'INDEX.md', type: 'file' },
+			'/work/alpha/Docs/vault/INDEX.md'
+		);
+	});
+
+	it('draws the outro whichever agent is active, even one with no Auto Run folder', async () => {
+		useSessionStore.setState({ activeSessionId: 'without-folder' });
+		render(<AppStandaloneModals {...makeProps()} />);
+
+		act(() => getModalActions().openPlaybookOutro(ended));
+
+		expect(await screen.findByTestId('outro-host-stub')).toBeInTheDocument();
+	});
+
+	it('draws the outro with no agent at all, because the run agent may have been deleted', async () => {
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		render(<AppStandaloneModals {...makeProps()} />);
+
+		act(() => getModalActions().openPlaybookOutro(ended));
+
+		expect(await screen.findByTestId('outro-host-stub')).toBeInTheDocument();
+	});
+
+	it('layers over the Exchange and the launch dialog, and closing it leaves both up', async () => {
+		render(<AppStandaloneModals {...makeProps()} />);
+		act(() => {
+			getModalActions().setMarketplaceModalOpen(true);
+			getModalActions().openPlaybookLaunch(playbook);
+			getModalActions().openPlaybookOutro(ended);
+		});
+
+		expect(await screen.findByTestId('exchange-stub')).toBeInTheDocument();
+		expect(await screen.findByTestId('launch-host-stub')).toBeInTheDocument();
+		expect(await screen.findByTestId('outro-host-stub')).toBeInTheDocument();
+
+		act(() => getModalActions().closePlaybookOutro());
+
+		expect(screen.queryByTestId('outro-host-stub')).toBeNull();
+		expect(screen.getByTestId('exchange-stub')).toBeInTheDocument();
+		expect(screen.getByTestId('launch-host-stub')).toBeInTheDocument();
 	});
 });

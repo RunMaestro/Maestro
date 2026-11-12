@@ -22,6 +22,7 @@ import { resolveTerminalTab } from '../utils/terminalTabHelpers';
 import { browserTabFocusFields, terminalTabFocusFields } from '../utils/tabFocusFields';
 import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
+import { openLaunchOutro } from './playbookLaunchCompletion';
 
 export interface ToastClickActionHandlers {
 	/**
@@ -159,6 +160,17 @@ export function dispatchToastClickAction(
 
 		case 'open-url':
 			openUrl(action.url);
+			return true;
+
+		case 'open-playbook-outro':
+			// Go to the agent that ran the playbook, like every agent-scoped kind. The agent can be
+			// gone; the outro still opens from the record, it only cannot open files.
+			if (useSessionStore.getState().sessions.some((s) => s.id === action.sessionId)) {
+				switchToSession(action.sessionId);
+			}
+			// The record is read from main, so the click returns before the outro is up. A launch
+			// main cannot give is told to the person by openLaunchOutro() itself.
+			void openLaunchOutro(action.launchId);
 			return true;
 
 		default: {

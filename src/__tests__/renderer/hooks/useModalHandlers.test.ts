@@ -40,6 +40,7 @@ import { useAgentErrorRecovery } from '../../../renderer/hooks/agent/useAgentErr
 import { gitService } from '../../../renderer/services/git';
 import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab as createBaseMockAITab, createMockFileTab } from '../../helpers/mockTab';
+import { createMockLaunchRecord } from '../../helpers/mockLaunchRecord';
 import { createMockSession } from '../../helpers/mockSession';
 import { resetStores } from '../../helpers/resetStores';
 import {
@@ -1869,6 +1870,100 @@ describe('useModalHandlers', () => {
 			// Ovation modal should still be open and data unchanged
 			expect(useModalStore.getState().isOpen('standingOvation')).toBe(true);
 			expect(useModalStore.getState().getData('standingOvation')).toEqual(ovationDataBefore);
+		});
+
+		describe('while the Playbook outro is open', () => {
+			// A launched Auto Run skips its own ovation so the outro is the only dialog. The badge is
+			// still unacknowledged, so this return-to-app check must not put the ovation over the outro.
+			const unacknowledgedBadge = () =>
+				useSettingsStore.setState({
+					settingsLoaded: true,
+					getUnacknowledgedBadgeLevel: () => 1,
+					autoRunStats: {
+						longestRunMs: 50000,
+						totalRuns: 10,
+						cumulativeTimeMs: 100000,
+						currentBadgeLevel: 1,
+						lastBadgeUnlockLevel: 1,
+						lastAcknowledgedBadgeLevel: 0,
+						longestRunTimestamp: 0,
+						badgeHistory: [],
+					},
+				});
+
+			/** Mount, let the startup ovation come and go, then leave the person with no ovation up. */
+			const mountWithNoOvationUp = () => {
+				unacknowledgedBadge();
+				useSessionStore.setState({ sessionsLoaded: true, sessions: [] });
+				renderHook(() => useModalHandlers(createInputRef(), createTerminalOutputRef()));
+				act(() => {
+					vi.advanceTimersByTime(1100);
+				});
+				getModalActions().setStandingOvationData(null);
+			};
+
+			/** The person comes back to the app: the document becomes visible. */
+			const returnToApp = () => {
+				Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+				act(() => {
+					document.dispatchEvent(new Event('visibilitychange'));
+				});
+			};
+
+			it('does NOT show the ovation when the person returns to the app', () => {
+				mountWithNoOvationUp();
+				getModalActions().openPlaybookOutro(createMockLaunchRecord({ status: 'completed' }));
+
+				returnToApp();
+				act(() => {
+					vi.advanceTimersByTime(600);
+				});
+
+				expect(useModalStore.getState().isOpen('standingOvation')).toBe(false);
+				expect(useModalStore.getState().isOpen('playbookOutro')).toBe(true);
+			});
+
+			it('shows the ovation at the next return once the outro is closed', () => {
+				mountWithNoOvationUp();
+				getModalActions().openPlaybookOutro(createMockLaunchRecord({ status: 'completed' }));
+				returnToApp();
+				act(() => {
+					vi.advanceTimersByTime(600);
+				});
+				expect(useModalStore.getState().isOpen('standingOvation')).toBe(false);
+
+				getModalActions().closePlaybookOutro();
+				returnToApp();
+				act(() => {
+					vi.advanceTimersByTime(600);
+				});
+
+				expect(useModalStore.getState().isOpen('standingOvation')).toBe(true);
+			});
+
+			it('does NOT show the ovation when the outro opens during the delay before it', () => {
+				mountWithNoOvationUp();
+
+				// The check passes and waits 500 ms; the launch ends and its outro opens in that wait.
+				returnToApp();
+				act(() => {
+					vi.advanceTimersByTime(200);
+				});
+				getModalActions().openPlaybookOutro(createMockLaunchRecord({ status: 'stopped' }));
+				act(() => {
+					vi.advanceTimersByTime(400);
+				});
+
+				expect(useModalStore.getState().isOpen('standingOvation')).toBe(false);
+
+				// The wait is over, so the next check can run once the outro is closed.
+				getModalActions().closePlaybookOutro();
+				returnToApp();
+				act(() => {
+					vi.advanceTimersByTime(600);
+				});
+				expect(useModalStore.getState().isOpen('standingOvation')).toBe(true);
+			});
 		});
 
 		// ====================================================================

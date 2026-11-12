@@ -859,6 +859,9 @@ export function useModalHandlers(
 			// Don't show if there's already an ovation displayed
 			const currentOvation = useModalStore.getState().getData('standingOvation');
 			if (currentOvation) return;
+			// A launched Auto Run skips its own ovation so the Playbook outro is the only dialog.
+			// The badge is still unacknowledged, so the next check after the outro closes shows it.
+			if (useModalStore.getState().isOpen('playbookOutro')) return;
 			if (checkPending) return;
 
 			const { getUnacknowledgedBadgeLevel, autoRunStats } = useSettingsStore.getState();
@@ -869,8 +872,9 @@ export function useModalHandlers(
 					checkPending = true;
 					// Small delay to let the UI stabilize
 					setTimeout(() => {
-						// Double-check in case it was acknowledged in the meantime
-						if (!useModalStore.getState().getData('standingOvation')) {
+						// Double-check in case it was acknowledged in the meantime, or an outro opened
+						const { getData, isOpen } = useModalStore.getState();
+						if (!getData('standingOvation') && !isOpen('playbookOutro')) {
 							getModalActions().setStandingOvationData({
 								badge,
 								isNewRecord: false,

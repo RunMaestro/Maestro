@@ -8,9 +8,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dispatchToastClickAction } from '../../../renderer/services/toastClickActions';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
+import { createMockLaunchRecord } from '../../helpers/mockLaunchRecord';
 import { createMockSession } from '../../helpers/mockSession';
 import type { Session, TerminalTab } from '../../../renderer/types';
 import type { BrowserTab } from '../../../shared/browserPage';
@@ -209,6 +211,71 @@ describe('dispatchToastClickAction', () => {
 
 			expect(useSessionStore.getState().activeSessionId).toBe('s1');
 			expect(useNotificationStore.getState().toasts[0].title).toBe('Browser tab not found');
+		});
+	});
+
+	describe('open-playbook-outro', () => {
+		const getLaunch = vi.mocked(window.maestro.marketplace.getLaunch);
+		const click = { kind: 'open-playbook-outro', sessionId: 's1', launchId: 'launch-1' } as const;
+
+		beforeEach(() => {
+			getLaunch.mockReset();
+			useModalStore.setState({ modals: new Map() });
+		});
+
+		it('goes to the agent that ran the playbook and opens the outro read from main', async () => {
+			seedSessions([createMockSession({ id: 's1' }), createMockSession({ id: 's2' })]);
+			useSessionStore.setState({ activeSessionId: 's2' });
+			const launch = createMockLaunchRecord({ sessionId: 's1', status: 'completed' });
+			getLaunch.mockResolvedValue({ success: true, launch });
+
+			expect(dispatchToastClickAction(click)).toBe(true);
+
+			expect(useSessionStore.getState().activeSessionId).toBe('s1');
+			expect(getLaunch).toHaveBeenCalledWith('launch-1');
+			await vi.waitFor(() => expect(useModalStore.getState().isOpen('playbookOutro')).toBe(true));
+			expect(useModalStore.getState().getData('playbookOutro')).toEqual({ launch });
+			expect(useNotificationStore.getState().toasts).toHaveLength(0);
+		});
+
+		it('closes the Document Graph overlay on the way to the agent', async () => {
+			useFileExplorerStore.setState({ isGraphViewOpen: true });
+			seedSessions([createMockSession({ id: 's1' })]);
+			getLaunch.mockResolvedValue({ success: true, launch: createMockLaunchRecord() });
+
+			dispatchToastClickAction(click);
+
+			expect(useFileExplorerStore.getState().isGraphViewOpen).toBe(false);
+			await vi.waitFor(() => expect(useModalStore.getState().isOpen('playbookOutro')).toBe(true));
+		});
+
+		it('opens the outro without moving anyone when the agent is gone', async () => {
+			seedSessions([createMockSession({ id: 's2' })]);
+			useSessionStore.setState({ activeSessionId: 's2' });
+			getLaunch.mockResolvedValue({ success: true, launch: createMockLaunchRecord() });
+
+			expect(dispatchToastClickAction(click)).toBe(true);
+
+			expect(useSessionStore.getState().activeSessionId).toBe('s2');
+			await vi.waitFor(() => expect(useModalStore.getState().isOpen('playbookOutro')).toBe(true));
+			expect(useNotificationStore.getState().toasts).toHaveLength(0);
+		});
+
+		it('says so, and opens nothing, when main has no such launch', async () => {
+			seedSessions([createMockSession({ id: 's1' })]);
+			getLaunch.mockResolvedValue({ success: false, error: 'Error: Launch not found: launch-1' });
+
+			dispatchToastClickAction(click);
+
+			await vi.waitFor(() => expect(useNotificationStore.getState().toasts).toHaveLength(1));
+			const [toast] = useNotificationStore.getState().toasts;
+			expect(toast.title).toBe('Playbook outro not available');
+			expect(toast.message).toBe(
+				'Maestro could not read the launch record: Launch not found: launch-1'
+			);
+			expect(useModalStore.getState().isOpen('playbookOutro')).toBe(false);
+			// The agent is still where the person was sent: the click went somewhere.
+			expect(useSessionStore.getState().activeSessionId).toBe('s1');
 		});
 	});
 

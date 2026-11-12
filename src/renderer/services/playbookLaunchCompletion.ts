@@ -1,12 +1,14 @@
 /**
- * Playbook Launch completion in the renderer: telling main that a launched
- * Auto Run has ended.
+ * Playbook Launch completion in the renderer, in both directions: telling main
+ * that a launched Auto Run has ended, and showing the person the result when
+ * main says the launch is over.
  *
  * The renderer runs the Auto Run, so it is the one that knows when the run
  * ends (`onComplete` in `useBatchHandlers`). Main does the rest
  * (`completeMarketplaceLaunch()` in `src/main/services/marketplace-service.ts`):
  * it ends the launch record, cleans up the launch folder and broadcasts
- * `marketplace:launchChanged`, which is what opens the outro.
+ * `marketplace:launchChanged`. {@link announceLaunchEnd} answers that
+ * broadcast, from the window that owns app-wide side effects.
  *
  * Nothing here knows which Auto Run is a launched one. A launch is a record in
  * main, so the renderer asks main whether the agent has a running launch when
@@ -18,7 +20,9 @@ import type {
 	PlaybookLaunchRecord,
 } from '../../shared/marketplace-types';
 import type { BatchCompleteInfo } from '../hooks/batch/useBatchProcessor';
+import { getModalActions, useModalStore } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
+import { selectSessionById, useSessionStore } from '../stores/sessionStore';
 import { ipcErrorMessage, ipcResultErrorMessage } from '../utils/ipcErrorMessage';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
@@ -111,6 +115,112 @@ export async function reportLaunchedRunCompletion(end: LaunchedRunEnd): Promise<
 		title: 'Playbook launch not completed',
 		message: `"${launch.playbookTitle}" has ended, but Maestro could not finish the launch: ${error}`,
 		sessionId: end.sessionId,
+	});
+	return false;
+}
+
+/**
+ * Where the end of a launch is shown.
+ *
+ * - `open`: the outro opens now, because the run's agent is the one on screen and the result
+ *   belongs to what the person is looking at.
+ * - `toast`: a toast whose click opens the outro. The person is on another agent, or is reading
+ *   another outro, and a dialog must not take that over.
+ * - `ignore`: the record did not end. The broadcast reports any change to a launch record.
+ */
+export type LaunchEndPresentation = 'open' | 'toast' | 'ignore';
+
+/** What this window is showing when a launch ends. */
+export interface LaunchEndContext {
+	/** The agent this window has selected; blank when there is none. */
+	activeSessionId: string;
+	/** An outro is already open. */
+	outroOpen: boolean;
+}
+
+/**
+ * Decide how the end of a launch reaches the person. Pure: {@link announceLaunchEnd} reads the
+ * window and acts on the answer.
+ */
+export function presentLaunchEnd(
+	launch: Pick<PlaybookLaunchRecord, 'status' | 'sessionId'>,
+	context: LaunchEndContext
+): LaunchEndPresentation {
+	if (launch.status !== 'completed' && launch.status !== 'stopped') return 'ignore';
+	return launch.sessionId === context.activeSessionId && !context.outroOpen ? 'open' : 'toast';
+}
+
+/**
+ * A toast for a launch that ended out of the person's sight. It names the agent, and a click goes
+ * to that agent and opens the outro (`open-playbook-outro`). The click is data, so the entry in the
+ * notification center keeps it.
+ */
+function toastLaunchEnd(launch: PlaybookLaunchRecord): void {
+	const name = selectSessionById(launch.sessionId)(useSessionStore.getState())?.name;
+	const where = name ? ` on "${name}"` : '';
+	const stopped = launch.status === 'stopped';
+	notifyToast({
+		color: stopped ? 'yellow' : 'green',
+		title: stopped ? 'Playbook stopped' : 'Playbook finished',
+		message: stopped
+			? `"${launch.playbookTitle}" was stopped${where}. Click to see where it left off.`
+			: `"${launch.playbookTitle}" finished${where}. Click to see what it did and what to do next.`,
+		project: name,
+		sessionId: launch.sessionId,
+		clickAction: {
+			kind: 'open-playbook-outro',
+			sessionId: launch.sessionId,
+			launchId: launch.launchId,
+		},
+	});
+}
+
+/**
+ * Show the person that a launch is over: the outro when the run's agent is on screen, else a toast
+ * that opens it. Call it with each record main broadcasts on `marketplace:launchChanged`, from the
+ * window that owns app-wide side effects (`useLaunchEndAnnouncement`). Never moves the person: it
+ * does not switch agents, and it does not replace an outro that is already open.
+ */
+export function announceLaunchEnd(launch: PlaybookLaunchRecord): void {
+	const presentation = presentLaunchEnd(launch, {
+		activeSessionId: useSessionStore.getState().activeSessionId,
+		outroOpen: useModalStore.getState().isOpen('playbookOutro'),
+	});
+	if (presentation === 'open') {
+		getModalActions().openPlaybookOutro(launch);
+	} else if (presentation === 'toast') {
+		toastLaunchEnd(launch);
+	}
+}
+
+/**
+ * Open the outro of a launch that ended, by id: what a click on {@link announceLaunchEnd}'s toast
+ * does. The toast carries the id and not the record, so a notification restored after a reload
+ * opens the same outro, read from main (`marketplace:getLaunch`).
+ *
+ * Resolves `true` when the outro opened. A record main cannot give is told to the person with a
+ * toast, and a rejected call is also reported. It never rejects.
+ */
+export async function openLaunchOutro(launchId: string): Promise<boolean> {
+	let reason: string;
+	try {
+		const result = await window.maestro.marketplace.getLaunch(launchId);
+		if (result.success && result.launch) {
+			getModalActions().openPlaybookOutro(result.launch);
+			return true;
+		}
+		reason = ipcResultErrorMessage(result.error, 'no reason given');
+	} catch (thrown) {
+		captureException(thrown, {
+			extra: { operation: 'playbookLaunchCompletion:getLaunch', launchId },
+		});
+		reason = ipcErrorMessage(thrown);
+	}
+	logger.warn(`The outro of launch ${launchId} was not opened: ${reason}`, LOG_CONTEXT);
+	notifyToast({
+		color: 'yellow',
+		title: 'Playbook outro not available',
+		message: `Maestro could not read the launch record: ${reason}`,
 	});
 	return false;
 }

@@ -43,6 +43,7 @@ import { GroupChatRightPanel } from './components/GroupChatRightPanel';
 import {
 	// Batch processing
 	useBatchHandlers,
+	useLaunchEndAnnouncement,
 	useBatchedSessionUpdates,
 	// Settings
 	useSettings,
@@ -1759,6 +1760,10 @@ function MaestroConsoleInner() {
 		processQueuedItemRef,
 		handleClearAgentError,
 	});
+
+	// A launched Auto Run (Playbook Launch) is reported to main from useBatchHandlers' onComplete;
+	// main broadcasts the finished launch, and this opens its outro (or a toast that opens it).
+	useLaunchEndAnnouncement();
 
 	// Agent Resilience: give the retry engine a way to resume a parked Auto Run
 	// batch so batch turns can auto-continue after transient upstream/quota errors.

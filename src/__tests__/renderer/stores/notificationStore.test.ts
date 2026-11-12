@@ -1082,6 +1082,21 @@ describe('notificationStore', () => {
 				url: 'https://example.com/logs',
 			});
 		});
+
+		it('preserves clickAction (open-playbook-outro) on toast', () => {
+			notifyToast({
+				color: 'green',
+				title: 'Playbook finished',
+				message: 'Click to see what it did.',
+				clickAction: { kind: 'open-playbook-outro', sessionId: 'sess-9', launchId: 'launch-1' },
+			});
+			const toast = useNotificationStore.getState().toasts[0];
+			expect(toast.clickAction).toEqual({
+				kind: 'open-playbook-outro',
+				sessionId: 'sess-9',
+				launchId: 'launch-1',
+			});
+		});
 	});
 
 	// ==========================================================================
@@ -1274,6 +1289,36 @@ describe('notificationStore', () => {
 				])
 			);
 			expect(loadNotificationHistory()).toEqual([valid]);
+		});
+
+		it('keeps a persisted open-playbook-outro action, and drops one that names no launch', () => {
+			// A kind the history parser did not know would drop the whole entry on the next reload.
+			notifyToast({
+				title: 'Playbook finished',
+				message: '',
+				clickAction: { kind: 'open-playbook-outro', sessionId: 'sess-9', launchId: 'launch-1' },
+			});
+			const valid = history()[0];
+			localStorage.setItem(
+				NOTIFICATION_HISTORY_STORAGE_KEY,
+				JSON.stringify([
+					{
+						...valid,
+						id: 'no-launch',
+						clickAction: { kind: 'open-playbook-outro', sessionId: 'sess-9' },
+					},
+					valid,
+				])
+			);
+
+			const restored = loadNotificationHistory();
+
+			expect(restored).toEqual([valid]);
+			expect(restored[0].clickAction).toEqual({
+				kind: 'open-playbook-outro',
+				sessionId: 'sess-9',
+				launchId: 'launch-1',
+			});
 		});
 
 		it('marks one entry read and leaves the rest', () => {
