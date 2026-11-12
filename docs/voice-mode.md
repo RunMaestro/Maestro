@@ -110,7 +110,7 @@ Choose **Custom** in **Voice setup**, select **VoiceStudio** for Voice (`maestro
 
 ### Recognition vocabulary
 
-The current agent, agent names, tab titles, and the word "Maestro" provide recognition hints automatically, up to 128 terms. Custom terms have no field in Settings; add them from the command line, for example `maestro-cli settings set acappella.providers.vocabulary '["Kubernetes","Postgres"]'`. Recognizers that support vocabulary prompts (OpenAI hosted transcription) receive these terms; this does not change where recognition runs. The optional **Dictation vocabulary correction** assignment under **Models > Assignments** also checks finalized voice transcripts. It is off by default and preserves the original text when correction fails or is ambiguous.
+The current agent, agent names, tab titles, and the word "Maestro" provide recognition hints automatically, up to 128 terms. Custom terms have no field in Settings; add them from the command line, for example `maestro-cli settings set acappella.providers.vocabulary '["Kubernetes","Postgres"]'`. Recognizers that support vocabulary prompts (OpenAI hosted transcription) receive these terms; this does not change where recognition runs. The optional **Dictation vocabulary correction** assignment under **Settings -> Models -> System One** (`maestro-cli models assign dictation-cleanup local:<model-id>`) also checks finalized voice transcripts. It is off by default and preserves the original text when correction fails or is ambiguous.
 
 <Note>
 	The **wake word is always local and never optional**. While only the wake detector is running, no
@@ -328,7 +328,7 @@ Rebind either one under **Hotkeys** in **Voice Controls** or in the **Shortcuts*
 
 You can also start a session from:
 
-- The microphone under the **Send** button in the composer (**Talk to this agent**). It uses **Default voice mode**. Tab mode needs an open AI tab, or it says _Open an AI tab before starting Tab voice mode._ With A Cappella off, the same place offers dictation instead.
+- The microphone under the **Send** button in the composer (**Talk to this agent**). It uses **Default voice mode**. Tab mode needs an open AI tab, or it says _Open an AI tab before starting Tab voice mode._ With A Cappella off there is no microphone under **Send**; [Dictation](./local-models#dictation) has its own microphone in the composer toolbar once you assign it a model.
 - The **command palette** (`Cmd+K` / `Ctrl+K`): **Talk to** the agent you are looking at (its subtext names your wake phrase), or **Talk to the Conductor**.
 - Right-clicking an agent in the **Left Bar**: **Talk to this agent**, or **End voice session** while one is bound to it.
 - The command line: `maestro-cli voice start` (see [Who you are talking to](#who-you-are-talking-to)).
@@ -357,7 +357,7 @@ A document conversation is an ordinary AI tab, tagged with the file it is about,
 
 <Note>
 	Talk with Document is offered only when A Cappella is on and the file has text to read.
-	With A Cappella off, the chat microphone uses dictation when available. Images (SVG included),
+	With A Cappella off, the chat microphone dictates with the browser's speech recognizer, when the build has one. Images (SVG included),
 	audio and video, compiled binaries, and archives do not offer document chat.
 </Note>
 
@@ -535,5 +535,6 @@ Four cards at the end of the A Cappella settings are worth reaching for before f
 - [Remote Control](./remote-control) - the browser interface and the Cloudflare tunnel
 - [Configuration](./configuration) - where Maestro stores its data
 - [Local Models](./local-models) - the speech models, the neural voice, and the Voice routing task
+- [Dictation](./local-models#dictation) - speech into any text box without a voice session, on the same microphone
 - [Quick Chat](./quick-chat) - the Quick Chat window and its microphone
 - [CLI guide](./cli#voice) - every `maestro-cli voice` verb

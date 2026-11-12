@@ -698,7 +698,7 @@ Most shortcuts can be remapped to fit your workflow:
 
 Some actions ship with **no** key assigned and read **Not set** instead of a combination - the media player controls, Open Leaderboard, and Toggle In-App Toasts are current examples. They are dimmed, but they work exactly like any other row: click and record. Maestro leaves them unbound rather than claiming chords for actions most people reach through Quick Actions.
 
-**Dictate into Text Box** is one of them, for a different reason: it has to work while you are typing in any text box, so any chord Maestro picked would take a key away from typing somewhere. Assign it one that suits your keyboard. Tap the chord to start dictating into the text box that holds the caret and tap it again to stop, or hold it down and speak, then release. It does nothing until the [Dictation task](./local-models#dictation) has a speech model assigned.
+**Dictate into Text Box** is one of them, for a different reason: it has to work while you are typing in any text box, so any chord Maestro picked would take a key away from typing somewhere. Assign it one that suits your keyboard. Tap the chord to start dictating into the text box that holds the caret and tap it again to stop, or hold it down and speak, then release. It works while a modal is open, and never types into a terminal; with no text box holding the caret it flashes **Nowhere to dictate**. It does nothing until the [Dictation task](./local-models#dictation) has a speech-to-text model or an endpoint assigned. Dictation is not an Encore Feature, so the chord works with A Cappella off.
 
 ![Shortcuts Settings](./screenshots/shortcuts-settings.png)
 
