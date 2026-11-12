@@ -2,15 +2,17 @@
  * Computer History - what a LOCAL MODEL is shown to write a digest (pure).
  *
  * The digest agent is handed file paths and reads them with its own tools. A
- * local model has no tools and a small context, so its input is built here: a
- * segment becomes one compact line per event, and a 6-hour block becomes the
- * text of its 15-minute digests. Both are bounded by a character budget the
- * caller derives from the model's context.
+ * local model has no tools, so its input is built here: a segment becomes a
+ * line of time per app and one compact line per event, and a 6-hour block
+ * becomes the text of its 15-minute digests. Both are bounded by a character
+ * budget the caller derives from the model's context.
  *
  * Everything rendered here is captured from the screen and UNTRUSTED. The
  * caller fences it (`fenceUntrusted`) before it reaches a model.
  */
 
+import { formatDurationCompact } from '../duration';
+import { addEventToAppStats, createAppStats } from './appStats';
 import { splitDigestBody } from './digestBody';
 import {
 	DIGEST_ACCURACY_RULES,
@@ -18,20 +20,27 @@ import {
 	digestFormatInstructions,
 } from './digestFormat';
 import { ROLLUP_HOURS, SEGMENT_MINUTES } from './paths';
+import { supersededDrafts } from './reader';
 import type { StoredEvent } from './types';
 
-/** The most text one event contributes, when the budget allows it. */
-export const MAX_DIGEST_EVENT_TEXT_CHARS = 600;
+/**
+ * The most text one event contributes, when the budget allows it. Large enough
+ * for a whole sent message or a screen's worth of an email; a busy window
+ * shares the budget and every event gets less.
+ */
+export const MAX_DIGEST_EVENT_TEXT_CHARS = 2000;
 /** The least text one event keeps, however many events share the budget. */
 export const MIN_DIGEST_EVENT_TEXT_CHARS = 80;
-/** The most one 15-minute digest contributes to a roll-up. */
-export const MAX_ROLLUP_DIGEST_CHARS = 2400;
+/** The most one 15-minute digest contributes to a roll-up, when the budget allows it. */
+export const MAX_ROLLUP_DIGEST_CHARS = 4000;
 /**
- * The most of the previous digest a 15-minute digest is shown. It is context
- * for thread names and open items, so its opening (title, lede, threads) is
- * what matters, and it must leave the record most of a small context.
+ * The most of the previous digest a 15-minute digest is shown, unless the
+ * caller sets less. It is context for thread names and open items, so its
+ * opening (title, lede, threads) is what matters.
  */
-export const MAX_PREVIOUS_DIGEST_CHARS = 1000;
+export const MAX_PREVIOUS_DIGEST_CHARS = 2000;
+/** Apps named in the time-in-front line; the rest are summed as "other". */
+const APP_TIME_LINE_MAX_APPS = 6;
 /** Room a line needs besides its text: time, app name, and the verb. */
 const LINE_OVERHEAD_CHARS = 48;
 
@@ -70,6 +79,27 @@ function describeWindow(event: StoredEvent): string {
 	return 'in front';
 }
 
+/**
+ * One line saying how long each app was in front, longest first: what the
+ * person spent the window on, which the event lines alone do not show (a
+ * long read makes one snapshot; a chat makes dozens). Empty for a window with
+ * no measurable time.
+ */
+export function renderAppTimeLine(events: readonly StoredEvent[]): string {
+	const stats = createAppStats();
+	for (const event of events) addEventToAppStats(stats, event);
+	const ranked = Object.entries(stats.activeMs)
+		.filter(([, ms]) => ms >= 1000)
+		.sort((a, b) => b[1] - a[1]);
+	if (ranked.length === 0) return '';
+	const named = ranked
+		.slice(0, APP_TIME_LINE_MAX_APPS)
+		.map(([id, ms]) => `${oneLine(stats.names[id] || id)} ${formatDurationCompact(ms)}`);
+	const restMs = ranked.slice(APP_TIME_LINE_MAX_APPS).reduce((sum, [, ms]) => sum + ms, 0);
+	if (restMs >= 1000) named.push(`other apps ${formatDurationCompact(restMs)}`);
+	return `Time in front: ${named.join(', ')}`;
+}
+
 function describeText(event: StoredEvent, text: string): string {
 	const field = event.element?.label ? ` in "${oneLine(event.element.label)}"` : '';
 	switch (event.kind) {
@@ -92,6 +122,11 @@ function describeText(event: StoredEvent, text: string): string {
  *   other lines do not repeat it.
  * - A snapshot identical to the last one of the same window is skipped: a
  *   window that sits still is recorded many times.
+ * - A draft that a later commit in the same field supersedes is skipped (the
+ *   same rule `queryEvents` uses): a message typed with pauses is recorded
+ *   once per pause, and only the last version says what was written.
+ * - The first line says how long each app was in front
+ *   ({@link renderAppTimeLine}).
  * - Every event's text is cut to a share of the budget (never under
  *   {@link MIN_DIGEST_EVENT_TEXT_CHARS}). When the lines still do not fit,
  *   evenly spaced lines are kept, so the whole window is covered rather than
@@ -110,8 +145,10 @@ export function renderSegmentForDigest(
 	const entries: Entry[] = [];
 	let lastWindow: string | null = null;
 	const lastSnapshot = new Map<string, string>();
+	const drafts = supersededDrafts(events);
 
 	for (const event of events) {
+		if (drafts.has(event)) continue;
 		const app = oneLine(event.app?.name || event.app?.id || 'Unknown app');
 		const prefix = `${clock(event.ts)} ${app}: `;
 		const key = windowKey(event);
@@ -143,39 +180,64 @@ export function renderSegmentForDigest(
 			(entry.event ? describeText(entry.event, clip(entry.text, textCap)) : entry.text)
 	);
 
+	const header = renderAppTimeLine(events);
+	const budget = Math.max(1, maxChars - (header ? header.length + 1 : 0));
 	const size = lines.reduce((sum, line) => sum + line.length + 1, 0);
-	const stride = Math.max(1, Math.ceil(size / maxChars));
+	const stride = Math.max(1, Math.ceil(size / budget));
 	const kept: string[] = [];
 	let used = 0;
 	for (let i = 0; i < lines.length; i += stride) {
 		// Sampling fits on average; a run of long lines can still overshoot.
-		if (used + lines[i].length + 1 > maxChars && kept.length > 0) break;
+		if (used + lines[i].length + 1 > budget && kept.length > 0) break;
 		kept.push(lines[i]);
 		used += lines[i].length + 1;
 	}
-	return { text: kept.join('\n'), shown: kept.length, total: events.length };
+	// A window with nothing to show stays empty: the time line alone is no record.
+	const text = kept.length > 0 && header ? `${header}\n${kept.join('\n')}` : kept.join('\n');
+	return { text, shown: kept.length, total: events.length };
 }
 
 /**
  * Join a block's 15-minute digests, in time order, as the input of a roll-up.
- * Each digest keeps its own heading (it names the window) and is cut to
- * {@link MAX_ROLLUP_DIGEST_CHARS}; an empty one is dropped.
+ * Each keeps its heading (it names the window) and its summary, without the
+ * provenance line (a file and a model name, the same on every digest). Each is
+ * cut to an equal share of `maxChars` (at most {@link MAX_ROLLUP_DIGEST_CHARS}),
+ * so every window of the block is in the input; an empty one is dropped.
  */
-export function renderDigestsForRollup(bodies: readonly string[]): string {
-	return bodies
-		.map((body) => body.trim())
-		.filter((body) => body !== '')
-		.map((body) => clip(body, MAX_ROLLUP_DIGEST_CHARS))
-		.join('\n\n');
+export function renderDigestsForRollup(
+	bodies: readonly string[],
+	options: { maxChars?: number } = {}
+): string {
+	const parts = bodies
+		.map((body) => {
+			const trimmed = body.trim();
+			const { summary } = splitDigestBody(trimmed);
+			// Without the digest header there is no heading to keep: the summary is the body.
+			if (summary === trimmed) return summary;
+			return `${trimmed.split('\n', 1)[0]}\n${summary}`;
+		})
+		.map((part) => part.trim())
+		.filter((part) => part !== '');
+	const share =
+		options.maxChars === undefined
+			? MAX_ROLLUP_DIGEST_CHARS
+			: Math.min(
+					MAX_ROLLUP_DIGEST_CHARS,
+					Math.max(200, Math.floor(options.maxChars / Math.max(1, parts.length)) - 2)
+				);
+	return parts.map((part) => clip(part, share)).join('\n\n');
 }
 
 /**
  * The previous digest as a local model is shown it: the writer's summary only
  * (the header names a file and a model, which says nothing about the work),
- * cut to {@link MAX_PREVIOUS_DIGEST_CHARS}. Empty when there is no summary.
+ * cut to `maxChars`. Empty when there is no summary.
  */
-export function renderPreviousDigest(body: string): string {
-	return clip(splitDigestBody(body).summary, MAX_PREVIOUS_DIGEST_CHARS);
+export function renderPreviousDigest(
+	body: string,
+	maxChars: number = MAX_PREVIOUS_DIGEST_CHARS
+): string {
+	return clip(splitDigestBody(body).summary, maxChars);
 }
 
 export type LocalDigestInstruction =

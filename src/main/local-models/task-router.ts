@@ -117,6 +117,12 @@ export interface LocalTaskInput extends LocalTaskAttribution {
 	/** In-process callers only: an abort signal cannot cross IPC or the CLI bridge. */
 	signal?: AbortSignal;
 	/**
+	 * In-process callers only: the context the call needs, in tokens (see
+	 * `GenerateTextRequest.contextTokens`). A long-input task (a Computer
+	 * History digest) sets it so its input is not cut to the 4,096-token default.
+	 */
+	contextTokens?: number;
+	/**
 	 * Nobody is waiting on this call (a Computer History digest). It is not
 	 * counted by {@link isInteractiveLocalTaskRunning}. In-process callers only.
 	 */
@@ -251,6 +257,7 @@ export async function runLocalTask(
 				...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
 				...(input.jsonSchema ? { jsonSchema: input.jsonSchema } : {}),
 				...(input.signal ? { signal: input.signal } : {}),
+				...(input.contextTokens !== undefined ? { contextTokens: input.contextTokens } : {}),
 			}),
 		{
 			agentId: input.agentId,

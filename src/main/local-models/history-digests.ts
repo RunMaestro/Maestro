@@ -7,10 +7,12 @@
  * which reads the files itself; a local model has no tools, so the text is
  * read here and handed over (`src/shared/computer-history/digestInput.ts`).
  *
- * A local model's context holds about one piece of a busy 15-minute window,
- * so an input that does not fit is read in pieces: each piece is answered with
- * notes, and one last call merges the notes into the digest. One piece that
- * fails abandons the digest: a summary with a hole in it would not say so.
+ * Every call asks for a {@link DIGEST_CONTEXT_TOKENS} context, which holds a
+ * whole busy 15-minute window. An input that still does not fit (a window
+ * full of large screens, or a model or server with a smaller context) is read
+ * in pieces: each piece is answered with notes, and one last call merges the
+ * notes into the digest. One piece that fails abandons the digest: a summary
+ * with a hole in it would not say so.
  *
  * With no model assigned there is no writer (`hasModel()`), so the scheduler
  * queues nothing. The verdicts of a call, none of which falls back to an agent:
@@ -48,7 +50,7 @@ import { getPrompt } from '../prompt-manager';
 import type { SafeSendFn } from '../utils/safe-send';
 import { captureException } from '../utils/sentry';
 import { getConfiguredLocalModelEndpoints } from './endpoint-service';
-import { readLocalModelAssignments, type LocalModelSource } from './sources';
+import { readLocalModelAssignments, sourceForAssignment, type LocalModelSource } from './sources';
 import { clearLocalTaskNotice, reportLocalTaskUnavailable } from './task-notices';
 import {
 	runLocalTask,
@@ -57,6 +59,9 @@ import {
 	type LocalTaskResult,
 } from './task-router';
 import { chunkText } from './text-chunker';
+import { getLocalModel } from '../../shared/local-models/model-catalog';
+import { MODEL_SERVER_ENDPOINT_ID } from '../../shared/local-models/model-server';
+import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 
 const TASK_ID = 'history-digests';
 
@@ -64,31 +69,92 @@ const TASK_ID = 'history-digests';
 const ASSIGNMENT_LOCATION = taskAssignmentLocation(TASK_ID);
 
 /**
- * Input tokens in one call, by the 4-characters-per-token estimate. Captured
- * text (URLs, code, tables) runs denser than prose, so this is sized to fit a
- * 4096-token context with the system prompt and the reply even at 3
- * characters per token.
+ * What one digest may read and write, for the context its source runs at.
+ * Every size is derived from `contextTokens` so a call never overflows it:
+ * input pieces are counted at 4 characters per token, but captured text (URLs,
+ * code, tables) can run to 3, so each budget leaves that margin plus the
+ * system prompt, the instruction, the previous digest, and the reply.
  */
-export const DIGEST_PIECE_TOKENS = 1500;
-
-/** The most pieces one digest is read in. A segment is cut to fit them. */
-export const DIGEST_MAX_PIECES = 6;
-
-/** Characters of a segment a digest reads: every piece, full. */
-export const DIGEST_MAX_INPUT_CHARS = DIGEST_MAX_PIECES * DIGEST_PIECE_TOKENS * 4;
-
-/** Reply budget for the notes of one piece. The notes of every piece fit one call. */
-const DIGEST_NOTES_MAX_TOKENS = 240;
+export interface DigestBudget {
+	/** The context every call asks for (`contextTokens`). */
+	contextTokens: number;
+	/** Input tokens in one call, by the 4-characters-per-token estimate. */
+	pieceTokens: number;
+	/** The most pieces one digest is read in. A segment is cut to fit them. */
+	maxPieces: number;
+	/** Reply budget for the notes of one piece. The notes of every piece fit one call. */
+	notesMaxTokens: number;
+	/** Reply budget for a digest or a roll-up. */
+	replyMaxTokens: number;
+	/** The most of the previous digest's summary shown, in characters. */
+	previousChars: number;
+}
 
 /**
- * Reply budget for a digest or a roll-up: a title, a sentence, and up to the
- * format's bullet cap under three headings. With the previous digest
- * (`MAX_PREVIOUS_DIGEST_CHARS`) and one full piece, a call still fits 4096.
+ * The context every digest call asks for when its source can hold it. A whole
+ * busy 15-minute window fits in one call at this size, so the model reads the
+ * window itself instead of notes on pieces of it.
  */
-const DIGEST_MAX_TOKENS = 700;
+export const DIGEST_CONTEXT_TOKENS = 32_768;
 
-/** How long one call may take. Long enough for a cold model to load. */
-export const DIGEST_CALL_TIMEOUT_MS = 3 * 60_000;
+/**
+ * For a source that runs at {@link DIGEST_CONTEXT_TOKENS} or more. A full piece
+ * is about 26,700 real tokens at 3 characters per token; the rest of the call
+ * is about 3,300.
+ */
+export const LARGE_DIGEST_BUDGET: DigestBudget = {
+	contextTokens: DIGEST_CONTEXT_TOKENS,
+	pieceTokens: 20_000,
+	maxPieces: 4,
+	notesMaxTokens: 600,
+	replyMaxTokens: 1200,
+	previousChars: 2000,
+};
+
+/**
+ * For a source whose context is unknown or small: a server that runs at the
+ * context it was started with (LM Studio, llama-server, vLLM), or a model
+ * trained for less. Sized for a 4,096-token context.
+ */
+export const SMALL_DIGEST_BUDGET: DigestBudget = {
+	contextTokens: 4096,
+	pieceTokens: 1100,
+	maxPieces: 6,
+	notesMaxTokens: 200,
+	replyMaxTokens: 600,
+	previousChars: 600,
+};
+
+/** Characters of a segment a digest reads at most: every piece, full. */
+export function digestMaxInputChars(budget: DigestBudget): number {
+	return budget.maxPieces * budget.pieceTokens * 4;
+}
+
+/**
+ * The budget for the source the task runs on. Large when the context is one
+ * Maestro sets or knows: an in-process model trained for it (the engine opens
+ * the context each call asks for), Maestro's model server (its catalog models
+ * run at 40,960), or Ollama (sent `num_ctx` per call). Small otherwise.
+ */
+export function digestBudgetFor(
+	source: LocalModelSource | null,
+	endpoints: readonly LocalModelEndpoint[]
+): DigestBudget {
+	if (!source) return SMALL_DIGEST_BUDGET;
+	if (source.type === 'local') {
+		const trained = getLocalModel(source.modelId)?.contextLength ?? 0;
+		return trained >= DIGEST_CONTEXT_TOKENS ? LARGE_DIGEST_BUDGET : SMALL_DIGEST_BUDGET;
+	}
+	if (source.endpointId === MODEL_SERVER_ENDPOINT_ID) return LARGE_DIGEST_BUDGET;
+	const endpoint = endpoints.find((e) => e.id === source.endpointId);
+	return endpoint?.kind === 'ollama' ? LARGE_DIGEST_BUDGET : SMALL_DIGEST_BUDGET;
+}
+
+/**
+ * How long one call may take: a cold load of a large model plus reading a
+ * full piece, on a laptop, with other work running.
+ */
+export const DIGEST_CALL_TIMEOUT_MS = 10 * 60_000;
 
 /** What the scheduler hands over: the same facts the agent prompt names. */
 export type HistoryDigestRequest =
@@ -153,10 +219,13 @@ class DigestCallFailed extends Error {}
  * that went away between the scheduler's check and this read (cleared,
  * retention) only costs the continuity, never the digest.
  */
-async function readPreviousDigest(previousDigestPath: string | null | undefined): Promise<string> {
+async function readPreviousDigest(
+	previousDigestPath: string | null | undefined,
+	maxChars: number
+): Promise<string> {
 	if (!previousDigestPath) return '';
 	try {
-		return renderPreviousDigest(await fs.readFile(previousDigestPath, 'utf-8'));
+		return renderPreviousDigest(await fs.readFile(previousDigestPath, 'utf-8'), maxChars);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return '';
 		throw error;
@@ -175,12 +244,17 @@ export function createHistoryDigestWriter(
 	const readAssignments = options.readAssignments ?? readLocalModelAssignments;
 	const label = LOCAL_MODEL_TASKS[TASK_ID].label;
 
-	const ask = async (prompt: string, maxTokens: number): Promise<DigestReply> => {
+	const ask = async (
+		prompt: string,
+		maxTokens: number,
+		budget: DigestBudget
+	): Promise<DigestReply> => {
 		await whenNoInteractiveLocalTask();
 		const verdict = await runTask({
 			system: getPrompt('computer-history-digest-local'),
 			prompt,
 			maxTokens,
+			contextTokens: budget.contextTokens,
 			background: true,
 			signal: AbortSignal.timeout(DIGEST_CALL_TIMEOUT_MS),
 		});
@@ -212,14 +286,15 @@ export function createHistoryDigestWriter(
 	const summarize = async (
 		job: LocalDigestInstruction,
 		input: string,
+		budget: DigestBudget,
 		previous = ''
 	): Promise<DigestReply> => {
 		const pieces = chunkText(input, {
 			countTokens: estimateTokenCount,
-			maxTokens: DIGEST_PIECE_TOKENS,
+			maxTokens: budget.pieceTokens,
 			overlapTokens: 0,
 			// Windows close at line ends, so they can run under-full.
-			maxChunks: 2 * DIGEST_MAX_PIECES,
+			maxChunks: 2 * budget.maxPieces,
 		});
 		// The previous digest goes only to a call that writes the digest, never
 		// to a notes call, and as its own fenced block (it was written from
@@ -235,31 +310,39 @@ export function createHistoryDigestWriter(
 				: `${instruction}\n\n${fenceUntrusted(body)}`;
 		};
 		if (pieces.length === 1) {
-			return ask(request({ stage: 'whole' }, pieces[0]), DIGEST_MAX_TOKENS);
+			return ask(request({ stage: 'whole' }, pieces[0]), budget.replyMaxTokens, budget);
 		}
 		const notes: string[] = [];
 		for (const [index, piece] of pieces.entries()) {
 			const reply = await ask(
 				request({ stage: 'part', part: index + 1, parts: pieces.length }, piece),
-				DIGEST_NOTES_MAX_TOKENS
+				budget.notesMaxTokens,
+				budget
 			);
 			notes.push(reply.text);
 		}
 		return ask(
 			request({ stage: 'notes', parts: pieces.length }, notes.join('\n\n')),
-			DIGEST_MAX_TOKENS
+			budget.replyMaxTokens,
+			budget
 		);
 	};
 
 	const write = async (request: HistoryDigestRequest): Promise<HistoryDigestResult> => {
 		try {
+			const budget = digestBudgetFor(
+				sourceForAssignment(resolveLocalModelAssignment(readAssignments(), TASK_ID)),
+				getConfiguredLocalModelEndpoints()
+			);
 			let job: LocalDigestInstruction;
 			let input: string;
 			let previous = '';
 			if (request.kind === '15m') {
-				previous = await readPreviousDigest(request.previousDigestPath);
+				previous = await readPreviousDigest(request.previousDigestPath, budget.previousChars);
 				const events = parseSegmentText(await fs.readFile(request.segmentPath, 'utf-8'));
-				const rendered = renderSegmentForDigest(events, { maxChars: DIGEST_MAX_INPUT_CHARS });
+				const rendered = renderSegmentForDigest(events, {
+					maxChars: digestMaxInputChars(budget),
+				});
 				input = rendered.text;
 				job = {
 					kind: '15m',
@@ -272,7 +355,7 @@ export function createHistoryDigestWriter(
 				const bodies = await Promise.all(
 					request.digestPaths.map((digestPath) => fs.readFile(digestPath, 'utf-8'))
 				);
-				input = renderDigestsForRollup(bodies);
+				input = renderDigestsForRollup(bodies, { maxChars: digestMaxInputChars(budget) });
 				job = {
 					kind: '6h',
 					blockStartIso: request.blockStartIso,
@@ -283,7 +366,7 @@ export function createHistoryDigestWriter(
 			if (input.trim() === '') {
 				return { success: false, error: 'The window holds nothing to summarize.' };
 			}
-			const reply = await summarize(job, input, previous);
+			const reply = await summarize(job, input, budget, previous);
 			clearLocalTaskNotice(TASK_ID);
 			const model =
 				localModelAssignmentSourceLabel(reply.source, getConfiguredLocalModelEndpoints()) ??
