@@ -2800,9 +2800,14 @@ The rules, and why each is a rule:
    compile until it has a variable or a reason. Claude Code is reached through
    `ANTHROPIC_BASE_URL`. Codex is reached through `OPENAI_BASE_URL` AND a config argument,
    `-c openai_base_url="<url>"`, placed ahead of its own arguments (`configArgs` on the mapping,
-   `gateway.args` on the launch plan). Copilot CLI ignores base-URL variables. OpenCode and Factory
-   Droid set a base URL per model provider in their own config files, so no single variable routes
-   them. A guessed name fails silently: the CLI ignores it and the agent runs direct while the UI
+   `gateway.args` on the launch plan). OpenCode reads no base-URL variable: the gateway is added to
+   its inline config document, `OPENCODE_CONFIG_CONTENT` (see
+   [OpenCode: the gateway in its inline config](#opencode-the-gateway-in-its-inline-config)).
+   Copilot CLI reads a base URL only for a BYOK provider, which takes it off the Copilot
+   subscription, so it stays refused (see
+   [Copilot CLI: a BYOK variable only](#copilot-cli-a-byok-variable-only)). Factory Droid is not verified (see
+   [Factory Droid: not verified](#factory-droid-not-verified)), so it stays refused, and so do the
+   providers in [Other providers: not verified](#other-providers-not-verified). A guessed name fails silently: the CLI ignores it and the agent runs direct while the UI
    says it is proxied. **The Codex mapping shipped as exactly that failure**, with the variable
    alone: Codex CLI 0.162.1 on a ChatGPT login does not read `OPENAI_BASE_URL`. See
    [Real run](#real-run-2026-10-11-darwin-arm64), finding 2, for the measurement and the fix.
@@ -2850,6 +2855,131 @@ provider's API), and a worktree agent inherits its parent's. Provenance is a fou
 `EnvVarSource`, `gateway` ("Local Models gateway"), in `resolveAgentEnvironment()`; the gateway
 table's **Show environment** draws it with `<EnvVarList>`.
 
+### OpenCode: the gateway in its inline config
+
+OpenCode has no base-URL variable. Each provider's address is `provider.<id>.options.baseURL` in
+its config, and `OPENCODE_CONFIG_CONTENT` is an inline config merged over the user's files. That
+variable already carries Maestro's permission block (the provider default, and its read-only
+override), so the gateway ADDS to it instead of setting it. The mapping is a third form of
+`AgentGatewaySupport`:
+
+- `configDocument.merge` (`withOpenCodeGateway()` in `src/shared/local-models/opencode-config.ts`)
+  sets `options.baseURL` on `anthropic` and `openai`, keeps every other key, and sets
+  `enabled_providers` to those two (narrowed by the document's own list, when it has one). A model
+  from any other provider then fails by name ("Model unavailable") instead of running direct while
+  the agent is shown as proxied. The launch applies it as `gateway.envVarMerges`, last, on the value
+  every layer settled on (`gatewayEnvVarMerges` in `resolveAgentEnvVars()`), the way a Run on
+  recipe's merge is applied. `applyAgentGatewayToSpawn()` builds it on the provider default.
+- Rule 1 reads the document: an agent whose own `OPENCODE_CONFIG_CONTENT` names a base URL for
+  either provider wins (`user-override` with `inDocument`); a document that does not is the base the
+  gateway is added to.
+- `subcommandArgs: ['--standalone']`, placed after `run` (`placeSubcommandArgs()`). Without it,
+  `opencode run` talks to the background service when one is up, and whether that service reads
+  the run's document was not measured. With it, the run is proven to read it.
+- `urlIncludesApiVersion`: the gateway URL is the SDK base URL, WITH `/v1`. OpenCode appends
+  `/messages` (Anthropic) and `/responses` (OpenAI) to it. So `tokenProxyGatewayUrl(port, route,
+'opencode')` gives `/anthropic/v1` and `/openai/v1`, and a user pointing OpenCode at LiteLLM or
+  Headroom types the address that serves `/v1/messages`, with the `/v1`.
+- The route is the provider the agent's model names (`tokenProxyRouteForAgent(toolType, env,
+model)`, the model being the agent's own or the Settings -> Agents default): `anthropic/...` takes
+  the `anthropic` route, `openai/...` the `openai` route, and any other model (or none) is refused
+  by name. A gateway set for one provider while a turn runs a model of the other fails loudly at the
+  proxy (an upstream 404), never direct.
+
+Evidence, 2026-11-11, OpenCode 2.2.7 (`/opt/homebrew/bin/opencode`), with a throwaway `HOME` and
+XDG directories, a fake key (`ANTHROPIC_API_KEY=sk-ant-fake-...`, or `OPENAI_API_KEY=sk-fake-...`),
+and nothing of the user's config read or written:
+
+| Command (`opencode run --standalone --format json -m <model> "Say hi"`)                  | Result                                                             |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `anthropic/claude-haiku-4-5`, `provider.anthropic.options.baseURL=http://127.0.0.1:1/v1` | every attempt `ECONNREFUSED` (the closed port)                     |
+| `openai/gpt-5-mini`, `provider.openai.options.baseURL=http://127.0.0.1:1/v1`             | every attempt `ECONNREFUSED`                                       |
+| `anthropic/claude-haiku-4-5`, no `baseURL` (control)                                     | `401 invalid x-api-key` from Anthropic: the key went out           |
+| Anthropic `baseURL` at a recording listener                                              | `POST /v1/messages?beta=true`, `x-api-key`, title request included |
+| OpenAI `baseURL` at a recording listener                                                 | `POST /v1/responses` (and one `GET /v1/responses`), bearer         |
+| `ollama/...` or `opencode/...` with `enabled_providers: ["anthropic","openai"]`          | `provider.no-route`: "Model unavailable", exit 1                   |
+| no `-m`, same `enabled_providers`                                                        | picked an enabled provider; `ECONNREFUSED`                         |
+
+Not verified: an OpenCode login other than an API key (a Claude or ChatGPT subscription through an
+OpenCode auth plugin), and an OpenCode older than `--standalone`, which fails the launch on the
+unknown option (as it does for Run on).
+
+### Copilot CLI: a BYOK variable only
+
+Checked 2026-11-11 (G03.4) against Copilot CLI 1.0.95 (`/opt/homebrew/bin/copilot`). Every run
+used `env -i` with a throwaway `HOME` and `COPILOT_HOME`, `COPILOT_AUTO_UPDATE=false`, a fake
+key, and `copilot -p "Reply with one word: hi" --allow-all-tools -s`. No GitHub login was present
+and no real provider was reached.
+
+`copilot help environment` documents `COPILOT_PROVIDER_BASE_URL` ("API endpoint URL for a custom
+model provider (BYOK). When set, the CLI uses this provider instead of GitHub Copilot's model
+routing. GitHub authentication is not required"), with `COPILOT_PROVIDER_TYPE` (`openai`,
+`azure`, `anthropic`), `COPILOT_PROVIDER_API_KEY` and `COPILOT_PROVIDER_WIRE_API`. The reported
+`COPILOT_PROVIDER_API_URL` is not among them.
+
+| Setting                                                                  | Result                                                                                               |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `COPILOT_PROVIDER_BASE_URL=http://127.0.0.1:1`, type `anthropic`         | "Could not connect to local model provider at http://127.0.0.1:1" (also with `COPILOT_OFFLINE=true`) |
+| `COPILOT_PROVIDER_BASE_URL=http://127.0.0.1:1/v1`, type `openai`         | "Could not connect to local model provider at http://127.0.0.1:1/v1"                                 |
+| Recording listener (answers 500), type `anthropic`, URL without `/v1`    | `POST /v1/messages`, key in `x-api-key`, 6 attempts                                                  |
+| Recording listener, type `openai`, URL with `/v1`                        | `POST /v1/chat/completions`, bearer                                                                  |
+| Recording listener, type `openai`, `COPILOT_PROVIDER_WIRE_API=responses` | `POST /v1/responses`, bearer                                                                         |
+| `COPILOT_PROVIDER_API_URL=http://127.0.0.1:1`, no login                  | Ignored: the CLI asked for a GitHub login                                                            |
+| Control: no base URL, no login                                           | The CLI asked for a GitHub login                                                                     |
+
+So the variable is honored, and the closed port proves it. It is still not mapped, because it is a
+BYOK switch, not a base URL for the subscription:
+
+- **A Copilot subscription cannot be proxied with it.** Setting it takes the turn off GitHub's
+  model routing and sends only the provider key, so a subscription agent pointed at the Maestro
+  proxy would arrive with no usable credential. Proxying a subscription needs the GitHub token to
+  Copilot token exchange and the Copilot API as the upstream, which the proxy does not do.
+- **A BYOK user already sets it.** Rule 1 then lets the user's value win, so the gateway would
+  never apply to the one login it could carry.
+
+The `copilot-cli` reason says this. A BYOK user who wants the Maestro proxy can set
+`COPILOT_PROVIDER_BASE_URL` to the proxy URL in the agent's own environment variables; Maestro does
+not do that for them (not measured end to end). Run on (`run-on.ts`) uses the same
+variable on purpose, to put the agent on a local model.
+
+### Factory Droid: not verified
+
+Checked 2026-11-11 (G03.2): no `droid` binary was installed on the machine that runs the
+closed-port test (`which droid` empty, no `~/.factory`, nothing on Spotlight), so no command was
+run and nothing was measured. The mapping stays refused, with a reason that says it is unverified.
+
+What a later check should test, in this order, each against `http://127.0.0.1:1` with a temporary
+`HOME` (Droid reads `~/.factory/`, so the user's settings are never touched):
+
+1. `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`. Third-party gateway guides (Orq.ai) report that these
+   override Droid's config for a BYOK model; Factory's enterprise gateway page lists them too. A
+   variable would make Droid an `envVar` mapping like Claude Code.
+2. `customModels[].baseUrl` in `settings.json` (legacy `config.json`: `custom_models[].base_url`),
+   which is Factory's documented route. Two traps: the `openai` provider is reported to ignore
+   `baseUrl` (an OpenAI-compatible gateway needs `generic-chat-completion-api`), and a file under
+   `HOME` is not a per-launch setting, so a verified route here needs a per-launch config path (see
+   `src/shared/plugins/mcp-agent-config.ts`) before it can be mapped.
+
+Whatever is verified covers BYOK custom models only: the documented `baseUrl` belongs to a custom
+model entry, and nothing documented points Factory's own subscription models at another URL.
+
+### Other providers: not verified
+
+Checked 2026-11-11 (G03.3). For each provider below, no binary was installed on the machine that
+runs the closed-port test (`which`, a login shell's `command -v`, and Spotlight all came back
+empty), so no command was run and nothing was measured. Each keeps a refusal whose reason says
+Maestro has not verified a route, and the "Candidates" column is what a later check should test
+against `http://127.0.0.1:1`, with a temporary `HOME` so the user's config is never touched. A
+candidate is only reported, not proven: it is not mapped until a closed port refuses the turn.
+
+| Provider    | Binary   | Candidates (reported, unverified)                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Grok CLI    | `grok`   | xAI's settings reference names `GROK_XAI_API_BASE_URL` for API-key auth. Community Grok CLIs read `GROK_BASE_URL` and `--base-url`; which one the installed build reads is unknown.                                                                                                                                                                                                                                                                   |
+| Oh My Pi    | `omp`    | A provider's `baseUrl` in `~/.omp/agent/models.yml` (older `models.json` is migrated to it), applied over a built-in provider. One install is reported to read `~/.oh-omp/agent/` instead. A file under `HOME` needs a per-launch config path before it can be mapped.                                                                                                                                                                                |
+| Pi          | `pi`     | A provider's `baseUrl` in `~/.pi/agent/models.json`, which its docs show routing a built-in provider (for example `anthropic`) through a proxy without redefining its models. A file under `HOME` needs a per-launch config path before it can be mapped.                                                                                                                                                                                             |
+| Qwen3 Coder | `qwen`   | `OPENAI_BASE_URL`, documented for its OpenAI-compatible auth beside `OPENAI_API_KEY` and `OPENAI_MODEL`, and a `--openai-base-url` flag that its loading-priority docs rank above the variable. Either would be an `envVar` or `configArgs` mapping. A Qwen OAuth login is a different auth type and may read neither.                                                                                                                                |
+| Hermes      | `hermes` | `OPENAI_BASE_URL` (its environment-variable reference: the base URL for a custom endpoint), and `model.provider: custom` with `model.base_url` in `~/.hermes/config.yaml`, which `hermes model` writes and which persists past the variable. Reported traps: a saved config can win over the variable, and some tools (vision, web summaries) call OpenRouter directly, so a closed-port pass would not prove every request goes through the gateway. |
+
 ## Token conservation proxy
 
 Maestro's own proxy is an HTTP server on `127.0.0.1` that an agent reaches through its gateway
@@ -2885,6 +3015,10 @@ request is never inspected to learn where it goes. The table is `TOKEN_PROXY_ROU
 | `http://127.0.0.1:PORT/openai/v1` | `https://api.openai.com/v1`             | Codex with an OpenAI API key |
 | `http://127.0.0.1:PORT/chatgpt`   | `https://chatgpt.com/backend-api/codex` | Codex with a ChatGPT login   |
 
+OpenCode is given the same routes with the version in the URL: `/anthropic/v1` for an
+`anthropic/...` model and `/openai/v1` for an `openai/...` model
+([OpenCode](#opencode-the-gateway-in-its-inline-config)).
+
 The `anthropic` and `chatgpt` routes are confirmed against real turns
 ([Real run](#real-run-2026-10-11-darwin-arm64)); the `chatgpt` one only when Codex is given the
 address through its `openai_base_url` config key, because Codex 0.162.1 ignores the variable the
@@ -2912,9 +3046,9 @@ EVERY path under a route is forwarded (a provider CLI also calls token counting 
 | --------------------------------------------------------- | ------------------------------------------------------------------ |
 | `resolveTokenProxyTarget(method, url, upstreams)`         | Route, upstream, path and query of one request, or a named refusal |
 | `classifyTokenProxyPath(method, path)`                    | Which API a forwarded request speaks                               |
-| `tokenProxyGatewayUrl(port, route)`                       | The base URL to store on an agent                                  |
+| `tokenProxyGatewayUrl(port, route, toolType?)`            | The base URL to store on an agent (OpenCode's carries `/v1`)       |
 | `tokenProxyAgentGatewayUrl(url, port, agentId)`           | The base URL to give that agent's process for one launch           |
-| `tokenProxyRouteForAgent(toolType, env)`                  | Which route an agent's provider and credential take                |
+| `tokenProxyRouteForAgent(toolType, env, model?)`          | Which route an agent's provider, credential and model take         |
 | `gatewayPointsAtTokenProxy(gatewayUrl, port)`             | Whether a stored gateway reaches the proxy (any loopback spelling) |
 | `resolveTokenProxyMode({ gatewayUrl, storedMode, port })` | An agent's mode: `off`, `passthrough` or `compress`                |
 | `tokenProxyErrorBody(code, message)`                      | The body of an error the PROXY raises                              |
@@ -3039,14 +3173,17 @@ Stats migration v16 adds one table. `proxyRequestFromLog()` in
    appears in every later request. `new_blocks` holds only the blocks with `cached: false`, and
    the cache makes the first verdict the only one, so "Recent compressions" needs no dedupe.
 
-5. **The provider's own count rides along, for every mode.** `response-usage.ts` keeps a bounded
-   copy (16 MB) of each successful answer to a message request as it is piped to the client,
-   unchanged, and once the response has ended reads the `usage` it names: Anthropic's
+5. **The provider's own count rides along, for every mode.** `response-usage.ts` reads each
+   successful answer to a message request as it is piped to the client, unchanged. An event stream
+   with no `Content-Encoding` is scanned one complete line at a time as it arrives, so the reader
+   holds only the running usage and the line not yet ended. A JSON body or an encoded answer needs
+   the whole body, so for those it keeps a bounded copy (16 MB) and decodes it once the response
+   has ended. Either way it reads the `usage` the answer names: Anthropic's
    `message_start` and cumulative `message_delta`, an OpenAI chat completion's final chunk, and a
    Responses `response.completed`, in an event stream or a whole JSON body, decoding gzip, deflate,
    br and zstd. OpenAI's cached tokens are moved out of its prompt total, so `input` is uncached
    input on every route, and OpenAI reports no cache writes (0). An answer that names no usage, an
-   error status, a body past the bound, an encoding with no decoder, and an answer from a
+   error status, a kept body past the bound, an encoding with no decoder, and an answer from a
    background target all leave the four columns NULL, never zero. These are exact where the proxy's
    own figures are characters / 4, and they cover passthrough requests the proxy never reads, so a
    passthrough week is the baseline a compress week is compared against. A cache write that grows
@@ -3154,7 +3291,7 @@ flowchart TD
 	S --> F["findToolResultSpans(kind)<br/>tool results outside the protected regions"]
 	F --> T{"at least 1000 tokens?"}
 	T -->|no| KEEP["left as sent"]
-	T -->|yes| H["SHA-256 of the original"]
+	T -->|yes| H["cache key: SHA-256 of the original<br/>(verdictKey() in early mode)"]
 	H --> C{"verdict in the cache?"}
 	C -->|yes| USE["use it: same bytes as every earlier turn"]
 	C -->|no| HEUR["heuristics<br/>JSON, or logs then long lines"]
@@ -3244,10 +3381,13 @@ Token counts are `estimateTokenCount()` (characters / 4) everywhere, including t
 A compressed block is the shortened text, a newline, and one line:
 
 ```
-[maestro-compressed sha256=<hash of the original> original_tokens=<n>]
+[maestro-compressed sha256=<cache key> original_tokens=<n>]
 ```
 
-`formatCompressionMarker()` writes it and `parseCompressionMarker()` reads it.
+`formatCompressionMarker()` writes it and `parseCompressionMarker()` reads it. The `sha256=` value
+names the cache entry that holds the original. In `compress` it is the SHA-256 of the original
+text; in `compress-early` it is `verdictKey(text, 'complete')`, which is not the hash of the
+content (rule 6), except for a launch that carries the retrieve tool, where it is the plain SHA-256.
 
 The cache is content-addressed, under `userData/proxy-cache/`:
 
@@ -3267,8 +3407,11 @@ Rules:
 2. **The verdict is stored BEFORE the replacement is used.** When the cache cannot be read or
    written (disk full, permissions) the block is sent as it was and `stats.storeFailures` counts
    it. A compression that is not recorded cannot be reproduced or audited.
-3. **One block is decided once at a time.** A process-wide `createKeyedWriteQueue()` keyed by hash
-   makes a second request that carries the same new block wait and read the first one's verdict.
+3. **One block is decided once at a time.** `cache.withEntry(hash, fn)`, over a process-wide
+   `createKeyedWriteQueue()` keyed by hash, makes a second request that carries the same new block
+   wait and read the first one's verdict. A prune removes each entry under the same queue and asks
+   again there whether it was used since the scan, so it never deletes an entry (and the original
+   its marker points to) while a request is resolving it.
 4. **A record that cannot be read is absent.** Bad JSON, another record version, another hash, or
    a missing replacement file is logged and decided again.
 5. **Pruning is by last use.** An entry that vanished mid conversation would be decided again,
@@ -3276,11 +3419,14 @@ Rules:
    bytes: the provider's cached prefix breaks and the model sees another version of an earlier
    result. That risk lasts only while the conversation is live, and a provider keeps a cached
    prefix for an hour at most. So every use stamps the record's mtime (at most every 6 hours, with
-   the process's own record of the use in between), and `cache.prune()` removes entries unused for
+   the process's own record of the use in between; that record is bounded to the 16384 most
+   recently used hashes, and a hash it forgets has its last use written to the record first), and
+   `cache.prune()` removes text files with no record that are over a day old, then entries unused for
    30 days (`DEFAULT_PRUNE_IDLE_MS`), then the least recently used while the directory is over
    512 MB (`DEFAULT_PRUNE_MAX_BYTES`). Nothing used within a day (`MIN_PRUNE_IDLE_MS`) is removed,
    by any prune. The record is deleted before its texts, so a crash leaves orphan texts, never a
-   record whose text is gone; an orphan older than a day is removed too. The service prunes a
+   record whose text is gone. Orphans go first, so the size pass does not count bytes that are about
+   to be freed. The service prunes a
    minute after the listener starts and daily while it listens; `maestro-cli models proxy cache`
    reads the size and `models proxy cache prune [--older-than 7d]` prunes now
    (`local_models_proxy_cache`). Before this rule the directory was never pruned, which kept raw
@@ -3291,7 +3437,10 @@ Rules:
    and keys it by `verdictKey(text, 'complete')`, the SHA-256 of a profile prefix plus the text. The
    marker carries that key, so `models proxy block` finds either. Without separate keys the shared
    cache would hand a sampled `compress` verdict to an early request, where the model never read
-   the original and has no way to ask for what was left out.
+   the original. So early mode never drops content, unless the launch carries the retrieve tool:
+   a request from such a launch is decided with the `full` profile under the plain SHA-256, the
+   key `compress` uses, because that model can ask for what was left out
+   ([Retrieval](#retrieval-the-model-asks-for-an-original)).
 
 `createCompressionCache()` keeps the newest 1024 verdicts in memory, so a request does not read the
 disk for each block. `readOriginal(hash)` is the read for an audit view; `isContentHash()` is its
@@ -3353,6 +3502,214 @@ Limits of this phase:
   request for up to 60 seconds, once per block.
 - Parallel tool results in a Responses request that the client interleaves with their calls
   (`call A, output A, call B, output B`) are read as answered up to the last call.
+
+### Retrieval: the model asks for an original
+
+`compress-early` is the only proxy mode that saves money under prompt caching, because it shortens
+a tool result before the provider writes it to its cache. A model in early mode never reads the
+original, so without a way to ask for it early mode may use only reductions that leave nothing
+out (the `complete` profile, cache rule 6). Retrieval gives the model that way: a tool the agent
+itself calls, `retrieve_compressed_original`, that returns the original lines of a compressed
+block by its hash. A launch that carries the tool is then decided with the `full` profile again.
+
+```mermaid
+sequenceDiagram
+	participant M as Model (provider)
+	participant A as Agent CLI
+	participant P as Token proxy
+	participant B as maestro-cli mcp serve
+	participant D as Desktop (bridge handler)
+	A->>P: request, launch binding in base URL
+	P->>P: compressRequestBody(): full profile,<br/>marker [maestro-compressed sha256=H original_tokens=N]
+	P->>M: shortened request
+	M->>A: tool call retrieve_compressed_original { hash: H, start_line, end_line }
+	A->>B: MCP tools/call
+	B->>D: plugins_call_tool + run-token proof
+	D->>D: readTokenProxyBlock(H, range)
+	D->>B: header line + exact original lines
+	B->>A: tool result
+	A->>P: next request carries the retrieve result
+	P->>P: isRetrieveToolResult() veto: result left as sent
+	P->>M: request, retrieve result uncompressed
+```
+
+The nine decisions, with their reasons:
+
+1. **Transport: the per-launch MCP bridge.** The tool rides `maestro-cli mcp serve`
+   (`src/cli/commands/mcp.ts`, `src/cli/services/mcp-bridge.ts`), injected per agent by
+   `src/shared/plugins/mcp-agent-config.ts` (`MCP_CONFIG_BY_AGENT`: Claude Code through
+   `--mcp-config`, Codex through `-c mcp_servers.*`, both verified against the real binaries)
+   from `src/main/ipc/handlers/process/handle-spawn.ts`. Reason: the bridge already exists, is
+   scoped to one launch, and edits no global config. A model that has an MCP tool calls it like
+   any other tool, with no change to the request the client sends.
+2. **Tool: `retrieve_compressed_original`, input `{ hash, start_line?, end_line? }`.** It answers
+   through `readTokenProxyBlock(hash, range)` in `proxy/service.ts`: lines 1 to 200 by default,
+   the existing limits (`TOKEN_PROXY_ORIGINAL_RANGE_MAX_LINES`, 1000 lines;
+   `TOKEN_PROXY_ORIGINAL_RANGE_MAX_BYTES`, 256 KiB), a first line that says which lines came back
+   and whether more exist, then the exact text. An unknown hash or a missing original is a tool
+   error that says so. Lookup is by exact hash only, with no search and no listing. Reason: the
+   same read the audit view and `models proxy block` use, so there is one implementation of the
+   range rules; an exact hash discloses only a block the model was already shown a marker for.
+3. **A core tool, not a plugin tool.** It works with the Plugins Encore Feature off. The bridge
+   was injected only when plugins are on and at least one plugin tool exists; the condition
+   becomes that, OR the agent has retrieval on. With retrieval alone, `tools/list` answers that
+   one tool. Reason: retrieval belongs to the token proxy, which is core, and a user who never
+   turned plugins on must still be able to use it.
+4. **Setting: `tokenProxyRetrieval`, a per-agent boolean** beside `tokenProxyMode` on the agent
+   record (`src/shared/types.ts`, `src/renderer/types/index.ts`). Default off. It has effect when
+   the mode is `compress` or `compress-early`. Reason: it changes what the model can call and
+   what it reads, so it is the user's decision, per agent, like the mode itself.
+5. **What it changes in compression.** In early mode, a request from a launch that carries the
+   tool is decided with the `full` profile under `verdictKey(text, 'full')` (the plain SHA-256,
+   shared with `compress` mode). A request from a launch without it keeps the `complete` profile
+   and its own key, exactly as before. Reason: the profile follows what THIS launch can do, so a
+   lossy block is never sent to a model that cannot retrieve it, whatever an earlier launch of
+   the same conversation had. Two keys also mean the two kinds of launch never share a verdict.
+6. **The launch says it has the tool, through the host-issued launch binding.**
+   `registerTokenProxyRecoveryLaunch()` and `recoveryFor` in `proxy/service.ts`, `launchBinding`
+   on `TokenProxyTarget`, and `LocalRecoveryCapability` in `proxy/compress.ts` already carry a
+   capability per launch. A second capability kind says "this launch was given the MCP retrieve
+   tool". It is never inferred from the request body, the agent id, or the stored setting alone.
+   Reason: the setting can change after a launch, and a request body can be shaped by anything
+   that reaches the port; only the spawn that injected the bridge knows the tool is there.
+7. **The model learns from the tool.** The tool's description and the MCP server's
+   `instructions` (in the `initialize` result) say that a tool result ending in
+   `[maestro-compressed sha256=<hash> original_tokens=<n>]` was shortened, and that this tool
+   returns its original lines for that hash. The marker text does not change. Reason: a stored
+   verdict's bytes, and so every cached prefix that holds them, stay the same; the instructions
+   reach the model only in launches that have the tool.
+8. **No loop.** A result of this tool is never compressed. The recovery veto in
+   `proxy/compress.ts` (`isOriginalRecovery()`, which recognized the shell recovery command)
+   extends to a tool result linked to a tool call whose name is the retrieve tool under any client
+   prefix (the bridge's server is `maestro`, so Claude Code names it
+   `mcp__maestro__retrieve_compressed_original`). Reason: a
+   retrieved original compressed again would give the model the same shortened text it asked to
+   see past, and it would ask again.
+9. **The shell-command recovery hint stays unemitted.** Tasks 03.4b3b and 03.4b3c of the
+   token optimization playbook are superseded. Reason: the hint depended on proof of how the
+   actual provider launch runs shell commands, which was never complete
+   (`docs/research/token-optimization-progress.md`, 03.4b3b), and a tool the model calls by name
+   needs no such proof.
+
+**How a launch gets the tool (`handle-spawn.ts`).** The desktop spawn decides before it builds the
+launch plan, because the binding has to be in the base URL the plan hands the process:
+
+1. The bridge is reachable: the provider's MCP strategy is verified and the agent is local (no
+   SSH). Claude through `maestro-p` is reachable too (see "The interactive Claude path and Codex"
+   below).
+2. The gateway agent is the agent the bridge's run proof names (`baseSessionId`). An Auto Run
+   task (`{id}-batch-{ts}`) or a History synopsis (`{id}-synopsis-{ts}`) spawns under another id,
+   gets no bridge, and stays on `complete`.
+3. No Run on target takes the gateway's place, and `agentHasTokenProxyRetrieval()` is true (the
+   switch on, the proxy compressing for this local agent).
+4. `ensureTokenProxyForGateway()` has the proxy up, then `registerTokenProxyRecoveryLaunch()`
+   with `{ kind: 'mcp-retrieve-tool' }` returns the bound URL, which goes into the plan. The
+   proxy refusing to bind (256 live launches) leaves the plain URL and no tool.
+5. If the plan does not hand the process that URL (a user base-URL variable wins), or the bridge
+   is not injected, the binding is released at once. Otherwise the bridge is injected (with
+   plugins on or off), and the binding is released with the run proofs: on exit, on a refusal
+   after it was issued, and on a failed spawn.
+
+The proxy's `recoveryFor` returns the retrieve capability only while the stored switch is still on,
+because the bridge refuses the next call once it is off: a switch turned off mid-launch drops that
+launch back to `complete` on the next request. The tool itself is offered by the bridge from the
+stored setting at `tools/list` time; the binding is what lets compression be lossy.
+
+**The interactive Claude path and Codex, checked against the real binaries (2026-11-11).**
+Claude Code 2.1.322, Codex CLI 0.167.1, darwin-arm64, no model call.
+
+- **Claude through `maestro-p`.** The bridge was skipped for this path because an old ordering
+  prepended `--mcp-config` ahead of the `maestro-p` script path, where Node would read it as its
+  own flag. The ordering changed: `handle-spawn.ts` merges the bridge flags into the agent args
+  first, and `applyLocalInteractiveSpawnDecision()` (through `applyClaudeSpawnDecision()`) then
+  builds `[maestro-p script, ...interactiveModeArgs, ...args]`, so the script path stays first.
+  `maestro-p` lists `--mcp-config` as a variadic pass-through flag (`src/maestro-p/args.ts`); the
+  inline JSON value does not look like a flag, so it is taken whole and forwarded. The skip is
+  removed, so an interactive launch gets the bridge, its binding, and the `full` profile like a
+  `--print` launch. Three checks:
+  1. The real built `dist/cli/maestro-p.js`, given the desktop's exact line (`--mcp-config
+<json>` with a path that holds a space and a `--tab` argument inside the JSON, then
+     `--print --verbose --output-format stream-json --dangerously-skip-permissions -- <prompt>`)
+     and a stub `MAESTRO_CLAUDE_BIN` that records its argv, handed claude
+     `--mcp-config <the same JSON, byte for byte> --dangerously-skip-permissions --session-id
+<uuid>`. The prompt went to the TUI, not to the argv.
+  2. The real `claude` TUI in a PTY, started with `--mcp-config <bridge JSON>
+--strict-mcp-config`, answered `/mcp` (a local command, no model call) with the server
+     `maestro`, `connected`. It showed `no tools`, which is correct: the bridge was started by
+     hand with no run proof, and a caller with no valid proof is offered no core tool.
+     (`claude mcp list` cannot be used for this check: it does not read `--mcp-config`.)
+  3. `src/__tests__/maestro-p/args.test.ts` parses the output of `buildMcpInjection()` and
+     `mergeMcpInjectionArgs()` for Claude and expects it forwarded intact;
+     `process.test.ts` expects an interactive retrieval launch to bind, keep the script path
+     first, and carry `--mcp-config` after it.
+
+  Side effect: plugin MCP tools now reach a TUI Claude launch as well, which was the same gap.
+
+- **Codex.** `codex mcp list` and `codex mcp get maestro`, run with the spawn's own overrides
+  (`-c mcp_servers.maestro.command=...`, `.args=[...]`, `.env={ ELECTRON_RUN_AS_NODE = "1" }`),
+  list the injected server `maestro`: enabled, stdio, the bridge command and arguments. Codex
+  0.167.1 does not start a server for `mcp list`, so the TOOL listing was not seen there; with a
+  run proof only the app can issue, it is covered by the bridge tests of R02.3 and is unproven in
+  a real Codex launch.
+
+**A real model uses it (2026-11-11, one sample).** The opt-in case "retrieval" of
+`token-proxy-real-e2e.test.ts`: Claude Code 2.1.322 `--print` on Haiku (`claude-haiku-5-5`),
+darwin-arm64, through the product's proxy service in `compress-early`, a launch bound as
+`handle-spawn.ts` binds it, and the built `maestro-cli mcp serve` dialing a loopback stand-in for
+the app's WebSocket that answers with the app's own `plugins_list_tools` / `plugins_call_tool`
+handlers (Plugins off). Turn one runs `cat items.json`, a JSON array of 60 objects (about 6 KB);
+turn two asks for the word of item 30. The prompts never name the tool: no nudge was needed.
+
+- The proxy sampled the array on the request that first carried it (items 1-10 and 56-60 kept,
+  `[maestro: 45 of 60 items omitted]`), and the model said the file held 60 items, of which it saw 15.
+- In turn two the model called `ToolSearch` first (Claude Code defers MCP tools, so the schema
+  is loaded on demand), then `mcp__maestro__retrieve_compressed_original` with the marker's
+  hash, and answered `marigold`, the right word. One call; the bridge listed tools
+  four times and was called once.
+- The tool's answer went to the provider as it came back (header line, then the exact text,
+  no marker), and the proxy counted one retrieval veto for it.
+- The same two turns with retrieval off got no MCP server and no lossy block: early mode kept
+  the array whole for that launch (decision 5), and the model read the answer from it.
+
+| Session       | Messages requests | Cache writes | Cache reads | Prompt cost units |
+| ------------- | ----------------: | -----------: | ----------: | ----------------: |
+| Retrieval on  |                 5 |       31,474 |      68,136 |            46,168 |
+| Retrieval off |                 3 |       10,380 |      49,653 |            17,948 |
+
+Prompt cost units are uncached input plus 1.25 per cache write and 0.1 per cache read. Read the
+cost row with care. Most of the difference is the first request of turn two (19,365 tokens
+written, none read): the test takes Bash away for that turn (`--disallowedTools Bash`, because a
+resumed session keeps turn one's grant and the question is whether the model asks the tool),
+which changes the tool list and so the cached prefix. The rest is the retrieval itself: the
+`ToolSearch` request, the call, the original written back to the cache (3,296 tokens), and the
+tool's definition and instructions (about 160 tokens on the first request). A 6 KB block is too
+small to save more than it costs to fetch back; the case shows that retrieval works, not what it
+saves. What it saves comes from large blocks that are shortened and never asked for.
+
+An earlier attempt of the same run found a harness gap, not a product gap: `maestro-cli` parses
+no command when `VITEST` is set, and Claude Code passes its environment to the MCP servers it
+starts, so the bridge exited silently and Claude reported it `failed`. `providerCliEnv()` now
+drops `VITEST*`. In that attempt the model, with only Bash, ran `cat` again, got the same sampled
+text, and said it could not tell: it did not guess.
+
+**Spawns that stay on `complete`.** Cue (`buildSpawnSpec()` in `cue-spawn-builder.ts`), Group Chat
+participants and cross-agent consults (`applyAgentGatewayToSpawn()`), and `maestro-cli send` inject
+no MCP bridge, so their requests carry no binding and early mode keeps every line for them. That is
+on purpose: binding a launch the model cannot retrieve from would send it blocks it cannot read
+back. Giving them the tool means injecting the bridge on those paths first, which is separate work.
+
+**Rejected: a tool spliced into the request by the proxy and answered inside the stream.** The
+proxy would add the tool definition to each request, watch the response for a call to it, answer
+it itself, and send a second upstream request inside the one client request. It was rejected
+because:
+
+- It rewrites a live response stream: thinking-block signatures, content block indexes, and
+  stop reasons would all have to be forged or re-numbered, and a signature cannot be forged.
+- It sends a second upstream request inside one client request, which the client never sees
+  and cannot count, retry, or cancel.
+- It changes what a subscription login's client sends: tools the client did not define reach the
+  provider under the user's account.
+- It breaks the proxy's rule that a response is never touched.
 
 ### Real run: 2026-10-11, darwin-arm64
 
@@ -3486,9 +3843,10 @@ Gateway table, `--proxy-mode compress-early`). The server passes `{ early: true 
 the model has not answered yet, and the block carrying the `cache_control` breakpoint, are both
 shortened (the breakpoint itself is left where the client put it). Everything else holds: only tool
 results, only over the threshold, the same bytes for the same content. Since 2026-11-11 early mode
-also keeps every line of content: it uses the `complete` heuristic profile under its own cache key
-(cache rule 6), because a model that never read the original cannot recover what a sample or a cut
-left out. The measurement below predates that change; on its log (folded repeats) the output is the
+never drops content, unless the launch carries the retrieve tool: without the tool it uses the
+`complete` heuristic profile under its own cache key (cache rule 6), because a model that never
+read the original cannot recover what a sample or a cut left out. A launch that carries the tool
+gets the `full` profile ([Retrieval](#retrieval-the-model-asks-for-an-original)). The measurement below predates that change; on its log (folded repeats) the output is the
 same. `proxy_requests.mode` records
 an early request as `compress`, since that column says whether the body was shortened; the agent's
 mode is read from its record.

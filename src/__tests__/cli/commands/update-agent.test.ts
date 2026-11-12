@@ -433,7 +433,7 @@ describe('update-agent command', () => {
 			await updateAgent('agent-1', { gatewayUrl: 'http://127.0.0.1:8787' });
 
 			expect(formatError).toHaveBeenCalledWith(
-				expect.stringContaining('ignores base-URL variables')
+				expect.stringContaining('reads a base URL only for a BYOK provider')
 			);
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
@@ -1362,6 +1362,110 @@ describe('update-agent command', () => {
 
 			expect(formatError).toHaveBeenCalledWith(
 				expect.stringContaining('--system-one expects on or off')
+			);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('--proxy-retrieval', () => {
+		function mockAgent() {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			vi.mocked(getSessionById).mockReturnValue({
+				id: 'full-session-id',
+				toolType: 'claude-code',
+				gatewayUrl: 'http://127.0.0.1:48123/anthropic',
+				tokenProxyMode: 'compress-early',
+			} as never);
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_config_result',
+				success: true,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			return sendCommand;
+		}
+
+		it.each(['on', 'ON', ' on '])('turns it on for %j', async (value) => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { proxyRetrieval: value });
+
+			expect(sendCommand).toHaveBeenCalledWith(
+				{
+					type: 'update_session_config',
+					sessionId: 'full-session-id',
+					configPatch: { tokenProxyRetrieval: true },
+				},
+				'update_session_config_result'
+			);
+			expect(consoleSpy).toHaveBeenCalledWith(
+				expect.stringMatching(/^ {2}Retrieval: on\. The model can ask for the original lines/)
+			);
+		});
+
+		it('turns it off with null on the wire, never false', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', { proxyRetrieval: 'off' });
+
+			expect(sendCommand.mock.calls[0][0].configPatch).toEqual({ tokenProxyRetrieval: null });
+			expect(consoleSpy).toHaveBeenCalledWith(
+				expect.stringMatching(/^ {2}Retrieval: off\. The model cannot ask for an original/)
+			);
+			expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('(cleared)'));
+		});
+
+		it('rides in one patch with the proxy mode that makes it count', async () => {
+			const sendCommand = mockAgent();
+
+			await updateAgent('agent-1', {
+				proxyRetrieval: 'on',
+				proxyMode: 'compress-early',
+				json: true,
+			});
+
+			expect(sendCommand.mock.calls[0][0].configPatch).toEqual({
+				tokenProxyMode: 'compress-early',
+				tokenProxyRetrieval: true,
+			});
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: true,
+				config: { tokenProxyRetrieval: true },
+			});
+		});
+
+		it.each([
+			['--proxy-mode off', { proxyMode: 'off' }],
+			['--gateway-url', { gatewayUrl: 'http://127.0.0.1:8787' }],
+		])('refuses on beside %s before it reaches the app', async (_what, rest) => {
+			mockAgent();
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+
+			await expect(updateAgent('agent-1', { proxyRetrieval: 'on', ...rest })).rejects.toThrow(
+				'process.exit'
+			);
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('--proxy-retrieval: Retrieval works only while')
+			);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it.each(['yes', 'true', ''])('refuses %j before it reaches the app', async (value) => {
+			mockAgent();
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+
+			await expect(updateAgent('agent-1', { proxyRetrieval: value })).rejects.toThrow(
+				'process.exit'
+			);
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('--proxy-retrieval expects on or off')
 			);
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});

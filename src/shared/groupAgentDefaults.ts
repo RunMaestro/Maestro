@@ -396,6 +396,11 @@ export type GroupDefaultsTarget = GroupAgentDefaults & {
 	toolType: ToolType;
 	/** Provenance of `customContextWindow`. Written with it, so the two cannot disagree. */
 	contextWindowSource?: 'user-edited';
+	/**
+	 * Retrieval is not a group default, but a published gateway clears it: it
+	 * belongs to the proxy the agent was on (`OFF_TOKEN_PROXY_FIELDS`).
+	 */
+	tokenProxyRetrieval?: boolean;
 };
 
 /** What a publish needs besides the agent and the diff. */
@@ -569,12 +574,13 @@ export function applyGroupDefaultsToSession<Target extends GroupDefaultsTarget>(
 				break;
 
 			case 'gatewayUrl':
-				// A proxy mode, and the background requests target beside it, belong
-				// to the gateway they were chosen for.
+				// A proxy mode, and the background requests target and retrieval
+				// beside it, belong to the gateway they were chosen for.
 				if (!sameValue(next.gatewayUrl, change.after)) {
 					write('gatewayUrl', change.after);
 					write('tokenProxyMode', OFF_TOKEN_PROXY_FIELDS.tokenProxyMode);
 					write('backgroundRequests', OFF_TOKEN_PROXY_FIELDS.backgroundRequests);
+					write('tokenProxyRetrieval', OFF_TOKEN_PROXY_FIELDS.tokenProxyRetrieval);
 				}
 				break;
 

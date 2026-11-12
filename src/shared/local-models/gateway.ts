@@ -3,7 +3,8 @@
  * provider traffic through an HTTP proxy (Headroom, LiteLLM, or Maestro's own).
  *
  * A gateway is reached through the provider's base-URL environment variable
- * (and, for a CLI that does not read one, a config argument as well), so "how
+ * (and, for a CLI that does not read one, a config argument as well, or an
+ * entry added to the config document it reads from a variable), so "how
  * is this provider pointed at a URL" is a per-provider fact and "may Maestro do
  * it" is a per-launch decision. Both live here, pure, so the launch plan, the
  * env provenance view, the settings UI and the CLI cannot disagree about them.
@@ -12,7 +13,9 @@
  *
  * 1. An explicit user variable wins. An agent whose own environment (its own
  *    vars, or the provider-level set when it has none) already sets the
- *    base-URL variable keeps that value, and the gateway is not applied.
+ *    base-URL variable keeps that value, and the gateway is not applied. For
+ *    a config document (OpenCode), the user's document is the base the gateway
+ *    is added to, and it wins only where it names a base URL itself.
  * 2. A provider whose base-URL variable Maestro does not know is refused, never
  *    guessed. A wrong variable name is ignored by the CLI, so the agent would
  *    run direct while the UI says it is proxied. A mapping is only as good as
@@ -22,9 +25,14 @@
  *    is never dropped so the turn can go to another endpoint.
  */
 
-import { isEnvVarSet } from '../agentEnvironment';
+import { isEnvVarSet, type EnvVarMerge } from '../agentEnvironment';
 import type { AgentId } from '../agentIds';
 import { getAgentDisplayName } from '../agentMetadata';
+import {
+	OPENCODE_CONFIG_ENV_VAR,
+	openCodeConfigNamesBaseUrl,
+	withOpenCodeGateway,
+} from './opencode-config';
 
 /** Whether an agent's traffic can be sent through a gateway, and how. */
 export type AgentGatewaySupport =
@@ -38,6 +46,30 @@ export type AgentGatewaySupport =
 			 * any subcommand), which is where a CLI reads a global option.
 			 */
 			configArgs?: (url: string) => string[];
+			/**
+			 * Arguments for the provider's batch subcommand, placed right after it
+			 * (`placeSubcommandArgs`). OpenCode reads `--standalone` after `run`.
+			 */
+			subcommandArgs?: string[];
+			/**
+			 * The gateway URL is the API root WITH its version (`.../v1`), which
+			 * is what an SDK `baseURL` takes (OpenCode), rather than the root a
+			 * CLI appends `/v1/...` to (Claude Code's `ANTHROPIC_BASE_URL`).
+			 */
+			urlIncludesApiVersion?: true;
+			/**
+			 * For a CLI that reads its base URL from a config DOCUMENT held in
+			 * `envVar` (OpenCode's inline JSON), how the gateway is added to that
+			 * document instead of replacing it. The launch applies `merge` to the
+			 * value it would otherwise carry (Maestro's permission block, its
+			 * read-only override, or the user's own document), so nothing in it
+			 * is lost. Rule 1 then reads the document: it wins only when it names
+			 * a base URL itself.
+			 */
+			configDocument?: {
+				merge: (current: string | undefined, url: string) => string;
+				namesBaseUrl: (document: string) => boolean;
+			};
 	  }
 	| {
 			supported: false;
@@ -45,8 +77,9 @@ export type AgentGatewaySupport =
 			reason: string;
 	  };
 
-const OWN_CONFIG_REASON =
-	'sets a base URL per model provider in its own config file. Point it at the gateway there.';
+/** The advice for a provider whose base-URL setting is not known at all. */
+const IF_IT_READS_A_VARIABLE =
+	"If it reads a base-URL variable, set it in this agent's environment variables.";
 
 /**
  * Keyed by `AgentId`, so a new provider fails to compile until it is given a
@@ -70,26 +103,118 @@ const GATEWAY_SUPPORT: Record<AgentId, AgentGatewaySupport> = {
 		// basic string for any URL `parseGatewayUrl` accepts.
 		configArgs: (url) => ['-c', `openai_base_url=${JSON.stringify(url)}`],
 	},
+	// Measured on 2026-11-11 against Copilot CLI 1.0.95 (G03.4, throwaway HOME
+	// and COPILOT_HOME, fake key): `COPILOT_PROVIDER_BASE_URL` IS honored. At
+	// `http://127.0.0.1:1` every `copilot -p` turn failed with "Could not connect
+	// to local model provider" (types `anthropic` and `openai`), and a recording
+	// listener saw `POST /v1/messages` (x-api-key), `POST /v1/chat/completions`
+	// and, with `COPILOT_PROVIDER_WIRE_API=responses`, `POST /v1/responses`
+	// (bearer). The reported `COPILOT_PROVIDER_API_URL` is ignored. But that
+	// variable is BYOK: it switches the CLI off GitHub's model routing and sends
+	// only the provider key, so a Copilot subscription cannot be proxied with it
+	// (that needs the Copilot token exchange, which Maestro does not do), and a
+	// BYOK user already sets it, which rule 1 lets win. Not mapped. Run on
+	// (`run-on.ts`) uses the same variable for a local model on purpose.
 	'copilot-cli': {
 		supported: false,
-		reason: 'Copilot CLI ignores base-URL variables, so its traffic cannot go through a gateway.',
+		reason:
+			'Copilot CLI reads a base URL only for a BYOK provider (COPILOT_PROVIDER_BASE_URL), which takes it off the Copilot subscription, so Maestro does not send it through a gateway.',
 	},
-	opencode: { supported: false, reason: `OpenCode ${OWN_CONFIG_REASON}` },
-	'factory-droid': { supported: false, reason: `Factory Droid ${OWN_CONFIG_REASON}` },
+	// OpenCode reads no base-URL variable: each provider's `options.baseURL`
+	// lives in its config, and `OPENCODE_CONFIG_CONTENT` is an inline config
+	// merged over the user's files. Measured on 2026-11-11 against OpenCode
+	// 2.2.7 (`opencode run --standalone --format json`, a throwaway HOME and a
+	// fake key): with `provider.anthropic.options.baseURL` (and, separately,
+	// `provider.openai.options.baseURL`) set to `http://127.0.0.1:1/v1` every
+	// attempt failed with ECONNREFUSED; without it the same key reached
+	// Anthropic (401). A recording listener saw `POST /v1/messages?beta=true`
+	// (Anthropic) and `POST /v1/responses` (OpenAI), so the gateway URL is the
+	// API root WITH `/v1`. `enabled_providers` limited to those two makes a
+	// model from any other provider fail ("Model unavailable") instead of
+	// running direct. `--standalone` makes the run read this launch's document:
+	// without it `run` talks to a background service when one is up, and
+	// whether that service honors the per-run document was not measured.
+	opencode: {
+		supported: true,
+		envVar: OPENCODE_CONFIG_ENV_VAR,
+		subcommandArgs: ['--standalone'],
+		urlIncludesApiVersion: true,
+		configDocument: { merge: withOpenCodeGateway, namesBaseUrl: openCodeConfigNamesBaseUrl },
+	},
+	// Not verified (G03.2, 2026-11-11): no `droid` binary was installed where the
+	// closed-port test runs, so nothing was measured. Factory documents a
+	// `baseUrl` per BYOK custom model in `~/.factory/settings.json` (legacy
+	// `config.json`: `base_url`), and third-party gateway guides report that
+	// `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` override it. Neither is mapped
+	// until a closed port proves the CLI reads it.
+	'factory-droid': notVerified(
+		'factory-droid',
+		'It sets a base URL per custom model in ~/.factory/settings.json: point a custom model at the gateway there.'
+	),
 	antigravity: unknownVariable('antigravity'),
 	'gemini-cli': unknownVariable('gemini-cli'),
-	'qwen3-coder': unknownVariable('qwen3-coder'),
-	hermes: unknownVariable('hermes'),
-	pi: unknownVariable('pi'),
-	omp: unknownVariable('omp'),
-	grok: unknownVariable('grok'),
+	// Not verified (G03.3, 2026-11-11): no `qwen` binary was installed where the
+	// closed-port test runs. Qwen Code documents `OPENAI_BASE_URL` (and a
+	// higher-priority `--openai-base-url` flag) for its OpenAI-compatible auth;
+	// whether a Qwen OAuth login reads either is unknown. Not mapped until a
+	// closed port proves it.
+	'qwen3-coder': notVerified(
+		'qwen3-coder',
+		"With an OpenAI-compatible key it is documented to read OPENAI_BASE_URL: set it in this agent's environment variables."
+	),
+	// Not verified (G03.3, 2026-11-11): no `hermes` binary was installed where
+	// the closed-port test runs. Hermes Agent lists `OPENAI_BASE_URL` for a
+	// custom endpoint and stores `model.provider: custom` + `model.base_url` in
+	// `~/.hermes/config.yaml`, which persists past the variable. Some of its
+	// tools (vision, web summaries) are reported to call OpenRouter directly
+	// whatever the base URL, so a verified route may still not carry every request.
+	hermes: notVerified(
+		'hermes',
+		'It sets a custom endpoint in ~/.hermes/config.yaml (model.base_url): point that endpoint at the gateway there.'
+	),
+	// Not verified (G03.3, 2026-11-11): no `pi` binary was installed where the
+	// closed-port test runs. Its docs (pi-coding-agent `docs/models.md`) route a
+	// built-in provider through a proxy by `baseUrl` on the provider in
+	// `~/.pi/agent/models.json`. A file under HOME is not a per-launch setting,
+	// so a verified route there needs a per-launch config path first.
+	pi: notVerified(
+		'pi',
+		"It sets a provider's base URL in ~/.pi/agent/models.json: point a provider at the gateway there."
+	),
+	// Not verified (G03.3, 2026-11-11): no `omp` binary was installed where the
+	// closed-port test runs. Its docs set a provider's `baseUrl` in
+	// `~/.omp/agent/models.yml` (migrated from `models.json`), applied over the
+	// built-in providers. A file under HOME is not a per-launch setting, so a
+	// verified route there needs a per-launch config path before it can be mapped.
+	omp: notVerified(
+		'omp',
+		"It sets a provider's base URL in ~/.omp/agent/models.yml: point a provider at the gateway there."
+	),
+	// Not verified (G03.3, 2026-11-11): no `grok` binary was installed where the
+	// closed-port test runs. xAI's settings reference names
+	// `GROK_XAI_API_BASE_URL` (API-key auth); community Grok CLIs read
+	// `GROK_BASE_URL` / `--base-url`. Neither is mapped until a closed port
+	// proves the build Maestro runs reads it.
+	grok: notVerified('grok', IF_IT_READS_A_VARIABLE),
 	terminal: { supported: false, reason: 'A terminal is a shell, not an agent.' },
 };
+
+/**
+ * A provider whose route was looked for and not proven by the closed-port test
+ * (the binary was absent, or the setting was ignored). `hint` is one sentence
+ * on where the user can point it at a gateway themselves.
+ */
+function notVerified(agentId: AgentId, hint: string): AgentGatewaySupport {
+	return {
+		supported: false,
+		reason: `Maestro has not verified a gateway route for ${getAgentDisplayName(agentId)}. ${hint}`,
+	};
+}
 
 function unknownVariable(agentId: AgentId): AgentGatewaySupport {
 	return {
 		supported: false,
-		reason: `Maestro does not know a base-URL variable for ${getAgentDisplayName(agentId)}. If it has one, set it in this agent's environment variables.`,
+		reason: `Maestro does not know a base-URL variable for ${getAgentDisplayName(agentId)}. ${IF_IT_READS_A_VARIABLE}`,
 	};
 }
 
@@ -170,18 +295,25 @@ export type AgentGatewayResolution =
 	/** The agent has no gateway. */
 	| { kind: 'none' }
 	/**
-	 * Set this variable on the agent's process, and put `args` ahead of its own
-	 * arguments (empty for a provider whose variable is enough).
+	 * Set `envVars` on the agent's process (or, for a config document, apply
+	 * `envVarMerges` to the value it would otherwise carry), put `args` ahead of
+	 * its own arguments, and `subcommandArgs` after its batch subcommand. Each is
+	 * empty when the provider does not need it.
 	 */
 	| {
 			kind: 'inject';
 			envVar: string;
 			url: string;
 			envVars: Record<string, string>;
+			envVarMerges: Record<string, EnvVarMerge>;
 			args: string[];
+			subcommandArgs: string[];
 	  }
-	/** The agent sets the variable itself; the gateway is not applied (rule 1). */
-	| { kind: 'user-override'; envVar: string; url: string; userValue: string }
+	/**
+	 * The agent sets the variable itself; the gateway is not applied (rule 1).
+	 * `inDocument` when the variable is a config document that names a base URL.
+	 */
+	| { kind: 'user-override'; envVar: string; url: string; userValue: string; inDocument?: true }
 	/** The launch must fail with this message (rule 3). */
 	| { kind: 'refused'; code: AgentGatewayRefusalCode; message: string };
 
@@ -225,12 +357,18 @@ export function resolveAgentGateway(input: AgentGatewayInput): AgentGatewayResol
 		};
 	}
 
-	if (isEnvVarSet(input.userEnvVars, support.envVar)) {
+	const userValue = input.userEnvVars?.[support.envVar];
+	const userSetsUrl = support.configDocument
+		? isEnvVarSet(input.userEnvVars, support.envVar) &&
+			support.configDocument.namesBaseUrl(userValue as string)
+		: isEnvVarSet(input.userEnvVars, support.envVar);
+	if (userSetsUrl) {
 		return {
 			kind: 'user-override',
 			envVar: support.envVar,
 			url: parsed.url,
-			userValue: (input.userEnvVars as Record<string, string>)[support.envVar],
+			userValue: userValue as string,
+			...(support.configDocument ? { inDocument: true as const } : {}),
 		};
 	}
 
@@ -242,12 +380,17 @@ export function resolveAgentGateway(input: AgentGatewayInput): AgentGatewayResol
 		};
 	}
 
+	const document = support.configDocument;
 	return {
 		kind: 'inject',
 		envVar: support.envVar,
 		url: parsed.url,
-		envVars: { [support.envVar]: parsed.url },
+		envVars: document ? {} : { [support.envVar]: parsed.url },
+		envVarMerges: document
+			? { [support.envVar]: (current) => document.merge(current, parsed.url) }
+			: {},
 		args: support.configArgs?.(parsed.url) ?? [],
+		subcommandArgs: support.subcommandArgs ?? [],
 	};
 }
 
@@ -261,7 +404,13 @@ export function gatewayEnvVarsFor(
 	gatewayUrl: string | null | undefined
 ): Record<string, string> | undefined {
 	const resolution = resolveAgentGateway({ toolType, gatewayUrl });
-	return resolution.kind === 'inject' ? resolution.envVars : undefined;
+	if (resolution.kind !== 'inject') return undefined;
+	// A config document is shown with only the gateway's part in it: the
+	// launch adds that part to whatever document the agent carries.
+	const merged = Object.fromEntries(
+		Object.entries(resolution.envVarMerges).map(([key, merge]) => [key, merge(undefined)])
+	);
+	return { ...resolution.envVars, ...merged };
 }
 
 export type GatewayUrlEdit =

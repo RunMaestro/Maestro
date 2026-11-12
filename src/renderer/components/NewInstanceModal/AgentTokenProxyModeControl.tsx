@@ -17,6 +17,11 @@
  * agent whose mode is not Off: the proxy is what routes those requests, so the
  * picker means nothing anywhere else. It applies at once too, through
  * `setAgentBackgroundRequests`, and it leaves with the proxy.
+ *
+ * Beside the mode, for a compressing mode only, is the Retrieval switch: it
+ * gives the agent's model the tool that asks the proxy for a shortened result's
+ * original lines. It applies at once through `setAgentTokenProxyRetrieval` and
+ * leaves with the proxy too.
  */
 
 import { useCallback, useState } from 'react';
@@ -26,16 +31,23 @@ import {
 	type BackgroundRequests,
 } from '../../../shared/local-models/background-requests';
 import {
+	isCompressingTokenProxyMode,
 	resolveTokenProxyMode,
 	TOKEN_PROXY_NAME,
+	TOKEN_PROXY_RETRIEVAL_DESCRIPTIONS,
 	type TokenProxyMode,
 } from '../../../shared/local-models/token-proxy';
 import { useTokenProxyModeChoice } from '../../hooks/localModels/useTokenProxyModeChoice';
 import { useTokenProxyReport } from '../../hooks/localModels/useTokenProxyReport';
-import { setAgentBackgroundRequests } from '../../services/agentGateway';
+import {
+	setAgentBackgroundRequests,
+	setAgentTokenProxyRetrieval,
+} from '../../services/agentGateway';
 import type { Session, Theme } from '../../types';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { BackgroundRequestsField } from '../shared/BackgroundRequestsField';
+import { FormFieldLabel } from '../ui/FormFieldLabel';
+import { ToggleSwitch } from '../ui/ToggleSwitch';
 import { TokenProxyModeField, tokenProxyModeBlocker } from '../shared/TokenProxyModeField';
 
 export interface AgentTokenProxyModeControlProps {
@@ -49,6 +61,8 @@ export interface AgentTokenProxyModeControlProps {
 	storedMode: Session['tokenProxyMode'];
 	/** The background requests target stored on the agent now, as stored. */
 	storedBackgroundRequests?: unknown;
+	/** The retrieval switch stored on the agent now. */
+	storedRetrieval?: boolean;
 	/** Name of the SSH remote the form has chosen, when it has chosen one. */
 	sshRemoteName?: string;
 	/** Why the choice must wait, e.g. an unsaved provider change. */
@@ -65,6 +79,7 @@ export function AgentTokenProxyModeControl({
 	gatewayUrl,
 	storedMode,
 	storedBackgroundRequests,
+	storedRetrieval,
 	sshRemoteName,
 	pendingReason,
 	onGatewayUrlChange,
@@ -104,6 +119,15 @@ export function AgentTokenProxyModeControl({
 					proxy; Off clears it.
 				</p>
 			</div>
+			{isCompressingTokenProxyMode(mode) && (
+				<AgentTokenProxyRetrievalControl
+					theme={theme}
+					agentId={agentId}
+					agentName={agentName}
+					on={storedRetrieval === true}
+					pendingReason={pendingReason}
+				/>
+			)}
 			{offersBackgroundRequests && (
 				<AgentBackgroundRequestsControl
 					theme={theme}
@@ -171,6 +195,77 @@ function AgentBackgroundRequestsControl({
 			<p className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
 				Applies as soon as you choose, and is turned off with the proxy.
 			</p>
+		</div>
+	);
+}
+
+interface AgentTokenProxyRetrievalControlProps {
+	theme: Theme;
+	agentId: string;
+	agentName: string;
+	/** The agent's stored `tokenProxyRetrieval`. */
+	on: boolean;
+	/** Why the choice must wait; the mode picker above already says it. */
+	pendingReason?: string;
+}
+
+/**
+ * The Retrieval switch of a live agent. A choice is written at once; the value
+ * shown is the agent's stored one, which the write updates.
+ */
+function AgentTokenProxyRetrievalControl({
+	theme,
+	agentId,
+	agentName,
+	on,
+	pendingReason,
+}: AgentTokenProxyRetrievalControlProps) {
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | undefined>();
+
+	const choose = useCallback(
+		(next: boolean) => {
+			setBusy(true);
+			setError(undefined);
+			void setAgentTokenProxyRetrieval(agentId, next)
+				.then((result) => {
+					if (!result.ok) setError(result.error);
+				})
+				.catch((err: unknown) => setError(ipcErrorMessage(err)))
+				.finally(() => setBusy(false));
+		},
+		[agentId]
+	);
+
+	return (
+		<div data-testid="edit-agent-proxy-retrieval">
+			<div className="flex items-start justify-between gap-3">
+				<div className="min-w-0">
+					<FormFieldLabel theme={theme}>Retrieval</FormFieldLabel>
+					<p className="text-xs" style={{ color: theme.colors.textDim }}>
+						{TOKEN_PROXY_RETRIEVAL_DESCRIPTIONS[on ? 'on' : 'off']} Applies from the agent's next
+						start, and is turned off with the proxy.
+					</p>
+				</div>
+				<ToggleSwitch
+					theme={theme}
+					checked={on}
+					onChange={choose}
+					busy={busy}
+					disabled={pendingReason !== undefined}
+					size="sm"
+					ariaLabel={`Let the model of ${agentName} retrieve compressed originals`}
+				/>
+			</div>
+			{error && (
+				<p
+					className="mt-1 text-xs select-text"
+					style={{ color: theme.colors.error }}
+					data-testid="edit-agent-proxy-retrieval-error"
+				>
+					{error}
+				</p>
+			)}
 		</div>
 	);
 }

@@ -3,7 +3,8 @@
  * read into the patch the app applies:
  *
  *   --nudge, --new-session-message, --custom-path, --custom-args, --env,
- *   --clear-env, --gateway-url, --proxy-mode, --tier, --background-requests,
+ *   --clear-env, --gateway-url, --proxy-mode, --proxy-retrieval, --tier,
+ *   --background-requests,
  *   --system-one, --model, --effort, --context-window, --token-source,
  *   --maestro-p-path, --codex-transport, --bookmark,
  *   --retry-on-availability, --retry-on-token-exhaustion, --codex-auto-reset,
@@ -41,6 +42,7 @@ export interface AgentSettingFlagOptions {
 	clearEnv?: boolean;
 	gatewayUrl?: string;
 	proxyMode?: string;
+	proxyRetrieval?: string;
 	tier?: string[];
 	backgroundRequests?: string;
 	systemOne?: string;
@@ -186,6 +188,17 @@ export function buildConfigPatch(
 			);
 		}
 		patch.tokenProxyMode = mode;
+	}
+
+	// `--proxy-retrieval <on|off>`: the Models tab's Retrieval switch. On is
+	// `true`; off removes the field (`null` on the wire). Whether the proxy
+	// compresses for the agent needs the proxy's port, which the app checks.
+	if (options.proxyRetrieval !== undefined) {
+		const word = options.proxyRetrieval.trim().toLowerCase();
+		if (word !== 'on' && word !== 'off') {
+			throw new Error(`--proxy-retrieval expects on or off, got "${options.proxyRetrieval}"`);
+		}
+		patch.tokenProxyRetrieval = word === 'on' ? true : null;
 	}
 
 	// `--tier <tier>=<target>` (repeatable): a patch with one entry per tier

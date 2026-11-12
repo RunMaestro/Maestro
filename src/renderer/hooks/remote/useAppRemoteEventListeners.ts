@@ -31,7 +31,11 @@ import { autoModelProblem } from '../../../shared/autoTurn';
 import { parseBackgroundRequests } from '../../../shared/local-models/background-requests';
 import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
 import { parseSystemOneOptOutEdit } from '../../../shared/local-models/system-one-agent';
-import { asTokenProxyMode, TOKEN_PROXY_MODES } from '../../../shared/local-models/token-proxy';
+import {
+	asTokenProxyMode,
+	TOKEN_PROXY_MODES,
+	TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION,
+} from '../../../shared/local-models/token-proxy';
 import {
 	parseRunOnEdit,
 	runOnGatewayEditProblem,
@@ -82,6 +86,7 @@ import {
 	OFF_TOKEN_PROXY_FIELDS,
 	setAgentBackgroundRequests,
 	setAgentTokenProxyMode,
+	setAgentTokenProxyRetrieval,
 } from '../../services/agentGateway';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { resolveAutoRunDispatchTarget } from '../../services/autoRunDispatchTarget';
@@ -2155,6 +2160,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// Where the token proxy sends background requests
 			// (`update-agent --background-requests`). Written by its service below.
 			'backgroundRequests',
+			// Retrieval (`update-agent --proxy-retrieval`). Written by its service below.
+			'tokenProxyRetrieval',
 			// System One opt-out (`update-agent --system-one`). Validated below.
 			'systemOneOptOut',
 			// The two derived peer grants (`update-agent --group-peers` and
@@ -2370,9 +2377,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 			updated.gatewayUrl = modeResult.gatewayUrl;
 			updated.tokenProxyMode = modeResult.mode === 'off' ? undefined : modeResult.mode;
-			// Off took the background requests target with it; the write below
-			// starts from the record as it was before, so it is told as well.
-			if (modeResult.mode === 'off') updated.backgroundRequests = undefined;
+			// Off took the background requests target and retrieval with it; the
+			// write below starts from the record as it was before, so it is told as well.
+			if (modeResult.mode === 'off') Object.assign(updated, OFF_TOKEN_PROXY_FIELDS);
 		}
 
 		// Where the token proxy sends this agent's background requests. Like the
@@ -2391,6 +2398,28 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 			updated.backgroundRequests = result.backgroundRequests;
+		}
+
+		// Retrieval (the `retrieve_compressed_original` tool) is a proxy setting
+		// too, so it goes through the service the Models tab switch calls: turning
+		// it on is refused unless the proxy compresses for the agent. It runs after
+		// the mode above, so one patch can choose a compress mode and turn it on;
+		// a patch that turns the proxy off, or sets a gateway of the caller's own,
+		// cannot also turn it on.
+		if ('tokenProxyRetrieval' in patch) {
+			const result =
+				patch.tokenProxyRetrieval === true &&
+				(patch.tokenProxyMode === 'off' || 'gatewayUrl' in patch)
+					? ({ ok: false, error: TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION } as const)
+					: await setAgentTokenProxyRetrieval(sessionId, patch.tokenProxyRetrieval);
+			if (!result.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: result.error,
+				});
+				return;
+			}
+			updated.tokenProxyRetrieval = result.retrieval || undefined;
 		}
 
 		// The System One opt-out goes through the validator the Models tab switch

@@ -749,6 +749,26 @@ describe('show-agent command', () => {
 			expect(JSON.parse(consoleSpy.mock.calls[0][0]).tokenProxyMode).toBe('compress');
 		});
 
+		it("reports the agent's retrieval switch, the read for update-agent --proxy-retrieval", () => {
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			vi.mocked(getSessionById).mockReturnValue(
+				mockSession({
+					gatewayUrl: 'http://127.0.0.1:48123/anthropic',
+					tokenProxyMode: 'compress-early',
+					tokenProxyRetrieval: true,
+				})
+			);
+			showAgent('agent-123', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).tokenProxyRetrieval).toBe(true);
+
+			// An agent that never turned it on reads false: a value, not an unset field.
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			showAgent('agent-123', { json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[1][0]).tokenProxyRetrieval).toBe(false);
+		});
+
 		it('reports tokenProxyMode as null when none is stored (the default, passthrough)', () => {
 			vi.mocked(getSessionById).mockReturnValue(mockSession());
 			vi.mocked(readGroups).mockReturnValue([]);

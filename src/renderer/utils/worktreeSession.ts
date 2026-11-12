@@ -152,6 +152,7 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		// that went direct while its parent was proxied would be a silent change.
 		gatewayUrl: params.parentSession.gatewayUrl,
 		tokenProxyMode: params.parentSession.tokenProxyMode,
+		tokenProxyRetrieval: params.parentSession.tokenProxyRetrieval,
 		// And the same Run on target: a worktree agent on the provider's cloud
 		// model while its parent runs on a local one would spend money the user
 		// chose not to spend.

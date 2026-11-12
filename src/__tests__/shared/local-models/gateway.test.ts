@@ -37,12 +37,38 @@ describe('agentGatewaySupport', () => {
 		expect(claude.configArgs).toBeUndefined();
 	});
 
-	it('refuses Copilot CLI and says it ignores base-URL variables', () => {
+	it('refuses Copilot CLI and says its base URL is BYOK-only', () => {
 		const support = agentGatewaySupport('copilot-cli');
 
 		expect(support.supported).toBe(false);
 		if (support.supported) throw new Error('expected unsupported');
-		expect(support.reason).toContain('ignores base-URL variables');
+		expect(support.reason).toContain('reads a base URL only for a BYOK provider');
+		// The measured variable, not the reported COPILOT_PROVIDER_API_URL.
+		expect(support.reason).toContain('COPILOT_PROVIDER_BASE_URL');
+		expect(support.reason).toContain('takes it off the Copilot subscription');
+	});
+
+	it('refuses Factory Droid as unverified and names where its base URL lives', () => {
+		const support = agentGatewaySupport('factory-droid');
+
+		expect(support.supported).toBe(false);
+		if (support.supported) throw new Error('expected unsupported');
+		expect(support.reason).toContain('has not verified');
+		expect(support.reason).toContain('~/.factory/settings.json');
+	});
+
+	it.each([
+		['grok', 'Grok CLI'],
+		['hermes', 'Hermes'],
+		['qwen3-coder', 'Qwen3 Coder'],
+		['pi', 'Pi'],
+		['omp', 'Oh My Pi'],
+	])('refuses %s as unverified, naming it', (toolType, displayName) => {
+		const support = agentGatewaySupport(toolType);
+
+		expect(support.supported).toBe(false);
+		if (support.supported) throw new Error('expected unsupported');
+		expect(support.reason).toContain(`has not verified a gateway route for ${displayName}`);
 	});
 
 	it('answers for every agent id, with a reason wherever it refuses', () => {
@@ -131,7 +157,77 @@ describe('resolveAgentGateway', () => {
 			envVar,
 			url,
 			envVars: { [envVar]: url },
+			envVarMerges: {},
 			args,
+			subcommandArgs: [],
+		});
+	});
+
+	describe('OpenCode, whose base URL lives in its inline config', () => {
+		const gateway = `${url}/anthropic/v1`;
+		const permissions = '{"permission":{"question":"deny"},"tools":{"question":false}}';
+
+		function injected(userEnvVars?: Record<string, string>) {
+			const resolution = resolveAgentGateway({
+				toolType: 'opencode',
+				gatewayUrl: gateway,
+				userEnvVars,
+			});
+			if (resolution.kind !== 'inject') throw new Error(`expected inject, got ${resolution.kind}`);
+			return resolution;
+		}
+
+		it('adds the gateway to the document instead of setting a variable', () => {
+			const resolution = injected();
+
+			expect(resolution.envVar).toBe('OPENCODE_CONFIG_CONTENT');
+			expect(resolution.envVars).toEqual({});
+			expect(resolution.args).toEqual([]);
+			// Read after `run`: without it `run` may use a background service.
+			expect(resolution.subcommandArgs).toEqual(['--standalone']);
+			const config = JSON.parse(resolution.envVarMerges.OPENCODE_CONFIG_CONTENT(permissions));
+			expect(config.permission).toEqual({ question: 'deny' });
+			expect(config.tools).toEqual({ question: false });
+			expect(config.provider.anthropic.options.baseURL).toBe(gateway);
+			expect(config.provider.openai.options.baseURL).toBe(gateway);
+			// Any other provider fails by name instead of running direct.
+			expect(config.enabled_providers).toEqual(['anthropic', 'openai']);
+		});
+
+		it("keeps the document's own provider settings and narrows its own provider list", () => {
+			const mine = JSON.stringify({
+				enabled_providers: ['openai', 'ollama'],
+				provider: { anthropic: { options: { timeout: 5 } }, ollama: { name: 'Mine' } },
+			});
+			const config = JSON.parse(injected().envVarMerges.OPENCODE_CONFIG_CONTENT(mine));
+
+			expect(config.provider.anthropic.options).toEqual({ timeout: 5, baseURL: gateway });
+			expect(config.provider.ollama).toEqual({ name: 'Mine' });
+			expect(config.enabled_providers).toEqual(['openai']);
+		});
+
+		it('builds on a document that is not JSON as if it were empty', () => {
+			const config = JSON.parse(injected().envVarMerges.OPENCODE_CONFIG_CONTENT('not json'));
+			expect(config.provider.anthropic.options.baseURL).toBe(gateway);
+		});
+
+		it("is added to the agent's own document unless that document names a base URL", () => {
+			expect(injected({ OPENCODE_CONFIG_CONTENT: permissions }).kind).toBe('inject');
+
+			const mine = '{"provider":{"openai":{"options":{"baseURL":"https://mine.example.com/v1"}}}}';
+			expect(
+				resolveAgentGateway({
+					toolType: 'opencode',
+					gatewayUrl: gateway,
+					userEnvVars: { OPENCODE_CONFIG_CONTENT: mine },
+				})
+			).toEqual({
+				kind: 'user-override',
+				envVar: 'OPENCODE_CONFIG_CONTENT',
+				url: gateway,
+				userValue: mine,
+				inDocument: true,
+			});
 		});
 	});
 
@@ -231,6 +327,12 @@ describe('gatewayEnvVarsFor', () => {
 		});
 	});
 
+	it("shows OpenCode's document with only the gateway's part in it", () => {
+		const vars = gatewayEnvVarsFor('opencode', 'http://127.0.0.1:8787/v1');
+		const config = JSON.parse(vars?.OPENCODE_CONFIG_CONTENT ?? 'null');
+		expect(config.provider.anthropic.options.baseURL).toBe('http://127.0.0.1:8787/v1');
+	});
+
 	it('is undefined with no gateway, an unusable one, or an unsupported provider', () => {
 		expect(gatewayEnvVarsFor('claude-code', undefined)).toBeUndefined();
 		expect(gatewayEnvVarsFor('claude-code', 'nope')).toBeUndefined();
@@ -259,7 +361,7 @@ describe('parseGatewayUrlEdit', () => {
 
 		expect(edit.ok).toBe(false);
 		if (edit.ok) throw new Error('expected a refusal');
-		expect(edit.error).toContain('ignores base-URL variables');
+		expect(edit.error).toContain('reads a base URL only for a BYOK provider');
 	});
 
 	it('refuses a value that is not a URL', () => {

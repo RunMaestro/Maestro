@@ -317,11 +317,13 @@ interface LaunchPlanCommon {
 	envVars: Record<string, string> | undefined;
 	/**
 	 * The gateway this launch goes through, when `envVars` carries its base-URL
-	 * variable. Undefined when the agent has none or sets the variable itself.
-	 * `gateway.args` are the provider's config arguments for it (Codex), already
-	 * placed at the FRONT of `args` and `launchArgs`.
+	 * variable (or the config document it was added to, OpenCode). Undefined
+	 * when the agent has none or sets the variable itself. `gateway.args` are
+	 * the provider's config arguments for it (Codex), already placed at the
+	 * FRONT of `args` and `launchArgs`; `gateway.subcommandArgs` were placed
+	 * right after the batch subcommand (OpenCode's `--standalone`).
 	 */
-	gateway: { envVar: string; url: string; args: string[] } | undefined;
+	gateway: { envVar: string; url: string; args: string[]; subcommandArgs: string[] } | undefined;
 	/**
 	 * The Run on target this launch uses, when it has one: `envVars` carries its
 	 * variables, and `args` and `launchArgs` already carry its root arguments
@@ -464,7 +466,12 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 	}
 	const planGateway =
 		gateway.kind === 'inject'
-			? { envVar: gateway.envVar, url: gateway.url, args: gateway.args }
+			? {
+					envVar: gateway.envVar,
+					url: gateway.url,
+					args: gateway.args,
+					subcommandArgs: gateway.subcommandArgs,
+				}
 			: undefined;
 
 	let launchArgs = selectionArgs;
@@ -481,8 +488,12 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 		launchArgs = applied.args;
 		planRunOn = applied.runOn;
 	} else if (planGateway) {
-		// A global option: ahead of the agent's own arguments, subcommand included.
-		launchArgs = [...planGateway.args, ...selectionArgs];
+		// A global option: ahead of the agent's own arguments, subcommand
+		// included. A subcommand option: right after the subcommand.
+		launchArgs = [
+			...planGateway.args,
+			...placeSubcommandArgs(agent, selectionArgs, planGateway.subcommandArgs),
+		];
 	}
 	const layers = {
 		defaultEnvVars: agent?.defaultEnvVars,
@@ -493,6 +504,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 		gatewayEnvVars: gateway.kind === 'inject' ? gateway.envVars : undefined,
 		runOnEnvVars: runOn.kind === 'inject' ? runOn.envVars : undefined,
 		runOnEnvVarMerges: runOn.kind === 'inject' ? runOn.envVarMerges : undefined,
+		gatewayEnvVarMerges: gateway.kind === 'inject' ? gateway.envVarMerges : undefined,
 		readOnlyEnvOverrides: input.readOnlyMode ? agent?.readOnlyEnvOverrides : undefined,
 	};
 	const layered = resolveAgentEnvVars(layers);

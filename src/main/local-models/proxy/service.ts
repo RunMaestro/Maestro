@@ -49,6 +49,7 @@
 import * as fs from 'fs/promises';
 import { randomBytes } from 'crypto';
 import * as path from 'path';
+import { applyEnvVarMerges } from '../../../shared/agentEnvironment';
 import { estimateTokenCount } from '../../../shared/formatters';
 import {
 	backgroundRequestsUnavailable,
@@ -57,10 +58,13 @@ import {
 } from '../../../shared/local-models/background-requests';
 import { endpointServesAnthropicMessages } from '../../../shared/local-models/endpoints';
 import { resolveAgentGateway } from '../../../shared/local-models/gateway';
+import { placeSubcommandArgs } from '../../../shared/maestro-lib/launch/agent-args';
+import type { LaunchPlanAgent } from '../../../shared/maestro-lib/launch/launch-plan';
 import { formatRunOnSpec, type RunOnSourceTarget } from '../../../shared/local-models/run-on';
 import {
 	asStoredTokenProxyMode,
 	gatewayPointsAtTokenProxy,
+	isTokenProxyRetrievalInEffect,
 	resolveTokenProxyTarget,
 	TOKEN_PROXY_HOST,
 	TOKEN_PROXY_NAME,
@@ -84,7 +88,7 @@ import { isTcpPort, pickFreePort } from '../../utils/tcp-port';
 import { localModelsDataDir } from '../paths';
 import { resolveSourceCallTarget, type SourceCallTarget } from '../run-on';
 import { reportLocalTaskUnavailable } from '../task-notices';
-import { compressRequestBody, type LocalRecoveryCapability } from './compress';
+import { compressRequestBody, type LaunchCapability } from './compress';
 import {
 	getCompressionCache,
 	isContentHash,
@@ -136,7 +140,7 @@ const recoveryLaunches = new Map<
 	{
 		agentId: string;
 		route: string;
-		recovery: Readonly<LocalRecoveryCapability>;
+		recovery: Readonly<LaunchCapability>;
 	}
 >();
 
@@ -244,6 +248,27 @@ function agentRecord(agentId: string): Record<string, unknown> | undefined {
 function modeFor(agentId: string | null): TokenProxyRequestMode {
 	if (agentId === null) return 'passthrough';
 	return asStoredTokenProxyMode(agentRecord(agentId)?.tokenProxyMode);
+}
+
+/**
+ * Whether one stored agent's model may be given the retrieve tool now: it is
+ * local, retrieval is on, and the proxy compresses its requests. Read from the
+ * stored record each time, so turning the switch off removes the tool from the
+ * next `tools/list` and refuses the next call.
+ */
+export async function agentHasTokenProxyRetrieval(agentId: string): Promise<boolean> {
+	const record = agentRecord(agentId);
+	if (!record) return false;
+	// An agent on an SSH remote cannot reach this machine's loopback proxy.
+	if ((record.sessionSshRemoteConfig as { enabled?: boolean } | undefined)?.enabled === true) {
+		return false;
+	}
+	return isTokenProxyRetrievalInEffect({
+		retrieval: record.tokenProxyRetrieval,
+		gatewayUrl: typeof record.gatewayUrl === 'string' ? record.gatewayUrl : null,
+		storedMode: record.tokenProxyMode,
+		port: await readPort(),
+	});
 }
 
 /** Why a source cannot be sent a request, as a background requests refusal. */
@@ -422,6 +447,14 @@ async function start(port: number): Promise<void> {
 					: undefined;
 				if (!launch || launch.agentId !== target.agentId || launch.route !== target.route)
 					return undefined;
+				if (launch.recovery.kind === 'mcp-retrieve-tool') {
+					// The launch was given the tool, AND the switch is still on: a
+					// switch turned off mid-launch refuses the next call, so its
+					// requests must not get blocks only the tool could bring back.
+					return agentRecord(launch.agentId)?.tokenProxyRetrieval === true
+						? { ...launch.recovery }
+						: undefined;
+				}
 				if (launch.recovery.dataDir !== localModelsDataDir()) {
 					recoveryLaunches.delete(target.launchBinding!);
 					return undefined;
@@ -605,17 +638,37 @@ export async function tokenProxyLaunchGatewayUrl(
 	return port === null ? gatewayUrl : tokenProxyAgentGatewayUrl(gatewayUrl, port, agentId);
 }
 
+/** Bounded syntax of one capability; the host proves what it means. */
+function isRegistrableCapability(recovery: LaunchCapability | undefined): boolean {
+	if (recovery?.kind === 'mcp-retrieve-tool') return true;
+	return (
+		recovery?.kind === 'local-posix-cli' &&
+		isContentHash(recovery.environmentId) &&
+		recovery.environmentId.length === 64 &&
+		[recovery.runtimePath, recovery.cliPath, recovery.dataDir].every(
+			(value) => typeof value === 'string' && value.length <= 2048
+		) &&
+		recovery.dataDir === localModelsDataDir()
+	);
+}
+
 /**
- * Main-process-only registration after a caller proves the real launch's tool,
- * CLI and archive visibility. This transport does not prove that evidence.
- * No launch caller supplies it yet (03.4b3); never expose it over IPC/HTTP.
- * Starts nothing, persists nothing. The launch owner must release on exit,
- * failed spawn or any change to the proven execution environment.
+ * Main-process-only registration of what one launch was given. Never expose it
+ * over IPC/HTTP. Starts nothing, persists nothing; the proxy must already be
+ * running (`ensureTokenProxyForGateway()`), or there is nothing to bind to.
+ * The launch owner must release on exit, failed spawn or any change to the
+ * proven execution environment.
+ *
+ * - `mcp-retrieve-tool`: the spawn injected the MCP bridge that offers
+ *   `retrieve_compressed_original` to this launch (`handle-spawn.ts`). Its
+ *   early-mode requests are decided with the `full` profile.
+ * - `local-posix-cli`: a caller proved the launch's shell, CLI and archive
+ *   visibility. No launch caller supplies it (03.4b3, superseded by the tool).
  */
 export function registerTokenProxyRecoveryLaunch(
 	agentId: string,
 	gatewayUrl: string,
-	recovery: LocalRecoveryCapability
+	recovery: LaunchCapability
 ): Promise<{ gatewayUrl: string; release: () => void } | null> {
 	const generation = recoveryLaunchGeneration;
 	return lifecycle.enqueue(LIFECYCLE_KEY, async () => {
@@ -628,13 +681,7 @@ export function registerTokenProxyRecoveryLaunch(
 			!agentId ||
 			agentId.length > 256 ||
 			/[\x00-\x1f\x7f]/.test(agentId) ||
-			recovery?.kind !== 'local-posix-cli' ||
-			!isContentHash(recovery.environmentId) ||
-			recovery.environmentId.length !== 64 ||
-			![recovery.runtimePath, recovery.cliPath, recovery.dataDir].every(
-				(value) => typeof value === 'string' && value.length <= 2048
-			) ||
-			recovery.dataDir !== localModelsDataDir() ||
+			!isRegistrableCapability(recovery) ||
 			!gatewayPointsAtTokenProxy(gatewayUrl, port)
 		)
 			return null;
@@ -668,13 +715,17 @@ export function registerTokenProxyRecoveryLaunch(
 		recoveryLaunches.set(binding, {
 			agentId,
 			route: target.route,
-			recovery: Object.freeze({
-				kind: recovery.kind,
-				environmentId: recovery.environmentId,
-				runtimePath: recovery.runtimePath,
-				cliPath: recovery.cliPath,
-				dataDir: recovery.dataDir,
-			}),
+			recovery: Object.freeze(
+				recovery.kind === 'mcp-retrieve-tool'
+					? { kind: recovery.kind }
+					: {
+							kind: recovery.kind,
+							environmentId: recovery.environmentId,
+							runtimePath: recovery.runtimePath,
+							cliPath: recovery.cliPath,
+							dataDir: recovery.dataDir,
+						}
+			),
 		});
 		return {
 			gatewayUrl: url,
@@ -690,6 +741,12 @@ export interface SpawnGatewayInput {
 	agentId: string;
 	/** That agent's provider, e.g. `claude-code`. */
 	toolType: string;
+	/**
+	 * The provider's definition: its batch subcommand places the gateway's
+	 * subcommand arguments, and its default variables are what a config
+	 * document merge builds on when the agent sets none (OpenCode).
+	 */
+	agent?: Pick<LaunchPlanAgent, 'batchModePrefix' | 'defaultEnvVars'> | null;
 	/** The arguments the spawn was about to use. */
 	args: string[];
 	/** The agent's effective custom vars; a base-URL variable set here wins. */
@@ -740,11 +797,19 @@ export async function applyAgentGatewayToSpawn(
 
 	const proxy = await ensureTokenProxyForGateway(gateway.url);
 	if (!proxy.ok) return { ok: false, error: proxy.error };
+	const customEnvVars = { ...(input.customEnvVars ?? {}), ...gateway.envVars };
+	// The spawn puts these over the provider's defaults, so a config document
+	// (OpenCode's inline config) is built here from the default it will cover.
+	applyEnvVarMerges(customEnvVars, gateway.envVarMerges, input.agent?.defaultEnvVars);
 	return {
 		ok: true,
-		// A global option: ahead of the agent's own arguments, subcommand included.
-		args: [...gateway.args, ...input.args],
-		customEnvVars: { ...(input.customEnvVars ?? {}), ...gateway.envVars },
+		// A global option: ahead of the agent's own arguments, subcommand
+		// included. A subcommand option: right after the subcommand.
+		args: [
+			...gateway.args,
+			...placeSubcommandArgs(input.agent, input.args, gateway.subcommandArgs),
+		],
+		customEnvVars,
 		gateway: { envVar: gateway.envVar, url: gateway.url },
 	};
 }

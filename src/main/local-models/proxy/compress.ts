@@ -44,13 +44,17 @@
  * Because the model never reads the original in early mode, early mode keeps
  * every line of content: it uses the `complete` heuristic profile (no array
  * sampling, no line cuts, no record sampling) and never the local model, under
- * its own cache key ({@link verdictKey}).
+ * its own cache key ({@link verdictKey}). The one exception is a request whose
+ * launch was given the retrieve tool ({@link RetrieveToolCapability}): that
+ * model can ask for any original by its hash, so the request is decided with
+ * the `full` profile under the plain key, exactly as `compress` decides it.
  *
  * ## The order of work for one block
  *
- *   1. Leave explicit failures and recognized original-recovery output whole.
- *      Otherwise hash the original (SHA-256; in early mode, with the profile
- *      prefix of {@link verdictKey}). A verdict already in the cache is used as
+ *   1. Leave explicit failures and recognized original-recovery output whole
+ *      (the shell recovery command, and a result of the retrieve tool).
+ *      Otherwise hash the original (SHA-256; in early mode without the
+ *      retrieve tool, with the profile prefix of {@link verdictKey}). A verdict already in the cache is used as
  *      it is: the same bytes as every earlier turn.
  *   2. Otherwise run the heuristics (`compressors.ts`).
  *   3. When the result is still at or above the model threshold, ask the
@@ -62,16 +66,18 @@
  *      replacement is used. A block whose verdict cannot be stored is sent as
  *      it was: an unrecorded compression could not be reproduced or audited.
  *
- * A compressed block ends with `[maestro-compressed sha256=<hash>
- * original_tokens=<n>]` on its own line.
+ * A compressed block ends with `[maestro-compressed sha256=<key>
+ * original_tokens=<n>]` on its own line. The key names the cache entry: the
+ * SHA-256 of the original in `compress` and in early mode with the retrieve
+ * tool, {@link verdictKey} in early mode without it.
  */
 
 import { canonicalJson } from '../../../shared/canonicalJson';
 import { estimateTokenCount, getBasename, isAbsolutePath } from '../../../shared/formatters';
 import { serializedJsonByteLength } from '../../../shared/jsonUtils';
 import type { TokenProxyRequestKind } from '../../../shared/local-models/token-proxy';
+import { TOKEN_PROXY_RETRIEVE_TOOL_NAME } from '../../../shared/local-models/token-proxy-retrieve-tool';
 import { getPrompt } from '../../prompt-manager';
-import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { logger } from '../../utils/logger';
 import { shellEscape } from '../../utils/shell-escape';
 import { runLocalTask, type LocalTaskUnavailable } from '../task-router';
@@ -134,7 +140,11 @@ export const MODEL_TIMEOUT_MS = 60 * 1000;
 
 const MARKER_PATTERN = /\[maestro-compressed sha256=([0-9a-f]{64}) original_tokens=(\d+)\]\s*$/;
 
-/** The line that ends every compressed block. */
+/**
+ * The line that ends every compressed block. `hash` is the cache key of the
+ * entry that holds the original ({@link verdictKey}), which in early mode is
+ * not the plain SHA-256 of the content.
+ */
 export function formatCompressionMarker(hash: string, originalTokens: number): string {
 	return `[maestro-compressed sha256=${hash} original_tokens=${originalTokens}]`;
 }
@@ -172,6 +182,25 @@ export interface LocalRecoveryCapability {
 	dataDir: string;
 }
 
+/**
+ * Host-issued evidence that one launch was given the MCP retrieve tool
+ * (`retrieve_compressed_original` on the per-launch bridge), so its model can
+ * ask for any original by hash. Like {@link LocalRecoveryCapability} it comes
+ * only from the launch binding the host registered when it injected the
+ * bridge; never from a request body, an agent id, or the stored setting alone.
+ */
+export interface RetrieveToolCapability {
+	kind: 'mcp-retrieve-tool';
+}
+
+/** What a launch binding may prove about the launch that carries it. */
+export type LaunchCapability = LocalRecoveryCapability | RetrieveToolCapability;
+
+/** Whether a launch capability gives the model the retrieve tool. */
+export function launchHasRetrieveTool(capability: LaunchCapability | undefined): boolean {
+	return capability?.kind === 'mcp-retrieve-tool';
+}
+
 export interface CompressRequestOptions {
 	/** Defaults to {@link DEFAULT_COMPRESS_MIN_TOKENS}. */
 	minTokens?: number;
@@ -181,8 +210,11 @@ export interface CompressRequestOptions {
 	cache?: CompressionCache;
 	/** The model tier. Defaults to {@link summarizeToolResult}. */
 	summarize?: ToolResultSummarizer;
-	/** Explicit host-side capability only. Absent/unsupported means hash-only. */
-	recovery?: LocalRecoveryCapability;
+	/**
+	 * Explicit host-side capability only. Absent/unsupported means hash-only.
+	 * A {@link RetrieveToolCapability} lets early mode use the `full` profile.
+	 */
+	recovery?: LaunchCapability;
 	/**
 	 * Called when the assigned model could not run, so the caller can tell the
 	 * user (`reportLocalTaskUnavailable`). The block falls back to its heuristic
@@ -193,7 +225,8 @@ export interface CompressRequestOptions {
 	 * `compress-early` mode: also shorten the tool results the model has NOT
 	 * read yet (the fresh ones, and any block carrying the `cache_control`
 	 * breakpoint, which is where a client puts it). Off, a fresh result goes out
-	 * whole and is shortened on the next request.
+	 * whole and is shortened on the next request. Without the retrieve tool
+	 * (`recovery`), early mode uses only the `complete` profile.
 	 */
 	early?: boolean;
 }
@@ -212,7 +245,7 @@ export interface CompressRequestStats {
 	/** Text spans outside protected regions and eligibility vetoes. */
 	candidates: number;
 	/** Selected text spans vetoed before hashing/cache access; absent when none. */
-	eligibilityVetoes?: { failed: number; recovery: number };
+	eligibilityVetoes?: { failed: number; recovery: number; retrieval?: number };
 	/** Candidates under the size threshold, left alone without being hashed. */
 	belowThreshold: number;
 	compressed: number;
@@ -679,6 +712,22 @@ function literalCommandTokens(command: string, assignments: Set<number>): string
 	return tokens;
 }
 
+/**
+ * A result of the retrieve tool, under any client prefix (Claude Code names it
+ * `mcp__<server>__retrieve_compressed_original`, Codex `<server>__...` or with
+ * `functions.` in front). It is the original the model asked for: compressing
+ * it again would make the model ask again, so it is never compressed. Only a
+ * result linked to a named call counts; an unlinked one is decided as usual.
+ */
+function isRetrieveToolResult(result: ToolResultDescriptor): boolean {
+	if (result.linkage !== 'matched' || !result.toolName) return false;
+	const name = result.toolName.toLowerCase();
+	if (name === TOKEN_PROXY_RETRIEVE_TOOL_NAME) return true;
+	return ['__', '.', '/', ':'].some((separator) =>
+		name.endsWith(`${separator}${TOKEN_PROXY_RETRIEVE_TOOL_NAME}`)
+	);
+}
+
 /** Only linked, structured shell calls can prove an original-recovery request. */
 function isOriginalRecovery(result: ToolResultDescriptor): boolean {
 	if (result.recoveryEligibility !== 'inspectable' || result.input.kind !== 'structured')
@@ -858,6 +907,19 @@ interface BlockContext {
  */
 const COMPLETE_PROFILE_KEY_PREFIX = 'maestro-token-proxy-profile:complete:v1\n';
 
+/**
+ * The heuristic profile one request is decided with: `complete` in early mode
+ * unless its launch carries the retrieve tool, `full` otherwise. A launch
+ * without the tool never gets a lossy block, whatever an earlier launch of
+ * the same conversation was given: the keys differ, so neither sees the
+ * other's verdict.
+ */
+export function requestProfile(
+	options: Pick<CompressRequestOptions, 'early' | 'recovery'>
+): HeuristicProfile {
+	return options.early === true && !launchHasRetrieveTool(options.recovery) ? 'complete' : 'full';
+}
+
 /** The cache key of a tool result under a profile. The marker and the cache both use it. */
 export function verdictKey(text: string, profile: HeuristicProfile): string {
 	return contentHash(profile === 'complete' ? `${COMPLETE_PROFILE_KEY_PREFIX}${text}` : text);
@@ -866,9 +928,7 @@ export function verdictKey(text: string, profile: HeuristicProfile): string {
 const RECOVERY_HINT_PREFIX = '[maestro-recovery ';
 
 /** Validate bounded syntax, not execution capability; the host must prove that. */
-function localRecoveryRoute(
-	capability: LocalRecoveryCapability | undefined
-): BlockContext['recovery'] {
+function localRecoveryRoute(capability: LaunchCapability | undefined): BlockContext['recovery'] {
 	if (
 		capability?.kind !== 'local-posix-cli' ||
 		!isContentHash(capability.environmentId) ||
@@ -897,14 +957,6 @@ type BlockResolution =
 	| { status: 'below-threshold' }
 	| { status: 'store-failed' }
 	| { status: 'resolved'; verdict: CompressionVerdict; cached: boolean };
-
-/**
- * One line per content hash, shared by every request in the process. Two
- * requests that carry the same new block must not both decide it: with a model
- * in the path they could decide differently, and the second has only to wait
- * to read the first one's verdict.
- */
-const blockQueue = createKeyedWriteQueue();
 
 /** Decide a block that has no verdict yet. */
 async function decideBlock(
@@ -981,7 +1033,12 @@ async function resolveBlock(text: string, context: BlockContext): Promise<BlockR
 	const originalTokens = estimateTokenCount(text);
 	if (originalTokens < context.minTokens) return { status: 'below-threshold' };
 	const hash = verdictKey(text, context.profile);
-	return blockQueue.enqueue(hash, async (): Promise<BlockResolution> => {
+	// One line per cache key, held by the cache itself (`withEntry`). Two
+	// requests that carry the same new block must not both decide it: with a
+	// model in the path they could decide differently, and the second has only
+	// to wait to read the first one's verdict. A prune takes the same line, so it
+	// never removes an entry (and its original) while a request resolves it.
+	return context.cache.withEntry(hash, async (): Promise<BlockResolution> => {
 		let cached: CompressionVerdict | null;
 		try {
 			cached = await context.cache.read(hash);
@@ -1029,7 +1086,7 @@ export async function compressRequestBody(
 		modelMinTokens: options.modelMinTokens ?? DEFAULT_MODEL_MIN_TOKENS,
 		cache: options.cache ?? getCompressionCache(),
 		recovery: localRecoveryRoute(options.recovery),
-		profile: options.early === true ? 'complete' : 'full',
+		profile: requestProfile(options),
 		summarize:
 			options.summarize ??
 			((text) => summarizeToolResult(text, { onUnavailable: options.onModelUnavailable })),
@@ -1043,10 +1100,13 @@ export async function compressRequestBody(
 					? 'failed'
 					: isOriginalRecovery(result)
 						? 'recovery'
-						: null;
+						: isRetrieveToolResult(result)
+							? 'retrieval'
+							: null;
 			if (!veto) return result.eligibleSpans;
 			stats.eligibilityVetoes ??= { failed: 0, recovery: 0 };
-			stats.eligibilityVetoes[veto] += result.eligibleSpans.length;
+			stats.eligibilityVetoes[veto] =
+				(stats.eligibilityVetoes[veto] ?? 0) + result.eligibleSpans.length;
 			return [];
 		}
 	);

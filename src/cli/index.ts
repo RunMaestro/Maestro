@@ -2639,6 +2639,10 @@ program
 		'Maestro token proxy for this agent: off | passthrough | compress | compress-early. Any mode but off points the gateway at the proxy; off clears it. compress shortens a tool result after the model has read it once; compress-early shortens it before, which is cheaper and means the model works from the shortened output (requires the desktop app)'
 	)
 	.option(
+		'--proxy-retrieval <on|off>',
+		'Whether the model of this agent may ask the Maestro token proxy for the original lines of a tool result it shortened (the retrieve_compressed_original tool). Only while the proxy mode is compress or compress-early; turned off with the proxy. Read it with show agent (requires the desktop app)'
+	)
+	.option(
 		'--tier <tier=target>',
 		"Where a low, medium or high task of this agent launches (repeatable): low=<source id>:<model>, high=provider:<model>, medium=provider (the provider, on the agent's own model), or low=default to follow the harness default again. Read them with show agent",
 		(value: string, prev: string[]) => [...(prev ?? []), value],

@@ -49,6 +49,10 @@ import { readHarnessTierDefaults, readLocalModelEndpoints } from '../services/st
 import { AUTO_MODEL, isAutoModel } from '../../shared/autoModel';
 import { autoModelProblem } from '../../shared/autoTurn';
 import { SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS } from '../../shared/local-models/system-one-agent';
+import {
+	TOKEN_PROXY_RETRIEVAL_DESCRIPTIONS,
+	TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION,
+} from '../../shared/local-models/token-proxy';
 import { applyPeerAgentEdits, peerAccessLabel, type PeerAgentEdits } from '../../shared/peerAgents';
 import type { AdditionalDirectory, PeerAccess } from '../../shared/types';
 import type { EnvParkEdits } from '../../shared/agentConfigExtras';
@@ -126,7 +130,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		options.migration === undefined
 	) {
 		failCommand(
-			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --env-park, --additional-dir, --retry-on-availability, --gateway-url, --proxy-mode, --run-on, --tier, --background-requests, --system-one, --peer, --group-peers). Run "maestro-cli update-agent --help" for the full list.',
+			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --env-park, --additional-dir, --retry-on-availability, --gateway-url, --proxy-mode, --proxy-retrieval, --run-on, --tier, --background-requests, --system-one, --peer, --group-peers). Run "maestro-cli update-agent --help" for the full list.',
 			options.json
 		);
 	}
@@ -286,6 +290,16 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 				options.json
 			);
 		}
+	}
+
+	// `--proxy-retrieval on` needs the proxy to compress for the agent. A call
+	// that turns the proxy off or sets another gateway is refused here; the
+	// stored mode against the proxy's port is checked by the app.
+	if (
+		configPatch?.tokenProxyRetrieval === true &&
+		(configPatch.tokenProxyMode === 'off' || configPatch.gatewayUrl !== undefined)
+	) {
+		failCommand(`--proxy-retrieval: ${TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION}`, options.json);
 	}
 
 	// Provider translation is handled separately from settings edits.
@@ -592,6 +606,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			customEnvVars: 'Env vars',
 			gatewayUrl: 'Gateway URL',
 			tokenProxyMode: 'Token proxy mode',
+			tokenProxyRetrieval: 'Retrieval',
 			runOn: 'Run on',
 			tierTargets: 'Tiers',
 			backgroundRequests: 'Background requests',
@@ -639,6 +654,10 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 				console.log(
 					`  ${label}: ${formatBackgroundRequestsSpec(value as BackgroundRequests | null)}`
 				);
+			} else if (key === 'tokenProxyRetrieval') {
+				// Off is not "cleared", it is the model without the retrieve tool.
+				const stored = value === true ? 'on' : 'off';
+				console.log(`  ${label}: ${stored}. ${TOKEN_PROXY_RETRIEVAL_DESCRIPTIONS[stored]}`);
 			} else if (key === 'systemOneOptOut') {
 				// On is not "cleared", it is the agent following the switch for all agents.
 				const stored = value === true ? 'off' : 'on';

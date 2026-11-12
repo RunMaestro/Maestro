@@ -3047,7 +3047,7 @@ describe('EditAgentModal', () => {
 
 			await waitFor(() => expect(field()).toBeDisabled());
 			expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent(
-				'ignores base-URL variables'
+				'reads a base URL only for a BYOK provider'
 			);
 		});
 	});

@@ -417,7 +417,7 @@ describe('LocalModelsGatewaySection', () => {
 
 		expect(within(row('c')).getByRole('textbox')).toBeDisabled();
 		expect(within(row('c')).getByTestId('gateway-url-c-status')).toHaveTextContent(
-			'ignores base-URL variables'
+			'reads a base URL only for a BYOK provider'
 		);
 	});
 
@@ -614,7 +614,9 @@ describe('the Maestro proxy mode', () => {
 		addAgent('Remote');
 
 		expect(modeSelect('c')).toBeDisabled();
-		expect(modeSelect('c').title).toContain('Copilot CLI ignores base-URL variables');
+		expect(modeSelect('c').title).toContain(
+			'Copilot CLI reads a base URL only for a BYOK provider'
+		);
 		expect(modeSelect('s')).toBeDisabled();
 		expect(modeSelect('s').title).toContain('SSH remote');
 	});

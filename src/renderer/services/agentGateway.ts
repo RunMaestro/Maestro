@@ -20,6 +20,11 @@
  * does, so it is refused for an agent that is not on the proxy and it leaves
  * with the proxy (`OFF_TOKEN_PROXY_FIELDS`): a setting nobody can see must not
  * come back into force when the proxy is switched on again somewhere else.
+ *
+ * `setAgentTokenProxyRetrieval` is the fourth: whether the agent's model is
+ * given the tool that asks the proxy for a compressed result's original. It is
+ * refused unless the proxy compresses for the agent, and it leaves with the
+ * proxy the same way.
  */
 
 import { canonicalJson } from '../../shared/canonicalJson';
@@ -31,9 +36,13 @@ import {
 import { agentGatewaySupport, parseGatewayUrlEdit } from '../../shared/local-models/gateway';
 import {
 	gatewayPointsAtTokenProxy,
+	holdsTokenProxyFields,
+	isCompressingTokenProxyMode,
 	OFF_TOKEN_PROXY_FIELDS,
+	parseTokenProxyRetrievalEdit,
 	resolveTokenProxyMode,
 	TOKEN_PROXY_NAME,
+	TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION,
 	tokenProxyGatewayUrl,
 	tokenProxyRouteForAgent,
 	type TokenProxyMode,
@@ -112,11 +121,23 @@ async function agentEffectiveEnv(session: Session): Promise<Record<string, strin
 	};
 }
 
+/** The agent's model: its own, or the provider default from Settings -> Agents. */
+async function agentEffectiveModel(session: Session): Promise<string | undefined> {
+	if (session.customModel?.trim()) return session.customModel;
+	try {
+		const model = (await window.maestro.agents?.getConfig?.(session.toolType))?.model;
+		return typeof model === 'string' ? model : undefined;
+	} catch {
+		// Without the provider default the agent's own model (none) decides.
+		return undefined;
+	}
+}
+
 /**
  * Set how the Maestro token proxy carries one agent's requests.
  *
  * - `off` clears the agent's gateway when it is the proxy, and its background
- *   requests target with it. A gateway that points somewhere else (Headroom,
+ *   requests target and retrieval switch with it. A gateway that points somewhere else (Headroom,
  *   LiteLLM) is left alone: it is already off.
  * - `passthrough` and `compress` point the agent's gateway at the proxy (on the
  *   route its provider and credential need) unless it is there already, and
@@ -140,11 +161,7 @@ export async function setAgentTokenProxyMode(
 		const port = (await proxy.report()).status.port;
 		const onProxy = port !== null && gatewayPointsAtTokenProxy(session.gatewayUrl, port);
 		const gatewayUrl = onProxy ? undefined : session.gatewayUrl;
-		if (
-			gatewayUrl !== session.gatewayUrl ||
-			session.tokenProxyMode !== undefined ||
-			session.backgroundRequests !== undefined
-		) {
+		if (gatewayUrl !== session.gatewayUrl || holdsTokenProxyFields(session)) {
 			updateSessionWith(sessionId, (s) => ({ ...s, gatewayUrl, ...OFF_TOKEN_PROXY_FIELDS }));
 			await flushAgentToStore(sessionId);
 		}
@@ -163,9 +180,13 @@ export async function setAgentTokenProxyMode(
 	const port = await proxy.ensurePort();
 	let gatewayUrl = session.gatewayUrl;
 	if (!gatewayPointsAtTokenProxy(gatewayUrl, port)) {
-		const route = tokenProxyRouteForAgent(session.toolType, await agentEffectiveEnv(session));
+		const route = tokenProxyRouteForAgent(
+			session.toolType,
+			await agentEffectiveEnv(session),
+			await agentEffectiveModel(session)
+		);
 		if (!route.ok) return route;
-		gatewayUrl = tokenProxyGatewayUrl(port, route.route);
+		gatewayUrl = tokenProxyGatewayUrl(port, route.route, session.toolType);
 	}
 	if (gatewayUrl !== session.gatewayUrl || session.tokenProxyMode !== mode) {
 		updateSessionWith(sessionId, (s) => ({ ...s, gatewayUrl, tokenProxyMode: mode }));
@@ -258,4 +279,49 @@ export async function setAgentBackgroundRequests(
 		await flushAgentToStore(sessionId);
 	}
 	return { ok: true, backgroundRequests };
+}
+
+export type SetAgentTokenProxyRetrievalResult =
+	| { ok: true; retrieval: boolean }
+	| { ok: false; error: string };
+
+/**
+ * Turn retrieval on (`true`) or off (`false` / `null`) for one agent.
+ *
+ * On is refused unless the proxy compresses this agent's requests (`compress`
+ * or `compress-early`): in any other mode nothing is shortened, so the switch
+ * would store a setting that does nothing. Off is always allowed.
+ *
+ * Resolves once main holds the new value, so the next launch reads it.
+ */
+export async function setAgentTokenProxyRetrieval(
+	sessionId: string,
+	value: unknown
+): Promise<SetAgentTokenProxyRetrievalResult> {
+	const session: Session | undefined = useSessionStore
+		.getState()
+		.sessions.find((s) => s.id === sessionId);
+	if (!session) return { ok: false, error: 'Agent not found' };
+
+	const edit = parseTokenProxyRetrievalEdit(value);
+	if (!edit.ok) return edit;
+	const { retrieval } = edit;
+
+	if (retrieval) {
+		const port = (await window.maestro.localModels.proxy.report()).status.port;
+		const mode = resolveTokenProxyMode({
+			gatewayUrl: session.gatewayUrl,
+			storedMode: session.tokenProxyMode,
+			port,
+		});
+		if (!isCompressingTokenProxyMode(mode)) {
+			return { ok: false, error: TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION };
+		}
+	}
+
+	if (session.tokenProxyRetrieval !== retrieval) {
+		updateSessionWith(sessionId, (s) => ({ ...s, tokenProxyRetrieval: retrieval }));
+		await flushAgentToStore(sessionId);
+	}
+	return { ok: true, retrieval: retrieval === true };
 }

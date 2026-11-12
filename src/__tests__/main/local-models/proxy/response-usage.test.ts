@@ -130,13 +130,77 @@ describe('createProviderUsageReader', () => {
 		expect(reader.finish()?.cacheReadTokens).toBe(26102);
 	});
 
-	it('still reads the usage of a gzip stream cut short after message_start', () => {
-		const whole = zlib.gzipSync(Buffer.from(ANTHROPIC_STREAM, 'utf-8'));
+	it('still reads the usage of a gzip stream cut short after message_start', async () => {
+		// Flush after message_start, so the cut lands after bytes that decode to it.
+		const split = ANTHROPIC_STREAM.indexOf('event: content_block_delta');
+		const gzip = zlib.createGzip();
+		const out: Buffer[] = [];
+		gzip.on('data', (chunk: Buffer) => out.push(chunk));
+		gzip.write(ANTHROPIC_STREAM.slice(0, split));
+		await new Promise<void>((resolve) => gzip.flush(zlib.constants.Z_SYNC_FLUSH, () => resolve()));
+		const flushed = Buffer.concat(out).length;
+		gzip.end(ANTHROPIC_STREAM.slice(split));
+		await new Promise((resolve) => gzip.on('end', resolve));
+		const whole = Buffer.concat(out);
+
 		const reader = createProviderUsageReader('anthropic-messages', 'gzip');
-		reader.push(whole.subarray(0, whole.length - 12));
-		const usage = reader.finish();
-		// Whatever survived decoding is read; a stream that lost everything is unknown.
-		if (usage) expect(usage.cacheWriteTokens).toBe(1750);
+		// Cut at the flush: no final block and no trailer, as a dropped connection leaves it.
+		expect(whole.length).toBeGreaterThan(flushed);
+		reader.push(whole.subarray(0, flushed));
+		expect(reader.finish()).toEqual({
+			inputTokens: 12,
+			cacheReadTokens: 26102,
+			cacheWriteTokens: 1750,
+			outputTokens: 1,
+		});
+	});
+
+	it('reads a plain stream without keeping it: past the bound, the usage lines still count', () => {
+		const reader = createProviderUsageReader('anthropic-messages', null);
+		const [start, rest] = [
+			ANTHROPIC_STREAM.slice(0, ANTHROPIC_STREAM.indexOf('event: content_block_delta')),
+			ANTHROPIC_STREAM.slice(ANTHROPIC_STREAM.indexOf('event: content_block_delta')),
+		];
+		reader.push(Buffer.from(start, 'utf-8'));
+		// More than the bound in ordinary delta lines, which a kept copy could not hold.
+		const delta = Buffer.from(
+			`event: content_block_delta\ndata: ${JSON.stringify({ delta: { text: 'x'.repeat(4000) } })}\n\n`
+		);
+		for (let sent = 0; sent <= USAGE_READ_MAX_BYTES; sent += delta.length) reader.push(delta);
+		reader.push(Buffer.from(rest, 'utf-8'));
+		expect(reader.finish()).toEqual({
+			inputTokens: 12,
+			cacheReadTokens: 26102,
+			cacheWriteTokens: 1750,
+			outputTokens: 214,
+		});
+	});
+
+	it('skips one stream line past the bound and reads the lines after it', () => {
+		const reader = createProviderUsageReader('anthropic-messages', null);
+		reader.push(Buffer.from('data: {"text":"'));
+		reader.push(Buffer.alloc(USAGE_READ_MAX_BYTES + 1, 0x61));
+		reader.push(Buffer.from('","usage":{"input_tokens":999}}\n'));
+		reader.push(Buffer.from(ANTHROPIC_STREAM.replace(/\n/g, '\r\n')));
+		expect(reader.finish()).toMatchObject({ inputTokens: 12, outputTokens: 214 });
+	});
+
+	it('reads a final data line the stream never ended, and a JSON body after leading blank lines', () => {
+		const cut = createProviderUsageReader('anthropic-messages', null);
+		cut.push(Buffer.from('event: message_delta\ndata: {"usage":{"output_tokens":7}}'));
+		expect(cut.finish()).toMatchObject({ outputTokens: 7 });
+
+		const body = createProviderUsageReader('anthropic-messages', 'identity');
+		body.push(Buffer.from('\n  '));
+		body.push(
+			Buffer.from('{\n  "usage": {\n    "input_tokens": 3,\n    "output_tokens": 2\n  }\n}')
+		);
+		expect(body.finish()).toEqual({
+			inputTokens: 3,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			outputTokens: 2,
+		});
 	});
 
 	it('answers null for an encoding it cannot decode, an empty body, and past its bound', () => {
@@ -147,8 +211,13 @@ describe('createProviderUsageReader', () => {
 		expect(createProviderUsageReader('anthropic-messages', null).finish()).toBeNull();
 
 		const large = createProviderUsageReader('anthropic-messages', null);
+		large.push(Buffer.from('{"usage":{"input_tokens":1,"pad":"'));
 		large.push(Buffer.alloc(USAGE_READ_MAX_BYTES + 1, 0x20));
-		large.push(Buffer.from(ANTHROPIC_STREAM));
+		large.push(Buffer.from('"}}'));
 		expect(large.finish()).toBeNull();
+
+		const encoded = createProviderUsageReader('anthropic-messages', 'gzip');
+		encoded.push(Buffer.alloc(USAGE_READ_MAX_BYTES + 1));
+		expect(encoded.finish()).toBeNull();
 	});
 });

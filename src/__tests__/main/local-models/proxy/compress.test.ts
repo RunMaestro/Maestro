@@ -46,10 +46,12 @@ import {
 	MODEL_CHUNK_MAX_TOKENS,
 	MODEL_MAX_INPUT_TOKENS,
 	parseCompressionMarker,
+	requestProfile,
 	summarizeToolResult,
 	verdictKey,
 	type CompressRequestOptions,
 	type LocalRecoveryCapability,
+	type RetrieveToolCapability,
 	type ModelSummary,
 } from '../../../../main/local-models/proxy/compress';
 import {
@@ -67,6 +69,9 @@ import {
 } from '../../../../main/local-models/proxy/json-spans';
 
 const SOURCE = { type: 'local', modelId: 'qwen3-1.7b' } as const;
+
+/** Host evidence that a launch was given the MCP retrieve tool. */
+const RETRIEVE_TOOL: RetrieveToolCapability = { kind: 'mcp-retrieve-tool' };
 
 // Synthetic host evidence only; none of these paths is opened or executed.
 const LOCAL_RECOVERY: LocalRecoveryCapability = {
@@ -857,6 +862,67 @@ describe('request-local tool result descriptors', () => {
 		);
 
 		it.each(formats)(
+			'$kind never compresses a result of the retrieve tool, under any client prefix, in either mode',
+			async (format) => {
+				const { kind, result, contentKey, wrap } = format;
+				const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'skipped' }));
+				for (const name of [
+					'retrieve_compressed_original',
+					'mcp__maestro__retrieve_compressed_original',
+					'maestro__retrieve_compressed_original',
+					'functions.mcp__maestro__retrieve_compressed_original',
+					'MCP__Other-Server__Retrieve_Compressed_Original',
+				]) {
+					for (const early of [false, true]) {
+						for (const recovery of [undefined, RETRIEVE_TOOL]) {
+							const cache = newCache();
+							const read = vi.spyOn(cache, 'read');
+							const body = wrap(
+								[withInvocation(format, name, { hash: hash, start_line: 1 })],
+								[{ ...result, [contentKey]: LOG }],
+								!early
+							);
+							const guarded = await compressRequestBody(
+								kind,
+								body,
+								options({ cache, early, summarize, modelMinTokens: 1, recovery })
+							);
+							expect(guarded).toMatchObject({
+								body,
+								changed: false,
+								stats: {
+									candidates: 0,
+									eligibilityVetoes: { failed: 0, recovery: 0, retrieval: 1 },
+								},
+							});
+							expect(read).not.toHaveBeenCalled();
+						}
+					}
+				}
+				expect(summarize).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each(formats)(
+			'$kind decides a tool that only resembles the retrieve tool as usual',
+			async (format) => {
+				const { kind, result, contentKey, wrap } = format;
+				for (const name of ['myretrieve_compressed_original', 'retrieve_compressed_original_v2']) {
+					const body = wrap(
+						[withInvocation(format, name, { hash })],
+						[{ ...result, [contentKey]: LOG }]
+					);
+					const compressed = await compressRequestBody(kind, body, options());
+					expect(compressed.stats.compressed).toBe(1);
+					expect(compressed.stats.eligibilityVetoes).toBeUndefined();
+				}
+				// An unlinked result names no tool: nothing to exempt.
+				const unlinked = wrap([], [{ ...result, [contentKey]: LOG }]);
+				expect((await compressRequestBody(kind, unlinked, options())).stats.compressed).toBe(1);
+			}
+		);
+
+		it.each(formats)(
 			'$kind retains freshness/cache-control gates before counting vetoes',
 			async (format) => {
 				const { kind, result, contentKey, wrap } = format;
@@ -1335,6 +1401,78 @@ describe('compressRequestBody: early mode', () => {
 		};
 		expect(responsesOut.instructions).toBe(LOG);
 		expect(responsesOut.input[2].output).toBe(earlyCompressedLog());
+	});
+
+	describe('a launch that carries the retrieve tool', () => {
+		const ARRAY = JSON.stringify(
+			Array.from({ length: 60 }, (_, index) => ({ id: index, nested: { note: 'x'.repeat(40) } }))
+		);
+
+		it('chooses the profile from the launch capability, never from early alone', () => {
+			expect(requestProfile({})).toBe('full');
+			expect(requestProfile({ early: false, recovery: RETRIEVE_TOOL })).toBe('full');
+			expect(requestProfile({ early: true })).toBe('complete');
+			expect(requestProfile({ early: true, recovery: LOCAL_RECOVERY })).toBe('complete');
+			expect(requestProfile({ early: true, recovery: RETRIEVE_TOOL })).toBe('full');
+		});
+
+		it('decides a fresh result with the full profile under the plain key, as compress does', async () => {
+			const cache = newCache();
+			const delayed = await compressRequestBody(
+				'anthropic-messages',
+				anthropicBody(ARRAY),
+				options({ cache })
+			);
+			expect(delayed.stats.compressed).toBe(1);
+			const delayedText = (
+				(JSON.parse(delayed.body) as { messages: Array<{ content: unknown }> }).messages[2]
+					.content as Array<{ content: string }>
+			)[0].content;
+
+			const result = await compressRequestBody(
+				'anthropic-messages',
+				anthropicBody('small', ARRAY),
+				early({ cache, recovery: RETRIEVE_TOOL })
+			);
+			// The same verdict `compress` stored: shared key, same bytes, a cache hit.
+			expect(result.blocks).toEqual([
+				expect.objectContaining({ hash: verdictKey(ARRAY, 'full'), cached: true }),
+			]);
+			expect(verdictKey(ARRAY, 'full')).toBe(contentHash(ARRAY));
+			expect(result.body).toBe(anthropicBody('small', delayedText));
+		});
+
+		it('asks the model tier, which the complete profile never does', async () => {
+			const summarize = vi.fn(async (): Promise<ModelSummary> => ({ status: 'skipped' }));
+			await compressRequestBody(
+				'anthropic-messages',
+				anthropicBody('small', SOURCE_FILE),
+				early({ summarize, modelMinTokens: 1, recovery: RETRIEVE_TOOL })
+			);
+			expect(summarize).toHaveBeenCalledTimes(1);
+		});
+
+		it('never sends a lossy block to a later launch of the same conversation without it', async () => {
+			const cache = newCache();
+			const body = anthropicBody('small', ARRAY);
+			const withTool = await compressRequestBody(
+				'anthropic-messages',
+				body,
+				early({ cache, recovery: RETRIEVE_TOOL })
+			);
+			expect(withTool.stats.compressed).toBe(1);
+			expect(withTool.blocks[0].hash).toBe(contentHash(ARRAY));
+
+			// The client resends the original text it holds; the full verdict for it
+			// is in the shared cache, and must not be used for this launch.
+			for (const next of [body, anthropicBody(ARRAY, 'the newest result')]) {
+				const without = await compressRequestBody('anthropic-messages', next, early({ cache }));
+				expect(without.body).toBe(next);
+				// Kept whole under its own `complete` key (a hit, after the first time).
+				expect(without.stats).toMatchObject({ compressed: 0, kept: 1 });
+			}
+			expect((await cache.read(verdictKey(ARRAY, 'complete')))?.outcome).toBe('kept');
+		});
 	});
 
 	it('leaves a small fresh result alone', async () => {
@@ -2197,6 +2335,7 @@ describe('compressRequestBody: a cache that cannot be used', () => {
 			read: on === 'read' ? async () => Promise.reject(error) : real.read,
 			write: on === 'write' ? async () => Promise.reject(error) : real.write,
 			readOriginal: real.readOriginal,
+			withEntry: real.withEntry,
 			usage: real.usage,
 			prune: real.prune,
 		};

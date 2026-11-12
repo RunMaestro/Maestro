@@ -437,6 +437,84 @@ describe('buildAgentLaunchPlan', () => {
 
 			expect(result).toMatchObject({ ok: false, reason: 'remote-not-found' });
 		});
+
+		describe('OpenCode, whose base URL lives in its inline config', () => {
+			const gatewayUrl = 'http://127.0.0.1:8787/anthropic/v1';
+
+			function openCode(overrides: Partial<AgentLaunchInput> = {}): AgentLaunchInput {
+				return input({
+					agent: {
+						...getAgentDefinition('opencode'),
+						capabilities: getAgentCapabilities('opencode'),
+					},
+					command: '/opt/homebrew/bin/opencode',
+					args: ['run', '--format', 'json', '--model', 'anthropic/claude-sonnet-4'],
+					gateway: { toolType: 'opencode', url: gatewayUrl },
+					...overrides,
+				});
+			}
+
+			function configs(plan: { envVars?: Record<string, string>; env?: NodeJS.ProcessEnv }) {
+				return [plan.envVars?.[OPENCODE_CONFIG_ENV_VAR], plan.env?.[OPENCODE_CONFIG_ENV_VAR]].map(
+					(text) => JSON.parse(text ?? 'null')
+				);
+			}
+
+			it('adds the gateway to the permission block, and runs on a private server', () => {
+				const defaults = JSON.parse(
+					getAgentDefinition('opencode')?.defaultEnvVars?.[OPENCODE_CONFIG_ENV_VAR] ?? 'null'
+				);
+				for (const surface of ['desktop', 'cli', 'cue'] as const) {
+					const result = buildAgentLaunchPlan(openCode({ surface }));
+
+					if (!result.ok) throw new Error(result.error);
+					// `--standalone` after `run`, so this launch's document is the one read.
+					expect(result.plan.args.slice(0, 2)).toEqual(['run', '--standalone']);
+					expect(result.plan.gateway).toMatchObject({
+						envVar: OPENCODE_CONFIG_ENV_VAR,
+						url: gatewayUrl,
+						subcommandArgs: ['--standalone'],
+					});
+					for (const config of configs(result.plan)) {
+						// Maestro's permission block survives: losing `question: deny` hangs batch mode.
+						expect(config.permission).toEqual(defaults.permission);
+						expect(config.tools).toEqual(defaults.tools);
+						expect(config.provider.anthropic.options.baseURL).toBe(gatewayUrl);
+						expect(config.provider.openai.options.baseURL).toBe(gatewayUrl);
+						expect(config.enabled_providers).toEqual(['anthropic', 'openai']);
+					}
+				}
+			});
+
+			it('adds the gateway to the read-only override too', () => {
+				const result = buildAgentLaunchPlan(openCode({ readOnlyMode: true }));
+
+				if (!result.ok) throw new Error(result.error);
+				const [config] = configs(result.plan);
+				expect(config.permission.question).toBe('deny');
+				expect(config.provider.anthropic.options.baseURL).toBe(gatewayUrl);
+			});
+
+			it("builds on the agent's own document, and yields where it names a base URL", () => {
+				const added = buildAgentLaunchPlan(
+					openCode({ sessionCustomEnvVars: { [OPENCODE_CONFIG_ENV_VAR]: '{"theme":"mine"}' } })
+				);
+				if (!added.ok) throw new Error(added.error);
+				const [config] = configs(added.plan);
+				expect(config.theme).toBe('mine');
+				expect(config.provider.anthropic.options.baseURL).toBe(gatewayUrl);
+
+				const mine =
+					'{"provider":{"anthropic":{"options":{"baseURL":"https://mine.example.com/v1"}}}}';
+				const yielded = buildAgentLaunchPlan(
+					openCode({ sessionCustomEnvVars: { [OPENCODE_CONFIG_ENV_VAR]: mine } })
+				);
+				if (!yielded.ok) throw new Error(yielded.error);
+				expect(yielded.plan.gateway).toBeUndefined();
+				expect(yielded.plan.envVars?.[OPENCODE_CONFIG_ENV_VAR]).toBe(mine);
+				expect(yielded.plan.args).not.toContain('--standalone');
+			});
+		});
 	});
 
 	describe("the agent's Run on target", () => {

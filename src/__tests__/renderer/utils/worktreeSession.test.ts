@@ -31,6 +31,7 @@ const createMockParentSession = (overrides: Partial<Session> = {}): Session =>
 		customEnvVarsDisabled: { PARKED: 'later' },
 		gatewayUrl: 'http://127.0.0.1:8787',
 		tokenProxyMode: 'compress' as const,
+		tokenProxyRetrieval: true,
 		runOn: { type: 'source' as const, endpointId: 'maestro-server', model: 'gpt-oss-20b' },
 		tierTargets: { high: { type: 'provider-model' as const, model: 'opus' } },
 		backgroundRequests: {
@@ -89,6 +90,8 @@ describe('buildWorktreeSession', () => {
 		// And how the Maestro proxy carries it, when that gateway is the proxy:
 		// a worktree agent of a compressing parent compresses too.
 		expect(session.tokenProxyMode).toBe('compress');
+		// And whether its model can ask the proxy for a compressed original.
+		expect(session.tokenProxyRetrieval).toBe(true);
 		// And the Run on target: a worktree agent on the provider's cloud model
 		// while its parent runs on a local one would spend money silently.
 		expect(session.runOn).toEqual({

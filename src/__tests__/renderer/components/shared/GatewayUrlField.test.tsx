@@ -6,6 +6,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { Theme } from '../../../../renderer/types';
+import { resolveAgentGateway } from '../../../../shared/local-models/gateway';
 import {
 	GatewayUrlField,
 	describeGatewayStatus,
@@ -79,7 +80,7 @@ describe('GatewayUrlField', () => {
 		const { input } = renderField({ toolType: 'copilot-cli' });
 
 		expect(input.disabled).toBe(true);
-		expect(status()).toHaveTextContent('Copilot CLI ignores base-URL variables');
+		expect(status()).toHaveTextContent('Copilot CLI reads a base URL only for a BYOK provider');
 	});
 
 	it("says the gateway is not applied when the agent's own variable wins", () => {
@@ -139,5 +140,28 @@ describe('describeGatewayStatus', () => {
 				message: 'bad',
 			})
 		).toEqual({ tone: 'error', text: 'bad' });
+	});
+
+	it("says OpenCode's gateway is added to its inline config, and when that config wins", () => {
+		expect(
+			describeGatewayStatus(
+				resolveAgentGateway({ toolType: 'opencode', gatewayUrl: 'http://127.0.0.1:8787/v1' })
+			)
+		).toEqual({
+			tone: 'dim',
+			text: 'Adds the gateway to OPENCODE_CONFIG_CONTENT when this agent starts.',
+		});
+		expect(
+			describeGatewayStatus(
+				resolveAgentGateway({
+					toolType: 'opencode',
+					gatewayUrl: 'http://127.0.0.1:8787/v1',
+					userEnvVars: {
+						OPENCODE_CONFIG_CONTENT:
+							'{"provider":{"anthropic":{"options":{"baseURL":"https://mine.example.com/v1"}}}}',
+					},
+				})
+			)?.text
+		).toContain('names a base URL');
 	});
 });

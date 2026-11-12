@@ -394,6 +394,14 @@ export interface SessionInfo {
 	 */
 	tokenProxyMode?: 'passthrough' | 'compress' | 'compress-early';
 	/**
+	 * Retrieval: true gives this agent's model the `retrieve_compressed_original`
+	 * tool, so it can ask the token proxy for the lines a compressed tool result
+	 * left out. Absent means off. It has effect only while `tokenProxyMode` is
+	 * `compress` or `compress-early`, and it is cleared with the mode (see
+	 * `OFF_TOKEN_PROXY_FIELDS` in `shared/local-models/token-proxy.ts`).
+	 */
+	tokenProxyRetrieval?: boolean;
+	/**
 	 * Run on: where this agent's model runs. Absent (or `provider`) is the
 	 * provider's own cloud model; a `source` target points the same harness at a
 	 * model on a Local Models source, resolved at launch by `resolveRunOnLaunch`

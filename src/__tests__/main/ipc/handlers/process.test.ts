@@ -75,6 +75,7 @@ import { fingerprintGrokSpawnSelection } from '../../../../shared/grokSpawnSelec
 import { sha256Hex } from '../../../../shared/maestro-lib/grok/host-seams';
 import type { SpawnProcessConfig } from '../../../../main/ipc/handlers/process/spawn-types';
 import type { SshRemoteConfig } from '../../../../shared/types';
+import { MCP_CONFIG_BY_AGENT } from '../../../../shared/plugins/mcp-agent-config';
 import type { ProviderSwitchTab } from '../../../../shared/maestro-lib/agents/providerSwap';
 import type { SpawnResult } from '../../../../main/process-manager/types';
 import * as path from 'path';
@@ -395,8 +396,22 @@ const mockEnsureTokenProxyForGateway = vi.hoisted(() =>
 const mockTokenProxyLaunchGatewayUrl = vi.hoisted(() =>
 	vi.fn(async (_agentId: string | undefined, gatewayUrl: string | undefined) => gatewayUrl)
 );
+// Retrieval is off unless a test turns it on; a launch binding is the
+// service's to issue, so the default is none.
+const mockAgentHasTokenProxyRetrieval = vi.hoisted(() => vi.fn(async (_agentId: string) => false));
+const mockRegisterTokenProxyRecoveryLaunch = vi.hoisted(() =>
+	vi.fn(
+		async (
+			_agentId: string,
+			_gatewayUrl: string,
+			_recovery: unknown
+		): Promise<{ gatewayUrl: string; release: () => void } | null> => null
+	)
+);
 vi.mock('../../../../main/local-models/proxy/service', () => ({
+	agentHasTokenProxyRetrieval: mockAgentHasTokenProxyRetrieval,
 	ensureTokenProxyForGateway: mockEnsureTokenProxyForGateway,
+	registerTokenProxyRecoveryLaunch: mockRegisterTokenProxyRecoveryLaunch,
 	tokenProxyLaunchGatewayUrl: mockTokenProxyLaunchGatewayUrl,
 }));
 
@@ -1575,6 +1590,198 @@ describe('process IPC handlers', () => {
 				});
 
 				expect(mockEnsureTokenProxyForGateway).not.toHaveBeenCalled();
+			});
+
+			describe('an agent with token proxy retrieval in effect', () => {
+				const proxyGateway = `${gatewayUrl}/agent/agent-gw/anthropic`;
+				const bound = `${gatewayUrl}/agent/agent-gw/launch/${'b'.repeat(64)}/anthropic`;
+				let release: ReturnType<typeof vi.fn>;
+
+				beforeEach(() => {
+					release = vi.fn();
+					storeAgent({ id: 'agent-gw', gatewayUrl: `${gatewayUrl}/anthropic` });
+					mockTokenProxyLaunchGatewayUrl.mockResolvedValue(proxyGateway);
+					mockAgentHasTokenProxyRetrieval.mockResolvedValue(true);
+					mockRegisterTokenProxyRecoveryLaunch.mockResolvedValue({ gatewayUrl: bound, release });
+				});
+
+				afterEach(() => {
+					mockTokenProxyLaunchGatewayUrl.mockImplementation(async (_id, url) => url);
+					mockAgentHasTokenProxyRetrieval.mockResolvedValue(false);
+					mockRegisterTokenProxyRecoveryLaunch.mockResolvedValue(null);
+				});
+
+				function bridgeArgs(args: string[]): string | undefined {
+					const at = args.indexOf('--mcp-config');
+					return at === -1 ? undefined : args[at + 1];
+				}
+
+				it('binds the launch, hands the process the bound URL and injects the bridge with plugins off', async () => {
+					await spawnClaude();
+
+					expect(mockAgentHasTokenProxyRetrieval).toHaveBeenCalledWith('agent-gw');
+					// The proxy is up before the launch is bound to it.
+					expect(mockEnsureTokenProxyForGateway).toHaveBeenCalledWith(proxyGateway);
+					expect(mockRegisterTokenProxyRecoveryLaunch).toHaveBeenCalledWith(
+						'agent-gw',
+						proxyGateway,
+						{ kind: 'mcp-retrieve-tool' }
+					);
+					const spawned = mockProcessManager.spawn.mock.calls[0][0];
+					expect(spawned.customEnvVars).toMatchObject({ ANTHROPIC_BASE_URL: bound });
+					const config = bridgeArgs(spawned.args);
+					expect(config).toBeDefined();
+					expect(JSON.parse(config!).mcpServers.maestro.args).toEqual(
+						expect.arrayContaining(['mcp', 'serve', '--tab', 'agent-gw'])
+					);
+					expect(release).not.toHaveBeenCalled();
+					// The binding lives exactly as long as the process.
+					for (const [event, listener] of mockProcessManager.on.mock.calls as Array<
+						[string, (sessionId: string) => void]
+					>) {
+						if (event === 'exit') listener('agent-gw-ai-tab-1');
+					}
+					expect(release).toHaveBeenCalledTimes(1);
+				});
+
+				it('gives an interactive (maestro-p) launch the bridge after the script path', async () => {
+					const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+					storeAgent({
+						id: 'agent-gw',
+						gatewayUrl: `${gatewayUrl}/anthropic`,
+						enableMaestroP: true,
+						maestroPMode: 'interactive',
+						maestroPPath,
+					});
+					const apiArgs = ['--print', '--verbose', '--output-format', 'stream-json'];
+					mockAgentDetector.getAgent.mockResolvedValue({
+						id: 'claude-code',
+						name: 'Claude Code',
+						command: 'claude',
+						args: apiArgs,
+						apiCommand: 'claude',
+						interactiveCommand: 'maestro-p',
+						interactiveModeArgs: [],
+						requiresPty: true,
+					});
+					mockProcessManager.spawn.mockReturnValue({ pid: 3101, success: true });
+					await handlers.get('process:spawn')!({} as any, {
+						sessionId: 'agent-gw-ai-tab-1',
+						toolType: 'claude-code',
+						cwd: '/test',
+						command: '/usr/local/bin/claude',
+						args: apiArgs,
+						prompt: 'hi',
+					});
+
+					expect(mockRegisterTokenProxyRecoveryLaunch).toHaveBeenCalledWith(
+						'agent-gw',
+						proxyGateway,
+						{ kind: 'mcp-retrieve-tool' }
+					);
+					const spawned = mockProcessManager.spawn.mock.calls[0][0];
+					expect(spawned.command).toBe(process.execPath);
+					// Node reads the script path first; maestro-p forwards the rest to claude.
+					expect(spawned.args[0]).toBe(maestroPPath);
+					expect(spawned.args.indexOf('--mcp-config')).toBeGreaterThan(0);
+					expect(JSON.parse(bridgeArgs(spawned.args)!).mcpServers.maestro.args).toEqual(
+						expect.arrayContaining(['mcp', 'serve', '--tab', 'agent-gw'])
+					);
+					expect(spawned.customEnvVars).toMatchObject({
+						ANTHROPIC_BASE_URL: bound,
+						MAESTRO_CLAUDE_BIN: '/usr/local/bin/claude',
+					});
+				});
+
+				it('gives a Codex launch the bridge through its config overrides', async () => {
+					mockAgentDetector.getAgent.mockResolvedValue({ id: 'codex', requiresPty: false });
+					mockProcessManager.spawn.mockReturnValue({ pid: 3102, success: true });
+					await handlers.get('process:spawn')!({} as any, {
+						sessionId: 'agent-gw-ai-tab-1',
+						toolType: 'codex',
+						cwd: '/test',
+						command: 'codex',
+						args: ['exec', '--json'],
+					});
+					const spawned = mockProcessManager.spawn.mock.calls[0][0];
+					expect(spawned.args).toEqual(
+						expect.arrayContaining([`openai_base_url=${JSON.stringify(bound)}`])
+					);
+					expect(spawned.args.some((arg: string) => arg.startsWith('mcp_servers.'))).toBe(true);
+				});
+
+				it('injects no bridge and binds nothing with plugins off and retrieval off', async () => {
+					mockAgentHasTokenProxyRetrieval.mockResolvedValue(false);
+					await spawnClaude();
+
+					expect(mockRegisterTokenProxyRecoveryLaunch).not.toHaveBeenCalled();
+					const spawned = mockProcessManager.spawn.mock.calls[0][0];
+					expect(spawned.customEnvVars).toMatchObject({ ANTHROPIC_BASE_URL: proxyGateway });
+					expect(bridgeArgs(spawned.args)).toBeUndefined();
+					expect(spawned.customEnvVars ?? {}).not.toHaveProperty('MAESTRO_PLUGIN_RUN_TOKEN_FILE');
+				});
+
+				it('binds nothing for a spawn whose id is not the agent the bridge would prove', async () => {
+					await spawnClaude({ sessionId: 'agent-gw-batch-1760000000000' });
+					expect(mockRegisterTokenProxyRecoveryLaunch).not.toHaveBeenCalled();
+					expect(bridgeArgs(mockProcessManager.spawn.mock.calls[0][0].args)).toBeUndefined();
+				});
+
+				it('releases the binding and injects no bridge when a user base URL wins', async () => {
+					await spawnClaude({
+						sessionCustomEnvVars: { ANTHROPIC_BASE_URL: 'https://mine.example.com' },
+					});
+					expect(release).toHaveBeenCalledTimes(1);
+					expect(bridgeArgs(mockProcessManager.spawn.mock.calls[0][0].args)).toBeUndefined();
+				});
+
+				it('releases the binding and injects no bridge when the MCP admission rule refuses it', async () => {
+					// A verified strategy the admission rule still refuses: no version is
+					// observed before a desktop spawn, so a version-bound one never qualifies.
+					const original = MCP_CONFIG_BY_AGENT['claude-code'];
+					MCP_CONFIG_BY_AGENT['claude-code'] = { ...original, qualifiedVersions: ['9.9.9'] };
+					try {
+						await spawnClaude();
+					} finally {
+						MCP_CONFIG_BY_AGENT['claude-code'] = original;
+					}
+					expect(mockRegisterTokenProxyRecoveryLaunch).toHaveBeenCalled();
+					expect(release).toHaveBeenCalledTimes(1);
+					const spawned = mockProcessManager.spawn.mock.calls[0][0];
+					expect(bridgeArgs(spawned.args)).toBeUndefined();
+					expect(spawned.customEnvVars ?? {}).not.toHaveProperty('MAESTRO_PLUGIN_RUN_TOKEN_FILE');
+				});
+
+				it('keeps the plain launch when the proxy will not bind it, and offers no tool', async () => {
+					mockRegisterTokenProxyRecoveryLaunch.mockResolvedValue(null);
+					await spawnClaude();
+					const spawned = mockProcessManager.spawn.mock.calls[0][0];
+					expect(spawned.customEnvVars).toMatchObject({ ANTHROPIC_BASE_URL: proxyGateway });
+					expect(bridgeArgs(spawned.args)).toBeUndefined();
+				});
+
+				it('releases the binding when the spawn fails or is refused', async () => {
+					mockAgentDetector.getAgent.mockResolvedValue({ id: 'claude-code', requiresPty: false });
+					mockProcessManager.spawn.mockReturnValue({ pid: 0, success: false });
+					await expect(
+						handlers.get('process:spawn')!({} as any, {
+							sessionId: 'agent-gw-ai-tab-1',
+							toolType: 'claude-code',
+							cwd: '/test',
+							command: 'claude',
+							args: [],
+						})
+					).rejects.toThrow('agent process did not start');
+					expect(release).toHaveBeenCalled();
+
+					release.mockClear();
+					mockEnsureTokenProxyForGateway
+						.mockResolvedValueOnce({ ok: true })
+						.mockResolvedValueOnce({ ok: false, error: 'port in use' });
+					const refused = await spawnClaude();
+					expect(refused).toEqual({ success: false, pid: 0 });
+					expect(release).toHaveBeenCalled();
+				});
 			});
 
 			it('refuses to spawn when the token proxy cannot start, and says so in the tab', async () => {

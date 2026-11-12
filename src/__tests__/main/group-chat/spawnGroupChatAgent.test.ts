@@ -336,6 +336,8 @@ describe('spawnGroupChatAgent', () => {
 			expect(mockApplyGateway).toHaveBeenCalledWith({
 				agentId: 'agent-7',
 				toolType: 'codex',
+				// Its batch subcommand and defaults, for a gateway that needs them (OpenCode).
+				agent: expect.objectContaining({ id: 'codex' }),
 				args: ['exec'],
 				customEnvVars: { FOO: '1' },
 				remote: null,

@@ -90,7 +90,7 @@ import type {
 	CompressedBlock,
 	CompressRequestResult,
 	CompressRequestStats,
-	LocalRecoveryCapability,
+	LaunchCapability,
 } from './compress';
 
 /**
@@ -252,9 +252,7 @@ export interface TokenProxyServerOptions {
 	 */
 	modeFor?: (agentId: string | null) => TokenProxyRequestMode;
 	/** Host registry lookup only. Request bodies/headers cannot supply evidence. */
-	recoveryFor?: (
-		target: Extract<TokenProxyTarget, { ok: true }>
-	) => LocalRecoveryCapability | undefined;
+	recoveryFor?: (target: Extract<TokenProxyTarget, { ok: true }>) => LaunchCapability | undefined;
 	/**
 	 * Shortens a request body in `compress` mode (`compressRequestBody`). It
 	 * takes and returns text. Without it every request is a passthrough.
@@ -262,7 +260,7 @@ export interface TokenProxyServerOptions {
 	compress?: (
 		kind: TokenProxyRequestKind,
 		body: string,
-		options: { early: boolean; recovery?: LocalRecoveryCapability }
+		options: { early: boolean; recovery?: LaunchCapability }
 	) => Promise<CompressRequestResult>;
 	/**
 	 * Where one agent's background requests go, or null when they go to the

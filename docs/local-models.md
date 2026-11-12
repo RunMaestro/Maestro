@@ -966,15 +966,30 @@ A gateway is an HTTP proxy that an agent's requests go through on the way to its
 
 The gateway table is on **Models -> Gateway**. A gateway is set per agent and is off until you type a URL. When the agent next starts, Maestro points the provider's CLI at that URL:
 
-| Provider    | How it is pointed at the gateway                                           |
-| ----------- | -------------------------------------------------------------------------- |
-| Claude Code | `ANTHROPIC_BASE_URL`                                                       |
-| Codex       | `OPENAI_BASE_URL`, and the argument `-c openai_base_url="<url>"`           |
-| Copilot CLI | Nothing. Copilot CLI ignores base-URL variables, so the field is disabled. |
-| OpenCode    | Nothing. It sets a base URL per model provider in its own config file.     |
-| Others      | Nothing known to Maestro. The field is disabled and says so.               |
+| Provider    | How it is pointed at the gateway                                                                                                       |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | `ANTHROPIC_BASE_URL`                                                                                                                   |
+| Codex       | `OPENAI_BASE_URL`, and the argument `-c openai_base_url="<url>"`                                                                       |
+| OpenCode    | `OPENCODE_CONFIG_CONTENT`: the `anthropic` and `openai` providers get the gateway as `baseURL`, and `opencode run` gets `--standalone` |
+| Others      | Nothing. The field is disabled and says why (see the next table).                                                                      |
 
 Codex gets both because Codex CLI does not read `OPENAI_BASE_URL` on a ChatGPT login (tested with 0.162.1); the argument is what it honors.
+
+OpenCode reads no base-URL variable. Maestro adds the gateway to the inline config document it already gives each OpenCode launch, merged over your own config files, and limits the run to the `anthropic` and `openai` providers. An OpenCode agent whose model is from any other provider (`openrouter/...`, `google/...`) fails by name instead of running direct. For OpenCode a gateway URL you type is the API root with `/v1` (`http://127.0.0.1:8787/v1`), because OpenCode appends only `/messages` or `/responses`; the Maestro proxy adds the `/v1` itself. Tested with OpenCode 2.2.7.
+
+Maestro maps a provider only after a test proves its CLI reads the setting: the setting is pointed at a closed port, and the turn must fail to connect. A setting that is only documented is not enough, because a CLI that ignores it runs direct while the app says it goes through the gateway. These providers have no gateway:
+
+| Provider                | Why not                                                                                                                                                                                                                                                                                                                                 |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Copilot CLI             | It reads a base URL (`COPILOT_PROVIDER_BASE_URL`) only for a provider you bring your own key for, and that takes the turn off your Copilot subscription. To carry a subscription a proxy would have to do the Copilot token exchange, which Maestro does not. With your own key, set the variable in the agent's environment variables. |
+| Factory Droid           | Not tested yet. It sets a base URL per custom model in `~/.factory/settings.json`: point a custom model at the gateway there.                                                                                                                                                                                                           |
+| Qwen3 Coder             | Not tested yet. With an OpenAI-compatible key it is documented to read `OPENAI_BASE_URL`: set it in the agent's environment variables.                                                                                                                                                                                                  |
+| Hermes                  | Not tested yet. It sets a custom endpoint in `~/.hermes/config.yaml` (`model.base_url`).                                                                                                                                                                                                                                                |
+| Pi, Oh My Pi            | Not tested yet. Each sets a provider's base URL in its own models file (`~/.pi/agent/models.json`, `~/.omp/agent/models.yml`).                                                                                                                                                                                                          |
+| Grok CLI                | Not tested yet. If it reads a base-URL variable, set it in the agent's environment variables.                                                                                                                                                                                                                                           |
+| Antigravity, Gemini CLI | No base-URL variable is known.                                                                                                                                                                                                                                                                                                          |
+
+Maestro does not check a setting you make yourself in an agent's environment variables or a provider's config file.
 
 A gateway sends an agent's requests to its cloud provider by another route. To send them to a model on another server instead, use [Run on](#run-on). The two do not combine: while an agent's Run on target is a source, its gateway is not applied.
 
@@ -1013,25 +1028,35 @@ Choosing any mode but Off sets the agent's gateway URL to the proxy for you. Cho
 **Which compress mode to pick.** The note under the control says the same thing in one sentence.
 
 - **Compress** changes nothing about what the model works from: it reads every tool result in full, and the result is shortened only once it is history. The cost is that the result is written to your provider's prompt cache twice, in full and then shortened. Measured on Claude Code, that made a short session (4 to 6 requests) cost between 2% and 36% more than Passthrough, depending on the output, and it pays back only in a longer one. Pick it for long sessions where you want the model to see everything once.
-- **Compress early** shortens a result before the model sees it, so nothing is ever cached in full and it is the cheapest mode. In a measured four-turn session it cost 14% less than Passthrough, where Compress cost 36% more. Because the model never reads the original, Compress early only uses reductions that leave nothing out: it minifies JSON, uses lossless tables, strips terminal escapes, folds repeated lines into one copy and a count, and groups Git status. It never samples a list, cuts a line, or asks a local model to summarize, so a result that only those would shorten goes out whole. Pick it when the tool output is mostly build logs, test runs, and JSON.
+- **Compress early** shortens a result before the model sees it, so nothing is ever cached in full and it is the cheapest mode. In a measured four-turn session it cost 14% less than Passthrough, where Compress cost 36% more. Because the model never reads the original, Compress early only uses reductions that leave nothing out: it minifies JSON, uses lossless tables, strips terminal escapes, folds repeated lines into one copy and a count, and groups Git status. It never samples a list, cuts a line, or asks a local model to summarize, so a result that only those would shorten goes out whole. Pick it when the tool output is mostly build logs, test runs, and JSON. Turn on **Retrieval** (below) to let Compress early leave lines out too.
+
+**Retrieval.** In **Edit Agent -> Models**, a **Retrieval** switch sits beside the Maestro proxy control while the mode is Compress or Compress early. It is off by default. When it is on, the agent's model gets one more tool, `retrieve_compressed_original`: it passes the `sha256=` value from a block's marker and, optionally, a line range, and gets back the original lines (200 at a time by default, at most 1,000 lines or 256 KiB per call) with a first line that says which lines came back and whether more exist. What that changes:
+
+- **Compress early may leave content out.** With the tool, Compress early uses every reduction Compress uses, including sampling a list and summarizing with a local model, because the model can read past anything that was dropped. Without the tool it keeps the reductions that leave nothing out, as above. A launch without the tool never gets a block it could not recover, even in a conversation an earlier launch with the tool shortened.
+- **Compress does not change.** It already lets the model read every result in full once; the switch only gives that model a way to look again.
+- **The tool reaches only originals this machine still holds.** Originals unused for 30 days are pruned (see below). Asking for a pruned or unknown hash is a tool error that says so, and the model works from the shortened text.
+- **A retrieved original is never shortened again.**
+- **Which launches get it.** Claude Code (in both its `claude --print` and its interactive mode) and Codex agents on this machine, in the turns you send from the app. Maestro gives the tool through the same per-launch MCP server it uses for plugin tools, so it works with Plugins off and edits no global config. An OpenCode agent does not get it yet, because Maestro has not verified that server for OpenCode. Nor do an agent on an SSH remote, an Auto Run task, a Cue run, a Group Chat, a consult, or `maestro-cli send`. Those turns keep the lossless reductions.
+- **Applies from the agent's next turn.** Setting the proxy mode to Off, a gateway URL of your own, or another provider turns it off with the proxy. In Passthrough the switch is hidden and has no effect.
 
 What both compress modes do, and do not do:
 
 - **They shorten only tool results**, and only ones over about 1,000 tokens. Your messages, the system prompt, tool definitions, and the agent's own text are never changed.
 - **Explicit failures and recognized original-recovery commands stay whole.** These checks run before cached replacements are used. Unknown tool status is not treated as success.
-- **The same text always shortens to the same bytes while you use it.** Each result is keyed by a SHA-256 hash of its content and the first result is kept, so your provider's prompt cache keeps working. Compress early keeps its own results, apart from Compress.
+- **The same text always shortens to the same bytes while you use it.** Each result is stored under a SHA-256 key made from its content and the first result is kept, so your provider's prompt cache keeps working. Compress early keeps its own results, apart from Compress.
 - **The originals do not stay forever.** The proxy prunes its cache once a day while it runs: entries unused for 30 days, then the least recently used while the cache is over 512 MB. Nothing used in the last day is removed. A conversation you resume after its entries were pruned has those results shortened again, which costs nothing, because your provider's prompt cache expired long before.
-- **Every change is marked and kept.** A shortened block ends with `[maestro-compressed sha256=... original_tokens=...]`, and the original stays on this machine.
+- **Every change is marked and kept.** A shortened block ends with `[maestro-compressed sha256=... original_tokens=...]`, and the original stays on this machine. The `sha256=` value names the cache entry that holds the original (pass it to `maestro-cli models proxy block`). In Compress early it is not the hash of the content, because that mode keeps its own entries.
 - **If shortening fails, the request is sent as it arrived.** You do not lose a turn to it.
 - **A local model is optional.** Rules handle JSON, repeated logs, protected diagnostic lines, and recognized Git, search, successful test/build, and warning-only lint output. Eligible scalar JSON rows use a labelled table that preserves key/value lexemes and distinguishes missing keys from null. Other JSON can still use lossy array sampling. Assign the **Token proxy** task a model on **Models -> System Two** to also summarize results that are still very large.
 
 Under the table, **Maestro token proxy** shows what it did in the last 30 days, in all and per agent: requests, tokens saved, and the average time a request was held to be shortened. Tokens saved is an estimate at 4 characters per token. On output full of paths, digits and stack traces the real saving can be about twice the figure shown. Below the table, **Provider counted** sums what your provider itself reported for each request, in every mode including Passthrough: uncached input, cache reads, cache writes, and output. Those are exact. Compare a Passthrough week with a Compress week to see what compression really saved. **Recent compressions** lists the blocks it last shortened. Select one to see a diff of what the agent sent against what was sent in its place.
 
-The proxy cannot be used by an agent on an SSH remote (the remote host cannot reach this machine's `127.0.0.1`) or by a provider with no base-URL variable. The control is disabled for those and says why. A turn started with `maestro-cli send` goes through the proxy unchanged and is counted without an agent name, because only the app tells the proxy which agent a request belongs to.
+The proxy reaches the providers in the first table above: Claude Code, Codex, and OpenCode (for an `anthropic/...` or `openai/...` model; any other model is refused when you pick a mode). It cannot be used by an agent on an SSH remote (the remote host cannot reach this machine's `127.0.0.1`) or by a provider in the second table. The control is disabled for those and says why. A turn started with `maestro-cli send` goes through the proxy unchanged and is counted without an agent name, because only the app tells the proxy which agent a request belongs to.
 
 ```bash
 maestro-cli update-agent <agent-id> --proxy-mode compress   # off | passthrough | compress | compress-early
-maestro-cli show agent <agent-id> --json                    # tokenProxyMode
+maestro-cli update-agent <agent-id> --proxy-retrieval on     # on | off; only while compressing
+maestro-cli show agent <agent-id> --json                    # tokenProxyMode, tokenProxyRetrieval
 maestro-cli models proxy status                             # the listener, agents, totals, recent compressions
 maestro-cli models proxy block <hash>                       # a diff of one shortened block
 maestro-cli models proxy block <hash> --original --lines 10:30
@@ -1039,7 +1064,7 @@ maestro-cli models proxy cache                              # entries, size, lea
 maestro-cli models proxy cache prune --older-than 7d        # prune now (never below 1 day)
 ```
 
-`--lines` selects inclusive, 1-based original lines, with a maximum of 1,000 lines and 256 KiB returned text. It requires `--original`. Standard output contains the exact selected text; standard error reports which lines were returned and whether the selection is complete. With `--json`, that metadata is in `block.originalRange`. A request past EOF can return fewer lines; a scan or byte limit fails explicitly. Token totals and the compressed side still describe the whole block. Executable recovery hints await launch-environment proof; compressed markers currently identify the archive by hash.
+`--lines` selects inclusive, 1-based original lines, with a maximum of 1,000 lines and 256 KiB returned text. It requires `--original`. Standard output contains the exact selected text; standard error reports which lines were returned and whether the selection is complete. With `--json`, that metadata is in `block.originalRange`. A request past EOF can return fewer lines; a scan or byte limit fails explicitly. Token totals and the compressed side still describe the whole block. The marker names the archive by hash and carries no shell command; a model reads an original through the Retrieval tool, a person through `models proxy block`.
 
 ### Background requests
 

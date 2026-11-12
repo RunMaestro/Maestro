@@ -201,8 +201,20 @@ export function resolveTokenProxyTarget(
 }
 
 /** The base URL an agent is given to reach `route` through the proxy. */
-export function tokenProxyGatewayUrl(port: number, route: TokenProxyRouteId): string {
-	return `http://${TOKEN_PROXY_HOST}:${port}${TOKEN_PROXY_ROUTES[route].gatewayPath}`;
+export function tokenProxyGatewayUrl(
+	port: number,
+	route: TokenProxyRouteId,
+	toolType?: string
+): string {
+	const path = TOKEN_PROXY_ROUTES[route].gatewayPath;
+	// A provider whose gateway URL carries the API version (OpenCode's SDK
+	// `baseURL`) is given the route's `/v1`, which it then never appends itself.
+	const support = toolType === undefined ? undefined : agentGatewaySupport(toolType);
+	const versioned =
+		support?.supported && support.urlIncludesApiVersion && !path.endsWith('/v1')
+			? `${path}/v1`
+			: path;
+	return `http://${TOKEN_PROXY_HOST}:${port}${versioned}`;
 }
 
 /**
@@ -289,16 +301,31 @@ export const TOKEN_PROXY_MODES: readonly TokenProxyMode[] = [
 
 /**
  * What an agent's record holds once it is off the Maestro token proxy: no
- * mode, and no background requests target. Every writer that moves an agent's
- * gateway away from the proxy spreads this, so the two cannot drift apart.
+ * mode, no background requests target, and no retrieval. Every writer that
+ * moves an agent's gateway away from the proxy spreads this, so the fields
+ * cannot drift apart.
  *
  * Shared, so the renderer's writers and the pure group-defaults publish
- * (`applyGroupDefaultsToSession`) clear the same two fields.
+ * (`applyGroupDefaultsToSession`) clear the same fields.
  */
 export const OFF_TOKEN_PROXY_FIELDS: Readonly<{
 	tokenProxyMode: undefined;
 	backgroundRequests: undefined;
-}> = Object.freeze({ tokenProxyMode: undefined, backgroundRequests: undefined });
+	tokenProxyRetrieval: undefined;
+}> = Object.freeze({
+	tokenProxyMode: undefined,
+	backgroundRequests: undefined,
+	tokenProxyRetrieval: undefined,
+});
+
+/** Whether a record still holds any field {@link OFF_TOKEN_PROXY_FIELDS} clears. */
+export function holdsTokenProxyFields(
+	record: Readonly<Partial<Record<keyof typeof OFF_TOKEN_PROXY_FIELDS, unknown>>>
+): boolean {
+	return (Object.keys(OFF_TOKEN_PROXY_FIELDS) as Array<keyof typeof OFF_TOKEN_PROXY_FIELDS>).some(
+		(key) => record[key] !== undefined
+	);
+}
 
 /** The part of the mode that is stored on the agent. `off` is the gateway's absence. */
 export type StoredTokenProxyMode = Exclude<TokenProxyMode, 'off'>;
@@ -356,6 +383,67 @@ export function isCompressingTokenProxyMode(mode: TokenProxyMode): boolean {
 	return mode === 'compress' || mode === 'compress-early';
 }
 
+/**
+ * Retrieval: the per-agent switch that gives the agent's model the
+ * `retrieve_compressed_original` tool, so it can ask the proxy for the lines a
+ * compressed tool result left out. Stored as `tokenProxyRetrieval: true` on the
+ * agent record; off is the field's absence. It has effect only in a compressing
+ * mode, and it leaves with the proxy ({@link OFF_TOKEN_PROXY_FIELDS}).
+ */
+export const TOKEN_PROXY_RETRIEVAL_FIELD = 'tokenProxyRetrieval';
+
+/** What the switch means in each position, for the Models tab and the CLI. */
+export const TOKEN_PROXY_RETRIEVAL_DESCRIPTIONS: Readonly<Record<'on' | 'off', string>> =
+	Object.freeze({
+		on: 'The model can ask for the original lines of a tool result the proxy shortened, so Compress early may leave lines out. It reaches only originals this machine still holds.',
+		off: 'The model cannot ask for an original, so Compress early only uses reductions that leave nothing out.',
+	});
+
+/** Why turning retrieval on is refused for an agent the proxy does not compress for. */
+export const TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION =
+	'Retrieval works only while the Maestro token proxy compresses this agent: set its proxy mode to compress or compress-early first.';
+
+export type TokenProxyRetrievalEdit =
+	| { ok: true; retrieval: true | undefined }
+	| { ok: false; error: string };
+
+/**
+ * Read a retrieval value from the CLI, the bridge or a click. `true` turns it
+ * on; `false` and `null` remove the field. Anything else is refused by name.
+ */
+export function parseTokenProxyRetrievalEdit(value: unknown): TokenProxyRetrievalEdit {
+	if (value === true) return { ok: true, retrieval: true };
+	if (value === false || value === null || value === undefined) {
+		return { ok: true, retrieval: undefined };
+	}
+	return { ok: false, error: `${TOKEN_PROXY_RETRIEVAL_FIELD} must be true, false or null.` };
+}
+
+/**
+ * Whether retrieval has effect for one agent now: the switch is on and the
+ * proxy compresses its requests (its gateway reaches the proxy and the stored
+ * mode is `compress` or `compress-early`). A stored `true` under passthrough
+ * is kept but does nothing, so it gives the model no tool.
+ */
+export function isTokenProxyRetrievalInEffect(input: {
+	retrieval?: unknown;
+	gatewayUrl?: string | null;
+	storedMode?: unknown;
+	/** The proxy's port, or null when none has been chosen yet. */
+	port: number | null;
+}): boolean {
+	return (
+		input.retrieval === true &&
+		isCompressingTokenProxyMode(
+			resolveTokenProxyMode({
+				gatewayUrl: input.gatewayUrl,
+				storedMode: input.storedMode,
+				port: input.port,
+			})
+		)
+	);
+}
+
 /** Narrow a value from the CLI, the bridge or a stored record. Never a cast. */
 export function asTokenProxyMode(value: unknown): TokenProxyMode | undefined {
 	return TOKEN_PROXY_MODES.includes(value as TokenProxyMode)
@@ -388,11 +476,14 @@ export function resolveTokenProxyMode(input: {
  * Which route an agent's traffic takes through the proxy, or null with the
  * reason when it cannot use the proxy at all. `env` is the agent's effective
  * environment (`resolveAgentEnvironment`): Codex with an API key talks to
- * api.openai.com, and with a ChatGPT login to a different host.
+ * api.openai.com, and with a ChatGPT login to a different host. `model` is the
+ * agent's model (its own, or the provider default): OpenCode's route is the
+ * provider its model names (`anthropic/...`, `openai/...`).
  */
 export function tokenProxyRouteForAgent(
 	toolType: string,
-	env: Record<string, string>
+	env: Record<string, string>,
+	model?: string
 ): { ok: true; route: TokenProxyRouteId } | { ok: false; error: string } {
 	const support = agentGatewaySupport(toolType);
 	if (!support.supported) return { ok: false, error: support.reason };
@@ -400,6 +491,18 @@ export function tokenProxyRouteForAgent(
 	if (toolType === 'codex') {
 		const apiKey = classifyCredentialKind(toolType, env).kind === 'api-key';
 		return { ok: true, route: apiKey ? 'openai' : 'chatgpt' };
+	}
+	if (toolType === 'opencode') {
+		const provider = model?.trim().split('/')[0] ?? '';
+		if (provider === 'anthropic') return { ok: true, route: 'anthropic' };
+		if (provider === 'openai') return { ok: true, route: 'openai' };
+		return {
+			ok: false,
+			error:
+				provider === ''
+					? `${TOKEN_PROXY_NAME} carries OpenCode only for an anthropic/... or openai/... model, and this agent names none. Set its model first.`
+					: `${TOKEN_PROXY_NAME} carries OpenCode only for an anthropic/... or openai/... model, not "${model?.trim()}".`,
+		};
 	}
 	return { ok: false, error: `${TOKEN_PROXY_NAME} has no route for "${toolType}".` };
 }

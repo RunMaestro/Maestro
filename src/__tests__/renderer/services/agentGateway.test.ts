@@ -4,7 +4,8 @@
  * Also the Maestro token proxy mode switch, which is the same kind of write:
  * the mode and the gateway URL it implies are stored and flushed together.
  * And the background requests target, which belongs to the proxy: refused for
- * an agent that is not on it, and gone when the agent leaves it.
+ * an agent that is not on it, and gone when the agent leaves it. And the
+ * retrieval switch, refused unless the proxy compresses, and cleared the same way.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -14,7 +15,9 @@ import {
 	setAgentBackgroundRequests,
 	setAgentGatewayUrl,
 	setAgentTokenProxyMode,
+	setAgentTokenProxyRetrieval,
 } from '../../../renderer/services/agentGateway';
+import { TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION } from '../../../shared/local-models/token-proxy';
 import { BACKGROUND_REQUESTS_NEEDS_PROXY } from '../../../shared/local-models/background-requests';
 import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -194,7 +197,7 @@ describe('setAgentGatewayUrl', () => {
 
 		expect(result).toEqual({
 			ok: false,
-			error: expect.stringContaining('ignores base-URL variables'),
+			error: expect.stringContaining('reads a base URL only for a BYOK provider'),
 		});
 	});
 
@@ -293,6 +296,27 @@ describe('setAgentTokenProxyMode', () => {
 		expect(stored().gatewayUrl).toBe(proxyUrl('/openai/v1'));
 	});
 
+	it("routes OpenCode by its model's provider, on a URL that carries /v1", async () => {
+		seed({ toolType: 'opencode', customModel: 'anthropic/claude-opus-4-5' } as Partial<Session>);
+		await setAgentTokenProxyMode('agent-1', 'passthrough');
+		expect(stored().gatewayUrl).toBe(proxyUrl('/anthropic/v1'));
+
+		// With no model of its own, the provider default decides.
+		seed({ toolType: 'opencode' } as Partial<Session>);
+		vi.mocked(window.maestro.agents.getConfig).mockResolvedValueOnce({ model: 'openai/gpt-5' });
+		await setAgentTokenProxyMode('agent-1', 'passthrough');
+		expect(stored().gatewayUrl).toBe(proxyUrl('/openai/v1'));
+
+		// A model the proxy cannot carry is refused, and nothing is stored.
+		const original = seed({
+			toolType: 'opencode',
+			customModel: 'ollama/qwen3:8b',
+		} as Partial<Session>);
+		const refused = await setAgentTokenProxyMode('agent-1', 'passthrough');
+		expect(refused.ok).toBe(false);
+		expect(stored()).toBe(original);
+	});
+
 	it('writes nothing when the mode did not change', async () => {
 		seed({ gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress' });
 
@@ -342,7 +366,8 @@ describe('setAgentTokenProxyMode', () => {
 		const result = await setAgentTokenProxyMode('agent-1', 'compress');
 
 		expect(result.ok).toBe(false);
-		if (!result.ok) expect(result.error).toContain('Copilot CLI ignores base-URL variables');
+		if (!result.ok)
+			expect(result.error).toContain('Copilot CLI reads a base URL only for a BYOK provider');
 		expect(window.maestro.localModels.proxy.ensurePort).not.toHaveBeenCalled();
 		expect(stored().gatewayUrl).toBeUndefined();
 	});
@@ -521,5 +546,119 @@ describe('background requests leave with the proxy', () => {
 		await setAgentTokenProxyMode('agent-1', 'compress');
 
 		expect(stored().backgroundRequests).toEqual({ target: QWEN });
+	});
+});
+
+describe('setAgentTokenProxyRetrieval', () => {
+	it('turns it on for an agent the proxy compresses for, in a flushed write', async () => {
+		seed({ gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress-early' });
+
+		const result = await setAgentTokenProxyRetrieval('agent-1', true);
+
+		expect(result).toEqual({ ok: true, retrieval: true });
+		expect(stored().tokenProxyRetrieval).toBe(true);
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: 'agent-1', tokenProxyRetrieval: true })],
+			[]
+		);
+	});
+
+	it('turns it on in compress mode too', async () => {
+		seed({ gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress' });
+
+		expect(await setAgentTokenProxyRetrieval('agent-1', true)).toEqual({
+			ok: true,
+			retrieval: true,
+		});
+	});
+
+	it.each([
+		['passthrough', { gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'passthrough' }],
+		['off the proxy', {}],
+		['another gateway', { gatewayUrl: 'http://127.0.0.1:8787', tokenProxyMode: 'compress' }],
+	] as const)('refuses on for an agent %s, and writes nothing', async (_label, record) => {
+		seed(record as Partial<Session>);
+
+		const result = await setAgentTokenProxyRetrieval('agent-1', true);
+
+		expect(result).toEqual({ ok: false, error: TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION });
+		expect(stored().tokenProxyRetrieval).toBeUndefined();
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it.each([false, null])('turns it off with %s, which removes the field', async (value) => {
+		seed({
+			gatewayUrl: proxyUrl('/anthropic'),
+			tokenProxyMode: 'compress-early',
+			tokenProxyRetrieval: true,
+		});
+
+		const result = await setAgentTokenProxyRetrieval('agent-1', value);
+
+		expect(result).toEqual({ ok: true, retrieval: false });
+		expect(stored().tokenProxyRetrieval).toBeUndefined();
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+	});
+
+	it('allows off for an agent that is not on the proxy, without reading the proxy', async () => {
+		seed();
+
+		expect(await setAgentTokenProxyRetrieval('agent-1', false)).toEqual({
+			ok: true,
+			retrieval: false,
+		});
+		expect(window.maestro.localModels.proxy.report).not.toHaveBeenCalled();
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('refuses a value that is not a boolean', async () => {
+		seed({ gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress' });
+
+		const result = await setAgentTokenProxyRetrieval('agent-1', 'on');
+
+		expect(result.ok).toBe(false);
+		expect(stored().tokenProxyRetrieval).toBeUndefined();
+	});
+
+	it('reports an agent that does not exist', async () => {
+		seed();
+
+		expect(await setAgentTokenProxyRetrieval('missing', true)).toEqual({
+			ok: false,
+			error: 'Agent not found',
+		});
+	});
+
+	it('is cleared by mode off, even when it is the only proxy field left', async () => {
+		seed({ tokenProxyRetrieval: true });
+
+		await setAgentTokenProxyMode('agent-1', 'off');
+
+		expect(stored().tokenProxyRetrieval).toBeUndefined();
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+	});
+
+	it('is cleared when the gateway is set to another address', async () => {
+		seed({
+			gatewayUrl: proxyUrl('/anthropic'),
+			tokenProxyMode: 'compress-early',
+			tokenProxyRetrieval: true,
+		});
+
+		await setAgentGatewayUrl('agent-1', 'http://127.0.0.1:8787');
+
+		expect(stored().tokenProxyRetrieval).toBeUndefined();
+	});
+
+	it('is kept when the mode changes and the agent stays on the proxy', async () => {
+		seed({
+			gatewayUrl: proxyUrl('/anthropic'),
+			tokenProxyMode: 'compress-early',
+			tokenProxyRetrieval: true,
+		});
+
+		await setAgentTokenProxyMode('agent-1', 'compress');
+
+		expect(stored().tokenProxyRetrieval).toBe(true);
 	});
 });

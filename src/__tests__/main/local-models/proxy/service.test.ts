@@ -62,6 +62,7 @@ vi.mock('../../../../main/local-models/proxy/compression-cache', () => ({
 }));
 
 import {
+	agentHasTokenProxyRetrieval,
 	applyAgentGatewayToSpawn,
 	configureTokenProxy,
 	ensureTokenProxyForGateway,
@@ -85,7 +86,10 @@ import {
 import { configureAgentRunOn, resetAgentRunOnForTests } from '../../../../main/local-models/run-on';
 import type { LocalModelEndpoint } from '../../../../shared/local-models/endpoints';
 import { MODEL_SERVER_ENDPOINT_ID } from '../../../../shared/local-models/model-server';
-import { resolveTokenProxyTarget } from '../../../../shared/local-models/token-proxy';
+import {
+	resolveTokenProxyTarget,
+	tokenProxyGatewayUrl,
+} from '../../../../shared/local-models/token-proxy';
 import type { LocalRecoveryCapability } from '../../../../main/local-models/proxy/compress';
 
 let agents: Array<Record<string, unknown>> = [];
@@ -408,6 +412,32 @@ describe('applyAgentGatewayToSpawn', () => {
 		]);
 	});
 
+	it("adds OpenCode's gateway to its inline config, built on the provider default", async () => {
+		configure();
+		agents = [{ id: 'a1', toolType: 'opencode', gatewayUrl: 'https://litellm.example.com/v1' }];
+		const defaults = '{"permission":{"question":"deny"},"tools":{"question":false}}';
+
+		const result = await applyAgentGatewayToSpawn({
+			...input,
+			toolType: 'opencode',
+			agent: {
+				batchModePrefix: ['run'],
+				defaultEnvVars: { OPENCODE_CONFIG_CONTENT: defaults },
+			},
+			args: ['run', '--format', 'json'],
+		});
+
+		if (!result.ok) throw new Error(result.error);
+		expect(result.args).toEqual(['run', '--standalone', '--format', 'json']);
+		const config = JSON.parse(result.customEnvVars?.OPENCODE_CONFIG_CONTENT ?? 'null');
+		expect(config.permission).toEqual({ question: 'deny' });
+		expect(config.provider.anthropic.options.baseURL).toBe('https://litellm.example.com/v1');
+		expect(result.gateway).toEqual({
+			envVar: 'OPENCODE_CONFIG_CONTENT',
+			url: 'https://litellm.example.com/v1',
+		});
+	});
+
 	it("starts the Maestro proxy and puts the agent's id in the URL", async () => {
 		configure();
 		const port = await ensureTokenProxyPort();
@@ -617,6 +647,53 @@ describe("an agent's mode", () => {
 		options.onRequest?.(entry);
 
 		expect(requestStats.recordTokenProxyRequest).toHaveBeenCalledWith(entry);
+	});
+});
+
+describe('agentHasTokenProxyRetrieval', () => {
+	it('is true only for a local agent with retrieval on that the proxy compresses for', async () => {
+		configure();
+		const port = await ensureTokenProxyPort();
+		const gatewayUrl = tokenProxyGatewayUrl(port, 'anthropic');
+		agents = [
+			{ id: 'early', gatewayUrl, tokenProxyMode: 'compress-early', tokenProxyRetrieval: true },
+			{ id: 'late', gatewayUrl, tokenProxyMode: 'compress', tokenProxyRetrieval: true },
+			// Kept on a passthrough agent, but it shortens nothing, so no tool.
+			{ id: 'pass', gatewayUrl, tokenProxyRetrieval: true },
+			{ id: 'off', gatewayUrl, tokenProxyMode: 'compress-early' },
+			{
+				id: 'other-gateway',
+				gatewayUrl: 'http://127.0.0.1:1/x',
+				tokenProxyMode: 'compress',
+				tokenProxyRetrieval: true,
+			},
+			{
+				id: 'ssh',
+				gatewayUrl,
+				tokenProxyMode: 'compress',
+				tokenProxyRetrieval: true,
+				sessionSshRemoteConfig: { enabled: true },
+			},
+		];
+
+		expect(await agentHasTokenProxyRetrieval('early')).toBe(true);
+		expect(await agentHasTokenProxyRetrieval('late')).toBe(true);
+		for (const id of ['pass', 'off', 'other-gateway', 'ssh', 'gone']) {
+			expect(await agentHasTokenProxyRetrieval(id)).toBe(false);
+		}
+	});
+
+	it('is false while no proxy port has been chosen', async () => {
+		configure();
+		agents = [
+			{
+				id: 'a',
+				gatewayUrl: 'http://127.0.0.1:4000/anthropic',
+				tokenProxyMode: 'compress',
+				tokenProxyRetrieval: true,
+			},
+		];
+		expect(await agentHasTokenProxyRetrieval('a')).toBe(false);
 	});
 });
 
@@ -1039,6 +1116,44 @@ describe('host-issued recovery launch bindings', () => {
 		expect(options.recoveryFor?.(targetFor(launch!.gatewayUrl))).toBeUndefined();
 		vi.stubEnv('MAESTRO_USER_DATA', undefined as unknown as string);
 		expect(options.recoveryFor?.(targetFor(launch!.gatewayUrl))).toBeUndefined();
+	});
+
+	it('binds a launch that was given the retrieve tool, while its switch stays on', async () => {
+		const { port, options } = await startWithCapturedOptions();
+		const plain = `http://127.0.0.1:${port}/anthropic`;
+		agents = [
+			{ id: 'a', gatewayUrl: plain, tokenProxyMode: 'compress-early', tokenProxyRetrieval: true },
+		];
+		const launch = await registerTokenProxyRecoveryLaunch('a', plain, {
+			kind: 'mcp-retrieve-tool',
+		});
+		expect(launch).not.toBeNull();
+		const target = targetFor(launch!.gatewayUrl);
+		expect(options.recoveryFor?.(target)).toEqual({ kind: 'mcp-retrieve-tool' });
+		// Extra fields a caller passes are not kept.
+		const padded = await registerTokenProxyRecoveryLaunch('a', plain, {
+			kind: 'mcp-retrieve-tool',
+			dataDir: '/elsewhere',
+		} as never);
+		expect(options.recoveryFor?.(targetFor(padded!.gatewayUrl))).toEqual({
+			kind: 'mcp-retrieve-tool',
+		});
+		// Another agent, an unbound URL and the agent's settings prove nothing.
+		expect(options.recoveryFor?.({ ...target, agentId: 'b' })).toBeUndefined();
+		expect(
+			options.recoveryFor?.(targetFor((await tokenProxyLaunchGatewayUrl('a', plain))!))
+		).toBeUndefined();
+		// The switch turned off mid-launch: the next call is refused, so the
+		// next request must not get a block only the tool could bring back.
+		agents = [{ ...agents[0], tokenProxyRetrieval: false }];
+		expect(options.recoveryFor?.(target)).toBeUndefined();
+		agents = [{ ...agents[0], tokenProxyRetrieval: true }];
+		expect(options.recoveryFor?.(target)).toEqual({ kind: 'mcp-retrieve-tool' });
+		agents = [];
+		expect(options.recoveryFor?.(target)).toBeUndefined();
+		agents = [{ id: 'a', gatewayUrl: plain, tokenProxyRetrieval: true }];
+		launch!.release();
+		expect(options.recoveryFor?.(target)).toBeUndefined();
 	});
 
 	it('does not revive a queued registration after configuration replacement', async () => {
