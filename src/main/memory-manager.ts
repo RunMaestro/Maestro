@@ -31,6 +31,8 @@ import * as path from 'path';
 import {
 	resolveClaudeMemoryPath,
 	analyzeMemoryLinks,
+	discoverClaudeMemoryPath,
+	resolveMemoryRepositoryRoot,
 } from '../shared/maestro-lib/translation/memory';
 import { assertTranslationTarget } from '../shared/maestro-lib/translation/resource-projections';
 import {
@@ -134,6 +136,38 @@ export function memoryLayoutFor(
 		default:
 			throw new Error(`Memory viewer is not supported for agent "${toolType}"`);
 	}
+}
+
+/**
+ * The layout for an agent whose account dir the caller has already resolved,
+ * with the two refinements Claude adds: it honors `autoMemoryDirectory`, and it
+ * keys a worktree's memory by its main checkout rather than the worktree path.
+ * Store-free, so the desktop (`memory-location.ts`) and `maestro-cli agent
+ * footprint` find the same store. `readCommonDirectory` answers
+ * `git rev-parse --git-common-dir` for the caller's host.
+ */
+export async function resolveProviderMemoryLayout(
+	toolType: string,
+	options: {
+		projectPath: string;
+		accountDir: string;
+		readCommonDirectory: (cwd: string) => Promise<string | undefined>;
+	}
+): Promise<MemoryLayout> {
+	const layout = memoryLayoutFor(toolType, options);
+	if (toolType !== 'claude-code') return layout;
+	const memoryProjectRoot = await resolveMemoryRepositoryRoot(
+		options.projectPath,
+		options.readCommonDirectory
+	);
+	return {
+		...layout,
+		directoryPath: await discoverClaudeMemoryPath(
+			options.projectPath,
+			options.accountDir,
+			memoryProjectRoot
+		),
+	};
 }
 
 function layoutInfo(layout: MemoryLayout): MemoryLayoutInfo {

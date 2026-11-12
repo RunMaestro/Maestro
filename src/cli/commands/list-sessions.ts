@@ -9,15 +9,8 @@
 // number the user can find in the app. See `overlayTabConversationStats` for how
 // the disk-based Claude path is reconciled with it.
 
-import os from 'os';
-import {
-	resolveAgentId,
-	getSessionById,
-	readStoredAiTabs,
-	readAgentConfig,
-	readSettings,
-} from '../services/storage';
-import { resolveAgentAccountDir } from '../../shared/agentAccountDir';
+import { resolveAgentId, getSessionById, readStoredAiTabs } from '../services/storage';
+import { resolveCliAgentAccountDir } from '../services/agent-account-dir';
 import { listClaudeSessions } from '../services/agent-sessions';
 import { formatSessions, formatError, SessionDisplay } from '../output/formatter';
 import { computeTabConversationStats } from '../../shared/tabConversationStats';
@@ -244,21 +237,7 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 				limit,
 				skip,
 				search: options.search,
-				configDir: resolveAgentAccountDir(
-					{
-						toolType: agent.toolType,
-						customEnvVars: agent.customEnvVars,
-						sshRemote: !!agent.sessionSshRemoteConfig?.enabled,
-					},
-					{
-						agentLevelEnvVars: readAgentConfig(agent.toolType).customEnvVars as
-							| Record<string, string>
-							| undefined,
-						globalShellEnvVars: readSettings().shellEnvVars as Record<string, string> | undefined,
-						env: process.env,
-						homeDir: os.homedir(),
-					}
-				),
+				configDir: resolveCliAgentAccountDir(agent),
 			});
 			result = {
 				totalCount: claudeResult.totalCount,

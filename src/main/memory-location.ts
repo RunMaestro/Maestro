@@ -14,13 +14,9 @@ import os from 'os';
 import path from 'path';
 import { MEMORY_INDEX_FILE, type MemoryTarget } from '../shared/agentMemory';
 import { getProviderProfileConfig } from '../shared/providerProfiles';
-import {
-	discoverClaudeMemoryPath,
-	resolveMemoryRepositoryRoot,
-} from '../shared/maestro-lib/translation/memory';
 import { assertTranslationTarget } from '../shared/maestro-lib/translation/resource-projections';
 import { resolveAgentAccountDir } from './agents/provider-account-dirs';
-import { memoryLayoutFor, type MemoryLayout } from './memory-manager';
+import { memoryLayoutFor, resolveProviderMemoryLayout, type MemoryLayout } from './memory-manager';
 import { isInitialized } from './stores/instances';
 import { getSessionsStore } from './stores/getters';
 import { execGitReadOnly } from './utils/remote-git';
@@ -60,17 +56,12 @@ export async function resolveMemoryLayout(target: MemoryTarget): Promise<MemoryL
 	const accountDir =
 		(agentId && resolveAgentAccountDir(agentId, { sessions })) ||
 		path.join(os.homedir(), config.defaultSubdir);
-	const layout = memoryLayoutFor(toolType, { projectPath, accountDir });
-	if (toolType !== 'claude-code') return layout;
-
-	// Claude honors `autoMemoryDirectory`, and keys a worktree's memory by its
-	// main checkout rather than by the worktree path.
-	const memoryProjectRoot = await resolveMemoryRepositoryRoot(projectPath, async (cwd) => {
-		const result = await execGitReadOnly(['rev-parse', '--git-common-dir'], cwd);
-		return result.exitCode === 0 ? result.stdout : undefined;
+	return resolveProviderMemoryLayout(toolType, {
+		projectPath,
+		accountDir,
+		readCommonDirectory: async (cwd) => {
+			const result = await execGitReadOnly(['rev-parse', '--git-common-dir'], cwd);
+			return result.exitCode === 0 ? result.stdout : undefined;
+		},
 	});
-	return {
-		...layout,
-		directoryPath: await discoverClaudeMemoryPath(projectPath, accountDir, memoryProjectRoot),
-	};
 }

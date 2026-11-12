@@ -2580,6 +2580,19 @@ Send one short read-only turn through the agent's harness on its Run on target a
 maestro-cli agent test-run-on <agent-id> --json
 ```
 
+## `maestro-cli agent footprint [agent-id]`
+
+Audit what could be adding to an agent's prompt: instruction files, memory, skills and MCP servers on disk (size estimates, activation unknown), and the text Maestro's settings add (sized as configured now, delivery unknown). Read only; counts nothing as savings. Defaults to the agent this runs under
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli agent footprint <agent-id>
+maestro-cli agent footprint --json
+```
+
 ## `maestro-cli rename-agent <agent-id> <new-name>`
 
 Rename an agent in the Maestro desktop app

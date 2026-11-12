@@ -19,6 +19,7 @@ import {
 	formatElapsedTimeColon,
 	formatCost,
 	estimateTokenCount,
+	estimateTokensFromBytes,
 	truncatePath,
 	truncateCommand,
 	truncateAtWordBoundary,
@@ -540,6 +541,27 @@ describe('shared/formatters', () => {
 		it('should handle longer text', () => {
 			const text = 'Hello, this is a sample text for token estimation.';
 			expect(estimateTokenCount(text)).toBe(Math.ceil(text.length / 4));
+		});
+	});
+
+	describe('estimateTokensFromBytes', () => {
+		it('follows the same rule as estimateTokenCount, for a size', () => {
+			for (const text of ['', 'a', 'abcd', 'abcde', 'x'.repeat(401)]) {
+				expect(estimateTokensFromBytes(Buffer.byteLength(text))).toBe(estimateTokenCount(text));
+			}
+		});
+
+		it('is zero for no bytes and for a size that cannot be real', () => {
+			expect(estimateTokensFromBytes(0)).toBe(0);
+			expect(estimateTokensFromBytes(-5)).toBe(0);
+			expect(estimateTokensFromBytes(Number.NaN)).toBe(0);
+		});
+
+		it('leans high for non-ASCII text, where bytes outnumber characters', () => {
+			const text = 'é'.repeat(8);
+			expect(estimateTokensFromBytes(Buffer.byteLength(text))).toBeGreaterThan(
+				estimateTokenCount(text)
+			);
 		});
 	});
 

@@ -312,6 +312,7 @@ import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './comman
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import { agentTestRunOn } from './commands/agent-test-run-on';
+import { agentFootprint } from './commands/agent-footprint';
 import { interrupt } from './commands/interrupt';
 import {
 	tabNew,
@@ -2778,6 +2779,14 @@ agentCmd
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agentId, options) => agentTestRunOn(agentId, options));
+
+agentCmd
+	.command('footprint [agent-id]')
+	.description(
+		"Audit what could be adding to an agent's prompt: instruction files, memory, skills and MCP servers on disk (size estimates, activation unknown), and the text Maestro's settings add (sized as configured now, delivery unknown). Read only; counts nothing as savings. Defaults to the agent this runs under"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agentId, options) => agentFootprint(agentId, options));
 
 // Rename agent command - change an agent's display name in the desktop app
 program

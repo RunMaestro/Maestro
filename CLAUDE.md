@@ -66,7 +66,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Browser relay text chunks:** `chunkBrowserRelayText()` in `src/shared/browserRelay.ts`
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
 - **Format numbers:** `formatNumber()` (compact), `formatCount()` (exact) in `src/shared/formatters.ts`
-- **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()` in `src/shared/formatters.ts`
+- **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()`, `estimateTokensFromBytes()` in `src/shared/formatters.ts`
 - **Truncate prose without splitting a word:** `truncateAtWordBoundary()` in `src/shared/formatters.ts`
 - **Format elapsed time:** `formatElapsedTimeColon()` in `src/shared/formatters.ts`
 - **Humanized durations:** everything in `src/shared/duration.ts`: `humanizeDuration(ms, opts)` plus its presets (never another `Math.floor(ms / 86400000)` ladder)
@@ -253,6 +253,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Native Pianola question cores:** `extractQuestionCores()` in `src/shared/pianola/pianola-awaiting-detector.ts`
 
 - **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
+- **Where an agent's memory store is, without the desktop's stores:** `resolveProviderMemoryLayout()` in `src/main/memory-manager.ts` (worktrees keyed by the main checkout; the Memory Viewer and `maestro-cli agent footprint` both call it)
+- **Project instruction file names and skill roots:** `INSTRUCTION_FILE_NAMES`, `PROJECT_SKILL_ROOTS` in `src/shared/maestro-lib/translation/resources.ts`
+- **What could be adding to an agent's prompt (context footprint audit):** `auditContextFootprint()`, `formatContextFootprint()` in `src/shared/contextFootprint.ts`; `collectContextFootprint()` in `src/main/context-footprint.ts`
 - **Provider translation version compatibility:** `translationVersionLimitation()` in `src/shared/maestro-lib/translation/support.ts`
 - **Provider translation acceptance:** `limitationsNeedingAcceptance()`, `translationWarningsAccepted()` in `src/shared/maestro-lib/translation/limitations.ts`
 - **Provider translation knowledge scope:** `translationKnowledgeRoot()`, `resolveTranslationKnowledgeBinding()`, `assertTranslationKnowledgeDirectory()`, `bindTranslationKnowledge()` in `src/shared/maestro-lib/translation/knowledge-binding.ts`; `translationWriteRoot()` in the sibling `transaction.ts`
@@ -267,7 +270,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
 - **An agent's model list, and refreshing it:** `discoverAgentModels()` in `src/main/agents/model-discovery.ts`; `refreshModels()` on `useAgentModelEffortOptions()`; `MODELS_REFRESHED_CHANNEL` in `src/shared/agentModelsRefresh.ts`
 - **Which account dirs exist for a provider (main):** `getProviderAccountDirs(toolType, options?)` in `src/main/agents/provider-account-dirs.ts`
-- **Which account dir an agent runs under:** `resolveAgentAccountDir()` in `src/shared/agentAccountDir.ts` (store-reading wrapper in `src/main/agents/provider-account-dirs.ts`)
+- **Which account dir an agent runs under:** `resolveAgentAccountDir()` in `src/shared/agentAccountDir.ts` (store-reading wrappers: `src/main/agents/provider-account-dirs.ts`; CLI: `resolveCliAgentAccountDir()` in `src/cli/services/agent-account-dir.ts`)
 - **Naming the account a login acts on:** `<AccountPill>`, `ghAccountLabel()` in `src/renderer/components/ui/AccountPill.tsx`; `parseGhActiveAccount()` in `src/main/utils/ghErrors.ts`
 - **Whether a login flow can fix an auth failure:** `classifyCredentialKind()`, `credentialKindBlocksLogin()`, `providerAuthKey()` in `src/shared/providerAuthIdentity.ts`
 - **Typing a login command into a shell:** `formatAgentLoginCommand()`, `loginShellSyntaxFor()` in `src/shared/agentMetadata.ts`

@@ -312,6 +312,10 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 		'maestro-cli update-agent <agent-id> --peer docs-agent:r --remove-peer legacy-agent',
 	],
 	'agent test-run-on': ['maestro-cli agent test-run-on <agent-id> --json'],
+	'agent footprint': [
+		'maestro-cli agent footprint <agent-id>',
+		'maestro-cli agent footprint --json',
+	],
 	'rename-agent': ['maestro-cli rename-agent <agent-id> "API Worker"'],
 	bookmark: ['maestro-cli bookmark <agent-id>'],
 	unbookmark: ['maestro-cli unbookmark <agent-id>'],

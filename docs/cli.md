@@ -1092,6 +1092,36 @@ DELEGATION GRAPH  All agents
 
 The verb only reads. To change an edge, use `update-agent <source> --peer <target>:<r|w|rw|none>` or `--remove-peer <target>` (see [Creating, Updating, and Removing Agents](#creating-updating-and-removing-agents)). To see the canvas, use `maestro-cli open delegation-graph`.
 
+### Auditing What Could Add to an Agent's Prompt (`agent footprint`)
+
+`agent footprint` reports where an agent's prompt could be getting weight, from what Maestro can see on this machine. It reads files and writes nothing, it needs no running app, and it is run when you ask: no timer or scan keeps it up to date. It keeps two kinds of finding apart, because neither one shows what a provider actually loaded.
+
+```bash
+# One agent
+maestro-cli agent footprint <agent-id>
+
+# The agent this command runs under
+maestro-cli agent footprint
+
+# Every component with its path and size, for a script
+maestro-cli agent footprint <agent-id> --json
+```
+
+| Flag     | Description                    |
+| -------- | ------------------------------ |
+| `--json` | Output as JSON (for scripting) |
+
+The report has four parts:
+
+- **Maestro-added text.** Maestro's system prompt, the agent's New Session Message and its Nudge Message, each sized as configured now and on its own, with how often it is added (each spawn, the first message of a new session, every message). Delivery and window are `unknown` on every line. A prompt rebuilt today or a setting saved today is not a record of what an earlier launch carried: the setting may have changed since, a resumed session does not get the first-message text again, and Maestro keeps no record of what it sent. The three are never added together, because they arrive at different times.
+- **Inventory on disk.** The instruction files (`CLAUDE.md`, `AGENTS.md`, `.claude/CLAUDE.md`), skills, memory and MCP servers it found, totalled by kind. A size is what the file would cost if a provider loaded all of it, estimated from the file size at about 4 bytes a token. Whether a provider loads it is `unknown`. An MCP server's tool definitions are not in `.mcp.json`, so a server has no size.
+- **Candidate overhead.** The largest inventory components (1,000 estimated tokens or more, at most ten), each with its path, where it was found and its activation. A candidate is a place to look, not a finding.
+- **Unknown.** What the report could not establish, in plain sentences: components with no record of being loaded, files it could not read, limits it hit, and the parts of the provider's own prompt it never measures.
+
+Nothing in the report is counted as compression savings. `--json` carries `accounting.countsAsSavings: false`, and the figures never reach the token proxy counters or the Models tab. The JSON has `subject`, `configured.contributions`, `inventory` (`components`, `byKind`, `estimatedTokens`), `candidates`, `unknowns` and `accounting`. A record that something was loaded or delivered would carry `boundTo`, the launch or session it is about; the verb finds none today, so none is shown.
+
+It reads only these places: the agent's project root (the instruction files, `.mcp.json`, and one folder per skill under `.claude/skills`, `.agents/skills`, `.codex/skills` and `.grok/skills`), the agent's provider account folder (the same instruction file names and `skills/`), and the memory store of that agent, found the way the Memory Viewer finds it (a worktree agent uses its main checkout's store). Only `.mcp.json` is opened, to list its server names; secrets in it are never printed. It does not read instruction files in parent folders or subfolders, `CLAUDE.local.md`, user-level MCP servers, or any other project's memory. For an agent on an SSH remote it reads no file, because the paths belong to the remote host.
+
 ### Local Models (`models`)
 
 `models` is the command-line form of **Settings > Models**: the Library, the engines, the model server, the endpoints you run, which model each housekeeping task uses, tier defaults, and the token proxy. Each verb reaches the same main-process function as its button, so a download started here is the download the Library shows. The concepts are in [Local Models](/local-models); this section is the verb map.

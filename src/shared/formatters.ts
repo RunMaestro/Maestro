@@ -424,6 +424,16 @@ export function estimateTokenCount(text: string): number {
 }
 
 /**
+ * The same ~4 per token rule as {@link estimateTokenCount}, for a size in bytes
+ * (a file nobody has read). UTF-8 text with non-ASCII characters has more bytes
+ * than characters, so this leans high for it: an estimate from file size, never
+ * a measure of what a provider loaded.
+ */
+export function estimateTokensFromBytes(bytes: number): number {
+	return bytes > 0 ? Math.ceil(bytes / 4) : 0;
+}
+
+/**
  * Format elapsed time in seconds as timer-style display (mm:ss or hh:mm:ss).
  * Useful for live countdown/timer displays.
  *

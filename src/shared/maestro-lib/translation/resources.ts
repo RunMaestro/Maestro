@@ -19,6 +19,17 @@ export interface TranslationResources {
 	limitations: TranslationLimitation[];
 }
 
+/** Instruction files read at a project root, and at an account root when it is selected. */
+export const INSTRUCTION_FILE_NAMES = ['CLAUDE.md', 'AGENTS.md'] as const;
+
+/** Project folders holding one skill per directory, in the order they are collected. */
+export const PROJECT_SKILL_ROOTS = [
+	'.claude/skills',
+	'.agents/skills',
+	'.codex/skills',
+	'.grok/skills',
+] as const;
+
 async function resolveResourceRoot(root: string, nativeFs: TranslationFs): Promise<string> {
 	const paths = nativeFs?.paths ?? path;
 	try {
@@ -106,7 +117,7 @@ export async function collectTranslationResources(
 		prefix: string;
 		allowedRoot?: string;
 	}> = [
-		...['CLAUDE.md', 'AGENTS.md'].map((name) => ({
+		...INSTRUCTION_FILE_NAMES.map((name) => ({
 			file: paths.join(projectRoot, name),
 			kind: 'instruction' as const,
 			scope: 'project' as const,
@@ -114,7 +125,7 @@ export async function collectTranslationResources(
 		})),
 		// `.grok/skills` is one of Grok's always-on skill roots (pinned compat.rs
 		// `skill_config_dirs`); `.agents/skills` is the other and is already here.
-		...['.claude/skills', '.agents/skills', '.codex/skills', '.grok/skills'].map((name) => ({
+		...PROJECT_SKILL_ROOTS.map((name) => ({
 			file: paths.join(projectRoot, name),
 			kind: 'skill' as const,
 			scope: 'project' as const,

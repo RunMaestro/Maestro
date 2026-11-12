@@ -234,6 +234,12 @@ Anything Maestro cannot establish is listed under **Unknown**. The notices say w
 
 An agent or a script can read the same preview with `maestro-cli tab continuity`.
 
+## Context Footprint
+
+To see where an agent's prompt could be getting weight, run `maestro-cli agent footprint <agent-id>`. It is read only and has no window yet.
+
+It lists the instruction files, skills, memory and MCP servers it found for the agent, with sizes estimated from file size, and the text Maestro's own settings add (the system prompt, the New Session Message and the Nudge Message), sized as they are configured now. Treat both as estimates. Maestro does not record what a provider loaded, so whether a component is loaded and whether Maestro's text reached the provider stay **unknown**, and nothing is counted as compression savings. See [Auditing What Could Add to an Agent's Prompt](./cli#auditing-what-could-add-to-an-agents-prompt-agent-footprint) for the full report.
+
 ## Merging Sessions
 
 Combine context from multiple sessions or tabs into one:
