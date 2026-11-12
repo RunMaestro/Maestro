@@ -28,6 +28,7 @@ import {
 	type RemoteFsDeps,
 } from '../../../main/utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
+import { describeSshUnreachable, isSshConnectionFailure } from '../../../shared/sshConnection';
 import type { ExecResult } from '../../../main/utils/execFile';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { resolveSshPath } from '../../../main/utils/cliDetection';
@@ -53,6 +54,15 @@ describe('remote-fs', () => {
 		privateKeyPath: '~/.ssh/id_ed25519',
 		enabled: true,
 	};
+
+	/**
+	 * The error remote-fs reports for a run that exited with `exitCode`. Exit 255
+	 * is ssh's own failure, which every remote op rewrites into the
+	 * "Unable to connect over SSH" message.
+	 */
+	function viaSsh(exitCode: number | string, stderr: string): string {
+		return isSshConnectionFailure(exitCode) ? describeSshUnreachable(baseConfig, stderr) : stderr;
+	}
 
 	// Create mock dependencies
 	function createMockDeps(execResult: ExecResult): RemoteFsDeps {
@@ -563,7 +573,7 @@ describe('remote-fs', () => {
 					expect(result).toEqual({
 						success: false,
 						errorCode: undefined,
-						error: stderr || 'Remote path identity unavailable',
+						error: viaSsh(exitCode, stderr) || 'Remote path identity unavailable',
 					});
 					expect(result.data).toBeUndefined();
 				}
@@ -610,7 +620,7 @@ describe('remote-fs', () => {
 										maxBytes: 8,
 										expectedIdentity: identity,
 									});
-					expect(result).toEqual({ success: false, errorCode, error: stderr });
+					expect(result).toEqual({ success: false, errorCode, error: viaSsh(exitCode, stderr) });
 					expect(deps.execSsh).toHaveBeenCalledTimes(1);
 				}
 			}
@@ -1535,12 +1545,13 @@ finally:
 			[1, 'head: Permission denied', 'Permission denied: /file'],
 			[1, 'head: No such file or directory', 'File not found: /file'],
 			[127, 'base64: command not found', 'base64: command not found'],
-			[255, 'Permission denied (publickey).', 'Permission denied: /file'],
+			// Exit 255 is ssh's own failure, so it reads as an unreachable host.
+			[255, 'Permission denied (publickey).', null],
 		] as const)('does not decode stdout on outer exit %s: %s', async (exitCode, stderr, error) => {
 			const deps = createMockDeps({ stdout: 'eAow', stderr, exitCode });
 			expect(await readFileRemote('/file', baseConfig, deps, { maxBytes: 16 })).toEqual({
 				success: false,
-				error,
+				error: error ?? viaSsh(exitCode, stderr),
 			});
 			expect(deps.execSsh).toHaveBeenCalledTimes(1);
 		});
@@ -1589,7 +1600,7 @@ finally:
 				expect(await pending).toEqual(
 					recovers
 						? { success: true, data: 'x' }
-						: { success: false, error: 'Connection reset by peer' }
+						: { success: false, error: viaSsh(255, 'Connection reset by peer') }
 				);
 				expect(deps.execSsh).toHaveBeenCalledTimes(recovers ? 2 : 4);
 				const calls = vi.mocked(deps.execSsh).mock.calls;

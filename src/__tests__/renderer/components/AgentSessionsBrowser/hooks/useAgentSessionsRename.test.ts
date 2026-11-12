@@ -7,6 +7,7 @@ import { createMockAITab } from '../../../../helpers/mockTab';
 import { resetStore } from '../../../../helpers/resetStores';
 import { useNotificationStore } from '../../../../../renderer/stores/notificationStore';
 import { captureException } from '../../../../../renderer/utils/sentry';
+import { serializeError } from '../../../../../shared/serializeError';
 
 vi.mock('../../../../../renderer/utils/sentry', () => ({
 	captureException: vi.fn(),
@@ -306,7 +307,8 @@ describe('useAgentSessionsRename', () => {
 				'error',
 				'Failed to rename session:',
 				undefined,
-				failure
+				// The renderer logger keeps an Error's message and stack (serializeError).
+				serializeError(failure)
 			);
 			expect(updateSession).not.toHaveBeenCalled();
 			expect(setViewingSession).not.toHaveBeenCalled();
