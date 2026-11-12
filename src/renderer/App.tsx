@@ -1625,6 +1625,7 @@ function MaestroConsoleInner() {
 		canSummarize,
 		handleSummarizeAndContinue,
 		summarizeTab,
+		previewContinuity,
 	} = useSummarizeAndContinue();
 
 	// Fresh store snapshot - chrome equality ignores contextUsage / logs.
@@ -2499,7 +2500,7 @@ function MaestroConsoleInner() {
 		resumeAfterError: resumeAutoRunAfterError,
 		skipCurrentDocument: skipCurrentAutoRunDocument,
 		abortBatchOnError: abortAutoRunBatchOnError,
-		tabContextOps: { summarizeTab, mergeTabContext, transferTabContext },
+		tabContextOps: { summarizeTab, previewContinuity, mergeTabContext, transferTabContext },
 	});
 
 	/*

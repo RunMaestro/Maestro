@@ -335,6 +335,7 @@ import {
 	tabPinsRename,
 	tabPinsShow,
 	tabCompact,
+	tabContinuity,
 	tabMerge,
 	tabTransfer,
 } from './commands/tab';
@@ -3053,6 +3054,12 @@ tabTargetOptions(tab.command('compact [tab-id]'))
 	.option('--background', 'Keep the source tab selected (no view change, no toast)')
 	.option('--focus', 'Switch to the compacted tab (default)')
 	.action((tabId, options) => tabCompact(tabId, options));
+
+tabTargetOptions(tab.command('continuity [tab-id]'))
+	.description(
+		'Preview what a continuation of a tab must keep (default: the active tab): its constraints, pending work, verified results and failures with sources, and what is unknown. Read only: starts no turn and changes nothing'
+	)
+	.action((tabId, options) => tabContinuity(tabId, options));
 
 tabTargetOptions(tab.command('merge [tab-id]'))
 	.description(

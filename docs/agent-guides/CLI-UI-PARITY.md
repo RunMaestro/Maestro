@@ -788,6 +788,17 @@ the same bridge message the CLI sends.
 | `ask <peer:agent> <question>`                                                | An `@mention` of a mirrored agent from a local composer           | No phase plans one yet; FED-SSH-06 covers send, interrupt, new tab, rename, star |
 | Worktrees for host-owned agents (no verb either: `create-worktree` is local) | Worktree create and scan for a mirrored agent                     | Out of scope for v1 (decision D5)                                                |
 
+### Continuity preview: remaining gap
+
+`tab continuity` shipped first (token optimization 05.2). It is read only, so it has no `--background` flag, and
+it is its own `continuity_preview` message: a flag on `summarize_context` would make an older desktop start a real
+compaction. Close the row by moving it to Covered when the menu item, palette entry and modal land (05.2b), through
+the same `previewContinuity()` function the CLI reaches.
+
+| CLI verb                                                                                  | Missing UI half                                                                                              | Arrives in |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ---------- |
+| `tab continuity [<tab-id>]` (prints the preview; `--json` adds counts, notices, unknowns) | Context: Preview Continuity in the AI tab overlay menu and the palette, opening a read-only plain-text modal | 05.2b      |
+
 ### Audit backlog (2026-09-27, re-verified 2026-10-19)
 
 A full sweep of the palette, shortcuts, context menus, and modals found these

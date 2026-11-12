@@ -45,7 +45,7 @@ import { getBasename, truncateAtWordBoundary } from './formatters';
 import { readCommandCall, type CommandCall } from './literalCommand';
 import { forEachMarkdownLine } from './markdownTaskScan';
 import { redactSecrets } from './redactSecrets';
-import { stripAnsiCodes } from './stringUtils';
+import { stripAnsiCodes, stripControlCharacters } from './stringUtils';
 import { isFailedSynopsisResponse, parseSynopsis } from './synopsis';
 import {
 	describeToolActivityStatus,
@@ -71,8 +71,12 @@ export interface DigestEntry {
 export interface ContextDigestInput {
 	/** One conversation's entries, oldest first. Mixing conversations is the caller's error. */
 	entries: readonly DigestEntry[];
-	/** Earlier synopses (id and raw response), oldest first. Optional excerpts, never evidence. */
-	synopses?: readonly { id: string; response: string }[];
+	/**
+	 * Earlier synopses (id and raw response), oldest first. Optional excerpts, never
+	 * evidence. `beforeCompaction` marks one written before the conversation's last
+	 * completed compaction; the caller knows when each was written, the digest does not.
+	 */
+	synopses?: readonly { id: string; response: string; beforeCompaction?: boolean }[];
 	/** Whose error bank tells a failed synopsis from a real one. Default `claude-code`. */
 	agentId?: string;
 	/** Characters the listed items may use; the frame around them is extra. Default 8,000. */
@@ -255,15 +259,17 @@ const lastIndexWhere = <T>(items: readonly T[], test: (item: T) => boolean): num
 	items.map(test).lastIndexOf(true);
 
 /**
- * Text safe to show on one line: secret-shaped spans redacted, each line break
- * shown as ⏎, cut at a word. Spacing inside a line is NOT touched: a path with
- * two spaces or a quoted argument is the user's or the command's own. Tool and
- * agent text (`data`) also loses backticks, so nothing it holds can close the
- * code span the preview wraps it in.
+ * Text safe to show on one line: control characters removed (an escape or a
+ * bidirectional override in a pasted line or a model's reply must not act on a
+ * terminal or reorder what a reader sees), secret-shaped spans redacted, each
+ * line break shown as ⏎, cut at a word. Spacing inside a line is NOT touched: a
+ * path with two spaces or a quoted argument is the user's or the command's own.
+ * Tool and agent text (`data`) also loses backticks, so nothing it holds can
+ * close the code span the preview wraps it in.
  */
 function safeText(text: string, limit: number, data: boolean): { text: string; truncated?: true } {
-	let shown = redactSecrets(text.slice(0, SCAN_CHARS).trim())
-		.text.replace(/[ \t]*[\r\n]+\s*/g, ' ⏎ ')
+	let shown = redactSecrets(stripControlCharacters(text.slice(0, SCAN_CHARS)).trim())
+		.text.replace(/[ \t]*\n+\s*/g, ' ⏎ ')
 		.trim();
 	if (data) shown = shown.replace(/`/g, "'");
 	return shown.length > limit
@@ -612,7 +618,7 @@ function readExcerpts(
 	agentId: string
 ): DigestItem[] {
 	const excerpts: DigestItem[] = [];
-	for (const { id, response } of synopses) {
+	for (const { id, response, beforeCompaction } of synopses) {
 		if (isFailedSynopsisResponse(response, agentId)) continue;
 		const parsed = parseSynopsis(response);
 		if (parsed.nothingToReport || !parsed.shortSummary) continue;
@@ -620,8 +626,10 @@ function readExcerpts(
 		excerpts.push({
 			text,
 			origin: 'synopsis',
-			ref: { label: `synopsis ${id}`, entryId: id },
+			// The id comes from a History file other tools can write: it is shown, so clean it.
+			ref: { label: `synopsis ${safeText(id, 40, true).text}`, entryId: id },
 			...(truncated ? { truncated } : {}),
+			...(beforeCompaction ? { beforeCompaction: true as const } : {}),
 		});
 	}
 	return excerpts.slice(-MAX_EXCERPTS);

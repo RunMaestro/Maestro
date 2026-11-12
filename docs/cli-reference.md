@@ -3047,6 +3047,20 @@ Context: Compact - summarize a tab into a new tab beside it (default: the active
 maestro-cli tab compact active --agent <agent-id> --background
 ```
 
+## `maestro-cli tab continuity [tab-id]`
+
+Preview what a continuation of a tab must keep (default: the active tab): its constraints, pending work, verified results and failures with sources, and what is unknown. Read only: starts no turn and changes nothing
+
+| Option             | Description                                    | Default |
+| ------------------ | ---------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when &lt;tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)                 | -       |
+
+```bash
+maestro-cli tab continuity active --agent <agent-id>
+maestro-cli tab continuity <tab-id> --json
+```
+
 ## `maestro-cli tab merge [tab-id]`
 
 Context: Merge Into - send a tab's transcript, verbatim, into another agent's tab (default: the active tab)

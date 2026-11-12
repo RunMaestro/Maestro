@@ -1,39 +1,55 @@
 /**
  * Wire shape for the AI tab overlay menu's context items, reached remotely:
  * Context: Compact (`summarize_context`), Context: Merge Into (`merge_context`)
- * and Context: Send to Agent (`transfer_context`).
+ * and Context: Send to Agent (`transfer_context`), plus the read-only
+ * continuity preview (`continuity_preview`).
  *
- * The three messages predate tab targeting and keep their names and fields
+ * The first three messages predate tab targeting and keep their names and fields
  * (`sessionId` for compact, `sourceSessionId` + `targetSessionId` for the
  * other two), so an old-shape sender still works. Every new field is optional:
  * `tabId` names the source tab (default: the agent's active AI tab, which is
  * what the menu acts on), `targetTabId` the merge target's tab (default: the
  * target agent's active AI tab), and `background` asks for no view change.
  *
+ * The preview is its OWN message, not a flag on `summarize_context`: a desktop
+ * that predates it ignores a field it does not know, so a preview asked for with
+ * a flag would start a real compaction (a provider turn) there. An unknown
+ * message type is refused instead.
+ *
  * Lives in `shared/` because all three processes need it: the CLI builds the
  * message, main validates it on the way through, and the renderer answers it.
  */
 
-/** The three context operations of the tab overlay menu. */
-export type TabContextOp = 'compact' | 'merge' | 'transfer';
+import { stripControlCharacters } from './stringUtils';
+
+/** The context operations of the tab overlay menu, and the continuity preview. */
+export type TabContextOp = 'compact' | 'merge' | 'transfer' | 'continuity';
 
 /** Protocol message and reply type for each operation. */
 export const TAB_CONTEXT_OP_MESSAGES = {
 	compact: { type: 'summarize_context', resultType: 'summarize_context_result' },
 	merge: { type: 'merge_context', resultType: 'merge_context_result' },
 	transfer: { type: 'transfer_context', resultType: 'transfer_context_result' },
+	continuity: { type: 'continuity_preview', resultType: 'continuity_preview_result' },
 } as const satisfies Record<TabContextOp, { type: string; resultType: string }>;
 
 /**
  * How long main waits for the renderer to finish each operation before it
  * answers `timedOut`. Compact runs a summarization turn (chunked for a long
- * transcript), so it gets minutes; merge and transfer only move text.
+ * transcript), so it gets minutes; merge and transfer only move text; the
+ * continuity preview reads History once and starts no turn.
  */
 export const TAB_CONTEXT_OP_REPLY_MS: Record<TabContextOp, number> = {
 	compact: 10 * 60_000,
 	merge: 60_000,
 	transfer: 30_000,
+	continuity: 30_000,
 };
+
+/** The operations that name their source agent in `sessionId` (the others use `sourceSessionId`). */
+function namesSessionId(op: TabContextOp): boolean {
+	return op === 'compact' || op === 'continuity';
+}
 
 /**
  * Extra time the CLI waits past main's budget, so main's `timedOut` answer
@@ -59,6 +75,28 @@ export interface TabContextOpRequest {
 	background?: boolean;
 }
 
+/**
+ * The continuity preview of one tab, as it crosses the wire. `text` is the whole
+ * preview and the only part meant to be read; the rest lets a script check it
+ * without parsing prose. Built by `continuityWire()` in `continuityPreview.ts`.
+ */
+export interface TabContinuityPreview {
+	/** Plain text. Never Markdown: its excerpts are model text. */
+	text: string;
+	/** Transcript entries the preview was read from. */
+	entries: number;
+	synopses: {
+		/** Earlier synopses the preview shows. */
+		shown: number;
+		/** History entries kept out, by reason. */
+		refused: Record<string, number>;
+	};
+	/** What the gates found about the evidence, one sentence each. */
+	notices: string[];
+	/** What could not be established, as `field: reason`. */
+	unknowns: string[];
+}
+
 /** What the renderer answers a context operation with. */
 export interface TabContextOpResult {
 	success: boolean;
@@ -81,6 +119,8 @@ export interface TabContextOpResult {
 	staged?: boolean;
 	/** compact: how much smaller the new tab's context is, in percent. */
 	reductionPercent?: number;
+	/** continuity: the preview. */
+	continuity?: TabContinuityPreview;
 }
 
 const STRING_FIELDS = [
@@ -91,6 +131,60 @@ const STRING_FIELDS = [
 	'targetSessionId',
 	'targetTabId',
 ] as const;
+
+/** Longest preview text the receiver keeps. The digest is far smaller; this bounds a hostile sender. */
+export const MAX_CONTINUITY_TEXT_CHARS = 64_000;
+const MAX_CONTINUITY_LINES = 50;
+const MAX_CONTINUITY_LINE_CHARS = 1_000;
+const MAX_CONTINUITY_REASONS = 20;
+
+function wholeCount(value: unknown): number | undefined {
+	return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+/** A list of short sentences from outside: strings only, controls removed, bounded. */
+function sentenceList(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.filter((item): item is string => typeof item === 'string')
+		.slice(0, MAX_CONTINUITY_LINES)
+		.map((item) => stripControlCharacters(item).slice(0, MAX_CONTINUITY_LINE_CHARS));
+}
+
+/**
+ * Narrow a preview from the wire. It is printed and shown as it arrives, so the
+ * receiver does not trust the sender to have cleaned it: control characters are
+ * removed, every size is bounded, and a shape that is not a preview is dropped
+ * (the caller then reports a desktop that answered without one).
+ */
+function normalizeContinuity(raw: unknown): TabContinuityPreview | undefined {
+	if (!raw || typeof raw !== 'object') return undefined;
+	const candidate = raw as Record<string, unknown>;
+	const synopses = candidate.synopses as Record<string, unknown> | null | undefined;
+	const entries = wholeCount(candidate.entries);
+	const shown = wholeCount(synopses?.shown);
+	if (typeof candidate.text !== 'string' || !candidate.text) return undefined;
+	if (entries === undefined || shown === undefined) return undefined;
+	const refused: Record<string, number> = {};
+	const rawRefused = synopses?.refused;
+	if (rawRefused && typeof rawRefused === 'object') {
+		for (const [reason, count] of Object.entries(rawRefused).slice(0, MAX_CONTINUITY_REASONS)) {
+			const n = wholeCount(count);
+			if (n !== undefined) refused[stripControlCharacters(reason).slice(0, 40)] = n;
+		}
+	}
+	const text = stripControlCharacters(candidate.text);
+	return {
+		text:
+			text.length > MAX_CONTINUITY_TEXT_CHARS
+				? `${text.slice(0, MAX_CONTINUITY_TEXT_CHARS)}\n[cut: the preview is longer than ${MAX_CONTINUITY_TEXT_CHARS} characters]`
+				: text,
+		entries,
+		synopses: { shown, refused },
+		notices: sentenceList(candidate.notices),
+		unknowns: sentenceList(candidate.unknowns),
+	};
+}
 
 /**
  * Narrow whatever the renderer sent back to a result.
@@ -117,6 +211,8 @@ export function normalizeTabContextOpResult(raw: unknown): TabContextOpResult {
 	) {
 		result.reductionPercent = candidate.reductionPercent;
 	}
+	const continuity = normalizeContinuity(candidate.continuity);
+	if (continuity) result.continuity = continuity;
 	if (!result.success && !result.error) result.error = 'Context operation failed';
 	return result;
 }
@@ -125,7 +221,7 @@ export function normalizeTabContextOpResult(raw: unknown): TabContextOpResult {
 export function buildTabContextOpMessage(request: TabContextOpRequest): Record<string, unknown> {
 	const { op, sessionId, tabId, targetSessionId, targetTabId, background } = request;
 	const message: Record<string, unknown> = { type: TAB_CONTEXT_OP_MESSAGES[op].type };
-	if (op === 'compact') {
+	if (namesSessionId(op)) {
 		message.sessionId = sessionId;
 	} else {
 		message.sourceSessionId = sessionId;
@@ -163,13 +259,13 @@ export function parseTabContextOpMessage(
 	op: TabContextOp,
 	message: Record<string, unknown>
 ): { ok: true; request: TabContextOpRequest } | { ok: false; error: string } {
-	const sourceField = op === 'compact' ? 'sessionId' : 'sourceSessionId';
+	const sourceField = namesSessionId(op) ? 'sessionId' : 'sourceSessionId';
 	const rawSource = message[sourceField];
 	const sessionId = typeof rawSource === 'string' ? rawSource.trim() : '';
 	const rawTarget = message.targetSessionId;
 	const targetSessionId = typeof rawTarget === 'string' ? rawTarget.trim() : '';
 
-	if (op === 'compact') {
+	if (namesSessionId(op)) {
 		if (!sessionId) return { ok: false, error: 'Missing sessionId' };
 	} else if (!sessionId || !targetSessionId) {
 		return { ok: false, error: 'Missing sourceSessionId or targetSessionId' };
@@ -190,7 +286,7 @@ export function parseTabContextOpMessage(
 		request: {
 			op,
 			sessionId,
-			...(op !== 'compact' ? { targetSessionId } : {}),
+			...(!namesSessionId(op) ? { targetSessionId } : {}),
 			...(tabId.value ? { tabId: tabId.value } : {}),
 			...(targetTabId.value ? { targetTabId: targetTabId.value } : {}),
 			...(message.background === true ? { background: true } : {}),

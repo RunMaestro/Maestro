@@ -16,12 +16,14 @@ const RENDERER_CHANNELS: Record<TabContextOp, string> = {
 	compact: 'remote:summarizeContext',
 	merge: 'remote:mergeContext',
 	transfer: 'remote:transferContext',
+	continuity: 'remote:continuityPreview',
 };
 
 /**
  * Forward the AI tab overlay menu's context operations (Compact, Merge Into,
- * Send to Agent) to the renderer that owns the source agent, which runs the
- * menu's own handlers and answers with a structured result.
+ * Send to Agent) and the read-only continuity preview to the renderer that
+ * owns the source agent, which runs the menu's own handlers and answers with a
+ * structured result.
  */
 export function registerContextOpsCallbacks(
 	server: WebServer,

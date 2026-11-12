@@ -299,6 +299,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteTransferContextResponse: vi.fn(),
+		onRemoteContinuityPreview: vi.fn().mockImplementation((handler) => {
+			contextOpHandlers.continuity = handler;
+			return () => {};
+		}),
+		sendRemoteContinuityPreviewResponse: vi.fn(),
 		onRemoteThroughputGaugeCommand: vi.fn().mockImplementation((handler) => {
 			onRemoteThroughputGaugeCommandHandler = handler;
 			return () => {};
@@ -3726,13 +3731,14 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote context operations', () => {
-		// `maestro-cli tab compact|merge|transfer`. The handlers live in App's
+		// `maestro-cli tab compact|merge|transfer|continuity`. The handlers live in App's
 		// hooks, so this hook only forwards; useAppRemoteEventListeners answers.
 		// Each reply must reach the preload sender for its own channel.
 		it.each([
 			['compact', 'sendRemoteSummarizeContextResponse'],
 			['merge', 'sendRemoteMergeContextResponse'],
 			['transfer', 'sendRemoteTransferContextResponse'],
+			['continuity', 'sendRemoteContinuityPreviewResponse'],
 		] as const)('forwards %s as a window event whose reply uses %s', (op, sender) => {
 			renderHook(() => useRemoteIntegration(createDeps({ sessions: [] })));
 			const listener = vi.fn((e: Event) => {

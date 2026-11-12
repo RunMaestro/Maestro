@@ -761,6 +761,14 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: TabContextOpResult
 		) => void;
+		// `maestro-cli tab continuity`: the read-only continuity preview of one tab.
+		onRemoteContinuityPreview: (
+			callback: (request: TabContextOpRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteContinuityPreviewResponse: (
+			responseChannel: string,
+			result: TabContextOpResult
+		) => void;
 		// `maestro-cli throughput-gauge` requests (primary window only); returns unsubscribe.
 		onRemoteThroughputGaugeCommand: (
 			callback: (request: ThroughputGaugeCommandRequest, responseChannel: string) => void

@@ -164,6 +164,29 @@ export function processCarriageReturns(text: string): string {
 	return processedLines.join('\n');
 }
 
+/**
+ * C0 controls except tab and line feed, DEL, the C1 controls, and the Unicode
+ * bidirectional overrides and isolates. The marks LRM, RLM and ALM stay: they
+ * are ordinary punctuation of right-to-left writing, not a way to reorder it.
+ */
+const UNSAFE_DISPLAY_CHARACTERS =
+	/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+
+/**
+ * Make untrusted text safe to print to a terminal or show verbatim.
+ *
+ * Text that came from a model, a tool or a file can carry an escape (ESC
+ * starts a screen clear, a title change or a hyperlink), a carriage return
+ * (it redraws the line, so a reader sees something other than what is stored)
+ * or a bidirectional override (it reorders what a reader sees). Removing the
+ * control characters leaves the printable remainder of a sequence as inert
+ * text; it does not interpret the sequence. Tab and line feed are kept, and a
+ * carriage return is read as a line break, so `\r\n` stays one break.
+ */
+export function stripControlCharacters(text: string): string {
+	return text.replace(/\r\n?/g, '\n').replace(UNSAFE_DISPLAY_CHARACTERS, '');
+}
+
 /** 1 minus normalised Levenshtein distance. */
 export function normalizedEditSimilarity(a: string, b: string): number {
 	if (a === b) return 1;

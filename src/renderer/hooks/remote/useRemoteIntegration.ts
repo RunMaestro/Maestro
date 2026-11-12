@@ -1356,6 +1356,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const unsubscribeTransferContext = window.maestro.process.onRemoteTransferContext(
 			forwardTabContextOp(window.maestro.process.sendRemoteTransferContextResponse)
 		);
+		const unsubscribeContinuityPreview = window.maestro.process.onRemoteContinuityPreview(
+			forwardTabContextOp(window.maestro.process.sendRemoteContinuityPreviewResponse)
+		);
 
 		// Handle remote reorder tab from web interface
 		const unsubscribeReorderTab = window.maestro.process.onRemoteReorderTab(
@@ -1713,6 +1716,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeSummarizeContext();
 			unsubscribeMergeContext();
 			unsubscribeTransferContext();
+			unsubscribeContinuityPreview();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();
 			unsubscribeEnqueueCommand();

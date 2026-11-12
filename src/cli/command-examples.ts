@@ -340,6 +340,10 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'tab closed': ['maestro-cli tab closed --agent <agent-id> --json'],
 	'tab reopen': ['maestro-cli tab reopen --agent <agent-id> --index 0 --background'],
 	'tab compact': ['maestro-cli tab compact active --agent <agent-id> --background'],
+	'tab continuity': [
+		'maestro-cli tab continuity active --agent <agent-id>',
+		'maestro-cli tab continuity <tab-id> --json',
+	],
 	'tab merge': ['maestro-cli tab merge <tab-id> --into <agent-id> --background'],
 	'tab transfer': ['maestro-cli tab transfer <tab-id> --to <agent-id> --background'],
 

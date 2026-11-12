@@ -232,6 +232,7 @@ import {
 	handleMergeContext,
 	handleTransferContext,
 	handleSummarizeContext,
+	handleContinuityPreview,
 	handleCreateGist,
 } from './contextOps';
 import {
@@ -774,6 +775,10 @@ export class WebSocketMessageHandler {
 
 			case 'summarize_context':
 				handleSummarizeContext(this.ctx, client, message);
+				break;
+
+			case 'continuity_preview':
+				handleContinuityPreview(this.ctx, client, message);
 				break;
 
 			case 'create_gist':

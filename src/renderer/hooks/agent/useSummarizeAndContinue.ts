@@ -15,9 +15,13 @@
  * State lives in operationStore (Zustand); this hook owns orchestration only.
  */
 
-import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
+import {
+	projectTabProvider,
+	resolveTabNativeProvider,
+	resolveTabProvider,
+} from '../../utils/providerTabSessions';
 import { useRef, useCallback } from 'react';
-import type { Session, LogEntry } from '../../types';
+import type { Session, LogEntry, AITab } from '../../types';
 import type { SummarizeProgress, SummarizeResult } from '../../types/contextMerge';
 import { contextSummarizationService } from '../../services/contextSummarizer';
 import { createTabAtPosition } from '../../utils/tabHelpers';
@@ -27,6 +31,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import type { SummarizeState, TabSummarizeState } from '../../stores/operationStore';
 import { logger } from '../../utils/logger';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
+import { continuityWire } from '../../../shared/continuityPreview';
 import type { TabContextOpResult } from '../../../shared/tabContextOps';
 
 // Re-export types from the canonical store location
@@ -85,6 +90,15 @@ export interface UseSummarizeAndContinueResult {
 		tabId: string,
 		options?: { background?: boolean }
 	) => Promise<TabContextOpResult>;
+	/**
+	 * Context: Preview Continuity - the read-only evidence digest of one tab
+	 * (what a continuation must keep, with its sources and its unknowns), also
+	 * run by `maestro-cli tab continuity`. Reads the tab and the agent's History;
+	 * starts no turn, compacts nothing, writes no log entry and sends nothing, so
+	 * it is safe to call at any time. Resolves with `continuity` set, or with the
+	 * reason it was refused. Never throws for a refused request.
+	 */
+	previewContinuity: (sessionId: string, tabId: string) => Promise<TabContextOpResult>;
 }
 
 /**
@@ -494,6 +508,53 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 	);
 
 	/**
+	 * Preview what a continuation of one tab must keep. The only way the evidence
+	 * digest is reached: it is never part of summarizing, merging or sending, so
+	 * it cannot enter a prompt or a transcript unasked.
+	 */
+	const previewContinuity = useCallback(
+		async (sessionId: string, tabId: string): Promise<TabContextOpResult> => {
+			const subject = { sessionId, tabId };
+			const resolve = (): { session: Session; tab: AITab } | { error: string } => {
+				const session = selectSessionById(sessionId)(useSessionStore.getState());
+				if (!session) return { error: `Agent not found: ${sessionId}` };
+				const tab = session.aiTabs.find((t) => t.id === tabId);
+				if (!tab) return { error: `Tab ${tabId} is not an AI tab of agent ${sessionId}` };
+				return { session, tab };
+			};
+
+			const before = resolve();
+			if ('error' in before) return { success: false, error: before.error, ...subject };
+			const history = await contextSummarizationService.readContinuityHistory(before.session);
+
+			// Read the transcript again now: it is at least as new as the History just read,
+			// and the tab may have been closed while History was read.
+			const current = resolve();
+			if ('error' in current) return { success: false, error: current.error, ...subject };
+			const { session, tab } = current;
+			const planned = contextSummarizationService.previewContinuity({
+				target: { agentId: sessionId, tabId },
+				agentId: session.id,
+				tab: {
+					id: tab.id,
+					agentSessionId: tab.agentSessionId,
+					nativeSessionBinding: tab.nativeSessionBinding,
+					provider: resolveTabProvider(tab, session),
+					state: tab.state,
+					consultOrigin: tab.consultOrigin,
+					documentOrigin: tab.documentOrigin,
+					entries: tab.logs,
+				},
+				history: history?.records ?? null,
+				historyTruncated: history?.truncated,
+			});
+			if (!planned.ok) return { success: false, error: planned.error, ...subject };
+			return { success: true, ...subject, continuity: continuityWire(planned.preview) };
+		},
+		[]
+	);
+
+	/**
 	 * High-level handler: compacts a tab of the active agent (default: its
 	 * active tab). Extracted from App.tsx wrapper (Tier 3E).
 	 */
@@ -525,6 +586,7 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 		minContextUsagePercent: contextSummarizationService.getMinContextUsagePercent(),
 		handleSummarizeAndContinue,
 		summarizeTab,
+		previewContinuity,
 	};
 }
 

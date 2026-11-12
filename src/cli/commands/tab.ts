@@ -24,6 +24,9 @@
 // "tab compact", "tab merge" and "tab transfer" are the overlay menu's Context:
 // Compact, Merge Into and Send to Agent, sent as summarize_context,
 // merge_context and transfer_context and run by the menu's own handlers.
+// "tab continuity" is the read-only preview of what a continuation must keep,
+// sent as its own continuity_preview message (never a flag on summarize_context,
+// which an older desktop would answer by compacting).
 //
 // Federation: "tab new", "tab rename", "tab star" and "tab unstar" take
 // `--agent peer:agent` to act on an agent a peer's host owns. They reach the
@@ -52,6 +55,7 @@ import {
 	TAB_CONTEXT_OP_MESSAGES,
 	TAB_CONTEXT_OP_REPLY_MS,
 	buildTabContextOpMessage,
+	normalizeTabContextOpResult,
 	type TabContextOp,
 	type TabContextOpRequest,
 	type TabContextOpResult,
@@ -906,6 +910,7 @@ const TAB_CONTEXT_OP_LABELS: Record<TabContextOp, string> = {
 	compact: 'compaction',
 	merge: 'context merge',
 	transfer: 'context transfer',
+	continuity: 'continuity preview',
 };
 
 /**
@@ -915,9 +920,14 @@ const TAB_CONTEXT_OP_LABELS: Record<TabContextOp, string> = {
  */
 function failTabContextTimeout(op: TabContextOp, json?: boolean): never {
 	const seconds = Math.round(TAB_CONTEXT_OP_REPLY_MS[op] / 1000);
+	// A preview only reads, so "may still be running" would be wrong for it. What a silent
+	// desktop usually means is an older Maestro: it answers a message it does not know with
+	// an echo, which this request does not wait on.
 	const message =
-		`Timed out after ${seconds}s waiting for the ${TAB_CONTEXT_OP_LABELS[op]} to finish. ` +
-		'It may still be running in Maestro; check with "maestro-cli session list".';
+		op === 'continuity'
+			? `Timed out after ${seconds}s waiting for the continuity preview. Nothing was changed: it only reads. A Maestro that predates "tab continuity" never answers it.`
+			: `Timed out after ${seconds}s waiting for the ${TAB_CONTEXT_OP_LABELS[op]} to finish. ` +
+				'It may still be running in Maestro; check with "maestro-cli session list".';
 	if (json) console.log(JSON.stringify({ success: false, timedOut: true, error: message }));
 	else console.error(`Error: ${message}`);
 	return exitWith(ExitCode.Timeout);
@@ -1007,6 +1017,44 @@ export async function tabCompact(
 		result.reductionPercent !== undefined ? ` (${result.reductionPercent}% smaller)` : '';
 	console.log(formatSuccess(`Compacted tab ${entry.tabId} into a new tab${reduction}`));
 	if (result.newTabId) console.log(`  Tab: ${result.newTabId}`);
+}
+
+/**
+ * `maestro-cli tab continuity` - the read-only continuity preview of a tab: the
+ * evidence a compaction or continuation must keep (the user's own constraints,
+ * pending work, verified results, unresolved failures), each line with the
+ * entry it came from, and what could not be established. It prints text and
+ * changes nothing: no turn, no compaction, no log entry, no prompt.
+ */
+export async function tabContinuity(
+	tabId: string | undefined,
+	options: TabMutateOptions
+): Promise<void> {
+	const entry = await resolveContextTab(tabId, options.agent, options.json);
+	const result = await sendTabContextOp(
+		{ op: 'continuity', sessionId: entry.agentId, tabId: entry.tabId },
+		options.json
+	);
+	// The desktop cleaned the preview before it left. It is printed to a terminal
+	// here, so the same check runs again on what actually arrived.
+	const { continuity } = normalizeTabContextOpResult({
+		success: true,
+		continuity: result.continuity,
+	});
+	if (!continuity) {
+		return failCommand(
+			'The desktop answered without a preview. It may be an older Maestro that does not know "tab continuity".',
+			options.json
+		);
+	}
+
+	if (options.json) {
+		console.log(
+			JSON.stringify({ success: true, agentId: entry.agentId, tabId: entry.tabId, ...continuity })
+		);
+		return;
+	}
+	console.log(continuity.text);
 }
 
 /**

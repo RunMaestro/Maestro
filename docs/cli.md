@@ -1347,6 +1347,7 @@ maestro-cli tab pins show                             # open the pin panel (move
 maestro-cli tab compact -a <agent-id>                         # summarize into a new tab
 maestro-cli tab merge <tab-id> --into <agent-id> [--target-tab <tab-id>]
 maestro-cli tab transfer <tab-id> --to <agent-id> --background
+maestro-cli tab continuity <tab-id>                           # read only: what a continuation must keep
 
 # Pin an agent to the Bookmarks section at the top of the Left Bar
 maestro-cli bookmark <agent-id>
@@ -1362,6 +1363,8 @@ maestro-cli unbookmark <agent-id>
 `tab pins` is the CLI half of the pin button on a message and the pin panel (see [Pinned Messages](./general-usage#pinned-messages)). Every verb answers with the tab's pins after it ran, so `--json` output is enough to verify a change. Only user messages and agent replies can be pinned. `add` takes any transcript entry ID (exact or a unique prefix; a later chunk of a streamed reply pins the whole reply) or `--last user|agent`, and pinning a message twice reports `alreadyPinned` instead of failing. A pin listed as `loaded: false` points at a message older than what the tab has read back. `remove` and `rename` take a pin ID (exact or a unique prefix). `show` selects the agent and the tab, then opens the panel; it refuses a tab with no pins.
 
 `tab compact` prints the compacted tab's ID and how much smaller its context is; it refuses a tab too small to compact. `tab merge` sends into the target agent's active tab unless `--target-tab` names another (another tab of the same agent works too); with `--background` the context waits on that tab and sends when it is next opened, which the output says. `tab transfer` prints the new tab's ID in the target agent; a busy target queues the context behind its running turn. A compaction can take minutes, so the CLI waits up to 10 minutes; if any of the three runs out of time it exits 5 and says the operation may still be running, rather than reporting a failure.
+
+`tab continuity` is the read-only counterpart. It prints what a continuation of the tab must keep (the user's own constraints, pending work, verified results and unresolved failures, each with the transcript entry it came from) and what could not be established. It starts no turn, compacts nothing and writes nothing, so it takes no `--background` flag, and it is its own request: an older desktop refuses it instead of compacting. An earlier synopsis from History is shown only when it provably belongs to that tab (same agent, provider session and tab, or a matching native owner record); `--json` reports how many entries were kept out, and why. A tab with no entries gets an empty preview that says so, and a consult tab or a document chat is refused. The output is plain text, not Markdown: its excerpts are model text, so do not render it as Markdown where you show it.
 
 `tab new`, `tab reopen`, `tab compact`, `tab merge`, `tab transfer`, and `switch-mode` take `--background` / `--focus`; see [Who Moves the View](#who-moves-the-view---background----focus). `switch-mode --background` refuses when the target is the agent already on screen, since the mode change _is_ the view change there, and tells you to re-run with `--focus` if you meant it anyway.
 

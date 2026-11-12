@@ -17,6 +17,8 @@ import type { LogEntry } from '../../../renderer/types';
 // Mock window.maestro for IPC calls
 const mockGroomContext = vi.fn();
 const mockCancelGrooming = vi.fn();
+const mockGetAllPaginated = vi.fn();
+const mockLog = vi.fn();
 
 vi.stubGlobal('window', {
 	maestro: {
@@ -24,6 +26,8 @@ vi.stubGlobal('window', {
 			groomContext: mockGroomContext,
 			cancelGrooming: mockCancelGrooming,
 		},
+		history: { getAllPaginated: mockGetAllPaginated },
+		logger: { log: mockLog },
 	},
 });
 
@@ -481,6 +485,138 @@ Continue with implementation.`);
 			const before = JSON.stringify(logs);
 			service.buildContinuityDigest(logs);
 			expect(JSON.stringify(logs)).toBe(before);
+		});
+	});
+
+	describe('previewContinuity', () => {
+		const tab = {
+			id: 'tab-1',
+			agentSessionId: 'sess-1',
+			provider: 'claude-code',
+			entries: [
+				createMockLog({
+					id: 'u1',
+					source: 'user',
+					text: 'Ship the exporter. Never touch the CLI.',
+				}),
+			],
+		};
+		const asked = { agentId: 'agent-1', tabId: 'tab-1' };
+
+		it('plans the preview of the tab it is handed', () => {
+			const result = service.previewContinuity({
+				target: asked,
+				agentId: 'agent-1',
+				tab,
+				history: [],
+			});
+
+			expect(result.ok).toBe(true);
+			expect(result.ok && result.preview.digest.constraints.map((item) => item.text)).toEqual([
+				'Never touch the CLI.',
+			]);
+			expect(result.ok && result.preview.text).toContain('Continuity preview of tab tab-1');
+		});
+
+		it('refuses a tab that is not the one asked for, before reading anything', () => {
+			const result = service.previewContinuity({
+				target: { agentId: 'agent-1', tabId: 'tab-2' },
+				agentId: 'agent-1',
+				tab,
+				history: [],
+			});
+
+			expect(result).toMatchObject({ ok: false, code: 'wrong-target' });
+		});
+
+		it('starts no turn, reads no History and writes nothing', () => {
+			service.previewContinuity({ target: asked, agentId: 'agent-1', tab, history: [] });
+
+			expect(mockGroomContext).not.toHaveBeenCalled();
+			expect(mockCancelGrooming).not.toHaveBeenCalled();
+			expect(mockGetAllPaginated).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('readContinuityHistory', () => {
+		const agent = { id: 'agent-1', cwd: '/work/app', projectRoot: '/work/app' };
+
+		it("reads the agent's newest interactive entries through the panel's own read", async () => {
+			mockGetAllPaginated.mockResolvedValue({
+				entries: [{ id: 'h1', type: 'USER' }],
+				hasMore: false,
+			});
+
+			const read = await service.readContinuityHistory(agent);
+
+			expect(read).toEqual({ records: [{ id: 'h1', type: 'USER' }], truncated: false });
+			expect(mockGetAllPaginated).toHaveBeenCalledTimes(1);
+			expect(mockGetAllPaginated).toHaveBeenCalledWith({
+				sessionId: 'agent-1',
+				projectPath: '/work/app',
+				sharedContext: undefined,
+				lookbackHours: null,
+				types: ['USER'],
+				pagination: { limit: 300, offset: 0 },
+			});
+		});
+
+		it('passes the shared History of an SSH remote that syncs it', async () => {
+			mockGetAllPaginated.mockResolvedValue({ entries: [], hasMore: false });
+
+			await service.readContinuityHistory({
+				...agent,
+				cwd: '/home/dev/app',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1', syncHistory: true },
+			});
+
+			expect(mockGetAllPaginated.mock.calls[0][0].sharedContext).toEqual({
+				sshRemoteId: 'remote-1',
+				remoteCwd: '/home/dev/app',
+			});
+		});
+
+		it('reports that more History exists than was read', async () => {
+			mockGetAllPaginated.mockResolvedValue({ entries: [], hasMore: true });
+			expect(await service.readContinuityHistory(agent)).toMatchObject({ truncated: true });
+		});
+
+		it('resolves null, and logs it, when the read fails', async () => {
+			mockGetAllPaginated.mockRejectedValue(new Error('remote unreachable'));
+
+			expect(await service.readContinuityHistory(agent)).toBeNull();
+			expect(mockLog).toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('History could not be read'),
+				undefined,
+				expect.any(Error)
+			);
+		});
+	});
+
+	describe('summarizing carries no digest', () => {
+		it('sends the summarization prompt without any continuity text', async () => {
+			const logs = [
+				createMockLog({ source: 'user', text: 'Ship the exporter. Never touch the CLI.' }),
+				createMockLog({ source: 'ai', text: 'Started on the exporter.' }),
+			];
+
+			await service.summarizeContext(
+				{
+					sourceSessionId: 'session-123',
+					sourceTabId: 'tab-456',
+					projectRoot: '/test/project',
+					agentType: 'claude-code' as const,
+				},
+				logs,
+				() => {}
+			);
+
+			const prompt = mockGroomContext.mock.calls[0][2] as string;
+			expect(prompt).toContain('Never touch the CLI.');
+			expect(prompt).not.toMatch(/continuity (digest|preview)/i);
+			expect(prompt).not.toContain('not verified');
+			expect(mockGetAllPaginated).not.toHaveBeenCalled();
 		});
 	});
 

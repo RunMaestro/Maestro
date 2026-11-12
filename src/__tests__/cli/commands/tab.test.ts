@@ -39,6 +39,7 @@ import {
 	tabClosed,
 	tabReopen,
 	tabCompact,
+	tabContinuity,
 	tabMerge,
 	tabTransfer,
 	tabPinsList,
@@ -702,6 +703,102 @@ describe('tab commands', () => {
 			mockContextOp({ success: false, timedOut: true, error: 'still summarizing' });
 			await expect(tabCompact(undefined, { agent: 'agent-1' })).rejects.toThrow('__exit__');
 			expect(processExitSpy).toHaveBeenCalledWith(5);
+		});
+
+		const PREVIEW = {
+			text: 'Continuity preview of tab tab-bbbb (claude-code).\n\nNotices:\n- one',
+			entries: 6,
+			synopses: { shown: 1, refused: { 'other-tab': 2 } },
+			notices: ['one'],
+			unknowns: ['objective: none'],
+		};
+
+		it('tab continuity defaults to the active tab of -a, sends its own message, and prints the text', async () => {
+			const sent = mockContextOp({ success: true, continuity: PREVIEW });
+			await tabContinuity(undefined, { agent: 'agent-2' });
+
+			expect(sent).toHaveLength(1);
+			// Its own message: no field on it could make an older desktop compact instead.
+			expect(sent[0].payload).toEqual({
+				type: 'continuity_preview',
+				sessionId: 'agent-2',
+				tabId: 'tab-bbbb',
+			});
+			expect(sent[0].responseType).toBe('continuity_preview_result');
+			// A read, not a summarization turn: seconds, not the minutes a compaction waits.
+			expect(sent[0].timeoutMs).toBeLessThan(2 * 60_000);
+			expect(consoleSpy).toHaveBeenCalledWith(PREVIEW.text);
+		});
+
+		it('tab continuity --json carries the counts, notices and unknowns beside the text', async () => {
+			const sent = mockContextOp({ success: true, continuity: PREVIEW });
+			await tabContinuity('tab-cc', { json: true });
+
+			expect(sent[0].payload).toEqual({
+				type: 'continuity_preview',
+				sessionId: 'agent-1',
+				tabId: 'tab-cccc',
+			});
+			expect(lastJson()).toEqual({
+				success: true,
+				agentId: 'agent-1',
+				tabId: 'tab-cccc',
+				...PREVIEW,
+			});
+		});
+
+		it('tab continuity refuses a tab that belongs to another agent than -a, sending nothing', async () => {
+			const sent = mockContextOp({ success: true, continuity: PREVIEW });
+			await expect(tabContinuity('tab-bbbb', { agent: 'agent-1' })).rejects.toThrow('__exit__');
+			expect(sent).toHaveLength(0);
+		});
+
+		it("tab continuity reports the desktop's refusal and exits 1", async () => {
+			mockContextOp({
+				success: false,
+				error: "Tab tab-aaaa holds another agent's consult, not a conversation of this agent.",
+			});
+			await expect(tabContinuity(undefined, { agent: 'agent-1', json: true })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(lastJson().success).toBe(false);
+			expect(lastJson().error).toContain('consult');
+		});
+
+		it('tab continuity reports a timeout apart from a failure (exit 5)', async () => {
+			mockContextOp(new CommandTimeoutError('continuity_preview_result'));
+			await expect(tabContinuity(undefined, { agent: 'agent-1', json: true })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(5);
+			expect(lastJson().error).toContain('continuity preview');
+			// A read has nothing "still running" to look for; it says nothing changed and why it may be silent.
+			expect(lastJson().error).toContain('Nothing was changed');
+			expect(lastJson().error).not.toContain('still be running');
+			expect(lastJson().error).toContain('predates');
+		});
+
+		it('tab continuity says so when the desktop answers success with no preview (an older Maestro)', async () => {
+			mockContextOp({ success: true });
+			await expect(tabContinuity(undefined, { agent: 'agent-1', json: true })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(lastJson().error).toContain('answered without a preview');
+		});
+
+		it('tab continuity does not print control characters a sender put in the text', async () => {
+			mockContextOp({
+				success: true,
+				continuity: { ...PREVIEW, text: 'Done\u001b[2J\u001b]0;pwned\u0007\rhidden\u202e' },
+			});
+			await tabContinuity(undefined, { agent: 'agent-1' });
+
+			const printed = consoleSpy.mock.calls.map((call) => String(call[0])).join('\n');
+			// eslint-disable-next-line no-control-regex
+			expect(printed).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e]/);
+			expect(printed).toContain('Done');
 		});
 
 		it('tab merge sends both tabs and reports the receiving tab', async () => {

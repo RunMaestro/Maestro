@@ -477,6 +477,8 @@ Manages compacting a single conversation context to reduce context window usage.
 - `cancelSummarization()` - Calls `window.maestro.context.cancelGrooming()`
 - `formatCompactedTabName(originalName)` - Generates "Name Compacted YYYY-MM-DD"
 - `buildContinuityDigest(logs, options?)` - Evidence digest of a tab's logs (objective, the user's constraints, pending work, verified results, unresolved failures, unknowns, source references), built without a model by `buildContextDigest()` in `src/shared/contextDigest.ts`. Pure: starts no turn and is sent nowhere by this method
+- `previewContinuity(input)` - The continuity preview of ONE tab: its digest behind the gates that decide what may enter it (the tab asked about, a conversation of this agent, a History synopsis that provably belongs to it). Pure like `buildContinuityDigest`; reached only through `useSummarizeAndContinue().previewContinuity()`, never by summarizing, merging or sending. See the canonical entry in `CANONICAL-UTILITIES.md`
+- `readContinuityHistory(session)` - The agent's newest 300 interactive History entries, through the read the History panel uses. Resolves `null` (and logs a warning) when the read fails; the preview then says History was not read
 
 **Chunked summarization:**
 Large contexts (>50k tokens) are split into chunks, each summarized separately, then combined. If the combined result exceeds `TARGET_COMPACTED_TOKENS`, up to 3 consolidation passes aggressively reduce it.

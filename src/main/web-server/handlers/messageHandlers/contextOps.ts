@@ -2,7 +2,7 @@
  * Context Ops domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: merge_context,
- * transfer_context, summarize_context, create_gist.
+ * transfer_context, summarize_context, continuity_preview, create_gist.
  */
 
 import type { CreateGistResult } from '../../../../shared/gitUtils';
@@ -15,7 +15,7 @@ import {
 } from '../../../../shared/tabContextOps';
 
 /**
- * Shared body of the three context messages: validate, forward to the
+ * Shared body of the four context messages: validate, forward to the
  * renderer that owns the source agent, and ALWAYS answer with the typed
  * `*_result` (never a bare `error` frame), so a waiting client is never left
  * to its own timeout.
@@ -80,6 +80,19 @@ export function handleSummarizeContext(
 	message: WebClientMessage
 ): void {
 	handleTabContextOp(ctx, client, message, 'compact');
+}
+
+/**
+ * Handle continuity_preview - the read-only digest of one tab. Its own message,
+ * not a flag on summarize_context: a desktop that predates it must refuse the
+ * message instead of ignoring a flag and starting a compaction.
+ */
+export function handleContinuityPreview(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	handleTabContextOp(ctx, client, message, 'continuity');
 }
 
 /**

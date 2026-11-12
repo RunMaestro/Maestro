@@ -282,6 +282,44 @@ describe('buildContextDigest', () => {
 			expect(digest.constraints[0].text).not.toContain('sk-abcdefghijklmnop');
 			expect(digest.preview).not.toContain('sk-abcdefghijklmnop');
 		});
+
+		it('removes control characters from the retained words, so the preview is safe to print', () => {
+			const digest = build([
+				user(
+					'Build the exporter \u001b[31mnow\u001b[0m\r\nthen tidy\u202e up\nNever touch \u0007the CLI'
+				),
+			]);
+
+			// The escape bytes are gone, the printable rest is kept, and a CR LF reads as one line break.
+			expect(digest.objective?.text).toBe(
+				'Build the exporter [31mnow[0m ⏎ then tidy up ⏎ Never touch the CLI'
+			);
+			expect(digest.constraints.map((item) => item.text)).toEqual(['Never touch the CLI']);
+			// eslint-disable-next-line no-control-regex
+			expect(digest.preview).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e]/);
+		});
+
+		it('cleans tool commands and agent errors the same way', () => {
+			const digest = build([
+				user('Build the exporter please'),
+				failedBash('npm test \u001b[2J-- -t "a\u0007b"', 'FAIL src/a.test.ts\u001b]0;pwned\u0007'),
+				errorEntry('Boom \u001b[2J\u202e happened'),
+			]);
+
+			// eslint-disable-next-line no-control-regex
+			expect(digest.preview).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e]/);
+			expect(digest.unresolvedFailures.map((item) => item.text)).toContain(
+				'npm test [2J-- -t "ab"'
+			);
+		});
+
+		it('redacts a secret even when a control character was hidden inside it', () => {
+			const digest = build([
+				user('Never print the key sk-abcdefghijklmnop\u0007qrstuvwxyz0123 anywhere.'),
+			]);
+			expect(digest.preview).not.toContain('sk-abcdefghijklmnop');
+			expect(digest.preview).not.toContain('qrstuvwxyz0123');
+		});
 	});
 
 	describe('compaction', () => {
@@ -1032,6 +1070,29 @@ describe('buildContextDigest', () => {
 			]);
 			expect(digest.excerpts[0].ref).toEqual({ label: 'synopsis h-2', entryId: 'h-2' });
 			expect(digest.preview).toContain('Earlier synopses (written by a model, not verified):');
+		});
+
+		it('cleans the id of a synopsis before it is shown as a source', () => {
+			const digest = build([user('Ship the exporter please')], {
+				synopses: [{ ...real(1), id: 'h\u001b[2J-1\u202e' }],
+			});
+
+			expect(digest.excerpts[0].ref.label).toBe('synopsis h[2J-1');
+			// eslint-disable-next-line no-control-regex
+			expect(digest.preview).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e]/);
+		});
+
+		it('shows a synopsis the caller marked as written before the last compaction, and only that one', () => {
+			const digest = build([user('Ship the exporter please')], {
+				synopses: [{ ...real(1), beforeCompaction: true }, real(2)],
+			});
+
+			expect(digest.excerpts[0].beforeCompaction).toBe(true);
+			expect(digest.excerpts[1].beforeCompaction).toBeUndefined();
+			expect(digest.preview).toContain(
+				'Finished step 1 [synopsis h-1, before the last compaction]'
+			);
+			expect(digest.preview).toContain('Finished step 2 [synopsis h-2]');
 		});
 
 		it('keeps a synopsis out of the constraints, even when it is worded like one', () => {

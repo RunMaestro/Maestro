@@ -112,6 +112,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Redacting secrets from text you persist or show:** `redactSecrets(text, opts?)`, `passesLuhn()` in `src/shared/redactSecrets.ts`
 - **Encoding answers to provider questions:** `encodeQuestionAnswer()`, `hasAnswer()`, `QuestionForAnswer`, `QuestionSelection` in `src/shared/questionAnswer.ts`
 - **Strip ANSI / collapse progress overwrites:** `stripAnsiCodes()`, `processCarriageReturns()` in `src/shared/stringUtils.ts`
+- **Making untrusted text safe to print or show verbatim:** `stripControlCharacters()` in `src/shared/stringUtils.ts` (escapes, CR, C0/C1 controls, bidirectional overrides)
 - **Normalized edit similarity:** `normalizedEditSimilarity()` in `src/shared/stringUtils.ts`
 - **Preparing text for speech:** `prepareSpeechText()` in `src/shared/acappella/speech-text.ts`
 - **Speech recognition vocabulary:** `normalizeSpeechVocabulary()`, `buildSpeechVocabulary()` in `src/shared/acappella/speech-vocabulary.ts`; `correctSpeechVocabulary()` in `src/main/local-models/speech-vocabulary.ts`
@@ -374,6 +375,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Editing the newest queued message:** `requestEditLastQueuedMessage()` in `src/renderer/services/editQueuedMessage.ts`
 - **Recovering a turn refused on the context limit:** `getContextCompactCommand()` in `src/shared/contextCompaction.ts`; `compactTabContext()`, `recordContextCompaction()` in `src/renderer/services/contextCompaction.ts`; driven by `scheduleRetryForError()` in `src/renderer/stores/retryStore.ts`
 - **Evidence digest of a conversation, for a continuation:** `buildContextDigest()`, `DEFAULT_DIGEST_CHARS` in `src/shared/contextDigest.ts`; `buildContinuityDigest()` on `contextSummarizationService` in `src/renderer/services/contextSummarizer.ts`
+- **The explicit continuity preview of ONE tab (gates, wire form, who may call it):** `planContinuityPreview()`, `continuityWire()` in `src/shared/continuityPreview.ts`, reached by `useSummarizeAndContinue().previewContinuity()` and `maestro-cli tab continuity`
 - **Whether a Force Send control exists at all:** `shouldOfferForceSend()`, `getForceSendEligibility()`, `getForceSendTitle()` in `src/renderer/utils/executionQueue.ts`
 - **Model/effort badges on a finished turn:** `<TurnSettingPills>` in `src/renderer/components/ui/TurnSettingPills.tsx`; settings are stamped at SEND by `codifyTurnSettings()` in `src/renderer/utils/providerTabSessions.ts`
 - **Thinking mode (`'off' | 'on' | 'sticky'`):** `THINKING_MODES`, `nextThinkingMode()`, `asThinkingMode()` in `src/shared/types.ts`
