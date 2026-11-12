@@ -1076,32 +1076,33 @@ The verb only reads. To change an edge, use `update-agent <source> --peer <targe
 
 `models` is the command-line form of **Settings > Models**: the Library, the engines, the model server, the endpoints you run, which model each housekeeping task uses, tier defaults, and the token proxy. Each verb reaches the same main-process function as its button, so a download started here is the download the Library shows. The concepts are in [Local Models](/local-models); this section is the verb map.
 
-| To do this                                   | Run                                                                                                                                |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| See which models are installed               | `models list [--kind text-gen\|embedding\|classifier\|stt\|tts\|wake-word] [--fit]`                                                |
-| Download, pause, cancel, verify, or drop one | `models install <id>`, `models pause <id>`, `models cancel <id>`, `models verify <id>`, `models remove <id> [--force]`             |
-| Resume a paused download                     | `models install <id>` (there is no separate resume verb)                                                                           |
-| Open the Models tab on one panel             | `open settings --tab models --sub-tab overview\|library\|library/<section>\|sources\|system-one\|system-two\|gateway`              |
-| Add a GGUF model from Hugging Face           | `models add-hf <repo> <file> [--dry-run]`, `models remove-hf <id>`                                                                 |
-| Install or update an engine                  | `models runtimes list`, `models runtimes install onnx\|llama`                                                                      |
-| Point a task at a model                      | `models assign <task> off\|utility-agent\|system-one\|local:<id>\|endpoint:<endpoint>:<model>`                                     |
-| Choose the Utility source                    | `settings set utilitySource '<json>'`, `settings set utilityAgentId\|utilityModelId <value>`                                       |
-| Choose what a task does with no answer       | `s1 set fail-policy <task> open\|closed\|default`                                                                                  |
-| Set the language a speech model dictates in  | `models assign dictation local:<id>?language=de`                                                                                   |
-| See what each task runs on, and if it can    | `models tasks`, `models status [<task>]`                                                                                           |
-| Run a task now                               | `models run <task> --input "<text>"`, `models run git-drafts --cwd <repo>`, `models run dictation --audio <wav>`                   |
-| See and drive the model server               | `models server status\|start\|stop\|key`, `models server set --bind local\|network --max-models <n> --rotate-key --build <choice>` |
-| Use a model server you run                   | `models endpoints list\|add\|update\|remove\|models\|test\|detect`                                                                 |
-| Read the model server log                    | `models server status` prints the path, then `open-file <path>`                                                                    |
-| Point Maestro at VoiceStudio                 | `settings set acappella.voiceStudio.baseUrl\|engine\|seed <value>` (no verb checks the connection)                                 |
-| Set tier defaults per harness                | `models tiers list\|options\|suggest\|set\|reset`                                                                                  |
-| See what the token proxy did                 | `models proxy status`, `models proxy block <hash> [--original\|--compressed] [--lines <start:end>]`                                |
-| Inspect or prune the compression cache       | `models proxy cache`, `models proxy cache prune [--older-than <duration>]`                                                         |
-| Set the proxy mode for new agents            | `settings set defaultTokenProxyMode off\|passthrough\|compress\|compress-early` (existing agents keep theirs)                      |
-| Check the semantic index                     | `models index`                                                                                                                     |
-| Index Cue runs for Semantic search           | `settings set semanticIndexCue true\|false`                                                                                        |
-| Search past work by meaning                  | `search "<query>" --semantic` (see [Searching Past Work](#searching-past-work-search))                                             |
-| Change where model files come from           | `models config show`, `models config set download-base <url\|default>`                                                             |
+| To do this                                      | Run                                                                                                                                               |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| See which models are installed                  | `models list [--kind text-gen\|embedding\|classifier\|stt\|tts\|wake-word] [--fit]`                                                               |
+| Download, pause, cancel, verify, or drop one    | `models install <id>`, `models pause <id>`, `models cancel <id>`, `models verify <id>`, `models remove <id> [--force]`                            |
+| Resume a paused download                        | `models install <id>` (there is no separate resume verb)                                                                                          |
+| Open the Models tab on one panel                | `open settings --tab models --sub-tab overview\|library\|library/<section>\|sources\|system-one\|system-two\|gateway`                             |
+| Add a GGUF model from Hugging Face              | `models add-hf <repo> <file> [--dry-run]`, `models remove-hf <id>`                                                                                |
+| Install or update an engine                     | `models runtimes list`, `models runtimes install onnx\|llama`                                                                                     |
+| Point a task at a model                         | `models assign <task> off\|utility-agent\|system-one\|local:<id>\|endpoint:<endpoint>:<model>`                                                    |
+| Choose the Utility source                       | `settings set utilitySource '<json>'`, `settings set utilityAgentId\|utilityModelId <value>`                                                      |
+| Choose what a task does with no answer          | `s1 set fail-policy <task> open\|closed\|default`                                                                                                 |
+| Set the language a speech model dictates in     | `models assign dictation local:<id>?language=de`                                                                                                  |
+| See what each task runs on, and if it can       | `models tasks`, `models status [<task>]`                                                                                                          |
+| Run a task now                                  | `models run <task> --input "<text>"`, `models run git-drafts --cwd <repo>`, `models run dictation --audio <wav>`                                  |
+| See and drive the model server                  | `models server status\|start\|stop\|key`, `models server set --bind local\|network --max-models <n> --rotate-key --build <choice>`                |
+| Use a model server you run                      | `models endpoints list\|add\|update\|remove\|models\|test\|detect`                                                                                |
+| Read the model server log                       | `models server status` prints the path, then `open-file <path>`                                                                                   |
+| Point Maestro at VoiceStudio                    | `settings set acappella.voiceStudio.baseUrl\|engine\|seed <value>` (no verb checks the connection)                                                |
+| Set tier defaults per harness                   | `models tiers list\|options\|suggest\|set\|reset`                                                                                                 |
+| See what the token proxy did                    | `models proxy status`, `models proxy block <hash> [--original\|--compressed] [--lines <start:end>]`                                               |
+| Inspect or prune the compression cache          | `models proxy cache`, `models proxy cache prune [--older-than <duration>]`                                                                        |
+| Set the proxy mode for new agents               | `settings set defaultTokenProxyMode off\|passthrough\|compress\|compress-early` (existing agents keep theirs)                                     |
+| See what the other models did (Usage Dashboard) | `stats models [--range day\|week\|month\|quarter\|year\|all] [--json]` (see [What the Other Models Did](#what-the-other-models-did-stats-models)) |
+| Check the semantic index                        | `models index`                                                                                                                                    |
+| Index Cue runs for Semantic search              | `settings set semanticIndexCue true\|false`                                                                                                       |
+| Search past work by meaning                     | `search "<query>" --semantic` (see [Searching Past Work](#searching-past-work-search))                                                            |
+| Change where model files come from              | `models config show`, `models config set download-base <url\|default>`                                                                            |
 
 ```bash
 # What is installed, and what will fit on this computer
@@ -1183,7 +1184,11 @@ maestro-cli stats models --range month --json
 maestro-cli open usage-dashboard --tab models
 ```
 
-`--range` takes `day`, `week`, `month`, `quarter`, `year` or `all`, as `stats` does. `stats` itself prints the rest of the dashboard.
+`--range` takes `day`, `week`, `month`, `quarter`, `year` or `all`, as `stats` does, and defaults to `week`. `--range` and `--json` may be written before or after `models`. `stats` itself prints the rest of the dashboard.
+
+The text output starts with a headline (requests, tokens in and out, the share that ran on this machine, errors), then the sections **Sources**, **Tasks**, **Agents (Run on turns)**, **System One** and **Token proxy**. Every section after **Sources** is left out when it holds nothing. The System One section notes `decisions are kept 30 days` when the range reaches further back than that, and when Auto turns ran it ends with an `Auto routing` line that splits them into low, medium and high. A range in which nothing ran is not a failure: it prints "Nothing ran in this range." and points at `maestro-cli models status`, which shows what is set up to run on another model. `--json` prints the whole record the tab draws: `range`, `since`, `totals`, `sources`, `byTask`, `byAgent`, `systemOne` and `proxy`.
+
+The desktop app must be running. A range that is not one of the six exits `2` with `Invalid range "<range>". Must be one of: day, week, month, quarter, year, all`. The app not running, an older build, or no answer exits `3` to `5`, and a read that fails exits `1` with `Model usage could not be read`. Like every `stats` verb, it belongs to the **Usage & Stats** Encore Feature: while that is off the verb is hidden from `--help` and refuses with "Usage & Stats is turned off. Turn it on in Settings > Plugins, or run: maestro-cli encore enable usage-stats" (`--json` code `USAGE_STATS_DISABLED`).
 
 ### Searching Past Work (`search`)
 
