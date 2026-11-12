@@ -4,6 +4,11 @@ import * as os from 'os';
 import * as path from 'path';
 import { DigestScheduler } from '../../../main/computer-history/digests';
 import { defaultComputerHistoryConfig } from '../../../shared/computer-history/config';
+import {
+	DIGEST_ACCURACY_RULES,
+	PREVIOUS_DIGEST_RULE,
+	digestFormatInstructions,
+} from '../../../shared/computer-history/digestFormat';
 import type { ComputerHistoryConfig } from '../../../shared/computer-history/types';
 
 let dir: string;
@@ -65,6 +70,11 @@ describe('DigestScheduler', () => {
 		expect(call.targetSessionId).toBe('agent-1');
 		expect(call.question).toContain(path.join(dir, 'segments', '2026-10-03', '1415Z.jsonl'));
 		expect(call.question).toMatch(/UNTRUSTED/);
+		// The shared digest shape and accuracy rules, so both writers agree.
+		expect(call.question).toContain(digestFormatInstructions('15m'));
+		expect(call.question).toContain(DIGEST_ACCURACY_RULES);
+		// No earlier digest in the last hour: no continuity line.
+		expect(call.question).not.toContain('The previous digest is at:');
 		const written = fs.readFileSync(out, 'utf-8');
 		expect(written).toContain('- worked on invoices');
 		// The agent's answer is scrubbed like captured text.
@@ -73,6 +83,39 @@ describe('DigestScheduler', () => {
 		if (process.platform !== 'win32') expect(fs.statSync(out).mode & 0o777).toBe(0o600);
 		expect(s.status().last15mFile).toBe('digests/2026-10-03/1415Z.md');
 		expect(s.status().last15mAt).not.toBeNull();
+	});
+
+	it('hands the nearest earlier digest of the last hour for continuity', async () => {
+		config.digests = { enabled: true, agentId: 'agent-1' };
+		// 14:15 has no digest (an idle window); 14:00 does, two windows back.
+		const earlier = path.join(dir, 'digests', '2026-10-03', '1400Z.md');
+		fs.mkdirSync(path.dirname(earlier), { recursive: true });
+		fs.writeFileSync(earlier, '- earlier work');
+		const later = { ...entry, file: 'segments/2026-10-03/1430Z.jsonl' };
+		fs.writeFileSync(path.join(dir, 'segments', '2026-10-03', '1430Z.jsonl'), '{}\n');
+		const consult = vi.fn(async () => ({ success: true, answer: '- x' }));
+		const s = scheduler(consult);
+		s.onSegmentClosed(later, T0 + 900_000);
+		await vi.waitFor(() => expect(consult).toHaveBeenCalledTimes(1));
+		const { question } = (consult.mock.calls[0] as unknown[])[0] as { question: string };
+		expect(question).toContain(`The previous digest is at: ${earlier}`);
+		expect(question).toContain(PREVIOUS_DIGEST_RULE);
+		// Paths, never contents.
+		expect(question).not.toContain('earlier work');
+	});
+
+	it('looks back at most an hour for the previous digest', async () => {
+		config.digests = { enabled: true, agentId: 'agent-1' };
+		// Five windows (75 minutes) before 14:15.
+		const old = path.join(dir, 'digests', '2026-10-03', '1300Z.md');
+		fs.mkdirSync(path.dirname(old), { recursive: true });
+		fs.writeFileSync(old, '- old work');
+		const consult = vi.fn(async () => ({ success: true, answer: '- x' }));
+		const s = scheduler(consult);
+		s.onSegmentClosed(entry, T0);
+		await vi.waitFor(() => expect(consult).toHaveBeenCalledTimes(1));
+		const { question } = (consult.mock.calls[0] as unknown[])[0] as { question: string };
+		expect(question).not.toContain('The previous digest is at:');
 	});
 
 	it('records a failed consult without writing a file', async () => {
