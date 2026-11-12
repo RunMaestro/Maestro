@@ -64,16 +64,24 @@ export type SetAgentGatewayResult =
 	| { ok: false; error: string };
 
 /**
- * Write the main-process copy of one agent now. Never throws: the renderer
- * store already holds the value and the debounced flush will follow.
+ * Write the main-process copy of one agent now. Best-effort callers leave a
+ * failed write to the debounced flush. Routing decisions require confirmation
+ * from main, so they opt into errors instead of reporting a route in force.
  */
-export async function flushAgentToStore(sessionId: string): Promise<void> {
+export async function flushAgentToStore(
+	sessionId: string,
+	options?: { required?: boolean }
+): Promise<void> {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-	if (!session) return;
+	if (!session) {
+		if (options?.required) throw new Error('Agent not found');
+		return;
+	}
 	try {
 		await window.maestro.sessions.setMany([session as any], []);
 	} catch (err) {
 		logger.error('[AgentGateway] Failed to persist agent gateway', undefined, err);
+		if (options?.required) throw err;
 	}
 }
 
@@ -164,8 +172,8 @@ export async function setAgentTokenProxyMode(
 		const gatewayUrl = onProxy ? undefined : session.gatewayUrl;
 		if (gatewayUrl !== session.gatewayUrl || holdsTokenProxyFields(session)) {
 			updateSessionWith(sessionId, (s) => ({ ...s, gatewayUrl, ...OFF_TOKEN_PROXY_FIELDS }));
-			await flushAgentToStore(sessionId);
 		}
+		await flushAgentToStore(sessionId, { required: true });
 		return { ok: true, mode, gatewayUrl };
 	}
 
@@ -191,8 +199,10 @@ export async function setAgentTokenProxyMode(
 	}
 	if (gatewayUrl !== session.gatewayUrl || session.tokenProxyMode !== mode) {
 		updateSessionWith(sessionId, (s) => ({ ...s, gatewayUrl, tokenProxyMode: mode }));
-		await flushAgentToStore(sessionId);
 	}
+	// A previous immediate write may have failed while renderer state kept the
+	// intended setting. Even an unchanged choice must confirm main's copy.
+	await flushAgentToStore(sessionId, { required: true });
 	return { ok: true, mode, gatewayUrl };
 }
 

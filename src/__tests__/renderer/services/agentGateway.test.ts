@@ -242,6 +242,14 @@ describe('setAgentGatewayUrl', () => {
 });
 
 describe('flushAgentToStore', () => {
+	it('keeps best-effort callers nonthrowing when persistence fails', async () => {
+		seed();
+		vi.mocked(window.maestro.sessions.setMany).mockRejectedValueOnce(
+			new Error('Store unavailable')
+		);
+		await expect(flushAgentToStore('agent-1')).resolves.toBeUndefined();
+	});
+
 	it('does nothing for an agent that does not exist', async () => {
 		seed();
 
@@ -252,6 +260,34 @@ describe('flushAgentToStore', () => {
 });
 
 describe('setAgentTokenProxyMode', () => {
+	it.each(['compress', 'off'] as const)(
+		'rejects a failed immediate %s write and retries it even when renderer state matches',
+		async (mode) => {
+			seed({ gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'passthrough' });
+			vi.mocked(window.maestro.sessions.setMany).mockRejectedValueOnce(
+				new Error('Store unavailable')
+			);
+			await expect(setAgentTokenProxyMode('agent-1', mode)).rejects.toThrow('Store unavailable');
+			await expect(setAgentTokenProxyMode('agent-1', mode)).resolves.toMatchObject({
+				ok: true,
+				mode,
+			});
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(2);
+		}
+	);
+
+	it('makes a failed blanket-default write visible', async () => {
+		seed();
+		useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
+		vi.mocked(window.maestro.sessions.setMany).mockRejectedValueOnce(
+			new Error('Store unavailable')
+		);
+		await applyDefaultAgentTokenProxy('agent-1');
+		expect(useNotificationStore.getState().toasts).toEqual(
+			expect.arrayContaining([expect.objectContaining({ title: 'Proxy default was not applied' })])
+		);
+	});
+
 	it('points the agent at the proxy and stores the mode, in one flushed write', async () => {
 		seed();
 
@@ -337,13 +373,13 @@ describe('setAgentTokenProxyMode', () => {
 		expect(stored()).toBe(original);
 	});
 
-	it('writes nothing when the mode did not change', async () => {
+	it('confirms main holds an unchanged mode before reporting success', async () => {
 		seed({ gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress' });
 
 		const result = await setAgentTokenProxyMode('agent-1', 'compress');
 
 		expect(result.ok).toBe(true);
-		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
 	});
 
 	it('off clears a gateway that is the proxy, and the stored mode with it', async () => {
@@ -366,7 +402,10 @@ describe('setAgentTokenProxyMode', () => {
 
 		expect(result).toEqual({ ok: true, mode: 'off', gatewayUrl: 'http://127.0.0.1:8787' });
 		expect(stored().gatewayUrl).toBe('http://127.0.0.1:8787');
-		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ gatewayUrl: 'http://127.0.0.1:8787' })],
+			[]
+		);
 	});
 
 	it('off changes nothing before the proxy has a port', async () => {
