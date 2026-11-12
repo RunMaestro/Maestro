@@ -497,6 +497,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Keeping a floating menu on screen:** `useContextMenuPosition(menuRef, x, y)` in `src/renderer/hooks/ui/useContextMenuPosition.ts` (apply BOTH `maxHeight` and `overflowY: 'auto'`)
 - **How a floating surface looks (popover, menu, hover card, tooltip):** `elevatedSurfaceStyle(theme)`, `getElevatedSurfaceColors(colors)` in `src/renderer/utils/elevatedSurface.ts`
 - **Dropdown/tooltip anchored to a header element:** `useAnchoredMenuPosition(menuRef, anchorRef)` in `src/renderer/hooks/ui/useAnchoredMenuPosition.ts`, rendered via `createPortal(..., document.body)`
+- **A menu that opens on mouse hover AND on click:** `useHoverPopover({ triggerRef, contentRef, hoverEnabled? })` in `src/renderer/hooks/ui/useHoverPopover.ts`
 - **A pane width the user sets by dragging:** `useResizablePanel()` in `src/renderer/hooks/ui/useResizablePanel.ts`; a pane inside another surface pairs it with `usePersistedPanelWidth()` and omits `settingsKey`
 - **A dropdown the user resizes by its bottom edge (never off screen):** `useResizableDropdownHeight()`, `fitDropdownHeight` in `src/renderer/hooks/ui/useResizableDropdownHeight.ts`
 - **Sizing a surface to its longest label:** `widestLabelWidth(labels, opts)`, `estimateLabelWidth()` in `src/renderer/utils/labelWidth.ts`

@@ -1,6 +1,7 @@
 /// <reference types="@testing-library/jest-dom/vitest" />
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
+import { HOVER_POPOVER_OPEN_DELAY_MS } from '../../../../renderer/hooks/ui/useHoverPopover';
 import { SearchPopover } from '../../../../renderer/components/TabBar/SearchPopover';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
@@ -47,9 +48,59 @@ describe('SearchPopover on a phone', () => {
 		expect(screen.queryByText('See All Snoozed Tabs')).not.toBeInTheDocument();
 	});
 
+	it('does not peek the desktop menu on hover', () => {
+		vi.useFakeTimers();
+		try {
+			setup();
+			fireEvent.pointerEnter(screen.getByTitle('Switch tab (7 open tabs)'), {
+				pointerType: 'mouse',
+			});
+			act(() => {
+				vi.advanceTimersByTime(HOVER_POPOVER_OPEN_DELAY_MS);
+			});
+			expect(screen.queryByText('Search Tabs')).not.toBeInTheDocument();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('keeps the open-tab count on the magnifier', () => {
 		setup();
 		expect(screen.getByLabelText('7 open tabs')).toBeInTheDocument();
+	});
+});
+
+describe('SearchPopover on desktop', () => {
+	beforeEach(() => {
+		useSettingsStore.setState({ showTabCountBadge: true });
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('peeks the menu on mouse hover without a click', () => {
+		const { onSearchTabs } = setup();
+		fireEvent.pointerEnter(screen.getByTitle('Search… (7 open tabs)'), { pointerType: 'mouse' });
+		act(() => {
+			vi.advanceTimersByTime(HOVER_POPOVER_OPEN_DELAY_MS);
+		});
+		expect(screen.getByText('Search Tabs')).toBeInTheDocument();
+		expect(onSearchTabs).not.toHaveBeenCalled();
+	});
+
+	// On a tablet the tap is the gesture: pointerenter from a finger is ignored.
+	it('needs a press on touch', () => {
+		setup();
+		const button = screen.getByTitle('Search… (7 open tabs)');
+		fireEvent.pointerEnter(button, { pointerType: 'touch' });
+		act(() => {
+			vi.advanceTimersByTime(HOVER_POPOVER_OPEN_DELAY_MS);
+		});
+		expect(screen.queryByText('Search Tabs')).not.toBeInTheDocument();
+		fireEvent.click(button);
+		expect(screen.getByText('Search Tabs')).toBeInTheDocument();
 	});
 });
 
