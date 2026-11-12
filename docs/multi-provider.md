@@ -295,7 +295,15 @@ at the top of this page.
 
 There is no account to split. A local runtime such as Ollama or LM Studio has no
 login and no quota, so a second "account" buys you nothing. What you can vary
-per agent is the **endpoint and the model**, by pointing a provider's base-URL
+per agent is the **endpoint and the model**. For Claude Code, Codex, OpenCode
+and Copilot CLI, set the agent's [Run on](/local-models#run-on) target and
+Maestro sets the variables for each launch:
+
+```bash
+maestro-cli update-agent <agent-id> --run-on <source-id>:<model>
+```
+
+For any other provider, or to do it by hand, point the provider's base-URL
 variable at your local server:
 
 ```bash
