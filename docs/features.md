@@ -102,6 +102,7 @@ The group name in the banner is a button that opens that group's Group Settings.
 | **Left Bar**         | Right-click the group header, then **Group Settings...**                              |
 | **Quick Actions**    | `Cmd+K` / `Ctrl+K`, then **Group Settings**. It acts on the group of the active agent |
 | **New Agent banner** | Click the group name in the **Pre-filled from** banner                                |
+| **CLI**              | `maestro-cli open group-settings --group <group-id>`                                  |
 
 A group Maestro made for a git worktree family has no Group Settings, because its agents are made by **Create Worktree**, which copies the parent agent and never opens the New Agent form. From a terminal, use [`maestro-cli group-settings` and `update-group-settings`](./cli#group-settings).
 
@@ -120,11 +121,11 @@ The badge is not drawn at all while **Show group label on bookmarked agents** is
 
 If you save a change and the group already has agents that could receive it, Maestro asks **Publish to existing agents?** before it saves. The dialog names what you changed and lists the group's agents.
 
-| Button                  | What it does                                                                                                |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------- |
-| **Publish to N agents** | Saves the profile and writes this save's change into each agent that can receive it                         |
-| **New agents only**     | Saves the profile and leaves every existing agent as it is. It has the focus, so `Enter` is the safe choice |
-| **Cancel** / `Esc`      | Abandons the save. The form keeps what you typed                                                            |
+| Button                                                                             | What it does                                                                                                                                                                                                                               |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Publish to all N agents** (**Publish to 1 agent**, **Publish to X of N agents**) | Saves the profile and writes this save's change into each agent that can receive it. The label counts the agents the change reaches; **X of N** means some agents cannot receive it, such as agents on another provider for a model change |
+| **New agents only**                                                                | Saves the profile and leaves every existing agent as it is. It has the focus, so `Enter` is the safe choice                                                                                                                                |
+| **Cancel** / `Esc`                                                                 | Abandons the save. The form keeps what you typed                                                                                                                                                                                           |
 
 What a publish writes:
 
