@@ -994,19 +994,21 @@ From a terminal, set the same fields with `maestro-cli settings set acappella.vo
 
 **Run on** keeps an agent's provider CLI and changes the model behind it. The agent is still Claude Code, Codex, OpenCode, or Copilot CLI. Its tool loop, permission prompts, transcripts and Maestro's session handling are the same. Only the model that answers changes, from the provider's cloud model to a model on one of your [sources](#endpoints): the [Maestro model server](#model-server), a server you run (Ollama, LM Studio), or a cloud endpoint you added.
 
-Set it in the agent's **Models** tab, in **New Agent** or **Edit Agent**. The picker lists **Provider (default)**, then the models of each source, grouped by source. The Maestro model server comes first and lists the models you have installed. A saved source is listed only while it is enabled. Opening the tab starts nothing: the server's list comes from disk and the server is never started for it, and each enabled saved source is asked for its models.
+Set it in the agent's **Models** tab, in **New Agent** or **Edit Agent**. **Group Settings -> Models** has the same field without **Test**: the target is copied onto each agent created in the group. The picker lists **Provider (default)**, then the models of each source, grouped by source. The Maestro model server comes first and lists the models you have installed. A saved source is listed only while it is enabled. Opening the tab starts nothing: the server's list comes from disk and the server is never started for it, and each enabled saved source is asked for its models.
 
-| Control     | What it does                                                                                                                                                                       |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Run on**  | The model, by source. Each model from the Maestro model server shows its [fit label](#will-it-run-on-this-computer) and **Agent-ready** when it passed with this agent's provider. |
-| **Context** | The window the harness is told it has. It starts at the model's context on the server (40,960 for any other source) and cannot be lower than 40,960.                               |
-| **Test**    | Sends one short, read-only turn through the agent's real launch and shows the reply or the reason it failed.                                                                       |
+| Control                   | What it does                                                                                                                                                                       |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Run on**                | The model, by source. Each model from the Maestro model server shows its [fit label](#will-it-run-on-this-computer) and **Agent-ready** when it passed with this agent's provider. |
+| **Context size (tokens)** | The window the harness is told it has. It starts at the model's context on the server (40,960 for any other source) and cannot be lower than 40,960.                               |
+| **Test**                  | Sends one short, read-only turn through the agent's real launch and shows the reply or the reason it failed.                                                                       |
 
 Under the picker, Maestro says what the launch will do: that a source was removed or is disabled, that a loopback source cannot be reached from the agent's SSH remote, or that the agent's own variable takes precedence. A model without the **Agent-ready** badge shows "Not tested as an agent. Turns may fail or loop."
 
 A turn's pill names where it ran, in place of the model: `gpt-oss 20B (MXFP4) · Maestro`, `qwen3:latest · Ollama`.
 
-Before sending, the composer's model pill and the phone options sheet show the effective **Run on** model and source, including a tab's override. A source target overrides named provider model choices; change it in **Edit Agent > Models**. Selecting **Auto** shows Auto instead, because routing can choose a different target for the turn.
+Before sending, the composer's model pill and the phone options sheet show the effective **Run on** model and source. A source target overrides named provider model choices; change it in **Edit Agent > Models**. Selecting **Auto** shows Auto instead, because routing can choose a different target for the turn.
+
+The [Usage Dashboard](./usage-dashboard#models)'s **Models** tab has a **Run On Agents** card: one tile per agent whose turns ran on a Run on target, with **Turns**, **Tokens in**, **Tokens out** and **p50 turn**. `maestro-cli stats models` prints the same numbers under **Agents (Run on turns)**.
 
 ### Which providers can run on a source
 
@@ -1088,6 +1090,8 @@ On the same `gpt-oss 20B` at 40,960 tokens on an Apple M5 Max (128 GB), a one-wo
 
 **Test** sends `Reply with the single word: ready` through the agent's own launch: its provider, directory, path, arguments, variables and SSH remote, with the form's unsaved values on top. The turn is read-only, because the model may be one nobody has run as an agent in your project directory. It waits at most 5 minutes for the turn, and loading a model is outside that budget. A Provider target has nothing to test and is refused. A test leaves one short session in the provider's own session store for the agent's directory.
 
+A test that passes reads `<target> answered in <n> s: <reply>`. In **New Agent**, **Test** waits for a directory ("Choose a working directory on the General tab first."), and an invalid context size blocks it ("Fix the context size first."). **Test** also works from the [web interface](./remote-control).
+
 From the command line the test runs on what is stored, so set the target first.
 
 ### From the command line
@@ -1100,8 +1104,11 @@ maestro-cli update-agent <agent-id> --run-on-context 131072                 # th
 maestro-cli agent test-run-on <agent-id> [--json]                           # one short turn on the stored target
 maestro-cli update-agent <agent-id> --run-on provider                       # back to the provider's model
 maestro-cli create-agent "Local Coder" -d . -t claude-code --run-on maestro-server:<model-id>
+maestro-cli update-group-settings <group-id> --run-on <source-id>:<model> [--run-on-context <tokens>]   # for new agents in the group
 maestro-cli show agent <agent-id> --json   # runOn, runOnSpec, runOnLabel, runOnProblem
 ```
+
+`show agent` without `--json` prints a `Run on:` line with the target and its context, or the reason the stored target cannot be used.
 
 A target is written `provider` or `<source id>:<model>`. The source id ends at the first colon, so a model name may hold one. `maestro-server` is the Maestro model server; other ids are in `models endpoints list`. A source id that names nothing, a provider with no recipe, and a context under 40,960 are refused at the write. Whether the source serves the model is not asked at the write: `agent test-run-on` asks. A disabled source is accepted and is refused by name at launch until you enable it.
 
@@ -1124,15 +1131,15 @@ A tier's **target** is one of two things:
 
 Maestro reads three layers when the task launches, and the first one that sets the tier wins.
 
-| Layer               | Where you set it                                      | How it applies                                                                                                                                                 |
-| ------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Agent**           | **Edit Agent -> Models -> Tiers**                     | Wins for the tiers it sets. A tier left on **Harness default** falls through                                                                                   |
-| **Harness default** | **Settings -> Models -> System Two -> Tier defaults** | Every agent on that harness that does not set the tier follows it, and a change applies at the next launch                                                     |
-| **Built-in**        | Maestro's own table                                   | The starting value of the harness default, and what **Reset** goes back to. Claude Code `haiku`, `sonnet` and `opus`; Codex Luna, Sol and Astra; Factory Droid |
+| Layer               | Where you set it                                      | How it applies                                                                                                                                                                                              |
+| ------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent**           | **Edit Agent -> Models -> Tiers**                     | Wins for the tiers it sets. A tier left on **Harness default** falls through                                                                                                                                |
+| **Harness default** | **Settings -> Models -> System Two -> Tier defaults** | Every agent on that harness that does not set the tier follows it, and a change applies at the next launch                                                                                                  |
+| **Built-in**        | Maestro's own table                                   | The starting value of the harness default, and what **Reset** goes back to. Claude Code `haiku`, `sonnet` and `opus`; Codex Luna, Sol and Astra; Factory Droid the Claude 4.5 Haiku, Sonnet and Opus models |
 
-If no layer maps a tier (OpenCode and Copilot CLI have no built-in row), the task runs on the agent's own model and its log says the tier was ignored. Maestro does not guess a model for it.
+If no layer maps a tier (OpenCode, Copilot CLI and Grok CLI have no built-in row), the task runs on the agent's own model and its log says the tier was ignored. Maestro does not guess a model for it.
 
-Every surface that shows a tier also shows which layer it came from: **Agent**, **Harness default** or **Built-in**.
+Every surface that shows a tier also shows which layer it came from: **Agent**, **Harness default** or **Built-in**, or **Not mapped** when no layer sets it.
 
 ### Tier defaults
 
@@ -1150,13 +1157,13 @@ Opening System Two reads those lists. Nothing is written until you press **Save*
 | **Discard** | Drops your edits to the row                                               |
 | **Save**    | Stores the row. Suggest and Reset change the pickers only                 |
 
-**Suggest** uses a family Maestro knows for that harness (Claude Code's aliases, the newest Codex Luna, Sol and Astra), then the built-in model when the list holds it, then a description that says "fast" or "frontier", and, for `medium`, the model listed first. It does not pick a family out of another harness's list: OpenCode and Copilot CLI list several Claude and GPT models at once, so those tiers stay blank with the reason. A tier with no suggestion keeps the value it has.
+**Suggest** uses a family Maestro knows for that harness (Claude Code's aliases, the newest Codex Luna, Sol and Astra), then the built-in model when the list holds it, then a description that says "fast" (for `low`) or "frontier" (for `high`), and, for `medium`, the model the catalogue ranks first. It does not pick a family out of another harness's list: OpenCode and Copilot CLI list several Claude and GPT models at once, so those tiers stay blank with the reason. When the harness's own list names no tier and the harness can [run on a source](#which-providers-can-run-on-a-source), Suggest ranks the local models that passed as agents with it by size: the smallest for `low`, the largest for `high`, and the middle one for `medium` when at least three sizes are listed. A tier with no suggestion keeps the value it has.
 
-A value the harness no longer lists is flagged on its row, with the model **Suggest** would put in its place.
+A value the harness no longer lists is flagged on its row, with the model **Suggest** would put in its place. **Refresh lists** reads every harness's list again. The table works the same from the [web interface](./remote-control).
 
 ### Per agent
 
-**Edit Agent -> Models -> Tiers** has one picker per tier. The first choice is **Harness default (`<value>`)**, which follows the table above. The others are the same targets the Tier defaults table offers. Tiers save with the dialog, like Run on. Switching an agent's provider starts its tiers over, because a tier names a model. New Agent has no Tiers block: a new agent follows the harness defaults, and you can edit it afterwards.
+**Edit Agent -> Models -> Tiers** has one picker per tier. The first choice is **Harness default (`<value>`)**, which follows the table above. The others are the same targets the Tier defaults table offers. Tiers save with the dialog, like Run on. Switching an agent's provider starts its tiers over, because a tier names a model. New Agent has no Tiers block: a new agent follows the harness defaults, and you can edit it afterwards. **Group Settings -> Models -> Tiers** has the same pickers, and copies them onto each agent created in the group.
 
 ### The rules
 
@@ -1170,6 +1177,8 @@ A value the harness no longer lists is flagged on its row, with the model **Sugg
 
 Tiers apply to Auto Run (in the app and from `maestro-cli`) and to Cue subscriptions, and to a turn on [Auto](#model-routing-and-auto), where a router picks the tier for you. Tab naming, summaries and context grooming are not tiered: they ask for the provider's own cheap model and run on the agent's own target. `maestro-cli send` takes no `--tier`; `--model auto` asks the router for one.
 
+To run one playbook without its tiers, check **Ignore model hints in documents** in the Auto Run dialog (see [Model Tier and Effort](./autorun-playbooks#model-tier-and-effort)).
+
 ### From the command line
 
 ```bash
@@ -1182,7 +1191,9 @@ maestro-cli models tiers reset <harness> [--tier low]     # back to the built-in
 
 maestro-cli update-agent <agent-id> --tier low=<source id>:<model> --tier high=provider:opus
 maestro-cli update-agent <agent-id> --tier low=default    # back to the harness default
+maestro-cli update-group-settings <group-id> --tier low=<source id>:<model>   # for new agents in the group
 maestro-cli show agent <agent-id> --json                  # tiers: value, spelling and layer of each
+maestro-cli cue model <subscription> --tier low [--effort low]   # the tier a Cue subscription asks for
 ```
 
 A target is written `default`, `provider`, `provider:<model>` or `<source id>:<model>`. The source id ends at the first colon. `--tier` is repeatable and changes only the tiers it names. `models tiers set` and `reset` write at once; the table in Settings writes on **Save**.
@@ -1212,7 +1223,7 @@ The **Model routing** row takes one source, and the source names the router:
 
 The picker lists the local routers first and says beside each one which router it is and whether it is calibrated. System One appears only while an [engine](#system-one-engines) is chosen. A model on an endpoint is always used as a local judge, because an endpoint does not say what kind of model it serves.
 
-The embedding router also learns from you. `maestro-cli s1 route "<prompt>" --correct <tier>` records the tier you say that request needs, and a request like it votes that way from then on. The corrections are kept on this computer.
+The embedding router also learns from you. `maestro-cli s1 route "<prompt>" --correct <tier>` records the tier you say that request needs, and a request like it votes that way from then on. A correction sets the tier only, never the effort, and only the embedding router reads it. A second correction for the same text replaces the first. The newest 500 corrections are kept on this computer, in `model-routing-corrections.json` in Maestro's data directory. Maestro has no control or verb that clears them. Corrections are made from the command line only.
 
 #### How well they decide
 
@@ -1244,16 +1255,17 @@ Maestro offers **Auto** only where it would change something. Its tooltip names 
 | Codex               | Yes (Luna, Sol, Astra)                                      | Yes              |
 | Factory Droid       | Yes                                                         | Yes              |
 | Copilot CLI         | Only through a tier map: the agent's or the harness default | Yes              |
+| Grok CLI            | Only through a tier map: the agent's or the harness default | Yes              |
 | OpenCode and others | Only through a tier map: the agent's or the harness default | No               |
 
 If neither axis is true, Auto is not in the list. It is in these places, and nowhere else:
 
-- The **Provider** tab of **New Agent** and **Edit Agent**. Mapping a tier on the **Models** tab makes Auto appear before you save.
+- The **Provider** tab of **New Agent**, **Edit Agent** and **Group Settings**. In Edit Agent, mapping a tier on the **Models** tab makes Auto appear before you save.
 - The composer's model pill, and its phone sheet.
-- The **Model and Effort** console.
+- The **Change Tabs Model and Effort** console (`Opt+Cmd+.`).
 - The queued-message editor.
 
-The Group Chat moderator, the wizard and the agent creation dialog do not offer it, because their turns are never routed.
+The Group Chat moderator and the wizard do not offer it, because their turns are never routed. The Auto Run dialog's model picker does not offer it either, but an agent set to Auto is still routed there. A Cue subscription asks for it in YAML with `model: auto`.
 
 If the router is off and an agent is on Auto, the agent runs at its default and its pill says **Auto (router off)**. That is not an error.
 
@@ -1264,6 +1276,8 @@ If the router is off and an agent is on Auto, the agent runs at its default and 
 3. **The choice is locked at send.** What the router said is stored with the turn and shown on its pill. A message queued behind a busy agent is routed when it is queued, not when it starts. Editing its text asks the router again. Resending a failed turn keeps the answer.
 
 A tier that names a target that cannot run fails the turn by name. It does not fall through to another model.
+
+If a provider refuses an effort level, a toast says `<Provider> rejected effort "<value>"`. Until Maestro restarts, tab naming, synopses and effort hints that map to that value use the agent's configured effort instead.
 
 ### What Auto routes
 
@@ -1290,7 +1304,9 @@ A finished turn shows one pill in the model pill's place. Hover it for one sente
 | **Auto (no decision)**                | A router was asked and gave none in time, or could not run. The tooltip says why     |
 | **Auto**                              | A queued message the router has not answered yet                                     |
 
-A routed queued message shows no effort pill until it starts, because the effort it will run at is the router's.
+A routed queued message shows no effort pill until it starts, because the effort it will run at is the router's. Turn pills are hidden on a phone screen.
+
+The [Usage Dashboard](./usage-dashboard#models)'s **Models** tab has an **Auto routing, by tier** chart: the turns sent on the Auto model, by the tier the router chose. Turns that read **Auto (router off)** or **Auto (no decision)** are not counted.
 
 ### From the command line
 
