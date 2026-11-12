@@ -77,6 +77,27 @@ describe('SegmentedControl', () => {
 		expect(screen.getByTestId('sort-queries')).toHaveAttribute('tabindex', '-1');
 	});
 
+	// A form field nobody has answered yet names no segment. With every segment at
+	// tabindex -1 the bar would have no tab stop, and a keyboard user could never
+	// answer it.
+	it('makes the first segment the tab stop when no segment is chosen', () => {
+		renderControl('' as Mode);
+
+		expect(screen.getByTestId('sort-name')).toHaveAttribute('tabindex', '0');
+		expect(screen.getByTestId('sort-created')).toHaveAttribute('tabindex', '-1');
+		expect(screen.getByTestId('sort-queries')).toHaveAttribute('tabindex', '-1');
+		for (const radio of screen.getAllByRole('radio')) {
+			expect(radio).toHaveAttribute('aria-checked', 'false');
+		}
+	});
+
+	it('lets a click answer a bar that had no chosen segment', () => {
+		const onChange = renderControl('' as Mode);
+
+		fireEvent.click(screen.getByTestId('sort-created'));
+		expect(onChange).toHaveBeenCalledWith('created');
+	});
+
 	it('moves the selection with the arrow keys', () => {
 		const onChange = renderControl('created');
 		const group = screen.getByRole('radiogroup', { name: 'Sort agents' });

@@ -76,6 +76,11 @@ export function SegmentedControl<T extends string>({
 	// option can be one the user cannot see.
 	const revealRef = useRevealActiveItem<HTMLDivElement>(value);
 
+	// The bar is one tab stop: the chosen segment. When `value` names no segment
+	// (a form field nobody has answered yet) the first one stands in, or no
+	// segment could take focus and a keyboard user could never answer.
+	const hasActive = options.some((o) => o.value === value);
+
 	return (
 		<div
 			ref={revealRef}
@@ -111,7 +116,7 @@ export function SegmentedControl<T extends string>({
 						aria-checked={isActive}
 						aria-pressed={isActive}
 						title={opt.title}
-						tabIndex={isActive ? 0 : -1}
+						tabIndex={isActive || (!hasActive && i === 0) ? 0 : -1}
 						data-testid={testId ? `${testId}-${opt.value}` : undefined}
 					>
 						{opt.shortLabel ? (

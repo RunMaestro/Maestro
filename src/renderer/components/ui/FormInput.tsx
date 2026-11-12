@@ -11,6 +11,9 @@
  * - Optional label with consistent formatting
  * - Optional helper text below input
  * - Optional error display with error styling
+ * - Optional required marker (an asterisk after the label plus `aria-required`)
+ * - Optional `min` / `max` / `step` for number inputs (HTML attributes: they
+ *   steer the browser's stepper and do not validate; the host validates)
  * - Ref forwarding for focus management
  * - Optional addon content (icons, buttons) on the right
  *
@@ -53,6 +56,18 @@ export interface FormInputProps {
 	disabled?: boolean;
 	/** Input type (text, password, email, etc.). Defaults to 'text' */
 	type?: string;
+	/**
+	 * Marks the field as required: a red asterisk after the label and
+	 * `aria-required` on the input. It does not validate; the host decides when a
+	 * blank value is an error and says so through `error`.
+	 */
+	required?: boolean;
+	/** Lowest value a `type="number"` input's stepper offers. Not a validator. */
+	min?: number;
+	/** Highest value a `type="number"` input's stepper offers. Not a validator. */
+	max?: number;
+	/** Stepper increment for a `type="number"` input. */
+	step?: number | 'any';
 	/** Whether to use monospace font. Defaults to false */
 	monospace?: boolean;
 	/** Additional className for the input element */
@@ -91,6 +106,10 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
 			helperText,
 			disabled = false,
 			type = 'text',
+			required = false,
+			min,
+			max,
+			step,
 			monospace = false,
 			className = '',
 			heightClass = '',
@@ -140,6 +159,11 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
 						style={{ color: theme.colors.textMain }}
 					>
 						{label}
+						{required && (
+							<span aria-hidden="true" className="ml-1" style={{ color: theme.colors.error }}>
+								*
+							</span>
+						)}
 					</label>
 				)}
 
@@ -148,6 +172,10 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
 						ref={ref}
 						id={inputId}
 						type={type}
+						min={min}
+						max={max}
+						step={step}
+						aria-required={required || undefined}
 						value={value}
 						onChange={(e) => onChange(e.target.value)}
 						onKeyDown={handleKeyDown}

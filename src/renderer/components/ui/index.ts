@@ -101,6 +101,9 @@ export type { CountBadgeProps } from './CountBadge';
 export { MiniBadge } from './MiniBadge';
 export type { MiniBadgeProps } from './MiniBadge';
 
+export { ToggleChip } from './ToggleChip';
+export type { ToggleChipProps } from './ToggleChip';
+
 export { StartTruncatedText } from './StartTruncatedText';
 export type { StartTruncatedTextProps } from './StartTruncatedText';
 

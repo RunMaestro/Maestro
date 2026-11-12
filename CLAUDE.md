@@ -375,6 +375,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Starting a Playbook Launch (checks, import, record, Auto Run):** `launchMarketplacePlaybook(request, host)` in `src/main/services/marketplace-service.ts`; `configureAutoRunInRenderer()` in `src/main/web-server/callbacks/autoRunConfigCallbacks.ts`
 - **Ending and reading a Playbook Launch (cleanup, broadcast):** `completeMarketplaceLaunch(launchId, completion, host)`, `getMarketplaceLaunch()`, `listMarketplaceLaunches()` in `src/main/services/marketplace-service.ts`
 - **Submitting a Playbook Launch from a window (which agent, in what order):** `launchPlaybook(submission)`, `resolveLaunchTarget(target)`, `LaunchTarget` in `src/renderer/services/playbookLaunch.ts`
+- **Drawing a playbook launch question (one field per input type):** `<LaunchInputField>`, `pathBrowseKind()`, `launchInputTestId()` in `src/renderer/components/MarketplaceModal/launch/LaunchInputField.tsx`
 - **Whether an untyped value is a task-selection mode:** `isTaskSelectionMode()` in `src/shared/types.ts`
 - **Auto Run steering notes (mid-run course correction):** `formatSteeringNotesBlock()` in `src/shared/autorunSteering.ts`; `submitSteeringNote()`, `recordSteeringResponse()`, `runRemoteSteeringCommand()` in `src/renderer/services/autoRunSteering.ts`; wire shape in `src/shared/autoRunSteeringCommands.ts`
 - **Auto Run delegation (a task hands work to another agent):** `formatDelegationResultsBlock()`, `applyAutoRunDelegationEvent()` in `src/shared/autoRunDelegation.ts`; `awaitDelegationsBeforeTurn()`, `settleDelegationsAtRunEnd()` in `src/renderer/services/autoRunDelegations.ts`
@@ -446,6 +447,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A spinning loading icon:** `<Spinner>` in `src/renderer/components/ui/Spinner.tsx` (never `animate-spin` on an `<svg>`)
 - **A pulsing placeholder bar while content loads:** `<SkeletonBox>` in `src/renderer/components/ui/SkeletonBox.tsx`
 - **Tiny uppercase state chip:** `<MiniBadge>` in `src/renderer/components/ui/MiniBadge.tsx`
+- **A pill the user toggles on and off (a pick-any row):** `<ToggleChip>` in `src/renderer/components/ui/ToggleChip.tsx`
 - **A labeled action button in a panel header:** `<HeaderActionButton>` in `src/renderer/components/ui/HeaderActionButton.tsx`
 - **A text box that narrows a list:** `<FilterInput>` in `src/renderer/components/ui/FilterInput.tsx`
 - **Segmented toolbar (sort/filter pill bar):** `<SegmentedControl>` in `src/renderer/components/ui/SegmentedControl.tsx`

@@ -468,6 +468,87 @@ describe('FormInput', () => {
 		});
 	});
 
+	describe('required marker', () => {
+		it('should draw a red asterisk after the label and set aria-required', () => {
+			render(<FormInput theme={mockTheme} value="" onChange={vi.fn()} label="PR URL" required />);
+
+			const mark = screen.getByText('*');
+			expect(mark).toHaveStyle({ color: mockTheme.colors.error });
+			// The asterisk is decoration; aria-required carries the meaning.
+			expect(mark).toHaveAttribute('aria-hidden', 'true');
+			expect(screen.getByLabelText(/PR URL/)).toHaveAttribute('aria-required', 'true');
+		});
+
+		it('should keep the asterisk inside the label so a click on it focuses the input', () => {
+			render(<FormInput theme={mockTheme} value="" onChange={vi.fn()} label="PR URL" required />);
+
+			expect(screen.getByText('*').closest('label')).toBe(screen.getByText(/PR URL/));
+		});
+
+		it('should draw neither the asterisk nor aria-required by default', () => {
+			render(<FormInput theme={mockTheme} value="" onChange={vi.fn()} label="PR URL" />);
+
+			expect(screen.queryByText('*')).not.toBeInTheDocument();
+			expect(screen.getByLabelText('PR URL')).not.toHaveAttribute('aria-required');
+		});
+
+		it('should not block an empty value itself: the host decides', () => {
+			const onSubmit = vi.fn();
+			render(
+				<FormInput theme={mockTheme} value="" onChange={vi.fn()} onSubmit={onSubmit} required />
+			);
+
+			fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+			expect(onSubmit).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('number attributes', () => {
+		it('should pass min, max and step to a number input', () => {
+			render(
+				<FormInput
+					theme={mockTheme}
+					type="number"
+					value="5"
+					onChange={vi.fn()}
+					min={1}
+					max={10}
+					step={0.5}
+				/>
+			);
+
+			const input = screen.getByRole('spinbutton');
+			expect(input).toHaveAttribute('min', '1');
+			expect(input).toHaveAttribute('max', '10');
+			expect(input).toHaveAttribute('step', '0.5');
+		});
+
+		it('should keep a bound of zero', () => {
+			render(
+				<FormInput theme={mockTheme} type="number" value="" onChange={vi.fn()} min={0} max={0} />
+			);
+
+			const input = screen.getByRole('spinbutton');
+			expect(input).toHaveAttribute('min', '0');
+			expect(input).toHaveAttribute('max', '0');
+		});
+
+		it('should accept step="any" for decimals', () => {
+			render(<FormInput theme={mockTheme} type="number" value="" onChange={vi.fn()} step="any" />);
+
+			expect(screen.getByRole('spinbutton')).toHaveAttribute('step', 'any');
+		});
+
+		it('should write no attribute for a bound that is not set', () => {
+			render(<FormInput theme={mockTheme} type="number" value="" onChange={vi.fn()} />);
+
+			const input = screen.getByRole('spinbutton');
+			expect(input).not.toHaveAttribute('min');
+			expect(input).not.toHaveAttribute('max');
+			expect(input).not.toHaveAttribute('step');
+		});
+	});
+
 	describe('layout with addon', () => {
 		it('should render input and addon in flex container', () => {
 			const onChange = vi.fn();

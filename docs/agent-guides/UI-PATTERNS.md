@@ -500,7 +500,7 @@ A horizontal row of mutually exclusive options rendered as one joined pill bar -
 />
 ```
 
-It owns the active-segment coloring, the seam borders, `role="radiogroup"` + `role="radio"` semantics, arrow-key navigation between segments, and a single tab stop (`tabIndex` follows the selection, as a native radio group does). Each segment gets `data-testid="${testId}-${value}"`, so existing per-segment test ids keep working when a hand-rolled bar is migrated.
+It owns the active-segment coloring, the seam borders, `role="radiogroup"` + `role="radio"` semantics, arrow-key navigation between segments, and a single tab stop (`tabIndex` follows the selection, as a native radio group does; when `value` names no segment, as in an unanswered form field, the first segment is the tab stop so the bar stays reachable by keyboard). Each segment gets `data-testid="${testId}-${value}"`, so existing per-segment test ids keep working when a hand-rolled bar is migrated.
 
 For a bar that must shrink, give an option a `shortLabel`. Both forms render, the short one `hidden`; the HOST's container query swaps them by targeting `.segmented-label-full` / `.segmented-label-short`, because only the host knows what else shares its row. `GroupChatHeader` and its `groupchatheader` block in `index.css` are the reference.
 
@@ -1580,6 +1580,35 @@ weight.
   the reader has to decode - unless the abbreviation is the established UI term, in which
   case pass `title` with the long form.
 
+### `<ToggleChip>` (`src/renderer/components/ui/ToggleChip.tsx`)
+
+A pill the user switches on and off by clicking it: the control behind a "pick any of
+these" row, such as a multiselect input or a filter facet. It is the pressable
+counterpart to `<MiniBadge>` (a static state tag) and to `<SegmentedControl>` (exactly
+one of several). Each chip stands alone, so any mix can be on. Do NOT hand-roll another
+`rounded-full border px-2.5 py-1 text-xs` button with an accent tint for "on".
+
+```tsx
+<div role="group" aria-labelledby={labelId} className="flex flex-wrap gap-1.5">
+	{options.map((o) => (
+		<ToggleChip
+			key={o.value}
+			theme={theme}
+			label={o.label}
+			selected={picked.includes(o.value)}
+			onToggle={(on) => setPicked(toggle(picked, o.value, on))}
+		/>
+	))}
+</div>
+```
+
+- It is a real toggle button (`aria-pressed`), so a test selects it with
+  `getByRole('button', { name: 'High' })` and reads the state from `aria-pressed`.
+- `onToggle` receives the NEXT state, the opposite of `selected`. The caller owns the state.
+- A selected chip also draws a check mark, so the state is never colour alone.
+- The chip is only the button. The wrapper, its label and its error line belong to the
+  surface; `LaunchInputField` is the reference for a labelled group.
+
 ### `<ProviderAvailabilityBar>` (`src/renderer/components/ui/ProviderAvailabilityBar.tsx`)
 
 "4 providers available locally of 11 supported", plus the toggle that switches
@@ -1741,6 +1770,12 @@ Key features:
 - Built-in Enter key handling with `submitEnabled` guard
 - Error state changes border color to `theme.colors.error`
 - Auto-generated `id` for label association (accessibility)
+- `required` draws a red asterisk inside the label and sets `aria-required`. It never validates:
+  the host decides when a blank value is an error and says so through `error`.
+- `min`, `max` and `step` reach a `type="number"` input as HTML attributes. They steer the
+  browser's stepper and nothing else. A number box that keeps its answer as a number must also
+  keep the text being typed (`"2.50"` is 2.5); see `NumberField` in
+  `src/renderer/components/MarketplaceModal/launch/LaunchInputField.tsx`.
 
 ### `<ToggleSwitch>` (`src/renderer/components/ui/ToggleSwitch.tsx`)
 
