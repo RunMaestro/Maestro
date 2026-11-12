@@ -7,7 +7,8 @@
  * first. The caller is the agent named by the bridge's run proof, never an id
  * in the tool arguments; a caller without a valid proof is offered nothing.
  * Lookup is by exact hash only, through `readTokenProxyBlock()`: no search and
- * no listing.
+ * no listing. Its reads name themselves (`caller: 'mcpRetrieveTool'`), so the
+ * proxy's recovery counters keep them apart from every other read of a block.
  */
 import {
 	TOKEN_PROXY_RETRIEVE_DEFAULT_LINES,
@@ -135,7 +136,7 @@ export async function callTokenProxyRetrieveTool(args: unknown): Promise<CoreBri
 	const { hash, range } = parsed;
 	let block: TokenProxyBlockDetail | null;
 	try {
-		block = await readTokenProxyBlock(hash, range);
+		block = await readTokenProxyBlock(hash, range, { caller: 'mcpRetrieveTool' });
 	} catch (error) {
 		// A range past the byte or scan limit is the caller's to narrow.
 		if (error instanceof RangeError) return { ok: false, error: error.message };
@@ -157,5 +158,8 @@ export async function callTokenProxyRetrieveTool(args: unknown): Promise<CoreBri
 			error: `The original of block ${hash} is no longer stored on this machine; only the shortened text remains.`,
 		};
 	}
+	// The reader has already counted this call as a recovered original for this
+	// tool. A refusal added after this point would make that count overstate
+	// what the tool served.
 	return { ok: true, text: `${formatRetrieveHeader(hash, range, block)}\n${block.original}` };
 }

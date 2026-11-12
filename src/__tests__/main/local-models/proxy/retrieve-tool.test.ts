@@ -176,7 +176,11 @@ describe('callTokenProxyRetrieveTool', () => {
 
 		const result = await callTokenProxyRetrieveTool({ hash, start_line: 2, end_line: 4 });
 
-		expect(service.readTokenProxyBlock).toHaveBeenCalledWith(hash, { startLine: 2, endLine: 4 });
+		expect(service.readTokenProxyBlock).toHaveBeenCalledWith(
+			hash,
+			{ startLine: 2, endLine: 4 },
+			{ caller: 'mcpRetrieveTool' }
+		);
 		expect(result).toEqual({
 			ok: true,
 			text: `[original sha256=${hash} lines 2-4; more lines follow, call again with start_line=5]\n${text}`,
@@ -186,7 +190,24 @@ describe('callTokenProxyRetrieveTool', () => {
 	it('asks for lines 1 to 200 when the call names no range', async () => {
 		service.readTokenProxyBlock.mockResolvedValueOnce(block('a\n', { startLine: 1, endLine: 1 }));
 		await callTokenProxyRetrieveTool({ hash });
-		expect(service.readTokenProxyBlock).toHaveBeenCalledWith(hash, { startLine: 1, endLine: 200 });
+		expect(service.readTokenProxyBlock).toHaveBeenCalledWith(
+			hash,
+			{ startLine: 1, endLine: 200 },
+			{ caller: 'mcpRetrieveTool' }
+		);
+	});
+
+	it('names itself on every read, so the proxy counts it apart from other reads', async () => {
+		service.readTokenProxyBlock
+			.mockResolvedValueOnce(block('a\n', { startLine: 1, endLine: 1 }))
+			.mockResolvedValueOnce(null)
+			.mockResolvedValueOnce(block(null, null))
+			.mockRejectedValueOnce(new Error('EIO'));
+		for (let call = 0; call < 4; call++) await callTokenProxyRetrieveTool({ hash });
+		expect(service.readTokenProxyBlock).toHaveBeenCalledTimes(4);
+		for (const [, , options] of service.readTokenProxyBlock.mock.calls) {
+			expect(options).toEqual({ caller: 'mcpRetrieveTool' });
+		}
 	});
 
 	it('is a tool error for an unknown hash', async () => {

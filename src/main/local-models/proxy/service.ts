@@ -75,7 +75,9 @@ import {
 	type TokenProxyAgentRow,
 	type TokenProxyBlockDetail,
 	type TokenProxyOriginalLineRange,
+	type TokenProxyRecoveryCaller,
 	type TokenProxyRecoveryObservations,
+	type TokenProxyRecoveryReadCounts,
 	type TokenProxyReport,
 	type TokenProxyRequestMode,
 	type TokenProxyRouteId,
@@ -148,22 +150,42 @@ const recoveryLaunches = new Map<
 
 // Fixed-size process-lifetime observations, not a second request ledger.
 // No hash, command, path, agent or session content is retained here.
-const recoveryReadCounters = {
-	invocations: 0,
-	rangedInvocations: 0,
-	recoveredOriginals: 0,
-	unavailableBlocks: 0,
-	missingOriginals: 0,
-	failedReads: 0,
-	returnedOriginalBytes: 0,
-	returnedOriginalTokenEstimate: 0,
-};
+function emptyRecoveryReadCounts(): TokenProxyRecoveryReadCounts {
+	return {
+		invocations: 0,
+		rangedInvocations: 0,
+		recoveredOriginals: 0,
+		unavailableBlocks: 0,
+		missingOriginals: 0,
+		failedReads: 0,
+		returnedOriginalBytes: 0,
+		returnedOriginalTokenEstimate: 0,
+	};
+}
 
-function countRecoveryRead(counter: keyof typeof recoveryReadCounters, amount = 1): void {
-	recoveryReadCounters[counter] = Math.min(
-		Number.MAX_SAFE_INTEGER,
-		recoveryReadCounters[counter] + amount
-	);
+// Every caller together, as the counters always were, and the same eight
+// counters per caller. A read bumps the total and its caller's part in one step,
+// so the two cannot disagree. The total is its own tally, not a sum: a sum of
+// two saturated parts would no longer be a safe integer.
+const recoveryReadCounters = emptyRecoveryReadCounts();
+const recoveryReadsByCaller: Record<TokenProxyRecoveryCaller, TokenProxyRecoveryReadCounts> = {
+	mcpRetrieveTool: emptyRecoveryReadCounts(),
+	otherReads: emptyRecoveryReadCounts(),
+};
+const allRecoveryTallies = [
+	recoveryReadCounters,
+	recoveryReadsByCaller.mcpRetrieveTool,
+	recoveryReadsByCaller.otherReads,
+];
+
+function countRecoveryRead(
+	caller: TokenProxyRecoveryCaller,
+	counter: keyof TokenProxyRecoveryReadCounts,
+	amount = 1
+): void {
+	for (const tally of [recoveryReadCounters, recoveryReadsByCaller[caller]]) {
+		tally[counter] = Math.min(Number.MAX_SAFE_INTEGER, tally[counter] + amount);
+	}
 }
 
 /** Read-only snapshot for phase 06; forwarding historical tool text never increments it. */
@@ -173,13 +195,18 @@ export function getTokenProxyRecoveryObservations(): TokenProxyRecoveryObservati
 		scope: 'process-lifetime' as const,
 		coverage: 'canonical-block-reader' as const,
 		tokenCountKind: 'character-estimate' as const,
-		// The reader serves inspection and CLI alike, including --compressed.
+		// Inspection, the CLI (including --compressed) and any other read are one
+		// `otherReads` group, so the CLI is not counted on its own.
 		// Returned archive text is not proof that a model received it.
 		cliInvocations: null,
 		modelExposure: 'unknown' as const,
 		unobservedRetrievals: 'unknown' as const,
-		saturated: Object.values(recoveryReadCounters).some(
-			(value) => value === Number.MAX_SAFE_INTEGER
+		byCaller: {
+			mcpRetrieveTool: { ...recoveryReadsByCaller.mcpRetrieveTool },
+			otherReads: { ...recoveryReadsByCaller.otherReads },
+		},
+		saturated: allRecoveryTallies.some((tally) =>
+			Object.values(tally).some((value) => value === Number.MAX_SAFE_INTEGER)
 		),
 	};
 }
@@ -894,10 +921,17 @@ export async function getTokenProxyReport(): Promise<TokenProxyReport> {
  * holds no compressed verdict for. `hash` arrives over IPC and the CLI, so it
  * is checked before it is used as a path. A range selects original lines only;
  * the replacement and token totals still describe the entire frozen block.
+ *
+ * Every read is counted (`getTokenProxyRecoveryObservations()`), in the total
+ * and under its caller. Only the retrieve tool says who it is
+ * (`{ caller: 'mcpRetrieveTool' }`); a read that names no caller is counted as
+ * `otherReads`, whose actor is unknown. The IPC and WebSocket routes that
+ * inspect a block never pass the option, and nothing they receive can set it.
  */
 export async function readTokenProxyBlock(
 	hash: unknown,
-	range?: TokenProxyOriginalLineRange
+	range?: TokenProxyOriginalLineRange,
+	options: { caller?: TokenProxyRecoveryCaller } = {}
 ): Promise<TokenProxyBlockDetail | null> {
 	if (!isContentHash(hash)) {
 		throw new Error(
@@ -905,23 +939,25 @@ export async function readTokenProxyBlock(
 		);
 	}
 	const requested = range === undefined ? undefined : validateTokenProxyOriginalLineRange(range);
-	countRecoveryRead('invocations');
-	if (requested !== undefined) countRecoveryRead('rangedInvocations');
+	const caller: TokenProxyRecoveryCaller =
+		options.caller === 'mcpRetrieveTool' ? 'mcpRetrieveTool' : 'otherReads';
+	countRecoveryRead(caller, 'invocations');
+	if (requested !== undefined) countRecoveryRead(caller, 'rangedInvocations');
 	try {
 		const cache = getCompressionCache();
 		const verdict = await cache.read(hash);
 		if (!verdict || verdict.outcome !== 'compressed') {
-			countRecoveryRead('unavailableBlocks');
+			countRecoveryRead(caller, 'unavailableBlocks');
 			return null;
 		}
 		const original = requested === undefined ? await cache.readOriginal(hash) : undefined;
 		const ranged = requested === undefined ? undefined : await cache.readOriginal(hash, requested);
 		const text = requested === undefined ? (original ?? null) : (ranged?.text ?? null);
-		if (text === null) countRecoveryRead('missingOriginals');
+		if (text === null) countRecoveryRead(caller, 'missingOriginals');
 		else {
-			countRecoveryRead('recoveredOriginals');
-			countRecoveryRead('returnedOriginalBytes', Buffer.byteLength(text, 'utf8'));
-			countRecoveryRead('returnedOriginalTokenEstimate', estimateTokenCount(text));
+			countRecoveryRead(caller, 'recoveredOriginals');
+			countRecoveryRead(caller, 'returnedOriginalBytes', Buffer.byteLength(text, 'utf8'));
+			countRecoveryRead(caller, 'returnedOriginalTokenEstimate', estimateTokenCount(text));
 		}
 		return {
 			hash,
@@ -934,7 +970,7 @@ export async function readTokenProxyBlock(
 			createdAt: verdict.createdAt,
 		};
 	} catch (error) {
-		countRecoveryRead('failedReads');
+		countRecoveryRead(caller, 'failedReads');
 		throw error;
 	}
 }
@@ -950,9 +986,7 @@ export async function resetTokenProxyForTests(): Promise<void> {
 	deps = null;
 	knownPort = undefined;
 	lastError = null;
-	for (const key of Object.keys(recoveryReadCounters) as Array<keyof typeof recoveryReadCounters>) {
-		recoveryReadCounters[key] = 0;
-	}
+	for (const tally of allRecoveryTallies) Object.assign(tally, emptyRecoveryReadCounts());
 	await opportunityObserver.idle();
 	opportunityObserver.reset();
 }

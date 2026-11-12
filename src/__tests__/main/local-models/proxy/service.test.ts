@@ -99,6 +99,7 @@ import {
 	TOKEN_PROXY_STATE_FILE,
 	tokenProxyLaunchGatewayUrl,
 } from '../../../../main/local-models/proxy/service';
+import { callTokenProxyRetrieveTool } from '../../../../main/local-models/proxy/retrieve-tool';
 import {
 	createTokenProxyServer,
 	type TokenProxyServer,
@@ -110,6 +111,7 @@ import { MODEL_SERVER_ENDPOINT_ID } from '../../../../shared/local-models/model-
 import {
 	resolveTokenProxyTarget,
 	tokenProxyGatewayUrl,
+	type TokenProxyRecoveryReadCounts,
 } from '../../../../shared/local-models/token-proxy';
 import type { LocalRecoveryCapability } from '../../../../main/local-models/proxy/compress';
 
@@ -995,7 +997,11 @@ describe('host-issued recovery launch bindings', () => {
 		recovery.runtimePath = '/mutated';
 		const resolved = options.recoveryFor?.(target);
 		expect(resolved).toEqual(expected);
-		resolved!.runtimePath = '/also-mutated';
+		// Only a local CLI capability has a runtime path; the guard also narrows the union.
+		if (resolved?.kind !== 'local-posix-cli') {
+			throw new Error(`expected a local-posix-cli capability, got ${resolved?.kind}`);
+		}
+		resolved.runtimePath = '/also-mutated';
 		expect(options.recoveryFor?.(target)).toEqual(expected);
 		compressor.compressRequestBody.mockResolvedValueOnce({ body: '{}', changed: false });
 		await options.compress?.('anthropic-messages', '{}', {
@@ -1492,6 +1498,41 @@ describe('readTokenProxyBlock', () => {
 	});
 
 	describe('recovery observations', () => {
+		const NO_READS: TokenProxyRecoveryReadCounts = {
+			invocations: 0,
+			rangedInvocations: 0,
+			recoveredOriginals: 0,
+			unavailableBlocks: 0,
+			missingOriginals: 0,
+			failedReads: 0,
+			returnedOriginalBytes: 0,
+			returnedOriginalTokenEstimate: 0,
+		};
+		const reads = (over: Partial<TokenProxyRecoveryReadCounts>): TokenProxyRecoveryReadCounts => ({
+			...NO_READS,
+			...over,
+		});
+		const COUNTER_KEYS = Object.keys(NO_READS) as Array<keyof TokenProxyRecoveryReadCounts>;
+		/** What `readOriginal` answers for a line range, as the retrieve tool's header reads it. */
+		const excerpt = (text: string, startLine = 1, endLine = 200) => ({
+			text,
+			range: {
+				hash,
+				source: 'original' as const,
+				requested: { startLine, endLine },
+				returned: { startLine, endLine },
+				complete: true,
+				hasMore: false,
+			},
+		});
+		const textVolume = (...texts: string[]) => ({
+			returnedOriginalBytes: texts.reduce((sum, text) => sum + Buffer.byteLength(text, 'utf8'), 0),
+			returnedOriginalTokenEstimate: texts.reduce(
+				(sum, text) => sum + Math.ceil(text.length / 4),
+				0
+			),
+		});
+
 		beforeEach(() => {
 			cache.read.mockReset().mockResolvedValue({
 				outcome: 'compressed',
@@ -1531,23 +1572,22 @@ describe('readTokenProxyBlock', () => {
 			await readTokenProxyBlock(hash);
 			await readTokenProxyBlock(hash, { startLine: 2, endLine: 2 });
 			await readTokenProxyBlock(hash);
-			expect(getTokenProxyRecoveryObservations()).toEqual({
+			// Reads that name no caller are other reads, whose actor is unknown.
+			const volume = reads({
 				invocations: 3,
 				rangedInvocations: 1,
 				recoveredOriginals: 3,
-				unavailableBlocks: 0,
-				missingOriginals: 0,
-				failedReads: 0,
-				returnedOriginalBytes:
-					Buffer.byteLength(first, 'utf8') * 2 + Buffer.byteLength(selected, 'utf8'),
-				returnedOriginalTokenEstimate:
-					Math.ceil(first.length / 4) * 2 + Math.ceil(selected.length / 4),
+				...textVolume(first, selected, first),
+			});
+			expect(getTokenProxyRecoveryObservations()).toEqual({
+				...volume,
 				scope: 'process-lifetime',
 				coverage: 'canonical-block-reader',
 				tokenCountKind: 'character-estimate',
 				cliInvocations: null,
 				modelExposure: 'unknown',
 				unobservedRetrievals: 'unknown',
+				byCaller: { mcpRetrieveTool: NO_READS, otherReads: volume },
 				saturated: false,
 			});
 			expect(before.invocations).toBe(0);
@@ -1608,6 +1648,15 @@ describe('readTokenProxyBlock', () => {
 			await expect(readTokenProxyBlock(hash, { startLine: 0, endLine: 2 })).rejects.toThrow(
 				'Original line range'
 			);
+			// The tool refuses these before any read, so no counter sees them.
+			for (const args of [
+				undefined,
+				{ hash: 'bad hash' },
+				{ hash, start_line: 0 },
+				{ hash, start_line: 9, end_line: 2 },
+			]) {
+				await expect(callTokenProxyRetrieveTool(args)).resolves.toMatchObject({ ok: false });
+			}
 			const { options } = await startWithCapturedOptions();
 			compressor.compressRequestBody.mockResolvedValue({
 				body: '{}',
@@ -1618,11 +1667,183 @@ describe('readTokenProxyBlock', () => {
 			await options.compress?.('anthropic-messages', '{}', { early: true });
 			await options.compress?.('anthropic-messages', '{}', { early: true });
 			expect(getTokenProxyRecoveryObservations()).toMatchObject({
-				invocations: 0,
-				recoveredOriginals: 0,
+				...NO_READS,
+				byCaller: { mcpRetrieveTool: NO_READS, otherReads: NO_READS },
 			});
 			expect(cache.read).not.toHaveBeenCalled();
 			expect(cache.readOriginal).not.toHaveBeenCalled();
+		});
+
+		it('counts the reads the retrieve tool serves apart from every other read of the same block', async () => {
+			const whole = 'café\r\n';
+			const ranged = '資料\n';
+			const toolDefault = 'line 1\nline 2\n';
+			const toolNamed = '  indented\t"id": 3\n';
+			cache.readOriginal
+				.mockResolvedValueOnce(whole)
+				.mockResolvedValueOnce(excerpt(ranged, 2, 2))
+				.mockResolvedValueOnce(excerpt(toolDefault))
+				.mockResolvedValueOnce(excerpt(toolNamed, 3, 4));
+
+			await readTokenProxyBlock(hash);
+			await readTokenProxyBlock(hash, { startLine: 2, endLine: 2 });
+			const first = await callTokenProxyRetrieveTool({ hash });
+			const second = await callTokenProxyRetrieveTool({ hash, start_line: 3, end_line: 4 });
+
+			// The tool answers with a header line, then the original lines.
+			expect(first).toEqual({ ok: true, text: expect.stringMatching(/^\[original sha256=/) });
+			expect(first.ok && first.text.endsWith(toolDefault)).toBe(true);
+			expect(second.ok && second.text.endsWith(toolNamed)).toBe(true);
+
+			const snapshot = getTokenProxyRecoveryObservations();
+			// The header is not counted: only the original text is.
+			expect(snapshot.byCaller.mcpRetrieveTool).toEqual(
+				reads({
+					invocations: 2,
+					rangedInvocations: 2,
+					recoveredOriginals: 2,
+					...textVolume(toolDefault, toolNamed),
+				})
+			);
+			expect(snapshot.byCaller.otherReads).toEqual(
+				reads({
+					invocations: 2,
+					rangedInvocations: 1,
+					recoveredOriginals: 2,
+					...textVolume(whole, ranged),
+				})
+			);
+			// The totals still count every read once, as before callers were told apart.
+			expect(snapshot).toMatchObject(
+				reads({
+					invocations: 4,
+					rangedInvocations: 3,
+					recoveredOriginals: 4,
+					...textVolume(whole, ranged, toolDefault, toolNamed),
+				})
+			);
+			for (const key of COUNTER_KEYS) {
+				expect(snapshot[key], key).toBe(
+					snapshot.byCaller.mcpRetrieveTool[key] + snapshot.byCaller.otherReads[key]
+				);
+			}
+			// A served response is not a model's receipt, and a read with no caller is not a person.
+			expect(snapshot).toMatchObject({
+				modelExposure: 'unknown',
+				unobservedRetrievals: 'unknown',
+				cliInvocations: null,
+				saturated: false,
+			});
+		});
+
+		it('counts misses and failures under the caller that made the read', async () => {
+			const served = 'served\n';
+			// Tool: an unknown hash, a kept block, a missing original, an archive failure,
+			// a byte-limit refusal, and one call that serves text.
+			cache.read.mockResolvedValueOnce(null).mockResolvedValueOnce({ outcome: 'kept' });
+			cache.readOriginal
+				.mockResolvedValueOnce(null)
+				.mockRejectedValueOnce(new Error('archive read failed'))
+				.mockRejectedValueOnce(new RangeError('output limit'))
+				.mockResolvedValueOnce(excerpt(served));
+			const results = [];
+			for (let call = 0; call < 6; call++) {
+				results.push(await callTokenProxyRetrieveTool({ hash }));
+			}
+			// Other: an unknown hash, a missing original and an archive failure.
+			cache.read.mockResolvedValueOnce(null);
+			await readTokenProxyBlock(hash);
+			cache.readOriginal.mockResolvedValueOnce(null);
+			await readTokenProxyBlock(hash);
+			cache.readOriginal.mockRejectedValueOnce(new Error('archive read failed'));
+			await expect(readTokenProxyBlock(hash)).rejects.toThrow('archive read failed');
+
+			const snapshot = getTokenProxyRecoveryObservations();
+			expect(results.map((result) => result.ok)).toEqual([false, false, false, false, false, true]);
+			expect(snapshot.byCaller.mcpRetrieveTool).toEqual(
+				reads({
+					invocations: 6,
+					rangedInvocations: 6,
+					recoveredOriginals: 1,
+					unavailableBlocks: 2,
+					missingOriginals: 1,
+					failedReads: 2,
+					...textVolume(served),
+				})
+			);
+			expect(snapshot.byCaller.otherReads).toEqual(
+				reads({ invocations: 3, unavailableBlocks: 1, missingOriginals: 1, failedReads: 1 })
+			);
+			// Every response that carried original text was counted as recovered, and no other was.
+			expect(snapshot.byCaller.mcpRetrieveTool.recoveredOriginals).toBe(
+				results.filter((result) => result.ok).length
+			);
+			for (const key of COUNTER_KEYS) {
+				expect(snapshot[key], key).toBe(
+					snapshot.byCaller.mcpRetrieveTool[key] + snapshot.byCaller.otherReads[key]
+				);
+			}
+		});
+
+		it('keeps the totals the same whoever made the reads, and counts a caller only when it names itself', async () => {
+			const exercise = async (options?: { caller?: 'mcpRetrieveTool' }) => {
+				cache.read.mockResolvedValueOnce(null);
+				await readTokenProxyBlock(hash, undefined, options);
+				cache.readOriginal.mockResolvedValueOnce('whole original\n');
+				await readTokenProxyBlock(hash, undefined, options);
+				cache.readOriginal.mockResolvedValueOnce(excerpt('ranged\n', 2, 2));
+				await readTokenProxyBlock(hash, { startLine: 2, endLine: 2 }, options);
+				cache.readOriginal.mockResolvedValueOnce(null);
+				await readTokenProxyBlock(hash, { startLine: 1, endLine: 2 }, options);
+				cache.readOriginal.mockRejectedValueOnce(new Error('archive read failed'));
+				await expect(readTokenProxyBlock(hash, undefined, options)).rejects.toThrow(
+					'archive read failed'
+				);
+				const { byCaller, ...snapshot } = getTokenProxyRecoveryObservations();
+				return { byCaller, totals: Object.fromEntries(COUNTER_KEYS.map((k) => [k, snapshot[k]])) };
+			};
+
+			const unattributed = await exercise();
+			expect(unattributed.byCaller.mcpRetrieveTool).toEqual(NO_READS);
+			expect(unattributed.byCaller.otherReads).toEqual(unattributed.totals);
+			await resetTokenProxyForTests();
+
+			const fromTool = await exercise({ caller: 'mcpRetrieveTool' });
+			expect(fromTool.byCaller.otherReads).toEqual(NO_READS);
+			expect(fromTool.byCaller.mcpRetrieveTool).toEqual(fromTool.totals);
+			// The five reads are the same whoever made them, so the totals are too.
+			expect(fromTool.totals).toEqual(unattributed.totals);
+			expect(unattributed.totals).toEqual(
+				reads({
+					invocations: 5,
+					rangedInvocations: 2,
+					recoveredOriginals: 2,
+					unavailableBlocks: 1,
+					missingOriginals: 1,
+					failedReads: 1,
+					...textVolume('whole original\n', 'ranged\n'),
+				})
+			);
+			await resetTokenProxyForTests();
+
+			// Nothing but the retrieve tool's own name moves a read out of `otherReads`.
+			for (const options of [
+				{},
+				{ caller: undefined },
+				{ caller: 'otherReads' },
+				{ caller: 'x' },
+			]) {
+				cache.readOriginal.mockResolvedValueOnce('text');
+				await readTokenProxyBlock(hash, undefined, options as never);
+			}
+			expect(getTokenProxyRecoveryObservations().byCaller).toEqual({
+				mcpRetrieveTool: NO_READS,
+				otherReads: reads({
+					invocations: 4,
+					recoveredOriginals: 4,
+					...textVolume(...Array(4).fill('text')),
+				}),
+			});
 		});
 
 		it('saturates counters instead of overflowing and returns independent read-only snapshots', async () => {
@@ -1642,24 +1863,65 @@ describe('readTokenProxyBlock', () => {
 				returnedOriginalBytes: Number.MAX_SAFE_INTEGER,
 				saturated: true,
 			});
+			expect(snapshot.byCaller.otherReads.returnedOriginalBytes).toBe(Number.MAX_SAFE_INTEGER);
+			expect(snapshot.byCaller.mcpRetrieveTool).toEqual(NO_READS);
 			snapshot.invocations = 999;
-			expect(getTokenProxyRecoveryObservations().invocations).toBe(2);
+			snapshot.byCaller.otherReads.invocations = 999;
+			snapshot.byCaller.mcpRetrieveTool.invocations = 999;
+			const again = getTokenProxyRecoveryObservations();
+			expect(again.invocations).toBe(2);
+			expect(again.byCaller.otherReads.invocations).toBe(2);
+			expect(again.byCaller.mcpRetrieveTool.invocations).toBe(0);
+		});
+
+		it("saturates one caller's counter without moving the other caller's, and still reports saturation", async () => {
+			cache.readOriginal.mockResolvedValue(excerpt('x'));
+			const byteLength = vi
+				.spyOn(Buffer, 'byteLength')
+				.mockReturnValueOnce(Number.MAX_SAFE_INTEGER);
+			try {
+				await callTokenProxyRetrieveTool({ hash });
+			} finally {
+				byteLength.mockRestore();
+			}
+			expect(getTokenProxyRecoveryObservations()).toMatchObject({
+				returnedOriginalBytes: Number.MAX_SAFE_INTEGER,
+				saturated: true,
+				byCaller: {
+					mcpRetrieveTool: { returnedOriginalBytes: Number.MAX_SAFE_INTEGER },
+					otherReads: { returnedOriginalBytes: 0 },
+				},
+			});
+			// The total is full and stays there. The other caller's own part keeps counting.
+			cache.readOriginal.mockResolvedValueOnce('x').mockResolvedValueOnce(excerpt('x'));
+			await readTokenProxyBlock(hash);
+			await callTokenProxyRetrieveTool({ hash });
+			expect(getTokenProxyRecoveryObservations()).toMatchObject({
+				invocations: 3,
+				returnedOriginalBytes: Number.MAX_SAFE_INTEGER,
+				saturated: true,
+				byCaller: {
+					mcpRetrieveTool: { invocations: 2, returnedOriginalBytes: Number.MAX_SAFE_INTEGER },
+					otherReads: { invocations: 1, returnedOriginalBytes: 1 },
+				},
+			});
 		});
 
 		it('retains observations across listener stops and resets them only with the test reset', async () => {
+			cache.readOriginal
+				.mockResolvedValueOnce('kept in memory')
+				.mockResolvedValueOnce(excerpt('kept in memory'));
 			await readTokenProxyBlock(hash);
+			await callTokenProxyRetrieveTool({ hash });
 			await stopTokenProxy();
-			expect(getTokenProxyRecoveryObservations().invocations).toBe(1);
+			const kept = getTokenProxyRecoveryObservations();
+			expect(kept.invocations).toBe(2);
+			expect(kept.byCaller.mcpRetrieveTool.invocations).toBe(1);
+			expect(kept.byCaller.otherReads.invocations).toBe(1);
 			await resetTokenProxyForTests();
 			expect(getTokenProxyRecoveryObservations()).toMatchObject({
-				invocations: 0,
-				rangedInvocations: 0,
-				recoveredOriginals: 0,
-				unavailableBlocks: 0,
-				missingOriginals: 0,
-				failedReads: 0,
-				returnedOriginalBytes: 0,
-				returnedOriginalTokenEstimate: 0,
+				...NO_READS,
+				byCaller: { mcpRetrieveTool: NO_READS, otherReads: NO_READS },
 				saturated: false,
 			});
 		});

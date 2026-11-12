@@ -9148,7 +9148,13 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				ok: true,
 				result: `[original sha256=${hash} lines 2-3; this is the end of the original]\ntwo\nthree\n`,
 			});
-			expect(readTokenProxyBlock).toHaveBeenLastCalledWith(hash, { startLine: 2, endLine: 3 });
+			// The read made for a model's tool call names itself, so the recovery counters
+			// keep it apart from the CLI and inspection routes, which pass no caller.
+			expect(readTokenProxyBlock).toHaveBeenLastCalledWith(
+				hash,
+				{ startLine: 2, endLine: 3 },
+				{ caller: 'mcpRetrieveTool' }
+			);
 			expect(invokeTool).not.toHaveBeenCalled();
 		});
 

@@ -471,6 +471,8 @@ that predates v22 is NULL in all of them.
 
 A figure drawn from rows is one of three kinds (`ProxyEvidenceKind`): `measured`, `estimate` (characters / 4: `originalTokens`, `sentTokens`) or `opportunity` (never stored). The kinds are never added into one savings number. Build figures with `proxyFigure()` and total them only with `addProxyFigures()`; see "How sure a token proxy figure is" in [CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md).
 
+Reads of a compressed block's original are not row facts. `TokenProxyRecoveryObservations` counts them in memory for the life of the process, split by caller: the reads the MCP handler made for `retrieve_compressed_original`, and every other read (actor unknown). Do not store them in a row or add them to a range total.
+
 ## IPC Handlers
 
 Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollectionEnabled` in settings before recording data.

@@ -3619,7 +3619,10 @@ The nine decisions, with their reasons:
    the existing limits (`TOKEN_PROXY_ORIGINAL_RANGE_MAX_LINES`, 1000 lines;
    `TOKEN_PROXY_ORIGINAL_RANGE_MAX_BYTES`, 256 KiB), a first line that says which lines came back
    and whether more exist, then the exact text. An unknown hash or a missing original is a tool
-   error that says so. Lookup is by exact hash only, with no search and no listing. Reason: the
+   error that says so. Lookup is by exact hash only, with no search and no listing. The tool
+   passes `{ caller: 'mcpRetrieveTool' }` to that read, so the in-memory recovery counters
+   (`getTokenProxyRecoveryObservations()`) count its reads apart from every other read, whose
+   actor is unknown. A served response is not proof that the model read it. Reason: the
    same read the audit view and `models proxy block` use, so there is one implementation of the
    range rules; an exact hash discloses only a block the model was already shown a marker for.
 3. **A core tool, not a plugin tool.** It works with the Plugins Encore Feature off. The bridge

@@ -1069,18 +1069,23 @@ export function proxyProviderClassHasValue(reading: ProxyProviderClassReading): 
 }
 
 /**
- * What the canonical block reader (`readTokenProxyBlock`) has returned since
- * the app started: a snapshot of eight saturating counters and what they leave
- * unknown. Process lifetime, not a time range, and in memory only.
+ * Who called the canonical block reader (`readTokenProxyBlock`), as far as the
+ * code can tell.
  *
- * Bytes and counts are measured. `returnedOriginalTokenEstimate` is an estimate
- * (`tokenCountKind`). Returned archive text is not proof that a model received
- * it: `modelExposure` and `unobservedRetrievals` say so, and `cliInvocations`
- * is null because the reader serves inspection and the CLI alike. Forwarding
- * historical tool text never increments a counter (`ProxyVetoCounts.retrieval`
- * counts retrieved text carried forward in history).
+ * - `mcpRetrieveTool`: the MCP handler answering a call of
+ *   `retrieve_compressed_original`.
+ * - `otherReads`: every other call. That is the Gateway section's inspection,
+ *   `maestro-cli models proxy block`, and any programmatic read. The actor is
+ *   unknown: an agent can run the CLI as well as a person can, so these reads
+ *   are not human activity.
  */
-export interface TokenProxyRecoveryObservations {
+export type TokenProxyRecoveryCaller = 'mcpRetrieveTool' | 'otherReads';
+
+/**
+ * The eight counters of the canonical block reader, for every caller together
+ * or for one caller. Each saturates at the largest safe integer.
+ */
+export interface TokenProxyRecoveryReadCounts {
 	/** Reads whose hash and range passed validation. */
 	invocations: number;
 	/** Reads that asked for a line range. */
@@ -1096,13 +1101,41 @@ export interface TokenProxyRecoveryObservations {
 	/** UTF-8 bytes of the original text returned. */
 	returnedOriginalBytes: number;
 	returnedOriginalTokenEstimate: number;
+}
+
+/**
+ * What the canonical block reader (`readTokenProxyBlock`) has returned since
+ * the app started: a snapshot of saturating counters and what they leave
+ * unknown. Process lifetime, not a time range, and in memory only.
+ *
+ * The counters on this object count every caller together, as they always did.
+ * `byCaller` holds the same eight counters for each caller the code can tell
+ * apart (`TokenProxyRecoveryCaller`). Until a counter saturates, each total is
+ * the sum of its two parts. For the retrieve tool, `recoveredOriginals` is the
+ * number of calls it answered with original text (a range past the end of the
+ * original has no lines and counts as zero bytes), and the returned bytes are
+ * the size of that text (the one-line header the tool adds is not counted).
+ * The tool always sends a line range, so its `rangedInvocations` equals its
+ * `invocations`.
+ *
+ * Bytes and counts are measured. `returnedOriginalTokenEstimate` is an estimate
+ * (`tokenCountKind`). Returned archive text is not proof that a model received
+ * it: `modelExposure` and `unobservedRetrievals` say so, and a tool response the
+ * handler served is not proof that the model read it. `cliInvocations` is null
+ * because the CLI is not told apart from other reads. Forwarding historical
+ * tool text never increments a counter (`ProxyVetoCounts.retrieval` counts
+ * retrieved text carried forward in history).
+ */
+export interface TokenProxyRecoveryObservations extends TokenProxyRecoveryReadCounts {
 	scope: 'process-lifetime';
 	coverage: 'canonical-block-reader';
 	tokenCountKind: 'character-estimate';
 	cliInvocations: null;
 	modelExposure: 'unknown';
 	unobservedRetrievals: 'unknown';
-	/** A counter reached the largest safe integer. */
+	/** The eight counters again, by caller. Independent copies of the live tallies. */
+	byCaller: Record<TokenProxyRecoveryCaller, TokenProxyRecoveryReadCounts>;
+	/** A counter, in the total or in either caller's part, reached the largest safe integer. */
 	saturated: boolean;
 }
 
