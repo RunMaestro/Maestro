@@ -20,6 +20,7 @@ import type {
 	SessionDetail,
 	CustomAICommand,
 	Theme,
+	PlaybookLaunchRecord,
 } from '../../../../main/web-server/types';
 import type { HistoryEntry } from '../../../../shared/types';
 
@@ -715,6 +716,60 @@ describe('CallbackRegistry', () => {
 			registry.getHistory('/home/user/project', 'session-20');
 
 			expect(callback).toHaveBeenCalledWith('/home/user/project', 'session-20');
+		});
+	});
+
+	describe('Playbook Launch callbacks', () => {
+		const record = { launchId: 'launch-1', status: 'completed' } as PlaybookLaunchRecord;
+		const completion = { completedTasks: 1, totalTasks: 1, elapsedTimeMs: 5, wasStopped: false };
+		const request = {
+			sessionId: 'session-1',
+			playbookId: 'research-market',
+			values: { MARKET_TOPIC: 'EV chargers' },
+			keepSavedPlaybook: false,
+		};
+
+		it('answers each launch call as not configured until its callback is set', async () => {
+			const notConfigured = { success: false, error: 'Marketplace launch not configured' };
+
+			expect(await registry.launchMarketplacePlaybook(request)).toEqual(notConfigured);
+			expect(await registry.completeMarketplaceLaunch('launch-1', completion)).toEqual(
+				notConfigured
+			);
+			expect(await registry.getMarketplaceLaunch('launch-1')).toEqual(notConfigured);
+			expect(await registry.listMarketplaceLaunches({})).toEqual(notConfigured);
+		});
+
+		it('passes each launch call through to its callback and returns its answer', async () => {
+			const launch = vi.fn().mockResolvedValue({ success: true, launchId: 'launch-1' });
+			const complete = vi.fn().mockResolvedValue({ success: true, launch: record });
+			const get = vi.fn().mockResolvedValue({ success: true, launch: record });
+			const list = vi.fn().mockResolvedValue({ success: true, launches: [record] });
+			registry.setLaunchMarketplacePlaybookCallback(launch);
+			registry.setCompleteMarketplaceLaunchCallback(complete);
+			registry.setGetMarketplaceLaunchCallback(get);
+			registry.setListMarketplaceLaunchesCallback(list);
+
+			expect(await registry.launchMarketplacePlaybook(request)).toEqual({
+				success: true,
+				launchId: 'launch-1',
+			});
+			expect(await registry.completeMarketplaceLaunch('launch-1', completion)).toEqual({
+				success: true,
+				launch: record,
+			});
+			expect(await registry.getMarketplaceLaunch('launch-1')).toEqual({
+				success: true,
+				launch: record,
+			});
+			expect(await registry.listMarketplaceLaunches({ sessionId: 'session-1' })).toEqual({
+				success: true,
+				launches: [record],
+			});
+			expect(launch).toHaveBeenCalledWith(request);
+			expect(complete).toHaveBeenCalledWith('launch-1', completion);
+			expect(get).toHaveBeenCalledWith('launch-1');
+			expect(list).toHaveBeenCalledWith({ sessionId: 'session-1' });
 		});
 	});
 

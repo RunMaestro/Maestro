@@ -170,6 +170,16 @@ import type {
 	ImportMarketplacePlaybookCallback,
 	MarketplaceManifestResult,
 	MarketplaceImportResult,
+	LaunchMarketplacePlaybookCallback,
+	CompleteMarketplaceLaunchCallback,
+	GetMarketplaceLaunchCallback,
+	ListMarketplaceLaunchesCallback,
+	MarketplaceLaunchClientRequest,
+	MarketplaceLaunchResult,
+	MarketplaceLaunchRecordResult,
+	MarketplaceLaunchListResult,
+	PlaybookLaunchCompletion,
+	PlaybookLaunchListOptions,
 	PlaybookLaunchValues,
 	ListDesktopSessionsCallback,
 	GetSessionHistoryCallback,
@@ -325,6 +335,10 @@ export interface WebServerCallbacks {
 	getMarketplaceDocument: GetMarketplaceDocumentCallback | null;
 	getMarketplaceReadme: GetMarketplaceReadmeCallback | null;
 	importMarketplacePlaybook: ImportMarketplacePlaybookCallback | null;
+	launchMarketplacePlaybook: LaunchMarketplacePlaybookCallback | null;
+	completeMarketplaceLaunch: CompleteMarketplaceLaunchCallback | null;
+	getMarketplaceLaunch: GetMarketplaceLaunchCallback | null;
+	listMarketplaceLaunches: ListMarketplaceLaunchesCallback | null;
 	listDesktopSessions: ListDesktopSessionsCallback | null;
 	getSessionHistory: GetSessionHistoryCallback | null;
 }
@@ -442,6 +456,10 @@ export class CallbackRegistry {
 		getMarketplaceDocument: null,
 		getMarketplaceReadme: null,
 		importMarketplacePlaybook: null,
+		launchMarketplacePlaybook: null,
+		completeMarketplaceLaunch: null,
+		getMarketplaceLaunch: null,
+		listMarketplaceLaunches: null,
 		listDesktopSessions: null,
 		getSessionHistory: null,
 	};
@@ -1302,6 +1320,41 @@ export class CallbackRegistry {
 		);
 	}
 
+	async launchMarketplacePlaybook(
+		request: MarketplaceLaunchClientRequest
+	): Promise<MarketplaceLaunchResult> {
+		if (!this.callbacks.launchMarketplacePlaybook) {
+			return { success: false, error: 'Marketplace launch not configured' };
+		}
+		return this.callbacks.launchMarketplacePlaybook(request);
+	}
+
+	async completeMarketplaceLaunch(
+		launchId: string,
+		completion: PlaybookLaunchCompletion
+	): Promise<MarketplaceLaunchRecordResult> {
+		if (!this.callbacks.completeMarketplaceLaunch) {
+			return { success: false, error: 'Marketplace launch not configured' };
+		}
+		return this.callbacks.completeMarketplaceLaunch(launchId, completion);
+	}
+
+	async getMarketplaceLaunch(launchId: string): Promise<MarketplaceLaunchRecordResult> {
+		if (!this.callbacks.getMarketplaceLaunch) {
+			return { success: false, error: 'Marketplace launch not configured' };
+		}
+		return this.callbacks.getMarketplaceLaunch(launchId);
+	}
+
+	async listMarketplaceLaunches(
+		options: PlaybookLaunchListOptions
+	): Promise<MarketplaceLaunchListResult> {
+		if (!this.callbacks.listMarketplaceLaunches) {
+			return { success: false, error: 'Marketplace launch not configured' };
+		}
+		return this.callbacks.listMarketplaceLaunches(options);
+	}
+
 	listDesktopSessions(): ReturnType<ListDesktopSessionsCallback> | null {
 		return this.callbacks.listDesktopSessions?.() ?? null;
 	}
@@ -1760,6 +1813,22 @@ export class CallbackRegistry {
 
 	setImportMarketplacePlaybookCallback(callback: ImportMarketplacePlaybookCallback): void {
 		this.callbacks.importMarketplacePlaybook = callback;
+	}
+
+	setLaunchMarketplacePlaybookCallback(callback: LaunchMarketplacePlaybookCallback): void {
+		this.callbacks.launchMarketplacePlaybook = callback;
+	}
+
+	setCompleteMarketplaceLaunchCallback(callback: CompleteMarketplaceLaunchCallback): void {
+		this.callbacks.completeMarketplaceLaunch = callback;
+	}
+
+	setGetMarketplaceLaunchCallback(callback: GetMarketplaceLaunchCallback): void {
+		this.callbacks.getMarketplaceLaunch = callback;
+	}
+
+	setListMarketplaceLaunchesCallback(callback: ListMarketplaceLaunchesCallback): void {
+		this.callbacks.listMarketplaceLaunches = callback;
 	}
 
 	setListDesktopSessionsCallback(callback: ListDesktopSessionsCallback): void {

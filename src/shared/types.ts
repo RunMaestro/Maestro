@@ -1087,6 +1087,7 @@ export type {
 	PlaybookLaunchValues,
 	PlaybookLaunchCompletion,
 	PlaybookLaunchRecord,
+	PlaybookLaunchListOptions,
 	PlaybookLaunchRequest,
 	PlaybookLaunchResult,
 } from './marketplace-types';

@@ -233,10 +233,16 @@ describe('marketplace IPC handlers', () => {
 			set: vi.fn(),
 		};
 
-		// Setup dependencies
+		// Setup dependencies. The launch channels are tested in marketplace-launch.test.ts.
 		mockDeps = {
 			app: mockApp,
 			settingsStore: mockSettingsStore as unknown as Store,
+			launchHost: {
+				app: mockApp,
+				startAutoRun: vi.fn(),
+				isMaestroCliInstalled: vi.fn(),
+				onLaunchChanged: vi.fn(),
+			},
 		};
 
 		// Default mock for crypto.randomUUID
@@ -265,6 +271,10 @@ describe('marketplace IPC handlers', () => {
 				'marketplace:getDocument',
 				'marketplace:getReadme',
 				'marketplace:importPlaybook',
+				'marketplace:launch',
+				'marketplace:completeLaunch',
+				'marketplace:getLaunch',
+				'marketplace:listLaunches',
 			];
 
 			for (const channel of expectedChannels) {

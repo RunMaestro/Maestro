@@ -16,6 +16,10 @@ import type { GrokSpawnSelectionFingerprint } from '../shared/grokSpawnSelection
 import type {
 	AgentDiscoveryRequest,
 	AgentDiscoveryResult,
+	PlaybookLaunchCompletion,
+	PlaybookLaunchListOptions,
+	PlaybookLaunchRecord,
+	PlaybookLaunchRequest,
 	PlaybookLaunchValues,
 } from '../shared/types';
 /* eslint-disable @typescript-eslint/no-unused-vars */
@@ -3332,7 +3336,28 @@ interface MaestroAPI {
 			importedDocs?: string[];
 			error?: string;
 		}>;
+		/** Launch a playbook on an agent. Resolves once its Auto Run has started. */
+		launch: (request: PlaybookLaunchRequest) => Promise<{
+			success: boolean;
+			launchId?: string;
+			folderRelativePath?: string;
+			error?: string;
+		}>;
+		/** Report that a launched Auto Run has ended. Main cleans up and broadcasts `onLaunchChanged`. */
+		completeLaunch: (
+			launchId: string,
+			completion: PlaybookLaunchCompletion
+		) => Promise<{ success: boolean; launch?: PlaybookLaunchRecord; error?: string }>;
+		getLaunch: (
+			launchId: string
+		) => Promise<{ success: boolean; launch?: PlaybookLaunchRecord; error?: string }>;
+		/** Launch records, newest first, optionally of one agent and capped by `limit`. */
+		listLaunches: (
+			options?: PlaybookLaunchListOptions
+		) => Promise<{ success: boolean; launches?: PlaybookLaunchRecord[]; error?: string }>;
 		onManifestChanged: (handler: () => void) => () => void;
+		/** A launch record changed: a launched Auto Run ended and main cleaned up after it. */
+		onLaunchChanged: (handler: (launch: PlaybookLaunchRecord) => void) => () => void;
 	};
 	// Updates API
 	updates: {

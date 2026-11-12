@@ -371,6 +371,102 @@ describe('updateLaunch', () => {
 			addedByANewerBuild: { kept: true },
 		});
 	});
+
+	it('records why cleanup could not remove the launch folder', async () => {
+		const created = await store.createLaunch(newLaunch());
+
+		const updated = await store.updateLaunch(created.launchId, {
+			cleanup: 'failed',
+			cleanupError: 'Refusing to delete the launch folder "x": it is not a folder',
+		});
+
+		expect(updated).toEqual({
+			...created,
+			cleanup: 'failed',
+			cleanupError: 'Refusing to delete the launch folder "x": it is not a folder',
+		});
+		expect(readStoredFile().launches).toEqual([updated]);
+	});
+});
+
+describe('finishLaunch', () => {
+	const finish = {
+		status: 'completed' as const,
+		finishedAt: 9_000,
+		completion,
+	};
+
+	it('ends a running launch, persists it and frees its agent', async () => {
+		const created = await store.createLaunch(newLaunch());
+
+		const result = await store.finishLaunch(created.launchId, finish);
+
+		expect(result).toEqual({ record: { ...created, ...finish }, finished: true });
+		expect(readStoredFile().launches).toEqual([{ ...created, ...finish }]);
+		await expect(store.findRunningLaunchForSession('agent-1')).resolves.toBeUndefined();
+	});
+
+	it('changes nothing for a launch that has already ended, and says so', async () => {
+		seedFile([storedRecord({ status: 'stopped', finishedAt: 2_000 })]);
+		const before = fs.readFileSync(filePath, 'utf-8');
+
+		const result = await store.finishLaunch('launch-1', finish);
+
+		expect(result).toEqual({
+			record: storedRecord({ status: 'stopped', finishedAt: 2_000 }),
+			finished: false,
+		});
+		expect(fs.readFileSync(filePath, 'utf-8')).toBe(before);
+	});
+
+	it('resolves undefined for an unknown id and creates no file', async () => {
+		await expect(store.finishLaunch('no-such-launch', finish)).resolves.toBeUndefined();
+		expect(fs.existsSync(filePath)).toBe(false);
+	});
+
+	it('lets only one of two reports of the same run end it', async () => {
+		const created = await store.createLaunch(newLaunch());
+
+		const results = await Promise.all([
+			store.finishLaunch(created.launchId, { status: 'completed', finishedAt: 2_000, completion }),
+			store.finishLaunch(created.launchId, {
+				status: 'stopped',
+				finishedAt: 3_000,
+				completion: { ...completion, wasStopped: true },
+			}),
+		]);
+
+		expect(results.map((result) => result?.finished)).toEqual([true, false]);
+		// The second sees the record as the first left it.
+		expect(results[1]?.record).toEqual(results[0]?.record);
+		await expect(store.getLaunch(created.launchId)).resolves.toMatchObject({
+			status: 'completed',
+			finishedAt: 2_000,
+		});
+	});
+
+	it('never changes a field outside the update fields, such as the launch folder', async () => {
+		const created = await store.createLaunch(newLaunch());
+		const smuggled = {
+			...finish,
+			folderRelativePath: '../../elsewhere',
+			autoRunFolderPath: '/',
+			sessionId: 'agent-2',
+		} as typeof finish;
+
+		const result = await store.finishLaunch(created.launchId, smuggled);
+
+		expect(result?.record).toEqual({ ...created, ...finish });
+	});
+
+	it('treats a launch an earlier app run left running as ended', async () => {
+		seedFile([storedRecord({ status: 'running', appRunId: 'an-earlier-app-run' })]);
+
+		const result = await store.finishLaunch('launch-1', finish);
+
+		expect(result?.finished).toBe(false);
+		expect(result?.record.status).toBe('failed');
+	});
 });
 
 describe('getLaunch', () => {

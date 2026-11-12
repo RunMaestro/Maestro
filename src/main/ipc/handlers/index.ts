@@ -101,6 +101,7 @@ import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
 import type { WindowRegistry } from '../../window-registry';
 import type { WindowManager } from '../../app-lifecycle/window-manager';
+import type { MarketplaceLaunchHost } from '../../services/marketplace-service';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
 import { createSafeSend } from '../../utils/safe-send';
 import { getSshRemoteById } from '../../stores/getters';
@@ -231,6 +232,8 @@ export interface HandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	// Claude-specific dependencies
 	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
+	// Playbook Launch dependencies
+	marketplaceLaunchHost: MarketplaceLaunchHost;
 	// Multi-window dependencies. Optional during the phased rollout - the
 	// registry and window manager are wired in main/index.ts at app-ready (a
 	// later phase). Until then the windows:* handlers report "not initialized".
@@ -337,6 +340,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	// Register marketplace handlers
 	registerMarketplaceHandlers({
 		app: deps.app,
+		launchHost: deps.marketplaceLaunchHost,
 	});
 	// Register stats handlers for usage tracking
 	registerStatsHandlers({

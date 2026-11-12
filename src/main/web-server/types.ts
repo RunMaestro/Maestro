@@ -1679,11 +1679,22 @@ export type GenerateDirectorNotesSynopsisCallback = (
 import type {
 	MarketplaceManifest,
 	MarketplacePlaybook,
+	PlaybookLaunchCompletion,
+	PlaybookLaunchListOptions,
+	PlaybookLaunchRecord,
+	PlaybookLaunchRequest,
 	PlaybookLaunchValues,
 } from '../../shared/marketplace-types';
 
 /** Re-export for convenience so handlers don't pull from two places. */
-export type { MarketplaceManifest, MarketplacePlaybook, PlaybookLaunchValues };
+export type {
+	MarketplaceManifest,
+	MarketplacePlaybook,
+	PlaybookLaunchCompletion,
+	PlaybookLaunchListOptions,
+	PlaybookLaunchRecord,
+	PlaybookLaunchValues,
+};
 
 /** Result from the marketplace get-manifest callback. */
 export interface MarketplaceManifestResult {
@@ -1730,3 +1741,51 @@ export type ImportMarketplacePlaybookCallback = (
 	targetFolderName: string,
 	launchValues?: PlaybookLaunchValues
 ) => Promise<MarketplaceImportResult>;
+
+/**
+ * What a web client asks for when it launches a playbook. Main takes the agent's Auto Run folder
+ * and SSH remote from the stored agent, so the client names neither.
+ */
+export type MarketplaceLaunchClientRequest = Omit<
+	PlaybookLaunchRequest,
+	'autoRunFolderPath' | 'sshRemoteId'
+>;
+
+/** Result from the marketplace launch callback. */
+export interface MarketplaceLaunchResult {
+	success: boolean;
+	error?: string;
+	launchId?: string;
+	folderRelativePath?: string;
+}
+
+/** Result from a callback that reads or ends one launch record. */
+export interface MarketplaceLaunchRecordResult {
+	success: boolean;
+	error?: string;
+	launch?: PlaybookLaunchRecord;
+}
+
+/** Result from the launch list callback. */
+export interface MarketplaceLaunchListResult {
+	success: boolean;
+	error?: string;
+	launches?: PlaybookLaunchRecord[];
+}
+
+export type LaunchMarketplacePlaybookCallback = (
+	request: MarketplaceLaunchClientRequest
+) => Promise<MarketplaceLaunchResult>;
+
+export type CompleteMarketplaceLaunchCallback = (
+	launchId: string,
+	completion: PlaybookLaunchCompletion
+) => Promise<MarketplaceLaunchRecordResult>;
+
+export type GetMarketplaceLaunchCallback = (
+	launchId: string
+) => Promise<MarketplaceLaunchRecordResult>;
+
+export type ListMarketplaceLaunchesCallback = (
+	options: PlaybookLaunchListOptions
+) => Promise<MarketplaceLaunchListResult>;

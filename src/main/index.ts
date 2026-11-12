@@ -254,6 +254,8 @@ import { createSafeSend, isWebContentsAvailable } from './utils/safe-send';
 import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capability-snapshot';
 import { setModelsRefreshedBroadcaster } from './agents/model-discovery';
 import { createWebServerFactory } from './web-server/web-server-factory';
+import { configureAutoRunInRenderer } from './web-server/callbacks/autoRunConfigCallbacks';
+import type { MarketplaceLaunchHost } from './services/marketplace-service';
 import { registerBrowserRelayHandlers } from './browser/browser-relay';
 import { isHostBrowserPageWindow } from './browser/browser-pages';
 import type { DebugPackageDependencies } from './debug-package';
@@ -936,6 +938,16 @@ function closeFloatingWidgetWindows(): void {
 const CUE_DISABLED_MESSAGE =
 	'Maestro Cue is turned off. Run `maestro-cli encore enable cue` first.';
 
+// One Playbook Launch host for the IPC handlers and the web bridge, so a launch started or
+// completed from the desktop or from `maestro-cli` runs, checks and broadcasts the same way.
+const marketplaceLaunchHost: MarketplaceLaunchHost = {
+	app,
+	// The main window's `configure_auto_run` round trip, the one `maestro-cli auto-run` uses.
+	startAutoRun: (sessionId, config) => configureAutoRunInRenderer(mainWindow, sessionId, config),
+	isMaestroCliInstalled: async () => (await maestroCliManager.checkStatus()).installed,
+	onLaunchChanged: (launch) => safeSend('marketplace:launchChanged', launch),
+};
+
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
 	releaseQueueItem: (...args) => {
@@ -950,6 +962,7 @@ const createWebServer = createWebServerFactory({
 	sessionsStore,
 	groupsStore,
 	getDebugPackageDeps: () => debugPackageDeps,
+	marketplaceLaunchHost,
 	getMainWindow: () => mainWindow,
 	getWindowForSession: resolveWindowForSession,
 	deliverCadenza,
@@ -3755,6 +3768,7 @@ app
 			createWebServer,
 			wakatimeManager,
 			maestroCliManager,
+			marketplaceLaunchHost,
 			getAgentConfigForAgent,
 			getCustomEnvVarsForAgent,
 		});

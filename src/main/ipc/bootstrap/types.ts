@@ -14,6 +14,7 @@ import type { InteractiveReplayController } from '../../agents/claude-interactiv
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
 import type { WakaTimeManager } from '../../wakatime-manager';
 import type { MaestroCliManager } from '../../maestro-cli-manager';
+import type { MarketplaceLaunchHost } from '../../services/marketplace-service';
 import type { DebugPackageDependencies } from '../../debug-package';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type { WindowRegistry } from '../../window-registry';
@@ -73,6 +74,8 @@ export interface IpcBootstrapDependencies {
 	createWebServer: ReturnType<typeof createWebServerFactory>;
 	wakatimeManager: WakaTimeManager;
 	maestroCliManager: MaestroCliManager;
+	/** What Playbook Launch runs with. The web server factory gets the same object. */
+	marketplaceLaunchHost: MarketplaceLaunchHost;
 	getAgentConfigForAgent: (agentId: string) => Record<string, any>;
 	getCustomEnvVarsForAgent: (agentId: string) => Record<string, string> | undefined;
 }

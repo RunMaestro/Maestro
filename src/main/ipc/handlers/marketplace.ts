@@ -18,7 +18,12 @@ import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { createSafeSend } from '../../utils/safe-send';
 import { SshRemoteConfig } from '../../../shared/types';
-import type { PlaybookLaunchValues } from '../../../shared/marketplace-types';
+import type {
+	PlaybookLaunchCompletion,
+	PlaybookLaunchListOptions,
+	PlaybookLaunchRequest,
+	PlaybookLaunchValues,
+} from '../../../shared/marketplace-types';
 import type { MaestroSettings } from './persistence';
 import {
 	getMarketplaceManifest,
@@ -27,6 +32,11 @@ import {
 	getMarketplaceReadme,
 	importMarketplacePlaybook,
 	createLocalManifestWatcher,
+	launchMarketplacePlaybook,
+	completeMarketplaceLaunch,
+	getMarketplaceLaunch,
+	listMarketplaceLaunches,
+	type MarketplaceLaunchHost,
 } from '../../services/marketplace-service';
 
 const LOG_CONTEXT = '[Marketplace]';
@@ -37,6 +47,11 @@ export interface MarketplaceHandlerDependencies {
 	settingsStore?: Store<MaestroSettings>;
 	/** Main window getter, used to bridge manifest-change pushes to web clients */
 	getMainWindow?: () => BrowserWindow | null;
+	/**
+	 * What Playbook Launch runs with: the Auto Run starter, the maestro-cli check and the
+	 * `marketplace:launchChanged` broadcast. The web bridge's launch callbacks get the same object.
+	 */
+	launchHost: MarketplaceLaunchHost;
 }
 
 let marketplaceSettingsStore: Store<MaestroSettings> | undefined;
@@ -65,7 +80,7 @@ const handlerOpts = (operation: string, logSuccess = true): CreateHandlerOptions
  * Register all Marketplace-related IPC handlers.
  */
 export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies): void {
-	const { app, settingsStore, getMainWindow } = deps;
+	const { app, settingsStore, getMainWindow, launchHost } = deps;
 	const safeSend = createSafeSend(getMainWindow ?? (() => null));
 
 	marketplaceSettingsStore = settingsStore;
@@ -150,6 +165,51 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 					launchValues,
 				});
 				return { ...result };
+			}
+		)
+	);
+
+	// marketplace:launch - Launch a playbook: import it with the answers into a launch folder of
+	// its own, record the launch and start its Auto Run. Resolves { launchId, folderRelativePath }.
+	ipcMain.handle(
+		'marketplace:launch',
+		createIpcHandler(handlerOpts('launch'), async (request: PlaybookLaunchRequest) => {
+			const result = await launchMarketplacePlaybook(request, launchHost);
+			return { ...result };
+		})
+	);
+
+	// marketplace:completeLaunch - The renderer that ran a launched Auto Run reports its end. Main
+	// ends the record, cleans up and broadcasts marketplace:launchChanged. Resolves { launch }.
+	ipcMain.handle(
+		'marketplace:completeLaunch',
+		createIpcHandler(
+			handlerOpts('completeLaunch'),
+			async (launchId: string, completion: PlaybookLaunchCompletion) => {
+				const launch = await completeMarketplaceLaunch(launchId, completion, launchHost);
+				return { launch };
+			}
+		)
+	);
+
+	// marketplace:getLaunch - One launch record. Resolves { launch }.
+	ipcMain.handle(
+		'marketplace:getLaunch',
+		createIpcHandler(handlerOpts('getLaunch', false), async (launchId: string) => {
+			const launch = await getMarketplaceLaunch(app, launchId);
+			return { launch };
+		})
+	);
+
+	// marketplace:listLaunches - Launch records, newest first, optionally of one agent and capped by
+	// a limit. Resolves { launches }.
+	ipcMain.handle(
+		'marketplace:listLaunches',
+		createIpcHandler(
+			handlerOpts('listLaunches', false),
+			async (options?: PlaybookLaunchListOptions) => {
+				const launches = await listMarketplaceLaunches(app, options);
+				return { launches };
 			}
 		)
 	);

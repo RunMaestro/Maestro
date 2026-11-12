@@ -55,7 +55,10 @@ const METHODS: Record<string, string> = {
 	logger: 'getLogLevel log',
 	// Read-only: a browser-spawned agent needs it to build the same system prompt.
 	maestroRun: 'readyPath',
-	marketplace: 'getDocument getManifest getReadme importPlaybook refreshManifest',
+	// completeLaunch is absent on purpose: a launched Auto Run runs in the desktop's main window,
+	// which reports its end (and so starts cleanup). A browser never has one to report.
+	marketplace:
+		'getDocument getLaunch getManifest getReadme importPlaybook launch listLaunches refreshManifest',
 	memory: 'create delete getPath list orphans read search write',
 	// Main owns the inbox; a browser marks read or clears through the same delta.
 	notification: 'changeHistory',
@@ -110,7 +113,7 @@ const EVENTS: Record<string, string> = {
 	groupChat:
 		'autoRunBatchComplete autoRunTriggered historyEntry message moderatorSessionIdChanged moderatorUsage participantLiveOutput participantState participantsChanged queueState stateChange',
 	history: 'entryAdded externalChange',
-	marketplace: 'manifestChanged',
+	marketplace: 'launchChanged manifestChanged',
 	notification: 'commandCompleted historyChanged',
 	parquet: 'fetchProgress',
 	plugins: 'changed groupings-changed',

@@ -101,6 +101,10 @@ import {
 	handleMarketplaceGetDocument,
 	handleMarketplaceGetReadme,
 	handleMarketplaceImportPlaybook,
+	handleMarketplaceLaunch,
+	handleMarketplaceCompleteLaunch,
+	handleMarketplaceGetLaunch,
+	handleMarketplaceListLaunches,
 } from './marketplace';
 import { handlePluginsListTools, handlePluginsCallTool, handlePluginsSendAgent } from './plugins';
 import { handleListAgentModels } from './models';
@@ -886,6 +890,22 @@ export class WebSocketMessageHandler {
 
 			case 'marketplace_import_playbook':
 				handleMarketplaceImportPlaybook(this.ctx, client, message);
+				break;
+
+			case 'marketplace_launch':
+				handleMarketplaceLaunch(this.ctx, client, message);
+				break;
+
+			case 'marketplace_complete_launch':
+				handleMarketplaceCompleteLaunch(this.ctx, client, message);
+				break;
+
+			case 'marketplace_get_launch':
+				handleMarketplaceGetLaunch(this.ctx, client, message);
+				break;
+
+			case 'marketplace_list_launches':
+				handleMarketplaceListLaunches(this.ctx, client, message);
 				break;
 
 			case 'list_desktop_sessions':

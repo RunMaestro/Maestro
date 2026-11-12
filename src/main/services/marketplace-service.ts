@@ -23,6 +23,8 @@ import type {
 	MarketplaceManifest,
 	MarketplaceCache,
 	MarketplacePlaybook,
+	PlaybookLaunchCompletion,
+	PlaybookLaunchListOptions,
 	PlaybookLaunchRecord,
 	PlaybookLaunchRequest,
 	PlaybookLaunchResult,
@@ -1034,7 +1036,11 @@ export type LaunchAutoRunStarter = (
 	config: LaunchAutoRunConfig
 ) => Promise<{ success: boolean; error?: string }>;
 
-/** What `launchMarketplacePlaybook` needs from the app that runs it. */
+/**
+ * What Playbook Launch needs from the app that runs it. `src/main/index.ts` builds one, which the
+ * IPC handlers and the web bridge callbacks share, so a launch started or completed either way
+ * behaves the same.
+ */
 export interface MarketplaceLaunchHost {
 	app: App;
 	startAutoRun: LaunchAutoRunStarter;
@@ -1044,6 +1050,12 @@ export interface MarketplaceLaunchHost {
 	 * declares `preconditions.maestroCli`.
 	 */
 	isMaestroCliInstalled: () => Promise<boolean>;
+	/**
+	 * Tells every window and web client that a launch record changed, as the
+	 * `marketplace:launchChanged` event with the record. Called when `completeMarketplaceLaunch`
+	 * has ended a launch and cleaned up after it.
+	 */
+	onLaunchChanged: (launch: PlaybookLaunchRecord) => void;
 }
 
 /**
@@ -1172,6 +1184,10 @@ export async function launchMarketplacePlaybook(
 	request: PlaybookLaunchRequest,
 	host: MarketplaceLaunchHost
 ): Promise<PlaybookLaunchResult> {
+	// `marketplace:launch` passes whatever its caller sent.
+	if (typeof request !== 'object' || request === null) {
+		throw new MarketplaceImportError('The launch request must be an object');
+	}
 	const { values, sessionId, autoRunFolderPath } = request;
 	// An empty id means this computer, as everywhere else.
 	const sshRemoteId = request.sshRemoteId || undefined;
@@ -1344,6 +1360,216 @@ async function startLaunch(
 		{ launchId: record.launchId }
 	);
 	return { launchId: record.launchId, folderRelativePath: folder };
+}
+
+/** A whole number of 0 or more, as a task count is. */
+function isTaskCount(value: unknown): value is number {
+	return Number.isInteger(value) && (value as number) >= 0;
+}
+
+/** A finite number of 0 or more, as a duration or a cost is. */
+function isNonNegativeNumber(value: unknown): value is number {
+	return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * The completion a caller reported, checked and copied field by field, because it crosses IPC or
+ * the web bridge: nothing else it carries reaches the launch record. Throws
+ * `MarketplaceImportError` naming the first field that is wrong.
+ */
+function checkedLaunchCompletion(completion: unknown): PlaybookLaunchCompletion {
+	if (typeof completion !== 'object' || completion === null) {
+		throw new MarketplaceImportError(
+			'completion must be an object with completedTasks, totalTasks, elapsedTimeMs and wasStopped'
+		);
+	}
+	const reported = completion as Partial<Record<keyof PlaybookLaunchCompletion, unknown>>;
+	const { completedTasks, totalTasks, elapsedTimeMs, totalCostUsd, wasStopped } = reported;
+	if (!isTaskCount(completedTasks)) {
+		throw new MarketplaceImportError(
+			'completion.completedTasks must be a whole number of 0 or more'
+		);
+	}
+	if (!isTaskCount(totalTasks)) {
+		throw new MarketplaceImportError('completion.totalTasks must be a whole number of 0 or more');
+	}
+	if (!isNonNegativeNumber(elapsedTimeMs)) {
+		throw new MarketplaceImportError('completion.elapsedTimeMs must be a number of 0 or more');
+	}
+	if (totalCostUsd !== undefined && totalCostUsd !== null && !isNonNegativeNumber(totalCostUsd)) {
+		throw new MarketplaceImportError(
+			'completion.totalCostUsd must be a number of 0 or more, when it is given'
+		);
+	}
+	if (typeof wasStopped !== 'boolean') {
+		throw new MarketplaceImportError('completion.wasStopped must be true or false');
+	}
+	return {
+		completedTasks,
+		totalTasks,
+		elapsedTimeMs,
+		...(isNonNegativeNumber(totalCostUsd) && { totalCostUsd }),
+		wasStopped,
+	};
+}
+
+/**
+ * The cleanup for a launch that has just ended, by the rules `completeMarketplaceLaunch` gives.
+ * It never throws for a folder or a saved playbook it cannot remove: it reports and logs the
+ * failure, and a folder it could not remove comes back as `failed` with the reason.
+ */
+async function cleanUpAfterLaunch(
+	app: App,
+	launch: PlaybookLaunchRecord
+): Promise<Pick<PlaybookLaunchRecord, 'cleanup' | 'cleanupError'>> {
+	if (launch.status === 'stopped') return { cleanup: 'skipped-stopped' };
+	// A saved playbook names its documents inside the launch folder, so a reusable playbook keeps it.
+	if (launch.spec?.cleanup === 'keep' || launch.keepSavedPlaybook) return { cleanup: 'kept' };
+
+	try {
+		await deleteLaunchFolder(
+			launch.autoRunFolderPath,
+			launch.folderRelativePath,
+			launch.sshRemoteId
+		);
+	} catch (error) {
+		void captureException(error, {
+			operation: 'marketplace:completeLaunch',
+			launchId: launch.launchId,
+			folder: launch.folderRelativePath,
+		});
+		logger.warn(
+			`Could not remove the launch folder ${launch.folderRelativePath}, so it and its saved playbook stay`,
+			LOG_CONTEXT,
+			{ launchId: launch.launchId, error }
+		);
+		return {
+			cleanup: 'failed',
+			cleanupError: error instanceof Error ? error.message : String(error),
+		};
+	}
+
+	try {
+		await deleteSavedPlaybook(app, launch.sessionId, launch.savedPlaybookId);
+	} catch (error) {
+		// The documents are gone already, which is what the cleanup line reports. The saved playbook
+		// left behind runs nothing, and the user can delete it from the Auto Run panel.
+		void captureException(error, {
+			operation: 'marketplace:completeLaunch',
+			launchId: launch.launchId,
+			savedPlaybookId: launch.savedPlaybookId,
+		});
+		logger.warn(
+			`Could not remove the saved playbook ${launch.savedPlaybookId} of launch ${launch.launchId}`,
+			LOG_CONTEXT,
+			{ error }
+		);
+	}
+	return { cleanup: 'done' };
+}
+
+/**
+ * End a launch whose Auto Run has finished, and clean up after it. The renderer that ran the Auto
+ * Run reports its end here over IPC, and `maestro-cli` can too, with the
+ * `marketplace_complete_launch` WS message.
+ *
+ * The record ends first: `completed`, or `stopped` when the user stopped the run, with
+ * `finishedAt` and the completion. That step refuses a launch that is not running, in the same
+ * queued step as the write, so a second report of one run changes nothing; from then on the agent
+ * is free for its next launch. Cleanup then follows the record, never the caller:
+ *
+ * - A stopped run keeps its folder, so it can be resumed (`skipped-stopped`).
+ * - A spec with `cleanup: 'keep'`, or a playbook the user saved as reusable, keeps it too
+ *   (`kept`): the saved playbook runs its documents from that folder.
+ * - Otherwise `deleteLaunchFolder` removes the one folder the record names, inside the Auto Run
+ *   folder and on the SSH remote the launch imported into, and then the saved playbook the import
+ *   added goes (`done`).
+ * - A folder that cannot be removed is reported and kept with its saved playbook (`failed`, with
+ *   `cleanupError`). The launch still ends.
+ *
+ * Last, `onLaunchChanged` broadcasts the record, which the call also resolves. Throws
+ * `MarketplaceImportError` for a missing launch id, a completion that is not well formed, an
+ * unknown launch, and a launch that has already ended.
+ */
+export async function completeMarketplaceLaunch(
+	launchId: string,
+	completion: PlaybookLaunchCompletion,
+	host: Pick<MarketplaceLaunchHost, 'app' | 'onLaunchChanged'>
+): Promise<PlaybookLaunchRecord> {
+	if (typeof launchId !== 'string' || launchId === '') {
+		throw new MarketplaceImportError('launchId is required');
+	}
+	const ended = checkedLaunchCompletion(completion);
+	const store = getPlaybookLaunchStore(host.app);
+
+	const finish = await store.finishLaunch(launchId, {
+		status: ended.wasStopped ? 'stopped' : 'completed',
+		finishedAt: Date.now(),
+		completion: ended,
+	});
+	if (!finish) throw new MarketplaceImportError(`Launch not found: ${launchId}`);
+	if (!finish.finished) {
+		throw new MarketplaceImportError(
+			`Launch ${launchId} has already ended (${finish.record.status}), so it cannot be completed again`
+		);
+	}
+
+	const cleanup = await cleanUpAfterLaunch(host.app, finish.record);
+	// Only the record cap can drop a record that has ended, and what cleanup did still stands.
+	const record = (await store.updateLaunch(launchId, cleanup)) ?? { ...finish.record, ...cleanup };
+
+	logger.info(
+		`Launch ${launchId} of "${record.playbookTitle}" ended ${record.status}; cleanup: ${record.cleanup}`,
+		LOG_CONTEXT
+	);
+	host.onLaunchChanged(record);
+	return record;
+}
+
+/**
+ * One launch record, for the outro and `maestro-cli`. Throws `MarketplaceImportError` for a
+ * missing id and for an id no launch has.
+ */
+export async function getMarketplaceLaunch(
+	app: Pick<App, 'getPath'>,
+	launchId: string
+): Promise<PlaybookLaunchRecord> {
+	if (typeof launchId !== 'string' || launchId === '') {
+		throw new MarketplaceImportError('launchId is required');
+	}
+	const launch = await getPlaybookLaunchStore(app).getLaunch(launchId);
+	if (!launch) throw new MarketplaceImportError(`Launch not found: ${launchId}`);
+	return launch;
+}
+
+/**
+ * Launch records, newest first: every launch, or those of one agent, at most `limit` of them.
+ * The options cross IPC or the web bridge, so their shape is checked, and `null` (which JSON
+ * sends for a value left out) means not given. Throws `MarketplaceImportError` for options that
+ * are not an object, a `sessionId` that is not a string, and a `limit` that is not a positive
+ * whole number.
+ */
+export async function listMarketplaceLaunches(
+	app: Pick<App, 'getPath'>,
+	options?: PlaybookLaunchListOptions | null
+): Promise<PlaybookLaunchRecord[]> {
+	const query: unknown = options ?? {};
+	if (typeof query !== 'object' || query === null || Array.isArray(query)) {
+		throw new MarketplaceImportError('options must be an object with sessionId and limit');
+	}
+	const given = query as Partial<Record<keyof PlaybookLaunchListOptions, unknown>>;
+	const sessionId = given.sessionId ?? undefined;
+	if (sessionId !== undefined && typeof sessionId !== 'string') {
+		throw new MarketplaceImportError('sessionId must be a string');
+	}
+	const limit = (given.limit ?? undefined) as number | undefined;
+	try {
+		return await getPlaybookLaunchStore(app).listLaunches({ sessionId, limit });
+	} catch (error) {
+		// The store owns the limit rule. Its refusal is the caller's input, like the checks above.
+		if (error instanceof RangeError) throw new MarketplaceImportError(error.message);
+		throw error;
+	}
 }
 
 /**

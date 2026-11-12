@@ -1043,3 +1043,40 @@ describe('Pianola memory over the bridge', () => {
 		}
 	});
 });
+
+/**
+ * Playbook Launch from a browser: the Exchange can launch and read launches, and sees the push when
+ * one ends. Completing a launch is not on the bridge: a launched Auto Run runs in the desktop's main
+ * window, which reports its end (and so starts cleanup), so a browser never has one to report.
+ */
+describe('Playbook Launch over the bridge', () => {
+	it('allows launching and reading launches, and the launchChanged push', () => {
+		for (const operation of ['launch', 'getLaunch', 'listLaunches']) {
+			expect(isRemoteMethodAllowed(`marketplace:${operation}`)).toBe(true);
+		}
+		expect(isRemoteEventAllowed('marketplace:launchChanged')).toBe(true);
+	});
+
+	it('keeps completing a launch, which starts cleanup, off the bridge', () => {
+		expect(isRemoteMethodAllowed('marketplace:completeLaunch')).toBe(false);
+	});
+
+	it('fans marketplace:launchChanged out to bridge clients', () => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		const launch = { launchId: 'launch-1', status: 'completed', cleanup: 'done' };
+		try {
+			broadcastBridgeEvent('marketplace:launchChanged', [launch]);
+			expect(broadcastToAll.mock.calls[0][0]).toMatchObject({
+				type: 'bridge.event',
+				channel: 'marketplace:launchChanged',
+				args: [launch],
+			});
+		} finally {
+			uninstallWebContentsBridgeHook();
+		}
+	});
+});

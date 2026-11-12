@@ -335,6 +335,23 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			importedDocs: [],
 			importedAssets: [],
 		}),
+		launchMarketplacePlaybook: vi.fn().mockResolvedValue({
+			success: true,
+			launchId: 'launch-1',
+			folderRelativePath: 'market-research-launch-20261111-093000',
+		}),
+		completeMarketplaceLaunch: vi.fn().mockResolvedValue({
+			success: true,
+			launch: { launchId: 'launch-1', status: 'completed', cleanup: 'done' },
+		}),
+		getMarketplaceLaunch: vi.fn().mockResolvedValue({
+			success: true,
+			launch: { launchId: 'launch-1', status: 'running' },
+		}),
+		listMarketplaceLaunches: vi.fn().mockResolvedValue({
+			success: true,
+			launches: [{ launchId: 'launch-1', status: 'running' }],
+		}),
 		listDesktopSessions: vi.fn().mockReturnValue([]),
 		getSessionHistory: vi.fn().mockReturnValue(null),
 	};
@@ -5361,6 +5378,304 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('marketplace_get_manifest_result');
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('not configured');
+		});
+	});
+
+	describe('Playbook Launch (Playbook Exchange)', () => {
+		const lastResponse = () =>
+			JSON.parse((client.socket.send as any).mock.calls.at(-1)[0]) as Record<string, any>;
+
+		describe('marketplace_launch', () => {
+			it('launches with the answers and the save choice, and answers with the launch', async () => {
+				const values = { MARKET_TOPIC: 'EV chargers', DEPTH_BATCH: 3 };
+				handler.handleMessage(client, {
+					type: 'marketplace_launch',
+					sessionId: 'session-1',
+					playbookId: 'research-market',
+					values,
+					keepSavedPlaybook: true,
+					requestId: 'req-launch',
+				});
+
+				await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+				// The agent's Auto Run folder and SSH remote are never taken from the client.
+				expect(callbacks.launchMarketplacePlaybook).toHaveBeenCalledWith({
+					sessionId: 'session-1',
+					playbookId: 'research-market',
+					values,
+					keepSavedPlaybook: true,
+				});
+				expect(lastResponse()).toEqual({
+					type: 'marketplace_launch_result',
+					success: true,
+					launchId: 'launch-1',
+					folderRelativePath: 'market-research-launch-20261111-093000',
+					sessionId: 'session-1',
+					requestId: 'req-launch',
+				});
+			});
+
+			it('takes left-out answers and save choice as none and false', async () => {
+				handler.handleMessage(client, {
+					type: 'marketplace_launch',
+					sessionId: 'session-1',
+					playbookId: 'superpowers-setup',
+					values: null,
+				});
+
+				await vi.waitFor(() =>
+					expect(callbacks.launchMarketplacePlaybook).toHaveBeenCalledWith({
+						sessionId: 'session-1',
+						playbookId: 'superpowers-setup',
+						values: {},
+						keepSavedPlaybook: false,
+					})
+				);
+			});
+
+			it('passes a refused launch on as a typed failure', async () => {
+				vi.mocked(callbacks.launchMarketplacePlaybook).mockResolvedValueOnce({
+					success: false,
+					error: 'Launch values are not valid: MARKET_TOPIC: This field is required',
+				});
+				handler.handleMessage(client, {
+					type: 'marketplace_launch',
+					sessionId: 'session-1',
+					playbookId: 'research-market',
+					requestId: 'req-refused',
+				});
+
+				await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+				expect(lastResponse()).toMatchObject({
+					type: 'marketplace_launch_result',
+					success: false,
+					error: 'Launch values are not valid: MARKET_TOPIC: This field is required',
+					requestId: 'req-refused',
+				});
+			});
+
+			it('answers a callback that throws with a typed failure', async () => {
+				vi.mocked(callbacks.launchMarketplacePlaybook).mockRejectedValueOnce(new Error('boom'));
+				handler.handleMessage(client, {
+					type: 'marketplace_launch',
+					sessionId: 'session-1',
+					playbookId: 'research-market',
+					requestId: 'req-boom',
+				});
+
+				await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+				expect(lastResponse()).toMatchObject({
+					type: 'marketplace_launch_result',
+					success: false,
+					error: 'Launch failed: boom',
+					requestId: 'req-boom',
+				});
+			});
+
+			it.each([
+				[{ playbookId: 'research-market' }, 'Missing sessionId'],
+				[{ sessionId: '  ', playbookId: 'research-market' }, 'Missing sessionId'],
+				[{ sessionId: 'session-1' }, 'Missing playbookId'],
+				[
+					{ sessionId: 'session-1', playbookId: 'research-market', values: 'MARKET_TOPIC=EV' },
+					'values must be an object keyed by input name',
+				],
+				[
+					{ sessionId: 'session-1', playbookId: 'research-market', values: ['EV'] },
+					'values must be an object keyed by input name',
+				],
+				[
+					{ sessionId: 'session-1', playbookId: 'research-market', keepSavedPlaybook: 'yes' },
+					'keepSavedPlaybook must be true or false',
+				],
+			])('refuses %j before calling main', (fields, error) => {
+				handler.handleMessage(client, {
+					type: 'marketplace_launch',
+					requestId: 'req-bad',
+					...fields,
+				});
+
+				expect(callbacks.launchMarketplacePlaybook).not.toHaveBeenCalled();
+				expect(lastResponse()).toMatchObject({
+					type: 'marketplace_launch_result',
+					success: false,
+					error,
+					requestId: 'req-bad',
+				});
+			});
+
+			it('replies with a typed failure when launch is not configured', () => {
+				callbacks.launchMarketplacePlaybook = undefined as never;
+				handler.setCallbacks(callbacks);
+
+				handler.handleMessage(client, {
+					type: 'marketplace_launch',
+					sessionId: 'session-1',
+					playbookId: 'research-market',
+				});
+
+				expect(lastResponse()).toMatchObject({
+					type: 'marketplace_launch_result',
+					success: false,
+					error: 'Marketplace launch not configured',
+				});
+			});
+		});
+
+		describe('marketplace_complete_launch', () => {
+			it('hands the completion to main as sent, and answers with the ended record', async () => {
+				const completion = {
+					completedTasks: 4,
+					totalTasks: 4,
+					elapsedTimeMs: 120_000,
+					wasStopped: false,
+				};
+				handler.handleMessage(client, {
+					type: 'marketplace_complete_launch',
+					launchId: 'launch-1',
+					completion,
+					requestId: 'req-complete',
+				});
+
+				await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+				expect(callbacks.completeMarketplaceLaunch).toHaveBeenCalledWith('launch-1', completion);
+				expect(lastResponse()).toEqual({
+					type: 'marketplace_complete_launch_result',
+					success: true,
+					launch: { launchId: 'launch-1', status: 'completed', cleanup: 'done' },
+					launchId: 'launch-1',
+					requestId: 'req-complete',
+				});
+			});
+
+			it.each([[undefined], [''], [42]])('refuses a missing launchId (%j)', (launchId) => {
+				handler.handleMessage(client, {
+					type: 'marketplace_complete_launch',
+					launchId,
+					completion: {},
+					requestId: 'req-no-id',
+				});
+
+				expect(callbacks.completeMarketplaceLaunch).not.toHaveBeenCalled();
+				expect(lastResponse()).toMatchObject({
+					type: 'marketplace_complete_launch_result',
+					success: false,
+					error: 'Missing launchId',
+					requestId: 'req-no-id',
+				});
+			});
+
+			it('replies with a typed failure when completion is not configured', () => {
+				callbacks.completeMarketplaceLaunch = undefined as never;
+				handler.setCallbacks(callbacks);
+
+				handler.handleMessage(client, {
+					type: 'marketplace_complete_launch',
+					launchId: 'launch-1',
+				});
+
+				expect(lastResponse()).toMatchObject({
+					type: 'marketplace_complete_launch_result',
+					success: false,
+					error: 'Marketplace launch not configured',
+				});
+			});
+		});
+
+		describe('marketplace_get_launch', () => {
+			it('answers with the launch record', async () => {
+				handler.handleMessage(client, {
+					type: 'marketplace_get_launch',
+					launchId: 'launch-1',
+					requestId: 'req-get',
+				});
+
+				await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+				expect(callbacks.getMarketplaceLaunch).toHaveBeenCalledWith('launch-1');
+				expect(lastResponse()).toEqual({
+					type: 'marketplace_get_launch_result',
+					success: true,
+					launch: { launchId: 'launch-1', status: 'running' },
+					launchId: 'launch-1',
+					requestId: 'req-get',
+				});
+			});
+
+			it('passes an unknown launch on as a typed failure', async () => {
+				vi.mocked(callbacks.getMarketplaceLaunch).mockResolvedValueOnce({
+					success: false,
+					error: 'Launch not found: launch-9',
+				});
+				handler.handleMessage(client, { type: 'marketplace_get_launch', launchId: 'launch-9' });
+
+				await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+				expect(lastResponse()).toMatchObject({
+					type: 'marketplace_get_launch_result',
+					success: false,
+					error: 'Launch not found: launch-9',
+				});
+			});
+
+			it('refuses a missing launchId', () => {
+				handler.handleMessage(client, { type: 'marketplace_get_launch', requestId: 'req-x' });
+
+				expect(callbacks.getMarketplaceLaunch).not.toHaveBeenCalled();
+				expect(lastResponse()).toMatchObject({
+					type: 'marketplace_get_launch_result',
+					success: false,
+					error: 'Missing launchId',
+					requestId: 'req-x',
+				});
+			});
+		});
+
+		describe('marketplace_list_launches', () => {
+			it('passes the agent filter and the limit to main, and answers with the records', async () => {
+				handler.handleMessage(client, {
+					type: 'marketplace_list_launches',
+					sessionId: 'session-1',
+					limit: 10,
+					requestId: 'req-list',
+				});
+
+				await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+				expect(callbacks.listMarketplaceLaunches).toHaveBeenCalledWith({
+					sessionId: 'session-1',
+					limit: 10,
+				});
+				expect(lastResponse()).toEqual({
+					type: 'marketplace_list_launches_result',
+					success: true,
+					launches: [{ launchId: 'launch-1', status: 'running' }],
+					requestId: 'req-list',
+				});
+			});
+
+			it('lists every launch when no filter is given', async () => {
+				handler.handleMessage(client, { type: 'marketplace_list_launches' });
+
+				await vi.waitFor(() =>
+					expect(callbacks.listMarketplaceLaunches).toHaveBeenCalledWith({
+						sessionId: undefined,
+						limit: undefined,
+					})
+				);
+			});
+
+			it('passes a refused filter on as a typed failure', async () => {
+				vi.mocked(callbacks.listMarketplaceLaunches).mockResolvedValueOnce({
+					success: false,
+					error: 'limit must be a positive whole number, not 0',
+				});
+				handler.handleMessage(client, { type: 'marketplace_list_launches', limit: 0 });
+
+				await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+				expect(lastResponse()).toMatchObject({
+					type: 'marketplace_list_launches_result',
+					success: false,
+					error: 'limit must be a positive whole number, not 0',
+				});
+			});
 		});
 	});
 

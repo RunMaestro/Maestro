@@ -31,6 +31,7 @@ import type { App } from 'electron';
 
 import {
 	MarketplaceLaunchBusyError,
+	type PlaybookLaunchListOptions,
 	type PlaybookLaunchRecord,
 } from '../../shared/marketplace-types';
 import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
@@ -91,13 +92,20 @@ export interface PlaybookLaunchUpdate {
 	finishedAt?: number;
 	completion?: PlaybookLaunchRecord['completion'];
 	cleanup?: PlaybookLaunchRecord['cleanup'];
+	cleanupError?: PlaybookLaunchRecord['cleanupError'];
 }
 
-export interface ListLaunchesOptions {
-	/** Only the launches of this agent */
-	sessionId?: string;
-	/** At most this many records. Must be a positive whole number. */
-	limit?: number;
+/** How a running launch ends: the status it ends with, and any other update fields. */
+export interface PlaybookLaunchFinish extends PlaybookLaunchUpdate {
+	status: Exclude<PlaybookLaunchRecord['status'], 'running'>;
+}
+
+/** What `finishLaunch` found. */
+export interface FinishLaunchResult {
+	/** The launch as it is stored after the call */
+	record: PlaybookLaunchRecord;
+	/** True when this call ended the launch. False when it had already ended, so nothing changed. */
+	finished: boolean;
 }
 
 export interface PlaybookLaunchStore {
@@ -112,9 +120,19 @@ export interface PlaybookLaunchStore {
 		launchId: string,
 		update: PlaybookLaunchUpdate
 	): Promise<PlaybookLaunchRecord | undefined>;
+	/**
+	 * End a running launch: apply `finish` only while the launch is still `running`. The check and
+	 * the write are one queued step, so two reports of the end of one run cannot both end it.
+	 * Resolves `undefined` for an unknown id, and `finished: false` with the stored record for a
+	 * launch that has already ended. Neither writes anything.
+	 */
+	finishLaunch(
+		launchId: string,
+		finish: PlaybookLaunchFinish
+	): Promise<FinishLaunchResult | undefined>;
 	getLaunch(launchId: string): Promise<PlaybookLaunchRecord | undefined>;
 	/** Launches, newest first. Rejects with a `RangeError` when `limit` is not a positive whole number. */
-	listLaunches(options?: ListLaunchesOptions): Promise<PlaybookLaunchRecord[]>;
+	listLaunches(options?: PlaybookLaunchListOptions): Promise<PlaybookLaunchRecord[]>;
 	/** The running launch of an agent, if it has one. */
 	findRunningLaunchForSession(sessionId: string): Promise<PlaybookLaunchRecord | undefined>;
 }
@@ -234,7 +252,23 @@ function applyUpdate(
 	if (update.finishedAt !== undefined) next.finishedAt = update.finishedAt;
 	if (update.completion !== undefined) next.completion = update.completion;
 	if (update.cleanup !== undefined) next.cleanup = update.cleanup;
+	if (update.cleanupError !== undefined) next.cleanupError = update.cleanupError;
 	return next;
+}
+
+/** Apply `update` to the launch at `index`, save the list, and return the updated launch. */
+async function saveUpdatedLaunch(
+	filePath: string,
+	launches: PlaybookLaunchRecord[],
+	index: number,
+	update: PlaybookLaunchUpdate
+): Promise<PlaybookLaunchRecord> {
+	const record = applyUpdate(launches[index], update);
+	await writeLaunches(
+		filePath,
+		launches.map((launch, i) => (i === index ? record : launch))
+	);
+	return record;
 }
 
 /** Drop finished records, earliest start first, until the cap holds or none is left to drop. */
@@ -288,12 +322,20 @@ export function createPlaybookLaunchStore(launchesFilePath: string): PlaybookLau
 			withLaunches(async (launches) => {
 				const index = launches.findIndex((launch) => launch.launchId === launchId);
 				if (index === -1) return undefined;
-				const record = applyUpdate(launches[index], update);
-				await writeLaunches(
-					filePath,
-					launches.map((launch, i) => (i === index ? record : launch))
-				);
-				return record;
+				return saveUpdatedLaunch(filePath, launches, index, update);
+			}),
+
+		finishLaunch: (launchId, finish) =>
+			withLaunches(async (launches) => {
+				const index = launches.findIndex((launch) => launch.launchId === launchId);
+				if (index === -1) return undefined;
+				if (launches[index].status !== 'running') {
+					return { record: launches[index], finished: false };
+				}
+				return {
+					record: await saveUpdatedLaunch(filePath, launches, index, finish),
+					finished: true,
+				};
 			}),
 
 		getLaunch: (launchId) =>

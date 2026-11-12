@@ -155,6 +155,10 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetMarketplaceDocumentCallback = vi.fn();
 			setGetMarketplaceReadmeCallback = vi.fn();
 			setImportMarketplacePlaybookCallback = vi.fn();
+			setLaunchMarketplacePlaybookCallback = vi.fn();
+			setCompleteMarketplaceLaunchCallback = vi.fn();
+			setGetMarketplaceLaunchCallback = vi.fn();
+			setListMarketplaceLaunchesCallback = vi.fn();
 			setListDesktopSessionsCallback = vi.fn();
 			setGetSessionHistoryCallback = vi.fn();
 			// Concerto: Movement (in-app panels) + Cadenza (HUD cards) bridge callbacks.
@@ -215,6 +219,10 @@ vi.mock('../../../main/services/marketplace-service', () => ({
 	getMarketplaceDocument: vi.fn(),
 	getMarketplaceReadme: vi.fn(),
 	importMarketplacePlaybook: vi.fn(),
+	launchMarketplacePlaybook: vi.fn(),
+	completeMarketplaceLaunch: vi.fn(),
+	getMarketplaceLaunch: vi.fn(),
+	listMarketplaceLaunches: vi.fn(),
 }));
 
 // Mock Sentry - captureException is called from the import callback's
@@ -243,11 +251,28 @@ import { getThemeById } from '../../../main/themes';
 import { getHistoryManager } from '../../../main/history-manager';
 import { logger } from '../../../main/utils/logger';
 import { captureException } from '../../../main/utils/sentry';
-import { importMarketplacePlaybook } from '../../../main/services/marketplace-service';
 import {
+	completeMarketplaceLaunch,
+	getMarketplaceLaunch,
+	importMarketplacePlaybook,
+	launchMarketplacePlaybook,
+	listMarketplaceLaunches,
+	type MarketplaceLaunchHost,
+} from '../../../main/services/marketplace-service';
+import {
+	MarketplaceImportError,
+	MarketplaceLaunchBusyError,
 	MarketplaceLaunchValuesError,
+	type PlaybookLaunchCompletion,
+	type PlaybookLaunchRecord,
 	type PlaybookLaunchValues,
 } from '../../../shared/marketplace-types';
+import type {
+	CompleteMarketplaceLaunchCallback,
+	GetMarketplaceLaunchCallback,
+	LaunchMarketplacePlaybookCallback,
+	ListMarketplaceLaunchesCallback,
+} from '../../../main/web-server/types';
 import {
 	applyMovementHtmlPayload,
 	clearConcertoHtmlDocumentsForTests,
@@ -1804,6 +1829,246 @@ describe('web-server/web-server-factory', () => {
 
 			expect(result).toEqual({ success: false, error: 'disk full' });
 			expect(captureException).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('Playbook Launch callbacks', () => {
+		const launchHost: MarketplaceLaunchHost = {
+			app: {} as never,
+			startAutoRun: vi.fn(),
+			isMaestroCliInstalled: vi.fn(),
+			onLaunchChanged: vi.fn(),
+		};
+		const record = {
+			launchId: 'launch-1',
+			sessionId: 'session-1',
+			status: 'completed',
+			cleanup: 'done',
+		} as PlaybookLaunchRecord;
+		const completion: PlaybookLaunchCompletion = {
+			completedTasks: 2,
+			totalTasks: 2,
+			elapsedTimeMs: 30_000,
+			wasStopped: false,
+		};
+		const request = {
+			sessionId: 'session-1',
+			playbookId: 'research-market',
+			values: { MARKET_TOPIC: 'EV chargers' },
+			keepSavedPlaybook: true,
+		};
+		const localAgent = { id: 'session-1', autoRunFolderPath: '/auto-run' };
+
+		/** The launch callbacks the factory registers for these agents, SSH remotes and launch host. */
+		const setupLaunchCallbacks = (
+			sessions: Array<Record<string, unknown>>,
+			sshRemotes: Array<Record<string, unknown>> = [],
+			host: MarketplaceLaunchHost | undefined = launchHost
+		) => {
+			mockSessionsStore.get = vi.fn((key: string, defaultValue?: any) =>
+				key === 'sessions' ? sessions : defaultValue
+			) as any;
+			const originalSettingsGet = mockSettingsStore.get as (
+				key: string,
+				defaultValue?: unknown
+			) => unknown;
+			mockSettingsStore.get = vi.fn((key: string, defaultValue?: any) =>
+				key === 'sshRemotes' ? sshRemotes : originalSettingsGet(key, defaultValue)
+			) as any;
+			const server = createWebServerFactory({ ...deps, marketplaceLaunchHost: host })();
+			const registered = <T>(setter: unknown) =>
+				(setter as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as T | undefined;
+			return {
+				launch: registered<LaunchMarketplacePlaybookCallback>(
+					server.setLaunchMarketplacePlaybookCallback
+				),
+				complete: registered<CompleteMarketplaceLaunchCallback>(
+					server.setCompleteMarketplaceLaunchCallback
+				),
+				get: registered<GetMarketplaceLaunchCallback>(server.setGetMarketplaceLaunchCallback),
+				list: registered<ListMarketplaceLaunchesCallback>(
+					server.setListMarketplaceLaunchesCallback
+				),
+			};
+		};
+
+		it("launches into the stored agent's own Auto Run folder, with the app launch host", async () => {
+			vi.mocked(launchMarketplacePlaybook).mockResolvedValueOnce({
+				launchId: 'launch-1',
+				folderRelativePath: 'market-research-launch-20261111-093000',
+			});
+			const { launch } = setupLaunchCallbacks([localAgent]);
+
+			const result = await launch!(request);
+
+			expect(result).toEqual({
+				success: true,
+				launchId: 'launch-1',
+				folderRelativePath: 'market-research-launch-20261111-093000',
+			});
+			expect(launchMarketplacePlaybook).toHaveBeenCalledWith(
+				{
+					playbookId: 'research-market',
+					values: { MARKET_TOPIC: 'EV chargers' },
+					sessionId: 'session-1',
+					autoRunFolderPath: '/auto-run',
+					sshRemoteId: undefined,
+					keepSavedPlaybook: true,
+				},
+				launchHost
+			);
+		});
+
+		it("launches on the agent's own SSH remote", async () => {
+			vi.mocked(launchMarketplacePlaybook).mockResolvedValueOnce({
+				launchId: 'launch-2',
+				folderRelativePath: 'market-research-launch-20261111-093000',
+			});
+			const { launch } = setupLaunchCallbacks(
+				[
+					{
+						id: 'session-1',
+						autoRunFolderPath: '/home/dev/project/.maestro/playbooks',
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					},
+				],
+				[{ id: 'remote-1', enabled: true, host: 'build.example.com' }]
+			);
+
+			await expect(launch!(request)).resolves.toMatchObject({ success: true });
+			expect(launchMarketplacePlaybook).toHaveBeenCalledWith(
+				expect.objectContaining({
+					autoRunFolderPath: '/home/dev/project/.maestro/playbooks',
+					sshRemoteId: 'remote-1',
+				}),
+				launchHost
+			);
+		});
+
+		it.each([
+			['an unknown agent', [], [], 'Session not found: session-1'],
+			[
+				'an agent with no Auto Run folder',
+				[{ id: 'session-1' }],
+				[],
+				'Session has no Auto Run folder configured',
+			],
+			[
+				'an agent whose SSH remote is disabled',
+				[
+					{
+						id: 'session-1',
+						autoRunFolderPath: '/home/dev/auto-run',
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					},
+				],
+				[{ id: 'remote-1', enabled: false }],
+				'SSH remote not found or disabled',
+			],
+		])(
+			'refuses %s before launching, without a Sentry report',
+			async (_case, sessions, remotes, error) => {
+				const { launch } = setupLaunchCallbacks(sessions, remotes);
+
+				await expect(launch!(request)).resolves.toEqual({ success: false, error });
+				expect(launchMarketplacePlaybook).not.toHaveBeenCalled();
+				expect(captureException).not.toHaveBeenCalled();
+			}
+		);
+
+		it('returns a refused launch as a typed failure without a Sentry report', async () => {
+			vi.mocked(launchMarketplacePlaybook).mockRejectedValueOnce(
+				new MarketplaceLaunchBusyError({ launchId: 'launch-0', playbookTitle: 'Market Research' })
+			);
+			const { launch } = setupLaunchCallbacks([localAgent]);
+
+			const result = await launch!(request);
+
+			expect(result).toEqual({
+				success: false,
+				error:
+					'This agent is already running the "Market Research" launch (launch-0). Wait for it to finish, or stop it, then launch again.',
+			});
+			expect(captureException).not.toHaveBeenCalled();
+		});
+
+		it('reports any other launch failure to Sentry', async () => {
+			const failure = new Error('disk full');
+			vi.mocked(launchMarketplacePlaybook).mockRejectedValueOnce(failure);
+			const { launch } = setupLaunchCallbacks([localAgent]);
+
+			await expect(launch!(request)).resolves.toEqual({ success: false, error: 'disk full' });
+			expect(captureException).toHaveBeenCalledWith(failure, {
+				operation: 'webServerFactory:launchMarketplacePlaybook',
+				sessionId: 'session-1',
+				playbookId: 'research-market',
+			});
+		});
+
+		it('completes a launch through the service with the app launch host', async () => {
+			vi.mocked(completeMarketplaceLaunch).mockResolvedValueOnce(record);
+			const { complete } = setupLaunchCallbacks([localAgent]);
+
+			await expect(complete!('launch-1', completion)).resolves.toEqual({
+				success: true,
+				launch: record,
+			});
+			expect(completeMarketplaceLaunch).toHaveBeenCalledWith('launch-1', completion, launchHost);
+		});
+
+		it('returns a refused completion as a typed failure without a Sentry report', async () => {
+			vi.mocked(completeMarketplaceLaunch).mockRejectedValueOnce(
+				new MarketplaceImportError('Launch not found: launch-9')
+			);
+			const { complete } = setupLaunchCallbacks([localAgent]);
+
+			await expect(complete!('launch-9', completion)).resolves.toEqual({
+				success: false,
+				error: 'Launch not found: launch-9',
+			});
+			expect(captureException).not.toHaveBeenCalled();
+		});
+
+		it('reads one launch and lists launches', async () => {
+			vi.mocked(getMarketplaceLaunch).mockResolvedValueOnce(record);
+			vi.mocked(listMarketplaceLaunches).mockResolvedValueOnce([record]);
+			const { get, list } = setupLaunchCallbacks([localAgent]);
+
+			await expect(get!('launch-1')).resolves.toEqual({ success: true, launch: record });
+			await expect(list!({ sessionId: 'session-1', limit: 5 })).resolves.toEqual({
+				success: true,
+				launches: [record],
+			});
+			expect(getMarketplaceLaunch).toHaveBeenCalledWith(
+				expect.objectContaining({ getPath: expect.any(Function) }),
+				'launch-1'
+			);
+			expect(listMarketplaceLaunches).toHaveBeenCalledWith(
+				expect.objectContaining({ getPath: expect.any(Function) }),
+				{ sessionId: 'session-1', limit: 5 }
+			);
+		});
+
+		it('returns a refused read as a typed failure without a Sentry report', async () => {
+			vi.mocked(listMarketplaceLaunches).mockRejectedValueOnce(
+				new MarketplaceImportError('sessionId must be a string')
+			);
+			const { list } = setupLaunchCallbacks([localAgent]);
+
+			await expect(list!({ sessionId: 42 as never })).resolves.toEqual({
+				success: false,
+				error: 'sessionId must be a string',
+			});
+			expect(captureException).not.toHaveBeenCalled();
+		});
+
+		it('registers no launch or completion without a launch host, and keeps the reads', () => {
+			const callbacks = setupLaunchCallbacks([localAgent], [], undefined);
+
+			expect(callbacks.launch).toBeUndefined();
+			expect(callbacks.complete).toBeUndefined();
+			expect(callbacks.get).toBeDefined();
+			expect(callbacks.list).toBeDefined();
 		});
 	});
 

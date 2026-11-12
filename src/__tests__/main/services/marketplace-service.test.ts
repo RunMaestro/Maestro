@@ -8,7 +8,8 @@
  *
  * `launchMarketplacePlaybook` runs the same way: a real userData folder (local manifest, launch
  * records, saved playbooks), a real Auto Run folder, the real Auto Run state tracker, and a mocked
- * Auto Run starter in place of the renderer. Nothing reaches the network.
+ * Auto Run starter in place of the renderer. Nothing reaches the network. `completeMarketplaceLaunch`
+ * and the launch reads run against the launches those tests start, with a mocked broadcast.
  */
 
 import * as fs from 'fs';
@@ -48,17 +49,27 @@ vi.mock('../../../main/ssh-remote-manager', () => ({
 vi.mock('../../../main/utils/fetchWithTimeout', () => ({
 	fetchWithTimeout: mockFetchWithTimeout,
 }));
+// The real saved-playbooks store, with its delete wrapped so a test can make it fail once.
+vi.mock('../../../main/stores/savedPlaybooksStore', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../main/stores/savedPlaybooksStore')>();
+	return { ...actual, deleteSavedPlaybook: vi.fn(actual.deleteSavedPlaybook) };
+});
 
 import {
+	completeMarketplaceLaunch,
 	deleteLaunchFolder,
+	getMarketplaceLaunch,
 	launchMarketplacePlaybook,
+	listMarketplaceLaunches,
 	type MarketplaceLaunchHost,
 } from '../../../main/services/marketplace-service';
+import { deleteSavedPlaybook } from '../../../main/stores/savedPlaybooksStore';
 import {
 	MarketplaceImportError,
 	MarketplaceLaunchBusyError,
 	MarketplaceLaunchCleanupError,
 	MarketplaceLaunchValuesError,
+	type PlaybookLaunchCompletion,
 	type PlaybookLaunchRecord,
 	type PlaybookLaunchRequest,
 	type PlaybookLaunchResult,
@@ -498,6 +509,7 @@ describe('launchMarketplacePlaybook', () => {
 			app,
 			startAutoRun: vi.fn(async () => ({ success: true })),
 			isMaestroCliInstalled: vi.fn(async () => true),
+			onLaunchChanged: vi.fn(),
 			...overrides,
 		};
 	}
@@ -1268,6 +1280,437 @@ describe('launchMarketplacePlaybook', () => {
 			);
 			expect(host.isMaestroCliInstalled).not.toHaveBeenCalled();
 			expect(mockExecFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		const finished: PlaybookLaunchCompletion = {
+			completedTasks: 2,
+			totalTasks: 2,
+			elapsedTimeMs: 60_000,
+			wasStopped: false,
+		};
+
+		it('removes the remote launch folder over SSH, with the guarded command, when the run completes', async () => {
+			const { launchId } = await launchMarketplacePlaybook(remoteRequest(), launchHost());
+			const sentAtLaunch = sentCommands().length;
+
+			const ended = await completeMarketplaceLaunch(launchId, finished, launchHost());
+
+			const escaped = `'${REMOTE_ROOT}/${LAUNCH_FOLDER}'`;
+			expect(sentCommands().slice(sentAtLaunch)).toEqual([
+				`[ -L ${escaped} ] && exit 4; [ -e ${escaped} ] || exit 3; ` +
+					`[ -d ${escaped} ] || exit 5; rm -rf -- ${escaped}`,
+			]);
+			expect(ended).toMatchObject({
+				status: 'completed',
+				cleanup: 'done',
+				sshRemoteId: 'remote-1',
+			});
+			// The saved playbook lives on this computer, wherever the agent runs.
+			expect(savedPlaybooks()).toEqual([]);
+		});
+
+		it('keeps the remote launch folder, and says why, when the remote is disabled by the time the run ends', async () => {
+			const { launchId } = await launchMarketplacePlaybook(remoteRequest(), launchHost());
+			const sentAtLaunch = sentCommands().length;
+			mockGetSshRemoteById.mockReturnValue({ ...remote, enabled: false });
+
+			const ended = await completeMarketplaceLaunch(launchId, finished, launchHost());
+
+			expect(sentCommands().slice(sentAtLaunch)).toEqual([]);
+			expect(ended).toMatchObject({
+				status: 'completed',
+				cleanup: 'failed',
+				cleanupError: `Refusing to delete the launch folder "${LAUNCH_FOLDER}": SSH remote "remote-1" is missing or disabled, and the same path on this computer is a different folder`,
+			});
+			expect(savedPlaybooks()).toHaveLength(1);
+		});
+	});
+
+	describe('completing the launch (completeMarketplaceLaunch)', () => {
+		/** When the run ends, so `finishedAt` is known */
+		const FINISHED_AT = new Date(2026, 10, 11, 10, 15, 0);
+		const otherPlaybook = { id: 'mine', name: 'My own playbook', documents: [], prompt: '' };
+		const completion: PlaybookLaunchCompletion = {
+			completedTasks: 2,
+			totalTasks: 2,
+			elapsedTimeMs: 45 * 60_000,
+			totalCostUsd: 1.25,
+			wasStopped: false,
+		};
+		const stopped: PlaybookLaunchCompletion = {
+			...completion,
+			completedTasks: 1,
+			wasStopped: true,
+		};
+
+		beforeEach(() => {
+			fs.mkdirSync(path.join(userData, 'playbooks'));
+			fs.writeFileSync(
+				path.join(userData, 'playbooks', 'agent-1.json'),
+				JSON.stringify({ playbooks: [otherPlaybook] })
+			);
+			fs.writeFileSync(path.join(root, 'My-Own-Doc.md'), 'mine');
+		});
+
+		/** Launch, then move the clock to the end of the run. Resolves the launch record. */
+		async function launched(
+			overrides: Partial<PlaybookLaunchRequest> = {}
+		): Promise<PlaybookLaunchRecord> {
+			const { launchId } = await launchMarketplacePlaybook(launchRequest(overrides), launchHost());
+			vi.setSystemTime(FINISHED_AT);
+			return launchRecords().find((record) => record.launchId === launchId)!;
+		}
+
+		const launchFolderExists = () => fs.existsSync(path.join(root, LAUNCH_FOLDER, '1_SCOPE.md'));
+
+		it('removes the launch folder and its saved playbook, ends the record and broadcasts it', async () => {
+			const launch = await launched();
+			const host = launchHost();
+
+			const ended = await completeMarketplaceLaunch(launch.launchId, completion, host);
+
+			expect(ended).toEqual({
+				...launch,
+				status: 'completed',
+				finishedAt: FINISHED_AT.getTime(),
+				completion,
+				cleanup: 'done',
+			});
+			expect(launchRecords()).toEqual([ended]);
+			// Only the launch folder goes: the agent's own documents and saved playbooks stay.
+			expect(fs.readdirSync(root)).toEqual(['My-Own-Doc.md']);
+			expect(savedPlaybooks()).toEqual([otherPlaybook]);
+			expect(host.onLaunchChanged).toHaveBeenCalledTimes(1);
+			expect(host.onLaunchChanged).toHaveBeenCalledWith(ended);
+			expect(mockCaptureException).not.toHaveBeenCalled();
+		});
+
+		it('frees the agent for its next launch', async () => {
+			const launch = await launched();
+
+			await completeMarketplaceLaunch(launch.launchId, completion, launchHost());
+
+			await expect(launchMarketplacePlaybook(launchRequest(), launchHost())).resolves.toEqual({
+				launchId: expect.any(String),
+				folderRelativePath: expect.stringMatching(/^market-research-launch-/),
+			});
+		});
+
+		it('keeps the folder and the saved playbook of a stopped run, so it can be resumed', async () => {
+			const launch = await launched();
+			const host = launchHost();
+
+			const ended = await completeMarketplaceLaunch(launch.launchId, stopped, host);
+
+			expect(ended).toMatchObject({
+				status: 'stopped',
+				finishedAt: FINISHED_AT.getTime(),
+				completion: stopped,
+				cleanup: 'skipped-stopped',
+			});
+			expect(launchFolderExists()).toBe(true);
+			expect(savedPlaybooks()).toHaveLength(2);
+			expect(host.onLaunchChanged).toHaveBeenCalledWith(ended);
+		});
+
+		it('keeps the folder and the saved playbook when the spec says keep', async () => {
+			writeManifest([manifestEntry({ launch: { ...LAUNCH, cleanup: 'keep' } })]);
+			const launch = await launched();
+
+			const ended = await completeMarketplaceLaunch(launch.launchId, completion, launchHost());
+
+			expect(ended).toMatchObject({ status: 'completed', cleanup: 'kept' });
+			expect(launchFolderExists()).toBe(true);
+			expect(savedPlaybooks()).toHaveLength(2);
+		});
+
+		it('keeps the folder of a playbook the user saved as reusable, because it runs from there', async () => {
+			const launch = await launched({ keepSavedPlaybook: true });
+
+			const ended = await completeMarketplaceLaunch(launch.launchId, completion, launchHost());
+
+			expect(ended).toMatchObject({ status: 'completed', cleanup: 'kept' });
+			expect(launchFolderExists()).toBe(true);
+			const saved = savedPlaybooks();
+			expect(saved).toHaveLength(2);
+			expect(saved[1].documents[0].filename).toBe(`${LAUNCH_FOLDER}/1_SCOPE`);
+		});
+
+		it('follows the spec the launch started with, not the manifest as it is now', async () => {
+			const launch = await launched();
+			writeManifest([manifestEntry({ launch: { ...LAUNCH, cleanup: 'keep' } })]);
+
+			const ended = await completeMarketplaceLaunch(launch.launchId, completion, launchHost());
+
+			expect(ended.cleanup).toBe('done');
+			expect(fs.readdirSync(root)).toEqual(['My-Own-Doc.md']);
+		});
+
+		it('keeps a folder it may not remove, with its saved playbook, says why and still ends the launch', async () => {
+			const launch = await launched();
+			// Something put a file where the launch folder was.
+			fs.rmSync(path.join(root, LAUNCH_FOLDER), { recursive: true });
+			fs.writeFileSync(path.join(root, LAUNCH_FOLDER), 'not a folder');
+			const host = launchHost();
+
+			const ended = await completeMarketplaceLaunch(launch.launchId, completion, host);
+
+			expect(ended).toMatchObject({
+				status: 'completed',
+				completion,
+				cleanup: 'failed',
+				cleanupError: `Refusing to delete the launch folder "${LAUNCH_FOLDER}": it is not a folder`,
+			});
+			expect(launchRecords()).toEqual([ended]);
+			expect(fs.readFileSync(path.join(root, LAUNCH_FOLDER), 'utf-8')).toBe('not a folder');
+			expect(savedPlaybooks()).toHaveLength(2);
+			expect(mockCaptureException).toHaveBeenCalledWith(
+				expect.any(MarketplaceLaunchCleanupError),
+				expect.objectContaining({
+					operation: 'marketplace:completeLaunch',
+					launchId: launch.launchId,
+					folder: LAUNCH_FOLDER,
+				})
+			);
+			expect(host.onLaunchChanged).toHaveBeenCalledWith(ended);
+		});
+
+		it('counts a launch folder that is already gone as cleaned up', async () => {
+			const launch = await launched();
+			fs.rmSync(path.join(root, LAUNCH_FOLDER), { recursive: true });
+
+			const ended = await completeMarketplaceLaunch(launch.launchId, completion, launchHost());
+
+			expect(ended.cleanup).toBe('done');
+			expect(savedPlaybooks()).toEqual([otherPlaybook]);
+		});
+
+		it('reports a saved playbook it cannot remove, and still records the folder as removed', async () => {
+			const launch = await launched();
+			const failure = new Error('EACCES: permission denied');
+			vi.mocked(deleteSavedPlaybook).mockRejectedValueOnce(failure);
+
+			const ended = await completeMarketplaceLaunch(launch.launchId, completion, launchHost());
+
+			expect(ended.cleanup).toBe('done');
+			expect(ended).not.toHaveProperty('cleanupError');
+			expect(fs.readdirSync(root)).toEqual(['My-Own-Doc.md']);
+			expect(mockCaptureException).toHaveBeenCalledWith(
+				failure,
+				expect.objectContaining({
+					operation: 'marketplace:completeLaunch',
+					savedPlaybookId: launch.savedPlaybookId,
+				})
+			);
+		});
+
+		it('keeps only the completion fields a record holds', async () => {
+			const launch = await launched();
+			const reported = {
+				completedTasks: 1,
+				totalTasks: 3,
+				elapsedTimeMs: 1_500,
+				wasStopped: false,
+				// A cost left out as JSON sends it, and fields of the renderer's report the record does not keep.
+				totalCostUsd: null,
+				inputTokens: 900,
+				sessionName: 'Agent 1',
+			} as unknown as PlaybookLaunchCompletion;
+
+			const ended = await completeMarketplaceLaunch(launch.launchId, reported, launchHost());
+
+			expect(ended.completion).toEqual({
+				completedTasks: 1,
+				totalTasks: 3,
+				elapsedTimeMs: 1_500,
+				wasStopped: false,
+			});
+		});
+
+		it('refuses a second report of the same run, and changes nothing', async () => {
+			const launch = await launched();
+			const host = launchHost();
+			const ended = await completeMarketplaceLaunch(launch.launchId, completion, host);
+
+			await expect(completeMarketplaceLaunch(launch.launchId, stopped, host)).rejects.toThrow(
+				`Launch ${launch.launchId} has already ended (completed), so it cannot be completed again`
+			);
+
+			expect(launchRecords()).toEqual([ended]);
+			expect(host.onLaunchChanged).toHaveBeenCalledTimes(1);
+		});
+
+		it('lets only one of two reports at once end the launch and clean up after it', async () => {
+			const launch = await launched();
+			const host = launchHost();
+
+			const results = await Promise.allSettled([
+				completeMarketplaceLaunch(launch.launchId, completion, host),
+				completeMarketplaceLaunch(launch.launchId, stopped, host),
+			]);
+
+			expect(results.map((result) => result.status)).toEqual(['fulfilled', 'rejected']);
+			expect(host.onLaunchChanged).toHaveBeenCalledTimes(1);
+			expect(launchRecords()[0]).toMatchObject({ status: 'completed', cleanup: 'done' });
+		});
+
+		it('refuses a launch that an earlier app run left behind', async () => {
+			seedLaunchRecords([
+				{
+					launchId: 'interrupted',
+					sessionId: 'agent-1',
+					status: 'running',
+					appRunId: 'an-earlier-app-run',
+					startedAt: 1,
+				},
+			]);
+			const host = launchHost();
+
+			await expect(completeMarketplaceLaunch('interrupted', completion, host)).rejects.toThrow(
+				'Launch interrupted has already ended (failed), so it cannot be completed again'
+			);
+			expect(host.onLaunchChanged).not.toHaveBeenCalled();
+		});
+
+		it('refuses an unknown launch and broadcasts nothing', async () => {
+			const host = launchHost();
+
+			const refusal = completeMarketplaceLaunch('no-such-launch', completion, host);
+
+			await expect(refusal).rejects.toBeInstanceOf(MarketplaceImportError);
+			await expect(refusal).rejects.toThrow('Launch not found: no-such-launch');
+			expect(host.onLaunchChanged).not.toHaveBeenCalled();
+		});
+
+		it.each([[''], [undefined], [42]])('refuses a missing launch id (%s)', async (launchId) => {
+			await expect(
+				completeMarketplaceLaunch(launchId as string, completion, launchHost())
+			).rejects.toThrow('launchId is required');
+		});
+
+		it.each([
+			[
+				'no completion',
+				null,
+				'completion must be an object with completedTasks, totalTasks, elapsedTimeMs and wasStopped',
+			],
+			['a list', [], 'completion.completedTasks must be a whole number of 0 or more'],
+			[
+				'a negative task count',
+				{ ...completion, completedTasks: -1 },
+				'completion.completedTasks must be a whole number of 0 or more',
+			],
+			[
+				'a task total that is not whole',
+				{ ...completion, totalTasks: 1.5 },
+				'completion.totalTasks must be a whole number of 0 or more',
+			],
+			[
+				'a time that is not a number',
+				{ ...completion, elapsedTimeMs: '45m' },
+				'completion.elapsedTimeMs must be a number of 0 or more',
+			],
+			[
+				'an endless time',
+				{ ...completion, elapsedTimeMs: Infinity },
+				'completion.elapsedTimeMs must be a number of 0 or more',
+			],
+			[
+				'a negative cost',
+				{ ...completion, totalCostUsd: -0.5 },
+				'completion.totalCostUsd must be a number of 0 or more, when it is given',
+			],
+			[
+				'a stop flag that is not true or false',
+				{ ...completion, wasStopped: 'no' },
+				'completion.wasStopped must be true or false',
+			],
+		])('refuses %s, and the launch keeps running', async (_case, reported, message) => {
+			const launch = await launched();
+			const host = launchHost();
+
+			const refusal = completeMarketplaceLaunch(
+				launch.launchId,
+				reported as unknown as PlaybookLaunchCompletion,
+				host
+			);
+
+			await expect(refusal).rejects.toBeInstanceOf(MarketplaceImportError);
+			await expect(refusal).rejects.toThrow(message);
+			expect(launchRecords()).toEqual([launch]);
+			expect(launchFolderExists()).toBe(true);
+			expect(host.onLaunchChanged).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('reading launches (getMarketplaceLaunch, listMarketplaceLaunches)', () => {
+		const ids = (launches: PlaybookLaunchRecord[]) => launches.map((launch) => launch.launchId);
+
+		beforeEach(() => {
+			seedLaunchRecords([
+				{ launchId: 'first', sessionId: 'agent-1', status: 'completed', startedAt: 1 },
+				{ launchId: 'second', sessionId: 'agent-2', status: 'stopped', startedAt: 2 },
+				{ launchId: 'third', sessionId: 'agent-1', status: 'completed', startedAt: 3 },
+			]);
+		});
+
+		it('returns the record of one launch', async () => {
+			await expect(getMarketplaceLaunch(app, 'second')).resolves.toEqual({
+				launchId: 'second',
+				sessionId: 'agent-2',
+				status: 'stopped',
+				startedAt: 2,
+			});
+		});
+
+		it('refuses an id no launch has', async () => {
+			const refusal = getMarketplaceLaunch(app, 'no-such-launch');
+
+			await expect(refusal).rejects.toBeInstanceOf(MarketplaceImportError);
+			await expect(refusal).rejects.toThrow('Launch not found: no-such-launch');
+		});
+
+		it.each([[''], [undefined], [7]])('refuses a missing launch id (%s)', async (launchId) => {
+			await expect(getMarketplaceLaunch(app, launchId as string)).rejects.toThrow(
+				'launchId is required'
+			);
+		});
+
+		it('lists launches newest first, of one agent, and up to a limit', async () => {
+			expect(ids(await listMarketplaceLaunches(app))).toEqual(['third', 'second', 'first']);
+			expect(ids(await listMarketplaceLaunches(app, { sessionId: 'agent-1' }))).toEqual([
+				'third',
+				'first',
+			]);
+			expect(ids(await listMarketplaceLaunches(app, { sessionId: 'agent-1', limit: 1 }))).toEqual([
+				'third',
+			]);
+		});
+
+		it('reads null options, and null fields, as not given', async () => {
+			expect(ids(await listMarketplaceLaunches(app, null))).toEqual(['third', 'second', 'first']);
+			expect(
+				ids(await listMarketplaceLaunches(app, { sessionId: null, limit: null } as never))
+			).toEqual(['third', 'second', 'first']);
+		});
+
+		it.each([
+			['options that are a list', [], 'options must be an object with sessionId and limit'],
+			['options that are text', 'agent-1', 'options must be an object with sessionId and limit'],
+			['an agent id that is not text', { sessionId: 42 }, 'sessionId must be a string'],
+			['a limit of 0', { limit: 0 }, 'limit must be a positive whole number, not 0'],
+			[
+				'a limit that is not whole',
+				{ limit: 2.5 },
+				'limit must be a positive whole number, not 2.5',
+			],
+		])('refuses %s, as a marketplace error', async (_case, options, message) => {
+			const error = await listMarketplaceLaunches(app, options as never).catch(
+				(caught: unknown) => caught
+			);
+
+			expect(error).toBeInstanceOf(MarketplaceImportError);
+			expect((error as Error).message).toBe(message);
 		});
 	});
 });

@@ -40,6 +40,12 @@ import type {
 	NotifyCenterFlashParams,
 	MarketplaceManifestResult,
 	MarketplaceImportResult,
+	MarketplaceLaunchClientRequest,
+	MarketplaceLaunchResult,
+	MarketplaceLaunchRecordResult,
+	MarketplaceLaunchListResult,
+	PlaybookLaunchCompletion,
+	PlaybookLaunchListOptions,
 	PlaybookLaunchValues,
 	SessionHistoryResult,
 	GetSessionHistoryOptions,
@@ -491,6 +497,18 @@ export interface MessageHandlerCallbacks {
 		targetFolderName: string,
 		launchValues?: PlaybookLaunchValues
 	) => Promise<MarketplaceImportResult>;
+	/** Playbook Launch for `maestro-cli marketplace launch`, in main (`launchMarketplacePlaybook`). */
+	launchMarketplacePlaybook: (
+		request: MarketplaceLaunchClientRequest
+	) => Promise<MarketplaceLaunchResult>;
+	completeMarketplaceLaunch: (
+		launchId: string,
+		completion: PlaybookLaunchCompletion
+	) => Promise<MarketplaceLaunchRecordResult>;
+	getMarketplaceLaunch: (launchId: string) => Promise<MarketplaceLaunchRecordResult>;
+	listMarketplaceLaunches: (
+		options: PlaybookLaunchListOptions
+	) => Promise<MarketplaceLaunchListResult>;
 	/** External-pickup primitive used by `maestro-cli session list`. Surfaces every
 	 *  open AI tab across all desktop agents so consumers (Maestro-Discord, Cue)
 	 *  can address tabs by id without owning a persistent channel. */

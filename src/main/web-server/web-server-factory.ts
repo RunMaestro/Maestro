@@ -17,6 +17,7 @@ import type { DebugPackageDependencies } from '../debug-package';
 import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { AddGroupChatParticipantCallback } from './types';
+import type { MarketplaceLaunchHost } from '../services/marketplace-service';
 import { registerSessionCallbacks } from './callbacks/sessionCallbacks';
 import { registerThemeCallbacks } from './callbacks/themeCallbacks';
 import { registerNotificationCallbacks } from './callbacks/notificationCallbacks';
@@ -110,6 +111,9 @@ export interface WebServerFactoryDependencies {
 	 *  `feedback submit --support-package`). Absent = the CLI reports the
 	 *  feature as unconfigured instead of shipping a hollow zip. */
 	getDebugPackageDeps?: () => DebugPackageDependencies;
+	/** What Playbook Launch runs with, the object the IPC handlers get too. Absent = the launch
+	 *  callbacks report the feature as unconfigured. */
+	marketplaceLaunchHost?: MarketplaceLaunchHost;
 	/** Direct group chat participant add by agent GUID (`maestro-cli group-chat add`).
 	 *  Answered in main by the router, which owns participants. */
 	addGroupChatParticipant?: AddGroupChatParticipantCallback;

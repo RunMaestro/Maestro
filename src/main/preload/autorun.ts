@@ -8,7 +8,14 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { PlaybookLaunchValues, PlaybookStatus } from '../../shared/types';
+import type {
+	PlaybookLaunchCompletion,
+	PlaybookLaunchListOptions,
+	PlaybookLaunchRecord,
+	PlaybookLaunchRequest,
+	PlaybookLaunchValues,
+	PlaybookStatus,
+} from '../../shared/types';
 import { AUTORUN_DELEGATION_CHANNEL } from '../../shared/autoRunDelegation';
 
 /**
@@ -236,10 +243,31 @@ export function createMarketplaceApi() {
 				launchValues
 			),
 
+		/** Launch a playbook on an agent. Resolves `{ launchId, folderRelativePath }` once its Auto Run starts. */
+		launch: (request: PlaybookLaunchRequest) => ipcRenderer.invoke('marketplace:launch', request),
+
+		/** Report that a launched Auto Run has ended. Main cleans up and broadcasts `onLaunchChanged`. */
+		completeLaunch: (launchId: string, completion: PlaybookLaunchCompletion) =>
+			ipcRenderer.invoke('marketplace:completeLaunch', launchId, completion),
+
+		getLaunch: (launchId: string) => ipcRenderer.invoke('marketplace:getLaunch', launchId),
+
+		/** Launch records, newest first, optionally of one agent and capped by `limit`. */
+		listLaunches: (options?: PlaybookLaunchListOptions) =>
+			ipcRenderer.invoke('marketplace:listLaunches', options),
+
 		onManifestChanged: (handler: () => void) => {
 			const wrappedHandler = () => handler();
 			ipcRenderer.on('marketplace:manifestChanged', wrappedHandler);
 			return () => ipcRenderer.removeListener('marketplace:manifestChanged', wrappedHandler);
+		},
+
+		/** A launch record changed: a launched Auto Run ended and main cleaned up after it. */
+		onLaunchChanged: (handler: (launch: PlaybookLaunchRecord) => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, launch: PlaybookLaunchRecord) =>
+				handler(launch);
+			ipcRenderer.on('marketplace:launchChanged', wrappedHandler);
+			return () => ipcRenderer.removeListener('marketplace:launchChanged', wrappedHandler);
 		},
 	};
 }

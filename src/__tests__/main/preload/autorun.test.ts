@@ -548,5 +548,86 @@ describe('Autorun Preload API', () => {
 				expect(callback).toHaveBeenCalled();
 			});
 		});
+
+		describe('Playbook Launch', () => {
+			it('invokes marketplace:launch with the request object', async () => {
+				mockInvoke.mockResolvedValue({ success: true, launchId: 'launch-1' });
+				const request = {
+					playbookId: 'research-market',
+					values: { MARKET_TOPIC: 'EV chargers' },
+					sessionId: 'session-123',
+					autoRunFolderPath: '/project/.maestro/playbooks',
+					sshRemoteId: 'ssh-remote-1',
+					keepSavedPlaybook: false,
+				};
+
+				const result = await api.launch(request);
+
+				expect(mockInvoke).toHaveBeenCalledWith('marketplace:launch', request);
+				expect(result).toEqual({ success: true, launchId: 'launch-1' });
+			});
+
+			it('invokes marketplace:completeLaunch with the launch id and the completion', async () => {
+				mockInvoke.mockResolvedValue({ success: true });
+				const completion = {
+					completedTasks: 3,
+					totalTasks: 4,
+					elapsedTimeMs: 60_000,
+					totalCostUsd: 0.2,
+					wasStopped: true,
+				};
+
+				await api.completeLaunch('launch-1', completion);
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'marketplace:completeLaunch',
+					'launch-1',
+					completion
+				);
+			});
+
+			it('invokes marketplace:getLaunch with the launch id', async () => {
+				mockInvoke.mockResolvedValue({ success: true });
+
+				await api.getLaunch('launch-1');
+
+				expect(mockInvoke).toHaveBeenCalledWith('marketplace:getLaunch', 'launch-1');
+			});
+
+			it('invokes marketplace:listLaunches with the options, or none', async () => {
+				mockInvoke.mockResolvedValue({ success: true, launches: [] });
+
+				await api.listLaunches({ sessionId: 'session-123', limit: 1 });
+				await api.listLaunches();
+
+				expect(mockInvoke).toHaveBeenNthCalledWith(1, 'marketplace:listLaunches', {
+					sessionId: 'session-123',
+					limit: 1,
+				});
+				expect(mockInvoke).toHaveBeenNthCalledWith(2, 'marketplace:listLaunches', undefined);
+			});
+
+			it('hands each launchChanged record to the handler and unsubscribes the same listener', () => {
+				const callback = vi.fn();
+				let registeredHandler: ((event: unknown, launch: unknown) => void) | undefined;
+				mockOn.mockImplementation(
+					(_channel: string, handler: (event: unknown, launch: unknown) => void) => {
+						registeredHandler = handler;
+					}
+				);
+				const launch = { launchId: 'launch-1', status: 'completed', cleanup: 'done' };
+
+				const cleanup = api.onLaunchChanged(callback);
+				registeredHandler!({}, launch);
+				cleanup();
+
+				expect(mockOn).toHaveBeenCalledWith('marketplace:launchChanged', registeredHandler);
+				expect(callback).toHaveBeenCalledWith(launch);
+				expect(mockRemoveListener).toHaveBeenCalledWith(
+					'marketplace:launchChanged',
+					registeredHandler
+				);
+			});
+		});
 	});
 });

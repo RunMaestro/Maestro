@@ -260,10 +260,23 @@ export interface PlaybookLaunchRecord {
 	finishedAt?: number;
 	completion?: PlaybookLaunchCompletion;
 	/**
-	 * What cleanup did: removed the launch folder ('done'), kept it because the spec says to
-	 * ('kept'), or left it because the run was stopped ('skipped-stopped').
+	 * What cleanup did with the launch folder: removed it ('done'); kept it ('kept') because the
+	 * spec says to, or because the user saved the playbook as reusable, which runs from that
+	 * folder; left it because the run was stopped, so it can be resumed ('skipped-stopped'); or
+	 * could not remove it ('failed', with `cleanupError`). The saved playbook the import added is
+	 * removed with the folder ('done') and stays in every other case.
 	 */
-	cleanup?: 'done' | 'kept' | 'skipped-stopped';
+	cleanup?: 'done' | 'kept' | 'skipped-stopped' | 'failed';
+	/** Why cleanup could not remove the launch folder. Set only with `cleanup: 'failed'`. */
+	cleanupError?: string;
+}
+
+/** Which launch records a list returns. */
+export interface PlaybookLaunchListOptions {
+	/** Only the launches of this agent */
+	sessionId?: string;
+	/** At most this many records. Must be a positive whole number. */
+	limit?: number;
 }
 
 /**

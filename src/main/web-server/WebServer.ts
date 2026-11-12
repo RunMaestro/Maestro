@@ -228,6 +228,10 @@ import type {
 	GetMarketplaceDocumentCallback,
 	GetMarketplaceReadmeCallback,
 	ImportMarketplacePlaybookCallback,
+	LaunchMarketplacePlaybookCallback,
+	CompleteMarketplaceLaunchCallback,
+	GetMarketplaceLaunchCallback,
+	ListMarketplaceLaunchesCallback,
 	ListDesktopSessionsCallback,
 	GetSessionHistoryCallback,
 } from './types';
@@ -1135,6 +1139,22 @@ export class WebServer {
 		this.callbackRegistry.setImportMarketplacePlaybookCallback(callback);
 	}
 
+	setLaunchMarketplacePlaybookCallback(callback: LaunchMarketplacePlaybookCallback): void {
+		this.callbackRegistry.setLaunchMarketplacePlaybookCallback(callback);
+	}
+
+	setCompleteMarketplaceLaunchCallback(callback: CompleteMarketplaceLaunchCallback): void {
+		this.callbackRegistry.setCompleteMarketplaceLaunchCallback(callback);
+	}
+
+	setGetMarketplaceLaunchCallback(callback: GetMarketplaceLaunchCallback): void {
+		this.callbackRegistry.setGetMarketplaceLaunchCallback(callback);
+	}
+
+	setListMarketplaceLaunchesCallback(callback: ListMarketplaceLaunchesCallback): void {
+		this.callbackRegistry.setListMarketplaceLaunchesCallback(callback);
+	}
+
 	setListDesktopSessionsCallback(callback: ListDesktopSessionsCallback): void {
 		this.callbackRegistry.setListDesktopSessionsCallback(callback);
 	}
@@ -1754,6 +1774,14 @@ export class WebServer {
 					targetFolderName,
 					launchValues
 				),
+			launchMarketplacePlaybook: async (request) =>
+				this.callbackRegistry.launchMarketplacePlaybook(request),
+			completeMarketplaceLaunch: async (launchId, completion) =>
+				this.callbackRegistry.completeMarketplaceLaunch(launchId, completion),
+			getMarketplaceLaunch: async (launchId) =>
+				this.callbackRegistry.getMarketplaceLaunch(launchId),
+			listMarketplaceLaunches: async (options) =>
+				this.callbackRegistry.listMarketplaceLaunches(options),
 			listDesktopSessions: () => this.callbackRegistry.listDesktopSessions(),
 			getSessionHistory: (tabId, options) =>
 				this.callbackRegistry.getSessionHistory(tabId, options),

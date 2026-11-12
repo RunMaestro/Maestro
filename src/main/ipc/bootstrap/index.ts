@@ -469,11 +469,12 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		settingsStore: deps.settingsStore,
 	});
 
-	// Register Marketplace handlers for fetching and importing playbooks
+	// Register Marketplace handlers for fetching, importing and launching playbooks
 	registerMarketplaceHandlers({
 		app: deps.app,
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
+		launchHost: deps.marketplaceLaunchHost,
 	});
 
 	// Register Stats handlers for usage tracking

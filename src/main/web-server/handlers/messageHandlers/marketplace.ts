@@ -2,13 +2,29 @@
  * Marketplace domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: marketplace_get_manifest,
- * marketplace_get_document, marketplace_get_readme, marketplace_import_playbook.
+ * marketplace_get_document, marketplace_get_readme, marketplace_import_playbook,
+ * and Playbook Launch: marketplace_launch, marketplace_complete_launch,
+ * marketplace_get_launch, marketplace_list_launches.
  */
 
 import { captureException } from '../../../utils/sentry';
-import type { PlaybookLaunchValues } from '../../../../shared/marketplace-types';
+import type {
+	PlaybookLaunchCompletion,
+	PlaybookLaunchValues,
+} from '../../../../shared/marketplace-types';
 import { isLaunchValuesObject } from '../../../../shared/playbookLaunch';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+
+/** The typed result every marketplace request is answered with. */
+type MarketplaceResultType =
+	| 'marketplace_get_manifest_result'
+	| 'marketplace_get_document_result'
+	| 'marketplace_get_readme_result'
+	| 'marketplace_import_playbook_result'
+	| 'marketplace_launch_result'
+	| 'marketplace_complete_launch_result'
+	| 'marketplace_get_launch_result'
+	| 'marketplace_list_launches_result';
 
 /**
  * Reject a `playbookPath` that points at the local filesystem (absolute
@@ -55,11 +71,7 @@ function isUntrustedLocalPath(playbookPath: string): boolean {
 function sendMarketplaceFailure(
 	ctx: MessageHandlerContext,
 	client: WebClient,
-	type:
-		| 'marketplace_get_manifest_result'
-		| 'marketplace_get_document_result'
-		| 'marketplace_get_readme_result'
-		| 'marketplace_import_playbook_result',
+	type: MarketplaceResultType,
 	error: string,
 	message: WebClientMessage,
 	extra?: Record<string, unknown>
@@ -85,11 +97,7 @@ function reportMarketplaceHandlerError(
 	ctx: MessageHandlerContext,
 	client: WebClient,
 	error: unknown,
-	type:
-		| 'marketplace_get_manifest_result'
-		| 'marketplace_get_document_result'
-		| 'marketplace_get_readme_result'
-		| 'marketplace_import_playbook_result',
+	type: MarketplaceResultType,
 	handler: string,
 	message: WebClientMessage,
 	userMessagePrefix: string,
@@ -455,6 +463,232 @@ export function handleMarketplaceImportPlaybook(
 				message,
 				'Import failed',
 				{ sessionId, playbookId, targetFolderName: trimmedFolder }
+			);
+		});
+}
+
+/** A launch id from a message: any string that is not blank, else `undefined`. */
+function launchIdOf(message: WebClientMessage): string | undefined {
+	const launchId = message.launchId;
+	return typeof launchId === 'string' && launchId.trim() !== '' ? launchId : undefined;
+}
+
+/**
+ * Handle marketplace_launch - launch a playbook on an agent: import it with the answers into a
+ * launch folder of its own, record the launch and start its Auto Run. As for an import, the server
+ * takes the agent's Auto Run folder and SSH remote from the stored agent, so the client names
+ * neither. `values` (answers keyed by input name) may be left out when every input has a default.
+ */
+export function handleMarketplaceLaunch(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const type = 'marketplace_launch_result';
+	const sessionId = message.sessionId;
+	const playbookId = message.playbookId;
+
+	if (typeof sessionId !== 'string' || sessionId.trim() === '') {
+		sendMarketplaceFailure(ctx, client, type, 'Missing sessionId', message);
+		return;
+	}
+	if (typeof playbookId !== 'string' || playbookId.trim() === '') {
+		sendMarketplaceFailure(ctx, client, type, 'Missing playbookId', message, { sessionId });
+		return;
+	}
+	// Only the shape is checked here. The service resolves the answers against the playbook's
+	// launch spec and validates every value before anything touches the disk.
+	const values = message.values ?? {};
+	if (!isLaunchValuesObject(values)) {
+		sendMarketplaceFailure(
+			ctx,
+			client,
+			type,
+			'values must be an object keyed by input name',
+			message,
+			{ sessionId }
+		);
+		return;
+	}
+	const keepSavedPlaybook = message.keepSavedPlaybook ?? false;
+	if (typeof keepSavedPlaybook !== 'boolean') {
+		sendMarketplaceFailure(ctx, client, type, 'keepSavedPlaybook must be true or false', message, {
+			sessionId,
+		});
+		return;
+	}
+	if (!ctx.callbacks.launchMarketplacePlaybook) {
+		sendMarketplaceFailure(ctx, client, type, 'Marketplace launch not configured', message, {
+			sessionId,
+		});
+		return;
+	}
+
+	ctx.callbacks
+		.launchMarketplacePlaybook({
+			sessionId,
+			playbookId,
+			values: values as PlaybookLaunchValues,
+			keepSavedPlaybook,
+		})
+		.then((result) => {
+			ctx.send(client, {
+				type,
+				success: result.success,
+				error: result.error,
+				launchId: result.launchId,
+				folderRelativePath: result.folderRelativePath,
+				sessionId,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			reportMarketplaceHandlerError(
+				ctx,
+				client,
+				error,
+				type,
+				'marketplace_launch',
+				message,
+				'Launch failed',
+				{ sessionId, playbookId }
+			);
+		});
+}
+
+/**
+ * Handle marketplace_complete_launch - report that a launched Auto Run has ended. Main ends the
+ * launch record, cleans up after the run and broadcasts `marketplace:launchChanged`. The service
+ * checks every field of `completion`.
+ */
+export function handleMarketplaceCompleteLaunch(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const type = 'marketplace_complete_launch_result';
+	const launchId = launchIdOf(message);
+	if (!launchId) {
+		sendMarketplaceFailure(ctx, client, type, 'Missing launchId', message);
+		return;
+	}
+	if (!ctx.callbacks.completeMarketplaceLaunch) {
+		sendMarketplaceFailure(ctx, client, type, 'Marketplace launch not configured', message, {
+			launchId,
+		});
+		return;
+	}
+
+	ctx.callbacks
+		.completeMarketplaceLaunch(launchId, message.completion as PlaybookLaunchCompletion)
+		.then((result) => {
+			ctx.send(client, {
+				type,
+				success: result.success,
+				error: result.error,
+				launch: result.launch,
+				launchId,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			reportMarketplaceHandlerError(
+				ctx,
+				client,
+				error,
+				type,
+				'marketplace_complete_launch',
+				message,
+				'Completing the launch failed',
+				{ launchId }
+			);
+		});
+}
+
+/** Handle marketplace_get_launch - one launch record (`maestro-cli marketplace launch-status`). */
+export function handleMarketplaceGetLaunch(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const type = 'marketplace_get_launch_result';
+	const launchId = launchIdOf(message);
+	if (!launchId) {
+		sendMarketplaceFailure(ctx, client, type, 'Missing launchId', message);
+		return;
+	}
+	if (!ctx.callbacks.getMarketplaceLaunch) {
+		sendMarketplaceFailure(ctx, client, type, 'Marketplace launch not configured', message, {
+			launchId,
+		});
+		return;
+	}
+
+	ctx.callbacks
+		.getMarketplaceLaunch(launchId)
+		.then((result) => {
+			ctx.send(client, {
+				type,
+				success: result.success,
+				error: result.error,
+				launch: result.launch,
+				launchId,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			reportMarketplaceHandlerError(
+				ctx,
+				client,
+				error,
+				type,
+				'marketplace_get_launch',
+				message,
+				'Failed to read the launch',
+				{ launchId }
+			);
+		});
+}
+
+/**
+ * Handle marketplace_list_launches - launch records, newest first (`maestro-cli marketplace
+ * launches`). `sessionId` keeps one agent's launches and `limit` caps the list; the service checks
+ * both.
+ */
+export function handleMarketplaceListLaunches(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const type = 'marketplace_list_launches_result';
+	if (!ctx.callbacks.listMarketplaceLaunches) {
+		sendMarketplaceFailure(ctx, client, type, 'Marketplace launch not configured', message);
+		return;
+	}
+
+	ctx.callbacks
+		.listMarketplaceLaunches({
+			sessionId: message.sessionId,
+			limit: message.limit as number | undefined,
+		})
+		.then((result) => {
+			ctx.send(client, {
+				type,
+				success: result.success,
+				error: result.error,
+				launches: result.launches,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			reportMarketplaceHandlerError(
+				ctx,
+				client,
+				error,
+				type,
+				'marketplace_list_launches',
+				message,
+				'Failed to list launches'
 			);
 		});
 }
