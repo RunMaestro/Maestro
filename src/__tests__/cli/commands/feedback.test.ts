@@ -65,12 +65,13 @@ const baseSubmit = {
 describe('feedback commands', () => {
 	let exitSpy: MockInstance;
 	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
 	let tmpDir: string;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-		vi.spyOn(console, 'error').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
 			throw new Error('__exit__');
 		});
@@ -388,6 +389,42 @@ describe('feedback commands', () => {
 			mockBridge({ feedback_submit: { success: false, error: 'gh exploded' } });
 			await expect(feedbackSubmit({ ...baseSubmit, force: true })).rejects.toThrow('__exit__');
 			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+		});
+
+		it('prints every warning when filing fails in text mode', async () => {
+			mockBridge({
+				feedback_submit: {
+					success: false,
+					error: 'gh exploded',
+					warnings: [
+						'Screenshot "shot.png" could not be uploaded.',
+						'The support package could not be built.',
+					],
+				},
+			});
+			await expect(feedbackSubmit({ ...baseSubmit, force: true })).rejects.toThrow('__exit__');
+			const err = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+			expect(err).toContain('Error: gh exploded');
+			expect(err).toContain('Warning: Screenshot "shot.png" could not be uploaded.');
+			expect(err).toContain('Warning: The support package could not be built.');
+		});
+
+		it('keeps warnings in the --json failure result', async () => {
+			mockBridge({
+				feedback_submit: {
+					success: false,
+					error: 'gh exploded',
+					warnings: ['Screenshot "shot.png" could not be uploaded.'],
+				},
+			});
+			await expect(feedbackSubmit({ ...baseSubmit, force: true, json: true })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+				success: false,
+				error: 'gh exploded',
+				warnings: ['Screenshot "shot.png" could not be uploaded.'],
+			});
 		});
 	});
 

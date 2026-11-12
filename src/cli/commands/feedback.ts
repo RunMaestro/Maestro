@@ -81,6 +81,12 @@ function fail(message: string, options: JsonOption, code: ExitCode, extra?: obje
 		console.log(JSON.stringify({ success: false, error: message, ...extra }));
 	} else {
 		console.error(`Error: ${message}`);
+		const warnings = (extra as { warnings?: unknown } | undefined)?.warnings;
+		if (Array.isArray(warnings)) {
+			for (const warning of warnings) {
+				console.error(`Warning: ${String(warning)}`);
+			}
+		}
 	}
 	return exitWith(code);
 }
