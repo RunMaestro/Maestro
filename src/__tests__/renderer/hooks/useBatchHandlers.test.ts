@@ -11,11 +11,13 @@
  * - Return value stability
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, BatchRunState, AgentError } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
+import { createMockLaunchRecord } from '../../helpers/mockLaunchRecord';
+import type { PlaybookLaunchRecord } from '../../../shared/marketplace-types';
 
 // ============================================================================
 // Mock useBatchProcessor BEFORE importing useBatchHandlers
@@ -63,6 +65,17 @@ vi.mock('../../../renderer/services/leaderboard', () => ({
 }));
 
 // ============================================================================
+// Mock the lifecycle-owner check. No WindowProvider is rendered here, which the real hook reads as
+// the main window; a test flips this to play a secondary window or a web-desktop client.
+// ============================================================================
+
+let mockIsLifecycleOwner = true;
+vi.mock('../../../renderer/contexts/WindowContext', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/contexts/WindowContext')>()),
+	useIsLifecycleOwner: () => mockIsLifecycleOwner,
+}));
+
+// ============================================================================
 // Now import the hook and stores
 // ============================================================================
 
@@ -74,7 +87,11 @@ import { useBatchProcessor } from '../../../renderer/hooks/batch/useBatchProcess
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
-import { useModalStore } from '../../../renderer/stores/modalStore';
+import {
+	useModalStore,
+	selectModalOpen,
+	selectModalData,
+} from '../../../renderer/stores/modalStore';
 import { useFeedbackDraftStore } from '../../../renderer/stores/feedbackDraftStore';
 
 // ============================================================================
@@ -146,6 +163,8 @@ function createDeps(overrides: Partial<UseBatchHandlersDeps> = {}): UseBatchHand
 
 beforeEach(() => {
 	vi.clearAllMocks();
+
+	mockIsLifecycleOwner = true;
 
 	// Reset mock return values
 	mockActiveBatchSessionIds = [];
@@ -1118,6 +1137,314 @@ describe('useBatchHandlers', () => {
 					totalCostUsd: 0.01,
 					documentsProcessed: 1,
 				});
+			});
+		});
+
+		// ================================================================
+		// Playbook Launch: the end of a launched Auto Run ends its launch, and the outro that
+		// follows is the only modal, so the celebrations stand down
+		// ================================================================
+
+		describe('Playbook Launch', () => {
+			// useBatchHandlers waits this long behind the completion toast before a celebration.
+			const CELEBRATION_DELAY_MS = 500;
+
+			const listLaunches = vi.mocked(window.maestro.marketplace.listLaunches);
+			const completeLaunch = vi.mocked(window.maestro.marketplace.completeLaunch);
+
+			/** The end of a five-task run on session-1, as the batch processor reports it. */
+			const RUN_END = {
+				sessionId: 'session-1',
+				sessionName: 'My Agent',
+				completedTasks: 5,
+				totalTasks: 5,
+				wasStopped: false,
+				elapsedTimeMs: 60_000,
+				inputTokens: 1000,
+				outputTokens: 500,
+				totalCostUsd: 0.05,
+				documentsProcessed: 2,
+			};
+
+			const AUTO_RUN_STATS = {
+				cumulativeTimeMs: 0,
+				totalRuns: 0,
+				currentBadgeLevel: 0,
+				longestRunMs: 0,
+				longestRunTimestamp: 0,
+				lastBadgeUnlockLevel: 0,
+				lastAcknowledgedBadgeLevel: 0,
+				badgeHistory: [],
+			};
+
+			type Recorded = { newBadgeLevel: number | null; isNewRecord: boolean };
+			let recordAutoRunComplete: Mock<(elapsedTimeMs: number) => Recorded>;
+			let setFirstAutoRunCompleted: Mock<(value: boolean) => void>;
+
+			const firstRunCelebrationOpen = () =>
+				selectModalOpen('firstRunCelebration')(useModalStore.getState());
+			const standingOvationOpen = () =>
+				selectModalOpen('standingOvation')(useModalStore.getState());
+
+			/** Main holds these launches for the agent. */
+			function mainHasLaunches(...launches: PlaybookLaunchRecord[]): void {
+				listLaunches.mockResolvedValue({ success: true, launches });
+			}
+
+			/** The settings the completion handler reads. */
+			function seedSettings(
+				settings: { firstAutoRunCompleted: boolean },
+				recorded: Recorded = { newBadgeLevel: null, isNewRecord: false }
+			): void {
+				recordAutoRunComplete = vi.fn<(elapsedTimeMs: number) => Recorded>(() => recorded);
+				setFirstAutoRunCompleted = vi.fn<(value: boolean) => void>();
+				useSettingsStore.setState({
+					firstAutoRunCompleted: settings.firstAutoRunCompleted,
+					setFirstAutoRunCompleted,
+					autoRunStats: AUTO_RUN_STATS,
+					recordAutoRunComplete,
+					leaderboardRegistration: null,
+				});
+			}
+
+			/** Render the hook and end the run the way the batch processor does. */
+			function endRun(overrides: Partial<typeof RUN_END> = {}): void {
+				renderHook(() => useBatchHandlers(createDeps()));
+				const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+				act(() => {
+					callArgs.onComplete?.({ ...RUN_END, ...overrides });
+				});
+			}
+
+			/** Let main's answers arrive and the celebration delay pass. */
+			async function settle(): Promise<void> {
+				await act(async () => vi.advanceTimersByTimeAsync(CELEBRATION_DELAY_MS));
+			}
+
+			beforeEach(() => {
+				vi.useFakeTimers();
+				useSessionStore.setState({
+					sessions: [createMockSession({ id: 'session-1', name: 'My Agent' })],
+					activeSessionId: 'session-1',
+				});
+				mainHasLaunches();
+				completeLaunch.mockReset();
+				completeLaunch.mockResolvedValue({ success: true, launch: createMockLaunchRecord() });
+				seedSettings({ firstAutoRunCompleted: true });
+			});
+
+			afterEach(() => {
+				vi.useRealTimers();
+				// The mocks are shared by every test in this file: put the global defaults back.
+				listLaunches.mockReset();
+				listLaunches.mockResolvedValue({ success: true, launches: [] });
+				completeLaunch.mockReset();
+				completeLaunch.mockResolvedValue({ success: true });
+			});
+
+			describe('ending the launch', () => {
+				it('ends the running launch of the agent whose run finished, with how the run went', async () => {
+					mainHasLaunches(createMockLaunchRecord({ launchId: 'launch-7' }));
+
+					endRun();
+					await settle();
+
+					expect(listLaunches).toHaveBeenCalledTimes(1);
+					expect(listLaunches).toHaveBeenCalledWith({ sessionId: 'session-1' });
+					expect(completeLaunch).toHaveBeenCalledTimes(1);
+					expect(completeLaunch).toHaveBeenCalledWith('launch-7', {
+						completedTasks: 5,
+						totalTasks: 5,
+						elapsedTimeMs: 60_000,
+						totalCostUsd: 0.05,
+						wasStopped: false,
+					});
+				});
+
+				it('reports a stopped run as stopped', async () => {
+					mainHasLaunches(createMockLaunchRecord());
+
+					endRun({ completedTasks: 2, wasStopped: true });
+					await settle();
+
+					expect(completeLaunch).toHaveBeenCalledWith(
+						'launch-1',
+						expect.objectContaining({ completedTasks: 2, totalTasks: 5, wasStopped: true })
+					);
+				});
+
+				it('reports a run that took no time, which earns no achievement', async () => {
+					mainHasLaunches(createMockLaunchRecord());
+
+					endRun({ elapsedTimeMs: 0 });
+					await settle();
+
+					expect(completeLaunch).toHaveBeenCalledWith(
+						'launch-1',
+						expect.objectContaining({ elapsedTimeMs: 0 })
+					);
+					expect(recordAutoRunComplete).not.toHaveBeenCalled();
+				});
+
+				it('still records the achievement of a launched run', async () => {
+					mainHasLaunches(createMockLaunchRecord());
+
+					endRun();
+					await settle();
+
+					expect(recordAutoRunComplete).toHaveBeenCalledWith(60_000);
+				});
+
+				it('ends nothing for an ordinary Auto Run', async () => {
+					mainHasLaunches();
+
+					endRun();
+					await settle();
+
+					expect(listLaunches).toHaveBeenCalledTimes(1);
+					expect(completeLaunch).not.toHaveBeenCalled();
+				});
+
+				it.each(['completed', 'stopped', 'failed'] as const)(
+					'ends nothing when the only launch on the agent is %s',
+					async (status) => {
+						mainHasLaunches(createMockLaunchRecord({ status, finishedAt: 2_000 }));
+
+						endRun();
+						await settle();
+
+						expect(completeLaunch).not.toHaveBeenCalled();
+					}
+				);
+
+				it('does not ask or report from a window that does not own app-wide side effects', async () => {
+					mockIsLifecycleOwner = false;
+					mainHasLaunches(createMockLaunchRecord());
+
+					endRun();
+					await settle();
+
+					expect(listLaunches).not.toHaveBeenCalled();
+					expect(completeLaunch).not.toHaveBeenCalled();
+				});
+			});
+
+			describe('the first-run celebration', () => {
+				beforeEach(() => {
+					seedSettings({ firstAutoRunCompleted: false });
+				});
+
+				it('opens for an ordinary run', async () => {
+					endRun();
+					await settle();
+
+					expect(firstRunCelebrationOpen()).toBe(true);
+					expect(selectModalData('firstRunCelebration')(useModalStore.getState())).toStrictEqual({
+						elapsedTimeMs: 60_000,
+						completedTasks: 5,
+						totalTasks: 5,
+					});
+					expect(setFirstAutoRunCompleted).toHaveBeenCalledWith(true);
+				});
+
+				it('stays shut for a launched run, which counts as the first run all the same', async () => {
+					mainHasLaunches(createMockLaunchRecord());
+
+					endRun();
+					await settle();
+
+					expect(completeLaunch).toHaveBeenCalledTimes(1);
+					expect(firstRunCelebrationOpen()).toBe(false);
+					expect(setFirstAutoRunCompleted).toHaveBeenCalledWith(true);
+				});
+
+				it('opens when main could not end the launch, because no outro will follow', async () => {
+					mainHasLaunches(createMockLaunchRecord());
+					completeLaunch.mockResolvedValue({ success: false, error: 'Error: store is locked' });
+
+					endRun();
+					await settle();
+
+					expect(firstRunCelebrationOpen()).toBe(true);
+				});
+
+				it('waits for the answer from main, however late, before it decides', async () => {
+					let answer!: (result: Awaited<ReturnType<typeof listLaunches>>) => void;
+					listLaunches.mockReturnValue(
+						new Promise((resolve) => {
+							answer = resolve;
+						})
+					);
+
+					endRun();
+					await settle();
+					// The delay has passed and main has not answered: nothing opens yet.
+					expect(firstRunCelebrationOpen()).toBe(false);
+
+					await act(async () => {
+						answer({ success: true, launches: [] });
+						await vi.advanceTimersByTimeAsync(0);
+					});
+
+					expect(firstRunCelebrationOpen()).toBe(true);
+				});
+
+				it('stays shut when the late answer names a launch', async () => {
+					let answer!: (result: Awaited<ReturnType<typeof listLaunches>>) => void;
+					listLaunches.mockReturnValue(
+						new Promise((resolve) => {
+							answer = resolve;
+						})
+					);
+
+					endRun();
+					await settle();
+					await act(async () => {
+						answer({ success: true, launches: [createMockLaunchRecord()] });
+						await vi.advanceTimersByTimeAsync(0);
+					});
+
+					expect(completeLaunch).toHaveBeenCalledTimes(1);
+					expect(firstRunCelebrationOpen()).toBe(false);
+				});
+			});
+
+			describe('the standing ovation', () => {
+				// The first run is behind the user, and the badge on the Left Bar is level 1.
+				const ACHIEVEMENTS = [
+					['unlocks a badge', { newBadgeLevel: 1, isNewRecord: false }],
+					['sets a record', { newBadgeLevel: null, isNewRecord: true }],
+				] as const;
+
+				function seedAchievement(recorded: Recorded) {
+					seedSettings({ firstAutoRunCompleted: true }, recorded);
+					useSettingsStore.setState({ autoRunStats: { ...AUTO_RUN_STATS, currentBadgeLevel: 1 } });
+				}
+
+				it.each(ACHIEVEMENTS)('opens for an ordinary run that %s', async (_, recorded) => {
+					seedAchievement(recorded);
+
+					endRun();
+					await settle();
+
+					expect(standingOvationOpen()).toBe(true);
+					expect(selectModalData('standingOvation')(useModalStore.getState())?.badge.level).toBe(1);
+				});
+
+				it.each(ACHIEVEMENTS)(
+					'stays shut for a launched run that %s, which is still recorded',
+					async (_, recorded) => {
+						seedAchievement(recorded);
+						mainHasLaunches(createMockLaunchRecord());
+
+						endRun();
+						await settle();
+
+						expect(recordAutoRunComplete).toHaveBeenCalledWith(60_000);
+						expect(completeLaunch).toHaveBeenCalledTimes(1);
+						expect(standingOvationOpen()).toBe(false);
+					}
+				);
 			});
 		});
 	});

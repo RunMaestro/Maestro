@@ -8,6 +8,7 @@
  *   - Computing memoized batch state for the UI
  *   - Owning the quit confirmation effect (prevents quit during active runs)
  *   - Providing handleSyncAutoRunStats for leaderboard server sync
+ *   - Reporting the end of a Playbook Launch's Auto Run to main (lifecycle-owning window only)
  *
  * PERF: Does not subscribe to full sessions / active Session. Streaming session
  * updates must not re-render App via this hook.
@@ -41,8 +42,29 @@ import type { RightPanelHandle } from '../../components/RightPanel';
 import type { AgentSpawnResult, SpawnAgentOptions } from '../agent/useAgentExecution';
 import * as Sentry from '@sentry/electron/renderer';
 import { queueLeaderboardDelta, noteAutoRunCreditSettled } from '../../services/leaderboard';
+import { reportLaunchedRunCompletion } from '../../services/playbookLaunchCompletion';
+import { useIsLifecycleOwner } from '../../contexts/WindowContext';
 import { logger } from '../../utils/logger';
 import { groupChatAutoRunSummary } from '../../../shared/maestro-lib/groupchat/autorun-summary';
+
+/** How long a celebration waits behind the completion toast. */
+const CELEBRATION_DELAY_MS = 500;
+
+/** The report of a window that does not report launched runs: no launch ended. */
+const NO_LAUNCH_ENDED: Promise<boolean> = Promise.resolve(false);
+
+/**
+ * Open a celebration once the completion toast has had a moment on screen, unless the run ended a
+ * Playbook Launch (`launchEnded` resolves true). A launched run ends in the outro, so the outro is
+ * the only modal it opens.
+ */
+function celebrateAfterToast(launchEnded: Promise<boolean>, celebrate: () => void): void {
+	setTimeout(() => {
+		void launchEnded.then((ended) => {
+			if (!ended) celebrate();
+		});
+	}, CELEBRATION_DELAY_MS);
+}
 
 /**
  * Resolve the effective group name for a session, falling back to the parent's group
@@ -194,6 +216,8 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 	const audioFeedbackEnabled = useSettingsStore(selectAudioFeedbackEnabled);
 	const audioFeedbackCommand = useSettingsStore(selectAudioFeedbackCommand);
 	const autoRunStats = useSettingsStore(selectAutoRunStats);
+	// Fixed for the life of a window, so the `onComplete` closure below cannot go stale on it.
+	const isLifecycleOwner = useIsLifecycleOwner();
 
 	// --- Refs for async access ---
 	const pauseBatchOnErrorRef = useRef<
@@ -301,6 +325,12 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				sessionId: info.sessionId,
 			});
 
+			// Playbook Launch: when this run was a launched one, main ends the launch, cleans up after
+			// it and broadcasts the outro. Only the lifecycle-owning window reports; every window
+			// reaches this handler. The report goes before the elapsed-time gate below because a
+			// launch ends even when the run took no time. The celebrations below wait for the answer.
+			const launchEnded = isLifecycleOwner ? reportLaunchedRunCompletion(info) : NO_LAUNCH_ENDED;
+
 			// Record achievement and check for badge unlocks
 			if (info.elapsedTimeMs > 0) {
 				const { newBadgeLevel, isNewRecord } = doRecordAutoRunComplete(info.elapsedTimeMs);
@@ -308,16 +338,16 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 
 				// Check for first Auto Run celebration (takes priority over standing ovation)
 				if (!firstAutoRunCompleted) {
-					// This is the user's first Auto Run completion!
+					// This is the user's first Auto Run completion! A launched run counts as one, and
+					// its outro stands in for the celebration.
 					setFirstAutoRunCompleted(true);
-					// Small delay to let the toast appear first
-					setTimeout(() => {
+					celebrateAfterToast(launchEnded, () => {
 						setFirstRunCelebrationData({
 							elapsedTimeMs: info.elapsedTimeMs,
 							completedTasks: info.completedTasks,
 							totalTasks: info.totalTasks,
 						});
-					}, 500);
+					});
 				}
 				// Show Standing Ovation overlay for new badges or records (only if not showing first run)
 				else if (newBadgeLevel !== null || isNewRecord) {
@@ -327,14 +357,13 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 							: CONDUCTOR_BADGES.find((b) => b.level === currentAutoRunStats.currentBadgeLevel);
 
 					if (badge) {
-						// Small delay to let the toast appear first
-						setTimeout(() => {
+						celebrateAfterToast(launchEnded, () => {
 							setStandingOvationData({
 								badge,
 								isNewRecord,
 								recordTimeMs: isNewRecord ? info.elapsedTimeMs : currentAutoRunStats.longestRunMs,
 							});
-						}, 500);
+						});
 					}
 				}
 
