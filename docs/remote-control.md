@@ -401,6 +401,7 @@ A few things act on the computer running Maestro itself, or manage its secrets, 
 | **Reveal in Finder**, **Open in Finder**                                       | Not shown: there is no Finder on your device to show the host's folder in.                                                                                                               |
 | **Open in Default App**                                                        | Downloads the file to your device instead.                                                                                                                                               |
 | **Dictation**                                                                  | Records on your device's microphone. Needs HTTPS (Remote Control) or localhost on the computer running Maestro; over a plain `http://` address the microphone stays dimmed and says why. |
+| **Spoken notices**                                                             | The setting and its **Test** button work, but the line plays on the computer running Maestro, not on your device. A browser tab in front does not count as Maestro being focused.        |
 | **Plugin install and permissions**, **DataviewJS trust**, **Computer History** | Desktop app only.                                                                                                                                                                        |
 | **Quit, updates, windows, the web server and Remote Control switches**         | Desktop app only. Turning the web server off from a browser would disconnect that browser.                                                                                               |
 
@@ -514,3 +515,4 @@ Native Lite also supervises its transport and renderer. SSH exits, temporary con
 - [SSH Remote Execution](/ssh-remote-execution) - Running Maestro on remote servers
 - [Voice Mode](/voice-mode) - A Cappella voice, desktop only, and pairing a phone as its microphone
 - [Dictation](/local-models#dictation) - speech into any text box, which works in the browser over HTTPS
+- [Spoken notices](/local-models#spoken-notices) - a line spoken when an agent finishes, which plays on the computer running Maestro

@@ -2445,9 +2445,11 @@ maestro-cli notify speak "The deploy finished and the smoke tests pass."
 maestro-cli notify speak "Backup complete" --json
 ```
 
-The command waits until the line was heard and then prints it. It uses the same queue as [spoken notices](./local-models#spoken-notices): lines never overlap, and each one waits a few seconds after the last. Nothing is spoken while an A Cappella voice session is open; the command then exits non-zero and prints the reason, for example `Not spoken (voice-session-active): ...`. Text is limited to 600 characters, and markup (backticks, asterisks, links) is removed before it is spoken.
+The command waits until the line was heard and then prints `Spoken: <text>`. It uses the same queue as [spoken notices](./local-models#spoken-notices): lines never overlap, and each one starts 3 seconds after the last ended. Nothing is spoken while an A Cappella voice session is live; the command then exits `1` and prints the reason, for example `Not spoken (voice-session-active): ...` (with `--json`, the `code` and `error` fields). Text is limited to 600 characters, and markup (backticks, asterisks, links) is removed before it is spoken. Empty text, or text over 600 characters, exits `2`. The command needs the desktop app.
 
-This is an explicit request, so it speaks whatever **Speak When an Agent Finishes** is set to.
+This is an explicit request, so it speaks whatever **Speak When an Agent Finishes** is set to. It is the command-line form of the **Test** button in **Settings -> Notifications**.
+
+To speak a line every time an agent finishes, set the mode with `maestro-cli settings set spokenNotices <off|unfocused|always>`. To add a short summary of what the agent did, assign a model to the **Spoken notices** task with `maestro-cli models assign spoken-notices local:<model-id>`.
 
 | Flag     | Description               |
 | -------- | ------------------------- |
