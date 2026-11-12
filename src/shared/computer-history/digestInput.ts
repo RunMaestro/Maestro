@@ -11,6 +11,12 @@
  * caller fences it (`fenceUntrusted`) before it reaches a model.
  */
 
+import { splitDigestBody } from './digestBody';
+import {
+	DIGEST_ACCURACY_RULES,
+	PREVIOUS_DIGEST_RULE,
+	digestFormatInstructions,
+} from './digestFormat';
 import { ROLLUP_HOURS, SEGMENT_MINUTES } from './paths';
 import type { StoredEvent } from './types';
 
@@ -20,6 +26,12 @@ export const MAX_DIGEST_EVENT_TEXT_CHARS = 600;
 export const MIN_DIGEST_EVENT_TEXT_CHARS = 80;
 /** The most one 15-minute digest contributes to a roll-up. */
 export const MAX_ROLLUP_DIGEST_CHARS = 2400;
+/**
+ * The most of the previous digest a 15-minute digest is shown. It is context
+ * for thread names and open items, so its opening (title, lede, threads) is
+ * what matters, and it must leave the record most of a small context.
+ */
+export const MAX_PREVIOUS_DIGEST_CHARS = 1000;
 /** Room a line needs besides its text: time, app name, and the verb. */
 const LINE_OVERHEAD_CHARS = 48;
 
@@ -157,6 +169,15 @@ export function renderDigestsForRollup(bodies: readonly string[]): string {
 		.join('\n\n');
 }
 
+/**
+ * The previous digest as a local model is shown it: the writer's summary only
+ * (the header names a file and a model, which says nothing about the work),
+ * cut to {@link MAX_PREVIOUS_DIGEST_CHARS}. Empty when there is no summary.
+ */
+export function renderPreviousDigest(body: string): string {
+	return clip(splitDigestBody(body).summary, MAX_PREVIOUS_DIGEST_CHARS);
+}
+
 export type LocalDigestInstruction =
 	| {
 			kind: '15m';
@@ -165,6 +186,8 @@ export type LocalDigestInstruction =
 			/** Events shown and held, so the model is told when it sees a sample. */
 			shown: number;
 			total: number;
+			/** The request carries the previous digest, fenced before the record. */
+			hasPrevious?: boolean;
 	  }
 	| { kind: '6h'; blockStartIso: string; blockEndIso: string; digests: number };
 
@@ -177,15 +200,16 @@ export type LocalDigestStage =
 	/** The notes of every part, answered with the digest. */
 	| { stage: 'notes'; parts: number };
 
-const DIGEST_ASK =
-	'Say what the person worked on: apps used, documents and pages looked at, messages sent, and decisions or tasks that appear.';
-const ROLLUP_ASK =
-	'Give the main threads of work, notable documents, conversations and decisions, and open tasks. Group related windows; do not repeat every bullet.';
+const NOTES_ASK =
+	'Note each piece of work: the documents, pages, projects, and people involved, what the person typed or sent, and whether each step finished.';
 
 /**
  * The instruction that goes above the fenced input of one local digest call.
- * The rules that never change (bullets only, untrusted input, no secrets) are
- * the system prompt, `computer-history-digest-local`.
+ * The rules that never change (untrusted input, no introduction) are the
+ * system prompt, `computer-history-digest-local`. The shape of the answer and
+ * the accuracy rules are the ones the digest agent gets (`./digestFormat`).
+ * A notes call asks only for notes, so it carries the accuracy rules but not
+ * the shape, and never the previous digest: that is for the call that writes.
  */
 export function buildLocalDigestInstruction(
 	job: LocalDigestInstruction,
@@ -201,16 +225,19 @@ export function buildLocalDigestInstruction(
 				? `a sample of the activity record (${job.total} events were recorded)`
 				: 'the activity record'
 			: `${job.digests} ${SEGMENT_MINUTES}-minute digest(s), in time order`;
-	const ask = job.kind === '15m' ? DIGEST_ASK : ROLLUP_ASK;
 	const name = job.kind === '15m' ? 'digest' : 'roll-up';
-	const bullets = job.kind === '15m' ? 12 : 15;
+	const previous =
+		job.kind === '15m' && job.hasPrevious
+			? ` The first fenced block is the digest of the window before this one. ${PREVIOUS_DIGEST_RULE}`
+			: '';
+	const shape = `${digestFormatInstructions(job.kind)}\n\n${DIGEST_ACCURACY_RULES}`;
 
 	switch (at.stage) {
 		case 'whole':
-			return `Write the ${name} of ${window}. Below is ${record}. ${ask} Use at most ${bullets} bullets.`;
+			return `Write the ${name} of ${window}. Below is ${record}.${previous}\n\n${shape}`;
 		case 'part':
-			return `Take notes for the ${name} of ${window}. Below is part ${at.part} of ${at.parts} of ${record}. ${ask} Use at most 8 bullets, and keep the times.`;
+			return `Take notes for the ${name} of ${window}. Below is part ${at.part} of ${at.parts} of ${record}. ${NOTES_ASK} Use at most 8 bullets, and keep the times.\n\n${DIGEST_ACCURACY_RULES}`;
 		case 'notes':
-			return `Write the ${name} of ${window}. Below are notes taken on ${at.parts} parts of ${record}, in time order. Merge them into one ${name}. ${ask} Use at most ${bullets} bullets.`;
+			return `Write the ${name} of ${window}. Below are notes taken on ${at.parts} parts of ${record}, in time order. Merge them into one ${name}.${previous}\n\n${shape}`;
 	}
 }

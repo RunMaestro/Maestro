@@ -30,6 +30,7 @@ import * as fs from 'fs/promises';
 import {
 	buildLocalDigestInstruction,
 	renderDigestsForRollup,
+	renderPreviousDigest,
 	renderSegmentForDigest,
 	type LocalDigestInstruction,
 } from '../../shared/computer-history/digestInput';
@@ -79,8 +80,12 @@ export const DIGEST_MAX_INPUT_CHARS = DIGEST_MAX_PIECES * DIGEST_PIECE_TOKENS * 
 /** Reply budget for the notes of one piece. The notes of every piece fit one call. */
 const DIGEST_NOTES_MAX_TOKENS = 240;
 
-/** Reply budget for a digest or a roll-up. */
-const DIGEST_MAX_TOKENS = 600;
+/**
+ * Reply budget for a digest or a roll-up: a title, a sentence, and up to the
+ * format's bullet cap under three headings. With the previous digest
+ * (`MAX_PREVIOUS_DIGEST_CHARS`) and one full piece, a call still fits 4096.
+ */
+const DIGEST_MAX_TOKENS = 700;
 
 /** How long one call may take. Long enough for a cold model to load. */
 export const DIGEST_CALL_TIMEOUT_MS = 3 * 60_000;
@@ -93,6 +98,11 @@ export type HistoryDigestRequest =
 			segmentPath: string;
 			windowStartIso: string;
 			windowEndIso: string;
+			/**
+			 * Absolute path of the nearest earlier digest of the last hour, or
+			 * null. Its summary is shown for continuity; a missing file is skipped.
+			 */
+			previousDigestPath?: string | null;
 	  }
 	| {
 			kind: '6h';
@@ -137,6 +147,21 @@ interface DigestReply {
 
 /** A call that did not produce text, as the failure the scheduler records. */
 class DigestCallFailed extends Error {}
+
+/**
+ * The previous digest's summary, or '' when there is none. A previous digest
+ * that went away between the scheduler's check and this read (cleared,
+ * retention) only costs the continuity, never the digest.
+ */
+async function readPreviousDigest(previousDigestPath: string | null | undefined): Promise<string> {
+	if (!previousDigestPath) return '';
+	try {
+		return renderPreviousDigest(await fs.readFile(previousDigestPath, 'utf-8'));
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return '';
+		throw error;
+	}
+}
 
 /**
  * Build the writer the Computer History service is given. Throws only for an
@@ -184,7 +209,11 @@ export function createHistoryDigestWriter(
 		}
 	};
 
-	const summarize = async (job: LocalDigestInstruction, input: string): Promise<DigestReply> => {
+	const summarize = async (
+		job: LocalDigestInstruction,
+		input: string,
+		previous = ''
+	): Promise<DigestReply> => {
 		const pieces = chunkText(input, {
 			countTokens: estimateTokenCount,
 			maxTokens: DIGEST_PIECE_TOKENS,
@@ -192,8 +221,19 @@ export function createHistoryDigestWriter(
 			// Windows close at line ends, so they can run under-full.
 			maxChunks: 2 * DIGEST_MAX_PIECES,
 		});
-		const request = (at: Parameters<typeof buildLocalDigestInstruction>[1], body: string) =>
-			`${buildLocalDigestInstruction(job, at)}\n\n${fenceUntrusted(body)}`;
+		// The previous digest goes only to a call that writes the digest, never
+		// to a notes call, and as its own fenced block (it was written from
+		// captured text, so it is as untrusted as the record).
+		const request = (at: Parameters<typeof buildLocalDigestInstruction>[1], body: string) => {
+			const withPrevious = previous !== '' && at.stage !== 'part';
+			const instruction = buildLocalDigestInstruction(
+				job.kind === '15m' ? { ...job, hasPrevious: withPrevious } : job,
+				at
+			);
+			return withPrevious
+				? `${instruction}\n\n${fenceUntrusted(previous)}\n\n${fenceUntrusted(body)}`
+				: `${instruction}\n\n${fenceUntrusted(body)}`;
+		};
 		if (pieces.length === 1) {
 			return ask(request({ stage: 'whole' }, pieces[0]), DIGEST_MAX_TOKENS);
 		}
@@ -215,7 +255,9 @@ export function createHistoryDigestWriter(
 		try {
 			let job: LocalDigestInstruction;
 			let input: string;
+			let previous = '';
 			if (request.kind === '15m') {
+				previous = await readPreviousDigest(request.previousDigestPath);
 				const events = parseSegmentText(await fs.readFile(request.segmentPath, 'utf-8'));
 				const rendered = renderSegmentForDigest(events, { maxChars: DIGEST_MAX_INPUT_CHARS });
 				input = rendered.text;
@@ -241,7 +283,7 @@ export function createHistoryDigestWriter(
 			if (input.trim() === '') {
 				return { success: false, error: 'The window holds nothing to summarize.' };
 			}
-			const reply = await summarize(job, input);
+			const reply = await summarize(job, input, previous);
 			clearLocalTaskNotice(TASK_ID);
 			const model =
 				localModelAssignmentSourceLabel(reply.source, getConfiguredLocalModelEndpoints()) ??

@@ -308,3 +308,71 @@ describe('createHistoryDigestWriter: a 6-hour roll-up', () => {
 		expect(calls[0].prompt).not.toContain(a);
 	});
 });
+
+describe('createHistoryDigestWriter: the previous digest', () => {
+	function writePrevious(summary: string): string {
+		const file = path.join(dir, '1400Z.md');
+		fs.writeFileSync(
+			file,
+			[
+				'# 15-minute digest a - b',
+				'',
+				'Segment: `segments/x.jsonl` (5 events). Written by local model `m`.',
+				'',
+				summary,
+				'',
+			].join('\n')
+		);
+		return file;
+	}
+
+	it('is fenced before the record, as its summary only', async () => {
+		const segmentPath = writeSegment([{ text: 'invoice list' }]);
+		const previousDigestPath = writePrevious(
+			'**Invoice cleanup**\n\n### Threads\n- **Invoices:** half done.'
+		);
+		const { write, calls } = writer(() => ok('- x'));
+		await write({ kind: '15m', segmentPath, ...WINDOW, previousDigestPath });
+		const [call] = calls;
+		expect(call.prompt).toContain(
+			'The first fenced block is the digest of the window before this one.'
+		);
+		const first = call.prompt.indexOf(UNTRUSTED_FENCE_BEGIN);
+		const firstEnd = call.prompt.indexOf(UNTRUSTED_FENCE_END);
+		const fencedPrevious = call.prompt.slice(first, firstEnd);
+		expect(fencedPrevious).toContain('**Invoice cleanup**');
+		expect(fencedPrevious).not.toContain('Written by');
+		// The record is the second fenced block.
+		expect(call.prompt.indexOf(UNTRUSTED_FENCE_BEGIN, firstEnd)).toBeGreaterThan(firstEnd);
+		expect(call.prompt.slice(firstEnd)).toContain('Safari: on screen: invoice list');
+	});
+
+	it('goes to the call that writes the digest, never to a notes call', async () => {
+		const segmentPath = writeSegment(
+			Array.from({ length: 60 }, (_, i) => ({ text: `screen ${i} ${'word '.repeat(150)}` }))
+		);
+		const previousDigestPath = writePrevious('**Earlier thread**');
+		const { write, calls } = writer((input) =>
+			input.prompt.includes('Take notes') ? ok('- note') : ok('- the digest')
+		);
+		await write({ kind: '15m', segmentPath, ...WINDOW, previousDigestPath });
+		const parts = calls.filter((c) => c.prompt.includes('Take notes'));
+		expect(parts.length).toBeGreaterThan(1);
+		for (const part of parts) expect(part.prompt).not.toContain('Earlier thread');
+		expect(calls.at(-1)!.prompt).toContain('Earlier thread');
+	});
+
+	it('a previous digest that is gone costs only the continuity', async () => {
+		const segmentPath = writeSegment([{ text: 'invoice list' }]);
+		const { write, calls } = writer(() => ok('- x'));
+		const result = await write({
+			kind: '15m',
+			segmentPath,
+			...WINDOW,
+			previousDigestPath: path.join(dir, 'gone.md'),
+		});
+		expect(result).toMatchObject({ success: true });
+		expect(calls[0].prompt).not.toContain('window before this one');
+		expect(sentry.captureException).not.toHaveBeenCalled();
+	});
+});
