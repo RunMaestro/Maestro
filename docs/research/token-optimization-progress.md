@@ -1,6 +1,6 @@
 # Token optimization implementation ledger
 
-Status: Partial implementation. Phases 01 and 02, tasks 03.1 through 03.3, and prerequisites 03.4a, 03.4b1, 03.4b2 and 03.4b3a are complete for their scoped artifacts and static checks. Bounded original line recovery and process-lifetime read observations exist; capability-aware hint construction, cache replay protection and host-issued launch/request capability transport are prepared. Actual hint emission remains pending proven launch binding in 03.4b3b/03.4b3c. Phases 04 through 08, including the effectiveness dashboard, remain unimplemented. Regression tests are authored but unrun; runtime validation remains pending.
+Status: Partial implementation. Phases 01 and 02, tasks 03.1 through 03.3, and prerequisites 03.4a, 03.4b1, 03.4b2 and 03.4b3a are complete for their scoped artifacts and static checks. Bounded original line recovery and process-lifetime read observations exist; cache replay protection and host-issued launch/request capability transport exist. Tasks 03.4b3b/03.4b3c (shell recovery hints) were superseded on 2026-11-11 by model-side retrieval (`retrieve_compressed_original`, see the last section), which uses the 03.4b2 launch binding; the shell hint is never emitted. Phases 04 through 08, including the effectiveness dashboard, remain unimplemented. Regression tests are authored but unrun; runtime validation remains pending.
 
 Target: `/Users/pedram/Projects/Maestro-WorkTrees/acappella`, existing `acappella` branch.
 Research: `docs/research/token-optimization-analysis.md`.
