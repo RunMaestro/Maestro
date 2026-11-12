@@ -13,6 +13,10 @@
  * unknown (NULL) for one it only counted, one it forwarded unread, and one whose
  * compressor failed. The body that reaches the provider is never changed by any of
  * it.
+ *
+ * It also pins what the row may claim about the provider's own counts: a class the
+ * answer never named is stored as 0 and recorded as unreported, so no default
+ * zero is read back as a measurement, and nothing of the answer itself is stored.
  */
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
@@ -128,16 +132,25 @@ interface Upstream {
 	seen: Array<{ url: string; body: Buffer }>;
 }
 
+/** What the provider answers: its content type and body, as the wire carries them. */
+interface Answer {
+	type: string;
+	body: string;
+}
+
+/** An answer that names no usage. */
+const NO_USAGE: Answer = { type: 'application/json', body: '{}' };
+
 /** A real HTTP server standing in for the provider. Records what reached it. */
-async function startUpstream(): Promise<Upstream> {
+async function startUpstream(answer: Answer = NO_USAGE): Promise<Upstream> {
 	const seen: Upstream['seen'] = [];
 	const server = http.createServer((req, res) => {
 		const chunks: Buffer[] = [];
 		req.on('data', (chunk: Buffer) => chunks.push(chunk));
 		req.on('end', () => {
 			seen.push({ url: req.url ?? '', body: Buffer.concat(chunks) });
-			res.writeHead(200, { 'Content-Type': 'application/json' });
-			res.end('{}');
+			res.writeHead(200, { 'Content-Type': answer.type });
+			res.end(answer.body);
 		});
 	});
 	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -173,7 +186,7 @@ async function startProxy(
 	compress: NonNullable<TokenProxyServerOptions['compress']> = realCompressor()
 ): Promise<number> {
 	const proxy = createTokenProxyServer({
-		upstreams: { anthropic: upstream.origin },
+		upstreams: { anthropic: upstream.origin, openai: upstream.origin },
 		onRequest: (entry) => recordTokenProxyRequest(entry),
 		modeFor: () => mode,
 		compress,
@@ -183,19 +196,27 @@ async function startProxy(
 	return port;
 }
 
+const ANTHROPIC_PATH = '/agent/agent-1/anthropic/v1/messages';
+
 /**
- * POST one Anthropic request as agent-1 and wait for the provider's 200 to come
- * back through the proxy. The headers are a raw list, so `Host` is named here:
- * Node refuses a request without one before the proxy ever sees it.
+ * POST one request as agent-1 (an Anthropic message unless `path` says otherwise)
+ * and wait for the provider's 200 to come back through the proxy, resolving with
+ * the answer's bytes. The headers are a raw list, so `Host` is named here: Node
+ * refuses a request without one before the proxy ever sees it.
  */
-function post(port: number, body: Buffer, headers: string[] = []): Promise<void> {
-	return new Promise<void>((resolve, reject) => {
+function post(
+	port: number,
+	body: Buffer,
+	headers: string[] = [],
+	path: string = ANTHROPIC_PATH
+): Promise<Buffer> {
+	return new Promise<Buffer>((resolve, reject) => {
 		const req = http.request(
 			{
 				host: '127.0.0.1',
 				port,
 				method: 'POST',
-				path: '/agent/agent-1/anthropic/v1/messages',
+				path,
 				headers: [
 					'Host',
 					`127.0.0.1:${port}`,
@@ -208,11 +229,12 @@ function post(port: number, body: Buffer, headers: string[] = []): Promise<void>
 				agent: false,
 			},
 			(res) => {
-				res.on('data', () => {});
+				const answer: Buffer[] = [];
+				res.on('data', (chunk: Buffer) => answer.push(chunk));
 				res.on('error', reject);
 				res.on('end', () =>
 					res.statusCode === 200
-						? resolve()
+						? resolve(Buffer.concat(answer))
 						: reject(new Error(`the proxy answered ${res.statusCode}`))
 				);
 			}
@@ -421,6 +443,140 @@ describe.skipIf(!canLoadNodeSqlite())(
 			await vi.waitFor(() => expect(attempted).toHaveBeenCalledTimes(1));
 			expect(upstream.seen).toHaveLength(1);
 			expect(db.prepare('SELECT COUNT(*) AS n FROM proxy_requests').get()).toEqual({ n: 0 });
+		});
+
+		describe("the provider's own counts, and how its answer gave them", () => {
+			const ANSWER_TEXT = 'PRIVATE-ANSWER-TEXT';
+			const OPENAI_PATH = '/agent/agent-1/openai/v1/chat/completions';
+			const OPENAI_REQUEST = Buffer.from(
+				JSON.stringify({ model: 'gpt-5', messages: [{ role: 'user', content: 'hello' }] })
+			);
+
+			/** The eight provider columns of a row: four counts, then how each was given. */
+			const providerColumns = (
+				tokens: [number | null, number | null, number | null, number | null],
+				given: [string | null, string | null, string | null, string | null]
+			) => ({
+				provider_input_tokens: tokens[0],
+				provider_cache_read_tokens: tokens[1],
+				provider_cache_write_tokens: tokens[2],
+				provider_output_tokens: tokens[3],
+				provider_input_reportedness: given[0],
+				provider_cache_read_reportedness: given[1],
+				provider_cache_write_reportedness: given[2],
+				provider_output_reportedness: given[3],
+			});
+
+			/** An Anthropic answer that names its output and no other class. */
+			const OUTPUT_ONLY: Answer = {
+				type: 'application/json',
+				body: JSON.stringify({
+					id: 'msg_1',
+					type: 'message',
+					content: [{ type: 'text', text: ANSWER_TEXT }],
+					usage: { output_tokens: 7 },
+				}),
+			};
+
+			/** An Anthropic event stream that names all four classes, a cache write of zero included. */
+			const FULL_STREAM: Answer = {
+				type: 'text/event-stream',
+				body:
+					'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":7,"cache_creation_input_tokens":0,"cache_read_input_tokens":900,"output_tokens":1}}}\n\n' +
+					`event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"text":"${ANSWER_TEXT}"}}\n\n` +
+					'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":55}}\n\n',
+			};
+
+			/** An OpenAI chat completion, with the cached part of its prompt named or left out. */
+			const chatCompletion = (usage: Record<string, unknown>): Answer => ({
+				type: 'application/json',
+				body: JSON.stringify({
+					id: 'chatcmpl_1',
+					object: 'chat.completion',
+					choices: [{ message: { content: ANSWER_TEXT } }],
+					usage,
+				}),
+			});
+
+			it.each(['passthrough', 'compress', 'compress-early'] as const)(
+				'records an answer that named only its output with three unreported classes: %s',
+				async (mode) => {
+					const upstream = await startUpstream(OUTPUT_ONLY);
+					const port = await startProxy(upstream, mode);
+
+					const received = await post(port, Buffer.from(BODY));
+
+					const [row] = await storedRows(1);
+					// The default 0 of three classes is stored, and the row says it is not a measurement.
+					expect(row).toMatchObject(
+						providerColumns([0, 0, 0, 7], ['unreported', 'unreported', 'unreported', 'reported'])
+					);
+					// The client got the provider's answer untouched, and the row holds none of its text.
+					expect(received.toString('utf-8')).toBe(OUTPUT_ONLY.body);
+					expect(JSON.stringify(row)).not.toContain(ANSWER_TEXT);
+				}
+			);
+
+			it('records an event stream that named all four classes, a cache write of zero included, as reported', async () => {
+				const upstream = await startUpstream(FULL_STREAM);
+				const port = await startProxy(upstream, 'compress');
+
+				const received = await post(port, Buffer.from(BODY));
+
+				const [row] = await storedRows(1);
+				expect(row).toMatchObject(
+					providerColumns([7, 900, 0, 55], ['reported', 'reported', 'reported', 'reported'])
+				);
+				expect(received.toString('utf-8')).toBe(FULL_STREAM.body);
+				expect(JSON.stringify(row)).not.toContain(ANSWER_TEXT);
+			});
+
+			it('records an OpenAI answer with cache detail: input derived, cache write not applicable', async () => {
+				const upstream = await startUpstream(
+					chatCompletion({
+						prompt_tokens: 20,
+						prompt_tokens_details: { cached_tokens: 5 },
+						completion_tokens: 3,
+					})
+				);
+				const port = await startProxy(upstream, 'passthrough');
+
+				await post(port, OPENAI_REQUEST, [], OPENAI_PATH);
+
+				const [row] = await storedRows(1);
+				expect(row).toMatchObject({
+					route: 'openai',
+					kind: 'openai-chat-completions',
+					...providerColumns([15, 5, 0, 3], ['derived', 'reported', 'not-applicable', 'reported']),
+				});
+			});
+
+			it('records an OpenAI prompt total with no cache detail as unreported, never as uncached input', async () => {
+				const upstream = await startUpstream(
+					chatCompletion({ prompt_tokens: 20, completion_tokens: 3 })
+				);
+				const port = await startProxy(upstream, 'passthrough');
+
+				await post(port, OPENAI_REQUEST, [], OPENAI_PATH);
+
+				const [row] = await storedRows(1);
+				// The prompt total of 20 is not stored: it does not say how much of it was uncached.
+				expect(row).toMatchObject(
+					providerColumns([0, 0, 0, 3], ['unreported', 'unreported', 'not-applicable', 'reported'])
+				);
+			});
+
+			it('leaves every provider column unknown when the answer named no usage', async () => {
+				const upstream = await startUpstream(NO_USAGE);
+				const port = await startProxy(upstream, 'compress');
+
+				await post(port, Buffer.from(BODY));
+
+				const [row] = await storedRows(1);
+				expect(row).toMatchObject(
+					providerColumns([null, null, null, null], [null, null, null, null])
+				);
+			});
 		});
 	}
 );

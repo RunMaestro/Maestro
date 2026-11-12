@@ -3188,9 +3188,13 @@ Stats migration v16 adds one table. `proxyRequestFromLog()` in
    `message_start` and cumulative `message_delta`, an OpenAI chat completion's final chunk, and a
    Responses `response.completed`, in an event stream or a whole JSON body, decoding gzip, deflate,
    br and zstd. OpenAI's cached tokens are moved out of its prompt total, so `input` is uncached
-   input on every route, and OpenAI reports no cache writes (0). An answer that names no usage, an
-   error status, a kept body past the bound, an encoding with no decoder, and an answer from a
-   background target all leave the four columns NULL, never zero. These are exact where the proxy's
+   input on every route. It is derived (the total minus the cached tokens) only when the answer
+   names both: a prompt total with no cache detail does not say how much was uncached, so it is
+   stored as neither input nor a cache read. OpenAI reports no cache writes (0, not applicable). A
+   class the answer never named is a default 0 in the four columns and `unreported` in
+   `provider_*_reportedness`, where a zero the answer named is `reported`. An answer that names no
+   class, an error status, a kept body past the bound, an encoding with no decoder, and an answer
+   from a background target all leave the eight columns NULL, never zero. These are exact where the proxy's
    own figures are characters / 4, and they cover passthrough requests the proxy never reads, so a
    passthrough week is the baseline a compress week is compared against. A cache write that grows
    on a request where nothing new arrived is the mark of a broken cached prefix.

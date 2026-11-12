@@ -218,6 +218,65 @@ describe('token proxy server', () => {
 				cacheReadTokens: 900,
 				cacheWriteTokens: 40,
 				outputTokens: 55,
+				reportedness: {
+					input: 'reported',
+					cacheRead: 'reported',
+					cacheWrite: 'reported',
+					output: 'reported',
+				},
+			});
+		});
+
+		it('says which classes the answer named, and leaves the rest unreported, byte for byte unchanged', async () => {
+			const anthropicAnswer = '{"id":"msg_1","type":"message","usage":{"output_tokens":7}}';
+			// A prompt total with no cache detail: it does not say how much was uncached.
+			const openAiAnswer =
+				'{"id":"chatcmpl_1","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":3}}';
+			const upstream = await startUpstream((req, res) => {
+				res.writeHead(200, { 'content-type': 'application/json' });
+				res.end(req.url?.includes('/chat/completions') ? openAiAnswer : anthropicAnswer);
+			});
+			const { port, logs } = await startProxy({
+				anthropic: upstream.origin,
+				openai: upstream.origin,
+			});
+
+			const anthropic = await send(port, {
+				path: '/anthropic/v1/messages',
+				body: Buffer.from('{}'),
+			});
+			const openAi = await send(port, {
+				path: '/openai/v1/chat/completions',
+				body: Buffer.from('{}'),
+			});
+
+			expect(anthropic.body.toString('utf-8')).toBe(anthropicAnswer);
+			expect(openAi.body.toString('utf-8')).toBe(openAiAnswer);
+			await vi.waitFor(() => expect(logs).toHaveLength(2));
+			const usageOf = (route: string) => logs.find((log) => log.route === route)?.providerUsage;
+			expect(usageOf('anthropic')).toEqual({
+				inputTokens: 0,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				outputTokens: 7,
+				reportedness: {
+					input: 'unreported',
+					cacheRead: 'unreported',
+					cacheWrite: 'unreported',
+					output: 'reported',
+				},
+			});
+			expect(usageOf('openai')).toEqual({
+				inputTokens: 0,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				outputTokens: 3,
+				reportedness: {
+					input: 'unreported',
+					cacheRead: 'unreported',
+					cacheWrite: 'not-applicable',
+					output: 'reported',
+				},
 			});
 		});
 

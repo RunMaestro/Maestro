@@ -18,6 +18,16 @@
  * line) past {@link USAGE_READ_MAX_BYTES}, an encoding with no decoder, or a
  * body that names no usage gives `null`, which the stats row stores as
  * unknown, never as zero.
+ *
+ * An answer rarely names all four classes, and a class it left out is not a
+ * zero. The four numbers stay for compatibility, with 0 for a class nobody
+ * named, and `reportedness` records how each one got its number: `reported` (the
+ * answer named it, a named zero included), `derived` (OpenAI's uncached input,
+ * its prompt total minus its cached tokens, which needs both), `not-applicable`
+ * (OpenAI has no cache-write class, so 0 is true by definition) or `unreported`
+ * (a default 0 that says nothing). A prompt total with no cache detail is
+ * therefore not uncached input. The usage is `null` when no class was reported
+ * or derived.
  */
 
 import * as zlib from 'zlib';
@@ -25,6 +35,10 @@ import type {
 	TokenProxyProviderUsage,
 	TokenProxyRequestKind,
 } from '../../../shared/local-models/token-proxy';
+import type {
+	ProxyProviderClassStatus,
+	ProxyProviderUsageClass,
+} from '../../../shared/stats-types';
 
 /**
  * A kept body (or one stream line) past this is not read for its usage. An
@@ -91,49 +105,110 @@ function usageObjectOf(value: unknown): Record<string, unknown> | undefined {
 }
 
 /**
- * Fold one usage object into the running total. Later events carry cumulative
- * counts (Anthropic's `message_delta` repeats output, and lately input, as
- * running totals), so a field that is present replaces the earlier value.
+ * What an answer named, field by field. A field it never carried stays
+ * undefined, and that is not a zero. Anthropic names its four classes. OpenAI
+ * names a prompt total with its cached tokens inside it (`prompt`), the cached
+ * part of it (`cacheRead`) and the output, and never the uncached input, which
+ * {@link readingsOf} derives from the first two.
+ */
+interface NamedUsage {
+	input?: number;
+	prompt?: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+	output?: number;
+}
+
+/**
+ * Fold one usage object into what the answer has named so far. Later events
+ * carry cumulative counts (Anthropic's `message_delta` repeats output, and lately
+ * input, as running totals), so a field that is present replaces the earlier
+ * value and a field that is absent leaves it.
  */
 function foldUsage(
 	kind: TokenProxyRequestKind,
 	usage: Record<string, unknown>,
-	into: Partial<TokenProxyProviderUsage>
+	into: NamedUsage
 ): void {
 	if (kind === 'anthropic-messages') {
-		const input = count(usage.input_tokens);
-		const read = count(usage.cache_read_input_tokens);
-		const write = count(usage.cache_creation_input_tokens);
-		const output = count(usage.output_tokens);
-		if (input !== undefined) into.inputTokens = input;
-		if (read !== undefined) into.cacheReadTokens = read;
-		if (write !== undefined) into.cacheWriteTokens = write;
-		if (output !== undefined) into.outputTokens = output;
+		into.input = count(usage.input_tokens) ?? into.input;
+		into.cacheRead = count(usage.cache_read_input_tokens) ?? into.cacheRead;
+		into.cacheWrite = count(usage.cache_creation_input_tokens) ?? into.cacheWrite;
+		into.output = count(usage.output_tokens) ?? into.output;
 		return;
 	}
-	// OpenAI counts cached tokens INSIDE the prompt total and writes no separate
-	// cache-write class; the split here matches Anthropic's (input is uncached).
 	const chat = kind === 'openai-chat-completions';
-	const prompt = count(chat ? usage.prompt_tokens : usage.input_tokens);
 	const details = record(chat ? usage.prompt_tokens_details : usage.input_tokens_details);
-	const cached = count(details?.cached_tokens) ?? 0;
-	const output = count(chat ? usage.completion_tokens : usage.output_tokens);
-	if (prompt !== undefined) {
-		into.inputTokens = Math.max(0, prompt - cached);
-		into.cacheReadTokens = cached;
-		into.cacheWriteTokens = 0;
-	}
-	if (output !== undefined) into.outputTokens = output;
+	into.prompt = count(chat ? usage.prompt_tokens : usage.input_tokens) ?? into.prompt;
+	into.cacheRead = count(details?.cached_tokens) ?? into.cacheRead;
+	into.output = count(chat ? usage.completion_tokens : usage.output_tokens) ?? into.output;
 }
 
-function complete(usage: Partial<TokenProxyProviderUsage>): TokenProxyProviderUsage | null {
-	const { inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens } = usage;
-	if (inputTokens === undefined && outputTokens === undefined) return null;
+/** One class as a row stores it: the number, and how the answer gave it. */
+interface ClassReading {
+	tokens: number;
+	status: ProxyProviderClassStatus;
+}
+
+/** A class the answer never named keeps the compatibility value 0, and that 0 says nothing. */
+const UNREPORTED: ClassReading = { tokens: 0, status: 'unreported' };
+
+/** A class the answer named, a named zero included. */
+function reported(tokens: number | undefined): ClassReading {
+	return tokens === undefined ? UNREPORTED : { tokens, status: 'reported' };
+}
+
+/** Every class of the answer, in the normalized split: input is uncached input. */
+function readingsOf(
+	kind: TokenProxyRequestKind,
+	named: NamedUsage
+): Record<ProxyProviderUsageClass, ClassReading> {
+	if (kind === 'anthropic-messages') {
+		return {
+			input: reported(named.input),
+			cacheRead: reported(named.cacheRead),
+			cacheWrite: reported(named.cacheWrite),
+			output: reported(named.output),
+		};
+	}
+	// OpenAI counts cached tokens INSIDE the prompt total, so uncached input is the
+	// total minus the cached part, and it needs both. A total with no cache detail
+	// does not say how much of it was uncached, so it is not stored as input. OpenAI
+	// writes no cache-write class: 0 is true by definition.
+	const { prompt, cacheRead } = named;
 	return {
-		inputTokens: inputTokens ?? 0,
-		cacheReadTokens: cacheReadTokens ?? 0,
-		cacheWriteTokens: cacheWriteTokens ?? 0,
-		outputTokens: outputTokens ?? 0,
+		input:
+			prompt !== undefined && cacheRead !== undefined
+				? { tokens: Math.max(0, prompt - cacheRead), status: 'derived' }
+				: UNREPORTED,
+		cacheRead: reported(cacheRead),
+		cacheWrite: { tokens: 0, status: 'not-applicable' },
+		output: reported(named.output),
+	};
+}
+
+/**
+ * The usage an answer named, or null when it named no class. A class counts when
+ * the answer reported it or it is derived from what the answer reported. One that
+ * is not applicable is zero by definition and shows nothing was named.
+ */
+function complete(kind: TokenProxyRequestKind, named: NamedUsage): TokenProxyProviderUsage | null {
+	const readings = readingsOf(kind, named);
+	const gave = Object.values(readings).some(
+		({ status }) => status === 'reported' || status === 'derived'
+	);
+	if (!gave) return null;
+	return {
+		inputTokens: readings.input.tokens,
+		cacheReadTokens: readings.cacheRead.tokens,
+		cacheWriteTokens: readings.cacheWrite.tokens,
+		outputTokens: readings.output.tokens,
+		reportedness: {
+			input: readings.input.status,
+			cacheRead: readings.cacheRead.status,
+			cacheWrite: readings.cacheWrite.status,
+			output: readings.output.status,
+		},
 	};
 }
 
@@ -143,27 +218,23 @@ export function parseProviderUsage(
 	text: string
 ): TokenProxyProviderUsage | null {
 	if (kind === 'other') return null;
-	const total: Partial<TokenProxyProviderUsage> = {};
+	const named: NamedUsage = {};
 	const trimmed = text.trimStart();
 	if (trimmed.startsWith('{')) {
 		try {
 			const usage = usageObjectOf(JSON.parse(trimmed));
-			if (usage) foldUsage(kind, usage, total);
+			if (usage) foldUsage(kind, usage, named);
 		} catch (error) {
 			if (!(error instanceof SyntaxError)) throw error;
 		}
-		return complete(total);
+		return complete(kind, named);
 	}
-	for (const line of text.split('\n')) foldEventLine(kind, line, total);
-	return complete(total);
+	for (const line of text.split('\n')) foldEventLine(kind, line, named);
+	return complete(kind, named);
 }
 
-/** Fold one event-stream line into the running total, when it is a `data:` line with a usage. */
-function foldEventLine(
-	kind: TokenProxyRequestKind,
-	line: string,
-	into: Partial<TokenProxyProviderUsage>
-): void {
+/** Fold one event-stream line into what the answer has named, when it is a `data:` line with a usage. */
+function foldEventLine(kind: TokenProxyRequestKind, line: string, into: NamedUsage): void {
 	if (!line.startsWith('data:') || !line.includes('"usage"')) return;
 	try {
 		const usage = usageObjectOf(JSON.parse(line.slice(5).trim()));
@@ -201,8 +272,8 @@ export function createProviderUsageReader(
 	let bytes = 0;
 	let overflowed = kind === 'other';
 
-	// The event-stream path: the running usage, and the line not yet ended.
-	const total: Partial<TokenProxyProviderUsage> = {};
+	// The event-stream path: what the answer has named so far, and the line not yet ended.
+	const named: NamedUsage = {};
 	let pending: Buffer[] = [];
 	let pendingBytes = 0;
 	// A line past the bound is skipped up to its newline, not read.
@@ -223,7 +294,7 @@ export function createProviderUsageReader(
 			skippingLine = false;
 		} else {
 			const line = Buffer.concat([...pending, tail], pendingBytes + tail.length);
-			foldEventLine(kind, line.toString('utf-8').replace(/\r$/, ''), total);
+			foldEventLine(kind, line.toString('utf-8').replace(/\r$/, ''), named);
 		}
 		pending = [];
 		pendingBytes = 0;
@@ -280,7 +351,7 @@ export function createProviderUsageReader(
 			if (mode === 'lines') {
 				// A stream cut short may end mid line; a whole `data:` line still counts.
 				if (pendingBytes > 0) endLine(Buffer.alloc(0));
-				return complete(total);
+				return complete(kind, named);
 			}
 			if (bytes === 0) return null;
 			let body: Buffer | null;

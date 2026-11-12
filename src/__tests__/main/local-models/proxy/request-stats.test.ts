@@ -42,9 +42,13 @@ import type { CompressRequestStats } from '../../../../main/local-models/proxy/c
 import type { TokenProxyRequestLog } from '../../../../main/local-models/proxy/server';
 import {
 	proxyBlockCountsProblem,
+	proxyProviderClassHasValue,
+	proxyProviderClassReading,
 	TOKEN_PROXY_MODES,
 	TOKEN_PROXY_SKIP_REASONS,
+	type TokenProxyProviderUsage,
 } from '../../../../shared/local-models/token-proxy';
+import { PROXY_PROVIDER_USAGE_CLASSES } from '../../../../shared/stats-types';
 import { stringPaths } from '../../../helpers/proxyTelemetryFixtures';
 
 function logEntry(overrides: Partial<TokenProxyRequestLog> = {}): TokenProxyRequestLog {
@@ -291,6 +295,8 @@ describe('proxyRequestFromLog', () => {
 			providerCacheWriteTokens: 40,
 			providerOutputTokens: 55,
 		});
+		// This usage carries no record of how the classes were given: it stays legacy.
+		expect(row).not.toHaveProperty('providerUsageReportedness');
 		expect(proxyRequestFromLog(logEntry())).not.toHaveProperty('providerInputTokens');
 	});
 
@@ -604,7 +610,200 @@ describe('proxyRequestFromLog: the mode in force and the block counts', () => {
 	});
 });
 
+describe('proxyRequestFromLog: how the provider’s counts were given', () => {
+	/** An answer that named only its output: three classes carry a default 0. */
+	const OUTPUT_ONLY: TokenProxyProviderUsage = {
+		inputTokens: 0,
+		cacheReadTokens: 0,
+		cacheWriteTokens: 0,
+		outputTokens: 7,
+		reportedness: {
+			input: 'unreported',
+			cacheRead: 'unreported',
+			cacheWrite: 'unreported',
+			output: 'reported',
+		},
+	};
+	/** An OpenAI answer with cache detail: input derived, no cache-write class. */
+	const OPENAI_SPLIT: TokenProxyProviderUsage = {
+		inputTokens: 15,
+		cacheReadTokens: 5,
+		cacheWriteTokens: 0,
+		outputTokens: 3,
+		reportedness: {
+			input: 'derived',
+			cacheRead: 'reported',
+			cacheWrite: 'not-applicable',
+			output: 'reported',
+		},
+	};
+	const readings = (row: NonNullable<ReturnType<typeof proxyRequestFromLog>>) =>
+		PROXY_PROVIDER_USAGE_CLASSES.map((usageClass) => proxyProviderClassReading(row, usageClass));
+
+	it('stores how each class got its number, together with the four counts', () => {
+		const row = proxyRequestFromLog(logEntry({ providerUsage: OPENAI_SPLIT }))!;
+
+		expect(row).toMatchObject({
+			providerInputTokens: 15,
+			providerCacheReadTokens: 5,
+			providerCacheWriteTokens: 0,
+			providerOutputTokens: 3,
+			providerUsageReportedness: OPENAI_SPLIT.reportedness,
+		});
+		expect(readings(row)).toEqual(['derived', 'reported', 'not-applicable', 'reported']);
+	});
+
+	it('does not present a default zero as a measured class', () => {
+		const row = proxyRequestFromLog(logEntry({ providerUsage: OUTPUT_ONLY }))!;
+
+		// The compatibility numbers are all there, and three of them are not measurements.
+		expect(row).toMatchObject({
+			providerInputTokens: 0,
+			providerCacheReadTokens: 0,
+			providerCacheWriteTokens: 0,
+			providerOutputTokens: 7,
+		});
+		expect(readings(row)).toEqual(['unreported', 'unreported', 'unreported', 'reported']);
+		expect(readings(row).map(proxyProviderClassHasValue)).toEqual([false, false, false, true]);
+	});
+
+	it('keeps a zero the answer reported apart from a zero it never named', () => {
+		const named = proxyRequestFromLog(
+			logEntry({
+				providerUsage: {
+					...OUTPUT_ONLY,
+					outputTokens: 0,
+					reportedness: { ...OUTPUT_ONLY.reportedness!, input: 'reported', output: 'reported' },
+				},
+			})
+		)!;
+
+		expect(readings(named)).toEqual(['reported', 'unreported', 'unreported', 'reported']);
+		expect(readings(named).map(proxyProviderClassHasValue)).toEqual([true, false, false, true]);
+	});
+
+	it('keeps usage that carries no record of reportedness legacy, whatever its numbers', () => {
+		const row = proxyRequestFromLog(
+			logEntry({
+				providerUsage: {
+					inputTokens: 4_000,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 0,
+					outputTokens: 600,
+				},
+			})
+		)!;
+
+		expect(row).toMatchObject({ providerInputTokens: 4_000, providerOutputTokens: 600 });
+		expect(row).not.toHaveProperty('providerUsageReportedness');
+		expect(readings(row)).toEqual(['legacy', 'legacy', 'legacy', 'legacy']);
+	});
+
+	it('states no counts and no reportedness when the answer named no usage', () => {
+		const row = proxyRequestFromLog(logEntry())!;
+
+		for (const field of [
+			'providerInputTokens',
+			'providerCacheReadTokens',
+			'providerCacheWriteTokens',
+			'providerOutputTokens',
+			'providerUsageReportedness',
+		]) {
+			expect(row).not.toHaveProperty(field);
+		}
+		expect(readings(row)).toEqual(['absent', 'absent', 'absent', 'absent']);
+	});
+
+	it('states none for a request a background target answered', () => {
+		const row = proxyRequestFromLog(
+			logEntry({ background: { routedTo: 'maestro-server:qwen3.5-4b', addedLatencyMs: 40 } })
+		)!;
+
+		expect(row).not.toHaveProperty('providerUsageReportedness');
+		expect(readings(row)).toEqual(['absent', 'absent', 'absent', 'absent']);
+	});
+
+	it.each([
+		['passthrough', logEntry({ providerUsage: OUTPUT_ONLY })],
+		['compress', { ...entryWith('compress'), providerUsage: OUTPUT_ONLY }],
+		['compress-early', { ...entryWith('compress-early'), providerUsage: OUTPUT_ONLY }],
+		[
+			'a compress request forwarded as it arrived',
+			logEntry({
+				mode: 'compress',
+				compression: { skipped: 'not-text', changed: false, addedLatencyMs: 1 },
+				providerUsage: OUTPUT_ONLY,
+			}),
+		],
+	])('records it for %s: the answer is the provider’s, whatever the proxy read', (_name, entry) => {
+		expect(proxyRequestFromLog(entry)).toMatchObject({
+			providerOutputTokens: 7,
+			providerUsageReportedness: OUTPUT_ONLY.reportedness,
+		});
+	});
+
+	it('does not share the reader’s object with the row', () => {
+		const usage: TokenProxyProviderUsage = {
+			...OUTPUT_ONLY,
+			reportedness: { ...OUTPUT_ONLY.reportedness! },
+		};
+		const row = proxyRequestFromLog(logEntry({ providerUsage: usage }))!;
+
+		usage.reportedness!.input = 'reported';
+
+		expect(row.providerUsageReportedness?.input).toBe('unreported');
+	});
+
+	it('holds no text of the answer: the strings of the counts are the closed set', () => {
+		const row = proxyRequestFromLog(logEntry({ providerUsage: OPENAI_SPLIT }))!;
+		const paths = stringPaths(row).filter((path) => path.startsWith('providerUsageReportedness'));
+
+		expect(paths.sort()).toEqual(
+			PROXY_PROVIDER_USAGE_CLASSES.map(
+				(usageClass) => `providerUsageReportedness.${usageClass}`
+			).sort()
+		);
+		expect(Object.values(row.providerUsageReportedness!).sort()).toEqual([
+			'derived',
+			'not-applicable',
+			'reported',
+			'reported',
+		]);
+	});
+});
+
 describe('recordTokenProxyRequest', () => {
+	it('writes how the provider’s counts were given, with the counts', () => {
+		recordTokenProxyRequest(
+			logEntry({
+				providerUsage: {
+					inputTokens: 0,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 0,
+					outputTokens: 7,
+					reportedness: {
+						input: 'unreported',
+						cacheRead: 'unreported',
+						cacheWrite: 'unreported',
+						output: 'reported',
+					},
+				},
+			})
+		);
+
+		expect(statsDb.recordProxyRequest).toHaveBeenCalledWith(
+			expect.objectContaining({
+				providerOutputTokens: 7,
+				providerUsageReportedness: {
+					input: 'unreported',
+					cacheRead: 'unreported',
+					cacheWrite: 'unreported',
+					output: 'reported',
+				},
+			})
+		);
+	});
+
 	it('writes one row for a request that holds a message list', () => {
 		recordTokenProxyRequest(compressedEntry());
 

@@ -154,6 +154,12 @@ export function proxyRequestFromLog(entry: TokenProxyRequestLog): Omit<ProxyRequ
 					providerCacheReadTokens: entry.providerUsage.cacheReadTokens,
 					providerCacheWriteTokens: entry.providerUsage.cacheWriteTokens,
 					providerOutputTokens: entry.providerUsage.outputTokens,
+					// How each number above got its number. Without it a class the answer never
+					// named reads as a measured 0, so it is stored with the four tokens or not
+					// at all, and usage that carries none stays legacy.
+					...(entry.providerUsage.reportedness
+						? { providerUsageReportedness: { ...entry.providerUsage.reportedness } }
+						: {}),
 				}
 			: {}),
 	};

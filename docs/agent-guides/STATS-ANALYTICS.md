@@ -266,8 +266,14 @@ server's close handler.
   `new_blocks` or `compressor_counts`, and `sent_tokens` equals `original_tokens` when the original
   is known. How long the request was held stays, as a measure of time and not of savings. The
   server's catch path drops the attempt from its log for the same reason.
-- The four `*_reportedness` columns have no producer yet; the writer stores them when a row
-  carries them.
+- The four `*_reportedness` columns come from the provider's answer, through
+  `createProviderUsageReader()` (`src/main/local-models/proxy/response-usage.ts`), which records how
+  each class got its number: `reported` (the answer named it, a named zero included), `derived`
+  (OpenAI's uncached input, its prompt total minus its cached tokens, which needs both),
+  `not-applicable` (OpenAI has no cache-write class) or `unreported` (the answer did not name it, and
+  the token column holds a default 0 that says nothing). An OpenAI prompt total with no cache detail
+  is stored as neither uncached input nor a cache read. The mapping writes the four with the four
+  provider tokens or not at all, and an answer that names no class leaves all eight NULL.
 - The INSERT is built from one typed column map, and the telemetry column names come from
   `ADD_PROXY_REQUEST_TELEMETRY_COLUMNS`, so a column added to the schema must be supplied by the
   writer to compile. `proxy-requests-telemetry.test.ts` checks that a row which states everything

@@ -630,9 +630,10 @@ export interface TokenProxyBlockDetail {
  * total into `cacheReadTokens`, and it reports no cache writes (0).
  *
  * The four numbers are always present for compatibility, and a class the answer
- * did not name is 0. `reportedness` says which numbers the provider gave. It is
- * absent from usage a producer did not track, and readers then treat every
- * class as unknown (see `proxyProviderClassReading()`).
+ * did not name is 0. `reportedness` says which numbers the provider gave: the
+ * response reader always sets it. It is optional for usage built elsewhere (a
+ * test fixture), and readers then treat every class as unknown (see
+ * `proxyProviderClassReading()`).
  */
 export interface TokenProxyProviderUsage {
 	inputTokens: number;
