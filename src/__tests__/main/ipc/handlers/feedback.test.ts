@@ -94,10 +94,7 @@ import {
 	saveImageToTempFile,
 } from '../../../../main/process-manager/utils/imageUtils';
 import { registerFeedbackHandlers } from '../../../../main/ipc/handlers/feedback';
-import {
-	clearFeedbackRepoVerdicts,
-	resetFeedbackSubmissionGuard,
-} from '../../../../main/feedback';
+import { clearFeedbackRepoVerdicts, resetFeedbackSubmissionGuard } from '../../../../main/feedback';
 import { feedbackReportFingerprint } from '../../../../shared/feedback';
 
 /** `gh auth status` for a signed-in account, in gh 2.40+ wording. */
@@ -142,7 +139,9 @@ function mockConversationGh(options?: {
 				? ({
 						exitCode: 0,
 						stdout: JSON.stringify({
-							content: { download_url: upload.downloadUrl ?? 'https://raw.githubusercontent.com/x/y' },
+							content: {
+								download_url: upload.downloadUrl ?? 'https://raw.githubusercontent.com/x/y',
+							},
 						}),
 						stderr: '',
 					} as any)
@@ -945,6 +944,79 @@ describe('feedback handlers', () => {
 			expect(second).toMatchObject({ success: false });
 			expect(second.error).toContain('already been filed');
 			expect(issueCreateArgs()).toHaveLength(1);
+		});
+
+		it('refuses a second submit of a report that is still being filed', async () => {
+			let releaseIssueCreate!: () => void;
+			const issueCreateGate = new Promise<void>((resolve) => {
+				releaseIssueCreate = resolve;
+			});
+			let markIssueCreateStarted!: () => void;
+			const issueCreateStarted = new Promise<void>((resolve) => {
+				markIssueCreateStarted = resolve;
+			});
+			vi.mocked(execFileNoThrow).mockImplementation(async (_command, args) => {
+				const argv = (args ?? []) as string[];
+				if (argv[0] === 'issue' && argv[1] === 'create') {
+					markIssueCreateStarted();
+					await issueCreateGate;
+					return {
+						exitCode: 0,
+						stdout: 'https://github.com/RunMaestro/Maestro/issues/2001\n',
+						stderr: '',
+					} as any;
+				}
+				return { exitCode: 0, stdout: '', stderr: '' } as any;
+			});
+			const payload = {
+				category: 'bug_report',
+				summary: 'Held while filing',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+			};
+
+			const firstPromise = submit(payload);
+			await issueCreateStarted;
+
+			const second = await submit(payload);
+			expect(second).toMatchObject({ success: false });
+			expect(second.error).toContain('already being filed');
+
+			releaseIssueCreate();
+			const first = await firstPromise;
+			expect(first.success).toBe(true);
+			expect(issueCreateArgs()).toHaveLength(1);
+		});
+
+		it('releases the claim when the first submit fails, so a retry can file', async () => {
+			let createCount = 0;
+			vi.mocked(execFileNoThrow).mockImplementation(async (_command, args) => {
+				const argv = (args ?? []) as string[];
+				if (argv[0] === 'issue' && argv[1] === 'create') {
+					createCount += 1;
+					return createCount === 1
+						? ({ exitCode: 1, stdout: '', stderr: 'gh exploded' } as any)
+						: ({
+								exitCode: 0,
+								stdout: 'https://github.com/RunMaestro/Maestro/issues/2002\n',
+								stderr: '',
+							} as any);
+				}
+				return { exitCode: 0, stdout: '', stderr: '' } as any;
+			});
+			const payload = {
+				category: 'bug_report',
+				summary: 'Retry after failure',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+			};
+
+			const first = await submit(payload);
+			const second = await submit(payload);
+
+			expect(first).toMatchObject({ success: false });
+			expect(second.success).toBe(true);
+			expect(issueCreateArgs()).toHaveLength(2);
 		});
 
 		it('files a report longer than the Windows command line limit whole, via --body-file', async () => {

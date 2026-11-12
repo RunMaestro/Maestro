@@ -88,10 +88,16 @@ const MAX_SUBMITTED_ISSUES = 100;
 // issue. In memory only: it guards the moment of submission, not history, and a
 // process restart or an ordinary new report moves it on.
 let lastFiledReportFingerprint: string | null = null;
+// The identity of a report being filed right now. Claimed synchronously before
+// the first await so two submits of the same report cannot both get past the
+// guard while screenshots upload and gh creates the issue. Released by the
+// filing call's finally whether it succeeded, failed, or threw.
+let inFlightReportFingerprint: string | null = null;
 
-/** Test seam: forget the last filed report so a suite can file it again. */
+/** Test seam: forget the filed and in-flight reports so a suite can file again. */
 export function resetFeedbackSubmissionGuard(): void {
 	lastFiledReportFingerprint = null;
+	inFlightReportFingerprint = null;
 }
 
 /**
@@ -1566,6 +1572,12 @@ export async function submitFeedbackConversation(
 			error: 'The report changed after you reviewed it. Review it again before submitting.',
 		};
 	}
+	if (inFlightReportFingerprint === fingerprint) {
+		return {
+			success: false,
+			error: 'This report is already being filed.',
+		};
+	}
 	if (lastFiledReportFingerprint === fingerprint) {
 		return {
 			success: false,
@@ -1573,171 +1585,179 @@ export async function submitFeedbackConversation(
 		};
 	}
 
-	// An upload failure is reported as a result, not thrown: a throw crosses IPC
-	// as "Error invoking remote method ...", burying the gh guidance it carries.
-	// A failed screenshot degrades to a warning so the rest of the report still
-	// files, and screenshots that did upload keep their links.
-	let attachmentMarkdown: string;
-	const warnings: string[] = [];
+	// Claim it before the first await so a second submit during the uploads and
+	// issue creation is refused instead of filing a duplicate. The finally below
+	// releases the claim unless the issue was created, where it stays filed.
+	inFlightReportFingerprint = fingerprint;
 	try {
-		const result = await uploadAttachments(normalizedAttachments, { degrade: true });
-		attachmentMarkdown = result.markdown;
-		warnings.push(...result.warnings);
-	} catch (error) {
-		if (error instanceof GhCommandError && error.needsGhLogin) {
-			return {
-				success: false,
-				error: error.message,
-				needsGhLogin: true,
-			};
-		}
-		warnings.push(
-			'Screenshots could not be uploaded, so the issue was filed without them.' +
-				(error instanceof Error ? ` (${error.message})` : '')
-		);
-		attachmentMarkdown =
-			normalizedAttachments.length > 0
-				? '_Screenshots were attached in Maestro but could not be uploaded._'
-				: 'None';
-	}
-
-	// Live state as of filing: an anonymized section on the issue, and the Auto
-	// Run counters the support package cannot read on its own (they live only in
-	// the renderer, so a package built here used to ship that section empty).
-	const liveDiagnosis = await captureFeedbackLiveDiagnosis();
-
-	// Generate and upload debug package if requested
-	let debugPackageMarkdown = '';
-	if (payload.includeDebugPackage && debugPackageDeps) {
+		// An upload failure is reported as a result, not thrown: a throw crosses IPC
+		// as "Error invoking remote method ...", burying the gh guidance it carries.
+		// A failed screenshot degrades to a warning so the rest of the report still
+		// files, and screenshots that did upload keep their links.
+		let attachmentMarkdown: string;
+		const warnings: string[] = [];
 		try {
-			const packageResult = await generateDebugPackage(
-				os.tmpdir(),
-				debugPackageDeps,
-				liveDiagnosis.rendererAvailable
-					? { autoRunSnapshots: liveDiagnosis.autoRunSnapshots }
-					: undefined
-			);
-			if (packageResult.success && packageResult.path) {
-				try {
-					debugPackageMarkdown = await uploadFeedbackZip(
-						packageResult.path,
-						'maestro-debug-package.zip'
-					);
-				} finally {
-					await fs.unlink(packageResult.path).catch(() => {});
-				}
-				if (!debugPackageMarkdown) {
-					warnings.push(
-						'The support package could not be uploaded, so the issue was filed without it.'
-					);
-				}
-			} else {
-				warnings.push(
-					'The support package could not be built, so the issue was filed without it.'
-				);
+			const result = await uploadAttachments(normalizedAttachments, { degrade: true });
+			attachmentMarkdown = result.markdown;
+			warnings.push(...result.warnings);
+		} catch (error) {
+			if (error instanceof GhCommandError && error.needsGhLogin) {
+				return {
+					success: false,
+					error: error.message,
+					needsGhLogin: true,
+				};
 			}
-		} catch (e) {
-			void captureException(e);
-			logger.warn(`Failed to generate/upload debug package: ${e}`, LOG_CONTEXT);
 			warnings.push(
-				'The support package could not be built, so the issue was filed without it.'
+				'Screenshots could not be uploaded, so the issue was filed without them.' +
+					(error instanceof Error ? ` (${error.message})` : '')
 			);
+			attachmentMarkdown =
+				normalizedAttachments.length > 0
+					? '_Screenshots were attached in Maestro but could not be uploaded._'
+					: 'None';
 		}
-	}
 
-	// Upload performance trace if one was captured from the modal. The temp
-	// zip is consumed here and deleted regardless of upload outcome.
-	let performanceTraceMarkdown = '';
-	if (typeof payload.performanceTracePath === 'string' && payload.performanceTracePath) {
-		try {
-			performanceTraceMarkdown = await uploadFeedbackZip(
-				payload.performanceTracePath,
-				'maestro-performance-trace.zip'
-			);
-			if (!performanceTraceMarkdown) {
+		// Live state as of filing: an anonymized section on the issue, and the Auto
+		// Run counters the support package cannot read on its own (they live only in
+		// the renderer, so a package built here used to ship that section empty).
+		const liveDiagnosis = await captureFeedbackLiveDiagnosis();
+
+		// Generate and upload debug package if requested
+		let debugPackageMarkdown = '';
+		if (payload.includeDebugPackage && debugPackageDeps) {
+			try {
+				const packageResult = await generateDebugPackage(
+					os.tmpdir(),
+					debugPackageDeps,
+					liveDiagnosis.rendererAvailable
+						? { autoRunSnapshots: liveDiagnosis.autoRunSnapshots }
+						: undefined
+				);
+				if (packageResult.success && packageResult.path) {
+					try {
+						debugPackageMarkdown = await uploadFeedbackZip(
+							packageResult.path,
+							'maestro-debug-package.zip'
+						);
+					} finally {
+						await fs.unlink(packageResult.path).catch(() => {});
+					}
+					if (!debugPackageMarkdown) {
+						warnings.push(
+							'The support package could not be uploaded, so the issue was filed without it.'
+						);
+					}
+				} else {
+					warnings.push(
+						'The support package could not be built, so the issue was filed without it.'
+					);
+				}
+			} catch (e) {
+				void captureException(e);
+				logger.warn(`Failed to generate/upload debug package: ${e}`, LOG_CONTEXT);
+				warnings.push('The support package could not be built, so the issue was filed without it.');
+			}
+		}
+
+		// Upload performance trace if one was captured from the modal. The temp
+		// zip is consumed here and deleted regardless of upload outcome.
+		let performanceTraceMarkdown = '';
+		if (typeof payload.performanceTracePath === 'string' && payload.performanceTracePath) {
+			try {
+				performanceTraceMarkdown = await uploadFeedbackZip(
+					payload.performanceTracePath,
+					'maestro-performance-trace.zip'
+				);
+				if (!performanceTraceMarkdown) {
+					warnings.push(
+						'The performance trace could not be uploaded, so the issue was filed without it.'
+					);
+				}
+			} catch (e) {
+				void captureException(e);
+				logger.warn(`Failed to upload performance trace: ${e}`, LOG_CONTEXT);
 				warnings.push(
 					'The performance trace could not be uploaded, so the issue was filed without it.'
 				);
+			} finally {
+				await fs.unlink(payload.performanceTracePath).catch(() => {});
 			}
-		} catch (e) {
-			void captureException(e);
-			logger.warn(`Failed to upload performance trace: ${e}`, LOG_CONTEXT);
-			warnings.push(
-				'The performance trace could not be uploaded, so the issue was filed without it.'
+		}
+
+		// Build issue body
+		const liveDiagnosisMarkdown = formatLiveDiagnosisForIssue(liveDiagnosis);
+		const title = buildIssueTitle(payload.category, summaryField.value!);
+		const isBug = payload.category === 'bug_report';
+		const sections = [
+			`## Summary\n${summaryField.value!}`,
+			buildEnvironmentSection(environment),
+			isBug ? `## Steps to Reproduce\n${reproField.value || 'Not provided.'}` : null,
+			`## ${isBug ? 'Expected Behavior' : 'Desired Outcome'}\n${expectedField.value!}`,
+			`## ${isBug ? 'Actual Behavior' : 'Details'}\n${actualField.value!}`,
+			contextField.value ? `## Additional Context\n${contextField.value}` : null,
+			liveDiagnosisMarkdown ? `## Live Diagnosis\n${liveDiagnosisMarkdown}` : null,
+			attachmentMarkdown ? `## Screenshots / Recordings\n${attachmentMarkdown}` : null,
+			debugPackageMarkdown ? `## Support Package\n${debugPackageMarkdown}` : null,
+			performanceTraceMarkdown ? `## Performance Trace\n${performanceTraceMarkdown}` : null,
+		]
+			.filter(Boolean)
+			.join('\n\n');
+
+		// Ensure label and create issue
+		try {
+			await ensureFeedbackLabel();
+		} catch {
+			// Continue without label
+		}
+
+		const bodyFile = feedbackTempPath('maestro-feedback', '.md');
+		await fs.writeFile(bodyFile, sections, 'utf-8');
+
+		try {
+			const issueCreate = await execFileNoThrow(
+				await resolveFeedbackGhCommand(),
+				[
+					'issue',
+					'create',
+					'-R',
+					'RunMaestro/Maestro',
+					'--title',
+					title,
+					'--body-file',
+					bodyFile,
+					'--label',
+					'Maestro-feedback',
+				],
+				undefined,
+				getExpandedEnv()
 			);
-		} finally {
-			await fs.unlink(payload.performanceTracePath).catch(() => {});
-		}
-	}
 
-	// Build issue body
-	const liveDiagnosisMarkdown = formatLiveDiagnosisForIssue(liveDiagnosis);
-	const title = buildIssueTitle(payload.category, summaryField.value!);
-	const isBug = payload.category === 'bug_report';
-	const sections = [
-		`## Summary\n${summaryField.value!}`,
-		buildEnvironmentSection(environment),
-		isBug ? `## Steps to Reproduce\n${reproField.value || 'Not provided.'}` : null,
-		`## ${isBug ? 'Expected Behavior' : 'Desired Outcome'}\n${expectedField.value!}`,
-		`## ${isBug ? 'Actual Behavior' : 'Details'}\n${actualField.value!}`,
-		contextField.value ? `## Additional Context\n${contextField.value}` : null,
-		liveDiagnosisMarkdown ? `## Live Diagnosis\n${liveDiagnosisMarkdown}` : null,
-		attachmentMarkdown ? `## Screenshots / Recordings\n${attachmentMarkdown}` : null,
-		debugPackageMarkdown ? `## Support Package\n${debugPackageMarkdown}` : null,
-		performanceTraceMarkdown ? `## Performance Trace\n${performanceTraceMarkdown}` : null,
-	]
-		.filter(Boolean)
-		.join('\n\n');
+			if (issueCreate.exitCode !== 0) {
+				return {
+					...ghFailureResult(issueCreate.stderr, 'Failed to create GitHub issue.'),
+					warnings,
+				};
+			}
 
-	// Ensure label and create issue
-	try {
-		await ensureFeedbackLabel();
-	} catch {
-		// Continue without label
-	}
-
-	const bodyFile = feedbackTempPath('maestro-feedback', '.md');
-	await fs.writeFile(bodyFile, sections, 'utf-8');
-
-	try {
-		const issueCreate = await execFileNoThrow(
-			await resolveFeedbackGhCommand(),
-			[
-				'issue',
-				'create',
-				'-R',
-				'RunMaestro/Maestro',
-				'--title',
-				title,
-				'--body-file',
-				bodyFile,
-				'--label',
-				'Maestro-feedback',
-			],
-			undefined,
-			getExpandedEnv()
-		);
-
-		if (issueCreate.exitCode !== 0) {
+			// gh issue create prints the issue URL to stdout
+			const issueUrl = issueCreate.stdout.trim();
+			if (issueUrl) {
+				await recordSubmittedIssue({ issueUrl, title, category: payload.category });
+			}
+			lastFiledReportFingerprint = fingerprint;
 			return {
-				...ghFailureResult(issueCreate.stderr, 'Failed to create GitHub issue.'),
-				warnings,
+				success: true,
+				issueUrl: issueUrl || undefined,
+				...(warnings.length > 0 ? { warnings } : {}),
 			};
+		} finally {
+			await fs.unlink(bodyFile).catch(() => {});
 		}
-
-		// gh issue create prints the issue URL to stdout
-		const issueUrl = issueCreate.stdout.trim();
-		if (issueUrl) {
-			await recordSubmittedIssue({ issueUrl, title, category: payload.category });
-		}
-		lastFiledReportFingerprint = fingerprint;
-		return {
-			success: true,
-			issueUrl: issueUrl || undefined,
-			...(warnings.length > 0 ? { warnings } : {}),
-		};
 	} finally {
-		await fs.unlink(bodyFile).catch(() => {});
+		if (inFlightReportFingerprint === fingerprint) {
+			inFlightReportFingerprint = null;
+		}
 	}
 }
 
