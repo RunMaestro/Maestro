@@ -155,6 +155,35 @@ export interface MissingBinaryEvidence {
 const RUNTIME_MISSING_PATTERN =
 	/\benv:\s*['"‘’]?(node|bun|deno|python3?)['"‘’]?:\s*No such file or directory/i;
 
+/** Interpreters whose absence behind `/usr/bin/env` has its own remedy. */
+export type MissingBinaryRuntime = 'node' | 'bun' | 'deno' | 'python';
+
+/** Why a binary could not be run, and which runtime was missing when relevant. */
+export interface MissingBinaryClassification {
+	reason: 'not-found' | 'runtime-missing';
+	runtime?: MissingBinaryRuntime;
+}
+
+const RUNTIME_LABELS: Record<MissingBinaryRuntime, string> = {
+	node: 'Node.js',
+	bun: 'Bun',
+	deno: 'Deno',
+	python: 'Python',
+};
+
+/** Display name for an interpreter named by a failed `/usr/bin/env` line. */
+export function missingRuntimeLabel(runtime: MissingBinaryRuntime): string {
+	return RUNTIME_LABELS[runtime];
+}
+
+/** The interpreter named by the stderr line, or null when the line does not name one. */
+function missingRuntimeFromStderr(stderr: string): MissingBinaryRuntime | null {
+	const match = stderr.match(RUNTIME_MISSING_PATTERN);
+	if (!match) return null;
+	const runtime = match[1].toLowerCase();
+	return runtime === 'python3' ? 'python' : (runtime as MissingBinaryRuntime);
+}
+
 function normalizeExecutableName(name: string): string {
 	const unquoted = name.trim().replace(/^['"‘’`]+|['"‘’`]+$/g, '');
 	const base = unquoted.split(/[\\/]/).pop() ?? unquoted;
@@ -188,9 +217,11 @@ function missingExecutableFromStderr(stderr: string): string | null {
  *   spawn, a shell's exit 127 WITH its "command not found" wording, or Windows'
  *   "is not recognized" (cmd exits 9009, a PowerShell wrapper exits 1).
  * - `runtime-missing`: the binary exists, but the interpreter its shebang names
- *   does not (`env: node: No such file or directory`). This is the nvm/volta
- *   case: an npm-installed CLI found in a Node version directory, run from a
- *   PATH where that Node is not. Restoring Node.js to PATH fixes it.
+ *   does not (`env: node: No such file or directory`). The classification
+ *   carries which runtime (`node`, `bun`, `deno`, `python`) was named, so the
+ *   message can give the right remedy. Node is the nvm/volta case: an
+ *   npm-installed CLI found in a Node version directory, run from a PATH where
+ *   that Node is not.
  *
  * Only stderr is consulted. Stdout carries the agent's own transcript, which
  * can legitimately quote "command not found" from a tool call it ran.
@@ -202,15 +233,14 @@ function missingExecutableFromStderr(stderr: string): string | null {
  */
 export function classifyMissingBinary(
 	evidence: MissingBinaryEvidence
-): 'not-found' | 'runtime-missing' | null {
-	if (evidence.errorCode === 'ENOENT') return 'not-found';
+): MissingBinaryClassification | null {
+	if (evidence.errorCode === 'ENOENT') return { reason: 'not-found' };
 
 	const stderr = evidence.stderr ?? '';
 	// `/usr/bin/env` with no node on PATH. Only a shell reports this as a 127;
 	// a direct spawn of a script whose interpreter is missing is an ENOENT.
-	if (evidence.exitCode === 127 && RUNTIME_MISSING_PATTERN.test(stderr)) {
-		return 'runtime-missing';
-	}
+	const runtime = evidence.exitCode === 127 ? missingRuntimeFromStderr(stderr) : null;
+	if (runtime) return { reason: 'runtime-missing', runtime };
 
 	if (evidence.exitCode !== 127 && evidence.exitCode !== 9009 && evidence.exitCode !== 1) {
 		return null;
@@ -219,7 +249,7 @@ export function classifyMissingBinary(
 	const missing = missingExecutableFromStderr(stderr);
 	if (!missing || !evidence.command) return null;
 	return normalizeExecutableName(missing) === normalizeExecutableName(evidence.command)
-		? 'not-found'
+		? { reason: 'not-found' }
 		: null;
 }
 
@@ -233,7 +263,8 @@ export function classifyMissingBinary(
 export function agentNotInstalledMessage(
 	agentId: AgentId | string,
 	reason: 'not-found' | 'runtime-missing',
-	platform?: InstallPlatform | string
+	platform?: InstallPlatform | string,
+	runtime: MissingBinaryRuntime = 'node'
 ): string {
 	const name = getAgentDisplayName(agentId);
 	const cli = agentCliLabel(agentId);
@@ -241,7 +272,11 @@ export function agentNotInstalledMessage(
 	const docsUrl = getAgentInstallInfo(agentId)?.docsUrl;
 
 	if (reason === 'runtime-missing') {
-		return `${cli} is installed, but the runtime it needs (Node.js) is not on PATH. Restore Node.js to PATH first (for example with \`nvm use\`), then send the message again. Reinstall the CLI under that Node.js only if it still does not start.`;
+		const label = missingRuntimeLabel(runtime);
+		if (runtime === 'node') {
+			return `${cli} is installed, but the runtime it needs (${label}) is not on PATH. Restore ${label} to PATH first (for example with \`nvm use\`), then send the message again. Reinstall the CLI under that ${label} only if it still does not start.`;
+		}
+		return `${cli} is installed, but the runtime it needs (${label}) is not on PATH. Install ${label} or put it on PATH, then send the message again.`;
 	}
 
 	const remedy = command

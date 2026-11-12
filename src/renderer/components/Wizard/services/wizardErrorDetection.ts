@@ -23,6 +23,8 @@ import {
 	agentNotInstalledMessage,
 	classifyMissingBinary,
 	getAgentInstallCommand,
+	missingRuntimeLabel,
+	type MissingBinaryRuntime,
 } from '../../../../shared/agentInstall';
 import { getPlatform } from '../../../utils/platformUtils';
 import type { AgentErrorType, ToolType } from '../../../types';
@@ -94,9 +96,17 @@ const RETRYABLE_TYPES: ReadonlySet<AgentErrorType> = new Set<AgentErrorType>([
  * per platform. When there is no command to name, the generic hint stands
  * rather than inventing one to type into a shell.
  */
-function missingBinaryHint(agentType: ToolType, reason: 'not-found' | 'runtime-missing'): string {
+function missingBinaryHint(
+	agentType: ToolType,
+	reason: 'not-found' | 'runtime-missing',
+	runtime: MissingBinaryRuntime = 'node'
+): string {
 	if (reason === 'runtime-missing') {
-		return 'Restore Node.js to PATH first (for example with `nvm use`), then start the wizard over. Reinstall the CLI only if it still does not start.';
+		const label = missingRuntimeLabel(runtime);
+		if (runtime === 'node') {
+			return `Restore ${label} to PATH first (for example with \`nvm use\`), then start the wizard over. Reinstall the CLI only if it still does not start.`;
+		}
+		return `${label} is not on PATH. Install ${label} or put it on PATH, then start the wizard over.`;
 	}
 	const install = getAgentInstallCommand(agentType, getPlatform());
 	return install
@@ -156,7 +166,7 @@ export function detectWizardError(
 
 	// A CLI that never started is not a crash, and the generic bank would call
 	// it one. Classified first, on the local host only (see ExitHandler).
-	const missingReason =
+	const missingBinary =
 		(options.local ?? true)
 			? classifyMissingBinary({
 					exitCode: options.exitCode,
@@ -164,12 +174,17 @@ export function detectWizardError(
 					command: options.command,
 				})
 			: null;
-	if (missingReason) {
+	if (missingBinary) {
 		return {
 			type: 'agent_not_installed',
 			title: ERROR_TITLES.agent_not_installed,
-			message: agentNotInstalledMessage(agentType, missingReason, getPlatform()),
-			recoveryHint: missingBinaryHint(agentType, missingReason),
+			message: agentNotInstalledMessage(
+				agentType,
+				missingBinary.reason,
+				getPlatform(),
+				missingBinary.runtime
+			),
+			recoveryHint: missingBinaryHint(agentType, missingBinary.reason, missingBinary.runtime),
 			canRetry: false,
 		};
 	}

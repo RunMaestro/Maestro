@@ -144,6 +144,31 @@ describe('detectWizardError', () => {
 			expect(error?.type).not.toBe('agent_not_installed');
 		});
 
+		it('names the missing runtime in both the message and the hint', () => {
+			for (const [stderr, label] of [
+				['env: node: No such file or directory', 'Node.js'],
+				['env: bun: No such file or directory', 'Bun'],
+				['env: python3: No such file or directory', 'Python'],
+			] as const) {
+				const error = detectWizardError(stderr, 'codex', {
+					exitCode: 127,
+					stderr,
+					command: 'codex',
+				});
+
+				expect(error?.type).toBe('agent_not_installed');
+				expect(error?.message).toContain(label);
+				expect(error?.recoveryHint).toContain(label);
+
+				if (label === 'Node.js') {
+					expect(error?.recoveryHint).toContain('nvm');
+				} else {
+					expect(error?.message).not.toContain('nvm');
+					expect(error?.recoveryHint).not.toContain('nvm');
+				}
+			}
+		});
+
 		it('does not blame the provider when a child command is missing', () => {
 			const error = detectWizardError('sh: 1: git: not found', 'codex', {
 				exitCode: 127,

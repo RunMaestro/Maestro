@@ -671,11 +671,16 @@ export class ExitHandler {
 	): AgentError | null {
 		if (managedProcess.sshRemoteId || managedProcess.isTerminal) return null;
 		if (managedProcess.toolType === 'terminal') return null;
-		const reason = classifyMissingBinary(evidence);
-		if (!reason) return null;
+		const missingBinary = classifyMissingBinary(evidence);
+		if (!missingBinary) return null;
 		return {
 			type: 'agent_not_installed',
-			message: agentNotInstalledMessage(managedProcess.toolType, reason, process.platform),
+			message: agentNotInstalledMessage(
+				managedProcess.toolType,
+				missingBinary.reason,
+				process.platform,
+				missingBinary.runtime
+			),
 			recoverable: true,
 			agentId: managedProcess.toolType,
 			sessionId,

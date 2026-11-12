@@ -66,8 +66,10 @@ describe('agentInstall', () => {
 
 	describe('classifyMissingBinary', () => {
 		it('treats a spawn ENOENT as not-found', () => {
-			expect(classifyMissingBinary({ errorCode: 'ENOENT', command: 'codex' })).toBe('not-found');
-			expect(classifyMissingBinary({ errorCode: 'ENOENT' })).toBe('not-found');
+			expect(classifyMissingBinary({ errorCode: 'ENOENT', command: 'codex' })).toEqual({
+				reason: 'not-found',
+			});
+			expect(classifyMissingBinary({ errorCode: 'ENOENT' })).toEqual({ reason: 'not-found' });
 		});
 
 		it('treats a shell exit 127 naming the launched command as not-found', () => {
@@ -76,9 +78,9 @@ describe('agentInstall', () => {
 				'sh: 1: codex: not found',
 				'fish: Unknown command: codex',
 			]) {
-				expect(classifyMissingBinary({ exitCode: 127, stderr, command: 'codex' })).toBe(
-					'not-found'
-				);
+				expect(classifyMissingBinary({ exitCode: 127, stderr, command: 'codex' })).toEqual({
+					reason: 'not-found',
+				});
 			}
 		});
 
@@ -89,7 +91,7 @@ describe('agentInstall', () => {
 					stderr: 'zsh: command not found: codex',
 					command: '/usr/local/bin/Codex.CMD',
 				})
-			).toBe('not-found');
+			).toEqual({ reason: 'not-found' });
 		});
 
 		it('does not blame the provider for a child command that is missing', () => {
@@ -119,7 +121,7 @@ describe('agentInstall', () => {
 					stderr: 'env: node: No such file or directory',
 					command: 'codex',
 				})
-			).toBe('runtime-missing');
+			).toEqual({ reason: 'runtime-missing', runtime: 'node' });
 		});
 
 		it('accepts GNU env UTF-8 quotes around the runtime', () => {
@@ -129,7 +131,24 @@ describe('agentInstall', () => {
 					stderr: '/usr/bin/env: ‘node’: No such file or directory',
 					command: 'codex',
 				})
-			).toBe('runtime-missing');
+			).toEqual({ reason: 'runtime-missing', runtime: 'node' });
+		});
+
+		it('carries the bun and python runtimes named on stderr', () => {
+			expect(
+				classifyMissingBinary({
+					exitCode: 127,
+					stderr: 'env: bun: No such file or directory',
+					command: 'codex',
+				})
+			).toEqual({ reason: 'runtime-missing', runtime: 'bun' });
+			expect(
+				classifyMissingBinary({
+					exitCode: 127,
+					stderr: 'env: python3: No such file or directory',
+					command: 'codex',
+				})
+			).toEqual({ reason: 'runtime-missing', runtime: 'python' });
 		});
 
 		it('requires a 127 for the runtime diagnostic, not just the wording', () => {
@@ -149,14 +168,14 @@ describe('agentInstall', () => {
 					stderr: "'codex' is not recognized as an internal or external command,",
 					command: 'codex.cmd',
 				})
-			).toBe('not-found');
+			).toEqual({ reason: 'not-found' });
 			expect(
 				classifyMissingBinary({
 					exitCode: 1,
 					stderr: "codex : The term 'codex' is not recognized as the name of a cmdlet, function",
 					command: 'codex',
 				})
-			).toBe('not-found');
+			).toEqual({ reason: 'not-found' });
 		});
 
 		it('does not blame the provider for another Windows command', () => {
@@ -205,6 +224,28 @@ describe('agentInstall', () => {
 			expect(message).toContain('Restore Node.js to PATH first');
 			expect(message).toContain('Reinstall the CLI');
 			expect(message).not.toContain('npm install');
+		});
+
+		it('names the runtime from stderr and only Node.js gets nvm', () => {
+			const messageFor = (stderr: string): string => {
+				const missing = classifyMissingBinary({ exitCode: 127, stderr, command: 'codex' });
+				if (!missing) throw new Error('Expected the stderr to classify as a missing binary');
+				return agentNotInstalledMessage('codex', missing.reason, undefined, missing.runtime);
+			};
+
+			const node = messageFor('env: node: No such file or directory');
+			expect(node).toContain('Node.js');
+			expect(node).toContain('nvm');
+
+			const bun = messageFor('env: bun: No such file or directory');
+			expect(bun).toContain('Bun');
+			expect(bun).not.toContain('Node.js');
+			expect(bun).not.toContain('nvm');
+
+			const python = messageFor('env: python3: No such file or directory');
+			expect(python).toContain('Python');
+			expect(python).not.toContain('Node.js');
+			expect(python).not.toContain('nvm');
 		});
 
 		it('prints the platform install command for the user to copy', () => {
