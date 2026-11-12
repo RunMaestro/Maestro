@@ -45,6 +45,7 @@ import { isMacOS } from '../shared/platformDetection';
 import { formatShortcutKeysFor } from '../shared/shortcutKeys';
 import { resolveEncoreFeatures, type EncoreFeatureDefaults } from '../shared/encoreFeatureDefaults';
 import { logger } from './utils/logger';
+import type { WindowCycleDirection } from './window-cycle';
 
 /** Map of shortcut id -> key array, e.g. `{ toggleMode: ['Meta', 'j'] }`. */
 export type MenuShortcutKeys = Record<string, string[]>;
@@ -136,6 +137,8 @@ let shortcutKeysSignature = '';
  * the stored flags before the first install and again on every change.
  */
 let encoreFeatures: EncoreFeatureDefaults = resolveEncoreFeatures(undefined);
+/** What Cmd+` does; main wires it to the window registry before install. */
+let cycleWindowsHandler: ((direction: WindowCycleDirection) => void) | null = null;
 
 /**
  * Gap between an item's name and its keystroke in the menu label.
@@ -275,7 +278,26 @@ function buildTemplate(): Electron.MenuItemConstructorOptions[] {
 			// terminal modes. Window closing is handled by the app lifecycle (Cmd+Q
 			// quits, red traffic light hides) so the native Close item is unnecessary.
 			label: 'Window',
-			submenu: [{ role: 'minimize' }, { role: 'zoom' }],
+			submenu: [
+				{ role: 'minimize' },
+				{ role: 'zoom' },
+				{ type: 'separator' },
+				// The one place besides Quit where a real accelerator is right
+				// (rule 1 in the module comment). macOS reserves Cmd+` as a
+				// system hotkey, so Chromium does not hand it to the renderer
+				// anyway, and AppKit's own cycle skips the Quick Chat panel.
+				// See src/main/window-cycle.ts.
+				{
+					label: 'Cycle Through Windows',
+					accelerator: 'Cmd+`',
+					click: () => cycleWindowsHandler?.('next'),
+				},
+				{
+					label: 'Cycle Through Windows Backwards',
+					accelerator: 'Cmd+Shift+`',
+					click: () => cycleWindowsHandler?.('previous'),
+				},
+			],
 		},
 	];
 }
@@ -322,6 +344,11 @@ export function setMenuEncoreFeatures(raw: unknown): void {
 	const changed = JSON.stringify(next) !== JSON.stringify(encoreFeatures);
 	encoreFeatures = next;
 	if (changed && isMacOS()) installApplicationMenu();
+}
+
+/** Set what the Window menu's Cmd+` items do (cycle Maestro's windows). */
+export function setMenuWindowCycler(handler: (direction: WindowCycleDirection) => void): void {
+	cycleWindowsHandler = handler;
 }
 
 /** Test seam: drop the cached bindings so the next push always rebuilds. */

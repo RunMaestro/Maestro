@@ -3646,7 +3646,7 @@ quickChatCmd
 
 quickChatCmd
 	.command('return')
-	.description('Close the Quick Chat window and bring Maestro forward (Cmd+` in the window)')
+	.description('Close the Quick Chat window and bring Maestro forward (the show-Maestro hotkey)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => quickChat('return', {}, options));
 

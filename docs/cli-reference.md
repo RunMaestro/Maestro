@@ -3207,7 +3207,7 @@ Close the Quick Chat window; the conversation is kept
 
 ## `maestro-cli quick-chat return`
 
-Close the Quick Chat window and bring Maestro forward (Cmd+` in the window)
+Close the Quick Chat window and bring Maestro forward (the show-Maestro hotkey)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

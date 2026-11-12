@@ -697,7 +697,7 @@ export interface QuickChatStatus {
 
 /**
  * Window actions that stay in the main process. `return` hides the window and
- * brings the Maestro window forward (Cmd+` in the window).
+ * brings the Maestro window forward (what the show-Maestro hotkey does).
  */
 export type QuickChatWindowAction = 'show' | 'hide' | 'toggle' | 'return';
 

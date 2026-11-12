@@ -71,11 +71,21 @@ export function keysToAccelerator(keys: string[]): string | null {
  * Bring a Maestro app window to the foreground from any app, and put the
  * Quick Chat window away: going to Maestro proper means leaving the floating
  * chat, which otherwise stays pinned over the window just summoned. The show
- * hotkey, Quick Chat's "Open in Maestro", and its Cmd+` all land here.
+ * hotkey, Quick Chat's "Open in Maestro", and `maestro-cli quick-chat return`
+ * all land here.
  */
 export function summonAppWindow(window: BrowserWindow): void {
 	if (window.isDestroyed()) return;
 	hideQuickChatWindow();
+	focusAppWindow(window);
+}
+
+/**
+ * Bring a Maestro app window to the foreground from any app, leaving Quick Chat
+ * where it is. Cmd+` cycling lands here, so the chat stays up to come back to.
+ */
+export function focusAppWindow(window: BrowserWindow): void {
+	if (window.isDestroyed()) return;
 	if (window.isMinimized()) window.restore();
 	if (!window.isVisible()) window.show();
 	if (isMacOS()) {

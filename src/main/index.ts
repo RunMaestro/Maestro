@@ -39,7 +39,8 @@ import {
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
 import { DURATION_MS } from '../shared/duration';
-import { installApplicationMenu, setMenuEncoreFeatures } from './app-menu';
+import { installApplicationMenu, setMenuEncoreFeatures, setMenuWindowCycler } from './app-menu';
+import { attachWindowCycleShortcut, cycleWindows, type WindowCycleDirection } from './window-cycle';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -3898,6 +3899,16 @@ app
 		// The Encore flags go in first: an item for a switched-off feature is
 		// left out, and the menu follows the flags live from then on.
 		setMenuEncoreFeatures(store.get('encoreFeatures'));
+		// Cmd+` cycles Maestro's windows, Quick Chat included (AppKit skips the
+		// panel). The menu item takes the keystroke most of the time; the input
+		// hook takes it when Chromium hands it to the page. See window-cycle.ts.
+		const cycle = (direction: WindowCycleDirection) => cycleWindows(windowRegistry, direction);
+		setMenuWindowCycler(cycle);
+		if (isMacOS()) {
+			app.on('browser-window-created', (_event, win) =>
+				attachWindowCycleShortcut(win.webContents, cycle)
+			);
+		}
 		installApplicationMenu();
 		store.onDidChange('encoreFeatures', (value) => setMenuEncoreFeatures(value));
 
