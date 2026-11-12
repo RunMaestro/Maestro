@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { DigestScheduler, MAX_PENDING_15M } from '../../../main/computer-history/digests';
 import { defaultComputerHistoryConfig } from '../../../shared/computer-history/config';
+import { digestFormatInstructions } from '../../../shared/computer-history/digestFormat';
 import { digestRelativePath, segmentRelativePath } from '../../../shared/computer-history/paths';
 import type { ComputerHistoryConfig } from '../../../shared/computer-history/types';
 
@@ -89,6 +90,11 @@ describe('6-hour roll-up', () => {
 		const body = fs.readFileSync(out, 'utf-8');
 		expect(body).toContain('6-hour roll-up');
 		expect(body).toContain('[REDACTED_API_KEY]');
+		// The scheduler, not the writer, lists the digests the roll-up came from.
+		expect(body.trimEnd()).toMatch(
+			/### Sources\n\n- `digests\/2026-10-03\/1200Z\.md`\n- `digests\/2026-10-03\/1745Z\.md`$/
+		);
+		expect(rollupQuestion).toContain(digestFormatInstructions('6h'));
 		if (process.platform !== 'win32') expect(fs.statSync(out).mode & 0o777).toBe(0o600);
 		expect(s.status().lastRollupFile).toBe('digests/2026-10-03/6h-1200Z.md');
 		expect(s.status().lastRollupAt).not.toBeNull();

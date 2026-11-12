@@ -63,6 +63,13 @@ import {
 } from '../../shared/computer-history/paths';
 import { readIndex } from '../../shared/computer-history/reader';
 import type { ComputerHistoryConfig, SegmentIndexEntry } from '../../shared/computer-history/types';
+import {
+	DIGEST_ACCURACY_RULES,
+	PREVIOUS_DIGEST_LOOKBACK_WINDOWS,
+	PREVIOUS_DIGEST_RULE,
+	digestFormatInstructions,
+	formatDigestSources,
+} from '../../shared/computer-history/digestFormat';
 import { redactSecrets } from '../../shared/redactSecrets';
 import type { DigestStatus } from '../../shared/computer-history/status';
 import type { HistoryDigestRequest, HistoryDigestWriter } from '../local-models/history-digests';
@@ -118,6 +125,8 @@ export function buildDigestPrompt(opts: {
 	entry: SegmentIndexEntry;
 	windowStartIso: string;
 	windowEndIso: string;
+	/** The nearest earlier digest of the last hour, for continuity, or null. */
+	previousDigestPath?: string | null;
 }): string {
 	return [
 		`You are writing a ${SEGMENT_MINUTES}-minute Computer History digest for the user. Maestro records what the user sees and types across their apps, locally.`,
@@ -125,8 +134,13 @@ export function buildDigestPrompt(opts: {
 		`Read the segment file at: ${opts.segmentPath}`,
 		`Its format is described in: ${opts.schemaPath}`,
 		`It covers ${opts.windowStartIso} to ${opts.windowEndIso} (UTC) and holds ${opts.entry.events} events.`,
+		...(opts.previousDigestPath
+			? ['', `The previous digest is at: ${opts.previousDigestPath}`, PREVIOUS_DIGEST_RULE]
+			: []),
 		'',
-		'Write a short markdown summary of what the user worked on in that window: apps used, documents and pages looked at, messages sent, and decisions or tasks that appear. Use at most 12 bullets. Quote only what is needed. Never repeat secrets or anything that looks like a password, key, or card number.',
+		digestFormatInstructions('15m'),
+		'',
+		DIGEST_ACCURACY_RULES,
 		'',
 		UNTRUSTED_RULE,
 	].join('\n');
@@ -144,7 +158,9 @@ export function buildRollupPrompt(opts: {
 		`Read these ${SEGMENT_MINUTES}-minute digest files (markdown, one per window, in time order):`,
 		...opts.digestPaths.map((p) => `- ${p}`),
 		'',
-		'Write a markdown roll-up of the block: the main threads of work, notable documents, conversations, and decisions, and open tasks. Group related windows; do not repeat every bullet. Use at most 15 bullets. Never repeat secrets or anything that looks like a password, key, or card number.',
+		digestFormatInstructions('6h'),
+		'',
+		DIGEST_ACCURACY_RULES,
 		'',
 		UNTRUSTED_RULE,
 	].join('\n');
@@ -345,6 +361,23 @@ export class DigestScheduler {
 		return out;
 	}
 
+	/**
+	 * Absolute path of the nearest digest before the window at `startMs`,
+	 * looking back {@link PREVIOUS_DIGEST_LOOKBACK_WINDOWS} windows, or null.
+	 * Jobs run in time order, so an earlier window's digest is already written
+	 * when this one runs.
+	 */
+	private async previousDigestPath(startMs: number): Promise<string | null> {
+		for (let back = 1; back <= PREVIOUS_DIGEST_LOOKBACK_WINDOWS; back++) {
+			const abs = resolveStorePath(
+				this.deps.storeDir,
+				digestRelativePath(startMs - back * SEGMENT_MS)
+			);
+			if (await exists(abs)) return abs;
+		}
+		return null;
+	}
+
 	private async drain(): Promise<void> {
 		if (this.running) return;
 		this.running = true;
@@ -404,11 +437,18 @@ export class DigestScheduler {
 		return { answer: result.answer, writtenBy: `agent \`${digests.agentId}\`` };
 	}
 
-	private async writeDigest(rel: string, header: string[], answer: string): Promise<void> {
+	private async writeDigest(
+		rel: string,
+		header: string[],
+		answer: string,
+		footer = ''
+	): Promise<void> {
 		const abs = resolveStorePath(this.deps.storeDir, rel);
 		await fs.mkdir(path.dirname(abs), { recursive: true, mode: STORE_DIR_MODE });
 		// The writer read untrusted, possibly secret-bearing text: scrub its answer.
-		const body = [...header, '', redactSecrets(answer.trim()).text, ''].join('\n');
+		const parts = [...header, '', redactSecrets(answer.trim()).text];
+		if (footer) parts.push('', footer);
+		const body = [...parts, ''].join('\n');
 		await fs.writeFile(abs, body, { encoding: 'utf-8', mode: STORE_FILE_MODE });
 	}
 
@@ -420,6 +460,7 @@ export class DigestScheduler {
 		const windowStartIso = new Date(startMs).toISOString();
 		const windowEndIso = new Date(startMs + SEGMENT_MS).toISOString();
 		const segmentPath = resolveStorePath(this.deps.storeDir, entry.file);
+		const previousDigestPath = await this.previousDigestPath(startMs);
 		const written = await this.ask(digests, {
 			question: buildDigestPrompt({
 				segmentPath,
@@ -427,8 +468,9 @@ export class DigestScheduler {
 				entry,
 				windowStartIso,
 				windowEndIso,
+				previousDigestPath,
 			}),
-			local: { kind: '15m', segmentPath, windowStartIso, windowEndIso },
+			local: { kind: '15m', segmentPath, windowStartIso, windowEndIso, previousDigestPath },
 		});
 		if (written === null) return;
 		// The writer can take minutes. Re-check right before writing: the user
@@ -476,7 +518,10 @@ export class DigestScheduler {
 				'',
 				`From ${inputs.length} ${SEGMENT_MINUTES}-minute digest(s). Written by ${written.writtenBy}.`,
 			],
-			written.answer
+			written.answer,
+			formatDigestSources(
+				inputs.map((abs) => path.relative(this.deps.storeDir, abs).split(path.sep).join('/'))
+			)
 		);
 		this.lastRollupFile = rel;
 		this.lastRollupAt = new Date(this.now()).toISOString();
