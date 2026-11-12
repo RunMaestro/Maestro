@@ -21,6 +21,12 @@ import {
 	BUSY_MODEL_USAGE as BUSY,
 	EMPTY_MODEL_USAGE as EMPTY,
 } from '../../helpers/modelUsageFixtures';
+import { busyProxyEffectiveness } from '../../helpers/proxyTelemetryFixtures';
+import { TOKEN_PROXY_UNKNOWN_LABELS } from '../../../shared/local-models/token-proxy';
+import {
+	TOKEN_PROXY_PROVIDER_USAGE_NOTE,
+	TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE,
+} from '../../../shared/local-models/token-proxy-report';
 
 function mockSend(reply: Record<string, unknown>) {
 	const captured: { payload?: Record<string, unknown>; responseType?: string } = {};
@@ -97,11 +103,15 @@ describe('stats models command', () => {
 		expect(output).toMatch(/Auto routing\s+17 turns: low 10, medium 5, high 2/);
 
 		// The proxy's saving is an estimate, and the report says so.
-		expect(output).toMatch(/All agents\s+12 requests, 10000 tokens saved \(25%\), 14 ms average/);
+		expect(output).toMatch(
+			/All agents\s+12 requests, est\. tokens saved 10,000 \(25%\), average added latency 14 ms\n/
+		);
 		expect(output).toMatch(/Alpha\s+9 requests/);
 		expect(output).toMatch(/No agent\s+3 requests, -/);
 		expect(output).toContain('1 background request sent to a Local Models target');
 		expect(output).toContain('Token counts are estimates at 4 characters per token.');
+		// No dollar or quality result exists for it, and the record says so.
+		expect(output).toContain(TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE);
 		expect(exitSpy).not.toHaveBeenCalled();
 	});
 
@@ -146,6 +156,137 @@ describe('stats models command', () => {
 		);
 		expect(output).toMatch(/Claude Code\s+.*40 requests/);
 		expect(output).not.toMatch(/Tasks|Agents|System One|Token proxy/);
+	});
+
+	describe('the token proxy block of a current desktop', () => {
+		const provider = {
+			requests: 112,
+			inputTokens: 1_200_000,
+			cacheReadTokens: 4_100_000,
+			cacheWriteTokens: 0,
+			outputTokens: 61_000,
+		};
+		const none = {
+			compressRequests: 0,
+			originalTokens: 0,
+			sentTokens: 0,
+			tokensSaved: 0,
+			avgAddedLatencyMs: 0,
+			timedRequests: 0,
+			provider: { ...provider, requests: 0, inputTokens: 0, cacheReadTokens: 0, outputTokens: 0 },
+		};
+		const read = {
+			compressRequests: 100,
+			originalTokens: 400_000,
+			sentTokens: 300_000,
+			tokensSaved: 100_000,
+			avgAddedLatencyMs: 14,
+			timedRequests: 98,
+			provider,
+		};
+		const CURRENT = {
+			...BUSY,
+			proxy: {
+				routedRequests: 0,
+				totals: { requests: 120, ...read },
+				byAgent: [
+					{ agentId: 'agent-alpha-0001', name: 'Alpha', requests: 100, ...read },
+					{ agentId: null, name: null, requests: 20, ...none },
+				],
+				byMode: [
+					{ effectiveMode: 'compress', requests: 100, ...read },
+					{ effectiveMode: null, requests: 20, ...none },
+				],
+				byRoute: [
+					{ route: 'anthropic', requests: 100, ...read },
+					{ route: 'acme-gateway', requests: 20, ...none },
+				],
+				effectiveness: busyProxyEffectiveness(),
+			},
+		};
+
+		it('says what the proxy did with the requests in the words `models proxy status` uses', async () => {
+			mockSend({ type: 'model_usage', success: true, data: CURRENT });
+
+			await statsModels({ range: 'month' });
+
+			const output = logSpy.mock.calls[0][0] as string;
+			expect(output).toMatch(
+				/Requests\s+120 requests carried\. Of those: 100 read, 8 forwarded without the compressor's result/
+			);
+			expect(output).toMatch(
+				/Blocks\s+90 of 100 read requests counted: 300 candidate blocks \(160 shortened/
+			);
+			expect(output).toMatch(
+				/Processing time\s+p50 12ms, p95 80ms, p99 1\.2s over 98 timed requests/
+			);
+			expect(output).toMatch(/Algorithms\s+json 150 blocks in 40 requests/);
+		});
+
+		it('files a request with no recorded mode as not recorded, apart from the agents', async () => {
+			mockSend({ type: 'model_usage', success: true, data: CURRENT });
+
+			await statsModels({ range: 'month' });
+
+			const output = logSpy.mock.calls[0][0] as string;
+			const [agents, modes] = output.split('By mode (what each request was carried as):');
+			expect(agents).toMatch(/Alpha\s+100 requests/);
+			expect(modes).toMatch(/Compress tool results\s+100 requests, est\. tokens saved 100,000/);
+			expect(modes).toContain(`${TOKEN_PROXY_UNKNOWN_LABELS['not-recorded']}  20 requests, -`);
+		});
+
+		it('prints each provider route as the Gateway names it, keeping a route it does not know', async () => {
+			mockSend({ type: 'model_usage', success: true, data: CURRENT });
+
+			await statsModels({ range: 'month' });
+
+			const output = logSpy.mock.calls[0][0] as string;
+			const routes = output.split('By provider route:')[1];
+			expect(routes).toMatch(
+				/Claude Code\s+100 requests, est\. tokens saved 100,000 \(25%\), average added latency 14 ms/
+			);
+			expect(routes).toContain('acme-gateway  20 requests, -');
+		});
+
+		it('prints the provider classes with their coverage, apart from the estimates', async () => {
+			mockSend({ type: 'model_usage', success: true, data: CURRENT });
+
+			await statsModels({ range: 'month' });
+
+			const output = logSpy.mock.calls[0][0] as string;
+			const [estimates, classes] = output.split('Provider usage');
+			expect(estimates).toContain('est. tokens saved 100,000 (25%)');
+			expect(classes).toContain(TOKEN_PROXY_PROVIDER_USAGE_NOTE);
+			expect(classes).toMatch(/Input\s+1\.2M tokens on 100 of 120 requests\./);
+			expect(classes).toMatch(/Cache write\s+0 tokens on 50 of 120 requests\./);
+			expect(output).toContain(TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE);
+		});
+
+		it('leaves the originals read back to `models proxy status`: they belong to no range', async () => {
+			mockSend({ type: 'model_usage', success: true, data: CURRENT });
+
+			await statsModels({ range: 'month' });
+
+			const output = logSpy.mock.calls[0][0] as string;
+			expect(output).not.toContain('Original recovery');
+			expect(output).not.toContain('Retrieve tool');
+		});
+
+		it('keeps the effectiveness whole in the JSON record', async () => {
+			mockSend({ type: 'model_usage', success: true, data: CURRENT });
+
+			await statsModels({ range: 'month', json: true });
+
+			const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+			expect(parsed.proxy.effectiveness).toEqual(busyProxyEffectiveness());
+			expect(parsed.proxy.byMode[1].effectiveMode).toBeNull();
+			expect(parsed.proxy.byRoute.map((row: { route: string }) => row.route)).toEqual([
+				'anthropic',
+				'acme-gateway',
+			]);
+			expect(parsed.proxy.totals.timedRequests).toBe(98);
+			expect(parsed.proxy).not.toHaveProperty('recovery');
+		});
 	});
 
 	it('prints the whole record as JSON with --json', async () => {

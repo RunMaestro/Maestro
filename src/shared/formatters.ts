@@ -5,6 +5,7 @@
  * Functions:
  * - formatSize: File sizes (B, KB, MB, GB, TB)
  * - formatNumber: Large numbers with k/M/B suffixes
+ * - formatCountNoun: An exact count with its noun ("1 request", "1,204 requests")
  * - formatTokens: Token counts with K/M/B suffixes (~prefix)
  * - formatTokensCompact: Token counts without ~prefix
  * - formatTokensPerSecond: Token throughput rates (dash when unmeasured)
@@ -159,6 +160,15 @@ export function formatNumber(num: number): string {
  */
 export function formatCount(count: number): string {
 	return nfLocalCount().format(count);
+}
+
+/**
+ * A count with its noun, the noun agreeing with the count: `1 request`,
+ * `1,204 requests`. The count is grouped like {@link formatCount}. Pass `many`
+ * for a noun that does not take a plain `s` (`entry`, `entries`).
+ */
+export function formatCountNoun(count: number, one: string, many = `${one}s`): string {
+	return `${formatCount(count)} ${count === 1 ? one : many}`;
 }
 
 /**

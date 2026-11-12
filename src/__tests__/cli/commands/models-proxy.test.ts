@@ -30,7 +30,19 @@ import {
 	TOKEN_PROXY_OPPORTUNITY_NOTE,
 	TOKEN_PROXY_UNAVAILABLE_IDENTITY,
 } from '../../../shared/local-models/token-proxy';
+import {
+	TOKEN_PROXY_EVIDENCE_SEPARATION_NOTE,
+	TOKEN_PROXY_UNKNOWN_LABELS,
+} from '../../../shared/local-models/token-proxy';
+import {
+	TOKEN_PROXY_PROVIDER_STORED_SUMS_NOTE,
+	TOKEN_PROXY_PROVIDER_USAGE_NOTE,
+	TOKEN_PROXY_RECOVERY_HEADING,
+	TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE,
+	TOKEN_PROXY_TREND_NOTE,
+} from '../../../shared/local-models/token-proxy-report';
 import { formatError, formatTokenProxyOpportunities } from '../../../cli/output/formatter';
+import { busyProxyEffectiveness, recoveryObservations } from '../../helpers/proxyTelemetryFixtures';
 
 function mockSend(reply: Record<string, unknown>) {
 	const captured: { payload?: Record<string, unknown>; responseType?: string } = {};
@@ -78,6 +90,7 @@ const RUNNING: TokenProxyReport = {
 			sentTokens: 30000,
 			tokensSaved: 10000,
 			avgAddedLatencyMs: 14,
+			timedRequests: 5,
 		},
 		byAgent: [
 			{
@@ -88,6 +101,7 @@ const RUNNING: TokenProxyReport = {
 				sentTokens: 30000,
 				tokensSaved: 10000,
 				avgAddedLatencyMs: 14,
+				timedRequests: 5,
 			},
 			{
 				agentId: null,
@@ -97,6 +111,7 @@ const RUNNING: TokenProxyReport = {
 				sentTokens: 0,
 				tokensSaved: 0,
 				avgAddedLatencyMs: 0,
+				timedRequests: 0,
 			},
 		],
 	},
@@ -260,7 +275,9 @@ describe('models proxy status command', () => {
 		expect(output).toMatch(/TOKEN PROXY/);
 		expect(output).toMatch(/listening on 127\.0\.0\.1:48123/);
 		expect(output).toMatch(/Alpha\s+compress\s+.*http:\/\/127\.0\.0\.1:48123\/anthropic/);
-		expect(output).toMatch(/All agents\s+12 requests, 10000 tokens saved \(25%\), 14 ms average/);
+		expect(output).toMatch(
+			/All agents\s+12 requests, est\. tokens saved 10,000 \(25%\), average added latency 14 ms\n/
+		);
 		// A request with no agent was only counted.
 		expect(output).toMatch(/No agent\s+3 requests, -/);
 		// A saving is an estimate, and the report says which way it is off.
@@ -354,7 +371,7 @@ describe('models proxy status command', () => {
 			const output = logSpy.mock.calls[0][0] as string;
 			const [realized, potential] = output.split('Read opportunities');
 			// What the proxy removed is printed first, and the block that follows is not part of it.
-			expect(realized).toMatch(/10000 tokens saved \(25%\)/);
+			expect(realized).toMatch(/est\. tokens saved 10,000 \(25%\)/);
 			expect(potential).toContain('observation only: none of this was applied');
 			expect(potential).toMatch(/412 requests examined, 38 with a read among their newest results/);
 			expect(potential).toContain('Passthrough requests are not read.');
@@ -435,6 +452,453 @@ describe('models proxy status command', () => {
 			}).join('\n');
 
 			expect(lines).toContain('2 requests hit a work bound; older reads went unexamined.');
+		});
+	});
+
+	describe('effectiveness', () => {
+		const NO_PROVIDER = {
+			requests: 0,
+			inputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			outputTokens: 0,
+		};
+		const group = (overrides: Record<string, unknown>) => ({
+			requests: 0,
+			compressRequests: 0,
+			originalTokens: 0,
+			sentTokens: 0,
+			tokensSaved: 0,
+			avgAddedLatencyMs: 0,
+			timedRequests: 0,
+			provider: NO_PROVIDER,
+			...overrides,
+		});
+		const BUSY: TokenProxyReport = {
+			...RUNNING,
+			usage: {
+				range: 'month',
+				totals: group({
+					requests: 120,
+					compressRequests: 100,
+					originalTokens: 400_000,
+					sentTokens: 300_000,
+					tokensSaved: 100_000,
+					avgAddedLatencyMs: 14,
+					timedRequests: 98,
+					provider: {
+						requests: 112,
+						inputTokens: 1_200_000,
+						cacheReadTokens: 4_100_000,
+						cacheWriteTokens: 0,
+						outputTokens: 61_000,
+					},
+				}),
+				byAgent: [
+					group({
+						agentId: 'agent-1',
+						requests: 100,
+						compressRequests: 100,
+						originalTokens: 400_000,
+						sentTokens: 300_000,
+						tokensSaved: 100_000,
+						avgAddedLatencyMs: 14,
+						timedRequests: 98,
+					}),
+					group({ agentId: null, requests: 20 }),
+				],
+				byMode: [
+					group({
+						effectiveMode: 'compress',
+						requests: 70,
+						compressRequests: 70,
+						originalTokens: 280_000,
+						sentTokens: 210_000,
+						tokensSaved: 70_000,
+						avgAddedLatencyMs: 12,
+						timedRequests: 68,
+					}),
+					group({
+						effectiveMode: 'compress-early',
+						requests: 30,
+						compressRequests: 30,
+						originalTokens: 120_000,
+						sentTokens: 90_000,
+						tokensSaved: 30_000,
+						avgAddedLatencyMs: 0,
+						timedRequests: 30,
+					}),
+					group({ effectiveMode: null, requests: 20, compressRequests: 0 }),
+				],
+				byRoute: [
+					group({
+						route: 'anthropic',
+						requests: 95,
+						compressRequests: 95,
+						originalTokens: 380_000,
+						sentTokens: 285_000,
+						tokensSaved: 95_000,
+						avgAddedLatencyMs: 14,
+						timedRequests: 93,
+					}),
+					group({
+						route: 'openai',
+						requests: 5,
+						compressRequests: 5,
+						originalTokens: 20_000,
+						sentTokens: 15_000,
+						tokensSaved: 5_000,
+						avgAddedLatencyMs: 0,
+						timedRequests: 0,
+					}),
+					group({ route: 'acme-gateway', requests: 20, compressRequests: 0 }),
+				],
+				effectiveness: busyProxyEffectiveness(),
+			},
+		} as TokenProxyReport;
+
+		async function printed(report: TokenProxyReport): Promise<string> {
+			mockSend({ success: true, report });
+			await modelsProxyStatus({});
+			return logSpy.mock.calls.at(-1)?.[0] as string;
+		}
+
+		it('prints what the proxy did with the requests, each count with its coverage', async () => {
+			const output = await printed(BUSY);
+
+			expect(output).toMatch(
+				/Requests\s+120 requests carried\. Of those: 100 read, 8 forwarded without the compressor's result, 60 with a block shortened \(210 blocks\)/
+			);
+			expect(output).toMatch(
+				/Blocks\s+90 of 100 read requests counted: 300 candidate blocks \(160 shortened, 50 kept whole, 80 under the size threshold, 10 left alone because the cache failed\)/
+			);
+			// Maestro's own cache is not the provider's, and the line says so.
+			expect(output).toContain(
+				"40 verdicts reused from Maestro's compression cache (not the provider's prompt cache)"
+			);
+			expect(output).toMatch(/Set aside\s+120 recent or at a cache breakpoint, 3 failed results/);
+			expect(output).toMatch(
+				/Skipped\s+5 a body that is not UTF-8 text; 3 decoding or compressing failed/
+			);
+			expect(output).toMatch(
+				/Processing time\s+p50 12ms, p95 80ms, p99 1\.2s over 98 timed requests; 2 read requests without a time/
+			);
+			// The algorithms overlap, and the unique count is a subtotal said against the range's.
+			expect(output).toContain(
+				'200 unique blocks in the requests that recorded their algorithms, out of 210 shortened in the range; a block that two algorithms shortened is listed under each, so the lists do not add up'
+			);
+			// Three kinds of figure are on the screen and the report says they are never added.
+			expect(output).toContain(TOKEN_PROXY_EVIDENCE_SEPARATION_NOTE);
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('says the time against the sample of each group, never an unmeasured 0 ms', async () => {
+			const output = await printed({
+				...BUSY,
+				usage: {
+					...BUSY.usage!,
+					totals: { ...BUSY.usage!.totals, avgAddedLatencyMs: 0, timedRequests: 1 },
+					byAgent: [
+						{ ...BUSY.usage!.byAgent[0], avgAddedLatencyMs: 0, timedRequests: 0 },
+						{
+							...BUSY.usage!.byAgent[0],
+							agentId: 'agent-2',
+							avgAddedLatencyMs: 0,
+							timedRequests: 1,
+						},
+						{
+							...BUSY.usage!.byAgent[0],
+							agentId: 'agent-3',
+							avgAddedLatencyMs: 14,
+							timedRequests: undefined,
+						},
+					],
+				},
+			});
+
+			expect(output).toMatch(/All agents\s+120 requests, .*average added latency 0 ms\n/);
+			expect(output).toMatch(/Alpha\s+100 requests, .*average added latency unknown\n/);
+			expect(output).toMatch(/agent-2\s+100 requests, .*average added latency 0 ms\n/);
+			// An older desktop sent a mean and not its sample.
+			expect(output).toMatch(
+				/agent-3\s+100 requests, .*average added latency 14 ms \(sample unknown\)\n/
+			);
+		});
+
+		it('prints each mode apart from the agents, and a historical request as not recorded', async () => {
+			const output = await printed(BUSY);
+
+			const [agents, modes] = output.split('By mode (what each request was carried as):');
+			expect(agents).toMatch(/Alpha\s+100 requests/);
+			expect(agents).not.toContain('Compress early');
+			expect(modes).toMatch(
+				/Compress tool results\s+70 requests, est\. tokens saved 70,000 \(25%\), average added latency 12 ms/
+			);
+			// A measured zero in one mode is still a measurement.
+			expect(modes).toMatch(
+				/Compress early\s+30 requests, est\. tokens saved 30,000 \(25%\), average added latency 0 ms/
+			);
+			// A request that predates the field is not filed under the agent's setting today.
+			expect(modes).toContain(`${TOKEN_PROXY_UNKNOWN_LABELS['not-recorded']}  20 requests, -`);
+		});
+
+		it('prints each provider route apart from the agents and modes, keeping a route it does not know', async () => {
+			const output = await printed(BUSY);
+
+			const routes = output.split('By provider route:')[1];
+			// The route is named as the Gateway names it.
+			expect(routes).toMatch(
+				/Claude Code\s+95 requests, est\. tokens saved 95,000 \(25%\), average added latency 14 ms\n/
+			);
+			// A route whose requests carry no time is unknown, not 0 ms.
+			expect(routes).toMatch(
+				/Codex with an OpenAI API key\s+5 requests, est\. tokens saved 5,000 \(25%\), average added latency unknown\n/
+			);
+			// A route another build stored stays as it was stored, and is only counted.
+			expect(routes).toContain('acme-gateway  20 requests, -');
+			// The cut sits after the modes, and each cut holds the same requests.
+			expect(output.indexOf('By provider route:')).toBeGreaterThan(
+				output.indexOf('By mode (what each request was carried as):')
+			);
+		});
+
+		it('prints no route cut for a desktop that sent none', async () => {
+			const output = await printed({
+				...BUSY,
+				usage: { ...BUSY.usage!, byRoute: undefined },
+			});
+
+			expect(output).not.toContain('By provider route:');
+			expect(output).toContain('By mode (what each request was carried as):');
+		});
+
+		it('lists the latest days of the range, each with its estimate, and says the rest are in the JSON', async () => {
+			const day = (date: string, requests: number, compressRequests: number) => ({
+				date,
+				requests,
+				compressRequests,
+				originalTokens: compressRequests * 4_000,
+				sentTokens: compressRequests * 3_000,
+				blocksShortened: compressRequests,
+			});
+			const trend = Array.from({ length: 9 }, (_, index) =>
+				day(`2026-11-0${index + 1}`, 10 + index, index === 8 ? 0 : 4)
+			);
+			const output = await printed({
+				...BUSY,
+				usage: { ...BUSY.usage!, effectiveness: { ...busyProxyEffectiveness(), trend } },
+			});
+
+			const days = output.split('Recent days')[1].split('Provider usage')[0];
+			expect(days).toContain(TOKEN_PROXY_TREND_NOTE);
+			// The latest seven, oldest first; the two before them are in the JSON record.
+			expect(days).not.toContain('2026-11-01');
+			expect(days).not.toContain('2026-11-02');
+			expect(days).toMatch(
+				/2026-11-03\s+12 requests, 4 read, est\. tokens saved 4,000 \(25%\), 4 blocks shortened/
+			);
+			// A day with nothing read has no estimate to show.
+			expect(days).toMatch(/2026-11-09\s+18 requests, none read\n/);
+			expect(days.indexOf('2026-11-03')).toBeLessThan(days.indexOf('2026-11-09'));
+			expect(days).toContain('2 earlier days in the JSON record (--json)');
+		});
+
+		it('prints no days when the range has none, and no note about earlier ones for a short range', async () => {
+			expect(await printed(BUSY)).not.toContain('Recent days');
+
+			const output = await printed({
+				...BUSY,
+				usage: {
+					...BUSY.usage!,
+					effectiveness: {
+						...busyProxyEffectiveness(),
+						trend: [
+							{
+								date: '2026-11-12',
+								requests: 3,
+								compressRequests: 3,
+								originalTokens: 12_000,
+								sentTokens: 9_000,
+								blocksShortened: 2,
+							},
+						],
+					},
+				},
+			});
+			expect(output).toMatch(/2026-11-12\s+3 requests, 3 read, est\. tokens saved 3,000 \(25%\)/);
+			expect(output).not.toContain('earlier day');
+		});
+
+		it('prints the provider classes apart from the estimates, with the coverage of each', async () => {
+			const output = await printed(BUSY);
+
+			const [estimates, provider] = output.split('Provider usage');
+			expect(estimates).toContain('est. tokens saved 100,000 (25%)');
+			expect(provider).toContain(TOKEN_PROXY_PROVIDER_USAGE_NOTE);
+			expect(provider).toMatch(
+				/Input\s+1\.2M tokens on 100 of 120 requests\. Other requests: 12 not reported in the answer \(unknown, not zero\); 8 recorded before reporting was tracked \(unknown\)/
+			);
+			expect(provider).toMatch(
+				/Cache write\s+0 tokens on 50 of 120 requests\. Other requests: 50 not a class this provider has \(zero by definition\)/
+			);
+			expect(provider).toMatch(/Output\s+61\.0K tokens on 112 of 120 requests/);
+			// The old line summed stored numbers, defaults included. It is gone.
+			expect(output).not.toContain('Provider counted');
+		});
+
+		it('says no dollar or quality result exists, whatever the desktop sent', async () => {
+			expect(await printed(BUSY)).toContain(TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE);
+			expect(await printed(RUNNING)).toContain(TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE);
+		});
+
+		it('prints the older desktop shape as stored sums of unknown provenance, not as provider counts', async () => {
+			const output = await printed({
+				...RUNNING,
+				usage: {
+					...RUNNING.usage!,
+					totals: {
+						...RUNNING.usage!.totals,
+						timedRequests: undefined,
+						provider: {
+							requests: 12,
+							inputTokens: 4_000,
+							cacheReadTokens: 120_000,
+							cacheWriteTokens: 0,
+							outputTokens: 600,
+						},
+					},
+				},
+			});
+
+			expect(output).toMatch(
+				/All agents\s+12 requests, .*average added latency 14 ms \(sample unknown\)/
+			);
+			expect(output).not.toContain('By mode');
+			expect(output).not.toContain(TOKEN_PROXY_EVIDENCE_SEPARATION_NOTE);
+			// The sums sit under the note for sums. The note for classes would promote
+			// them to reported or derived counts, and it is not printed.
+			const provider = output.split('Provider usage')[1];
+			expect(provider).toContain(TOKEN_PROXY_PROVIDER_STORED_SUMS_NOTE);
+			expect(output).not.toContain(TOKEN_PROXY_PROVIDER_USAGE_NOTE);
+			expect(provider).toMatch(
+				/Stored sums\s+unknown provenance and coverage for each class, over 12 requests with usage: input 4\.0K, cache read 120\.0K, cache write 0, output 600/
+			);
+			expect(output).not.toContain('Provider counted');
+		});
+
+		it('keeps the whole record in the JSON report, with the unknowns as unknowns', async () => {
+			mockSend({ success: true, report: BUSY });
+
+			await modelsProxyStatus({ json: true });
+
+			const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+			expect(parsed.usage.effectiveness).toEqual(busyProxyEffectiveness());
+			expect(
+				parsed.usage.byMode.map((row: { effectiveMode: unknown }) => row.effectiveMode)
+			).toEqual(['compress', 'compress-early', null]);
+			expect(parsed.usage.byMode[2].timedRequests).toBe(0);
+			expect(parsed.usage.totals.timedRequests).toBe(98);
+			// The stored route text survives untouched, an unknown one included.
+			expect(parsed.usage.byRoute.map((row: { route: string }) => row.route)).toEqual([
+				'anthropic',
+				'openai',
+				'acme-gateway',
+			]);
+			expect(parsed.usage.byRoute[1].timedRequests).toBe(0);
+		});
+	});
+
+	describe('original recovery', () => {
+		const READ = {
+			mcpRetrieveTool: {
+				invocations: 3,
+				rangedInvocations: 3,
+				recoveredOriginals: 2,
+				missingOriginals: 1,
+				returnedOriginalBytes: 18_432,
+				returnedOriginalTokenEstimate: 4_608,
+			},
+			otherReads: {
+				invocations: 1,
+				recoveredOriginals: 1,
+				returnedOriginalBytes: 2_048,
+				returnedOriginalTokenEstimate: 512,
+			},
+		};
+
+		async function printed(report: TokenProxyReport): Promise<string> {
+			mockSend({ success: true, report });
+			await modelsProxyStatus({});
+			return logSpy.mock.calls.at(-1)?.[0] as string;
+		}
+
+		it('prints the retrieve tool apart from other reads, and apart from the range', async () => {
+			const output = await printed({ ...RUNNING, recovery: recoveryObservations(READ) });
+
+			const [range, recovery] = output.split(TOKEN_PROXY_RECOVERY_HEADING);
+			expect(recovery).toMatch(
+				/Retrieve tool\s+3 calls: 2 returned original text \(18\.0 KB, about 4\.6K tokens, an estimate\); 1 found the original no longer stored/
+			);
+			expect(recovery).toMatch(
+				/Other reads\s+1 read: 1 returned original text \(2\.0 KB, about 512 tokens, an estimate\); the actor is unknown/
+			);
+			expect(recovery).toMatch(/Not known\s+whether a model read a returned original/);
+			expect(recovery).toMatch(
+				/Net saving\s+not evaluated\. A return is not subtracted from the tokens saved/
+			);
+			// The range above says nothing of it, and the saving there is as it was.
+			expect(range).not.toContain('18.0 KB');
+			expect(range).toMatch(/est\. tokens saved 10,000 \(25%\)/);
+		});
+
+		it('changes nothing above itself: the range prints the same with and without it', async () => {
+			const without = await printed(RUNNING);
+			const withRecovery = await printed({ ...RUNNING, recovery: recoveryObservations(READ) });
+
+			expect(withRecovery.startsWith(without)).toBe(true);
+			expect(withRecovery.length).toBeGreaterThan(without.length);
+		});
+
+		it('says in one line that nothing was read back', async () => {
+			const output = await printed({ ...RUNNING, recovery: recoveryObservations() });
+
+			expect(output).toMatch(
+				/Original recovery\s+none read back since the app started; reads outside this app are not counted/
+			);
+			expect(output).not.toContain('Retrieve tool');
+		});
+
+		it('prints nothing about it for a desktop that predates it', async () => {
+			const output = await printed(RUNNING);
+
+			expect(output).not.toContain('Original recovery');
+			expect(output).not.toContain('Retrieve tool');
+		});
+
+		it('says when a counter reached its limit', async () => {
+			const output = await printed({ ...RUNNING, recovery: recoveryObservations(READ, true) });
+
+			expect(output).toContain(
+				'a counter reached its largest value, so these figures are lower bounds'
+			);
+		});
+
+		it('keeps it whole in the JSON report, as a field apart from the usage', async () => {
+			const recovery = recoveryObservations(READ);
+			mockSend({ success: true, report: { ...RUNNING, recovery } });
+
+			await modelsProxyStatus({ json: true });
+
+			const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+			expect(parsed.recovery).toEqual(recovery);
+			expect(parsed.recovery).toMatchObject({
+				scope: 'process-lifetime',
+				modelExposure: 'unknown',
+				unobservedRetrievals: 'unknown',
+				byCaller: { mcpRetrieveTool: { invocations: 3 }, otherReads: { invocations: 1 } },
+			});
+			expect(JSON.stringify(parsed.usage)).not.toContain('returnedOriginalBytes');
+			expect(parsed.usage.totals.tokensSaved).toBe(10000);
 		});
 	});
 });

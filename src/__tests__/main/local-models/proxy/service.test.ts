@@ -1347,8 +1347,36 @@ describe('read opportunities', () => {
 			'usage',
 			'recentCompressions',
 			'readOpportunities',
+			'recovery',
 		]);
 		expect(JSON.stringify(report.usage)).not.toContain('opportunities');
+		expect(JSON.stringify(report.usage)).not.toContain('recovery');
+	});
+
+	it('carry the originals read back beside the usage, as a count of the app and not of the range', async () => {
+		configure();
+		const usage = { range: 'month', totals: { requests: 3 }, byAgent: [] };
+		requestStats.readTokenProxyUsage.mockReturnValueOnce({
+			usage,
+			recentCompressions: [],
+		} as never);
+
+		const report = await getTokenProxyReport();
+
+		// The same live tally the canonical reader keeps: process lifetime, by caller,
+		// with receipt and unobserved retrievals stated as unknown.
+		expect(report.recovery).toEqual(getTokenProxyRecoveryObservations());
+		expect(report.recovery).toMatchObject({
+			scope: 'process-lifetime',
+			modelExposure: 'unknown',
+			unobservedRetrievals: 'unknown',
+			byCaller: { mcpRetrieveTool: { invocations: 0 }, otherReads: { invocations: 0 } },
+		});
+		// A copy: changing the report cannot change the counters.
+		expect(report.recovery).not.toBe(getTokenProxyRecoveryObservations());
+		// Not inside a range, so the range's totals are what they were.
+		expect(report.usage).toBe(usage);
+		expect(usage.totals).toEqual({ requests: 3 });
 	});
 
 	it('are forgotten with the rest of the state, after the pass in flight', async () => {

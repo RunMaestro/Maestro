@@ -890,8 +890,10 @@ export async function getTokenProxyStatus(): Promise<TokenProxyStatus> {
 /**
  * The proxy's whole picture, for the Gateway section and `maestro-cli models
  * proxy status`: the listener, the agents on it with their mode, what it
- * carried lately, the blocks it last shortened, and the read opportunities it
- * observed. The last is potential only and separate from the others. Reads only.
+ * carried lately, the blocks it last shortened, the read opportunities it
+ * observed and the originals read back since the app started. The opportunities
+ * are potential only, and the reads are a process-lifetime count that belongs to
+ * no range; both are separate from the others. Reads only.
  */
 export async function getTokenProxyReport(): Promise<TokenProxyReport> {
 	const status = await getTokenProxyStatus();
@@ -912,6 +914,7 @@ export async function getTokenProxyReport(): Promise<TokenProxyReport> {
 		agents,
 		...readTokenProxyUsage(),
 		readOpportunities: opportunityObserver.snapshot(),
+		recovery: getTokenProxyRecoveryObservations(),
 	};
 }
 

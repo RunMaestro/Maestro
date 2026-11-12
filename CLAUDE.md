@@ -65,7 +65,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **ID generation:** `generateId()` in `src/renderer/utils/ids.ts`, `generateUUID()` in `src/shared/uuid.ts`
 - **Browser relay text chunks:** `chunkBrowserRelayText()` in `src/shared/browserRelay.ts`
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
-- **Format numbers:** `formatNumber()` (compact), `formatCount()` (exact) in `src/shared/formatters.ts`
+- **Format numbers:** `formatNumber()` (compact), `formatCount()` (exact), `formatCountNoun()` (exact count and its noun) in `src/shared/formatters.ts`
 - **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()`, `estimateTokensFromBytes()` in `src/shared/formatters.ts`
 - **Truncate prose without splitting a word:** `truncateAtWordBoundary()` in `src/shared/formatters.ts`
 - **Format elapsed time:** `formatElapsedTimeColon()` in `src/shared/formatters.ts`
@@ -585,6 +585,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Applying the global proxy default to a new agent:** `applyDefaultAgentTokenProxy()` in `src/renderer/services/agentGateway.ts`
 - **What the token proxy carried, saved and shortened:** `recordTokenProxyRequest()`, `proxyRequestFromLog()`, `readTokenProxyUsage()` in `src/main/local-models/proxy/request-stats.ts`; `getTokenProxyReport()`, `readTokenProxyBlock()` in `proxy/service.ts`; table `proxy_requests` via `src/main/stats/proxy-requests.ts`
 - **How sure a token proxy figure is:** `proxyFigure()`, `addProxyFigures()`, `proxyBlockCountsProblem()`, `proxyProviderClassReading()` in `src/shared/local-models/token-proxy.ts`; `ProxyFigure`, `ProxyBlockCounts` in `src/shared/stats-types.ts`; `getProxyEffectiveness()` in `src/main/stats/proxy-effectiveness.ts`
+- **Saying the token proxy report (CLI, Settings, dashboard):** `describeProxyEffectiveness()`, `describeProviderUsage()`, `describeProxyRecovery()`, `describeProxyTrend()`, `describeProxyRoute()` in `src/shared/local-models/token-proxy-report.ts`
 - **Routing a token proxy request to a background target:** `planBackgroundRoute()`, `withRequestModel()` in `src/main/local-models/proxy/background-route.ts`; `modelIdInTierFamily()` in `src/shared/modelTiers.ts`; `resolveSourceCallTarget()` in `src/main/local-models/run-on.ts`
 - **Setting an agent's background requests target:** `parseBackgroundRequestsEdit()`, `backgroundRequestsSupport()`, `buildBackgroundRequestsOptionGroups()` in `src/shared/local-models/background-requests.ts`; `setAgentBackgroundRequests()`, `OFF_TOKEN_PROXY_FIELDS` in `src/renderer/services/agentGateway.ts`
 - **A unified diff of two texts already in memory:** `<TextDiff theme before after>` in `src/renderer/components/ui/TextDiff.tsx`, over `buildSyntheticGitDiff()` / `parseGitDiff()` in `src/renderer/utils/gitDiffParser.ts`

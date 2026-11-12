@@ -48,6 +48,7 @@ import {
 	describeAddedLatency,
 	describeTokensSaved,
 } from '../../../../shared/local-models/token-proxy';
+import { TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE } from '../../../../shared/local-models/token-proxy-report';
 import type { DurationPercentiles } from '../../../../shared/percentiles';
 import { useTableSort } from '../../../hooks/ui/useTableSort';
 import type { Theme } from '../../../types';
@@ -995,6 +996,9 @@ export const ProxySavingsSection = memo(function ProxySavingsSection({
 			)}
 			<SectionNote theme={theme} testId="model-usage-proxy-estimate">
 				{TOKEN_PROXY_ESTIMATE_NOTE}
+			</SectionNote>
+			<SectionNote theme={theme} testId="model-usage-proxy-not-evaluated">
+				{TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE}
 			</SectionNote>
 		</SectionCard>
 	);

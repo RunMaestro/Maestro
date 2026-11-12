@@ -22,6 +22,7 @@ import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { ModelUsage } from '../../../../shared/local-models/model-usage';
 import { TOKEN_PROXY_ESTIMATE_NOTE } from '../../../../shared/local-models/token-proxy';
+import { TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE } from '../../../../shared/local-models/token-proxy-report';
 import { BUSY_MODEL_USAGE, EMPTY_MODEL_USAGE } from '../../../helpers/modelUsageFixtures';
 import { mockTheme } from '../../../helpers/mockTheme';
 import { createMockSession } from '../../../helpers/mockSession';
@@ -289,7 +290,32 @@ describe('ModelUsageStats', () => {
 			expect(screen.getByTestId('model-usage-proxy-estimate')).toHaveTextContent(
 				TOKEN_PROXY_ESTIMATE_NOTE
 			);
+			// No dollar or quality result exists for the saving, and the section says so.
+			expect(screen.getByTestId('model-usage-proxy-not-evaluated')).toHaveTextContent(
+				TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE
+			);
 			expect(screen.getByText('Estimate')).toBeInTheDocument();
+		});
+
+		it('says unknown, not 0 ms, for a group whose read requests carry no time', async () => {
+			const proxy = BUSY_MODEL_USAGE.proxy;
+			await renderLoaded({
+				...BUSY_MODEL_USAGE,
+				proxy: {
+					...proxy,
+					totals: { ...proxy.totals, avgAddedLatencyMs: 0, timedRequests: 1 },
+					byAgent: [
+						{ ...proxy.byAgent[0], avgAddedLatencyMs: 0, timedRequests: 0 },
+						proxy.byAgent[1],
+					],
+				},
+			});
+
+			// A measured zero is a measurement and a group with no sample is not.
+			expect(screen.getByTestId('model-usage-proxy-total')).toHaveTextContent('0 ms');
+			const [alpha] = screen.getAllByTestId('model-usage-proxy-agent');
+			expect(alpha).toHaveTextContent('unknown');
+			expect(alpha).not.toHaveTextContent('0 ms');
 		});
 
 		it('publishes the footer line', async () => {

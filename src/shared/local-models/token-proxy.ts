@@ -363,16 +363,33 @@ export const TOKEN_PROXY_ESTIMATE_NOTE =
  * is counted and nothing else. The figure is an estimate: show
  * {@link TOKEN_PROXY_ESTIMATE_NOTE} beside it.
  */
-export function describeTokensSaved(totals: ProxyRequestTotals): string {
+export function describeTokensSaved(
+	totals: Pick<ProxyRequestTotals, 'compressRequests' | 'originalTokens' | 'tokensSaved'>
+): string {
 	if (totals.compressRequests === 0) return '-';
 	const share =
 		totals.originalTokens > 0 ? Math.round((totals.tokensSaved / totals.originalTokens) * 100) : 0;
 	return `${formatCount(totals.tokensSaved)} (${share}%)`;
 }
 
-/** Mean time a request was held while the proxy read it. A dash when it read none. */
+/**
+ * Mean time a request was held while the proxy read it, said against the
+ * requests that carry a time (`timedRequests`), because a mean of 0 reads the
+ * same whether it was measured or has no sample:
+ *
+ * - `-`: the proxy read no request body in the range.
+ * - `unknown`: it read some and none carries a time, so there is no mean. Also an
+ *   older desktop's mean of 0, which cannot be told from no sample.
+ * - `14 ms`: the mean of one or more timed requests. A measured 0 stays `0 ms`.
+ * - `14 ms (sample unknown)`: an older desktop sent a mean and not its sample.
+ */
 export function describeAddedLatency(totals: ProxyRequestTotals): string {
-	return totals.compressRequests === 0 ? '-' : `${formatCount(totals.avgAddedLatencyMs)} ms`;
+	if (totals.compressRequests === 0) return '-';
+	const mean = `${formatCount(totals.avgAddedLatencyMs)} ms`;
+	if (totals.timedRequests === undefined) {
+		return totals.avgAddedLatencyMs > 0 ? `${mean} (sample unknown)` : 'unknown';
+	}
+	return totals.timedRequests === 0 ? 'unknown' : mean;
 }
 
 /** Eligibility policy per mode, without a provider-exposure or cost guarantee. */
@@ -566,6 +583,12 @@ export interface TokenProxyReport {
 	 * older desktop.
 	 */
 	readOpportunities?: TokenProxyReadOpportunities;
+	/**
+	 * The originals read back since the app started, by caller. Process lifetime,
+	 * not a time range: it is kept apart from `usage` on purpose, and never added to
+	 * it or subtracted from a saving there. Absent from an older desktop.
+	 */
+	recovery?: TokenProxyRecoveryObservations;
 }
 
 /** Inclusive, 1-based original lines. LF ends a line; a trailing LF adds no empty line. */

@@ -238,6 +238,7 @@ export const BUSY_MODEL_USAGE: ModelUsage = {
 			sentTokens: 30_000,
 			tokensSaved: 10_000,
 			avgAddedLatencyMs: 14,
+			timedRequests: 5,
 		},
 		routedRequests: 1,
 		byAgent: [
@@ -250,6 +251,7 @@ export const BUSY_MODEL_USAGE: ModelUsage = {
 				sentTokens: 30_000,
 				tokensSaved: 10_000,
 				avgAddedLatencyMs: 14,
+				timedRequests: 5,
 			},
 			{
 				agentId: null,
@@ -260,6 +262,7 @@ export const BUSY_MODEL_USAGE: ModelUsage = {
 				sentTokens: 0,
 				tokensSaved: 0,
 				avgAddedLatencyMs: 0,
+				timedRequests: 0,
 			},
 		],
 	},

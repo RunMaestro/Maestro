@@ -8,6 +8,7 @@ import {
 	formatTokensPerSecond,
 	formatNumber,
 	formatCount,
+	formatCountNoun,
 	formatTokens,
 	formatTokensCompact,
 	formatRelativeTime,
@@ -116,6 +117,32 @@ describe('shared/formatters', () => {
 		it('handles zero and negatives', () => {
 			expect(formatCount(0)).toBe('0');
 			expect(formatCount(-5)).toBe('-5');
+		});
+	});
+
+	// ==========================================================================
+	// formatCountNoun tests (a count with its noun)
+	// ==========================================================================
+	describe('formatCountNoun', () => {
+		it('makes the noun agree with the count', () => {
+			expect(formatCountNoun(1, 'request')).toBe('1 request');
+			expect(formatCountNoun(0, 'request')).toBe('0 requests');
+			expect(formatCountNoun(2, 'request')).toBe('2 requests');
+		});
+
+		it('groups the digits of the count like formatCount', () => {
+			expect(formatCountNoun(1204, 'request')).toBe('1,204 requests');
+			expect(formatCountNoun(1204993, 'block')).toBe('1,204,993 blocks');
+		});
+
+		it('takes the plural for a noun that does not add an s', () => {
+			expect(formatCountNoun(1, 'entry', 'entries')).toBe('1 entry');
+			expect(formatCountNoun(3, 'entry', 'entries')).toBe('3 entries');
+		});
+
+		it('keeps a phrase as the noun', () => {
+			expect(formatCountNoun(1, 'read request')).toBe('1 read request');
+			expect(formatCountNoun(5, 'read request')).toBe('5 read requests');
 		});
 	});
 

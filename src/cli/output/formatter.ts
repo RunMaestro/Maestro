@@ -3,10 +3,10 @@
 
 import {
 	formatCount,
+	formatCountNoun,
 	formatDurationDecimal,
 	formatRelativeTime,
 	formatSize,
-	formatTokensCompact,
 } from '../../shared/formatters';
 import {
 	MODEL_SERVER_NAME,
@@ -54,8 +54,11 @@ import {
 	type WorkSearchResult,
 } from '../../shared/local-models/work-search';
 import {
+	describeAddedLatency,
 	describeOpportunityReasons,
+	describeTokensSaved,
 	TOKEN_PROXY_ESTIMATE_NOTE,
+	TOKEN_PROXY_EVIDENCE_SEPARATION_NOTE,
 	TOKEN_PROXY_HOST,
 	TOKEN_PROXY_OBSERVATION_SKIP_LABELS,
 	TOKEN_PROXY_OPPORTUNITY_KIND_LABELS,
@@ -63,8 +66,22 @@ import {
 	type TokenProxyBlockDetail,
 	type TokenProxyObservationSkip,
 	type TokenProxyReadOpportunities,
+	type TokenProxyRecoveryObservations,
 	type TokenProxyReport,
 } from '../../shared/local-models/token-proxy';
+import {
+	describeProviderUsage,
+	describeProviderUsageNote,
+	describeProxyEffectiveness,
+	describeProxyMode,
+	describeProxyRecovery,
+	describeProxyRoute,
+	describeProxyTrend,
+	TOKEN_PROXY_RECOVERY_HEADING,
+	TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE,
+	TOKEN_PROXY_TREND_NOTE,
+	type ProxyReportLine,
+} from '../../shared/local-models/token-proxy-report';
 import type { DurationPercentiles } from '../../shared/percentiles';
 import { peerAccessLabel, type PeerConfigurationReport } from '../../shared/peerAgents';
 import {
@@ -81,7 +98,11 @@ import type { GroupSettingsPublishReport } from '../../shared/groupSettingsUpdat
 import type { GroupAgentDefaults } from '../../shared/types';
 import { formatBackgroundRequestsSpec } from '../../shared/local-models/background-requests';
 import { formatRunOnSpec } from '../../shared/local-models/run-on';
-import type { ProxyRequestTotals } from '../../shared/stats-types';
+import type {
+	ProxyAgentTotals,
+	ProxyRequestTotals,
+	ProxyRequestUsage,
+} from '../../shared/stats-types';
 import {
 	TIER_LEVELS,
 	TIER_NOT_MAPPED_LABEL,
@@ -1273,24 +1294,121 @@ export function formatSemanticIndexProgress(progress: SemanticIndexProgress): st
 	return lines.join('\n');
 }
 
-/** Tokens saved with the share of what arrived, or a dash when nothing was read. */
-function proxyTokensSaved(totals: ProxyRequestTotals): string {
-	if (totals.compressRequests === 0) return '-';
-	const share =
-		totals.originalTokens > 0 ? Math.round((totals.tokensSaved / totals.originalTokens) * 100) : 0;
-	return `${totals.tokensSaved} tokens saved (${share}%)`;
+/** `Label  text` rows from the shared report lines, the labels padded to one column. */
+function proxyReportRows(lines: ProxyReportLine[], indent = '  '): string[] {
+	const width = Math.max(...lines.map((line) => line.label.length));
+	return lines.map((line) => `${indent}${c('white', line.label.padEnd(width))}  ${line.text}`);
 }
 
-function proxyUsageLine(label: string, totals: ProxyRequestTotals): string {
-	const latency =
-		totals.compressRequests === 0 ? '' : `, ${totals.avgAddedLatencyMs} ms average added latency`;
-	return `  ${c('white', label)}  ${totals.requests} ${totals.requests === 1 ? 'request' : 'requests'}, ${proxyTokensSaved(totals)}${latency}`;
+/**
+ * One group of requests: how many, the tokens the proxy estimates it saved and
+ * the mean time it held them. Both figures are said by the shared descriptions
+ * (the ones Settings and the dashboard use), so a group with no timed request
+ * reads unknown where it would otherwise read as 0 ms. A dash is a group whose
+ * bodies the proxy did not read.
+ */
+function proxyUsageLine(label: string, totals: ProxyRequestTotals, indent = '  '): string {
+	const read =
+		totals.compressRequests === 0
+			? '-'
+			: `est. tokens saved ${describeTokensSaved(totals)}, average added latency ${describeAddedLatency(totals)}`;
+	return `${indent}${c('white', label)}  ${formatCountNoun(totals.requests, 'request')}, ${read}`;
+}
+
+/**
+ * The totals of a range, then each agent, each mode and each provider route.
+ * `models proxy status` and `stats models` print these lines from the same
+ * record, so they cannot disagree. The modes are what each request was carried
+ * as: a request whose row does not say stays unknown, and is never filed under an
+ * agent's setting today. A route this build does not know keeps its stored name.
+ * Every cut partitions the same requests, so no cut is added to another.
+ */
+function proxyRangeLines<A extends ProxyAgentTotals>(
+	usage: Pick<ProxyRequestUsage, 'totals' | 'byMode' | 'byRoute'> & { byAgent: A[] },
+	agentLabel: (row: A) => string
+): string[] {
+	const lines = [proxyUsageLine('All agents', usage.totals)];
+	for (const row of usage.byAgent) lines.push(proxyUsageLine(agentLabel(row), row));
+	if (usage.byMode && usage.byMode.length > 0) {
+		lines.push(dim('  By mode (what each request was carried as):'));
+		for (const row of usage.byMode) {
+			lines.push(proxyUsageLine(describeProxyMode(row.effectiveMode), row, '    '));
+		}
+	}
+	if (usage.byRoute && usage.byRoute.length > 0) {
+		lines.push(dim('  By provider route:'));
+		for (const row of usage.byRoute) {
+			lines.push(proxyUsageLine(describeProxyRoute(row.route), row, '    '));
+		}
+	}
+	return lines;
+}
+
+/**
+ * What stands under the totals of a range: the estimate note, what the proxy did
+ * with the requests (counts and their coverage), the provider's own counts, and
+ * what is not evaluated. Each kind of figure is printed apart and none is added
+ * to another. An older desktop answers without the effectiveness: its totals
+ * print as before, with the same note that no money or quality result exists.
+ */
+function proxyEffectivenessLines(
+	usage: Pick<ProxyRequestUsage, 'totals' | 'effectiveness'>
+): string[] {
+	const lines: string[] = [];
+	if (usage.totals.compressRequests > 0) lines.push(dim(`  ${TOKEN_PROXY_ESTIMATE_NOTE}`));
+	if (usage.effectiveness) {
+		lines.push(
+			dim(`  ${TOKEN_PROXY_EVIDENCE_SEPARATION_NOTE}`),
+			'',
+			...proxyReportRows(describeProxyEffectiveness(usage.effectiveness))
+		);
+		const days = describeProxyTrend(usage.effectiveness.trend);
+		if (days.length > 0) {
+			const earlier = usage.effectiveness.trend.length - days.length;
+			lines.push(
+				'',
+				`  ${bold('Recent days')}  ${dim(TOKEN_PROXY_TREND_NOTE)}`,
+				...proxyReportRows(days, '    ')
+			);
+			if (earlier > 0) {
+				lines.push(dim(`    ${plural(earlier, 'earlier day')} in the JSON record (--json)`));
+			}
+		}
+	}
+	const provider = describeProviderUsage(usage);
+	if (provider.length > 0) {
+		lines.push(
+			'',
+			`  ${bold('Provider usage')}  ${dim(describeProviderUsageNote(usage))}`,
+			...proxyReportRows(provider, '    ')
+		);
+	}
+	lines.push('', dim(`  ${TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE}`));
+	return lines;
+}
+
+/**
+ * The originals read back since the app started (`models proxy status`): the
+ * retrieve tool's calls apart from every other read, and what is not known. It
+ * is a count of the app's life, so it is printed apart from the range and is
+ * never subtracted from a saving.
+ */
+export function formatTokenProxyRecovery(recovery: TokenProxyRecoveryObservations): string[] {
+	if (recovery.invocations === 0) {
+		return [
+			'',
+			`${bold('Original recovery')}  ${dim('none read back since the app started; reads outside this app are not counted')}`,
+		];
+	}
+	return ['', bold(TOKEN_PROXY_RECOVERY_HEADING), ...proxyReportRows(describeProxyRecovery(recovery))];
 }
 
 /**
  * `maestro-cli models proxy status`: the listener, the agents on it with their
- * mode, what it carried in the last 30 days, and the blocks it last shortened
- * (each with the hash `models proxy block` takes).
+ * mode, what it carried in the last 30 days (by agent, mode and provider route,
+ * what it did with the requests, and the provider's counts by class), the blocks
+ * it last shortened (each with the hash `models proxy block` takes), and the
+ * originals read back since the app started, which belong to no range.
  */
 export function formatTokenProxyReport(report: TokenProxyReport): string {
 	const { status } = report;
@@ -1325,22 +1443,12 @@ export function formatTokenProxyReport(report: TokenProxyReport): string {
 	} else if (report.usage.totals.requests === 0) {
 		lines.push(dim('  No requests.'));
 	} else {
-		lines.push(proxyUsageLine('All agents', report.usage.totals));
-		for (const row of report.usage.byAgent) {
-			const label =
-				row.agentId === null ? 'No agent' : (names.get(row.agentId) ?? row.agentId.slice(0, 8));
-			lines.push(proxyUsageLine(label, row));
-		}
-		if (report.usage.totals.compressRequests > 0) {
-			lines.push(dim(`  ${TOKEN_PROXY_ESTIMATE_NOTE}`));
-		}
-		// An older desktop answers without the provider's counts.
-		const provider = report.usage.totals.provider;
-		if (provider && provider.requests > 0) {
-			lines.push(
-				`  Provider counted (${formatCount(provider.requests)} requests): input ${formatTokensCompact(provider.inputTokens)}, cache read ${formatTokensCompact(provider.cacheReadTokens)}, cache write ${formatTokensCompact(provider.cacheWriteTokens)}, output ${formatTokensCompact(provider.outputTokens)}`
-			);
-		}
+		lines.push(
+			...proxyRangeLines(report.usage, (row) =>
+				row.agentId === null ? 'No agent' : (names.get(row.agentId) ?? row.agentId.slice(0, 8))
+			),
+			...proxyEffectivenessLines(report.usage)
+		);
 	}
 
 	if (report.recentCompressions.length > 0) {
@@ -1351,7 +1459,8 @@ export function formatTokenProxyReport(report: TokenProxyReport): string {
 			);
 		}
 	}
-	// An older desktop answers without the observations.
+	// An older desktop answers without the recovery counts and the observations.
+	if (report.recovery) lines.push(...formatTokenProxyRecovery(report.recovery));
 	if (report.readOpportunities) lines.push(...formatTokenProxyOpportunities(report.readOpportunities));
 	return lines.join('\n');
 }
@@ -1547,17 +1656,17 @@ export function formatModelUsage(usage: ModelUsage): string {
 	const { proxy } = usage;
 	if (proxy.totals.requests > 0) {
 		lines.push('', bold('Token proxy'));
-		lines.push(proxyUsageLine('All agents', proxy.totals));
-		for (const row of proxy.byAgent) {
-			const label = row.agentId === null ? 'No agent' : (row.name ?? row.agentId.slice(0, 8));
-			lines.push(proxyUsageLine(label, row));
-		}
+		lines.push(
+			...proxyRangeLines(proxy, (row) =>
+				row.agentId === null ? 'No agent' : (row.name ?? row.agentId.slice(0, 8))
+			)
+		);
 		if (proxy.routedRequests > 0) {
 			lines.push(
 				`  ${plural(proxy.routedRequests, 'background request')} sent to a Local Models target`
 			);
 		}
-		if (proxy.totals.compressRequests > 0) lines.push(dim(`  ${TOKEN_PROXY_ESTIMATE_NOTE}`));
+		lines.push(...proxyEffectivenessLines(proxy));
 	}
 	return lines.join('\n');
 }

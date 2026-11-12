@@ -17,6 +17,12 @@ import {
 	type StoredTokenProxyMode,
 	type TokenProxyReport,
 } from '../../../../../shared/local-models/token-proxy';
+import {
+	TOKEN_PROXY_PROVIDER_STORED_SUMS_NOTE,
+	TOKEN_PROXY_PROVIDER_USAGE_NOTE,
+	TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE,
+} from '../../../../../shared/local-models/token-proxy-report';
+import { emptyProxyEffectiveness } from '../../../../helpers/proxyTelemetryFixtures';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 
@@ -687,6 +693,8 @@ describe('the Maestro proxy usage', () => {
 		sentTokens: 30_000,
 		tokensSaved: 10_000,
 		avgAddedLatencyMs: 14,
+		// As a current desktop sends it: the sample the mean is the mean of.
+		timedRequests: 5,
 	};
 	const entry = {
 		hash: blockHash,
@@ -859,5 +867,136 @@ describe('the Maestro proxy usage', () => {
 		expect(describeAddedLatency(unread)).toBe('-');
 		expect(describeTokensSaved(totals)).toBe('10,000 (25%)');
 		expect(describeAddedLatency(totals)).toBe('14 ms');
+		// An older desktop sends the mean without its sample, and says so.
+		expect(describeAddedLatency({ ...totals, timedRequests: undefined })).toBe(
+			'14 ms (sample unknown)'
+		);
+	});
+
+	it('says unknown, not 0 ms, where no read request carries a time', async () => {
+		const read = { ...totals, avgAddedLatencyMs: 0 };
+		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(
+			runningProxy(['a'], {
+				usage: {
+					range: 'month',
+					totals: { ...read, timedRequests: 1 },
+					byAgent: [
+						{ agentId: 'a', ...read, requests: 9, timedRequests: 0 },
+						{ agentId: 'b', ...read, requests: 3, timedRequests: 1 },
+						{ agentId: 'c', ...read, requests: 2, timedRequests: undefined },
+					],
+				},
+			})
+		);
+		seed(agent({ id: 'a', name: 'Alpha', gatewayUrl: proxyUrl('/anthropic') }));
+
+		render(<LocalModelsGatewaySection theme={theme} />);
+
+		expect(await screen.findByTestId('token-proxy-usage-total')).toHaveTextContent('0 ms');
+		const [none, measured, legacy] = screen.getAllByTestId('token-proxy-usage-agent');
+		// A group with no timed request is unknown. A measured zero stays 0 ms. An
+		// older desktop's zero cannot be told from no sample, so it is unknown too.
+		expect(none).toHaveTextContent('unknown');
+		expect(none).not.toHaveTextContent('0 ms');
+		expect(measured).toHaveTextContent('0 ms');
+		expect(legacy).toHaveTextContent('unknown');
+		expect(legacy).not.toHaveTextContent('0 ms');
+	});
+
+	it('shows the provider counts class by class, with the coverage of each', async () => {
+		const classes = emptyProxyEffectiveness().providerClasses;
+		const rows = {
+			reported: 0,
+			derived: 0,
+			'not-applicable': 0,
+			unreported: 0,
+			legacy: 0,
+			absent: 0,
+		};
+		const effectiveness = {
+			...emptyProxyEffectiveness(),
+			providerClasses: {
+				...classes,
+				input: {
+					tokens: {
+						kind: 'measured' as const,
+						unit: 'tokens' as const,
+						value: 4_000,
+						coverage: { scope: 'range' as const, counted: 8, of: 12 },
+					},
+					rows: { ...rows, reported: 6, derived: 2, unreported: 3, legacy: 1 },
+				},
+				output: {
+					tokens: {
+						kind: 'measured' as const,
+						unit: 'tokens' as const,
+						value: 900,
+						coverage: { scope: 'range' as const, counted: 12, of: 12 },
+					},
+					rows: { ...rows, reported: 12 },
+				},
+			},
+		};
+		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(
+			runningProxy(['a'], {
+				usage: {
+					range: 'month',
+					totals: { ...totals, timedRequests: 5, provider: { requests: 12 } },
+					byAgent: [],
+					effectiveness,
+				},
+			})
+		);
+		seed(agent({ id: 'a', name: 'Alpha', gatewayUrl: proxyUrl('/anthropic') }));
+
+		render(<LocalModelsGatewaySection theme={theme} />);
+
+		const provider = await screen.findByTestId('token-proxy-provider-usage');
+		expect(provider).toHaveTextContent(TOKEN_PROXY_PROVIDER_USAGE_NOTE);
+		// A class is summed only over the requests that reported or derived it, and
+		// the rest are named as unknown instead of being added in as zeros.
+		expect(provider).toHaveTextContent('Input4.0K tokens on 8 of 12 requests');
+		expect(provider).toHaveTextContent('3 not reported in the answer (unknown, not zero)');
+		expect(provider).toHaveTextContent('1 recorded before reporting was tracked (unknown)');
+		expect(provider).toHaveTextContent('Output900 tokens on 12 of 12 requests');
+		expect(provider).toHaveTextContent('Cache readunknown:');
+		// No dollar or quality figure exists, and the panel says so.
+		expect(screen.getByTestId('token-proxy-results-note')).toHaveTextContent(
+			TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE
+		);
+	});
+
+	it('shows the sums of an older desktop as stored sums of unknown provenance', async () => {
+		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(
+			runningProxy(['a'], {
+				usage: {
+					range: 'month',
+					totals: {
+						...totals,
+						provider: {
+							requests: 12,
+							inputTokens: 4_000,
+							cacheReadTokens: 120_000,
+							cacheWriteTokens: 0,
+							outputTokens: 600,
+						},
+					},
+					byAgent: [],
+				},
+			})
+		);
+		seed(agent({ id: 'a', name: 'Alpha', gatewayUrl: proxyUrl('/anthropic') }));
+
+		render(<LocalModelsGatewaySection theme={theme} />);
+
+		const provider = await screen.findByTestId('token-proxy-provider-usage');
+		// The sums sit under the note for sums. The note for classes would call them
+		// reported or derived counts, which nothing says they are.
+		expect(provider).toHaveTextContent(TOKEN_PROXY_PROVIDER_STORED_SUMS_NOTE);
+		expect(provider).not.toHaveTextContent(TOKEN_PROXY_PROVIDER_USAGE_NOTE);
+		expect(provider).toHaveTextContent(
+			'Stored sumsunknown provenance and coverage for each class, over 12 requests with usage: input 4.0K, cache read 120.0K, cache write 0, output 600'
+		);
+		expect(provider).not.toHaveTextContent('Provider counted');
 	});
 });

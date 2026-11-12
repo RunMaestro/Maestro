@@ -5329,7 +5329,7 @@ The Maestro token proxy: what it carried, saved, and shortened
 
 ## `maestro-cli models proxy status`
 
-Whether the proxy is listening, the agents on it and their mode, tokens saved and added latency for the last 30 days, recent compressions, and the read opportunities it observed but did not apply (requires the desktop app)
+Whether the proxy is listening, the agents on it and their mode, and for the last 30 days the estimated tokens saved and added latency by agent, mode and provider route, what it did with the requests, the counts the provider reported by class, recent compressions, the originals read back since the app started, and the read opportunities it observed but did not apply (requires the desktop app)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |

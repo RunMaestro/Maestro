@@ -16,13 +16,9 @@
  * Nothing here changes a setting. The mode control is in the Gateway table.
  */
 
-import { useCallback, useState } from 'react';
+import { Fragment, useCallback, useMemo, useState } from 'react';
 
-import {
-	formatCount,
-	formatRelativeTime,
-	formatTokensCompact,
-} from '../../../../../shared/formatters';
+import { formatCount, formatRelativeTime } from '../../../../../shared/formatters';
 import {
 	describeAddedLatency,
 	describeTokensSaved,
@@ -31,6 +27,11 @@ import {
 	type TokenProxyBlockDetail,
 	type TokenProxyReport,
 } from '../../../../../shared/local-models/token-proxy';
+import {
+	describeProviderUsage,
+	describeProviderUsageNote,
+	TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE,
+} from '../../../../../shared/local-models/token-proxy-report';
 import type { ProxyCompressionEntry } from '../../../../../shared/stats-types';
 import type { Theme } from '../../../../types';
 import { TextDiff } from '../../../ui/TextDiff';
@@ -82,6 +83,13 @@ export function LocalModelsProxyUsage({
 	);
 
 	const usage = report?.usage ?? null;
+	const providerUsage = useMemo(
+		() =>
+			usage
+				? { note: describeProviderUsageNote(usage), lines: describeProviderUsage(usage) }
+				: null,
+		[usage]
+	);
 
 	return (
 		<SectionCard theme={theme} className="space-y-3">
@@ -174,15 +182,23 @@ export function LocalModelsProxyUsage({
 				</p>
 			)}
 
-			{usage && (usage.totals.provider?.requests ?? 0) > 0 && (
-				<p className="text-xs select-text" data-testid="token-proxy-provider-usage">
-					<span className="opacity-70">
-						Provider counted, {formatCount(usage.totals.provider.requests)} requests:{' '}
-					</span>
-					input {formatTokensCompact(usage.totals.provider.inputTokens)}, cache read{' '}
-					{formatTokensCompact(usage.totals.provider.cacheReadTokens)}, cache write{' '}
-					{formatTokensCompact(usage.totals.provider.cacheWriteTokens)}, output{' '}
-					{formatTokensCompact(usage.totals.provider.outputTokens)}
+			{providerUsage && providerUsage.lines.length > 0 && (
+				<div className="space-y-1 text-xs select-text" data-testid="token-proxy-provider-usage">
+					<p className="opacity-70">{providerUsage.note}</p>
+					<dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+						{providerUsage.lines.map((line) => (
+							<Fragment key={line.label}>
+								<dt className="opacity-70">{line.label}</dt>
+								<dd>{line.text}</dd>
+							</Fragment>
+						))}
+					</dl>
+				</div>
+			)}
+
+			{usage && usage.totals.requests > 0 && (
+				<p className="text-xs opacity-70" data-testid="token-proxy-results-note">
+					{TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE}
 				</p>
 			)}
 

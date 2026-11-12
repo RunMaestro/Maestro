@@ -501,6 +501,17 @@ Rules a reader of these fields needs:
 - **Days are local.** `trend` uses SQLite `localtime`, the boundary of every per-day stat, and lists only the days that have a request. The first day of a rolling range (week, month) is partial.
 - **The reader needs the v22 columns**, as the writer does. A database whose v22 migration failed cannot be read until the next start applies it.
 
+### Saying the Token Proxy Report
+
+A surface does not word `ProxyRequestUsage` itself. `src/shared/local-models/token-proxy-report.ts` turns it into `{ label, text }` lines, and the Settings Gateway card, the Usage Dashboard and `maestro-cli models proxy status` / `stats models` print those lines (see "Saying the token proxy report" in [CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md)). The rules a new line must keep:
+
+- **Say the coverage with the count.** `90 of 100 read requests counted`, `1.2M tokens on 100 of 120 requests`. A count without its denominator is not stated.
+- **Unknown is a word, not a 0.** A mean added latency is read against `timedRequests` (`describeAddedLatency()`): no timed request is `unknown`, a measured zero is `0 ms`, and an older desktop's mean without its sample is `(sample unknown)`. A mode a row never stated is `not recorded`. A provider class nobody reported is `unknown`, with the other requests named by reading.
+- **The old provider sums are not classes.** `totals.provider` adds stored numbers, defaults included. Without `effectiveness` it is printed as `Stored sums` of unknown provenance under its own note; it is never called reported or derived.
+- **Days are the series behind the totals.** `describeProxyTrend()` says each day with the same `describeTokensSaved()` as the totals, lists the latest `PROXY_TREND_TEXT_DAYS` (7) and leaves the rest to `effectiveness.trend` in the JSON. The first day of a rolling range is partial, and `TOKEN_PROXY_TREND_NOTE` says so.
+- **Recovery is not a range.** `TokenProxyReport.recovery` is a count of the app's life (`getTokenProxyRecoveryObservations()`). It is printed in its own section, never inside a range, and never subtracted from the tokens saved. The retrieve tool is apart from other reads (actor unknown), receipt by a model is unknown, and no net saving is stated.
+- **No money, no quality.** No dollar basis or quality check exists. `TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE` is said wherever a saving is shown.
+
 ## IPC Handlers
 
 Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollectionEnabled` in settings before recording data.
