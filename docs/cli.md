@@ -580,15 +580,15 @@ maestro-cli image save --all -t <tab-id> -o screenshots/
   2  f8d010b2  9h ago        Kensho   Fibonacci Ingest     notes from a verbal session, see the image
 ```
 
-| Flag                  | Command                                      | Description                                                       |
-| --------------------- | -------------------------------------------- | ----------------------------------------------------------------- |
-| `-a, --agent <id>`    | both                                         | Only this agent (defaults to every agent)                         |
-| `-t, --tab <tab-id>`  | both                                         | Only this AI tab                                                  |
-| `--limit <n>`         | `list`                                       | Maximum images to show (default: 20)                              |
-| `-o, --output <path>` | `save`                                       | File or directory to write (default: a generated name in the cwd) |
-| `--all`               | `save`                                       | Save every image in scope instead of just the newest              |
-| `--force`             | Alias for `--accept-translation-limitations` | -                                                                 |
-| `--json`              | both                                         | Output as JSON (for scripting)                                    |
+| Flag                  | Command | Description                                                       |
+| --------------------- | ------- | ----------------------------------------------------------------- |
+| `-a, --agent <id>`    | both    | Only this agent (defaults to every agent)                         |
+| `-t, --tab <tab-id>`  | both    | Only this AI tab                                                  |
+| `--limit <n>`         | `list`  | Maximum images to show (default: 20)                              |
+| `-o, --output <path>` | `save`  | File or directory to write (default: a generated name in the cwd) |
+| `--all`               | `save`  | Save every image in scope instead of just the newest              |
+| `--force`             | `save`  | Overwrite an existing file named by `--output`                    |
+| `--json`              | both    | Output as JSON (for scripting)                                    |
 
 Details worth knowing:
 
@@ -781,7 +781,19 @@ The rest of the Models tab, and the settings the Edit Agent form groups under Re
 
 `--provider` on its own is a plain switch, the same as Edit Agent with **Convert memory and session history** unchecked: tabs keep their transcripts, each starts a fresh conversation on the new provider, and switching back resumes the old one. Provider-specific settings are parked per provider and restored on the way back. JSON output reports `converted: false` and any `notices` (queued messages whose model or effort could not carry across).
 
-`--convert` opts into the desktop's native conversation translation flow; every translation option below implies it. Review it with `--dry-run --json`, take the returned `plan.id`, then apply that ID with `--migration-plan` and `--accept-translation-limitations` if you accept the reported limits (`--force` is an alias). Acceptance does not bypass a blocked plan. `--migration` supports `plan`, `apply`, `status`, `recover`, and `rollback`; `--translation-resource` selects an individual user resource and is repeatable. Tabs, transcripts, drafts, queued messages, and file previews are preserved. This changes the agent's active provider. Inspect the reported state and exit status before reporting completion; a deferred or failed switch exits nonzero. Provider translation requires a matching desktop build and is refused by a headless host without changing agent state. See [Provider Notes](/provider-notes#switching-providers-with-memory-and-session-carry) for supported versions, live evidence, and remaining limitations.
+`--convert` opts into the desktop's native conversation translation flow; every translation option below implies it. Review it with `--dry-run --json`, take the returned `plan.id`, then apply that ID with `--migration-plan` and `--accept-translation-limitations` if you accept the reported limits (`--force` is an alias). Acceptance does not bypass a blocked plan. `--migration` supports `plan`, `apply`, `status`, `recover`, and `rollback`; `--translation-resource` selects an individual user resource and is repeatable. Tabs, transcripts, drafts, queued messages, and file previews are preserved. This changes the agent's active provider. Inspect the reported state and exit status before reporting completion; a deferred or failed switch exits nonzero. Provider translation requires a matching desktop build and is refused by a headless host without changing agent state. See [Provider Notes](/provider-notes#switching-providers-with-memory-and-session-carry) for supported versions and remaining limitations, and [Switching Providers](/multi-provider#switching-providers) for the Edit Agent side of the same switch.
+
+`update-agent` refuses these before it sends anything:
+
+- `Provider migration must be a separate operation from settings, directory, group or SSH edits.` Run `--provider` or `--migration` on its own.
+- `--dry-run requires --provider.`
+- `--migration-plan requires --provider or --migration.` and `--migration-plan must be a nonempty reviewed operation ID.`
+- `Invalid migration action.` for a `--migration` value other than the five above.
+- `Invalid provider "<type>". Must be one of: ...` for an unknown provider.
+
+When the desktop answers with an error, most often because its build does not match the CLI, the desktop's message is followed by a hint. A plain switch fails with `... Switching without conversion requires a matching desktop build.` and a conversion with `... Provider translation requires a matching desktop build; no legacy provider switch was attempted.`
+
+Read a tab's provider back with `maestro-cli tab show <tab-id>`. The **Provider** row is what the tab runs on, **Agent default** is the agent's provider, **Provider pin** is `inherited` unless the tab keeps its own provider (a reopened saved conversation, see [Tabs that keep their own provider](/multi-provider#tabs-that-keep-their-own-provider)), and **Turn provider** is the provider its current or last turn was sent on. No verb sets a tab's provider.
 
 | Flag                                    | Description                                                                                                                                                                                     | Default |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
@@ -829,6 +841,7 @@ The rest of the Models tab, and the settings the Edit Agent form groups under Re
 | `--env-unpark <KEY>`                    | Switch a parked environment variable back on (repeatable)                                                                                                                                       | -       |
 | `--share-history-to-project-dir <bool>` | Mirror History entries into the local project's `.maestro/history/`, for an agent another Maestro controls. Agent must be stopped                                                               | -       |
 | `--convert`                             | With `--provider`: convert native conversations and project memory too (opt-in)                                                                                                                 | -       |
+| `--project-resources`                   | Install native project resources and add local git exclude entries                                                                                                                              | -       |
 | `--dry-run`                             | Plan translation without native writes; requires `--provider`                                                                                                                                   | -       |
 | `--accept-translation-limitations`      | Accept the reported conversion limits; blocked plans remain blocked                                                                                                                             | -       |
 | `--migration <action>`                  | Plan, apply, inspect status, recover, or roll back a migration                                                                                                                                  | -       |
