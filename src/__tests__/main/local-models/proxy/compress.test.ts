@@ -133,6 +133,44 @@ function anthropicBody(answered: unknown, fresh: unknown = 'fresh result'): stri
 	});
 }
 
+interface ManyResult {
+	content: unknown;
+	failed?: boolean;
+	marked?: boolean;
+}
+
+/**
+ * An Anthropic request of several tool results, each answered in its own
+ * message; `fresh` is the last, still unanswered, in the last user message. A
+ * result may be `failed` (`is_error`) or `marked` (a cache breakpoint on the
+ * result block itself); a part of a list carries its own marker.
+ */
+function manyResults(answered: ManyResult[], fresh: unknown): string {
+	const messages: unknown[] = [{ role: 'user', content: 'run the checks' }];
+	const results: ManyResult[] = [...answered, { content: fresh }];
+	results.forEach((result, index) => {
+		messages.push(
+			{
+				role: 'assistant',
+				content: [{ type: 'tool_use', id: `t${index}`, name: 'Bash', input: {} }],
+			},
+			{
+				role: 'user',
+				content: [
+					{
+						type: 'tool_result',
+						tool_use_id: `t${index}`,
+						content: result.content,
+						...(result.failed ? { is_error: true } : {}),
+						...(result.marked ? { cache_control: { type: 'ephemeral' } } : {}),
+					},
+				],
+			}
+		);
+	});
+	return JSON.stringify({ model: 'claude-opus-5-5', messages });
+}
+
 beforeEach(async () => {
 	tempRoot.dir = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-proxy-compress-'));
 	vi.clearAllMocks();
@@ -2498,34 +2536,6 @@ describe('compressRequestBody: a cache that cannot be used', () => {
 describe('compressRequestBody: the block counts the telemetry contract reads', () => {
 	type Counted = Awaited<ReturnType<typeof compressRequestBody>>['stats'];
 
-	/** Each result is answered in its own message; `fresh` is the last, still unanswered. */
-	function manyResults(
-		answered: Array<{ content: string; failed?: boolean }>,
-		fresh: string
-	): string {
-		const messages: unknown[] = [{ role: 'user', content: 'run the checks' }];
-		[...answered, { content: fresh }].forEach((result, index) => {
-			messages.push(
-				{
-					role: 'assistant',
-					content: [{ type: 'tool_use', id: `t${index}`, name: 'Bash', input: {} }],
-				},
-				{
-					role: 'user',
-					content: [
-						{
-							type: 'tool_result',
-							tool_use_id: `t${index}`,
-							content: result.content,
-							...(result.failed ? { is_error: true } : {}),
-						},
-					],
-				}
-			);
-		});
-		return JSON.stringify({ model: 'claude-opus-5-5', messages });
-	}
-
 	/** The two rules `proxyBlockCountsProblem` states, read off what the compressor counted. */
 	function expectBlocksAddUp(stats: Counted): void {
 		expect(stats.candidates).toBe(
@@ -2616,6 +2626,221 @@ describe('compressRequestBody: the block counts the telemetry contract reads', (
 		);
 		expect(result.stats).toMatchObject({ candidates: 2, kept: 1, compressed: 1, modelFailures: 1 });
 		expectBlocksAddUp(result.stats);
+	});
+});
+
+describe('compressRequestBody: the protected count', () => {
+	type Counted = Awaited<ReturnType<typeof compressRequestBody>>['stats'];
+	type Kind = Parameters<typeof compressRequestBody>[0];
+
+	const MARKER = { cache_control: { type: 'ephemeral' } } as const;
+
+	async function count(kind: Kind, body: string, early: boolean): Promise<Counted> {
+		return (await compressRequestBody(kind, body, options({ early }))).stats;
+	}
+
+	/** Every recognized block, as the producer derives it: protected + vetoed + candidates. */
+	function recognized(stats: Counted): number {
+		const vetoes = stats.eligibilityVetoes;
+		return (
+			stats.protected +
+			(vetoes?.failed ?? 0) +
+			(vetoes?.recovery ?? 0) +
+			(vetoes?.retrieval ?? 0) +
+			stats.candidates
+		);
+	}
+
+	/** The text parts of every tool result in an Anthropic body, counted off the parsed JSON alone. */
+	function toolResultTextParts(body: string): number {
+		const { messages } = JSON.parse(body) as { messages: Array<{ content: unknown }> };
+		let parts = 0;
+		for (const message of messages) {
+			if (!Array.isArray(message.content)) continue;
+			for (const block of message.content as Array<{ type: string; content?: unknown }>) {
+				if (block.type !== 'tool_result') continue;
+				parts +=
+					typeof block.content === 'string'
+						? 1
+						: (block.content as Array<{ type: string }>).filter((part) => part.type === 'text')
+								.length;
+			}
+		}
+		return parts;
+	}
+
+	it('protects the fresh result of an Anthropic request, and nothing once early mode lifts the rule', async () => {
+		const body = anthropicBody(LOG);
+
+		expect(await count('anthropic-messages', body, false)).toMatchObject({
+			protected: 1,
+			candidates: 1,
+		});
+		expect(await count('anthropic-messages', body, true)).toMatchObject({
+			protected: 0,
+			candidates: 2,
+		});
+	});
+
+	it('protects a part that carries the cache breakpoint, and the rest of its result stays a candidate', async () => {
+		const body = anthropicBody([
+			{ type: 'text', text: LOG },
+			{ type: 'text', text: OTHER_LOG, ...MARKER },
+		]);
+
+		// The marked part and the fresh result are protected.
+		expect(await count('anthropic-messages', body, false)).toMatchObject({
+			protected: 2,
+			candidates: 1,
+		});
+		expect(await count('anthropic-messages', body, true)).toMatchObject({
+			protected: 0,
+			candidates: 3,
+		});
+	});
+
+	it('protects every part of a result block that carries the breakpoint itself', async () => {
+		const body = manyResults(
+			[
+				{
+					content: [
+						{ type: 'text', text: LOG },
+						{ type: 'text', text: OTHER_LOG },
+					],
+					marked: true,
+				},
+			],
+			'fresh result'
+		);
+
+		expect(await count('anthropic-messages', body, false)).toMatchObject({
+			protected: 3,
+			candidates: 0,
+		});
+		expect(await count('anthropic-messages', body, true)).toMatchObject({
+			protected: 0,
+			candidates: 3,
+		});
+	});
+
+	it('protects the tool messages of Chat Completions that no assistant message has answered', async () => {
+		const body = JSON.stringify({
+			model: 'gpt-5',
+			messages: [
+				{ role: 'user', content: LOG },
+				{ role: 'assistant', content: null, tool_calls: [{ id: 'c1' }] },
+				{ role: 'tool', tool_call_id: 'c1', content: LOG },
+				{ role: 'assistant', content: null, tool_calls: [{ id: 'c2' }, { id: 'c3' }] },
+				{ role: 'tool', tool_call_id: 'c2', content: OTHER_LOG },
+				{ role: 'tool', tool_call_id: 'c3', content: [{ type: 'text', text: LOG }] },
+			],
+		});
+
+		// c2 and c3 are unanswered: one text span each.
+		expect(await count('openai-chat-completions', body, false)).toMatchObject({
+			protected: 2,
+			candidates: 1,
+		});
+		expect(await count('openai-chat-completions', body, true)).toMatchObject({
+			protected: 0,
+			candidates: 3,
+		});
+	});
+
+	it('protects the outputs of Responses that follow the last model item', async () => {
+		const body = JSON.stringify({
+			model: 'gpt-5-codex',
+			input: [
+				{ type: 'message', role: 'user', content: [{ type: 'input_text', text: LOG }] },
+				{ type: 'function_call', call_id: 'c1', name: 'shell', arguments: '{}' },
+				{ type: 'function_call_output', call_id: 'c1', output: LOG },
+				{ type: 'custom_tool_call', call_id: 'c2', name: 'apply_patch', input: '' },
+				{ type: 'custom_tool_call_output', call_id: 'c2', output: OTHER_LOG },
+				{ type: 'function_call', call_id: 'c3', name: 'shell', arguments: '{}' },
+				{ type: 'function_call_output', call_id: 'c3', output: LOG },
+			],
+		});
+
+		expect(await count('openai-responses', body, false)).toMatchObject({
+			protected: 1,
+			candidates: 2,
+		});
+		expect(await count('openai-responses', body, true)).toMatchObject({
+			protected: 0,
+			candidates: 3,
+		});
+	});
+
+	it('counts the protected part of a vetoed result apart from the text that was vetoed', async () => {
+		const body = manyResults(
+			[
+				{
+					content: [
+						{ type: 'text', text: LOG },
+						{ type: 'text', text: OTHER_LOG, ...MARKER },
+					],
+					failed: true,
+				},
+			],
+			'fresh result'
+		);
+
+		const stats = await count('anthropic-messages', body, false);
+
+		// The marked part and the fresh result are protected; the part the proxy could
+		// have looked at is vetoed because the result failed.
+		expect(stats).toMatchObject({ protected: 2, candidates: 0, eligibilityVetoes: { failed: 1 } });
+		expect(recognized(stats)).toBe(3);
+	});
+
+	it('adds up to the text parts the request holds, whichever mode reads it', async () => {
+		const body = manyResults(
+			[
+				{ content: LOG },
+				{
+					content: [
+						{ type: 'text', text: SOURCE_FILE },
+						{ type: 'text', text: OTHER_LOG, ...MARKER },
+					],
+				},
+				{ content: 'a short answer' },
+				{ content: OTHER_LOG, failed: true },
+				{ content: [{ type: 'text', text: LOG }], marked: true },
+			],
+			'fresh result'
+		);
+		// Counted off the parsed request, not off the compressor's own descriptors.
+		const held = toolResultTextParts(body);
+		expect(held).toBe(7);
+
+		const delayed = await count('anthropic-messages', body, false);
+		expect(delayed).toMatchObject({
+			protected: 3,
+			candidates: 3,
+			eligibilityVetoes: { failed: 1 },
+		});
+		expect(recognized(delayed)).toBe(held);
+
+		const early = await count('anthropic-messages', body, true);
+		expect(early).toMatchObject({ protected: 0, candidates: 6, eligibilityVetoes: { failed: 1 } });
+		expect(recognized(early)).toBe(held);
+	});
+
+	it('does not depend on what the cache already decided', async () => {
+		const body = anthropicBody(LOG);
+		const cache = newCache();
+
+		const first = await compressRequestBody('anthropic-messages', body, options({ cache }));
+		const second = await compressRequestBody('anthropic-messages', body, options({ cache }));
+
+		expect(first.stats).toMatchObject({ protected: 1, cacheHits: 0 });
+		expect(second.stats).toMatchObject({ protected: 1, cacheHits: 1 });
+	});
+
+	it('counts none for a body it does not recognize', async () => {
+		expect((await count('anthropic-messages', 'not json', false)).protected).toBe(0);
+		expect((await count('anthropic-messages', '{"messages":"x"}', false)).protected).toBe(0);
+		expect((await count('other', anthropicBody(LOG), false)).protected).toBe(0);
 	});
 });
 

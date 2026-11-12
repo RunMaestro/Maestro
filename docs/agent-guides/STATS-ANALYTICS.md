@@ -248,6 +248,31 @@ nothing holds 0, and `SUM` over rows that hold none is NULL, not 0. The text col
 no `*_reportedness` was written before reportedness was tracked and reads as `legacy` through
 `proxyProviderClassReading()`.
 
+**Who fills them.** `proxyRequestFromLog()` in `src/main/local-models/proxy/request-stats.ts` maps a
+request log entry to a row and `recordProxyRequest()` writes it; `recordTokenProxyRequest()` runs the
+mapping inside its guard, after the statistics gate, so no fault of the mapping can reach the
+server's close handler.
+
+- `effective_mode` is the log entry's own `mode`, stated for every recorded request, passthrough
+  included.
+- The nine counts come from the compressor's `CompressRequestStats` (`protected` is counted by
+  `compressRequestBody()`: per tool result, its text spans minus its eligible ones, so it is 0 in
+  early mode). They exist only for a request the proxy read, shortened as the row says and forwarded
+  as the compressor decided. A passthrough request, a request a background target answered and a
+  request forwarded as it arrived (any `skip_reason`) have none. Counts that break
+  `proxyBlockCountsProblem()` are not stored and are reported once, to the log and to Sentry.
+- **A request forwarded as it arrived credits no reduction in any column**, including a failure
+  after the compressor had returned: `blocks_compressed` and `cache_hits` are 0, there are no
+  `new_blocks` or `compressor_counts`, and `sent_tokens` equals `original_tokens` when the original
+  is known. How long the request was held stays, as a measure of time and not of savings. The
+  server's catch path drops the attempt from its log for the same reason.
+- The four `*_reportedness` columns have no producer yet; the writer stores them when a row
+  carries them.
+- The INSERT is built from one typed column map, and the telemetry column names come from
+  `ADD_PROXY_REQUEST_TELEMETRY_COLUMNS`, so a column added to the schema must be supplied by the
+  writer to compile. `proxy-requests-telemetry.test.ts` checks that a row which states everything
+  fills every column of the real table.
+
 #### `_migrations`
 
 Migration tracking table:

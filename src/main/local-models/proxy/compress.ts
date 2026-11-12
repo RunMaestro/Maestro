@@ -244,6 +244,14 @@ export interface CompressedBlock {
 }
 
 export interface CompressRequestStats {
+	/**
+	 * Recognized text spans left out because the result is recent or the part
+	 * carries the cache breakpoint: per tool result, its text spans minus its
+	 * eligible ones. A protected part of a vetoed result is counted here and the
+	 * rest of that result under `eligibilityVetoes`. `early` lifts both rules, so
+	 * it is 0 there.
+	 */
+	protected: number;
 	/** Text spans outside protected regions and eligibility vetoes. */
 	candidates: number;
 	/** Selected text spans vetoed before hashing/cache access; absent when none. */
@@ -278,6 +286,7 @@ export interface CompressRequestResult {
 
 function emptyStats(): CompressRequestStats {
 	return {
+		protected: 0,
 		candidates: 0,
 		belowThreshold: 0,
 		compressed: 0,
@@ -1079,6 +1088,7 @@ export async function compressRequestBody(
 
 	const spans = findToolResultDescriptors(kind, body, root, { early: options.early }).flatMap(
 		(result) => {
+			stats.protected += result.contentSpans.length - result.eligibleSpans.length;
 			if (result.eligibleSpans.length === 0) return [];
 			const veto =
 				result.failureStatus === 'failed'

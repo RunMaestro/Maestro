@@ -872,6 +872,7 @@ describe('token proxy server, compress mode', () => {
 					]
 				: [],
 			stats: {
+				protected: 0,
 				candidates: 1,
 				belowThreshold: 0,
 				compressed: changed ? 1 : 0,
@@ -1370,6 +1371,42 @@ describe('token proxy server, compress mode', () => {
 			changed: false,
 			error: 'cache directory is gone',
 		});
+	});
+
+	it('credits no compression to a request that failed after the compressor had returned', async () => {
+		const upstream = await startUpstream((_req, res) => res.end('ok'));
+		// The compressor reports a shortened body, and then the result cannot be turned into bytes.
+		const compress = vi.fn(async () => ({
+			...compressResult(shortened, true),
+			body: 42 as unknown as string,
+		}));
+		const { port, logs } = await startProxy(
+			{ anthropic: upstream.origin },
+			{ modeFor: () => 'compress', compress }
+		);
+		const body = Buffer.from(original, 'utf-8');
+
+		const answer = await send(port, {
+			path: '/agent/a/anthropic/v1/messages',
+			headers: jsonHeaders(body),
+			body,
+		});
+
+		expect(answer.status).toBe(200);
+		expect(upstream.seen[0].body.equals(body)).toBe(true);
+		await vi.waitFor(() => expect(logs).toHaveLength(1));
+		expect(logs[0].sentBytes).toBe(body.length);
+		const estimate = Math.ceil(original.length / 4);
+		expect(logs[0].compression).toMatchObject({
+			skipped: 'failed',
+			changed: false,
+			originalTokens: estimate,
+			// The request went out whole, so it is the same estimate before and after.
+			sentTokens: estimate,
+		});
+		// What the compressor counted before the failure describes a body that did not go out.
+		expect(logs[0].compression).not.toHaveProperty('stats');
+		expect(logs[0].compression).not.toHaveProperty('blocks');
 	});
 
 	it('is a passthrough when no compressor was given, whatever the mode', async () => {
@@ -2135,6 +2172,7 @@ describe('token proxy server, background routing', () => {
 				changed: true,
 				blocks: [],
 				stats: {
+					protected: 0,
 					candidates: 1,
 					belowThreshold: 0,
 					compressed: 1,

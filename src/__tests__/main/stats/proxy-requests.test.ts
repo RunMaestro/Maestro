@@ -69,6 +69,16 @@ describe('proxy-requests', () => {
 				cacheHits: 1,
 				compressorCounts: { json: 0, logs: 2, 'long-lines': 0, model: 0 },
 				newBlocks: [block],
+				effectiveMode: 'compress-early',
+				blockCounts: {
+					protected: 0,
+					vetoed: { failed: 1, recovery: 2, retrieval: 3 },
+					candidates: 7,
+					belowThreshold: 3,
+					kept: 1,
+					storeFailed: 1,
+					modelFailed: 1,
+				},
 			});
 
 			expect(id).toBe('request-id');
@@ -96,6 +106,24 @@ describe('proxy-requests', () => {
 				// It went to the provider.
 				null,
 				// The provider's own counts were not given.
+				null,
+				null,
+				null,
+				null,
+				// The mode in force, which `mode` cannot say for the two compress modes.
+				'compress-early',
+				// The nine block counts: protected, the three vetoes, then the partition of
+				// the candidates. A counted zero is 0.
+				0,
+				1,
+				2,
+				3,
+				7,
+				3,
+				1,
+				1,
+				1,
+				// No record of how the provider's counts were given: there are none.
 				null,
 				null,
 				null,
@@ -145,8 +173,141 @@ describe('proxy-requests', () => {
 				null,
 				null,
 				null,
+				null,
+				// A request that states none of the telemetry stores all fourteen as unknown.
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
+				null,
 				null
 			);
+		});
+
+		it('binds the provider counts and how each got its number, in schema order', () => {
+			recordProxyRequest(mockDb, {
+				route: 'anthropic',
+				kind: 'anthropic-messages',
+				mode: 'passthrough',
+				effectiveMode: 'passthrough',
+				startedAt: 3_000,
+				durationMs: 20,
+				status: 200,
+				outcome: 'completed',
+				requestBytes: 100,
+				sentBytes: 100,
+				responseBytes: 40,
+				blocksCompressed: 0,
+				cacheHits: 0,
+				providerInputTokens: 0,
+				providerCacheReadTokens: 900,
+				providerCacheWriteTokens: 0,
+				providerOutputTokens: 55,
+				providerUsageReportedness: {
+					input: 'unreported',
+					cacheRead: 'derived',
+					cacheWrite: 'not-applicable',
+					output: 'reported',
+				},
+			});
+
+			const bound = mockStatement.run.mock.calls[0] as unknown[];
+			// The four provider counts, then the mode in force, nine unknown counts, and one
+			// reportedness per class in the same order as the counts.
+			expect(bound.slice(21)).toEqual([
+				0,
+				900,
+				0,
+				55,
+				'passthrough',
+				...Array<null>(9).fill(null),
+				'unreported',
+				'derived',
+				'not-applicable',
+				'reported',
+			]);
+		});
+
+		it('stores the blocks of a request that found none as zeros, apart from a request that has no counts', () => {
+			const counted = {
+				protected: 0,
+				vetoed: { failed: 0, recovery: 0, retrieval: 0 },
+				candidates: 0,
+				belowThreshold: 0,
+				kept: 0,
+				storeFailed: 0,
+				modelFailed: 0,
+			};
+			const base = {
+				route: 'anthropic',
+				kind: 'anthropic-messages',
+				mode: 'compress' as const,
+				effectiveMode: 'compress' as const,
+				startedAt: 4_000,
+				durationMs: 20,
+				status: 200,
+				outcome: 'completed',
+				requestBytes: 100,
+				sentBytes: 100,
+				responseBytes: 40,
+				blocksCompressed: 0,
+				cacheHits: 0,
+			};
+
+			recordProxyRequest(mockDb, { ...base, blockCounts: counted });
+			recordProxyRequest(mockDb, base);
+
+			const [withCounts, without] = (mockStatement.run.mock.calls as unknown[][]).map((call) =>
+				call.slice(26, 35)
+			);
+			expect(withCounts).toEqual(Array<number>(9).fill(0));
+			expect(without).toEqual(Array<null>(9).fill(null));
+		});
+
+		it('fills every column of the table with one placeholder each', () => {
+			recordProxyRequest(mockDb, {
+				route: 'anthropic',
+				kind: 'anthropic-messages',
+				mode: 'passthrough',
+				startedAt: 5_000,
+				durationMs: 20,
+				status: 200,
+				outcome: 'completed',
+				requestBytes: 100,
+				sentBytes: 100,
+				responseBytes: 40,
+				blocksCompressed: 0,
+				cacheHits: 0,
+			});
+
+			const sql = String(vi.mocked(mockDb.prepare).mock.calls[0][0]);
+			const columns = /\(([^)]*)\)\s*VALUES/
+				.exec(sql)![1]
+				.split(',')
+				.map((column) => column.trim());
+			const placeholders = /VALUES\s*\(([^)]*)\)/.exec(sql)![1].split(',');
+
+			expect(columns).toHaveLength(39);
+			expect(new Set(columns).size).toBe(39);
+			expect(placeholders).toHaveLength(39);
+			expect(mockStatement.run.mock.calls[0]).toHaveLength(39);
+			for (const column of ['id', 'blocks_compressed', 'effective_mode', 'blocks_model_failed']) {
+				expect(columns).toContain(column);
+			}
+			expect(columns.slice(-4)).toEqual([
+				'provider_input_reportedness',
+				'provider_cache_read_reportedness',
+				'provider_cache_write_reportedness',
+				'provider_output_reportedness',
+			]);
 		});
 
 		it('stores the target of a request that was routed, in its own column', () => {

@@ -17,26 +17,72 @@ import type {
 	ProxyRequestUsage,
 	StatsTimeRange,
 } from '../../shared/stats-types';
+import { ADD_PROXY_REQUEST_TELEMETRY_COLUMNS } from './schema';
 import { generateId, getTimeRangeStart, LOG_CONTEXT, StatementCache } from './utils';
 import { logger } from '../utils/logger';
 
 const stmtCache = new StatementCache();
 
+/** The columns of `proxy_requests` that exist since migration v21, in table order. */
+const REQUEST_COLUMNS = [
+	'id',
+	'agent_id',
+	'route',
+	'kind',
+	'mode',
+	'started_at',
+	'duration_ms',
+	'status',
+	'outcome',
+	'request_bytes',
+	'sent_bytes',
+	'response_bytes',
+	'original_tokens',
+	'sent_tokens',
+	'added_latency_ms',
+	'blocks_compressed',
+	'cache_hits',
+	'compressor_counts',
+	'new_blocks',
+	'skip_reason',
+	'routed_to',
+	'provider_input_tokens',
+	'provider_cache_read_tokens',
+	'provider_cache_write_tokens',
+	'provider_output_tokens',
+] as const;
+
+/**
+ * Migration v22's telemetry columns, named by the schema's own list: a column
+ * added there is a column `recordProxyRequest()` must supply, or it does not
+ * compile.
+ */
+type TelemetryColumn = (typeof ADD_PROXY_REQUEST_TELEMETRY_COLUMNS)[number]['name'];
+type InsertColumn = (typeof REQUEST_COLUMNS)[number] | TelemetryColumn;
+
+/** Every column an INSERT fills, in table order. The placeholders are made from it. */
+const INSERT_COLUMNS: readonly InsertColumn[] = [
+	...REQUEST_COLUMNS,
+	...ADD_PROXY_REQUEST_TELEMETRY_COLUMNS.map((column) => column.name),
+];
+
 const INSERT_SQL = `
-  INSERT INTO proxy_requests
-    (id, agent_id, route, kind, mode, started_at, duration_ms, status, outcome,
-     request_bytes, sent_bytes, response_bytes, original_tokens, sent_tokens,
-     added_latency_ms, blocks_compressed, cache_hits, compressor_counts, new_blocks, skip_reason,
-     routed_to, provider_input_tokens, provider_cache_read_tokens, provider_cache_write_tokens,
-     provider_output_tokens)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO proxy_requests (${INSERT_COLUMNS.join(', ')})
+  VALUES (${INSERT_COLUMNS.map(() => '?').join(', ')})
 `;
 
 function roundedOrNull(value: number | undefined): number | null {
 	return value === undefined ? null : Math.round(value);
 }
 
-/** Record one request. Returns the generated id. */
+/**
+ * Record one request. Returns the generated id.
+ *
+ * A fact the request does not state is stored as NULL, which every reader takes
+ * as unknown. That holds for the telemetry columns above all: the nine block
+ * counts go in together or not at all, and the four provider reportedness values
+ * are the provider counts' record of how each got its number.
+ */
 export function recordProxyRequest(
 	db: Database.Database,
 	request: Omit<ProxyRequest, 'id'>
@@ -45,35 +91,50 @@ export function recordProxyRequest(
 	const counts = request.compressorCounts;
 	const hasCounts = counts !== undefined && Object.values(counts).some((count) => count > 0);
 	const blocks = request.newBlocks;
-	stmtCache
-		.get(db, INSERT_SQL)
-		.run(
-			id,
-			request.agentId ?? null,
-			request.route,
-			request.kind,
-			request.mode,
-			request.startedAt,
-			Math.round(request.durationMs),
-			request.status,
-			request.outcome,
-			request.requestBytes,
-			request.sentBytes,
-			request.responseBytes,
-			roundedOrNull(request.originalTokens),
-			roundedOrNull(request.sentTokens),
-			roundedOrNull(request.addedLatencyMs),
-			request.blocksCompressed,
-			request.cacheHits,
-			hasCounts ? JSON.stringify(counts) : null,
-			blocks && blocks.length > 0 ? JSON.stringify(blocks) : null,
-			request.skipReason ?? null,
-			request.routedTo ?? null,
-			roundedOrNull(request.providerInputTokens),
-			roundedOrNull(request.providerCacheReadTokens),
-			roundedOrNull(request.providerCacheWriteTokens),
-			roundedOrNull(request.providerOutputTokens)
-		);
+	const blockCounts = request.blockCounts;
+	const reportedness = request.providerUsageReportedness;
+	const values: Record<InsertColumn, string | number | null> = {
+		id,
+		agent_id: request.agentId ?? null,
+		route: request.route,
+		kind: request.kind,
+		mode: request.mode,
+		started_at: request.startedAt,
+		duration_ms: Math.round(request.durationMs),
+		status: request.status,
+		outcome: request.outcome,
+		request_bytes: request.requestBytes,
+		sent_bytes: request.sentBytes,
+		response_bytes: request.responseBytes,
+		original_tokens: roundedOrNull(request.originalTokens),
+		sent_tokens: roundedOrNull(request.sentTokens),
+		added_latency_ms: roundedOrNull(request.addedLatencyMs),
+		blocks_compressed: request.blocksCompressed,
+		cache_hits: request.cacheHits,
+		compressor_counts: hasCounts ? JSON.stringify(counts) : null,
+		new_blocks: blocks && blocks.length > 0 ? JSON.stringify(blocks) : null,
+		skip_reason: request.skipReason ?? null,
+		routed_to: request.routedTo ?? null,
+		provider_input_tokens: roundedOrNull(request.providerInputTokens),
+		provider_cache_read_tokens: roundedOrNull(request.providerCacheReadTokens),
+		provider_cache_write_tokens: roundedOrNull(request.providerCacheWriteTokens),
+		provider_output_tokens: roundedOrNull(request.providerOutputTokens),
+		effective_mode: request.effectiveMode ?? null,
+		blocks_protected: blockCounts?.protected ?? null,
+		blocks_vetoed_failed: blockCounts?.vetoed.failed ?? null,
+		blocks_vetoed_recovery: blockCounts?.vetoed.recovery ?? null,
+		blocks_vetoed_retrieval: blockCounts?.vetoed.retrieval ?? null,
+		blocks_candidates: blockCounts?.candidates ?? null,
+		blocks_below_threshold: blockCounts?.belowThreshold ?? null,
+		blocks_kept: blockCounts?.kept ?? null,
+		blocks_store_failed: blockCounts?.storeFailed ?? null,
+		blocks_model_failed: blockCounts?.modelFailed ?? null,
+		provider_input_reportedness: reportedness?.input ?? null,
+		provider_cache_read_reportedness: reportedness?.cacheRead ?? null,
+		provider_cache_write_reportedness: reportedness?.cacheWrite ?? null,
+		provider_output_reportedness: reportedness?.output ?? null,
+	};
+	stmtCache.get(db, INSERT_SQL).run(...INSERT_COLUMNS.map((column) => values[column]));
 	logger.debug(`Recorded proxy request: ${request.route} (${request.mode})`, LOG_CONTEXT);
 	return id;
 }

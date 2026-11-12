@@ -122,9 +122,18 @@ export interface TokenProxyCompressionLog {
 	changed: boolean;
 	/** How long the request was held to be read and shortened. */
 	addedLatencyMs: number;
-	/** Tokens (characters / 4) of the body as it arrived and as it was sent. */
+	/**
+	 * Tokens (characters / 4) of the body as it arrived and as it was sent. Both
+	 * are absent when the compressor never returned, and equal when it returned
+	 * and a failure then sent the body as it arrived.
+	 */
 	originalTokens?: number;
 	sentTokens?: number;
+	/**
+	 * What the compressor counted and the blocks it shortened. Absent for a
+	 * request forwarded as it arrived, even when the compressor had returned
+	 * before a failure: they would describe a body that did not go out.
+	 */
 	stats?: CompressRequestStats;
 	blocks?: CompressedBlock[];
 }
@@ -873,10 +882,15 @@ export function createTokenProxyServer(options: TokenProxyServerOptions = {}): T
 						};
 					}
 				} catch (error) {
-					// The request goes out as it arrived. Nothing else is safe to send.
+					// The request goes out as it arrived. Nothing else is safe to send, and
+					// nothing the compressor counted before the failure describes what goes
+					// out: the log keeps no blocks, and the sent estimate is the original.
 					log.skipped = 'failed';
 					log.error = errorText(error);
 					log.changed = false;
+					delete log.stats;
+					delete log.blocks;
+					log.sentTokens = log.originalTokens;
 					body = raw;
 					headers = arrivedHeaders();
 				}

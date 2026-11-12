@@ -12,7 +12,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const logger = vi.hoisted(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }));
 vi.mock('../../../../main/utils/logger', () => ({ logger }));
 
-const sentry = vi.hoisted(() => ({ captureException: vi.fn(async () => {}) }));
+const sentry = vi.hoisted(() => ({
+	captureException: vi.fn(async () => {}),
+	captureMessage: vi.fn(async () => {}),
+}));
 vi.mock('../../../../main/utils/sentry', () => sentry);
 
 const settings = vi.hoisted(() => ({ values: {} as Record<string, unknown> }));
@@ -35,7 +38,14 @@ import {
 	TOKEN_PROXY_RECENT_COMPRESSIONS,
 	TOKEN_PROXY_USAGE_RANGE,
 } from '../../../../main/local-models/proxy/request-stats';
+import type { CompressRequestStats } from '../../../../main/local-models/proxy/compress';
 import type { TokenProxyRequestLog } from '../../../../main/local-models/proxy/server';
+import {
+	proxyBlockCountsProblem,
+	TOKEN_PROXY_MODES,
+	TOKEN_PROXY_SKIP_REASONS,
+} from '../../../../shared/local-models/token-proxy';
+import { stringPaths } from '../../../helpers/proxyTelemetryFixtures';
 
 function logEntry(overrides: Partial<TokenProxyRequestLog> = {}): TokenProxyRequestLog {
 	return {
@@ -76,6 +86,7 @@ function compressedEntry(): TokenProxyRequestLog {
 			sentTokens: 650,
 			blocks: [freshBlock, cachedBlock],
 			stats: {
+				protected: 1,
 				candidates: 3,
 				belowThreshold: 1,
 				compressed: 2,
@@ -103,6 +114,38 @@ function compressedEntry(): TokenProxyRequestLog {
 	});
 }
 
+/**
+ * The request {@link compressedEntry} stands for, run in `mode` with the
+ * compressor's counts changed as asked. Its default counts obey the contract.
+ */
+function entryWith(
+	mode: TokenProxyRequestLog['mode'],
+	stats: Partial<CompressRequestStats> = {},
+	compression: Partial<NonNullable<TokenProxyRequestLog['compression']>> = {}
+): TokenProxyRequestLog {
+	const base = compressedEntry();
+	return {
+		...base,
+		mode,
+		compression: {
+			...base.compression!,
+			...compression,
+			stats: { ...base.compression!.stats!, ...stats },
+		},
+	};
+}
+
+/** An entry that throws when its compression is read: a fault the mapping must contain. */
+function faultyEntry(): TokenProxyRequestLog {
+	const entry = logEntry({ mode: 'compress' });
+	Object.defineProperty(entry, 'compression', {
+		get() {
+			throw new Error('bad entry');
+		},
+	});
+	return entry;
+}
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	settings.values = {};
@@ -116,6 +159,9 @@ describe('proxyRequestFromLog', () => {
 			route: 'anthropic',
 			kind: 'anthropic-messages',
 			mode: 'passthrough',
+			// The mode in force is stated for a request that was only counted too; the
+			// counts are not, because nothing was read.
+			effectiveMode: 'passthrough',
 			startedAt: 1_000,
 			durationMs: 250,
 			status: 200,
@@ -272,6 +318,292 @@ describe('proxyRequestFromLog', () => {
 	});
 });
 
+describe('proxyRequestFromLog: the mode in force and the block counts', () => {
+	/** Counts that obey every rule, for a request that found nothing to count. */
+	const NOTHING_COUNTED: Partial<CompressRequestStats> = {
+		protected: 0,
+		candidates: 0,
+		belowThreshold: 0,
+		compressed: 0,
+		kept: 0,
+		cacheHits: 0,
+	};
+
+	it('has a pairing below for every mode a request can be carried in', () => {
+		// `off` is the setting of an agent that is not pointed at the proxy: no request carries it.
+		expect(TOKEN_PROXY_MODES.filter((mode) => mode !== 'off').sort()).toEqual([
+			'compress',
+			'compress-early',
+			'passthrough',
+		]);
+	});
+
+	it.each([
+		['passthrough', 'passthrough'],
+		['compress', 'compress'],
+		['compress-early', 'compress'],
+	] as const)('states %s as the mode in force, and stores %s as the mode', (effective, stored) => {
+		const entry =
+			effective === 'passthrough' ? logEntry({ mode: effective }) : entryWith(effective);
+		expect(proxyRequestFromLog(entry)).toMatchObject({ effectiveMode: effective, mode: stored });
+	});
+
+	it('states what the compressor counted, with a veto it never applied as zero', () => {
+		const row = proxyRequestFromLog(entryWith('compress'));
+
+		expect(row?.blockCounts).toEqual({
+			protected: 1,
+			vetoed: { failed: 0, recovery: 0, retrieval: 0 },
+			candidates: 3,
+			belowThreshold: 1,
+			kept: 0,
+			storeFailed: 0,
+			modelFailed: 0,
+		});
+		// The blocks shortened are the row's own count and are not repeated in the block counts.
+		expect(row).toMatchObject({ blocksCompressed: 2, cacheHits: 1 });
+	});
+
+	it('carries every veto the compressor applied, and its store and model failures', () => {
+		const row = proxyRequestFromLog(
+			entryWith('compress', {
+				protected: 4,
+				candidates: 6,
+				belowThreshold: 2,
+				compressed: 2,
+				kept: 1,
+				cacheHits: 2,
+				storeFailures: 1,
+				modelFailures: 1,
+				eligibilityVetoes: { failed: 2, recovery: 1, retrieval: 3 },
+			})
+		);
+
+		expect(row?.blockCounts).toEqual({
+			protected: 4,
+			vetoed: { failed: 2, recovery: 1, retrieval: 3 },
+			candidates: 6,
+			belowThreshold: 2,
+			kept: 1,
+			storeFailed: 1,
+			modelFailed: 1,
+		});
+	});
+
+	it('reads a veto list that never named the retrieval veto as zero retrievals', () => {
+		const row = proxyRequestFromLog(
+			entryWith('compress', { eligibilityVetoes: { failed: 1, recovery: 0 } })
+		);
+		expect(row?.blockCounts?.vetoed).toEqual({ failed: 1, recovery: 0, retrieval: 0 });
+	});
+
+	it('states the zero protected blocks of an early request as a count', () => {
+		const row = proxyRequestFromLog(entryWith('compress-early', { protected: 0 }));
+		expect(row).toMatchObject({ effectiveMode: 'compress-early', blockCounts: { protected: 0 } });
+	});
+
+	it('keeps a count of zero apart from an unknown', () => {
+		// The compressor ran and found nothing: every count is a real 0.
+		expect(proxyRequestFromLog(entryWith('compress', NOTHING_COUNTED))?.blockCounts).toEqual({
+			protected: 0,
+			vetoed: { failed: 0, recovery: 0, retrieval: 0 },
+			candidates: 0,
+			belowThreshold: 0,
+			kept: 0,
+			storeFailed: 0,
+			modelFailed: 0,
+		});
+		// Nobody read the body of a passthrough request: there is nothing to count.
+		expect(proxyRequestFromLog(logEntry())).not.toHaveProperty('blockCounts');
+	});
+
+	describe.each(['compress', 'compress-early'] as const)(
+		'a %s request forwarded as it arrived',
+		(mode) => {
+			it.each(TOKEN_PROXY_SKIP_REASONS)(
+				'keeps the mode and states no counts: skipped as %s',
+				(reason) => {
+					const row = proxyRequestFromLog(
+						logEntry({
+							mode,
+							compression: { skipped: reason, changed: false, addedLatencyMs: 2 },
+						})
+					);
+
+					expect(row).toMatchObject({
+						mode: 'compress',
+						effectiveMode: mode,
+						skipReason: reason,
+						blocksCompressed: 0,
+					});
+					expect(row).not.toHaveProperty('blockCounts');
+					expect(row).not.toHaveProperty('originalTokens');
+				}
+			);
+		}
+	);
+
+	describe('a request forwarded as it arrived after its compressor had returned', () => {
+		// The attempt shortened two blocks, then a failure sent the original: nothing the
+		// attempt counted describes what went out.
+		it.each(TOKEN_PROXY_SKIP_REASONS)(
+			'credits no reduction when it was skipped as %s, whatever the attempt counted',
+			(reason) => {
+				const row = proxyRequestFromLog(
+					entryWith('compress', {}, { skipped: reason, error: 'late failure', changed: false })
+				)!;
+
+				expect(row).toMatchObject({
+					mode: 'compress',
+					effectiveMode: 'compress',
+					skipReason: reason,
+					blocksCompressed: 0,
+					cacheHits: 0,
+					// Nothing was removed: the same estimate before and after.
+					originalTokens: 1_000,
+					sentTokens: 1_000,
+					// How long the request was held is still true.
+					addedLatencyMs: 12,
+				});
+				for (const field of ['blockCounts', 'newBlocks', 'compressorCounts']) {
+					expect(row).not.toHaveProperty(field);
+				}
+			}
+		);
+
+		it('still credits the same attempt when its body is the one that went out', () => {
+			// The positive control: only the skip takes the credit away.
+			const row = proxyRequestFromLog(entryWith('compress'))!;
+
+			expect(row).toMatchObject({ blocksCompressed: 2, cacheHits: 1, sentTokens: 650 });
+			expect(row.newBlocks).toHaveLength(1);
+			expect(row.blockCounts).toBeDefined();
+		});
+
+		it('leaves the estimates out when the compressor never returned them', () => {
+			const row = proxyRequestFromLog(
+				logEntry({
+					mode: 'compress',
+					compression: { skipped: 'failed', error: 'boom', changed: false, addedLatencyMs: 3 },
+				})
+			)!;
+
+			expect(row).toMatchObject({ effectiveMode: 'compress', skipReason: 'failed' });
+			expect(row).not.toHaveProperty('originalTokens');
+			expect(row).not.toHaveProperty('sentTokens');
+			expect(row).not.toHaveProperty('addedLatencyMs');
+		});
+	});
+
+	it('states the mode and no counts for a compress request a background target answered', () => {
+		const row = proxyRequestFromLog(
+			logEntry({
+				mode: 'compress',
+				background: { routedTo: 'maestro-server:qwen3.5-4b', addedLatencyMs: 40 },
+			})
+		);
+
+		expect(row).toMatchObject({
+			mode: 'compress',
+			effectiveMode: 'compress',
+			routedTo: 'maestro-server:qwen3.5-4b',
+		});
+		expect(row).not.toHaveProperty('blockCounts');
+	});
+
+	it.each([
+		['candidates that are not their parts', { candidates: 4 }, /candidates must equal/],
+		['more cache hits than blocks decided', { cacheHits: 3 }, /cacheHits cannot exceed/],
+		['more model failures than blocks decided', { modelFailures: 3 }, /modelFailed cannot exceed/],
+		['a negative count', { protected: -1 }, /non-negative integer/],
+		['a fractional count', { belowThreshold: 1.5 }, /non-negative integer/],
+		['a count that is not a number', { kept: Number.NaN }, /non-negative integer/],
+	] as const)('stores no counts that break a rule, and reports it: %s', (_name, broken, rule) => {
+		const row = proxyRequestFromLog(entryWith('compress', broken));
+
+		// Counts that disagree are worse than none, and the rest of the row is unharmed.
+		expect(row).not.toHaveProperty('blockCounts');
+		expect(row).toMatchObject({
+			effectiveMode: 'compress',
+			originalTokens: 1_000,
+			sentTokens: 650,
+			addedLatencyMs: 12,
+		});
+		expect(logger.warn).toHaveBeenCalledWith(expect.stringMatching(rule), '[TokenProxy]');
+		expect(sentry.captureMessage).toHaveBeenCalledTimes(1);
+		expect(sentry.captureMessage).toHaveBeenCalledWith(
+			'Token proxy block counts break the telemetry contract',
+			'warning',
+			{
+				problem: expect.stringMatching(rule),
+				route: 'anthropic',
+				kind: 'anthropic-messages',
+				mode: 'compress',
+			}
+		);
+	});
+
+	it('reports nothing for counts that hold', () => {
+		proxyRequestFromLog(entryWith('compress'));
+		proxyRequestFromLog(entryWith('compress-early', { protected: 0 }));
+		proxyRequestFromLog(entryWith('compress', NOTHING_COUNTED));
+
+		expect(logger.warn).not.toHaveBeenCalled();
+		expect(sentry.captureMessage).not.toHaveBeenCalled();
+	});
+
+	it('emits only counts the contract accepts', () => {
+		for (const entry of [
+			entryWith('compress'),
+			entryWith('compress-early', { protected: 0 }),
+			entryWith('compress', NOTHING_COUNTED),
+			entryWith('compress', {
+				candidates: 6,
+				belowThreshold: 2,
+				compressed: 2,
+				kept: 1,
+				storeFailures: 1,
+				cacheHits: 2,
+				eligibilityVetoes: { failed: 2, recovery: 1, retrieval: 3 },
+			}),
+		]) {
+			const row = proxyRequestFromLog(entry);
+			expect(row?.blockCounts).toBeDefined();
+			expect(proxyBlockCountsProblem(row!)).toBeNull();
+		}
+	});
+
+	it('does not share the compressor’s objects with the row', () => {
+		const entry = entryWith('compress', {
+			eligibilityVetoes: { failed: 1, recovery: 0, retrieval: 0 },
+		});
+		const row = proxyRequestFromLog(entry)!;
+
+		entry.compression!.stats!.eligibilityVetoes!.failed = 99;
+		entry.compression!.stats!.protected = 99;
+
+		expect(row.blockCounts?.vetoed.failed).toBe(1);
+		expect(row.blockCounts?.protected).toBe(1);
+	});
+
+	it('holds no text of the request: its strings are the closed set the contract allows', () => {
+		const paths = stringPaths(proxyRequestFromLog(entryWith('compress-early')));
+
+		expect([...paths].sort()).toEqual(
+			[
+				'agentId',
+				'route',
+				'kind',
+				'mode',
+				'effectiveMode',
+				'outcome',
+				'newBlocks[].hash',
+				'newBlocks[].compressors[]',
+			].sort()
+		);
+	});
+});
+
 describe('recordTokenProxyRequest', () => {
 	it('writes one row for a request that holds a message list', () => {
 		recordTokenProxyRequest(compressedEntry());
@@ -311,6 +643,60 @@ describe('recordTokenProxyRequest', () => {
 			expect.any(Error),
 			expect.objectContaining({ operation: 'stats:recordProxyRequest' })
 		);
+	});
+
+	it('writes the mode in force and the block counts of a request it read', () => {
+		recordTokenProxyRequest(entryWith('compress-early', { protected: 0 }));
+
+		expect(statsDb.recordProxyRequest).toHaveBeenCalledTimes(1);
+		expect(statsDb.recordProxyRequest).toHaveBeenCalledWith(
+			expect.objectContaining({
+				mode: 'compress',
+				effectiveMode: 'compress-early',
+				blockCounts: expect.objectContaining({ protected: 0, candidates: 3 }),
+			})
+		);
+	});
+
+	it('contains a fault of the mapping itself: it runs in the server’s close handler', () => {
+		expect(() => recordTokenProxyRequest(faultyEntry())).not.toThrow();
+
+		expect(statsDb.recordProxyRequest).not.toHaveBeenCalled();
+		expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('bad entry'), '[TokenProxy]');
+		expect(sentry.captureException).toHaveBeenCalledWith(
+			expect.any(Error),
+			expect.objectContaining({ operation: 'stats:recordProxyRequest', route: 'anthropic' })
+		);
+	});
+
+	it('maps nothing, and reads nothing of the entry, while usage statistics are off', () => {
+		settings.values = { statsCollectionEnabled: false };
+
+		expect(() => recordTokenProxyRequest(faultyEntry())).not.toThrow();
+
+		expect(statsDb.recordProxyRequest).not.toHaveBeenCalled();
+		expect(logger.warn).not.toHaveBeenCalled();
+		expect(sentry.captureException).not.toHaveBeenCalled();
+		expect(sentry.captureMessage).not.toHaveBeenCalled();
+	});
+
+	it('maps nothing while the database is not ready', () => {
+		statsDb.isReady.mockReturnValue(false);
+
+		expect(() => recordTokenProxyRequest(faultyEntry())).not.toThrow();
+
+		expect(statsDb.recordProxyRequest).not.toHaveBeenCalled();
+		expect(sentry.captureException).not.toHaveBeenCalled();
+	});
+
+	it('reports counts that break a rule once, and still writes the request without them', () => {
+		recordTokenProxyRequest(entryWith('compress', { candidates: 9 }));
+
+		expect(sentry.captureMessage).toHaveBeenCalledTimes(1);
+		expect(statsDb.recordProxyRequest).toHaveBeenCalledTimes(1);
+		const written = (statsDb.recordProxyRequest.mock.calls as unknown[][])[0][0];
+		expect(written).toMatchObject({ effectiveMode: 'compress', originalTokens: 1_000 });
+		expect(written).not.toHaveProperty('blockCounts');
 	});
 });
 

@@ -3203,6 +3203,12 @@ Stats migration v16 adds one table. `proxyRequestFromLog()` in
    are written together or not at all; a counted request that found nothing holds 0, and `SUM`
    over rows that hold none is NULL. A provider token with no `*_reportedness` was written before
    it was tracked, and a class the answer never named reads as 0 in it.
+7. **The mode in force and the counts describe what the proxy sent.** `effective_mode` is the
+   request's own mode and is stated for every recorded request. The block counts are stated only
+   for a request the proxy read, shortened as the row says and forwarded as the compressor decided;
+   a passthrough request, a request answered by a background target and a request forwarded as it
+   arrived (including one whose compressor returned and was followed by a failure) leave them NULL.
+   A request forwarded as it arrived credits no reduction anywhere in its row.
 
 `readTokenProxyUsage()` returns the totals for the last 30 days (`getProxyRequestUsage`, in all
 and per agent, with the provider's counts summed in `provider`) and the 25 newest compressions
