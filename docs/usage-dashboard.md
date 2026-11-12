@@ -418,16 +418,17 @@ The Usage Dashboard collects:
 
 ### Enabling/Disabling Collection
 
-Stats collection is enabled by default. To disable:
+Stats collection is enabled by default. The **Usage & Stats** Encore Feature is also the recording switch. To disable:
 
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`)
-2. Go to the **General** tab
-3. Find **Usage Dashboard** section (marked with Beta badge)
-4. Toggle off **Enable stats collection**
+2. Go to **Plugins**
+3. Toggle off **Usage & Stats**
 
-You can also set your **Default dashboard time range** here (Today, This Week, This Month, This Quarter, This Year, or All Time).
+From a terminal, run `maestro-cli encore disable usage-stats` (and `maestro-cli encore enable usage-stats` to turn it back on).
 
-Disabling collection stops new data from being recorded but preserves existing data in the dashboard.
+The settings below the **Usage & Stats** tile also hold the **Default lookback window** (Today, This Week, This Month, This Quarter, This Year, or All Time). From a terminal, run `maestro-cli settings set defaultStatsTimeRange day|week|month|quarter|year|all`.
+
+Disabling collection stops new data from being recorded. Data already recorded is kept.
 
 ## Accessibility
 
