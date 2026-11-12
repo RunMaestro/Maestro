@@ -1080,6 +1080,7 @@ The verb only reads. To change an edge, use `update-agent <source> --peer <targe
 | Add a GGUF model from Hugging Face           | `models add-hf <repo> <file> [--dry-run]`, `models remove-hf <id>`                                                                 |
 | Install or update an engine                  | `models runtimes list`, `models runtimes install onnx\|llama`                                                                      |
 | Point a task at a model                      | `models assign <task> off\|utility-agent\|system-one\|local:<id>\|endpoint:<endpoint>:<model>`                                     |
+| Set the language a speech model dictates in  | `models assign dictation local:<id>?language=de`                                                                                   |
 | See what each task runs on, and if it can    | `models tasks`, `models status [<task>]`                                                                                           |
 | Run a task now                               | `models run <task> --input "<text>"`, `models run git-drafts --cwd <repo>`, `models run dictation --audio <wav>`                   |
 | See and drive the model server               | `models server status\|start\|stop\|key`, `models server set --bind local\|network --max-models <n> --rotate-key --build <choice>` |
@@ -1117,6 +1118,7 @@ Notes:
 - **A missing target is refused by name.** A task whose model is not installed or whose endpoint is off fails with the reason; it is never moved to another model. `models status` says what to do about it.
 - **Exit codes.** `models run` exits `6` when the task is switched off or assigned to the Utility Agent (nothing will answer, so do not retry) and `7` when the task ran and could not answer (unavailable, cancelled, no changes). `1` is a usage or refused-write failure.
 - **Which verbs need the app.** Reads and writes of the settings file (`models assign`, `models tasks`, `models endpoints list|add|update|remove`, `models tiers list|set|reset`, `models config`) work with Maestro closed, and the watcher reloads the running app. Anything that downloads, starts, or probes needs the app and exits `3` without it.
+- **Dictation.** `models run dictation --audio <file.wav>` transcribes a 16-bit PCM WAV file (at most 512 MB) with the same [Dictation](/local-models#dictation) assignment the microphone uses, and prints the transcript. `--audio` is refused for every other task, and it cannot be combined with `--input`, `--system`, `--max-tokens`, `--cwd` or `--base`. Dictating live from the microphone has no verb.
 - **Agents.** Point one agent at a model with `update-agent --run-on`, `--tier`, `--background-requests` and `--proxy-mode` (see [Creating, Updating, and Removing Agents](#creating-updating-and-removing-agents)), and test the target with `agent test-run-on <agent-id>`.
 
 ### System One (`s1`)
