@@ -14,6 +14,21 @@ import type { PianolaDecisionRecord } from '../../../shared/pianola/storage';
 // testTimeout so a real miss still fails as an assertion.
 const WATCH_EVENT_WAIT = { timeout: 8_000, interval: 25 };
 
+// refresh() re-creates its watchers, and on macOS a just-armed fs.watch can miss
+// a change made before FSEvents starts its stream. Repeat the change until the
+// wakeup arrives, so the test proves the watcher works rather than racing it.
+async function expectWakeAfter(signal: ReturnType<typeof vi.fn>, change: () => void) {
+	change();
+	let lastChange = Date.now();
+	await vi.waitFor(() => {
+		if (signal.mock.calls.length === 0 && Date.now() - lastChange > 500) {
+			change();
+			lastChange = Date.now();
+		}
+		expect(signal).toHaveBeenCalled();
+	}, WATCH_EVENT_WAIT);
+}
+
 vi.mock('fs', async (importOriginal) => ({ ...(await importOriginal<typeof import('fs')>()) }));
 
 const root = process.cwd();
@@ -67,27 +82,30 @@ describe('scope file wakeups', () => {
 		const { directory, files, signal } = setup();
 		const sync = path.join(directory, 'synced');
 		fs.mkdirSync(sync);
-		fs.writeFileSync(
-			path.join(directory, 'bootstrap.tmp'),
-			JSON.stringify({ customSyncPath: sync })
-		);
-		fs.renameSync(
-			path.join(directory, 'bootstrap.tmp'),
-			path.join(directory, 'maestro-bootstrap.json')
-		);
-		await vi.waitFor(() => expect(signal).toHaveBeenCalled(), WATCH_EVENT_WAIT);
+		await expectWakeAfter(signal, () => {
+			fs.writeFileSync(
+				path.join(directory, 'bootstrap.tmp'),
+				JSON.stringify({ customSyncPath: sync })
+			);
+			fs.renameSync(
+				path.join(directory, 'bootstrap.tmp'),
+				path.join(directory, 'maestro-bootstrap.json')
+			);
+		});
 		files.refresh();
 		signal.mockClear();
-		fs.writeFileSync(path.join(sync, 'settings.tmp'), '{"encoreFeatures":{}}');
-		fs.renameSync(path.join(sync, 'settings.tmp'), path.join(sync, 'maestro-settings.json'));
-		await vi.waitFor(() => expect(signal).toHaveBeenCalled(), WATCH_EVENT_WAIT);
+		await expectWakeAfter(signal, () => {
+			fs.writeFileSync(path.join(sync, 'settings.tmp'), '{"encoreFeatures":{}}');
+			fs.renameSync(path.join(sync, 'settings.tmp'), path.join(sync, 'maestro-settings.json'));
+		});
 		signal.mockClear();
-		fs.writeFileSync(path.join(directory, 'registry.tmp'), '{}');
-		fs.renameSync(
-			path.join(directory, 'registry.tmp'),
-			path.join(directory, 'maestro-pianola-supervisor.json')
-		);
-		await vi.waitFor(() => expect(signal).toHaveBeenCalled(), WATCH_EVENT_WAIT);
+		await expectWakeAfter(signal, () => {
+			fs.writeFileSync(path.join(directory, 'registry.tmp'), '{}');
+			fs.renameSync(
+				path.join(directory, 'registry.tmp'),
+				path.join(directory, 'maestro-pianola-supervisor.json')
+			);
+		});
 	});
 
 	it('suppresses exact own decision writes but wakes for foreign appends before or during one', async () => {
