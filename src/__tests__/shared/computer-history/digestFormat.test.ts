@@ -38,6 +38,7 @@ describe('digestFormatInstructions', () => {
 		expect(DIGEST_ACCURACY_RULES).toMatch(/report what they wrote/);
 		expect(DIGEST_ACCURACY_RULES).toMatch(/not an app or a window/);
 		expect(DIGEST_ACCURACY_RULES).toMatch(/one-time code/);
+		expect(DIGEST_ACCURACY_RULES).toMatch(/drafts of one message/);
 		expect(DIGEST_ACCURACY_RULES).not.toMatch(DASHES);
 	});
 });
