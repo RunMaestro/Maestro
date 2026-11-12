@@ -69,10 +69,21 @@ describe('agentInstall', () => {
 			expect(classifyMissingBinary({ errorCode: 'ENOENT' })).toBe('not-found');
 		});
 
-		it('treats a shell exit 127 as not-found', () => {
+		it('treats a shell exit 127 with "command not found" as not-found', () => {
 			expect(
 				classifyMissingBinary({ exitCode: 127, stderr: 'zsh: command not found: codex' })
 			).toBe('not-found');
+			expect(classifyMissingBinary({ exitCode: 127, stderr: 'sh: 1: codex: not found' })).toBe(
+				'not-found'
+			);
+			expect(classifyMissingBinary({ exitCode: 127, stderr: 'fish: Unknown command: codex' })).toBe(
+				'not-found'
+			);
+		});
+
+		it('requires stderr evidence for a 127, since a started CLI can return it too', () => {
+			expect(classifyMissingBinary({ exitCode: 127, stderr: '' })).toBeNull();
+			expect(classifyMissingBinary({ exitCode: 127, stderr: 'Error: build failed' })).toBeNull();
 		});
 
 		it('names a missing shebang runtime separately', () => {

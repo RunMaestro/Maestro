@@ -149,8 +149,8 @@ export interface MissingBinaryEvidence {
  * Why the binary could not be run, or null when the evidence does not say.
  *
  * - `not-found`: the binary is not on disk or not on PATH. `ENOENT` from the
- *   spawn, a shell's exit 127 ("command not found"), or Windows' "is not
- *   recognized" (cmd exits 9009, a PowerShell wrapper exits 1).
+ *   spawn, a shell's exit 127 WITH its "command not found" wording, or Windows'
+ *   "is not recognized" (cmd exits 9009, a PowerShell wrapper exits 1).
  * - `runtime-missing`: the binary exists, but the interpreter its shebang names
  *   does not (`env: node: No such file or directory`). This is the nvm/volta
  *   case: an npm-installed CLI found in a Node version directory, run from a
@@ -170,7 +170,16 @@ export function classifyMissingBinary(
 	if (/\benv:\s*['"]?(node|bun|deno|python3?)['"]?:\s*No such file or directory/i.test(stderr)) {
 		return 'runtime-missing';
 	}
-	if (evidence.exitCode === 127) return 'not-found';
+	// Exit 127 is the shell's "command not found", but a CLI that did start can
+	// also propagate a 127 from a child it ran. Require the shell's wording, the
+	// way the Windows branch does, so a provider exiting 127 for its own reasons
+	// is not mistaken for a missing install.
+	if (
+		evidence.exitCode === 127 &&
+		/(command not found|:\s*not found|unknown command)/i.test(stderr)
+	) {
+		return 'not-found';
+	}
 	if (
 		(evidence.exitCode === 9009 || evidence.exitCode === 1) &&
 		/is not recognized as (an internal or external command|the name of a cmdlet)/i.test(stderr)
