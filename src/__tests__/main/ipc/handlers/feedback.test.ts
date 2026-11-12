@@ -111,15 +111,23 @@ const probeAllowed = () => ({
 	stderr: 'gh: Invalid request.\n\n"title" wasn\'t supplied. (HTTP 422)',
 });
 
+/** One screenshot upload's outcome, in attachment order. */
+interface MockUploadResult {
+	ok: boolean;
+	downloadUrl?: string;
+}
+
+interface MockConversationGhOptions {
+	uploadResults?: MockUploadResult[];
+	issueUrl?: string;
+}
+
 /**
  * Route the gh calls one conversational submit makes: resolve the login, check
  * the attachments repo, check the label, then upload each screenshot (one result
  * per attachment, in order), then create the issue. Anything else succeeds.
  */
-function mockConversationGh(options?: {
-	uploadResults?: Array<{ ok: boolean; downloadUrl?: string }>;
-	issueUrl?: string;
-}): void {
+function mockConversationGh(options?: MockConversationGhOptions): void {
 	let uploadIndex = 0;
 	vi.mocked(execFileNoThrow).mockImplementation(async (_command, args) => {
 		const argv = (args ?? []) as string[];
@@ -1017,6 +1025,101 @@ describe('feedback handlers', () => {
 			expect(first).toMatchObject({ success: false });
 			expect(second.success).toBe(true);
 			expect(issueCreateArgs()).toHaveLength(2);
+		});
+
+		it('tracks different reports filing at once without overwriting their claims', async () => {
+			let release!: () => void;
+			const gate = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			let started = 0;
+			let markBothStarted!: () => void;
+			const bothStarted = new Promise<void>((resolve) => {
+				markBothStarted = resolve;
+			});
+			let created = 0;
+			vi.mocked(execFileNoThrow).mockImplementation(async (_command, args) => {
+				const argv = (args ?? []) as string[];
+				if (argv[0] === 'issue' && argv[1] === 'create') {
+					started += 1;
+					if (started === 2) markBothStarted();
+					await gate;
+					created += 1;
+					return {
+						exitCode: 0,
+						stdout: `https://github.com/RunMaestro/Maestro/issues/${3000 + created}\n`,
+						stderr: '',
+					} as any;
+				}
+				return { exitCode: 0, stdout: '', stderr: '' } as any;
+			});
+			const reportA = {
+				category: 'bug_report',
+				summary: 'Report A',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+			};
+			const reportB = { ...reportA, summary: 'Report B' };
+
+			const firstA = submit(reportA);
+			const firstB = submit(reportB);
+			await bothStarted;
+
+			const secondA = await submit(reportA);
+			expect(secondA).toMatchObject({ success: false });
+			expect(secondA.error).toContain('already being filed');
+
+			release();
+			const [a, b] = await Promise.all([firstA, firstB]);
+			expect(a.success).toBe(true);
+			expect(b.success).toBe(true);
+			expect(issueCreateArgs()).toHaveLength(2);
+		});
+
+		it('keeps the performance trace when issue creation fails, then deletes it on success', async () => {
+			const tracePath = '/tmp/held-trace.zip';
+			vi.mocked(fs.readFile).mockResolvedValue(Buffer.from('zip-data'));
+			let createCalls = 0;
+			vi.mocked(execFileNoThrow).mockImplementation(async (_command, args) => {
+				const argv = (args ?? []) as string[];
+				const joined = argv.join(' ');
+				if (argv[0] === 'issue' && argv[1] === 'create') {
+					createCalls += 1;
+					return createCalls === 1
+						? ({ exitCode: 1, stdout: '', stderr: 'gh exploded' } as any)
+						: ({
+								exitCode: 0,
+								stdout: 'https://github.com/RunMaestro/Maestro/issues/2003\n',
+								stderr: '',
+							} as any);
+				}
+				if (joined.includes('contents/feedback/')) {
+					return {
+						exitCode: 0,
+						stdout: JSON.stringify({
+							content: { download_url: 'https://raw.example/trace.zip' },
+						}),
+						stderr: '',
+					} as any;
+				}
+				return { exitCode: 0, stdout: '', stderr: '' } as any;
+			});
+			const payload = {
+				category: 'bug_report',
+				summary: 'Trace attached',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+				performanceTracePath: tracePath,
+			};
+			const unlinked = () => vi.mocked(fs.unlink).mock.calls.map(([target]) => String(target));
+
+			const first = await submit(payload);
+			expect(first.success).toBe(false);
+			expect(unlinked()).not.toContain(tracePath);
+
+			const second = await submit(payload);
+			expect(second.success).toBe(true);
+			expect(unlinked()).toContain(tracePath);
 		});
 
 		it('files a report longer than the Windows command line limit whole, via --body-file', async () => {

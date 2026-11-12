@@ -159,6 +159,18 @@ export interface FeedbackConversationSubmitPayload {
 	reviewedFingerprint?: string;
 }
 
+/** What identifies one structured report, as the renderer and main agree on it. */
+export interface FeedbackReportFingerprintInput {
+	category: FeedbackCategory;
+	summary: string;
+	expectedBehavior: string;
+	actualBehavior: string;
+	reproductionSteps?: string;
+	additionalContext?: string;
+	includeDebugPackage?: boolean;
+	attachments?: ReadonlyArray<{ name: string }>;
+}
+
 /**
  * Canonical identity of a structured report.
  *
@@ -169,16 +181,7 @@ export interface FeedbackConversationSubmitPayload {
  * names, and the support-package choice. Temp paths (the performance trace) are
  * deliberately excluded because they change on every capture.
  */
-export function feedbackReportFingerprint(input: {
-	category: FeedbackCategory;
-	summary: string;
-	expectedBehavior: string;
-	actualBehavior: string;
-	reproductionSteps?: string;
-	additionalContext?: string;
-	includeDebugPackage?: boolean;
-	attachments?: ReadonlyArray<{ name: string }>;
-}): string {
+export function feedbackReportFingerprint(input: FeedbackReportFingerprintInput): string {
 	const field = (value: string | undefined) =>
 		(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
 	return [

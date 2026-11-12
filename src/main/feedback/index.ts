@@ -88,16 +88,17 @@ const MAX_SUBMITTED_ISSUES = 100;
 // issue. In memory only: it guards the moment of submission, not history, and a
 // process restart or an ordinary new report moves it on.
 let lastFiledReportFingerprint: string | null = null;
-// The identity of a report being filed right now. Claimed synchronously before
-// the first await so two submits of the same report cannot both get past the
-// guard while screenshots upload and gh creates the issue. Released by the
-// filing call's finally whether it succeeded, failed, or threw.
-let inFlightReportFingerprint: string | null = null;
+// The identity of every report being filed right now. Claimed synchronously
+// before the first await so two submits of the same report cannot both get past
+// the guard while screenshots upload and gh creates the issue, while different
+// reports filing at once keep their own claim. Released by the filing call's
+// finally whether it succeeded, failed, or threw.
+const inFlightReportFingerprints = new Set<string>();
 
 /** Test seam: forget the filed and in-flight reports so a suite can file again. */
 export function resetFeedbackSubmissionGuard(): void {
 	lastFiledReportFingerprint = null;
-	inFlightReportFingerprint = null;
+	inFlightReportFingerprints.clear();
 }
 
 /**
@@ -669,6 +670,11 @@ interface AttachmentUploadResult {
 	warnings: string[];
 }
 
+/** A filing caller sets `degrade` to keep going when a screenshot fails. */
+interface UploadAttachmentOptions {
+	degrade?: boolean;
+}
+
 function screenshotWarning(count: number): string {
 	return `${count} screenshot${count === 1 ? '' : 's'} could not be uploaded, so the issue was filed without ${count === 1 ? 'it' : 'them'}.`;
 }
@@ -683,7 +689,7 @@ function screenshotWarning(count: number): string {
  */
 async function uploadAttachments(
 	attachments: FeedbackAttachmentInput[],
-	options?: { degrade?: boolean }
+	options?: UploadAttachmentOptions
 ): Promise<AttachmentUploadResult> {
 	if (attachments.length === 0) {
 		return { markdown: 'None', warnings: [] };
@@ -1572,7 +1578,7 @@ export async function submitFeedbackConversation(
 			error: 'The report changed after you reviewed it. Review it again before submitting.',
 		};
 	}
-	if (inFlightReportFingerprint === fingerprint) {
+	if (inFlightReportFingerprints.has(fingerprint)) {
 		return {
 			success: false,
 			error: 'This report is already being filed.',
@@ -1587,8 +1593,9 @@ export async function submitFeedbackConversation(
 
 	// Claim it before the first await so a second submit during the uploads and
 	// issue creation is refused instead of filing a duplicate. The finally below
-	// releases the claim unless the issue was created, where it stays filed.
-	inFlightReportFingerprint = fingerprint;
+	// releases only this report's claim unless the issue was created, where it
+	// stays filed.
+	inFlightReportFingerprints.add(fingerprint);
 	try {
 		// An upload failure is reported as a result, not thrown: a throw crosses IPC
 		// as "Error invoking remote method ...", burying the gh guidance it carries.
@@ -1661,12 +1668,18 @@ export async function submitFeedbackConversation(
 		}
 
 		// Upload performance trace if one was captured from the modal. The temp
-		// zip is consumed here and deleted regardless of upload outcome.
+		// zip is kept until the issue is created, so a failed create can be
+		// retried with the same trace. If the user closes instead, the renderer
+		// discards it (it only marks the trace consumed on success).
 		let performanceTraceMarkdown = '';
-		if (typeof payload.performanceTracePath === 'string' && payload.performanceTracePath) {
+		const performanceTracePath =
+			typeof payload.performanceTracePath === 'string' && payload.performanceTracePath
+				? payload.performanceTracePath
+				: null;
+		if (performanceTracePath) {
 			try {
 				performanceTraceMarkdown = await uploadFeedbackZip(
-					payload.performanceTracePath,
+					performanceTracePath,
 					'maestro-performance-trace.zip'
 				);
 				if (!performanceTraceMarkdown) {
@@ -1680,8 +1693,6 @@ export async function submitFeedbackConversation(
 				warnings.push(
 					'The performance trace could not be uploaded, so the issue was filed without it.'
 				);
-			} finally {
-				await fs.unlink(payload.performanceTracePath).catch(() => {});
 			}
 		}
 
@@ -1746,6 +1757,11 @@ export async function submitFeedbackConversation(
 				await recordSubmittedIssue({ issueUrl, title, category: payload.category });
 			}
 			lastFiledReportFingerprint = fingerprint;
+			// The issue exists, so the trace has served its purpose. If creation
+			// failed above, it is kept for the retry.
+			if (performanceTracePath) {
+				await fs.unlink(performanceTracePath).catch(() => {});
+			}
 			return {
 				success: true,
 				issueUrl: issueUrl || undefined,
@@ -1755,9 +1771,7 @@ export async function submitFeedbackConversation(
 			await fs.unlink(bodyFile).catch(() => {});
 		}
 	} finally {
-		if (inFlightReportFingerprint === fingerprint) {
-			inFlightReportFingerprint = null;
-		}
+		inFlightReportFingerprints.delete(fingerprint);
 	}
 }
 
