@@ -80,6 +80,14 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 
 	logger.info('Registering context IPC handlers', LOG_CONTEXT);
 
+	ipcMain.handle(
+		'context:getFootprint',
+		withIpcErrorLogging(handlerOpts('getFootprint'), async (agentId: string) => {
+			const { auditStoredAgentContextFootprint } = await import('../../context-footprint-service');
+			return auditStoredAgentContextFootprint(agentId);
+		})
+	);
+
 	// Get context from a stored agent session
 	ipcMain.handle(
 		'context:getStoredSession',

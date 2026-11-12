@@ -45,14 +45,19 @@ async function resolveMemory(
 }
 
 async function auditAgent(agent: SessionInfo): Promise<ContextFootprintAudit> {
-	const remote = !!agent.sessionSshRemoteConfig?.enabled;
+	const remote = !!(
+		agent.sessionSshRemoteConfig?.enabled ||
+		('sshRemoteId' in agent && agent.sshRemoteId)
+	);
 	const projectRoot = agent.projectRoot || agent.cwd;
 	const accountDir = remote ? undefined : resolveCliAgentAccountDir(agent);
 	const memory =
 		!remote && accountDir ? await resolveMemory(agent, projectRoot, accountDir) : undefined;
-	const systemPrompt = await prepareMaestroSystemPromptCli(agent, {
-		readSystemOneAccess: async () => undefined,
-	});
+	const systemPrompt = remote
+		? undefined
+		: await prepareMaestroSystemPromptCli(agent, {
+				readSystemOneAccess: async () => undefined,
+			});
 	return collectContextFootprint({
 		agentId: agent.id,
 		agentName: agent.name,

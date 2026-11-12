@@ -8,6 +8,7 @@
 
 import { ipcRenderer } from 'electron';
 import type { ClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
+import type { ContextFootprintAudit } from '../../shared/contextFootprint';
 
 /**
  * Message structure from stored sessions
@@ -35,6 +36,9 @@ export interface StoredSessionResponse {
  */
 export function createContextApi() {
 	return {
+		getFootprint: (agentId: string): Promise<ContextFootprintAudit> =>
+			ipcRenderer.invoke('context:getFootprint', agentId),
+
 		// Get context from a stored agent session
 		getStoredSession: (
 			agentId: string,

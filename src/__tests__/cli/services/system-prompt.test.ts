@@ -105,6 +105,19 @@ describe('prepareMaestroSystemPromptCli', () => {
 		desktop.sendCommand = vi.fn(async () => desktop.reply);
 	});
 
+	it.each([true, false])(
+		'uses supplied Git facts without synchronous probing (isRepo=%s)',
+		async (isRepo) => {
+			vi.mocked(getCliPrompt).mockResolvedValue('branch=[{{GIT_BRANCH}}]');
+			const result = await prepareMaestroSystemPromptCli(mockSession(), {
+				gitInfo: { isRepo, branch: 'observed-branch' },
+			});
+			expect(result).toBe(isRepo ? 'branch=[observed-branch]' : 'branch=[]');
+			expect(isGitRepo).not.toHaveBeenCalled();
+			expect(getGitBranch).not.toHaveBeenCalled();
+		}
+	);
+
 	it('fills the journey path, and leaves it empty for SSH sessions', async () => {
 		vi.mocked(getCliPrompt).mockResolvedValue('journey=[{{AGENT_JOURNEY_PATH}}]');
 

@@ -238,11 +238,13 @@ describe('agent footprint command', () => {
 	});
 
 	describe('an agent on an SSH remote', () => {
-		it("reads none of this machine's files and does not resolve an account here", async () => {
+		it.each([
+			{ sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' } },
+			{ sshRemoteId: 'observed-host' },
+			{ sessionSshRemoteConfig: { enabled: false }, sshRemoteId: 'observed-host' },
+		])("reads none of this machine's files for either remote identity: %j", async (remote) => {
 			seed(project, { 'CLAUDE.md': 'a file on THIS machine' });
-			vi.mocked(getSessionById).mockReturnValue(
-				agent({ sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' } })
-			);
+			vi.mocked(getSessionById).mockReturnValue(Object.assign(agent(), remote));
 
 			await agentFootprint('agent-1', { json: true });
 
@@ -251,9 +253,11 @@ describe('agent footprint command', () => {
 			expect(result.unknowns.map((n: { code: string }) => n.code)).toContain('remote-agent');
 			expect(resolveCliAgentAccountDir).not.toHaveBeenCalled();
 			expect(getGitCommonDir).not.toHaveBeenCalled();
-			expect(result.configured.contributions.map((c: { id: string }) => c.id)).toEqual([
-				'maestro-system-prompt',
-			]);
+			expect(prepareMaestroSystemPromptCli).not.toHaveBeenCalled();
+			expect(result.configured.contributions).toEqual([]);
+			expect(result.unknowns.map((n: { code: string }) => n.code)).toContain(
+				'maestro-prompt-unavailable'
+			);
 		});
 	});
 

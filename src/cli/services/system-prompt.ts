@@ -68,6 +68,8 @@ async function loadSection(promptId: string): Promise<string | undefined> {
 }
 
 export interface PrepareMaestroSystemPromptCliOptions {
+	/** Already observed Git facts. Desktop read-only callers use bounded async probes. */
+	gitInfo?: { isRepo: boolean; branch?: string };
 	/**
 	 * How to learn whether a System One request from the agent would be
 	 * answered. The CLI asks the desktop app over the WS bridge (the default). A
@@ -126,8 +128,12 @@ export async function prepareMaestroSystemPromptCli(
 		throw err;
 	}
 
-	const sessionIsGitRepo = isGitRepo(session.cwd);
-	const gitBranch = sessionIsGitRepo ? getGitBranch(session.cwd) : undefined;
+	const sessionIsGitRepo = options.gitInfo?.isRepo ?? isGitRepo(session.cwd);
+	const gitBranch = sessionIsGitRepo
+		? options.gitInfo
+			? options.gitInfo.branch
+			: getGitBranch(session.cwd)
+		: undefined;
 
 	// Skip the history-file pointer for SSH sessions - the path is local to the
 	// Maestro app's machine, not the remote where the agent will actually run.

@@ -27,7 +27,7 @@ const METHODS: Record<string, string> = {
 	codexVisualization: 'load',
 	'concerto-html': 'release restore',
 	context:
-		'cancelGrooming cleanupGroomingSession createGroomingSession getStoredSession groomContext sendGroomingPrompt',
+		'cancelGrooming cleanupGroomingSession createGroomingSession getFootprint getStoredSession groomContext sendGroomingPrompt',
 	contextTimeline: 'clearCaptures getCaptures',
 	coworking: 'getInstallStatus removeSession',
 	'cross-agent': 'cancel consultBudget send',

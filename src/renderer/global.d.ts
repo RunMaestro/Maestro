@@ -306,6 +306,9 @@ import type { DataviewApi } from '../main/preload/dataview';
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
 	context: {
+		getFootprint: (
+			agentId: string
+		) => Promise<import('../shared/contextFootprint').ContextFootprintAudit>;
 		getStoredSession: (
 			agentId: string,
 			projectRoot: string,

@@ -47,7 +47,7 @@ transport and exit events take precedence over an older snapshot.
 - `agentError` - Agent error handling (clearError, retryAfterError)
 - `memory` - Agent memory (Claude per project, Codex per account); every method takes a `MemoryTarget` (`src/shared/agentMemory.ts`): list, read, write, create, delete, search, getPath, plus orphan handling. `search` matches a query against both filenames and file bodies and returns the first matching line per hit, so the Memory Viewer's filter box does not have to pull every file into the renderer.
 - `claude` - (Deprecated) Claude Code provider sessions - use `agentSessions` instead
-- `context` - Context grooming for cross-provider handoff: getStoredSession, groomContext, cancelGrooming
+- `context` - Context grooming for cross-provider handoff: getStoredSession, groomContext, cancelGrooming; getFootprint(agentId) reads a stored agent's context inventory on demand, with no writes or provider calls. SSH inventories remain unavailable; configured text does not prove delivery or current-window membership. The same read method is available to web desktop.
 - `crossAgent` - `@mention` consults: send, cancel (by source agent), onChunk
 - `groupChat` - Group chat CRUD, moderator start/stop, submitMessage, the main-owned queue (getQueue, queueAdd/Remove/Reorder/Resume, onQueueState)
 - `tabNaming` - generateTabName (auto-naming a tab from its first message)

@@ -26,9 +26,14 @@ vi.mock('../../../../main/utils/context-groomer', () => ({
 
 vi.mock('../../../../main/stores', () => ({ getSettingsStore: vi.fn() }));
 vi.mock('../../../../main/agents', () => ({ getSessionStorage: vi.fn() }));
+vi.mock('../../../../main/context-footprint-service', () => ({
+	auditStoredAgentContextFootprint: vi.fn(),
+}));
 
 import { registerContextHandlers } from '../../../../main/ipc/handlers/context';
 import { getSessionStorage } from '../../../../main/agents';
+import { auditStoredAgentContextFootprint } from '../../../../main/context-footprint-service';
+import { auditContextFootprint } from '../../../../shared/contextFootprint';
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
 
@@ -55,6 +60,31 @@ beforeEach(() => {
 	groomContext
 		.mockReset()
 		.mockResolvedValue({ response: '2', durationMs: 1, completionReason: '' });
+});
+
+describe('context:getFootprint', () => {
+	it('forwards only the selected stored identity, ignoring path and environment extras', async () => {
+		const audit = auditContextFootprint({
+			subject: { agentId: 'selected', toolType: 'codex', projectRoot: '/fixture' },
+			components: [],
+			configured: [],
+			notes: [],
+		});
+		vi.mocked(auditStoredAgentContextFootprint).mockResolvedValueOnce(audit);
+		const handler = register({}, 'context:getFootprint');
+		await expect(handler({}, 'selected', { projectRoot: '/elsewhere', env: {} })).resolves.toBe(
+			audit
+		);
+		expect(auditStoredAgentContextFootprint).toHaveBeenLastCalledWith('selected');
+		expect(groomContext).not.toHaveBeenCalled();
+	});
+	it('preserves service errors for the caller', async () => {
+		vi.mocked(auditStoredAgentContextFootprint).mockRejectedValueOnce(
+			new Error('agent unavailable')
+		);
+		const handler = register({}, 'context:getFootprint');
+		await expect(handler({}, 'missing')).rejects.toThrow('agent unavailable');
+	});
 });
 
 describe('context:getStoredSession', () => {

@@ -47,6 +47,7 @@ const FILES = listSources(SRC).map((file) => ({
 const SHARED = 'shared/contextFootprint.ts';
 const COLLECTOR = 'main/context-footprint.ts';
 const COMMAND = 'cli/commands/agent-footprint.ts';
+const SERVICE = 'main/context-footprint-service.ts';
 
 const textOf = (relative: string): string => {
 	const file = FILES.find((candidate) => candidate.relative === relative);
@@ -88,7 +89,7 @@ const COUNTER_FILES = FILES.map((file) => file.relative).filter(
 
 describe('who reaches the context footprint audit', () => {
 	it('finds the files it is checking (a rename must not empty this test)', () => {
-		for (const relative of [SHARED, COLLECTOR, COMMAND])
+		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE])
 			expect(textOf(relative).length).toBeGreaterThan(0);
 		expect(COUNTER_FILES).toEqual(
 			expect.arrayContaining([
@@ -103,16 +104,23 @@ describe('who reaches the context footprint audit', () => {
 		expect(COUNTER_FILES.length).toBeGreaterThan(20);
 	});
 
-	it('has its rules imported by the collector and the verb, and nothing else', () => {
-		expect(filesWhere(importing('contextFootprint'))).toEqual([COMMAND, COLLECTOR]);
+	it('has its rules imported only by the collector, verb and typed on-demand app boundary', () => {
+		expect(filesWhere(importing('contextFootprint'))).toEqual(
+			[COMMAND, COLLECTOR, SERVICE, 'main/preload/context.ts', 'renderer/global.d.ts'].sort()
+		);
 	});
 
-	it('has its collector imported by the verb alone', () => {
-		expect(filesWhere(importing('context-footprint'))).toEqual([COMMAND]);
+	it('has its collector imported only by the verb and stored-agent service', () => {
+		expect(filesWhere(importing('context-footprint'))).toEqual([COMMAND, SERVICE].sort());
+		expect(filesWhere(importing('context-footprint-service'))).toEqual([
+			'main/ipc/handlers/context.ts',
+		]);
 	});
 
-	it('is run by one verb', () => {
-		expect(filesWhere(naming('collectContextFootprint'))).toEqual([COMMAND, COLLECTOR]);
+	it('runs only through an explicit command or context audit request', () => {
+		expect(filesWhere(naming('collectContextFootprint'))).toEqual(
+			[COMMAND, COLLECTOR, SERVICE].sort()
+		);
 		expect(filesWhere(naming('auditContextFootprint'))).toEqual([COLLECTOR, SHARED]);
 		expect(filesWhere(naming('agentFootprint'))).toEqual([COMMAND, 'cli/index.ts']);
 	});
@@ -138,7 +146,7 @@ describe('the audit and the realized compression counters stay apart', () => {
 	it('imports nothing from the counters, the proxy or the stats tables', () => {
 		const banned =
 			/local-models\/proxy|local-models\/token-proxy|local-models\/model-usage|stats\/|request-stats|compression-cache|UsageDashboard/;
-		for (const relative of [SHARED, COLLECTOR, COMMAND]) {
+		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE]) {
 			expect(
 				importsOf(relative).filter((specifier) => banned.test(specifier)),
 				relative
@@ -159,7 +167,7 @@ describe('the audit and the realized compression counters stay apart', () => {
 			'model_usage',
 			'getStatsDB',
 		];
-		for (const relative of [SHARED, COLLECTOR, COMMAND]) {
+		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE]) {
 			for (const symbol of symbols) {
 				expect(naming(symbol)(textOf(relative)), `${relative} names ${symbol}`).toBe(false);
 			}
@@ -167,7 +175,7 @@ describe('the audit and the realized compression counters stay apart', () => {
 	});
 
 	it('never calls configured text known loaded and never offers a window total', () => {
-		for (const relative of [SHARED, COLLECTOR, COMMAND]) {
+		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE]) {
 			expect(textOf(relative), relative).not.toMatch(/known[ _-]?loaded/i);
 			expect(textOf(relative), relative).not.toMatch(/windowTotal|currentContext|currentWindow/i);
 		}
@@ -189,7 +197,7 @@ describe('the audit only reads', () => {
 		/\b(?:writeFile\w*|appendFile\w*|unlink\w*|rmdir\w*|rmSync|rm|rename\w*|mkdir\w*|symlink\w*|copyFile\w*|truncate\w*|createWriteStream|chmod\w*|chown\w*|utimes\w*|atomicWrite\w*|createExclusive|open(?:Sync)?|execFile\w*|exec|spawn\w*|fork)\s*\(/;
 
 	it('names no way to write, remove, move or run anything', () => {
-		for (const relative of [SHARED, COLLECTOR, COMMAND]) {
+		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE]) {
 			const match = textOf(relative).match(WRITES);
 			expect(match?.[0], `${relative} calls ${match?.[0]}`).toBeUndefined();
 		}
@@ -222,7 +230,7 @@ describe('the audit runs when asked', () => {
 	it('starts no timer, watcher, schedule or background task', () => {
 		const SCHEDULING =
 			/\b(?:setInterval|setTimeout|setImmediate|queueMicrotask|requestIdleCallback|requestAnimationFrame|chokidar|watchFile|fs\.watch|watch\(|node-cron|cron|schedule\w*|nohup|daemon)\b/;
-		for (const relative of [SHARED, COLLECTOR, COMMAND]) {
+		for (const relative of [SHARED, COLLECTOR, COMMAND, SERVICE]) {
 			const match = textOf(relative).match(SCHEDULING);
 			expect(match?.[0], `${relative} uses ${match?.[0]}`).toBeUndefined();
 		}

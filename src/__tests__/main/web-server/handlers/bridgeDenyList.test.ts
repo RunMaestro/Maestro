@@ -10,9 +10,17 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+	isRemoteMethodAllowed,
 	isRemoteSecretField,
 	sanitizeRemoteResult,
 } from '../../../../main/web-server/handlers/bridgeDenyList';
+
+describe('context audit bridge availability', () => {
+	it('allows the same read-only audit method on web desktop without opening arbitrary context methods', () => {
+		expect(isRemoteMethodAllowed('context:getFootprint')).toBe(true);
+		expect(isRemoteMethodAllowed('context:writeFootprint')).toBe(false);
+	});
+});
 
 describe('isRemoteSecretField', () => {
 	it('keeps the name of the variable an endpoint reads its key from', () => {
