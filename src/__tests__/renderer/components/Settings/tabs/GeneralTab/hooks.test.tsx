@@ -169,6 +169,62 @@ describe('GeneralTab hooks', () => {
 				text: 'CLI installed. Open a new terminal for PATH changes to apply.',
 				ok: true,
 			});
+			expect(result.current.restartRequired).toBe(true);
+		});
+
+		it('does not ask for a restart when the install left the PATH alone', async () => {
+			const { result } = renderHook(() => useMaestroCliState({ isOpen: false }));
+			expect(result.current.restartRequired).toBe(false);
+
+			await act(async () => {
+				await result.current.installOrUpdate();
+			});
+
+			expect(result.current.restartRequired).toBe(false);
+		});
+
+		it('clears the restart note when the next install does not change the PATH', async () => {
+			const installOrUpdate = vi
+				.fn()
+				.mockResolvedValueOnce({
+					success: true,
+					status: cliStatus,
+					pathUpdated: true,
+					restartRequired: true,
+					shellFilesUpdated: [],
+				})
+				.mockResolvedValueOnce({
+					success: true,
+					status: cliStatus,
+					pathUpdated: false,
+					restartRequired: false,
+					shellFilesUpdated: [],
+				});
+			installMaestroCliMock({ installOrUpdate });
+			const { result } = renderHook(() => useMaestroCliState({ isOpen: false }));
+
+			await act(async () => {
+				await result.current.installOrUpdate();
+			});
+			expect(result.current.restartRequired).toBe(true);
+
+			await act(async () => {
+				await result.current.installOrUpdate();
+			});
+			expect(result.current.restartRequired).toBe(false);
+		});
+
+		it('does not ask for a restart when the install fails', async () => {
+			installMaestroCliMock({
+				installOrUpdate: vi.fn().mockRejectedValue(new Error('install failed')),
+			});
+			const { result } = renderHook(() => useMaestroCliState({ isOpen: false }));
+
+			await act(async () => {
+				await result.current.installOrUpdate();
+			});
+
+			expect(result.current.restartRequired).toBe(false);
 		});
 
 		it('reports install failures and captures them', async () => {

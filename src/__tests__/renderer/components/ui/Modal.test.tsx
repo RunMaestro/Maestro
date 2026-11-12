@@ -360,4 +360,39 @@ describe('Modal', () => {
 			expect(screen.getByRole('button', { name: 'Remove' }).className).toContain('py-1.5');
 		});
 	});
+
+	describe('ModalFooter cancelDisabled', () => {
+		it('leaves Cancel enabled by default', () => {
+			const onCancel = vi.fn();
+			render(<ModalFooter theme={mockTheme} onCancel={onCancel} onConfirm={vi.fn()} />);
+
+			const cancel = screen.getByRole('button', { name: 'Cancel' });
+			expect(cancel).toBeEnabled();
+			fireEvent.click(cancel);
+			expect(onCancel).toHaveBeenCalledTimes(1);
+		});
+
+		it('disables Cancel and ignores its click and its Enter key', () => {
+			const onCancel = vi.fn();
+			render(
+				<ModalFooter theme={mockTheme} onCancel={onCancel} onConfirm={vi.fn()} cancelDisabled />
+			);
+
+			const cancel = screen.getByRole('button', { name: 'Cancel' });
+			expect(cancel).toBeDisabled();
+			fireEvent.click(cancel);
+			fireEvent.keyDown(cancel, { key: 'Enter' });
+			expect(onCancel).not.toHaveBeenCalled();
+		});
+
+		it('keeps Confirm working while Cancel is disabled', () => {
+			const onConfirm = vi.fn();
+			render(
+				<ModalFooter theme={mockTheme} onCancel={vi.fn()} onConfirm={onConfirm} cancelDisabled />
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+			expect(onConfirm).toHaveBeenCalledTimes(1);
+		});
+	});
 });

@@ -37,6 +37,22 @@ describe('modalPriorities', () => {
 			expect(MODAL_PRIORITIES.NEW_INSTANCE).toBeGreaterThan(MODAL_PRIORITIES.MARKETPLACE);
 		});
 
+		it('MARKETPLACE_LAUNCH should sit between MARKETPLACE and NEW_INSTANCE (opens from the Exchange, opens the New Agent modal)', () => {
+			// The launch dialog opens on top of the Exchange, so Escape closes the dialog and
+			// leaves the Exchange open. It opens NewInstanceModal in capture mode, so Escape
+			// there closes only the New Agent modal.
+			expect(MODAL_PRIORITIES.MARKETPLACE_LAUNCH).toBeGreaterThan(MODAL_PRIORITIES.MARKETPLACE);
+			expect(MODAL_PRIORITIES.NEW_INSTANCE).toBeGreaterThan(MODAL_PRIORITIES.MARKETPLACE_LAUNCH);
+		});
+
+		it('MARKETPLACE_LAUNCH should not share a priority with any other modal', () => {
+			const sharing = Object.entries(MODAL_PRIORITIES).filter(
+				([name, priority]) =>
+					name !== 'MARKETPLACE_LAUNCH' && priority === MODAL_PRIORITIES.MARKETPLACE_LAUNCH
+			);
+			expect(sharing).toEqual([]);
+		});
+
 		it('AGENT_PROMPT_COMPOSER should have higher priority than BATCH_RUNNER (opens from within)', () => {
 			// AgentPromptComposerModal opens from BatchRunnerModal
 			expect(MODAL_PRIORITIES.AGENT_PROMPT_COMPOSER).toBeGreaterThan(MODAL_PRIORITIES.BATCH_RUNNER);

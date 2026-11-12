@@ -1,6 +1,5 @@
 import type { UseSettingsReturn } from '../../../../hooks/settings/useSettings';
 import type { ShellInfo, Theme } from '../../../../types';
-import type { MaestroCliStatus } from '../../../../../shared/maestro-cli';
 
 export interface GeneralTabProps {
 	theme: Theme;
@@ -19,15 +18,8 @@ export interface ShellSettingsState {
 	selectShell: (shell: ShellInfo) => void;
 }
 
-export interface MaestroCliState {
-	status: MaestroCliStatus | null;
-	statusError: string | null;
-	checking: boolean;
-	installing: boolean;
-	installMessage: { text: string; ok: boolean } | null;
-	checkStatus: () => Promise<void>;
-	installOrUpdate: () => Promise<void>;
-}
+/** The install state moved to a shared hook (the Updates and Playbook Launch dialogs read it too). */
+export type { MaestroCliState } from '../../../../hooks/utils/useMaestroCliState';
 
 export interface SyncStorageState {
 	defaultStoragePath: string;

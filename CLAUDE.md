@@ -376,6 +376,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Ending and reading a Playbook Launch (cleanup, broadcast):** `completeMarketplaceLaunch(launchId, completion, host)`, `getMarketplaceLaunch()`, `listMarketplaceLaunches()` in `src/main/services/marketplace-service.ts`
 - **Submitting a Playbook Launch from a window (which agent, in what order):** `launchPlaybook(submission)`, `resolveLaunchTarget(target)`, `LaunchTarget` in `src/renderer/services/playbookLaunch.ts`
 - **Drawing a playbook launch question (one field per input type):** `<LaunchInputField>`, `pathBrowseKind()`, `launchInputTestId()` in `src/renderer/components/MarketplaceModal/launch/LaunchInputField.tsx`
+- **The dialog that launches a playbook from the Exchange:** `<PlaybookLaunchModal>` in `src/renderer/components/MarketplaceModal/launch/PlaybookLaunchModal.tsx`, over `evaluateLaunchGate()`, `firstLaunchBlocker()` in `launchAgents.ts` and `useLaunchTarget()`
 - **Whether an untyped value is a task-selection mode:** `isTaskSelectionMode()` in `src/shared/types.ts`
 - **Auto Run steering notes (mid-run course correction):** `formatSteeringNotesBlock()` in `src/shared/autorunSteering.ts`; `submitSteeringNote()`, `recordSteeringResponse()`, `runRemoteSteeringCommand()` in `src/renderer/services/autoRunSteering.ts`; wire shape in `src/shared/autoRunSteeringCommands.ts`
 - **Auto Run delegation (a task hands work to another agent):** `formatDelegationResultsBlock()`, `applyAutoRunDelegationEvent()` in `src/shared/autoRunDelegation.ts`; `awaitDelegationsBeforeTurn()`, `settleDelegationsAtRunEnd()` in `src/renderer/services/autoRunDelegations.ts`
@@ -528,6 +529,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Steering a turn that is ALREADY RUNNING:** `getSteerEligibility()` in `src/renderer/utils/executionQueue.ts`, `steerQueuedItem()`, `requestSteerSend()` in `src/renderer/services/chatSteering.ts`, wire protocol in `src/shared/chatSteering.ts`, `steerCodexAppServerTurn()` in `src/main/codex-app-server/steering.ts`
 - **Honoring the user's settings in a secondary window:** `useWindowSettingsSync()`, `usePublishTypographyVars()`, `useReloadSettingsOnExternalChange()` in `src/renderer/hooks/settings/useWindowSettingsSync.ts`
 - **Reading settings without the lifecycle effects:** `useSettingsValues()` in `src/renderer/hooks/settings/useSettings.ts`
+- **Whether maestro-cli is installed on this machine, and installing it:** `useMaestroCliState({ isOpen })`, `MaestroCliState` in `src/renderer/hooks/utils/useMaestroCliState.ts`
 
 #### Phone and touch (web-desktop)
 

@@ -218,6 +218,13 @@ export const MODAL_PRIORITIES = {
 	/** Playbook Exchange modal - browse and import community playbooks (opens from BatchRunner or AutoRunExpanded, so needs higher priority than both) */
 	MARKETPLACE: 735,
 
+	/**
+	 * Playbook Launch dialog. It opens from the Playbook Exchange, so it ranks just above
+	 * MARKETPLACE (Escape closes the dialog and leaves the Exchange open) and below
+	 * NEW_INSTANCE, which it opens in capture mode.
+	 */
+	MARKETPLACE_LAUNCH: 736,
+
 	/** Symphony modal - browse and contribute to open source projects */
 	SYMPHONY: 710,
 

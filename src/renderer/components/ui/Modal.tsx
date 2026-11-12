@@ -488,6 +488,11 @@ export interface ModalFooterProps {
 	destructive?: boolean;
 	/** Whether to show cancel button. Defaults to true */
 	showCancel?: boolean;
+	/**
+	 * Whether the cancel button is disabled. For a modal whose confirm action is in flight and
+	 * cannot be taken back, so Cancel would only look like it works. Defaults to false.
+	 */
+	cancelDisabled?: boolean;
 	/** Additional class name for confirm button */
 	confirmClassName?: string;
 	/** Ref to attach to confirm button for focus management */
@@ -530,6 +535,7 @@ export function ModalFooter({
 	confirmDisabled = false,
 	destructive = false,
 	showCancel = true,
+	cancelDisabled = false,
 	confirmClassName = '',
 	confirmButtonRef,
 	cancelButtonRef,
@@ -549,8 +555,9 @@ export function ModalFooter({
 					ref={cancelButtonRef}
 					type="button"
 					onClick={onCancel}
-					onKeyDown={(e) => handleKeyDown(e, onCancel)}
-					className="px-4 py-1.5 rounded border text-sm hover:bg-white/5 transition-colors outline-none focus:ring-2 focus:ring-offset-1"
+					onKeyDown={(e) => !cancelDisabled && handleKeyDown(e, onCancel)}
+					disabled={cancelDisabled}
+					className="px-4 py-1.5 rounded border text-sm hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed outline-none focus:ring-2 focus:ring-offset-1"
 					style={{
 						borderColor: theme.colors.border,
 						color: theme.colors.textMain,

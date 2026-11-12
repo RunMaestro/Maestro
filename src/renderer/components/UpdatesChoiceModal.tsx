@@ -22,7 +22,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 import { ModalBackButton } from './ui/ModalBackButton';
 import { ToggleSwitch } from './ui/ToggleSwitch';
-import { useMaestroCliState } from './Settings/tabs/GeneralTab/hooks';
+import { useMaestroCliState } from '../hooks/utils/useMaestroCliState';
 
 export interface UpdatesChoiceModalProps {
 	theme: Theme;

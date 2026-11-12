@@ -171,7 +171,7 @@ function SettingsModal({ theme, onClose }: Props) {
 
 **A modal body must never focus its own input.** `<Modal>` always claims focus on mount, inside a `requestAnimationFrame`: it focuses `initialFocusRef` when one is passed and its own overlay container when one is not. That frame lands AFTER the body's own effects, so a child that calls `inputRef.current.focus()` itself is silently handed back to a `div` one frame later and the surface swallows every keystroke - the failure looks like a dead text box, not a focus bug. Pass `initialFocusRef` and let Modal do it. A body effect stays correct for things focus does not undo, such as putting the caret at the end of a textarea (`QueuedItemEditModal`).
 
-`<ModalFooter>` provides a standard cancel/confirm button pair with optional `destructive` styling (red confirm button).
+`<ModalFooter>` provides a standard cancel/confirm button pair with optional `destructive` styling (red confirm button). Pass `cancelDisabled` while the confirm action is in flight and cannot be taken back (the Playbook Launch dialog does), so Cancel never looks like it works when it would only close the window on a launch that already started.
 
 ### Modal Sizing (max footprint)
 

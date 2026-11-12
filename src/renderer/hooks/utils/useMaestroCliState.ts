@@ -1,7 +1,28 @@
+/**
+ * useMaestroCliState - whether `maestro-cli` is installed on this machine, and the action that installs it.
+ *
+ * Settings > General, the Updates dialog and the Playbook Launch dialog all read the same install
+ * state and run the same install action, so the state lives here and not in any one of them.
+ */
+
 import { useCallback, useEffect, useState } from 'react';
-import type { MaestroCliStatus } from '../../../../../../shared/maestro-cli';
-import { captureException } from '../../../../../utils/sentry';
-import type { MaestroCliState } from '../types';
+import type { MaestroCliStatus } from '../../../shared/maestro-cli';
+import { captureException } from '../../utils/sentry';
+
+export interface MaestroCliState {
+	status: MaestroCliStatus | null;
+	statusError: string | null;
+	checking: boolean;
+	installing: boolean;
+	installMessage: { text: string; ok: boolean } | null;
+	/**
+	 * The last install changed the user's PATH. Only terminals opened afterwards see the change;
+	 * agents Maestro starts already get the updated PATH. Reset by the next install or check.
+	 */
+	restartRequired: boolean;
+	checkStatus: () => Promise<void>;
+	installOrUpdate: () => Promise<void>;
+}
 
 /**
  * The path the filesystem refused to let the installer write, when that is
@@ -25,6 +46,7 @@ export function useMaestroCliState({ isOpen }: UseMaestroCliStateArgs): MaestroC
 	const [checking, setChecking] = useState(false);
 	const [installing, setInstalling] = useState(false);
 	const [installMessage, setInstallMessage] = useState<{ text: string; ok: boolean } | null>(null);
+	const [restartRequired, setRestartRequired] = useState(false);
 
 	const checkStatus = useCallback(async () => {
 		setChecking(true);
@@ -49,10 +71,12 @@ export function useMaestroCliState({ isOpen }: UseMaestroCliStateArgs): MaestroC
 	const installOrUpdate = useCallback(async () => {
 		setInstalling(true);
 		setInstallMessage(null);
+		setRestartRequired(false);
 		setStatusError(null);
 		try {
 			const result = await window.maestro.maestroCli.installOrUpdate();
 			setStatus(result.status);
+			setRestartRequired(result.restartRequired);
 			if (result.pathUpdateError) {
 				setStatusError(result.pathUpdateError);
 			}
@@ -95,6 +119,7 @@ export function useMaestroCliState({ isOpen }: UseMaestroCliStateArgs): MaestroC
 	useEffect(() => {
 		if (!isOpen) return;
 		setInstallMessage(null);
+		setRestartRequired(false);
 		void checkStatus();
 	}, [checkStatus, isOpen]);
 
@@ -104,6 +129,7 @@ export function useMaestroCliState({ isOpen }: UseMaestroCliStateArgs): MaestroC
 		checking,
 		installing,
 		installMessage,
+		restartRequired,
 		checkStatus,
 		installOrUpdate,
 	};
