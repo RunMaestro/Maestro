@@ -598,6 +598,27 @@ highlighted result. A result with nothing to change in place, such as the theme
 picker, goes to its tab with either key. Typing any letter while a result has
 focus returns you to the search box.
 
+## Settings Tabs and the Models Library
+
+These work while Settings is open. Neither has an entry in **Settings ->
+Shortcuts**, so neither can be rebound.
+
+| Action                                        | macOS               | Windows/Linux        |
+| --------------------------------------------- | ------------------- | -------------------- |
+| Previous / next sidebar row                   | `Cmd+Shift+[` / `]` | `Ctrl+Shift+[` / `]` |
+| Previous / next Library section (Models only) | `Cmd+[` / `]`       | `Ctrl+[` / `]`       |
+
+`Cmd+Shift+[` / `]` walk every row in the Settings sidebar, panels included.
+Stepping down into **Models** lands on its Overview first, then **Library**,
+**Sources**, **System One**, **System Two**, and **Gateway**; stepping up lands
+on **Gateway**. `Cmd+[` / `]` step through the Library sections (**Engines**,
+**Agent Models**, **Housekeeping**, **Speech**, **Search & Safety**,
+**Custom**) and wrap at the ends. They work only on **Settings -> Models ->
+Library**, and not while the Settings search is open. The Models tab has no
+chord of its own: open it with **Open Models Settings** in Quick Actions
+(`Cmd+K`), or `maestro-cli open settings --tab models`. See
+[Local Models](./local-models#models).
+
 ## Maestro Prompts (Settings)
 
 Settings -> Maestro Prompts edits the system prompts Maestro sends to agents.
