@@ -120,6 +120,7 @@ interface MockUploadResult {
 interface MockConversationGhOptions {
 	uploadResults?: MockUploadResult[];
 	issueUrl?: string;
+	issueCreateFails?: boolean;
 }
 
 /**
@@ -156,6 +157,9 @@ function mockConversationGh(options?: MockConversationGhOptions): void {
 				: ({ exitCode: 1, stdout: '', stderr: 'upload failed' } as any);
 		}
 		if (argv[0] === 'issue' && argv[1] === 'create') {
+			if (options?.issueCreateFails) {
+				return { exitCode: 1, stdout: '', stderr: 'gh exploded' } as any;
+			}
 			return {
 				exitCode: 0,
 				stdout: `${options?.issueUrl ?? 'https://github.com/RunMaestro/Maestro/issues/2000'}\n`,
@@ -890,6 +894,29 @@ describe('feedback handlers', () => {
 			expect(bodies.some((body) => body.contents.includes('Second report'))).toBe(true);
 		});
 
+		it('refuses either report after two file concurrently', async () => {
+			mockConversationGh();
+			const reportA = {
+				category: 'bug_report',
+				summary: 'Concurrent A',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+			};
+			const reportB = { ...reportA, summary: 'Concurrent B' };
+
+			const [firstA, firstB] = await Promise.all([submit(reportA), submit(reportB)]);
+			expect(firstA.success).toBe(true);
+			expect(firstB.success).toBe(true);
+
+			const secondA = await submit(reportA);
+			const secondB = await submit(reportB);
+			expect(secondA).toMatchObject({ success: false });
+			expect(secondA.error).toContain('already been filed');
+			expect(secondB).toMatchObject({ success: false });
+			expect(secondB.error).toContain('already been filed');
+			expect(issueCreateArgs()).toHaveLength(2);
+		});
+
 		it('keeps the screenshots that uploaded when a later one fails, and warns', async () => {
 			mockConversationGh({
 				uploadResults: [{ ok: true, downloadUrl: 'https://raw.example/first.png' }, { ok: false }],
@@ -913,6 +940,23 @@ describe('feedback handlers', () => {
 			const body = bodyWrites()[0].contents;
 			expect(body).toContain('![first.png](https://raw.example/first.png)');
 			expect(body).not.toContain('second.png');
+		});
+
+		it('does not claim the issue was filed when upload and issue creation both fail', async () => {
+			mockConversationGh({ uploadResults: [{ ok: false }], issueCreateFails: true });
+
+			const result = await submit({
+				category: 'bug_report',
+				summary: 'Nothing was filed',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+				attachments: [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AAA' }],
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.warnings).toHaveLength(1);
+			expect(result.warnings?.[0]).toContain('could not be uploaded');
+			expect(result.warnings?.[0]).not.toContain('filed');
 		});
 
 		it('refuses a report that changed after the user reviewed it', async () => {

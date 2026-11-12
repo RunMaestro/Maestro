@@ -159,6 +159,11 @@ export interface FeedbackConversationSubmitPayload {
 	reviewedFingerprint?: string;
 }
 
+/** The part of an attachment that identifies it in a report fingerprint. */
+export interface FeedbackAttachmentIdentity {
+	name: string;
+}
+
 /** What identifies one structured report, as the renderer and main agree on it. */
 export interface FeedbackReportFingerprintInput {
 	category: FeedbackCategory;
@@ -168,7 +173,7 @@ export interface FeedbackReportFingerprintInput {
 	reproductionSteps?: string;
 	additionalContext?: string;
 	includeDebugPackage?: boolean;
-	attachments?: ReadonlyArray<{ name: string }>;
+	attachments?: ReadonlyArray<FeedbackAttachmentIdentity>;
 }
 
 /**

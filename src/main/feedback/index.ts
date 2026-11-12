@@ -83,11 +83,11 @@ const DRAFTS_FILE_NAME = 'feedback-drafts.json';
 const SUBMITTED_ISSUES_FILE_NAME = 'feedback-submitted-issues.json';
 const MAX_SUBMITTED_ISSUES = 100;
 
-// The identity of the last report this process filed. Re-submitting the same
-// report (a double click, a late retry) is refused instead of opening a second
+// The identity of every report this process has filed. Re-submitting any of
+// them (a double click, a late retry) is refused instead of opening a second
 // issue. In memory only: it guards the moment of submission, not history, and a
-// process restart or an ordinary new report moves it on.
-let lastFiledReportFingerprint: string | null = null;
+// process restart clears it.
+const filedReportFingerprints = new Set<string>();
 // The identity of every report being filed right now. Claimed synchronously
 // before the first await so two submits of the same report cannot both get past
 // the guard while screenshots upload and gh creates the issue, while different
@@ -97,7 +97,7 @@ const inFlightReportFingerprints = new Set<string>();
 
 /** Test seam: forget the filed and in-flight reports so a suite can file again. */
 export function resetFeedbackSubmissionGuard(): void {
-	lastFiledReportFingerprint = null;
+	filedReportFingerprints.clear();
 	inFlightReportFingerprints.clear();
 }
 
@@ -676,7 +676,7 @@ interface UploadAttachmentOptions {
 }
 
 function screenshotWarning(count: number): string {
-	return `${count} screenshot${count === 1 ? '' : 's'} could not be uploaded, so the issue was filed without ${count === 1 ? 'it' : 'them'}.`;
+	return `${count} screenshot${count === 1 ? '' : 's'} could not be uploaded, so ${count === 1 ? 'it is' : 'they are'} not included in the report.`;
 }
 
 /**
@@ -760,7 +760,7 @@ async function uploadAttachments(
 			failed += 1;
 			const reason = error instanceof Error ? error.message : String(error);
 			warnings.push(
-				`Screenshot "${attachment.name}" could not be uploaded, so the issue was filed without it. (${reason})`
+				`Screenshot "${attachment.name}" could not be uploaded, so it is not included in the report. (${reason})`
 			);
 		}
 	}
@@ -1584,7 +1584,7 @@ export async function submitFeedbackConversation(
 			error: 'This report is already being filed.',
 		};
 	}
-	if (lastFiledReportFingerprint === fingerprint) {
+	if (filedReportFingerprints.has(fingerprint)) {
 		return {
 			success: false,
 			error: 'This report has already been filed. Start a new report to file another issue.',
@@ -1616,7 +1616,7 @@ export async function submitFeedbackConversation(
 				};
 			}
 			warnings.push(
-				'Screenshots could not be uploaded, so the issue was filed without them.' +
+				'Screenshots could not be uploaded, so they are not included in the report.' +
 					(error instanceof Error ? ` (${error.message})` : '')
 			);
 			attachmentMarkdown =
@@ -1652,18 +1652,20 @@ export async function submitFeedbackConversation(
 					}
 					if (!debugPackageMarkdown) {
 						warnings.push(
-							'The support package could not be uploaded, so the issue was filed without it.'
+							'The support package could not be uploaded, so it is not included in the report.'
 						);
 					}
 				} else {
 					warnings.push(
-						'The support package could not be built, so the issue was filed without it.'
+						'The support package could not be built, so it is not included in the report.'
 					);
 				}
 			} catch (e) {
 				void captureException(e);
 				logger.warn(`Failed to generate/upload debug package: ${e}`, LOG_CONTEXT);
-				warnings.push('The support package could not be built, so the issue was filed without it.');
+				warnings.push(
+					'The support package could not be built, so it is not included in the report.'
+				);
 			}
 		}
 
@@ -1684,14 +1686,14 @@ export async function submitFeedbackConversation(
 				);
 				if (!performanceTraceMarkdown) {
 					warnings.push(
-						'The performance trace could not be uploaded, so the issue was filed without it.'
+						'The performance trace could not be uploaded, so it is not included in the report.'
 					);
 				}
 			} catch (e) {
 				void captureException(e);
 				logger.warn(`Failed to upload performance trace: ${e}`, LOG_CONTEXT);
 				warnings.push(
-					'The performance trace could not be uploaded, so the issue was filed without it.'
+					'The performance trace could not be uploaded, so it is not included in the report.'
 				);
 			}
 		}
@@ -1756,7 +1758,7 @@ export async function submitFeedbackConversation(
 			if (issueUrl) {
 				await recordSubmittedIssue({ issueUrl, title, category: payload.category });
 			}
-			lastFiledReportFingerprint = fingerprint;
+			filedReportFingerprints.add(fingerprint);
 			// The issue exists, so the trace has served its purpose. If creation
 			// failed above, it is kept for the retry.
 			if (performanceTracePath) {
