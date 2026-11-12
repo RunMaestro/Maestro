@@ -3863,6 +3863,8 @@ describe('EditAgentModal', () => {
 		}
 
 		const picker = () => screen.getByTestId('edit-agent-run-on-field-select') as HTMLSelectElement;
+		const contextSelect = () =>
+			screen.getByTestId('edit-agent-run-on-field-context-select') as HTMLSelectElement;
 		const contextInput = () =>
 			screen
 				.getByTestId('edit-agent-run-on-field-context')
@@ -3888,7 +3890,8 @@ describe('EditAgentModal', () => {
 			renderOnModels(createSession({ runOn: QWEN }));
 
 			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
-			expect(contextInput().value).toBe('65536');
+			expect(contextSelect().value).toBe('65536');
+			expect(screen.queryByTestId('edit-agent-run-on-field-context')).not.toBeInTheDocument();
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toEqual(QWEN);
@@ -3923,7 +3926,9 @@ describe('EditAgentModal', () => {
 		it('saves a context size typed into the field', async () => {
 			renderOnModels(createSession({ runOn: QWEN }));
 
-			await waitFor(() => expect(contextInput().value).toBe('65536'));
+			await waitFor(() => expect(contextSelect().value).toBe('65536'));
+			fireEvent.change(contextSelect(), { target: { value: 'custom' } });
+			expect(contextInput().value).toBe('65536');
 			fireEvent.change(contextInput(), { target: { value: '131072' } });
 			fireEvent.click(screen.getByText('Save Changes'));
 
@@ -3933,7 +3938,8 @@ describe('EditAgentModal', () => {
 		it('refuses a context under the agent minimum, on the Models tab, without saving', async () => {
 			renderOnModels(createSession({ runOn: QWEN }));
 
-			await waitFor(() => expect(contextInput().value).toBe('65536'));
+			await waitFor(() => expect(contextSelect().value).toBe('65536'));
+			fireEvent.change(contextSelect(), { target: { value: 'custom' } });
 			fireEvent.change(contextInput(), { target: { value: '8192' } });
 			openTab('General');
 			fireEvent.click(screen.getByText('Save Changes'));
