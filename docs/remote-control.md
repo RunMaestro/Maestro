@@ -519,5 +519,6 @@ Native Lite also supervises its transport and renderer. SSH exits, temporary con
 - [Semantic search](/local-models#semantic-search) - the **Semantic** toggles and the **Semantic index** card, which work in the browser; the index and the model stay on the computer running Maestro
 - [Dictation](/local-models#dictation) - speech into any text box, which works in the browser over HTTPS
 - [System One](/local-models#system-one) - the engine, its **Test**, agent budgets and the **Decision ledger**, which work in the browser; engine keys are set only on the computer running Maestro
+- [Run on](/local-models#run-on), [Tiers](/local-models#tiers) and [Auto](/local-models#model-routing-and-auto) - the model behind an agent, its tier targets and the model router, which work in the browser; the Run on **Test** and the router run on the computer running Maestro, and turn pills are hidden on a phone screen
 - [Spoken notices](/local-models#spoken-notices) - a line spoken when an agent finishes, which plays on the computer running Maestro
 - [Sources in the web interface](/local-models#sources-in-the-web-interface) - endpoints, the model server and VoiceStudio from a browser, where the model server key stays on the host

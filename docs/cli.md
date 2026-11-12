@@ -788,7 +788,7 @@ The rest of the Models tab, and the settings the Edit Agent form groups under Re
 | `--custom-args <args>`                  | Custom CLI arguments. Empty string clears                                                                                                                                                       | -       |
 | `--env <KEY=VALUE>`                     | Set an environment variable (repeatable; replaces the env map)                                                                                                                                  | -       |
 | `--clear-env`                           | Clear all per-agent environment variables                                                                                                                                                       | -       |
-| `--model <model>`                       | Model override (e.g. sonnet, opus). Empty string clears                                                                                                                                         | -       |
+| `--model <model>`                       | Model override (e.g. sonnet, opus; `auto` lets the model router pick each turn). Empty string clears                                                                                            | -       |
 | `--effort <level>`                      | Effort/reasoning level override. Empty string clears                                                                                                                                            | -       |
 | `--context-window <size>`               | Context window size in tokens. `0` or `none` clears                                                                                                                                             | -       |
 | `--token-source <mode>`                 | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                                                                                                  | -       |
@@ -1149,7 +1149,7 @@ Notes:
 | Keep one agent off System One        | `update-agent <agent-id> --system-one off` (`on` follows the global switch again)                                    |
 | Keep a group's new agents off it     | `update-group-settings <group-id> --system-one off`                                                                  |
 | See what it decided and what it cost | `s1 ledger [--task <task>] [--outcome <outcome>] [--since 2h] [--limit <n>]`, `s1 usage [--agent <id>] [--since 7d]` |
-| Dry-run the model router             | `s1 route "<prompt>" [--agent <id>]`                                                                                 |
+| Dry-run or correct the model router  | `s1 route "<prompt>" [--agent <id>] [--correct <tier>]`                                                              |
 
 ```bash
 # A calibrated gut check in a shell condition
@@ -1284,6 +1284,7 @@ maestro-cli tab show active                     # read them all back
 maestro-cli tab thinking <tab-id> sticky        # off | on | sticky | cycle
 maestro-cli tab read-only <tab-id> true         # plan mode: no file writes
 maestro-cli tab model <tab-id> opus             # "inherit" clears the override
+maestro-cli tab model <tab-id> auto             # the model router picks each turn
 maestro-cli tab effort <tab-id> high            # "inherit" clears the override
 maestro-cli tab enter-to-send <tab-id> false    # "inherit" = global setting
 
@@ -3219,7 +3220,7 @@ maestro-cli cue model nightly-review
 # Run a step on the provider's top model at low effort
 maestro-cli cue model nightly-review --tier high --effort low
 
-# Pin an exact model (for providers with no tier mapping, such as Codex)
+# Pin an exact model id, passed to the agent as-is
 maestro-cli cue model triage --model gpt-5.5-codex
 
 # Go back to the agent's own model and effort
@@ -3242,6 +3243,7 @@ Notes:
 - On a server, pass `--data-dir` (or set `MAESTRO_USER_DATA`) so the command reads the same agents the Cue engine runs. A running engine picks the edited `cue.yaml` up on its own.
 - With no setting flag the command only reads. Its output names the stored choice and the model and effort the run resolves to.
 - `--tier` and `--model` are two spellings of one choice. Setting one removes the other.
+- `--model auto` writes `model: auto`, which opts the subscription's runs into [model routing](/local-models#model-routing-and-auto): the router picks the tier per run, and the subscription's `effort` still wins.
 - When the agent's provider cannot honor a tier or an effort, the command still saves it and prints a warning. The run then uses the agent's own value.
 - Subscriptions with `action: command` or `action: notify` run no agent, so the command refuses to set a model on them.
 
