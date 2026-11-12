@@ -5,8 +5,8 @@
  *
  * The Suggest rules are pinned against catalogues captured from real installs
  * (`fixtures/tier-catalogues`): Codex CLI 0.162.1's `models_cache.json`, an
- * `opencode models` listing, and the Copilot list from models.dev. A rule that
- * starts guessing shows up here as a tier that should have stayed blank.
+ * `opencode models` listing, and the Copilot list from models.dev. Suggest
+ * always makes a choice when anything is listed; a guess says so in its reason.
  */
 
 import fs from 'fs';
@@ -176,20 +176,31 @@ describe('Suggest', () => {
 		});
 	});
 
-	it('leaves medium blank when the first model is already the high pick', () => {
+	it('fills a tier nothing ranks from its neighbour, and says it is a guess', () => {
 		const topHeavy: HarnessCatalogModel[] = [
 			{ id: 'x-max', description: 'Frontier model.', priority: 1 },
 			{ id: 'x-other', priority: 2 },
 		];
 		const suggested = suggestHarnessTierDefaults('codex', topHeavy);
 		expect(suggested.high.target).toEqual({ type: 'provider-model', model: 'x-max' });
-		expect(suggested.medium.target).toBeNull();
-		expect(suggested.low.target).toBeNull();
+		expect(suggested.medium).toEqual({
+			target: { type: 'provider-model', model: 'x-max' },
+			reason:
+				'best guess: the same as high, since nothing listed ranks a separate model for medium',
+		});
+		expect(suggested.low.target).toEqual({ type: 'provider-model', model: 'x-max' });
 	});
 
-	it('does not choose between several described models with no stated order', () => {
+	it('takes the first listed model when nothing in the catalogue ranks one', () => {
 		const unordered = ids(['a', 'b']).map((model) => ({ ...model, description: 'A fast model.' }));
-		expect(suggestHarnessTierDefaults('codex', unordered).low.target).toBeNull();
+		const suggested = suggestHarnessTierDefaults('codex', unordered);
+		for (const tier of ['low', 'medium', 'high'] as const) {
+			expect(suggested[tier]).toEqual({
+				target: { type: 'provider-model', model: 'a' },
+				reason:
+					"best guess: the first model Codex's catalogue lists, since nothing in it ranks one model above another",
+			});
+		}
 	});
 
 	it("uses Claude Code's aliases, which always name the current model", () => {
@@ -213,25 +224,55 @@ describe('Suggest', () => {
 		});
 	});
 
-	it('leaves every tier blank for an OpenCode listing: it states only names', () => {
+	it('guesses the newest Claude ladder out of an OpenCode listing, skipping variants', () => {
 		const suggested = suggestHarnessTierDefaults('opencode', OPENCODE, [
 			SERVER([GPT_OSS_20B_ID, GPT_OSS_120B_ID]),
 		]);
-		// The listing holds Claude families (`anthropic/claude-opus-5-5`), and no
-		// local model has passed the agent qualification with OpenCode. Neither
-		// is a fact that picks one model, so nothing is suggested.
-		for (const tier of ['low', 'medium', 'high'] as const) {
-			expect(suggested[tier].target).toBeNull();
-			expect(suggested[tier].reason).toMatch(/OpenCode's catalogue states nothing/);
-		}
+		// No local model has passed the agent qualification with OpenCode, so the
+		// guess comes from the Claude family names. `claude-opus-5-5-fast` is a
+		// variant, and the dated snapshots lose to the plain id.
+		expect(suggested.low.target).toEqual({
+			type: 'provider-model',
+			model: 'anthropic/claude-haiku-5-5',
+		});
+		expect(suggested.medium.target).toEqual({
+			type: 'provider-model',
+			model: 'anthropic/claude-sonnet-5-5',
+		});
+		expect(suggested.high).toEqual({
+			target: { type: 'provider-model', model: 'anthropic/claude-opus-5-5' },
+			reason: 'best guess: the newest Opus listed, since the catalogue ranks nothing itself',
+		});
 	});
 
-	it('leaves every tier blank for the Copilot list, which holds two families at once', () => {
+	it('guesses one ladder for the Copilot list, which holds two families at once', () => {
 		expect(COPILOT.map((model) => model.id)).toEqual(
 			expect.arrayContaining(['claude-opus-5.5', 'gpt-6-astra'])
 		);
 		const suggested = suggestHarnessTierDefaults('copilot-cli', COPILOT);
-		expect(Object.values(suggested).every((tier) => tier.target === null)).toBe(true);
+		// Both ladders are complete; the tie goes to the first known ladder, so
+		// the three tiers never mix vendors.
+		expect(suggested.low.target).toEqual({ type: 'provider-model', model: 'claude-haiku-5.5' });
+		expect(suggested.medium.target).toEqual({
+			type: 'provider-model',
+			model: 'claude-sonnet-5.5',
+		});
+		expect(suggested.high.target).toEqual({ type: 'provider-model', model: 'claude-opus-5.5' });
+	});
+
+	it('takes the most complete ladder, and its newest dotted version', () => {
+		const gptOnly = ids([
+			'gpt-5.6-luna',
+			'gpt-6-luna',
+			'gpt-6-sol',
+			'gpt-6.1-sol',
+			'claude-opus-5',
+		]);
+		const suggested = suggestHarnessTierDefaults('copilot-cli', gptOnly);
+		expect(suggested.low.target).toEqual({ type: 'provider-model', model: 'gpt-6-luna' });
+		expect(suggested.medium.target).toEqual({ type: 'provider-model', model: 'gpt-6.1-sol' });
+		// The Codex ladder lists no Astra, so high borrows medium.
+		expect(suggested.high.target).toEqual({ type: 'provider-model', model: 'gpt-6.1-sol' });
 	});
 
 	it('says so when a harness lists no catalogue at all', () => {
@@ -276,8 +317,9 @@ describe('Suggest', () => {
 			expect(suggested.low.target).toMatchObject({ model: GPT_OSS_20B_ID });
 			expect(suggested.high.target).toMatchObject({ model: QWEN3_CODER_NEXT_ID });
 			expect(suggested.medium).toEqual({
-				target: null,
-				reason: 'Fewer than three local model sizes are listed, so none is the middle one.',
+				target: suggested.high.target,
+				reason:
+					'best guess: the same as high, since nothing listed ranks a separate model for medium',
 			});
 		});
 
@@ -297,7 +339,8 @@ describe('Suggest', () => {
 				SERVER([GEMMA_4_E4B_ID, GPT_OSS_20B_ID, GPT_OSS_120B_ID]),
 			]);
 			expect(suggested.high.target).toEqual({ type: 'provider-model', model: 'opus' });
-			expect(suggested.low.target).toBeNull();
+			// Low borrows the provider pick, never a local model.
+			expect(suggested.low.target).toEqual({ type: 'provider-model', model: 'opus' });
 		});
 
 		it('does not apply to a harness with no Run on recipe', () => {
@@ -325,7 +368,7 @@ describe('a tier whose model the harness no longer lists', () => {
 		]);
 		expect(staleTierModels('codex', nextGeneration)).toEqual([
 			{ tier: 'low', model: 'gpt-6-luna', source: 'built-in', replacement: 'gpt-7-luna' },
-			{ tier: 'high', model: 'gpt-6-astra', source: 'built-in', replacement: null },
+			{ tier: 'high', model: 'gpt-6-astra', source: 'built-in', replacement: 'gpt-7-sol' },
 		]);
 	});
 
@@ -336,7 +379,7 @@ describe('a tier whose model the harness no longer lists', () => {
 			)
 		);
 		expect(staleTierModels('codex', hidden)).toEqual([
-			{ tier: 'high', model: 'gpt-6-astra', source: 'built-in', replacement: null },
+			{ tier: 'high', model: 'gpt-6-astra', source: 'built-in', replacement: 'gpt-6.1-sol' },
 		]);
 	});
 

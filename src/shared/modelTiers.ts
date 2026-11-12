@@ -1011,7 +1011,7 @@ export function withHarnessTierDefault(
 
 /** What Suggest proposes for one tier, and why; or why it proposes nothing. */
 export interface TierSuggestion {
-	/** Null when nothing the catalogue states picks a model for this tier. */
+	/** Null only when the harness lists no model and no local model qualifies. */
 	target: TierTarget | null;
 	reason: string;
 }
@@ -1022,9 +1022,9 @@ export type HarnessTierSuggestions = Record<ModelTier, TierSuggestion>;
  * The model families Maestro knows by name, per harness. A family keeps its
  * role across generations, which is what makes it safe to suggest from: Claude
  * Code's aliases always name the current model, and Codex's Luna, Sol and Astra
- * lines are the ones the built-in table follows. A family is NOT read out of
- * another harness's catalogue (`anthropic/claude-opus-4-8` on OpenCode): which
- * of several listed members is the one to run is a guess there.
+ * lines are the ones the built-in table follows. Another harness's catalogue
+ * (`anthropic/claude-opus-5-5` on OpenCode) is read for these families only as
+ * a labelled best guess, after every stated fact ({@link suggestHarnessTierDefaults}).
  */
 const TIER_FAMILIES: Partial<Record<ToolType, Readonly<Record<ModelTier, string>>>> = {
 	'claude-code': { low: 'haiku', medium: 'sonnet', high: 'opus' },
@@ -1149,9 +1149,150 @@ function rankedLocalTargets(
 	return ranked.sort((a, b) => a.parametersB - b.parametersB);
 }
 
+type TierPicks = Partial<Record<ModelTier, TierSuggestion>>;
+
+/**
+ * Local picks by size: smallest is low, largest is high, and the lower central
+ * one is medium when it sits strictly between them. Empty when fewer than two
+ * sizes are listed.
+ */
+function suggestLocalTargets(
+	harness: ToolType,
+	name: string,
+	runOnTargets: readonly RunOnPickerSource[]
+): TierPicks {
+	const local = agentRunOnSupport(harness).supported
+		? rankedLocalTargets(harness, runOnTargets)
+		: [];
+	const smallest = local[0];
+	const largest = local[local.length - 1];
+	if (!smallest || smallest.parametersB >= largest.parametersB) return {};
+	const size = (entry: { parametersB: number }) => `${entry.parametersB}B parameters`;
+	const picks: TierPicks = {
+		low: {
+			target: smallest.target,
+			reason: `smallest local model that runs agents on ${name} (${size(smallest)})`,
+		},
+		high: {
+			target: largest.target,
+			reason: `largest local model that runs agents on ${name} (${size(largest)})`,
+		},
+	};
+	const middle = local[Math.floor((local.length - 1) / 2)];
+	if (middle.parametersB > smallest.parametersB && middle.parametersB < largest.parametersB) {
+		picks.medium = {
+			target: middle.target,
+			reason: `middle local model that runs agents on ${name}, by size (${size(middle)})`,
+		};
+	}
+	return picks;
+}
+
+/**
+ * Where a catalogue id sits in `family`: its version numbers, and whether it
+ * carries a date stamp. Null unless the id is exactly an optional vendor word,
+ * the family, and version numbers (`claude-opus-5-5`, `anthropic/claude-opus-5.5`,
+ * `gpt-6-luna`). A variant such as `claude-opus-5-5-fast` is not a member: it
+ * is not the model the tier means.
+ */
+function familyMemberVersion(
+	id: string,
+	family: string
+): { version: number[]; dated: boolean } | null {
+	const tokens = id
+		.slice(id.lastIndexOf('/') + 1)
+		.toLowerCase()
+		.split(/[-_:\s]+/)
+		.filter((token) => token !== '');
+	if (tokens.filter((token) => token === family).length !== 1) return null;
+	const version: number[] = [];
+	let dated = false;
+	for (const [index, token] of tokens.entries()) {
+		if (token === family) continue;
+		if (/^\d{6,}$/.test(token)) {
+			dated = true;
+			continue;
+		}
+		if (/^\d+(\.\d+)*$/.test(token)) {
+			version.push(...token.split('.').map(Number));
+			continue;
+		}
+		// The vendor word may lead the id; any other word makes it a variant.
+		if (index !== 0) return null;
+	}
+	return { version, dated };
+}
+
+/** Positive when `a` is a newer version than `b`; a missing part counts as 0. */
+function compareVersions(a: readonly number[], b: readonly number[]): number {
+	for (let i = 0; i < Math.max(a.length, b.length); i++) {
+		const diff = (a[i] ?? 0) - (b[i] ?? 0);
+		if (diff !== 0) return diff;
+	}
+	return 0;
+}
+
+/**
+ * The newest listed member of a family: highest version, then the undated id
+ * over a dated snapshot of the same model, then the shorter id.
+ */
+function newestFamilyMember(
+	catalog: readonly HarnessCatalogModel[],
+	family: string
+): HarnessCatalogModel | null {
+	let best: { model: HarnessCatalogModel; version: number[]; dated: boolean } | null = null;
+	for (const model of catalog) {
+		const member = familyMemberVersion(model.id, family);
+		if (!member) continue;
+		const order = best ? compareVersions(member.version, best.version) : 1;
+		const better =
+			!best ||
+			order > 0 ||
+			(order === 0 &&
+				((best.dated && !member.dated) ||
+					(best.dated === member.dated && model.id.length < best.model.id.length)));
+		if (better) best = { model, ...member };
+	}
+	return best?.model ?? null;
+}
+
+/**
+ * A best guess for a catalogue that ranks nothing itself (OpenCode, Copilot
+ * CLI): the newest member of each tier of one known family ladder. The ladder
+ * that covers the most tiers wins, ties going to the order of
+ * {@link TIER_FAMILIES}, so the tiers come from one vendor's line.
+ */
+function suggestFromFamilyLadder(catalog: readonly HarnessCatalogModel[]): TierPicks {
+	let best: TierPicks = {};
+	for (const ladder of Object.values(TIER_FAMILIES)) {
+		if (!ladder) continue;
+		const picks: TierPicks = {};
+		for (const tier of TIER_LEVELS) {
+			const member = newestFamilyMember(catalog, ladder[tier]);
+			if (!member) continue;
+			picks[tier] = {
+				target: { type: 'provider-model', model: member.id },
+				reason: `best guess: the newest ${capitalize(ladder[tier])} listed, since the catalogue ranks nothing itself`,
+			};
+		}
+		if (Object.keys(picks).length > Object.keys(best).length) best = picks;
+	}
+	return best;
+}
+
+/** The tiers whose pick a blank tier borrows, nearest first. */
+const TIER_NEIGHBOURS: Readonly<Record<ModelTier, readonly ModelTier[]>> = {
+	low: ['medium', 'high'],
+	// A medium task is safer on the stronger model than on the weaker one.
+	medium: ['high', 'low'],
+	high: ['medium', 'low'],
+};
+
 /**
  * A suggestion for each tier of a harness, from what it can run on this
- * machine: its own catalogue, and the Run on targets the sources list.
+ * machine: its own catalogue, and the Run on targets the sources list. Suggest
+ * always makes a choice when there is anything to choose from; a tier is blank
+ * only when the harness lists no model and no local model qualifies.
  *
  * Rules, first one that names a model wins, per tier:
  *
@@ -1164,16 +1305,23 @@ function rankedLocalTargets(
  *   4. Medium only: the model the catalogue lists first, when it states an
  *      order and that model is not the low or high pick.
  *
- * When the provider's catalogue names NO tier and the harness has a Run on
- * recipe, the local models that passed the agent qualification with this
- * harness are ranked by parameter count: smallest is low, largest is high, and
- * the lower central one is medium when at least three sizes are listed. A local
- * model is only ever ranked against other local models, never against a cloud
- * one.
+ * When those name NO tier:
  *
- * A tier nothing names is left blank with the reason. Nothing here writes a
- * setting: a discovered list must not change how a document resolves until the
- * user saves it.
+ *   5. When the harness has a Run on recipe, the local models that passed the
+ *      agent qualification with this harness, ranked by parameter count:
+ *      smallest is low, largest is high, and the lower central one is medium
+ *      when at least three sizes are listed. A local model is only ever ranked
+ *      against other local models, never against a cloud one.
+ *   6. Else a best guess from a known family ladder read out of the catalogue
+ *      (`anthropic/claude-opus-5-5` on OpenCode is high): the newest member of
+ *      each tier, all from one ladder.
+ *
+ * Then a tier still blank borrows a neighbouring tier's pick
+ * ({@link TIER_NEIGHBOURS}), and when nothing named any tier, every tier takes
+ * the model the catalogue lists first. A guess says so in its reason.
+ *
+ * Nothing here writes a setting: a discovered list must not change how a
+ * document resolves until the user saves it.
  */
 export function suggestHarnessTierDefaults(
 	harness: ToolType,
@@ -1181,11 +1329,6 @@ export function suggestHarnessTierDefaults(
 	runOnTargets: readonly RunOnPickerSource[] = []
 ): HarnessTierSuggestions {
 	const name = getAgentDisplayName(harness);
-	const blank = (reason: string): TierSuggestion => ({ target: null, reason });
-	const unranked =
-		catalog.length > 0
-			? `${name}'s catalogue states nothing that ranks a model for this tier. Pick one by hand.`
-			: `No model catalogue was found for ${name}. Pick one by hand.`;
 
 	const provider: Partial<Record<ModelTier, { model: string; reason: string }>> = {};
 	for (const tier of TIER_LEVELS) {
@@ -1206,44 +1349,44 @@ export function suggestHarnessTierDefaults(
 		}
 	}
 
-	if (Object.keys(provider).length > 0) {
-		const suggest = (tier: ModelTier): TierSuggestion => {
-			const pick = provider[tier];
-			return pick
-				? { target: { type: 'provider-model', model: pick.model }, reason: pick.reason }
-				: blank(unranked);
-		};
-		return { low: suggest('low'), medium: suggest('medium'), high: suggest('high') };
+	let picks: TierPicks = {};
+	for (const tier of TIER_LEVELS) {
+		const pick = provider[tier];
+		if (pick) {
+			picks[tier] = { target: { type: 'provider-model', model: pick.model }, reason: pick.reason };
+		}
+	}
+	if (Object.keys(picks).length === 0) picks = suggestLocalTargets(harness, name, runOnTargets);
+	if (Object.keys(picks).length === 0) picks = suggestFromFamilyLadder(catalog);
+
+	if (Object.keys(picks).length === 0) {
+		const first =
+			pickByStatedOrder(catalog.filter((model) => model.priority !== undefined))?.model ??
+			catalog[0];
+		const only: TierSuggestion = first
+			? {
+					target: { type: 'provider-model', model: first.id },
+					reason: `best guess: the first model ${name}'s catalogue lists, since nothing in it ranks one model above another`,
+				}
+			: { target: null, reason: `No model catalogue was found for ${name}. Pick one by hand.` };
+		return { low: only, medium: only, high: only };
 	}
 
-	const local = agentRunOnSupport(harness).supported
-		? rankedLocalTargets(harness, runOnTargets)
-		: [];
-	const smallest = local[0];
-	const largest = local[local.length - 1];
-	if (!smallest || smallest.parametersB >= largest.parametersB) {
-		return { low: blank(unranked), medium: blank(unranked), high: blank(unranked) };
-	}
-	const size = (entry: { parametersB: number }) => `${entry.parametersB}B parameters`;
-	const middle = local[Math.floor((local.length - 1) / 2)];
-	const hasMiddle =
-		middle.parametersB > smallest.parametersB && middle.parametersB < largest.parametersB;
-	return {
-		low: {
-			target: smallest.target,
-			reason: `smallest local model that runs agents on ${name} (${size(smallest)})`,
-		},
-		medium: hasMiddle
-			? {
-					target: middle.target,
-					reason: `middle local model that runs agents on ${name}, by size (${size(middle)})`,
-				}
-			: blank('Fewer than three local model sizes are listed, so none is the middle one.'),
-		high: {
-			target: largest.target,
-			reason: `largest local model that runs agents on ${name} (${size(largest)})`,
-		},
+	const resolve = (tier: ModelTier): TierSuggestion => {
+		const own = picks[tier];
+		if (own) return own;
+		for (const neighbour of TIER_NEIGHBOURS[tier]) {
+			const borrowed = picks[neighbour];
+			if (!borrowed) continue;
+			return {
+				target: borrowed.target,
+				reason: `best guess: the same as ${neighbour}, since nothing listed ranks a separate model for ${tier}`,
+			};
+		}
+		// Unreachable: `picks` names at least one tier.
+		return { target: null, reason: `Nothing listed ranks a model for ${tier}. Pick one by hand.` };
 	};
+	return { low: resolve('low'), medium: resolve('medium'), high: resolve('high') };
 }
 
 /** A tier whose provider model the harness's catalogue does not list. */

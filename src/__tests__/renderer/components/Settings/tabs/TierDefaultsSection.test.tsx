@@ -176,7 +176,7 @@ describe('TierDefaultsSection', () => {
 		expect(window.maestro.settings.set).not.toHaveBeenCalled();
 	});
 
-	it('says why Suggest left a tier alone, and keeps the value it had', async () => {
+	it('makes a choice for every tier of a catalogue that ranks nothing, saying it guessed', async () => {
 		useSettingsStore.setState({
 			harnessTierDefaults: {
 				opencode: { low: { type: 'provider-model', model: 'ollama/qwen3:latest' } },
@@ -186,12 +186,19 @@ describe('TierDefaultsSection', () => {
 
 		fireEvent.click(button('suggest', 'opencode'));
 
-		expect(picker('opencode', 'low').value).toBe('provider:ollama/qwen3:latest');
+		expect(picker('opencode', 'high').value).toBe('provider:anthropic/claude-opus-5-5');
+		expect(picker('opencode', 'low').value).toBe('provider:anthropic/claude-opus-5-5');
 		expect(screen.getByTestId('tier-defaults-opencode-high-suggestion').textContent).toMatch(
-			/OpenCode's catalogue states nothing/
+			/best guess: the newest Opus listed/
 		);
-		// Nothing changed, so there is nothing to save.
-		expect(button('save', 'opencode').disabled).toBe(true);
+		expect(screen.getByTestId('tier-defaults-opencode-low-suggestion').textContent).toMatch(
+			/best guess: the same as high/
+		);
+		// Suggest only fills the pickers; Save stores them.
+		expect(button('save', 'opencode').disabled).toBe(false);
+		expect(stored()).toEqual({
+			opencode: { low: { type: 'provider-model', model: 'ollama/qwen3:latest' } },
+		});
 	});
 
 	it('drops a suggestion reason once the picker holds another value', async () => {

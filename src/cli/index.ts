@@ -4893,7 +4893,7 @@ modelTiers
 modelTiers
 	.command('suggest <harness>')
 	.description(
-		'A suggested model per tier with the reason, from what the harness lists; a tier nothing ranks is left blank (requires the desktop app)'
+		'A suggested model per tier with the reason, from what the harness lists; a guess says so, and a tier is blank only when nothing is listed (requires the desktop app)'
 	)
 	.option('--apply', 'Save the suggested tiers; a tier with no suggestion keeps its value')
 	.option('--json', 'Output as JSON (for scripting)')

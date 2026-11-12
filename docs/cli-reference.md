@@ -5482,7 +5482,7 @@ maestro-cli models tiers options claude-code --refresh
 
 ## `maestro-cli models tiers suggest <harness>`
 
-A suggested model per tier with the reason, from what the harness lists; a tier nothing ranks is left blank (requires the desktop app)
+A suggested model per tier with the reason, from what the harness lists; a guess says so, and a tier is blank only when nothing is listed (requires the desktop app)
 
 | Option    | Description                                                         | Default |
 | --------- | ------------------------------------------------------------------- | ------- |

@@ -191,7 +191,7 @@ describe('models tiers commands', () => {
 			expect(writeHarnessTierDefaults).not.toHaveBeenCalled();
 		});
 
-		it('saves the suggested tiers with --apply and keeps a tier nothing was suggested for', async () => {
+		it('saves every suggested tier with --apply, a borrowed guess included', async () => {
 			stored = { codex: { high: { type: 'provider-model', model: 'mine' } } };
 			const noAstra = {
 				...CODEX_OPTIONS,
@@ -204,10 +204,11 @@ describe('models tiers commands', () => {
 				codex: {
 					low: { type: 'provider-model', model: 'gpt-7-luna' },
 					medium: { type: 'provider-model', model: 'gpt-6.1-sol' },
-					high: { type: 'provider-model', model: 'mine' },
+					// No Astra is listed, so high borrows the medium pick.
+					high: { type: 'provider-model', model: 'gpt-6.1-sol' },
 				},
 			});
-			expect(json().applied).toEqual(['low', 'medium']);
+			expect(json().applied).toEqual(['low', 'medium', 'high']);
 		});
 
 		it('says so when there is nothing to save', async () => {
