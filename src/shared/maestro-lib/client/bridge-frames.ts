@@ -13,6 +13,7 @@ import { describeToolActivity } from '../../toolActivityLabel';
 import { createOutputParser } from '../parsers/parser-factory';
 import { resolveTurnOutcome, type TurnOutcome } from '../streaming/turn-outcome';
 import type { ClientErrorCode, TurnToolCall } from './types';
+import { isUnsupportedInvokeError } from '../../bridgeError';
 
 // ---------------------------------------------------------------------------
 // Process ids (8.1)
@@ -374,13 +375,9 @@ export const CUSTOM_COMMANDS_STORE_KEY = 'customAICommands';
 // Reply classification (9)
 // ---------------------------------------------------------------------------
 
-/** The error text the bridge answers an unregistered or denied channel with. */
-export function isUnsupportedInvokeError(text: string): boolean {
-	return (
-		text.includes('No ipcMain handler registered') ||
-		text.includes('is not available over the web interface')
-	);
-}
+// Lives beside the other bridge error rules so the web-desktop shim can use it
+// without pulling this module's parsers into its bundle.
+export { isUnsupportedInvokeError };
 
 /** Text the handlers use for a missing agent, tab, group, or queue item. */
 export function looksLikeNotFound(text: string): boolean {
