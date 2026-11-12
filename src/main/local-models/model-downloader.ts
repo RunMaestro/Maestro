@@ -69,6 +69,15 @@ export const MAX_ACTIVE_DOWNLOADS = 2;
 /** Progress push interval. ~4 Hz: fast enough to look live, slow enough to be free. */
 export const PROGRESS_INTERVAL_MS = 250;
 
+/**
+ * Time constant of the smoothed transfer rate. Each progress sample covers only
+ * one ~250ms interval, and a CDN stream arrives in bursts and short stalls, so the
+ * raw per-sample rate swings by 30x: a 10 MB/s download read as 248 KB/s with
+ * "14h left". An exponential average over ~5 seconds follows a real change in
+ * speed within a few seconds without reporting every stall as the new rate.
+ */
+export const RATE_SMOOTHING_MS = 5000;
+
 /** Attempts per file before a transient failure becomes a real one. */
 export const MAX_RETRIES = 4;
 
@@ -191,7 +200,10 @@ interface Job {
 	lastProgressAt: number;
 	lastSampleBytes: number;
 	lastSampleAt: number;
+	/** Smoothed over {@link RATE_SMOOTHING_MS}; see `emit()`. */
 	bytesPerSecond: number;
+	/** False until the first rate sample, which seeds the average as is. */
+	rateSeeded: boolean;
 }
 
 export class ModelDownloader {
@@ -258,6 +270,7 @@ export class ModelDownloader {
 			lastSampleBytes: 0,
 			lastSampleAt: this.now(),
 			bytesPerSecond: 0,
+			rateSeeded: false,
 		};
 		this.jobs.set(modelId, job);
 		job.running = this.runWhenSlotFree(job);
@@ -447,6 +460,8 @@ export class ModelDownloader {
 		const existing = await statSize(finalPath);
 		if (existing === file.bytes) {
 			job.bytesReceived += file.bytes;
+			// Bytes already on disk were not transferred; keep them out of the rate.
+			job.lastSampleBytes = job.bytesReceived;
 			this.emit(job, true);
 			return;
 		}
@@ -591,8 +606,17 @@ export class ModelDownloader {
 
 		const elapsed = (now - job.lastSampleAt) / 1000;
 		if (elapsed >= 0.2) {
-			const delta = job.bytesReceived - job.lastSampleBytes;
-			job.bytesPerSecond = delta > 0 ? delta / elapsed : 0;
+			const delta = Math.max(0, job.bytesReceived - job.lastSampleBytes);
+			const sampleRate = delta / elapsed;
+			if (job.rateSeeded) {
+				// Weight by the sample's length, so the average decays at the same speed
+				// whatever cadence the samples arrive at.
+				const weight = 1 - Math.exp(-(elapsed * 1000) / RATE_SMOOTHING_MS);
+				job.bytesPerSecond += weight * (sampleRate - job.bytesPerSecond);
+			} else {
+				job.bytesPerSecond = sampleRate;
+				job.rateSeeded = true;
+			}
 			job.lastSampleBytes = job.bytesReceived;
 			job.lastSampleAt = now;
 		}

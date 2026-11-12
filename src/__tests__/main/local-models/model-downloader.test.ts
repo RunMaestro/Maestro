@@ -203,6 +203,61 @@ describe('model-downloader', () => {
 		expect(await exists(partPath())).toBe(false);
 	});
 
+	it('smooths the transfer rate so one stalled sample does not read as the new speed', async () => {
+		// 10 B per 250ms (40 B/s) twice, then a stall that delivers 1 B in 250ms
+		// (4 B/s raw), then the rest. Each chunk waits a macrotask before moving the
+		// clock, so the progress event for a chunk always sees that chunk's time.
+		const plan = [
+			{ bytes: 10, ms: 250 },
+			{ bytes: 10, ms: 250 },
+			{ bytes: 1, ms: 250 },
+			{ bytes: fixture.contents.length - 21, ms: 250 },
+		];
+		let clock = 0;
+		let offset = 0;
+		let step = 0;
+		const fetchImpl: FetchLike = async () =>
+			new Response(
+				new ReadableStream<Uint8Array>(
+					{
+						async pull(controller) {
+							await new Promise((resolve) => setTimeout(resolve, 0));
+							const next = plan[step++];
+							if (!next) {
+								controller.close();
+								return;
+							}
+							clock += next.ms;
+							controller.enqueue(
+								new Uint8Array(fixture.contents.subarray(offset, offset + next.bytes))
+							);
+							offset += next.bytes;
+						},
+					},
+					{ highWaterMark: 0 }
+				),
+				{ status: 200 }
+			);
+		const downloader = new ModelDownloader({
+			fetchImpl,
+			retryDelayMs: () => 0,
+			progressIntervalMs: 0,
+			now: () => clock,
+		});
+		const events: DownloadProgress[] = [];
+		downloader.onProgress((progress) => events.push(progress));
+
+		const result = await downloader.download(fixture.id);
+
+		expect(result.status).toBe('complete');
+		const steady = events.find((event) => event.bytesReceived === 20);
+		const afterStall = events.find((event) => event.bytesReceived === 21);
+		expect(steady?.bytesPerSecond).toBeCloseTo(40, 5);
+		// Raw would be 4 B/s. One 250ms sample moves a 5s average about 5%.
+		expect(afterStall?.bytesPerSecond).toBeGreaterThan(35);
+		expect(afterStall?.bytesPerSecond).toBeLessThan(40);
+	});
+
 	it('requests from the catalog host when no download base is configured', async () => {
 		const urls: string[] = [];
 		const fetchImpl: FetchLike = async (url) => {
