@@ -19,15 +19,18 @@
  *    printed or the assistant wrote is never promoted into any of them; it
  *    appears only as a quoted `detail`, which the preview labels as data.
  *  - "Verified" needs a call that finished, a command read (by
- *    `readLiteralCommand`, as a shell would) as ONE invocation of a check
+ *    `readCommandCall`, as a shell would) as ONE invocation of a check
  *    runner, and a passing summary line in its output. Naming a runner inside
  *    another command's arguments, chaining, piping or redirecting does not make
- *    a check, and an exit status alone is NOT verification; those runs are
- *    listed as unknowns, not as results.
+ *    a check; neither does a wrapper whose program an option may have swallowed
+ *    (`npx --package vitest echo ...` runs `echo`), and an exit status alone is
+ *    NOT verification; those runs are listed as unknowns, not as results.
  *  - Evidence that disagrees is shown, not settled: a command that failed after
  *    it passed keeps both, exit 0 with failure text is a conflict, and a first
- *    and a latest request are both shown. Two commands are the same only when
- *    their arguments are, so one test selection never clears another's failure.
+ *    and a latest request are both shown. Two calls are the same only when
+ *    their arguments (as the provider split them), directory and added
+ *    variables are, so one test selection, or one package's run, never clears
+ *    another's failure.
  *  - The user's words are kept as written: case and spacing are not folded, and
  *    a line break shows as ⏎. Only a secret is replaced, by its placeholder.
  *  - What cannot be established is listed under `unknowns` with its reason.
@@ -39,7 +42,7 @@
  */
 
 import { getBasename, truncateAtWordBoundary } from './formatters';
-import { readLiteralCommand } from './literalCommand';
+import { readCommandCall, type CommandCall } from './literalCommand';
 import { forEachMarkdownLine } from './markdownTaskScan';
 import { redactSecrets } from './redactSecrets';
 import { stripAnsiCodes } from './stringUtils';
@@ -176,6 +179,26 @@ const CHECK_PROGRAMS = new Set(
 	)
 );
 const PACKAGE_RUNNERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+/** Programs that run another program: the first word after their switches is that program. */
+const PACKAGE_EXECUTORS = new Set(['npx', 'bunx', 'pnpx']);
+/**
+ * The switches of those executors that take no value. Any other option may take
+ * the next word as its value (`--package vitest`, `-c 'echo ok'`), so the word
+ * after it is not known to be the program.
+ */
+const PLAIN_SWITCHES = new Set([
+	'-y',
+	'--yes',
+	'--no',
+	'--no-install',
+	'-q',
+	'--quiet',
+	'--silent',
+	'--ignore-scripts',
+	'--offline',
+	'--prefer-offline',
+	'--prefer-online',
+]);
 const CHECK_SCRIPT = /^(?:test|lint|build|typecheck|check|validate)(?::[\w-]+)?$/;
 const CHECK_SUBCOMMANDS = new Map<string, readonly string[]>([
 	['go', ['test', 'vet', 'build']],
@@ -201,13 +224,19 @@ const isFailureLine = (line: string): boolean =>
 /**
  * One finished shell call, read as a check. `unparsed` is a command that
  * mentions a check but is not one literal invocation (it chains, pipes,
- * redirects or expands), so its output cannot be tied to a single check.
+ * redirects or expands, or runs behind a wrapper whose program cannot be
+ * named), so its output cannot be tied to a single check.
  */
 interface Run {
 	index: number;
+	/** The command as shown. For an argv array, elements that hold a space are quoted. */
 	command: string;
-	/** Same key, same invocation (see `readLiteralCommand`); the exact text when unreadable. */
+	/** Same key, same invocation (see `readCommandCall`); built from the exact text when unreadable. */
 	key: string;
+	/** The directory the call asked to run in, when it named one. Shown beside the command. */
+	cwd?: string;
+	/** Names of the variables the call asked to add. Never their values. */
+	envNames?: string[];
 	kind: 'verified' | 'failed' | 'conflict' | 'exit-only' | 'unparsed';
 	/** The line of output the kind rests on. */
 	detail?: string;
@@ -294,47 +323,57 @@ function findLine(text: string, test: (line: string) => boolean): string | undef
 	return undefined;
 }
 
-/** Whether a literal command (program first) is ONE invocation of a check runner. */
-function isCheckInvocation(words: readonly string[]): boolean {
+/**
+ * What a literal command (program first) is. `check` is ONE invocation of a
+ * check runner; `other` is a program that is not one; `unknown` is a wrapper
+ * whose program cannot be named, because an option in front of it may have
+ * taken the next word as its value (`npx --package vitest echo ok` runs `echo`).
+ */
+function readInvocation(words: readonly string[]): 'check' | 'other' | 'unknown' {
 	const program = getBasename(words[0]);
 	const args = words.slice(1);
-	if (CHECK_PROGRAMS.has(program)) return true;
-	if (['npx', 'bunx', 'pnpx'].includes(program)) {
-		return CHECK_PROGRAMS.has(args.find((arg) => !arg.startsWith('-')) ?? '');
+	if (CHECK_PROGRAMS.has(program)) return 'check';
+	if (PACKAGE_EXECUTORS.has(program)) {
+		const wrapped = args.find((arg) => !PLAIN_SWITCHES.has(arg));
+		if (wrapped === undefined || wrapped.startsWith('-')) return 'unknown';
+		return CHECK_PROGRAMS.has(wrapped) ? 'check' : 'other';
 	}
 	if (PACKAGE_RUNNERS.has(program)) {
-		return CHECK_SCRIPT.test((args[0] === 'run' ? args[1] : args[0]) ?? '');
+		return CHECK_SCRIPT.test((args[0] === 'run' ? args[1] : args[0]) ?? '') ? 'check' : 'other';
 	}
 	if (/^python3?$/.test(program) && args[0] === '-m') {
-		return CHECK_PROGRAMS.has(args[1] ?? '') || args[1] === 'unittest';
+		return CHECK_PROGRAMS.has(args[1] ?? '') || args[1] === 'unittest' ? 'check' : 'other';
 	}
-	return CHECK_SUBCOMMANDS.get(program)?.includes(args[0]) ?? false;
+	return CHECK_SUBCOMMANDS.get(program)?.includes(args[0]) ? 'check' : 'other';
 }
 
 /**
  * Read one finished shell call as a check. A failed call of any command is a
  * failure. A call that finished is judged only when it is a check: one literal
- * invocation of a runner (`isCheckInvocation`), or a command that merely
- * mentions one and cannot be read as such (`unparsed`). Failure text beside a
- * clean exit is a conflict, a passing summary line from a read invocation is
- * verified, and a clean exit with nothing stated is exit-only. Other commands
- * that finished say nothing worth keeping: `grep FAIL log.txt` is not a failed
- * check, and `cat 'npm test results.log'` is not a passing one.
+ * invocation of a runner (`readInvocation`), or a command that merely mentions
+ * one and cannot be read as such (`unparsed`). Failure text beside a clean exit
+ * is a conflict, a passing summary line from a read invocation is verified, and
+ * a clean exit with nothing stated is exit-only. Other commands that finished
+ * say nothing worth keeping: `grep FAIL log.txt` is not a failed check, and
+ * `cat 'npm test results.log'` is not a passing one.
  */
 function classifyRun(
 	index: number,
-	command: string,
+	call: CommandCall,
 	state: unknown,
 	failed: boolean
 ): Run | undefined {
-	const parsed = readLiteralCommand(command);
+	const { key, words } = readCommandCall(call);
 	const stored = (state as { output?: unknown } | null | undefined)?.output;
 	const output = typeof stored === 'string' ? stored : '';
 	const text = stripAnsiCodes(output.slice(0, SCAN_CHARS));
+	const envNames = call.env ? Object.keys(call.env) : [];
 	const run = {
 		index,
-		command,
-		key: parsed?.key ?? command.trim(),
+		command: call.text,
+		key,
+		...(call.cwd ? { cwd: call.cwd } : {}),
+		...(envNames.length ? { envNames } : {}),
 		cutOff: output.length >= MAX_PERSISTED_TOOL_OUTPUT_CHARS,
 	};
 	const failure = findLine(text, isFailureLine);
@@ -342,11 +381,25 @@ function classifyRun(
 		const last = text.trimEnd().split('\n').pop()?.trim();
 		return { ...run, kind: 'failed', detail: failure ?? last };
 	}
-	if (!(parsed ? isCheckInvocation(parsed.words) : MENTIONS_CHECK.test(command))) return undefined;
+	const invocation = words ? readInvocation(words) : 'unknown';
+	if (invocation === 'other') return undefined;
+	if (invocation === 'unknown' && !MENTIONS_CHECK.test(call.text)) return undefined;
 	if (failure) return { ...run, kind: 'conflict', detail: failure };
-	if (!parsed) return { ...run, kind: 'unparsed' };
+	if (invocation === 'unknown') return { ...run, kind: 'unparsed' };
 	const pass = findLine(text, (line) => PASS_LINE.test(line));
 	return pass ? { ...run, kind: 'verified', detail: pass } : { ...run, kind: 'exit-only' };
+}
+
+/**
+ * What the call said about where it ran: its directory and the NAMES of the
+ * variables it added, never their values. Two runs of one command that differ
+ * only here would otherwise read alike in the preview.
+ */
+function runContext(run: Run): string[] {
+	return [
+		...(run.cwd ? [`in ${safeText(run.cwd, 80, true).text}`] : []),
+		...(run.envNames ? [`with env ${safeText(run.envNames.join(' '), 60, true).text}`] : []),
+	];
 }
 
 function recordRun(histories: Map<string, RunHistory>, run: Run): void {
@@ -465,7 +518,11 @@ function readActivity(ev: Evidence) {
 
 	const runItem = (run: Run, notes: string[]): DigestItem => {
 		const later = edits.filter((edit) => edit > run.index).length;
-		const all = later ? [...notes, `${later} file edit${later === 1 ? '' : 's'} since`] : notes;
+		const all = [
+			...runContext(run),
+			...notes,
+			...(later ? [`${later} file edit${later === 1 ? '' : 's'} since`] : []),
+		];
 		return make(
 			run.index,
 			run.command,
@@ -607,9 +664,10 @@ function listUnknowns(
 		);
 	}
 	const named = (runs: Run[]): string => {
-		const shown = runs
-			.slice(0, 3)
-			.map((run) => `${refOf(run.index).label} "${safeText(run.command, 80, true).text}"`);
+		const shown = runs.slice(0, 3).map((run) => {
+			const context = runContext(run).join(', ');
+			return `${refOf(run.index).label} "${safeText(run.command, 80, true).text}"${context ? ` (${context})` : ''}`;
+		});
 		return runs.length > 3 ? `${shown.join(', ')} and ${runs.length - 3} more` : shown.join(', ');
 	};
 	const bare = activity.unproven.filter((run) => run.kind === 'exit-only');
@@ -624,7 +682,7 @@ function listUnknowns(
 	if (chained.length) {
 		note(
 			'verifiedObservations',
-			`${named(chained)} ran as a chained, piped, redirected or expanded command, so its output cannot be tied to one check and nothing was verified.`
+			`${named(chained)} ran as a chained, piped, redirected or expanded command, or behind a wrapper whose program cannot be named (an option before it may have taken the next word as its value), so its output cannot be tied to one check and nothing was verified.`
 		);
 	}
 	if (activity.neverEnded) {

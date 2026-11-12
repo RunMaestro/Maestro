@@ -203,7 +203,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a working directory can be spawned into:** `unusableCwdReason(cwd)`, `unusableDirectoryReason(dir, label)` in `src/main/process-manager/utils/spawnCwd.ts`
 - **Whether an agent is working right now (main process):** `isAgentBusy()`, `isAiTabProcessActive()` in `src/main/utils/agent-busy.ts` (never the persisted `state`)
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
-- **Reading one shell command, without running it:** `readLiteralCommand()`, `literalCommandTokens()` in `src/shared/literalCommand.ts` (null for a pipe, `;`, a redirect, an expansion or a comment)
+- **Reading one shell command, without running it:** `readLiteralCommand()`, `readCommandCall()`, `literalCommandTokens()` in `src/shared/literalCommand.ts` (null for a pipe, `;`, a redirect, an expansion or a comment)
 - **Resuming a provider session a background synopsis may still hold:** `awaitSynopsisWriters()` in `src/main/process-manager/utils/synopsisWriterGate.ts` (already called by `process:spawn`; no per-send-path busy check)
 - **A path handed to a REMOTE shell (`cd`, `ls`, `stat` over SSH):** `shellEscapeRemotePath()` in `src/main/utils/shell-escape.ts` (`shellEscape()` stops `~` from expanding)
 - **SSH connection options (`ssh -o`):** `resolveSshOptions()`, `buildSshOptionArgs()`, `validateSshOption()` in `src/shared/sshOptions.ts`

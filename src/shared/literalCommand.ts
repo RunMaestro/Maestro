@@ -9,8 +9,17 @@
  * before it decides what a word is, so this reads them too, and says nothing
  * when it cannot be sure.
  *
+ * Two calls are also not the same when only their surroundings differ: `npm
+ * test` in two directories, or with and without `CI=1`, tests two different
+ * things, and an argv array `['npm', 'test', '-t', 'a b']` has four arguments
+ * where the line `npm test -t a b` has five. `readCommandCall` reads a call
+ * with all of that, and its `key` is built with `canonicalJson`, so equal keys
+ * mean equal invocations and nothing compares display text.
+ *
  * Pure: no process, file or shell access. Nothing here evaluates the command.
  */
+
+import { canonicalJson } from './canonicalJson';
 
 /**
  * Read a single literal shell invocation, never evaluate it. Custom-args
@@ -90,13 +99,15 @@ export interface LiteralCommand {
 	words: string[];
 }
 
-/**
- * The one command `command` runs, or null when that cannot be established: a
- * pipe, a redirection, `;`, `||`, a comment, a glob, an expansion, a line
- * break, or an unclosed quote. A leading run of `cd <literal path> &&` is read
- * past (see `CD_PREFIX`).
- */
-export function readLiteralCommand(command: string): LiteralCommand | null {
+/** A command read into what makes it the same invocation, and the words to act on. */
+interface Reading {
+	/** JSON-safe. Equal identities are the same invocation. */
+	identity: Record<string, unknown>;
+	words: string[];
+}
+
+/** One command line, read the way a shell would. */
+function readCommandLine(command: string): Reading | null {
 	let rest = command.trim();
 	const dirs: string[] = [];
 	for (let match = CD_PREFIX.exec(rest); match; match = CD_PREFIX.exec(rest)) {
@@ -108,7 +119,80 @@ export function readLiteralCommand(command: string): LiteralCommand | null {
 	if (!tokens?.length) return null;
 	let at = 0;
 	while (ASSIGNMENT.test(tokens[at] ?? '') && assignments.has(at)) at++;
-	return at < tokens.length
-		? { key: JSON.stringify([dirs, tokens]), words: tokens.slice(at) }
-		: null;
+	if (at >= tokens.length) return null;
+	const words = tokens.slice(at);
+	return {
+		// The assignments are their own member: the program `CI=1` of an argv array
+		// is not the assignment `CI=1` of a command line.
+		identity: {
+			argv: words,
+			...(dirs.length ? { cd: dirs } : {}),
+			...(at ? { set: tokens.slice(0, at) } : {}),
+		},
+		words,
+	};
+}
+
+/**
+ * An argv array, read as it is. No shell reads it, so nothing in it is quoted,
+ * split, expanded or an assignment: each element is one argument, whatever it
+ * holds, and a space inside an element does not make two arguments.
+ */
+function readArgv(argv: readonly string[]): Reading | null {
+	return argv.length ? { identity: { argv }, words: [...argv] } : null;
+}
+
+/**
+ * The one command `command` runs, or null when that cannot be established: a
+ * pipe, a redirection, `;`, `||`, a comment, a glob, an expansion, a line
+ * break, or an unclosed quote. A leading run of `cd <literal path> &&` is read
+ * past (see `CD_PREFIX`).
+ */
+export function readLiteralCommand(command: string): LiteralCommand | null {
+	const read = readCommandLine(command);
+	return read && { key: canonicalJson(read.identity), words: read.words };
+}
+
+/** A command a tool was asked to run, and what it was asked to run it with. */
+export interface CommandCall {
+	/**
+	 * The command on one line, as shown. When `argv` is set this is a display
+	 * of it: the identity comes from `argv`, never from this text.
+	 */
+	text: string;
+	/** The argv array the caller sent. Each element is one argument, whatever it holds. */
+	argv?: readonly string[];
+	/** The directory the caller asked it to run in. Absent when it named none. */
+	cwd?: string;
+	/** The variables the caller asked to add. Absent when it named none. */
+	env?: Readonly<Record<string, string>>;
+}
+
+export interface CommandReading {
+	/**
+	 * Equal keys are the same invocation: the same arguments (see
+	 * `LiteralCommand.key`) run in the same directory with the same added
+	 * variables. A directory or variable one call names and the other leaves
+	 * out makes two keys, because what an unnamed call ran in is not known. A
+	 * call that cannot be read is keyed by its exact text and the same context.
+	 */
+	key: string;
+	/** The program and its arguments, or null when the call cannot be read (see `readLiteralCommand`). */
+	words: string[] | null;
+}
+
+/**
+ * Read a command call: its words, when they can be established, and the key
+ * that says which calls are the same invocation.
+ */
+export function readCommandCall(call: CommandCall): CommandReading {
+	const read = call.argv ? readArgv(call.argv) : readCommandLine(call.text);
+	return {
+		key: canonicalJson({
+			...(read?.identity ?? { text: call.text.trim() }),
+			cwd: call.cwd || undefined,
+			env: call.env && Object.keys(call.env).length ? call.env : undefined,
+		}),
+		words: read?.words ?? null,
+	};
 }

@@ -464,6 +464,9 @@ describe('buildContextDigest', () => {
 		it.each([
 			['a bare runner', 'vitest run src/a.test.ts', VITEST_PASS],
 			['npx with a flag', 'npx --yes vitest run', VITEST_PASS],
+			['npx with the short flag', 'npx -y vitest run', VITEST_PASS],
+			['npx with several switches', 'npx -y --quiet --no-install vitest run', VITEST_PASS],
+			['bunx', 'bunx vitest run', VITEST_PASS],
 			['an env assignment in front', 'CI=1 npx vitest run', VITEST_PASS],
 			['a runner by path', './node_modules/.bin/jest --ci', 'Tests:       12 passed, 12 total'],
 			['a package script', 'npm run test:unit -- --silent', ' Tests  12 passed (12)'],
@@ -478,6 +481,83 @@ describe('buildContextDigest', () => {
 
 			expect(digest.verifiedObservations.map((item) => item.text)).toEqual([command]);
 			expect(unknownsOf(digest, 'verifiedObservations')).toEqual([]);
+		});
+
+		describe('a wrapper such as npx', () => {
+			it.each([
+				['--package with a space', "npx --package vitest echo 'All tests passed'"],
+				['-p', "npx -p vitest echo 'All tests passed'"],
+				['--package=', "npx --package=vitest echo 'All tests passed'"],
+				['--call', "npx --call vitest echo 'All tests passed'"],
+				['--workspace', "npx --workspace vitest echo 'All tests passed'"],
+				['a switch followed by --package', "npx --yes --package vitest echo 'All tests passed'"],
+				['bunx --package', "bunx --package vitest echo 'All tests passed'"],
+				['pnpx -p', "pnpx -p vitest echo 'All tests passed'"],
+			])(
+				'does not call the first non-dash word the program when an option comes first: %s',
+				(_name, command) => {
+					const digest = build([bash(command, 'All tests passed\n12 passed')]);
+
+					expect(digest.verifiedObservations).toEqual([]);
+					const [reason] = unknownsOf(digest, 'verifiedObservations');
+					expect(reason).toContain('wrapper whose program cannot be named');
+					expect(reason).toContain('nothing was verified');
+					expect(reason).toContain(`"${command}"`);
+				}
+			);
+
+			it('lists a real check behind an option as unknown rather than guess at its program', () => {
+				const digest = build([bash('npx --prefix app vitest run', VITEST_PASS)]);
+				expect(digest.verifiedObservations).toEqual([]);
+				expect(unknownsOf(digest, 'verifiedObservations')).toHaveLength(1);
+			});
+
+			it('names a wrapper that mentions no check as nothing at all', () => {
+				const digest = build([
+					bash("npx --package left-pad echo 'All tests passed'", '12 passed'),
+					bash('npx cowsay hi', '12 passed'),
+					bash('npx', '12 passed'),
+				]);
+				expect(digest.verifiedObservations).toEqual([]);
+				expect(digest.unresolvedFailures).toEqual([]);
+				expect(unknownsOf(digest, 'verifiedObservations')).toEqual([]);
+			});
+
+			it('does not verify a program that is not a runner, whatever it prints', () => {
+				const digest = build([
+					bash("npx -y echo 'vitest: 12 passed'", 'vitest: 12 passed'),
+					bash('npx -y cowsay vitest', '12 passed'),
+				]);
+				expect(digest.verifiedObservations).toEqual([]);
+				expect(unknownsOf(digest, 'verifiedObservations')).toEqual([]);
+			});
+
+			it('still verifies the argv form of a plain wrapper, and lists an argv one behind an option', () => {
+				const plain = build([
+					tool('shell', { command: ['npx', '--yes', 'vitest', 'run'] }, { output: VITEST_PASS }),
+				]);
+				expect(plain.verifiedObservations.map((item) => item.text)).toEqual([
+					'npx --yes vitest run',
+				]);
+
+				const behind = build([
+					tool(
+						'shell',
+						{ command: ['npx', '--package', 'vitest', 'echo', 'All tests passed'] },
+						{ output: 'All tests passed' }
+					),
+				]);
+				expect(behind.verifiedObservations).toEqual([]);
+				expect(unknownsOf(behind, 'verifiedObservations')[0]).toContain('wrapper whose program');
+			});
+
+			it('verifies an argv array only as the one program it names', () => {
+				const digest = build([
+					tool('shell', { command: ['npm test'] }, { output: '12 passed' }),
+					tool('shell', { command: ['echo', 'npm test'] }, { output: '12 passed' }),
+				]);
+				expect(digest.verifiedObservations).toEqual([]);
+			});
 		});
 
 		it('counts file edits made since a result, and not failed ones', () => {
@@ -603,6 +683,243 @@ describe('buildContextDigest', () => {
 			]);
 			expect(digest.unresolvedFailures).toHaveLength(1);
 			expect(digest.verifiedObservations).toHaveLength(1);
+		});
+
+		describe('argument boundaries of an argv array', () => {
+			const argvCall = (command: string[], output: string, state: Record<string, unknown> = {}) =>
+				tool('shell', { command }, { output, ...state });
+
+			it('keeps two arrays apart that differ only where an argument ends', () => {
+				const digest = build([
+					argvCall(['npm', 'test', '--', '-t', 'alpha beta'], '1 failed', { status: 'failed' }),
+					argvCall(['npm', 'test', '--', '-t', 'alpha', 'beta'], ' Tests  1 passed (1)'),
+				]);
+
+				expect(digest.unresolvedFailures.map((item) => item.text)).toEqual([
+					"npm test -- -t 'alpha beta'",
+				]);
+				expect(digest.verifiedObservations.map((item) => item.text)).toEqual([
+					'npm test -- -t alpha beta',
+				]);
+				expect(digest.verifiedObservations[0].note ?? '').not.toContain('earlier failure');
+			});
+
+			it('keeps them apart in the other order too', () => {
+				const digest = build([
+					argvCall(['npm', 'test', '--', '-t', 'alpha', 'beta'], '1 failed', { status: 'failed' }),
+					argvCall(['npm', 'test', '--', '-t', 'alpha beta'], ' Tests  1 passed (1)'),
+				]);
+				expect(digest.unresolvedFailures).toHaveLength(1);
+				expect(digest.verifiedObservations).toHaveLength(1);
+			});
+
+			it('resolves a failure by the identical array', () => {
+				const argv = ['npm', 'test', '--', '-t', 'alpha beta'];
+				const digest = build([
+					argvCall(argv, '1 failed', { status: 'failed' }),
+					argvCall([...argv], ' Tests  1 passed (1)'),
+				]);
+				expect(digest.unresolvedFailures).toEqual([]);
+				expect(digest.verifiedObservations[0].note).toContain(
+					'after an earlier failure at tool #1'
+				);
+			});
+
+			it('resolves a failure of an array by the same command written as a line, and the reverse', () => {
+				const failedArray = build([
+					argvCall(['npm', 'test'], '1 failed', { status: 'failed' }),
+					bash('npm test', ' Tests  1 passed (1)'),
+				]);
+				const failedLine = build([
+					failedBash('npm test', '1 failed'),
+					argvCall(['npm', 'test'], ' Tests  1 passed (1)'),
+				]);
+
+				expect(failedArray.unresolvedFailures).toEqual([]);
+				expect(failedLine.unresolvedFailures).toEqual([]);
+			});
+
+			it('does not let a line with a quoted space stand for an array that splits it', () => {
+				const digest = build([
+					argvCall(['npm', 'test', '--', '-t', 'alpha', 'beta'], '1 failed', { status: 'failed' }),
+					bash("npm test -- -t 'alpha beta'", ' Tests  1 passed (1)'),
+				]);
+				expect(digest.unresolvedFailures).toHaveLength(1);
+			});
+		});
+
+		describe('the directory and variables a call names', () => {
+			const codexCall = (cmd: string, context: Record<string, unknown>, state = {}) =>
+				tool('exec_command', { cmd, ...context }, state);
+			const failedCodexCall = (cmd: string, context: Record<string, unknown>) =>
+				codexCall(cmd, context, { status: 'failed', output: '1 failed' });
+			const passedCodexCall = (cmd: string, context: Record<string, unknown>) =>
+				codexCall(cmd, context, { output: ' Tests  1 passed (1)' });
+
+			it('keeps one command run in two directories apart', () => {
+				const digest = build([
+					failedCodexCall('npm test', { workdir: '/repo/one' }),
+					passedCodexCall('npm test', { workdir: '/repo/two' }),
+				]);
+
+				expect(digest.unresolvedFailures.map((item) => item.text)).toEqual(['npm test']);
+				expect(digest.verifiedObservations.map((item) => item.text)).toEqual(['npm test']);
+				expect(digest.unresolvedFailures[0].note).toContain('in /repo/one');
+				expect(digest.verifiedObservations[0].note).toContain('in /repo/two');
+				expect(digest.verifiedObservations[0].note).not.toContain('earlier failure');
+			});
+
+			it('resolves a failure by the same command in the same directory', () => {
+				const digest = build([
+					failedCodexCall('npm test', { workdir: '/repo/one' }),
+					passedCodexCall('npm test', { workdir: '/repo/one' }),
+				]);
+
+				expect(digest.unresolvedFailures).toEqual([]);
+				expect(digest.verifiedObservations[0].note).toContain('in /repo/one');
+				expect(digest.verifiedObservations[0].note).toContain(
+					'after an earlier failure at tool #1'
+				);
+			});
+
+			it.each(['workdir', 'cwd', 'Cwd', 'directory', 'workingDirectory'])(
+				'reads the directory spelled %s',
+				(key) => {
+					const digest = build([
+						failedCodexCall('npm test', { [key]: '/repo/one' }),
+						passedCodexCall('npm test', { [key]: '/repo/two' }),
+					]);
+					expect(digest.unresolvedFailures).toHaveLength(1);
+					expect(digest.verifiedObservations).toHaveLength(1);
+				}
+			);
+
+			it('keeps a run that named a directory apart from one that named none, in both orders', () => {
+				const named = build([
+					failedCodexCall('npm test', { workdir: '/repo/one' }),
+					passedCodexCall('npm test', {}),
+				]);
+				const unnamed = build([
+					failedCodexCall('npm test', {}),
+					passedCodexCall('npm test', { workdir: '/repo/one' }),
+				]);
+
+				expect(named.unresolvedFailures).toHaveLength(1);
+				expect(unnamed.unresolvedFailures).toHaveLength(1);
+				expect(named.verifiedObservations[0].note ?? '').not.toContain('earlier failure');
+				expect(unnamed.verifiedObservations[0].note ?? '').not.toContain('earlier failure');
+			});
+
+			it('keeps the same command in a call directory and in a cd apart', () => {
+				const digest = build([
+					failedCodexCall('npm test', { workdir: '/repo/one' }),
+					bash('cd /repo/one && npm test', ' Tests  1 passed (1)'),
+				]);
+				expect(digest.unresolvedFailures).toHaveLength(1);
+			});
+
+			it('keeps an argv array run in two directories apart', () => {
+				const digest = build([
+					tool(
+						'shell',
+						{ command: ['npm', 'test'], workdir: '/repo/one' },
+						{ status: 'failed', output: '1 failed' }
+					),
+					tool(
+						'shell',
+						{ command: ['npm', 'test'], workdir: '/repo/two' },
+						{ output: ' Tests  1 passed (1)' }
+					),
+				]);
+				expect(digest.unresolvedFailures).toHaveLength(1);
+				expect(digest.verifiedObservations).toHaveLength(1);
+			});
+
+			it('keeps a command it cannot read apart by directory too', () => {
+				const apart = build([
+					failedCodexCall('npx vitest run | tail -5', { workdir: '/repo/one' }),
+					passedCodexCall('npx vitest run | tail -5', { workdir: '/repo/two' }),
+				]);
+				const same = build([
+					failedCodexCall('npx vitest run | tail -5', { workdir: '/repo/one' }),
+					passedCodexCall('npx vitest run | tail -5', { workdir: '/repo/one' }),
+				]);
+
+				expect(apart.unresolvedFailures).toHaveLength(1);
+				expect(same.unresolvedFailures).toEqual([]);
+			});
+
+			it('keeps one command run with different added variables apart', () => {
+				const digest = build([
+					failedCodexCall('npm test', { env: { CI: '1' } }),
+					passedCodexCall('npm test', {}),
+				]);
+
+				expect(digest.unresolvedFailures).toHaveLength(1);
+				expect(digest.unresolvedFailures[0].note).toContain('with env CI');
+				expect(digest.verifiedObservations).toHaveLength(1);
+			});
+
+			it('resolves a failure by the same variables, whatever order they are listed in', () => {
+				const digest = build([
+					failedCodexCall('npm test', { env: { CI: '1', NODE_ENV: 'test' } }),
+					passedCodexCall('npm test', { env: { NODE_ENV: 'test', CI: '1' } }),
+				]);
+				expect(digest.unresolvedFailures).toEqual([]);
+			});
+
+			it('names the variables a call added and shows no value, secret-shaped or plain', () => {
+				const digest = build([
+					failedCodexCall('npm test', {
+						env: { MODE: 'plain-value-xyz', API_TOKEN: 'sk-live-0123456789abcdef' },
+					}),
+				]);
+
+				expect(digest.unresolvedFailures[0].note).toContain('with env MODE API_TOKEN');
+				expect(digest.preview).not.toContain('plain-value-xyz');
+				expect(digest.preview).not.toContain('0123456789abcdef');
+			});
+
+			it('keeps a variable with a different value apart, and never shows a value', () => {
+				const digest = build([
+					failedCodexCall('npm test', { env: { API_TOKEN: 'sk-live-first-0123456789abcdef' } }),
+					passedCodexCall('npm test', { env: { API_TOKEN: 'sk-live-second-0123456789abcdef' } }),
+				]);
+
+				expect(digest.unresolvedFailures).toHaveLength(1);
+				expect(digest.unresolvedFailures[0].note).toContain('with env API_TOKEN');
+				expect(digest.preview).not.toContain('0123456789abcdef');
+				expect(digest.preview).not.toContain('sk-live');
+			});
+
+			it('shows the directory beside the command, so two lines of one command can be told apart', () => {
+				const digest = build([
+					failedCodexCall('npm test', { workdir: '/repo/one' }),
+					passedCodexCall('npm test', { workdir: '/repo/two' }),
+				]);
+				expect(digest.preview).toContain('[in /repo/one, tool #1]');
+				expect(digest.preview).toContain('[in /repo/two, tool #2]');
+			});
+
+			it('cleans the directory text before it is shown', () => {
+				const digest = build([failedCodexCall('npm test', { workdir: '/repo/a`b\nc' })]);
+				const note = digest.unresolvedFailures[0].note ?? '';
+
+				expect(note).toContain("in /repo/a'b");
+				expect(note).not.toMatch(/[`\n]/);
+			});
+
+			it('names the directory of a run that exited clean without a result', () => {
+				const digest = build([codexCall('npm test', { workdir: '/repo/one' }, { output: 'done' })]);
+				const [reason] = unknownsOf(digest, 'verifiedObservations');
+
+				expect(reason).toContain('"npm test" (in /repo/one)');
+			});
+
+			it('keeps a call that names no directory free of any note about one', () => {
+				const digest = build([failedBash('npm test', '1 failed')]);
+				expect(digest.unresolvedFailures[0].note ?? '').toBe('');
+			});
 		});
 
 		it('resolves a failure of a command it cannot read only by the exact same text', () => {

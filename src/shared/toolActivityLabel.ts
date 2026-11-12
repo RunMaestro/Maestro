@@ -20,6 +20,8 @@
  */
 
 import { truncateCommand, truncatePath } from './formatters';
+import type { CommandCall } from './literalCommand';
+import { shellEscape } from './maestro-lib/launch/shell-escape';
 
 /** A tool call rendered as one short, human-readable line. */
 export interface ToolActivityLabel {
@@ -78,14 +80,24 @@ function firstString(input: Record<string, unknown>, keys: string[]): string | u
 }
 
 /**
+ * An argv array: at least one element, every element a string. `Array.from`
+ * fills the holes of a sparse array first, so a hole is not a string.
+ */
+function isArgv(value: unknown): value is string[] {
+	return (
+		Array.isArray(value) &&
+		value.length > 0 &&
+		Array.from(value).every((item) => typeof item === 'string')
+	);
+}
+
+/**
  * Coerce a command value to a string. Codex and OpenCode deliver `command` as an
  * argv array (`['npm', 'test']`); Claude Code sends a single string.
  */
 function commandString(value: unknown): string | undefined {
 	if (typeof value === 'string' && value.trim()) return value.trim();
-	if (Array.isArray(value) && value.length > 0 && value.every((v) => typeof v === 'string')) {
-		return value.join(' ');
-	}
+	if (isArgv(value)) return value.join(' ');
 	return undefined;
 }
 
@@ -140,14 +152,17 @@ function splitToolInput(input: unknown): {
 	};
 }
 
+/** What a tool input holds under any provider's spelling of "the command". */
+function commandValue(record: Record<string, unknown>): unknown {
+	return record.command ?? record.cmd ?? record.script ?? record.CommandLine;
+}
+
 /** The command a tool input carries, in any provider's spelling, untruncated. */
 function inputCommand(
 	record: Record<string, unknown>,
 	rawInput: string | undefined
 ): string | undefined {
-	return (
-		commandString(record.command ?? record.cmd ?? record.script ?? record.CommandLine) ?? rawInput
-	);
+	return commandString(commandValue(record)) ?? rawInput;
 }
 
 /**
@@ -314,18 +329,64 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 	}
 }
 
+/** Where a shell call says to run, in the spellings providers use. */
+const CWD_KEYS = [
+	'workdir',
+	'workDir',
+	'cwd',
+	'Cwd',
+	'directory',
+	'working_directory',
+	'workingDirectory',
+];
+/** The variables a shell call says to add, in the spellings providers use. */
+const ENV_KEYS = ['env', 'environment'];
+/** An argument a shell reads back as itself, so it needs no quotes to be shown. */
+const PLAIN_ARGUMENT = /^[\w@%+=:,./-]+$/;
+
+const displayArgument = (argument: string): string =>
+	PLAIN_ARGUMENT.test(argument) ? argument : shellEscape(argument);
+
+/** The variables a call names: an object whose values are strings, numbers or booleans. */
+function inputEnv(record: Record<string, unknown>): Record<string, string> | undefined {
+	for (const key of ENV_KEYS) {
+		const value = record[key];
+		if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+		const entries = Object.entries(value).flatMap(([name, item]) =>
+			typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean'
+				? [[name, String(item)] as const]
+				: []
+		);
+		if (entries.length) return Object.fromEntries(entries);
+	}
+	return undefined;
+}
+
 /**
- * The full shell command a tool call carries, in any provider's spelling, or
- * undefined when the call is not a shell call.
+ * The full shell command a tool call carries, in any provider's spelling, and
+ * what it asked to run it with; undefined when the call is not a shell call.
  *
  * `describeToolActivity` shows the same command shortened to one line; a caller
- * that compares or classifies commands needs the whole string. Codex sends an
- * argv array (joined here), Claude Code a string.
+ * that compares or classifies commands needs the whole call. Codex sends an
+ * argv array, Claude Code a string. An argv array is returned as `argv`, whose
+ * elements are the arguments, and `text` shows them with any element that holds
+ * a space or a quote quoted, so `['a', 'b c']` and `['a', 'b', 'c']` read
+ * differently. A list that is not an argv array (a blank program, an element
+ * that is not a string) names no command and is never re-read as a line.
+ * `cwd` and `env` are what the call said, and only that: an absent one is
+ * unknown, not the directory or environment of the previous call.
  */
-export function describeToolCommand(toolName: string, input: unknown): string | undefined {
+export function describeToolCommand(toolName: string, input: unknown): CommandCall | undefined {
 	if (describeToolActivity(toolName, input).verb !== VERB_RAN) return undefined;
 	const { record, rawInput } = splitToolInput(input);
-	return inputCommand(record, rawInput);
+	const value = commandValue(record);
+	const argv = isArgv(value) ? value : undefined;
+	if (Array.isArray(value) && !argv?.[0].trim()) return undefined;
+	const text = argv ? argv.map(displayArgument).join(' ') : (commandString(value) ?? rawInput);
+	if (!text) return undefined;
+	const cwd = firstString(record, CWD_KEYS);
+	const env = inputEnv(record);
+	return { text, ...(argv ? { argv } : {}), ...(cwd ? { cwd } : {}), ...(env ? { env } : {}) };
 }
 
 /** One step of a task list a provider keeps (TodoWrite, update_plan). */

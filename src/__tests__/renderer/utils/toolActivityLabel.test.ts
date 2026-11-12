@@ -382,15 +382,26 @@ describe('describeToolActivityStatus', () => {
 describe('describeToolCommand', () => {
 	it('returns the whole command, where the label shortens it', () => {
 		const command = `npx vitest run ${'src/__tests__/some/very/long/path/'.repeat(4)}a.test.ts`;
-		expect(describeToolCommand('Bash', { command })).toBe(command);
+		expect(describeToolCommand('Bash', { command })).toEqual({ text: command });
 		expect(describeToolActivity('Bash', { command }).target.length).toBeLessThan(command.length);
 	});
 
 	it('reads every provider spelling of a shell call', () => {
-		expect(describeToolCommand('shell', { command: ['npm', 'run', 'lint'] })).toBe('npm run lint');
-		expect(describeToolCommand('local_shell', { cmd: 'git status' })).toBe('git status');
-		expect(describeToolCommand('run_terminal_cmd', { script: 'make test' })).toBe('make test');
-		expect(describeToolCommand('exec_command', 'ls -la')).toBe('ls -la');
+		expect(describeToolCommand('shell', { command: ['npm', 'run', 'lint'] })).toEqual({
+			text: 'npm run lint',
+			argv: ['npm', 'run', 'lint'],
+		});
+		expect(describeToolCommand('local_shell', { cmd: 'git status' })).toEqual({
+			text: 'git status',
+		});
+		expect(describeToolCommand('run_terminal_cmd', { script: 'make test' })).toEqual({
+			text: 'make test',
+		});
+		expect(describeToolCommand('exec_command', 'ls -la')).toEqual({ text: 'ls -la' });
+		expect(describeToolCommand('run_command', { CommandLine: 'make test', Cwd: '/p' })).toEqual({
+			text: 'make test',
+			cwd: '/p',
+		});
 	});
 
 	it('is undefined for a call that is not a shell call, even if its input names a command', () => {
@@ -402,6 +413,102 @@ describe('describeToolCommand', () => {
 	it('is undefined for a shell call with no command', () => {
 		expect(describeToolCommand('Bash', {})).toBeUndefined();
 		expect(describeToolCommand('Bash', undefined)).toBeUndefined();
+	});
+
+	describe('an argv array', () => {
+		it('keeps each element as one argument, and shows the ones that hold a space quoted', () => {
+			const joined = describeToolCommand('shell', {
+				command: ['npm', 'test', '--', '-t', 'alpha beta'],
+			});
+			const split = describeToolCommand('shell', {
+				command: ['npm', 'test', '--', '-t', 'alpha', 'beta'],
+			});
+
+			expect(joined?.argv).toEqual(['npm', 'test', '--', '-t', 'alpha beta']);
+			expect(split?.argv).toEqual(['npm', 'test', '--', '-t', 'alpha', 'beta']);
+			expect(joined?.text).toBe("npm test -- -t 'alpha beta'");
+			expect(split?.text).toBe('npm test -- -t alpha beta');
+		});
+
+		it('quotes an empty element, a quote, a variable and a glob so the line cannot be misread', () => {
+			expect(
+				describeToolCommand('shell', { command: ['echo', '', "it's", '$HOME', '*.ts', 'a;b'] })
+					?.text
+			).toBe("echo '' 'it'\\''s' '$HOME' '*.ts' 'a;b'");
+		});
+
+		it('leaves the activity feed label as the plain join it always was', () => {
+			expect(
+				describeToolActivity('shell', { command: ['npm', 'test', '--', '-t', 'alpha beta'] }).target
+			).toBe('npm test -- -t alpha beta');
+		});
+
+		it.each([
+			['an empty list', []],
+			['a list with a non-string element', ['npm', 1]],
+			['a blank program', ['']],
+			['a blank program in front of words', [' ', 'npm', 'test']],
+			['a sparse list with a hole in front', Object.assign(new Array(2), { 1: 'npm' })],
+		])('names no command for %s, and never re-reads it as a line', (_name, command) => {
+			expect(describeToolCommand('shell', { command })).toBeUndefined();
+		});
+	});
+
+	describe('what the call said about where it ran', () => {
+		it.each([
+			'workdir',
+			'workDir',
+			'cwd',
+			'Cwd',
+			'directory',
+			'working_directory',
+			'workingDirectory',
+		])('reads the directory spelled %s', (key) => {
+			expect(
+				describeToolCommand('exec_command', { cmd: 'npm test', [key]: ' /repo/one ' })
+			).toEqual({ text: 'npm test', cwd: '/repo/one' });
+		});
+
+		it('reads the variables a call adds, as strings, and skips what is not a plain value', () => {
+			const call = describeToolCommand('Bash', {
+				command: 'npm test',
+				env: {
+					CI: '1',
+					COUNT: 3,
+					FLAG: true,
+					UNSET: null,
+					NESTED: { a: 1 },
+					LIST: ['a'],
+					FN: () => 1,
+					BIG: BigInt(10),
+					SYM: Symbol('x'),
+				},
+			});
+			expect(call?.env).toEqual({ CI: '1', COUNT: '3', FLAG: 'true' });
+			expect(describeToolCommand('Bash', { command: 'x', environment: { A: 'b' } })?.env).toEqual({
+				A: 'b',
+			});
+		});
+
+		it('says nothing about a directory or variables the call did not name', () => {
+			for (const input of [
+				{ command: 'npm test' },
+				{ command: 'npm test', cwd: '  ', env: {} },
+				{ command: 'npm test', env: ['CI=1'], environment: 'CI=1' },
+				{ command: 'npm test', env: { NESTED: { a: 1 } } },
+			]) {
+				const call = describeToolCommand('Bash', input);
+				expect(call).toEqual({ text: 'npm test' });
+				expect(call).not.toHaveProperty('cwd');
+				expect(call).not.toHaveProperty('env');
+			}
+		});
+
+		it('reads the directory beside an argv array', () => {
+			expect(
+				describeToolCommand('shell', { command: ['npm', 'test'], workdir: '/repo/two' })
+			).toEqual({ text: 'npm test', argv: ['npm', 'test'], cwd: '/repo/two' });
+		});
 	});
 });
 
