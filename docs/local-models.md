@@ -335,20 +335,83 @@ The file must be a 16-bit PCM WAV, at most 512 MB. The desktop app must be runni
 
 ### Spoken notices
 
-A spoken notice is one line said aloud when an agent finishes a turn. You turn notices on in **Settings**, then **Notifications**, under **Speak When an Agent Finishes**: only when Maestro is not focused, or always. They are off by default.
+A spoken notice is one line said aloud when an agent finishes a turn, for example "Backend finished". Notices are part of Local Models, not an Encore Feature, so they work with A Cappella switched off. They have no keyboard shortcut, menu item, or command palette entry: you set them in Settings or from the command line.
 
-The **Spoken notices** task decides how much the line says:
+#### Turning them on
 
-- **Off** (the default): the line is the agent's name and "finished", for example "Backend finished". This needs no model.
-- **A local model or an endpoint**: the model reads the end of the agent's reply and adds a short summary, for example "Backend finished: tests pass, two files changed".
+Open **Settings -> Notifications** and find **Speak When an Agent Finishes** (the settings search finds it as "spoken" or "speak"). Pick one value:
 
-If the assigned model is not ready, or takes longer than 20 seconds, the plain line is spoken instead and Maestro tells you once why. A notice is never skipped because of the model.
+| Value                           | What it does                                      |
+| ------------------------------- | ------------------------------------------------- |
+| **Off** (the default)           | Nothing is spoken.                                |
+| **When Maestro is not focused** | Speaks only while no Maestro window has focus.    |
+| **Always**                      | Speaks after every finished turn, focused or not. |
 
-The line is spoken with a local voice on the computer that runs Maestro. It uses the voice, speed, and volume you chose for A Cappella when that voice is a local one, and your computer's own voice otherwise. A hosted voice is never used for a notice, because a notice is spoken without you asking and would send text to that service each time.
+Press **Test** beside the choice to hear the sample line "Maestro finished: this is how a spoken notice sounds." The button shows **Speaking** while the line plays. Test speaks whatever the setting says, with the same voice and the same queue as a real notice. If the line is not spoken, the reason is shown under the row in red, for example "A voice session is live, so the notice was not spoken."
 
-Notices never overlap. One line is spoken at a time, the next waits a few seconds after it, and a line that has waited a minute is dropped as old news. Nothing is spoken while an A Cappella voice session is open, and a notice waits while you dictate.
+```bash
+maestro-cli settings set spokenNotices unfocused   # or off, always
+maestro-cli settings get spokenNotices
+maestro-cli notify speak "Maestro finished: this is how a spoken notice sounds."   # what Test does
+```
 
-From the command line, `maestro-cli notify speak "<text>"` says a line of your own through the same voice and the same queue, and reports whether it was spoken.
+#### What the line says
+
+The **Spoken notices** task on **Settings -> Models -> System Two** decides how much the line says. It chooses the words only. It never decides whether a notice is spoken.
+
+- **Off** (the default): the line is the agent's name and "finished", for example "Backend finished". The name is the one the Left Bar shows. This needs no model.
+- **A local model or an endpoint**: the model reads the start of your request (the first 400 characters) and the end of the agent's reply (the last 2,400 characters) and writes a short summary. Maestro puts the agent's name in front, for example "Backend finished: tests pass, two files changed". An assigned endpoint receives that text.
+
+The task has no Utility Agent option. While notices are on, a line under the setting says which case applies: "The line adds a short summary written by" and the source when a model is ready, or how to assign one when the task is off. When the assigned model is not ready, the line turns yellow, names the problem and the fix, and ends "Until then the line is "<agent name> finished"."
+
+If the assigned model is not ready, takes longer than 20 seconds, or gives no usable summary, the plain line is spoken instead, and a model that is not ready is reported once in a toast. A notice is never skipped because of the model.
+
+The model follows the `spoken-notice-local` prompt: at most 12 words, no agent name, no paths or code, and it says so when the agent needs your input or failed. Edit it in **Settings -> Maestro Prompts**. Maestro removes code, links, and markup from the line and cuts it at a word after 220 characters, about 15 seconds of speech.
+
+```bash
+maestro-cli models assign spoken-notices local:<model-id>
+maestro-cli models assign spoken-notices endpoint:<endpoint>:<model>
+maestro-cli models assign spoken-notices off
+maestro-cli models status spoken-notices   # would it run, and if not, why
+```
+
+#### The voice
+
+The line is spoken on the computer that runs Maestro. No voice session starts and the microphone stays closed. It uses the voice, speed, and volume you chose for A Cappella when that voice is a local one, and your computer's own voice otherwise. A hosted voice is never used for a notice, because a notice is spoken without you asking and would send text to that service each time. If the local voice you chose cannot speak, the notice is not spoken and no other voice is used instead.
+
+The voice settings are in A Cappella, so they are hidden while A Cappella is off. Notices then use whichever voice was last chosen there, and your computer's own voice when none was. The first notice after Maestro starts can wait up to 10 seconds while its audio starts.
+
+#### When a notice waits or is not spoken
+
+Notices never overlap. One line is spoken at a time, and the next starts 3 seconds after the last one ends. At most four notices wait: when another arrives, the oldest waiting one is dropped. A notice that has waited more than a minute is dropped as old news.
+
+- Nothing is spoken while an A Cappella voice session is live. When a session starts, the notice being spoken is cut off and the waiting ones are dropped.
+- A notice waits while you dictate, so the microphone does not record it.
+- With **When Maestro is not focused**, nothing is spoken while a Maestro window has focus.
+
+`maestro-cli notify speak` names each case with a code:
+
+| Code                   | Message                                                               |
+| ---------------------- | --------------------------------------------------------------------- |
+| `setting-off`          | Speak when an agent finishes is off (Settings > Notifications).       |
+| `app-focused`          | Maestro is focused, and notices are set to speak only when it is not. |
+| `voice-session-active` | A voice session is live, so the notice was not spoken.                |
+| `cancelled`            | A voice session started, so the notice was cut off.                   |
+| `superseded`           | Newer notices arrived before this one could be spoken.                |
+| `stale`                | The notice waited too long behind others to still be news.            |
+| `empty`                | There is nothing to say.                                              |
+| `no-speaker`           | Nothing in this process can speak a notice.                           |
+| `speech-failed`        | The voice could not speak, and the message says why.                  |
+
+#### In the web interface
+
+From the [web interface](./remote-control) you can change the setting and press **Test**, but the line plays on the computer running Maestro, not in your browser. Only one client reports a finished turn, so a turn is never spoken twice. For **When Maestro is not focused**, only a desktop window counts: a browser tab in front does not stop a notice.
+
+#### Speaking from the command line
+
+`maestro-cli notify speak "<text>"` says a line of your own through the same voice and the same queue, waits until it was spoken, and prints `Spoken: <text>`. It ignores the setting and window focus, but not a live voice session. The desktop app must be running.
+
+The text may be at most 600 characters. Empty or longer text exits with code 2. A line that was not spoken prints `Not spoken (<code>): <message>` and exits with code 1. With `--json` the result is `{"success":true,"spoken":true,"text":"..."}`, or `"spoken":false` with `code` and `error`.
 
 ### Voice routing
 
