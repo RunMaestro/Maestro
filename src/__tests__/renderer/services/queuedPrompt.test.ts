@@ -8,7 +8,7 @@
  * with. The `@mention` flags must be STAMPED but not fired.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const planCrossAgentMentions = vi.fn();
 vi.mock('../../../renderer/services/crossAgentMentions', () => ({
@@ -18,8 +18,11 @@ vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 import {
 	buildQueuedMessageItem,
 	enqueuePromptForTab,
+	matchQueuedSlashCommand,
+	resolveQueuedItemEdit,
 } from '../../../renderer/services/queuedPrompt';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { registerDispatchDepsProvider } from '../../../renderer/stores/retryStore';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import type { Session } from '../../../renderer/types';
@@ -138,5 +141,96 @@ describe('enqueuePromptForTab', () => {
 		seed({ aiTabs: [], unifiedTabOrder: [], activeTabId: undefined });
 		expect(enqueuePromptForTab({ sessionId: 'session-1', tabId: 'a', text: 'nope' })).toBeNull();
 		expect(currentQueue()).toHaveLength(0);
+	});
+});
+
+describe('matchQueuedSlashCommand', () => {
+	beforeEach(() => {
+		registerDispatchDepsProvider(() => ({
+			conductorProfile: '',
+			customAICommands: [
+				{ id: 'c1', command: '/commit', description: 'Commit and push', prompt: 'Commit it' },
+			],
+			speckitCommands: [],
+			openspecCommands: [],
+		}));
+	});
+
+	afterEach(() => {
+		registerDispatchDepsProvider(null);
+	});
+
+	it('matches one of the user commands, with no arguments', () => {
+		const session = seed();
+		expect(matchQueuedSlashCommand(session, '  /commit ')).toEqual({
+			command: '/commit',
+			commandArgs: '',
+			description: 'Commit and push',
+		});
+	});
+
+	it('splits arguments off the command the way the composer does', () => {
+		const session = seed();
+		expect(matchQueuedSlashCommand(session, '/commit and tag it')).toMatchObject({
+			command: '/commit',
+			commandArgs: 'and tag it',
+		});
+	});
+
+	it('matches an agent-discovered command only when it carries a prompt', () => {
+		const session = seed({
+			agentCommands: [
+				{ command: '/review', description: 'Review', prompt: 'Review it' },
+				{ command: '/compact', description: 'Compact' },
+			],
+		});
+		expect(matchQueuedSlashCommand(session, '/review')?.command).toBe('/review');
+		// A provider's own command stays a message and reaches the provider as typed.
+		expect(matchQueuedSlashCommand(session, '/compact')).toBeNull();
+	});
+
+	it('is null for ordinary text, unknown commands, and before App wires the deps', () => {
+		const session = seed();
+		expect(matchQueuedSlashCommand(session, 'please /commit')).toBeNull();
+		expect(matchQueuedSlashCommand(session, '/nope')).toBeNull();
+		registerDispatchDepsProvider(null);
+		expect(matchQueuedSlashCommand(session, '/commit')).toBeNull();
+	});
+});
+
+describe('resolveQueuedItemEdit', () => {
+	const patch = (text: string) => ({ text, images: [], turnSettings: {} });
+
+	beforeEach(() => {
+		planCrossAgentMentions.mockReset();
+		planCrossAgentMentions.mockReturnValue({ suppressLocal: true });
+		registerDispatchDepsProvider(() => ({
+			conductorProfile: '',
+			customAICommands: [{ id: 'c1', command: '/commit', description: 'Commit', prompt: 'x' }],
+			speckitCommands: [],
+			openspecCommands: [],
+		}));
+	});
+
+	afterEach(() => {
+		registerDispatchDepsProvider(null);
+	});
+
+	it('resolves a slash command and drops the mention flags', () => {
+		const session = seed();
+		const result = resolveQueuedItemEdit(session, patch('/commit'));
+
+		expect(result.slashCommand?.command).toBe('/commit');
+		expect(result.crossAgent).toEqual({ crossAgentMention: false, crossAgentOnly: false });
+		expect(planCrossAgentMentions).not.toHaveBeenCalled();
+	});
+
+	it('re-derives both mention flags for ordinary text', () => {
+		const session = seed();
+		const result = resolveQueuedItemEdit(session, patch('@Codex do X'));
+
+		expect(result.slashCommand).toBeUndefined();
+		expect(result.crossAgent).toEqual({ crossAgentMention: true, crossAgentOnly: true });
+		expect(planCrossAgentMentions).toHaveBeenCalledWith('@Codex do X', 'session-1');
 	});
 });

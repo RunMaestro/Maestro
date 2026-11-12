@@ -217,6 +217,7 @@ import type {
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
 import { reorderQueueItem, applyQueuedItemEdit } from './utils/executionQueue';
+import { resolveQueuedItemEdit } from './services/queuedPrompt';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
 // Tiling-aware Cmd+Shift+T: restores a pane back into its tiled group when the
@@ -1800,10 +1801,19 @@ function MaestroConsoleInner() {
 
 	// Edit a queued message's prompt text and attached images in place.
 	const handleEditQueuedItem = useCallback((itemId: string, patch: QueuedItemEditPatch) => {
-		updateSessionWith(activeSessionIdRef.current, (s) => ({
-			...s,
-			executionQueue: applyQueuedItemEdit(s.executionQueue, itemId, patch),
-		}));
+		updateSessionWith(activeSessionIdRef.current, (s) => {
+			const { crossAgent, slashCommand } = resolveQueuedItemEdit(s, patch);
+			return {
+				...s,
+				executionQueue: applyQueuedItemEdit(
+					s.executionQueue,
+					itemId,
+					patch,
+					crossAgent,
+					slashCommand
+				),
+			};
+		});
 	}, []);
 
 	// Reorder a queued item within the active session's inline chat list. The

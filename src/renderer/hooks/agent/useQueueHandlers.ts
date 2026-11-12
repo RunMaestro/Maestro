@@ -19,7 +19,7 @@ import {
 	getQueueBusyContext,
 } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
-import { planCrossAgentMentions } from '../../services/crossAgentMentions';
+import { resolveQueuedItemEdit } from '../../services/queuedPrompt';
 import { logger } from '../../utils/logger';
 
 // ============================================================================
@@ -126,29 +126,24 @@ export function useQueueHandlers({
 
 	const handleEditQueueItem = useCallback(
 		(sessionId: string, itemId: string, patch: QueuedItemEditPatch) => {
-			// Re-resolve the pending consult against the EDITED text: the user may
-			// have added or removed an `@agent` mention, and the item's stale flag
-			// would otherwise consult the wrong agent (or nobody) when it dispatches.
-			//
-			// BOTH flags have to be re-derived, not just `crossAgentMention`. Whether
-			// this agent answers at all is decided by where the mention sits, and the
-			// edit can move it: `@Codex do X` -> `do X, and @Codex too` must go back to
-			// spawning locally, and the reverse must stop spawning. Leaving
-			// `crossAgentOnly` behind silently discards half of what the user edited.
-			const mentionPlan = planCrossAgentMentions(patch.text, sessionId);
-			const crossAgent = {
-				crossAgentMention: !!mentionPlan,
-				crossAgentOnly: mentionPlan?.suppressLocal ?? false,
-			};
+			// The mention flags and the slash command are re-derived from the EDITED
+			// text (see resolveQueuedItemEdit): a stale flag consults the wrong agent,
+			// and `/commit` left as a message is sent to the provider as literal text.
 			setSessions((prev) =>
-				prev.map((s) =>
-					s.id === sessionId
-						? {
-								...s,
-								executionQueue: applyQueuedItemEdit(s.executionQueue, itemId, patch, crossAgent),
-							}
-						: s
-				)
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					const { crossAgent, slashCommand } = resolveQueuedItemEdit(s, patch);
+					return {
+						...s,
+						executionQueue: applyQueuedItemEdit(
+							s.executionQueue,
+							itemId,
+							patch,
+							crossAgent,
+							slashCommand
+						),
+					};
+				})
 			);
 		},
 		[]
