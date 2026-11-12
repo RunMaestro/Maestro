@@ -24,6 +24,20 @@ node "%ProgramFiles%\Maestro\resources\maestro-cli.js" %*
 "@ | Out-File -FilePath "$env:ProgramFiles\Maestro\maestro-cli.cmd" -Encoding ASCII
 ```
 
+**Linux AppImage.** A running AppImage lives in a temporary mount (`/tmp/.mount_*`) that gets a new name on every launch, so a hand-written wrapper cannot point into it. Use **Settings > Install / Update CLI**: it writes a shim that re-enters the AppImage in node mode, plus a bootstrap beside it that resolves the bundled CLI from the mount that run creates. The shim keeps working after a restart and while the desktop app is closed. After an AppImage update that renames the file, launch the new AppImage once so Maestro can repair the shim. Maestro also repairs an older shim that pointed at a `/tmp/.mount_*` path at the next launch.
+
+For a mount-free wrapper, extract the AppImage once to a directory that stays, and point the wrapper there:
+
+```bash
+# Extracts to ./squashfs-root; repeat after each AppImage update
+./maestro-<version>-x86_64.AppImage --appimage-extract
+rm -rf "$HOME/maestro-app"               # replace the previous extraction
+mv squashfs-root "$HOME/maestro-app"     # any directory you keep
+printf '#!/bin/bash\nELECTRON_RUN_AS_NODE=1 "%s/maestro-app/maestro" "%s/maestro-app/resources/maestro-cli.js" "$@"\n' "$HOME" "$HOME" | sudo tee /usr/local/bin/maestro-cli && sudo chmod +x /usr/local/bin/maestro-cli
+```
+
+If a Settings-installed shim at `~/.local/bin/maestro-cli` takes precedence in `PATH`, remove it and its bootstrap with `rm -f "$HOME/.local/bin/maestro-cli" "$HOME/.local/bin/maestro-cli-bootstrap.js"`. Then check that `command -v maestro-cli` resolves to `/usr/local/bin/maestro-cli`.
+
 Alternatively, run directly with Node.js:
 
 ```bash
@@ -132,15 +146,17 @@ On failure, `success` is `false` and an `error` field is included:
 }
 ```
 
-| Flag                 | Description                                                   |
-| -------------------- | ------------------------------------------------------------- |
-| `-s, --session <id>` | Resume an existing session instead of creating a new one      |
-| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)        |
-| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app |
+| Flag                 | Description                                                                                                                       |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `-s, --session <id>` | Resume a provider session (the `sessionId` a previous `send` returned, or one from `list sessions`) instead of creating a new one |
+| `-r, --read-only`    | Run in read-only/plan mode (agent cannot modify files)                                                                            |
+| `-t, --tab`          | Open/focus the agent's session tab in the Maestro desktop app                                                                     |
+
+`send` runs headless, beside the desktop: it never writes into a desktop tab. `--session` takes a **provider** session id, not a Maestro tab id. A tab id is refused with `SESSION_IS_TAB_ID`, and the provider session of a tab that is mid-turn is refused with `TAB_BUSY` (resuming it would put a second writer on one conversation). Both errors name the command that does what you meant: to deliver a message into a live tab, waiting behind a busy turn, use `maestro-cli dispatch <agent-id> "<message>" --tab <tab-id> --queue`.
 
 For desktop-handoff workflows (route the message through a desktop tab, return an addressable tab id, etc.) use [`maestro-cli dispatch`](#dispatching-to-a-desktop-tab) instead.
 
-Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `<AGENT>_NOT_FOUND` (e.g. `CLAUDE_CODE_NOT_FOUND`, `CODEX_NOT_FOUND`), `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`.
+Error codes: `AGENT_NOT_FOUND`, `AGENT_UNSUPPORTED`, `<AGENT>_NOT_FOUND` (e.g. `CLAUDE_CODE_NOT_FOUND`, `CODEX_NOT_FOUND`), `SESSION_IS_TAB_ID`, `TAB_BUSY`, `MAESTRO_NOT_RUNNING`, `COMMAND_FAILED`.
 
 Supported agent types: any installed provider - `claude-code`, `codex`, `opencode`, `factory-droid`, `copilot-cli`, `hermes`, `pi`, `qwen3-coder`, `omp`.
 
@@ -170,7 +186,8 @@ maestro-cli dispatch <agent-id> "start a new review pass" --new-tab
 # Continue a previous dispatch by targeting its tab
 maestro-cli dispatch <agent-id> "and now run the tests" -t <tab-id>
 
-# Force a write to a busy tab (requires allowConcurrentSend=true)
+# Force a write into a tab that is itself mid-turn (requires allowConcurrentSend=true).
+# An idle tab of a busy agent needs no --force: it runs its own turn in parallel.
 maestro-cli dispatch <agent-id> "interrupt with this" -f
 ```
 
@@ -185,15 +202,15 @@ Output is always JSON. `sessionId` and `tabId` are the same value, duplicated so
 }
 ```
 
-| Flag             | Description                                                                                                                                                                                                                                                                                          |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--new-tab`      | Create a fresh AI tab in the target agent and deliver the prompt into it. If the agent is mid-turn the prompt is queued for the new tab and runs when that turn ends, so the response reports `queued: true`. Mutually exclusive with `-t` and `-f` (a new tab owns no turn for `--force` to bypass) |
-| `--background`   | Leave the view where it is. Already the default with `--new-tab`; without it, suppresses the agent switch                                                                                                                                                                                            |
-| `--focus`        | Move the view to the target after dispatching                                                                                                                                                                                                                                                        |
-| `-t, --tab <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                                                                                                                                                                       |
-| `-f, --force`    | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab`                                                                                                                                                               |
+| Flag             | Description                                                                                                                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--new-tab`      | Create a fresh AI tab in the target agent and deliver the prompt into it. It runs now, even while another tab of the agent is mid-turn. Mutually exclusive with `-t` and `-f` (a new tab is never mid-turn, so there is nothing to force)        |
+| `--background`   | Leave the view where it is. Already the default with `--new-tab`; without it, suppresses the agent switch                                                                                                                                        |
+| `--focus`        | Move the view to the target after dispatching                                                                                                                                                                                                    |
+| `-t, --tab <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                                                                                                                   |
+| `-f, --force`    | Write into a tab that is itself mid-turn (two answers interleave in one conversation). Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. An idle tab of a busy agent needs no `--force`. Cannot be combined with `--new-tab` |
 
-Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `NEW_TAB_NO_ID` fires when the desktop app acknowledges `--new-tab` without returning a tab id, leaving callers nothing to chain follow-up dispatches against. Requires the Maestro desktop app to be running.
+Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `DISPATCH_REFUSED`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `DISPATCH_REFUSED` fires when the desktop declines the prompt, most often because the target tab is mid-turn (use `--queue` to wait for it). `NEW_TAB_NO_ID` fires when the desktop app acknowledges `--new-tab` without returning a tab id, leaving callers nothing to chain follow-up dispatches against. Requires the Maestro desktop app to be running.
 
 ### Dispatch with Callback (`--notify-on-complete`)
 
@@ -312,7 +329,7 @@ Both verbs talk to the running desktop over the same WebSocket as `dispatch`. Th
 
 #### List Open Tabs
 
-Flatten every open AI tab across every Maestro agent into addressable entries:
+Flatten the open tabs across every Maestro agent into addressable entries. By default the list holds the AI tabs the tab strips draw, so its count matches the screen:
 
 ```bash
 # Default: compact text (one tab per line)
@@ -320,15 +337,37 @@ maestro-cli session list
 
 # JSON for scripting
 maestro-cli session list --json
+
+# Hidden tabs only, visible plus hidden, or every tab with its visibility
+maestro-cli session list --hidden
+maestro-cli session list --include-hidden --json
+maestro-cli session list --all
+
+# File, browser, and terminal tabs too (or one kind: file, browser, terminal)
+maestro-cli session list --type all
 ```
 
-Default text columns: `state` (`busy` / `idle`), star (`★` if starred), `tabId`, agent name + id, tab name, `createdAt` (relative). One tab per line so the output pipes cleanly into `grep`, `awk`, etc.
+Every entry carries a `visibility`:
 
-JSON envelope:
+| `visibility` | Meaning                                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------------------------------- |
+| `visible`    | The tab strip draws a chip for it, standalone or inside a tiled group                                      |
+| `hidden`     | A real tab the tab bar does not show, such as the transcript a `maestro-cli ask` consult leaves behind     |
+| `orphaned`   | The tab has no slot in the strip at all: a close that did not fully apply. Maestro clears these at startup |
+
+The default lists `visible` tabs only; `--hidden` lists the hidden ones, `--include-hidden` lists both, and `--all` adds orphans. `session list --type all` with no scope flag counts the same tabs as the Usage Dashboard **Open Tabs** card. AI entries also carry `hidden` and `inTabOrder` (whether the agent's tab order holds a ref for the tab; a tab tiled into a group has none but is still on screen).
+
+Default text columns: `state` (`busy` / `idle`), star (`★` if starred), `tabId`, agent name + id, tab name, `createdAt` (relative), and `[hidden]` or `[orphaned: ...]` on a tab that is not visible. A file, browser, or terminal row shows its kind, `*` if it is the agent's selected tab of that kind, `tabId`, agent, name, and the file path, URL, or shell directory. One tab per line so the output pipes cleanly into `grep`, `awk`, etc. A last line counts the tabs the chosen scope left out.
+
+JSON envelope. `scope` is `visible`, `hidden`, `visible+hidden`, or `all`; `type` is the `--type` value; `counts` holds every tab of the chosen type by visibility, whatever the scope listed; `visibilityReported` is `false` when the running Maestro is too old to tell hidden tabs apart. AI tabs are always in `sessions`. With a `--type` other than `ai`, the file, browser, and terminal tabs are in `tabs`:
 
 ```json
 {
 	"success": true,
+	"scope": "visible",
+	"type": "all",
+	"counts": { "visible": 567, "hidden": 528, "orphaned": 0 },
+	"visibilityReported": true,
 	"sessions": [
 		{
 			"tabId": "tab-1",
@@ -340,7 +379,22 @@ JSON envelope:
 			"agentSessionId": "claude-uuid-1",
 			"state": "idle",
 			"createdAt": 1714268000000,
-			"starred": false
+			"starred": false,
+			"hidden": false,
+			"inTabOrder": true,
+			"visibility": "visible"
+		}
+	],
+	"tabs": [
+		{
+			"tabId": "f1e2d3c4-...",
+			"tabType": "file",
+			"agentId": "a1b2c3d4-...",
+			"agentName": "Backend",
+			"name": "README.md",
+			"target": "/repo/README.md",
+			"active": false,
+			"visibility": "visible"
 		}
 	]
 }
@@ -749,6 +803,11 @@ maestro-cli tab close <tab-id>
 maestro-cli tab rename <tab-id> "Docs"
 maestro-cli tab star <tab-id>
 maestro-cli tab unstar <tab-id>
+
+# Reopen the agent's most recently closed tab (same as Cmd+Shift+T). Add
+# --background to restore it without changing the tab the agent is showing.
+maestro-cli tab reopen -a <agent-id>
+maestro-cli tab reopen -a <agent-id> --background
 
 # Flag a tab for the human with the unread dot, or clear it
 maestro-cli tab unread <tab-id>
@@ -1428,19 +1487,19 @@ Surfaces behind an Encore Feature that you have switched off (Cue, Symphony, Dir
 
 #### Open a File
 
-Open a file as a preview tab in the Maestro desktop app. Without `--agent`, the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties), and a path outside every agent's directory is an error. Pass `--agent <id>` to name the agent yourself, which is also how you open a file that lives nowhere near a project.
+Open a file as a preview tab in the Maestro desktop app. Without `--agent`, a shell inside Maestro (an agent's own turn, or a terminal tab) opens the file in the agent it belongs to, so `maestro-cli open-file ~/.bashrc` typed in a terminal tab lands in that tab's agent. Elsewhere the owning agent is auto-detected by which agent's working directory the file lives in (longest-prefix match, most-recently-active wins on ties), and a path outside every agent's directory is an error. Pass `--agent <id>` to name the agent yourself.
 
 ```bash
 maestro-cli open-file <file-path> [-a <id>] [--background | --no-switch] [--queue]
 ```
 
-| Flag               | Description                                                                                   |
-| ------------------ | --------------------------------------------------------------------------------------------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)                            |
-| `--background`     | Open the preview tab without changing anything currently rendered, on any agent               |
-| `--focus`          | Switch to the file after opening it (default)                                                 |
-| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                            |
-| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback |
+| Flag               | Description                                                                                               |
+| ------------------ | --------------------------------------------------------------------------------------------------------- |
+| `-a, --agent <id>` | Target agent (defaults to the agent owning this shell or terminal tab, else the file path's owning agent) |
+| `--background`     | Open the preview tab without changing anything currently rendered, on any agent                           |
+| `--focus`          | Switch to the file after opening it (default)                                                             |
+| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                                        |
+| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback             |
 
 A folder has no preview, so `open-file <folder>` reveals it in the agent's Files panel instead: the Right Bar opens on the Files tab, every ancestor and the folder itself expand, and its row is selected. Clicking a folder link in the chat does the same. `--background` and `--no-switch` expand and select without moving the view. A folder outside the agent's file tree cannot be revealed there.
 
@@ -1967,7 +2026,15 @@ maestro-cli cue schedule --daily-at 09:00,17:30 --agent Neema --prompt "Sweep th
 
 # Every 30 minutes
 maestro-cli cue schedule --every 30m --agent "ODIN Market" --prompt "Poll the market feed."
+
+# Into an existing conversation: an agent scheduling its own follow-up from its tab
+maestro-cli cue schedule --at "2026-11-11 15:00" --here --prompt "Find more candidates."
+
+# Into a named tab of an agent
+maestro-cli cue schedule --in 1d --agent Pedsidian --tab 810dda7e --prompt "Check the draft again."
 ```
+
+By default a scheduled prompt runs as its own detached Cue turn, and its output lands in History and `cue activity`, not in any tab. `--tab` (or `--here`, for the tab the command runs from) delivers it into that tab instead, the same as `dispatch --tab --queue`: it waits behind a busy turn, the reply marks the tab unread, and the view never moves. If the tab was closed by the time the task fires, the prompt goes to a new tab of the agent and a toast says so. The tab keeps its own model, so `--tier`, `--model`, and `--effort` are refused with it.
 
 Inspect and edit what is scheduled:
 
@@ -2003,6 +2070,8 @@ maestro-cli cue schedule --cancel standup
 | `--cancel <name>`          | Delete a task                                                            |
 | `-a, --agent <id-or-name>` | Target agent (required when creating; scopes the other modes)            |
 | `-p, --prompt <text>`      | Prompt to send when the task fires                                       |
+| `--tab <tab-id>`           | Deliver the prompt into this AI tab of `--agent` (id or unique prefix)   |
+| `--here`                   | Deliver into the AI tab this command runs from; `--agent` defaults to it |
 | `--notify` / `--sticky`    | Also raise a toast; `--sticky` keeps it up until dismissed               |
 | `-m, --message <text>`     | Toast body (defaults to the label, then the prompt)                      |
 | `-n, --name <name>`        | Custom subscription name (auto-generated when omitted)                   |

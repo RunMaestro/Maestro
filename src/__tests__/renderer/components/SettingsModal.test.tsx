@@ -133,8 +133,9 @@ const mockSetDirectorNotesSettings = vi.fn();
 
 // Mock useSettings hook (now self-sources all settings previously passed as props)
 let mockUseSettingsOverrides: Record<string, any> = {};
-vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
-	useSettings: () => ({
+vi.mock('../../../renderer/hooks/settings/useSettings', () => {
+	// Sections read settings through useSettingsValues; both return the same mock.
+	const useSettings = () => ({
 		// Theme settings
 		activeThemeId: 'dracula',
 		setActiveThemeId: mockSetActiveThemeId,
@@ -344,8 +345,9 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		},
 		setFilePreviewToolbarButtonVisibility: vi.fn(),
 		...mockUseSettingsOverrides,
-	}),
-}));
+	});
+	return { useSettings, useSettingsValues: useSettings };
+});
 
 // Sample theme for testing
 
@@ -558,6 +560,19 @@ describe('SettingsModal', () => {
 
 			// Theme tab should show theme mode sections
 			expect(screen.getByText('dark Mode')).toBeInTheDocument();
+		});
+
+		it('marks the active tab for the nav to scroll into view', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'theme' })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const nav = screen.getByLabelText('Settings tabs');
+			const marked = nav.querySelectorAll('[data-reveal-active="true"]');
+			expect(marked).toHaveLength(1);
+			expect(marked[0]).toBe(screen.getByTitle('Themes'));
 		});
 
 		it('should jump to the setting named by initialSettingId', async () => {

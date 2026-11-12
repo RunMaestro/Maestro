@@ -23,6 +23,7 @@
 import { getTerminalSessionId } from '../utils/terminalTabHelpers';
 import { useSettingsStore } from '../stores/settingsStore';
 import { captureException } from '../utils/sentry';
+import { buildTerminalOwnerEnv } from '../../shared/agentDelegation';
 import type { Session, TerminalTab } from '../types';
 
 /**
@@ -142,7 +143,9 @@ export async function spawnPtyForTab(options: SpawnPtyForTabOptions): Promise<vo
 			cwd: spawnCwd,
 			shell: defaultShell || undefined,
 			shellArgs,
-			shellEnvVars,
+			// Name the owning agent so `maestro-cli open-file` typed here targets it
+			// without `--agent`. Passed per invocation so it reaches the SSH export too.
+			shellEnvVars: { ...shellEnvVars, ...buildTerminalOwnerEnv(session.id) },
 			cols,
 			rows,
 			toolType: session.toolType,

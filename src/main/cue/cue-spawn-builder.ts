@@ -73,24 +73,52 @@ function isWindowsBatchShim(command: string): boolean {
 }
 
 /**
+ * Text cmd.exe treats as a variable reference on a command line: a `%`, at
+ * least one character, and the next `%`.
+ *
+ * cmd.exe takes everything between two `%` signs as the name, so a name is not
+ * limited to letters and digits (`%ProgramFiles(x86)%`, `%a b%`, `%=C:%`), and
+ * the substring and substitution forms (`%PATH:~0,3%`, `%X:a=b%`) are the same
+ * shape. On a command line (unlike in a batch file) an undefined name is left
+ * as it is and `%%` has no special meaning, so `%%PATH%%` still expands the
+ * inner `%PATH%`; the pair is found wherever it sits. The pattern does not ask
+ * whether the name is defined: dynamic variables (`%CD%`, `%RANDOM%`,
+ * `%ERRORLEVEL%`) are never in the spawn environment, names match without
+ * regard to case, and a pair with a name nobody defines costs only a refusal.
+ */
+const CMD_PERCENT_PAIR = /%[^%]+%/;
+
+/**
  * Why `arg` cannot reach the program intact as one argument of a cmd.exe
  * command line built with `escapeCmdArg()`, or null when it can.
  *
  * - A line break ends the command line, so the rest of the argument is lost
  *   (or runs as a second command).
- * - `%NAME%` is expanded inside double quotes, and there is no escape for it
- *   on a command line.
+ * - A `%NAME%` pair (`CMD_PERCENT_PAIR`) is expanded inside double quotes,
+ *   and there is no escape for it on a command line.
  * - `^` is literal inside double quotes, so the `^^` that `escapeCmdArg()`
  *   writes arrives doubled.
  *
+ * A `%` with no partner (`100%`, `%20`, `50% off`) and an empty `%%` pass
+ * unchanged: cmd.exe leaves them alone on a command line, and npm's `.cmd`
+ * shim forwards its arguments with a bare `%*`, which is not expanded a second
+ * time. A shim that forwards through `CALL` would expand them again; that is
+ * the shim's own parsing, outside what this rule can see. Two lone `%` in
+ * DIFFERENT arguments do form a pair on the joined line, but `escapeCmdArg()`
+ * quotes every argument holding a `%`, so that name always contains a `"`,
+ * which no variable Windows defines has.
+ *
  * Same rule, name and wording as rc's `cmdShellArgProblem()` in
  * `src/shared/maestro-lib/launch/windows-command.ts`, which main does not have
- * yet. When main is merged into rc, rc's builder (which imports that one) wins
- * this file and this copy goes.
+ * yet, and the cue-spawn-builder tests run the same cases as rc's
+ * `windows-command.test.ts`: change both together. When main is merged into
+ * rc, rc's builder (which imports that one) wins this file and this copy goes.
  */
 function cmdShellArgProblem(arg: string): string | null {
 	if (/[\r\n]/.test(arg)) return 'it contains a line break, which ends a cmd.exe command line';
-	if (arg.includes('%')) return 'it contains %, which cmd.exe expands as a variable';
+	if (CMD_PERCENT_PAIR.test(arg)) {
+		return 'it contains a %NAME% pair, which cmd.exe expands as a variable';
+	}
 	if (arg.includes('^')) return 'it contains ^, which cmd.exe would pass on doubled';
 	return null;
 }

@@ -43,6 +43,7 @@ import {
 	groupChatStatus,
 	groupChatStop,
 	groupChatArchive,
+	groupChatAdd,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -69,6 +70,7 @@ import { createWorktree } from './commands/create-worktree';
 import { removeAgent } from './commands/remove-agent';
 import { updateAgent } from './commands/update-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
+import { listModels } from './commands/list-models';
 import { listTerminals } from './commands/list-terminals';
 import { sendTerminal } from './commands/send-terminal';
 import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
@@ -146,6 +148,7 @@ import {
 	tabClose,
 	tabRename,
 	tabStar,
+	tabReopen,
 	tabMove,
 	tabUnread,
 	tabSaveToHistory,
@@ -318,6 +321,16 @@ list
 	.action(listSshRemotes);
 
 list
+	.command('models <provider>')
+	.description(
+		'List the models a provider offers (e.g. opencode, claude-code), as the model pickers see them'
+	)
+	.option('--refresh', 'Re-run discovery past the cache and update every open model picker')
+	.option('--ssh-remote <id>', 'Discover on this SSH remote instead of this machine')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(listModels);
+
+list
 	.command('terminals')
 	.description('List open terminal tabs in the desktop app (all agents unless --agent is given)')
 	.option('-a, --agent <id>', 'Only list terminals belonging to this agent')
@@ -448,7 +461,10 @@ clean
 program
 	.command('send <agent-id> <message>')
 	.description('Send a message to an agent and get a JSON response')
-	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
+	.option(
+		'-s, --session <id>',
+		'Resume a PROVIDER session id (the sessionId a previous send returned, or one from `list sessions`), not a Maestro tab id. Runs headless beside the desktop; to deliver into a live tab use `dispatch --tab <tab-id> --queue`'
+	)
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
 	.option(
@@ -467,7 +483,7 @@ program
 	)
 	.option(
 		'--new-tab',
-		'Create a fresh AI tab and deliver the prompt into it. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).'
+		'Create a fresh AI tab and deliver the prompt into it. It runs now, even while another tab of the agent is working.'
 	)
 	.option(
 		'--background',
@@ -479,7 +495,7 @@ program
 	)
 	.option(
 		'-f, --force',
-		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab, which queues instead)'
+		'Write into a tab that is itself mid-turn (interleaves two answers); requires allowConcurrentSend. An idle tab of a busy agent needs no --force. Cannot be combined with --new-tab.'
 	)
 	.option(
 		'--focus',
@@ -487,7 +503,7 @@ program
 	)
 	.option(
 		'--queue',
-		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.'
+		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target tab dispatches immediately, even while another tab of the agent is working. Cannot be combined with --new-tab or --force. Returns the queue position.'
 	)
 	.option('--wait', 'Alias for --queue')
 	.option(
@@ -663,6 +679,17 @@ const session = program
 session
 	.command('list')
 	.description('List open desktop AI tabs and their tab/session IDs')
+	.option('--include-hidden', 'Also list hidden tabs (consults) the tab bar does not show')
+	.option('--hidden', 'List only hidden tabs (consults and other tabs the tab bar does not show)')
+	.option(
+		'--all',
+		'List every tab, visible, hidden, and orphaned (no tab-strip slot), with a visibility field'
+	)
+	.option(
+		'--type <kind>',
+		'Which tabs: ai (default), file, browser, terminal, or all. Non-AI tabs are listed under "tabs" in JSON',
+		'ai'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sessionList);
 
@@ -730,6 +757,14 @@ groupChat
 	.action(groupChatStop);
 
 groupChat
+	.command('add <chat> <agent>')
+	.description(
+		'Add an agent (ID, ID prefix, or name) to a group chat without an @mention; linked by ID'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatAdd);
+
+groupChat
 	.command('archive <chat>')
 	.description(
 		'Archive a group chat (stops its moderator and participants); --restore brings it back'
@@ -749,7 +784,10 @@ program
 	.description(
 		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)'
 	)
-	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
+	.option(
+		'-a, --agent <id>',
+		"Target agent (defaults to the agent owning this shell or terminal tab, else the file path's owning agent)"
+	)
 	.option(
 		'--background',
 		'Open the preview tab without changing anything currently rendered, on any agent'
@@ -770,7 +808,10 @@ program
 program
 	.command('open-graph [paths...]')
 	.description('Open the Document Graph over specific markdown files or a directory')
-	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by path's owning agent)")
+	.option(
+		'-a, --agent <id>',
+		"Target agent (defaults to the agent owning this shell or terminal tab, else the path's owning agent)"
+	)
 	.option('--focus <path>', 'Center the graph on this document (default: the most-linked one)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openGraph);
@@ -1149,6 +1190,14 @@ cue
 	.option('--resume <name>', 'Re-enable a paused task')
 	.option('-a, --agent <id-or-name>', 'Target agent (required when creating; scopes other modes)')
 	.option('-p, --prompt <text>', 'Prompt to send when the task fires')
+	.option(
+		'--tab <tab-id>',
+		'Deliver the prompt into this existing AI tab of --agent (waits behind a busy turn, marks the tab unread, never moves the view; a closed tab falls back to a new tab + toast)'
+	)
+	.option(
+		'--here',
+		'Like --tab, for the AI tab this command runs from (an agent scheduling its own follow-up); --agent defaults to that agent'
+	)
 	.option('--notify', 'Show a toast notification when the task fires')
 	.option('--sticky', 'Make the notify toast sticky (requires --notify)')
 	.option('-m, --message <text>', 'Body for the notify toast (defaults to label/prompt)')
@@ -1526,6 +1575,15 @@ tab
 tabTargetOptions(tab.command('close <tab-id>'))
 	.description('Close a tab (owning agent is resolved automatically)')
 	.action((tabId, options) => tabClose(tabId, options));
+
+tab
+	.command('reopen')
+	.description("Reopen an agent's most recently closed tab (same as Cmd+Shift+T)")
+	.requiredOption('-a, --agent <id>', 'Target agent ID')
+	.option('--background', "Restore the tab without changing the agent's visible tab")
+	.option('--focus', 'Make the reopened tab the visible one (default)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => tabReopen(options));
 
 tabTargetOptions(tab.command('rename <tab-id> <new-name>'))
 	.description('Rename a tab')

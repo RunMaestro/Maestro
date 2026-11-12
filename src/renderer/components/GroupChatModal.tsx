@@ -566,6 +566,10 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 								onEnvVarAdd={() => {
 									ac.setCustomEnvVars(withBlankEnvVarRow(ac.customEnvVars));
 								}}
+								onEnvVarsReplace={(vars, disabledVars) => {
+									ac.setCustomEnvVars(vars);
+									ac.setCustomEnvVarsDisabled(disabledVars);
+								}}
 								onEnvVarsBlur={() => {
 									/* Local state only */
 								}}

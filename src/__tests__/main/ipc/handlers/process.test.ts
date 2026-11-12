@@ -2205,6 +2205,59 @@ describe('process IPC handlers', () => {
 			expect(result).toEqual({ pid: 5000, success: true });
 		});
 
+		// node-pty on Windows reports pid 0 until ConPTY connects. Returning that 0
+		// made the renderer respawn the tab on every render (pid 0 = "never spawned").
+		describe('when the PTY reports pid 0 at spawn (Windows ConPTY)', () => {
+			const spawnArgs = { sessionId: 'session-1-terminal-tab-1', cwd: 'C:\\project' };
+
+			it('waits for the real PID and records it on the managed process', async () => {
+				const pty = { pid: 0 };
+				const proc = { pid: 0, ptyProcess: pty };
+				mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 0, success: true });
+				mockProcessManager.get.mockReturnValue(proc);
+				setTimeout(() => {
+					pty.pid = 4321;
+				}, 30);
+
+				const handler = handlers.get('process:spawnTerminalTab');
+				const result = await handler!({} as any, spawnArgs);
+
+				expect(result).toEqual({ pid: 4321, success: true });
+				expect(proc.pid).toBe(4321);
+				expect(mockProcessManager.kill).not.toHaveBeenCalled();
+			});
+
+			it('fails the spawn when the PTY exits before its PID arrives', async () => {
+				const proc = { pid: 0, ptyProcess: { pid: 0 } };
+				mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 0, success: true });
+				mockProcessManager.get.mockReturnValueOnce(proc).mockReturnValue(undefined);
+
+				const handler = handlers.get('process:spawnTerminalTab');
+				const result = await handler!({} as any, spawnArgs);
+
+				expect(result).toEqual({ pid: 0, success: false });
+				expect(mockProcessManager.kill).not.toHaveBeenCalled();
+			});
+
+			it('fails the spawn and kills the PTY when no PID arrives in time', async () => {
+				vi.useFakeTimers();
+				try {
+					const proc = { pid: 0, ptyProcess: { pid: 0 } };
+					mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 0, success: true });
+					mockProcessManager.get.mockReturnValue(proc);
+
+					const handler = handlers.get('process:spawnTerminalTab');
+					const pending = handler!({} as any, spawnArgs);
+					await vi.advanceTimersByTimeAsync(7000);
+
+					expect(await pending).toEqual({ pid: 0, success: false });
+					expect(mockProcessManager.kill).toHaveBeenCalledWith('session-1-terminal-tab-1');
+				} finally {
+					vi.useRealTimers();
+				}
+			});
+		});
+
 		it('should merge agent-level and session-level customEnvVars into terminal env', async () => {
 			mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 5010, success: true });
 			mockAgentConfigsStore.get.mockReturnValue({

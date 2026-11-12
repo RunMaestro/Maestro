@@ -55,8 +55,13 @@ import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
 import { useToastAvoidZone } from '../hooks/ui/useToastAvoidZone';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
 
-/** Maximum image file size in bytes (10MB) */
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
+/**
+ * Maximum image file size in MB. AI chat has no cap, and a 25 MB paste goes
+ * through every Claude path (Claude Code downscales before upload), so this
+ * only guards against a runaway attach.
+ */
+const MAX_IMAGE_SIZE_MB = 50;
+const MAX_IMAGE_SIZE = MAX_IMAGE_SIZE_MB * 1024 * 1024;
 
 /** Allowed image MIME types */
 const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
@@ -493,7 +498,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 				// Validate file size
 				if (file.size > MAX_IMAGE_SIZE) {
 					logger.warn(
-						`[GroupChatInput] File too large rejected: ${(file.size / 1024 / 1024).toFixed(2)}MB (max: 10MB)`
+						`[GroupChatInput] File too large rejected: ${(file.size / 1024 / 1024).toFixed(2)}MB (max: ${MAX_IMAGE_SIZE_MB}MB)`
 					);
 					return;
 				}

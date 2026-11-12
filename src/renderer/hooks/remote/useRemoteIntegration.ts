@@ -20,11 +20,13 @@ import {
 	visibleAiTabs,
 } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
-import { buildQueuedMessageItem, enqueuePromptForTab } from '../../services/queuedPrompt';
+import { buildQueuedMessageItem } from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
+import { reopenClosedTabInAgent } from '../../services/reopenClosedTab';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { ReopenClosedTabResult } from '../../../shared/reopenClosedTab';
 import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
@@ -375,23 +377,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					return;
 				}
 
-				// Check if session is busy (should have been checked by web server,
-				// but double-check). `force: true` (from `dispatch --force`) opts
-				// out of the guard so a queued follow-up can land on a busy tab.
-				if (targetSession.state === 'busy' && !force) {
-					logger.warn(
-						'[useRemoteIntegration] Session is busy, dropping command. State:',
-						undefined,
-						targetSession.state
-					);
-					rejectDelivery('session-busy');
-					return;
-				}
-				logger.info(
-					'[useRemoteIntegration] Session state check passed:',
-					undefined,
-					targetSession.state
-				);
+				// No busy check here: busy is decided per TAB in handleRemoteCommand,
+				// which resolves the target tab. An agent-level check at this point
+				// would refuse an idle tab just because a sibling tab is working.
 
 				// If web provided an inputMode, sync the session state before executing
 				// This ensures the renderer uses the same mode the web intended
@@ -675,10 +663,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		);
 
 		// Handle remote "new AI tab with prompt" from CLI (dispatch --new-tab).
-		// Atomically creates a fresh AI tab and delivers the prompt into it. An
-		// IDLE agent is dispatched through the same maestro:remoteCommand event
-		// path a plain dispatch uses, so downstream spawn/history/state flows are
-		// identical; a BUSY agent has the prompt queued for the new tab instead.
+		// Atomically creates a fresh AI tab and delivers the prompt into it through
+		// the same maestro:remoteCommand event path a plain dispatch uses, so
+		// downstream spawn/history/state flows are identical. A fresh tab is never
+		// mid-turn, so the prompt runs now even while another tab of the agent is
+		// working - the same as opening a new desktop tab and sending.
 		// A background dispatch (the default) creates the new tab without focus so
 		// the user's current view is preserved; `dispatch --focus` makes the new
 		// tab active instead. flushSync forces React to commit the new tab into
@@ -707,13 +696,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					ack({ success: false, error: `Agent not found: ${sessionId}` });
 					return;
 				}
-				// A BUSY agent is deliberately NOT a refusal here. Busy is an
-				// agent-level state, so a brand-new tab inherits it even though it
-				// owns no process, and `dispatch --new-tab` rejects both --force and
-				// --queue as meaningless ("a fresh tab is never busy") - which left
-				// no flag able to express what the caller wanted and turned every
-				// dispatch at a working agent into a dropped prompt (#1602). The
-				// prompt is queued below instead.
+				// A BUSY agent is deliberately NOT a refusal here (#1602), and no
+				// longer a reason to queue either: busy is an agent-level state, but
+				// the turn runs in the fresh tab, which owns no process.
 				let createdTabId: string | undefined;
 				flushSync(() => {
 					updateSessionWith(sessionId, (s) => {
@@ -743,36 +728,6 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						'[useRemoteIntegration] onRemoteNewAITabWithPrompt: createTab failed, dropping prompt'
 					);
 					ack({ success: false, error: 'Could not create a new AI tab' });
-					return;
-				}
-				// Re-read the agent rather than trusting the snapshot taken before
-				// the tab was created: the store write above is the only thing that
-				// ran in between, but the decision below is about live state.
-				const isBusy = sessionsRef.current.find((s) => s.id === sessionId)?.state === 'busy';
-				if (isBusy) {
-					// The agent already owns a live process, so the spawn path would
-					// refuse this prompt. Queue it against the fresh tab instead:
-					// `useQueueProcessing` drains it the moment the current turn ends,
-					// and the item is built by the shared builder so it is identical
-					// to one the composer would have queued - including the frozen
-					// model/effort and the `@mention` flags, which fire at drain time.
-					const queued = enqueuePromptForTab({
-						sessionId,
-						tabId: createdTabId,
-						text: prompt,
-					});
-					if (!queued) {
-						logger.warn(
-							'[useRemoteIntegration] onRemoteNewAITabWithPrompt: could not queue prompt for the new tab'
-						);
-						ack({
-							success: false,
-							tabId: createdTabId,
-							error: 'Created the tab but could not queue the prompt for it',
-						});
-						return;
-					}
-					ack({ success: true, tabId: createdTabId, queued: true });
 					return;
 				}
 				// Pass the new tab id explicitly so the renderer writes into the tab
@@ -998,6 +953,25 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle a remote Reopen Closed Tab (`maestro-cli tab reopen`). The
+		// closed-tab history lives only here, so the renderer answers with what
+		// came back - the same tiling-aware restore Cmd+Shift+T runs.
+		const unsubscribeReopenClosedTab = window.maestro.process.onRemoteReopenClosedTab(
+			(sessionId, background, responseChannel) => {
+				const reply = (result: ReopenClosedTabResult) =>
+					window.maestro.process.sendRemoteReopenClosedTabResponse(responseChannel, result);
+				try {
+					reply(reopenClosedTabInAgent(sessionId, { background }));
+				} catch (error) {
+					logger.error('[useRemoteIntegration] Reopen closed tab failed', undefined, error);
+					reply({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
 		// Handle a remote snooze verb (`maestro-cli snooze`). The renderer owns the
 		// authoritative snooze state - the parked tabs themselves live in
 		// `session.snoozedTabs` - so every verb is answered here, through the same
@@ -1093,10 +1067,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					}
 					const resolvedTabId = targetTab.id;
 
-					// Idle target: no line to wait in, dispatch now through the shared
-					// remote-command path (identical to a plain `dispatch`). Respect the
-					// dispatch --focus opt-in via `background`.
-					if (session.state !== 'busy') {
+					// Idle target TAB with nothing queued for it: no line to wait in,
+					// dispatch now through the shared remote-command path (identical to a
+					// plain `dispatch`). Another tab of the agent being busy is not a line:
+					// that tab's turn runs beside this one, as desktop tabs do. Respect
+					// the dispatch --focus opt-in via `background`.
+					const lineForTab = (session.executionQueue ?? []).some(
+						(item) => item.tabId === resolvedTabId
+					);
+					if (targetTab.state !== 'busy' && !lineForTab) {
 						if (!background) {
 							setActiveSessionId(sessionId);
 						}
@@ -1232,6 +1211,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeCloseTab();
 			unsubscribeRenameTab();
 			unsubscribeStarTab();
+			unsubscribeReopenClosedTab();
 			unsubscribeSnoozeCommand();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();

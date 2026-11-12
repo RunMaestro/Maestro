@@ -6,6 +6,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useCueVisibilityWiring } from '../../../../renderer/hooks/cue/useCueVisibilityWiring';
+import { isWebDesktop } from '../../../../renderer/utils/runtimeContext';
+
+// Default to the Electron desktop; the web-desktop test flips it.
+vi.mock('../../../../renderer/utils/runtimeContext', async () => {
+	const actual = await vi.importActual('../../../../renderer/utils/runtimeContext');
+	return { ...actual, isWebDesktop: vi.fn(() => false) };
+});
 
 describe('useCueVisibilityWiring', () => {
 	let setActive: ReturnType<typeof vi.fn>;
@@ -20,6 +27,7 @@ describe('useCueVisibilityWiring', () => {
 
 	afterEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(isWebDesktop).mockReturnValue(false);
 	});
 
 	it('seeds main process with current visibility state on mount', () => {
@@ -76,5 +84,16 @@ describe('useCueVisibilityWiring', () => {
 		expect(() => renderHook(() => useCueVisibilityWiring())).not.toThrow();
 		// Wait a microtask for the catch handler.
 		await Promise.resolve();
+	});
+
+	it('never reports a browser client visibility to the host', () => {
+		// One host-wide flag: a phone locking would pause the host's scanners.
+		vi.mocked(isWebDesktop).mockReturnValue(true);
+		renderHook(() => useCueVisibilityWiring());
+		expect(setActive).not.toHaveBeenCalled();
+
+		Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+		document.dispatchEvent(new Event('visibilitychange'));
+		expect(setActive).not.toHaveBeenCalled();
 	});
 });

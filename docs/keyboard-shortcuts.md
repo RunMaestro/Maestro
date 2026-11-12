@@ -205,6 +205,8 @@ In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
 Right Bar instead, switching between the Participants and History panels. The Right
 Bar opens if it was closed.
 
+Inside the **Change Model and Effort** console, `Cmd+R` / `Ctrl+R` re-reads the model list, so a model you just installed shows up without leaving the console. See [Changing a Tab's Model and Effort](./general-usage#changing-a-tabs-model-and-effort).
+
 **Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
 
 ### Tab Switcher
@@ -540,6 +542,29 @@ so the selection slides sideways instead of jumping to another branch's tip.
 `Home`/`End` and the page keys also stay on the current branch. Clicking a commit
 message selects it, the same as clicking its dot. The graph is built from every
 branch, so all of this reaches commits the List view does not hold.
+
+## Settings Search
+
+Type in the search box at the top of Settings to find a setting on any tab. You
+can change most results without leaving the search: a single on/off setting
+shows its switch on the result row, and a larger setting opens its full section
+under the row.
+
+| Action                                   | macOS              | Windows/Linux      |
+| ---------------------------------------- | ------------------ | ------------------ |
+| Focus the search box                     | `Cmd+F`            | `Ctrl+F`           |
+| Move from the search box into results    | `Down Arrow`       | `Down Arrow`       |
+| Move between results                     | `Up/Down Arrow`    | `Up/Down Arrow`    |
+| Flip a switch, or open/close its section | `Space`            | `Space`            |
+| Open or close a section                  | `Right/Left Arrow` | `Right/Left Arrow` |
+| Go to the setting on its tab             | `Enter`            | `Enter`            |
+| Back to the search box                   | `Esc`              | `Esc`              |
+
+`Space` only acts on a result when the result has focus, so you can still type a
+space in a search of two or more words. `Enter` in the search box goes to the
+highlighted result. A result with nothing to change in place, such as the theme
+picker, goes to its tab with either key. Typing any letter while a result has
+focus returns you to the search box.
 
 ## Maestro Prompts (Settings)
 

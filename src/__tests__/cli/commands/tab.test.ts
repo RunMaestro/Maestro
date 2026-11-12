@@ -20,6 +20,7 @@ import {
 	tabClose,
 	tabRename,
 	tabStar,
+	tabReopen,
 	tabMove,
 	tabUnread,
 	tabSaveToHistory,
@@ -148,6 +149,52 @@ describe('tab commands', () => {
 			const getPayload = mockTab({ success: true, tabId: 'tab-new' });
 			await tabNew({ agent: 'agent-1', background: true, focus: true });
 			expect(getPayload().background).toBe(false);
+		});
+	});
+
+	describe('tab reopen', () => {
+		it('sends reopen_closed_tab for the named agent, foreground by default', async () => {
+			const getPayload = mockTab({
+				success: true,
+				tabId: 'tab-back',
+				tabType: 'ai',
+				wasDuplicate: false,
+				background: false,
+			});
+			await tabReopen({ agent: 'agent-1' });
+			expect(getPayload()).toMatchObject({
+				type: 'reopen_closed_tab',
+				sessionId: 'agent-1',
+				background: false,
+			});
+			expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Reopened ai tab'));
+			expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('tab-back'));
+		});
+
+		it('puts background:true on the wire for --background', async () => {
+			const getPayload = mockTab({ success: true, tabId: 't', tabType: 'file', background: true });
+			await tabReopen({ agent: 'agent-1', background: true });
+			expect(getPayload().background).toBe(true);
+		});
+
+		it('prints the restored tab as JSON', async () => {
+			mockTab({ success: true, tabId: 'tab-back', tabType: 'browser', wasDuplicate: true });
+			await tabReopen({ agent: 'agent-1', json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0] as string)).toEqual({
+				success: true,
+				agentId: 'agent-1',
+				tabId: 'tab-back',
+				tabType: 'browser',
+				wasDuplicate: true,
+				background: false,
+			});
+		});
+
+		it('fails when the agent has nothing to reopen', async () => {
+			mockTab({ success: false, error: 'No closed tab to reopen' });
+			await expect(tabReopen({ agent: 'agent-1' })).rejects.toThrow('__exit__');
+			expect(formatError).toHaveBeenCalledWith('No closed tab to reopen');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 	});
 

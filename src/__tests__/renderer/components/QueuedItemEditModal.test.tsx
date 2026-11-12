@@ -116,6 +116,7 @@ describe('QueuedItemEditModal model + effort override', () => {
 					)
 				),
 				getConfig: vi.fn(() => Promise.resolve({})),
+				onModelsRefreshed: vi.fn(() => () => {}),
 			},
 		};
 	}

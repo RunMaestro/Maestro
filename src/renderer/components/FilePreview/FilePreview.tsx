@@ -82,6 +82,7 @@ import {
 	scanLineStats,
 	canScaleFontForView,
 	resolvePreviewScroller,
+	deriveProjectRoot,
 } from './filePreviewUtils';
 import { BionifyTextBlock } from '../../utils/bionifyReadingMode';
 import { MarkdownImage } from './MarkdownImage';
@@ -210,8 +211,13 @@ export const FilePreview = React.memo(
 		// (before paint) when the reused scroll container switches files. An
 		// effect-only reset flashes one frame of the previous file's hidden state.
 		const showStatsBarPathRef = useRef<string | undefined>(file?.path);
+		// scrollTop at which the user clicked the collapsed header to bring the
+		// details back. While set, the scroll handler keeps them shown until the
+		// user actually scrolls away from that spot. null = not pinned.
+		const detailsRevealedAtRef = useRef<number | null>(null);
 		if (file?.path !== showStatsBarPathRef.current) {
 			showStatsBarPathRef.current = file?.path;
+			detailsRevealedAtRef.current = null;
 			const atTop = initialScrollTop === undefined || initialScrollTop <= 10;
 			if (showStatsBar !== atTop) {
 				setShowStatsBar(atTop);
@@ -797,6 +803,8 @@ export const FilePreview = React.memo(
 			}
 			return null;
 		}, [fileTree]);
+		const fileTreeIndicesRef = useRef(fileTreeIndices);
+		fileTreeIndicesRef.current = fileTreeIndices;
 
 		// Resolve homeDir for tilde path expansion
 		const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -955,24 +963,14 @@ export const FilePreview = React.memo(
 			return {
 				...components,
 				img: ({ src, alt, ...props }: any) => {
-					// Check if this image came from file tree (set by remarkFileLinks)
-					const isFromTree = props['data-maestro-from-tree'] === 'true';
-					let projectRootForImage: string | undefined;
-
-					if (isFromTree && cwd && file) {
-						// Resolve project root so relative image links from tree render correctly.
-						const cwdIndex = file.path.indexOf(`/${cwd}/`);
-						if (cwdIndex !== -1) {
-							projectRootForImage = file.path.substring(0, cwdIndex);
-						} else {
-							const firstCwdSegment = cwd.split('/')[0];
-							const segmentIndex = file.path.indexOf(`/${firstCwdSegment}/`);
-							if (segmentIndex !== -1) {
-								projectRootForImage = file.path.substring(0, segmentIndex);
-							}
-						}
-					}
-
+					// `![[name|300]]` embeds carry their width from remarkFileLinks.
+					const embedWidth = Number(props['data-maestro-width']) || undefined;
+					// Read through a ref: a file-tree refresh must not rebuild this map,
+					// which would remount the document and lose the reader's scroll.
+					const fileTreeIndices = fileTreeIndicesRef.current;
+					const embedProjectRoot = file
+						? deriveProjectRoot(file.path, cwd, fileTreeIndices)
+						: undefined;
 					return (
 						<MarkdownImage
 							src={src}
@@ -980,8 +978,11 @@ export const FilePreview = React.memo(
 							markdownFilePath={file?.path || ''}
 							theme={theme}
 							showRemoteImages={showRemoteImages}
-							isFromFileTree={isFromTree}
-							projectRoot={projectRootForImage}
+							projectRoot={embedProjectRoot}
+							homeDir={homeDir}
+							fileTreeIndices={fileTreeIndices}
+							width={embedWidth}
+							onOpenFile={onFileClick}
 							sshRemoteId={sshRemoteId}
 						/>
 					);
@@ -1001,6 +1002,7 @@ export const FilePreview = React.memo(
 			file?.path,
 			showRemoteImages,
 			sshRemoteId,
+			homeDir,
 			onSave,
 			stableToggleTask,
 			effectiveBionifyReadingMode,
@@ -1022,6 +1024,14 @@ export const FilePreview = React.memo(
 			if (!file?.path) return;
 			requestFileDeletion({ path: file.path, sshRemoteId });
 		}, [file?.path, sshRemoteId]);
+
+		// Click on the collapsed header: show the path + stats again, pinned to
+		// the current scroll position. The next real scroll collapses them.
+		const handleRevealDetails = useCallback(() => {
+			const scrollEl = contentRef.current ? resolvePreviewScroller(contentRef.current) : null;
+			detailsRevealedAtRef.current = scrollEl?.scrollTop ?? 0;
+			setShowStatsBar(true);
+		}, []);
 
 		// Fetch file stats when file changes
 		useEffect(() => {
@@ -1370,6 +1380,9 @@ export const FilePreview = React.memo(
 			// Stats subbar (~28px) + directory path row (~20px) + cushion.
 			const STATS_CHROME_PX = 64;
 			const AT_TOP_PX = 10;
+			// How far the user must scroll from a click-reveal before the
+			// details collapse again. Absorbs trailing momentum events.
+			const REVEAL_SCROLL_SLOP_PX = 8;
 
 			// Captured, because a table view scrolls its own element inside the
 			// column and scroll events do not bubble. Only the preview's real
@@ -1380,8 +1393,14 @@ export const FilePreview = React.memo(
 				if (!scrollEl || event.target !== scrollEl) return;
 				const { scrollTop, scrollHeight, clientHeight } = scrollEl;
 				const overflow = scrollHeight - clientHeight;
+				const revealedAt = detailsRevealedAtRef.current;
+				if (revealedAt !== null && Math.abs(scrollTop - revealedAt) >= REVEAL_SCROLL_SLOP_PX) {
+					detailsRevealedAtRef.current = null;
+				}
+				const pinnedByClick = detailsRevealedAtRef.current !== null;
 				setShowStatsBar((prev) => {
 					if (scrollTop <= AT_TOP_PX) return true;
+					if (pinnedByClick) return prev;
 					// Require scrollTop past chrome+at-top so after the header
 					// collapses we remain below the show threshold even if the
 					// browser preserves content position by reducing scrollTop.
@@ -1994,6 +2013,7 @@ export const FilePreview = React.memo(
 					setWordWrap={setFileEditWordWrap}
 					toolbarVisibility={filePreviewToolbarVisibility}
 					onDelete={handleDeleteFile}
+					onRevealDetails={handleRevealDetails}
 				/>
 
 				{/* File changed on disk banner */}
@@ -2073,13 +2093,17 @@ export const FilePreview = React.memo(
 					// content box edge to edge. The CSV / JSONL tables keep the
 					// padding but scroll themselves, so the column stacks the find
 					// bar over them instead of scrolling. Every other view is a
-					// document that scrolls inside this padded column.
+					// document that scrolls inside this padded column. Its bottom
+					// padding (`pb-24`) lets the last lines scroll clear of the
+					// round controls floating in the bottom corners (the ToC
+					// button is ~56px tall from the edge), so they never sit on
+					// top of the text.
 					className={
 						isParquet
 							? 'flex-1 min-h-0 overflow-hidden'
 							: isTablePane
 								? 'flex-1 min-h-0 flex flex-col overflow-hidden px-6 pt-3 pb-6'
-								: 'flex-1 overflow-y-auto px-6 pt-3 pb-6 scrollbar-thin'
+								: 'flex-1 overflow-y-auto px-6 pt-3 pb-24 scrollbar-thin'
 					}
 					style={
 						{

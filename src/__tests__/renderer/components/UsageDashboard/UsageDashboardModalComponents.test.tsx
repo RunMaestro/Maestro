@@ -258,6 +258,39 @@ describe('UsageDashboardModal shell components', () => {
 		expect(switchViewMode).toHaveBeenCalledWith('activity');
 	});
 
+	it('marks the active tab for the strip to reveal', () => {
+		const viewModeTabs = [
+			{ value: 'overview' as const, label: 'Overview' },
+			{ value: 'activity' as const, label: 'Activity' },
+		];
+		const props = { theme, viewModeTabs, switchViewMode: vi.fn(), onKeyDown: vi.fn() };
+		const { rerender } = render(<UsageDashboardTabs {...props} viewMode="overview" />);
+
+		const overviewTab = screen.getByRole('tab', { name: 'Overview' });
+		const activityTab = screen.getByRole('tab', { name: 'Activity' });
+		expect(overviewTab).toHaveAttribute('data-reveal-active', 'true');
+		expect(activityTab).not.toHaveAttribute('data-reveal-active');
+
+		rerender(<UsageDashboardTabs {...props} viewMode="activity" />);
+		expect(activityTab).toHaveAttribute('data-reveal-active', 'true');
+		expect(overviewTab).not.toHaveAttribute('data-reveal-active');
+	});
+
+	it('forwards the tab strip element to the parent ref', () => {
+		const ref = { current: null as HTMLDivElement | null };
+		render(
+			<UsageDashboardTabs
+				ref={ref}
+				theme={theme}
+				viewMode="overview"
+				viewModeTabs={[{ value: 'overview', label: 'Overview' }]}
+				switchViewMode={vi.fn()}
+				onKeyDown={vi.fn()}
+			/>
+		);
+		expect(ref.current).toBe(screen.getByTestId('view-mode-tabs'));
+	});
+
 	it('renders footer range text and exact database size formatting', () => {
 		render(
 			<UsageDashboardFooter

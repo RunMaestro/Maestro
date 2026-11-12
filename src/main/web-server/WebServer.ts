@@ -92,6 +92,7 @@ import type {
 	CloseTabCallback,
 	RenameTabCallback,
 	StarTabCallback,
+	ReopenClosedTabCallback,
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
@@ -165,6 +166,7 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	ArchiveGroupChatCallback,
+	AddGroupChatParticipantCallback,
 	SendGroupChatMessageCallback,
 	GroupChatMessage,
 	GroupChatState,
@@ -557,6 +559,10 @@ export class WebServer {
 		this.callbackRegistry.setStarTabCallback(callback);
 	}
 
+	setReopenClosedTabCallback(callback: ReopenClosedTabCallback): void {
+		this.callbackRegistry.setReopenClosedTabCallback(callback);
+	}
+
 	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
 		this.callbackRegistry.setSnoozeCommandCallback(callback);
 	}
@@ -833,6 +839,10 @@ export class WebServer {
 
 	setArchiveGroupChatCallback(callback: ArchiveGroupChatCallback): void {
 		this.callbackRegistry.setArchiveGroupChatCallback(callback);
+	}
+
+	setAddGroupChatParticipantCallback(callback: AddGroupChatParticipantCallback): void {
+		this.callbackRegistry.setAddGroupChatParticipantCallback(callback);
 	}
 
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
@@ -1196,6 +1206,8 @@ export class WebServer {
 				this.callbackRegistry.renameTab(sessionId, tabId, newName),
 			starTab: async (sessionId: string, tabId: string, starred: boolean) =>
 				this.callbackRegistry.starTab(sessionId, tabId, starred),
+			reopenClosedTab: async (sessionId: string, background: boolean) =>
+				this.callbackRegistry.reopenClosedTab(sessionId, background),
 			snoozeCommand: async (request: SnoozeCommandRequest) =>
 				this.callbackRegistry.snoozeCommand(request),
 			autoRunSteeringCommand: async (request: SteeringCommandRequest) =>
@@ -1348,6 +1360,8 @@ export class WebServer {
 			stopGroupChat: async (chatId: string) => this.callbackRegistry.stopGroupChat(chatId),
 			archiveGroupChat: async (chatId: string, archived: boolean) =>
 				this.callbackRegistry.archiveGroupChat(chatId, archived),
+			addGroupChatParticipant: async (chatId: string, agentId: string) =>
+				this.callbackRegistry.addGroupChatParticipant(chatId, agentId),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
 				this.callbackRegistry.sendGroupChatMessage(chatId, message),
 			mergeContext: async (sourceSessionId: string, targetSessionId: string) =>

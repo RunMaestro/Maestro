@@ -13,13 +13,15 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useRef, useState } from 'react';
-import { render, screen, fireEvent, waitFor, createEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, createEvent, act } from '@testing-library/react';
 import { ModelEffortModal } from '../../../renderer/components/ModelEffortModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { useModalLayer } from '../../../renderer/hooks/ui/useModalLayer';
 import { useFocusAfterRender } from '../../../renderer/hooks/utils/useFocusAfterRender';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useTabStore } from '../../../renderer/stores/tabStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
+import type { ModelsRefreshedPayload } from '../../../shared/agentModelsRefresh';
 import { createMockSession, createMockAITab } from '../../helpers';
 import { mockTheme } from '../../helpers/mockTheme';
 import { restorePointer, setCoarsePointer } from '../../helpers/mockPointer';
@@ -452,6 +454,92 @@ describe('ModelEffortModal', () => {
 			await waitFor(() => expect(document.activeElement).toBe(composer));
 			unmount();
 			composer.remove();
+		});
+	});
+
+	describe('refreshing the model list', () => {
+		const NEW_MODEL = 'ollama/qwen3-coder:30b';
+
+		beforeEach(() => {
+			useCenterFlashStore.setState({ active: null });
+		});
+
+		it('re-reads the list past the cache on Cmd+R and shows the new model without committing', async () => {
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+			(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockResolvedValue([
+				NEW_MODEL,
+				...MODELS,
+			]);
+
+			fireEvent.keyDown(keyTarget(), { key: 'r', metaKey: true });
+
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith('claude-code', true);
+			await screen.findByText(NEW_MODEL);
+			expect(useCenterFlashStore.getState().active).toMatchObject({
+				message: 'Models refreshed',
+				detail: '4 models, 1 new',
+			});
+			expect(setTabModel).not.toHaveBeenCalled();
+		});
+
+		// Every bare letter is a type-to-jump, so the refresh lives on a chord.
+		it('leaves a bare R to type-to-jump', async () => {
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+			vi.mocked(window.maestro.agents.getModels).mockClear();
+
+			fireEvent.keyDown(keyTarget(), { key: 'r' });
+
+			expect(window.maestro.agents.getModels).not.toHaveBeenCalled();
+		});
+
+		it('refreshes from the icon beside MODEL', async () => {
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+
+			fireEvent.click(screen.getByTestId('model-effort-refresh'));
+
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith('claude-code', true);
+		});
+
+		it('says so when the refresh fails and keeps the old list', async () => {
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+			(window.maestro.agents.getModels as ReturnType<typeof vi.fn>).mockRejectedValue(
+				new Error('opencode models exited 1')
+			);
+
+			fireEvent.keyDown(keyTarget(), { key: 'r', ctrlKey: true });
+
+			await waitFor(() =>
+				expect(useCenterFlashStore.getState().active).toMatchObject({
+					message: 'Could not refresh models',
+					detail: 'opencode models exited 1',
+				})
+			);
+			expect(screen.getByText('claude-sonnet-4.5')).toBeInTheDocument();
+		});
+
+		// The Settings refresh button, another picker, or the CLI.
+		it('adopts a list refreshed somewhere else while it is open', async () => {
+			renderModal();
+			await screen.findByText('claude-sonnet-4.5');
+			const onModelsRefreshed = window.maestro.agents.onModelsRefreshed as ReturnType<typeof vi.fn>;
+			const listener = onModelsRefreshed.mock.calls.at(-1)?.[0] as (
+				payload: ModelsRefreshedPayload
+			) => void;
+
+			// Another provider's list, or this provider's list on a remote host, is not ours.
+			act(() => {
+				listener({ agentId: 'codex', sshRemoteId: null, models: ['gpt-9'] });
+				listener({ agentId: 'claude-code', sshRemoteId: 'remote-1', models: ['remote-only'] });
+				listener({ agentId: 'claude-code', sshRemoteId: null, models: [NEW_MODEL, ...MODELS] });
+			});
+
+			await screen.findByText(NEW_MODEL);
+			expect(screen.queryByText('gpt-9')).toBeNull();
+			expect(screen.queryByText('remote-only')).toBeNull();
 		});
 	});
 });

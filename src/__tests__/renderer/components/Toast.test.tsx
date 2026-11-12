@@ -822,6 +822,19 @@ describe('ToastContainer clear of the Right Bar tab strip (#1628)', () => {
 		expect(stack.style.overflowX).toBe('hidden');
 	});
 
+	it('lets a bottom-right stack grow to the title bar when the Right Bar is closed', () => {
+		useUIStore.setState({ rightPanelOpen: false });
+		render(<ToastContainer theme={mockTheme} />);
+		// 8px offset + 48px title-bar clearance - 16px of scroller padding.
+		expect(screen.getByTestId('toast-stack').style.maxHeight).toBe('calc(100vh - 40px)');
+	});
+
+	it('lets a bottom-left stack grow to the title bar, away from the Right Bar', () => {
+		useSettingsStore.setState({ toastPosition: 'bottom-left' });
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.maxHeight).toBe('calc(100vh - 40px)');
+	});
+
 	it('shrinks the cap by however far the stack is lifted', () => {
 		useToastAvoidZoneStore.setState({
 			zones: {

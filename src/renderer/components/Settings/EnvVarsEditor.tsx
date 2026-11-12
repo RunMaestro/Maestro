@@ -5,6 +5,9 @@
  * with validation for variable names and values. Uses stable indices
  * to prevent focus loss during key editing.
  *
+ * Two modes over the same records: Basic (a row per variable) and Advanced
+ * (`.env` text, see `EnvVarsDotEnvInput`). The choice is remembered.
+ *
  * Usage:
  * ```tsx
  * <EnvVarsEditor envVars={shellEnvVars} setEnvVars={setShellEnvVars} theme={theme} />
@@ -14,29 +17,22 @@
 import { useState, useEffect } from 'react';
 import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
-import { isAbsolutePath } from '../../../shared/formatters';
 import type { Theme } from '../../types';
 import { AuthPathValueInput } from '../shared/AuthPathValueInput';
 import { EMPTY_KNOWN_AUTH_DIRS, type KnownAuthDirs } from '../../../shared/authPaths';
 import { EnvVarKeyInput } from '../shared/EnvVarKeyInput';
 import {
+	ENV_VARS_ADVANCED_MODE_STORAGE_KEY,
+	EnvVarsDotEnvInput,
+	EnvVarsModeToggle,
+} from '../shared/EnvVarsDotEnvInput';
+import { validateEnvVarEntry, validateEnvVarValue } from '../../../shared/dotEnv';
+import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
+import {
 	BLANK_ENV_VAR_KEY,
 	EMPTY_KNOWN_ENV_VAR_KEYS,
 	type KnownEnvVarKeys,
 } from '../../../shared/envVarCatalog';
-
-/**
- * Variable names whose values MUST be absolute filesystem paths. A relative
- * value (e.g. `sm/Users/me/.claude-smash` - a real typo we shipped through)
- * gets `path.resolve()`'d against the main-process cwd at sample time, which
- * silently points the variable at a non-existent directory and produces
- * confusing dashboard tabs. Validating here rejects the bad value at write
- * time so the typo never lands on disk.
- */
-const ABSOLUTE_PATH_KEYS: Record<string, true> = {
-	CLAUDE_CONFIG_DIR: true,
-	CODEX_HOME: true,
-};
 
 export interface EnvVarEntry {
 	id: number;
@@ -129,33 +125,9 @@ export function EnvVarsEditor({
 	const [validationErrors, setValidationErrors] = useState<Record<number, string>>({});
 	// Id of the row added by "Add Variable", so only THAT row takes the caret.
 	const [focusEntryId, setFocusEntryId] = useState<number | null>(null);
-
-	// Validate environment variable format
-	const validateEntry = (entry: EnvVarEntry): string | null => {
-		if (!entry.key.trim()) {
-			return null; // Empty keys are OK (will be ignored)
-		}
-		// Check for valid variable name format (alphanumeric and underscore)
-		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(entry.key)) {
-			return `Invalid variable name: only letters, numbers, and underscores allowed and must not start with a number.`;
-		}
-		// Check if value contains special characters that might need quoting
-		if (
-			entry.value &&
-			/[&|;`$<>()]/.test(entry.value) &&
-			!entry.value.startsWith('"') &&
-			!entry.value.startsWith("'")
-		) {
-			return `Invalid value: contains disallowed special characters; quote or escape them if you intend to include them.`;
-		}
-		// Variables that are consumed as filesystem paths must be absolute -
-		// relative values get resolved against the main-process cwd at runtime
-		// (often `/`) and silently point at a non-existent directory.
-		if (ABSOLUTE_PATH_KEYS[entry.key] && entry.value && !isAbsolutePath(entry.value)) {
-			return `${entry.key} must be an absolute path (starting with /).`;
-		}
-		return null;
-	};
+	const { value: advanced, setValue: setAdvanced } = usePersistedToggle(
+		ENV_VARS_ADVANCED_MODE_STORAGE_KEY
+	);
 
 	// Sync entries back to parent when they change (but debounced to avoid focus issues)
 	const commitChanges = (newEntries: EnvVarEntry[]) => {
@@ -165,7 +137,7 @@ export function EnvVarsEditor({
 
 		// Collect all errors first
 		newEntries.forEach((entry) => {
-			const error = validateEntry(entry);
+			const error = validateEnvVarEntry(entry.key, entry.value);
 			if (error) {
 				errors[entry.id] = error;
 			}
@@ -227,6 +199,14 @@ export function EnvVarsEditor({
 		});
 	};
 
+	// Advanced mode replaces both records whole. The rows are rebuilt from them
+	// by the sync effect above, so any row error on screen is stale by then.
+	const replaceFromText = (vars: Record<string, string>, disabledVars: Record<string, string>) => {
+		setValidationErrors({});
+		setEnvVars(vars);
+		setDisabledEnvVars?.(disabledVars);
+	};
+
 	const entryKeys = entries.map((entry) => entry.key);
 
 	// A new row starts UNNAMED so the name field can offer the provider variables
@@ -246,91 +226,109 @@ export function EnvVarsEditor({
 			className="p-3 rounded border"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 		>
-			{label !== null && (
-				<label className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
-					{label}
-				</label>
-			)}
-			<div className="space-y-2">
-				{entries.map((entry) => {
-					const error = validationErrors[entry.id];
-					const off = !entry.enabled;
-					return (
-						<div key={entry.id}>
-							<div className="flex gap-2 items-center">
-								{canToggle && (
-									<GhostIconButton
-										onClick={() => toggleEntry(entry.id)}
-										padding="p-2"
-										title={
-											off
-												? `Enable ${entry.key || 'variable'} (currently not passed to any process)`
-												: `Disable ${entry.key || 'variable'} (keeps the value, stops passing it to processes)`
-										}
-										color={off ? theme.colors.textDim : theme.colors.accent}
-									>
-										{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-									</GhostIconButton>
-								)}
-								<EnvVarKeyInput
-									theme={theme}
-									value={entry.key}
-									onChange={(key) => updateEntry(entry.id, 'key', key)}
-									knownEnvVarKeys={knownEnvVarKeys}
-									usedKeys={entryKeys}
-									autoFocus={focusEntryId === entry.id}
-									onAutoFocused={() => setFocusEntryId(null)}
-									className="p-2 rounded border bg-transparent outline-none text-xs font-mono"
-									style={{
-										borderColor: error ? '#ef4444' : theme.colors.border,
-										color: theme.colors.textMain,
-										opacity: off ? 0.45 : 1,
-										textDecoration: off ? 'line-through' : undefined,
-									}}
-								/>
-								<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
-									=
-								</span>
-								<AuthPathValueInput
-									envVarKey={entry.key}
-									value={entry.value}
-									knownAuthDirs={knownAuthDirs}
-									onChange={(value) => updateEntry(entry.id, 'value', value)}
-									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
-									containerClassName="flex-1 min-w-0"
-									style={{
-										borderColor: theme.colors.border,
-										color: theme.colors.textMain,
-										opacity: off ? 0.45 : 1,
-										textDecoration: off ? 'line-through' : undefined,
-									}}
-								/>
-								<GhostIconButton
-									onClick={() => removeEntry(entry.id)}
-									padding="p-2"
-									title="Remove variable"
-									color={theme.colors.textDim}
-								>
-									<Trash2 className="w-3 h-3" />
-								</GhostIconButton>
-							</div>
-							{error && (
-								<p className="text-xs mt-1 px-2" style={{ color: '#ef4444' }}>
-									{error}
-								</p>
-							)}
-						</div>
-					);
-				})}
-				<button
-					onClick={addEntry}
-					className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-					style={{ color: theme.colors.textDim }}
-				>
-					<Plus className="w-3 h-3" />
-					Add Variable
-				</button>
+			<div className="flex items-center justify-between gap-2 mb-2">
+				{label !== null ? (
+					<label className="block text-xs font-medium" style={{ color: theme.colors.textDim }}>
+						{label}
+					</label>
+				) : (
+					<span />
+				)}
+				<EnvVarsModeToggle advanced={advanced} onChange={setAdvanced} theme={theme} />
 			</div>
+			{advanced ? (
+				<EnvVarsDotEnvInput
+					theme={theme}
+					envVars={envVars}
+					disabledEnvVars={canToggle ? disabledEnvVars : undefined}
+					onChange={replaceFromText}
+					validateValue={validateEnvVarValue}
+				/>
+			) : (
+				<div className="space-y-2">
+					{entries.map((entry) => {
+						const error = validationErrors[entry.id];
+						const off = !entry.enabled;
+						return (
+							<div key={entry.id}>
+								<div className="flex gap-2 items-center">
+									{canToggle && (
+										<GhostIconButton
+											onClick={() => toggleEntry(entry.id)}
+											padding="p-2"
+											title={
+												off
+													? `Enable ${entry.key || 'variable'} (currently not passed to any process)`
+													: `Disable ${entry.key || 'variable'} (keeps the value, stops passing it to processes)`
+											}
+											color={off ? theme.colors.textDim : theme.colors.accent}
+										>
+											{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+										</GhostIconButton>
+									)}
+									<EnvVarKeyInput
+										theme={theme}
+										value={entry.key}
+										onChange={(key) => updateEntry(entry.id, 'key', key)}
+										knownEnvVarKeys={knownEnvVarKeys}
+										usedKeys={entryKeys}
+										autoFocus={focusEntryId === entry.id}
+										onAutoFocused={() => setFocusEntryId(null)}
+										className="p-2 rounded border bg-transparent outline-none text-xs font-mono"
+										style={{
+											borderColor: error ? '#ef4444' : theme.colors.border,
+											color: theme.colors.textMain,
+											opacity: off ? 0.45 : 1,
+											textDecoration: off ? 'line-through' : undefined,
+										}}
+									/>
+									<span
+										className="flex items-center text-xs"
+										style={{ color: theme.colors.textDim }}
+									>
+										=
+									</span>
+									<AuthPathValueInput
+										envVarKey={entry.key}
+										value={entry.value}
+										knownAuthDirs={knownAuthDirs}
+										onChange={(value) => updateEntry(entry.id, 'value', value)}
+										className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
+										containerClassName="flex-1 min-w-0"
+										style={{
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+											opacity: off ? 0.45 : 1,
+											textDecoration: off ? 'line-through' : undefined,
+										}}
+									/>
+									<GhostIconButton
+										onClick={() => removeEntry(entry.id)}
+										padding="p-2"
+										title="Remove variable"
+										color={theme.colors.textDim}
+									>
+										<Trash2 className="w-3 h-3" />
+									</GhostIconButton>
+								</div>
+								{error && (
+									<p className="text-xs mt-1 px-2" style={{ color: '#ef4444' }}>
+										{error}
+									</p>
+								)}
+							</div>
+						);
+					})}
+					<button
+						onClick={addEntry}
+						className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textDim }}
+					>
+						<Plus className="w-3 h-3" />
+						Add Variable
+					</button>
+				</div>
+			)}
 			{description !== null && <p className="text-xs opacity-70 mt-2">{description}</p>}
 		</div>
 	);

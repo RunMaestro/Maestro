@@ -20,6 +20,7 @@ import { readClaudeTurnBaseline } from '../../../shared/claudeCostTracker';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { stripNulBytesFromArgs } from '../utils/argvNulBytes';
+import { promptExceedsPosixArgvLimit } from '../utils/promptArgvLimit';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { armStdioCloseWatchdog } from '../utils/stdioCloseWatchdog';
 import {
@@ -83,7 +84,6 @@ export class ChildProcessSpawner {
 			shellEnvVars,
 			noPromptSeparator,
 			sendPromptViaStdin,
-			sendPromptViaStdinRaw,
 		} = config;
 
 		const hasImages = images && images.length > 0;
@@ -103,6 +103,38 @@ export class ChildProcessSpawner {
 		const argsHaveInputStreamJson = args.some(
 			(arg, i) => arg === 'stream-json' && i > 0 && args[i - 1] === '--input-format'
 		);
+
+		// Callers move the prompt to stdin only on Windows. On Linux and macOS a
+		// prompt past the argv limit (a long group chat history, a big Cue
+		// payload) fails the spawn with E2BIG (MAESTRO-VR), so send it as raw
+		// stdin instead when the agent reads its prompt there. Local spawns only:
+		// an SSH spawn's prompt belongs to the remote command or script.
+		const promptTooLongForArgv =
+			!!prompt &&
+			!hasImages &&
+			!isWindows() &&
+			!sendPromptViaStdin &&
+			!argsHaveInputStreamJson &&
+			!config.sendPromptViaStdinRaw &&
+			!config.promptAlreadyInArgs &&
+			!config.sshStdinScript &&
+			!config.sshRemoteCommand &&
+			!config.sshRemoteId &&
+			capabilities.supportsPromptViaStdin &&
+			promptExceedsPosixArgvLimit(prompt);
+		const sendPromptViaStdinRaw = !!config.sendPromptViaStdinRaw || promptTooLongForArgv;
+		if (promptTooLongForArgv) {
+			logger.info(
+				'[ProcessManager] Prompt too long for argv, sending via stdin',
+				'ProcessManager',
+				{
+					sessionId,
+					toolType,
+					promptLength: prompt?.length,
+				}
+			);
+		}
+
 		const promptViaStdin = sendPromptViaStdin || sendPromptViaStdinRaw || argsHaveInputStreamJson;
 
 		// Build final args based on batch mode and images
@@ -701,7 +733,7 @@ export class ChildProcessSpawner {
 						: config.sshStdinScript
 				);
 				childProcess.stdin?.end();
-			} else if (config.sendPromptViaStdinRaw && effectivePrompt) {
+			} else if (sendPromptViaStdinRaw && effectivePrompt) {
 				// Raw stdin mode: send prompt as literal text (non-stream-json agents on Windows)
 				// Note: When sending via stdin, PowerShell treats the input as literal text,
 				// NOT as code to parse. No escaping is needed for special characters.

@@ -51,13 +51,20 @@ export interface RemarkFileLinksOptions {
 	projectRoot?: string;
 	/** User's home directory (e.g. /Users/pedram) - used to expand ~/... paths */
 	homeDir?: string;
+	/**
+	 * Whether an absolute path exists: `true`, `false`, or `undefined` while
+	 * unknown. Consulted only for a path with whitespace in it, whose extent the
+	 * pattern had to guess (see ABSOLUTE_PATH_PATTERN); such a path links only
+	 * on `true`. Without it, every match links, as before.
+	 */
+	pathExists?: (absolutePath: string) => boolean | undefined;
 }
 
 /**
  * The remark plugin
  */
 export function remarkFileLinks(options: RemarkFileLinksOptions) {
-	const { fileTree, indices, cwd, projectRoot, homeDir } = options;
+	const { fileTree, indices, cwd, projectRoot, homeDir, pathExists } = options;
 
 	// Resolve indices: prefer pre-built (caller memoized), build from fileTree
 	// as a fallback, or use empty indices when neither is provided.
@@ -95,7 +102,6 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				resolvedPath: string;
 				type: 'link' | 'image';
 				isRelativeToCwd?: boolean; // For images: true if path needs cwd prepended (fallback paths)
-				isFromFileTree?: boolean; // For images: true if path was found in file tree (complete from project root)
 				imageWidth?: number; // For images: optional width in pixels
 				absoluteUrl?: string; // For links outside projectRoot: use file:// URL instead of maestro-file://
 			}
@@ -135,12 +141,9 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				let resolvedPath: string;
 				let isRelativeToCwd = false; // Track if path needs cwd prepended
 
-				let isFromFileTree = false;
-
 				if (foundPath) {
 					// Found in file tree - path is already complete from project root
 					resolvedPath = foundPath;
-					isFromFileTree = true;
 				} else {
 					// Not found - use _attachments fallback relative to current document
 					resolvedPath = `_attachments/${imagePath}`;
@@ -154,7 +157,6 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 					resolvedPath,
 					type: 'image',
 					isRelativeToCwd,
-					isFromFileTree,
 					imageWidth,
 				});
 			}
@@ -207,6 +209,21 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 
 					// Convert to relative path
 					const relativePath = toRelativePath(absolutePath);
+
+					// A space-free path's extent is unambiguous. One with whitespace
+					// is the pattern's best guess at where a path ends, and the same
+					// text could be prose that runs into a file name, so it links only
+					// once the file is known to exist: from the file tree when it is
+					// in the project, otherwise from the filesystem.
+					if (
+						pathExists &&
+						/\s/.test(absolutePath) &&
+						!(relativePath && allPaths.has(relativePath)) &&
+						pathExists(absolutePath) !== true
+					) {
+						continue;
+					}
+
 					// For absolute paths within projectRoot, always create a link even if not in file tree
 					// The file click handler will attempt to open the file from disk
 					if (relativePath) {
@@ -319,7 +336,8 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				if (match.type === 'image') {
 					// Add image node - construct file:// URL for the image
 					// For AI terminal (has projectRoot): build absolute file:// URL
-					// For FilePreview (no projectRoot): use relative path (resolveImagePath handles it)
+					// For FilePreview (no projectRoot): emit a relative reference and let the
+					// preview's resolveEmbedCandidates find the file
 					let imageSrc: string;
 					if (projectRoot) {
 						// Build full path:
@@ -333,8 +351,11 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 						}
 						imageSrc = `file://${fullPath}`;
 					} else {
-						// Relative path - FilePreview's resolveImagePath will resolve from markdown file location
-						imageSrc = match.resolvedPath;
+						// Found in the tree: a root-relative path. Not found: the name exactly
+						// as written, since resolveEmbedCandidates already tries the
+						// attachment folders (`_attachments/` among them) and the note's own
+						// folder, which a pre-guessed `_attachments/` prefix would rule out.
+						imageSrc = match.isRelativeToCwd ? match.display : match.resolvedPath;
 					}
 					// Build style string - use specified width or default to max-width: 100%
 					const imageStyle = match.imageWidth
@@ -349,7 +370,6 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 							hProperties: {
 								'data-maestro-image': match.resolvedPath,
 								'data-maestro-width': match.imageWidth?.toString(),
-								'data-maestro-from-tree': match.isFromFileTree ? 'true' : undefined,
 								style: imageStyle,
 							},
 						},

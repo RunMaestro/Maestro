@@ -193,6 +193,7 @@ function normalizeCommand(rawCommand: unknown): CueCommand | undefined {
 					command: 'send',
 					target: cli.target,
 					message: typeof cli.message === 'string' ? cli.message : undefined,
+					...(typeof cli.tab === 'string' && cli.tab.trim().length > 0 ? { tab: cli.tab } : {}),
 				},
 			};
 		}

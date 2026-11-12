@@ -12,6 +12,10 @@ import {
 	type SnoozeCommandRequest,
 	type SnoozeCommandResult,
 } from '../../../shared/snoozeCommands';
+import {
+	normalizeReopenClosedTabResult,
+	type ReopenClosedTabResult,
+} from '../../../shared/reopenClosedTab';
 
 /**
  * How long a single remote rename may hold its per-tab queue slot without the
@@ -240,6 +244,21 @@ export function registerTabCallbacks(
 		}
 		targetWindow.webContents.send('remote:starTab', sessionId, tabId, starred);
 		return true;
+	});
+
+	// Reopen is a round trip: the closed-tab history is renderer-only state, so
+	// only the window holding the agent can say what came back.
+	server.setReopenClosedTabCallback(async (sessionId: string, background: boolean) => {
+		const targetWindow = resolveSessionWindow(sessionId);
+		if (!targetWindow || !isWebContentsAvailable(targetWindow)) {
+			logger.warn('No owning window is available for reopenClosedTab', 'WebServer');
+			return { success: false, error: 'Maestro window is not available' };
+		}
+		return requestFromRenderer<ReopenClosedTabResult>(targetWindow, 'remote:reopenClosedTab', {
+			fallback: { success: false, error: 'Maestro did not answer the reopen request' },
+			parse: normalizeReopenClosedTabResult,
+			args: [sessionId, background],
+		});
 	});
 
 	// Snooze verbs are a ROUND TRIP, not a fire-and-forget send: the CLI's caller

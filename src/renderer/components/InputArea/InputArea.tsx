@@ -151,6 +151,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		availableEfforts = [],
 		onModelChange,
 		onEffortChange,
+		onRefreshModels,
+		refreshingModels,
 	} = props;
 
 	// Self-source thinking items with a narrow store equality so App/MainPanel
@@ -729,6 +731,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							availableEfforts={availableEfforts}
 							onModelChange={onModelChange}
 							onEffortChange={onEffortChange}
+							onRefreshModels={onRefreshModels}
+							refreshingModels={refreshingModels}
 							modelMenuOpen={modelMenuOpen}
 							setModelMenuOpen={setModelMenuOpen}
 							modelMenuRef={modelMenuRef}

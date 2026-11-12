@@ -23,6 +23,8 @@ The web interface is the full Maestro app, served by the desktop app to any brow
 
 Everything else is the desktop app: the same agents, tabs, transcripts (including pasted screenshots), Auto Run, and settings, live-synced with the desktop window.
 
+**Theme:** by default the web interface shows the theme picked in **Settings > Themes**, the same one the desktop window shows. To have a phone follow its own light or dark setting, turn on **Follow System Appearance** in **Settings > Themes**, then pick a light theme and a dark theme. Each browser resolves that setting against its own device, so a phone in dark mode and a laptop in light mode each show the matching theme.
+
 ## Local Access (Same Network)
 
 1. Click the **OFFLINE** button in the Left Bar header to enable the web interface

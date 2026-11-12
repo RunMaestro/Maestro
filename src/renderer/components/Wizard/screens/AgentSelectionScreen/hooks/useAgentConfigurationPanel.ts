@@ -255,5 +255,6 @@ export function useAgentConfigurationPanel({
 		handleEnvVarValueChange,
 		handleEnvVarRemove,
 		handleEnvVarAdd,
+		handleEnvVarsReplace: setCustomEnvVars,
 	};
 }

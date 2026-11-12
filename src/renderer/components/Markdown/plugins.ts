@@ -44,6 +44,8 @@ export interface MarkdownFileLinkOptions {
 	projectRoot?: string;
 	/** Home directory for tilde (`~/...`) expansion. */
 	homeDir?: string;
+	/** Confirms an absolute path with whitespace exists before it links (see remarkFileLinks). */
+	pathExists?: (absolutePath: string) => boolean | undefined;
 }
 
 export interface BuildMarkdownPluginsOptions {
@@ -181,6 +183,7 @@ export function buildMarkdownPlugins(
 				cwd: fileLinks!.cwd || '',
 				projectRoot: fileLinks!.projectRoot,
 				homeDir: fileLinks!.homeDir,
+				pathExists: fileLinks!.pathExists,
 			},
 		]);
 	}

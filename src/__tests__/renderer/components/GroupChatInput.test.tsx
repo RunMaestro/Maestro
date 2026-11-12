@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -781,6 +781,36 @@ describe('GroupChatInput', () => {
 			const annotatorState = useImageAnnotatorStore.getState();
 			expect(annotatorState.isOpen).toBe(true);
 			expect(annotatorState.imageDataUrl).toBe(stagedImages[0]);
+		});
+
+		const pickFile = (container: HTMLElement, sizeBytes: number) => {
+			const input = container.querySelector('#group-chat-image-input') as HTMLInputElement;
+			const file = new File(['x'], 'shot.png', { type: 'image/png' });
+			Object.defineProperty(file, 'size', { value: sizeBytes });
+			fireEvent.change(input, { target: { files: [file] } });
+		};
+
+		it('accepts a 25 MB screenshot', async () => {
+			const setStagedImages = vi.fn();
+			const { container } = render(
+				<GroupChatInput {...createDefaultProps({ stagedImages: [], setStagedImages })} />
+			);
+
+			pickFile(container, 25 * 1024 * 1024);
+
+			await waitFor(() => expect(setStagedImages).toHaveBeenCalled());
+		});
+
+		it('refuses an image over the 50 MB cap', async () => {
+			const setStagedImages = vi.fn();
+			const { container } = render(
+				<GroupChatInput {...createDefaultProps({ stagedImages: [], setStagedImages })} />
+			);
+
+			pickFile(container, 51 * 1024 * 1024);
+
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(setStagedImages).not.toHaveBeenCalled();
 		});
 	});
 

@@ -41,6 +41,7 @@ import { useWindowOwnsSession } from '../contexts/WindowContext';
 import { notifyToast } from '../stores/notificationStore';
 import { isAutoRunDocumentLocked, reconcileDiskContent } from '../utils/autoRunDraft';
 import type { FileNode } from '../types/fileTree';
+import { StartTruncatedText } from './ui/StartTruncatedText';
 import type { FileClickOptions } from '../hooks/ui/useAppHandlers';
 import {
 	RIGHT_PANEL_MIN_WIDTH,
@@ -847,17 +848,13 @@ export const RightPanel = memo(
 						{currentSessionBatchState.documents &&
 							currentSessionBatchState.documents.length === 1 && (
 								<div>
-									<span
-										className="text-xs overflow-hidden text-ellipsis whitespace-nowrap block"
-										style={{
-											color: theme.colors.textDim,
-											direction: 'rtl',
-											textAlign: 'left',
-										}}
+									<StartTruncatedText
+										className="text-xs block"
+										style={{ color: theme.colors.textDim }}
 										title={`${currentSessionBatchState.documents[0]}.md`}
 									>
-										<bdi>{currentSessionBatchState.documents[0]}.md</bdi>
-									</span>
+										{currentSessionBatchState.documents[0]}.md
+									</StartTruncatedText>
 								</div>
 							)}
 
@@ -867,25 +864,19 @@ export const RightPanel = memo(
 								<div>
 									{/* Document name with progress bar */}
 									<div className="flex items-center gap-2 min-w-0">
-										<span
-											className="text-xs font-medium overflow-hidden text-ellipsis whitespace-nowrap min-w-0"
-											style={{
-												color: theme.colors.textMain,
-												direction: 'rtl',
-												textAlign: 'left',
-											}}
+										<StartTruncatedText
+											className="text-xs font-medium"
+											style={{ color: theme.colors.textMain }}
 											title={`Document ${currentSessionBatchState.currentDocumentIndex + 1}/${currentSessionBatchState.documents.length}: ${currentSessionBatchState.documents[currentSessionBatchState.currentDocumentIndex]}.md`}
 										>
-											<bdi>
-												Document {currentSessionBatchState.currentDocumentIndex + 1}/
-												{currentSessionBatchState.documents.length}:{' '}
-												{
-													currentSessionBatchState.documents[
-														currentSessionBatchState.currentDocumentIndex
-													]
-												}
-											</bdi>
-										</span>
+											Document {currentSessionBatchState.currentDocumentIndex + 1}/
+											{currentSessionBatchState.documents.length}:{' '}
+											{
+												currentSessionBatchState.documents[
+													currentSessionBatchState.currentDocumentIndex
+												]
+											}
+										</StartTruncatedText>
 										<div
 											className="flex-1 h-1 rounded-full overflow-hidden shrink-0"
 											style={{ backgroundColor: theme.colors.border, minWidth: '60px' }}

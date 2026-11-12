@@ -489,13 +489,13 @@ export const ToastContainer = memo(function ToastContainer({
 	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
 
 	// Keep the stack off the Right Bar's Files / History / Auto Run tab strip
-	// (#1628). A top-right stack over an open Right Bar starts below the strip
-	// instead of on it. A bottom stack is capped so it never grows into the
-	// band at all, and toasts past the cap scroll inside the stack. Interactive
+	// (#1628). Only a right-side stack over an open Right Bar can reach the
+	// strip, so only that stack clears it: a top stack starts below the strip,
+	// and a bottom stack is capped below it with the overflow scrolling inside
+	// the stack. Every other stack only has to clear the title bar. Interactive
 	// toasts over the strip swallowed the clicks meant for its tabs.
 	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
-	const topOffset =
-		stackAtTop && !stackAtLeft && rightPanelOpen ? TOAST_TAB_STRIP_CLEARANCE : TOAST_TOP_OFFSET;
+	const topOffset = !stackAtLeft && rightPanelOpen ? TOAST_TAB_STRIP_CLEARANCE : TOAST_TOP_OFFSET;
 	const bottomOffset = TOAST_BOTTOM_OFFSET + Math.max(bottomInset, playerLift);
 	// The scroller is padded (one stack gap above and below, the gutter at the
 	// sides) and pulled back out by the same negative margin, so the toasts sit
@@ -505,7 +505,7 @@ export const ToastContainer = memo(function ToastContainer({
 	// clearance band (bottom stack) or run past the bottom offset (top stack).
 	const maxHeight = stackAtTop
 		? `calc(100vh - ${topOffset - TOAST_STACK_GAP}px)`
-		: `calc(100vh - ${bottomOffset + TOAST_TAB_STRIP_CLEARANCE - 2 * TOAST_STACK_GAP}px)`;
+		: `calc(100vh - ${bottomOffset + topOffset - 2 * TOAST_STACK_GAP}px)`;
 
 	// A bottom stack puts the newest toast last, so once it overflows, scroll
 	// to the end to keep that toast in view. A top stack renders reversed, so

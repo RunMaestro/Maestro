@@ -251,6 +251,7 @@ Fires when files matching a glob pattern are created, modified, or deleted.
 - Debounces by 5 seconds per file - rapid saves to the same file produce a single event
 - The glob is evaluated relative to the project root
 - Standard glob syntax: `*` matches within a directory, `**` matches across directories
+- If the OS file-watch limit is used up (`EMFILE` or `ENOSPC`, common on busy Linux and Docker hosts), the subscription switches to polling every second and logs a warning. To restore native watching, raise `fs.inotify.max_user_instances` (`EMFILE`) or `fs.inotify.max_user_watches` (`ENOSPC`) on the host
 
 **Example:**
 

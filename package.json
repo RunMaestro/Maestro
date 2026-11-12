@@ -1,6 +1,6 @@
 {
 	"name": "maestro",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "Maestro hones fractured attention into focused intent.",
 	"main": "dist/main/index.js",
 	"desktopName": "maestro.desktop",
@@ -33,6 +33,7 @@
 		"build": "npm run build:main && npm run build:provenance && npm run build:renderer && npm run build:web-desktop && npm run build:cli && npm run build:maestro-p && npm run build:permission-relay-bridge",
 		"build:provenance": "node scripts/write-build-provenance.mjs",
 		"verify:provenance": "node scripts/write-build-provenance.mjs --verify",
+		"smoke:packaged": "node scripts/smoke-launch-packaged.mjs",
 		"build:main": "node scripts/clean-tsc-output.mjs && tsc -p tsconfig.main.json && node scripts/gen-build-info.mjs && npm run build:preload",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
@@ -243,7 +244,7 @@
 			],
 			"artifactName": "${name}-${version}-${arch}.${ext}",
 			"category": "Development",
-			"icon": "build/icon.png",
+			"icon": "build/icons",
 			"syncDesktopName": true,
 			"extraResources": [
 				{

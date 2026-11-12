@@ -120,6 +120,10 @@ npm install
 npm run dev
 ```
 
+### Development Builds
+
+**[Download Pedram's Build](https://pedramamini.com/dropbox/maestro.zip)**, an unofficial development build for **macOS on Apple Silicon only**. It may include unfinished features.
+
 ### Requirements
 
 - At least one supported AI coding agent installed and authenticated:

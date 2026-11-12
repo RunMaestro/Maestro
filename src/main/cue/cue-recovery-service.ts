@@ -22,7 +22,9 @@ import {
 	failOrphanedRunningEvents,
 	getLastHeartbeat,
 	initCueDb,
+	isCueDbCorruptionError,
 	pruneCueEvents,
+	quarantineCorruptCueDb,
 } from './cue-db';
 import { reconcileMissedTimeEvents, type ReconcileSessionInfo } from './cue-reconciler';
 import { captureException } from '../utils/sentry';
@@ -84,16 +86,36 @@ export interface CueRecoveryService {
 }
 
 export function createCueRecoveryService(deps: CueRecoveryServiceDeps): CueRecoveryService {
+	function openCueDb(): void {
+		initCueDb((level, msg) => deps.onLog(level as MainLogLevel, msg));
+		pruneCueEvents(resolveCueHistoryRetentionMs(deps.getCueHistoryRetentionDays?.()));
+		const orphaned = failOrphanedRunningEvents(ORPHANED_RUN_MESSAGE);
+		if (orphaned > 0) {
+			deps.onLog(
+				'warn',
+				`[CUE] Marked ${orphaned} run(s) left running by an engine that exited unexpectedly as failed`
+			);
+		}
+	}
+
 	function init(): CueRecoveryInitResult {
 		try {
-			initCueDb((level, msg) => deps.onLog(level as MainLogLevel, msg));
-			pruneCueEvents(resolveCueHistoryRetentionMs(deps.getCueHistoryRetentionDays?.()));
-			const orphaned = failOrphanedRunningEvents(ORPHANED_RUN_MESSAGE);
-			if (orphaned > 0) {
+			try {
+				openCueDb();
+			} catch (error) {
+				// A damaged cue.db fails the same way on every boot, so without this
+				// Cue never starts again until the user finds and deletes the file.
+				// Corruption can surface in initCueDb() or only on the first write
+				// (pruneCueEvents), which is why the whole open sequence is retried.
+				if (!isCueDbCorruptionError(error) || !quarantineCorruptCueDb()) throw error;
 				deps.onLog(
 					'warn',
-					`[CUE] Marked ${orphaned} run(s) left running by an engine that exited unexpectedly as failed`
+					'[CUE] Cue database was corrupt - moved it aside and started a new one. Past Cue activity history is not shown.'
 				);
+				// Reported, not thrown: the engine recovers, but we still want to
+				// know how often this happens.
+				captureException(error, { extra: { operation: 'cue.dbCorruptRecovered' } });
+				openCueDb();
 			}
 			return { ok: true };
 		} catch (error) {

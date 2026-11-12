@@ -44,7 +44,7 @@ export const CORE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	allowConcurrentSend: {
 		description:
-			'Allow `maestro-cli send --live --force` to dispatch prompts to an agent whose active tab is already busy. Enables concurrent writes to a single agent; off by default because it can interleave responses.',
+			'Allow `maestro-cli dispatch --force` to write into a tab that is itself mid-turn. Off by default because two answers interleave in one conversation. An idle tab of a busy agent needs no setting: it runs its own turn in parallel.',
 		type: 'boolean',
 		default: false,
 		category: 'advanced',

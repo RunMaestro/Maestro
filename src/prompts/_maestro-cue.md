@@ -235,11 +235,12 @@ A **Command node** is a subscription that runs a shell command or invokes `maest
       command: send # required; only 'send' is supported today
       target: <session-id-or-name> # required, supports template vars
       message: '{{CUE_SOURCE_OUTPUT}}' # optional; default is exactly this
+      tab: <ai-tab-id> # optional, supports template vars; deliver into this tab of target
   # standard subscription fields all still apply (pipeline_name, target_node_key,
   # source_session, source_sub, event-specific fields like interval_minutes, etc.)
 ```
 
-**Validator rules:** `command.mode` must be `'shell'` or `'cli'`; `command.shell` must be non-empty; `command.cli.command` must be `'send'`; `command.cli.target` must be non-empty; `command.cli.message` must be a string when present. **`fan_out` is rejected** on `action: command` subs - Command nodes do not fan out. `output_prompt` and the legacy `cli_output` field are silently skipped at runtime for command actions.
+**Validator rules:** `command.mode` must be `'shell'` or `'cli'`; `command.shell` must be non-empty; `command.cli.command` must be `'send'`; `command.cli.target` must be non-empty; `command.cli.message` must be a string when present; `command.cli.tab` must be non-empty when present. Without `tab` the message goes to the target's active tab. With `tab` it goes into that tab, waiting behind a busy turn (`dispatch --tab --queue`), never moving the user's view, and the reply marks the tab unread; a tab that no longer exists falls back to a new tab plus a toast. A scheduled prompt meant for an existing conversation is authored with `cue schedule --tab <id>` / `--here`, which writes exactly this shape. **`fan_out` is rejected** on `action: command` subs - Command nodes do not fan out. `output_prompt` and the legacy `cli_output` field are silently skipped at runtime for command actions.
 
 **Fields that are NOT configurable per node** (and what they actually use):
 

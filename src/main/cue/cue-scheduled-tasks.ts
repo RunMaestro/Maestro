@@ -180,10 +180,25 @@ function projectNextFire(sub: CueSubscription): number | null {
 	return null;
 }
 
+/**
+ * The tab-delivery half of a task scheduled into an existing tab: an
+ * `action: command` cli dispatch that names a `tab`. Such a task keeps its
+ * prompt in `command.cli.message` (one copy, so an edit cannot leave two
+ * disagreeing), which is why readers and the updater go through this.
+ */
+function tabDispatchOf(
+	sub: Pick<CueSubscription, 'action' | 'command'>
+): { tab: string; message: string } | null {
+	if (sub.action !== 'command' || sub.command?.mode !== 'cli') return null;
+	const { tab, message } = sub.command.cli;
+	return tab ? { tab, message: message ?? '' } : null;
+}
+
 /** Convert one validated subscription into a `ScheduledTask` row. */
 function toScheduledTask(sub: CueSubscription, agent: ScheduledTaskAgent): ScheduledTask {
 	const event = sub.event as ScheduledTask['event'];
 	const action: CueAction = sub.action ?? 'prompt';
+	const tabDispatch = tabDispatchOf(sub);
 	return {
 		name: sub.name,
 		kind: kindForEvent(event),
@@ -194,7 +209,10 @@ function toScheduledTask(sub: CueSubscription, agent: ScheduledTaskAgent): Sched
 		projectRoot: agent.projectRoot,
 		action,
 		label: sub.label ?? '',
-		prompt: sub.prompt ?? '',
+		// A command sub's `prompt` is a normalizer sentinel (the cli target), not
+		// what the task says; the dispatched message is.
+		prompt: tabDispatch ? tabDispatch.message : (sub.prompt ?? ''),
+		...(tabDispatch ? { tabId: tabDispatch.tab } : {}),
 		pipelineName: sub.pipeline_name ?? DEFAULT_SCHEDULED_TASK_PIPELINE,
 		fireAt: sub.fire_at,
 		scheduleTimes: sub.schedule_times,
@@ -268,6 +286,15 @@ export function buildScheduledTaskSubscriptions(
 	if (turnSettings && !hasPrompt) {
 		throw new Error('a model tier, model, or effort needs a prompt to run');
 	}
+	const tabId = input.tabId?.trim() || undefined;
+	if (tabId && !hasPrompt) {
+		throw new Error('a target tab needs a prompt to deliver');
+	}
+	if (tabId && turnSettings) {
+		throw new Error(
+			"a prompt delivered into an existing tab runs on that tab's model; drop the tier, model, or effort"
+		);
+	}
 
 	const timing: Record<string, unknown> = {};
 	let baseName: string;
@@ -315,7 +342,24 @@ export function buildScheduledTaskSubscriptions(
 	const dual = hasPrompt && hasNotify;
 	const subs: Record<string, unknown>[] = [];
 
-	if (hasPrompt) {
+	if (hasPrompt && tabId) {
+		// Into an existing conversation: the same `dispatch --tab --queue` an agent
+		// would run by hand, done by Cue itself so no agent turn is spent as a relay.
+		subs.push({
+			name: dual ? `${baseName}-prompt` : baseName,
+			event,
+			enabled: true,
+			action: 'command',
+			command: {
+				mode: 'cli',
+				cli: { command: 'send', target: agent.id, tab: tabId, message: promptText },
+			},
+			...timing,
+			agent_id: agent.id,
+			pipeline_name: pipelineName,
+			label,
+		});
+	} else if (hasPrompt) {
 		subs.push({
 			name: dual ? `${baseName}-prompt` : baseName,
 			event,
@@ -417,7 +461,15 @@ export async function updateScheduledTask(
 			}
 			target.interval_minutes = patch.intervalMinutes;
 		}
-		if (patch.prompt !== undefined) target.prompt = patch.prompt;
+		if (patch.prompt !== undefined) {
+			const tabDispatch = tabDispatchOf(target as Pick<CueSubscription, 'action' | 'command'>);
+			if (tabDispatch) {
+				// The raw YAML object: `tabDispatchOf` just proved this shape.
+				(target.command as { cli: { message?: string } }).cli.message = patch.prompt;
+			} else {
+				target.prompt = patch.prompt;
+			}
+		}
 		if (patch.label !== undefined) target.label = truncateTaskLabel(patch.label);
 		if (patch.enabled !== undefined) target.enabled = patch.enabled;
 		if (patch.notify !== undefined) {

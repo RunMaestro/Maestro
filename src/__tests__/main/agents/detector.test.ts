@@ -2010,7 +2010,7 @@ describe('agent-detector', () => {
 			const agents = await detector.detectAgents();
 			const opencode = agents.find((a) => a.id === 'opencode');
 
-			expect(opencode?.jsonOutputArgs).toEqual(['--format', 'json']);
+			expect(opencode?.jsonOutputArgs).toEqual(['--format', 'json', '--thinking']);
 		});
 	});
 

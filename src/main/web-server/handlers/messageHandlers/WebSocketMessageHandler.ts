@@ -97,6 +97,7 @@ import {
 	handleMarketplaceImportPlaybook,
 } from './marketplace';
 import { handlePluginsListTools, handlePluginsCallTool } from './plugins';
+import { handleListAgentModels } from './models';
 import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
@@ -121,6 +122,7 @@ import {
 	handleCloseTab,
 	handleRenameTab,
 	handleStarTab,
+	handleReopenClosedTab,
 	handleReorderTab,
 	handleToggleBookmark,
 	handleOpenFileTab,
@@ -157,6 +159,7 @@ import {
 	handleSendGroupChatMessage,
 	handleStopGroupChat,
 	handleArchiveGroupChat,
+	handleAddGroupChatParticipant,
 } from './groupChat';
 import {
 	handleMergeContext,
@@ -316,6 +319,10 @@ export class WebSocketMessageHandler {
 
 			case 'star_tab':
 				handleStarTab(this.ctx, client, message);
+				break;
+
+			case 'reopen_closed_tab':
+				handleReopenClosedTab(this.ctx, client, message);
 				break;
 
 			case 'snooze_command':
@@ -566,6 +573,10 @@ export class WebSocketMessageHandler {
 				handleArchiveGroupChat(this.ctx, client, message);
 				break;
 
+			case 'add_group_chat_participant':
+				handleAddGroupChatParticipant(this.ctx, client, message);
+				break;
+
 			case 'merge_context':
 				handleMergeContext(this.ctx, client, message);
 				break;
@@ -740,6 +751,10 @@ export class WebSocketMessageHandler {
 
 			case 'feedback_diagnose':
 				void handleFeedbackDiagnose(this.ctx, client, message);
+				break;
+
+			case 'list_agent_models':
+				void handleListAgentModels(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

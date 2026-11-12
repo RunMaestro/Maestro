@@ -218,6 +218,7 @@ import type { MemoryApi } from '../main/preload/memory';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
+import type { ReopenClosedTabResult } from '../shared/reopenClosedTab';
 import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
@@ -494,6 +495,13 @@ interface MaestroAPI {
 		onRemoteStarTab: (
 			callback: (sessionId: string, tabId: string, starred: boolean) => void
 		) => () => void;
+		onRemoteReopenClosedTab: (
+			callback: (sessionId: string, background: boolean, responseChannel: string) => void
+		) => () => void;
+		sendRemoteReopenClosedTabResponse: (
+			responseChannel: string,
+			result: ReopenClosedTabResult
+		) => void;
 		onRemoteSnoozeCommand: (
 			callback: (request: SnoozeCommandRequest, responseChannel: string) => void
 		) => () => void;
@@ -1525,13 +1533,17 @@ interface MaestroAPI {
 			baseBranch: string,
 			title: string,
 			body: string,
-			ghPath?: string
+			ghPath?: string,
+			sshRemoteId?: string
 		) => Promise<{
 			success: boolean;
 			prUrl?: string;
 			error?: string;
 		}>;
-		getDefaultBranch: (cwd: string) => Promise<{
+		getDefaultBranch: (
+			cwd: string,
+			sshRemoteId?: string
+		) => Promise<{
 			success: boolean;
 			branch?: string;
 			error?: string;
@@ -1832,6 +1844,9 @@ interface MaestroAPI {
 			global: string[];
 		}>;
 		getModels: (agentId: string, forceRefresh?: boolean, sshRemoteId?: string) => Promise<string[]>;
+		onModelsRefreshed: (
+			callback: (payload: import('../shared/agentModelsRefresh').ModelsRefreshedPayload) => void
+		) => () => void;
 		getConfigOptions: (
 			agentId: string,
 			optionKey: string,
@@ -1871,7 +1886,7 @@ interface MaestroAPI {
 					accountEmail?: string;
 					accountUuid?: string;
 					organizationName?: string;
-					session: { percent: number; resetsAt?: string };
+					session?: { percent: number; resetsAt?: string };
 					weekAllModels: { percent: number; resetsAt?: string };
 					weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
 				}
@@ -3496,6 +3511,7 @@ interface MaestroAPI {
 		pollAuthStatus: (clientToken: string) => Promise<{
 			status: 'pending' | 'confirmed' | 'expired' | 'error';
 			authToken?: string;
+			email?: string;
 			message?: string;
 			error?: string;
 		}>;

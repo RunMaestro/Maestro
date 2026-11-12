@@ -16,8 +16,10 @@
  * wins. That keeps this correct as agents are added without touching callers.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { readEffortFromConfig } from '../../utils/agentEffort';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { describeModelsRefresh, summarizeModelsRefresh } from '../../../shared/agentModelsRefresh';
 
 export interface AgentModelEffortOptions {
 	/** Model ids the agent offers. Empty when the agent has no model selection. */
@@ -35,6 +37,14 @@ export interface AgentModelEffortOptions {
 	 * nothing to show.
 	 */
 	loaded: boolean;
+	/**
+	 * Re-run model discovery past the cache (a model just pulled into Ollama,
+	 * say) and report the result in a center flash. Every other open picker
+	 * picks the new list up from the main-process broadcast.
+	 */
+	refreshModels: () => Promise<void>;
+	/** True while a refresh started by THIS surface is in flight. */
+	refreshingModels: boolean;
 }
 
 /**
@@ -52,6 +62,14 @@ export function useAgentModelEffortOptions(agentId?: string): AgentModelEffortOp
 	const [defaultModel, setDefaultModel] = useState('');
 	const [defaultEffort, setDefaultEffort] = useState('');
 	const [loaded, setLoaded] = useState(false);
+	const [refreshingModels, setRefreshingModels] = useState(false);
+
+	// Read after the refresh's await: the surface may have moved to another
+	// agent, and that agent's list must not be overwritten with this one.
+	const agentIdRef = useRef(agentId);
+	agentIdRef.current = agentId;
+	const modelsRef = useRef(models);
+	modelsRef.current = models;
 
 	useEffect(() => {
 		if (!agentId) return;
@@ -103,7 +121,53 @@ export function useAgentModelEffortOptions(agentId?: string): AgentModelEffortOp
 		};
 	}, [agentId]);
 
-	return { models, efforts, defaultModel, defaultEffort, loaded };
+	// A forced discovery anywhere (Settings, another picker, the CLI) carries
+	// the fresh list. Without this a picker that stays mounted - the composer
+	// does not remount per tab - kept the list it fetched on first render.
+	useEffect(() => {
+		if (!agentId) return;
+		return window.maestro.agents.onModelsRefreshed((payload) => {
+			// This hook discovers on this machine, so a remote host's list is not ours.
+			if (payload.agentId !== agentId || payload.sshRemoteId !== null) return;
+			setModels(payload.models);
+		});
+	}, [agentId]);
+
+	const refreshModels = useCallback(async () => {
+		const target = agentId;
+		if (!target) return;
+		const previous = modelsRef.current;
+		setRefreshingModels(true);
+		try {
+			const next = await window.maestro.agents.getModels(target, true);
+			if (agentIdRef.current !== target) return;
+			setModels(next);
+			notifyCenterFlash({
+				message: 'Models refreshed',
+				detail: describeModelsRefresh(summarizeModelsRefresh(previous, next)),
+				color: 'green',
+			});
+		} catch (error) {
+			if (agentIdRef.current !== target) return;
+			notifyCenterFlash({
+				message: 'Could not refresh models',
+				detail: error instanceof Error ? error.message : String(error),
+				color: 'red',
+			});
+		} finally {
+			setRefreshingModels(false);
+		}
+	}, [agentId]);
+
+	return {
+		models,
+		efforts,
+		defaultModel,
+		defaultEffort,
+		loaded,
+		refreshModels,
+		refreshingModels,
+	};
 }
 
 /**

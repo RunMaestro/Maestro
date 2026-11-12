@@ -39,6 +39,7 @@ import {
 	isSessionImageRef,
 	sessionImageRefBasename,
 } from '../../shared/sessionImageRefs';
+import { parseBase64DataUrl } from '../../shared/dataUrl';
 
 const IMAGE_DIR_NAME = 'session-images';
 // The reference grammar is shared with the renderer (which rewrites refs to
@@ -100,21 +101,10 @@ export function isInlineImageDataUrl(value: string): boolean {
 	return typeof value === 'string' && value.startsWith('data:image/');
 }
 
-// Matches only the `data:<media type>;base64,` header. The payload is taken by
-// slicing, NOT by a `(.+)` capture group: a pasted Retina screenshot is a
-// multi-megabyte base64 string, and making the regex engine scan and capture
-// the whole payload cost 1.6s of blocked main thread across one 62s field
-// trace (the relocation pass re-parses every image on every persistence flush).
-// `slice` hands back a V8 SlicedString - no copy, no scan.
-const DATA_URL_HEADER_RE = /^data:(image\/[^;]+);base64,/;
-
-/** Parse a data URL into its media type and base64 payload, or null. */
+/** Parse an inline image data URL into its media type and base64 payload, or null. */
 function parseDataUrl(dataUrl: string): { mediaType: string; base64: string } | null {
-	const match = DATA_URL_HEADER_RE.exec(dataUrl);
-	if (!match) return null;
-	const base64 = dataUrl.slice(match[0].length);
-	if (!base64) return null;
-	return { mediaType: match[1], base64 };
+	const parsed = parseBase64DataUrl(dataUrl);
+	return parsed && parsed.mediaType.startsWith('image/') ? parsed : null;
 }
 
 /**

@@ -6,6 +6,7 @@
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
+import type { ReopenClosedTabResult } from '../../shared/reopenClosedTab';
 import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
@@ -399,6 +400,15 @@ export type StarTabCallback = (
  * thrown error there reads as a broken command instead of "no such snooze".
  */
 export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
+/**
+ * Reopen an agent's most recently closed tab (`maestro-cli tab reopen`). The
+ * closed-tab history lives only in the renderer, so it answers. Resolves rather
+ * than rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type ReopenClosedTabCallback = (
+	sessionId: string,
+	background: boolean
+) => Promise<ReopenClosedTabResult>;
 /**
  * One Auto Run steering verb, forwarded to the renderer - which holds the notes
  * its run loop reads - and answered with whatever it did. Resolves rather than
@@ -967,7 +977,9 @@ export interface GetSessionHistoryOptions {
 }
 
 /** Callback to enumerate all open AI tabs across all desktop agents. */
-export type ListDesktopSessionsCallback = () => DesktopSessionEntry[];
+export type ListDesktopSessionsCallback = () =>
+	| DesktopSessionEntry[]
+	| import('../../shared/desktopTabs').DesktopTabListing;
 
 /** Callback to fetch a tab's full conversation history by tabId. */
 export type GetSessionHistoryCallback = (
@@ -1367,6 +1379,19 @@ export type StartGroupChatCallback = (
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
 export type ArchiveGroupChatCallback = (chatId: string, archived: boolean) => Promise<boolean>;
+export interface AddGroupChatParticipantResult {
+	success: boolean;
+	/** The participant's name in the chat. */
+	participantName?: string;
+	/** True when the agent was already a participant; nothing changed. */
+	alreadyMember?: boolean;
+	error?: string;
+}
+/** Add the agent with this exact GUID to a group chat. */
+export type AddGroupChatParticipantCallback = (
+	chatId: string,
+	agentId: string
+) => Promise<AddGroupChatParticipantResult>;
 export type SendGroupChatMessageCallback = (chatId: string, message: string) => Promise<boolean>;
 export type GetGroupChatsCallback = () => Promise<GroupChatState[]>;
 

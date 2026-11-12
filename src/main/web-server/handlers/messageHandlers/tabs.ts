@@ -2,7 +2,7 @@
  * Tabs domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: select_tab, new_tab,
- * close_tab, rename_tab, star_tab, reorder_tab, toggle_bookmark,
+ * close_tab, rename_tab, star_tab, reopen_closed_tab, reorder_tab, toggle_bookmark,
  * open_file_tab, open_browser_tab, open_terminal_tab, new_ai_tab_with_prompt,
  * open_document_graph.
  */
@@ -237,6 +237,53 @@ export function handleStarTab(
 		})
 		.catch((error) => {
 			ctx.sendError(client, `Failed to star tab: ${error.message}`);
+		});
+}
+
+/**
+ * Handle reopen_closed_tab message - restore an agent's most recently closed tab
+ * (`maestro-cli tab reopen`). The renderer owns the closed-tab history, so this
+ * validates the agent and forwards; the answer names the tab that came back.
+ */
+export function handleReopenClosedTab(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sendResult = (payload: Record<string, unknown>) => {
+		ctx.send(client, {
+			type: 'reopen_closed_tab_result',
+			...payload,
+			requestId: message.requestId,
+		});
+	};
+
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const background = readBackgroundField(message);
+	logger.info(
+		`[Web] Received reopen_closed_tab message: session=${sessionId}, background=${background}`,
+		LOG_CONTEXT
+	);
+
+	if (!sessionId) {
+		sendResult({ success: false, error: 'Missing sessionId' });
+		return;
+	}
+	if (!ctx.callbacks.getSessionDetail?.(sessionId)) {
+		sendResult({ success: false, error: `Session not found: ${sessionId}` });
+		return;
+	}
+	if (!ctx.callbacks.reopenClosedTab) {
+		sendResult({ success: false, error: 'Reopen closed tab is not configured' });
+		return;
+	}
+
+	ctx.callbacks
+		.reopenClosedTab(sessionId, background)
+		.then((result) => sendResult({ ...result, sessionId }))
+		.catch((error) => {
+			const detail = error instanceof Error ? error.message : String(error);
+			sendResult({ success: false, error: `Failed to reopen closed tab: ${detail}` });
 		});
 }
 

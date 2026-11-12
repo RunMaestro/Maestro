@@ -16,6 +16,8 @@ Cross-platform and multi-environment considerations for the Maestro codebase. Fo
 | Git worktrees            | Yes   | Yes     | Yes   | Yes        |
 | PTY terminal             | Yes   | Yes     | Yes   | N/A        |
 
+The matrix shows the four longest-supported providers; there are 13 agent ids in `AGENT_IDS` (`src/shared/agentIds.ts`), and every provider's spawn, resume, and read-only flags live in `src/main/agents/definitions.ts`.
+
 ---
 
 ## Critical Platform Gotchas
@@ -49,41 +51,50 @@ import { expandTilde } from '../shared/pathUtils';
 const expanded = expandTilde('~/.config/file'); // Always use this
 ```
 
-**Minimum path lengths:**
+**Platform checks go through the helpers, never raw `process.platform`:**
 
 ```typescript
-// Validation must account for platform differences
-const minPathLength = process.platform === 'win32' ? 4 : 5; // C:\a vs /a/b
+// Main process, CLI, and shared code:
+import { isWindows, isMacOS, isLinux, getWhichCommand } from '../shared/platformDetection';
+// Renderer only (process.platform there is the shim sentinel 'browser'):
+import {
+	isWindowsPlatform,
+	isMacOSPlatform,
+	isLinuxPlatform,
+} from '../renderer/utils/platformUtils';
 ```
 
-**Windows reserved names:**
+**Minimum path lengths and Windows reserved names** (`isValidSyncPath()` in `src/shared/syncPath.ts`):
 
 ```typescript
-// CON, PRN, AUX, NUL, COM1-9, LPT1-9 are invalid on Windows
+const minPathLength = isWindows() ? 4 : 5; // C:\a vs /a/b
+// CON, PRN, AUX, NUL, COM1-9, LPT1-9 are invalid on Windows; checked per path segment
 const reservedNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+// Plugin KV ids use a stricter variant that also rejects `CON.txt` (src/main/plugins/plugin-kv-store.ts)
 ```
 
 ### 2. Shell Detection & Execution
 
-**Default shells differ:**
+**Default shells differ** (`src/main/utils/shellDetector.ts`):
 
 ```typescript
-// Windows: $SHELL doesn't exist; default to PowerShell
-const defaultShell = process.platform === 'win32' ? 'powershell.exe' : 'bash';
+// Windows: $SHELL doesn't exist. Candidates: powershell, pwsh, cmd, bash (Git Bash), wsl.
+// Unix: zsh, bash, sh, fish, tcsh. Terminal-tab PTYs spawn whichever the user picked in Settings.
+const defaultShell = isWindows() ? 'powershell.exe' : 'bash';
 ```
 
 **Command lookup differs:**
 
 ```typescript
 // 'which' on Unix, 'where' on Windows
-const command = process.platform === 'win32' ? 'where' : 'which';
+const command = getWhichCommand();
 ```
 
 **Executable permissions:**
 
 ```typescript
 // Unix requires X_OK check; Windows does not
-if (process.platform !== 'win32') {
+if (!isWindows()) {
 	await fs.promises.access(filePath, fs.constants.X_OK);
 }
 ```
@@ -106,9 +117,15 @@ const useShell = isWindows && needsWindowsShell(command);
 // WRONG - fails for terminal-only SSH agents
 const sshId = session.sshRemoteId;
 
-// CORRECT - works for all SSH agents
-const sshId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId;
+// CORRECT - the helpers fold both together (src/renderer/utils/sessionHelpers.ts)
+import { getSessionSshRemoteId, isSessionRemote } from '../utils/sessionHelpers';
+const sshId = getSessionSshRemoteId(session);
+if (isSessionRemote(session)) {
+	/* remote-only path */
+}
 ```
+
+**Stopping a remote agent** (`src/main/utils/ssh-remote-signal.ts`): with `RequestTTY=no` a signal to the local `ssh` client never reaches the remote process, so the launch script records the agent's pid (plus start time) in a pid file before it `exec`s, and Stop runs a one-shot `ssh` with the same connection args to signal that process group.
 
 **File watching not available for SSH:**
 
@@ -119,14 +136,17 @@ if (sshRemoteId) {
 }
 ```
 
-**Prompts must go via stdin for SSH:**
+**Prompts go via stdin for SSH (with one size rule):**
 
 ```typescript
-// IMPORTANT: ALL agent prompts are passed via stdin passthrough for SSH.
-// This avoids shell escaping issues and command line length limits.
-if (isSSH) {
-	// Pass prompt via stdin, not as command line argument
-}
+// The main spawn path (src/main/ipc/handlers/process/wrap-spawn-for-ssh.ts)
+// sends the whole launch script AND the prompt through stdin to /bin/bash on
+// the remote, which sidesteps shell escaping and command-line length limits.
+// wrapSpawnWithSsh() (src/main/utils/ssh-spawn-wrapper.ts), used by Cue, group
+// chat, the context groomer, the usage sampler and the CLI, embeds a prompt of
+// 4000 chars or fewer on the command line and switches to the stdin script
+// only above that. Keep that threshold in mind when a remote prompt is
+// visible in `ps` output or hits a remote shell's argument limit.
 ```
 
 **Path resolution on remote:**
@@ -154,9 +174,10 @@ if (isRemote) {
 ```typescript
 // Claude Code: ~/.claude/projects/<encoded-path>/
 // Codex: ~/.codex/sessions/YYYY/MM/DD/*.jsonl
-// OpenCode:
-//   - macOS/Linux: ~/.config/opencode/storage/
-//   - Windows: %APPDATA%/opencode/storage/
+// OpenCode (XDG on EVERY platform, src/main/storage/opencode-session-storage.ts):
+//   - v1.2+: SQLite at $XDG_DATA_HOME/opencode/opencode.db, default ~/.local/share/opencode/opencode.db
+//   - older: JSON under ~/.local/share/opencode/storage/
+//   - Windows: same ~/.local/share path; %APPDATA%\opencode is only a legacy fallback
 ```
 
 **Resume flags differ:**
@@ -165,13 +186,14 @@ if (isRemote) {
 // Claude Code: --resume <session-id>
 // Codex: resume <thread_id> (subcommand, not flag)
 // OpenCode: --session <session-id>
+// Every other provider: see its entry in src/main/agents/definitions.ts
 ```
 
 **Read-only mode flags differ:**
 
 ```typescript
 // Claude Code: --permission-mode plan
-// Codex: --sandbox read-only
+// Codex: --sandbox read-only (batch mode also adds --skip-git-repo-check)
 // OpenCode: --agent plan
 ```
 
@@ -181,8 +203,11 @@ if (isRemote) {
 
 ```typescript
 // Alt+L = '¬', Alt+P = 'π', Alt+U = 'ü'
-// Must use e.code for Alt key combos, not e.key
-if (e.altKey && process.platform === 'darwin') {
+// Must use e.code for Alt key combos, not e.key. Never read process.platform in
+// the renderer: the shim (src/renderer/public/process-shim.js) reports 'browser'.
+// useMainKeyboardHandler.ts does it this way:
+import { isMacOSPlatform } from '../utils/platformUtils';
+if (e.altKey && isMacOSPlatform()) {
 	const key = e.code.replace('Key', '').toLowerCase(); // 'KeyL' -> 'l'
 }
 ```
@@ -235,14 +260,20 @@ When making changes that involve any of the above areas, verify:
 
 ## Key Files for Platform Logic
 
-| Concern             | Primary Files                                              |
-| ------------------- | ---------------------------------------------------------- |
-| Path utilities      | `src/shared/pathUtils.ts`                                  |
-| Shell detection     | `src/main/utils/shellDetector.ts`                          |
-| WSL detection       | `src/main/utils/wslDetector.ts`                            |
-| CLI detection       | `src/main/utils/cliDetection.ts`                           |
-| SSH spawn wrapper   | `src/main/utils/ssh-spawn-wrapper.ts`                      |
-| SSH command builder | `src/main/utils/ssh-command-builder.ts`                    |
-| Agent path probing  | `src/main/agents/path-prober.ts`                           |
-| Windows diagnostics | `src/main/debug-package/collectors/windows-diagnostics.ts` |
-| Safe exec           | `src/main/utils/execFile.ts`                               |
+| Concern                     | Primary Files                                                                                |
+| --------------------------- | -------------------------------------------------------------------------------------------- |
+| Platform detection (main)   | `src/shared/platformDetection.ts`                                                            |
+| Platform detection (render) | `src/renderer/utils/platformUtils.ts`, shim in `src/renderer/public/process-shim.js`         |
+| Path utilities              | `src/shared/pathUtils.ts`                                                                    |
+| Shell escaping              | `src/main/utils/shell-escape.ts`                                                             |
+| Shell detection             | `src/main/utils/shellDetector.ts`                                                            |
+| WSL detection               | `src/main/utils/wslDetector.ts`                                                              |
+| CLI detection               | `src/main/utils/cliDetection.ts`                                                             |
+| SSH spawn wrapper           | `src/main/utils/ssh-spawn-wrapper.ts`, `src/main/ipc/handlers/process/wrap-spawn-for-ssh.ts` |
+| SSH command builder         | `src/main/utils/ssh-command-builder.ts`                                                      |
+| SSH remote resolution       | `src/main/utils/ssh-remote-resolver.ts`, `src/main/utils/ssh-config-parser.ts`               |
+| SSH remote stop/kill        | `src/main/utils/ssh-remote-signal.ts`                                                        |
+| Agent path probing          | `src/main/agents/path-prober.ts`                                                             |
+| Provider session storage    | `src/main/storage/codex-session-storage.ts`, `src/main/storage/opencode-session-storage.ts`  |
+| Windows diagnostics         | `src/main/debug-package/collectors/windows-diagnostics.ts`                                   |
+| Safe exec                   | `src/main/utils/execFile.ts`                                                                 |

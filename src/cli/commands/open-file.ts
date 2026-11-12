@@ -19,12 +19,11 @@
 // An http(s) URL instead of a path streams it in the media player: progressive
 // MP4 (H.264/AAC) and plain audio files over HTTP. It never becomes a tab and
 // never switches agents. The agent it is filed under is `--agent`, else the
-// agent owning the shell's cwd.
+// agent that owns this shell, else the agent owning the shell's cwd.
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
-import { getSessionById } from '../services/storage';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import {
 	getRemoteMediaName,
@@ -32,7 +31,7 @@ import {
 	isRemoteMediaUrl,
 	type MediaOpenMode,
 } from '../../shared/mediaTypes';
-import { resolveOwningAgent } from '../utils/owning-agent';
+import { resolveTargetAgent } from '../utils/owning-agent';
 
 interface OpenFileOptions {
 	agent?: string;
@@ -123,9 +122,8 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 /**
  * Validate a remote media URL and pick the agent to file it under.
  *
- * A URL lives in no agent's working directory, so ownership falls back to the
- * shell's cwd: an agent calling this from its own workspace files the stream
- * under itself without having to pass `--agent`.
+ * A URL lives in no agent's working directory, so without `--agent` it goes to
+ * the agent that owns this shell, else the agent owning the shell's cwd.
  */
 function resolveUrlTarget(url: string, options: OpenFileOptions): ResolvedTarget {
 	try {
@@ -134,64 +132,35 @@ function resolveUrlTarget(url: string, options: OpenFileOptions): ResolvedTarget
 		console.error(`Error: Not a valid URL: ${url}`);
 		process.exit(1);
 	}
-
-	if (options.agent) {
-		const session = getSessionById(options.agent);
-		if (!session) {
-			console.error(`Error: Agent not found: ${options.agent}`);
-			process.exit(1);
-		}
-		return { sessionId: session.id, absolutePath: url };
-	}
-
-	const owned = resolveOwningAgent(process.cwd());
-	if (!owned) {
-		console.error(
-			`Error: the current directory is not inside any agent's working directory. Pick an agent with --agent <id>.`
-		);
-		process.exit(1);
-	}
-	return { sessionId: owned.agent.id, absolutePath: url };
+	return { sessionId: resolveAgentOrExit(null, options), absolutePath: url };
 }
 
 /**
  * Resolve the file path and the target agent.
  *
- * - Relative paths are resolved against the shell's CWD (process.cwd()).
- * - With `--agent`, the file opens in that agent regardless of where it lives -
- *   the explicit flag means the user is asserting which agent they want.
- * - Without `--agent`, we auto-detect the owning agent by longest cwd-prefix
- *   match. On tie, we pick the most-recently-active candidate by history-file
- *   mtime. With zero owners, we error and tell the user to pass `--agent`.
+ * Relative paths are resolved against the shell's CWD (process.cwd()). The
+ * agent is `--agent`, else the agent that owns this shell (its own turn or its
+ * terminal tab), else the agent whose workspace holds the file: see
+ * `resolveTargetAgent`.
  */
 function resolveTarget(filePath: string, options: OpenFileOptions): ResolvedTarget {
 	const absolutePath = path.isAbsolute(filePath)
 		? path.resolve(filePath)
 		: path.resolve(process.cwd(), filePath);
+	return { sessionId: resolveAgentOrExit(absolutePath, options), absolutePath };
+}
 
-	if (options.agent) {
-		const session = getSessionById(options.agent);
-		if (!session) {
-			console.error(`Error: Agent not found: ${options.agent}`);
-			process.exit(1);
-		}
-		return { sessionId: session.id, absolutePath };
-	}
-
-	const owned = resolveOwningAgent(absolutePath);
-
-	if (!owned) {
-		console.error(
-			`Error: ${absolutePath} is not inside any agent's working directory. Pick an agent with --agent <id>.`
-		);
+function resolveAgentOrExit(absolutePath: string | null, options: OpenFileOptions): string {
+	const resolved = resolveTargetAgent(absolutePath, options.agent);
+	if ('error' in resolved) {
+		console.error(`Error: ${resolved.error}`);
 		process.exit(1);
 	}
-
-	if (owned.others.length > 0) {
-		const others = owned.others.map((s) => s.name);
+	if (resolved.others.length > 0) {
+		const others = resolved.others.map((s) => s.name);
 		console.error(
-			`Note: ${owned.others.length + 1} agents own this path; opened in ${owned.agent.name}. Other candidates: ${others.join(', ')}. Use --agent to override.`
+			`Note: ${resolved.others.length + 1} agents own this path; opened in ${resolved.agent.name}. Other candidates: ${others.join(', ')}. Use --agent to override.`
 		);
 	}
-	return { sessionId: owned.agent.id, absolutePath };
+	return resolved.agent.id;
 }

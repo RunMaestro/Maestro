@@ -23,6 +23,7 @@ import type {
 	GroupChatState,
 	StartGroupChatOptions,
 	StartGroupChatResult,
+	AddGroupChatParticipantResult,
 	CueSubscriptionInfo,
 	CueActivityEntry,
 	UsageDashboardData,
@@ -35,7 +36,6 @@ import type {
 	NotifyCenterFlashParams,
 	MarketplaceManifestResult,
 	MarketplaceImportResult,
-	DesktopSessionEntry,
 	SessionHistoryResult,
 	GetSessionHistoryOptions,
 	EnqueueCommandResult,
@@ -45,6 +45,7 @@ import type {
 	ConsultAgentResult,
 	RenameTabResult,
 	SnoozeCommandCallback,
+	ReopenClosedTabCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	OpenFileTabOptions,
@@ -156,6 +157,8 @@ export interface MessageHandlerCallbacks {
 		newName: string
 	) => Promise<boolean | RenameTabResult>;
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
+	/** `maestro-cli tab reopen` - restore an agent's most recently closed tab. */
+	reopenClosedTab: ReopenClosedTabCallback;
 	/** `maestro-cli snooze` - park, list, wake, dismiss, reschedule, history. */
 	snoozeCommand: SnoozeCommandCallback;
 	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
@@ -373,6 +376,10 @@ export interface MessageHandlerCallbacks {
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
 	stopGroupChat: (chatId: string) => Promise<boolean>;
 	archiveGroupChat: (chatId: string, archived: boolean) => Promise<boolean>;
+	addGroupChatParticipant: (
+		chatId: string,
+		agentId: string
+	) => Promise<AddGroupChatParticipantResult>;
 	sendGroupChatMessage: (chatId: string, message: string) => Promise<boolean>;
 	mergeContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	transferContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
@@ -442,7 +449,7 @@ export interface MessageHandlerCallbacks {
 	/** External-pickup primitive used by `maestro-cli session list`. Surfaces every
 	 *  open AI tab across all desktop agents so consumers (Maestro-Discord, Cue)
 	 *  can address tabs by id without owning a persistent channel. */
-	listDesktopSessions: () => DesktopSessionEntry[];
+	listDesktopSessions: () => ReturnType<import('../../types').ListDesktopSessionsCallback>;
 	/** Read-only conversation history fetch used by `maestro-cli session show
 	 *  <tabId>`. Filters (`sinceMs`, `tail`) live alongside the read so we don't
 	 *  ship the full transcript over the wire on every poll. */

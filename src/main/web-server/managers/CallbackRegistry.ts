@@ -25,6 +25,7 @@ import type {
 	RenameTabCallback,
 	RenameTabResult,
 	StarTabCallback,
+	ReopenClosedTabCallback,
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
@@ -119,6 +120,8 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	ArchiveGroupChatCallback,
+	AddGroupChatParticipantCallback,
+	AddGroupChatParticipantResult,
 	SendGroupChatMessageCallback,
 	GroupChatState,
 	MergeContextCallback,
@@ -156,10 +159,10 @@ import type {
 	ListDesktopSessionsCallback,
 	GetSessionHistoryCallback,
 	GetSessionHistoryOptions,
-	DesktopSessionEntry,
 	SessionHistoryResult,
 } from '../types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { ReopenClosedTabResult } from '../../../shared/reopenClosedTab';
 import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
@@ -190,6 +193,7 @@ export interface WebServerCallbacks {
 	closeTab: CloseTabCallback | null;
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
+	reopenClosedTab: ReopenClosedTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
@@ -255,6 +259,7 @@ export interface WebServerCallbacks {
 	getGroupChatState: GetGroupChatStateCallback | null;
 	stopGroupChat: StopGroupChatCallback | null;
 	archiveGroupChat: ArchiveGroupChatCallback | null;
+	addGroupChatParticipant: AddGroupChatParticipantCallback | null;
 	sendGroupChatMessage: SendGroupChatMessageCallback | null;
 	mergeContext: MergeContextCallback | null;
 	transferContext: TransferContextCallback | null;
@@ -300,6 +305,7 @@ export class CallbackRegistry {
 		closeTab: null,
 		renameTab: null,
 		starTab: null,
+		reopenClosedTab: null,
 		snoozeCommand: null,
 		autoRunSteeringCommand: null,
 		windowCommand: null,
@@ -363,6 +369,7 @@ export class CallbackRegistry {
 		getGroupChatState: null,
 		stopGroupChat: null,
 		archiveGroupChat: null,
+		addGroupChatParticipant: null,
 		sendGroupChatMessage: null,
 		mergeContext: null,
 		transferContext: null,
@@ -483,6 +490,13 @@ export class CallbackRegistry {
 	async starTab(sessionId: string, tabId: string, starred: boolean): Promise<boolean> {
 		if (!this.callbacks.starTab) return false;
 		return this.callbacks.starTab(sessionId, tabId, starred);
+	}
+
+	async reopenClosedTab(sessionId: string, background: boolean): Promise<ReopenClosedTabResult> {
+		if (!this.callbacks.reopenClosedTab) {
+			return { success: false, error: 'Reopen closed tab is not configured' };
+		}
+		return this.callbacks.reopenClosedTab(sessionId, background);
 	}
 
 	async snoozeCommand(request: SnoozeCommandRequest): Promise<SnoozeCommandResult> {
@@ -952,6 +966,16 @@ export class CallbackRegistry {
 		return this.callbacks.archiveGroupChat(chatId, archived);
 	}
 
+	async addGroupChatParticipant(
+		chatId: string,
+		agentId: string
+	): Promise<AddGroupChatParticipantResult> {
+		if (!this.callbacks.addGroupChatParticipant) {
+			return { success: false, error: 'Group chat not configured' };
+		}
+		return this.callbacks.addGroupChatParticipant(chatId, agentId);
+	}
+
 	async sendGroupChatMessage(chatId: string, message: string): Promise<boolean> {
 		if (!this.callbacks.sendGroupChatMessage) return false;
 		return this.callbacks.sendGroupChatMessage(chatId, message);
@@ -1118,7 +1142,7 @@ export class CallbackRegistry {
 		return this.callbacks.importMarketplacePlaybook(sessionId, playbookId, targetFolderName);
 	}
 
-	listDesktopSessions(): DesktopSessionEntry[] {
+	listDesktopSessions(): ReturnType<ListDesktopSessionsCallback> {
 		return this.callbacks.listDesktopSessions?.() ?? [];
 	}
 
@@ -1195,6 +1219,10 @@ export class CallbackRegistry {
 
 	setStarTabCallback(callback: StarTabCallback): void {
 		this.callbacks.starTab = callback;
+	}
+
+	setReopenClosedTabCallback(callback: ReopenClosedTabCallback): void {
+		this.callbacks.reopenClosedTab = callback;
 	}
 
 	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
@@ -1443,6 +1471,10 @@ export class CallbackRegistry {
 
 	setArchiveGroupChatCallback(callback: ArchiveGroupChatCallback): void {
 		this.callbacks.archiveGroupChat = callback;
+	}
+
+	setAddGroupChatParticipantCallback(callback: AddGroupChatParticipantCallback): void {
+		this.callbacks.addGroupChatParticipant = callback;
 	}
 
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {

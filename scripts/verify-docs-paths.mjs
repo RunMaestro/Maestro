@@ -3,12 +3,19 @@
 // resolves on disk. These files are loaded into every agent session as ground
 // truth; a stale path teaches an agent to import from a file that no longer
 // exists. Run via `npm run docs:verify`. Exits non-zero on any missing path.
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const docs = ['CLAUDE.md', 'docs/agent-guides/CANONICAL-UTILITIES.md'];
+// Every CLAUDE*.md at the repo root is loaded into agent context, so each one
+// is checked, plus the full-rationale companion the index points at.
+const docs = [
+	...readdirSync(root)
+		.filter((name) => /^CLAUDE.*\.md$/.test(name))
+		.sort(),
+	'docs/agent-guides/CANONICAL-UTILITIES.md',
+];
 
 let missing = 0;
 let checked = 0;

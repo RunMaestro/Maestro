@@ -114,6 +114,7 @@ import { isWindows } from '../../../../shared/platformDetection';
 import { getAgentDefinition } from '../../../../main/agents/definitions';
 import { getAgentCapabilities as getRealAgentCapabilities } from '../../../../main/agents/capabilities';
 import { logger } from '../../../../main/utils/logger';
+import { POSIX_PROMPT_ARGV_MAX_BYTES } from '../../../../main/process-manager/utils/promptArgvLimit';
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -387,6 +388,73 @@ describe('ChildProcessSpawner', () => {
 			spawner.spawn(createBaseConfig({ args: ['--print'], prompt: 'plain' }));
 
 			expect(mockSpawn.mock.calls[0][1]).toEqual(['--print', '--', 'plain']);
+		});
+	});
+
+	describe('prompt too long for argv on Linux/macOS (MAESTRO-VR)', () => {
+		const longPrompt = 'x'.repeat(POSIX_PROMPT_ARGV_MAX_BYTES + 1);
+		const stdinCapable = { supportsStreamJsonInput: false, supportsPromptViaStdin: true } as any;
+
+		it('sends a prompt past the limit over stdin instead of argv', () => {
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(stdinCapable);
+			const { spawner } = createTestContext();
+
+			const result = spawner.spawn(createBaseConfig({ prompt: longPrompt }));
+
+			expect(result.success).toBe(true);
+			const spawnedArgs = mockSpawn.mock.calls[0][1] as string[];
+			expect(spawnedArgs).toEqual(['--print']);
+			expect(mockChildProcess.stdin.write).toHaveBeenCalledWith(longPrompt);
+			expect(mockChildProcess.stdin.end).toHaveBeenCalled();
+		});
+
+		it('keeps a prompt under the limit in argv', () => {
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(stdinCapable);
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ prompt: 'short' }));
+
+			expect(mockSpawn.mock.calls[0][1]).toEqual(['--print', '--', 'short']);
+			expect(mockChildProcess.stdin.write).not.toHaveBeenCalled();
+		});
+
+		it('keeps the prompt in argv for an agent that does not read stdin', () => {
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce({
+				supportsStreamJsonInput: false,
+				supportsPromptViaStdin: false,
+			} as any);
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ toolType: 'omp', command: 'omp', prompt: longPrompt }));
+
+			expect(mockSpawn.mock.calls[0][1]).toEqual(['--print', '--', longPrompt]);
+			expect(mockChildProcess.stdin.write).not.toHaveBeenCalled();
+		});
+
+		it('leaves an SSH spawn alone', () => {
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce(stdinCapable);
+			const { spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({ command: 'ssh', prompt: longPrompt, sshRemoteId: 'remote-1' })
+			);
+
+			expect(mockSpawn.mock.calls[0][1]).toEqual(['--print', '--', longPrompt]);
+			expect(mockChildProcess.stdin.write).not.toHaveBeenCalled();
+		});
+
+		it('leaves Windows to the callers, which already pick stdin there', () => {
+			vi.mocked(isWindows).mockReturnValue(true);
+			try {
+				vi.mocked(getAgentCapabilities).mockReturnValueOnce(stdinCapable);
+				const { spawner } = createTestContext();
+
+				spawner.spawn(createBaseConfig({ command: 'claude.exe', prompt: longPrompt }));
+
+				expect(mockChildProcess.stdin.write).not.toHaveBeenCalled();
+			} finally {
+				vi.mocked(isWindows).mockReturnValue(false);
+			}
 		});
 	});
 

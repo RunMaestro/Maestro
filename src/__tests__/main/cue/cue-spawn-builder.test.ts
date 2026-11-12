@@ -349,7 +349,9 @@ describe('cue-spawn-builder', () => {
 				expect(result.ok).toBe(false);
 				if (!result.ok) {
 					expect(result.message).toContain('cannot pass the prompt intact');
-					expect(result.message).toContain('it contains %, which cmd.exe expands as a variable');
+					expect(result.message).toContain(
+						'it contains a %NAME% pair, which cmd.exe expands as a variable'
+					);
 				}
 			});
 
@@ -403,6 +405,85 @@ describe('cue-spawn-builder', () => {
 				}
 			});
 
+			// The same cases as rc's src/__tests__/shared/maestro-lib/launch/windows-command.test.ts,
+			// run through the builder because main's cmdShellArgProblem() is private to
+			// it. Change both together until main has maestro-lib. The cmd.exe
+			// behaviour is read from documented parser rules; only the windows-latest
+			// CI leg has a real cmd.exe.
+			describe('the cmd.exe argument rule', () => {
+				/** The reason the builder refuses `arg`, or null when it builds. */
+				async function problemFor(arg: string): Promise<string | null> {
+					useStdinCapableCodex();
+					mockApplyOverrides.mockReturnValueOnce({
+						args: ['exec', '--json', '--', arg],
+						effectiveCustomEnvVars: undefined,
+					} as unknown as ReturnType<typeof mockApplyOverrides>);
+					const result = await buildSpawnSpec(
+						createConfig({ toolType: 'codex', customPath: shimPath }),
+						'prompt'
+					);
+					if (result.ok) return null;
+					const marker = ' intact: ';
+					expect(result.message).not.toContain(arg);
+					return result.message.slice(result.message.indexOf(marker) + marker.length);
+				}
+
+				it.each([
+					['a trailing percent', '100%'],
+					['a URL escape', '%20'],
+					['a percent in prose', '50% off'],
+					['an empty pair', '%%'],
+					['a doubled trailing percent', '100%%'],
+					['a plain argument', '--print'],
+					['an argument with spaces and quotes', 'say "hi" & more'],
+				])('lets %s through', async (_label, arg) => {
+					expect(await problemFor(arg)).toBeNull();
+				});
+
+				it.each([
+					['a plain variable', '%PATH%'],
+					['a name with parentheses', '%ProgramFiles(x86)%'],
+					['a substring form', '%PATH:~0,3%'],
+					['a substitution form', '%X:a=b%'],
+					['a name with a space', '%a b%'],
+					['a drive variable', '%=C:%'],
+					['a pair inside doubled percents', '%%PATH%%'],
+					['a pair inside a value', '--settings=%APPDATA%\\claude.json'],
+					['two lone percents in one argument', '50% off, then 20% more'],
+				])('refuses %s', async (_label, arg) => {
+					expect(await problemFor(arg)).toBe(
+						'it contains a %NAME% pair, which cmd.exe expands as a variable'
+					);
+				});
+
+				it.each(['first\nsecond', 'first\r\nsecond', 'first\rsecond'])(
+					'refuses a line break (%j)',
+					async (arg) => {
+						expect(await problemFor(arg)).toBe(
+							'it contains a line break, which ends a cmd.exe command line'
+						);
+					}
+				);
+
+				it('refuses a caret', async () => {
+					expect(await problemFor('match ^main$')).toBe(
+						'it contains ^, which cmd.exe would pass on doubled'
+					);
+				});
+
+				it('runs a prompt with a lone % on the command line', async () => {
+					useStdinCapableCodex(false);
+
+					const result = await buildSpawnSpec(
+						createConfig({ toolType: 'codex', customPath: shimPath }),
+						'Cut it by 50% off'
+					);
+
+					expect(result.ok).toBe(true);
+					if (result.ok) expect(result.spec.args).toContain('"Cut it by 50% off"');
+				});
+			});
+
 			describe('never quotes a refused argument, which may be a credential', () => {
 				async function refusalFor(args: string[]) {
 					useStdinCapableCodex();
@@ -419,12 +500,21 @@ describe('cue-spawn-builder', () => {
 				}
 
 				it('names a --flag=value argument by its flag', async () => {
-					const message = await refusalFor(['exec', '--json', '--api-key=ab%cd']);
+					const message = await refusalFor(['exec', '--json', '--api-key=ab%cd%']);
 
 					expect(message).toContain(
-						'cannot pass the value of --api-key intact: it contains %, which cmd.exe expands as a variable'
+						'cannot pass the value of --api-key intact: it contains a %NAME% pair, which cmd.exe expands as a variable'
 					);
 					expect(message).not.toContain('ab%cd');
+				});
+
+				it('names the value of a --flag value pair with a %NAME% secret by its flag', async () => {
+					const message = await refusalFor(['exec', '--api-key', 'sk-%SECRET%-value']);
+
+					expect(message).toContain(
+						'cannot pass the value of --api-key intact: it contains a %NAME% pair, which cmd.exe expands as a variable'
+					);
+					expect(message).not.toContain('SECRET');
 				});
 
 				it('names the value of a --flag value pair by its flag', async () => {
@@ -437,7 +527,7 @@ describe('cue-spawn-builder', () => {
 				});
 
 				it('names any other argument by its position', async () => {
-					const message = await refusalFor(['exec', '--json', '--', 'ab%cd']);
+					const message = await refusalFor(['exec', '--json', '--', 'ab%cd%']);
 
 					expect(message).toContain('cannot pass argument 4 intact');
 					expect(message).not.toContain('ab%cd');
@@ -458,7 +548,7 @@ describe('cue-spawn-builder', () => {
 				});
 
 				it('never names a preceding value that only starts with a dash', async () => {
-					const message = await refusalFor(['exec', '--token', '-secret-value', 'bad%arg']);
+					const message = await refusalFor(['exec', '--token', '-secret-value', 'bad%arg%']);
 
 					expect(message).toContain('cannot pass argument 4 intact');
 					expect(message).not.toContain('secret-value');
@@ -466,7 +556,7 @@ describe('cue-spawn-builder', () => {
 				});
 
 				it('never names the part before = unless it is a bare flag name', async () => {
-					const message = await refusalFor(['exec', '-pSECRET=ab%cd']);
+					const message = await refusalFor(['exec', '-pSECRET=ab%cd%']);
 
 					expect(message).toContain('cannot pass argument 2 intact');
 					expect(message).not.toContain('SECRET');
@@ -475,7 +565,7 @@ describe('cue-spawn-builder', () => {
 				it('can only name a flag, never a value, after a flag that takes no value', async () => {
 					// Shape alone cannot tell that --json takes no value, so the label is
 					// imprecise here, but what it names is still only a flag.
-					const message = await refusalFor(['exec', '--json', '-pSECRET=ab%cd']);
+					const message = await refusalFor(['exec', '--json', '-pSECRET=ab%cd%']);
 
 					expect(message).toContain('cannot pass the value of --json intact');
 					expect(message).not.toContain('SECRET');
