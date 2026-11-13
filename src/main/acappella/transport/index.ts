@@ -136,6 +136,7 @@ export class ACappellaTransport {
 			},
 			getIceSettings: () => this.iceSettings(),
 			getAudioConfig: () => this.audioConfig(),
+			featureEnabled: () => this.featureEnabled(),
 			onDeviceOnline: (deviceId) => {
 				deps.onDevicesChanged?.();
 				logger.debug(`Device ${deviceId} online`, LOG_CONTEXT);

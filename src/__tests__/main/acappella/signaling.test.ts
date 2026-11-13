@@ -361,6 +361,65 @@ describe('disconnection', () => {
 		service.handleDisconnect('c1');
 		expect(offline).toEqual([credentials.deviceId]);
 	});
+
+	it('refuses auth if the device is revoked while authenticate() is in flight', async () => {
+		const credentials = await pairDevice();
+		const view = await pairing.authenticate(credentials.deviceId, credentials.token);
+		expect(view).not.toBeNull();
+
+		let resolveAuth!: (value: typeof view) => void;
+		const authSpy = vi.spyOn(pairing, 'authenticate').mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveAuth = resolve;
+				})
+		);
+
+		connect('c1');
+		const pendingAuth = authenticate('c1', credentials);
+		await pairing.revoke(credentials.deviceId);
+		resolveAuth(view);
+		await pendingAuth;
+		authSpy.mockRestore();
+
+		expect(sent['c1'].some((m) => m.op === 'authenticated')).toBe(false);
+		expect(last('c1')).toMatchObject({ op: 'auth-failed', reason: 'unauthorized' });
+
+		await service.handleMessage('c1', { op: 'offer', sdp: OFFER });
+		expect(last('c1')).toMatchObject({ op: 'error', code: 'not-authenticated' });
+		expect(peerHost.acceptOffer).not.toHaveBeenCalled();
+	});
+
+	it('refuses auth if the feature is disabled while authenticate() is in flight', async () => {
+		let enabled = true;
+		service = new SignalingService({
+			pairing,
+			peerHost,
+			getIceSettings: () => DEFAULT_ICE_SETTINGS,
+			featureEnabled: () => enabled,
+			now: () => now,
+		});
+		const credentials = await pairDevice();
+		const view = await pairing.authenticate(credentials.deviceId, credentials.token);
+
+		let resolveAuth!: (value: typeof view) => void;
+		const authSpy = vi.spyOn(pairing, 'authenticate').mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveAuth = resolve;
+				})
+		);
+
+		connect('c1');
+		const pendingAuth = authenticate('c1', credentials);
+		enabled = false;
+		resolveAuth(view);
+		await pendingAuth;
+		authSpy.mockRestore();
+
+		expect(sent['c1'].some((m) => m.op === 'authenticated')).toBe(false);
+		expect(last('c1')).toMatchObject({ op: 'closed' });
+	});
 });
 
 describe('parseClientMessage', () => {

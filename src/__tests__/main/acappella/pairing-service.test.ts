@@ -325,4 +325,20 @@ describe('device list', () => {
 		expect(device).not.toHaveProperty('tokenHash');
 		expect(device).not.toHaveProperty('tokenSalt');
 	});
+
+	it('deduplicates concurrent load() calls so a simultaneous revoke still sees persisted devices', async () => {
+		const writer = createService();
+		const { deviceId, token } = await pairDevice(writer);
+		await writer.whenPersisted();
+
+		const reader = createService();
+		const revoked: string[] = [];
+		reader.onRevoke((id) => revoked.push(id));
+
+		const [listed, didRevoke] = await Promise.all([reader.list(), reader.revoke(deviceId)]);
+		expect(listed).toHaveLength(1);
+		expect(didRevoke).toBe(true);
+		expect(revoked).toEqual([deviceId]);
+		expect(await reader.authenticate(deviceId, token)).toBeNull();
+	});
 });

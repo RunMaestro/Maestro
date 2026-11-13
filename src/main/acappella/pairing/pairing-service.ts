@@ -142,7 +142,7 @@ export class PairingService {
 	private readonly writes = createKeyedWriteQueue();
 
 	private devices = new Map<string, PairedDeviceRecord>();
-	private loaded = false;
+	private loadPromise: Promise<void> | null = null;
 	/** The most recently queued write, for {@link whenPersisted}. */
 	private lastWrite: Promise<void> = Promise.resolve();
 	/** Set by {@link close}; a persist after this point is dropped. */
@@ -380,6 +380,12 @@ export class PairingService {
 		return toView(record);
 	}
 
+	/** Synchronous active-device check for callers resuming after an async boundary. */
+	isDeviceActive(deviceId: string): boolean {
+		const record = this.devices.get(deviceId);
+		return Boolean(record && record.revokedAt === null);
+	}
+
 	// -- Device list ---------------------------------------------------------
 
 	/** Every device, revoked ones included, newest first. */
@@ -457,9 +463,11 @@ export class PairingService {
 	// -- Storage -------------------------------------------------------------
 
 	/** Read `devices.json` once. A missing or corrupt file is an empty list. */
-	async load(): Promise<void> {
-		if (this.loaded) return;
-		this.loaded = true;
+	load(): Promise<void> {
+		return (this.loadPromise ??= this.readFromDisk());
+	}
+
+	private async readFromDisk(): Promise<void> {
 		try {
 			const raw = await fs.readFile(this.options.filePath, 'utf-8');
 			const parsed = JSON.parse(raw) as { devices?: PairedDeviceRecord[] };
