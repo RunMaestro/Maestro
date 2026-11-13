@@ -7,6 +7,13 @@
  * `ssh-remote:reachability` event per transition (`src/main/ssh-reachability.ts`);
  * this store holds those, and `SshUnreachableModal` draws the open ones.
  *
+ * Tracked is not shown. With a hundred agents some remotes are always down,
+ * and a dialog for each would be noise. An outage reaches the screen only when
+ * it matters to what the user is doing: the agent they are looking at runs on
+ * that remote, or a live turn died on it (`surface()`, from the agent-error
+ * listener). Background work on other agents (git polls, file trees, Cue) only
+ * records it, so the dialog is ready the moment the user goes to that agent.
+ *
  * Dismissing hides the dialog for that outage only. It stays recorded, so the
  * same outage never reopens it, and the next one (after the host came back and
  * dropped again) does.
@@ -20,6 +27,11 @@ export interface SshOutage {
 	event: SshReachabilityEvent;
 	/** The user closed the dialog for this outage. */
 	dismissed: boolean;
+	/**
+	 * The outage reached the user: a live turn died on it, or its dialog was
+	 * shown. Only a surfaced outage announces its recovery.
+	 */
+	surfaced: boolean;
 }
 
 interface SshOutageState {
@@ -30,6 +42,8 @@ interface SshOutageState {
 	/** Load the remotes already down when this client started. */
 	hydrate: (events: SshReachabilityEvent[]) => void;
 	dismiss: (remoteId: string) => void;
+	/** Mark an outage as one the user must see, regardless of the active agent. */
+	surface: (remoteId: string) => void;
 }
 
 export const useSshOutageStore = create<SshOutageState>((set, get) => ({
@@ -49,7 +63,11 @@ export const useSshOutageStore = create<SshOutageState>((set, get) => ({
 			outages: {
 				...state.outages,
 				// A repeat push for the same outage keeps the user's dismissal.
-				[event.remoteId]: { event, dismissed: previous?.dismissed ?? false },
+				[event.remoteId]: {
+					event,
+					dismissed: previous?.dismissed ?? false,
+					surfaced: previous?.surfaced ?? false,
+				},
 			},
 		}));
 		return undefined;
@@ -60,7 +78,7 @@ export const useSshOutageStore = create<SshOutageState>((set, get) => ({
 			const outages = { ...state.outages };
 			for (const event of events) {
 				if (!event.reachable && !outages[event.remoteId]) {
-					outages[event.remoteId] = { event, dismissed: false };
+					outages[event.remoteId] = { event, dismissed: false, surfaced: false };
 				}
 			}
 			return { outages };
@@ -74,16 +92,30 @@ export const useSshOutageStore = create<SshOutageState>((set, get) => ({
 			return { outages: { ...state.outages, [remoteId]: { ...outage, dismissed: true } } };
 		});
 	},
+
+	surface: (remoteId) => {
+		set((state) => {
+			const outage = state.outages[remoteId];
+			if (!outage || outage.surfaced) return state;
+			return { outages: { ...state.outages, [remoteId]: { ...outage, surfaced: true } } };
+		});
+	},
 }));
 
 /**
- * Outages whose dialog is still open, oldest first. Returns a new array, so
- * derive it from `outages` (useMemo) rather than passing it to the hook as a
- * selector.
+ * Outages whose dialog should be on screen, oldest first: not dismissed, and
+ * either surfaced by a live turn or on the remote of the agent the user is
+ * looking at (`activeRemoteId`). Returns a new array, so derive it from
+ * `outages` (useMemo) rather than passing it to the hook as a selector.
  */
-export function selectOpenSshOutages(state: Pick<SshOutageState, 'outages'>): SshOutage[] {
+export function selectOpenSshOutages(
+	state: Pick<SshOutageState, 'outages'>,
+	activeRemoteId?: string
+): SshOutage[] {
 	return Object.values(state.outages)
-		.filter((outage) => !outage.dismissed)
+		.filter(
+			(outage) => !outage.dismissed && (outage.surfaced || outage.event.remoteId === activeRemoteId)
+		)
 		.sort((a, b) => a.event.since - b.event.since);
 }
 
