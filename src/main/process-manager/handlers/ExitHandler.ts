@@ -16,6 +16,7 @@ import { getSshRemoteById } from '../../stores/getters';
 import { noteSshExit } from '../../ssh-reachability';
 import {
 	describeSshUnreachable,
+	isSshConnectionFailure,
 	SSH_CONNECTION_FAILED_EXIT_CODE,
 } from '../../../shared/sshConnection';
 import {
@@ -283,7 +284,17 @@ export class ExitHandler {
 				managedProcess.stderrBuffer || '',
 				managedProcess.stdoutBuffer || managedProcess.streamedText || ''
 			);
-			if (agentError) {
+			// ssh that never reached the host exits 255, and every parser's last
+			// resort calls a bare non-zero exit a crash ("Agent exited with code
+			// 255"). Emitting that here would set errorEmitted and skip the SSH
+			// checks below, so the outage dialog and the availability retry, which
+			// both key on a network_error carrying sshRemoteId, never fire.
+			const isSshTransportCrash =
+				agentError?.type === 'agent_crashed' &&
+				Boolean(managedProcess.sshRemoteId) &&
+				isSshConnectionFailure(code) &&
+				!managedProcess.interrupted;
+			if (agentError && !isSshTransportCrash) {
 				agentError.sessionId = sessionId;
 				if (managedProcess.sshRemoteId) {
 					agentError.sshRemoteId = managedProcess.sshRemoteId;
