@@ -24,10 +24,15 @@
 // Prompt commands (custom commands, skills) also start with `/` but expand
 // into a model turn that ends with `end_turn` as usual; they write no
 // `<local-command-stdout>` row, so they are unaffected.
+//
+// A command claude does not have writes neither: the TUI logs one
+// `{ type: 'system', subtype: 'informational', content: 'Unknown command: /x' }`
+// row and goes idle, so that row ends the turn too, as a failure.
 
 import { stripAnsiCodes } from '../shared/stringUtils';
 
 const OUTPUT_TAG = /<local-command-(stdout|stderr)>([\s\S]*?)<\/local-command-\1>/g;
+const UNKNOWN_COMMAND = /^Unknown command: \/\S+/;
 
 /** True when the TUI will run this prompt as a slash command. */
 export function isSlashCommandPrompt(prompt: string): boolean {
@@ -59,6 +64,21 @@ export function localCommandOutput(entry: unknown): string | null {
 		parts.push(stripAnsiCodes(match[2]).trim());
 	}
 	return matched ? parts.filter(Boolean).join('\n') : null;
+}
+
+/**
+ * Claude's refusal of a slash command it does not have (`Unknown command:
+ * /commit`), ANSI-stripped and trimmed, when `entry` is that row. Null for
+ * every other row.
+ */
+export function unknownSlashCommandError(entry: unknown): string | null {
+	if (!entry || typeof entry !== 'object') return null;
+	const e = entry as Record<string, unknown>;
+	if (e.type !== 'system' || e.subtype !== 'informational' || typeof e.content !== 'string') {
+		return null;
+	}
+	const text = stripAnsiCodes(e.content).trim();
+	return UNKNOWN_COMMAND.test(text) ? text : null;
 }
 
 function contentText(content: unknown): string | null {

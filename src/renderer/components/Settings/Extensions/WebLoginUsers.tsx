@@ -23,6 +23,7 @@ import type { Theme } from '../../../types';
 import { MiniBadge } from '../../ui/MiniBadge';
 import { notifyToast } from '../../../stores/notificationStore';
 import { formatRelativeTime } from '../../../../shared/formatters';
+import { ipcErrorMessage } from '../../../../shared/serializeError';
 import {
 	validateWebPassword,
 	validateWebUsername,
@@ -35,13 +36,7 @@ interface WebLoginUsersProps {
 
 /** The message a rejected IPC call should show, without the `Error:` wrapper. */
 function errorText(err: unknown): string {
-	if (err instanceof Error && err.message) {
-		// Electron wraps a main-process throw as
-		// "Error invoking remote method 'webLogin:createUser': Error: <message>".
-		const tail = err.message.split(': Error: ').pop();
-		return (tail ?? err.message).trim();
-	}
-	return String(err);
+	return ipcErrorMessage(err, String(err));
 }
 
 export function WebLoginUsers({ theme }: WebLoginUsersProps) {

@@ -73,6 +73,7 @@ import {
 	handleInteractMovementDesigner,
 } from './movement';
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
+import { handleSshReachabilityCheck, handleSshReachabilityStatus } from './sshReachability';
 import {
 	handleLiveStatus,
 	handleLiveStart,
@@ -699,6 +700,14 @@ export class WebSocketMessageHandler {
 
 			case 'profiling_status':
 				handleProfilingStatus(this.ctx, client, message);
+				break;
+
+			case 'ssh_reachability_status':
+				handleSshReachabilityStatus(this.ctx, client, message);
+				break;
+
+			case 'ssh_reachability_check':
+				void handleSshReachabilityCheck(this.ctx, client, message);
 				break;
 
 			case 'live_status':

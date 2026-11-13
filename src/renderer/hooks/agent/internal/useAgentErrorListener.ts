@@ -46,6 +46,11 @@ import {
 } from '../../../stores/retryStore';
 import { scheduleAutoResume } from '../../../stores/autoRunResumeStore';
 import { reportAuthFailure } from '../../../stores/authOutageStore';
+import {
+	isSshRemoteDown,
+	isSshTransportError,
+	useSshOutageStore,
+} from '../../../stores/sshOutageStore';
 import { maybeAutoResetCodexUsage } from '../../../services/codexAutoReset';
 import { isEffortFallbackArmed, observeEffortRejection } from '../../../services/effortRejection';
 import type { AgentError, GroupChatMessage, LogEntry, SessionState } from '../../../types';
@@ -84,6 +89,8 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				timestamp: error.timestamp,
 				raw: error.raw,
 				parsedJson: error.parsedJson,
+				// Lets an ssh failure defer to the one outage dialog for its remote.
+				sshRemoteId: error.sshRemoteId,
 			};
 
 			// A provider refusing the effort level a turn asked for. Noted (and
@@ -553,7 +560,21 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					});
 					if (opened && providerKey) openModal('reauth', { providerKey });
 				} else if (!batchHandlesErrorUi) {
-					openModal('agentError', { sessionId: actualSessionId });
+					if (isSshTransportError(agentError)) {
+						// ssh could not reach the host. When the remote is confirmed down,
+						// the one SSH outage dialog speaks for every agent on it; a
+						// per-agent modal on top would say the same thing again. The tab
+						// keeps its error either way.
+						const remoteId = agentError.sshRemoteId;
+						void isSshRemoteDown(remoteId).then((down) => {
+							// A live turn died on it: show the outage even if the user
+							// is looking at another agent.
+							if (down) useSshOutageStore.getState().surface(remoteId);
+							else openModal('agentError', { sessionId: actualSessionId });
+						});
+					} else {
+						openModal('agentError', { sessionId: actualSessionId });
+					}
 				}
 			}
 		});

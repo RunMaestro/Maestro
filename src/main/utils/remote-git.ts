@@ -10,7 +10,7 @@
 
 import { SshRemoteConfig } from '../../shared/types';
 import { execFileNoThrow, ExecResult } from './execFile';
-import { buildSshCommand, RemoteCommandOptions } from './ssh-command-builder';
+import { buildSshCommand, execSshCommand, RemoteCommandOptions } from './ssh-command-builder';
 import { logger } from './logger';
 import { isWorktreeAlreadyUsedError, parseWorktreePathForBranch } from '../../shared/gitUtils';
 import { shellEscapeRemotePath } from './shell-escape';
@@ -79,9 +79,7 @@ export async function execGitRemote(
 	});
 
 	// Execute the SSH command
-	const result = timeout
-		? await execFileNoThrow(sshCommand.command, sshCommand.args, undefined, { timeout })
-		: await execFileNoThrow(sshCommand.command, sshCommand.args);
+	const result = await execSshCommand(sshRemote, sshCommand, timeout ? { timeout } : undefined);
 
 	if (result.exitCode !== 0) {
 		logger.debug(`Remote git command failed: ${result.stderr}`, LOG_CONTEXT, {
@@ -247,10 +245,9 @@ export async function execShellRemote(
 	};
 
 	const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-	return execFileNoThrow(
-		sshCommand.command,
-		sshCommand.args,
-		undefined,
+	return execSshCommand(
+		sshRemote,
+		sshCommand,
 		options?.timeoutMs ? { timeout: options.timeoutMs } : undefined
 	);
 }

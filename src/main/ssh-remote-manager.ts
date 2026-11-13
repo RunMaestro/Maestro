@@ -6,7 +6,7 @@
  */
 
 import { SshRemoteConfig, SshRemoteTestResult } from '../shared/types';
-import { execFileNoThrow, ExecResult } from './utils/execFile';
+import { execFileNoThrow, ExecResult, type ExecOptions } from './utils/execFile';
 import { expandTilde } from '../shared/pathUtils';
 import { captureException } from './utils/sentry';
 import { getPathAccessCache, defaultReadableProbe } from './utils/path-access-cache';
@@ -34,13 +34,19 @@ export interface SshRemoteValidation {
 }
 
 /**
+ * Ceiling for one reachability probe. Longer than the 45s `ConnectTimeout` a
+ * tunnelled remote typically sets, so a slow but live host is not misread.
+ */
+const SSH_REACHABILITY_PROBE_TIMEOUT_MS = 60_000;
+
+/**
  * Dependencies that can be injected for testing.
  */
 export interface SshRemoteManagerDeps {
 	/** Function to check file accessibility */
 	checkFileAccess: (filePath: string) => boolean;
 	/** Function to execute SSH commands */
-	execSsh: (command: string, args: string[]) => Promise<ExecResult>;
+	execSsh: (command: string, args: string[], options?: ExecOptions) => Promise<ExecResult>;
 }
 
 /**
@@ -53,8 +59,8 @@ const defaultDeps: SshRemoteManagerDeps = {
 	checkFileAccess: (filePath: string): boolean => {
 		return getPathAccessCache().check(filePath, defaultReadableProbe);
 	},
-	execSsh: (command: string, args: string[]): Promise<ExecResult> => {
-		return execFileNoThrow(command, args);
+	execSsh: (command: string, args: string[], options?: ExecOptions): Promise<ExecResult> => {
+		return execFileNoThrow(command, args, undefined, options);
 	},
 };
 
@@ -263,6 +269,25 @@ export class SshRemoteManager {
 	 * @param config The SSH remote configuration
 	 * @returns Array of SSH command-line arguments
 	 */
+	/**
+	 * Run `true` on the remote and report how ssh exited, for the reachability
+	 * tracker (`src/main/ssh-reachability.ts`). Unlike `testConnection` it does
+	 * not interpret the answer: exit 255 is ssh failing to connect, any other
+	 * code means it got through.
+	 */
+	async probeReachability(config: SshRemoteConfig): Promise<{
+		exitCode: number | string;
+		stderr: string;
+	}> {
+		// Bounded: a ProxyCommand that connects and then hangs would otherwise hold
+		// the single-flight probe, and with it every later check, forever. The
+		// timeout comes back as a string exit code, which counts as unreachable.
+		const result = await this.deps.execSsh('ssh', [...this.buildSshArgs(config), 'true'], {
+			timeout: SSH_REACHABILITY_PROBE_TIMEOUT_MS,
+		});
+		return { exitCode: result.exitCode, stderr: result.stderr };
+	}
+
 	buildSshArgs(config: SshRemoteConfig): string[] {
 		// Delegates so the connection this tests is byte-identical to the one an
 		// agent spawn opens. See src/shared/sshConnection.ts.

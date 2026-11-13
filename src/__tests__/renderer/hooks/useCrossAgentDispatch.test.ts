@@ -381,6 +381,17 @@ describe('buildConsultHistoryEntry', () => {
 		expect(entry().sessionName).toBe('↩ why was the export empty');
 	});
 
+	it('keeps a long subject whole in the summary and cuts only the pill label', () => {
+		// Regression: the subject was cut at the pill's 60 chars before the
+		// summary saw it, so the CSS-clamped History line ended in "..." with
+		// most of its width empty.
+		const subject =
+			"Pedram's live voice avatar (PedBot, DaddyBot to the family) needs the canvas form card wired up";
+		const e = entry({ subject });
+		expect(e.summary).toBe(`Consulted by Pedsidian: ${subject}`);
+		expect(e.sessionName).toBe("↩ Pedram's live voice avatar (PedBot, DaddyBot to the family)…");
+	});
+
 	it('falls back to the consult tab name when there is no subject', () => {
 		const e = entry({ subject: '', consultTabName: '↩ Pedsidian', targetName: 'rc' });
 		expect(e.summary).toBe('Consulted by Pedsidian');

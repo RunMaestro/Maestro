@@ -86,6 +86,9 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **Loading an image for canvas compositing:** `loadImageElement(src)` in `src/renderer/utils/loadImage.ts`.
 - **Saving generated image bytes to disk:** `saveImageDataUrlToDisk(dataUrl, defaultName?)` in `src/renderer/utils/imageExport.ts`.
 - **Screenshotting a surface exactly as it is painted:** `window.maestro.shell.capturePage(rect?)` (preload in `src/main/preload/system.ts`, handler `window:capturePage` in `src/main/ipc/handlers/system.ts`).
+- **An Error in a log entry or JSON payload:** `serializeError()`, `toLoggableData()` in `src/shared/serializeError.ts`, with `ipcErrorMessage(err, fallback?)` beside them for the text to SHOW from a rejected `window.maestro.*` call.
+- **An ssh run that never reached the host (exit 255):** `isSshConnectionFailure()`, `describeSshUnreachable(remote, stderr)` in `src/shared/sshConnection.ts`, applied to every remote file op by `execRemoteCommand()` in `src/main/utils/remote-fs.ts`.
+- **An SSH remote went down (one dialog per remote):** `noteSshExit()`, `checkSshRemote()` in `src/main/ssh-reachability.ts`; run one-shot remote commands with `execSshCommand()` in `src/main/utils/ssh-command-builder.ts`.
 - **Strip ANSI / collapse progress overwrites:** `stripAnsiCodes()`, `processCarriageReturns()` in `src/shared/stringUtils.ts`
 - **Reading what a TUI painted from a raw capture:** `replayTerminalScreen()`, `capturedAlternateScreen()` in `src/maestro-p/screen-replay.ts`
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
@@ -181,6 +184,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **Ask the model for a shell command (AI command mode):** `requestAiCommand()` / `acceptAiCommand()` / `dismissAiCommand()` in `src/renderer/services/aiCommand.ts`, state in `src/renderer/stores/aiCommandStore.ts`, prompt in `src/prompts/ai-command.md` (id `ai-command`, editable in Settings -> Maestro Prompts).
 - **The system-prompt envelope for a provider with no `--append-system-prompt`:** `EMBEDDED_SYSTEM_PROMPT_SEPARATOR`, `embedSystemPromptInPrompt(systemPrompt, userPrompt)`, `stripEmbeddedSystemPrompt(text)`, `hasEmbeddedSystemPrompt(text)` in `src/shared/embeddedSystemPrompt.ts`.
 - **Consulting another agent from a message (`@mention`):** `planCrossAgentMentions()` / `dispatchCrossAgentMentions()` / `dispatchCrossAgentMentionsForMessage()` in `src/renderer/services/crossAgentMentions.ts`, over `sendCrossAgentRequest()` in `src/renderer/hooks/agent/useCrossAgentDispatch.ts`.
+- **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer(sessionId, text)` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()` / `formatFileSelection()` in `src/renderer/utils/quoteSelection.ts`.
 - **Holding a mentioning turn open until its consult replies:** `holdTurnForConsults()`, `settleConsultHold()`, `withConsultPendingNote()` in `src/renderer/services/crossAgentConsultHold.ts`.
 - **When a mention runs (parallel / consult first / hand-off):** `inferMentionTiming()` in `src/shared/crossAgentContext.ts`, carried as `CrossAgentMentionPlan.routing`.
 - **An agent asking another agent (`maestro-cli ask`):** `runCrossAgentAsk()` in `src/renderer/services/crossAgentAsk.ts`, over the same `sendCrossAgentRequest()` a typed `@mention` uses.

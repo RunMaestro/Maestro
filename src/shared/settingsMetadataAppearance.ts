@@ -362,6 +362,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'appearance',
 	},
+	fileEditVimMode: {
+		description:
+			'Vim keybindings (normal, insert, and visual modes, plus :commands) in the File Preview code editor. Escape returns to normal mode instead of leaving the editor; Cmd+E / Ctrl+E still switches back to the preview.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
 	filePreviewToolbarVisibility: {
 		description:
 			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, revealInFolder, copyPath, delete.',

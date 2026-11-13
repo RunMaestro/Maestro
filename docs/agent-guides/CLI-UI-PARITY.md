@@ -242,6 +242,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Change working directory                                                 | `update-agent --cwd`                                                                             |
 | SSH remote execution config                                              | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                     |
 | Edit an SSH remote, incl. its `ssh -o` list                              | `update-ssh-remote --ssh-option / --clear-ssh-options`                                           |
+| SSH outage dialog: which remotes are down, "Check Now"                   | `ssh-remote-status`, `ssh-remote-status --check <remote-id>` (Dismiss is per-window view state)  |
 | Focus an agent, switch AI/Shell mode                                     | `focus-agent`, `switch-mode`                                                                     |
 | Create / rename / remove a group                                         | `create-group`, `rename-group`, `remove-group`                                                   |
 | Group icon, color, and nesting                                           | `create-group --icon/--color/--parent`, `update-group`                                           |
@@ -265,6 +266,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Open a modal or dashboard                                                | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                |
 | Auto Run: start, stop, resume, skip, abort                               | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                              |
 | Settings, theme, Encore features                                         | `settings`, `theme`, `set-theme`, `encore`                                                       |
+| File editor Vim keybindings (Settings -> Display -> File Edit & Preview) | `settings set fileEditVimMode true`                                                              |
 | Toasts and center flashes                                                | `notify toast`, `notify flash`                                                                   |
 | Save a pasted chat image (right-click)                                   | `image save` (`image list` to find it)                                                           |
 | Cue subscriptions and scheduled tasks                                    | `cue trigger`, `cue schedule`, `cue pipeline`                                                    |
@@ -358,6 +360,13 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
     filters is already readable through `cue pipeline` and `cue list`. Closing
     it means carrying a target through `open_modal` into `CueModal`'s
     `pendingGraphTarget`.
+13. **File editor selection and find-bar actions** (right-click a selection
+    in the File Preview editor: Quote in Message, Send to Agent, Copy; the find
+    bar's Replace / Replace All). Each acts on a live text selection or match in
+    the user's editor, which the CLI has no handle on. The capabilities are
+    reachable without it: an agent reads the file, quotes `path:lines` itself,
+    and hands the text over with `dispatch` / `send`; replacing text is an edit
+    to the file on disk, which an agent makes directly and `open-file` shows.
 
 ### Audit backlog (2026-09-27)
 

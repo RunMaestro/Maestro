@@ -42,3 +42,47 @@ export function aggregateFolderTaskCounts(
 	for (const node of tree) walk(node);
 	return totals;
 }
+
+/** The percentage/total pair a "{pct}% ({total})" task badge renders. */
+export interface TaskBadgeStats {
+	pct: number;
+	total: number;
+}
+
+/** Badge stats for one document or folder, or null when it has no tasks (no badge). */
+export function toTaskBadgeStats(counts: DocumentTaskCount | undefined): TaskBadgeStats | null {
+	if (!counts || counts.total === 0) return null;
+	return {
+		pct: Math.round((counts.completed / counts.total) * 100),
+		total: counts.total,
+	};
+}
+
+/** The badge's text: "{pct}% ({total})". */
+export function formatTaskBadgeLabel(stats: TaskBadgeStats): string {
+	return `${stats.pct}% (${stats.total})`;
+}
+
+/**
+ * The longest badge label across every count map, so the dropdown can size
+ * every badge to the widest one and their edges line up. With tabular digits
+ * every label shares the same non-digit characters, so the longest string is
+ * also the widest rendered one. Covers all entries, not only the visible rows,
+ * so the width does not jump while the user filters or expands folders.
+ * Returns '' when nothing has tasks.
+ */
+export function widestTaskBadgeLabel(
+	countMaps: ReadonlyArray<Map<string, DocumentTaskCount> | undefined>
+): string {
+	let widest = '';
+	for (const map of countMaps) {
+		if (!map) continue;
+		for (const counts of map.values()) {
+			const stats = toTaskBadgeStats(counts);
+			if (!stats) continue;
+			const label = formatTaskBadgeLabel(stats);
+			if (label.length > widest.length) widest = label;
+		}
+	}
+	return widest;
+}

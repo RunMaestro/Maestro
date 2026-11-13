@@ -300,6 +300,11 @@ export function registerDispatchDepsProvider(fn: (() => ProcessQueuedItemDeps) |
 	dispatchDepsProvider = fn;
 }
 
+/** The deps a queued command is resolved against, or null before App wires them. */
+export function getDispatchDeps(): ProcessQueuedItemDeps | null {
+	return dispatchDepsProvider ? dispatchDepsProvider() : null;
+}
+
 /**
  * Snapshot a prompt that is being spawned DIRECTLY rather than through
  * `agentStore.processQueuedItem` (which calls `noteDispatch` itself).
