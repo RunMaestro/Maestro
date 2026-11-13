@@ -20,6 +20,7 @@ import { sshRemoteManager } from '../ssh-remote-manager';
 import { logger } from './logger';
 import { resolveSshPath } from './cliDetection';
 import { describeSshUnreachable, isSshConnectionFailure } from '../../shared/sshConnection';
+import { noteSshExit } from '../ssh-reachability';
 
 /**
  * File or directory entry returned from readDir operations.
@@ -230,6 +231,7 @@ function getBackoffDelay(attempt: number, baseDelay: number, maxDelay: number): 
  * 65535` or, after a caller's own mapping, a misleading "Permission denied".
  */
 function withConnectionFailureMessage(result: ExecResult, config: SshRemoteConfig): ExecResult {
+	noteSshExit(config, result.exitCode);
 	if (!isSshConnectionFailure(result.exitCode)) return result;
 	return { ...result, stderr: describeSshUnreachable(config, result.stderr) };
 }
@@ -275,6 +277,7 @@ async function execRemoteCommand(
 
 			// Success - return immediately
 			if (result.exitCode === 0) {
+				noteSshExit(config, 0);
 				return result;
 			}
 
@@ -1299,6 +1302,7 @@ export async function readFileRemoteAbortable(
 					resolve({ success: false, error: 'Aborted' });
 					return;
 				}
+				noteSshExit(sshRemote, code);
 				if (code !== 0) {
 					const err = stderr || `Failed to read file: ${filePath}`;
 					resolve({

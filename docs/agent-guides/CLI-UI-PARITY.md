@@ -497,6 +497,8 @@ Cancellation, timeout, revocation, changed configuration or an unknown native
 census cannot publish the operation. JSON returns the committed target and migration
 result, or `NeedsConfiguration`, `Denied` or `Unknown`; failures exit nonzero.
 No real host dialog is exercised by the fixture composition tests.
+| SSH outage dialog: which remotes are down, "Check Now" | `ssh-remote-status`, `ssh-remote-status --check <remote-id>` (Dismiss is per-window view state) |
+| File editor Vim keybindings (Settings -> Display -> File Edit & Preview) | `settings set fileEditVimMode true` |
 
 ## Open gaps
 
@@ -529,6 +531,13 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
    means moving the layout mutations (`pipeline-layout-mutations.ts`) behind a
    service the host also serves, and deciding how a layout edited with no
    window reconciles with an open editor.
+5. **File editor selection and find-bar actions** (right-click a selection
+   in the File Preview editor: Quote in Message, Send to Agent, Copy; the find
+   bar's Replace / Replace All). Each acts on a live text selection or match in
+   the user's editor, which the CLI has no handle on. The capabilities are
+   reachable without it: an agent reads the file, quotes `path:lines` itself,
+   and hands the text over with `dispatch` / `send`; replacing text is an edit
+   to the file on disk, which an agent makes directly and `open-file` shows.
 
 ### Federation: remaining gaps
 

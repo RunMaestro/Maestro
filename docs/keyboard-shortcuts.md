@@ -131,6 +131,34 @@ asking, and the on-disk-change banner is where that question belongs. Plain
 `Cmd+R` is reserved: Maestro blocks it so the window can never reload out from
 under a running agent.
 
+## File Editor
+
+These work while the File Preview editor (`Cmd+E` on a file) has focus. See
+[Editing Files](./file-editor) for everything the editor does.
+
+| Action                         | macOS                            | Windows/Linux                     |
+| ------------------------------ | -------------------------------- | --------------------------------- |
+| Save                           | `Cmd+S`                          | `Ctrl+S`                          |
+| Accept completion              | `Tab` or `Enter`                 | `Tab` or `Enter`                  |
+| Open completion list           | `Ctrl+Space`                     | `Ctrl+Space`                      |
+| Toggle comment                 | `Cmd+/`                          | `Ctrl+/`                          |
+| Add cursor at next occurrence  | `Cmd+D`                          | `Ctrl+D`                          |
+| Add a cursor                   | `Opt+Click`                      | `Alt+Click`                       |
+| Column (rectangular) selection | `Shift+Opt+Drag`                 | `Shift+Alt+Drag`                  |
+| Back to one cursor             | `Esc`                            | `Esc`                             |
+| Move line up / down            | `Opt+Up` / `Opt+Down`            | `Alt+Up` / `Alt+Down`             |
+| Duplicate line up / down       | `Shift+Opt+Up` / `Down`          | `Shift+Alt+Up` / `Down`           |
+| Indent / outdent selection     | `Tab` / `Shift+Tab`              | `Tab` / `Shift+Tab`               |
+| Find / replace                 | `Cmd+F`, then `Tab` to Replace   | `Ctrl+F`, then `Tab` to Replace   |
+| Replace current match          | `Enter` in the Replace field     | `Enter` in the Replace field      |
+| Replace all                    | `Cmd+Enter` in the Replace field | `Ctrl+Enter` in the Replace field |
+| Back to preview                | `Esc` or `Cmd+E`                 | `Esc` or `Ctrl+E`                 |
+
+`Cmd+/` is Show Shortcuts everywhere else; inside the editor it toggles a
+comment. `Cmd+[` and `Cmd+]` keep switching agents, so indent with `Tab` and
+`Shift+Tab` instead. With **Vim keybindings** on, `Esc` returns to Vim's normal
+mode, and `Cmd+E` leaves the editor.
+
 ## Group Chat
 
 A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.

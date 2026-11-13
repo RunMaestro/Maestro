@@ -14,6 +14,11 @@ import type { DataBufferManager } from './DataBufferManager';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { captureException } from '../../utils/sentry';
 import { getSshRemoteById } from '../../stores/getters';
+import { noteSshExit } from '../../ssh-reachability';
+import {
+	describeSshUnreachable,
+	SSH_CONNECTION_FAILED_EXIT_CODE,
+} from '../../../shared/sshConnection';
 import {
 	waitForCopilotShutdown,
 	readCopilotFinalAnswer,
@@ -278,6 +283,12 @@ export class ExitHandler {
 		// never surface as a crash.
 		let settlement: TurnSettlement | undefined;
 
+		// Tell the reachability tracker how ssh ended. A Stop kills the local ssh
+		// client, which then exits 255 too, so a stopped turn proves nothing.
+		if (managedProcess.sshRemoteId && !managedProcess.interrupted) {
+			noteSshExit(managedProcess.sshRemoteId, code);
+		}
+
 		if (managedProcess.interrupted) {
 			settlement = {
 				outcome: 'interrupted',
@@ -339,6 +350,30 @@ export class ExitHandler {
 							exitCode: code,
 							errorType: sshError.type,
 							errorMessage: sshError.message,
+							stderrPreview: stderrToCheck.substring(0, 500),
+						});
+					} else if (code === SSH_CONNECTION_FAILED_EXIT_CODE) {
+						// ssh itself failed and said so in words no pattern knows: a tunnel
+						// (`tailcat Ping: context deadline exceeded`, `Connection closed by
+						// UNKNOWN port 65535`) or a host that dropped mid-handshake. Without
+						// this the turn just ended, with no error on the tab at all.
+						const remote = getSshRemoteById(managedProcess.sshRemoteId);
+						sshExplicitError = {
+							type: 'network_error',
+							message: describeSshUnreachable(
+								remote ?? { name: '', host: managedProcess.sshRemoteId },
+								stderrToCheck
+							),
+							recoverable: true,
+							agentId: toolType,
+							sessionId,
+							sshRemoteId: managedProcess.sshRemoteId,
+							timestamp: Date.now(),
+							raw: { exitCode: code, stderr: stderrToCheck },
+						};
+						logger.info('[ProcessManager] SSH connection failure at exit', 'ProcessManager', {
+							sessionId,
+							sshRemoteId: managedProcess.sshRemoteId,
 							stderrPreview: stderrToCheck.substring(0, 500),
 						});
 					} else if (code !== 0) {

@@ -221,6 +221,7 @@ describe('DisplayTab section components', () => {
 	it('wires file edit toggles and every file preview toolbar visibility control', () => {
 		const setFileEditShowLineNumbers = vi.fn();
 		const setFileEditWordWrap = vi.fn();
+		const setFileEditVimMode = vi.fn();
 		const setFilePreviewToolbarButtonVisibility = vi.fn();
 
 		render(
@@ -230,6 +231,8 @@ describe('DisplayTab section components', () => {
 				setFileEditShowLineNumbers={setFileEditShowLineNumbers}
 				fileEditWordWrap={true}
 				setFileEditWordWrap={setFileEditWordWrap}
+				fileEditVimMode={false}
+				setFileEditVimMode={setFileEditVimMode}
 				filePreviewToolbarVisibility={toolbarVisibility()}
 				setFilePreviewToolbarButtonVisibility={setFilePreviewToolbarButtonVisibility}
 			/>
@@ -239,6 +242,9 @@ describe('DisplayTab section components', () => {
 		fireEvent.click(screen.getByRole('switch', { name: 'Wrap long lines in the editor' }));
 		expect(setFileEditShowLineNumbers).toHaveBeenCalledWith(false);
 		expect(setFileEditWordWrap).toHaveBeenCalledWith(false);
+		// Vim ships off; the switch turns it on.
+		fireEvent.click(screen.getByRole('switch', { name: 'Vim keybindings in the editor' }));
+		expect(setFileEditVimMode).toHaveBeenCalledWith(true);
 
 		for (const key of FILE_PREVIEW_TOOLBAR_BUTTON_KEYS) {
 			fireEvent.click(
@@ -275,6 +281,8 @@ describe('DisplayTab section components', () => {
 					setFileEditShowLineNumbers={vi.fn()}
 					fileEditWordWrap={true}
 					setFileEditWordWrap={vi.fn()}
+					fileEditVimMode={false}
+					setFileEditVimMode={vi.fn()}
 					filePreviewToolbarVisibility={toolbarVisibility()}
 					setFilePreviewToolbarButtonVisibility={setFilePreviewToolbarButtonVisibility}
 				/>

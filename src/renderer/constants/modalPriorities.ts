@@ -45,6 +45,12 @@ export const MODAL_PRIORITIES = {
 	/** Provider re-authentication terminal - above the agent error modal it replaces */
 	REAUTH: 1015,
 
+	/**
+	 * An SSH remote stopped answering. Above the per-agent error modal, whose
+	 * failures on that remote it reports in one place.
+	 */
+	SSH_UNREACHABLE: 1012,
+
 	/** Agent error modal - critical, shows recovery options */
 	AGENT_ERROR: 1010,
 

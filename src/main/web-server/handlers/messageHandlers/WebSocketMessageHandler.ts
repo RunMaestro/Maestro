@@ -86,6 +86,7 @@ import {
 } from './movement';
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
 import { handleQuickChat } from './quickChat';
+import { handleSshReachabilityCheck, handleSshReachabilityStatus } from './sshReachability';
 import {
 	handleSupportPackageCreate,
 	handleFeedbackCheckAuth,
@@ -834,6 +835,14 @@ export class WebSocketMessageHandler {
 
 			case 'quick_chat':
 				handleQuickChat(this.ctx, client, message);
+				break;
+
+			case 'ssh_reachability_status':
+				handleSshReachabilityStatus(this.ctx, client, message);
+				break;
+
+			case 'ssh_reachability_check':
+				void handleSshReachabilityCheck(this.ctx, client, message);
 				break;
 
 			case 'support_package_create':

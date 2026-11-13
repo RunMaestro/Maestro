@@ -81,6 +81,7 @@ export class StderrHandler {
 					recoverable: sshError.recoverable,
 					agentId: toolType,
 					sessionId,
+					sshRemoteId: managedProcess.sshRemoteId,
 					timestamp: Date.now(),
 					raw: {
 						stderr: stderrData,

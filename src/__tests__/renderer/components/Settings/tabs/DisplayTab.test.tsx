@@ -140,6 +140,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => {
 		fileEditWordWrap: true,
 		setFileEditWordWrap: mockSetFileEditWordWrap,
 		fileEditShowLineNumbers: true,
+		fileEditVimMode: false,
+		setFileEditVimMode: vi.fn(),
 		setFileEditShowLineNumbers: mockSetFileEditShowLineNumbers,
 		filePreviewToolbarVisibility: {
 			save: true,

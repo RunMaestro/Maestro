@@ -595,6 +595,8 @@ export interface UseSettingsReturn {
 	setFileEditWordWrap: (value: boolean) => void;
 	fileEditShowLineNumbers: boolean;
 	setFileEditShowLineNumbers: (value: boolean) => void;
+	fileEditVimMode: boolean;
+	setFileEditVimMode: (value: boolean) => void;
 	filePreviewToolbarVisibility: FilePreviewToolbarVisibility;
 	setFilePreviewToolbarButtonVisibility: (button: FilePreviewToolbarButton, value: boolean) => void;
 

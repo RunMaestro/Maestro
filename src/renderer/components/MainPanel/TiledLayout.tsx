@@ -54,6 +54,7 @@ import { useTabStore } from '../../stores/tabStore';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type { FileNode } from '../../types/fileTree';
+import { quoteIntoAgentComposer } from '../../services/quoteIntoComposer';
 import type {
 	PaneRects,
 	PanelLayoutNode,
@@ -189,6 +190,8 @@ export interface PaneFileActions {
 	onFileClick?: (path: string) => void;
 	onOpenFuzzySearch?: () => void;
 	onShortcutUsed?: (shortcutId: string) => void;
+	/** "Send to Agent" on a file editor selection (opens the Send-to-Agent modal). */
+	onSendTextToAgent?: (text: string, sourceName: string) => void;
 }
 
 /**
@@ -391,6 +394,8 @@ function TiledFilePane({
 					onFileClick={actions?.onFileClick}
 					onOpenFuzzySearch={actions?.onOpenFuzzySearch}
 					onShortcutUsed={actions?.onShortcutUsed}
+					onSendSelectionToAgent={actions?.onSendTextToAgent}
+					onQuoteSelection={(text) => quoteIntoAgentComposer(session.id, text)}
 					// Scroll + find-query memory, so switching away and back lands where
 					// the user left off instead of jumping to the top with a cleared term.
 					initialScrollTop={fileTab.scrollTop}

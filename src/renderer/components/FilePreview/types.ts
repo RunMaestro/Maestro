@@ -58,6 +58,14 @@ export interface FilePreviewProps {
 	 * dashboards, but the full webview can.
 	 */
 	onOpenInBrowser?: () => void;
+	/**
+	 * "Send to Agent" on an editor selection: opens the Send-to-Agent modal with
+	 * the passage (path, line range, and the text in a code fence).
+	 * `sourceName` labels it there, e.g. `app.ts:12-30`.
+	 */
+	onSendSelectionToAgent?: (text: string, sourceName: string) => void;
+	/** "Quote in Message" on an editor selection: quotes it into the agent's composer. */
+	onQuoteSelection?: (text: string) => void;
 	/** SSH remote ID for remote file operations */
 	sshRemoteId?: string;
 	/**

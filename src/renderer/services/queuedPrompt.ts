@@ -21,10 +21,11 @@ import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
  * an IPC listener) run outside React.
  */
 
-import type { AITab, QueuedItem, Session } from '../types';
+import type { AITab, QueuedItem, QueuedItemEditPatch, Session } from '../types';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useAgentStore } from '../stores/agentStore';
 import { getDispatchDeps } from '../stores/retryStore';
+import type { QueuedSlashCommand } from '../utils/executionQueue';
 import { getActiveTab, getTabDisplayName } from '../utils/tabHelpers';
 import {
 	applyQueuedItemDispatch,
@@ -469,4 +470,74 @@ export function sendQueuedItemNow(
 		logger.error('[ForceSend] Dispatch failed, item returned to queue', undefined, err);
 	});
 	return true;
+}
+
+/**
+ * The slash command a message IS, when it starts with one of the user's commands
+ * (`/commit`, or `/speckit.plan the auth flow` with its arguments). Parsed the
+ * way the composer parses a typed command, and searched in the same sets and
+ * order `agentStore.processQueuedItem` resolves a command item against, so an
+ * item built from a match here always finds its definition at drain time.
+ *
+ * Null for ordinary text, for a slash word that is none of the user's commands
+ * (a provider's own `/compact` stays a message, as typed), and before App has
+ * wired the command lists.
+ */
+export function matchQueuedSlashCommand(session: Session, text: string): QueuedSlashCommand | null {
+	const commandText = text.trim();
+	if (!commandText.startsWith('/')) return null;
+	const deps = getDispatchDeps();
+	if (!deps) return null;
+	const firstSpace = commandText.indexOf(' ');
+	const command = firstSpace === -1 ? commandText : commandText.slice(0, firstSpace);
+	const commandArgs = firstSpace === -1 ? '' : commandText.slice(firstSpace + 1).trim();
+	const match =
+		deps.customAICommands.find((cmd) => cmd.command === command) ??
+		deps.speckitCommands.find((cmd) => cmd.command === command) ??
+		deps.openspecCommands.find((cmd) => cmd.command === command) ??
+		deps.bmadCommands?.find((cmd) => cmd.command === command) ??
+		session.agentCommands?.find((cmd) => cmd.command === command && cmd.prompt);
+	return match ? { command, commandArgs, description: match.description } : null;
+}
+
+/**
+ * Everything an edit to a queued message re-derives from its EDITED text, for
+ * `applyQueuedItemEdit`. Both edit surfaces (the inline chat list and the
+ * Execution Queue browser) call this, so they cannot drift on what an edit does.
+ *
+ * Both `@mention` flags are re-derived, not just `crossAgentMention`: the edit
+ * can add, remove, or move a mention, and where it sits decides whether this
+ * agent answers at all. A message edited into one of the user's slash commands
+ * becomes that command, with no mention to consult.
+ */
+export function resolveQueuedItemEdit(
+	session: Session,
+	patch: QueuedItemEditPatch,
+	itemId?: string
+): {
+	crossAgent: Pick<QueuedItem, 'crossAgentOnly' | 'mentionRouting'> & {
+		crossAgentMention: boolean;
+	};
+	slashCommand?: QueuedSlashCommand;
+} {
+	const slashCommand = matchQueuedSlashCommand(session, patch.text);
+	if (slashCommand) {
+		return {
+			crossAgent: { crossAgentMention: false, crossAgentOnly: false, mentionRouting: undefined },
+			slashCommand,
+		};
+	}
+	// A routing the user PICKED when queuing it survives the edit; the plan
+	// drops it only when the edit removes every mention.
+	const pickedRouting = itemId
+		? session.executionQueue?.find((item) => item.id === itemId)?.mentionRouting
+		: undefined;
+	const mentionPlan = planCrossAgentMentions(patch.text, session.id, pickedRouting);
+	return {
+		crossAgent: {
+			crossAgentMention: !!mentionPlan,
+			crossAgentOnly: mentionPlan?.suppressLocal ?? false,
+			mentionRouting: mentionPlan?.routingSource === 'explicit' ? mentionPlan.routing : undefined,
+		},
+	};
 }

@@ -103,6 +103,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Redacting secrets from text you persist or show:** `redactSecrets(text, opts?)`, `passesLuhn()` in `src/shared/redactSecrets.ts`
 - **An Error in a log entry or JSON payload:** `serializeError()`, `toLoggableData()` in `src/shared/serializeError.ts`
 - **An ssh run that never reached the host (exit 255):** `isSshConnectionFailure()`, `describeSshUnreachable()` in `src/shared/sshConnection.ts`
+- **Telling the user an SSH remote went down:** `noteSshExit()`, `checkSshRemote()` in `src/main/ssh-reachability.ts`; run one-shot remote commands with `execSshCommand()` in `src/main/utils/ssh-command-builder.ts`
 - **Strip ANSI / collapse progress overwrites:** `stripAnsiCodes()`, `processCarriageReturns()` in `src/shared/stringUtils.ts`
 - **Lines added and removed by a save:** `countLineChanges(before, after)` in `src/shared/lineChanges.ts`
 - **Matching error patterns against an agent's exit output:** `stripJsonEventLines()` in `src/shared/agentErrorPatterns.ts`
@@ -309,6 +310,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Running a shell code fence from an agent's reply:** `requestCodeFenceCommand()` / `CODE_FENCE_COMMAND_EVENT` in `src/renderer/services/codeFenceCommand.ts`, `isRunnableShellLanguage()` / `commandFromShellFence()` in `src/renderer/utils/shellCommandInput.ts`, drawn by `<CodeRunButton>`
 - **Ask the model for a shell command (AI command mode):** `requestAiCommand()`, `acceptAiCommand()`, `dismissAiCommand()` in `src/renderer/services/aiCommand.ts`; prompt in `src/prompts/ai-command.md`
 - **A composer's send column (notification bell + Send):** `<ComposerSendColumn>` in `src/renderer/components/ChatComposer/ComposerSendColumn.tsx`
+- **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer(sessionId, text)` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()` / `formatFileSelection()` in `src/renderer/utils/quoteSelection.ts`
 - **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx`
 - **Trimming a text paste in a composer:** `applyTrimmedTextPaste(e, currentValue, setValue)` / `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
 - **Composer keys both chat composers share (Cmd+F, `@` picker, Tab, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerAgentTabKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`

@@ -71,6 +71,7 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 - **Parquet tables** with a typed query language, on files far larger than memory
 - **Line numbers** for easy reference
 - **Search within file** (`Cmd+F` / `Ctrl+F`)
+- **Built-in code editor** (`Cmd+E` / `Ctrl+E` on any text file): autocomplete, auto-closing brackets and tags, multiple cursors, find and replace, toggle comment and line moves, optional Vim keybindings, and right-click to quote a selection into your message - see **[Editing Files](./file-editor)**
 
 Several formats come with a filtering language built for that format rather than
 a plain search box. **[File Formats](./file-formats)** is the full map: what

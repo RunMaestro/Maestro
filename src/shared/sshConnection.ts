@@ -157,6 +157,26 @@ export function describeSshUnreachable(
 	return `Unable to connect to "${label}" over SSH.${detail ? ` ${detail}` : ''}`;
 }
 
+/** How often an unreachable remote is probed to notice it came back. */
+export const SSH_RECOVERY_PROBE_INTERVAL_SECONDS = 30;
+
+/**
+ * A change in whether a remote can be reached, pushed from the main process on
+ * `ssh-remote:reachability` (see `src/main/ssh-reachability.ts`). Sent once when
+ * a remote is confirmed unreachable and once when it comes back, never per
+ * failed operation.
+ */
+export interface SshReachabilityEvent {
+	remoteId: string;
+	/** The remote's display name, or its host when it has none. */
+	remoteName: string;
+	reachable: boolean;
+	/** `describeSshUnreachable()` text; present only when `reachable` is false. */
+	message?: string;
+	/** Epoch ms the remote entered this state. */
+	since: number;
+}
+
 /** Parsed form of a probe's stdout. */
 export interface SshProbeReading {
 	/** True when the remote echoed the marker as its first line. */

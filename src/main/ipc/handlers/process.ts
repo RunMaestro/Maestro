@@ -34,6 +34,7 @@ import { shellEscape, shellEscapeRemotePath } from '../../utils/shell-escape';
 import { resolveSshPath } from '../../utils/cliDetection';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { buildSshOptionArgs } from '../../../shared/sshOptions';
+import { noteSshExit } from '../../ssh-reachability';
 import { MaestroSettings } from './persistence';
 import { getDefaultShell, resolveConfiguredShell } from '../../stores/defaults';
 import { handleProcessSpawn, cancelPendingDesktopSpawns } from './process/handle-spawn';
@@ -793,6 +794,16 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						remoteParts.push('exec "$SHELL" -l');
 						sshArgs.push(remoteParts.join(' && '));
 
+						// The terminal shows ssh's own error text; also tell the reachability
+						// tracker, so a host that dropped raises the same dialog as an agent.
+						const terminalSessionId = config.sessionId;
+						const remoteId = sshResult.config.id;
+						const onTerminalExit = (exitedId: string, exitCode: number) => {
+							if (exitedId !== terminalSessionId) return;
+							processManager.off('exit', onTerminalExit);
+							noteSshExit(remoteId, exitCode);
+						};
+						processManager.on('exit', onTerminalExit);
 						return settleTerminalPid(
 							processManager,
 							config.sessionId,
