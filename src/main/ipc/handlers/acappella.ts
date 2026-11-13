@@ -507,8 +507,7 @@ function noticeTtsFor(settings: VoiceProviderSettings): TtsProvider {
 
 function disposeNoticeTts(): void {
 	const previous = noticeTts?.provider as
-		| (TtsProvider & { dispose?: () => Promise<void> })
-		| undefined;
+		(TtsProvider & { dispose?: () => Promise<void> }) | undefined;
 	noticeTts = null;
 	void previous?.dispose?.();
 }
@@ -1077,6 +1076,7 @@ function toVoiceSessionView(snapshot: VoiceSessionSnapshot | null): VoiceSession
 export function syncACappellaAfterExternalSettingsChange(): void {
 	void handsFree?.sync();
 	voiceHotkeys?.sync();
+	getACappellaTransport()?.syncFeatureEnabled();
 }
 
 /**
