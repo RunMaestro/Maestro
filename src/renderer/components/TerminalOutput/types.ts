@@ -54,7 +54,7 @@ export interface LogItemProps {
 	onClearLocalFilter: (logId: string) => void;
 	// Delete state
 	deleteConfirmLogId: string | null;
-	onDeleteLog?: (logId: string) => number | null;
+	onDeleteLog?: (logId: string) => number | null | Promise<number | null>;
 	onSetDeleteConfirmLogId: (logId: string | null) => void;
 	scrollContainerRef: React.RefObject<HTMLDivElement>;
 	// Other callbacks
@@ -201,7 +201,7 @@ export interface TerminalOutputProps {
 	inputRef: React.RefObject<HTMLTextAreaElement>;
 	logsEndRef: React.RefObject<HTMLDivElement>;
 	maxOutputLines: number;
-	onDeleteLog?: (logId: string) => number | null; // Returns the index to scroll to after deletion
+	onDeleteLog?: (logId: string) => number | null | Promise<number | null>; // Returns the index to scroll to after deletion
 	onRemoveQueuedItem?: (itemId: string) => void; // Callback to remove a queued item from execution queue
 	onTogglePauseQueuedItem?: (itemId: string) => void; // Callback to toggle held/paused state of a queued item
 	onMergeQueuedItem?: (itemId: string) => void; // Fold a queued message into the one above it

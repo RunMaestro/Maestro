@@ -429,6 +429,24 @@ describe('ClaudeSessionStorage', () => {
 			expect(fs.writeFile).not.toHaveBeenCalled();
 		});
 
+		it("edits the transcript under the agent's own account directory", async () => {
+			vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: transcript });
+			vi.mocked(writeFileRemote).mockResolvedValue({ success: true });
+			vi.mocked(renameRemote).mockResolvedValue({ success: true });
+
+			await storage.deleteMessagePair(
+				'/remote/project',
+				'session-123',
+				'maestro-log-id',
+				'second',
+				sshConfig,
+				'~/.claude-work'
+			);
+
+			const [readPath] = vi.mocked(readFileRemote).mock.calls[0];
+			expect(readPath).toMatch(/^~\/\.claude-work\/projects\/.*\/session-123\.jsonl$/);
+		});
+
 		it('reports a remote read failure and writes nothing', async () => {
 			vi.mocked(readFileRemote).mockResolvedValue({ success: false, error: 'File not found: x' });
 
@@ -443,7 +461,8 @@ describe('ClaudeSessionStorage', () => {
 
 			const result = await storage.deleteMessagePair('/p', 's', 'id', 'not there', sshConfig);
 
-			expect(result).toEqual({ success: false, error: 'User message not found' });
+			// Never recorded, so nothing is in the agent's context to remove.
+			expect(result).toEqual({ success: true, linesRemoved: 0, notInTranscript: true });
 			expect(writeFileRemote).not.toHaveBeenCalled();
 			expect(renameRemote).not.toHaveBeenCalled();
 		});

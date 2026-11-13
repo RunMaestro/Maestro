@@ -147,7 +147,7 @@ export interface UseMainPanelPropsDeps {
 	getContextColor: (usage: number, theme: Theme) => string;
 	setActiveSessionId: (id: string) => void;
 	handleStopBatchRun: (sessionId?: string) => void;
-	handleDeleteLog: (logId: string) => number | null;
+	handleDeleteLog: (logId: string) => Promise<number | null>;
 	handleRemoveQueuedItem: (itemId: string) => void;
 	handleToggleQueuedItemPause: (itemId: string) => void;
 	handleMergeQueuedItem: (itemId: string) => void;

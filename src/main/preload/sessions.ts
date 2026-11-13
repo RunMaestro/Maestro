@@ -307,7 +307,8 @@ export function createAgentSessionsApi() {
 			sessionId: string,
 			userMessageUuid: string,
 			fallbackContent?: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			ownerAgentId?: string
 		) =>
 			ipcRenderer.invoke(
 				'agentSessions:deleteMessagePair',
@@ -316,7 +317,8 @@ export function createAgentSessionsApi() {
 				sessionId,
 				userMessageUuid,
 				fallbackContent,
-				sshRemoteId
+				sshRemoteId,
+				...(ownerAgentId === undefined ? [] : [ownerAgentId])
 			),
 
 		hasStorage: (agentId: string) => ipcRenderer.invoke('agentSessions:hasStorage', agentId),

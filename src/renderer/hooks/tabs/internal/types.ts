@@ -112,7 +112,7 @@ export interface UnifiedTabHandlersReturn {
 export interface ScrollLogHandlersReturn {
 	handleScrollPositionChange: (scrollTop: number) => void;
 	handleAtBottomChange: (isAtBottom: boolean) => void;
-	handleDeleteLog: (logId: string) => number | null;
+	handleDeleteLog: (logId: string) => Promise<number | null>;
 }
 
 export interface TabHandlersReturn

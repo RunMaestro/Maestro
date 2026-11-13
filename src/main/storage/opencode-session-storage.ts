@@ -33,6 +33,7 @@ import type {
 	SessionMessage,
 } from '../agents';
 import { BaseSessionStorage, type SearchableMessage } from './base-session-storage';
+import { MESSAGE_NOT_IN_TRANSCRIPT, type DeleteMessagePairResult } from '../agents/session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { isWindows } from '../../shared/platformDetection';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
@@ -1739,7 +1740,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		userMessageUuid: string,
 		fallbackContent?: string,
 		sshConfig?: SshRemoteConfig
-	): Promise<{ success: boolean; error?: string; linesRemoved?: number }> {
+	): Promise<DeleteMessagePairResult> {
 		// Delete operations on remote sessions are not supported
 		if (sshConfig) {
 			logger.warn('Delete message pair not supported for SSH remote sessions', LOG_CONTEXT);
@@ -1807,7 +1808,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 					userMessageUuid,
 					hasFallback: !!fallbackContent,
 				});
-				return { success: false, error: 'User message not found' };
+				return MESSAGE_NOT_IN_TRANSCRIPT;
 			}
 
 			// Find all messages to delete (user message + following assistant messages until next user)

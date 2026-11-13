@@ -147,7 +147,7 @@ export interface MainPanelProps {
 	onUploadFiles?: (files: File[]) => void;
 	getContextColor: (usage: number, theme: Theme) => string;
 	setActiveSessionId: (id: string) => void;
-	onDeleteLog?: (logId: string) => number | null;
+	onDeleteLog?: (logId: string) => number | null | Promise<number | null>;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
 	onMergeQueuedItem?: (itemId: string) => void;

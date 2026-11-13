@@ -247,7 +247,7 @@ export interface MainPanelContentProps {
 	paneFileActions?: PaneFileActions;
 
 	// Props forwarded to child components (from MainPanelProps)
-	onDeleteLog?: (logId: string) => number | null;
+	onDeleteLog?: (logId: string) => number | null | Promise<number | null>;
 	onScrollPositionChange?: (scrollTop: number) => void;
 	onAtBottomChange?: (isAtBottom: boolean) => void;
 	onInputBlur?: () => void;

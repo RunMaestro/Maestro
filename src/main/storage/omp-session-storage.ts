@@ -32,6 +32,7 @@ import { promises as fs } from 'fs';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { BaseSessionStorage, type SearchableMessage } from './base-session-storage';
+import { MESSAGE_NOT_IN_TRANSCRIPT, type DeleteMessagePairResult } from '../agents/session-storage';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
 import type {
 	AgentSessionInfo,
@@ -465,7 +466,7 @@ export class OmpSessionStorage extends BaseSessionStorage {
 		userMessageUuid: string,
 		fallbackContent?: string,
 		sshConfig?: SshRemoteConfig
-	): Promise<{ success: boolean; error?: string; linesRemoved?: number }> {
+	): Promise<DeleteMessagePairResult> {
 		if (sshConfig) {
 			return { success: false, error: 'Delete not supported for remote omp sessions' };
 		}
@@ -525,7 +526,7 @@ export class OmpSessionStorage extends BaseSessionStorage {
 				}
 			}
 
-			if (!foundUserMessage) return { success: false, error: 'User message not found' };
+			if (!foundUserMessage) return MESSAGE_NOT_IN_TRANSCRIPT;
 
 			await fs.writeFile(filePath, newLines.join('\n'), 'utf-8');
 			logger.info('Deleted message pair from omp session', LOG_CONTEXT, {

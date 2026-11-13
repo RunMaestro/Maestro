@@ -43,7 +43,9 @@ import type {
 	AgentSessionOrigin,
 	SessionOriginInfo,
 	SessionMessage,
+	DeleteMessagePairResult,
 } from '../agents';
+import { MESSAGE_NOT_IN_TRANSCRIPT } from '../agents/session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import type {
 	ClaudeSessionOrigin,
@@ -315,8 +317,17 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 * view, or edited from Maestro. Falls back to the default path so a missing
 	 * file still fails with the usual read error.
 	 */
-	private async locateLocalSessionFile(projectPath: string, sessionId: string): Promise<string> {
-		const defaultFile = path.join(this.getEncodedProjectDir(projectPath), `${sessionId}.jsonl`);
+	private async locateLocalSessionFile(
+		projectPath: string,
+		sessionId: string,
+		ownerAccountDir?: string
+	): Promise<string> {
+		// An agent's own account is the first place to look: the same session ID
+		// can sit in two account trees when a transcript was copied between them.
+		const defaultFile = path.join(
+			this.getEncodedProjectDir(projectPath, ownerAccountDir),
+			`${sessionId}.jsonl`
+		);
 		const exists = async (file: string): Promise<boolean> => {
 			try {
 				await fs.access(file);
@@ -856,12 +867,13 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		sessionId: string,
 		userMessageUuid: string,
 		fallbackContent?: string,
-		sshConfig?: SshRemoteConfig
-	): Promise<{ success: boolean; error?: string; linesRemoved?: number }> {
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
+	): Promise<DeleteMessagePairResult> {
 		try {
 			const sessionFile = sshConfig
-				? this.getSessionPath(projectPath, sessionId, sshConfig)!
-				: await this.locateLocalSessionFile(projectPath, sessionId);
+				? `${this.getRemoteEncodedProjectDir(projectPath, accountDir)}/${sessionId}.jsonl`
+				: await this.locateLocalSessionFile(projectPath, sessionId, accountDir);
 
 			let content: string;
 			if (sshConfig) {
@@ -882,7 +894,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 					hasFallback: !!fallbackContent,
 					remote: !!sshConfig,
 				});
-				return { success: false, error: 'User message not found' };
+				return MESSAGE_NOT_IN_TRANSCRIPT;
 			}
 
 			if (sshConfig) {

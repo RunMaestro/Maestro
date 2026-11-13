@@ -1701,6 +1701,72 @@ describe('agentSessions IPC handlers', () => {
 			);
 		});
 
+		it("edits the owning agent's own account transcript (its CODEX_HOME)", async () => {
+			vi.mocked(getLiveSessions).mockReturnValue([
+				createMockSession({
+					id: 'bench-lab',
+					toolType: 'codex',
+					cwd: '/project',
+					projectRoot: '/project',
+					customEnvVars: { CODEX_HOME: '/accounts/codex-gmail' },
+				}),
+			]);
+			const mockStorage = {
+				agentId: 'codex',
+				deleteMessagePair: vi
+					.fn()
+					.mockResolvedValue({ success: true, linesRemoved: 0, notInTranscript: true }),
+			};
+			vi.mocked(agentSessionStorage.getSessionStorage).mockReturnValue(
+				mockStorage as unknown as agentSessionStorage.AgentSessionStorage
+			);
+
+			const result = await handlers.get('agentSessions:deleteMessagePair')!(
+				{} as any,
+				'codex',
+				'/project',
+				'session-1',
+				'log-1',
+				'text',
+				undefined,
+				'bench-lab'
+			);
+
+			expect(mockStorage.deleteMessagePair).toHaveBeenCalledWith(
+				'/project',
+				'session-1',
+				'log-1',
+				'text',
+				undefined,
+				path.resolve('/accounts/codex-gmail')
+			);
+			expect(result).toEqual({ success: true, linesRemoved: 0, notInTranscript: true });
+		});
+
+		it('refuses an owned delete whose owner is gone or runs another provider', async () => {
+			vi.mocked(getLiveSessions).mockReturnValue([
+				createMockSession({ id: 'bench-lab', toolType: 'claude-code' }),
+			]);
+			const mockStorage = { agentId: 'codex', deleteMessagePair: vi.fn() };
+			vi.mocked(agentSessionStorage.getSessionStorage).mockReturnValue(
+				mockStorage as unknown as agentSessionStorage.AgentSessionStorage
+			);
+
+			await expect(
+				handlers.get('agentSessions:deleteMessagePair')!(
+					{} as any,
+					'codex',
+					'/project',
+					'session-1',
+					'log-1',
+					'text',
+					undefined,
+					'bench-lab'
+				)
+			).rejects.toThrow(/History owner is unavailable/);
+			expect(mockStorage.deleteMessagePair).not.toHaveBeenCalled();
+		});
+
 		it('refuses rather than editing a local file when the remote cannot be resolved', async () => {
 			vi.mocked(getSshRemoteById).mockReturnValueOnce(undefined);
 			const mockStorage = { agentId: 'claude-code', deleteMessagePair: vi.fn() };

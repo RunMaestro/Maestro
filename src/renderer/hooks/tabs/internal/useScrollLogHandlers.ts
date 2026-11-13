@@ -6,11 +6,12 @@ import type { Session } from '../../../types';
 import { getActiveTab } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
 import { resolveTurnProvider } from '../../../../shared/maestro-lib/agents/providerSwap';
+import { resolveSessionProjectPath } from '../../../components/AgentSessionsBrowser/utils/sessionProjectPath';
 import { deleteShellCommandLog } from './deleteShellCommandLog';
 import type { ScrollLogHandlersReturn } from './types';
 
 export function useScrollLogHandlers(): ScrollLogHandlersReturn {
-	const handleDeleteLog = useCallback((logId: string): number | null => {
+	const handleDeleteLog = useCallback(async (logId: string): Promise<number | null> => {
 		const { setSessions } = useSessionStore.getState();
 		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return null;
@@ -95,25 +96,45 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 		}
 
 		if (isAIMode && currentActiveTab) {
+			// The tab's live provider session (`agentSessionId` always belongs to
+			// `session.toolType`; parked providers live in `providerSessions`). The
+			// message leaves the tab only once it has left the agent's context too,
+			// or the provider confirms it never recorded it (a turn that failed
+			// before the provider wrote anything).
 			const agentSessionId = currentActiveTab.agentSessionId;
-			if (agentSessionId && currentSession.cwd) {
-				window.maestro.claude
-					.deleteMessagePair(currentSession.cwd, agentSessionId, logId, log.text)
-					.then((result) => {
-						if (!result.success) {
-							logger.warn(
-								'[handleDeleteLog] Failed to delete from Claude session:',
-								undefined,
-								result.error
-							);
-						}
-					})
-					.catch((err) => {
-						logger.error('[handleDeleteLog] Error deleting from Claude session:', undefined, err);
+			if (agentSessionId) {
+				try {
+					// A remote agent's transcript lives on its SSH remote, under the
+					// remote working directory rather than the local cwd. Passing the
+					// agent's id lets main resolve its own account directory too.
+					const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(currentSession);
+					const result = await window.maestro.agentSessions.deleteMessagePair(
+						currentSession.toolType,
+						sshRemoteId ? (projectPathForSessions ?? currentSession.cwd) : currentSession.cwd,
+						agentSessionId,
+						logId,
+						log.text,
+						sshRemoteId,
+						currentSession.id
+					);
+					if (!result.success) throw new Error(result.error || 'The provider refused deletion.');
+				} catch (error) {
+					logger.error('[handleDeleteLog] Provider deletion failed', undefined, error);
+					notifyToast({
+						color: 'red',
+						title: 'Message was not deleted',
+						message: `It remains in the agent's context. ${error instanceof Error ? error.message : String(error)}`,
+						sessionId: currentSession.id,
+						tabId: currentActiveTab.id,
 					});
+					return null;
+				}
 			}
 
 			const commandText = log.text.trim();
+			// Remove by id against the CURRENT tab: output may have streamed in
+			// while the provider edit was awaited, and a snapshot would drop it.
+			const deletedLogIds = new Set(logs.slice(logIndex, endIndex).map((entry) => entry.id));
 
 			setSessions((prev: Session[]) =>
 				prev.map((s) => {
@@ -125,7 +146,9 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 						...s,
 						aiCommandHistory: newAICommandHistory,
 						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === currentActiveTab.id ? { ...tab, logs: newLogs } : tab
+							tab.id === currentActiveTab.id
+								? { ...tab, logs: tab.logs.filter((entry) => !deletedLogIds.has(entry.id)) }
+								: tab
 						),
 					};
 				})
