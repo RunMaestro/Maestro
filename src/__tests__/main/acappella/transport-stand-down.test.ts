@@ -201,4 +201,37 @@ describe('ACappellaTransport lazy device-name loading', () => {
 		loadSpy.mockRestore();
 		cold.dispose();
 	});
+
+	it('forwards back-to-back signaling messages in arrival order and reads devices.json once', async () => {
+		await seedDevice('Studio iPad');
+		settings = { encoreFeatures: { aCappella: false } };
+
+		const cold = createTransport();
+		const loadSpy = vi.spyOn(cold.pairing, 'load');
+		const arrivals: unknown[] = [];
+		const handleSpy = vi
+			.spyOn(cold.signaling, 'handleMessage')
+			.mockImplementation(async (_clientId, payload) => {
+				arrivals.push(payload);
+			});
+
+		settings.encoreFeatures = { aCappella: true };
+		const first = { op: 'auth', seq: 1 };
+		const second = { op: 'offer', seq: 2 };
+		const p1 = cold.handleSignalMessage('c1', first);
+		const p2 = cold.handleSignalMessage('c1', second);
+
+		// Synchronous dispatch to signaling.handleMessage preserves arrival order
+		// without waiting on the background devices.json name load.
+		expect(arrivals).toEqual([first, second]);
+		await Promise.all([p1, p2]);
+		await vi.waitFor(() => {
+			expect(cold.pairing.listLoaded().map((d) => d.name)).toEqual(['Studio iPad']);
+		});
+		expect(loadSpy).toHaveBeenCalledTimes(1);
+
+		handleSpy.mockRestore();
+		loadSpy.mockRestore();
+		cold.dispose();
+	});
 });

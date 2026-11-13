@@ -113,7 +113,7 @@ export class ACappellaTransport {
 	private readonly quality = new Map<string, PeerQualityStats>();
 	private readonly probes = new Map<string, (result: IceProbeResult) => void>();
 	private readonly names = new Map<string, string>();
-	private namesLoaded = false;
+	private namesLoadPromise: Promise<void> | null = null;
 
 	constructor(deps: ACappellaTransportDeps) {
 		this.deps = deps;
@@ -177,7 +177,7 @@ export class ACappellaTransport {
 		});
 
 		if (this.featureEnabled()) {
-			void this.refreshNames();
+			void this.ensureNamesLoaded();
 		}
 	}
 
@@ -395,8 +395,8 @@ export class ACappellaTransport {
 		this.signaling.register(params);
 	}
 
-	async handleSignalMessage(clientId: string, payload: unknown): Promise<void> {
-		await this.ensureNamesLoaded();
+	handleSignalMessage(clientId: string, payload: unknown): Promise<void> {
+		void this.ensureNamesLoaded();
 		return this.signaling.handleMessage(clientId, payload);
 	}
 
@@ -424,14 +424,16 @@ export class ACappellaTransport {
 		this.deps.sendToAudioHost(command);
 	}
 
-	private async ensureNamesLoaded(): Promise<void> {
-		if (this.namesLoaded || !this.featureEnabled()) return;
-		await this.refreshNames();
+	private ensureNamesLoaded(): Promise<void> {
+		if (!this.featureEnabled()) return Promise.resolve();
+		return (this.namesLoadPromise ??= this.refreshNames().catch((error) => {
+			this.namesLoadPromise = null;
+			throw error;
+		}));
 	}
 
 	private async refreshNames(): Promise<void> {
 		for (const device of await this.pairing.list()) this.names.set(device.id, device.name);
-		this.namesLoaded = true;
 	}
 }
 
