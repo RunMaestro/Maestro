@@ -95,7 +95,7 @@ export interface WorktreeHandlersReturn {
 	handleCloseCreateWorktreeModal: () => void;
 	handleCreateWorktree: (branchName: string, baseBranch?: string) => Promise<void>;
 	handleCloseDeleteWorktreeModal: () => void;
-	handleConfirmDeleteWorktree: () => void;
+	handleConfirmDeleteWorktree: () => Promise<void>;
 	handleConfirmAndDeleteWorktreeOnDisk: () => Promise<void>;
 	handlePRCreated: (prDetails: PRDetails) => Promise<void>;
 	refreshWorktreeState: () => Promise<void>;
