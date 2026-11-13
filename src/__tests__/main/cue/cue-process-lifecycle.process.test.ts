@@ -72,6 +72,37 @@ async function waitFor(condition: () => boolean, timeoutMs = 5000): Promise<void
 }
 
 describe('runProcess against a real process', () => {
+	it('checks the host fence synchronously before launching and supplies settled native proof', async () => {
+		const onStarted = vi.fn();
+		const blocked = await runProcess(
+			nextRunId(),
+			spec({ chunks: [], close: { code: 0, signal: null } }),
+			options('opencode', { beforeLaunch: () => false, onStarted })
+		);
+		expect(blocked.executionStarted).toBe(false);
+		expect(onStarted).not.toHaveBeenCalled();
+		expect(getProcessList()).toHaveLength(0);
+		const allowed = await runProcess(
+			nextRunId(),
+			spec({ chunks: [], close: { code: 0, signal: null } }),
+			options('opencode', { beforeLaunch: () => true, onStarted })
+		);
+		expect(onStarted).toHaveBeenCalledWith(expect.any(Number));
+		expect(allowed).toMatchObject({ executionStarted: true, terminationConfirmed: true });
+	});
+	it('settles the existing child after a launch-observer persistence failure', async () => {
+		const result = await runProcess(
+			nextRunId(),
+			spec({ chunks: [], close: { code: 0, signal: null } }, { hold: true }),
+			options('opencode', {
+				onStarted: () => {
+					throw new Error('DB write failed');
+				},
+			})
+		);
+		expect(result.terminationConfirmed).toBe(true);
+		expect(getProcessList()).toHaveLength(0);
+	});
 	it('completes an OpenCode run with its answer, session id and usage', async () => {
 		const recording = CAPTURED_RECORDINGS['captured-opencode-normal'];
 

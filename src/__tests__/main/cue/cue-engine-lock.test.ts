@@ -758,6 +758,34 @@ setInterval(() => {
 		__setCueEngineLockTestHook(undefined);
 	});
 
+	it('keeps a native ownership callback exclusive against an actual living second host', async () => {
+		const dataDir = freshDataDir();
+		const lock = await import('../../../main/cue/cue-engine-lock');
+		expect(lock.acquireCueEngineLock('desktop', dataDir).acquired).toBe(true);
+		try {
+			const result = lock.withOwnedCueEngineLock(
+				() => requestSync(workers[0], 'acquire', dataDir),
+				dataDir
+			);
+			expect(result.ok).toBe(true);
+			if (result.ok) expect(result.value.acquired).toBe(false);
+			expect(lockOnDisk(dataDir).pid).toBe(process.pid);
+		} finally {
+			lock.releaseCueEngineLock(dataDir);
+		}
+	});
+	it('does not let a peer without the native token enter the ownership callback', async () => {
+		const dataDir = freshDataDir();
+		const lock = await import('../../../main/cue/cue-engine-lock');
+		expect((await request(workers[0], 'acquire', dataDir)).acquired).toBe(true);
+		let entered = false;
+		const result = lock.withOwnedCueEngineLock(() => {
+			entered = true;
+		}, dataDir);
+		expect(result.ok).toBe(false);
+		expect(entered).toBe(false);
+		await request(workers[0], 'release', dataDir);
+	});
 	/** Every worker acquires at the same wall-clock instant; exactly one may win. */
 	async function race(dataDir: string): Promise<void> {
 		const at = Date.now() + 40;

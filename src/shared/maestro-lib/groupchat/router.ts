@@ -2396,6 +2396,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 					const spawnResult = await launcher.runner.start({
 						processId: sessionId,
 						providerId: participant.agentId,
+						originWorkerId: matchingSession?.id,
 						agent,
 						command: spawnCommand,
 						args: spawnArgs,
@@ -3031,6 +3032,7 @@ Review the agent responses above. Either:
 		const spawnResult = await launcher.runner.start({
 			processId: sessionId,
 			providerId: participant.agentId,
+			originWorkerId: matchingSession?.id,
 			agent,
 			args: configResolution.args,
 			cwd,

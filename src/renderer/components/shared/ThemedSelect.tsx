@@ -31,6 +31,8 @@ interface ThemedSelectProps {
 	theme: Theme;
 	disabled?: boolean;
 	style?: React.CSSProperties;
+	/** Optional ref for focusing the trigger from a keyboard shortcut. */
+	triggerRef?: React.RefObject<HTMLButtonElement>;
 	/** Optional CSS class for the trigger button */
 	className?: string;
 	/** Accessible label for the trigger button */
@@ -51,6 +53,7 @@ export function ThemedSelect({
 	disabled = false,
 	style,
 	className,
+	triggerRef: externalTriggerRef,
 	'aria-label': ariaLabel,
 	id,
 	filterable = false,
@@ -61,7 +64,8 @@ export function ThemedSelect({
 	const [activeIndex, setActiveIndex] = useState(-1);
 	const [query, setQuery] = useState('');
 	const containerRef = useRef<HTMLDivElement>(null);
-	const triggerRef = useRef<HTMLButtonElement>(null);
+	const internalTriggerRef = useRef<HTMLButtonElement>(null);
+	const triggerRef = externalTriggerRef ?? internalTriggerRef;
 	const menuRef = useRef<HTMLDivElement>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 	const [dropUp, setDropUp] = useState(false);
@@ -226,10 +230,17 @@ export function ThemedSelect({
 			{open && !disabled && (
 				<div
 					ref={menuRef}
+					data-select-escape=""
 					role="listbox"
 					tabIndex={-1}
 					aria-activedescendant={activeIndex >= 0 ? `${instanceId}-opt-${activeIndex}` : undefined}
-					onKeyDown={filterable ? undefined : handleNavKeyDown}
+					onKeyDown={
+						filterable
+							? (e) => {
+									if (e.key === 'Escape') handleNavKeyDown(e);
+								}
+							: handleNavKeyDown
+					}
 					style={{
 						position: 'absolute',
 						left: 0,
@@ -247,9 +258,6 @@ export function ThemedSelect({
 				>
 					{filterable && (
 						<div
-							onKeyDown={(e) => {
-								if (e.key === 'Escape') handleNavKeyDown(e);
-							}}
 							style={{
 								display: 'flex',
 								alignItems: 'center',

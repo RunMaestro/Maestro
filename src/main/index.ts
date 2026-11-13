@@ -1,3 +1,4 @@
+import { configureBoardFeatures, requireBoardEnabled, isBoardEnabled } from './board/board-feature';
 import { createPluginSessionLifecycle } from './plugins/plugin-session-lifecycle';
 import type { ConfirmQueueItem, ReleaseQueueItem } from './stores/queue-item-receipt';
 import { flushPendingSessionWrites } from './stores/instances';
@@ -224,6 +225,59 @@ import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
+import { BoardRegistryRevision } from './board/board-registry-revision';
+import {
+	configureBoardCaptureHost,
+	configureBoardReadinessHost,
+	listBoardWorkers,
+	getBoardStorage,
+	getExistingBoardStorage,
+	listBoards,
+	saveBoard,
+	setBoardSavedListener,
+} from './board/board-storage';
+import { setProfilesSavedListener } from './profiles/profile-storage';
+import {
+	resolveCardOverrides,
+	resolveCardAssignment,
+	spawnBoardCard,
+	createBoardRunService,
+	decomposeBoardCard,
+	cancelBoardCardRun,
+	type BoardSpawnContext,
+} from './board/board-spawn';
+import { BoardStorageError } from './board/board-storage';
+import { probeBoardRemoteRepository } from './board/board-remote-source';
+import { configureBoardSourceHost } from './board/board-source-host';
+import { isBoardIsolationRequested } from './board/board-isolation';
+import { isPidAlive } from '../shared/maestro-lib/client/discovery';
+import {
+	boardOwnerLiveness,
+	createBoardOwnerHostIdentityReader,
+} from './board/board-owner-liveness';
+import { BoardCueHost, type BoardPreparedContext } from './board/board-cue';
+import { readBoardRuntimeReadiness } from './board/board-runtime';
+import { configureBoardRuntimeHost } from './board/board-runtime-host';
+import type { BoardClaimHostContext } from './board/board-claims';
+import { resolveBoardLocation } from './board/board-location';
+import type { BoardCardKey } from './board/board-workspace-storage';
+import {
+	readCueEngineLock,
+	readOwnedCueEngineLock,
+	isCueEngineLockOwnedByThisProcess,
+	isLeftByEarlierHolderOfOurPid,
+} from './cue/cue-engine-lock';
+import { execGitReadOnly } from './utils/remote-git';
+import { isAgentDormant } from '../shared/agentVisibility';
+
+import { autoDecomposeBoard } from './board/board-decompose';
+import { createBoardNotificationHandlers } from './board/board-notifications';
+import { prepareBoardReviewHandoff } from './board/board-review';
+import { readBoardWorkerCapacity } from './board/board-capacity-reader';
+import { createBoardAgentAdmission } from './board/board-claims';
+import { configureAgentAdmission } from './utils/headless-agent-activity';
+import { startBoardRunPr, startCardPr } from './board/board-pr';
+import { PROMPT_IDS } from '../shared/promptDefinitions';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { addParticipantByAgentId } from './group-chat/group-chat-router';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
@@ -615,6 +669,27 @@ noteSentryAgentInventory(sessionsStore.get('sessions', []));
 noteSentryWorkReasons(powerManager.getStatus().reasons);
 powerManager.onReasonsChanged(noteSentryWorkReasons);
 const groupsStore = getGroupsStore();
+configureBoardFeatures(store);
+configureBoardCaptureHost(() => ({
+	agents: sessionsStore.get('sessions', []),
+	groups: groupsStore.get('groups', []),
+}));
+// Isolated bootstrap already bound the admitted registries and a refusing transport pre-store.
+if (!isBoardIsolationRequested())
+	configureBoardSourceHost(() =>
+		sessionsStore
+			.get('sessions', [])
+			.map(({ id, cwd, dir, projectRoot, boardWorker, sshRemoteId, sessionSshRemoteConfig }) => ({
+				id,
+				dir: dir ?? cwd,
+				projectRoot,
+				boardWorker,
+				sshRemoteId,
+				sessionSshRemoteConfig: sessionSshRemoteConfig
+					? { enabled: sessionSshRemoteConfig.enabled, remoteId: sessionSshRemoteConfig.remoteId }
+					: undefined,
+			}))
+	);
 const agentConfigsStore = getAgentConfigsStore();
 const agentCapabilitiesStore = getAgentCapabilitiesStore();
 const windowStateStore = getWindowStateStore();
@@ -680,6 +755,18 @@ const cliWatcher = createCliWatcher({
 	getMainWindow: () => mainWindow,
 	getUserDataPath: () => app.getPath('userData'),
 });
+
+// Board: push `board:changed` whenever board.yaml is persisted (by the
+// dispatcher tick, an IPC mutation, or auto-decompose) so the kanban reconciles
+// on the event instead of polling. Storage itself stays host-agnostic - the CLI
+// imports the same module and never sets a listener. Payload is the project
+// root only; the renderer refetches, so no board data crosses the bridge here.
+setBoardSavedListener((projectRoot) => safeSend('board:changed', { projectRoot }));
+
+// Agent Profiles: same deal for `.maestro/profiles.yaml`, so the Profiles modal
+// (and the Board's role picker behind it) reconcile after a CLI or second-window
+// write instead of showing a stale list until the user hits refresh.
+setProfilesSavedListener((projectRoot) => safeSend('profiles:changed', { projectRoot }));
 
 // Watch for the laptop crossing timezones. Chromium refreshes its renderers on
 // an OS timezone change but leaves the main process's V8 date cache stale, so
@@ -1539,6 +1626,247 @@ app
 			usageRefreshScheduler.start();
 		}
 
+		// Board Phase 3: host context the board card spawner needs. Resolves a
+		// card's assignee profile to its base Left Bar agent and runs it through
+		// the same `executeCuePrompt` path Cue uses (SSH/custom config honored).
+		const boardSpawnContext: BoardSpawnContext = {
+			getStoredSessions: () => sessionsStore.get('sessions', []) as Array<Record<string, any>>,
+			getAgentConfig: (toolType) => getAgentConfigForAgent(toolType),
+			resolveAgentPath: async (toolType) => {
+				if (!agentDetector) return undefined;
+				const detected = await agentDetector.getAgent(toolType);
+				return detected?.available && detected.path ? detected.path : undefined;
+			},
+			getSshStore: () => createSshRemoteStoreAdapter(store),
+			getConductorProfile: () => (store.get('conductorProfile', '') as string) || undefined,
+			nowMs: () => Date.now(),
+		};
+
+		// One central owner, using Cue's already-held lock and existing process service.
+		const boardRegistry = new BoardRegistryRevision();
+		const boardIntakeState = (): Pick<BoardClaimHostContext, 'agentStates' | 'dispatchEnabled'> => {
+			const sessions = boardSpawnContext.getStoredSessions();
+			const flags = resolveEncoreFeatures(store.get('encoreFeatures'));
+			const cliBusySessionIds = getSessionIdsBusyWithCli();
+			return {
+				dispatchEnabled:
+					cueEngine?.isEnabled() === true && flags.maestroCue === true && flags.board === true,
+				agentStates: Object.fromEntries(
+					sessions.map((session) => [
+						session.id,
+						{
+							live: !isAgentDormant(session, flags),
+							busy: isAgentBusy(session as { id: string }, processManager, cliBusySessionIds),
+							location: resolveBoardLocation(session),
+							baseValues: {
+								customModel: session.customModel,
+								customEffort: session.customEffort,
+								customArgs: session.customArgs,
+								appendSystemPrompt: session.appendSystemPrompt,
+							},
+						},
+					])
+				),
+			};
+		};
+		const boardContext = (
+			_key: BoardCardKey,
+			prepared: BoardPreparedContext
+		): Omit<BoardClaimHostContext, 'owner'> => {
+			const storage = getBoardStorage();
+			const catalog = storage.captureCatalog();
+			const registryRevision = boardRegistry.observe({
+				catalog,
+				// The public catalog carries scope IDs only. Retain the full live
+				// launch configuration in the prepared-run registry fence.
+				agents: sessionsStore.get('sessions', []),
+				groups: groupsStore.get('groups', []),
+				workers: listBoardWorkers(),
+				// Inherited provider settings are launch inputs too. A prepared run
+				// cannot keep its registry fence across a provider-config edit.
+				agentConfigs: agentConfigsStore.get('configs', {}),
+				sshRemotes: store.get('sshRemotes', []),
+			});
+			let repository = prepared.repository;
+			if (repository?.location.kind === 'local') {
+				try {
+					const stat = lstatSync(realpathSync(repository.workingDirectory));
+					const identity = canonicalJson([
+						realpathSync(repository.workingDirectory),
+						stat.dev,
+						stat.ino,
+					]);
+					if (!repository.identity.startsWith(identity + '\n')) repository = null;
+				} catch (error) {
+					if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
+						void captureException(error, { operation: 'board:repositoryIdentity' });
+					repository = null;
+				}
+			}
+			return {
+				registryRevision,
+				reviewArtifact: prepared.reviewArtifact,
+				...boardIntakeState(),
+				repository,
+			};
+		};
+		const { notifyBoardCard, onBoardCardStatusChanged, onTransitions } =
+			createBoardNotificationHandlers(
+				(event) => pluginEventBus?.emit(event),
+				(payload) => safeSend('remote:notifyToast', payload)
+			);
+		let boardOwnerHostIdentity: string | undefined;
+		const readBoardOwnerIdentity = createBoardOwnerHostIdentityReader();
+		let boardOwnerInfo: ReturnType<typeof readCueEngineLock> = null;
+		const readBoardRuntimeLockSnapshot = () => {
+			if (!isBoardEnabled()) return null;
+			const held = readOwnedCueEngineLock();
+			if (!held || !isCueEngineLockOwnedByThisProcess(held)) return null;
+			// Reuse acquisition's pinned identity. Diagnostics observe the current token
+			// without pinning an adapter or probing/caching native host identity.
+			const info = boardOwnerInfo ?? held;
+			return {
+				info: {
+					pid: info.pid,
+					bootTime: info.bootTime,
+					startedAt: info.startedAt,
+					mode: 'desktop' as const,
+					token: info.token,
+					pidNsInode: info.pidNsInode,
+					platform: process.platform,
+					hostIdentity: boardOwnerHostIdentity,
+				},
+				verify: () => {
+					const current = readCueEngineLock();
+					return current &&
+						isCueEngineLockOwnedByThisProcess(current) &&
+						current.token === info.token
+						? { ok: true as const }
+						: { ok: false as const, reason: 'owner-conflict' };
+				},
+			};
+		};
+		const readBoardRuntimeLock = async () => {
+			requireBoardEnabled();
+			boardOwnerHostIdentity = await readBoardOwnerIdentity();
+			requireBoardEnabled();
+			const lock = readBoardRuntimeLockSnapshot();
+			if (lock) boardOwnerInfo ??= lock.info;
+			return lock;
+		};
+		const readBoardOwnerLiveness = (identity: string) =>
+			boardOwnerLiveness(identity, {
+				platform: process.platform,
+				hostIdentity: boardOwnerHostIdentity,
+				current: readCueEngineLock(),
+				ownsCurrent: isCueEngineLockOwnedByThisProcess,
+				isPidAlive,
+				earlierHolder: isLeftByEarlierHolderOfOurPid,
+			});
+		configureBoardReadinessHost((db) => ({
+			...boardIntakeState(),
+			runtimeReason: readBoardRuntimeReadiness(
+				db,
+				readBoardRuntimeLockSnapshot(),
+				readBoardOwnerLiveness
+			),
+		}));
+		const globalBoardHost = new BoardCueHost({
+			storage: getBoardStorage,
+			lock: readBoardRuntimeLock,
+			context: boardContext,
+			prepare: async (key) => {
+				const storage = getBoardStorage();
+				const card = storage.workspace
+					.readCollection(key)
+					?.cards.find((c) => c.cardId === key.cardId);
+				const prepared: BoardPreparedContext = { repository: null, reviewArtifact: null };
+				if (card?.payload.kind === 'review' && card.payload.reviewHandoff) {
+					const handoff = card.payload
+						.reviewHandoff as import('../shared/board/types').BoardReviewHandoff;
+					const proof = await prepareBoardReviewHandoff(storage, handoff);
+					prepared.reviewArtifact = proof;
+				}
+				if (!card || typeof card.payload.repositoryId !== 'string') return prepared;
+				const row = storage.db
+					.prepare('SELECT payload_json FROM repositories WHERE id=?')
+					.get(card?.payload.repositoryId) as { payload_json: string } | undefined;
+				if (!row || typeof card?.payload.workingDirectory !== 'string') return prepared;
+				const record = JSON.parse(row.payload_json);
+				if (record.validated !== true) return prepared;
+				const cwd = card.payload.workingDirectory;
+				if (record.location?.kind === 'ssh') {
+					try {
+						const identity = await probeBoardRemoteRepository(
+							record.location.remoteId,
+							record.workingDirectory,
+							cwd
+						);
+						prepared.repository = {
+							id: String(card.payload.repositoryId),
+							workingDirectory: cwd,
+							record,
+							location: record.location,
+							identity,
+						};
+					} catch (error) {
+						if (!(error instanceof BoardStorageError)) throw error;
+						// An unresolved remote never enters the local Git/realpath path.
+					}
+					return prepared;
+				}
+				// Native Git validates the explicit directory; never substitute a worker CWD.
+				const git = await execGitReadOnly(
+					['rev-parse', '--show-toplevel', '--absolute-git-dir'],
+					cwd
+				);
+				if (git.exitCode !== 0) return prepared;
+				try {
+					const physical = realpathSync(cwd);
+					const stat = lstatSync(physical);
+					const root = git.stdout.trim().split('\n')[0];
+					if (realpathSync(record.workingDirectory) !== realpathSync(root)) return prepared;
+					prepared.repository = {
+						id: String(card.payload.repositoryId),
+						workingDirectory: cwd,
+						record,
+						location: { kind: 'local' },
+						identity: canonicalJson([physical, stat.dev, stat.ino]) + '\n' + git.stdout.trim(),
+					};
+				} catch (error) {
+					if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? ''))
+						void captureException(error, { operation: 'board:prepareRepository' });
+					/* Missing native paths leave the repository unresolved. */
+				}
+				return prepared;
+			},
+			// An empty root invalidates the central view, whose listener refetches all sources.
+			onChanged: () => safeSend('board:changed', { projectRoot: '' }),
+			onTransitions,
+			onCompleted: (spec) => {
+				const task = startBoardRunPr(spec, {
+					notify: (payload) => safeSend('remote:notifyToast', payload),
+					onLog: (_level, message) => logger.cue(message, 'Board'),
+				}).finally(() => safeSend('board:changed', { projectRoot: '' }));
+				cueEngine?.trackBoardTask(task);
+			},
+			onTask: (task) => cueEngine?.trackBoardTask(task),
+			service: createBoardRunService(boardSpawnContext),
+			ownerLiveness: readBoardOwnerLiveness,
+			onWait: (key, reason) =>
+				logger.cue(`[Board] ${key.collectionKey}/${key.cardId}: ${reason}`, 'Cue'),
+		});
+		configureAgentAdmission(
+			createBoardAgentAdmission(
+				store,
+				() => getBoardStorage().db,
+				(error) => logger.error(`Board agent admission failed: ${String(error)}`, 'Board'),
+				() => getExistingBoardStorage()?.db,
+				readBoardWorkerCapacity
+			)
+		);
+		configureBoardRuntimeHost(globalBoardHost.runtimeFor);
+
 		// Warm any provider the strict startup pass left cold (no auto-refresh
 		// interval picked, no eligible recent maestro-p session, Codex not sampled
 		// on boot at all). Runs after that pass settles so the two can't spawn
@@ -1725,6 +2053,89 @@ app
 			// Surface Cue run lifecycle (`cue.runStarted` / `cue.runFinished`) to
 			// subscribed plugins (events:subscribe). Metadata-only; null-safe.
 			emitPluginEvent: (event) => pluginEventBus?.emit(event),
+			// Board Phase 3: the task-DAG dispatcher rides this engine's tick. All
+			// board side effects are injected here so the engine core stays
+			// board-agnostic. The dispatch pass is gated on BOTH `maestroCue` and
+			// `board` (Board requires Cue) inside the engine's board pass.
+			board: {
+				tickGlobal: () => globalBoardHost.tick(),
+				stopGlobal: () => globalBoardHost.stop(),
+				getEncoreFeatures: () => {
+					const ef = resolveEncoreFeatures(store.get('encoreFeatures'));
+					return { maestroCue: ef.maestroCue, board: ef.board };
+				},
+				getProjectRoots: () => {
+					const sessions = sessionsStore.get('sessions', []) as Array<Record<string, any>>;
+					const roots = new Set<string>();
+					for (const s of sessions) {
+						const root = s.projectRoot || s.cwd || s.fullPath;
+						if (typeof root === 'string' && root.length > 0) roots.add(root);
+					}
+					return [...roots];
+				},
+				listBoards: (projectRoot) => listBoards(projectRoot),
+				saveBoard: (projectRoot, board) => {
+					saveBoard(projectRoot, board, board.storage?.expectedRevision);
+				},
+				resolveOverrides: (projectRoot, card) =>
+					resolveCardOverrides(projectRoot, card, boardSpawnContext),
+				// Board Phase 6 worker pool: resolve each card to a FREE opt-in worker
+				// in the project dir. Takes precedence over resolveOverrides.
+				assign: (projectRoot, card, busy) =>
+					resolveCardAssignment(projectRoot, card, busy, boardSpawnContext),
+				spawnCard: (projectRoot, request, boardId) =>
+					spawnBoardCard(projectRoot, request, boardSpawnContext, boardId),
+				cancelCardRun: cancelBoardCardRun,
+				// Terminal card transitions surface as toasts through the SAME
+				// `remote:notifyToast` relay Cue's notify action uses. A blocked card
+				// needs a human, so its toast is sticky; a done card auto-dismisses.
+				notifyCard: notifyBoardCard,
+				// Board F3: a `done` card that opted into `prOnDone` gets its worktree
+				// branch pushed and a pull request opened. Fire-and-forget (the dispatch
+				// pass must never wait on git/gh); the result surfaces as its own toast.
+				createCardPr: (projectRoot, boardId, cardId) =>
+					startCardPr(projectRoot, boardId, cardId, {
+						notify: (payload) => safeSend('remote:notifyToast', payload),
+						onLog: (_level, message) => logger.cue(message, 'Board'),
+					}),
+				// Board Phase 5: every card status transition goes out on the plugin
+				// event bus (metadata only - ids, statuses, attempt, worker). Null-safe;
+				// no-op when plugins are disabled.
+				onCardStatusChanged: onBoardCardStatusChanged,
+				// Board Phase 5: a finished auto-decompose pass, counts only.
+				onBoardDecomposed: (projectRoot, boardId, triageCardCount) =>
+					pluginEventBus?.emit({
+						topic: 'board.decomposed',
+						at: new Date().toISOString(),
+						payload: { boardId, triageCardCount, projectPath: projectRoot },
+					}),
+				// OPTIONAL auto-decompose (Board Phase 5), off by default. Only runs when
+				// a board sets `autoDecompose: true`; loads the editable prompt template
+				// and fans triage cards into child cards via the same spawn plumbing.
+				decompose: async (projectRoot, board, signal) => {
+					const template = getPrompt(PROMPT_IDS.BOARD_DECOMPOSE);
+					// `board` here is the snapshot the tick loaded, and each LLM pass
+					// takes minutes, so the children are merged into a board re-read
+					// from disk and persisted per card (reload + save below) rather
+					// than by writing this stale snapshot back afterwards - which used
+					// to revert every status change the dispatcher made in between.
+					return await autoDecomposeBoard(board, {
+						promptTemplate: template,
+						signal,
+						spawn: (prompt, card) =>
+							decomposeBoardCard(projectRoot, card, prompt, boardSpawnContext, signal),
+						reload: () => listBoards(projectRoot).find((b) => b.id === board.id) ?? null,
+						save: (merged) => {
+							saveBoard(projectRoot, merged, merged.storage?.expectedRevision);
+						},
+						onLog: (level, message) => {
+							if (level === 'error') logger.error(message, 'Board');
+							else if (level === 'warn') logger.warn(message, 'Board');
+							else logger.cue(message, 'Board');
+						},
+					});
+				},
+			},
 			getUsageStatsEnabled: () => resolveEncoreFeatures(store.get('encoreFeatures')).usageStats,
 			// How far back the engine-start prune keeps cue_events. Read on every
 			// start (not captured once) so changing the setting takes effect the

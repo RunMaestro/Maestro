@@ -1,3 +1,4 @@
+import { answerBoardCommand, type BoardCommandHost } from '../../board/commands';
 /**
  * The requests a detached host answers: the desktop bridge's typed messages, run against a
  * `MaestroClient`.
@@ -441,21 +442,24 @@ export type RequestHandler = (message: Request) => Promise<Frame | undefined>;
 export interface RequestHandlerOptions {
 	/** The runtime's live tab state, laid over every agent record a reply carries. */
 	liveTabs?: LiveTabsLookup;
+	boardHost?: BoardCommandHost;
 }
 
 /** Answer the desktop bridge's typed messages with `client`. */
 export function createRequestHandler(
 	client: MaestroClient,
-	options: RequestHandlerOptions = {}
+	options: RequestHandlerOptions | BoardCommandHost = {}
 ): RequestHandler {
 	const sessionId = (message: Request): string => str(message.sessionId) ?? '';
-	const { liveTabs } = options;
+	const { liveTabs, boardHost } = typeof options === 'function' ? { boardHost: options } : options;
 	const live: LiveAgent = liveTabs
 		? (agent) => withLiveTabState(agent, liveTabs(agent.id))
 		: (agent) => agent;
 
 	return async (message) => {
 		switch (message.type) {
+			case 'board_command':
+				return answerBoardCommand(message, boardHost);
 			case 'ping':
 				return { type: 'pong' };
 

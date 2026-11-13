@@ -1,6 +1,11 @@
+import { AgentTurnAdmissionError } from '../../main/utils/headless-agent-activity';
 // Agent spawner service for CLI
 // Spawns agent CLIs and parses their output
 
+import {
+	createAdmittedCliTurnStarter,
+	type HeadlessTurnAdmissionOptions,
+} from '../../main/utils/headless-agent-activity';
 import { redactSecrets } from '../../shared/redactSecrets';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -41,7 +46,7 @@ import { buildChildProcessEnv } from '../../shared/maestro-lib/launch/env';
 import { checkBinaryExists, checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
 import { BACKGROUND_STOP_GRACE_MS } from '../../shared/maestro-lib/control/termination';
 import {
-	startTurn,
+	startTurn as startUnadmittedTurn,
 	turnProcessSpecFromPlan,
 	DEFAULT_STDERR_TAIL_LIMIT,
 	type StartTurnOptions,
@@ -196,6 +201,8 @@ type SpawnOverrides = Pick<
 	| 'onProgress'
 	| 'onProcessStarted'
 	| 'requireProcessExit'
+	| 'originWorkerId'
+	| 'workerAdmission'
 	| 'maestroPMaxWaitSeconds'
 	| 'acceptWorkspaceTrust'
 > & { deadlineAt?: number };
@@ -884,6 +891,11 @@ async function spawnClaudeAgent(
 	overrides: SpawnOverrides = {},
 	tokenSource: ClaudeTokenSourceFields = {}
 ): Promise<AgentResult> {
+	const startTurn = createAdmittedCliTurnStarter(
+		startUnadmittedTurn,
+		overrides,
+		!!sshRemoteConfig?.enabled
+	);
 	const def = getAgentDefinition('claude-code');
 
 	// Build args WITHOUT the prompt - the prompt is appended below for local
@@ -1402,6 +1414,11 @@ async function spawnJsonLineAgent(
 	sshRemoteConfig?: AgentSshRemoteConfig,
 	overrides: SpawnOverrides = {}
 ): Promise<AgentResult> {
+	const startTurn = createAdmittedCliTurnStarter(
+		startUnadmittedTurn,
+		overrides,
+		!!sshRemoteConfig?.enabled
+	);
 	const def = getAgentDefinition(toolType);
 	sshRemoteConfig = sshRemoteConfig ? { ...sshRemoteConfig } : undefined;
 
@@ -1887,7 +1904,7 @@ function grokCliFailure(
  * from `maestro-agent-configs.json`. Pass the session values directly here -
  * the spawner merges agent + session overrides via applyAgentConfigOverrides().
  */
-export interface SpawnAgentOptions {
+export interface SpawnAgentOptions extends HeadlessTurnAdmissionOptions {
 	/**
 	 * Host-owned original attachments must outlive the actual child. On an
 	 * unconfirmed stop, retain this call and its caller's resources until exit,
@@ -2010,7 +2027,7 @@ export interface SpawnAgentOptions {
  * Grok preserves the failure: these options carry neither automatic-hint
  * provenance nor a distinct fallback validated for the selected model/account/host.
  */
-export async function spawnAgent(
+async function spawnAgentWithAdmission(
 	toolType: ToolType,
 	cwd: string,
 	prompt: string,
@@ -2025,6 +2042,16 @@ export async function spawnAgent(
 			...options,
 			idle: options?.idle ?? HEADLESS_IDLE_PROFILE,
 		};
+	// SDK timeout/abort wrappers do not establish native termination. Until an
+	// admission-aware native terminal contract exists, managed turns must use
+	// Current; ordinary native callers retain their provider transport.
+	if (
+		(options?.originWorkerId !== undefined || options?.workerAdmission !== undefined) &&
+		options?.harnessControlMode === 'native'
+	)
+		return spawnFailureResult(
+			'Native control is not supported for admission-managed turns; use Current control'
+		);
 	assertHeadlessIdleProfile(options?.idle, options?.timeoutMs);
 	// Effort fallback and asynchronous launch planning share one absolute ceiling.
 	const deadlineAt = options?.timeoutMs ? Date.now() + options.timeoutMs : undefined;
@@ -2120,7 +2147,9 @@ async function spawnAgentOnce(
 	const readOnly = options?.readOnlyMode;
 	const sshRemoteConfig = options?.sshRemoteConfig;
 	const overrides: SpawnOverrides = {
-		requireProcessExit: options?.requireProcessExit,
+		requireProcessExit: options?.requireProcessExit || !!options?.workerAdmission,
+		originWorkerId: options?.originWorkerId,
+		workerAdmission: options?.workerAdmission,
 		signal: options?.signal,
 		pluginRunProofFile: options?.pluginRunProofFile,
 		mcpCliScriptPath: options?.mcpCliScriptPath,
@@ -2231,4 +2260,20 @@ export function uncheckAllTasks(content: string): string {
 export function writeDoc(folderPath: string, filename: string, content: string): void {
 	const filePath = `${folderPath}/${filename}`;
 	fs.writeFileSync(filePath, content, 'utf-8');
+}
+
+/** Managed admission refusals are results; unrelated startup/provider failures still reject. */
+export async function spawnAgent(
+	toolType: ToolType,
+	cwd: string,
+	prompt: string,
+	agentSessionId?: string,
+	options?: SpawnAgentOptions
+): Promise<AgentResult> {
+	try {
+		return await spawnAgentWithAdmission(toolType, cwd, prompt, agentSessionId, options);
+	} catch (error) {
+		if (error instanceof AgentTurnAdmissionError) return spawnFailureResult(error.message);
+		throw error;
+	}
 }

@@ -14,6 +14,7 @@ import type { ChildProcess } from 'child_process';
 import type { CueRunStatus } from './cue-types';
 import type { SpawnSpec } from './cue-spawn-builder';
 import type { AgentError, ToolType, UsageStats } from '../../shared/types';
+import { canStartAgentTurn, trackHeadlessAgentActivity } from '../utils/headless-agent-activity';
 import { createOutputParser } from '../parsers';
 import type {
 	AgentOutputParser,
@@ -91,6 +92,8 @@ export interface CueProcessInfo {
 
 /** Result of a process execution */
 export interface ProcessRunResult {
+	/** The native local child settled; remote descendants need their own proof. */
+	terminationConfirmed?: boolean;
 	executionStarted?: boolean;
 	stdout: string;
 	stderr: string;
@@ -104,6 +107,9 @@ export interface ProcessRunResult {
 
 /** Options controlling process execution */
 export interface ProcessRunOptions {
+	agentId?: string;
+	beforeLaunch?: () => boolean;
+	onStarted?: (pid: number | undefined) => void;
 	toolType: string;
 	timeoutMs: number;
 	sshRemoteEnabled?: boolean;
@@ -563,6 +569,11 @@ export async function runProcess(
 		...(promptArtifact?.owner === 'local' ? { promptArtifact } : {}),
 	};
 
+	if (
+		(options.agentId && !canStartAgentTurn(options.agentId, runId)) ||
+		options.beforeLaunch?.() === false
+	)
+		return stoppedResult();
 	let turn: TurnHandle;
 	try {
 		// maestro-p (interactive token mode) self-allocates its own PTY via
@@ -661,6 +672,14 @@ export async function runProcess(
 		},
 	};
 	const untrack = trackCueProcess(runId, entry);
+	const releaseActivity = options.agentId ? trackHeadlessAgentActivity(options.agentId) : undefined;
+	// Registration must survive an observer/persistence failure after spawn.
+	try {
+		options.onStarted?.(turn.child.pid);
+	} catch (error) {
+		onLog('error', `Could not persist Cue launch identity: ${String(error)}`);
+		turn.terminate();
+	}
 
 	// Enforce timeout - use platform-appropriate kill
 	const timeoutTimer =
@@ -677,6 +696,9 @@ export async function runProcess(
 	const exit = await turn.done;
 	settled = true;
 	untrack();
+	// This registry describes the live native transport. Board remote uncertainty
+	// remains fenced by its durable reservation after the local client exits.
+	releaseActivity?.();
 	if (timeoutTimer) clearTimeout(timeoutTimer);
 
 	const finish = (status: CueRunStatus, exitCode: number | null): ProcessRunResult => {
@@ -693,6 +715,7 @@ export async function runProcess(
 			exitCode,
 			status,
 			executionStarted: typeof turn.child.pid === 'number' || !exit.spawnError,
+			terminationConfirmed: !sshRemoteEnabled,
 			providerSessionId: capture.providerSessionId,
 			usage: capture.usage ?? toCueUsageStats(toolType),
 		};

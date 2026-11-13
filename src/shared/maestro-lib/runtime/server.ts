@@ -1,3 +1,4 @@
+import type { BoardCommandHost } from '../../board/commands';
 /**
  * Serve a runtime over the desktop bridge's WebSocket: the transport of `maestro-cli host`.
  *
@@ -45,6 +46,8 @@ const MAX_PAYLOAD_BYTES = 32 * 1024 * 1024;
 
 export interface RuntimeServerOptions {
 	runtime: MaestroRuntime;
+	/** Inject the current host facade; absence is an explicit unavailable response. */
+	boardHost?: BoardCommandHost;
 	/** The path segment every request must name. */
 	token: string;
 	/** The `x-maestro-cli-secret` header every request must carry. */
@@ -98,8 +101,10 @@ function refuse(socket: Duplex, status: string): void {
 export async function startRuntimeServer(options: RuntimeServerOptions): Promise<RuntimeServer> {
 	const { runtime } = options;
 	const epoch = crypto.randomUUID();
-	// Every agent record the host sends carries its live tab state, in replies and in pushes alike.
-	const handle = createRequestHandler(runtime, { liveTabs: runtime.liveTabs });
+	const handle = createRequestHandler(runtime, {
+		liveTabs: runtime.liveTabs,
+		boardHost: options.boardHost,
+	});
 	const frameState = createFrameState(runtime.liveTabs);
 	const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES });
 	const sockets = new Set<WebSocket>();

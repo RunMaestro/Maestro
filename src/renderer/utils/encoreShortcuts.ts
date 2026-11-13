@@ -19,6 +19,7 @@ export const SHORTCUT_ENCORE_FLAGS: Readonly<Record<string, keyof EncoreFeatureF
 	directorNotes: 'directorNotes',
 	searchDirectorNotes: 'directorNotes',
 	openCue: 'maestroCue',
+	openBoard: 'board',
 	computerHistory: 'computerHistory',
 	toggleConcerto: 'concerto',
 	toggleCadenzas: 'concerto',
@@ -34,6 +35,8 @@ export function isShortcutAvailable(shortcutId: string, encoreFeatures: EncoreFl
 	// Same predicate the hotkey, palette and menu use: the viewer is also
 	// withheld on the web-desktop build.
 	if (flag === 'computerHistory') return canOpenComputerHistory(encoreFeatures);
+	if (shortcutId === 'openBoard')
+		return encoreFeatures?.board === true && encoreFeatures.maestroCue === true;
 	return encoreFeatures?.[flag] === true;
 }
 

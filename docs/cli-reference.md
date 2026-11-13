@@ -1348,6 +1348,480 @@ List every agent with a readable .maestro/cue.yaml and its subscription counts
 | `--json`            | Output as JSON (for scripting)                                                  | -       |
 | `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
+## `maestro-cli board`
+
+Manage and dispatch the Maestro Board
+
+## `maestro-cli board list`
+
+List central Board collections, optionally filtered by source or agent project
+
+| Option                     | Description                                                         | Default |
+| -------------------------- | ------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the board(s)                               | -       |
+| `--json`                   | Output as JSON (for scripting)                                      | -       |
+| `--project-root <path>`    | Registered source project root for selecting a project              | -       |
+| `--source <key>`           | Canonical source identity; list without filters queries all sources | -       |
+| `--collection <key>`       | Canonical collection identity                                       | -       |
+| `--revision <n>`           | Expected collection revision                                        | -       |
+| `--card-revision <n>`      | Expected card revision                                              | -       |
+
+## `maestro-cli board create <name>`
+
+Create a new, empty board in an agent's project
+
+| Option                     | Description                                                         | Default |
+| -------------------------- | ------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project will own the board                              | -       |
+| `--max-in-progress <n>`    | Cap how many cards may run at once                                  | -       |
+| `--auto-decompose`         | Let the dispatcher fan triage cards out with one LLM pass           | -       |
+| `--json`                   | Output as JSON (for scripting)                                      | -       |
+| `--project-root <path>`    | Registered source project root for selecting a project              | -       |
+| `--source <key>`           | Canonical source identity; list without filters queries all sources | -       |
+| `--collection <key>`       | Canonical collection identity                                       | -       |
+| `--revision <n>`           | Expected collection revision                                        | -       |
+| `--card-revision <n>`      | Expected card revision                                              | -       |
+
+## `maestro-cli board rename <boardId> <newName>`
+
+Rename a board (cards and their ids are untouched)
+
+| Option                     | Description                                                         | Default |
+| -------------------------- | ------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the board                                  | -       |
+| `--json`                   | Output as JSON (for scripting)                                      | -       |
+| `--project-root <path>`    | Registered source project root for selecting a project              | -       |
+| `--source <key>`           | Canonical source identity; list without filters queries all sources | -       |
+| `--collection <key>`       | Canonical collection identity                                       | -       |
+| `--revision <n>`           | Expected collection revision                                        | -       |
+| `--card-revision <n>`      | Expected card revision                                              | -       |
+
+## `maestro-cli board delete <boardId>`
+
+Delete a board and every card on it
+
+| Option                     | Description                                                         | Default |
+| -------------------------- | ------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the board                                  | -       |
+| `--force`                  | Delete even when the board still has cards that are not done        | -       |
+| `--json`                   | Output as JSON (for scripting)                                      | -       |
+| `--project-root <path>`    | Registered source project root for selecting a project              | -       |
+| `--source <key>`           | Canonical source identity; list without filters queries all sources | -       |
+| `--collection <key>`       | Canonical collection identity                                       | -       |
+| `--revision <n>`           | Expected collection revision                                        | -       |
+| `--card-revision <n>`      | Expected card revision                                              | -       |
+
+## `maestro-cli board show <boardId>`
+
+Show a board and its cards
+
+| Option                     | Description                                                         | Default |
+| -------------------------- | ------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the board                                  | -       |
+| `--status <status>`        | Filter cards by exact status                                        | -       |
+| `--priority <priority>`    | Filter cards by priority (high, normal, low)                        | -       |
+| `--kind <kind>`            | Filter cards by kind (work, review, test, documentation)            | -       |
+| `--scope-agent <id>`       | Filter by exact assigned agent ID                                   | -       |
+| `--scope-group <id>`       | Filter by exact assigned group ID                                   | -       |
+| `--pin <id>`               | Filter by exact pinned agent ID                                     | -       |
+| `--repository <id>`        | Filter by exact repository ID                                       | -       |
+| `--json`                   | Output as JSON (for scripting)                                      | -       |
+| `--project-root <path>`    | Registered source project root for selecting a project              | -       |
+| `--source <key>`           | Canonical source identity; list without filters queries all sources | -       |
+| `--collection <key>`       | Canonical collection identity                                       | -       |
+| `--revision <n>`           | Expected collection revision                                        | -       |
+| `--card-revision <n>`      | Expected card revision                                              | -       |
+
+## `maestro-cli board show-card <cardId>`
+
+Read a card, its collection identity and its run history
+
+| Option                     | Description                                                         | Default |
+| -------------------------- | ------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent project context                                               | -       |
+| `--board <boardId>`        | Scope lookup to a specific board                                    | -       |
+| `--json`                   | Output as JSON (for scripting)                                      | -       |
+| `--project-root <path>`    | Registered source project root for selecting a project              | -       |
+| `--source <key>`           | Canonical source identity; list without filters queries all sources | -       |
+| `--collection <key>`       | Canonical collection identity                                       | -       |
+| `--revision <n>`           | Expected collection revision                                        | -       |
+| `--card-revision <n>`      | Expected card revision                                              | -       |
+
+## `maestro-cli board card-runs <cardId>`
+
+Read a card’s persisted run history and results
+
+| Option                     | Description                                                         | Default |
+| -------------------------- | ------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent project context                                               | -       |
+| `--board <boardId>`        | Scope lookup to a specific board                                    | -       |
+| `--json`                   | Output as JSON (for scripting)                                      | -       |
+| `--project-root <path>`    | Registered source project root for selecting a project              | -       |
+| `--source <key>`           | Canonical source identity; list without filters queries all sources | -       |
+| `--collection <key>`       | Canonical collection identity                                       | -       |
+| `--revision <n>`           | Expected collection revision                                        | -       |
+| `--card-revision <n>`      | Expected card revision                                              | -       |
+
+## `maestro-cli board add-card [boardId]`
+
+Add a card to the global Board, or to an explicitly selected legacy board
+
+| Option                        | Description                                                                                 | Default |
+| ----------------------------- | ------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>`    | Agent whose project owns the board                                                          | -       |
+| `-t, --title <title>`         | Card title                                                                                  | -       |
+| `--assignee <profileId>`      | Legacy alias for --role; requires an explicit role namespace                                | -       |
+| `--assignee-agent <agentId>`  | Pin the card to a specific agent (runs with its own settings)                               | -       |
+| `-b, --body <body>`           | Card body / instructions for the assignee                                                   | -       |
+| `--parents <ids>`             | Comma-separated parent card ids this card depends on                                        | -       |
+| `--priority <level>`          | Dispatch priority: high\|normal\|low (default normal)                                       | -       |
+| `--worktree`                  | Run this card in its own git worktree (created on first run)                                | -       |
+| `--pr-on-done [targetBranch]` | Open a pull request when the card lands in done (bare flag targets the repo default branch) | -       |
+| `--json`                      | Output as JSON (for scripting)                                                              | -       |
+| `--project-root <path>`       | Registered source project root for selecting a project                                      | -       |
+| `--source <key>`              | Canonical source identity; list without filters queries all sources                         | -       |
+| `--collection <key>`          | Canonical collection identity                                                               | -       |
+| `--revision <n>`              | Expected collection revision                                                                | -       |
+| `--card-revision <n>`         | Expected card revision                                                                      | -       |
+| `--kind <kind>`               | work, review, test, or documentation                                                        | -       |
+| `--review-of <cardId>`        | Bind a new review to this exact source card id                                              | -       |
+| `--review-attempt <n>`        | Exact completed source attempt for --review-of                                              | -       |
+| `--scope-agent <id>`          | Execute only on this agent; pass "" to clear scope                                          | -       |
+| `--scope-group <id>`          | Execute only within this group; pass "" to clear scope                                      | -       |
+| `--reviewer-agent <id>`       | Explicit reviewer within the task scope; pass "" to clear                                   | -       |
+| `--role <id>`                 | Require this exact worker role id within scope; pass "" to clear                            | -       |
+| `--role-namespace <key>`      | Exact namespace for --role (see board catalog)                                              | -       |
+| `--profile-namespace <key>`   | Legacy alias for --role-namespace                                                           | -       |
+| `--repository <id>`           | Registered repository identity                                                              | -       |
+| `--working-directory <path>`  | Explicit execution directory                                                                | -       |
+| `--start-mode <mode>`         | direct or approval; required approvals remain host protected                                | -       |
+
+## `maestro-cli board update-card <cardId>`
+
+Edit a card in place (only the flags you pass are changed)
+
+| Option                        | Description                                                                                 | Default |
+| ----------------------------- | ------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>`    | Agent whose project owns the card                                                           | -       |
+| `--board <boardId>`           | Scope the card lookup to a specific board                                                   | -       |
+| `-t, --title <title>`         | New card title                                                                              | -       |
+| `-b, --body <body>`           | New card body / instructions                                                                | -       |
+| `--assignee <profileId>`      | Legacy alias for --role; pass "" to clear                                                   | -       |
+| `--assignee-agent <agentId>`  | Pin the card to a specific agent; pass "" to clear                                          | -       |
+| `--parents <ids>`             | Comma-separated parent card ids; pass "" to clear                                           | -       |
+| `--priority <level>`          | Dispatch priority: high\|normal\|low ("normal" clears it)                                   | -       |
+| `--worktree`                  | Run this card in its own git worktree (created on first run)                                | -       |
+| `--no-worktree`               | Run this card in the shared project directory                                               | -       |
+| `--pr-on-done [targetBranch]` | Open a pull request when the card lands in done (bare flag targets the repo default branch) | -       |
+| `--no-pr-on-done`             | Do not open a pull request when the card lands in done                                      | -       |
+| `--json`                      | Output as JSON (for scripting)                                                              | -       |
+| `--project-root <path>`       | Registered source project root for selecting a project                                      | -       |
+| `--source <key>`              | Canonical source identity; list without filters queries all sources                         | -       |
+| `--collection <key>`          | Canonical collection identity                                                               | -       |
+| `--revision <n>`              | Expected collection revision                                                                | -       |
+| `--card-revision <n>`         | Expected card revision                                                                      | -       |
+| `--kind <kind>`               | work, review, test, or documentation                                                        | -       |
+| `--review-of <cardId>`        | Bind a new review to this exact source card id                                              | -       |
+| `--review-attempt <n>`        | Exact completed source attempt for --review-of                                              | -       |
+| `--scope-agent <id>`          | Execute only on this agent; pass "" to clear scope                                          | -       |
+| `--scope-group <id>`          | Execute only within this group; pass "" to clear scope                                      | -       |
+| `--reviewer-agent <id>`       | Explicit reviewer within the task scope; pass "" to clear                                   | -       |
+| `--role <id>`                 | Require this exact worker role id within scope; pass "" to clear                            | -       |
+| `--role-namespace <key>`      | Exact namespace for --role (see board catalog)                                              | -       |
+| `--profile-namespace <key>`   | Legacy alias for --role-namespace                                                           | -       |
+| `--repository <id>`           | Registered repository identity                                                              | -       |
+| `--working-directory <path>`  | Explicit execution directory                                                                | -       |
+| `--start-mode <mode>`         | direct or approval; required approvals remain host protected                                | -       |
+
+## `maestro-cli board remove-card <cardId>`
+
+Delete a card (its children inherit the card's parents)
+
+| Option                     | Description                                                         | Default |
+| -------------------------- | ------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the card                                   | -       |
+| `--board <boardId>`        | Scope the card lookup to a specific board                           | -       |
+| `--force`                  | Compatibility flag; running cards must be stopped before removal    | -       |
+| `--json`                   | Output as JSON (for scripting)                                      | -       |
+| `--project-root <path>`    | Registered source project root for selecting a project              | -       |
+| `--source <key>`           | Canonical source identity; list without filters queries all sources | -       |
+| `--collection <key>`       | Canonical collection identity                                       | -       |
+| `--revision <n>`           | Expected collection revision                                        | -       |
+| `--card-revision <n>`      | Expected card revision                                              | -       |
+
+## `maestro-cli board remove-cards`
+
+Atomically delete cards from one explicitly identified collection snapshot
+
+| Option                         | Description                                    | Default |
+| ------------------------------ | ---------------------------------------------- | ------- |
+| `--source <sourceKey>`         | Exact source ID                                | -       |
+| `--collection <collectionKey>` | Exact collection ID                            | -       |
+| `--revision <revision>`        | Expected collection revision                   | -       |
+| `--cards <json>`               | JSON array of \{cardId, cardRevision\} objects | -       |
+| `--json`                       | Output errors as JSON                          | -       |
+
+## `maestro-cli board set-status <cardId> <status>`
+
+Request a card status (triage|todo|blocked); final completion requires an explicit human decision in the UI
+
+| Option                     | Description                                                         | Default |
+| -------------------------- | ------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent whose project owns the card                                   | -       |
+| `--board <boardId>`        | Scope the card lookup to a specific board                           | -       |
+| `--json`                   | Output as JSON (for scripting)                                      | -       |
+| `--project-root <path>`    | Registered source project root for selecting a project              | -       |
+| `--source <key>`           | Canonical source identity; list without filters queries all sources | -       |
+| `--collection <key>`       | Canonical collection identity                                       | -       |
+| `--revision <n>`           | Expected collection revision                                        | -       |
+| `--card-revision <n>`      | Expected card revision                                              | -       |
+
+## `maestro-cli board hold <cardId>`
+
+hold a fenced Board attempt
+
+| Option                     | Description                                                         | Default |
+| -------------------------- | ------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent project context                                               | -       |
+| `--board <id>`             | Collection legacy id                                                | -       |
+| `--run-id <id>`            | Exact host run identity                                             | -       |
+| `--owner-epoch <n>`        | Exact host owner epoch                                              | -       |
+| `--generation <n>`         | Exact host attempt generation                                       | -       |
+| `--json`                   | Machine-readable response                                           | -       |
+| `--project-root <path>`    | Registered source project root for selecting a project              | -       |
+| `--source <key>`           | Canonical source identity; list without filters queries all sources | -       |
+| `--collection <key>`       | Canonical collection identity                                       | -       |
+| `--revision <n>`           | Expected collection revision                                        | -       |
+| `--card-revision <n>`      | Expected card revision                                              | -       |
+
+## `maestro-cli board resume <cardId>`
+
+resume a fenced Board attempt
+
+| Option                     | Description                                                         | Default |
+| -------------------------- | ------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent project context                                               | -       |
+| `--board <id>`             | Collection legacy id                                                | -       |
+| `--run-id <id>`            | Exact host run identity                                             | -       |
+| `--owner-epoch <n>`        | Exact host owner epoch                                              | -       |
+| `--generation <n>`         | Exact host attempt generation                                       | -       |
+| `--json`                   | Machine-readable response                                           | -       |
+| `--project-root <path>`    | Registered source project root for selecting a project              | -       |
+| `--source <key>`           | Canonical source identity; list without filters queries all sources | -       |
+| `--collection <key>`       | Canonical collection identity                                       | -       |
+| `--revision <n>`           | Expected collection revision                                        | -       |
+| `--card-revision <n>`      | Expected card revision                                              | -       |
+
+## `maestro-cli board approve <cardId>`
+
+Request approval (requires native human authority)
+
+| Option                     | Description                                                         | Default |
+| -------------------------- | ------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Agent project context                                               | -       |
+| `--board <id>`             | Collection legacy id                                                | -       |
+| `--run-id <id>`            | Exact host run identity                                             | -       |
+| `--owner-epoch <n>`        | Exact host owner epoch                                              | -       |
+| `--generation <n>`         | Exact host attempt generation                                       | -       |
+| `--json`                   | Machine-readable response                                           | -       |
+| `--project-root <path>`    | Registered source project root for selecting a project              | -       |
+| `--source <key>`           | Canonical source identity; list without filters queries all sources | -       |
+| `--collection <key>`       | Canonical collection identity                                       | -       |
+| `--revision <n>`           | Expected collection revision                                        | -       |
+| `--card-revision <n>`      | Expected card revision                                              | -       |
+
+## `maestro-cli board catalog`
+
+Read current Board scope, role and repository choices from the host
+
+| Option   | Description                           | Default |
+| -------- | ------------------------------------- | ------- |
+| `--json` | Output the exact host catalog as JSON | -       |
+
+## `maestro-cli board create-role <name>`
+
+Create a role in the global Board; assign it to workers in the Workers tab
+
+| Option   | Description                            | Default |
+| -------- | -------------------------------------- | ------- |
+| `--json` | Output the exact role identity as JSON | -       |
+
+## `maestro-cli board role-update <roleId>`
+
+Update one exact namespaced role through the host
+
+| Option              | Description                                         | Default |
+| ------------------- | --------------------------------------------------- | ------- |
+| `--source <key>`    | Exact source identity                               | -       |
+| `--namespace <key>` | Exact role namespace                                | -       |
+| `--set <json>`      | Role fields to patch; null clears an optional field | -       |
+| `--json`            | Machine-readable output                             | -       |
+
+## `maestro-cli board role-delete <roleId>`
+
+Delete one unreferenced namespaced role through the host
+
+| Option              | Description             | Default |
+| ------------------- | ----------------------- | ------- |
+| `--source <key>`    | Exact source identity   | -       |
+| `--namespace <key>` | Exact role namespace    | -       |
+| `--json`            | Machine-readable output | -       |
+
+## `maestro-cli board worker-role <roleId>`
+
+Assign or remove one exact role for a registered worker
+
+| Option              | Description                              | Default |
+| ------------------- | ---------------------------------------- | ------- |
+| `-a, --agent <id>`  | Exact registered worker agent ID         | -       |
+| `--namespace <key>` | Exact role namespace (see board catalog) | -       |
+| `--remove`          | Remove this role grant                   | -       |
+| `--json`            | Output the assigned role as JSON         | -       |
+
+## `maestro-cli board worker-options`
+
+Read or update a registered worker’s local execution overrides
+
+| Option             | Description                                                                                | Default |
+| ------------------ | ------------------------------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Exact registered worker agent ID                                                           | -       |
+| `--set <json>`     | Patch customModel, customEffort, appendSystemPrompt or customArgs; null clears an override | -       |
+| `--json`           | Output errors as JSON                                                                      | -       |
+
+## `maestro-cli board worker-list`
+
+list Board workers through the host
+
+| Option         | Description             | Default |
+| -------------- | ----------------------- | ------- |
+| `--agent <id>` | Exact agent ID          | -       |
+| `--json`       | Machine-readable output | -       |
+
+## `maestro-cli board worker-show`
+
+show Board workers through the host
+
+| Option         | Description             | Default |
+| -------------- | ----------------------- | ------- |
+| `--agent <id>` | Exact agent ID          | -       |
+| `--json`       | Machine-readable output | -       |
+
+## `maestro-cli board worker-register`
+
+register Board workers through the host
+
+| Option         | Description             | Default |
+| -------------- | ----------------------- | ------- |
+| `--agent <id>` | Exact agent ID          | -       |
+| `--json`       | Machine-readable output | -       |
+
+## `maestro-cli board worker-unregister`
+
+unregister Board workers through the host
+
+| Option         | Description             | Default |
+| -------------- | ----------------------- | ------- |
+| `--agent <id>` | Exact agent ID          | -       |
+| `--json`       | Machine-readable output | -       |
+
+## `maestro-cli board worker-pause`
+
+pause Board workers through the host
+
+| Option         | Description             | Default |
+| -------------- | ----------------------- | ------- |
+| `--agent <id>` | Exact agent ID          | -       |
+| `--json`       | Machine-readable output | -       |
+
+## `maestro-cli board worker-resume`
+
+resume Board workers through the host
+
+| Option         | Description             | Default |
+| -------------- | ----------------------- | ------- |
+| `--agent <id>` | Exact agent ID          | -       |
+| `--json`       | Machine-readable output | -       |
+
+## `maestro-cli board source-preview`
+
+preview an exact legacy source through the authenticated local host
+
+| Option                          | Description                                        | Default |
+| ------------------------------- | -------------------------------------------------- | ------- |
+| `--source-key <sha256>`         | Exact legacy source key                            | -       |
+| `--backup-path <absolute-path>` | Host-local backup path                             | -       |
+| `--sha256 <hash>`               | Verified backup SHA-256                            | -       |
+| `--revision <n>`                | Informational workspace revision (legacy argument) | -       |
+| `--receipt <json>`              | Exact suppression receipt JSON                     | -       |
+| `--json`                        | Machine-readable errors                            | -       |
+
+## `maestro-cli board source-export`
+
+export an exact legacy source through the authenticated local host
+
+| Option                          | Description                                        | Default |
+| ------------------------------- | -------------------------------------------------- | ------- |
+| `--source-key <sha256>`         | Exact legacy source key                            | -       |
+| `--backup-path <absolute-path>` | Host-local backup path                             | -       |
+| `--sha256 <hash>`               | Verified backup SHA-256                            | -       |
+| `--revision <n>`                | Informational workspace revision (legacy argument) | -       |
+| `--receipt <json>`              | Exact suppression receipt JSON                     | -       |
+| `--json`                        | Machine-readable errors                            | -       |
+
+## `maestro-cli board source-suppress`
+
+suppress an exact legacy source through the authenticated local host
+
+| Option                          | Description                                        | Default |
+| ------------------------------- | -------------------------------------------------- | ------- |
+| `--source-key <sha256>`         | Exact legacy source key                            | -       |
+| `--backup-path <absolute-path>` | Host-local backup path                             | -       |
+| `--sha256 <hash>`               | Verified backup SHA-256                            | -       |
+| `--revision <n>`                | Informational workspace revision (legacy argument) | -       |
+| `--receipt <json>`              | Exact suppression receipt JSON                     | -       |
+| `--json`                        | Machine-readable errors                            | -       |
+
+## `maestro-cli board source-restore`
+
+restore an exact legacy source through the authenticated local host
+
+| Option                          | Description                                        | Default |
+| ------------------------------- | -------------------------------------------------- | ------- |
+| `--source-key <sha256>`         | Exact legacy source key                            | -       |
+| `--backup-path <absolute-path>` | Host-local backup path                             | -       |
+| `--sha256 <hash>`               | Verified backup SHA-256                            | -       |
+| `--revision <n>`                | Informational workspace revision (legacy argument) | -       |
+| `--receipt <json>`              | Exact suppression receipt JSON                     | -       |
+| `--json`                        | Machine-readable errors                            | -       |
+
+## `maestro-cli board tick`
+
+Request one fenced Board dispatch pass from the running host
+
+| Option                     | Description                                       | Default |
+| -------------------------- | ------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Limit to boards belonging to this agent’s project | -       |
+| `--board <boardId>`        | Tick only a specific board                        | -       |
+| `--request-id <id>`        | Stable operation identity for retry               | -       |
+| `--source <key>`           | Canonical source identity                         | -       |
+| `--collection <key>`       | Canonical collection identity                     | -       |
+| `--revision <n>`           | Expected collection revision                      | -       |
+| `--json`                   | Output as JSON (for scripting)                    | -       |
+
+## `maestro-cli board watch`
+
+Request fenced host ticks until Ctrl-C; the host owns every run.
+
+| Option                     | Description                                       | Default |
+| -------------------------- | ------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Limit to boards belonging to this agent’s project | -       |
+| `--board <boardId>`        | Watch only a specific board                       | -       |
+| `--source <key>`           | Canonical source identity                         | -       |
+| `--collection <key>`       | Canonical collection identity                     | -       |
+| `--revision <n>`           | Expected collection revision                      | -       |
+| `--interval <seconds>`     | Seconds between ticks (default 30, minimum 5)     | -       |
+| `--json`                   | Output one JSON object per tick (for scripting)   | -       |
+
 ## `maestro-cli bundle`
 
 Export, validate, inspect, and import portable Cue pipeline and agent bundles
@@ -1729,6 +2203,7 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--maestro-p-path <path>`          | Override the maestro-p binary path (empty string clears)                                                                            | -       |
 | `--codex-transport <transport>`    | Codex transport: exec \| app-server (experimental, enables steering; Codex only)                                                    | -       |
 | `--bookmark <bool>`                | Bookmark the agent in the Left Bar (true/false)                                                                                     | -       |
+| `--board-worker <bool>`            | Opt the agent into the Board worker pool (true/false)                                                                               | -       |
 | `--provider <type>`                | Switch to another provider; tabs keep their transcripts and start fresh conversations there                                         | -       |
 | `--convert`                        | With --provider: also convert owned conversations and selected project knowledge (opt-in; implied by the translation options below) | -       |
 | `--force`                          | Alias for --accept-translation-limitations                                                                                          | -       |

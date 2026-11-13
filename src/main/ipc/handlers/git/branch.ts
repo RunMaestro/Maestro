@@ -1,9 +1,9 @@
 import { ipcMain } from 'electron';
-import { execFileNoThrow } from '../../../utils/execFile';
 import { execGit, execGitReadOnly } from '../../../utils/remote-git';
 import { getSshRemoteById } from '../../../stores';
 import { withIpcErrorLogging, createIpcHandler } from '../../../utils/ipcHandler';
 import { parseGitBranches, parseGitTags } from '../../../../shared/gitUtils';
+import { resolveDefaultBranch } from '../../../utils/pr-creator';
 import { branchSwitchBlocker } from '../../../utils/branch-switch-guard';
 import { handlerOpts, readOnlyGitReply, type GitHandlerDependencies } from './shared';
 
@@ -251,34 +251,10 @@ export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 		'git:getDefaultBranch',
 		createIpcHandler(handlerOpts('getDefaultBranch'), async (cwd: string, sshRemoteId?: string) => {
 			const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
-			if (sshRemoteId && !sshRemote) {
-				throw new Error(`SSH remote not found: ${sshRemoteId}`);
-			}
-			const git = (args: string[]) =>
-				sshRemote ? execGit(args, cwd, sshRemote, cwd) : execFileNoThrow('git', args, cwd);
-
-			// First try to get the default branch from remote
-			const remoteResult = await git(['remote', 'show', 'origin']);
-			if (remoteResult.exitCode === 0) {
-				// Parse "HEAD branch: main" from the output
-				const match = remoteResult.stdout.match(/HEAD branch:\s*(\S+)/);
-				if (match) {
-					return { branch: match[1] };
-				}
-			}
-
-			// Fallback: check if main or master exists locally
-			const mainResult = await git(['rev-parse', '--verify', 'main']);
-			if (mainResult.exitCode === 0) {
-				return { branch: 'main' };
-			}
-
-			const masterResult = await git(['rev-parse', '--verify', 'master']);
-			if (masterResult.exitCode === 0) {
-				return { branch: 'master' };
-			}
-
-			throw new Error('Could not determine default branch');
+			if (sshRemoteId && !sshRemote) throw new Error(`SSH remote not found: ${sshRemoteId}`);
+			const branch = await resolveDefaultBranch(cwd, undefined, sshRemote);
+			if (!branch) throw new Error('Could not determine default branch');
+			return { branch };
 		})
 	);
 }

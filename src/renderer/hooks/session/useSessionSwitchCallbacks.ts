@@ -15,13 +15,14 @@
  *   handleResumeSession (from useAgentSessionManagement), inputRef (DOM ref)
  */
 
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { LogEntry, UsageStats } from '../../types';
 import type { FlatFileItem } from '../../components/FileSearchModal';
 import type { FileNode } from '../../types/fileTree';
 import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
+import { notifyToast } from '../../stores/notificationStore';
 import { aiTabFocusFields, focusAiTabInSession } from '../../utils/tabHelpers';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type { CrossTabSearchJumpTarget } from '../../components/CrossTabSearchModal';
@@ -151,9 +152,31 @@ export function useSessionSwitchCallbacks(
 		[setActiveSessionId, setSessions]
 	);
 
+	const pendingToastJump = useRef<{ sessionId: string; tabId?: string } | null>(null);
+	const restorationComplete = useSessionStore(
+		(state) => state.sessionsLoaded && state.initialLoadComplete
+	);
+
 	// Navigate from toast notification to a session/tab
 	const handleToastSessionClick = useCallback(
 		(sessionId: string, tabId?: string) => {
+			const state = useSessionStore.getState();
+			if (!state.sessionsLoaded || !state.initialLoadComplete) {
+				pendingToastJump.current = { sessionId, tabId };
+				return;
+			}
+			// Guard stale jumps: this shared path also serves Cue and CLI toasts, so a
+			// deleted agent id (e.g. a Board worker agent removed after its run) would
+			// otherwise silently activate a nonexistent session and blank the view. Fail
+			// loudly instead. Explicit "not found" beats a silent blank switch.
+			if (useSessionStore.getState().sessions.every((s) => s.id !== sessionId)) {
+				notifyToast({
+					color: 'orange',
+					title: 'Agent not found',
+					message: 'The agent this notification points to no longer exists.',
+				});
+				return;
+			}
 			// Close the Document Graph if it's open. It's a full-screen modal
 			// overlay (fixed inset-0, z-9999), so without this the graph stays
 			// on top of the agent we just jumped to and swallows clicks meant
@@ -175,6 +198,13 @@ export function useSessionSwitchCallbacks(
 		},
 		[setActiveSessionId]
 	);
+
+	useEffect(() => {
+		if (!restorationComplete || !pendingToastJump.current) return;
+		const jump = pendingToastJump.current;
+		pendingToastJump.current = null;
+		handleToastSessionClick(jump.sessionId, jump.tabId);
+	}, [restorationComplete, handleToastSessionClick]);
 
 	// Native notifications use the same navigation as their in-app toast.
 	useEffect(() => {

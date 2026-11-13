@@ -753,6 +753,10 @@ export function EditAgentModal({
 				workingDirChanged ? trimmedWorkingDir : undefined,
 				codexAutoReset,
 				codexTransport,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
 			];
 			if (harnessControlMode === 'native') saveArguments[23] = 'native';
 			if (converting) {

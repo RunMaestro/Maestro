@@ -413,6 +413,8 @@ function MaestroConsoleInner() {
 		setCueModalOpen,
 		// Pianola Modal - pianolaModalOpen now self-sourced in AppStandaloneModals
 		setPianolaModalOpen,
+		// Board Modal - boardModalOpen now self-sourced in AppStandaloneModals
+		setBoardModalOpen,
 		// Maestro Cue YAML Editor - open state, sessionId, projectRoot self-sourced in AppStandaloneModals
 		closeCueYamlEditor,
 	} = useModalActions();
@@ -577,6 +579,12 @@ function MaestroConsoleInner() {
 	useEffect(() => {
 		if (!encoreFeatures.concerto) getModalActions().setConcertoStageOpen(false);
 	}, [encoreFeatures.concerto]);
+
+	// Board depends on Maestro Cue: force-close the Board modal when either the
+	// Board flag or its Cue dependency turns off (mirrors the Cue force-close).
+	useEffect(() => {
+		if (!encoreFeatures.board || !encoreFeatures.maestroCue) setBoardModalOpen(false);
+	}, [encoreFeatures.board, encoreFeatures.maestroCue, setBoardModalOpen]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
 	const { isShortcut, isTabShortcut, isPaneShortcut } = useKeyboardShortcutHelpers({
@@ -3741,6 +3749,11 @@ function MaestroConsoleInner() {
 							encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined
 						}
 						onOpenMaestroCue={encoreFeatures.maestroCue ? () => setCueModalOpen(true) : undefined}
+						onOpenBoard={
+							encoreFeatures.board && encoreFeatures.maestroCue
+								? () => setBoardModalOpen(true)
+								: undefined
+						}
 						onOpenPianola={encoreFeatures.pianola ? () => setPianolaModalOpen(true) : undefined}
 						onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
 						onCloseTabSwitcher={handleCloseTabSwitcher}

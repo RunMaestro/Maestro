@@ -37,6 +37,10 @@ export function LayerStackProvider({ children }: LayerStackProviderProps) {
 				const stack = layerStackRef.current;
 				const topLayer = stack.getTopLayer();
 				if (topLayer) {
+					// A focused select popup owns its first Escape. Let its keyboard
+					// handler close the popup and restore focus before closing the modal.
+					if (e.target instanceof Element && e.target.closest('[data-select-escape]')) return;
+
 					// Prevent default Escape behavior and stop propagation
 					e.preventDefault();
 					e.stopPropagation();

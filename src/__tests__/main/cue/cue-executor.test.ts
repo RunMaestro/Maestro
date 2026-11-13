@@ -93,14 +93,14 @@ vi.mock('crypto', async (importOriginal) => ({
 }));
 
 // Mock substituteTemplateVariables
-const mockSubstitute = vi.fn((template: string) => `substituted: ${template}`);
+const mockSubstitute = vi.fn((template: string, _context?: unknown) => `substituted: ${template}`);
 vi.mock('../../../shared/templateVariables', () => ({
 	substituteTemplateVariables: (...args: unknown[]) => mockSubstitute(args[0] as string, args[1]),
 }));
 
 // Mock agents module
 const mockGetAgentDefinition = vi.fn();
-const mockGetAgentCapabilities = vi.fn(() => ({
+const mockGetAgentCapabilities = vi.fn((..._args: unknown[]) => ({
 	supportsResume: true,
 	supportsReadOnlyMode: true,
 	supportsJsonOutput: true,
@@ -146,8 +146,9 @@ const mockApplyOverrides = vi.fn((_agent: unknown, args: string[], _overrides: u
 }));
 vi.mock('../../../shared/maestro-lib/launch/agent-args', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../shared/maestro-lib/launch/agent-args')>()),
-	buildAgentArgs: (...args: unknown[]) => mockBuildAgentArgs(...args),
-	applyAgentConfigOverrides: (...args: unknown[]) => mockApplyOverrides(...args),
+	buildAgentArgs: (...args: Parameters<typeof mockBuildAgentArgs>) => mockBuildAgentArgs(...args),
+	applyAgentConfigOverrides: (...args: Parameters<typeof mockApplyOverrides>) =>
+		mockApplyOverrides(...args),
 }));
 
 // Mock wrapSpawnWithSsh
@@ -167,7 +168,8 @@ vi.mock('../../../shared/maestro-lib/control/ssh-remote-signal', async (importOr
 
 // Mock parsers - default returns null (no parser), overridden per test as needed
 const mockGetOutputParser = vi.fn(
-	() => null as ReturnType<typeof import('../../../main/parsers').getOutputParser>
+	(..._args: unknown[]) =>
+		null as ReturnType<typeof import('../../../main/parsers').getOutputParser>
 );
 // A resolved remote is probed for maestro-p before the token mode is chosen.
 vi.mock('../../../main/agents/probeRemoteMaestroP', () => ({
@@ -205,7 +207,7 @@ class MockChildProcess extends EventEmitter {
 	exitCode: number | null = null;
 	signalCode: string | null = null;
 
-	kill(signal?: string) {
+	kill(_signal?: string) {
 		this.killed = true;
 		return true;
 	}
@@ -219,7 +221,7 @@ class MockChildProcess extends EventEmitter {
 }
 
 let mockChild: MockChildProcess;
-const mockSpawn = vi.fn(() => {
+const mockSpawn = vi.fn((_command: string, _args: string[], _options?: unknown) => {
 	mockChild = new MockChildProcess();
 	return mockChild as unknown as ChildProcess;
 });
@@ -228,10 +230,10 @@ vi.mock('child_process', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('child_process')>();
 	return {
 		...actual,
-		spawn: (...args: unknown[]) => mockSpawn(...args),
+		spawn: (...args: Parameters<typeof mockSpawn>) => mockSpawn(...args),
 		default: {
 			...actual,
-			spawn: (...args: unknown[]) => mockSpawn(...args),
+			spawn: (...args: Parameters<typeof mockSpawn>) => mockSpawn(...args),
 		},
 	};
 });
@@ -353,6 +355,15 @@ describe('cue-executor', () => {
 	});
 
 	describe('executeCuePrompt', () => {
+		it('rechecks the host artifact after async launch preparation and refuses before native spawn', async () => {
+			const prepareLaunch = vi.fn(async () => false);
+			const beforeLaunch = vi.fn(() => true);
+			const result = await executeCuePrompt(createExecutionConfig({ prepareLaunch, beforeLaunch }));
+			expect(prepareLaunch).toHaveBeenCalledOnce();
+			expect(beforeLaunch).not.toHaveBeenCalled();
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(result).toMatchObject({ executionStarted: false, status: 'failed' });
+		});
 		it('preserves a completed run when proof cleanup fails', async () => {
 			injectInvalidProof.current = true;
 			const onRunTranscript = vi.fn();
@@ -363,6 +374,8 @@ describe('cue-executor', () => {
 			const result = await resultPromise;
 			expect(result.status).toBe('completed');
 			expect(result.exitCode).toBe(0);
+			expect(result.executionStarted).toBe(true);
+			expect(result.terminationConfirmed).toBe(true);
 			expect(onRunTranscript).toHaveBeenCalledTimes(1);
 			expect(onRunTranscript).toHaveBeenCalledWith(
 				expect.objectContaining({ rawStdout: 'Completed output', status: 'completed', exitCode: 0 })
@@ -811,6 +824,8 @@ describe('cue-executor', () => {
 
 			expect(result.status).toBe('completed');
 			expect(result.exitCode).toBe(0);
+			expect(result.executionStarted).toBe(true);
+			expect(result.terminationConfirmed).toBe(true);
 			expect(result.runId).toBe('run-1');
 			expect(result.sessionId).toBe('session-1');
 			expect(result.sessionName).toBe('Test Session');
@@ -892,7 +907,7 @@ describe('cue-executor', () => {
 		describe('timeout enforcement', () => {
 			it('should send SIGTERM when timeout expires', async () => {
 				const config = createExecutionConfig({ timeoutMs: 5000 });
-				const killSpy = vi.spyOn(mockChild, 'kill');
+				vi.spyOn(mockChild, 'kill');
 
 				const resultPromise = executeCuePrompt(config);
 				await vi.advanceTimersByTimeAsync(0);

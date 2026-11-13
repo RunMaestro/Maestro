@@ -27,6 +27,7 @@ function createMockChildProcess() {
 		stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn(), destroy: vi.fn() }),
 		stdin: { write: vi.fn(), end: vi.fn(), on: vi.fn() },
 		on: vi.fn(),
+		once: vi.fn(),
 		unref: vi.fn(),
 		killed: false,
 		exitCode: null,

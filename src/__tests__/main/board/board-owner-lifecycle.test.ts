@@ -1,0 +1,368 @@
+import { beforeAll, beforeEach, afterAll, afterEach, expect, it, vi } from 'vitest';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
+import { snapshotSqlite } from '../../helpers/sqliteSnapshot';
+import {
+	BoardRuntime,
+	readBoardRuntimeReadiness,
+	boardRuntimeProcessIdentity,
+	type BoardRuntimeLock,
+} from '../../../main/board/board-runtime';
+import { configureBoardReadinessHost, BoardStorageFacade } from '../../../main/board/board-storage';
+import { openBoardDb } from '../../../main/board/board-db';
+import { configureBoardFeatures } from '../../../main/board/board-feature';
+import { boardOwnerLiveness } from '../../../main/board/board-owner-liveness';
+import {
+	acquireCueEngineLock,
+	readCueEngineLock,
+	isCueEngineLockOwnedByThisProcess,
+	isLeftByEarlierHolderOfOurPid,
+	releaseCueEngineLock,
+	__setCueEngineLockTestHook,
+} from '../../../main/cue/cue-engine-lock';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import { isPidAlive } from '../../../shared/maestro-lib/client/discovery';
+const fixture = createBoardIsolationFixture();
+let storage: BoardStorageFacade, lock: BoardRuntimeLock, deadPid: number, old: string;
+const runtime = () =>
+	new BoardRuntime(
+		storage,
+		lock,
+		() => ({}) as never,
+		{} as never,
+		(identity) => boardOwnerLiveness(identity)
+	);
+beforeAll(async () => {
+	fixture.install();
+	const child = spawn(process.execPath, ['-e', 'process.exit(0)'], { stdio: 'ignore' });
+	deadPid = child.pid!;
+	await once(child, 'exit');
+});
+beforeEach(() => {
+	configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
+	storage = new BoardStorageFacade(openBoardDb(fixture.env.BOARD_DB_PATH!));
+	expect(acquireCueEngineLock('desktop').acquired).toBe(true);
+	const held = readCueEngineLock()!;
+	lock = {
+		info: {
+			...held,
+			mode: 'desktop',
+			platform: process.platform,
+			...(process.platform === 'linux' ? {} : { hostIdentity: 'trusted-native-host-fixture' }),
+		},
+		verify: () => {
+			const current = readCueEngineLock();
+			return current && isCueEngineLockOwnedByThisProcess(current) && current.token === held.token
+				? { ok: true }
+				: { ok: false, reason: 'owner-conflict' };
+		},
+	};
+	const startedAt = new Date(Date.parse(held.startedAt) - 250).toISOString();
+	old = JSON.stringify({ bootTime: held.bootTime, pid: deadPid, startedAt });
+	storage.db
+		.prepare('INSERT INTO runtime_owner VALUES (1,?,?,?)')
+		.run(old, 5, Date.parse(startedAt) + 1);
+	const board = storage.ensureGlobalBoard();
+	for (let i = 0; i < 16; i++)
+		storage.db.prepare('INSERT INTO cards VALUES (?,?,?,?)').run(
+			board.storage!.collectionKey,
+			`issue-${i}`,
+			canonicalJson({
+				id: `issue-${i}`,
+				title: 'Owned analysis',
+				description: 'Stop for human decision',
+				status: i < 3 ? 'todo' : 'triage',
+				parents: [],
+				createdAt: startedAt,
+				updatedAt: startedAt,
+			}),
+			40
+		);
+});
+afterEach(() => {
+	__setCueEngineLockTestHook(undefined);
+	configureBoardReadinessHost(() => null);
+	vi.restoreAllMocks();
+	releaseCueEngineLock();
+	storage.db.close();
+	for (const suffix of ['', '-wal', '-shm'])
+		fs.rmSync(fixture.contract.db + suffix, { force: true });
+});
+afterAll(() => fixture.cleanup());
+it('automatically fences the idle legacy generation with the real native Cue lease, not a death or Human verdict', () => {
+	expect(boardOwnerLiveness(old)).toBe('unknown');
+	const before = snapshotSqlite(storage.db);
+	expect(runtime().acquire()).toEqual({ ok: true });
+	const after = snapshotSqlite(storage.db);
+	for (const table of Object.keys(before))
+		if (!['runtime_owner', 'commands'].includes(table)) expect(after[table]).toEqual(before[table]);
+	expect(storage.db.prepare('SELECT epoch,process_identity FROM runtime_owner').get()).toEqual({
+		epoch: 6,
+		process_identity: boardRuntimeProcessIdentity(lock),
+	});
+	const receipt = storage.db.prepare('SELECT principal,result_json FROM commands').get() as {
+		principal: string;
+		result_json: string;
+	};
+	expect(receipt.principal).toBe('native-cue-host');
+	expect(JSON.parse(receipt.result_json)).toMatchObject({
+		oldOwner: { process_identity: old, epoch: 5 },
+		newEpoch: 6,
+	});
+	expect(runtime().acquire()).toEqual({ ok: true });
+	expect(storage.db.prepare('SELECT count(*) AS n FROM commands').get()).toEqual({ n: 1 });
+});
+it('acquires a fresh owner normally and requires no extra permission', () => {
+	storage.db.prepare('DELETE FROM runtime_owner').run();
+	expect(runtime().acquire()).toEqual({ ok: true });
+	expect(storage.db.prepare('SELECT epoch FROM runtime_owner').get()).toEqual({ epoch: 1 });
+});
+it.each([
+	'modern-unknown',
+	'alive-legacy',
+	'foreign-namespace',
+	'corrupt',
+	'other-boot',
+	'unknown-card-attempt',
+	'migration-hold',
+	'running-card',
+])('refuses %s without changing any table', (kind) => {
+	let identity = JSON.parse(old);
+	if (kind === 'modern-unknown') identity.token = 'different-modern-token';
+	if (kind === 'alive-legacy') identity.pid = process.ppid;
+	if (kind === 'foreign-namespace')
+		identity = { ...identity, token: 'foreign-token', pidNsInode: (lock.info.pidNsInode ?? 0) + 1 };
+	if (kind === 'other-boot') identity.bootTime -= 120000;
+	storage.db
+		.prepare('UPDATE runtime_owner SET process_identity=?')
+		.run(kind === 'corrupt' ? '{' : JSON.stringify(identity));
+	if (kind === 'unknown-card-attempt')
+		storage.db
+			.prepare(
+				"UPDATE cards SET payload_json=json_set(payload_json,'$.runs',json('[{}]')) WHERE id='issue-0'"
+			)
+			.run();
+	if (kind === 'migration-hold')
+		storage.db.prepare('INSERT INTO migration_worker_holds VALUES (?,?)').run('uncertain', '[]');
+	if (kind === 'running-card')
+		storage.db
+			.prepare(
+				"UPDATE cards SET payload_json=json_set(payload_json,'$.status','running') WHERE id='issue-0'"
+			)
+			.run();
+	const before = snapshotSqlite(storage.db);
+	expect(runtime().acquire().ok).toBe(false);
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it.each(['run', 'reservation'])(
+	'retains a real persisted %s instead of granting idle handover',
+	(kind) => {
+		const key = storage.db.prepare('SELECT collection_key,id FROM cards LIMIT 1').get() as {
+			collection_key: string;
+			id: string;
+		};
+		storage.db
+			.prepare(
+				'INSERT INTO runs (run_id,collection_key,card_id,attempt,specification_json) VALUES (?,?,?,?,?)'
+			)
+			.run('old-attempt', key.collection_key, key.id, 1, '{}');
+		if (kind === 'reservation') {
+			storage.db.prepare('INSERT INTO workers VALUES (?,1,0,?)').run('held', '{}');
+			storage.db
+				.prepare('INSERT INTO reservations VALUES (?,?,?,?,?,?,?)')
+				.run('held', key.collection_key, key.id, 'old-attempt', 5, 1, 'uncertain');
+		}
+		const before = snapshotSqlite(storage.db);
+		expect(runtime().acquire().ok).toBe(false);
+		expect(snapshotSqlite(storage.db)).toEqual(before);
+	}
+);
+it('rechecks an epoch/capacity change at the real native generation boundary', () => {
+	__setCueEngineLockTestHook((point) => {
+		if (point === 'afterClaim')
+			storage.db
+				.prepare('INSERT INTO migration_worker_holds VALUES (?,?)')
+				.run('racing-hold', '[]');
+	});
+	const before = snapshotSqlite(storage.db);
+	expect(runtime().acquire().ok).toBe(false);
+	const after = snapshotSqlite(storage.db);
+	expect(after.runtime_owner).toEqual(before.runtime_owner);
+	expect(after.commands).toEqual(before.commands);
+	expect(after.migration_worker_holds.count).toBe(1);
+});
+it('rolls back owner handover when the durable handover receipt fails', () => {
+	storage.db.exec(
+		"CREATE TRIGGER refuse_receipt BEFORE INSERT ON commands BEGIN SELECT RAISE(ABORT,'owned receipt error'); END"
+	);
+	const before = snapshotSqlite(storage.db);
+	expect(() => runtime().acquire()).toThrow('owned receipt error');
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it('does not infer native ownership after the Cue lock is released', () => {
+	releaseCueEngineLock();
+	const before = snapshotSqlite(storage.db);
+	expect(runtime().acquire().ok).toBe(false);
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it.each([
+	{ board: false, maestroCue: false },
+	{ board: false, maestroCue: true },
+	{ board: true, maestroCue: false },
+])('does no owner work while gates are off %j', (gates) => {
+	configureBoardFeatures({ get: () => gates });
+	const before = snapshotSqlite(storage.db);
+	expect(runtime().acquire()).toEqual({ ok: false, reason: 'runtime-unavailable' });
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+
+it.each(['board-off', 'cue-off', 'lost-lock'] as const)(
+	'refuses %s at the native generation boundary without owner or receipt writes',
+	(change) => {
+		const before = snapshotSqlite(storage.db);
+		__setCueEngineLockTestHook((point) => {
+			if (point !== 'afterClaim') return;
+			if (change === 'lost-lock')
+				fs.unlinkSync(path.join(fixture.env.MAESTRO_USER_DATA!, 'cue-engine.lock'));
+			else
+				configureBoardFeatures({
+					get: () => ({ board: change !== 'board-off', maestroCue: change !== 'cue-off' }),
+				});
+		});
+		expect(runtime().acquire().ok).toBe(false);
+		expect(snapshotSqlite(storage.db)).toEqual(before);
+	}
+);
+
+function readReadiness() {
+	return readBoardRuntimeReadiness(storage.db, lock, (identity) =>
+		boardOwnerLiveness(identity, {
+			platform: lock.info.platform ?? process.platform,
+			hostIdentity: lock.info.hostIdentity,
+			current: readCueEngineLock(),
+			ownsCurrent: isCueEngineLockOwnedByThisProcess,
+			isPidAlive,
+			earlierHolder: isLeftByEarlierHolderOfOurPid,
+		})
+	);
+}
+it('observes the known idle legacy owner without acquiring, changing tables or taking a native generation claim', () => {
+	__setCueEngineLockTestHook(() => {
+		throw new Error('A diagnostic read must not claim native ownership');
+	});
+	const before = snapshotSqlite(storage.db);
+	expect(readReadiness()).toBeNull();
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it('projects a fresh modern conflict through workspace readiness without exposing proof or retaining a last error', () => {
+	const identity = {
+		...JSON.parse(old),
+		pid: process.ppid,
+		token: 'private-owned-proof',
+		pidNsInode: lock.info.pidNsInode,
+	};
+	storage.db.prepare('UPDATE runtime_owner SET process_identity=?').run(JSON.stringify(identity));
+	configureBoardReadinessHost((db) => ({
+		agentStates: {},
+		dispatchEnabled: true,
+		runtimeReason: readBoardRuntimeReadiness(db, lock, boardOwnerLiveness),
+	}));
+	let before = snapshotSqlite(storage.db);
+	const view = storage.query();
+	const reasons = view.collections[0].readiness?.['issue-0'];
+	expect(reasons).toBeDefined();
+	expect(reasons).toContain('owner-conflict');
+	expect(reasons).not.toContain('awaiting-cue');
+	expect(JSON.stringify(view)).not.toContain('private-owned-proof');
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+	storage.db
+		.prepare('UPDATE runtime_owner SET process_identity=?')
+		.run(boardRuntimeProcessIdentity(lock));
+	before = snapshotSqlite(storage.db);
+	expect(readReadiness()).toBeNull();
+	const freshReasons = storage.query().collections[0].readiness?.['issue-0'];
+	expect(freshReasons).toBeDefined();
+	expect(freshReasons).not.toContain('owner-conflict');
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it('reports current native lock loss instead of a stale owner conflict without acquiring', () => {
+	releaseCueEngineLock();
+	const before = snapshotSqlite(storage.db);
+	expect(readReadiness()).toBe('runtime-unavailable');
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+// This integration fixture uses the actual native Cue lock and its OS evidence.
+// Explicit cross-platform evidence belongs to board-owner-liveness.test.ts.
+it('observes a provably dead modern owner with actual native evidence without taking it over', () => {
+	storage.db.prepare('UPDATE runtime_owner SET process_identity=?').run(
+		JSON.stringify({
+			...JSON.parse(old),
+			token: 'finished-owned-token',
+			pidNsInode: lock.info.pidNsInode,
+			platform: lock.info.platform,
+			hostIdentity: lock.info.hostIdentity,
+		})
+	);
+	const before = snapshotSqlite(storage.db);
+	expect(readReadiness()).toBeNull();
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it('refuses Linux evidence without a namespace even for a terminated owned child', () => {
+	// A non-Linux native lock cannot become Linux proof by changing its label.
+	// Do not invent a namespace: preserve this exact counterfactual as a refusal.
+	lock.info.platform = 'linux';
+	lock.info.pidNsInode = undefined;
+	storage.db.prepare('UPDATE runtime_owner SET process_identity=?').run(
+		JSON.stringify({
+			...JSON.parse(old),
+			token: 'finished-owned-token',
+			platform: 'linux',
+		})
+	);
+	__setCueEngineLockTestHook(() => {
+		throw new Error('A diagnostic read must not claim native ownership');
+	});
+	const before = snapshotSqlite(storage.db);
+	expect(readReadiness()).toBe('owner-conflict');
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it.each([
+	{ board: false, maestroCue: false },
+	{ board: false, maestroCue: true },
+	{ board: true, maestroCue: false },
+])('does not read storage or take a native claim for disabled diagnostics %j', (gates) => {
+	const before = snapshotSqlite(storage.db);
+	storage.db.close();
+	configureBoardFeatures({ get: () => gates });
+	expect(readReadiness()).toBe('runtime-unavailable');
+	configureBoardFeatures({ get: () => ({ board: true, maestroCue: true }) });
+	storage = new BoardStorageFacade(openBoardDb(fixture.env.BOARD_DB_PATH!));
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});
+it('does not hide an unexpected diagnostic storage error behind awaiting-cue', () => {
+	storage.db.close();
+	try {
+		expect(() => readReadiness()).toThrow(/not open/i);
+	} finally {
+		storage = new BoardStorageFacade(openBoardDb(fixture.env.BOARD_DB_PATH!));
+	}
+});
+it.each(['darwin', 'win32'] as const)(
+	'reports unproven current %s identity without a host probe or database mutation',
+	(platform) => {
+		lock.info.platform = platform;
+		lock.info.hostIdentity = undefined;
+		const before = snapshotSqlite(storage.db);
+		expect(readReadiness()).toBe('owner-identity-unavailable');
+		expect(snapshotSqlite(storage.db)).toEqual(before);
+	}
+);
+it('observes fresh empty ownership without initializing it', () => {
+	storage.db.prepare('DELETE FROM runtime_owner').run();
+	const before = snapshotSqlite(storage.db);
+	expect(readReadiness()).toBeNull();
+	expect(snapshotSqlite(storage.db)).toEqual(before);
+});

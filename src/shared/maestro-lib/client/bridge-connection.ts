@@ -99,6 +99,21 @@ export class ConnectionClosedError extends Error {
 	}
 }
 
+// Fixture hosts use in-process/renderer IPC. Never discover or dial an installed desktop,
+// even with an explicit userDataDir or a discovery file copied into the fixture directory.
+const BRIDGE_ISOLATION_ENV = [
+	'BOARD_ISOLATION_ID',
+	'BOARD_ISOLATION_CONTRACT',
+	'BOARD_ISOLATED_ROOT',
+	'BOARD_DB_PATH',
+	'BOARD_SYNC_PATH',
+	'BOARD_AGENT_REGISTRY',
+	'BOARD_SOURCE_REGISTRY',
+	'BOARD_SOURCE_ROOT',
+	'MAESTRO_E2E_TEST',
+] as const;
+let isolatedBridge = BRIDGE_ISOLATION_ENV.some((key) => process.env[key] !== undefined);
+
 /**
  * Options that keep the CLI's behavior as the default: a bare
  * `new BridgeConnection()` reads the no-argument discovery, matches a reply by
@@ -159,6 +174,10 @@ export class BridgeConnection {
 	 * Throws `MaestroNotRunningError` when no host is running or reachable.
 	 */
 	async connect(): Promise<void> {
+		isolatedBridge ||= BRIDGE_ISOLATION_ENV.some((key) => process.env[key] !== undefined);
+		if (isolatedBridge) {
+			throw new Error('Isolated fixtures cannot connect to the desktop bridge; use fixture IPC');
+		}
 		const explicit = this.options.endpoint;
 		if (explicit && !isDialableEndpoint(explicit)) {
 			// Never echo the endpoint: it holds the token.

@@ -1199,3 +1199,44 @@ describe('agent-switch window scoping', () => {
 		expect(roomCommands.find((a) => a.id === 'markTabUnread')).toBeDefined();
 	});
 });
+
+describe('Board + Agent Profiles palette entries', () => {
+	/** Minimal args: the Encore gate lives at the call site, which either passes
+	 * an open handler or leaves it undefined. */
+	const baseArgs = {
+		activeSession: createMockSession({ id: 's1', name: 'Atlas' }),
+		setQuickActionOpen: close,
+		setSuccessFlashNotification: vi.fn(),
+		setAgentSessionsOpen: vi.fn(),
+		setActiveAgentSessionId: vi.fn(),
+		bionifyReadingMode: false,
+		setBionifyReadingMode: vi.fn(),
+		audioFeedbackEnabled: false,
+		setAudioFeedbackEnabled: vi.fn(),
+		idleNotificationEnabled: false,
+		setIdleNotificationEnabled: vi.fn(),
+		showStarredSessionsSection: true,
+		setShowStarredSessionsSection: vi.fn(),
+		shortcuts: {},
+	};
+
+	it('hides both commands when the feature is off (no handlers passed)', () => {
+		const ids = buildFeatureCommands(baseArgs).map((a) => a.id);
+		expect(ids).not.toContain('board');
+		expect(ids).not.toContain('agent-profiles');
+	});
+
+	it('opens the Board and closes the palette', () => {
+		const onOpenBoard = vi.fn();
+		const board = buildFeatureCommands({ ...baseArgs, onOpenBoard }).find((a) => a.id === 'board');
+		expect(board).toBeDefined();
+		board!.action();
+		expect(onOpenBoard).toHaveBeenCalled();
+		expect(close).toHaveBeenCalledWith(false);
+	});
+
+	it('does not expose Agent Profiles', () => {
+		const ids = buildFeatureCommands(baseArgs).map((a) => a.id);
+		expect(ids).not.toContain('agent-profiles');
+	});
+});

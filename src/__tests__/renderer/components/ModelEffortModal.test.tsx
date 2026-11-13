@@ -662,7 +662,11 @@ describe('ModelEffortModal', () => {
 
 			fireEvent.keyDown(keyTarget(), { key: 'r', metaKey: true });
 
-			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith('claude-code', true);
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(
+				'claude-code',
+				true,
+				undefined
+			);
 			await screen.findByText(NEW_MODEL);
 			expect(useCenterFlashStore.getState().active).toMatchObject({
 				message: 'Models refreshed',
@@ -688,7 +692,11 @@ describe('ModelEffortModal', () => {
 
 			fireEvent.click(screen.getByTestId('model-effort-refresh'));
 
-			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith('claude-code', true);
+			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(
+				'claude-code',
+				true,
+				undefined
+			);
 		});
 
 		it('says so when the refresh fails and keeps the old list', async () => {

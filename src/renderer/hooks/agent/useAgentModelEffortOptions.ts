@@ -16,7 +16,7 @@
  * wins. That keeps this correct as agents are added without touching callers.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { AgentDiscoveryRequest, AgentDiscoveryResult } from '../../../shared/types';
 import { readEffortFromConfig } from '../../utils/agentEffort';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
@@ -63,9 +63,26 @@ export interface AgentModelEffortOptions {
 export function useAgentModelEffortOptions(
 	agentId?: string,
 	/** Memoized selected context. Grok never discovers from a provider ID alone. */
-	context?: AgentDiscoveryRequest['context']
+	contextOrSshRemoteId?: AgentDiscoveryRequest['context'] | string
 ): AgentModelEffortOptions {
+	const context = typeof contextOrSshRemoteId === 'object' ? contextOrSshRemoteId : undefined;
+	const sshRemoteId =
+		typeof contextOrSshRemoteId === 'string'
+			? contextOrSshRemoteId
+			: context && context.kind !== 'agent'
+				? context.sshRemoteId
+				: undefined;
 	const scopedContext = agentId === 'grok' ? context : undefined;
+	const scope = useMemo(
+		() => ({ agentId, sshRemoteId, context: scopedContext }),
+		[agentId, sshRemoteId, scopedContext]
+	);
+	const scopeRef = useRef(scope);
+	const modelVersion = useRef(0);
+	const refreshRequest = useRef(0);
+	useLayoutEffect(() => {
+		scopeRef.current = scope;
+	}, [scope]);
 	const debouncedContext = useDebouncedValue(scopedContext, 300);
 	// Legacy requests have no context, even while a prior Grok context is debouncing.
 	const discoveryContext = agentId === 'grok' ? debouncedContext : undefined;
@@ -74,25 +91,18 @@ export function useAgentModelEffortOptions(
 	const [defaultModel, setDefaultModel] = useState('');
 	const [defaultEffort, setDefaultEffort] = useState('');
 	const [loaded, setLoaded] = useState(false);
-	const [refreshingModels, setRefreshingModels] = useState(false);
+	const [refreshing, setRefreshing] = useState<{ scope: typeof scope; request: number }>();
 	const [modelStatus, setModelStatus] = useState<AgentDiscoveryResult['status']>('unavailable');
 	const [effortStatus, setEffortStatus] = useState<AgentDiscoveryResult['status']>('unavailable');
-	const [resolvedFor, setResolvedFor] = useState<{
-		agentId: string;
-		context: typeof context;
-	}>();
-
-	// Read after the refresh's await: the surface may have moved to another
-	// agent (or another Grok account), and that list must not be overwritten.
-	const agentIdRef = useRef(agentId);
-	agentIdRef.current = agentId;
-	const scopedContextRef = useRef(scopedContext);
-	scopedContextRef.current = scopedContext;
+	const [resolvedFor, setResolvedFor] = useState<typeof scope>();
 	const modelsRef = useRef(models);
-	modelsRef.current = models;
+	useLayoutEffect(() => {
+		modelsRef.current = models;
+	}, [models]);
 
 	useEffect(() => {
 		let stale = false;
+		const version = ++modelVersion.current;
 		setLoaded(false);
 		setResolvedFor(undefined);
 		setModels([]);
@@ -108,18 +118,18 @@ export function useAgentModelEffortOptions(
 				? discoveryContext
 					? window.maestro.agents.getModels({ providerId: agentId, context: discoveryContext })
 					: Promise.resolve<AgentDiscoveryResult>({ status: 'unavailable', options: [] })
-				: window.maestro.agents.getModels(agentId).then((options) => ({
+				: window.maestro.agents.getModels(agentId, false, sshRemoteId).then((options) => ({
 						status: options.length ? ('discovered' as const) : ('unavailable' as const),
 						options,
 					}))
 		)
 			.then((fetched) => {
-				if (stale) return;
+				if (stale || scopeRef.current !== scope || modelVersion.current !== version) return;
 				setModels(fetched.options);
 				setModelStatus(fetched.status);
 			})
 			.catch(() => {
-				if (!stale) setModels([]);
+				if (!stale && scopeRef.current === scope && modelVersion.current === version) setModels([]);
 			});
 
 		const effortsDone = Promise.all(
@@ -139,7 +149,7 @@ export function useAgentModelEffortOptions(
 			)
 		)
 			.then(([effortOpts, reasoningOpts]) => {
-				if (stale) return;
+				if (stale || scopeRef.current !== scope) return;
 				const selected =
 					effortOpts.status === 'discovered' && effortOpts.options.length > 0
 						? effortOpts
@@ -156,26 +166,27 @@ export function useAgentModelEffortOptions(
 		const defaultsDone = window.maestro.agents
 			.getConfig(agentId)
 			.then((config) => {
-				if (stale) return;
+				if (stale || scopeRef.current !== scope) return;
 				setDefaultModel(config?.model || '');
 				setDefaultEffort(readEffortFromConfig(config) ?? '');
 			})
 			.catch(() => {
-				if (stale) return;
+				if (stale || scopeRef.current !== scope) return;
 				setDefaultModel('');
 				setDefaultEffort('');
 			});
 
 		Promise.all([modelsDone, effortsDone, defaultsDone]).then(() => {
-			if (stale) return;
-			setResolvedFor({ agentId, context: discoveryContext });
+			if (stale || scopeRef.current !== scope) return;
+			setResolvedFor(scope);
 			setLoaded(true);
 		});
 
 		return () => {
 			stale = true;
+			++refreshRequest.current;
 		};
-	}, [agentId, discoveryContext, scopedContext]);
+	}, [agentId, discoveryContext, scopedContext, sshRemoteId, scope]);
 
 	// A forced discovery anywhere (Settings, another picker, the CLI) carries
 	// the fresh list. Without this a picker that stays mounted - the composer
@@ -184,21 +195,30 @@ export function useAgentModelEffortOptions(
 	// a Grok list.
 	useEffect(() => {
 		if (!agentId || agentId === 'grok') return;
-		return window.maestro.agents.onModelsRefreshed((payload) => {
+		return window.maestro.agents.onModelsRefreshed?.((payload) => {
 			// This hook discovers on this machine, so a remote host's list is not ours.
-			if (payload.agentId !== agentId || payload.sshRemoteId !== null) return;
+			if (
+				scopeRef.current !== scope ||
+				payload.agentId !== agentId ||
+				(payload.sshRemoteId || undefined) !== sshRemoteId
+			)
+				return;
+			++modelVersion.current;
 			setModels(payload.models);
+			setResolvedFor(scope);
 		});
-	}, [agentId]);
+	}, [agentId, scope, sshRemoteId]);
 
 	const refreshModels = useCallback(async () => {
 		const target = agentId;
-		if (!target) return;
+		if (!target || scopeRef.current !== scope) return;
 		const targetContext = scopedContext;
 		// Grok never discovers from a provider ID alone.
 		if (target === 'grok' && !targetContext) return;
 		const previous = modelsRef.current;
-		setRefreshingModels(true);
+		const request = ++refreshRequest.current;
+		const version = modelVersion.current;
+		setRefreshing({ scope, request });
 		try {
 			const next: AgentDiscoveryResult =
 				target === 'grok' && targetContext
@@ -207,33 +227,39 @@ export function useAgentModelEffortOptions(
 							forceRefresh: true,
 							context: targetContext,
 						})
-					: await window.maestro.agents.getModels(target, true).then((options) => ({
+					: await window.maestro.agents.getModels(target, true, sshRemoteId).then((options) => ({
 							status: options.length ? ('discovered' as const) : ('unavailable' as const),
 							options,
 						}));
-			if (agentIdRef.current !== target || scopedContextRef.current !== targetContext) return;
-			setModels(next.options);
-			setModelStatus(next.status);
+			if (scopeRef.current !== scope || refreshRequest.current !== request) return;
+			if (modelVersion.current === version) {
+				++modelVersion.current;
+				setModels(next.options);
+				setModelStatus(next.status);
+				setResolvedFor(scope);
+			}
 			notifyCenterFlash({
 				message: 'Models refreshed',
 				detail: describeModelsRefresh(summarizeModelsRefresh(previous, next.options)),
 				color: 'green',
 			});
 		} catch (error) {
-			if (agentIdRef.current !== target || scopedContextRef.current !== targetContext) return;
+			if (scopeRef.current !== scope || refreshRequest.current !== request) return;
 			notifyCenterFlash({
 				message: 'Could not refresh models',
 				detail: error instanceof Error ? error.message : String(error),
 				color: 'red',
 			});
 		} finally {
-			setRefreshingModels(false);
+			setRefreshing((current) =>
+				current?.scope === scope && current.request === request ? undefined : current
+			);
 		}
-	}, [agentId, scopedContext]);
+	}, [agentId, scopedContext, scope, sshRemoteId]);
 
 	// Hide the previous account's lists on the render that changes context,
 	// before the effect has a chance to clear them or a consumer validates a pick.
-	const current = resolvedFor?.agentId === agentId && resolvedFor?.context === scopedContext;
+	const current = resolvedFor === scope;
 	return {
 		models: current ? models : [],
 		efforts: current ? efforts : [],
@@ -241,7 +267,7 @@ export function useAgentModelEffortOptions(
 		defaultEffort: current ? defaultEffort : '',
 		loaded: current && loaded,
 		refreshModels,
-		refreshingModels,
+		refreshingModels: refreshing?.scope === scope,
 		modelStatus: current ? modelStatus : 'unavailable',
 		effortStatus: current ? effortStatus : 'unavailable',
 	};

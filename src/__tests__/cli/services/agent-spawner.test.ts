@@ -3086,16 +3086,10 @@ Some text with [x] in it that's not a checkbox
 	/** Yield to the microtask queue so spawn() runs and event listeners attach. */
 	const yieldTick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-	/**
-	 * Wait until mockSpawn has been called at least `minCalls` times, or until
-	 * the per-poll attempts run out. First-run dynamic imports (ssh-spawn-wrapper)
-	 * can take several ticks, so we poll rather than assume spawn fires quickly.
-	 */
-	async function waitForSpawnCall(minCalls = 1, attempts = 50): Promise<void> {
-		for (let i = 0; i < attempts; i++) {
-			if (mockSpawn.mock.calls.length >= minCalls) return;
-			await yieldTick();
-		}
+	/** Wait for the observable start, including the first dynamic SSH import.
+	 * Exhaustion must fail here rather than silently skip the fake child exit. */
+	async function waitForSpawnCall(minCalls = 1): Promise<void> {
+		await vi.waitFor(() => expect(mockSpawn.mock.calls.length).toBeGreaterThanOrEqual(minCalls));
 	}
 
 	/**

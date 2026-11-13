@@ -1,7 +1,12 @@
 // @vitest-environment node
 import type { EventEmitter } from 'node:events';
+import { existsSync } from 'node:fs';
+import { createBoardIsolationFixture } from '../../helpers/boardIsolationFixture';
+import { configureBoardFeatures } from '../../../main/board/board-feature';
+import { getCliSecret } from '../../../main/web-server/auth/cli-secret';
+import { CLI_SECRET_HEADER } from '../../../shared/webLogin';
 import { hostname } from 'node:os';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import websocket from '@fastify/websocket';
 import WebSocket from 'ws';
@@ -478,5 +483,86 @@ describe('live socket authorization', () => {
 		);
 		expect(mutated).toBe(false);
 		expect(JSON.parse(sent[0])).toMatchObject({ type: 'error' });
+	});
+});
+
+describe('Board command failure replies', () => {
+	const isolation = createBoardIsolationFixture();
+	beforeAll(() => isolation.install());
+	afterAll(async () => isolation.cleanup());
+	it.each([
+		{ board: false, maestroCue: false },
+		{ board: false, maestroCue: true },
+		{ board: true, maestroCue: false },
+	])('correlates the native gate refusal without activating Board: %j', async (flags) => {
+		configureBoardFeatures({ get: () => flags });
+		state.settings.set('encoreFeatures', { webLogin: true });
+		const server = Fastify();
+		servers.push(server);
+		await server.register(websocket);
+		const clients = new Map<string, WebClient>();
+		const handler = new WebSocketMessageHandler();
+		const route = new WsRoute(token);
+		route.setCallbacks({
+			isOriginAllowed: (origin, host) => isAllowedRequestOrigin({ origin, host }),
+			getSessions: () => [],
+			getTheme: () => null,
+			getBionifyReadingMode: () => false,
+			getCustomCommands: () => [],
+			getAutoRunStates: () => new Map(),
+			getLiveSessionInfo: () => undefined,
+			isSessionLive: () => false,
+			onClientDisconnect: (id) => {
+				clients.delete(id);
+			},
+			onClientError: () => {},
+			onClientConnect: (client) => clients.set(client.id, client),
+			handleMessage: (id, message) => handler.handleMessage(clients.get(id)!, message),
+		});
+		route.registerRoute(server);
+		const address = await server.listen({ port: 0, host: '127.0.0.1' });
+		const socket = new WebSocket(`${address.replace('http:', 'ws:')}/${token}/ws`, {
+			headers: { [CLI_SECRET_HEADER]: getCliSecret(), origin: address },
+		});
+		sockets.push(socket);
+		const requestId = 'owned-delete-refusal';
+		const response = new Promise<Record<string, unknown>>((resolve, reject) => {
+			socket.on('message', (data) => {
+				const frame = JSON.parse(data.toString());
+				// A generic uncorrelated error must fail this assertion immediately,
+				// not be mistaken for the expected Board reply by a test-only client.
+				if (frame.type === 'error' || frame.requestId === requestId) resolve(frame);
+			});
+			socket.once('error', reject);
+		});
+		await new Promise<void>((resolve, reject) => {
+			socket.once('open', resolve);
+			socket.once('error', reject);
+		});
+		expect([...clients.values()][0].cli).toBe(true);
+		socket.send(
+			JSON.stringify({
+				type: 'board_command',
+				action: 'delete-cards',
+				requestId,
+				target: {
+					projectRoot: isolation.sources.one,
+					sourceKey: 'a'.repeat(64),
+					collectionKey: 'owned',
+					expectedRevision: 0,
+				},
+				cards: [{ cardId: 'owned', cardRevision: 0 }],
+			})
+		);
+		expect(await response).toMatchObject({
+			type: 'board_command_result',
+			requestId,
+			ok: false,
+			error: {
+				code: 'runtime-unavailable',
+				message: expect.stringContaining(flags.board ? 'CueDisabled' : 'BoardDisabled'),
+			},
+		});
+		expect(existsSync(isolation.contract.db)).toBe(false);
 	});
 });

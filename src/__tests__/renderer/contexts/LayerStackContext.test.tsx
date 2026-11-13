@@ -12,8 +12,12 @@
  * - Error boundary for context usage outside provider
  */
 
+import { ThemedSelect } from '../../../renderer/components/shared/ThemedSelect';
+import type { Theme } from '../../../renderer/types';
+
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, renderHook, act, fireEvent } from '@testing-library/react';
+import { render, screen, renderHook, act, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { LayerStackProvider, useLayerStack } from '../../../renderer/contexts/LayerStackContext';
 import { useOutputSearchLayer } from '../../../renderer/hooks/ui/useOutputSearchLayer';
@@ -63,6 +67,110 @@ describe('LayerStackContext', () => {
 	});
 
 	describe('LayerStackProvider', () => {
+		it.each(['composing', 'safari', 'ordinary'])(
+			'preserves RC IME Escape handling: %s',
+			async (mode) => {
+				vi.mocked(mockLayerStackAPI.getTopLayer).mockReturnValue({} as never);
+				render(
+					<LayerStackProvider>
+						<div>Owned modal</div>
+					</LayerStackProvider>
+				);
+				const event = new KeyboardEvent('keydown', {
+					key: 'Escape',
+					bubbles: true,
+					cancelable: true,
+				});
+				if (mode === 'composing') Object.defineProperty(event, 'isComposing', { value: true });
+				if (mode === 'safari') Object.defineProperty(event, 'keyCode', { value: 229 });
+				await act(async () => {
+					window.dispatchEvent(event);
+				});
+				expect(mockLayerStackAPI.closeTopLayer).toHaveBeenCalledTimes(mode === 'ordinary' ? 1 : 0);
+				expect(event.defaultPrevented).toBe(mode === 'ordinary');
+			}
+		);
+		it.each(['search', 'close', 'option'])(
+			'closes a filterable popup from %s focus before its parent layer',
+			async (focusTarget) => {
+				vi.mocked(mockLayerStackAPI.getTopLayer).mockReturnValue({} as never);
+				const user = userEvent.setup();
+				const theme = {
+					colors: {
+						bgActivity: '#333',
+						border: '#444',
+						textMain: '#fff',
+						textDim: '#aaa',
+						bgSidebar: '#222',
+					},
+				} as Theme;
+				render(
+					<LayerStackProvider>
+						<ThemedSelect
+							value="a"
+							options={[{ value: 'a', label: 'Alpha' }]}
+							onChange={vi.fn()}
+							theme={theme}
+							filterable
+						/>
+					</LayerStackProvider>
+				);
+				const trigger = screen.getByRole('button', { name: 'Alpha' });
+				await user.click(trigger);
+				const search = screen.getByRole('textbox');
+				await waitFor(() => expect(search).toHaveFocus());
+				if (focusTarget !== 'search') {
+					await user.tab();
+					expect(screen.getByRole('button', { name: 'Close filter (Esc)' })).toHaveFocus();
+				}
+				if (focusTarget === 'option') {
+					await user.tab();
+					expect(screen.getByRole('option', { name: 'Alpha' })).toHaveFocus();
+				}
+				await user.keyboard('{Escape}');
+				expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+				expect(trigger).toHaveFocus();
+				expect(mockLayerStackAPI.closeTopLayer).not.toHaveBeenCalled();
+				await user.keyboard('{Escape}');
+				expect(mockLayerStackAPI.closeTopLayer).toHaveBeenCalledTimes(1);
+			}
+		);
+		it.each([false, true])(
+			'lets a focused select popup handle Escape (filterable: %s)',
+			(filterable) => {
+				vi.mocked(mockLayerStackAPI.getTopLayer).mockReturnValue({} as never);
+				const theme = {
+					colors: {
+						bgActivity: '#333',
+						border: '#444',
+						textMain: '#fff',
+						textDim: '#aaa',
+						bgSidebar: '#222',
+					},
+				} as Theme;
+				render(
+					<LayerStackProvider>
+						<ThemedSelect
+							value="a"
+							options={[{ value: 'a', label: 'Alpha' }]}
+							onChange={vi.fn()}
+							theme={theme}
+							filterable={filterable}
+						/>
+					</LayerStackProvider>
+				);
+				const trigger = screen.getByRole('button', { name: 'Alpha' });
+				fireEvent.click(trigger);
+				const target = filterable ? screen.getByRole('textbox') : screen.getByRole('listbox');
+				target.focus();
+				fireEvent.keyDown(target, { key: 'Escape' });
+				expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+				expect(trigger).toHaveFocus();
+				expect(mockLayerStackAPI.closeTopLayer).not.toHaveBeenCalled();
+				fireEvent.keyDown(trigger, { key: 'Escape' });
+				expect(mockLayerStackAPI.closeTopLayer).toHaveBeenCalledTimes(1);
+			}
+		);
 		describe('rendering', () => {
 			it('renders children correctly', () => {
 				render(

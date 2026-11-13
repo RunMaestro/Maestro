@@ -34,6 +34,8 @@ export interface SpawnGroupChatAgentConfig extends Pick<
 	beforeSpawn?: () => void;
 	/** Stable session id for the process manager */
 	sessionId: string;
+	/** Real Maestro worker selected by the caller, absent for standalone moderators. */
+	originWorkerId?: string;
 	/** Agent id (e.g. 'claude-code', 'codex') - used as `toolType` */
 	agentId: string;
 	/** Resolved agent definition */
@@ -263,6 +265,7 @@ export async function spawnGroupChatAgent(
 	const spawnConfig: ProcessConfig & Pick<Parameters<IProcessManager['spawn']>[0], 'readOnlyMode'> =
 		{
 			sessionId: prepared.processId,
+			originWorkerId: config.originWorkerId,
 			toolType: prepared.providerId,
 			cwd: prepared.cwd,
 			command: prepared.command,

@@ -352,6 +352,12 @@ export interface SessionInfo {
 	/** Per-session SSH remote config - when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
 	/**
+	 * Board worker pool (Board Phase 6): opt-in flag marking this agent as an
+	 * available board worker in its project directory. Only opted-in, in-directory
+	 * agents are auto-assigned role-only cards.
+	 */
+	boardWorker?: boolean;
+	/**
 	 * Federation: set once this SSH agent was lifted onto its remote's host. The agent keeps every
 	 * tab and transcript, but its sends are refused with a pointer at `peer:agentId`. Read it
 	 * through `readLiftedTo()` / `liftedSendRefusal()` in `src/shared/maestro-lib/agents/lift-pointer.ts`.

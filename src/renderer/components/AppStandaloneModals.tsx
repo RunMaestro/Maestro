@@ -82,6 +82,7 @@ const PianolaModal = lazy(() =>
 const ComputerHistoryViewer = lazy(() =>
 	import('./ComputerHistory').then((m) => ({ default: m.ComputerHistoryViewer }))
 );
+const BoardModal = lazy(() => import('./BoardModal').then((m) => ({ default: m.BoardModal })));
 
 /**
  * Props for the AppStandaloneModals component.
@@ -273,6 +274,8 @@ function AppStandaloneModalsInner({
 		setPianolaModalOpen,
 		computerHistoryOpen,
 		setComputerHistoryOpen,
+		boardModalOpen,
+		setBoardModalOpen,
 		cueYamlEditorOpen,
 		cueYamlEditorSessionId,
 		cueYamlEditorProjectRoot,
@@ -488,6 +491,15 @@ function AppStandaloneModalsInner({
 			{canOpenComputerHistory(encoreFeatures) && computerHistoryOpen && (
 				<Suspense fallback={null}>
 					<ComputerHistoryViewer theme={theme} onClose={() => setComputerHistoryOpen(false)} />
+				</Suspense>
+			)}
+
+			{/* --- BOARD MODAL (lazy-loaded, Encore Feature; depends on Maestro Cue).
+			    Both flags, matching every open path (App.tsx force-close + hamburger):
+			    a setBoardModalOpen(true) while Cue is off must not mount the Board. --- */}
+			{encoreFeatures.board && encoreFeatures.maestroCue && boardModalOpen && (
+				<Suspense fallback={null}>
+					<BoardModal theme={theme} onClose={() => setBoardModalOpen(false)} />
 				</Suspense>
 			)}
 
