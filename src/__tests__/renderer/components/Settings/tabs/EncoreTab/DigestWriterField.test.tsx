@@ -74,7 +74,11 @@ describe('DigestWriterField', () => {
 	it('with no text model installed, says where to get one', async () => {
 		mount(digests());
 		expect(await screen.findByTestId('computer-history-digest-no-models')).toBeTruthy();
-		expect(optionLabels(screen.getByLabelText('Digest model'))).toEqual([CHOOSE_MODEL_LABEL]);
+		// The task inherits the Utility source by default, so that choice is offered too.
+		expect(optionLabels(screen.getByLabelText('Digest model'))).toEqual([
+			CHOOSE_MODEL_LABEL,
+			'Utility source',
+		]);
 		expect(screen.getByTestId('computer-history-digest-no-models').textContent).toContain(
 			'Settings > Models > Library'
 		);
@@ -88,7 +92,9 @@ describe('DigestWriterField', () => {
 		const onSave = mount(digests());
 		const select = screen.getByLabelText('Digest model') as HTMLSelectElement;
 		const model = getLocalModel(QWEN3_1_7B_ID)!.displayName;
-		await waitFor(() => expect(optionLabels(select)).toEqual([CHOOSE_MODEL_LABEL, model]));
+		await waitFor(() =>
+			expect(optionLabels(select)).toEqual([CHOOSE_MODEL_LABEL, 'Utility source', model])
+		);
 		expect(screen.queryByTestId('computer-history-digest-no-models')).toBeNull();
 
 		fireEvent.change(select, { target: { value: `local:${QWEN3_1_7B_ID}` } });
@@ -112,7 +118,10 @@ describe('DigestWriterField', () => {
 		const select = screen.getByLabelText('Digest model') as HTMLSelectElement;
 		expect(select.value).toBe(`local:${QWEN3_1_7B_ID}`);
 		fireEvent.change(select, { target: { value: 'off' } });
-		expect(useSettingsStore.getState().localModelAssignments).toEqual({});
+		// Off is no longer the default (the Utility source is), so it is stored.
+		expect(useSettingsStore.getState().localModelAssignments).toEqual({
+			'history-digests': { type: 'off' },
+		});
 	});
 
 	it('switching the writer saves the source alone', () => {

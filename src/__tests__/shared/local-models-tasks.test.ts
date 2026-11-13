@@ -553,12 +553,26 @@ describe('shared utility source', () => {
 			tasksUsingLocalModel({ 'tab-summary': { type: 'off' } }, local.modelId, local).map(
 				(task) => task.id
 			)
-		).toEqual(['tab-naming', 'ai-command']);
+		).toEqual([
+			'tab-naming',
+			'ai-command',
+			'git-drafts',
+			'spoken-notices',
+			'token-proxy',
+			'history-digests',
+		]);
 		expect(
 			tasksUsingEndpoint({ 'ai-command': local }, endpoint.endpointId, endpoint).map(
 				(task) => task.id
 			)
-		).toEqual(['tab-naming', 'tab-summary']);
+		).toEqual([
+			'tab-naming',
+			'tab-summary',
+			'git-drafts',
+			'spoken-notices',
+			'token-proxy',
+			'history-digests',
+		]);
 	});
 });
 

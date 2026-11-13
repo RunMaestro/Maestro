@@ -93,8 +93,10 @@ beforeEach(() => {
 });
 
 describe('draftPullRequest', () => {
-	it('is off by default, without reading the repository or asking a model', async () => {
-		vi.mocked(readLocalModelAssignments).mockReturnValue({});
+	it('is off while it inherits a provider Utility source, without reading the repository or asking a model', async () => {
+		// The default: the task inherits the Utility source, and a provider one
+		// resolves to off because drafting has no agent path.
+		vi.mocked(readLocalModelAssignments).mockReturnValue({ 'git-drafts': { type: 'off' } });
 
 		const result = await draftPullRequest({ cwd: CWD, baseBranch: 'main' });
 

@@ -29,8 +29,10 @@ vi.mock('../../../main/prompt-manager', () => ({
 vi.mock('../../../main/utils/sentry', () => sentry);
 vi.mock('../../../main/local-models/task-router', () => router);
 vi.mock('../../../main/local-models/task-notices', () => notices);
+// What the real reader returns with nothing stored: the inherited provider
+// Utility source, resolved to off for a task with no agent path.
 vi.mock('../../../main/local-models/sources', () => ({
-	readLocalModelAssignments: vi.fn(() => ({})),
+	readLocalModelAssignments: vi.fn(() => ({ 'history-digests': { type: 'off' } })),
 }));
 vi.mock('../../../main/local-models/endpoint-service', () => ({
 	getConfiguredLocalModelEndpoints: vi.fn(() => [{ id: 'ep-1', name: 'Ollama' }]),
@@ -286,9 +288,14 @@ describe('createHistoryDigestWriter: hasModel', () => {
 			readAssignments: () => ({ 'history-digests': SOURCE }),
 		});
 		expect(assigned.hasModel()).toBe(true);
-		expect(createHistoryDigestWriter({ readAssignments: () => ({}) }).hasModel()).toBe(false);
-		expect(createHistoryDigestWriter({ readAssignments: () => undefined }).hasModel()).toBe(false);
-		// The default reads the stored assignments (none in this file).
+		// The assignments arrive resolved: an inherited provider Utility source is
+		// already `off` for a task with no agent path.
+		expect(
+			createHistoryDigestWriter({
+				readAssignments: () => ({ 'history-digests': { type: 'off' } }),
+			}).hasModel()
+		).toBe(false);
+		// The default reads the resolved assignments (off in this file).
 		expect(createHistoryDigestWriter().hasModel()).toBe(false);
 	});
 });

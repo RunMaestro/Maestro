@@ -2229,11 +2229,12 @@ describe('agent-detector', () => {
 				{ id: 'gpt-6.1-sol', description: 'Latest workhorse model.', priority: 1 },
 				{ id: 'gpt-6-luna', priority: 4 },
 			]);
-			// gpt-6-astra, the built-in high tier, is not in this catalogue.
+			// gpt-6-astra, the built-in high tier, is not in this catalogue. With no
+			// Astra listed, Suggest guesses the medium tier's Sol for high.
 			expect(logger.warn).toHaveBeenCalledWith(
 				expect.stringContaining('Codex tier "high" maps to gpt-6-astra'),
 				'AgentDetector',
-				expect.objectContaining({ tier: 'high', slug: 'gpt-6-astra', replacement: null })
+				expect.objectContaining({ tier: 'high', slug: 'gpt-6-astra', replacement: 'gpt-6.1-sol' })
 			);
 		});
 
