@@ -455,12 +455,15 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			const ignoreModelHints = runOverrides?.ignoreModelHints === true;
 			const baselineModel = runOverrides?.modelOverride ?? session.customModel;
 			const baselineEffort = runOverrides?.effortOverride ?? session.customEffort;
+			// The run's Run on target stands in for the agent's own, exactly as its
+			// model does: the baseline a document's tier hint can still override.
+			const runRunOn = runOverrides?.runOnOverride;
 			// Where a tier launches for this agent: its own tier targets, then the
 			// harness defaults. Read from the store per dispatch, not captured, so a
 			// change made while the run is going applies to the next task.
 			const tierRouting: TierRouting = {
 				tierTargets: session.tierTargets,
-				runOn: session.runOn,
+				runOn: runRunOn ?? session.runOn,
 				harnessDefaults: useSettingsStore.getState().harnessTierDefaults,
 			};
 			const modelHint = ignoreModelHints ? null : findActiveModelHint(documentContent);
@@ -589,7 +592,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 						{
 							modelOverride: turnSettings.model,
 							effortOverride: turnSettings.effort,
-							runOnOverride: turnSettings.runOn,
+							runOnOverride: turnSettings.runOn ?? runRunOn,
 							...(autoStamp ? { autoStamp } : {}),
 							...(autoRunId ? { autoRunId } : {}),
 						}

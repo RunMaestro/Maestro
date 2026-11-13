@@ -982,6 +982,13 @@ export interface BatchRunConfig {
 	/** Per-run overrides; never change the session's interactive settings. */
 	model?: string;
 	effort?: string;
+	/**
+	 * Where this run's model runs, in place of the agent's own Run on target:
+	 * a model on a Local Models source, or `provider` to run a source-backed
+	 * agent on its provider's model (`model` then names it). Absent: the
+	 * agent's own target. A document's tier hint still wins for its tasks.
+	 */
+	runOn?: RunOnTarget;
 	ignoreModelHints?: boolean;
 	/** Missing auto-resume fields use resolveAutoResumePolicy's defaults. */
 	autoResumeOnError?: boolean;

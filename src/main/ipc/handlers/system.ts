@@ -22,6 +22,8 @@ import { execFileNoThrow } from '../../utils/execFile';
 import { peekShellPath } from '../../runtime/getShellPath';
 import { fallbackFontResult, type FontDetectionResult } from '../../../shared/fontDetection';
 import { logger } from '../../utils/logger';
+import { readLogSource } from '../../log-sources';
+import type { LogSourceReadOptions } from '../../../shared/logSources';
 import { detectShells } from '../../utils/shellDetector';
 import { isCloudflaredInstalled } from '../../utils/cliDetection';
 import { checkForUpdates } from '../../update-checker';
@@ -654,6 +656,14 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	ipcMain.handle('logger:getMaxLogBuffer', async () => {
 		return logger.getMaxLogBuffer();
 	});
+
+	// A file-backed source of the System Log Viewer (the model server's log),
+	// named by id: main alone maps the id to its file.
+	ipcMain.handle(
+		'logger:readLogSource',
+		async (_event, source: unknown, options?: LogSourceReadOptions) =>
+			readLogSource(source, options)
+	);
 
 	// Get the path to the debug log file (useful for Windows debugging)
 	ipcMain.handle('logger:getLogFilePath', async () => {

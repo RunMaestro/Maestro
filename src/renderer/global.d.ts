@@ -1174,6 +1174,7 @@ interface MaestroAPI {
 					maxIterations?: number | null;
 					model?: string;
 					effort?: string;
+					runOn?: import('../shared/local-models/run-on').RunOnTarget;
 				},
 				responseChannel: string
 			) => void
@@ -2749,6 +2750,10 @@ interface MaestroAPI {
 		getMaxLogBuffer: () => Promise<number>;
 		toast: (title: string, data?: unknown) => Promise<void>;
 		autorun: (message: string, context?: string, data?: unknown) => Promise<void>;
+		readLogSource: (
+			source: import('../shared/logSources').LogSourceId,
+			options?: import('../shared/logSources').LogSourceReadOptions
+		) => Promise<import('../shared/logSources').LogSourceRead>;
 		onNewLog: (
 			callback: (log: {
 				timestamp: number;

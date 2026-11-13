@@ -299,6 +299,8 @@ export interface MessageHandlerCallbacks {
 			 */
 			model?: string;
 			effort?: string;
+			/** Per-run Run on target (CLI `--run-on`), in place of the agent's own. */
+			runOn?: import('../../../../shared/local-models/run-on').RunOnTarget;
 			/** Skip the documents' MAESTRO:MODEL markers for this run (CLI `--ignore-model-hints`). */
 			ignoreModelHints?: boolean;
 			worktree?: {
@@ -325,6 +327,7 @@ export interface MessageHandlerCallbacks {
 			maxIterations?: number | null;
 			model?: string;
 			effort?: string;
+			runOn?: import('../../../../shared/local-models/run-on').RunOnTarget;
 		}
 	) => Promise<{ success: boolean; tabId?: string; code?: string; error?: string }>;
 	setSessionAutoRunFolder: (

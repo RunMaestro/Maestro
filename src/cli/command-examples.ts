@@ -214,6 +214,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'auto-run': [
 		'maestro-cli auto-run ./phase-01.md ./phase-02.md --agent <agent-id> --launch',
 		'maestro-cli auto-run ./phase-01.md --agent <agent-id> --save-as "Release prep"',
+		'maestro-cli auto-run ./phase-01.md --agent <agent-id> --launch --run-on <source-id>:<model>',
 	],
 	'stop-auto-run': ['maestro-cli stop-auto-run --agent <agent-id>'],
 	'resume-auto-run': ['maestro-cli resume-auto-run --agent <agent-id>'],

@@ -46,7 +46,7 @@ import {
 	groupFocusFields,
 } from '../../utils/tabHelpers';
 import { resolveSnoozeTarget } from '../../utils/snoozeHelpers';
-import { useModalStore } from '../../stores/modalStore';
+import { getModalActions, selectModalData, useModalStore } from '../../stores/modalStore';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -206,6 +206,7 @@ export const MainPanel = React.memo(
 		// Phase 3C: Direct store subscriptions (migrated from props)
 		const logLevel = useSettingsStore((s) => s.logLevel);
 		const logViewerSelectedLevels = useSettingsStore((s) => s.logViewerSelectedLevels);
+		const logViewerSource = useModalStore(selectModalData('logViewer'))?.source;
 		const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 		const contextWarningsEnabled = useSettingsStore(
 			(s) => s.contextManagementSettings.contextWarningsEnabled ?? false
@@ -1136,7 +1137,8 @@ export const MainPanel = React.memo(
 					>
 						<LogViewer
 							theme={theme}
-							onClose={() => setLogViewerOpen(false)}
+							onClose={getModalActions().closeLogViewer}
+							initialSource={logViewerSource}
 							logLevel={logLevel}
 							savedSelectedLevels={logViewerSelectedLevels}
 							onSelectedLevelsChange={useSettingsStore.getState().setLogViewerSelectedLevels}

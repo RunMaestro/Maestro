@@ -652,6 +652,11 @@ program
 		'--effort <effort>',
 		"Reasoning effort for this run only, overriding the agent's configured default"
 	)
+	.option(
+		'--run-on <target>',
+		'Where this run\'s model runs, overriding the agent\'s Run on target: <source id>:<model>, or "provider"'
+	)
+	.option('--run-on-context <tokens>', 'Context size for the --run-on source')
 	.action(async (agentId: string, goal: string, options: Record<string, unknown>) => {
 		const { goalRun } = await import('./commands/goal-run');
 		return goalRun(agentId, goal, options);
@@ -1422,6 +1427,14 @@ program
 		'--ignore-model-hints',
 		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
 	)
+	.option(
+		'--run-on <target>',
+		"Where this run's model runs, overriding the agent's Run on target: <source id>:<model> (a Local Models source), or \"provider\" for the provider's own models"
+	)
+	.option(
+		'--run-on-context <tokens>',
+		"Context size for the --run-on source (default: what the source reports, or the agent's own when it is the same source and model)"
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(autoRun);
 
@@ -1705,6 +1718,11 @@ cue
 	.option('--max-loops <n>', 'With --auto-run: loop ceiling (implies --loop)')
 	.option('--per-document', 'With --auto-run: one agent turn per document instead of one per task')
 	.option('--ignore-model-hints', "With --auto-run: ignore the documents' MAESTRO:MODEL hints")
+	.option(
+		'--run-on <target>',
+		'With --auto-run: where the run\'s model runs, <source id>:<model> or "provider" (as auto-run --run-on)'
+	)
+	.option('--run-on-context <tokens>', 'With --auto-run: context size for the --run-on source')
 	.option('--no-auto-resume', 'With --auto-run: stay paused after an agent error')
 	.option('--auto-resume-after <minutes>', 'With --auto-run: minutes between auto-resume attempts')
 	.option('--max-auto-resumes <n>', 'With --auto-run: auto-resume attempt ceiling')

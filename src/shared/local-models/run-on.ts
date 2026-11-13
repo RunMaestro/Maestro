@@ -562,6 +562,33 @@ export function runOnDefaultContextTokens(
 }
 
 /**
+ * The context a target someone just NAMED starts with: the size they gave,
+ * else the agent's own when it already runs on that source and model (naming
+ * the same target again keeps its context, as re-picking it in the dialog
+ * does), else where the picker's field starts (`runOnDefaultContextTokens`).
+ * One rule for `--run-on` on the CLI and a per-run pick in the Auto Run dialog.
+ */
+export function namedRunOnContextTokens(
+	named: Pick<RunOnSourceTarget, 'endpointId' | 'model'>,
+	agentRunOn: unknown,
+	reportedContextTokens?: number,
+	explicitContextTokens?: number
+): number {
+	if (explicitContextTokens !== undefined) return explicitContextTokens;
+	const stored = parseRunOnTarget(agentRunOn);
+	if (
+		stored.ok &&
+		stored.target.type === 'source' &&
+		stored.target.endpointId === named.endpointId &&
+		stored.target.model === named.model &&
+		stored.target.contextTokens !== undefined
+	) {
+		return stored.target.contextTokens;
+	}
+	return runOnDefaultContextTokens(named, reportedContextTokens);
+}
+
+/**
  * The context sizes the picker offers before "Custom". Model cards state most
  * windows in binary units, so "128K" is 131,072 and "1M" is 1,048,576; 200K is
  * the one decimal window in common use.

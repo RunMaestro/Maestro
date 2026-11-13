@@ -28,6 +28,7 @@ vi.mock('../../../../../renderer/utils/flashCopiedToClipboard', () => ({
 }));
 
 import { safeClipboardWrite } from '../../../../../renderer/utils/clipboard';
+import { getModalActions, useModalStore } from '../../../../../renderer/stores/modalStore';
 
 const theme = {
 	colors: {
@@ -381,10 +382,26 @@ describe('LocalModelsServerCard', () => {
 		expect(server.rotateKey).toHaveBeenCalledTimes(1);
 	});
 
-	it('opens the log', () => {
+	it('opens the log in the System Log Viewer, returning to this card on close', () => {
+		useModalStore.setState({ modals: new Map([['settings', { open: true, data: {} }]]) });
 		render(<LocalModelsServerCard theme={theme} server={fakeServer()} />);
 		fireEvent.click(screen.getByTestId('model-server-open-log'));
-		expect(window.maestro.shell.openPath).toHaveBeenCalledWith('/data/logs/model-server.log');
+
+		const state = useModalStore.getState();
+		expect(window.maestro.shell.openPath).not.toHaveBeenCalled();
+		expect(state.isOpen('settings')).toBe(false);
+		expect(state.getData('logViewer')).toEqual({
+			source: 'model-server',
+			returnTo: { tab: 'models', subTab: 'sources', settingId: 'local-models-model-server' },
+		});
+
+		getModalActions().closeLogViewer();
+		expect(useModalStore.getState().isOpen('logViewer')).toBe(false);
+		expect(useModalStore.getState().getData('settings')).toEqual({
+			tab: 'models',
+			subTab: 'sources',
+			settingId: 'local-models-model-server',
+		});
 	});
 
 	it('shows the last error and an action error', () => {

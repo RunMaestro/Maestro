@@ -23,6 +23,8 @@ import {
 import { MaestroNotRunningError } from '../services/maestro-not-running';
 import type { GoalRunConfig } from '../../shared/goalDriven/types';
 import { ExitCode, exitWith } from '../exit-codes';
+import { readRunOnFlags, reportedRunOnFlagContext } from '../services/run-on';
+import type { RunOnTarget } from '../../shared/local-models/run-on';
 
 interface GoalRunOptions {
 	exitCriteria?: string;
@@ -37,6 +39,9 @@ interface GoalRunOptions {
 	 */
 	model?: string;
 	effort?: string;
+	/** This run's Run on target (`<source id>:<model>` or `provider`), and its context. */
+	runOn?: string;
+	runOnContext?: string;
 	/**
 	 * Hand the run to the running desktop app instead of executing it in this
 	 * process. The run then behaves exactly like one started from the Auto Run
@@ -134,6 +139,7 @@ function failVisibleLaunch(
  */
 async function runVisibleGoalRun(
 	agent: { id: string; name: string },
+	runOn: RunOnTarget | undefined,
 	goalConfig: GoalRunConfig,
 	options: GoalRunOptions
 ): Promise<void> {
@@ -182,6 +188,7 @@ async function runVisibleGoalRun(
 					maxIterations: goalConfig.maxIterations,
 					...(options.model?.trim() && { model: options.model.trim() }),
 					...(options.effort?.trim() && { effort: options.effort.trim() }),
+					...(runOn && { runOn }),
 				},
 				'launch_goal_run_result',
 				// The desktop waits for the run to actually reach a running state
@@ -299,8 +306,25 @@ export async function goalRun(
 		// provider (and honors SSH remotes), so a CLI-side `detectAgent` here would
 		// reject a perfectly runnable agent just because this machine lacks the
 		// binary. Everything after this point is the headless path.
+		// The run's Run on target, by the rules `update-agent --run-on` follows.
+		let runOn: RunOnTarget | undefined;
+		if (options.runOn !== undefined || options.runOnContext !== undefined) {
+			const edit = readRunOnFlags(options, agent, await reportedRunOnFlagContext(options));
+			if (edit.kind === 'refused') {
+				if (useJson) emitError(edit.error, 'BAD_RUN_ON');
+				else console.error(formatError(edit.error));
+				exitWith(ExitCode.GeneralError);
+			}
+			if (edit.kind === 'set') runOn = edit.target ?? { type: 'provider' };
+		}
+
 		if (options.visible) {
-			await runVisibleGoalRun(agent, buildGoalConfig(trimmedGoal, options, useJson), options);
+			await runVisibleGoalRun(
+				agent,
+				runOn,
+				buildGoalConfig(trimmedGoal, options, useJson),
+				options
+			);
 			return;
 		}
 
@@ -377,6 +401,7 @@ export async function goalRun(
 			verbose: options.verbose,
 			model: options.model?.trim() || undefined,
 			effort: options.effort?.trim() || undefined,
+			...(runOn ? { runOn } : {}),
 			signal: interrupt.signal,
 		});
 

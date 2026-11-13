@@ -740,6 +740,31 @@ describe('electron-rebuild verification for better-sqlite3', () => {
 			expect(await effectivePostinstall(packageJson)).toContain('better-sqlite3');
 		});
 
+		it('rebuilds native modules for Electron before every local package script runs electron-builder', async () => {
+			// electron-builder runs with npmRebuild: false, so it ships node_modules as
+			// it finds them. A checkout last rebuilt for plain Node (rebuild:node-native)
+			// would otherwise ship an addon the app refuses to load.
+			const fs = await import('node:fs');
+			const path = await import('node:path');
+			const packageJson = JSON.parse(
+				fs.readFileSync(path.join(__dirname, '..', '..', '..', '..', 'package.json'), 'utf8')
+			);
+
+			expect(packageJson.build.npmRebuild).toBe(false);
+			expect(packageJson.scripts['rebuild:electron-native']).toContain('electron-rebuild');
+			expect(packageJson.scripts['rebuild:electron-native']).toContain('better-sqlite3');
+
+			const packageScripts = Object.entries(packageJson.scripts as Record<string, string>).filter(
+				([, command]) => command.includes('electron-builder')
+			);
+			expect(packageScripts.length).toBeGreaterThan(0);
+			for (const [name, command] of packageScripts) {
+				const rebuildAt = command.indexOf('npm run rebuild:electron-native');
+				expect(rebuildAt, name).toBeGreaterThanOrEqual(0);
+				expect(rebuildAt, name).toBeLessThan(command.indexOf('electron-builder'));
+			}
+		});
+
 		it('should have better-sqlite3 in dependencies', async () => {
 			const fs = await import('node:fs');
 			const path = await import('node:path');

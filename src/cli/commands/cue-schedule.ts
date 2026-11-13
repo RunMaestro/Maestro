@@ -67,6 +67,7 @@ import {
 import { formatCueTurnSettings, parseCueTurnSettingsInput } from '../../shared/cue/turn-settings';
 import type { SessionInfo } from '../../shared/types';
 import { ExitCode, exitWith } from '../exit-codes';
+import { readRunOnFlags, reportedRunOnFlagContext } from '../services/run-on';
 
 export interface CueScheduleOptions {
 	in?: string;
@@ -98,6 +99,9 @@ export interface CueScheduleOptions {
 	effort?: string;
 	perDocument?: boolean;
 	ignoreModelHints?: boolean;
+	/** With --auto-run: the run's Run on target and its context (`auto-run --run-on`). */
+	runOn?: string;
+	runOnContext?: string;
 	/** Commander's `--no-auto-resume`: true unless the flag was passed. */
 	autoResume?: boolean;
 	autoResumeAfter?: string;
@@ -605,6 +609,8 @@ const AUTO_RUN_ONLY_FLAGS: ReadonlyArray<[keyof CueScheduleOptions, string]> = [
 	['maxLoops', '--max-loops'],
 	['perDocument', '--per-document'],
 	['ignoreModelHints', '--ignore-model-hints'],
+	['runOn', '--run-on'],
+	['runOnContext', '--run-on-context'],
 	['autoResumeAfter', '--auto-resume-after'],
 	['maxAutoResumes', '--max-auto-resumes'],
 	['worktreeBranch', '--worktree-branch'],
@@ -838,7 +844,18 @@ async function runCreate(options: CueScheduleOptions): Promise<void> {
 	}
 
 	const promptText = options.prompt ?? '';
-	const autoRun = buildAutoRunConfig(options, promptText, sessions);
+	const builtAutoRun = buildAutoRunConfig(options, promptText, sessions);
+	// The run's Run on target, by the rules `auto-run --run-on` follows, against
+	// the agent the task fires on. Read here because the source is asked for
+	// the context it reports.
+	let autoRun = builtAutoRun;
+	if (builtAutoRun && (options.runOn !== undefined || options.runOnContext !== undefined)) {
+		const edit = readRunOnFlags(options, agent, await reportedRunOnFlagContext(options));
+		if (edit.kind === 'refused') errorOut(edit.error, options, 'BAD_RUN_ON');
+		if (edit.kind === 'set') {
+			autoRun = { ...builtAutoRun, run_on: edit.target ?? { type: 'provider' } };
+		}
+	}
 	// With --auto-run the prompt is the run's own instructions, not a message
 	// to send, so it travels inside the Auto Run payload instead.
 	const hasPrompt = promptText.length > 0 && !autoRun;

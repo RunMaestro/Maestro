@@ -16,6 +16,7 @@ import {
 } from '../../../shared/cue';
 import { parseCueAutoRunWorktree } from '../../../shared/cue/autorun-worktree';
 import { TIER_LEVELS, asTierLevel } from '../../../shared/modelTiers';
+import { parseRunOnTarget } from '../../../shared/local-models/run-on';
 
 function validateGlobPattern(pattern: string, prefix: string, errors: string[]): void {
 	// Path-traversal guard: the watcher resolves `watchGlob` against `projectRoot`
@@ -153,6 +154,13 @@ function validateAutoRunField(value: unknown, prefix: string, errors: string[]):
 		if (cfg[key] !== undefined && typeof cfg[key] !== 'string') {
 			errors.push(`${prefix}: "auto_run.${key}" must be a string when provided`);
 		}
+	}
+
+	// Refused, not dropped: a run that silently lost its target would run on
+	// the agent's own model, which may be a paid provider the author avoided.
+	if (cfg.run_on !== undefined) {
+		const runOn = parseRunOnTarget(cfg.run_on);
+		if (!runOn.ok) errors.push(`${prefix}: "auto_run.run_on": ${runOn.error}`);
 	}
 
 	for (const key of ['loop_enabled', 'ignore_model_hints', 'auto_resume_on_error'] as const) {

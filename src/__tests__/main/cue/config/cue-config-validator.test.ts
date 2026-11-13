@@ -481,6 +481,23 @@ describe('validateSubscription - action: autorun', () => {
 		expect(bad.some((e) => /"auto_run\.max_auto_resumes" must be a number/.test(e))).toBe(true);
 	});
 
+	it('accepts a run_on target and rejects a malformed one', () => {
+		expect(
+			errs({
+				...base,
+				auto_run: {
+					documents: ['/a.md'],
+					run_on: { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' },
+				},
+			}).some((e) => /run_on/.test(e))
+		).toBe(false);
+		expect(
+			errs({ ...base, auto_run: { documents: ['/a.md'], run_on: { type: 'source' } } }).some((e) =>
+				/"auto_run\.run_on":/.test(e)
+			)
+		).toBe(true);
+	});
+
 	it('rejects a non-boolean ignore_model_hints', () => {
 		expect(
 			errs({ ...base, auto_run: { documents: ['/a.md'], ignore_model_hints: 'yes' } }).some((e) =>

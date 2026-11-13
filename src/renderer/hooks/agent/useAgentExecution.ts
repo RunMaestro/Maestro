@@ -100,7 +100,10 @@ export interface SpawnAgentOptions {
  * The subset of spawn options the batch/goal runners forward from a
  * `BatchRunConfig`. `isAutoRun` is supplied by the wiring layer, not the runner.
  */
-export type SpawnAgentRunOverrides = Pick<SpawnAgentOptions, 'modelOverride' | 'effortOverride'>;
+export type SpawnAgentRunOverrides = Pick<
+	SpawnAgentOptions,
+	'modelOverride' | 'effortOverride' | 'runOnOverride'
+>;
 
 export type AgentSpawnErrorKind =
 	| 'watchdog-stalled'

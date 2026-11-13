@@ -4,6 +4,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
 import { failCommand, failFromError } from '../services/session-command';
+import { readRunOnFlags, reportedRunOnFlagContext } from '../services/run-on';
+import { readSessions } from '../services/storage';
+import type { RunOnTarget } from '../../shared/local-models/run-on';
 
 interface AutoRunOptions {
 	agent?: string;
@@ -25,7 +28,29 @@ interface AutoRunOptions {
 	effort?: string;
 	/** Skip the documents' MAESTRO:MODEL markers for this run (--ignore-model-hints). */
 	ignoreModelHints?: boolean;
+	/** This run's Run on target (`<source id>:<model>` or `provider`), and its context. */
+	runOn?: string;
+	runOnContext?: string;
 	json?: boolean;
+}
+
+/**
+ * The run's Run on target from `--run-on` / `--run-on-context`, read by the
+ * rules `update-agent` uses (`readRunOnFlags`), against the agent the run
+ * belongs to. `provider` sends a source-backed agent's run to its provider.
+ */
+async function readRunOnOverride(
+	options: AutoRunOptions,
+	sessionId: string
+): Promise<RunOnTarget | undefined> {
+	if (options.runOn === undefined && options.runOnContext === undefined) return undefined;
+	const agent = readSessions().find((session) => session.id === sessionId);
+	if (!agent) failCommand(`Agent not found: ${sessionId}`, options.json);
+	const reported = await reportedRunOnFlagContext(options);
+	const edit = readRunOnFlags(options, agent!, reported);
+	if (edit.kind === 'refused') failCommand(edit.error, options.json);
+	if (edit.kind !== 'set') return undefined;
+	return edit.target ?? { type: 'provider' };
 }
 
 export async function autoRun(docs: string[], options: AutoRunOptions): Promise<void> {
@@ -115,6 +140,7 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 	// leaves the agent's configured default untouched.
 	const runModel = options.model?.trim() || undefined;
 	const runEffort = options.effort?.trim() || undefined;
+	const runOn = await readRunOnOverride(options, sessionId);
 
 	try {
 		const result = await withMaestroClient(async (client) => {
@@ -136,6 +162,7 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 					worktree,
 					...(runModel && { model: runModel }),
 					...(runEffort && { effort: runEffort }),
+					...(runOn && { runOn }),
 					...(options.ignoreModelHints && { ignoreModelHints: true }),
 				},
 				'configure_auto_run_result'

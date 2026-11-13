@@ -39,7 +39,7 @@ import { ProgressBar } from '../../../ui/ProgressBar';
 import { SettingsSectionHeading } from '../../SettingsSectionHeading';
 import { SectionCard } from '../DisplayTab/components/SectionCard';
 import { CardRowTitle, CardWarning } from './CardParts';
-import { openFileForUser } from '../../../../services/hostShell';
+import { getModalActions } from '../../../../stores/modalStore';
 
 const STATE_LABELS: Readonly<Record<ModelServerState, string>> = Object.freeze({
 	stopped: 'Stopped',
@@ -68,6 +68,18 @@ export function modelServerCanStart(state: ModelServerState): boolean {
 /** The build the picker should select: the installed one, else `default`. */
 export function initialBuildChoice(report: ModelServerReport | null): ServerBuildChoice {
 	return report?.engine.choice ?? 'default';
+}
+
+/**
+ * Open the server's log in the System Log Viewer, on its Model server pill.
+ * The viewer replaces Settings while it is up, so Escape brings the user back
+ * to this card.
+ */
+export function openServerLog(): void {
+	getModalActions().openLogViewer({
+		source: 'model-server',
+		returnTo: { tab: 'models', subTab: 'sources', settingId: 'local-models-model-server' },
+	});
 }
 
 function stateColor(theme: Theme, state: ModelServerState): string {
@@ -198,11 +210,7 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 							{busy === 'stop' ? 'Stopping...' : 'Stop'}
 						</CardButton>
 					)}
-					<CardButton
-						theme={theme}
-						onClick={() => void openFileForUser(status.logPath)}
-						testId="model-server-open-log"
-					>
+					<CardButton theme={theme} onClick={openServerLog} testId="model-server-open-log">
 						<FileText className="w-3 h-3" />
 						Open log
 					</CardButton>

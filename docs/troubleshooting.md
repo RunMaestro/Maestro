@@ -30,8 +30,9 @@ Maestro maintains detailed system logs that help diagnose issues. Access them vi
 
 The **System Log Viewer** shows:
 
+- One **source** pill per log: **Maestro** (the app's own log) and **Model server** (the output of the Maestro model server, read from `model-server.log`). `maestro-cli open logs --tab model-server` opens on a given source.
 - Timestamped log entries with severity levels (debug, info, warn, error, toast, autorun)
-- Filterable by log level via clickable level pills and searchable text (`Cmd+F` / `Ctrl+F`)
+- Filterable by log level via clickable level pills and searchable text (`Cmd+F` / `Ctrl+F`). A file source has no levels of its own, so its lines are colored by what they say (an error or a warning) and searched the same way.
 - Real-time updates as new logs are generated
 - Detail view with full message content and source module
 

@@ -8,6 +8,7 @@ import type { PluginJson } from '../plugins/primitives';
 import type { TaskSelectionMode, UsageStats } from '../types';
 import type { CueGateOnUnavailable } from './gate';
 import type { EffortLevel, ModelTier } from '../modelTiers';
+import type { RunOnTarget } from '../local-models/run-on';
 
 /** Days of the week for scheduled triggers */
 export type CueScheduleDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
@@ -208,6 +209,9 @@ export interface CueAutoRunConfig {
 	/** "Fresh context per" in the Auto Run window: one agent turn per task
 	 *  (`task`, the default when absent) or one per document (`document`). */
 	task_selection_mode?: TaskSelectionMode;
+	/** Where the run's model runs, in place of the agent's own Run on target
+	 *  (`BatchRunConfig.runOn`). Absent means the agent's own. */
+	run_on?: RunOnTarget;
 	/** Ignore the documents' `MAESTRO:MODEL` hints and run every task on the
 	 *  run's own model. Absent means the hints apply. */
 	ignore_model_hints?: boolean;

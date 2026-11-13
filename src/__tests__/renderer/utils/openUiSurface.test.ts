@@ -133,6 +133,31 @@ describe('openUiSurface - delegation graph', () => {
 	});
 });
 
+describe('openUiSurface - logs', () => {
+	beforeEach(() => {
+		useModalStore.getState().closeModal('logViewer');
+	});
+
+	it("opens the System Log Viewer on Maestro's log with no tab", () => {
+		expect(openUiSurface({ surface: 'logs' })).toEqual({ ok: true });
+		expect(selectModalOpen('logViewer')(useModalStore.getState())).toBe(true);
+		expect(selectModalData('logViewer')(useModalStore.getState())?.source).toBeUndefined();
+	});
+
+	it('opens on one source (`open logs --tab model-server`)', () => {
+		expect(openUiSurface({ surface: 'logs', tab: 'model-server' })).toEqual({ ok: true });
+		expect(selectModalData('logViewer')(useModalStore.getState())).toEqual({
+			source: 'model-server',
+		});
+	});
+
+	it('refuses a source that does not exist', () => {
+		const result = openUiSurface({ surface: 'logs', tab: 'nope' });
+		expect(result.ok).toBe(false);
+		expect(selectModalOpen('logViewer')(useModalStore.getState())).toBe(false);
+	});
+});
+
 describe('openUiSurface - group settings', () => {
 	beforeEach(() => {
 		useModalStore.getState().closeModal('groupSettings');

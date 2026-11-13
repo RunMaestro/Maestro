@@ -30,6 +30,7 @@
 
 import type { CueAutoRunConfig, CueEvent, CueRunResult, CueSubscription } from './cue-types';
 import type { SessionInfo, TaskSelectionMode, WorktreeRunTarget } from '../../shared/types';
+import type { RunOnTarget } from '../../shared/local-models/run-on';
 import {
 	describeCueAutoRunWorktree,
 	runTargetFromCueWorktree,
@@ -50,6 +51,8 @@ export interface CueAutoRunLaunchParams {
 	maxLoops?: number;
 	model?: string;
 	effort?: string;
+	/** Where the run's model runs, in place of the agent's own target. */
+	runOn?: RunOnTarget;
 	taskSelectionMode?: TaskSelectionMode;
 	ignoreModelHints?: boolean;
 	autoResumeOnError?: boolean;
@@ -118,6 +121,7 @@ export async function executeCueAutoRun(config: CueAutoRunExecutionConfig): Prom
 		maxLoops: autoRun.max_loops,
 		model: autoRun.model,
 		effort: autoRun.effort,
+		...(autoRun.run_on ? { runOn: autoRun.run_on } : {}),
 		taskSelectionMode: autoRun.task_selection_mode,
 		ignoreModelHints: autoRun.ignore_model_hints,
 		autoResumeOnError: autoRun.auto_resume_on_error,

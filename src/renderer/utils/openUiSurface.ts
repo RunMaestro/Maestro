@@ -24,6 +24,7 @@ import {
 	type OpenUiSurfaceRequest,
 } from '../../shared/uiSurfaces';
 import type { AgentSettingsTabId } from '../../shared/agentSettingsTabs';
+import { isLogSourceId } from '../../shared/logSources';
 import { isWebDesktop } from './runtimeContext';
 import type { SettingsTab, UsageDashboardViewMode } from '../types';
 
@@ -130,6 +131,9 @@ export function openUiSurface(request: OpenUiSurfaceRequest): OpenUiSurfaceResul
 			openAgentSettings(session, tab ? { tab: tab.id as AgentSettingsTabId } : {});
 			return { ok: true };
 		}
+		case 'logs':
+			actions.openLogViewer(tab && isLogSourceId(tab.id) ? { source: tab.id } : undefined);
+			return { ok: true };
 		case 'delegation-graph':
 			// A group that is gone by now is not refused here: the graph falls
 			// back to every agent, the same as a scope whose group is deleted

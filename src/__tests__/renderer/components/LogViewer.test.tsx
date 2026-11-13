@@ -9,6 +9,7 @@
  * - Visual timeline
  * - Layer stack integration
  * - Keyboard navigation
+ * - Source pills (Maestro's log, the model server's log file)
  */
 
 import React from 'react';
@@ -45,6 +46,20 @@ const createMockLog = (
 	...overrides,
 });
 
+// A read of the model server's log file
+const createMockFileRead = (
+	overrides: Partial<{ text: string; exists: boolean; truncated: boolean }> = {}
+) => ({
+	source: 'model-server' as const,
+	path: '/data/logs/model-server.log',
+	exists: true,
+	text: 'main: server is listening\nsrv load_model: failed to load model\nwarning: slow\n',
+	truncated: false,
+	size: 100,
+	mtimeMs: 1,
+	...overrides,
+});
+
 // The cue level and its agent pill are both mixed out of the theme, so the
 // expectations below are derived the same way instead of naming a teal.
 const cueFill = mockTheme.colors.success;
@@ -68,6 +83,22 @@ const mockSafeClipboardWrite = vi.fn().mockResolvedValue(true);
 vi.mock('../../../renderer/utils/clipboard', () => ({
 	safeClipboardWrite: (...args: unknown[]) => mockSafeClipboardWrite(...args),
 }));
+
+// Mock the client download, so an export is observed without a real anchor
+const mockDownloadBlobToClient = vi.fn();
+vi.mock('../../../renderer/utils/clientDownload', () => ({
+	downloadBlobToClient: (...args: unknown[]) => mockDownloadBlobToClient(...args),
+}));
+
+// jsdom's Blob has no text(), so an exported blob is read the way a browser
+// without it would be.
+const readBlobText = (blob: Blob): Promise<string> =>
+	new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(String(reader.result));
+		reader.onerror = () => reject(reader.error);
+		reader.readAsText(blob);
+	});
 
 // Mock ConfirmModal
 vi.mock('../../../renderer/components/ConfirmModal', () => ({
@@ -112,6 +143,9 @@ beforeEach(() => {
 		.fn()
 		.mockResolvedValue(undefined);
 	(window.maestro.logger as Record<string, unknown>).onNewLog = vi.fn().mockReturnValue(() => {});
+	(window.maestro.logger as Record<string, unknown>).readLogSource = vi
+		.fn()
+		.mockResolvedValue(createMockFileRead());
 	(window.maestro.logger as Record<string, unknown>).getMaxLogBuffer = vi.fn(() => ({
 		then: (cb: (value: number) => void) => {
 			cb(1000);
@@ -679,35 +713,20 @@ describe('LogViewer', () => {
 				}),
 			]);
 
-			// Mock URL.createObjectURL and URL.revokeObjectURL
-			const mockUrl = 'blob:test-url';
-			const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue(mockUrl);
-			const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-
-			// Mock anchor element
-			const mockClick = vi.fn();
-			const originalCreateElement = document.createElement.bind(document);
-			vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
-				if (tag === 'a') {
-					return { click: mockClick, href: '', download: '' } as unknown as HTMLAnchorElement;
-				}
-				return originalCreateElement(tag);
-			});
-
 			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
 
 			await waitFor(() => {
-				expect(screen.getByTitle('Export logs')).toBeInTheDocument();
+				expect(screen.getByText('Test message')).toBeInTheDocument();
 			});
 
 			fireEvent.click(screen.getByTitle('Export logs'));
 
-			expect(createObjectURLSpy).toHaveBeenCalled();
-			expect(mockClick).toHaveBeenCalled();
-			expect(revokeObjectURLSpy).toHaveBeenCalledWith(mockUrl);
-
-			createObjectURLSpy.mockRestore();
-			revokeObjectURLSpy.mockRestore();
+			expect(mockDownloadBlobToClient).toHaveBeenCalledTimes(1);
+			const [blob, filename] = mockDownloadBlobToClient.mock.calls[0] as [Blob, string];
+			expect(filename).toMatch(/^maestro-logs-\d+\.txt$/);
+			const text = await readBlobText(blob);
+			expect(text).toContain('[INFO] [TestModule] Test message');
+			expect(text).toContain('"key": "value"');
 		});
 	});
 
@@ -1778,5 +1797,90 @@ describe('LogViewer on a phone', () => {
 			expect(screen.getByText(/to search/)).toBeInTheDocument();
 		});
 		expect(screen.getByText(/to search/)).toHaveAttribute('data-shortcut-hint');
+	});
+});
+
+describe('LogViewer log sources', () => {
+	const getMockReadLogSource = () =>
+		window.maestro.logger.readLogSource as ReturnType<typeof vi.fn>;
+
+	it('draws a pill per source and opens on Maestro by default', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		await waitFor(() => {
+			expect(screen.getByTestId('log-source-maestro')).toHaveAttribute('aria-pressed', 'true');
+		});
+		expect(screen.getByTestId('log-source-model-server')).toHaveAttribute('aria-pressed', 'false');
+		expect(getMockReadLogSource()).not.toHaveBeenCalled();
+	});
+
+	it('opens on the source it is given and shows the file lines', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
+		await waitFor(() => {
+			expect(screen.getByText('main: server is listening')).toBeInTheDocument();
+		});
+		expect(getMockReadLogSource()).toHaveBeenCalledWith('model-server', { known: undefined });
+		expect(screen.getByTestId('log-source-path')).toHaveTextContent('/data/logs/model-server.log');
+		expect(screen.getByText('3 lines')).toBeInTheDocument();
+		// Maestro-only controls: level filters and Clear.
+		expect(screen.queryByText('Filter:')).not.toBeInTheDocument();
+		expect(screen.queryByTitle('Clear logs')).not.toBeInTheDocument();
+	});
+
+	it('colors a line by the level its words read as', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
+		const failed = await screen.findByText('srv load_model: failed to load model');
+		expect(failed).toHaveStyle({ color: mockTheme.colors.error });
+		expect(screen.getByText('warning: slow')).toHaveStyle({ color: mockTheme.colors.warning });
+	});
+
+	it('switches source when a pill is clicked', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(screen.getByTestId('log-source-model-server'));
+		await waitFor(() => {
+			expect(screen.getByText('main: server is listening')).toBeInTheDocument();
+		});
+		fireEvent.click(screen.getByTestId('log-source-maestro'));
+		expect(screen.queryByText('main: server is listening')).not.toBeInTheDocument();
+		expect(screen.getByText('Filter:')).toBeInTheDocument();
+	});
+
+	it('searches the file lines', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
+		await screen.findByText('main: server is listening');
+		fireEvent.click(screen.getByRole('button', { name: 'Search logs' }));
+		fireEvent.change(screen.getByPlaceholderText('Search logs...'), {
+			target: { value: 'load_model' },
+		});
+		expect(screen.queryByText('main: server is listening')).not.toBeInTheDocument();
+		expect(screen.getByText('1 line')).toBeInTheDocument();
+	});
+
+	it('says when the file does not exist yet', async () => {
+		getMockReadLogSource().mockResolvedValue(createMockFileRead({ exists: false, text: '' }));
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
+		expect(await screen.findByText('Nothing has been logged yet')).toBeInTheDocument();
+	});
+
+	it('says when older lines were left out', async () => {
+		getMockReadLogSource().mockResolvedValue(createMockFileRead({ truncated: true }));
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
+		expect(await screen.findByText('Older lines are not shown.')).toBeInTheDocument();
+	});
+
+	it('names a failed read', async () => {
+		getMockReadLogSource().mockRejectedValue(new Error('EACCES'));
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
+		expect(await screen.findByText(/The log could not be read/)).toBeInTheDocument();
+	});
+
+	it('exports the shown file lines', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
+		await screen.findByText('main: server is listening');
+		fireEvent.click(screen.getByTitle('Export logs'));
+		const [blob, filename] = mockDownloadBlobToClient.mock.calls[0] as [Blob, string];
+		expect(filename).toMatch(/^model-server-log-.+\.txt$/);
+		expect(await readBlobText(blob)).toBe(
+			'main: server is listening\nsrv load_model: failed to load model\nwarning: slow'
+		);
 	});
 });

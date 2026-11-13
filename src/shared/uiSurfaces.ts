@@ -14,6 +14,7 @@
  * time. Adding a modal means adding one entry here, not touching four files.
  */
 
+import { LOG_SOURCES } from './logSources';
 import { AGENT_SETTINGS_TAB_IDS, AGENT_SETTINGS_TAB_LABELS } from './agentSettingsTabs';
 import { resolveEncoreFeatures } from './encoreFeatureDefaults';
 import {
@@ -367,7 +368,8 @@ export const UI_SURFACES: UiSurface[] = [
 		label: 'System Log Viewer',
 		aliases: ['log-viewer', 'system-logs'],
 		modal: 'logViewer',
-		description: "Maestro's own application logs.",
+		description: "Maestro's own application log, and the logs of the processes it supervises.",
+		tabs: LOG_SOURCES.map(({ id, label }) => ({ id, label })),
 		shortcutId: 'systemLogs',
 		commandPalette: 'System Logs',
 	},

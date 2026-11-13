@@ -24,6 +24,7 @@ import {
 } from '../../../shared/cue';
 import { parseCueAutoRunWorktree } from '../../../shared/cue/autorun-worktree';
 import { asTierLevel } from '../../../shared/modelTiers';
+import { parseRunOnTarget } from '../../../shared/local-models/run-on';
 
 export interface PromptSpec {
 	inline?: string;
@@ -255,6 +256,10 @@ function normalizeAutoRun(rawAutoRun: unknown): CueAutoRunConfig | undefined {
 	}
 	if (typeof raw.model === 'string') result.model = raw.model;
 	if (typeof raw.effort === 'string') result.effort = raw.effort;
+	if (raw.run_on !== undefined) {
+		const runOn = parseRunOnTarget(raw.run_on);
+		if (runOn.ok) result.run_on = runOn.target;
+	}
 	if (raw.task_selection_mode === 'task' || raw.task_selection_mode === 'document') {
 		result.task_selection_mode = raw.task_selection_mode;
 	}

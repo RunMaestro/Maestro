@@ -1678,6 +1678,23 @@ per-task synopsis and goal-handoff spawns) and take precedence over the agent's
 configured model, but nothing is written back to the agent. When the run ends,
 the agent is exactly as it was.
 
+`auto-run`, `goal-run`, and `cue schedule --auto-run` also take `--run-on
+
+<source id>:<model>`, which runs this run on a model a Local Models source serves
+(Ollama, LM Studio, the Maestro model server) in place of the agent's own Run on
+target, and `--run-on provider`, which runs an agent that normally runs on a
+source on its provider's own models for this run (`--model` names which one).
+`--run-on-context <tokens>` sets the window; without it the run uses what the
+source reports, or the agent's own window when it names the agent's own source
+and model. A source that is not configured is refused before anything starts.
+A document's tier marker still decides its own tasks. These are the choices the
+Auto Run window's **Model for this run** picker offers.
+
+```bash
+maestro-cli auto-run doc1.md --agent <agent-id> --launch --run-on <source-id>:deepseek-v4.1-flash:cloud
+maestro-cli goal-run <agent-id> "Ship the migration" --run-on provider --model gpt-6.1-terra
+```
+
 `playbook`, `run-doc`, and `auto-run` also take `--ignore-model-hints`. It skips
 every `MAESTRO:MODEL` marker in the run's documents, so each task runs at
 `--model` / `--effort` (or the agent's configured default when those are

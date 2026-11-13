@@ -23,12 +23,12 @@ The load-bearing fact: every failure in this area is invisible in development. A
 
 `src/shared/local-models/native-runtimes.ts` holds one descriptor per native runtime: the npm package, an exact version pin, the per-platform prebuild story, the `asarUnpack` globs, and the binaries a packaged app must contain. Four consumers read it and none of them keep their own copy:
 
-| Consumer                                            | What it uses the registry for                                                                |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `src/main/local-models/runtime/native-loader.ts`    | The only module allowed to import these packages                                             |
-| `src/main/local-models/runtime/runtime-selftest.ts` | The runtime self-test; `src/main/acappella/voice-self-test.ts` adds the microphone for voice |
-| `scripts/verify-native-packaging.mjs`               | Post-packaging assertion, reads the compiled copy from `dist/`                               |
-| `src/main/acappella/models/capability-gate.ts`      | Reports a runtime that will not load as its own blocking reason                              |
+| Consumer                                            | What it uses the registry for                                                                                                       |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main/local-models/runtime/native-loader.ts`    | The only module allowed to import these packages                                                                                    |
+| `src/main/local-models/runtime/runtime-selftest.ts` | The runtime self-test; `src/main/acappella/voice-self-test.ts` adds the microphone for voice                                        |
+| `scripts/verify-native-packaging.mjs`               | Post-packaging assertion, reads the compiled copy from `dist/`; also fails any ABI-tagged addon not built for the packaged Electron |
+| `src/main/acappella/models/capability-gate.ts`      | Reports a runtime that will not load as its own blocking reason                                                                     |
 
 `src/__tests__/shared/local-models-native-runtimes.test.ts` asserts the registry against `package.json`: version pins are exact, every `asarUnpack` glob is present in the electron-builder config, and `declared` matches the actual dependency list.
 

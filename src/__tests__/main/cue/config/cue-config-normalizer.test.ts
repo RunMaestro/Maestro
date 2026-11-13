@@ -590,6 +590,33 @@ describe('normalizer - action: autorun option passthrough', () => {
 		});
 	});
 
+	it('carries a valid run_on target to the engine and drops a malformed one', () => {
+		const sub = normalizeSub({
+			...base,
+			auto_run: {
+				documents: ['/proj/a.md'],
+				run_on: {
+					type: 'source',
+					endpointId: 'ep-ollama',
+					model: 'qwen3:latest',
+					contextTokens: 131072,
+				},
+			},
+		});
+		expect(sub.auto_run?.run_on).toEqual({
+			type: 'source',
+			endpointId: 'ep-ollama',
+			model: 'qwen3:latest',
+			contextTokens: 131072,
+		});
+
+		const bad = normalizeSub({
+			...base,
+			auto_run: { documents: ['/proj/a.md'], run_on: { type: 'source' } },
+		});
+		expect(bad.auto_run).not.toHaveProperty('run_on');
+	});
+
 	it('leaves both absent when the document does not set them', () => {
 		const sub = normalizeSub({ ...base, auto_run: { documents: ['/proj/a.md'] } });
 

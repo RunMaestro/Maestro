@@ -912,7 +912,7 @@ The card is on **Models -> Sources**, below the endpoints. It is a core part of 
 - **Context is at least 40,960 tokens.** An agent's first prompt is about 14,000 tokens, and a smaller context fails with "Prompt is too long". Maestro sets this for each model.
 - **Changes restart it.** The bind mode, the model count, and the key are read at launch, so changing one restarts a running server.
 - **It is watched.** If the server stops answering, Maestro restarts it, up to 3 times in a row. After that it is left **Failed**, and a red "Maestro model server stopped" notification says why. A start that does not answer within 60 seconds is stopped.
-- **Open log** opens `model-server.log` in Maestro's `logs` folder. From a terminal, `maestro-cli models server status` prints the path, and `maestro-cli open-file <path>` opens it.
+- **Open log** shows `model-server.log` in the System Log Viewer, on its **Model server** pill: searchable with `Cmd+F` / `Ctrl+F`, and kept current while it is open. Press `Escape` to return to this card. From a terminal, `maestro-cli open logs --tab model-server` opens the same view, and `maestro-cli models server status` prints the file's path.
 
 ### Local only or Network
 
@@ -972,7 +972,7 @@ Every verb takes `--json`. `status` and `start` print the address, and `key` mak
 Everything on **Models -> Sources** runs on the computer running Maestro, whichever screen you press the button on. **Detect local servers** looks for Ollama and LM Studio on that computer, not on the device the browser runs on, and **Test** calls the endpoint from there.
 
 - **The model server key stays on the host.** From a browser you can start, stop, install, change the bind mode and the model count, and **Rotate** the key, but **Copy** is refused. Read the key in the desktop app or with `maestro-cli models server key` on that computer.
-- **Open log** downloads the log file to the browser's device.
+- **Open log** shows the log in the browser's System Log Viewer, read from the computer running Maestro.
 - **VoiceStudio's Check connection** works only in the desktop app. Set its fields there, or with `maestro-cli settings set` (see [VoiceStudio](#voicestudio)).
 
 ## VoiceStudio
