@@ -292,7 +292,7 @@ import {
 } from './app-lifecycle';
 // A Cappella's hidden audio host window (created lazily on the first voice
 // session, closed here when the Encore Feature is switched off).
-import { getVoiceSessionService } from './acappella';
+import { getACappellaTransport, getVoiceSessionService } from './acappella';
 import type { VoiceWidgetState } from '../shared/floatingWidgets';
 import { closeAcappellaAudioHostWindow } from './acappella/audio-host-window';
 import {
@@ -874,7 +874,9 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	// Switching A Cappella off releases the microphone immediately rather than at
 	// quit: a hidden window holding an open capture device is exactly the thing a
 	// user turning the feature off is asking to be rid of.
-	if (!resolveEncoreFeatures(encoreFeatures).aCappella) {
+	if (resolveEncoreFeatures(encoreFeatures).aCappella) {
+		getACappellaTransport()?.syncFeatureEnabled();
+	} else {
 		floatingWidgetControllers['acappella-voice'].close();
 		// The full stand-down: session, audio bridge, inference pipeline, Bonjour
 		// advert, and every connected device. Awaited only for its own ordering -

@@ -37,6 +37,9 @@ import type { DeviceCandidateType } from '../../../shared/acappella/device-proto
 import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { logger } from '../../utils/logger';
 
+/** Matches SignalingService.AUTH_ATTEMPT_LIMIT: invalidate an offer after 5 wrong guesses. */
+export const CLAIM_ATTEMPT_LIMIT = 5;
+
 const LOG_CONTEXT = 'ACappella';
 
 /**
@@ -142,14 +145,14 @@ export class PairingService {
 	private readonly writes = createKeyedWriteQueue();
 
 	private devices = new Map<string, PairedDeviceRecord>();
-	private loaded = false;
+	private loadPromise: Promise<void> | null = null;
 	/** The most recently queued write, for {@link whenPersisted}. */
 	private lastWrite: Promise<void> = Promise.resolve();
 	/** Set by {@link close}; a persist after this point is dropped. */
 	private closed = false;
 
 	/** The one open pairing window. A second `startPairing` replaces it. */
-	private offer: (PairingOffer & { claimed: boolean }) | null = null;
+	private offer: (PairingOffer & { claimed: boolean; failedAttempts: number }) | null = null;
 
 	/** Claims waiting for, or just given, a decision. */
 	private requests = new Map<
@@ -216,6 +219,7 @@ export class PairingService {
 			expiresAt: now + this.options.pairingTtlMs,
 			fingerprint: this.fingerprint(),
 			claimed: false,
+			failedAttempts: 0,
 		};
 		this.clearPendingRequest();
 		return this.currentOffer() as PairingOffer;
@@ -253,11 +257,15 @@ export class PairingService {
 		remoteAddress?: string;
 	}): PairingClaimResult {
 		const offer = this.currentOffer();
-		if (!offer) return { status: 'rejected', reason: 'expired' };
+		if (!offer || !this.offer) return { status: 'rejected', reason: 'expired' };
+		if (this.offer.claimed) return { status: 'rejected', reason: 'already-used' };
 		if (!constantTimeEquals(input.code.trim().toUpperCase(), offer.code)) {
+			this.offer.failedAttempts += 1;
+			if (this.offer.failedAttempts >= CLAIM_ATTEMPT_LIMIT) {
+				this.offer = null;
+			}
 			return { status: 'rejected', reason: 'unknown-code' };
 		}
-		if (this.offer?.claimed) return { status: 'rejected', reason: 'already-used' };
 		if (this.pendingRequest()) return { status: 'rejected', reason: 'busy' };
 
 		// One-time use: the code is spent the moment it is presented, whether or
@@ -380,6 +388,12 @@ export class PairingService {
 		return toView(record);
 	}
 
+	/** Synchronous active-device check for callers resuming after an async boundary. */
+	isDeviceActive(deviceId: string): boolean {
+		const record = this.devices.get(deviceId);
+		return Boolean(record && record.revokedAt === null);
+	}
+
 	// -- Device list ---------------------------------------------------------
 
 	/** Every device, revoked ones included, newest first. */
@@ -457,9 +471,11 @@ export class PairingService {
 	// -- Storage -------------------------------------------------------------
 
 	/** Read `devices.json` once. A missing or corrupt file is an empty list. */
-	async load(): Promise<void> {
-		if (this.loaded) return;
-		this.loaded = true;
+	load(): Promise<void> {
+		return (this.loadPromise ??= this.readFromDisk());
+	}
+
+	private async readFromDisk(): Promise<void> {
 		try {
 			const raw = await fs.readFile(this.options.filePath, 'utf-8');
 			const parsed = JSON.parse(raw) as { devices?: PairedDeviceRecord[] };
