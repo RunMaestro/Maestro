@@ -28,6 +28,7 @@
 
 import { useCallback, useEffect, useState, type ComponentType, type KeyboardEvent } from 'react';
 import type { Theme } from '../../types';
+import { CountBadge } from './CountBadge';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useScrollIntoView } from '../../hooks/ui/useScrollIntoView';
@@ -41,6 +42,11 @@ export interface ModalTab<Id extends string = string> {
 	hasError?: boolean;
 	/** A dim count after the label ("People 3"). Omit, or pass undefined, for none. */
 	count?: number;
+	/**
+	 * Unread items behind the tab, drawn as the accent `CountBadge` the rest of
+	 * the app uses for "new". Omit, or pass 0, for none. Takes the place of `count`.
+	 */
+	unread?: number;
 }
 
 export interface ModalTabStripProps<Id extends string> {
@@ -189,14 +195,24 @@ export function ModalTabStrip<Id extends string>({
 					>
 						{Icon && <Icon className={`${compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} flex-shrink-0`} />}
 						<span>{tab.label}</span>
-						{tab.count !== undefined && (
-							<span
-								className={`${compact ? 'text-[10px]' : 'text-xs'} tabular-nums`}
-								style={{ color: theme.colors.textDim }}
-								data-testid={`${idPrefix}-tab-${tab.id}-count`}
-							>
-								{tab.count}
-							</span>
+						{tab.unread !== undefined && tab.unread > 0 ? (
+							<CountBadge
+								count={tab.unread}
+								theme={theme}
+								label="unread message"
+								max={99}
+								data-testid={`${idPrefix}-tab-${tab.id}-unread`}
+							/>
+						) : (
+							tab.count !== undefined && (
+								<span
+									className={`${compact ? 'text-[10px]' : 'text-xs'} tabular-nums`}
+									style={{ color: theme.colors.textDim }}
+									data-testid={`${idPrefix}-tab-${tab.id}-count`}
+								>
+									{tab.count}
+								</span>
+							)
 						)}
 						{tab.hasError && (
 							<>

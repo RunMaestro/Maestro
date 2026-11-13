@@ -54,6 +54,24 @@ describe('NewTabPopover', () => {
 		expect(screen.queryByText('Sketch Book')).not.toBeInTheDocument();
 	});
 
+	it('lists chat, file, sketch, terminal, then the browsers', () => {
+		renderPopover({ onNewSketchBook: vi.fn(), sketchBookKeys: ['Alt', 'Meta', 'k'] });
+		fireEvent.click(screen.getByTitle('New tab…'));
+		const labels = [
+			'New AI Chat',
+			'New File',
+			'Sketch Book',
+			'New Terminal',
+			'New Browser',
+			'New Incognito Browser',
+		];
+		const order = screen
+			.getAllByRole('button')
+			.map((button) => labels.find((label) => button.textContent?.startsWith(label)))
+			.filter(Boolean);
+		expect(order).toEqual(labels);
+	});
+
 	it('runs New Sketch Book from the menu and closes', () => {
 		const onNewSketchBook = vi.fn();
 		renderPopover({ onNewSketchBook, sketchBookKeys: ['Alt', 'Meta', 'k'] });

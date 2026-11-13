@@ -301,9 +301,7 @@ export function SketchSharePanel({
 	const signedIn = owner?.state === 'confirmed' && !owner.otherServer;
 	const roomTabs = Boolean(shared && signedIn);
 	const tabs: ModalTab<CollaborateTab>[] = [
-		...(chat
-			? [{ id: 'chat' as const, label: 'Chat', count: chatUnread > 0 ? chatUnread : undefined }]
-			: []),
+		...(chat ? [{ id: 'chat' as const, label: 'Chat', unread: chatUnread }] : []),
 		{ id: 'share', label: 'Share' },
 		...(roomTabs
 			? [

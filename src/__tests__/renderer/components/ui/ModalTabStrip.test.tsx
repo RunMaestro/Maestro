@@ -73,6 +73,21 @@ describe('ModalTabStrip', () => {
 		expect(screen.queryByTestId('edit-agent-tab-ssh-count')).toBeNull();
 	});
 
+	it('shows an accent unread badge in place of the count, and nothing at zero', () => {
+		renderStrip('general', vi.fn(), [
+			{ id: 'general', label: 'General', unread: 150, count: 3 },
+			{ id: 'provider', label: 'Provider', unread: 0 },
+			{ id: 'ssh', label: 'SSH' },
+		]);
+		const badge = screen.getByTestId('edit-agent-tab-general-unread');
+		expect(badge.textContent).toBe('99+');
+		expect(badge.getAttribute('aria-label')).toBe('150 unread messages');
+		expect(badge.style.color).toBeTruthy();
+		expect(screen.queryByTestId('edit-agent-tab-general-count')).toBeNull();
+		expect(screen.queryByTestId('edit-agent-tab-provider-unread')).toBeNull();
+		expect(screen.queryByTestId('edit-agent-tab-ssh-unread')).toBeNull();
+	});
+
 	it('can pin the strip above scrolling content with an opaque themed background', () => {
 		const props = {
 			theme: mockTheme,

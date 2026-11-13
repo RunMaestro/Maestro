@@ -337,6 +337,7 @@ describe('SketchSharePanel', () => {
 		await waitFor(() =>
 			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Chat2', 'Share'])
 		);
+		expect(screen.getByLabelText('2 unread messages').textContent).toBe('2');
 		expect(screen.getByTestId('chat-pane')).toBeTruthy();
 		expect(document.querySelector('[data-sketch-collaborate-footer]')).toBeNull();
 

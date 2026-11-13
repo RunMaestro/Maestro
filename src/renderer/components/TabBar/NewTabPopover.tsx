@@ -190,19 +190,7 @@ export const NewTabPopover = memo(function NewTabPopover({
 							New AI Chat
 							<ShortcutHint theme={theme} keys={newTabKeys} />
 						</button>
-						{/* Terminal sits second: it is the most-reached-for tab after a chat. */}
-						<button
-							className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
-							style={{ color: theme.colors.textMain }}
-							onClick={() => closeAndDo(() => onNewTerminalTab?.())}
-						>
-							<Terminal
-								className="w-3.5 h-3.5"
-								style={{ color: getTabKindColor('terminal', theme) }}
-							/>
-							New Terminal
-							<ShortcutHint theme={theme} keys={terminalKeys} />
-						</button>
+						{/* Order: chat, file, sketch, terminal, then the browsers. */}
 						{onNewFileTab && (
 							<button
 								className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
@@ -217,6 +205,32 @@ export const NewTabPopover = memo(function NewTabPopover({
 								<ShortcutHint theme={theme} keys={fileTabKeys} />
 							</button>
 						)}
+						{onNewSketchBook && (
+							<button
+								className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+								onClick={() => closeAndDo(onNewSketchBook)}
+							>
+								<PenTool
+									className="w-3.5 h-3.5"
+									style={{ color: getTabKindColor('sketch', theme) }}
+								/>
+								Sketch Book
+								<ShortcutHint theme={theme} keys={sketchBookKeys} />
+							</button>
+						)}
+						<button
+							className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textMain }}
+							onClick={() => closeAndDo(() => onNewTerminalTab?.())}
+						>
+							<Terminal
+								className="w-3.5 h-3.5"
+								style={{ color: getTabKindColor('terminal', theme) }}
+							/>
+							New Terminal
+							<ShortcutHint theme={theme} keys={terminalKeys} />
+						</button>
 						{/* Browser tabs rely on the Electron <webview>, which is inert in the
 						    web-desktop browser bundle - hide the create affordance there. */}
 						{onNewBrowserTab && !isWebDesktop() && (
@@ -245,20 +259,6 @@ export const NewTabPopover = memo(function NewTabPopover({
 									style={{ color: getTabKindColor('browser', theme) }}
 								/>
 								New Incognito Browser
-							</button>
-						)}
-						{onNewSketchBook && (
-							<button
-								className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
-								style={{ color: theme.colors.textMain }}
-								onClick={() => closeAndDo(onNewSketchBook)}
-							>
-								<PenTool
-									className="w-3.5 h-3.5"
-									style={{ color: getTabKindColor('sketch', theme) }}
-								/>
-								Sketch Book
-								<ShortcutHint theme={theme} keys={sketchBookKeys} />
 							</button>
 						)}
 					</div>,
