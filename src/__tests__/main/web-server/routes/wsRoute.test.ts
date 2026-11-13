@@ -16,6 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WebSocket } from 'ws';
+import { logger } from '../../../../main/utils/logger';
 import { WsRoute, type WsRouteCallbacks } from '../../../../main/web-server/routes/wsRoute';
 import { BroadcastService } from '../../../../main/web-server/services/broadcastService';
 import { bindPairedDeviceAuth } from '../../../../main/web-server/auth/web-login-policy';
@@ -567,6 +568,52 @@ describe('WsRoute', () => {
 				expect(connection.close).toHaveBeenCalledWith(1011, 'Background dispatch failed')
 			);
 			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['immediate message', JSON.stringify({ type: 'ping' })],
+			['malformed JSON', 'not valid json'],
+		])('contains a throwing authorizer in the %s fallback', (_label, message) => {
+			const connection = createMockConnection();
+			const request = createMockRequest();
+			const error = new Error('auth backend unavailable');
+			let broken = false;
+			bindPairedDeviceAuth(request, () => {
+				if (broken) throw error;
+				return { id: 'device', username: 'device', displayName: 'Device' };
+			});
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, request);
+			connection.send.mockClear();
+			vi.mocked(logger.error).mockClear();
+			broken = true;
+			expect(() => connection.emit('message', message)).not.toThrow();
+			expect(logger.error).toHaveBeenCalledWith(
+				'Client authorization failed',
+				'WebServer:WS',
+				error
+			);
+			expect(connection.close).toHaveBeenCalledWith(1011, 'Authorization failed');
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+			expect(connection.send).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['immediate message', JSON.stringify({ type: 'ping' })],
+			['malformed JSON', 'not valid json'],
+		])('keeps the unauthorized return for %s', (_label, message) => {
+			const connection = createMockConnection();
+			const request = createMockRequest();
+			let revoked = false;
+			bindPairedDeviceAuth(request, () =>
+				revoked ? undefined : { id: 'device', username: 'device', displayName: 'Device' }
+			);
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, request);
+			connection.send.mockClear();
+			revoked = true;
+			expect(() => connection.emit('message', message)).not.toThrow();
+			expect(connection.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+			expect(connection.send).not.toHaveBeenCalled();
 		});
 
 		it('should delegate messages to handleMessage callback', () => {

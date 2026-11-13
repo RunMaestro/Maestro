@@ -342,7 +342,13 @@ export class WsRoute {
 			// every policy read and handler start in that burst. Authorization stays
 			// live: it is checked immediately before each dispatch, never cached.
 			const invalidMessage = () => {
-				if (!client.isAuthorized?.()) return;
+				try {
+					if (!client.isAuthorized?.()) return;
+				} catch (error) {
+					logger.error('Client authorization failed', LOG_CONTEXT, error);
+					socket.close(1011, 'Authorization failed');
+					return;
+				}
 				sendBounded(socket, JSON.stringify({ type: 'error', message: 'Invalid message format' }));
 			};
 			const dispatch = (data: WebClientMessage) => {
