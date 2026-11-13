@@ -628,10 +628,17 @@ describe('CodexSessionStorage - readSessionMessages', () => {
 		// not match, so the lookup falls back to each file's header. It must read
 		// only that header: the fallback runs for every rollout until the match,
 		// and a rollout can be hundreds of MB (#1862).
-		const dir = '/home/user/.codex/sessions/2026/03/08';
-		const other = `${dir}/rollout-2026-03-08T03-10-28-019ccb6c-0000-7000-8000-000000000001.jsonl`;
-		const target = `${dir}/rollout-2026-03-08T03-12-00-019ccb6c-c0fd-7b70-92b7-558f514099c6.jsonl`;
-		vi.spyOn(storage as any, 'getSessionsDir').mockReturnValue('/home/user/.codex/sessions');
+		const sessionsDir = path.join('/home', 'user', '.codex', 'sessions');
+		const dir = path.join(sessionsDir, '2026', '03', '08');
+		const other = path.join(
+			dir,
+			'rollout-2026-03-08T03-10-28-019ccb6c-0000-7000-8000-000000000001.jsonl'
+		);
+		const target = path.join(
+			dir,
+			'rollout-2026-03-08T03-12-00-019ccb6c-c0fd-7b70-92b7-558f514099c6.jsonl'
+		);
+		vi.spyOn(storage as any, 'getSessionsDir').mockReturnValue(sessionsDir);
 		vi.mocked(fs.access).mockResolvedValue(undefined);
 		vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as any);
 		vi.mocked(fs.readdir)

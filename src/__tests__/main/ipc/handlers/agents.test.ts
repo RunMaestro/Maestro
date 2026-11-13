@@ -2245,7 +2245,7 @@ describe('agents IPC handlers', () => {
 				env: expect.objectContaining({ CLAUDE_CONFIG_DIR: '/accounts/work' }),
 			});
 			expect(fs.promises.readdir).toHaveBeenCalledWith(
-				expect.stringContaining('/accounts/work/skills'),
+				expect.stringContaining(path.join('/accounts/work', 'skills')),
 				expect.anything()
 			);
 		});
