@@ -3461,6 +3461,26 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote close tab', () => {
+		it('publishes the committed replacement inventory before acknowledging a close, without waiting for a poll', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+			act(() => onRemoteCloseTabHandler?.('session-1', 'tab-1', 'close-response'));
+			const updated = useSessionStore.getState().sessions[0];
+			expect(mockWeb.broadcastTabsChange).toHaveBeenCalledWith(
+				'session-1',
+				[expect.objectContaining({ id: updated.aiTabs[0].id })],
+				updated.activeTabId,
+				false
+			);
+			expect(mockWeb.broadcastTabsChange.mock.invocationCallOrder[0]).toBeLessThan(
+				mockProcess.sendRemoteCloseTabResponse.mock.invocationCallOrder[0]
+			);
+		});
+
 		it('keeps the last-tab replacement stable across duplicate closes and browser inventory sync', () => {
 			const session = createMockSession({
 				id: 'session-1',

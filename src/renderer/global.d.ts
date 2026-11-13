@@ -2414,11 +2414,14 @@ interface MaestroAPI {
 			sessionId: string,
 			userMessageUuid: string,
 			fallbackContent?: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			ownerAgentId?: string
 		) => Promise<{
 			success: boolean;
 			error?: string;
 			linesRemoved?: number;
+			/** The provider never recorded this message: nothing was in its context to remove. */
+			notInTranscript?: boolean;
 		}>;
 		hasStorage: (agentId: string) => Promise<boolean>;
 		getAvailableStorages: () => Promise<string[]>;

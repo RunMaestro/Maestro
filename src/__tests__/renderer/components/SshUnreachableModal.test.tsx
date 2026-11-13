@@ -7,6 +7,7 @@ import {
 	agentsOnRemote,
 } from '../../../renderer/components/SshUnreachableModal';
 import { useSshOutageStore } from '../../../renderer/stores/sshOutageStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { createMockSession } from '../../helpers/mockSession';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -24,7 +25,22 @@ function onRemote(id: string, name: string, remoteId: string): Session {
 	} as Partial<Session>);
 }
 
+/** Put the user on an agent: one on `remoteId`, or a local one when undefined. */
+function lookAt(remoteId?: string) {
+	const active = remoteId
+		? onRemote('active', 'Active', remoteId)
+		: createMockSession({ id: 'active', name: 'Local' });
+	useSessionStore.setState({ sessions: [active], activeSessionId: 'active' } as any);
+}
+
+/** Record an outage and put the user on an agent of that remote, so it shows. */
 function openOutage(remoteId = 'remote-1', remoteName = 'pedtome') {
+	lookAt(remoteId);
+	recordOutage(remoteId, remoteName);
+}
+
+/** Record an outage only, as background work on another agent would. */
+function recordOutage(remoteId = 'remote-1', remoteName = 'pedtome') {
 	useSshOutageStore.getState().applyReachability({
 		remoteId,
 		remoteName,
@@ -38,6 +54,7 @@ let checkReachability: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
 	useSshOutageStore.setState({ outages: {} });
+	lookAt(undefined);
 	checkReachability = vi.fn();
 	(window as any).maestro = {
 		...((window as any).maestro || {}),
@@ -124,5 +141,37 @@ describe('SshUnreachableModal', () => {
 		);
 
 		expect(screen.queryByTestId('ssh-unreachable-modal')).toBeNull();
+	});
+
+	describe('only when it matters', () => {
+		it('stays hidden while the user works on an agent of another remote or a local one', () => {
+			lookAt(undefined);
+			recordOutage('remote-1');
+			render(<SshUnreachableModal theme={mockTheme} sessions={[]} />);
+			expect(screen.queryByTestId('ssh-unreachable-modal')).toBeNull();
+
+			lookAt('remote-2');
+			expect(screen.queryByTestId('ssh-unreachable-modal')).toBeNull();
+			expect(useSshOutageStore.getState().outages['remote-1'].surfaced).toBe(false);
+		});
+
+		it('appears when the user goes to an agent on the down remote, and marks it surfaced', async () => {
+			recordOutage('remote-1');
+			render(<SshUnreachableModal theme={mockTheme} sessions={[]} />);
+			expect(screen.queryByTestId('ssh-unreachable-modal')).toBeNull();
+
+			lookAt('remote-1');
+
+			await waitFor(() => expect(screen.getByTestId('ssh-unreachable-modal')).toBeTruthy());
+			expect(useSshOutageStore.getState().outages['remote-1'].surfaced).toBe(true);
+		});
+
+		it('appears wherever the user is when a live turn surfaced it', async () => {
+			lookAt('remote-2');
+			recordOutage('remote-1');
+			useSshOutageStore.getState().surface('remote-1');
+			render(<SshUnreachableModal theme={mockTheme} sessions={[]} />);
+			expect(screen.getByTestId('ssh-unreachable-modal')).toBeTruthy();
+		});
 	});
 });

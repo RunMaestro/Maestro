@@ -382,6 +382,23 @@ describe('Sessions Preload API', () => {
 					'remote-1'
 				);
 			});
+
+			it('passes the owning agent id so main resolves its account directory', async () => {
+				mockInvoke.mockResolvedValue({ success: true });
+
+				await api.deleteMessagePair('codex', '/project', 's', 'uuid', 'text', undefined, 'agent-1');
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'agentSessions:deleteMessagePair',
+					'codex',
+					'/project',
+					's',
+					'uuid',
+					'text',
+					undefined,
+					'agent-1'
+				);
+			});
 		});
 
 		describe('hasStorage', () => {

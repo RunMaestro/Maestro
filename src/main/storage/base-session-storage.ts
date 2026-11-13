@@ -22,6 +22,7 @@ import { logger } from '../utils/logger';
 import type {
 	AgentSessionStorage,
 	AgentSessionInfo,
+	DeleteMessagePairResult,
 	PaginatedSessionsResult,
 	SessionMessagesResult,
 	SessionSearchResult,
@@ -141,8 +142,9 @@ export abstract class BaseSessionStorage implements AgentSessionStorage {
 		sessionId: string,
 		userMessageUuid: string,
 		fallbackContent?: string,
-		sshConfig?: SshRemoteConfig
-	): Promise<{ success: boolean; error?: string; linesRemoved?: number }>;
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
+	): Promise<DeleteMessagePairResult>;
 
 	/**
 	 * Load messages from a session in a simplified format for search.

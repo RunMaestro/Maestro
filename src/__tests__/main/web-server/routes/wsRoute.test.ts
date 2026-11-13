@@ -16,6 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WebSocket } from 'ws';
+import { logger } from '../../../../main/utils/logger';
 import { WsRoute, type WsRouteCallbacks } from '../../../../main/web-server/routes/wsRoute';
 import { BroadcastService } from '../../../../main/web-server/services/broadcastService';
 import { bindPairedDeviceAuth } from '../../../../main/web-server/auth/web-login-policy';
@@ -470,6 +471,151 @@ describe('WsRoute', () => {
 	});
 
 	describe('Message Handling', () => {
+		it('answers a tab intent before draining a burst of background git reads', async () => {
+			const connection = createMockConnection();
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, createMockRequest());
+			for (let i = 0; i < 20; i++) {
+				connection.emit(
+					'message',
+					Buffer.from(
+						JSON.stringify({
+							type: 'bridge.invoke',
+							channel: 'git:status',
+							requestId: i,
+							args: [`/repo-${i}`],
+						})
+					)
+				);
+			}
+			connection.emit(
+				'message',
+				Buffer.from(
+					JSON.stringify({
+						type: 'bridge.invoke',
+						channel: 'web:requestNewTab',
+						requestId: 21,
+						args: ['session-1', true],
+					})
+				)
+			);
+			// Auth and dispatch of the background reads must yield to interaction.
+			expect(
+				vi.mocked(callbacks.handleMessage).mock.calls.map(([, message]) => (message as any).channel)
+			).toEqual(['web:requestNewTab']);
+			await vi.waitFor(() => expect(callbacks.handleMessage).toHaveBeenCalledTimes(21));
+		});
+
+		it('rechecks authorization when a queued git read runs and drops disconnected reads', async () => {
+			const connection = createMockConnection();
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, createMockRequest());
+			connection.emit(
+				'message',
+				Buffer.from(
+					JSON.stringify({
+						type: 'bridge.invoke',
+						channel: 'git:branch',
+						requestId: 1,
+						args: ['/repo'],
+					})
+				)
+			);
+			webLogin.enabled = true; // A fresh gate change before the scheduled dispatch.
+			await vi.waitFor(() =>
+				expect(connection.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required')
+			);
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+			webLogin.enabled = false;
+			const closed = createMockConnection();
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(closed, createMockRequest());
+			closed.emit(
+				'message',
+				Buffer.from(
+					JSON.stringify({
+						type: 'bridge.invoke',
+						channel: 'git:info',
+						requestId: 2,
+						args: ['/repo'],
+					})
+				)
+			);
+			closed.emit('close', 1000);
+			await new Promise<void>((resolve) => setImmediate(() => setImmediate(resolve)));
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+		});
+
+		it('fails closed and reports an authorization exception during deferred dispatch', async () => {
+			const connection = createMockConnection();
+			const request = createMockRequest();
+			let broken = false;
+			bindPairedDeviceAuth(request, () => {
+				if (broken) throw new Error('auth backend unavailable');
+				return { id: 'device', username: 'device', displayName: 'Device' };
+			});
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, request);
+			connection.emit(
+				'message',
+				Buffer.from(
+					JSON.stringify({
+						type: 'bridge.invoke',
+						channel: 'git:status',
+						requestId: 1,
+						args: ['/repo'],
+					})
+				)
+			);
+			broken = true;
+			await vi.waitFor(() =>
+				expect(connection.close).toHaveBeenCalledWith(1011, 'Background dispatch failed')
+			);
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['immediate message', JSON.stringify({ type: 'ping' })],
+			['malformed JSON', 'not valid json'],
+		])('contains a throwing authorizer in the %s fallback', (_label, message) => {
+			const connection = createMockConnection();
+			const request = createMockRequest();
+			const error = new Error('auth backend unavailable');
+			let broken = false;
+			bindPairedDeviceAuth(request, () => {
+				if (broken) throw error;
+				return { id: 'device', username: 'device', displayName: 'Device' };
+			});
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, request);
+			connection.send.mockClear();
+			vi.mocked(logger.error).mockClear();
+			broken = true;
+			expect(() => connection.emit('message', message)).not.toThrow();
+			expect(logger.error).toHaveBeenCalledWith(
+				'Client authorization failed',
+				'WebServer:WS',
+				error
+			);
+			expect(connection.close).toHaveBeenCalledWith(1011, 'Authorization failed');
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+			expect(connection.send).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['immediate message', JSON.stringify({ type: 'ping' })],
+			['malformed JSON', 'not valid json'],
+		])('keeps the unauthorized return for %s', (_label, message) => {
+			const connection = createMockConnection();
+			const request = createMockRequest();
+			let revoked = false;
+			bindPairedDeviceAuth(request, () =>
+				revoked ? undefined : { id: 'device', username: 'device', displayName: 'Device' }
+			);
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, request);
+			connection.send.mockClear();
+			revoked = true;
+			expect(() => connection.emit('message', message)).not.toThrow();
+			expect(connection.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+			expect(connection.send).not.toHaveBeenCalled();
+		});
+
 		it('should delegate messages to handleMessage callback', () => {
 			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
 			const connection = createMockConnection();

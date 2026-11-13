@@ -345,6 +345,7 @@ export interface AgentSessionStorage {
 	 * @param userMessageUuid - UUID of the user message to delete
 	 * @param fallbackContent - Optional content to match if UUID not found
 	 * @param sshConfig - Optional SSH config for remote access
+	 * @param accountDir - Optional account config/home root, as in listSessions
 	 * @returns Success status and number of lines removed
 	 */
 	deleteMessagePair(
@@ -352,9 +353,32 @@ export interface AgentSessionStorage {
 		sessionId: string,
 		userMessageUuid: string,
 		fallbackContent?: string,
-		sshConfig?: SshRemoteConfig
-	): Promise<{ success: boolean; error?: string; linesRemoved?: number }>;
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
+	): Promise<DeleteMessagePairResult>;
 }
+
+/**
+ * The outcome of deleting a message pair from a provider transcript.
+ *
+ * `notInTranscript` marks a message the provider never recorded, typically a
+ * turn that failed before the provider wrote it (an auth error, a crash at
+ * spawn). Nothing is in the agent's context to remove, so it is a success with
+ * zero lines removed: the caller may drop the message from the tab.
+ */
+export interface DeleteMessagePairResult {
+	success: boolean;
+	error?: string;
+	linesRemoved?: number;
+	notInTranscript?: boolean;
+}
+
+/** The result for a user message absent from the transcript (see {@link DeleteMessagePairResult}). */
+export const MESSAGE_NOT_IN_TRANSCRIPT: DeleteMessagePairResult = Object.freeze({
+	success: true,
+	linesRemoved: 0,
+	notInTranscript: true,
+});
 
 /**
  * Registry of session storage implementations

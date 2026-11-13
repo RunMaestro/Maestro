@@ -84,6 +84,8 @@ export {
 	type SessionReadOptions,
 	type SessionOriginInfo,
 	type AgentSessionStorage,
+	type DeleteMessagePairResult,
+	MESSAGE_NOT_IN_TRANSCRIPT,
 	registerSessionStorage,
 	getSessionStorage,
 	hasSessionStorage,

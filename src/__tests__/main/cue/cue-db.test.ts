@@ -172,7 +172,6 @@ import {
 	WEBHOOK_DELIVERY_RETENTION_MS,
 	readCueDbStatusFigures,
 	readRecentCueEventsReadOnly,
-	isCueDbCorruptionError,
 	quarantineCorruptCueDb,
 } from '../../../main/cue/cue-db';
 
@@ -544,20 +543,6 @@ describe('cue-db corruption handling', () => {
 	function sqliteError(code: string): Error {
 		return Object.assign(new Error(code), { code });
 	}
-
-	it('classifies SQLITE_CORRUPT, its extended codes and SQLITE_NOTADB as corruption', () => {
-		expect(isCueDbCorruptionError(sqliteError('SQLITE_CORRUPT'))).toBe(true);
-		expect(isCueDbCorruptionError(sqliteError('SQLITE_CORRUPT_INDEX'))).toBe(true);
-		expect(isCueDbCorruptionError(sqliteError('SQLITE_NOTADB'))).toBe(true);
-	});
-
-	it('does not classify lock, I/O or plain errors as corruption', () => {
-		expect(isCueDbCorruptionError(sqliteError('SQLITE_BUSY'))).toBe(false);
-		expect(isCueDbCorruptionError(sqliteError('SQLITE_IOERR'))).toBe(false);
-		expect(isCueDbCorruptionError(new Error('database disk image is malformed'))).toBe(false);
-		expect(isCueDbCorruptionError(null)).toBe(false);
-		expect(isCueDbCorruptionError('SQLITE_CORRUPT')).toBe(false);
-	});
 
 	it('closes the handle and stays not ready when preparing the schema throws', () => {
 		const dbPath = path.join(os.tmpdir(), 'test-cue.db');

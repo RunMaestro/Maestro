@@ -50,7 +50,11 @@ import {
 } from '../../../stores/retryStore';
 import { scheduleAutoResume } from '../../../stores/autoRunResumeStore';
 import { reportAuthFailure } from '../../../stores/authOutageStore';
-import { isSshRemoteDown, isSshTransportError } from '../../../stores/sshOutageStore';
+import {
+	isSshRemoteDown,
+	isSshTransportError,
+	useSshOutageStore,
+} from '../../../stores/sshOutageStore';
 import { maybeAutoResetCodexUsage } from '../../../services/codexAutoReset';
 import { isEffortFallbackArmed, observeEffortRejection } from '../../../services/effortRejection';
 import type { AgentError, GroupChatMessage, LogEntry, SessionState } from '../../../types';
@@ -614,7 +618,10 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 						// keeps its error either way.
 						const remoteId = agentError.sshRemoteId;
 						void isSshRemoteDown(remoteId).then((down) => {
-							if (!down) openModal('agentError', { sessionId: actualSessionId });
+							// A live turn died on it: show the outage even if the user
+							// is looking at another agent.
+							if (down) useSshOutageStore.getState().surface(remoteId);
+							else openModal('agentError', { sessionId: actualSessionId });
 						});
 					} else {
 						openModal('agentError', { sessionId: actualSessionId });
