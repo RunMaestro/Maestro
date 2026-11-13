@@ -507,7 +507,8 @@ function noticeTtsFor(settings: VoiceProviderSettings): TtsProvider {
 
 function disposeNoticeTts(): void {
 	const previous = noticeTts?.provider as
-		(TtsProvider & { dispose?: () => Promise<void> }) | undefined;
+		| (TtsProvider & { dispose?: () => Promise<void> })
+		| undefined;
 	noticeTts = null;
 	void previous?.dispose?.();
 }
