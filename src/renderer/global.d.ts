@@ -1134,6 +1134,7 @@ interface MaestroAPI {
 			attachments?: Array<{ name: string; dataUrl: string }>;
 			includeDebugPackage?: boolean;
 			performanceTracePath?: string;
+			reviewedFingerprint?: string;
 		}) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		searchIssues: (query: string) => Promise<{
 			issues: Array<{
