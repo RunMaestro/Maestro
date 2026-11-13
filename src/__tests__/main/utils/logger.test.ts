@@ -371,7 +371,11 @@ describe('Logger', () => {
 
 				const logs = logger.getLogs();
 				expect(logs[0].context).toBe('ErrorContext');
-				expect(logs[0].data).toBe(errorData);
+				// Stored as a plain object: a raw Error stringifies to `{}`.
+				expect(logs[0].data).toEqual(
+					expect.objectContaining({ name: 'Error', message: 'test error' })
+				);
+				expect(JSON.stringify(logs[0].data)).toContain('test error');
 			});
 
 			it('should output to console.error for error level', async () => {

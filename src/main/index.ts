@@ -191,6 +191,9 @@ import { planWindowRestore, pickFocusWindowSpec } from './window-state-persisten
 import type { WindowState as SharedWindowState } from '../shared/window-types';
 import { setupAgentRunCapture } from './agent-run/setup-capture-listener';
 import { setAgentRunSink } from './agent-run/broadcast';
+import { configureSshReachability } from './ssh-reachability';
+import { sshRemoteManager } from './ssh-remote-manager';
+import { getSshRemoteById } from './stores/getters';
 import { startAgentRunStoreWatcher } from './agent-run/store-watcher';
 import { setupAgentRunRecovery } from './agent-run/setup-recovery';
 import { createTimeZoneWatcher } from './utils/timezone-watcher';
@@ -542,6 +545,14 @@ capabilitySnapshots.init(agentCapabilitiesStore, createSnapshotBroadcaster(safeS
 
 // A forced model discovery pushes the fresh list to every open model picker.
 setModelsRefreshedBroadcaster(safeSend);
+
+// One dialog per unreachable SSH remote, in every window and web client, fed by
+// every path that runs ssh (agent turns, remote-fs, remote git, shell commands).
+configureSshReachability({
+	resolveRemote: getSshRemoteById,
+	probe: (remote) => sshRemoteManager.probeReachability(remote),
+	emit: (event) => safeSend('ssh-remote:reachability', event),
+});
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
 const cliWatcher = createCliWatcher({

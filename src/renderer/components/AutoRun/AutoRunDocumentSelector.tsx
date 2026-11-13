@@ -25,7 +25,13 @@ import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { useResizableDropdownHeight } from '../../hooks/ui/useResizableDropdownHeight';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
-import { aggregateFolderTaskCounts } from './documentTaskAggregation';
+import {
+	aggregateFolderTaskCounts,
+	formatTaskBadgeLabel,
+	toTaskBadgeStats,
+	widestTaskBadgeLabel,
+	type TaskBadgeStats,
+} from './documentTaskAggregation';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 // Module-level cache so the user's expand/collapse choices survive the dropdown
@@ -292,34 +298,38 @@ export const AutoRunDocumentSelector = forwardRef<
 		[documentTree, documentTaskCounts]
 	);
 
-	// Turn raw counts into the percentage/total pair the badge renders.
-	const toTaskStats = (counts: DocumentTaskCount | undefined) => {
-		if (!counts || counts.total === 0) return null;
-		return {
-			pct: Math.round((counts.completed / counts.total) * 100),
-			total: counts.total,
-		};
-	};
-
 	// Get percentage and total task count for a document
-	const getTaskStats = (docPath: string): { pct: number; total: number } | null =>
-		toTaskStats(documentTaskCounts?.get(docPath));
+	const getTaskStats = (docPath: string): TaskBadgeStats | null =>
+		toTaskBadgeStats(documentTaskCounts?.get(docPath));
 
 	// Same, for a folder: the sum of every document in its subtree.
-	const getFolderTaskStats = (folderPath: string): { pct: number; total: number } | null =>
-		toTaskStats(folderTaskCounts.get(folderPath));
+	const getFolderTaskStats = (folderPath: string): TaskBadgeStats | null =>
+		toTaskBadgeStats(folderTaskCounts.get(folderPath));
+
+	// Every badge takes the width of the longest label, so their edges line up
+	// down the list.
+	const widestBadgeLabel = useMemo(
+		() => widestTaskBadgeLabel([documentTaskCounts, folderTaskCounts]),
+		[documentTaskCounts, folderTaskCounts]
+	);
 
 	// Pill badge showing "{pct}% ({total})" - rendered next to file entries in
-	// the dropdown list. Green when 100% complete, dim accent otherwise.
-	const renderTaskBadge = (stats: { pct: number; total: number }, extraClass = '') => (
+	// the dropdown list. Green when 100% complete, dim accent otherwise. The
+	// badge is a one-cell grid holding the label and an invisible copy of the
+	// widest label, so the browser sizes every badge to the widest one in
+	// whatever font is active.
+	const renderTaskBadge = (stats: TaskBadgeStats, extraClass = '') => (
 		<span
-			className={`shrink-0 text-xs px-1.5 py-0.5 rounded ${extraClass}`.trim()}
+			className={`shrink-0 inline-grid justify-items-center tabular-nums text-xs px-1.5 py-0.5 rounded ${extraClass}`.trim()}
 			style={{
 				backgroundColor: stats.pct === 100 ? theme.colors.success : theme.colors.accentDim,
 				color: stats.pct === 100 ? '#000' : theme.colors.textDim,
 			}}
 		>
-			{stats.pct}% ({stats.total})
+			<span className="col-start-1 row-start-1">{formatTaskBadgeLabel(stats)}</span>
+			<span className="col-start-1 row-start-1 invisible" aria-hidden="true" data-badge-sizer>
+				{widestBadgeLabel}
+			</span>
 		</span>
 	);
 

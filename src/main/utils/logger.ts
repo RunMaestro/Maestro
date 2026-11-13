@@ -17,6 +17,7 @@ import {
 	DEFAULT_MAX_LOGS,
 } from '../../shared/logger-types';
 import { isWindows, isMacOS } from '../../shared/platformDetection';
+import { toLoggableData } from '../../shared/serializeError';
 
 // Re-export types for backwards compatibility
 export type { MainLogLevel as LogLevel, SystemLogEntry as LogEntry };
@@ -324,6 +325,8 @@ class Logger extends EventEmitter {
 	}
 
 	private addLog(entry: SystemLogEntry): void {
+		// A raw Error stringifies to `{}`; keep its message and stack.
+		if (entry.data !== undefined) entry.data = toLoggableData(entry.data);
 		this.logs.push(entry);
 
 		// Keep only the last maxLogs entries

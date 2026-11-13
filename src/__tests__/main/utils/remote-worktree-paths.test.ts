@@ -17,7 +17,11 @@ import { afterEach, beforeEach, describe, expect, it, vi, type TestContext } fro
 import type { SshRemoteConfig } from '../../../shared/types';
 
 vi.mock('../../../main/utils/execFile', () => ({ execFileNoThrow: vi.fn() }));
-vi.mock('../../../main/utils/ssh-command-builder', () => ({ buildSshCommand: vi.fn() }));
+vi.mock('../../../main/utils/ssh-command-builder', async (importOriginal) => ({
+	// The real execSshCommand runs the mocked execFileNoThrow.
+	...(await importOriginal<typeof import('../../../main/utils/ssh-command-builder')>()),
+	buildSshCommand: vi.fn(),
+}));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));

@@ -3,7 +3,7 @@ import { EditorState, EditorSelection, Compartment, type Extension } from '@code
 import { EditorView } from '@codemirror/view';
 import { buildEditorTheme } from '../giantPreview/themeAdapter';
 import { loadLanguageExtension, hasLanguageSupport } from '../giantPreview/languageLoader';
-import { buildEditorExtensions } from './extensions';
+import { buildEditorExtensions, mainSelectionDetails } from './extensions';
 import { searchHighlightExtension, setSearchMatchesEffect } from './searchHighlight';
 import type { MarkdownEditorHandle, MarkdownEditorProps } from './types';
 
@@ -79,6 +79,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			fontScale = 1,
 			fontFamily,
 			baseFontPx,
+			codeEditing = false,
+			completion = 'typing',
+			vimMode = false,
+			onShortcutUsed,
+			onSelectionContextMenu,
 			className,
 		},
 		ref
@@ -92,6 +97,13 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		const onKeyDownRef = useRef(onKeyDown);
 		const onPasteRef = useRef(onPaste);
 		const onGutterContextRef = useRef(onLineNumberContextMenu);
+		const onShortcutUsedRef = useRef(onShortcutUsed);
+		const onSelectionContextMenuRef = useRef(onSelectionContextMenu);
+		onShortcutUsedRef.current = onShortcutUsed;
+		onSelectionContextMenuRef.current = onSelectionContextMenu;
+		// Only whether a selection menu exists changes the extension set; the
+		// handler itself is read through the ref.
+		const hasSelectionContextMenu = Boolean(onSelectionContextMenu);
 		useEffect(() => {
 			onChangeRef.current = onChange;
 		}, [onChange]);
@@ -118,17 +130,15 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				theme: new Compartment(),
 				language: new Compartment(),
 				base: new Compartment(),
+				vim: new Compartment(),
 			}),
 			[]
 		);
 
-		// Mount once. All subsequent prop changes flow through dispatch or
-		// reconfigure below.
-		useEffect(() => {
-			const host = hostRef.current;
-			if (!host) return;
-
-			const baseExt: Extension = buildEditorExtensions({
+		// One builder for the mount and every reconfigure, so the two can never
+		// disagree about what the base set contains.
+		const buildBase = (): Extension =>
+			buildEditorExtensions({
 				wrap,
 				showLineNumbers,
 				spellCheck,
@@ -137,7 +147,22 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				onKeyDown: (event) => onKeyDownRef.current?.(event),
 				onPaste: (event) => onPasteRef.current?.(event),
 				placeholder,
+				codeEditing:
+					codeEditing && !readOnly
+						? { completion, onShortcutUsed: (id) => onShortcutUsedRef.current?.(id) }
+						: undefined,
+				onSelectionContextMenu: hasSelectionContextMenu
+					? (selection, event) => onSelectionContextMenuRef.current?.(selection, event)
+					: undefined,
 			});
+
+		// Mount once. All subsequent prop changes flow through dispatch or
+		// reconfigure below.
+		useEffect(() => {
+			const host = hostRef.current;
+			if (!host) return;
+
+			const baseExt: Extension = buildBase();
 
 			const updateListener = EditorView.updateListener.of((update) => {
 				if (!update.docChanged) return;
@@ -148,6 +173,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			const state = EditorState.create({
 				doc: value,
 				extensions: [
+					// First, so Vim's key handling sits ahead of every other keymap
+					// at the same precedence (what @replit/codemirror-vim asks for).
+					compartments.vim.of([]),
 					compartments.base.of(baseExt),
 					compartments.theme.of(buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)),
 					compartments.language.of([]),
@@ -234,18 +262,41 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		useEffect(() => {
 			const view = viewRef.current;
 			if (!view) return;
-			const baseExt = buildEditorExtensions({
-				wrap,
-				showLineNumbers,
-				spellCheck,
-				readOnly,
-				onGutterContextMenu: (lineNumber, event) => onGutterContextRef.current?.(lineNumber, event),
-				onKeyDown: (event) => onKeyDownRef.current?.(event),
-				onPaste: (event) => onPasteRef.current?.(event),
-				placeholder,
+			view.dispatch({ effects: compartments.base.reconfigure(buildBase()) });
+			// buildBase reads exactly these values; the callbacks ride in refs.
+		}, [
+			wrap,
+			showLineNumbers,
+			spellCheck,
+			readOnly,
+			placeholder,
+			codeEditing,
+			completion,
+			hasSelectionContextMenu,
+			compartments.base,
+		]);
+
+		// Vim keybindings, loaded on first use so the package never enters the
+		// bundle path of anyone who leaves the setting off.
+		const vimEnabled = codeEditing && vimMode && !readOnly;
+		useEffect(() => {
+			const view = viewRef.current;
+			if (!view) return;
+			if (!vimEnabled) {
+				view.dispatch({ effects: compartments.vim.reconfigure([]) });
+				return;
+			}
+			let cancelled = false;
+			void import('@replit/codemirror-vim').then(({ vim }) => {
+				if (cancelled || !viewRef.current) return;
+				viewRef.current.dispatch({
+					effects: compartments.vim.reconfigure(vim({ status: true })),
+				});
 			});
-			view.dispatch({ effects: compartments.base.reconfigure(baseExt) });
-		}, [wrap, showLineNumbers, spellCheck, readOnly, placeholder, compartments.base]);
+			return () => {
+				cancelled = true;
+			};
+		}, [vimEnabled, compartments.vim]);
 
 		useImperativeHandle(
 			ref,
@@ -356,6 +407,24 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 						selection: EditorSelection.single(clampedFrom + text.length),
 					});
 					view.contentDOM.focus({ preventScroll: true });
+				},
+				replaceRanges(changes) {
+					const view = viewRef.current;
+					if (!view || changes.length === 0) return;
+					const docLen = view.state.doc.length;
+					const clamped = changes
+						.map((c) => {
+							const from = Math.max(0, Math.min(c.from, docLen));
+							const to = Math.max(from, Math.min(c.to, docLen));
+							return { from, to, insert: c.insert };
+						})
+						.sort((a, b) => a.from - b.from);
+					view.dispatch({ changes: clamped, userEvent: 'input.replace' });
+				},
+				getSelectionDetails() {
+					const view = viewRef.current;
+					if (!view) return null;
+					return mainSelectionDetails(view.state);
 				},
 				setSearchMatches(matches, currentIndex) {
 					const view = viewRef.current;

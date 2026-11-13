@@ -11,7 +11,11 @@
 
 import { describe, it, expect } from 'vitest';
 
-import { isSlashCommandPrompt, localCommandOutput } from '../../maestro-p/local-command-row';
+import {
+	isSlashCommandPrompt,
+	localCommandOutput,
+	unknownSlashCommandError,
+} from '../../maestro-p/local-command-row';
 
 // Rows copied from real claude 2.1.x transcripts.
 const caveatRow = {
@@ -146,6 +150,39 @@ describe('localCommandOutput', () => {
 		).toBeNull();
 		expect(localCommandOutput(null)).toBeNull();
 		expect(localCommandOutput('row')).toBeNull();
+	});
+});
+
+describe('unknownSlashCommandError', () => {
+	// Copied from a claude 2.1.322 transcript: the only row written for `/commit`.
+	const unknownRow = {
+		type: 'system',
+		subtype: 'informational',
+		content: 'Unknown command: /commit',
+		isMeta: false,
+		level: 'warning',
+	};
+
+	it('returns the refusal text for the unknown-command row', () => {
+		expect(unknownSlashCommandError(unknownRow)).toBe('Unknown command: /commit');
+	});
+
+	it('strips ANSI codes from the refusal', () => {
+		expect(
+			unknownSlashCommandError({
+				...unknownRow,
+				content: '\u001b[33mUnknown command: /x\u001b[39m',
+			})
+		).toBe('Unknown command: /x');
+	});
+
+	it('does not fire on other informational rows or command output rows', () => {
+		expect(
+			unknownSlashCommandError({ ...unknownRow, content: 'Model changed to opus' })
+		).toBeNull();
+		expect(unknownSlashCommandError(systemOutputRow)).toBeNull();
+		expect(unknownSlashCommandError(compactOutputRow)).toBeNull();
+		expect(unknownSlashCommandError(null)).toBeNull();
 	});
 });
 

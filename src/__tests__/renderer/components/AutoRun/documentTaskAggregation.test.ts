@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { aggregateFolderTaskCounts } from '../../../../renderer/components/AutoRun/documentTaskAggregation';
+import {
+	aggregateFolderTaskCounts,
+	formatTaskBadgeLabel,
+	toTaskBadgeStats,
+	widestTaskBadgeLabel,
+} from '../../../../renderer/components/AutoRun/documentTaskAggregation';
 import type {
 	DocTreeNode,
 	DocumentTaskCount,
@@ -92,5 +97,36 @@ describe('aggregateFolderTaskCounts', () => {
 		);
 
 		expect(result.has('bare')).toBe(false);
+	});
+});
+
+describe('toTaskBadgeStats', () => {
+	it('rounds the completion percentage', () => {
+		expect(toTaskBadgeStats({ completed: 1, total: 3 })).toEqual({ pct: 33, total: 3 });
+	});
+
+	it('returns null when there is nothing to badge', () => {
+		expect(toTaskBadgeStats(undefined)).toBeNull();
+		expect(toTaskBadgeStats({ completed: 0, total: 0 })).toBeNull();
+	});
+});
+
+describe('formatTaskBadgeLabel', () => {
+	it('renders "{pct}% ({total})"', () => {
+		expect(formatTaskBadgeLabel({ pct: 100, total: 152 })).toBe('100% (152)');
+	});
+});
+
+describe('widestTaskBadgeLabel', () => {
+	it('returns the longest label across every map', () => {
+		const docs = counts({ a: { completed: 1, total: 2 }, b: { completed: 152, total: 152 } });
+		const folders = counts({ f: { completed: 3, total: 1000 } });
+
+		// "0% (1000)" is 9 characters, "100% (152)" is 10.
+		expect(widestTaskBadgeLabel([docs, folders])).toBe('100% (152)');
+	});
+
+	it('ignores entries without tasks and missing maps', () => {
+		expect(widestTaskBadgeLabel([undefined, counts({ a: { completed: 0, total: 0 } })])).toBe('');
 	});
 });

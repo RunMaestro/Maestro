@@ -16,6 +16,7 @@ import type { GroomingProgress, MergeResult } from '../../types/contextMerge';
 // Agent/Transfer Modal Components
 import { AgentErrorModal, type RecoveryAction } from '../AgentErrorModal';
 import { ReauthModal } from '../ReauthModal';
+import { SshUnreachableModal } from '../SshUnreachableModal';
 import { MergeSessionModal, type MergeOptions } from '../MergeSessionModal';
 import { SendToAgentModal, type SendToAgentOptions } from '../SendToAgentModal';
 import { TransferProgressModal } from '../TransferProgressModal';
@@ -212,6 +213,9 @@ export const AppAgentModals = memo(function AppAgentModals({
 					onClose={() => closeReauthModal('reauth')}
 				/>
 			)}
+
+			{/* --- SSH REMOTE UNREACHABLE (one per remote, self-sourced) --- */}
+			<SshUnreachableModal theme={theme} sessions={sessions} />
 
 			{/* --- AGENT ERROR MODAL (group chats) --- */}
 			{groupChatError && (
