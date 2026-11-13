@@ -763,7 +763,7 @@ export function migrateLegacyVoiceProviders(store: {
 }): boolean {
 	if (!store.set) return false;
 	const stored = store.get(ACAPPELLA_SETTINGS_KEY, {}) as Record<string, unknown> | undefined;
-	if (!stored || typeof stored !== 'object') return false;
+	if (!stored || typeof stored !== 'object' || Object.keys(stored).length === 0) return false;
 	const version = typeof stored.providersVersion === 'number' ? stored.providersVersion : 0;
 	if (version >= VOICE_PROVIDERS_SETTINGS_VERSION) return false;
 
