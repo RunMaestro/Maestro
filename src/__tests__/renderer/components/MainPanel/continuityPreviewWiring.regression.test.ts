@@ -18,7 +18,10 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const read = (file: string) =>
-	readFileSync(resolve(__dirname, '../../../../renderer/components/MainPanel', file), 'utf8');
+	readFileSync(
+		resolve(__dirname, '../../../../renderer/components/MainPanel', file),
+		'utf8'
+	).replace(/\r\n/g, '\n');
 
 const MAIN_PANEL = read('MainPanel.tsx');
 const TILED_LAYOUT = read('TiledLayout.tsx');
@@ -26,7 +29,7 @@ const TILED_LAYOUT = read('TiledLayout.tsx');
 /** Each `<TabBar ... />` element body. TabBar takes no children, so the first `/>` closes it. */
 function tabBarSites(source: string): string[] {
 	const bodies: string[] = [];
-	for (let from = 0; ; ) {
+	for (let from = 0; ;) {
 		const start = source.indexOf('<TabBar', from);
 		if (start === -1) return bodies;
 		const end = source.indexOf('/>', start);
