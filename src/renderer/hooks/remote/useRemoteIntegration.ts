@@ -317,6 +317,28 @@ async function buildSessionGistBody(session: Session, agentSessionId: string): P
 	};
 }
 
+/** Publish the owner's current tab IDs; browser clients never mint replacement IDs. */
+function broadcastTabInventory(session: Session, activeTabChanged = false): void {
+	const tabsForBroadcast = session.aiTabs.map((tab) => ({
+		id: tab.id,
+		agentSessionId: tab.agentSessionId,
+		name: tab.name,
+		starred: tab.starred,
+		inputValue: tab.inputValue,
+		usageStats: tab.usageStats,
+		createdAt: tab.createdAt,
+		state: tab.state,
+		thinkingStartTime: tab.thinkingStartTime,
+		hasUnread: tab.hasUnread,
+	}));
+	window.maestro.web.broadcastTabsChange(
+		session.id,
+		tabsForBroadcast,
+		session.activeTabId || session.aiTabs[0]?.id || '',
+		activeTabChanged
+	);
+}
+
 /**
  * Hook for handling web interface communication.
  *
@@ -1004,6 +1026,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const unsubscribeCloseTab = window.maestro.process.onRemoteCloseTab(
 			(sessionId: string, tabId: string, responseChannel: string) => {
 				let closed = false;
+				let closedSession: Session | undefined;
 				try {
 					updateSessionWith(sessionId, (s) => {
 						const tab = s.aiTabs.find((t) => t.id === tabId);
@@ -1018,8 +1041,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							? result.session
 							: addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
 						closed = true;
+						closedSession = updated;
 						return updated;
 					});
+					// Do not leave a confirmed close waiting for the 500ms inventory poll.
+					if (closedSession) broadcastTabInventory(closedSession);
 				} finally {
 					window.maestro.process.sendRemoteCloseTabResponse(responseChannel, closed);
 				}
@@ -2766,25 +2792,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					prev.tabsHash !== current.tabsHash ||
 					activeTabChanged
 				) {
-					const tabsForBroadcast = session.aiTabs.map((tab) => ({
-						id: tab.id,
-						agentSessionId: tab.agentSessionId,
-						name: tab.name,
-						starred: tab.starred,
-						inputValue: tab.inputValue,
-						usageStats: tab.usageStats,
-						createdAt: tab.createdAt,
-						state: tab.state,
-						thinkingStartTime: tab.thinkingStartTime,
-						hasUnread: tab.hasUnread,
-					}));
-
-					window.maestro.web.broadcastTabsChange(
-						session.id,
-						tabsForBroadcast,
-						current.activeTabId,
-						activeTabChanged
-					);
+					broadcastTabInventory(session, activeTabChanged);
 
 					prevTabsRef.current.set(session.id, current);
 				}

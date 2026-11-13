@@ -470,6 +470,78 @@ describe('WsRoute', () => {
 	});
 
 	describe('Message Handling', () => {
+		it('answers a tab intent before draining a burst of background git reads', async () => {
+			const connection = createMockConnection();
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, createMockRequest());
+			for (let i = 0; i < 20; i++) {
+				connection.emit(
+					'message',
+					Buffer.from(
+						JSON.stringify({
+							type: 'bridge.invoke',
+							channel: 'git:status',
+							requestId: i,
+							args: [`/repo-${i}`],
+						})
+					)
+				);
+			}
+			connection.emit(
+				'message',
+				Buffer.from(
+					JSON.stringify({
+						type: 'bridge.invoke',
+						channel: 'web:requestNewTab',
+						requestId: 21,
+						args: ['session-1', true],
+					})
+				)
+			);
+			// Auth and dispatch of the background reads must yield to interaction.
+			expect(
+				vi.mocked(callbacks.handleMessage).mock.calls.map(([, message]) => (message as any).channel)
+			).toEqual(['web:requestNewTab']);
+			await vi.waitFor(() => expect(callbacks.handleMessage).toHaveBeenCalledTimes(21));
+		});
+
+		it('rechecks authorization when a queued git read runs and drops disconnected reads', async () => {
+			const connection = createMockConnection();
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, createMockRequest());
+			connection.emit(
+				'message',
+				Buffer.from(
+					JSON.stringify({
+						type: 'bridge.invoke',
+						channel: 'git:branch',
+						requestId: 1,
+						args: ['/repo'],
+					})
+				)
+			);
+			webLogin.enabled = true; // A fresh gate change before the scheduled dispatch.
+			await vi.waitFor(() =>
+				expect(connection.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required')
+			);
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+			webLogin.enabled = false;
+			const closed = createMockConnection();
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(closed, createMockRequest());
+			closed.emit(
+				'message',
+				Buffer.from(
+					JSON.stringify({
+						type: 'bridge.invoke',
+						channel: 'git:info',
+						requestId: 2,
+						args: ['/repo'],
+					})
+				)
+			);
+			closed.emit('close', 1000);
+			await new Promise<void>((resolve) => setImmediate(() => setImmediate(resolve)));
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+		});
+
 		it('should delegate messages to handleMessage callback', () => {
 			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
 			const connection = createMockConnection();
