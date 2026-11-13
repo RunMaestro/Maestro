@@ -31,6 +31,7 @@ import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import { SectionCard } from '../tabs/DisplayTab/components/SectionCard';
 import { usePairedDevices, type DeviceStatus } from './usePairedDevices';
+import { isImeComposing } from '../../../utils/ime';
 
 export interface PairedDevicesPanelProps {
 	theme: Theme;
@@ -228,7 +229,7 @@ export function PairedDevicesPanel({ theme, enabled }: PairedDevicesPanelProps) 
 										onChange={(event) => setRenaming({ id: device.id, value: event.target.value })}
 										onBlur={() => void commitRename()}
 										onKeyDown={(event) => {
-											if (event.key === 'Enter') void commitRename();
+											if (event.key === 'Enter' && !isImeComposing(event)) void commitRename();
 											if (event.key === 'Escape') setRenaming(null);
 										}}
 										className="px-2 py-1 rounded border text-sm"

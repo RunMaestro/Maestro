@@ -63,6 +63,7 @@ import {
 } from './groupDefaultsForm';
 import { GroupPillLabelField } from './GroupPillLabelField';
 import { PublishDefaultsDialog, type PublishDialogMember } from './PublishDefaultsDialog';
+import { isImeComposing } from '../../utils/ime';
 
 const TAB_ID_PREFIX = 'group-settings';
 
@@ -365,6 +366,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 		'keydown',
 		(event) => {
 			const e = event as KeyboardEvent;
+			if (isImeComposing(e)) return;
 			if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === 's') && !e.shiftKey) {
 				e.preventDefault();
 				handleSave();

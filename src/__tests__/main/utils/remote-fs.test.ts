@@ -2917,7 +2917,11 @@ finally:
 						: operation === 'exclusive'
 							? await createExclusiveRemote('/file', 'data', baseConfig, deps)
 							: await symlinkRemote('../target', '/link', baseConfig, deps);
-				expect(result).toEqual({ success: false, error: 'Connection reset by peer' });
+				// Exit 255 never reached the host, so the error names the remote.
+				expect(result).toEqual({
+					success: false,
+					error: 'Unable to connect to "Test Remote" over SSH. Connection reset by peer',
+				});
 				expect(deps.execSsh).toHaveBeenCalledTimes(1);
 			}
 		);

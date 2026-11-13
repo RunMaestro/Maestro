@@ -36,6 +36,7 @@ import {
 	buildAgentSettingsTabs,
 } from './AgentSettings';
 import { useAgentConfiguration } from '../hooks/agent';
+import { isImeComposing } from '../utils/ime';
 
 const TAB_ID_PREFIX = 'group-chat-moderator';
 
@@ -468,6 +469,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 	useEffect(() => {
 		if (!isOpen) return;
 		const handler = (e: KeyboardEvent) => {
+			if (isImeComposing(e)) return;
 			if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === 's') && !e.shiftKey) {
 				e.preventDefault();
 				attemptSubmit();

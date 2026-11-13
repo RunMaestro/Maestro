@@ -36,6 +36,7 @@ import {
 import { formatSendPhrases, parseSendPhrases } from '../../../shared/acappella/voice-controls';
 import type { Theme } from '../../types';
 import { Slider } from '../widgets';
+import { isImeComposing } from '../../utils/ime';
 
 export interface VoiceWaitPickerProps {
 	theme: Theme;
@@ -85,6 +86,7 @@ export function VoiceWaitPicker({ theme, sendWait, onPick, onSetPhrases }: Voice
 
 	const handlePhraseKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
 		if (event.key === 'Enter') {
+			if (isImeComposing(event)) return;
 			event.preventDefault();
 			event.currentTarget.blur();
 			return;

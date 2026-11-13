@@ -24,6 +24,7 @@ import { readableTextOn } from '../../../shared/colorContrast';
 import { isVoiceSessionActive } from '../../../shared/acappella/session-state';
 import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import type { VoiceSessionActions } from './useVoiceSession';
+import { isImeComposing } from '../../utils/ime';
 
 export interface VoiceDevHarnessProps {
 	theme: Theme;
@@ -90,7 +91,7 @@ export function VoiceDevHarness({ theme, actions }: VoiceDevHarnessProps) {
 					value={text}
 					onChange={(e) => setText(e.target.value)}
 					onKeyDown={(e) => {
-						if (e.key === 'Enter') handleSend();
+						if (e.key === 'Enter' && !isImeComposing(e)) handleSend();
 					}}
 					placeholder="Type an utterance..."
 					className="flex-1 min-w-0 px-2 py-1 text-xs-plus rounded outline-none border"

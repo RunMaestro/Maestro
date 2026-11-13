@@ -18,6 +18,7 @@ import type { UseDocumentChatReturn } from '../../hooks/ui/useDocumentChat';
 import { useChatImageDraft } from '../../hooks/input/useChatImageDraft';
 import { StagedImageTile } from '../InputArea/components/StagedImageTile';
 import { openZoomViewer } from '../ZoomViewer';
+import { isImeComposing } from '../../utils/ime';
 
 interface DocumentChatComposerProps {
 	theme: Theme;
@@ -132,7 +133,7 @@ export const DocumentChatComposer = React.memo(function DocumentChatComposer({
 
 	const handleKeyDown = useCallback(
 		(event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			if (event.key !== 'Enter' || event.shiftKey) return;
+			if (event.key !== 'Enter' || event.shiftKey || isImeComposing(event)) return;
 			event.preventDefault();
 			send();
 		},

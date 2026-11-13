@@ -295,7 +295,8 @@ describe('previewContinuity', () => {
 				'warn',
 				expect.stringContaining('History could not be read'),
 				undefined,
-				expect.any(Error)
+				// The logger serializes an Error so its message survives IPC.
+				expect.objectContaining({ name: 'Error', message: 'remote unreachable' })
 			);
 		});
 

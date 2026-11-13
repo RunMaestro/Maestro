@@ -358,6 +358,10 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'update-ssh-remote': ['maestro-cli update-ssh-remote <remote-id> --port 2222 --set-default'],
 	'remove-ssh-remote': ['maestro-cli remove-ssh-remote <remote-id>'],
 	'test-ssh-remote': ['maestro-cli test-ssh-remote <remote-id> --timeout 30'],
+	'ssh-remote-status': [
+		'maestro-cli ssh-remote-status --json',
+		'maestro-cli ssh-remote-status --check <remote-id>',
+	],
 
 	// Display, settings, theme, Encore
 	'display font': [
