@@ -127,6 +127,14 @@ src/
 
 Most tests live under `src/__tests__/` mirroring the source structure. Some unit tests are co-located in `__tests__/` directories next to their source files (mainly in `src/main/`). Both patterns are valid. The centralized `src/__tests__/` directory is preferred for new tests.
 
+### Consolidating Related Suites
+
+- Combine only closely related modules or contracts, using a descriptive domain filename without numbered `.merged` suffixes.
+- Keep each source's hooks, helpers, state, and original inner suite/test names in a source-named wrapper, such as `describe('cue-template-context-builder', ...)`. List the original source paths in comments.
+- Keep static imports, `vi.mock` factories, and `vi.hoisted` state at module scope. Leave suites separate when their mocks, dependency graphs, or global mutations are incompatible.
+- Preserve every original test and assertion. Compare runtime test-name multiplicities after removing only the added source-name prefix.
+- Keep file isolation and the configured worker limit unchanged; concurrency tuning is a separate change.
+
 ---
 
 ## Global Test Setup
