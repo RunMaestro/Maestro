@@ -253,14 +253,50 @@ describe('remote-git.ts', () => {
 		/** An exec that stays running until the test resolves it. */
 		function hangingExec() {
 			let finish!: (result: ExecResult) => void;
-			mockExecFileNoThrow.mockImplementationOnce(
-				() =>
-					new Promise<ExecResult>((resolve) => {
-						finish = resolve;
-					})
-			);
+			const pending = new Promise<ExecResult>((resolve) => {
+				finish = resolve;
+			});
+			mockExecFileNoThrow.mockImplementationOnce(() => pending);
 			return (result: ExecResult) => finish(result);
 		}
+
+		it('lets an input callback run between background process starts without waiting for git IO', async () => {
+			const finishes: Array<(result: ExecResult) => void> = [];
+			let startsAtInput = -1;
+			mockExecFileNoThrow.mockImplementation(() => {
+				if (finishes.length === 0) {
+					setImmediate(() => {
+						startsAtInput = finishes.length;
+					});
+				}
+				return new Promise<ExecResult>((resolve) => finishes.push(resolve));
+			});
+			const reads = Array.from({ length: 6 }, (_, i) =>
+				execGitReadOnly(['status', '--porcelain'], `/fairness-${i}`)
+			);
+			// All six starts must happen even while the first process has no result.
+			for (let turn = 0; turn < 30 && (finishes.length < 6 || startsAtInput === -1); turn++) {
+				await new Promise<void>((resolve) => setImmediate(resolve));
+			}
+			const concurrentStarts = finishes.length;
+			mockExecFileNoThrow.mockResolvedValue(successResult(' M a.ts\n'));
+			finishes.forEach((finish) => finish(successResult(' M a.ts\n')));
+			const results = await Promise.all(reads);
+			expect(results).toHaveLength(6);
+			expect(concurrentStarts).toBe(6);
+			expect(startsAtInput).toBe(1);
+		});
+
+		it('single-flights queued reads and preserves the arguments captured before yielding', async () => {
+			mockExecFileNoThrow.mockResolvedValue(successResult(' M a.ts\n'));
+			const args = ['status', '--porcelain'];
+			const first = execGitReadOnly(args, '/queued');
+			const second = execGitReadOnly([...args], '/queued');
+			args[0] = 'reset';
+			await Promise.all([first, second]);
+			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(1);
+			expect(mockExecFileNoThrow.mock.calls[0][1]).toEqual(['status', '--porcelain']);
+		});
 
 		it('skips optional locks and passes a timeout to the child', async () => {
 			mockExecFileNoThrow.mockResolvedValue(successResult(' M a.ts\n'));
@@ -387,7 +423,9 @@ describe('remote-git.ts', () => {
 			finish(failResult('ETIMEDOUT', 'ETIMEDOUT'));
 			await vi.advanceTimersByTimeAsync(0);
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult(''));
-			await execGitReadOnly(['status', '--porcelain'], '/icloud', null, undefined, 1000);
+			const fresh = execGitReadOnly(['status', '--porcelain'], '/icloud', null, undefined, 1000);
+			await vi.advanceTimersByTimeAsync(1);
+			await fresh;
 			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(2);
 		});
 	});
