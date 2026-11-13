@@ -12,6 +12,8 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 const hardware = vi.hoisted(() => ({ parallelism: 16 }));
 vi.mock('os', async (importOriginal) => ({
@@ -19,7 +21,13 @@ vi.mock('os', async (importOriginal) => ({
 	availableParallelism: () => hardware.parallelism,
 }));
 
-vi.mock('electron', () => ({ app: { getPath: () => '/tmp/maestro-onnx-encoder-test' } }));
+vi.mock('electron', async () => {
+	const osMod = await import('node:os');
+	const pathMod = await import('node:path');
+	return {
+		app: { getPath: () => pathMod.join(osMod.tmpdir(), 'maestro-onnx-encoder-test') },
+	};
+});
 
 const store = vi.hoisted(() => ({ installed: true }));
 vi.mock('../../../main/local-models/model-store', async (importOriginal) => ({
@@ -156,7 +164,7 @@ describe('OnnxEncoderPool', () => {
 describe('resolveInstalledEncoder', () => {
 	it('locates an installed embedding model from its run spec', async () => {
 		const resolved = await resolveInstalledEncoder(BGE_SMALL_EN_ID, 'embedding', 'test');
-		expect(resolved.modelPath.endsWith('onnx/model_quantized.onnx')).toBe(true);
+		expect(resolved.modelPath.endsWith(path.join('onnx', 'model_quantized.onnx'))).toBe(true);
 		expect(resolved.spec.outputName).toBe('last_hidden_state');
 	});
 

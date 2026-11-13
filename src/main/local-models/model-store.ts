@@ -113,7 +113,7 @@ export function modelDir(id: string): string {
 
 /** Absolute path of one file within a model's install directory. */
 export function modelFilePath(id: string, filePath: string): string {
-	const dir = modelDir(id);
+	const dir = path.resolve(modelDir(id));
 	const resolved = path.resolve(dir, filePath);
 	// Belt and braces: catalog paths are authored in this repo, but a relative
 	// path that escapes its root is the one mistake that turns a delete into a
