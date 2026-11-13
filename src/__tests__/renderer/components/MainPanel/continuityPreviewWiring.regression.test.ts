@@ -29,7 +29,7 @@ const TILED_LAYOUT = read('TiledLayout.tsx');
 /** Each `<TabBar ... />` element body. TabBar takes no children, so the first `/>` closes it. */
 function tabBarSites(source: string): string[] {
 	const bodies: string[] = [];
-	for (let from = 0; ;) {
+	for (let from = 0; ; ) {
 		const start = source.indexOf('<TabBar', from);
 		if (start === -1) return bodies;
 		const end = source.indexOf('/>', start);
