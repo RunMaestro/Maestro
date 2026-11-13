@@ -33,6 +33,7 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { offboardBeforeRemoval } from '../../services/groupLifecycle';
 import { collectNamingPrompt, requestTabAutoName } from '../../services/tabAutoNaming';
 import {
 	renameTerminalTab as renameTerminalTabHelper,
@@ -550,6 +551,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const performDeleteSession = useCallback(
 		async (session: Session, eraseWorkingDirectory: boolean) => {
 			const id = session.id;
+
+			// The group's Offboarding prompt runs before anything is torn down, and
+			// removal waits for it (or for its time limit, or for "Remove now").
+			await offboardBeforeRemoval(id);
 
 			// Record session closure for Usage Dashboard (before cleanup)
 			window.maestro.stats.recordSessionClosed(id, Date.now());

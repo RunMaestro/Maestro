@@ -1057,11 +1057,20 @@ maestro-cli update-group-settings <group-id> --short-label ""
 # Also write this call's changes into the agents already in the group
 maestro-cli update-group-settings <group-id> --model sonnet --publish
 maestro-cli update-group-settings <group-id> --model sonnet --publish --yes
+
+# Lifecycle prompts: Onboarding when an agent joins, Offboarding before one leaves
+maestro-cli update-group-settings <group-id> --onboarding on --onboarding-prompt @setup.md --onboarding-tier low
+maestro-cli update-group-settings <group-id> --offboarding on --offboarding-prompt "Stop the servers you started" --offboarding-timeout 10
+maestro-cli update-group-settings <group-id> --offboarding-runs-in ops-agent --offboarding-events worktree
+maestro-cli update-group-settings <group-id> --onboarding clear
+
+# Run a lifecycle prompt now, on one agent of the group (removes nothing)
+maestro-cli run-group-lifecycle <group-id> onboarding --agent <agent-id>
 ```
 
 `maestro-cli open group-settings --group <group-id>` opens the dialog itself.
 
-`group-settings` prints the group's defaults, or **no defaults** when it holds none, and its pill label. When the group has no label of its own, the abbreviation Maestro derives from the name is printed and marked as automatic. It reads the stored group and does not need the app to be running. `--json` returns `group` with `defaults`, `shortLabel`, `badgeLabel` and `badgeLabelSource` (`custom` or `automatic`).
+`group-settings` prints the group's defaults, or **no defaults** when it holds none, and its pill label. When the group has no label of its own, the abbreviation Maestro derives from the name is printed and marked as automatic. It reads the stored group and does not need the app to be running. `--json` returns `group` with `defaults`, `lifecycle`, `shortLabel`, `badgeLabel` and `badgeLabelSource` (`custom` or `automatic`). It also lists the group's [Onboarding and Offboarding](./features#onboarding-and-offboarding) prompts.
 
 `update-group-settings` needs the desktop app. It accepts the settings flags of [`update-agent`](#creating-updating-and-removing-agents) that map to a default (`--provider`, `--cwd`, `--nudge`, `--new-session-message`, `--custom-path`, `--custom-args`, `--env`, `--clear-env`, `--model`, `--effort`, `--context-window`, `--gateway-url`, `--proxy-mode`, `--background-requests`, `--run-on`, `--tier`, `--system-one`, the five peer flags, `--ssh-remote`, `--ssh-cwd`, and the rest), and it builds the profile with the same validation the dialog uses, so a flag and a click store the same thing. A provider-bound value for a group with no provider, or for another provider, is refused by name.
 
@@ -1073,17 +1082,26 @@ Notes on behavior:
 - **`--publish`** also writes this call's diff into the group's existing agents, by the same rules as the dialog's **Publish** button: only the fields this call changed are written, the provider, working directory and SSH remote are never written, environment variables merge by key, and list fields replace the agent's own list. `--short-label` is never published and combining it with `--publish` is not an error. The command prints the agents changed, the fields that replaced a list, and the fields skipped as unpublishable.
 - **There is no undo on the command line.** `--publish` prints the count and, without `--yes`, asks for confirmation on a terminal. A caller with no terminal must pass `--yes`. The desktop also raises the dialog's **Undo** toast.
 - **A worktree group is refused.** Its agents are made by `create-worktree`, which copies the parent agent.
+- **Lifecycle prompts are not defaults.** The `--onboarding-*` and `--offboarding-*` flags write the group's Onboarding and Offboarding prompts in the same call. They are read when an agent joins or leaves, never copied into an agent, never published, and `--clear` leaves them alone. A prompt that is on with no text, a hook that is on with no events, and a `--*-runs-in` agent that does not exist are refused by name.
+- **`run-group-lifecycle <group> <onboarding|offboarding> --agent <agent>`** runs the stored prompt now on one agent of the group, whether the hook is on or not, and prints the tab it was queued in. An Offboarding run removes nothing. It needs the desktop app.
 - **`create-agent --group` reads the profile.** See the examples above. With `--json`, `create-agent` reports `seededFromGroup: <id> | null`, and `seedSkipped` when a default could not be applied (for example, an SSH remote that no longer exists).
 
 `update-group-settings` flags that are not shared with `update-agent`:
 
-| Flag                   | Description                                                                                                                           | Default |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--short-label <text>` | Text for the group's pill label, at most 12 characters. Empty string returns to the automatic abbreviation. Never copied or published | -       |
-| `--clear`              | Remove the defaults entirely. Leaves `--short-label` alone. Cannot be combined with other defaults or `--publish`                     | -       |
-| `--publish`            | Also write this call's changes into the agents already in the group                                                                   | -       |
-| `--yes`                | Confirm a `--publish` without asking                                                                                                  | -       |
-| `--json`               | Machine-readable JSON output                                                                                                          | -       |
+| Flag                                                                        | Description                                                                                                                           | Default        |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `--short-label <text>`                                                      | Text for the group's pill label, at most 12 characters. Empty string returns to the automatic abbreviation. Never copied or published | -              |
+| `--clear`                                                                   | Remove the defaults entirely. Leaves `--short-label` alone. Cannot be combined with other defaults or `--publish`                     | -              |
+| `--publish`                                                                 | Also write this call's changes into the agents already in the group                                                                   | -              |
+| `--yes`                                                                     | Confirm a `--publish` without asking                                                                                                  | -              |
+| `--onboarding <on\|off\|clear>`, `--offboarding <on\|off\|clear>`           | Turn a lifecycle prompt on or off (the prompt is kept), or remove it                                                                  | -              |
+| `--onboarding-prompt <text\|@file>`, `--offboarding-prompt <text\|@file>`   | The prompt. `@path` reads it from a file                                                                                              | -              |
+| `--onboarding-events <list>`, `--offboarding-events <list>`                 | Which agents fire it, comma separated: `agent`, `worktree`                                                                            | both           |
+| `--onboarding-runs-in <self\|agent>`, `--offboarding-runs-in <self\|agent>` | The agent that runs it: `self` (the agent joining or leaving) or another agent                                                        | self           |
+| `--onboarding-tab <name>`, `--offboarding-tab <name>`                       | The tab it runs in. Empty string resets                                                                                               | the stage name |
+| `--onboarding-tier <tier>`, `--offboarding-tier <tier>`                     | `default`, `low`, `medium`, or `high`                                                                                                 | default        |
+| `--offboarding-timeout <minutes>`                                           | Minutes removal waits for the Offboarding turn, 1 to 60. Empty string resets                                                          | 5              |
+| `--json`                                                                    | Machine-readable JSON output                                                                                                          | -              |
 
 ### Reading the Delegation Graph (`delegation graph`)
 

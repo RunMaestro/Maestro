@@ -60,6 +60,10 @@ export const MODAL_PRIORITIES = {
 	/** Forced parallel execution warning - one-time acknowledgment */
 	FORCED_PARALLEL_WARNING: 1005,
 
+	/** A removal waiting on its group's Offboarding prompt. Above the delete
+	 * confirmation that started it, so it is what Escape closes first. */
+	OFFBOARDING_PROGRESS: 1002,
+
 	/** Confirmation dialogs - highest priority, always on top */
 	CONFIRM: 1000,
 

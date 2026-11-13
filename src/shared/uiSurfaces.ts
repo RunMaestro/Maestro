@@ -264,7 +264,7 @@ export const UI_SURFACES: UiSurface[] = [
 		aliases: ['group-defaults'],
 		modal: 'groupSettings',
 		description:
-			"One group's defaults for new agents, its pill label, and Publish to existing agents. Needs --group. Read and write the same settings with group-settings and update-group-settings.",
+			"One group's defaults for new agents, its pill label, Publish to existing agents, and its Lifecycle prompts (Onboarding and Offboarding). Needs --group. Read and write the same settings with group-settings and update-group-settings; run a Lifecycle prompt with run-group-lifecycle.",
 		commandPalette: 'Group Settings',
 		groupClick: 'right-click the group in the Left Bar > Group Settings',
 		groupRequired: true,

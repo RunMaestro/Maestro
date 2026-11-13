@@ -85,4 +85,32 @@ describe('parseGroupSettingsUpdateRequest', () => {
 			expect(GROUP_SETTINGS_PATCH_KEYS).not.toContain(key);
 		}
 	});
+	it('accepts a lifecycle patch on its own, and counts it as something to update', () => {
+		const parsed = parseGroupSettingsUpdateRequest({
+			lifecyclePatch: { onboarding: { enabled: true, prompt: 'Set up' }, offboarding: null },
+		});
+		expect(parsed).toEqual({
+			ok: true,
+			request: {
+				lifecyclePatch: { onboarding: { enabled: true, prompt: 'Set up' }, offboarding: null },
+			},
+		});
+	});
+
+	it('refuses a malformed lifecycle patch with the reason', () => {
+		const parsed = parseGroupSettingsUpdateRequest({ lifecyclePatch: { midboarding: {} } });
+		expect(parsed).toEqual({ ok: false, error: expect.stringContaining('midboarding') });
+	});
+
+	it('accepts a lifecycle run alone, and refuses one beside a write', () => {
+		expect(
+			parseGroupSettingsUpdateRequest({ runLifecycle: { stage: 'offboarding', agentId: 'a1' } })
+		).toEqual({ ok: true, request: { runLifecycle: { stage: 'offboarding', agentId: 'a1' } } });
+		const mixed = parseGroupSettingsUpdateRequest({
+			runLifecycle: { stage: 'onboarding', agentId: 'a1' },
+			shortLabel: 'BE',
+		});
+		expect(mixed.ok).toBe(false);
+		expect(parseGroupSettingsUpdateRequest({ runLifecycle: { stage: 'later' } }).ok).toBe(false);
+	});
 });

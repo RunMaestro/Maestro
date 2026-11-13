@@ -67,6 +67,7 @@ import {
 	withWorkingDirectory,
 	workingDirectoryChangeBlocker,
 } from '../../utils/agentWorkingDirectory';
+import { startGroupOnboarding, offboardBeforeRemoval } from '../../services/groupLifecycle';
 import { spawnPtyForTab } from '../../services/terminalSpawn';
 import { applySeededTokenProxy } from '../../services/groupDefaultsPublish';
 import { applyDefaultAgentTokenProxy } from '../../services/agentGateway';
@@ -1763,6 +1764,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				logger.error('[Remote] Failed to persist new CLI-created session:', undefined, persistErr);
 			}
 
+			// The group's Onboarding prompt, when it has one, as for an agent the
+			// New Agent form creates.
+			startGroupOnboarding(newId);
+
 			window.maestro.process.sendRemoteCreateSessionResponse(responseChannel, {
 				sessionId: newId,
 				seededFromGroup: seeded.seededFromGroup,
@@ -1777,6 +1782,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// Handle remote delete session from web interface (skip confirmation dialog)
 	useEventListener('maestro:remoteDeleteSession', async (e: Event) => {
 		const { sessionId } = (e as CustomEvent).detail;
+		if (!sessionsRef.current.some((s) => s.id === sessionId)) return;
+
+		// The group's Offboarding prompt runs first, and removal waits for it.
+		await offboardBeforeRemoval(sessionId);
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) return;
 

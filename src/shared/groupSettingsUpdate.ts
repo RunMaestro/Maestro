@@ -13,6 +13,14 @@
  * `parseGroupSettingsUpdateRequest`, the app validates the values.
  */
 
+import {
+	parseGroupLifecyclePatch,
+	parseGroupLifecycleRunRequest,
+	type GroupLifecycle,
+	type GroupLifecyclePatch,
+	type GroupLifecycleRunReport,
+	type GroupLifecycleRunRequest,
+} from './groupLifecycle';
 import type { GroupAgentDefaults } from './types';
 
 /**
@@ -72,6 +80,16 @@ export interface GroupSettingsUpdateRequest {
 	clearDefaults?: boolean;
 	/** Also write this save's change into the agents already in the group. */
 	publish?: boolean;
+	/**
+	 * A change to the group's Onboarding and Offboarding prompts. Not a default:
+	 * it is never copied into an agent and never published.
+	 */
+	lifecyclePatch?: GroupLifecyclePatch;
+	/**
+	 * Run one stage's prompt now, on one agent of the group (the dialog's "Run
+	 * now on an agent..."). Writes nothing, so it cannot ride with a write.
+	 */
+	runLifecycle?: GroupLifecycleRunRequest;
 }
 
 /** What a publish did, in the names a person reads. */
@@ -101,6 +119,10 @@ export interface GroupSettingsUpdateResult {
 	changed?: string[];
 	/** Present only when `publish` was requested. */
 	publish?: GroupSettingsPublishReport;
+	/** The group's lifecycle prompts after the write. `null` when it holds none. */
+	lifecycle?: GroupLifecycle | null;
+	/** Present only when `runLifecycle` was requested: where the prompt was queued. */
+	lifecycleRun?: GroupLifecycleRunReport;
 }
 
 export type GroupSettingsUpdateParse =
@@ -162,6 +184,27 @@ export function parseGroupSettingsUpdateRequest(raw: unknown): GroupSettingsUpda
 		if (value) request[key] = true;
 	}
 
+	if (raw.lifecyclePatch !== undefined) {
+		const lifecycle = parseGroupLifecyclePatch(raw.lifecyclePatch);
+		if (!lifecycle.ok) return lifecycle;
+		request.lifecyclePatch = lifecycle.patch;
+	}
+
+	if (raw.runLifecycle !== undefined) {
+		const run = parseGroupLifecycleRunRequest(raw.runLifecycle);
+		if (!run.ok) return run;
+		request.runLifecycle = run.request;
+		const writes = Object.keys(request).filter((key) => key !== 'runLifecycle');
+		if (writes.length > 0) {
+			return {
+				ok: false,
+				error:
+					'Running a lifecycle prompt writes nothing, so it cannot ride with a settings change. Do one, then the other.',
+			};
+		}
+		return { ok: true, request };
+	}
+
 	if (request.clearDefaults && (request.configPatch || request.sshPatch)) {
 		return {
 			ok: false,
@@ -180,6 +223,7 @@ export function parseGroupSettingsUpdateRequest(raw: unknown): GroupSettingsUpda
 		request.configPatch === undefined &&
 		request.sshPatch === undefined &&
 		request.shortLabel === undefined &&
+		request.lifecyclePatch === undefined &&
 		!request.clearDefaults
 	) {
 		return { ok: false, error: 'Nothing to update' };

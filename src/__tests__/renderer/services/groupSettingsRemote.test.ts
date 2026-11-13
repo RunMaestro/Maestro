@@ -6,7 +6,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('../../../renderer/services/groupLifecycle', () => ({
+	runGroupLifecycleNow: vi.fn(),
+}));
+
 import { applyRemoteGroupSettings } from '../../../renderer/services/groupSettingsRemote';
+import { runGroupLifecycleNow } from '../../../renderer/services/groupLifecycle';
 import { __resetGroupDefaultsPublishForTests } from '../../../renderer/services/groupDefaultsPublish';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -232,6 +238,82 @@ describe('applyRemoteGroupSettings', () => {
 			// The provider itself is never published.
 			expect(storedAgent('codex').toolType).toBe('codex');
 			expect(result.publish?.unpublished).toContain('Provider');
+		});
+	});
+	describe('lifecycle prompts', () => {
+		it('writes a lifecycle patch beside the profile and names the stage it changed', async () => {
+			seed([group()], [member('worker')]);
+
+			const result = await applyRemoteGroupSettings(GROUP_ID, {
+				lifecyclePatch: { onboarding: { enabled: true, prompt: 'Set up {{AGENT_NAME}}' } },
+			});
+
+			expect(result).toMatchObject({
+				success: true,
+				changed: ['Onboarding'],
+				lifecycle: {
+					onboarding: {
+						enabled: true,
+						prompt: 'Set up {{AGENT_NAME}}',
+						triggers: ['agent', 'worktree'],
+					},
+				},
+			});
+			expect(storedGroup().lifecycle?.onboarding?.prompt).toBe('Set up {{AGENT_NAME}}');
+		});
+
+		it('refuses a steward that does not exist, and writes nothing', async () => {
+			seed([group()], [member('worker')]);
+
+			const result = await applyRemoteGroupSettings(GROUP_ID, {
+				lifecyclePatch: { offboarding: { enabled: true, prompt: 'Bye', runsInAgentId: 'ghost' } },
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('no longer exists');
+			expect(storedGroup().lifecycle).toBeUndefined();
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+		});
+
+		it('runs a stage through the shared runner and writes nothing', async () => {
+			seed(
+				[
+					group({
+						lifecycle: { onboarding: { enabled: true, prompt: 'Hi', triggers: ['agent'] } },
+					}),
+				],
+				[member('worker')]
+			);
+			const report = {
+				stage: 'onboarding' as const,
+				subjectAgentId: 'worker',
+				runAgentId: 'worker',
+				tabId: 't1',
+				tabName: 'Onboarding',
+			};
+			vi.mocked(runGroupLifecycleNow).mockResolvedValueOnce({ ok: true, itemId: 'i1', report });
+
+			const result = await applyRemoteGroupSettings(GROUP_ID, {
+				runLifecycle: { stage: 'onboarding', agentId: 'worker' },
+			});
+
+			expect(runGroupLifecycleNow).toHaveBeenCalledWith(GROUP_ID, 'onboarding', 'worker');
+			expect(result).toMatchObject({ success: true, lifecycleRun: report, changed: [] });
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+		});
+
+		it("reports the runner's refusal", async () => {
+			seed([group()], [member('worker')]);
+			vi.mocked(runGroupLifecycleNow).mockResolvedValueOnce({
+				ok: false,
+				error: '"BACKEND" has no Offboarding prompt.',
+			});
+
+			const result = await applyRemoteGroupSettings(GROUP_ID, {
+				runLifecycle: { stage: 'offboarding', agentId: 'worker' },
+			});
+
+			expect(result).toEqual({ success: false, error: '"BACKEND" has no Offboarding prompt.' });
 		});
 	});
 });

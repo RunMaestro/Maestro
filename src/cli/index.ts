@@ -299,6 +299,7 @@ import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
 import { groupSettings } from './commands/group-settings';
 import { updateGroupSettings } from './commands/update-group-settings';
+import { runGroupLifecycle } from './commands/run-group-lifecycle';
 import { delegationGraph } from './commands/delegation-graph';
 import {
 	stopAutoRun,
@@ -2563,8 +2564,63 @@ program
 		"Also write this call's changes into the agents already in the group (provider, working directory and SSH remote are never written; env vars merge by key, lists replace). Needs --yes unless you answer a prompt"
 	)
 	.option('--yes', 'Confirm a --publish without asking')
+	.option(
+		'--onboarding <on|off|clear>',
+		'Onboarding: the prompt the group runs when an agent joins it. on/off keeps the prompt; clear removes the hook'
+	)
+	.option(
+		'--onboarding-prompt <text|@file>',
+		'The Onboarding prompt ({{VARIABLES}} allowed). @path reads it from a file'
+	)
+	.option(
+		'--onboarding-events <list>',
+		'Which agents fire Onboarding, comma separated: agent, worktree'
+	)
+	.option(
+		'--onboarding-runs-in <self|agent>',
+		'The agent that runs the Onboarding prompt: self (the agent itself) or another agent by id or name'
+	)
+	.option('--onboarding-tab <name>', 'Tab name the Onboarding prompt runs in (empty string resets)')
+	.option('--onboarding-tier <default|low|medium|high>', 'Model tier the Onboarding turn runs at')
+	.option(
+		'--offboarding <on|off|clear>',
+		'Offboarding: the prompt the group runs when an agent leaves it. on/off keeps the prompt; clear removes the hook'
+	)
+	.option(
+		'--offboarding-prompt <text|@file>',
+		'The Offboarding prompt ({{VARIABLES}} allowed). @path reads it from a file'
+	)
+	.option(
+		'--offboarding-events <list>',
+		'Which agents fire Offboarding, comma separated: agent, worktree'
+	)
+	.option(
+		'--offboarding-runs-in <self|agent>',
+		'The agent that runs the Offboarding prompt: self (the agent itself) or another agent by id or name'
+	)
+	.option(
+		'--offboarding-tab <name>',
+		'Tab name the Offboarding prompt runs in (empty string resets)'
+	)
+	.option('--offboarding-tier <default|low|medium|high>', 'Model tier the Offboarding turn runs at')
+	.option(
+		'--offboarding-timeout <minutes>',
+		'Minutes removal waits for the Offboarding turn before it goes ahead (1-60, empty string resets to 5)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((groupId, options) => updateGroupSettings(groupId, options));
+
+// Run a group's Onboarding or Offboarding prompt now, on one agent of the group:
+// Group Settings > Lifecycle > "Run now on an agent...". Writes nothing, and an
+// Offboarding run removes nothing.
+program
+	.command('run-group-lifecycle <group-id> <stage>')
+	.description(
+		"Run a group's Onboarding or Offboarding prompt now on one of its agents (requires the desktop app). Removes nothing"
+	)
+	.requiredOption('-a, --agent <id>', 'The agent the prompt is about (it must be in the group)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((groupId, stage, options) => runGroupLifecycle(groupId, stage, options));
 
 // Create-worktree command - create a new agent in a git worktree off a parent
 // agent, without an Auto Run playbook. The parent agent must already exist in

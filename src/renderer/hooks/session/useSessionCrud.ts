@@ -26,6 +26,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
+import { startGroupOnboarding } from '../../services/groupLifecycle';
 import { gitService } from '../../services/git';
 import { applySeededTokenProxy } from '../../services/groupDefaultsPublish';
 import { applyDefaultAgentTokenProxy } from '../../services/agentGateway';
@@ -371,6 +372,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					isRemote: !!isRemoteSession,
 					isWorktree: false,
 				});
+				// The group's Onboarding prompt, when it has one. Queued after the
+				// routing above so the first turn launches on the agent's real settings.
+				startGroupOnboarding(newId);
 
 				setActiveFocus('main');
 				setTimeout(() => inputRef.current?.focus(), 50);

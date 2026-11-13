@@ -408,4 +408,41 @@ describe('update-group-settings command', () => {
 			expect(out).toContain('Pill label');
 		});
 	});
+	describe('lifecycle prompts', () => {
+		it('sends the lifecycle flags as a lifecycle patch', async () => {
+			const lifecycle = {
+				onboarding: { enabled: true, prompt: 'Set up', triggers: ['agent'] },
+			};
+			const payload = mockSend({
+				success: true,
+				defaults: null,
+				shortLabel: null,
+				lifecycle,
+				changed: ['Onboarding'],
+			});
+			stored({ lifecycle: lifecycle as Group['lifecycle'] });
+
+			await updateGroupSettings('g1', {
+				onboarding: 'on',
+				onboardingPrompt: 'Set up',
+				onboardingEvents: 'agent',
+			});
+
+			expect(payload()).toEqual({
+				type: 'update_group_settings',
+				groupId: 'g1',
+				lifecyclePatch: { onboarding: { enabled: true, prompt: 'Set up', triggers: ['agent'] } },
+			});
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('fails when the app answers without a lifecycle, having dropped the patch', async () => {
+			mockSend({ success: true, defaults: null, shortLabel: null, changed: [] });
+
+			await updateGroupSettings('g1', { offboarding: 'off', json: true });
+
+			expect(exitSpy).toHaveBeenCalled();
+			expect(logSpy.mock.calls.flat().join(' ')).toContain('does not know Onboarding');
+		});
+	});
 });

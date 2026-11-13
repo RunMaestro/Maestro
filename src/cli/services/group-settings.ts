@@ -19,6 +19,15 @@ import {
 	type GroupSettingsUpdateRequest,
 } from '../../shared/groupSettingsUpdate';
 import { applyPeerAgentEdits } from '../../shared/peerAgents';
+import {
+	GROUP_LIFECYCLE_STAGES,
+	GROUP_LIFECYCLE_TRIGGERS,
+	normalizeGroupLifecycle,
+	type GroupLifecycle,
+	type GroupLifecycleHookPatch,
+	type GroupLifecyclePatch,
+	type GroupLifecycleStage,
+} from '../../shared/groupLifecycle';
 import type { Group, GroupAgentDefaults } from '../../shared/types';
 import { isWorktreeGroup } from '../../shared/types';
 import { readRunOnFlags } from './run-on';
@@ -31,7 +40,8 @@ import {
 } from './agent-setting-flags';
 import { hasPeerFlags, readPeerFlags, type PeerFlagOptions } from './peer-flags';
 import { resolveCliPath } from '../utils/parse';
-import { readGroups } from './storage';
+import { readGroups, resolveAgentId } from './storage';
+import { readInputFile } from './system-one-input';
 
 /** Every flag `update-group-settings` reads. */
 export interface GroupSettingsFlagOptions
@@ -43,6 +53,122 @@ export interface GroupSettingsFlagOptions
 	shortLabel?: string;
 	clear?: boolean;
 	publish?: boolean;
+	onboarding?: string;
+	onboardingPrompt?: string;
+	onboardingEvents?: string;
+	onboardingRunsIn?: string;
+	onboardingTab?: string;
+	onboardingTier?: string;
+	offboarding?: string;
+	offboardingPrompt?: string;
+	offboardingEvents?: string;
+	offboardingRunsIn?: string;
+	offboardingTab?: string;
+	offboardingTier?: string;
+	offboardingTimeout?: string;
+}
+
+/** The lifecycle flags of one stage, read off the options by the stage's name. */
+function stageFlags(options: GroupSettingsFlagOptions, stage: GroupLifecycleStage) {
+	return stage === 'onboarding'
+		? {
+				state: options.onboarding,
+				prompt: options.onboardingPrompt,
+				events: options.onboardingEvents,
+				runsIn: options.onboardingRunsIn,
+				tab: options.onboardingTab,
+				tier: options.onboardingTier,
+				timeout: undefined,
+			}
+		: {
+				state: options.offboarding,
+				prompt: options.offboardingPrompt,
+				events: options.offboardingEvents,
+				runsIn: options.offboardingRunsIn,
+				tab: options.offboardingTab,
+				tier: options.offboardingTier,
+				timeout: options.offboardingTimeout,
+			};
+}
+
+/**
+ * Read the `--onboarding-*` and `--offboarding-*` flags into the patch the app
+ * applies. The app judges the result (a steward that exists, a prompt on a
+ * hook that is on); this reads the words and refuses the malformed ones.
+ */
+export function readLifecycleFlags(
+	options: GroupSettingsFlagOptions
+): GroupLifecyclePatch | undefined {
+	const patch: GroupLifecyclePatch = {};
+	for (const stage of GROUP_LIFECYCLE_STAGES) {
+		const flags = stageFlags(options, stage);
+		const flag = (name: string) => `--${stage}${name ? `-${name}` : ''}`;
+		if (flags.state?.trim().toLowerCase() === 'clear') {
+			const others = [
+				flags.prompt,
+				flags.events,
+				flags.runsIn,
+				flags.tab,
+				flags.tier,
+				flags.timeout,
+			];
+			if (others.some((value) => value !== undefined)) {
+				throw new Error(
+					`${flag('')} clear removes the hook; it cannot ride with other ${stage} flags.`
+				);
+			}
+			patch[stage] = null;
+			continue;
+		}
+		const hook: GroupLifecycleHookPatch = {};
+		if (flags.state !== undefined) {
+			const state = flags.state.trim().toLowerCase();
+			if (state !== 'on' && state !== 'off') {
+				throw new Error(`${flag('')} must be on, off or clear.`);
+			}
+			hook.enabled = state === 'on';
+		}
+		if (flags.prompt !== undefined) {
+			hook.prompt = flags.prompt.startsWith('@')
+				? readInputFile(flags.prompt.slice(1)).text
+				: flags.prompt;
+		}
+		if (flags.events !== undefined) {
+			const words = flags.events
+				.split(',')
+				.map((word) => word.trim().toLowerCase())
+				.filter(Boolean);
+			const unknown = words.filter(
+				(word) => !(GROUP_LIFECYCLE_TRIGGERS as readonly string[]).includes(word)
+			);
+			if (unknown.length > 0) {
+				throw new Error(
+					`${flag('events')} takes ${GROUP_LIFECYCLE_TRIGGERS.join(', ')} (comma separated). Not: ${unknown.join(', ')}.`
+				);
+			}
+			hook.triggers = GROUP_LIFECYCLE_TRIGGERS.filter((trigger) => words.includes(trigger));
+		}
+		if (flags.runsIn !== undefined) {
+			const raw = flags.runsIn.trim();
+			hook.runsInAgentId = raw === '' || raw.toLowerCase() === 'self' ? null : resolveAgentId(raw);
+		}
+		if (flags.tab !== undefined) hook.tabName = flags.tab.trim() || null;
+		if (flags.tier !== undefined) {
+			const tier = flags.tier.trim().toLowerCase();
+			hook.tier =
+				tier === 'default' || tier === '' ? null : (tier as GroupLifecycleHookPatch['tier']);
+		}
+		if (flags.timeout !== undefined) {
+			const raw = flags.timeout.trim();
+			const minutes = Number(raw);
+			if (raw !== '' && (!Number.isFinite(minutes) || !Number.isInteger(minutes))) {
+				throw new Error(`${flag('timeout')} takes a whole number of minutes.`);
+			}
+			hook.timeoutMinutes = raw === '' ? null : minutes;
+		}
+		if (Object.keys(hook).length > 0) patch[stage] = hook;
+	}
+	return Object.keys(patch).length > 0 ? patch : undefined;
 }
 
 const VALID_PROVIDER_TYPES: ReadonlySet<string> = new Set(
@@ -129,12 +255,14 @@ export function readGroupSettingsFlags(
 	}
 	if (options.clear) request.clearDefaults = true;
 	if (options.publish) request.publish = true;
+	const lifecyclePatch = readLifecycleFlags(options);
+	if (lifecyclePatch) request.lifecyclePatch = lifecyclePatch;
 
 	const checked = parseGroupSettingsUpdateRequest(request);
 	if (!checked.ok) {
 		throw new Error(
 			checked.error === 'Nothing to update'
-				? 'Specify at least one field to update (e.g. --provider, --model, --env, --nudge, --peer, --short-label, --clear). Run "maestro-cli update-group-settings --help" for the full list.'
+				? 'Specify at least one field to update (e.g. --provider, --model, --env, --nudge, --peer, --short-label, --onboarding-prompt, --clear). Run "maestro-cli update-group-settings --help" for the full list.'
 				: checked.error
 		);
 	}
@@ -162,6 +290,8 @@ export interface GroupSettingsReport {
 	badgeLabelSource: 'custom' | 'automatic';
 	/** The defaults a new agent in the group starts with, or `null` when none. */
 	defaults: GroupAgentDefaults | null;
+	/** The Onboarding and Offboarding prompts, or `null` when the group holds none. */
+	lifecycle: GroupLifecycle | null;
 }
 
 export function describeGroupSettings(group: Group): GroupSettingsReport {
@@ -175,6 +305,7 @@ export function describeGroupSettings(group: Group): GroupSettingsReport {
 		badgeLabel: groupBadgeLabel(group),
 		badgeLabelSource: shortLabel ? 'custom' : 'automatic',
 		defaults: group.defaults && Object.keys(group.defaults).length > 0 ? group.defaults : null,
+		lifecycle: normalizeGroupLifecycle(group.lifecycle) ?? null,
 	};
 }
 
@@ -184,7 +315,12 @@ export function describeGroupSettings(group: Group): GroupSettingsReport {
  */
 export function verifyPersistedGroupSettings(
 	groupId: string,
-	expected: { defaults: GroupAgentDefaults | null; shortLabel: string | null }
+	expected: {
+		defaults: GroupAgentDefaults | null;
+		shortLabel: string | null;
+		/** Checked only when the write reported it: an older app sends none. */
+		lifecycle?: GroupLifecycle | null;
+	}
 ): string | null {
 	let stored: Group | undefined;
 	try {
@@ -200,6 +336,12 @@ export function verifyPersistedGroupSettings(
 	const mismatches: string[] = [];
 	if (canonicalJson(actual.defaults) !== canonicalJson(expected.defaults)) {
 		mismatches.push('the defaults on disk are not the ones the app reported storing');
+	}
+	if (
+		expected.lifecycle !== undefined &&
+		canonicalJson(actual.lifecycle) !== canonicalJson(expected.lifecycle)
+	) {
+		mismatches.push('the lifecycle prompts on disk are not the ones the app reported storing');
 	}
 	if (actual.shortLabel !== expected.shortLabel) {
 		mismatches.push(

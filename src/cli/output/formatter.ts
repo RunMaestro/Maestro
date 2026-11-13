@@ -6,6 +6,7 @@ import {
 	formatDurationDecimal,
 	formatRelativeTime,
 	formatSize,
+	truncateAtWordBoundary,
 } from '../../shared/formatters';
 import {
 	MODEL_SERVER_NAME,
@@ -93,6 +94,15 @@ import {
 	type GroupDefaultsFieldChange,
 } from '../../shared/groupAgentDefaults';
 import type { GroupSettingsPublishReport } from '../../shared/groupSettingsUpdate';
+import {
+	GROUP_LIFECYCLE_STAGE_LABELS,
+	GROUP_LIFECYCLE_STAGES,
+	GROUP_LIFECYCLE_TRIGGER_LABELS,
+	lifecycleTabName,
+	offboardingTimeoutMs,
+	type GroupLifecycle,
+	type GroupLifecycleRunReport,
+} from '../../shared/groupLifecycle';
 import type { GroupAgentDefaults } from '../../shared/types';
 import { formatBackgroundRequestsSpec } from '../../shared/local-models/background-requests';
 import { formatRunOnSpec } from '../../shared/local-models/run-on';
@@ -2486,6 +2496,34 @@ export interface GroupSettingsView {
 	badgeLabel: string;
 	badgeLabelSource: 'custom' | 'automatic';
 	defaults: GroupAgentDefaults | null;
+	/** Absent on a view built before lifecycle prompts existed. */
+	lifecycle?: GroupLifecycle | null;
+}
+
+/** The Onboarding and Offboarding lines of `group-settings`. */
+function formatGroupLifecycleLines(lifecycle: GroupLifecycle | null | undefined): string[] {
+	const lines = ['', `  ${bold(c('white', 'Lifecycle prompts'))}`];
+	for (const stage of GROUP_LIFECYCLE_STAGES) {
+		const label = GROUP_LIFECYCLE_STAGE_LABELS[stage];
+		const hook = lifecycle?.[stage];
+		if (!hook) {
+			lines.push(`    ${`${label}:`.padEnd(13)} ${dim('none')}`);
+			continue;
+		}
+		const events = hook.triggers.map((trigger) => GROUP_LIFECYCLE_TRIGGER_LABELS[stage][trigger]);
+		const details = [
+			hook.enabled ? c('green', 'on') : dim('off'),
+			events.length > 0 ? events.join(', ') : 'no events',
+			hook.runsInAgentId ? `runs in ${hook.runsInAgentId}` : 'runs in the agent itself',
+			`tab "${lifecycleTabName(hook, stage)}"`,
+			`tier ${hook.tier ?? 'default'}`,
+			...(stage === 'offboarding' ? [`waits up to ${offboardingTimeoutMs(hook) / 60_000} min`] : []),
+		];
+		lines.push(`    ${`${label}:`.padEnd(13)} ${details.join(' · ')}`);
+		const firstLine = hook.prompt.trim().split(/\r?\n/)[0] ?? '';
+		lines.push(`    ${''.padEnd(13)} ${dim(truncateAtWordBoundary(firstLine, 80) || '(no prompt)')}`);
+	}
+	return lines;
 }
 
 /**
@@ -2503,6 +2541,7 @@ export function formatGroupSettings(group: GroupSettingsView): string {
 	];
 	if (!group.defaults) {
 		lines.push(`  ${c('white', 'Defaults:')}    ${dim('no defaults')}`);
+		lines.push(...formatGroupLifecycleLines(group.lifecycle));
 		return lines.join('\n');
 	}
 	lines.push(`  ${bold(c('white', 'Defaults for a new agent in this group'))}`);
@@ -2513,6 +2552,7 @@ export function formatGroupSettings(group: GroupSettingsView): string {
 			`    ${`${groupDefaultLabel(key)}:`.padEnd(width + 1)} ${describeGroupDefaultValue(key, group.defaults[key])}`
 		);
 	}
+	lines.push(...formatGroupLifecycleLines(group.lifecycle));
 	return lines.join('\n');
 }
 
@@ -2548,6 +2588,23 @@ export function formatGroupSettingsUpdate(
 			lines.push(`  Skipped on ${skip.agentName}: ${skip.label}. ${skip.reason}`);
 		}
 	}
+	return lines.join('\n');
+}
+
+/** What `run-group-lifecycle` did, for a person. */
+export function formatGroupLifecycleRun(
+	groupName: string,
+	run: GroupLifecycleRunReport,
+	names: { subject: string; runAgent: string }
+): string {
+	const label = GROUP_LIFECYCLE_STAGE_LABELS[run.stage];
+	const where =
+		run.runAgentId === run.subjectAgentId
+			? `${names.subject}, tab "${run.tabName}"`
+			: `${names.runAgent}, tab "${run.tabName}" (about ${names.subject})`;
+	const lines = [formatSuccess(`Queued ${groupName}'s ${label} prompt in ${where}`)];
+	if (run.stage === 'offboarding') lines.push(dim('  Nothing was removed: this only runs the prompt.'));
+	lines.push(dim(`  Tab id: ${run.tabId}`));
 	return lines.join('\n');
 }
 

@@ -111,6 +111,7 @@ describe('GroupSettingsModal', () => {
 			'Models',
 			'Peers',
 			'SSH',
+			'Lifecycle',
 		]);
 		// The form names no agent.
 		expect(screen.queryByText('Agent Name')).not.toBeInTheDocument();
@@ -594,6 +595,81 @@ describe('GroupSettingsModal', () => {
 			expect(useSessionStore.getState().sessions).toEqual(agents);
 			expect(onClose).not.toHaveBeenCalled();
 			expect(screen.getByDisplayValue('Be brief.')).toBeInTheDocument();
+		});
+	});
+	describe('Lifecycle tab', () => {
+		it('says its prompts are read at the event, not copied into agents', () => {
+			renderModal(createGroup());
+			openTab('Lifecycle');
+
+			const explainer = screen.getByTestId('group-settings-explainer');
+			expect(explainer).toHaveTextContent('not copied into agents');
+			expect(explainer).not.toHaveTextContent('Nothing here is read while an agent runs.');
+			expect(screen.getByTestId('group-lifecycle-onboarding')).toBeInTheDocument();
+			expect(screen.getByTestId('group-lifecycle-offboarding')).toBeInTheDocument();
+		});
+
+		it('saves the prompts with the group, never as a default', async () => {
+			const group = createGroup();
+			renderModal(group);
+			openTab('Lifecycle');
+
+			fireEvent.click(screen.getByRole('switch', { name: 'Onboarding on' }));
+			fireEvent.change(screen.getByTestId('group-lifecycle-onboarding-prompt'), {
+				target: { value: 'Set up {{AGENT_NAME}}' },
+			});
+			fireEvent.change(screen.getByTestId('group-lifecycle-onboarding-tier'), {
+				target: { value: 'low' },
+			});
+			fireEvent.click(screen.getByTestId('group-lifecycle-onboarding-trigger-worktree'));
+			fireEvent.click(screen.getByText('Save'));
+
+			await waitFor(() => expect(setGroups).toHaveBeenCalled());
+			const saved = written(group).find((g) => g.id === group.id)!;
+			expect(saved.lifecycle).toEqual({
+				onboarding: {
+					enabled: true,
+					prompt: 'Set up {{AGENT_NAME}}',
+					triggers: ['agent'],
+					tier: 'low',
+				},
+			});
+			expect(saved.defaults).toBeUndefined();
+		});
+
+		it('refuses a hook that is on with no prompt, on its own tab, and writes nothing', () => {
+			renderModal(createGroup());
+			openTab('Lifecycle');
+
+			fireEvent.click(screen.getByRole('switch', { name: 'Offboarding on' }));
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(screen.getByText('Offboarding is on but has no prompt.')).toBeInTheDocument();
+			expect(setGroups).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
+		});
+
+		it('jumps to the Lifecycle tab from another tab when a save is refused there', () => {
+			renderModal(
+				createGroup({
+					lifecycle: {
+						offboarding: {
+							enabled: true,
+							prompt: 'Bye',
+							triggers: ['agent'],
+							runsInAgentId: 'gone',
+						},
+					},
+				})
+			);
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(screen.getByRole('tab', { name: /^Lifecycle/ })).toHaveAttribute(
+				'aria-selected',
+				'true'
+			);
+			expect(screen.getByText(/runs in an agent that no longer exists/)).toBeInTheDocument();
+			expect(setGroups).not.toHaveBeenCalled();
 		});
 	});
 });

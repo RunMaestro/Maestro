@@ -16,8 +16,14 @@
  *
  * Nothing is written when any step fails, so a refused flag leaves the group
  * as it was.
+ *
+ * The group's Onboarding and Offboarding prompts (`lifecyclePatch`) ride in the
+ * same write, checked with the dialog's own validator. A `runLifecycle` request
+ * writes nothing: it runs one stage's stored prompt now, through the runner the
+ * dialog's "Run now" calls.
  */
 
+import { canonicalJson } from '../../shared/canonicalJson';
 import { GROUP_SHORT_LABEL_MAX_LENGTH } from '../../shared/formatters';
 import {
 	diffGroupDefaults,
@@ -31,6 +37,12 @@ import {
 	type GroupSettingsUpdateResult,
 } from '../../shared/groupSettingsUpdate';
 import { isWorktreeGroup } from '../../shared/types';
+import {
+	applyGroupLifecyclePatch,
+	groupLifecycleProblem,
+	normalizeGroupLifecycle,
+	withGroupLifecycle,
+} from '../../shared/groupLifecycle';
 import { applyGroupDefaultsPatch } from '../components/GroupSettingsModal/groupDefaultsPatch';
 import { useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -38,6 +50,7 @@ import { getHomeDirAsync } from '../utils/homeDir';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
 import { notifyGroupDefaultsPublished, publishGroupDefaults } from './groupDefaultsPublish';
 import { flushGroupsToDisk } from './groupPersistence';
+import { runGroupLifecycleNow } from './groupLifecycle';
 
 function refuse(error: string): GroupSettingsUpdateResult {
 	return { success: false, error };
@@ -68,6 +81,29 @@ export async function applyRemoteGroupSettings(
 		return refuse(
 			`"${group.name}" is a worktree group. Its agents are created by the worktree flow and take no defaults, so there is nothing to set here.`
 		);
+	}
+
+	if (request.runLifecycle) {
+		const { stage, agentId } = request.runLifecycle;
+		const outcome = await runGroupLifecycleNow(groupId, stage, agentId);
+		if (!outcome.ok) return refuse(outcome.error);
+		return {
+			success: true,
+			defaults: group.defaults ?? null,
+			shortLabel: group.shortLabel ?? null,
+			lifecycle: normalizeGroupLifecycle(group.lifecycle) ?? null,
+			changed: [],
+			lifecycleRun: outcome.report,
+		};
+	}
+
+	let lifecycle = normalizeGroupLifecycle(group.lifecycle);
+	if (request.lifecyclePatch) {
+		lifecycle = applyGroupLifecyclePatch(group.lifecycle, request.lifecyclePatch);
+		const problem = groupLifecycleProblem(lifecycle, {
+			liveAgentIds: store.sessions.map((session) => session.id),
+		});
+		if (problem) return refuse(problem.error);
 	}
 
 	const shortLabel = request.shortLabel?.trim();
@@ -109,7 +145,10 @@ export async function applyRemoteGroupSettings(
 	store.setGroups((prev) =>
 		prev.map((candidate) =>
 			candidate.id === groupId
-				? withGroupShortLabel(withGroupDefaults(candidate, defaults), nextShortLabel)
+				? withGroupLifecycle(
+						withGroupShortLabel(withGroupDefaults(candidate, defaults), nextShortLabel),
+						lifecycle
+					)
 				: candidate
 		)
 	);
@@ -120,7 +159,12 @@ export async function applyRemoteGroupSettings(
 		success: true,
 		defaults: defaults ?? null,
 		shortLabel: nextShortLabel ?? null,
-		changed: [...summary.changed, ...summary.unpublished],
+		lifecycle: lifecycle ?? null,
+		changed: [
+			...summary.changed,
+			...summary.unpublished,
+			...(request.lifecyclePatch ? lifecycleChangeNames(group.lifecycle, lifecycle) : []),
+		],
 	};
 
 	if (request.publish) {
@@ -144,4 +188,20 @@ export async function applyRemoteGroupSettings(
 	}
 
 	return result;
+}
+
+/** The lifecycle stages a write changed, named as the dialog names them. */
+function lifecycleChangeNames(
+	before: unknown,
+	after: ReturnType<typeof normalizeGroupLifecycle>
+): string[] {
+	const previous = normalizeGroupLifecycle(before);
+	const names: string[] = [];
+	if (canonicalJson(previous?.onboarding ?? null) !== canonicalJson(after?.onboarding ?? null)) {
+		names.push('Onboarding');
+	}
+	if (canonicalJson(previous?.offboarding ?? null) !== canonicalJson(after?.offboarding ?? null)) {
+		names.push('Offboarding');
+	}
+	return names;
 }

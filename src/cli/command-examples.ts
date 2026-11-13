@@ -301,6 +301,11 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'update-group-settings': [
 		'maestro-cli update-group-settings <group-id> --provider claude-code --model opus',
 		'maestro-cli update-group-settings <group-id> --short-label "API" --publish --yes',
+		'maestro-cli update-group-settings <group-id> --onboarding on --onboarding-prompt @onboard.md --onboarding-tier low',
+		'maestro-cli update-group-settings <group-id> --offboarding on --offboarding-prompt "Stop the servers you started" --offboarding-timeout 10',
+	],
+	'run-group-lifecycle': [
+		'maestro-cli run-group-lifecycle <group-id> onboarding --agent <agent-id>',
 	],
 	'create-worktree': [
 		'maestro-cli create-worktree --agent <agent-id> --branch feat/search --base-branch main',

@@ -299,6 +299,12 @@ export interface Group {
 	/** Seed values copied into the create-agent form for a new agent in this group. */
 	defaults?: GroupAgentDefaults;
 	/**
+	 * Prompts the group runs when an agent joins it (Onboarding) and before one
+	 * leaves it (Offboarding). Unlike `defaults`, these are read at the moment of
+	 * the event, never copied into an agent. See `src/shared/groupLifecycle.ts`.
+	 */
+	lifecycle?: import('./groupLifecycle').GroupLifecycle;
+	/**
 	 * Parked out of the Left Bar. A middle ground between keeping a group on
 	 * screen and deleting it: hiding SUPPRESSES the group from the list, it
 	 * never restricts access, so the agents inside stay reachable through

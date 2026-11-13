@@ -4,6 +4,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import type { Group } from '../../../shared/types';
 
 vi.mock('../../../cli/services/storage', () => ({
@@ -20,6 +23,7 @@ import {
 	describeGroupSettings,
 	groupSettingsBlocker,
 	readGroupSettingsFlags,
+	readLifecycleFlags,
 	verifyPersistedGroupSettings,
 } from '../../../cli/services/group-settings';
 import { readGroups } from '../../../cli/services/storage';
@@ -51,6 +55,17 @@ describe('describeGroupSettings', () => {
 	it('treats an empty defaults object as none', () => {
 		expect(describeGroupSettings({ ...GROUP, defaults: {} }).defaults).toBeNull();
 	});
+
+	it('reports no lifecycle as null, and a stored one normalized', () => {
+		expect(describeGroupSettings(GROUP).lifecycle).toBeNull();
+		const report = describeGroupSettings({
+			...GROUP,
+			lifecycle: { onboarding: { enabled: true, prompt: 'Set up', triggers: ['agent'] } },
+		});
+		expect(report.lifecycle).toEqual({
+			onboarding: { enabled: true, prompt: 'Set up', triggers: ['agent'] },
+		});
+	});
 });
 
 describe('groupSettingsBlocker', () => {
@@ -80,6 +95,20 @@ describe('verifyPersistedGroupSettings', () => {
 		});
 		expect(message).toContain('defaults on disk');
 		expect(message).toContain('pill label');
+	});
+
+	it('names a lifecycle mismatch only when the app reported a lifecycle', () => {
+		vi.mocked(readGroups).mockReturnValue([GROUP]);
+		const stored = {
+			onboarding: { enabled: true, prompt: 'Set up', triggers: ['agent' as const] },
+		};
+		expect(
+			verifyPersistedGroupSettings('g1', { defaults: null, shortLabel: null, lifecycle: stored })
+		).toContain('lifecycle prompts');
+		expect(verifyPersistedGroupSettings('g1', { defaults: null, shortLabel: null })).toBeNull();
+		expect(
+			verifyPersistedGroupSettings('g1', { defaults: null, shortLabel: null, lifecycle: null })
+		).toBeNull();
 	});
 
 	it('fails for a group that vanished', () => {
@@ -129,5 +158,82 @@ describe('buildSshPatch', () => {
 		expect(() => buildSshPatch({ syncHistoryToRemote: 'maybe' })).toThrow(
 			'--sync-history-to-remote'
 		);
+	});
+});
+
+describe('readLifecycleFlags', () => {
+	it('reads nothing when no lifecycle flag was passed', () => {
+		expect(readLifecycleFlags({})).toBeUndefined();
+	});
+
+	it('reads every flag of a stage into its patch', () => {
+		expect(
+			readLifecycleFlags({
+				onboarding: 'on',
+				onboardingPrompt: 'Set up {{AGENT_NAME}}',
+				onboardingEvents: 'worktree, agent',
+				onboardingRunsIn: 'steward',
+				onboardingTab: ' Setup ',
+				onboardingTier: 'LOW',
+			})
+		).toEqual({
+			onboarding: {
+				enabled: true,
+				prompt: 'Set up {{AGENT_NAME}}',
+				triggers: ['agent', 'worktree'],
+				runsInAgentId: 'steward',
+				tabName: 'Setup',
+				tier: 'low',
+			},
+		});
+	});
+
+	it('resets the optional fields with self, an empty string and default', () => {
+		expect(
+			readLifecycleFlags({
+				offboardingRunsIn: 'self',
+				offboardingTab: '',
+				offboardingTier: 'default',
+				offboardingTimeout: '',
+			})
+		).toEqual({
+			offboarding: { runsInAgentId: null, tabName: null, tier: null, timeoutMinutes: null },
+		});
+	});
+
+	it('reads a prompt from a file named with @', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lifecycle-flags-'));
+		const file = path.join(dir, 'onboard.md');
+		fs.writeFileSync(file, 'Copy the env file.');
+		try {
+			expect(readLifecycleFlags({ onboardingPrompt: `@${file}` })).toEqual({
+				onboarding: { prompt: 'Copy the env file.' },
+			});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('removes a stage with clear, alone', () => {
+		expect(readLifecycleFlags({ offboarding: 'clear' })).toEqual({ offboarding: null });
+		expect(() => readLifecycleFlags({ offboarding: 'clear', offboardingTab: 'x' })).toThrow(
+			'--offboarding clear'
+		);
+	});
+
+	it('names the flag when a word is not one it takes', () => {
+		expect(() => readLifecycleFlags({ onboarding: 'maybe' })).toThrow('--onboarding');
+		expect(() => readLifecycleFlags({ onboardingEvents: 'agent,moved' })).toThrow(
+			'--onboarding-events'
+		);
+		expect(() => readLifecycleFlags({ offboardingTimeout: '2.5' })).toThrow(
+			'--offboarding-timeout'
+		);
+	});
+
+	it('rides in the update request, and a bad tier is refused by the shared parser', () => {
+		const request = readGroupSettingsFlags({ onboardingPrompt: 'Hi' }, GROUP);
+		expect(request.lifecyclePatch).toEqual({ onboarding: { prompt: 'Hi' } });
+		expect(() => readGroupSettingsFlags({ onboardingTier: 'huge' }, GROUP)).toThrow('tier');
 	});
 });

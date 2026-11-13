@@ -74,7 +74,7 @@ The Settings tab is called **Plugins** in v0.18.x and later. On **v0.17.4** and 
 
 A group collects agents in the Left Bar. It also holds a **profile**: the settings a new agent in that group starts with. You edit the profile in **Group Settings**, which is the [Edit Agent](./general-usage#editing-agents) form with one extra field (the pill label) and a different job. Edit Agent changes one agent. Group Settings changes what the next agent in the group looks like.
 
-The modal has the same tabs as Edit Agent: **General**, **Provider**, **Models**, **Peers**, and **SSH**. It is resizable and remembers its size. Every field is optional. A blank field means "use the Maestro default", so a profile can set one value and leave the rest alone.
+The modal has the same tabs as Edit Agent: **General**, **Provider**, **Models**, **Peers**, and **SSH**, plus a **Lifecycle** tab of its own (see [Onboarding and Offboarding](#onboarding-and-offboarding)). It is resizable and remembers its size. Every field is optional. A blank field means "use the Maestro default", so a profile can set one value and leave the rest alone.
 
 ### The Profile Is Copied, Not Inherited
 
@@ -141,3 +141,31 @@ What a publish writes:
 The publish ends with a toast, **Published to N agents**, and that toast is the **Undo**: click it to put back the prior value of every field the publish changed. The Undo lives only on the toast, only for this app session, and the dialog does not offer a second chance. The group's profile is left as saved, so the result is the same as choosing **New agents only**.
 
 **Clear defaults** (bottom left of the modal) removes every default the group holds after a confirmation. It does not publish anything.
+
+### Onboarding and Offboarding
+
+The **Lifecycle** tab holds two prompts that the group runs on its own:
+
+- **Onboarding** runs once when an agent joins the group: you create an agent in it, or you create a worktree agent under one of its agents.
+- **Offboarding** runs once before an agent leaves the group: you remove one of those agents.
+
+Use them for setup and teardown that a provider can do but a shell script cannot judge: copy an env file and install dependencies, register a preview environment, stop servers, drop a branch database, push unpushed work to a backup branch.
+
+Unlike the rest of Group Settings, these prompts are **not copied into agents**. Maestro reads them when the event happens, so an edit applies to the next agent that joins or leaves. **Clear defaults** does not remove them.
+
+| Setting        | What it does                                                                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **On / off**   | Off keeps the prompt but runs nothing                                                                                                                                                |
+| **When**       | Which agents fire it: **Agent created** / **Worktree created** (Onboarding), **Agent removed** / **Worktree removed** (Offboarding)                                                  |
+| **Runs in**    | **The new agent** or **The leaving agent** runs the prompt itself. **Another agent** hands it to an agent you choose, which is how you tear down for an agent that can no longer run |
+| **Tab**        | The name of the tab the prompt runs in. A new agent's Onboarding takes over its untouched first tab instead of opening a second one                                                  |
+| **Tier**       | **Default** runs on the agent's own model. **Low**, **Medium**, or **High** runs on that [tier's target](./local-models#run-on)                                                      |
+| **Time limit** | Offboarding only. Removal waits up to this many minutes (default 5) for the turn, then removes the agent anyway                                                                      |
+
+The prompt can use every [template variable](./prompt-customization#template-variables), and they describe the agent joining or leaving even when another agent runs the prompt. Three more are available: `{{LIFECYCLE_EVENT}}` (`agent-created`, `worktree-created`, `agent-removed`, or `worktree-removed`), `{{PARENT_AGENT_NAME}}`, and `{{PARENT_PATH}}` (a worktree agent's parent, empty for a plain agent).
+
+The prompt runs in the background, in its own tab, and never moves your view. When you remove an agent whose group has Offboarding on, a dialog shows the turn's latest output and how long removal will still wait. **Remove now, skip Offboarding** removes the agent at once, **View tab** takes you to the turn, and closing the dialog keeps waiting in the background.
+
+**Run now on an agent...** runs a prompt as typed, without saving, on one agent of the group. An Offboarding run here removes nothing.
+
+Moving an agent into or out of the group does not run either prompt. From a terminal, set the prompts with `maestro-cli update-group-settings <group> --onboarding on --onboarding-prompt @setup.md` and run one with `maestro-cli run-group-lifecycle <group> onboarding --agent <agent>` (see [Group Settings](./cli#group-settings)).
