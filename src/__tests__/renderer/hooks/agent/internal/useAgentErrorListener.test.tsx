@@ -1224,6 +1224,10 @@ describe('useAgentErrorListener - SSH transport errors', () => {
 		await waitFor(() =>
 			expect(useSshOutageStore.getState().outages['remote-1']?.event.remoteName).toBe('pedtome')
 		);
+		// A live turn died on it: surfaced, so the dialog shows wherever the user is.
+		await waitFor(() =>
+			expect(useSshOutageStore.getState().outages['remote-1']?.surfaced).toBe(true)
+		);
 		expect(useModalStore.getState().modals.get('agentError')?.open ?? false).toBe(false);
 		// The tab still records the failure.
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].agentError?.type).toBe('network_error');
