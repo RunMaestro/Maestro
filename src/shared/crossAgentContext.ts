@@ -12,6 +12,7 @@
  */
 
 import { scanMentionSpans } from './mentionPatterns';
+import { truncateAtWordBoundary } from './formatters';
 
 // ============================================================================
 // TYPES
@@ -156,20 +157,33 @@ function stripMentions(message: string): string {
 }
 
 /**
- * Derive a short, human-readable subject line from the user's consult message,
- * for the target's History entry + its consult attribution pill. Strips the
- * `@mention` tokens (so "@rc which branch?" becomes "which branch?"), collapses
- * whitespace, and truncates to `maxLen` with an ellipsis. Returns '' when the
- * message carries no prose beyond the mention - callers fall back to the source
- * agent's name so the entry is never left blank.
+ * Longest consult subject used as a LABEL: the History attribution pill, which
+ * is also the tab name a resume restores. Labels stay short.
  */
-export function deriveConsultSubject(userPrompt: string, maxLen = 60): string {
-	let subject = stripMentions(userPrompt).replace(/\s+/g, ' ').trim();
+export const CONSULT_SUBJECT_MAX_LENGTH = 60;
+
+/**
+ * Longest consult subject carried into the History summary line. That line is
+ * clamped to three lines by CSS, so the data cap only bounds storage; cutting
+ * it at the label length clipped the line with room to spare.
+ */
+export const CONSULT_SUMMARY_MAX_LENGTH = 400;
+
+/**
+ * Derive a human-readable subject line from the user's consult message, for
+ * the target's History entry + its consult attribution pill. Strips the
+ * `@mention` tokens (so "@rc which branch?" becomes "which branch?"), collapses
+ * whitespace, and truncates to `maxLen` at a word boundary with an ellipsis.
+ * Returns '' when the message carries no prose beyond the mention - callers
+ * fall back to the source agent's name so the entry is never left blank.
+ */
+export function deriveConsultSubject(
+	userPrompt: string,
+	maxLen = CONSULT_SUBJECT_MAX_LENGTH
+): string {
+	const subject = stripMentions(userPrompt).replace(/\s+/g, ' ').trim();
 	if (!subject) return '';
-	if (subject.length > maxLen) {
-		subject = `${subject.slice(0, maxLen - 1).trimEnd()}…`;
-	}
-	return subject;
+	return truncateAtWordBoundary(subject, maxLen);
 }
 
 // ============================================================================

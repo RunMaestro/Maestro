@@ -35,6 +35,7 @@ import {
 	type RemoteFsDeps,
 } from '../../../main/utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
+import { describeSshUnreachable, isSshConnectionFailure } from '../../../shared/sshConnection';
 import type { ExecResult } from '../../../main/utils/execFile';
 import { shellEscapeRemotePath } from '../../../main/utils/shell-escape';
 import { execFileNoThrow } from '../../../main/utils/execFile';
@@ -61,6 +62,15 @@ describe('remote-fs', () => {
 		privateKeyPath: '~/.ssh/id_ed25519',
 		enabled: true,
 	};
+
+	/**
+	 * The error remote-fs reports for a run that exited with `exitCode`. Exit 255
+	 * is ssh's own failure, which every remote op rewrites into the
+	 * "Unable to connect over SSH" message.
+	 */
+	function viaSsh(exitCode: number | string, stderr: string): string {
+		return isSshConnectionFailure(exitCode) ? describeSshUnreachable(baseConfig, stderr) : stderr;
+	}
 
 	// Create mock dependencies
 	function createMockDeps(execResult: ExecResult): RemoteFsDeps {
@@ -605,7 +615,7 @@ describe('remote-fs', () => {
 					expect(result).toEqual({
 						success: false,
 						errorCode: undefined,
-						error: stderr || 'Remote path identity unavailable',
+						error: viaSsh(exitCode, stderr) || 'Remote path identity unavailable',
 					});
 					expect(result.data).toBeUndefined();
 				}
@@ -652,7 +662,7 @@ describe('remote-fs', () => {
 										maxBytes: 8,
 										expectedIdentity: identity,
 									});
-					expect(result).toEqual({ success: false, errorCode, error: stderr });
+					expect(result).toEqual({ success: false, errorCode, error: viaSsh(exitCode, stderr) });
 					expect(deps.execSsh).toHaveBeenCalledTimes(1);
 				}
 			}
@@ -1577,12 +1587,13 @@ finally:
 			[1, 'head: Permission denied', 'Permission denied: /file'],
 			[1, 'head: No such file or directory', 'File not found: /file'],
 			[127, 'base64: command not found', 'base64: command not found'],
-			[255, 'Permission denied (publickey).', 'Permission denied: /file'],
+			// Exit 255 is ssh's own failure, so it reads as an unreachable host.
+			[255, 'Permission denied (publickey).', null],
 		] as const)('does not decode stdout on outer exit %s: %s', async (exitCode, stderr, error) => {
 			const deps = createMockDeps({ stdout: 'eAow', stderr, exitCode });
 			expect(await readFileRemote('/file', baseConfig, deps, { maxBytes: 16 })).toEqual({
 				success: false,
-				error,
+				error: error ?? viaSsh(exitCode, stderr),
 			});
 			expect(deps.execSsh).toHaveBeenCalledTimes(1);
 		});
@@ -1631,7 +1642,7 @@ finally:
 				expect(await pending).toEqual(
 					recovers
 						? { success: true, data: 'x' }
-						: { success: false, error: 'Connection reset by peer' }
+						: { success: false, error: viaSsh(255, 'Connection reset by peer') }
 				);
 				expect(deps.execSsh).toHaveBeenCalledTimes(recovers ? 2 : 4);
 				const calls = vi.mocked(deps.execSsh).mock.calls;
@@ -2320,7 +2331,9 @@ finally:
 			);
 
 			expect(result.success).toBe(false);
-			expect(result.error).toContain('connection refused');
+			expect(result.error).toBe(
+				'Unable to connect to "Test Remote" over SSH. Connection refused. Check host and port.'
+			);
 		});
 
 		it('expands a home-relative path via $HOME so the cd lands in the right directory', async () => {
@@ -3135,6 +3148,39 @@ finally:
 			const result = await statRemote('/file', baseConfig, deps);
 
 			expect(result.success).toBe(false);
+			// ssh's own refusal, not the remote file's permissions.
+			expect(result.error).toBe(
+				'Unable to connect to "Test Remote" over SSH. Authentication failed. Check username and private key.'
+			);
+		});
+
+		it('names the remote and keeps a tunnel error verbatim when the host is unreachable', async () => {
+			// A tailcat ProxyCommand that cannot reach its relay. Not a pattern
+			// describeSshConnectionError knows, so its words are the diagnostic.
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'tailcat Ping: context deadline exceeded\nproxy exited with status 1\n',
+				exitCode: 255,
+			});
+
+			const result = await writeFileRemote('/Users/me/notes.txt', 'body', baseConfig, deps);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe(
+				'Unable to connect to "Test Remote" over SSH. tailcat Ping: context deadline exceeded; proxy exited with status 1'
+			);
+		});
+
+		it('leaves a remote command failure (not exit 255) as the command reported it', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'base64: /nope/x.txt: No such file or directory',
+				exitCode: 1,
+			});
+
+			const result = await writeFileRemote('/nope/x.txt', 'body', baseConfig, deps);
+
+			expect(result.error).toBe('Parent directory not found: /nope/x.txt');
 		});
 
 		it('handles empty response with non-zero exit code', async () => {

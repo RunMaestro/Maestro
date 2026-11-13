@@ -532,7 +532,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Display',
 		label: 'File Edit & Preview',
 		description:
-			'Line numbers, word wrap default, and per-button visibility for the file preview / editor toolbar',
+			'Line numbers, word wrap default, Vim keybindings, and per-button visibility for the file preview / editor toolbar',
 		keywords: [
 			'file',
 			'edit',
@@ -544,6 +544,10 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'wrap',
 			'soft wrap',
 			'horizontal scroll',
+			'vim',
+			'vi',
+			'keybindings',
+			'modal editing',
 			'toolbar',
 			'buttons',
 			'visibility',

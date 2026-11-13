@@ -60,6 +60,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { isImeComposing } from '../../utils/ime';
 import type { AgentDebugInfo, AgentSeed, NewInstanceModalProps } from './types';
 import { SUPPORTED_AGENTS } from './types';
 import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidation';
@@ -1368,6 +1369,7 @@ export function NewInstanceModal({
 			}
 			// Handle Cmd+Enter or Cmd+S for creating agent
 			if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === 's') && !e.shiftKey) {
+				if (isImeComposing(e)) return;
 				e.preventDefault();
 				attemptCreate();
 			}

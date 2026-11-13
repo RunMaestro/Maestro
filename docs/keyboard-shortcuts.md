@@ -32,7 +32,7 @@ Tips and gotchas:
 
 [Quick Chat](./quick-chat) has its own system-wide hotkey, `Opt+Space` on macOS and `Alt+Space` on Windows and Linux by default. It opens a small floating chat window from any app, brings it to the front if it is behind another window, and closes it if it is in front. Change or clear it in **Settings -> Plugins -> Quick Chat -> Settings**.
 
-Inside the Quick Chat window: `Enter` sends, `Shift+Enter` adds a line, `Cmd+N` / `Ctrl+N` starts a new chat, `Cmd+O` / `Ctrl+O` opens the agent picker, `Cmd+T` / `Ctrl+T` opens the tab picker (where the next message goes), `Cmd+Y` / `Ctrl+Y` opens the recent chats to bring one back, `Cmd+S` / `Ctrl+S` keeps the chat as a tab (or makes it temporary again), `Cmd+P` / `Ctrl+P` pins the window on top (or unpins it), `Cmd+Shift+K` / `Ctrl+Shift+K` cycles the agent's thinking (hidden, shown while it works, kept), `Cmd+Shift+T` / `Ctrl+Shift+T` opens the chat as a tab in Maestro, `Cmd+=` / `Cmd+-` / `Cmd+0` (`Ctrl` off macOS) make the conversation text bigger, smaller, or back to normal, `Esc` closes the window (or, with the picker open, just the picker), `Cmd+W` / `Ctrl+W` closes the window even with the picker open, and ``Cmd+` `` (macOS) closes it and brings Maestro forward. The [show Maestro hotkey](#system-wide-hotkey-summon-maestro) also closes Quick Chat on its way to the Maestro window.
+Inside the Quick Chat window: `Enter` sends, `Shift+Enter` adds a line, `Cmd+N` / `Ctrl+N` starts a new chat, `Cmd+O` / `Ctrl+O` opens the agent picker, `Cmd+T` / `Ctrl+T` opens the tab picker (where the next message goes), `Cmd+Y` / `Ctrl+Y` opens the recent chats to bring one back, `Cmd+S` / `Ctrl+S` keeps the chat as a tab (or makes it temporary again), `Cmd+P` / `Ctrl+P` pins the window on top (or unpins it), `Cmd+Shift+K` / `Ctrl+Shift+K` cycles the agent's thinking (hidden, shown while it works, kept), `Cmd+Shift+T` / `Ctrl+Shift+T` opens the chat as a tab in Maestro, `Cmd+=` / `Cmd+-` / `Cmd+0` (`Ctrl` off macOS) make the conversation text bigger, smaller, or back to normal, `Esc` closes the window (or, with the picker open, just the picker), `Cmd+W` / `Ctrl+W` closes the window even with the picker open, and ``Cmd+` `` / ``Cmd+Shift+` `` (macOS) switch between Quick Chat and the Maestro windows, leaving Quick Chat up. The [show Maestro hotkey](#system-wide-hotkey-summon-maestro) also closes Quick Chat on its way to the Maestro window.
 
 No two system-wide hotkeys can share a combo. If you set one to a combo another already holds, the second registration fails and Maestro tells you.
 
@@ -147,6 +147,34 @@ have unsaved edits in is left alone: the reload would discard them without
 asking, and the on-disk-change banner is where that question belongs. Plain
 `Cmd+R` is reserved: Maestro blocks it so the window can never reload out from
 under a running agent.
+
+## File Editor
+
+These work while the File Preview editor (`Cmd+E` on a file) has focus. See
+[Editing Files](./file-editor) for everything the editor does.
+
+| Action                         | macOS                            | Windows/Linux                     |
+| ------------------------------ | -------------------------------- | --------------------------------- |
+| Save                           | `Cmd+S`                          | `Ctrl+S`                          |
+| Accept completion              | `Tab` or `Enter`                 | `Tab` or `Enter`                  |
+| Open completion list           | `Ctrl+Space`                     | `Ctrl+Space`                      |
+| Toggle comment                 | `Cmd+/`                          | `Ctrl+/`                          |
+| Add cursor at next occurrence  | `Cmd+D`                          | `Ctrl+D`                          |
+| Add a cursor                   | `Opt+Click`                      | `Alt+Click`                       |
+| Column (rectangular) selection | `Shift+Opt+Drag`                 | `Shift+Alt+Drag`                  |
+| Back to one cursor             | `Esc`                            | `Esc`                             |
+| Move line up / down            | `Opt+Up` / `Opt+Down`            | `Alt+Up` / `Alt+Down`             |
+| Duplicate line up / down       | `Shift+Opt+Up` / `Down`          | `Shift+Alt+Up` / `Down`           |
+| Indent / outdent selection     | `Tab` / `Shift+Tab`              | `Tab` / `Shift+Tab`               |
+| Find / replace                 | `Cmd+F`, then `Tab` to Replace   | `Ctrl+F`, then `Tab` to Replace   |
+| Replace current match          | `Enter` in the Replace field     | `Enter` in the Replace field      |
+| Replace all                    | `Cmd+Enter` in the Replace field | `Ctrl+Enter` in the Replace field |
+| Back to preview                | `Esc` or `Cmd+E`                 | `Esc` or `Ctrl+E`                 |
+
+`Cmd+/` is Show Shortcuts everywhere else; inside the editor it toggles a
+comment. `Cmd+[` and `Cmd+]` keep switching agents, so indent with `Tab` and
+`Shift+Tab` instead. With **Vim keybindings** on, `Esc` returns to Vim's normal
+mode, and `Cmd+E` leaves the editor.
 
 ## Group Chat
 

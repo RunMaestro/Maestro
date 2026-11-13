@@ -43,7 +43,11 @@ import {
 	requireDependency,
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
-import { buildSshCommand, RemoteCommandOptions } from '../../utils/ssh-command-builder';
+import {
+	buildSshCommand,
+	execSshCommand,
+	RemoteCommandOptions,
+} from '../../utils/ssh-command-builder';
 import { stripAnsi } from '../../utils/stripAnsi';
 import {
 	discoverAgentModels,
@@ -613,7 +617,7 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 			const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
 
 			// Execute with timeout
-			const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
+			const resultPromise = execSshCommand(sshRemote, sshCommand);
 			const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
 				(_, reject) => {
 					setTimeout(
@@ -778,7 +782,7 @@ async function discoverOpenCodeSlashCommandsRemote(
 
 	try {
 		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
+		const resultPromise = execSshCommand(sshRemote, sshCommand);
 		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
 			(_, reject) => {
 				setTimeout(
@@ -1036,7 +1040,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 					// Execute with timeout
 					const SSH_TIMEOUT_MS = 10000;
-					const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
+					const resultPromise = execSshCommand(sshConfig, sshCommand);
 					const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
 						(_, reject) => {
 							setTimeout(

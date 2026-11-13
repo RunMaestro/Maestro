@@ -46,6 +46,7 @@ import type {
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { generateId } from '../../utils/ids';
+import { isImeComposing } from '../../utils/ime';
 import {
 	clampCropRect,
 	defaultCropRect,
@@ -1431,6 +1432,10 @@ function TextEditor({ textBox, onChange, onCommit, bbox }: TextEditorProps) {
 			return;
 		}
 		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+			if (isImeComposing(e)) {
+				e.stopPropagation();
+				return;
+			}
 			e.preventDefault();
 			e.stopPropagation();
 			onCommit();

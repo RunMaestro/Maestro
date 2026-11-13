@@ -14,31 +14,54 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ---
 
-## v1.0.x - Press Run
+## v1.0.x - Right on Cue
 
-**Latest: v1.0.2** | Released October 21, 2026
+**Latest: v1.0.3** | Released November 12, 2026
 
-# 1.0.2 Highlights
+# 1.0.3 Highlights
 
-▶️ **Shell blocks in an agent's reply have a Run button.** When an agent answers with a `bash`, `sh`, `zsh`, or `console` block, click Run beside the copy button and the command runs exactly as if you had typed it after `!`, with the same card, working directory, and recall history. Alt-click drops it into the composer in command mode so you can edit it first, and hovering the button shows the full command line. A block written as a terminal session runs only its `$` lines, so sample output is never executed.
+⏰ **A scheduled prompt can come back to the conversation that asked for it.** `maestro-cli cue schedule --here` (or `--tab`) delivers the prompt into that tab when it fires. It waits behind a busy turn, marks the tab unread, and never moves your view, and if you closed the tab, it opens a new one with a toast. Agents use this now: ask one to "check back in 20 minutes" and the follow-up arrives in the same tab instead of in History. If you customized the CLI or Cue prompts in Settings > Maestro Prompts, your version stays; compare it with the new default there to pick this up.
 
-📊 **Re-reading your usage history no longer freezes the app.** When an update changes how tokens or cost are counted, Maestro reads your session history again once, and that work now happens off the window's thread. A progress window shows transcripts done, data left, and time remaining. Continue in background shrinks it to a corner card, progress is saved as it goes so a quit picks up where it stopped, Show Usage Data Scan Progress in the command palette brings it back, and `maestro-cli stats-indexing --wait` follows it from a terminal.
+⚙️ **Settings search changes the setting for you.** An on/off result shows its switch right on the row and flips in place, and a bigger setting opens its full section under the row. Down arrow walks the results, Space flips or expands, Right and Left expand and collapse, and Enter still jumps to the tab.
 
-🗺️ **The Cue Pipeline Graph groups pipelines by agent.** All Pipelines files each pipeline under the agent that owns it and draws a labeled box around each agent's cards, and Arrange packs every agent's cards into one tidy cluster. The pipeline picker is one filterable list with Pipelines and Agents sections: pick an agent to see only the pipelines it belongs to, with a back crumb when you open one of them. Escape in the picker clears the filter first instead of closing the whole Cue window.
+🌗 **Themes can track your device's light and dark mode.** Turn on Follow System Appearance in Settings > Themes and pick one light theme and one dark theme. Each screen follows its own device, so a phone on the web interface switches with the phone while the desktop follows the computer.
 
-🧙 **Both wizards draw everything the chat draws.** Mermaid diagrams, SVG, images, and math in a wizard reply render the same way they do in an agent's tab, so asking the wizard for a mockup or a flow diagram gets you a picture instead of raw source.
+📋 **Environment variables take plain `.env` text.** Every env var editor has a Basic / Advanced toggle. Advanced is one box of `KEY=value` lines: paste a `.env` file or a block from a provider's docs, or copy an agent's variables back out. A line that does not parse is listed with its line number, and `# KEY=value` parks a variable without deleting it.
 
-## Also in 1.0.2
+🧠 **Huge transcripts no longer take Maestro down.** Resuming a long conversation read the whole transcript at once, so a few hundred megabytes could crash the app and anything past about 512 MB would not open. Maestro now reads only the messages it shows, loads several times faster, and the usage data scan reads transcripts line by line for the same reason.
 
-- 🧊 **An Auto Run folder that holds a project checkout no longer stalls Maestro.** On Windows the window could go Not Responding for minutes while it watched every file in `node_modules`, and READMEs from dependency folders no longer show up as playbooks.
-- 🗑️ **Close a whole tab group** from its chip menu or with Close Tab Group in the command palette. It asks first, and closed AI tabs can be reopened like any other.
-- ✏️ **Rename Tab Group** is now the label on the group chip menu, matching the command palette, and it has its own bindable shortcut that renames the active group directly.
-- 🚪 **Closing an agent's last file, browser, or terminal tab lands you on a fresh chat**, instead of an empty tab strip or a conversation you never opened.
-- 🖥️ **Resumed Claude conversations in TUI mode keep your prompt intact.** A prompt could sit unsent in Claude's editor and later go out with `/quit` glued to its end, which then failed the next turn.
-- 🗄️ **`maestro-cli group-chat archive`** archives a group chat (or restores it with `--restore`), the same as the Archive action in the Left Bar.
+## Also in 1.0.3
+
+- 🧭 **Agents follow the code when a repo's docs are out of date, and list each mismatch** in their final reply. Your own instructions and files like CLAUDE.md still win. A customized system prompt in Settings > Maestro Prompts keeps your version; compare it with the new default there.
+- ⭐ **Starred sessions are in Cmd+K.** Type part of the name to bring an open tab forward or resume a closed one.
+- ♻️ **Reopen Closed Tab is in the command palette**, and `maestro-cli tab reopen` does it from a script.
+- 🧩 **The Memory Viewer works for Codex agents**, and every agent now shows the memory of the account it really runs as.
+- 🔄 **Model pickers refresh on demand.** A model you just pulled shows up after one click on Refresh, in every picker at once.
+- 💬 **Group Chat follows an agent through a rename**, reports an @mention that matched nobody, and `maestro-cli group-chat add` adds a participant.
+- 🔀 **Agents on an SSH remote can open pull requests**, from Create PR and from Auto Run.
+- 📡 **`maestro-cli live` switches the web interface and its tunnel on and off.** Only the CLI can do it; a browser on your network or the tunnel link cannot.
+- 🔐 **Claude in TUI or Dynamic mode no longer stalls on a hidden folder-trust prompt** for the agent's own working directory.
+- ❓ **A multiple-choice question from Claude in TUI mode ends the turn** with the options in the reply, instead of timing out.
+- ⏱️ **Auto Run no longer stops a Claude task that is busy running tools or thinking.**
+- 💭 **OpenCode agents show their reasoning in Thinking**, and an OpenCode usage limit reads as a limit.
+- 📈 **Claude plan usage refreshes again** after Claude Code dropped the 5-hour window from its usage screen.
+- 🏆 **Lifetime Conductor time only goes up.** A second window or web tab can no longer reset it.
+- 🖼️ **Obsidian images render in markdown previews**, including vault-root links and `|220` sizing.
+- 🔗 **A file path in an agent's reply links only the path**, not the sentence around it.
+- 📏 **Very long prompts and large screenshots send** instead of failing with E2BIG or a stack overflow.
+- 🎯 **Cmd+O on a running agent opens the tab doing the work.**
+- 📅 **Today on the Usage Dashboard starts at local midnight**, not 24 hours ago.
+- 📱 **A web interface waking from sleep no longer closes the tabs you opened on the desktop.**
+- 🩹 **Damaged saved data no longer blocks a launch.** Bad tab data, a broken group chat, and a corrupt Cue database are repaired or set aside.
+- 📂 **Cue file triggers keep firing when Linux runs out of file watches**, by polling instead.
+- 🛒 **Marketplace playbooks import again** and find the scripts and templates they ship with.
+- 💾 **Maestro refuses a Storage Location inside its own install folder**, which the next update would wipe.
+- 🐧 **Linux:** `maestro-cli` finds your agents, survives an AppImage restart, and the app icon shows in GNOME.
+- 🪟 **Windows:** Cue runs work with npm-installed agents, terminal tabs stop respawning into a crash, and shell paths and `--cwd` stay as typed.
 
 ### Previous Releases in this Series
 
+- **v1.0.2** (October 21, 2026) - Press Run
 - **v1.0.1** (October 20, 2026) - Full Orchestra
 - **v1.0.0** (October 9, 2026) - Full Orchestra
 
@@ -521,7 +544,6 @@ Plus the pre-release ALPHA...
 ### Previous Releases in this Series
 
 - **v0.1.5** (November 27, 2025)
-- **v0.1.4** (November 27, 2025)
 
 ---
 

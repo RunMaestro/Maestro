@@ -1760,6 +1760,31 @@ describe('EditAgentModal', () => {
 		expect(onSave).toHaveBeenCalled();
 	});
 
+	it('should leave Cmd+Enter to the input method during an active IME composition', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+
+		await waitFor(() => {
+			expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
+		});
+
+		for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true, ...ime });
+			expect(onSave).not.toHaveBeenCalled();
+		}
+
+		fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+		expect(onSave).toHaveBeenCalled();
+	});
+
 	it('should trigger save on Cmd+S when form is valid', async () => {
 		render(
 			<EditAgentModal

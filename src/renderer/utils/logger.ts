@@ -5,25 +5,26 @@
 
 import { type BaseLogLevel } from '../../shared/logger-types';
 import { PerformanceMetrics, type PerformanceMetric } from '../../shared/performance-metrics';
+import { toLoggableData } from '../../shared/serializeError';
 
 // Re-export for backwards compatibility
 export type LogLevel = BaseLogLevel;
 
 class RendererLogger {
 	debug(message: string, context?: string, data?: unknown): void {
-		window.maestro?.logger?.log('debug', message, context, data);
+		window.maestro?.logger?.log('debug', message, context, toLoggableData(data));
 	}
 
 	info(message: string, context?: string, data?: unknown): void {
-		window.maestro?.logger?.log('info', message, context, data);
+		window.maestro?.logger?.log('info', message, context, toLoggableData(data));
 	}
 
 	warn(message: string, context?: string, data?: unknown): void {
-		window.maestro?.logger?.log('warn', message, context, data);
+		window.maestro?.logger?.log('warn', message, context, toLoggableData(data));
 	}
 
 	error(message: string, context?: string, data?: unknown): void {
-		window.maestro?.logger?.log('error', message, context, data);
+		window.maestro?.logger?.log('error', message, context, toLoggableData(data));
 	}
 }
 

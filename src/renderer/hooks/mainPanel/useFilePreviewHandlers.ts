@@ -98,16 +98,12 @@ export function useFilePreviewHandlers({
 				// renamed, or deleted on disk since it was opened. A blind writeFile
 				// would silently recreate a ghost at the old location. Stat first; if
 				// it's gone, prompt for a destination instead of resurrecting it.
-				let stillExists = true;
-				try {
-					// stat returns null for a missing path (ENOENT) and throws only on
-					// genuine errors; treat both as "gone" so we never resurrect a ghost.
-					const st = await window.maestro.fs.stat(path, filePreviewSshRemoteId);
-					if (!st) stillExists = false;
-				} catch {
-					stillExists = false;
-				}
-				if (!stillExists) {
+				// stat returns null for a missing path (ENOENT) and throws only on a
+				// genuine error. Let a throw fail the save: over SSH it means the host
+				// is unreachable ("Unable to connect to ... over SSH"), and reading that
+				// as "file deleted" offered a LOCAL save dialog for a remote file.
+				const st = await window.maestro.fs.stat(path, filePreviewSshRemoteId);
+				if (!st) {
 					const chosen = await window.maestro.dialog.saveFile({
 						title: 'File moved or deleted on disk - choose where to save',
 						defaultPath: path,

@@ -110,6 +110,8 @@ Each owner, for their branch only:
 3. Write the notes into the draft with `draft --tag vX --title "vX | <Title>" --notes-file <file>`.
 4. Report to the moderator: version, draft URL, and the list of user-facing
    features in the notes. The RC owner adds branch evidence for each feature.
+   Include the ranked headline table from "Picking the headline": every
+   candidate, its four scores and total, and a one-line reason.
 
 ### Notes style (both channels)
 
@@ -132,12 +134,94 @@ Each owner, for their branch only:
 - No em dashes or en dashes anywhere.
 - End with `**Full Changelog**: https://github.com/RunMaestro/Maestro/compare/<previous tag>...<this tag>`.
 
-**Stable layout:** `# X.Y.Z Highlights`, three to five highlight paragraphs
-(emoji, bold lead sentence, then the detail), then `## Also in X.Y.Z` bullets.
+### Voice: write the email someone forwards
 
-**RC layout:** `# Major X.ODD.x Additions`, a line saying the RC carries
-everything in the stable release with a link to that release, the rc-only
-headline features, then `## Other Changes in X.Y.Z` bullets.
+The notes feed the subscriber email, Discord, and X. Write every highlight so a
+reader could forward it to a friend with "you have to see this", and so the
+friend gets it without any background.
+
+- **The bold lead is a quotable promise in the user's words.** "Say 'the file
+  I just saved' and your agent knows which one", not "Agent timeline". Someone
+  should be able to repeat it out loud.
+- **Pain, then scene, then proof.** One sentence on what used to hurt, one on
+  what the reader now does, then the facts that make it believable (where it
+  lives, what it costs, what stays private). The reader who feels the pain is
+  the one who forwards it.
+- **Specific verbs, short sentences.** Excitement comes from concrete detail,
+  not adjectives. Never "game-changer", "supercharge", "seamless", "powerful",
+  "unleash", "revolutionary", "next level", or stacked exclamation marks.
+- **A highlight is three or four sentences.** The full mechanics live in the
+  docs; a paragraph that lists every flag, badge, and edge case loses the
+  reader before the payoff. Calibration: the 1.1.1-RC draft's Federation
+  paragraph ran past 350 words.
+- **`Also in` bullets are one sentence with a bold lead**, and the list is
+  curated, not accumulated: aim for 35 or fewer. Drafts grow all cycle; before
+  tagging, cut what main already shipped, fixes few users felt, and anything
+  only a developer would notice.
+- **The release title is a hook for the lead.** Two or three words that name
+  the payoff ("Right on Cue", "Press Run"), never an internal codename.
+  Calibration: 1.1.0-RC shipped as "Maestro Lib Refactor", and the 1.1.1-RC
+  draft carried the same title.
+- **Behavior a user must act on goes under `## Before you upgrade`**: a default
+  that changes what Maestro does on its own, a moved or removed control, or a
+  feature that now needs something installed. Trust is part of the pitch.
+
+**Stable layout:** `# X.Y.Z Highlights`, three to five highlight paragraphs
+(emoji, bold lead sentence, then the detail), then `## Before you upgrade` when
+it applies, then `## Also in X.Y.Z` bullets.
+
+**RC layout:** `# X.Y.Z-RC Highlights`, a line saying the RC carries
+everything in the current stable release with a link to that release, then the
+rc-only highlights that are new since the previous RC. Then `## Already in
+X.ODD`: one line per rc-only feature from earlier RCs, reworded so no line
+repeats the previous RC's notes (newcomers still see the whole line, returning
+readers are not sold the same thing twice). Then `## Before you upgrade` when
+it applies, then `## Also in X.Y.Z-RC` bullets. Calibration: the 1.1.1-RC draft
+reprinted 1.1.0-RC's seven banner paragraphs nearly word for word and still
+linked stable 1.0.0 after 1.0.3 shipped.
+
+### Picking the headline
+
+The headline is the feature that will excite the most users, not the one that
+took the most work. Score every user-visible candidate 0 to 2 on each of:
+
+| Score          | 2                                               | 1                                         | 0                                                    |
+| -------------- | ----------------------------------------------- | ----------------------------------------- | ---------------------------------------------------- |
+| **Reach**      | Every user                                      | Most users                                | Only opt-in, Encore, CLI-only, or one-platform users |
+| **Visibility** | Seen without being told                         | Found when looked for                     | Invisible                                            |
+| **Pull**       | A new ability users wanted, or a pain many felt | Nice to have                              | Minor                                                |
+| **Showable**   | One screenshot or one sentence explains it      | Needs a short paragraph or a before/after | Needs background before it makes sense               |
+
+Rules:
+
+- **The lead (#1) must be on by default and reachable from the UI.** A
+  setting any user can flip in Settings counts. An Encore Feature, a provider
+  mode, or a CLI flag does not.
+- **Highlights go in score order.** On a tie, a new ability beats a fix.
+- **A fix earns a highlight only if many users felt the pain.** A crash few
+  people hit is an `Also in` bullet, however hard it was to find.
+- **Describe what the user gets, never a flag name.** "Agents can check back
+  later in the same tab", not `cue schedule --here`.
+
+**Calibration, v1.0.3.** The notes led with `cue schedule --here`: a CLI flag
+inside Cue, which is an Encore Feature most users have off (Reach 0). A crash
+fix for huge transcripts, which few users hit, took a highlight slot. Starred
+sessions and Reopen Closed Tab in Cmd+K, which every user would notice, were
+bullets. The better lead was 🌗 themes following the device's light and dark
+mode, with Settings search flipping settings in place and starred sessions and
+Reopen Closed Tab in Cmd+K as the next highlights:
+
+| Candidate                                          | Reach | Visibility | Pull | Showable | Total |
+| -------------------------------------------------- | ----- | ---------- | ---- | -------- | ----- |
+| 🌗 Themes follow the device's light and dark mode  | 2     | 1          | 2    | 2        | 7     |
+| ⚙️ Settings search flips settings in place         | 2     | 2          | 1    | 2        | 7     |
+| ⭐ Starred sessions and Reopen Closed Tab in Cmd+K | 2     | 1          | 1    | 2        | 6     |
+| ⏰ `cue schedule --here` (the lead that shipped)   | 0     | 0          | 1    | 1        | 2     |
+| 🧠 Huge transcripts no longer crash                | 0     | 0          | 1    | 1        | 2     |
+
+Themes wins the tie because it is a new ability users asked for. It is off
+until you turn it on, but it is one switch in Settings > Themes, so it passes
+the lead rule.
 
 ### RC notes are a delta
 
@@ -152,7 +236,13 @@ different SHAs on each branch. Match subjects, not bodies.
 
 Compare the two feature lists. Anything in both goes to the stable notes only;
 tell the RC owner to cut it. Two items about the same area are not duplicates
-if they describe different behavior. Then move on; there is no approval step.
+if they describe different behavior.
+
+Before clearing Phase 1, challenge each owner's #1 against "Picking the
+headline": does it pass the lead rule, and does any lower candidate outscore it
+on Reach or Pull? If the pick is wrong, send the owner the better candidate and
+have the notes reordered. This is the moderator's own check, not a human gate.
+Then move on; there is no approval step.
 
 ## Phase 2: Publish (sequential)
 
@@ -175,6 +265,18 @@ Start only after every release in scope verifies.
 2. **Do not repeat the last announcement.** Read the previous email template
    and Discord post. Lead with what is new since then; anything the last email
    already covered gets one short line at most.
+   **Score the published highlights again for this audience** with the rubric
+   in "Picking the headline". Email, Discord, and X readers did not read the
+   notes, so the notes' order is input, not a rule: lead with the top scorer
+   among published features, even when the notes lead with something else, and
+   report any change of lead. The email subject names the #1 in user words,
+   never a flag name.
+   **Write it to be forwarded.** The "Voice" rules in Phase 1 apply to every
+   channel. Open on the reader's pain or the scene the lead changes, not on the
+   version number. Give the #1 a screenshot or a one-line demo the reader can
+   picture. End the email with a direct ask to pass it on to someone it fits
+   (for example, someone running several agents in several terminals), written
+   fresh for this release's lead.
 3. Discord: `--preview` first, then post one message to #announcements with
    `--everyone`. Report the message ID. CI no longer posts releases to Discord,
    so this is the only announcement.
@@ -188,8 +290,8 @@ Start only after every release in scope verifies.
    the way the site's art is made (the RunMaestro.ai agent's
    `maestro-art-source-artlist` memory): a fresh session from
    `https://toolkit.artlist.io/new?mode=image`, Nano Banana 2, 16:9 at 2K, royal
-   purple velvet, the house style suffix. The scene is drawn from the headline
-   features, and every version in scope is lettered in gold where it can be read
+   purple velvet, the house style suffix. The scene is drawn from the step 2
+   lead, and every version in scope is lettered in gold where it can be read
    (`1.0.3` and `1.1.4 RC` on banners, for example). List `art/artlist/release-*`
    first and pick a different subject than the last release. Make up to three
    takes and reject any that misspells a version. Archive every take as
@@ -198,8 +300,8 @@ Start only after every release in scope verifies.
 7. **X: the last announcement out.** One post as @RunMaestroAI with the share
    JPEG: `node scripts/x-post.mjs --text-file <f> --image <share.jpg>`, with
    `--dry-run` first. At most 280 weighted characters (a URL counts 23). Name each
-   version, lead with the headline feature, and link the release page (both pages
-   for `all`, if they fit). The notes style rules apply: one emoji per item, no
+   version, lead with the step 2 top scorer in user words, and link the
+   release page (both pages for `all`, if they fit). The notes style rules apply: one emoji per item, no
    em or en dashes, and no line from the previous release post (read the last <!-- doc-refs-ignore -->
    `scripts/announce-drafts/*-x.md`). Report the tweet URL.
 8. Commit the template, the Discord draft, the art, and the X text

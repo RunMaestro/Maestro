@@ -8,6 +8,8 @@
 // UTILITY FUNCTIONS
 // ============================================================================
 
+import { isWindowsDrivePath } from './mentionPatterns';
+
 /** Why a provider cannot moderate a group chat, as the moderator picker shows it. */
 export const GROUP_CHAT_MODERATION_UNSUPPORTED = 'Agent does not support group chat moderation.';
 
@@ -280,6 +282,11 @@ function resolveMentionToken(
 	knownNames: readonly string[] | undefined,
 	fullWhenUnmatched = false
 ): MentionReading | undefined {
+	// A drive path is a file mention, never an agent: `@C:/Users/x/a.md` must not
+	// read as an agent named `C` (nor warn that no agent matches `@C`). Without
+	// this, the colon readings below cut it at the drive colon. Scoped to the
+	// forward-slash form the drop path produces; a backslash path stays text.
+	if (isWindowsDrivePath(stripMarkdownFormatting(rawToken))) return undefined;
 	const readings = colonReadings(rawToken);
 	if (readings.length === 0) return undefined;
 	if (knownNames && knownNames.length > 0) {

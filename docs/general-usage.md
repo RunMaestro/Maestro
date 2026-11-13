@@ -72,6 +72,7 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 - **Line numbers** for easy reference
 - **Search within file** (`Cmd+F` / `Ctrl+F`)
 - **Chat with the document** (`Cmd+Shift+\` / `Ctrl+Shift+\`, or the chat button in the bottom-left of the preview) - see below
+- **Built-in code editor** (`Cmd+E` / `Ctrl+E` on any text file): autocomplete, auto-closing brackets and tags, multiple cursors, find and replace, toggle comment and line moves, optional Vim keybindings, and right-click to quote a selection into your message - see **[Editing Files](./file-editor)**
 
 Several formats come with a filtering language built for that format rather than
 a plain search box. **[File Formats](./file-formats)** is the full map: what
@@ -220,59 +221,21 @@ keys works without clicking first.
 
 ### Audio and Video Playback
 
-Click an audio or video file and it opens in a player right inside the File
-Preview. Supported formats are the ones Chromium can decode: `mp3`, `wav`,
+Audio and video files never open as a tab. Open one (double-click it in the
+Files pane, click a media link in a transcript, or pick it in Fuzzy File Search)
+and it plays in the [Media Player](./media-player): one floating player with a
+play queue, a saved position per file, and a playback speed that persists.
+Playback continues when you switch tabs or agents.
+
+In the desktop app the player is its own window that floats over every app. In a
+browser attached through [Remote Control](./remote-control) it floats inside the
+Maestro page. Supported formats are the ones Chromium can decode: `mp3`, `wav`,
 `m4a`, `aac`, `flac`, `ogg`, `oga`, `opus`, `weba` for audio, and `mp4`, `m4v`,
-`webm`, `mov`, `ogv` for video. Anything else (`mkv`, `avi`) still gets the
-"Open in Default App" fallback.
+`webm`, `mov`, `ogv` for video. Other files (`mkv`, `avi`) get the normal
+"Open in Default App" preview.
 
-Playback starts as soon as you open the file, and **keeps going when you switch
-tabs or agents**. Start a podcast, go work somewhere else, and it follows you.
-
-### The Floating Player
-
-When you browse away from the tab, the player detaches into a small floating
-widget that stays on top of whatever you are doing:
-
-- **Drag the title bar** to move it anywhere, and **drag the bottom-right corner**
-  to resize it. It remembers where you left it, across restarts. Double-click the
-  corner to reset the size.
-- **Minimize** it to a slim pill with just the title and a play/pause button.
-- **Double-click the title bar** (or click the filename) to jump back to the
-  file's tab, which re-docks the player into it.
-- **Close** it to get it out of the way. This hides the controls only - the audio
-  keeps playing. Bring it back by opening a media file again, or with
-  **Open Media Player** in the command palette (`Cmd+K` / `Ctrl+K`).
-
-Audio-only files get just the controls, since there is no picture to show.
-
-### One Player at a Time
-
-Only one file plays at a time, so you never end up with two podcasts talking over
-each other. You can still have several media files open: the **prev/next buttons**
-in the transport step between them, and each one remembers its position, so you
-can jump back and forth without losing your place.
-
-Files stream from disk with range requests, so scrubbing a multi-gigabyte
-screen recording is instant and does not load the file into memory.
-
-**Playback speed persists.** Whatever rate you pick (anywhere from 0.25x to 4x)
-carries over to the next file you open and survives a restart. Pitch is
-preserved, so a 2x podcast still sounds like a person.
-
-| Shortcut               | Action                         |
-| ---------------------- | ------------------------------ |
-| `Space` or `K`         | Play / pause                   |
-| `Left` / `Right`       | Skip back / forward 10 seconds |
-| `Shift+Left` / `Right` | Skip back / forward 5 seconds  |
-| `Up` / `Down`          | Volume up / down               |
-| `,` / `.`              | Step playback speed down / up  |
-| `M`                    | Mute                           |
-| `L`                    | Loop                           |
-| `F`                    | Fullscreen (video only)        |
-
-You can also set the speed outside the app with
-`maestro-cli settings set mediaPlaybackRate 1.5`.
+See [Media Player](./media-player) for the controls, the queue, minimizing to
+the Left Bar, and keyboard shortcuts.
 
 ### Compressing a Folder
 
@@ -337,6 +300,8 @@ When you open a file, a **breadcrumb trail** appears showing your navigation his
 ### File Editing
 
 Files can be edited directly in the preview. Press `Cmd+S` / `Ctrl+S` to save changes. If you navigate away or close the preview with unsaved changes, a confirmation dialog will ask whether to discard them.
+
+In the markdown editor, fenced code blocks are syntax-highlighted with the same grammars the editor uses for whole files (TypeScript, Python, shell, and the rest), so a code sample in a note reads the same as the file it came from.
 
 ### Drag and Drop Files Into the Tree
 
@@ -587,7 +552,7 @@ A message that Force Send ran beside another working tab, or that the chord sent
 
 ### Steer
 
-While a turn is running, a queued message for that tab can carry a **Steer** button instead. Steering hands the message to the turn already in progress, so the agent can change course without waiting for the turn to end. It is offered only where the running turn can take input: a Claude Code agent on the interactive token source, or a Codex agent on the [app-server transport](./provider-notes). A message with images or an `@mention` is not steerable and sends normally when the turn ends. The same holds on Claude Code for a message that starts with `/` or `!`, which its editor would read as a command.
+While a turn is running, a queued message for that tab can carry a **Steer** button instead. Steering hands the message to the turn already in progress, so the agent can change course without waiting for the turn to end. It is offered only where the running turn can take input: a Claude Code agent on the interactive token source, or a Codex agent on the [app-server transport](./provider-notes). A message with images or an `@mention` is not steerable and sends normally when the turn ends. A message with images still shows the Steer button, dimmed, and its tooltip says to remove the image to steer the text alone. The same holds on Claude Code for a message that starts with `/` or `!`, which its editor would read as a command.
 
 `Opt+Cmd+Enter` / `Alt+Ctrl+Enter` (**Steer Running Turn**) does the same thing from the keyboard, wherever you are in the app. With text in the input, it sends what you typed as a steer; if the tab is idle, that is an ordinary send. With the input empty, it steers the newest queued message on the tab. When a message cannot be steered, it stays queued and a notice says why. The chord can be rebound or cleared in **Settings → Shortcuts**, and the same action is in the command palette.
 
@@ -883,6 +848,29 @@ manage that session in Grok CLI.
 
 There is no `maestro-cli` verb for deleting a message.
 
+## Agent Task List
+
+When an agent writes a checklist (Claude Code and OpenCode with `TodoWrite`,
+Codex with `update_plan`), the checklist shows as a card in the conversation.
+The card scrolls away as the conversation grows. To keep the current checklist
+in view, turn on **Settings → Display → Agent Task List → Dock the task list
+above the composer**. It is off by default.
+
+With the setting on, the newest checklist of the active tab sits in a bar above
+the input box:
+
+- Collapsed, the bar shows the task in progress, a completed/total count, and a
+  progress bar. Click it to expand the full list.
+- The bar updates in place each time the agent rewrites its plan, and it follows
+  you when you switch tabs.
+- The **X** hides the bar until the agent writes a new checklist.
+- A checklist that a subagent writes for its own work does not replace the plan
+  in the bar.
+
+**Expand it automatically** (in the same section, off by default) opens each new
+checklist to the full list. If you collapse one, it stays collapsed until the
+agent's next update.
+
 ## Command Interpreter
 
 The command interpreter can be focused for a clean, terminal-only experience when you collapse the left panel.
@@ -1055,6 +1043,16 @@ Organize agents into groups for better project management:
 
 - Right-click the group header → **Group Settings...** (or `Cmd+K` / `Ctrl+K` → "Group Settings" while an agent in the group is active) to set what a new agent in the group starts with, and the text of the group's pill label. See [Groups](./features#groups).
 
+**Hiding a group:**
+
+Hiding sits between collapsing a group and deleting it. Right-click the group header and choose **Hide Group** to remove the group from the Left Bar. Its agents are not changed: search and the `Cmd+O` / `Ctrl+O` switcher still find them, in a separate tier below the live and idle agents.
+
+- When one or more groups are hidden, a **Show Hidden (N)** button appears at the bottom of the agent list. Click it to show the hidden groups, drawn faded. Click **Hide Hidden (N)** to remove them again.
+- To make a group visible again, show the hidden groups, right-click the group, and choose **Unhide Group**.
+- A hidden parent group also hides its child groups.
+- The group that holds the active agent always stays visible, so you do not lose your place in the list.
+- From the CLI: `maestro-cli update-group <group-id> --hide` and `--show`.
+
 ### Drag and Drop
 
 Rearrange agents by dragging them:
@@ -1220,6 +1218,7 @@ Drag a tab from the tab bar onto the content area of the tab that is showing. Th
 
 - Drag the divider between two panes to resize them.
 - Click any pane to focus it. The focused pane shows a highlight ring, and it is the pane your typing goes to.
+- A file pane shows its floating font-zoom (**Aa**) and Table of Contents buttons only while it has focus, so a row of tiled documents is not covered in buttons. Moving focus away also closes an open Table of Contents.
 - Drag one pane onto the middle of another to swap their positions, or onto an edge to re-slice the layout.
 
 **The group chip**

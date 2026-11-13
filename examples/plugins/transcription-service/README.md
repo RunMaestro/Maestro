@@ -15,5 +15,5 @@ The host owns cleanup, expiry and cancellation. The provider uses only minted
 aliases, validates original Whisper metadata and returns the bounded normalized
 result. It neither dispatches to agents nor transports messages.
 
-See [the full host/SDK contract](../../../docs/plugin-services.md) for the
+See [the full host/SDK contract](../../../docs/agent-guides/PLUGIN-SERVICES.md) for the
 consumer manifest, startup behavior, limits, cancellation and migration rules.

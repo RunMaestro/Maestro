@@ -22,6 +22,7 @@ import { useAgentStore } from '../../../../../renderer/stores/agentStore';
 import { registerContextCompactionSpawner } from '../../../../../renderer/services/contextCompaction';
 import { useAuthOutageStore } from '../../../../../renderer/stores/authOutageStore';
 import * as runtimeContext from '../../../../../renderer/utils/runtimeContext';
+import { useSshOutageStore } from '../../../../../renderer/stores/sshOutageStore';
 import {
 	armEffortFallback,
 	settleEffortFallback,
@@ -1176,5 +1177,95 @@ describe('useAgentErrorListener', () => {
 			expect(getOutage(outageId)?.status).toBe('failed');
 			expect(useSessionStore.getState().sessions[0].agentError?.agentId).toBe('grok');
 		});
+	});
+});
+
+describe('useAgentErrorListener - SSH transport errors', () => {
+	const sshError = {
+		type: 'network_error',
+		message: 'Unable to connect to "pedtome" over SSH. Connection closed by UNKNOWN port 65535',
+		timestamp: 1700000000000,
+		agentId: 'claude-code',
+		recoverable: true,
+		sshRemoteId: 'remote-1',
+	};
+
+	// Its own agent id: an earlier test's dispatch snapshot for `sess-1` would
+	// make Agent Resilience auto-retry these and suppress every modal.
+	function seedSshSession() {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-ssh', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+	}
+
+	function mockReachability(reachable: boolean) {
+		const checkReachability = vi.fn().mockResolvedValue({
+			success: true,
+			reachable,
+			event: reachable
+				? undefined
+				: {
+						remoteId: 'remote-1',
+						remoteName: 'pedtome',
+						reachable: false,
+						message: sshError.message,
+						since: 1,
+					},
+		});
+		(window as any).maestro = {
+			...(window as any).maestro,
+			sshRemote: { ...((window as any).maestro?.sshRemote || {}), checkReachability },
+		};
+		return checkReachability;
+	}
+
+	beforeEach(() => {
+		useSshOutageStore.setState({ outages: {} });
+	});
+
+	it('leaves the per-agent modal closed when the remote is confirmed down (the outage dialog covers it)', async () => {
+		seedSshSession();
+		const check = mockReachability(false);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-ssh-ai-tab-1', sshError);
+
+		await waitFor(() => expect(check).toHaveBeenCalledWith('remote-1'));
+		await waitFor(() =>
+			expect(useSshOutageStore.getState().outages['remote-1']?.event.remoteName).toBe('pedtome')
+		);
+		expect(useModalStore.getState().modals.get('agentError')?.open ?? false).toBe(false);
+		// The tab still records the failure.
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].agentError?.type).toBe('network_error');
+	});
+
+	it('falls back to the per-agent modal when the host answers (a one-off drop)', async () => {
+		seedSshSession();
+		mockReachability(true);
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-ssh-ai-tab-1', sshError);
+
+		await waitFor(() =>
+			expect(useModalStore.getState().modals.get('agentError')?.open ?? false).toBe(true)
+		);
+	});
+
+	it('does not probe again for a remote already in an outage', async () => {
+		seedSshSession();
+		const check = mockReachability(false);
+		useSshOutageStore.getState().applyReachability({
+			remoteId: 'remote-1',
+			remoteName: 'pedtome',
+			reachable: false,
+			since: 1,
+		});
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		handler!('sess-ssh-ai-tab-1', sshError);
+		await Promise.resolve();
+
+		expect(check).not.toHaveBeenCalled();
+		expect(useModalStore.getState().modals.get('agentError')?.open ?? false).toBe(false);
 	});
 });

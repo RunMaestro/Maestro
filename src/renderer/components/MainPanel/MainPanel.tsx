@@ -994,6 +994,7 @@ export const MainPanel = React.memo(
 				onFileClick: props.onFileClick,
 				onOpenFuzzySearch: props.onOpenFuzzySearch,
 				onShortcutUsed: props.onShortcutUsed,
+				onSendTextToAgent: props.onSendTextToAgent,
 			}),
 			[
 				onFileTabClose,
@@ -1007,6 +1008,7 @@ export const MainPanel = React.memo(
 				props.onFileClick,
 				props.onOpenFuzzySearch,
 				props.onShortcutUsed,
+				props.onSendTextToAgent,
 			]
 		);
 
@@ -1471,6 +1473,7 @@ export const MainPanel = React.memo(
 									onTerminalSendSelectionToAgent={
 										props.onSendTextToAgent ? handleSendTerminalSelectionToAgent : undefined
 									}
+									onFileSendSelectionToAgent={props.onSendTextToAgent}
 									isMobileLandscape={isMobileLandscape}
 									activeTabContextUsage={activeTabContextUsage}
 									contextWarningsEnabled={contextWarningsEnabled}

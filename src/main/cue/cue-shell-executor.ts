@@ -21,6 +21,7 @@ import {
 	type SshSpawnWrapResult,
 } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
+import { noteSshExit } from '../ssh-reachability';
 import { getShellPath } from '../runtime/getShellPath';
 import { buildSpawnPath } from '../utils/spawnPath';
 import { filterServerProcessEnv, isServerModeActive } from '../../shared/maestro-lib/launch/env';
@@ -124,6 +125,8 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 		: process.env;
 	let spawnEnv: Record<string, string> = { ...inheritedEnv } as Record<string, string>;
 	let useLocalShell = true;
+	/** The remote this run goes through, for the reachability tracker. */
+	let sshRemoteId: string | undefined;
 
 	if (sshRemoteConfig?.enabled && sshStore) {
 		let wrapped: SshSpawnWrapResult;
@@ -154,6 +157,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 		spawnCwd = wrapped.cwd;
 		spawnEnv = { ...inheritedEnv, ...(wrapped.customEnvVars || {}) } as Record<string, string>;
 		useLocalShell = false;
+		sshRemoteId = wrapped.sshRemoteUsed.id;
 		onLog(
 			'cue',
 			`[CUE] Shell run ${runId} executing on SSH remote "${wrapped.sshRemoteUsed.name}"`
@@ -281,6 +285,8 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 		// same instant as the timeout can have its 'close' event re-routed to
 		// the new handler, falsely reporting a timeout.
 		child.on('close', (code) => {
+			// Our own timeout kill says nothing about the host.
+			if (sshRemoteId && !timedOut) noteSshExit(sshRemoteId, code);
 			finish(timedOut ? 'timeout' : code === 0 ? 'completed' : 'failed', code);
 		});
 

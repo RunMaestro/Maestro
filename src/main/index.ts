@@ -39,7 +39,8 @@ import {
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
 import { DURATION_MS } from '../shared/duration';
-import { installApplicationMenu, setMenuEncoreFeatures } from './app-menu';
+import { installApplicationMenu, setMenuEncoreFeatures, setMenuWindowCycler } from './app-menu';
+import { attachWindowCycleShortcut, cycleWindows, type WindowCycleDirection } from './window-cycle';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -324,6 +325,8 @@ import { planWindowRestore, pickFocusWindowSpec } from './window-state-persisten
 import type { WindowState as SharedWindowState } from '../shared/window-types';
 import { setupAgentRunCapture } from './agent-run/setup-capture-listener';
 import { setAgentRunSink } from './agent-run/broadcast';
+import { configureSshReachability } from './ssh-reachability';
+import { sshRemoteManager } from './ssh-remote-manager';
 import { startAgentRunStoreWatcher } from './agent-run/store-watcher';
 import { setupAgentRunRecovery } from './agent-run/setup-recovery';
 import { createTimeZoneWatcher } from './utils/timezone-watcher';
@@ -698,6 +701,14 @@ capabilitySnapshots.init(agentCapabilitiesStore, createSnapshotBroadcaster(safeS
 
 // A forced model discovery pushes the fresh list to every open model picker.
 setModelsRefreshedBroadcaster(safeSend);
+
+// One dialog per unreachable SSH remote, in every window and web client, fed by
+// every path that runs ssh (agent turns, remote-fs, remote git, shell commands).
+configureSshReachability({
+	resolveRemote: getSshRemoteById,
+	probe: (remote) => sshRemoteManager.probeReachability(remote),
+	emit: (event) => safeSend('ssh-remote:reachability', event),
+});
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
 const cliWatcher = createCliWatcher({
@@ -4129,6 +4140,16 @@ app
 		// The Encore flags go in first: an item for a switched-off feature is
 		// left out, and the menu follows the flags live from then on.
 		setMenuEncoreFeatures(store.get('encoreFeatures'));
+		// Cmd+` cycles Maestro's windows, Quick Chat included (AppKit skips the
+		// panel). The menu item takes the keystroke most of the time; the input
+		// hook takes it when Chromium hands it to the page. See window-cycle.ts.
+		const cycle = (direction: WindowCycleDirection) => cycleWindows(windowRegistry, direction);
+		setMenuWindowCycler(cycle);
+		if (isMacOS()) {
+			app.on('browser-window-created', (_event, win) =>
+				attachWindowCycleShortcut(win.webContents, cycle)
+			);
+		}
 		installApplicationMenu();
 		store.onDidChange('encoreFeatures', (value) => setMenuEncoreFeatures(value));
 

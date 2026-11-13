@@ -187,8 +187,8 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 			hideQuickChatWindow();
 			return getStatus();
 		}
-		// Cmd+` in the window: back to Maestro, the way it cycles between an
-		// app's windows. Works with the feature off too, like hide.
+		// Back to Maestro with the chat put away (the show-Maestro hotkey does
+		// the same). Works with the feature off too, like hide.
 		if (action === 'return') {
 			const main = deps.getMainWindow();
 			if (main) summonMainWindow(main);

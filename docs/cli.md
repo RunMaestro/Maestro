@@ -318,6 +318,7 @@ The response echoes the armed callback:
 - **Lands where it was asked for.** The wake-up goes to the tab that ran `dispatch` (or `--callback-tab`). When there is no such tab, because the dispatch came from a Cue or bot run, from your own shell, or the tab was closed meanwhile, it opens a new background tab in the caller agent. It never lands in whatever tab happens to be active.
 - **Self-cleaning.** Entries live in a main-process registry, never in `cue.yaml`. They expire on timeout and are dropped when the dispatch is rejected. They do not survive a desktop restart.
 - **Non-blocking.** The dispatching turn ends normally; the callback opens a new turn later.
+- **Shown as a result card.** In the caller's transcript the wake-up is a collapsed card, not the raw prompt: the agent it came from, the exit code, the duration, and Auto Run task counts. Click it to read a short preview of the result, with a link to the source tab for the full transcript. The agent still receives the full prompt. A custom `--callback-prompt` shows as plain text.
 
 **Callback prompt variables** (usable in `--callback-prompt`):
 
@@ -601,6 +602,41 @@ Details worth knowing:
 - **Reads come from disk, not the running app**, so these work with the desktop closed. The cost is the renderer's two-second persistence debounce: an image pasted this instant may not be on disk yet, and `image save` says so rather than guessing.
 
 Error codes: `AGENT_NOT_FOUND`, `NO_IMAGES`, `IMAGE_NOT_FOUND`, `AMBIGUOUS_IMAGE`, `IMAGE_MISSING`, `FILE_EXISTS`, `WRITE_FAILED`, `INVALID_USAGE`.
+
+### Timeline and User Journey
+
+`timeline` shows what happened around an agent in one list, oldest first: agent turns from [History](./history), your actions in Maestro from the [User Journey](./history#user-journey), and git commits. It shows only the newest events, and ends with the commands that read more. Both verbs read from disk, so they work while the desktop app is closed.
+
+```bash
+# The last day for one agent (default: --since 1d, newest 30 events)
+maestro-cli timeline --agent <agent-id>
+
+# Every agent, the last two hours, only lines that match
+maestro-cli timeline --since 2h --grep "tooltip"
+
+# Choose the sources: history, journey, git, computer
+maestro-cli timeline --agent <agent-id> --sources history,git --tail 50
+
+# Open one turn in full by the [entry <id>] handle a timeline line shows
+maestro-cli timeline show 1a2b3c4d
+
+# Your actions alone, filtered by kind
+maestro-cli journey --agent <agent-id> --kind file.save,browser.navigate --tail 20
+```
+
+A history line looks like `2:02 PM history USER (Fix tooltip): fixed clipping [entry 1a2b3c4d]`. Commit lines carry a `[commit <sha>]` handle for `git show`.
+
+| Option (`timeline`)  | Meaning                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------- |
+| `--agent <id>`       | Agent ID or name. Without it, every agent                                                 |
+| `--since`, `--until` | `30m`, `2h`, `1d`, `1w`, ISO-8601, or epoch. Default: the last day                        |
+| `--sources <list>`   | Default `history,journey,git`. `computer` needs [Computer History](./computer-history) on |
+| `--tail <n>`         | Only the newest N events (default 30)                                                     |
+| `--per-source <n>`   | Only the newest N events of each source (default 15)                                      |
+| `--grep <text>`      | Only events whose line matches (regex, case-insensitive)                                  |
+| `--json`             | JSON output                                                                               |
+
+`journey` kinds are `file.open`, `file.close`, `file.save`, `file.create`, `file.rename`, `file.delete`, `browser.open`, `browser.navigate`, and `browser.close`. It also takes `--since` (ISO-8601 or epoch), `--tail` (per agent), and `--json`. Prompts can read an agent's journey file through the `{{AGENT_JOURNEY_PATH}}` template variable.
 
 ### Creating, Updating, and Removing Agents
 
@@ -924,6 +960,10 @@ maestro-cli update-group <group-id> --clear-icon --clear-color
 # Fold a group in the Left Bar, or unfold it
 maestro-cli update-group <group-id> --collapse
 maestro-cli update-group <group-id> --expand
+
+# Hide a group from the Left Bar (its agents stay reachable), or show it again
+maestro-cli update-group <group-id> --hide
+maestro-cli update-group <group-id> --show
 
 # Remove an (empty) group
 maestro-cli remove-group <group-id>
@@ -2297,6 +2337,9 @@ maestro-cli open-terminal -a <agent-id> --name "Build watch"
 | `--command <cmd>`  | Command to run once the shell is ready                              | -           |
 | `--background`     | Create the tab without moving the view (agent and tab stay put)     | -           |
 | `--focus`          | Switch to the terminal tab after opening it (default)               | -           |
+| `--input-required` | Notify the user that the terminal needs them to type in it          | -           |
+
+`--input-required` is for a terminal opened because a person must type there, such as a `sudo` password prompt. Once the shell starts, Maestro raises a **Terminal needs your input** notification that names the agent and the terminal. The notification does not move the view; clicking it opens that terminal. Pair it with `--background`. For a terminal that is already open, send the same notice with `notify toast "Terminal needs your input" "Your input is needed." --agent <agent-id> --open-terminal <tab-id>`.
 
 `--command` is stored as the tab's startup command, the same field the tab's right-click "Startup Command…" menu writes. The command runs as soon as the shell finishes loading its rc files, and it runs again if the tab is restarted or the app is reopened. That is what you want for `npm run dev`; for a one-shot command that should not come back, close the tab when it finishes, or use `send-terminal` instead.
 

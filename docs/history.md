@@ -209,6 +209,23 @@ History is stored per-session in JSON files within the `history/` subdirectory o
 
 The maximum number of entries per session is controlled by the **Maximum Log Buffer** setting in Settings → Display (default: 10,000). History files can be passed to AI agents as context for understanding past work patterns.
 
+## User Journey
+
+History records what agents did. The **User Journey** records what you did inside Maestro, per agent, so an agent can follow a reference such as "the file I just saved" or "the page I had open":
+
+- Files you open, close, save, create, rename, or delete in File Preview and the Files panel.
+- Pages you open, navigate to, or close in a browser tab.
+
+Only names, paths, page titles, and page addresses are kept. File contents and diffs are never recorded. Query strings, fragments, and credentials are removed from page addresses before they are stored, because they often carry tokens. Edits made in other editors, or by agents, are not part of the journey.
+
+The journey stays on this computer, in `journey/<agentId>.jsonl` in the Maestro data folder. Entries older than 90 days are removed, and each agent keeps at most 25,000 entries.
+
+To stop recording, turn off **Settings → General → Privacy → Record the files and pages you open in Maestro**. Turning it off does not delete the entries already recorded.
+
+## Timeline
+
+`maestro-cli timeline` merges an agent's History, its User Journey, and the git commits in its working directory into one list, oldest first. When [Computer History](./computer-history) is on, it can include that too. Agents use it to answer "where were we" without asking you. See [Timeline and User Journey](./cli#timeline-and-user-journey) in the CLI docs.
+
 ## Help Panel
 
 Click the **?** button in the History panel header to open a detailed guide explaining all features, entry types, status indicators, and keyboard shortcuts.

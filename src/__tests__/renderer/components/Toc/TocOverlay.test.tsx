@@ -92,4 +92,18 @@ describe('TocOverlay options', () => {
 		fireEvent.keyDown(screen.getByTitle('First pin'), { key: 'Delete' });
 		expect(onEntryKeyDown).toHaveBeenCalledWith(entries[0], 0, expect.anything());
 	});
+
+	it('leaves Enter to the input method while typing in the filter input during IME composition', () => {
+		const onSelectEntry = vi.fn();
+		render(<Harness extra={{ onSelectEntry }} />);
+		const input = screen.getByPlaceholderText('Filter pins');
+
+		for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+			fireEvent.keyDown(input, { key: 'Enter', ...ime });
+			expect(onSelectEntry).not.toHaveBeenCalled();
+		}
+
+		fireEvent.keyDown(input, { key: 'Enter' });
+		expect(onSelectEntry).toHaveBeenCalledWith(entries[0], 'smooth');
+	});
 });

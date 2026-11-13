@@ -58,6 +58,7 @@ import type { Theme } from '../types';
 import type { AgentDiscoveryRequest } from '../../shared/types';
 import { FormInput } from './ui/FormInput';
 import { isEditingTextTarget } from '../utils/editableTarget';
+import { isImeComposing } from '../utils/ime';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
@@ -390,6 +391,10 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 				e.preventDefault();
 				stepEffort(e.key === 'ArrowRight' ? 1 : -1);
 			} else if (e.key === 'Enter') {
+				if (isImeComposing(e)) {
+					e.stopPropagation();
+					return;
+				}
 				e.preventDefault();
 				e.stopPropagation();
 				handleConfirm();
@@ -650,7 +655,9 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 									onChange={setValue}
 									onSubmit={handleConfirm}
 									onKeyDown={(e) => {
-										if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault();
+										if (e.key === 'Enter' && isImeComposing(e)) {
+											e.stopPropagation();
+										}
 									}}
 									placeholder={DEFAULT_LABEL}
 									helperText={

@@ -1415,6 +1415,8 @@ interface MaestroAPI {
 						errorLine?: string;
 					};
 					parsedJson?: unknown;
+					/** Set when the failing process ran over SSH. */
+					sshRemoteId?: string;
 				}
 			) => void
 		) => () => void;
@@ -2653,6 +2655,20 @@ interface MaestroAPI {
 			error?: string;
 			configPath: string;
 		}>;
+		getReachability: () => Promise<{
+			success: boolean;
+			unreachable?: import('../shared/sshConnection').SshReachabilityEvent[];
+			error?: string;
+		}>;
+		checkReachability: (remoteId: string) => Promise<{
+			success: boolean;
+			reachable?: boolean;
+			event?: import('../shared/sshConnection').SshReachabilityEvent;
+			error?: string;
+		}>;
+		onReachability: (
+			callback: (event: import('../shared/sshConnection').SshReachabilityEvent) => void
+		) => () => void;
 	};
 	devtools: {
 		open: () => Promise<void>;

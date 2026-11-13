@@ -60,6 +60,7 @@
 					"image-annotator",
 					"media-player",
 					"file-formats",
+					"file-editor",
 					"parquet-preview",
 					"remote-control",
 					"ssh-remote-execution",

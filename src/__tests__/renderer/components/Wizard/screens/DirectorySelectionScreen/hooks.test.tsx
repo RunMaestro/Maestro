@@ -377,6 +377,34 @@ describe('DirectorySelectionScreen hooks', () => {
 		document.body.removeChild(elsewhere);
 	});
 
+	it('leaves Enter to the input method during active IME composition', () => {
+		const browseRef = React.createRef<HTMLButtonElement>();
+		const attemptNextStep = vi.fn();
+		const { result } = renderHook(() =>
+			useDirectoryKeyboard({
+				browseButtonRef: browseRef,
+				isBrowsing: false,
+				isValidating: false,
+				canProceedToNext: () => true,
+				handleBrowse: vi.fn(),
+				attemptNextStep,
+				previousStep: vi.fn(),
+			})
+		);
+
+		for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+			act(() => {
+				result.current({ key: 'Enter', preventDefault: vi.fn(), ...ime } as any);
+			});
+			expect(attemptNextStep).not.toHaveBeenCalled();
+		}
+
+		act(() => {
+			result.current({ key: 'Enter', preventDefault: vi.fn() } as any);
+		});
+		expect(attemptNextStep).toHaveBeenCalledTimes(1);
+	});
+
 	describe('useAutoAgentName', () => {
 		beforeEach(() => {
 			useSessionStore.setState({ sessions: [] } as any);

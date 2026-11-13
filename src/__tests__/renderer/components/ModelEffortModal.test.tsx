@@ -237,8 +237,10 @@ describe('ModelEffortModal', () => {
 					},
 					'reasoningEffort'
 				);
-				fireEvent.keyDown(screen.getByLabelText('Model'), { key: 'Enter', isComposing: true });
-				expect(setTabModel).not.toHaveBeenCalled();
+				for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+					fireEvent.keyDown(screen.getByLabelText('Model'), { key: 'Enter', ...ime });
+					expect(setTabModel).not.toHaveBeenCalled();
+				}
 				fireEvent.keyDown(screen.getByLabelText('Effort'), { key: 'Enter' });
 				expect(setTabModel).toHaveBeenCalledWith('tab-1', 'manual-model');
 				expect(setTabEffort).toHaveBeenCalledWith('tab-1', 'manual-effort');
@@ -331,6 +333,20 @@ describe('ModelEffortModal', () => {
 
 		expect(setTabModel).not.toHaveBeenCalled();
 		expect(setTabEffort).not.toHaveBeenCalled();
+	});
+
+	it('leaves Enter to the input method during an active IME composition', async () => {
+		const { onClose } = renderModal();
+		await screen.findByText('claude-sonnet-4.5');
+
+		for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+			fireEvent.keyDown(keyTarget(), { key: 'Enter', ...ime });
+			expect(setTabModel).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
+		}
+
+		fireEvent.keyDown(keyTarget(), { key: 'Enter' });
+		expect(onClose).toHaveBeenCalled();
 	});
 
 	it('wraps at both ends of each axis', async () => {

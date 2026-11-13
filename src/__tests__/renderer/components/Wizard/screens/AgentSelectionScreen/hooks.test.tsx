@@ -822,6 +822,39 @@ describe('AgentSelectionScreen hooks', () => {
 		expect(preventDefault).not.toHaveBeenCalled();
 	});
 
+	it('leaves Enter to the input method while the name field is focused during IME composition', () => {
+		const { refs } = createRefs();
+		const nextStep = vi.fn();
+		const preventDefault = vi.fn();
+
+		const { result } = renderHook(() =>
+			useAgentSelectionKeyboard({
+				tiles: AGENT_TILES,
+				tileColumns: AGENT_TILES.length,
+				isNameFieldFocused: true,
+				focusedTileIndex: 0,
+				detectedAgents: [agent({ id: FIRST_TILE_ID, available: true })],
+				nameInputRef: refs.nameInputRef,
+				tileRefs: refs.tileRefs,
+				setIsNameFieldFocused: vi.fn(),
+				setFocusedTileIndex: vi.fn(),
+				setSelectedAgent: vi.fn(),
+				canProceedToNext: () => true,
+				nextStep,
+			})
+		);
+
+		for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+			act(() => result.current({ key: 'Enter', preventDefault, ...ime } as any));
+			expect(nextStep).not.toHaveBeenCalled();
+			expect(preventDefault).not.toHaveBeenCalled();
+		}
+
+		act(() => result.current({ key: 'Enter', preventDefault } as any));
+		expect(nextStep).toHaveBeenCalledTimes(1);
+		expect(preventDefault).toHaveBeenCalledTimes(1);
+	});
+
 	it('opens and closes config panel, loading config and models with SSH ID', async () => {
 		vi.useFakeTimers();
 		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({ model: 'old' });

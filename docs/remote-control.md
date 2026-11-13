@@ -390,6 +390,8 @@ Everything else is the desktop app: the same agents, tabs, transcripts (includin
 
 **Links and files:** with **Use system browser for links** on (**Settings -> General -> Default Browser**, off by default), a link opens in a new tab of your own browser; otherwise it opens in a Maestro browser tab, which the computer running Maestro loads and your browser displays. A link to a `localhost` preview on that computer always opens in a Maestro browser tab, because your device cannot reach that address. With no agent selected it says "Select an agent to open a host preview", and a tab that cannot be created says "Could not create host browser tab". Folder and save pickers browse the files of the computer running Maestro, not your device's. Copy and paste use your device's clipboard.
 
+**Browser tab title:** when agents are waiting for your input, the browser tab title shows how many, for example `(2) Maestro`. The count covers every agent, in every desktop window, so a background tab tells you when to come back.
+
 **Theme:** by default the web interface shows the theme picked in **Settings > Themes**, the same one the desktop window shows. To have a phone follow its own light or dark setting, turn on **Follow System Appearance** in **Settings > Themes**, then pick a light theme and a dark theme. Each browser resolves that setting against its own device, so a phone in dark mode and a laptop in light mode each show the matching theme.
 
 ### What stays in the desktop app

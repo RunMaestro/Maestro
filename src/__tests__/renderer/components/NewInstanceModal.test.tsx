@@ -1384,6 +1384,45 @@ describe('NewInstanceModal', () => {
 			expect(onCreate).toHaveBeenCalled();
 		});
 
+		it('should leave Cmd+Enter to the input method during an active IME composition', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+
+			const { container } = render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByPlaceholderText('Select directory...')).toBeInTheDocument();
+			});
+
+			const nameInput = screen.getByLabelText('Agent Name');
+			fireEvent.change(nameInput, { target: { value: 'Valid Agent Name' } });
+
+			const dirInput = screen.getByPlaceholderText('Select directory...');
+			fireEvent.change(dirInput, { target: { value: '/my/project' } });
+
+			const wrapper = container.firstChild as HTMLElement;
+			for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+				await act(async () => {
+					fireEvent.keyDown(wrapper, { key: 'Enter', metaKey: true, ...ime });
+				});
+				expect(onCreate).not.toHaveBeenCalled();
+			}
+
+			await act(async () => {
+				fireEvent.keyDown(wrapper, { key: 'Enter', metaKey: true });
+			});
+			expect(onCreate).toHaveBeenCalled();
+		});
+
 		it('should not create agent on Cmd+Enter when form is invalid', async () => {
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
 				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),

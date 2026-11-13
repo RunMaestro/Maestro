@@ -41,6 +41,8 @@ Results behave like the rest of the preview:
 - **Errors** show inside the block with Dataview's own message. A broken query never breaks the rest of the preview.
 - **Large results.** A block shows at most 1,000 rows (or tasks) and says how many the query found. Add a `LIMIT` to choose which ones.
 - **Slow queries.** Queries run in the background, so a slow one never freezes Maestro. A query that runs longer than 5 seconds is stopped and shows an error. It runs again after a minute, or as soon as you edit it.
+- **While it computes.** A block with no result yet shows placeholder rows and a **Calculating** pill. A refresh keeps the last result on screen, dimmed, with a **Recalculating** pill. Inline values dim the same way, without a pill. An answer that comes back within 300 ms shows no indicator.
+- **Source stays readable.** Wherever a `dataview` or `dataviewjs` fence shows as code (the feature is off, an agent's chat message, the DataviewJS trust prompt, or the markdown editor), it is syntax-highlighted: DQL keywords, functions, links, and tags for `dataview`, JavaScript for `dataviewjs`.
 
 Dataview renders in File Preview (both the rich and the fast renderer) and in the Auto Run document preview. Agent chat messages never run queries: a query an agent shows you stays code.
 
@@ -70,6 +72,8 @@ Agents on an [SSH remote](./ssh-remote-execution) work too. Their vault is index
 DataviewJS blocks are JavaScript in your notes, with Dataview's `dv` object in scope. Maestro supports the documented `dv` API: page queries (`dv.pages`, `dv.page`, `dv.current`), rendering (`dv.table`, `dv.list`, `dv.taskList`, `dv.header`, `dv.paragraph`, `dv.el`, and the `markdown*` variants), DQL from a script (`dv.query`, `dv.execute`, `dv.evaluate`), file reads (`dv.io.load`, `dv.io.csv`), `dv.view` for a `view.js` (and optional `view.css`) stored in the vault, and the utilities (`dv.date`, `dv.duration`, `dv.luxon`, `dv.array`, and so on).
 
 A script that takes longer than 5 seconds is stopped, and its block shows a timeout error. The other blocks in the note keep running.
+
+To keep scripts fast, the page data a script receives leaves out the tasks and list items of very large pages. When that happens, the block says so under its output, for example "Tasks and lists of 2 large pages were left out to keep this script fast."
 
 ## What is not supported
 

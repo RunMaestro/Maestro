@@ -348,6 +348,8 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => {
 		fileEditWordWrap: true,
 		setFileEditWordWrap: vi.fn(),
 		fileEditShowLineNumbers: true,
+		fileEditVimMode: false,
+		setFileEditVimMode: vi.fn(),
 		setFileEditShowLineNumbers: vi.fn(),
 		filePreviewToolbarVisibility: {
 			save: true,

@@ -65,6 +65,11 @@ import {
  * which reads the session store - a dependency a pure queue utility must not take
  * on. Callers that can resolve a mention pass it; the rest omit it and leave the
  * item's existing flags alone.
+ *
+ * `slashCommand` is the same kind of caller-derived fact: the edited text is one
+ * of the user's slash commands (`/commit`), so the item becomes that COMMAND,
+ * exactly as the composer would have queued it. Left a message, the drain sends
+ * the literal text and the provider refuses it as an unknown command.
  */
 export function applyQueuedItemEdit(
 	queue: QueuedItem[],
@@ -72,23 +77,44 @@ export function applyQueuedItemEdit(
 	patch: QueuedItemEditPatch,
 	crossAgent?: Pick<QueuedItem, 'crossAgentOnly' | 'mentionRouting'> & {
 		crossAgentMention: boolean;
-	}
+	},
+	slashCommand?: QueuedSlashCommand
 ): QueuedItem[] {
 	return queue.map((item) => {
+		// An item still waiting on admission is not the user's to edit yet.
 		if (item.id !== itemId || item.pendingAdmissionId) return item;
 		let turnSettings = patch.turnSettings;
 		if (turnSettings?.route && (item.text !== patch.text || !isAutoModel(turnSettings.model))) {
 			const { route: _staleRoute, ...withoutRoute } = turnSettings;
 			turnSettings = withoutRoute;
 		}
-		return {
+		const edited: QueuedItem = {
 			...item,
 			text: patch.text,
 			images: patch.images,
 			turnSettings,
 			...(crossAgent ?? {}),
 		};
+		if (!slashCommand) return edited;
+		return {
+			...edited,
+			type: 'command',
+			text: undefined,
+			command: slashCommand.command,
+			commandArgs: slashCommand.commandArgs,
+			commandDescription: slashCommand.description,
+			crossAgentMention: undefined,
+			crossAgentOnly: undefined,
+			mentionRouting: undefined,
+		};
 	});
+}
+
+/** A slash command a queued message's text resolves to (see `matchQueuedSlashCommand`). */
+export interface QueuedSlashCommand {
+	command: string;
+	commandArgs: string;
+	description?: string;
 }
 
 /**

@@ -59,6 +59,10 @@ describe('parseAgentMentions', () => {
 		expect(parseAgentMentions('open @notes.md now')).toEqual([]);
 	});
 
+	it('skips a Windows drive-letter path even when an agent shares the drive letter', () => {
+		expect(parseAgentMentions('see @C:/Users/x/a.md', new Set(['c']))).toEqual([]);
+	});
+
 	it('parses a dotted agent name when it is in the roster (the @RunMaestro.ai regression)', () => {
 		const roster = new Set(['runmaestro.ai']);
 		const result = parseAgentMentions('ping @RunMaestro.ai now', roster);
@@ -281,6 +285,12 @@ describe('deriveConsultSubject', () => {
 		const subject = deriveConsultSubject('@rc ' + 'a'.repeat(100), 10);
 		expect(subject).toBe('aaaaaaaaa…');
 		expect(subject.length).toBe(10);
+	});
+
+	it('cuts at a word boundary rather than mid-word', () => {
+		expect(deriveConsultSubject('@rc which branch should I build on', 20)).toBe(
+			'which branch should…'
+		);
 	});
 
 	it('returns empty string when only a mention with no prose', () => {

@@ -14,7 +14,13 @@ Open **Settings** (`Cmd+,` / `Ctrl+,`) and go to the **Plugins** tab. Every buil
 
 ![The Plugins tab in Settings, listing every built-in Encore Feature](./screenshots/plugins-catalog.png)
 
-Click a card to open its detail view, then use the **Enable** / **Disable** button. Features that carry their own options show them on a **Settings** tab beneath that button, and the capabilities the feature is allowed to use are itemized under **Permissions**.
+Click a card to open its detail view. The **Enable** switch is at the top right, beside a **Help** button, and stays there however long the content below is. Under the description are three tabs:
+
+- **Help** - the feature's usage guide: what it does and how to reach it. A feature that is off opens on this tab. A community plugin without a guide says so.
+- **Settings** - the feature's own options, when it has any. A feature that is on opens on this tab.
+- **Permissions** - the capabilities the feature is allowed to use.
+
+Turning the switch on or off does not change the tab you are on.
 
 ![A plugin's detail view, with its own settings and permission list](./screenshots/plugin-detail.png)
 
@@ -35,6 +41,10 @@ A built-in card carries one of two badges, and the badge says where the feature 
 
 <Note>
 Built-in features work with the community plugin subsystem switched off - that is the default, and the banner at the top of the tab says so. **Enable plugins** turns on loading of third-party plugins as well. You do not need it to use anything below.
+</Note>
+
+<Note>
+**Agent Flow** is no longer bundled. When plugins are enabled, Maestro retires an unmodified Agent Flow 0.3.0 install: it moves the package to `retired-plugins/agent-flow-0.3.0-<id>/` in the Maestro data folder and removes its permissions, settings, and stored data. A copy you changed is left where it is. Maestro never deletes the moved package; remove it yourself when you no longer need it.
 </Note>
 
 ## Available features
@@ -73,3 +83,5 @@ Disabling a feature hides its surfaces; it does not delete what you already have
 Want to build a new Encore Feature? The architecture is designed for easy extension - add a flag, wire up the toggle, gate the access points, and your feature ships behind a clean opt-in. Ship it off by default while it proves itself; flip its entry in `DEFAULT_ENCORE_FEATURES` (`src/shared/encoreFeatures.ts`) when it graduates.
 
 See the [Encore Features contributor guide](https://github.com/RunMaestro/Maestro/blob/main/CONTRIBUTING.md#encore-features-feature-gating) for the full implementation checklist, architecture details, and the canonical reference implementation (Director's Notes).
+
+Building a community plugin? Start with the [plugin development guide](https://github.com/RunMaestro/Maestro/blob/main/docs/agent-guides/PLUGIN-DEVELOPMENT.md). It links the host contracts for settings cards, services, platform primitives, and Relay.

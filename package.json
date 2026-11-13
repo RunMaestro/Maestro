@@ -33,6 +33,7 @@
 		"build": "npm run build:main && npm run build:provenance && npm run build:renderer && npm run build:web-desktop && npm run build:cli && npm run build:maestro-p && npm run build:maestro-lib-run && npm run build:permission-relay-bridge",
 		"build:provenance": "node scripts/write-build-provenance.mjs",
 		"verify:provenance": "node scripts/write-build-provenance.mjs --verify",
+		"smoke:packaged": "node scripts/smoke-launch-packaged.mjs",
 		"build:main": "node scripts/clean-tsc-output.mjs && tsc -p tsconfig.main.json && node scripts/gen-build-info.mjs && npm run build:preload",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
@@ -405,6 +406,7 @@
 	"dependencies": {
 		"@agentclientprotocol/sdk": "^2.0.2",
 		"@anthropic-ai/claude-agent-sdk": "^0.3.310",
+		"@codemirror/autocomplete": "^6.20.4",
 		"@codemirror/commands": "^6.10.3",
 		"@codemirror/lang-cpp": "^6.0.3",
 		"@codemirror/lang-css": "^6.3.1",
@@ -444,6 +446,7 @@
 		"@lezer/python": "^1.1.18",
 		"@napi-rs/keyring": "2.0.0",
 		"@opencode-ai/sdk": "^1.17.13",
+		"@replit/codemirror-vim": "^6.4.0",
 		"@sentry/electron": "^7.13.0",
 		"@serenity-kit/opaque": "1.1.0",
 		"@tanstack/react-virtual": "^3.13.13",

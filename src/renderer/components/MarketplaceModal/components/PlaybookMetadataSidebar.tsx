@@ -140,6 +140,9 @@ export function PlaybookMetadataSidebar({
 							: 'Yes (unlimited)'
 						: 'No'}
 				</p>
+				<p className="text-sm" style={{ color: theme.colors.textMain }}>
+					Fresh context per: {playbook.taskSelectionMode === 'document' ? 'Document' : 'Task'}
+				</p>
 			</div>
 
 			<div className="mb-6">

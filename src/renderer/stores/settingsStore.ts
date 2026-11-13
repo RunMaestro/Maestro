@@ -549,6 +549,8 @@ export interface SettingsStoreState
 	// File Edit & Preview
 	fileEditWordWrap: boolean;
 	fileEditShowLineNumbers: boolean;
+	/** Vim keybindings in the File Preview code editor. Off by default. */
+	fileEditVimMode: boolean;
 	filePreviewToolbarVisibility: FilePreviewToolbarVisibility;
 	moderatorStandingInstructions: string;
 	autoRunDisabled: boolean;
@@ -684,6 +686,7 @@ export interface SettingsStoreActions
 	setAutoExpandAgentTaskListBar: (value: boolean) => void;
 	setFileEditWordWrap: (value: boolean) => void;
 	setFileEditShowLineNumbers: (value: boolean) => void;
+	setFileEditVimMode: (value: boolean) => void;
 	setFilePreviewToolbarButtonVisibility: (button: FilePreviewToolbarButton, value: boolean) => void;
 	setModeratorStandingInstructions: (value: string) => void;
 	setAutoRunDisabled: (value: boolean) => void;
@@ -963,6 +966,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		autoExpandAgentTaskListBar: false,
 		fileEditWordWrap: true,
 		fileEditShowLineNumbers: true,
+		fileEditVimMode: false,
 		filePreviewToolbarVisibility: { ...DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY },
 		moderatorStandingInstructions: '',
 		autoRunDisabled: false,
@@ -1630,6 +1634,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setFileEditShowLineNumbers: (value) => {
 			set({ fileEditShowLineNumbers: value });
 			window.maestro.settings.set('fileEditShowLineNumbers', value);
+		},
+
+		setFileEditVimMode: (value) => {
+			set({ fileEditVimMode: value });
+			window.maestro.settings.set('fileEditVimMode', value);
 		},
 
 		setFilePreviewToolbarButtonVisibility: (button, value) => {
@@ -2931,6 +2940,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['fileEditShowLineNumbers'] !== undefined)
 			patch.fileEditShowLineNumbers = allSettings['fileEditShowLineNumbers'] as boolean;
 
+		if (allSettings['fileEditVimMode'] !== undefined)
+			patch.fileEditVimMode = allSettings['fileEditVimMode'] as boolean;
+
 		// Toolbar visibility merges with defaults so new buttons added in a
 		// future release default to visible even for users with persisted state.
 		if (allSettings['filePreviewToolbarVisibility'] !== undefined) {
@@ -3269,6 +3281,7 @@ export function getSettingsActions() {
 		setAutoExpandAgentTaskListBar: state.setAutoExpandAgentTaskListBar,
 		setFileEditWordWrap: state.setFileEditWordWrap,
 		setFileEditShowLineNumbers: state.setFileEditShowLineNumbers,
+		setFileEditVimMode: state.setFileEditVimMode,
 		setFilePreviewToolbarButtonVisibility: state.setFilePreviewToolbarButtonVisibility,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,

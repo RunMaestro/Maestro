@@ -14,7 +14,9 @@ vi.mock('../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
 }));
 
-vi.mock('../../../main/utils/ssh-command-builder', () => ({
+vi.mock('../../../main/utils/ssh-command-builder', async (importOriginal) => ({
+	// The real execSshCommand runs the mocked execFileNoThrow.
+	...(await importOriginal<typeof import('../../../main/utils/ssh-command-builder')>()),
 	buildSshCommand: vi.fn(),
 }));
 

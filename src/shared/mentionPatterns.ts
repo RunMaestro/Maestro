@@ -45,6 +45,11 @@ const NAME_CHAR = `\\p{L}\\p{N}\\p{M}\\p{Extended_Pictographic}${EMOJI_JOIN}-`;
  * A mention-body character: {@link NAME_CHAR} plus the path punctuation
  * (`_ . /`) a file body carries, so `@src/app.ts` is captured whole before the
  * file/agent split classifies it. `-` stays LAST (literal, not a range).
+ *
+ * A colon is deliberately NOT here. It is the separator in `@Agent:plan.md` and
+ * the syntax the room's colon-aware resolver reads, so a body may only carry one
+ * after an absolute Windows drive letter, where {@link DRIVE_PATH_SOURCE} opts
+ * it in (`@C:/Users/x/a.md`). Every other bare body still ends at a colon.
  */
 const BODY_CHAR = `\\p{L}\\p{N}\\p{M}\\p{Extended_Pictographic}${EMOJI_JOIN}_./-`;
 
@@ -116,15 +121,35 @@ export type MentionQuote = '"' | "'";
 const QUOTED_MENTION_SOURCE = `@"[^"\\n]+"|@'[^'\\n]+'`;
 
 /**
- * The scan alternatives cover both mention kinds: a leading `@` plus either a
- * quoted body or a path-ish bare body. Quoted comes FIRST so `@"a b.md"` is
- * captured whole instead of the bare alternative stopping at the space.
- * Classification (file vs. agent vs. plain text) happens per match in
- * {@link scanMentionSpans}. The bare body class is a superset of
- * {@link AGENT_MENTION_PATTERN_SOURCE} so a bare name is captured whole before
- * being classified. Compiled with the `u` flag (see {@link scanMentionSpans}).
+ * An absolute Windows drive path (`C:/Users/x/a.md`) written bare. This is the
+ * shape a file dropped from a Windows drive reaches a mention in: `toMentionPath`
+ * turns backslashes into forward slashes and keeps the drive letter. A path the
+ * bare grammar can carry is inserted without quotes. Only a SINGLE letter
+ * followed by `:/` opts into it, so `@Agent:plan.md` still reads as the agent
+ * `Agent`, and a bare `@C` is still an agent name. The rest of the body is the
+ * ordinary {@link BODY_CHAR} set, so a colon anywhere after the prefix ends the
+ * token.
+ *
+ * Typed or pasted BACKSLASH paths are out of scope: this recognises the
+ * forward-slash form every drop produces, which also repairs `@C:/...` mentions
+ * already saved in drafts and transcripts. Backslash bodies are left as text.
  */
-const MENTION_SCAN_SOURCE = `${QUOTED_MENTION_SOURCE}|@[${BODY_CHAR}]+`;
+const DRIVE_PATH_PREFIX_SOURCE = '[A-Za-z]:/';
+const DRIVE_PATH_SOURCE = `@${DRIVE_PATH_PREFIX_SOURCE}[${BODY_CHAR}]*`;
+const DRIVE_PATH_BODY_RE = new RegExp(`^${DRIVE_PATH_PREFIX_SOURCE}`);
+
+/**
+ * The scan alternatives cover both mention kinds: a leading `@` plus either a
+ * quoted body, an absolute Windows drive path, or a path-ish bare body. Quoted
+ * comes FIRST so `@"a b.md"` is captured whole instead of the bare alternative
+ * stopping at the space, and the drive form comes before the bare form so
+ * `@C:/a.md` is not cut down to `@C`. Classification (file vs. agent vs. plain
+ * text) happens per match in {@link scanMentionSpans}. The bare body class is a
+ * superset of {@link AGENT_MENTION_PATTERN_SOURCE} so a bare name is captured
+ * whole before being classified. Compiled with the `u` flag (see
+ * {@link scanMentionSpans}).
+ */
+const MENTION_SCAN_SOURCE = `${QUOTED_MENTION_SOURCE}|${DRIVE_PATH_SOURCE}|@[${BODY_CHAR}]+`;
 
 /** Sentence-ending punctuation trimmed off the tail of a BARE match. */
 const TRAILING_PUNCTUATION = /[.,;:!?)\]}>'"]+$/;
@@ -170,13 +195,23 @@ export function mentionQuoteChar(text: string): MentionQuote | null {
 }
 
 /**
+ * Whether a whole path can be written as a bare mention body: every character is
+ * a {@link BODY_CHAR}, with an optional Windows drive prefix. A path that fails
+ * this (parentheses, `+`, `&`, a space, and so on) cannot scan back out as one
+ * token, so {@link formatFileMention} quotes it instead.
+ */
+// eslint-disable-next-line no-misleading-character-class
+const BARE_MENTION_PATH_RE = new RegExp(`^(?:${DRIVE_PATH_PREFIX_SOURCE})?[${BODY_CHAR}]+$`, 'u');
+
+/**
  * Build the raw `@…` token for a file/directory path, quoting it when the path
- * carries whitespace. Single source of truth for every insertion site (the `@`
- * picker, the Files-panel drag-drop, the prompt composer), so what gets inserted
- * always scans back out as one mention.
+ * carries whitespace or any character the bare grammar cannot carry (a
+ * parenthesised `notes(1).md`, a `+`). Single source of truth for every
+ * insertion site (the `@` picker, the Files-panel drag-drop, the prompt
+ * composer), so what gets inserted always scans back out as one mention.
  */
 export function formatFileMention(path: string): string {
-	if (!/\s/.test(path)) return `@${path}`;
+	if (BARE_MENTION_PATH_RE.test(path)) return `@${path}`;
 	// Prefer `"`; fall back to `'` when the filename itself carries a double
 	// quote. A path holding BOTH quote characters cannot be delimited, so it goes
 	// in bare rather than as a token that scans back as something else.
@@ -222,6 +257,20 @@ function fileExtension(path: string): string {
  */
 export function isFileMentionBody(path: string): boolean {
 	return path.includes('/') || /\.[A-Za-z0-9]+$/.test(path);
+}
+
+/**
+ * Whether a mention BODY is an absolute Windows drive path (`C:/Users/x/a.md`).
+ * The room's colon-aware resolver reads `@Agent:plan.md` as an agent plus a
+ * file, so without this it would read `@C:/Users/x/a.md` as an agent named `C`
+ * (or warn that no agent matches `@C`). A drive path is a file mention, never an
+ * agent, so that resolver skips a body this returns true for.
+ *
+ * Forward slash only, matching what {@link formatFileMention} and the drop path
+ * produce. A typed or pasted backslash path is not a supported mention form.
+ */
+export function isWindowsDrivePath(body: string): boolean {
+	return DRIVE_PATH_BODY_RE.test(body);
 }
 
 /**

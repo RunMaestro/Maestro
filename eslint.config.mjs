@@ -134,6 +134,16 @@ export default tseslint.config(
 		},
 	},
 
+	// Boundary guard: src/main/** must not import src/renderer/**. The renderer
+	// build empties dist/renderer, so such an import breaks only the packaged app.
+	{
+		files: ['src/main/**/*.ts', 'src/main/**/*.tsx'],
+		plugins: { 'shared-boundary': sharedBoundaryPlugin },
+		rules: {
+			'shared-boundary/no-main-to-renderer-imports': 'error',
+		},
+	},
+
 	// Dataview boundary: src/shared/dataview/index.ts is the one import site for the
 	// vendored Dataview core. Only src/shared/dataview/** may reach into vendor/.
 	{

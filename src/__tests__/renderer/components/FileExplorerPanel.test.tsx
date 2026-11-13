@@ -3,10 +3,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { FileExplorerPanel } from '../../../renderer/components/FileExplorerPanel';
+import { TRUNCATION_BANNER_DISMISSED_KEY } from '../../../renderer/components/FileExplorerPanel/FileExplorerPanel';
 import type { Session, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 import { mockTheme } from '../../helpers/mockTheme';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 import { getElevatedSurfaceColors } from '../../../renderer/utils/elevatedSurface';
 // Mock lucide-react
@@ -437,6 +439,53 @@ describe('FileExplorerPanel', () => {
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 			const header = container.querySelector('.sticky');
 			expect(header).toHaveStyle({ backgroundColor: mockTheme.colors.bgSidebar });
+		});
+	});
+
+	describe('Truncated tree banner', () => {
+		const truncatedSession = () =>
+			createMockSession({ fileTreeTruncated: true, fileTreeLoadedCap: 100_000 });
+
+		beforeEach(() => {
+			// jsdom here ships no working Storage; the shared stand-in also resets
+			// the store between tests.
+			installLocalStorageMock();
+		});
+
+		it('shows the banner until it is dismissed', () => {
+			render(<FileExplorerPanel {...defaultProps} session={truncatedSession()} />);
+			expect(screen.getByText('Unable to load all files into the file panel.')).toBeInTheDocument();
+			expect(screen.queryByLabelText('Show file scan warning')).not.toBeInTheDocument();
+		});
+
+		it('stays dismissed across remounts and other agents once dismissed', () => {
+			const { unmount } = render(
+				<FileExplorerPanel {...defaultProps} session={truncatedSession()} />
+			);
+			fireEvent.click(screen.getByLabelText('Minimize file scan warning'));
+			expect(
+				screen.queryByText('Unable to load all files into the file panel.')
+			).not.toBeInTheDocument();
+			expect(screen.getByLabelText('Show file scan warning')).toBeInTheDocument();
+			unmount();
+
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={{ ...truncatedSession(), id: 'another-agent' }}
+				/>
+			);
+			expect(
+				screen.queryByText('Unable to load all files into the file panel.')
+			).not.toBeInTheDocument();
+			expect(screen.getByLabelText('Show file scan warning')).toBeInTheDocument();
+		});
+
+		it('reopens the banner from the hazard icon', () => {
+			window.localStorage.setItem(TRUNCATION_BANNER_DISMISSED_KEY, 'true');
+			render(<FileExplorerPanel {...defaultProps} session={truncatedSession()} />);
+			fireEvent.click(screen.getByLabelText('Show file scan warning'));
+			expect(screen.getByText('Unable to load all files into the file panel.')).toBeInTheDocument();
 		});
 	});
 

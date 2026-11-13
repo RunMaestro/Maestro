@@ -19,6 +19,8 @@ import { shellEscape, shellEscapeRemotePath } from './shell-escape';
 import { sshRemoteManager } from '../ssh-remote-manager';
 import { logger } from './logger';
 import { resolveSshPath } from './cliDetection';
+import { describeSshUnreachable, isSshConnectionFailure } from '../../shared/sshConnection';
+import { noteSshExit } from '../ssh-reachability';
 
 /**
  * File or directory entry returned from readDir operations.
@@ -231,6 +233,19 @@ function getBackoffDelay(attempt: number, baseDelay: number, maxDelay: number): 
 }
 
 /**
+ * When ssh itself failed (exit 255: host down, tunnel dead, auth refused),
+ * replace its raw stderr with one message that says so and names the remote.
+ * Every remote file operation reports `stderr` as its error, so without this a
+ * save to an unreachable host failed with `Connection closed by UNKNOWN port
+ * 65535` or, after a caller's own mapping, a misleading "Permission denied".
+ */
+function withConnectionFailureMessage(result: ExecResult, config: SshRemoteConfig): ExecResult {
+	noteSshExit(config, result.exitCode);
+	if (!isSshConnectionFailure(result.exitCode)) return result;
+	return { ...result, stderr: describeSshUnreachable(config, result.stderr) };
+}
+
+/**
  * Execute a command on a remote host via SSH with automatic retry for transient errors.
  *
  * Implements exponential backoff with jitter for recoverable SSH errors like
@@ -275,6 +290,7 @@ async function execRemoteCommand(
 
 			// Success - return immediately
 			if (result.exitCode === 0) {
+				noteSshExit(config, 0);
 				return result;
 			}
 
@@ -291,11 +307,11 @@ async function execRemoteCommand(
 			}
 
 			// Non-recoverable error or max retries reached - return the result
-			return result;
+			return withConnectionFailureMessage(result, config);
 		}
 
 		// Should never reach here, but return last result as fallback
-		return lastResult!;
+		return withConnectionFailureMessage(lastResult!, config);
 	} finally {
 		limiter.release();
 	}
@@ -1325,6 +1341,7 @@ export async function readFileRemoteAbortable(
 					resolve({ success: false, error: 'Aborted' });
 					return;
 				}
+				noteSshExit(sshRemote, code);
 				if (code !== 0) {
 					const err = stderr || `Failed to read file: ${filePath}`;
 					resolve({

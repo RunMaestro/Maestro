@@ -259,6 +259,8 @@ function FileEditPreview({ theme }: SettingsSectionProps) {
 			setFileEditShowLineNumbers={settings.setFileEditShowLineNumbers}
 			fileEditWordWrap={settings.fileEditWordWrap}
 			setFileEditWordWrap={settings.setFileEditWordWrap}
+			fileEditVimMode={settings.fileEditVimMode}
+			setFileEditVimMode={settings.setFileEditVimMode}
 			filePreviewToolbarVisibility={settings.filePreviewToolbarVisibility}
 			setFilePreviewToolbarButtonVisibility={settings.setFilePreviewToolbarButtonVisibility}
 		/>

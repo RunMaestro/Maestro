@@ -728,6 +728,46 @@ describe('marketplace IPC handlers', () => {
 			expect(result.playbook.prompt).toBe('Custom instructions here');
 		});
 
+		it.each([
+			{ declared: 'document', saved: 'document' },
+			{ declared: 'task', saved: 'task' },
+			{ declared: 'per-document', saved: undefined },
+			{ declared: undefined, saved: undefined },
+		])(
+			'carries the manifest taskSelectionMode $declared onto the saved playbook as $saved',
+			async ({ declared, saved }) => {
+				const manifest = {
+					...sampleManifest,
+					playbooks: sampleManifest.playbooks.map((p) =>
+						p.id === 'test-playbook-2' ? { ...p, taskSelectionMode: declared } : p
+					),
+				} as MarketplaceManifest;
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify({ fetchedAt: Date.now(), manifest }))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				mockFetch.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('# Content') });
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'test-playbook-2',
+					'Custom',
+					'/autorun',
+					'session-123'
+				);
+
+				expect(result.playbook.taskSelectionMode).toBe(saved);
+				// Absent stays absent on disk, so an old playbook imports byte-for-byte as before.
+				expect('taskSelectionMode' in result.playbook).toBe(saved !== undefined);
+				const written = vi
+					.mocked(fs.writeFile)
+					.mock.calls.find(([file]) => String(file).endsWith('session-123.json'));
+				expect(JSON.parse(String(written![1])).playbooks[0].taskSelectionMode).toBe(saved);
+			}
+		);
+
 		it('should save playbook to session storage', async () => {
 			const validCache: MarketplaceCache = {
 				fetchedAt: Date.now(),

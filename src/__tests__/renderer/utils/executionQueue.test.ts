@@ -637,6 +637,39 @@ describe('applyQueuedItemEdit', () => {
 
 		expect(next[0].paused).toBe(true);
 	});
+
+	// The user replaced a queued message with `/commit` and it drained as the
+	// literal text, which the provider refused as an unknown command.
+	it('turns a message edited into a slash command into that command', () => {
+		const queue = [{ ...item('a'), crossAgentMention: true, crossAgentOnly: true }];
+
+		const next = applyQueuedItemEdit(
+			queue,
+			'a',
+			{ text: '/commit', images: [], turnSettings: { model: 'opus' } },
+			{ crossAgentMention: false, crossAgentOnly: false },
+			{ command: '/commit', commandArgs: '', description: 'Commit and push' }
+		);
+
+		expect(next[0]).toMatchObject({
+			id: 'a',
+			type: 'command',
+			command: '/commit',
+			commandArgs: '',
+			commandDescription: 'Commit and push',
+			turnSettings: { model: 'opus' },
+		});
+		expect(next[0].text).toBeUndefined();
+		expect(next[0].crossAgentMention).toBeUndefined();
+		expect(next[0].crossAgentOnly).toBeUndefined();
+	});
+
+	it('keeps the item a message when no slash command is passed', () => {
+		const next = applyQueuedItemEdit([item('a')], 'a', patch());
+
+		expect(next[0].type).toBe('message');
+		expect(next[0].command).toBeUndefined();
+	});
 });
 
 // ============================================================================

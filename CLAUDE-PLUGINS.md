@@ -129,7 +129,7 @@ HostResponse { id, ok, result?, error? } <---postMessage---
   - `ui.panelPost`: requires `ui:panel` and targets ONLY one of the plugin's own declared panels (own-panels-only); JSON-only payload capped at `MAX_PANEL_POST_BYTES = 64 KB`; delivered to the panel page as a `maestro:panelData` window message. One-way push - there is no reply channel back to the sandbox.
   - `ui.openPanel` / `ui.closePanel` / `ui.togglePanel`: requires `ui:panel` (no new consent); built by one shared factory and resolved through the SAME `deps.getPanel` lookup `ui.panelPost` uses, so a plugin can only summon its OWN panels. `ui.openPanel` also opens own `settings` cards (Host API 1.23.0); close/toggle stay modal-only. Other docked placements are rejected. Registered only when `deps.panelVisibility` is wired (fail closed). Main broadcasts `plugins:panel-visibility` `{ pluginId, panelId, action }`; the renderer's App-level `PluginModalPanelMount` drives the `uiStore.openPluginPanelId` field (transient, namespaced `<pluginId>/<panelId>`), and `close` only closes when that exact panel is the open one.
 
-  **Relay conversations.** `agents.send` from the exact trusted `sh.maestro.relay` sandbox signed by the pinned Relay publisher (`src/shared/plugins/relay-identity.ts`) is a normal user conversation transport: it preserves the full prompt and existing headless agent execution configuration without a free-text topic risk veto. Exact-agent grants, trusted signature, separate unattended consent, provider-session ownership, cancellation/progress and ActionGuard still apply. No plugin opts can select this policy. Other plugin sends, `agents.dispatch` (including Relay), scheduler, Pianola and `process.spawn` keep their risk ceiling. The exact declared `sh.maestro.relay/send` MCP reply tool likewise carries conversational text only with a valid host-issued caller proof and live trusted Relay identity; Relay still authorizes the sender, bound guild/channel/thread and outbound policy before brokered network delivery. See [the Relay conversation boundary](docs/relay-host-contract.md#conversation-transport-boundary).
+  **Relay conversations.** `agents.send` from the exact trusted `sh.maestro.relay` sandbox signed by the pinned Relay publisher (`src/shared/plugins/relay-identity.ts`) is a normal user conversation transport: it preserves the full prompt and existing headless agent execution configuration without a free-text topic risk veto. Exact-agent grants, trusted signature, separate unattended consent, provider-session ownership, cancellation/progress and ActionGuard still apply. No plugin opts can select this policy. Other plugin sends, `agents.dispatch` (including Relay), scheduler, Pianola and `process.spawn` keep their risk ceiling. The exact declared `sh.maestro.relay/send` MCP reply tool likewise carries conversational text only with a valid host-issued caller proof and live trusted Relay identity; Relay still authorizes the sender, bound guild/channel/thread and outbound policy before brokered network delivery. See [the Relay conversation boundary](docs/agent-guides/RELAY-HOST-CONTRACT.md#conversation-transport-boundary).
 
   **Risk rejection is not a review queue.** Automatic paths still return the legacy error string `high-risk prompt: auto-dispatch blocked, surfaced for review` for compatibility with Relay's existing exact error mapping. This does not create a pending approval. Only the scheduler explicitly notifies on a blocked verdict; that toast is not an approval control.
 
@@ -245,7 +245,7 @@ Bundled plugins ship trusted via a build-time signature, not a committed one. Th
 The current host is `1.25.0`; it adds resumable `agents.send`, invocation-scoped
 public progress, verified plugin-tool caller context, and isolated `agents.generateTitle`.
 All sends and title generation require exact-agent Dispatch, unattended consent,
-trusted signatures, risk and action guards. See [the Relay contract](docs/relay-host-contract.md).
+trusted signatures, risk and action guards. See [the Relay contract](docs/agent-guides/RELAY-HOST-CONTRACT.md).
 `1.24.0` added host-mediated plugin services.
 `1.23.0` added independent plugin settings cards.
 `1.17.0` added `media:tools` with the exact
@@ -329,7 +329,7 @@ See [PLUGIN-MEDIA-TOOLS.md](docs/agent-guides/PLUGIN-MEDIA-TOOLS.md) for the con
 ## Plugin settings cards (1.23.0)
 
 Settings-placement panels are independent searchable Settings destinations, not
-Display-tab docks. See [the authoring contract](docs/plugin-settings-cards.md).
+Display-tab docks. See [the authoring contract](docs/agent-guides/PLUGIN-SETTINGS-CARDS.md).
 The manager admits them only for active trusted records with live `ui:panel`
 grants. `hostSettings: ["media"]` draws a host-owned link to Host media tools;
 it grants no host setting access. Own `ui.openPanel` can navigate to a settings
@@ -338,7 +338,7 @@ card; close/toggle remain modal-only. Identity is the existing namespaced panel 
 ## Host-mediated services (1.24.0)
 
 `provides` / pinned `requires` declarations, exact consent scopes and the closed
-transcription contract are documented in [plugin-services.md](docs/plugin-services.md).
+transcription contract are documented in [PLUGIN-SERVICES.md](docs/agent-guides/PLUGIN-SERVICES.md).
 `PluginServiceHost` routes through the existing sandbox result bridge; only
 `PluginMediaTools.delegate` mints call-bound aliases. Owner jobs become exclusive,
 keep their original deadline/limits and close before result delivery.

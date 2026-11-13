@@ -827,6 +827,11 @@ export interface PlaybookDocumentEntry {
 // Omitted on legacy playbooks → treated as 'task' (the historical behavior).
 export type TaskSelectionMode = 'task' | 'document';
 
+/** Whether an untyped value (a manifest field, a YAML key) is a {@link TaskSelectionMode}. */
+export function isTaskSelectionMode(value: unknown): value is TaskSelectionMode {
+	return value === 'task' || value === 'document';
+}
+
 // A saved Playbook configuration
 export interface Playbook {
 	id: string;

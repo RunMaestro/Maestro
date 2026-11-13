@@ -3,6 +3,7 @@ import {
 	AGENT_MENTION_PATTERN_SOURCE,
 	formatFileMention,
 	isFileMentionBody,
+	isWindowsDrivePath,
 	mentionQuoteChar,
 	stripMentionQuotes,
 	tokenizeMentions,
@@ -54,6 +55,96 @@ describe('isFileMentionBody', () => {
 	});
 });
 
+describe('isWindowsDrivePath', () => {
+	it('recognises a drive-letter prefix and nothing else', () => {
+		expect(isWindowsDrivePath('C:/Users/x/a.md')).toBe(true);
+		expect(isWindowsDrivePath('c:/')).toBe(true);
+		expect(isWindowsDrivePath('C:')).toBe(false);
+		expect(isWindowsDrivePath('C:Users')).toBe(false);
+		expect(isWindowsDrivePath('Agent:plan.md')).toBe(false);
+		// Backslash paths are not a supported mention form (out of scope).
+		expect(isWindowsDrivePath('C:\\Users\\x')).toBe(false);
+	});
+});
+
+describe('Windows drive-letter mentions', () => {
+	it('round-trips a space-free drive path through formatFileMention and tokenizeMentions', () => {
+		const path = 'C:/Users/x/project/a.md';
+		const token = formatFileMention(path);
+		expect(token).toBe(`@${path}`);
+		expect(tokenizeMentions(token)).toEqual([
+			{ kind: 'file', value: `@${path}`, path, extension: 'md' },
+		]);
+	});
+
+	it('round-trips a drive path with spaces (insertion quotes it)', () => {
+		const path = 'C:/Users/x/My Project/a b.md';
+		const token = formatFileMention(path);
+		expect(token).toBe(`@"${path}"`);
+		expect(tokenizeMentions(token)).toEqual([
+			{ kind: 'file', value: `@"${path}"`, path, extension: 'md' },
+		]);
+	});
+
+	it('chips a bare drive path even when an agent shares the drive letter', () => {
+		expect(tokenizeMentions('open @C:/Users/x/a.md now', new Set(['c']))).toEqual([
+			{ kind: 'text', value: 'open ' },
+			{ kind: 'file', value: '@C:/Users/x/a.md', path: 'C:/Users/x/a.md', extension: 'md' },
+			{ kind: 'text', value: ' now' },
+		]);
+	});
+
+	it('does not turn @Agent:file.md into a file mention', () => {
+		expect(tokenizeMentions('ask @Agent:plan.md', new Set(['agent']))).toEqual([
+			{ kind: 'text', value: 'ask ' },
+			{ kind: 'agent', value: '@Agent', name: 'Agent' },
+			{ kind: 'text', value: ':plan.md' },
+		]);
+		// Unknown bare names stay plain text, colon and all.
+		expect(tokenizeMentions('ask @Agent:plan.md')).toEqual([
+			{ kind: 'text', value: 'ask @Agent:plan.md' },
+		]);
+	});
+
+	it('keeps a bare drive letter as an agent name', () => {
+		expect(tokenizeMentions('hey @C look', new Set(['c']))).toEqual([
+			{ kind: 'text', value: 'hey ' },
+			{ kind: 'agent', value: '@C', name: 'C' },
+			{ kind: 'text', value: ' look' },
+		]);
+	});
+
+	it('leaves a drive path in a URL, an email or after a path segment as plain text', () => {
+		expect(tokenizeMentions('https://host/@C:/Users/x/a.md')).toEqual([
+			{ kind: 'text', value: 'https://host/@C:/Users/x/a.md' },
+		]);
+		expect(tokenizeMentions('me@C:/Users/x/a.md')).toEqual([
+			{ kind: 'text', value: 'me@C:/Users/x/a.md' },
+		]);
+		expect(tokenizeMentions('./@C:/Users/x/a.md')).toEqual([
+			{ kind: 'text', value: './@C:/Users/x/a.md' },
+		]);
+	});
+
+	it('trims sentence punctuation off a drive path', () => {
+		expect(tokenizeMentions('open @C:/Users/x/a.md.')).toEqual([
+			{ kind: 'text', value: 'open ' },
+			{ kind: 'file', value: '@C:/Users/x/a.md', path: 'C:/Users/x/a.md', extension: 'md' },
+			{ kind: 'text', value: '.' },
+		]);
+	});
+
+	it('round-trips a drive path the bare grammar cannot carry', () => {
+		for (const path of ['C:/Users/x/notes(1).md', 'C:/Users/x/a+b.md']) {
+			const token = formatFileMention(path);
+			expect(token).toBe(`@"${path}"`);
+			expect(tokenizeMentions(token)).toEqual([
+				{ kind: 'file', value: `@"${path}"`, path, extension: 'md' },
+			]);
+		}
+	});
+});
+
 describe('formatFileMention', () => {
 	it('leaves a space-free path bare', () => {
 		expect(formatFileMention('src/main/index.ts')).toBe('@src/main/index.ts');
@@ -84,6 +175,14 @@ describe('formatFileMention', () => {
 				path,
 				extension: 'md',
 			},
+		]);
+	});
+
+	it('quotes a path the bare grammar cannot carry', () => {
+		const path = 'src/notes(1).md';
+		expect(formatFileMention(path)).toBe(`@"${path}"`);
+		expect(tokenizeMentions(formatFileMention(path))).toEqual([
+			{ kind: 'file', value: `@"${path}"`, path, extension: 'md' },
 		]);
 	});
 });

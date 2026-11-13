@@ -27,6 +27,8 @@ import {
 	Type,
 	Regex,
 	Hash,
+	Replace,
+	ReplaceAll,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { captureException } from '../../utils/sentry';
@@ -99,6 +101,7 @@ import { ImageViewer } from './ImageViewer';
 import { ImageSaveModal } from './ImageSaveModal';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 import { getParentDir, getBasename } from '../../../shared/formatters';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 import { FilePreviewToc } from './FilePreviewToc';
 import { computeTocWidth } from '../Toc';
 import { HeadingPalette } from './HeadingPalette';
@@ -108,6 +111,14 @@ import { useFontScale } from '../../hooks/ui/useFontScale';
 import { isTextInputTarget } from '../../utils/messageScrollNavigation';
 import { MarkdownEditor } from './markdownEditor';
 import type { MarkdownEditorHandle } from './markdownEditor';
+import type { EditorSelectionDetails } from './markdownEditor/types';
+import { CODE_COMPLETION_MAX_CHARS } from './markdownEditor/codeEditing';
+import {
+	TerminalSelectionContextMenu,
+	type TerminalSelectionContextMenuState,
+} from '../TerminalSelectionContextMenu';
+import { formatFileLineReference, formatFileSelection } from '../../utils/quoteSelection';
+import { toRelativePath } from '../../utils/fileLinks/matcher';
 import {
 	domGetTopLine,
 	domScrollToLine,
@@ -211,6 +222,8 @@ export const FilePreview = React.memo(
 			pendingScrollToLine,
 			onPendingScrollToLineConsumed,
 			showFloatingControls = true,
+			onSendSelectionToAgent,
+			onQuoteSelection,
 		},
 		ref
 	) {
@@ -280,6 +293,14 @@ export const FilePreview = React.memo(
 			x: number;
 			y: number;
 		} | null>(null);
+		// Right-click on selected text in the code editor. `selection` is the
+		// passage as an agent receives it (path:lines + fenced text); `rawText`
+		// is what Copy puts on the clipboard.
+		const [editorSelectionMenu, setEditorSelectionMenu] = useState<
+			(TerminalSelectionContextMenuState & { rawText: string; sourceName: string }) | null
+		>(null);
+		// Replace field of the find bar (code editor only).
+		const [replaceText, setReplaceText] = useState('');
 
 		const codeContainerRef = useRef<HTMLDivElement>(null);
 		const contentRef = useRef<HTMLDivElement>(null);
@@ -653,6 +674,9 @@ export const FilePreview = React.memo(
 			searchKind,
 			cycleSearchKind,
 			regexError,
+			canReplace,
+			replaceCurrent,
+			replaceAll,
 		} = useFilePreviewSearch({
 			codeContainerRef,
 			markdownContainerRef,
@@ -684,6 +708,16 @@ export const FilePreview = React.memo(
 		const fileEditWordWrap = useSettingsStore((s) => s.fileEditWordWrap);
 		const setFileEditWordWrap = useSettingsStore((s) => s.setFileEditWordWrap);
 		const fileEditShowLineNumbers = useSettingsStore((s) => s.fileEditShowLineNumbers);
+		const fileEditVimMode = useSettingsStore((s) => s.fileEditVimMode);
+		// Code completes as you type; prose (markdown, plain text) only on
+		// Ctrl+Space, so a word followed by Enter stays a line break. Giant-tier
+		// sizes skip completion entirely.
+		const editorCompletion =
+			(file?.content.length ?? 0) > CODE_COMPLETION_MAX_CHARS
+				? ('off' as const)
+				: isCodeFile(language)
+					? ('typing' as const)
+					: ('request' as const);
 		const filePreviewToolbarVisibility = useSettingsStore((s) => s.filePreviewToolbarVisibility);
 		// Reading and editing are separate typographic jobs, so they are separate
 		// settings: a proportional face is easier to read a document in, while an
@@ -1345,7 +1379,7 @@ export const FilePreview = React.memo(
 				notifyToast({
 					type: 'error',
 					title: 'Save Failed',
-					message: err instanceof Error ? err.message : 'Could not save file.',
+					message: ipcErrorMessage(err, 'Could not save file.'),
 				});
 			} finally {
 				setIsSaving(false);
@@ -1721,6 +1755,54 @@ export const FilePreview = React.memo(
 				title,
 				message: 'Clipboard write was rejected. Check browser permissions and try again.',
 			});
+
+		// Right-click on an editor selection. The passage is built once here so
+		// Quote in Message and Send to Agent hand over the same thing: the
+		// project-relative path with its line range, then the text in a fence.
+		const handleEditorSelectionContextMenu = useCallback(
+			(selection: EditorSelectionDetails, event: MouseEvent) => {
+				if (!file) return;
+				const path = toRelativePath(file.path, cwd) ?? file.path;
+				setEditorSelectionMenu({
+					x: event.clientX,
+					y: event.clientY,
+					selection: formatFileSelection({
+						path,
+						startLine: selection.startLine,
+						endLine: selection.endLine,
+						text: selection.text,
+						language,
+					}),
+					rawText: selection.text,
+					sourceName: formatFileLineReference(file.name, selection.startLine, selection.endLine),
+				});
+			},
+			[file, cwd, language]
+		);
+
+		const copyEditorSelection = async (text: string) => {
+			try {
+				const ok = await safeClipboardWrite(text);
+				if (ok) {
+					flashCopiedToClipboard(text, 'Selection Copied');
+				} else {
+					failClipboardToast('Failed to Copy Selection');
+				}
+			} catch (err) {
+				captureException(err);
+				failClipboardToast('Failed to Copy Selection');
+			}
+		};
+
+		// Close the find bar and hand focus back to the pane. Shared by the
+		// search field and the replace field, which both close on Escape.
+		const closeFindBar = () => {
+			setSearchOpen(false);
+			setSearchQuery('');
+			setSearchMode('text');
+			setJqError(null);
+			containerRef.current?.focus();
+		};
 
 		const copyPathToClipboard = async () => {
 			if (!file) return;
@@ -2345,11 +2427,7 @@ export const FilePreview = React.memo(
 												if (showJqHelp) {
 													setShowJqHelp(false);
 												} else {
-													setSearchOpen(false);
-													setSearchQuery('');
-													setSearchMode('text');
-													setJqError(null);
-													containerRef.current?.focus();
+													closeFindBar();
 												}
 											} else if (searchMode === 'text' && searchKind !== 'line') {
 												if (e.key === 'Enter' && isImeComposing(e)) {
@@ -2463,6 +2541,71 @@ export const FilePreview = React.memo(
 										</>
 									)}
 								</div>
+								{/* Replace: code editor only, for text and regex search. Enter
+								    replaces the current match and moves to the next; Cmd/Ctrl+Enter
+								    replaces every match as one undoable edit. */}
+								{canReplace && (
+									<div className="flex items-center gap-2 mt-2">
+										<input
+											type="text"
+											value={replaceText}
+											onChange={(e) => setReplaceText(e.target.value)}
+											onKeyDown={(e) => {
+												if (e.key === 'Escape') {
+													e.preventDefault();
+													e.stopPropagation();
+													closeFindBar();
+												} else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+													e.preventDefault();
+													e.stopPropagation();
+													replaceAll(replaceText);
+													onShortcutUsed?.('editorReplaceAll');
+												} else if (e.key === 'Enter') {
+													e.preventDefault();
+													e.stopPropagation();
+													replaceCurrent(replaceText);
+												}
+											}}
+											placeholder={
+												searchKind === 'regex'
+													? `Replace with... ($1 for a group; Enter: replace, ${formatShortcutKeys(['Meta', 'Enter'])}: all)`
+													: `Replace with... (Enter: replace, ${formatShortcutKeys(['Meta', 'Enter'])}: all)`
+											}
+											aria-label="Replace with"
+											className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
+											style={{
+												borderColor: theme.colors.border,
+												color: theme.colors.textMain,
+												backgroundColor: theme.colors.bgSidebar,
+											}}
+										/>
+										<button
+											type="button"
+											onClick={() => replaceCurrent(replaceText)}
+											disabled={totalMatches === 0}
+											className="p-1.5 rounded hover:bg-white/10 transition-colors disabled:opacity-30"
+											style={{ color: theme.colors.textDim }}
+											title="Replace (Enter)"
+											aria-label="Replace"
+										>
+											<Replace className="w-4 h-4" />
+										</button>
+										<button
+											type="button"
+											onClick={() => {
+												replaceAll(replaceText);
+												onShortcutUsed?.('editorReplaceAll');
+											}}
+											disabled={totalMatches === 0}
+											className="p-1.5 rounded hover:bg-white/10 transition-colors disabled:opacity-30"
+											style={{ color: theme.colors.textDim }}
+											title={`Replace All (${formatShortcutKeys(['Meta', 'Enter'])})`}
+											aria-label="Replace All"
+										>
+											<ReplaceAll className="w-4 h-4" />
+										</button>
+									</div>
+								)}
 								{/* regex error */}
 								{searchMode !== 'jq' && searchKind === 'regex' && regexError && (
 									<div
@@ -2617,6 +2760,11 @@ export const FilePreview = React.memo(
 							fontScale={fontScale}
 							fontFamily={editorFontFamily}
 							baseFontPx={editorTypography.fontSize}
+							codeEditing
+							completion={editorCompletion}
+							vimMode={fileEditVimMode}
+							onShortcutUsed={onShortcutUsed}
+							onSelectionContextMenu={handleEditorSelectionContextMenu}
 							onLineNumberContextMenu={(lineNumber, event) => {
 								setLineCtxMenu({
 									lineNumber,
@@ -2638,7 +2786,9 @@ export const FilePreview = React.memo(
 									e.preventDefault();
 									e.stopPropagation();
 									handleSave();
-								} else if (e.key === 'Escape' && !isImeComposing(e)) {
+								} else if (e.key === 'Escape' && !isImeComposing(e) && !fileEditVimMode) {
+									// In Vim mode Escape belongs to Vim (back to normal mode);
+									// Cmd+E below still leaves the editor.
 									e.preventDefault();
 									e.stopPropagation();
 									setMarkdownEditMode(false);
@@ -3051,6 +3201,20 @@ export const FilePreview = React.memo(
 
 				{/* Line-number gutter right-click menu. Single action: copy a
 				    maestro:// deep link pointing at this exact line. */}
+				{editorSelectionMenu && (
+					<TerminalSelectionContextMenu
+						menu={editorSelectionMenu}
+						theme={theme}
+						onDismiss={() => setEditorSelectionMenu(null)}
+						onQuote={onQuoteSelection}
+						onCopy={() => void copyEditorSelection(editorSelectionMenu.rawText)}
+						onSendToAgent={
+							onSendSelectionToAgent
+								? (text) => onSendSelectionToAgent(text, editorSelectionMenu.sourceName)
+								: undefined
+						}
+					/>
+				)}
 				{lineCtxMenu && (
 					<>
 						<div

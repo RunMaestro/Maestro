@@ -723,3 +723,157 @@ describe('useFilePreviewSearch - code tier does not mutate React-owned DOM', () 
 		expect(handle.getTotalMatches()).toBe(0);
 	});
 });
+
+/**
+ * Replace in the code editor. The hook computes the edits from the same
+ * pattern that paints the matches and hands them to the editor in one
+ * `replaceRanges` call, which is what makes Replace All a single undo step.
+ */
+describe('useFilePreviewSearch - replace (edit mode)', () => {
+	interface ReplaceHandle {
+		setSearchQuery: (q: string) => void;
+		cycleSearchKind: () => void;
+		replaceCurrent: (r: string) => boolean;
+		replaceAll: (r: string) => number;
+		canReplace: () => boolean;
+		currentMatchIndex: () => number;
+		content: () => string;
+	}
+
+	function makeEditor(apply: (next: (prev: string) => string) => void) {
+		const replaceRanges = vi.fn((changes: { from: number; to: number; insert: string }[]) => {
+			apply((prev) =>
+				[...changes]
+					.sort((a, b) => b.from - a.from)
+					.reduce((text, c) => text.slice(0, c.from) + c.insert + text.slice(c.to), prev)
+			);
+		});
+		const editor = {
+			setSearchMatches: vi.fn(),
+			setSelection: vi.fn(),
+			replaceRanges,
+		} as unknown as MarkdownEditorHandle;
+		return { editor, replaceRanges, setSelection: editor.setSelection as ReturnType<typeof vi.fn> };
+	}
+
+	function renderReplaceHost(initial: string, opts: { markdownEditMode?: boolean } = {}) {
+		const ref: { current: ReplaceHandle | undefined } = { current: undefined };
+		let editorParts: ReturnType<typeof makeEditor> | undefined;
+
+		function ReplaceHost() {
+			const [content, setContent] = React.useState(initial);
+			const containerRef = useRef<HTMLDivElement>(null);
+			const codeRef = useRef<HTMLDivElement>(null);
+			const contentRef = useRef<HTMLDivElement>(null);
+			const editorRef = useRef<MarkdownEditorHandle | null>(null);
+			if (!editorRef.current) {
+				editorParts = makeEditor((next) => setContent(next));
+				editorRef.current = editorParts.editor;
+			}
+			const hook = useFilePreviewSearch({
+				codeContainerRef: codeRef,
+				markdownContainerRef: containerRef,
+				contentRef,
+				editorRef,
+				isMarkdown: false,
+				isImage: false,
+				isCsv: false,
+				isJsonl: false,
+				isJson: false,
+				isEditableText: true,
+				markdownEditMode: opts.markdownEditMode ?? true,
+				editContent: content,
+				fileContent: initial,
+				searchMode: 'text',
+				supportsLineSearch: true,
+			});
+			ref.current = {
+				setSearchQuery: hook.setSearchQuery,
+				cycleSearchKind: hook.cycleSearchKind,
+				replaceCurrent: hook.replaceCurrent,
+				replaceAll: hook.replaceAll,
+				canReplace: () => hook.canReplace,
+				currentMatchIndex: () => hook.currentMatchIndex,
+				content: () => content,
+			};
+			return (
+				<div>
+					<div ref={contentRef} />
+					<div ref={codeRef} />
+					<div ref={containerRef} />
+				</div>
+			);
+		}
+
+		render(<ReplaceHost />);
+		const handle = new Proxy({} as ReplaceHandle, {
+			get: (_t, key: keyof ReplaceHandle) => ref.current![key],
+		});
+		return { handle, editor: editorParts! };
+	}
+
+	it('replaces every match in ONE editor call (one undo step)', async () => {
+		const { handle, editor } = renderReplaceHost('foo bar Foo baz foo');
+		await act(async () => handle.setSearchQuery('foo'));
+
+		let replaced = 0;
+		await act(async () => {
+			replaced = handle.replaceAll('qux');
+		});
+
+		expect(replaced).toBe(3);
+		expect(editor.replaceRanges).toHaveBeenCalledTimes(1);
+		expect(handle.content()).toBe('qux bar qux baz qux');
+	});
+
+	it('replaces the current match and reveals the next one', async () => {
+		const { handle, editor } = renderReplaceHost('a1 a2 a3');
+		await act(async () => handle.setSearchQuery('a'));
+		expect(handle.currentMatchIndex()).toBe(0);
+
+		await act(async () => {
+			handle.replaceCurrent('b');
+		});
+
+		expect(handle.content()).toBe('b1 a2 a3');
+		// The index stays at 0, which now names "a2": selected and scrolled to.
+		expect(editor.setSelection).toHaveBeenLastCalledWith(3, 4, true);
+	});
+
+	it('expands capture groups in regex mode', async () => {
+		const { handle } = renderReplaceHost('key=value');
+		await act(async () => handle.cycleSearchKind()); // text -> regex
+		await act(async () => handle.setSearchQuery('(\\w+)=(\\w+)'));
+
+		await act(async () => {
+			handle.replaceAll('$2=$1');
+		});
+
+		expect(handle.content()).toBe('value=key');
+	});
+
+	it('treats a text-mode query and replacement literally', async () => {
+		const { handle } = renderReplaceHost('a.b axb');
+		await act(async () => handle.setSearchQuery('a.b'));
+
+		await act(async () => {
+			handle.replaceAll('$1');
+		});
+
+		expect(handle.content()).toBe('$1 axb');
+	});
+
+	it('cannot replace outside the editor, or in line mode', async () => {
+		const preview = renderReplaceHost('foo', { markdownEditMode: false });
+		await act(async () => preview.handle.setSearchQuery('foo'));
+		expect(preview.handle.canReplace()).toBe(false);
+		expect(preview.handle.replaceAll('x')).toBe(0);
+
+		const editing = renderReplaceHost('foo');
+		await act(async () => editing.handle.setSearchQuery('foo'));
+		expect(editing.handle.canReplace()).toBe(true);
+		await act(async () => editing.handle.cycleSearchKind()); // regex
+		await act(async () => editing.handle.cycleSearchKind()); // line
+		expect(editing.handle.canReplace()).toBe(false);
+	});
+});

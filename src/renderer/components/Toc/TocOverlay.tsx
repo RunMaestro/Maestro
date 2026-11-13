@@ -23,6 +23,7 @@ import type { Theme } from '../../types';
 import type { TocEntry } from './types';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 import { FilterInput } from '../ui/FilterInput';
+import { isImeComposing } from '../../utils/ime';
 
 interface TocOverlayProps {
 	theme: Theme;
@@ -219,6 +220,10 @@ export const TocOverlay = React.memo(function TocOverlay({
 			focusEntry(0);
 			scrollToEntry(entries[0], 'auto');
 		} else if (e.key === 'Enter' && entries.length > 0) {
+			if (isImeComposing(e)) {
+				e.stopPropagation();
+				return;
+			}
 			e.preventDefault();
 			e.stopPropagation();
 			setSelectedIndex(0);

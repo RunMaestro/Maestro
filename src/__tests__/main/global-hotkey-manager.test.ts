@@ -39,6 +39,7 @@ vi.mock('../../main/quick-chat/quick-chat-window', () => ({
 
 import {
 	disposeAllGlobalHotkeys,
+	focusAppWindow,
 	initGlobalHotkey,
 	keysToAccelerator,
 	setGlobalShowHotkey,
@@ -137,6 +138,23 @@ describe('show Maestro hotkey', () => {
 		expect(win.show).toHaveBeenCalled();
 		expect(app.show).toHaveBeenCalled();
 		// The non-activating Quick Chat panel leaves another app frontmost.
+		expect(app.focus).toHaveBeenCalledWith({ steal: true });
+		expect(win.focus).toHaveBeenCalled();
+	});
+
+	it('Cmd+` cycling brings Maestro forward but leaves Quick Chat up', () => {
+		const win = {
+			isDestroyed: () => false,
+			isMinimized: () => false,
+			isVisible: () => true,
+			restore: vi.fn(),
+			show: vi.fn(),
+			focus: vi.fn(),
+		};
+
+		focusAppWindow(win as unknown as Electron.BrowserWindow);
+
+		expect(hideQuickChatWindow).not.toHaveBeenCalled();
 		expect(app.focus).toHaveBeenCalledWith({ steal: true });
 		expect(win.focus).toHaveBeenCalled();
 	});

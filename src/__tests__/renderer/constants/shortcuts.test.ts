@@ -305,6 +305,16 @@ describe('DEFAULT_SHORTCUTS / TAB_SHORTCUTS / FIXED_SHORTCUTS duplicate bindings
 			ids: ['clearTerminal', 'toggleShowThinking'],
 			why: 'Mutually exclusive by input mode: clearTerminal is gated on inputMode === "terminal" (useMainKeyboardHandler), toggleShowThinking is a tab shortcut reached only in AI mode.',
 		},
+		{
+			chord: '/+Meta',
+			ids: ['help', 'editorToggleComment'],
+			why: 'The File Preview code editor claims Cmd+/ only while it has focus (EDITOR_OWNED_CHORDS in markdownEditor/codeEditing.ts stops the keydown before the window handler sees it). Everywhere else it is Show Shortcuts.',
+		},
+		{
+			chord: 'Enter+Meta',
+			ids: ['historyJumpToSession', 'editorReplaceAll'],
+			why: "Each answers only in its own field: the History tab's entry list, and the replace field of the File Preview find bar. Neither field can be focused while the other has focus.",
+		},
 	];
 
 	const normalize = (keys: string[]): string => [...keys].sort().join('+');

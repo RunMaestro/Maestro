@@ -16,7 +16,7 @@ import { useCallback } from 'react';
 import type { Session, TaskSelectionMode, UsageStats } from '../../types';
 import { substituteTemplateVariables, TemplateContext } from '../../utils/templateVariables';
 import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
-import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
+import { countMarkdownTasks, prepareDesktopAutoRunPrompt } from './batchUtils';
 import type {
 	AgentSpawnErrorKind,
 	SpawnAgentOptions,
@@ -467,7 +467,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 
 			// Resolve the task-selection block placeholder before the generic template
 			// substitution pass so any variables inside the swapped-in block are also
-			// expanded. No-op if the user has removed the placeholder from their prompt.
+			// expanded.
 			// In document mode, tell the agent to stop at the point where the
 			// document asks for DIFFERENT settings: it is already running under
 			// the settings resolved above, so it cannot honour a change it reads
@@ -487,9 +487,13 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 						baselineEffort,
 						tierRouting
 					);
-			const promptWithSelectionBlock = customPrompt.replace(
-				/\{\{TASK_SELECTION_BLOCK\}\}/gi,
-				getTaskSelectionBlock(taskSelectionMode, hintSegment)
+			// A playbook prompt that does not name {{DOCUMENT_PATH}} gets the default's
+			// selection and document blocks appended. Throws, before anything is
+			// spawned, when the Auto Run prompts cannot be loaded.
+			const promptWithSelectionBlock = await prepareDesktopAutoRunPrompt(
+				customPrompt,
+				taskSelectionMode,
+				hintSegment
 			);
 
 			// The settings this dispatch runs under. On a named model: the marker,

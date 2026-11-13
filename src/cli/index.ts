@@ -118,6 +118,7 @@ import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
 import { testSshRemote } from './commands/test-ssh-remote';
+import { sshRemoteStatus } from './commands/ssh-remote-status';
 import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
 import { directorNotesSynopsis } from './commands/director-notes-synopsis';
@@ -3199,6 +3200,16 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(testSshRemote);
 
+// SSH remote status - the running app's view of which remotes are unreachable
+program
+	.command('ssh-remote-status')
+	.description(
+		'List SSH remotes the running app holds as unreachable, or re-check one (the dialog\'s "Check Now")'
+	)
+	.option('--check <remote-id>', 'Probe this remote now; exits 2 if it is still unreachable')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(sshRemoteStatus);
+
 // Display / typography commands
 //
 // Addressed by SURFACE rather than by settings key: `settings set` can already
@@ -5144,7 +5155,7 @@ quickChatCmd
 
 quickChatCmd
 	.command('return')
-	.description('Close the Quick Chat window and bring Maestro forward (Cmd+` in the window)')
+	.description('Close the Quick Chat window and bring Maestro forward (the show-Maestro hotkey)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => quickChat('return', {}, options));
 

@@ -115,6 +115,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'Task-selection block injected into {{TASK_SELECTION_BLOCK}} when Fresh Context Per is set to Document',
 		category: 'autorun',
 	},
+	{
+		id: 'autorun-document',
+		filename: 'autorun-document.md',
+		description:
+			'Names the task document ({{DOCUMENT_PATH}}). Ends the default Auto Run prompt, and is appended to a playbook prompt that never names the document',
+		category: 'autorun',
+	},
 	// Commands
 	{
 		id: 'image-only-default',
@@ -553,6 +560,7 @@ export const PROMPT_IDS = {
 	AUTORUN_SYNOPSIS: 'autorun-synopsis',
 	AUTORUN_PER_TASK: 'autorun-per-task',
 	AUTORUN_PER_DOCUMENT: 'autorun-per-document',
+	AUTORUN_DOCUMENT: 'autorun-document',
 	// Commands
 	IMAGE_ONLY_DEFAULT: 'image-only-default',
 	COMMIT_COMMAND: 'commit-command',

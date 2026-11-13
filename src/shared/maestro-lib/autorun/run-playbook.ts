@@ -20,6 +20,7 @@ import {
 	type FinalSummaryTotals,
 } from '../../autoRunHistoryReconciliation';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../autorunModelHints';
+import { resolveAutoRunPromptTemplate } from '../../autorunPromptTemplate';
 import { describeStall, evaluateStall, MAX_CONSECUTIVE_NO_CHANGES } from '../../autorunStall';
 import { isAutoModel } from '../../autoModel';
 import { resolveAutoTurn } from '../../autoTurn';
@@ -664,8 +665,16 @@ export async function* runPlaybook(
 						playbook.taskSelectionMode,
 						hintSegment
 					);
+					// A playbook prompt that never names the document still gets the
+					// default's selection and document blocks, unless the policy pastes
+					// the document in below (resolveAutoRunPromptTemplate).
 					const basePrompt = substituteTemplateVariables(
-						rawBasePrompt.replace(/\{\{TASK_SELECTION_BLOCK\}\}/gi, selectionBlock),
+						resolveAutoRunPromptTemplate(rawBasePrompt, {
+							selectionBlock,
+							documentBlock: policy.inlineDocument
+								? null
+								: await deps.prompts.get(PROMPT_IDS.AUTORUN_DOCUMENT),
+						}),
 						templateContext
 					);
 

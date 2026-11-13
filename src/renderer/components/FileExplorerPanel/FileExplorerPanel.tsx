@@ -24,6 +24,7 @@ import { useGitDetail } from '../../contexts/GitStatusContext';
 import { buildChangedAncestors, buildFileChangeMap } from '../../utils/gitChangeMap';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../../constants/rightPanel';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { getOpenInLabel, fileManagerName } from '../../utils/platformUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
@@ -61,6 +62,9 @@ import { useFileContextMenu } from './hooks/useFileContextMenu';
 // Utils
 import { formatBytes } from './utils/pathHelpers';
 import { canRevealOnHost } from '../../services/hostShell';
+
+/** localStorage key remembering that the user dismissed the "not all files loaded" banner. */
+export const TRUNCATION_BANNER_DISMISSED_KEY = 'fileExplorer.truncationBanner.dismissed';
 
 function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const {
@@ -144,15 +148,18 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 	// Coordinator refs with ≥3 cross-hook readers
 	// The truncation warning is tall enough to swallow the top of the tree, so
-	// it can be collapsed down to the hazard icon beside the path. Keyed by
-	// session id rather than a bare boolean: collapsing it for one agent must
-	// not hide a fresh warning when the panel re-renders for another.
-	const [truncationCollapsedFor, setTruncationCollapsedFor] = useState<string | null>(null);
-	const truncationCollapsed = truncationCollapsedFor === session.id;
+	// it collapses down to the hazard icon beside the path. Dismissing it once
+	// is final: the choice is remembered across agents, remounts, and restarts,
+	// and the icon alone signals the truncation from then on. Clicking the icon
+	// reopens the banner (and un-remembers the dismissal) on purpose.
+	const { value: truncationCollapsed, setValue: setTruncationCollapsed } = usePersistedToggle(
+		TRUNCATION_BANNER_DISMISSED_KEY
+	);
 	const showTruncationWarning = !session.fileTreeLoading && !!session.fileTreeTruncated;
 	// "Load more" / "Load all" call refreshFileTree directly, which never sets
 	// fileTreeLoading or isRefreshing, so the banner tracks its own scan. Keyed
-	// by session id for the same reason as the collapse state above.
+	// by session id so a scan running for one agent does not show as running for
+	// another when the panel re-renders.
 	const [pendingTreeLoad, setPendingTreeLoad] = useState<{
 		sessionId: string;
 		kind: 'more' | 'all';
@@ -726,7 +733,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							type="button"
 							className="flex-shrink-0 opacity-70 hover:opacity-100 transition-opacity"
 							style={{ color: theme.colors.warning }}
-							onClick={() => setTruncationCollapsedFor(null)}
+							onClick={() => setTruncationCollapsed(false)}
 							aria-label="Show file scan warning"
 							title="Not all files were loaded into the file panel. Click for options."
 						>
@@ -838,7 +845,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 								startTruncatedTreeLoad('more', (session.fileTreeLoadedCap ?? 100_000) * 2)
 							}
 							onLoadAll={() => startTruncatedTreeLoad('all', Number.POSITIVE_INFINITY)}
-							onCollapse={() => setTruncationCollapsedFor(session.id)}
+							onCollapse={() => setTruncationCollapsed(true)}
 						/>
 					)}
 					{!session.fileTreeLoading &&

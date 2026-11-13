@@ -47,7 +47,9 @@ Files on an [SSH remote](/ssh-remote-execution) also fall through to that previe
 
 ## Moving it around
 
-**Drag the title bar** to move the player anywhere on screen. The grip on the left is the affordance, but the whole bar is grabbable, including the filename. It stays inside the window, and if you resize the window it stays on screen.
+In the desktop app the player is its own desktop-level window. It floats over every app, on every Space (full-screen apps included), and across monitors, so it stays in view when Maestro is minimized or behind another app. In a browser attached through [Remote Control](/remote-control), it floats inside the Maestro page instead.
+
+**Drag the title bar** to move the player anywhere on screen. The grip on the left is the affordance, but the whole bar is grabbable, including the filename. If the monitor it was on is gone at the next launch, it opens on a display you still have.
 
 Because the whole bar drags, the filename it shows cannot be selected with the mouse. The **copy icon** beside it puts that name on your clipboard, for pasting into a note or a prompt.
 

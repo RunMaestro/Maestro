@@ -26,6 +26,7 @@ import { createTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { logger } from '../../utils/logger';
 import {
+	CONSULT_SUMMARY_MAX_LENGTH,
 	deriveConsultSubject,
 	inferContextStrategy,
 	selectContextWindow,
@@ -340,7 +341,7 @@ interface TrackedRequest {
 	/** The calling agent's display name (for the target's history entry). */
 	sourceAgentName?: string;
 	/**
-	 * A short subject derived from the user's question (mentions stripped), used
+	 * A subject derived from the user's question (mentions stripped), used
 	 * for the history entry's list line + attribution pill so repeat consults are
 	 * distinguishable. Absent when a chunk lands before dispatch registered it.
 	 */
@@ -519,8 +520,9 @@ async function enrichConsultDetail(opts: {
 export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): Promise<void> {
 	const strategy = inferContextStrategy(opts.userPrompt);
 	// Subject for the target's History entry + attribution pill. Derived once,
-	// synchronously, from the user's question (mentions stripped).
-	const subject = deriveConsultSubject(opts.userPrompt);
+	// synchronously, from the user's question (mentions stripped), at summary
+	// length: the History line is CSS-clamped, and the pill cuts its own label.
+	const subject = deriveConsultSubject(opts.userPrompt, CONSULT_SUMMARY_MAX_LENGTH);
 	const windowed = selectContextWindow(opts.sourceLogs, strategy);
 	const transcript: CrossAgentTranscriptEntry[] = windowed.map((l) => ({
 		source: l.source,
