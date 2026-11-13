@@ -36,6 +36,7 @@ import {
 	RUN_ON_GATEWAY_SKIPPED_REASON,
 	runOnDefaultContextTokens,
 	runOnGatewayEditProblem,
+	runOnArgPathProblem,
 	runOnHarnessMode,
 	runOnTargetLabel,
 	runOnUnavailable,
@@ -499,6 +500,60 @@ describe('resolveRunOnLaunch: Codex', () => {
 		});
 
 		expect(resolution.args).toContain('model_context_window=131072');
+	});
+
+	it('declares that Codex needs a model catalog', () => {
+		const support = agentRunOnSupport('codex');
+		expect(support.supported && support.modelCatalog).toBe('codex');
+	});
+
+	it('hands Codex the model catalog as a TOML literal, after the context window', () => {
+		const resolution = injected({
+			toolType: 'codex',
+			target,
+			endpoint: server,
+			modelCatalogPath: '/tmp/maestro-run-on/codex-0123456789abcdef.json',
+		});
+
+		expect(resolution.args.slice(-4)).toEqual([
+			'-c',
+			`model_context_window=${RUN_ON_DEFAULT_CONTEXT_TOKENS}`,
+			'-c',
+			"model_catalog_json='/tmp/maestro-run-on/codex-0123456789abcdef.json'",
+		]);
+	});
+
+	it('names no catalog when the launch has none, so Codex runs on its own fallback', () => {
+		const resolution = injected({ toolType: 'codex', target, endpoint: server });
+
+		expect(resolution.args.join(' ')).not.toContain('model_catalog_json');
+	});
+
+	it('gives no other harness a catalog argument', () => {
+		for (const toolType of MEASURED.filter((id) => id !== 'codex')) {
+			const resolution = injected({ toolType, modelCatalogPath: '/tmp/catalog.json' });
+			expect([...resolution.args, ...resolution.subcommandArgs].join(' ')).not.toContain('catalog');
+		}
+	});
+});
+
+describe('runOnArgPathProblem', () => {
+	it.each([
+		'/var/folders/c3/T/maestro-run-on/codex-0123456789abcdef.json',
+		'C:\\Users\\pedram\\AppData\\Local\\Temp\\maestro-run-on\\codex-0123.json',
+		'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\maestro-run-on\\codex-0123.json',
+	])('passes %s', (filePath) => {
+		expect(runOnArgPathProblem(filePath)).toBeNull();
+	});
+
+	it.each([
+		'C:\\Users\\Jane Doe\\AppData\\Local\\Temp\\codex.json',
+		"/tmp/it's/codex.json",
+		'/tmp/"quoted"/codex.json',
+		'/tmp/$HOME/codex.json',
+		'~/codex.json',
+	])('refuses %s, which a shell or a TOML literal would change', (filePath) => {
+		expect(runOnArgPathProblem(filePath)).toMatch(/shell/);
 	});
 });
 

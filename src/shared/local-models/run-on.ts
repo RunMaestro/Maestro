@@ -165,6 +165,13 @@ export interface RunOnRecipeInput {
 	key: string;
 	model: string;
 	contextTokens: number;
+	/**
+	 * A file on the launching host that describes the model to the harness, for
+	 * a provider with a `modelCatalog`. Written by the main process
+	 * (`prepareAgentRunOn`); absent when it could not be, and the harness then
+	 * runs on its own fallback for an unknown model.
+	 */
+	modelCatalogPath?: string;
 }
 
 /** What a recipe hands back: everything that points one launch at the source. */
@@ -209,6 +216,13 @@ export type AgentRunOnSupport =
 			 * the source as well. Set blank for the launch (rule 5).
 			 */
 			providerKeyEnvVars?: readonly string[];
+			/**
+			 * The harness needs a file that describes the model, or it treats the
+			 * model as unknown. `codex`: Codex's model catalog
+			 * (`writeCodexModelCatalog` in the main process), without which Codex
+			 * warns on every turn and caps the window at its fallback's 272,000.
+			 */
+			modelCatalog?: 'codex';
 			/** The variables and arguments that point the harness at the source. */
 			recipe: (input: RunOnRecipeInput) => RunOnRecipe;
 	  }
@@ -262,10 +276,17 @@ const RUN_ON_SUPPORT: Record<AgentId, AgentRunOnSupport> = {
 	// a program an argument with its double quotes dropped and split at its
 	// spaces. Codex refuses that ("unexpected argument", measured 2026-10-13
 	// with Codex CLI 0.162.1, which takes this form on the same run).
+	//
+	// The model catalog names the model to Codex. Without it Codex warns "Model
+	// metadata for `<model>` not found" on every turn and builds a fallback
+	// entry whose `max_context_window` (272,000) caps `model_context_window`
+	// (measured 2026-11-12 with Codex CLI 0.167.2: a 1,000,000 window ran at
+	// 258,400). With it the warning is gone and the window is the target's.
 	codex: {
 		supported: true,
 		keyEnvVar: RUN_ON_KEY_ENV_VAR,
-		recipe: ({ baseUrl, key, contextTokens }) => ({
+		modelCatalog: 'codex',
+		recipe: ({ baseUrl, key, contextTokens, modelCatalogPath }) => ({
 			envVars: { [RUN_ON_KEY_ENV_VAR]: key },
 			args: [
 				'-c',
@@ -274,6 +295,7 @@ const RUN_ON_SUPPORT: Record<AgentId, AgentRunOnSupport> = {
 				`model_provider='${RUN_ON_PROVIDER_ID}'`,
 				'-c',
 				`model_context_window=${contextTokens}`,
+				...(modelCatalogPath ? ['-c', `model_catalog_json=${tomlLiteral(modelCatalogPath)}`] : []),
 			],
 		}),
 	},
@@ -411,6 +433,27 @@ function geminiWireOnly(agentId: AgentId): AgentRunOnSupport {
  */
 function tomlLiteral(url: string): string {
 	return `'${url.replace(/'/g, '%27')}'`;
+}
+
+/**
+ * The characters a file path may hold to be handed to a harness inside a
+ * {@link tomlLiteral}: nothing a shell splits or strips (no space, no quote),
+ * and no single quote, which a literal string cannot hold and which `%27`
+ * would not name for a path. Drive letters and both separators are allowed,
+ * and so is `~` inside a name: a Windows short path (`C:\Users\RUNNER~1\...`,
+ * what `os.tmpdir()` answers on a GitHub runner) holds one, and no shell reads
+ * a tilde that does not start the argument.
+ */
+const ARG_SAFE_PATH = /^[A-Za-z0-9_\-.:/\\][A-Za-z0-9_\-.:/\\~]*$/;
+
+/**
+ * Whether a file path can go on a harness's command line as a Run on argument
+ * (`modelCatalogPath`). Null when it can; otherwise why not, for the log.
+ */
+export function runOnArgPathProblem(filePath: string): string | null {
+	return ARG_SAFE_PATH.test(filePath)
+		? null
+		: 'it holds a character a shell could split or strip (only letters, digits, and _ - . : / \\ ~ are passed)';
 }
 
 /** Whether (and by which recipe) a provider's harness can run on another model server. */
@@ -767,6 +810,8 @@ export interface RunOnLaunchInput {
 	userEnvVars?: Record<string, string>;
 	/** The SSH remote the agent runs on, when it runs on one. */
 	remote?: { name: string } | null;
+	/** See {@link RunOnRecipeInput.modelCatalogPath}. */
+	modelCatalogPath?: string;
 }
 
 /**
@@ -800,7 +845,10 @@ export function runOnHarnessMode<Mode extends string>(
  * Maestro model server, so a process that has them does it (`prepareAgentRunOn`
  * in the main process) and the plan stays pure.
  */
-export type ResolvedRunOn = Pick<RunOnLaunchInput, 'toolType' | 'target' | 'endpoint' | 'key'>;
+export type ResolvedRunOn = Pick<
+	RunOnLaunchInput,
+	'toolType' | 'target' | 'endpoint' | 'key' | 'modelCatalogPath'
+>;
 
 const RECOVERY = 'Fix the source, or set Run on to Provider.';
 
@@ -868,6 +916,7 @@ export function resolveRunOnLaunch(input: RunOnLaunchInput): RunOnLaunchResoluti
 		key: input.key?.trim() || RUN_ON_PLACEHOLDER_KEY,
 		model: target.model,
 		contextTokens,
+		modelCatalogPath: input.modelCatalogPath,
 	});
 
 	const userOverrides = Object.keys(recipe.envVars).filter((name) =>

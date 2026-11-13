@@ -18,7 +18,17 @@ vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+// The catalog's own file I/O is pinned in codex-model-catalog.test.ts; here it
+// is a path, so nothing is written to the real temp folder.
+vi.mock('../../../main/local-models/codex-model-catalog', () => ({
+	writeCodexModelCatalog: vi.fn(async (model: string) => ({
+		ok: true,
+		path: `/tmp/maestro-run-on/codex-${model}.json`,
+	})),
+}));
+
 import { logger } from '../../../main/utils/logger';
+import { writeCodexModelCatalog } from '../../../main/local-models/codex-model-catalog';
 import { LocalModelEndpointError } from '../../../main/local-models/errors';
 import {
 	applyAgentRunOnToSpawn,
@@ -310,6 +320,53 @@ describe('prepareAgentRunOn: an agent that routes itself', () => {
 	});
 });
 
+describe('prepareAgentRunOn: the model catalog', () => {
+	it("writes Codex a catalog for the target's model and window, and hands its path on", async () => {
+		const prepared = await prepare({
+			toolType: 'codex',
+			target: { ...QWEN, contextTokens: 1_000_000 },
+		});
+
+		expect(writeCodexModelCatalog).toHaveBeenCalledWith('qwen3:latest', 1_000_000);
+		if (prepared.kind !== 'ready') throw new Error(JSON.stringify(prepared));
+		expect(prepared.runOn.modelCatalogPath).toBe('/tmp/maestro-run-on/codex-qwen3:latest.json');
+	});
+
+	it('writes no catalog for a harness that needs none', async () => {
+		const prepared = await prepare({ toolType: 'claude-code' });
+
+		expect(writeCodexModelCatalog).not.toHaveBeenCalled();
+		if (prepared.kind !== 'ready') throw new Error(JSON.stringify(prepared));
+		expect(prepared.runOn.modelCatalogPath).toBeUndefined();
+	});
+
+	it('writes none for an SSH remote, where a path on this machine means nothing', async () => {
+		const prepared = await prepare({
+			toolType: 'codex',
+			target: BIG,
+			remote: { name: 'Build Box' },
+		});
+
+		expect(writeCodexModelCatalog).not.toHaveBeenCalled();
+		if (prepared.kind !== 'ready') throw new Error(JSON.stringify(prepared));
+		expect(prepared.runOn.modelCatalogPath).toBeUndefined();
+	});
+
+	it('launches without a catalog it could not write, and says why', async () => {
+		vi.mocked(writeCodexModelCatalog).mockResolvedValueOnce({
+			ok: false,
+			reason: 'the catalog could not be written to /tmp/x: EACCES',
+		});
+
+		const prepared = await prepare({ toolType: 'codex' });
+
+		expect(prepared.kind).toBe('ready');
+		if (prepared.kind !== 'ready') throw new Error(JSON.stringify(prepared));
+		expect(prepared.runOn.modelCatalogPath).toBeUndefined();
+		expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('EACCES'), 'RunOn');
+	});
+});
+
 describe('prepareAgentRunOn: a process that was never configured', () => {
 	it('throws for a source target rather than run the agent on its provider', async () => {
 		resetAgentRunOnForTests();
@@ -520,6 +577,9 @@ describe('applyAgentRunOnToSpawn', () => {
 			'-c',
 			`model_providers.maestro={name='Maestro',base_url='${SERVER_URL}/v1',env_key='${RUN_ON_KEY_ENV_VAR}',wire_api='responses'}`,
 		]);
+		expect(result.args).toContain(
+			"model_catalog_json='/tmp/maestro-run-on/codex-gpt-oss-20b.json'"
+		);
 		expect(result.args.slice(-4)).toEqual(['exec', '--json', '-m', 'gpt-oss-20b']);
 		expect(result.customEnvVars).toEqual({ [RUN_ON_KEY_ENV_VAR]: 'sk-server' });
 	});

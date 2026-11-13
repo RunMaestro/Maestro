@@ -60,8 +60,11 @@ import {
 } from '../../shared/maestro-lib/launch/ssh-remote-resolver';
 import type { AgentSshRemoteConfig } from '../../shared/types';
 import { logger } from '../utils/logger';
+import { writeCodexModelCatalog } from './codex-model-catalog';
 import { listEndpointModels, type EndpointModel } from './endpoint-client';
 import { isLocalModelEndpointError } from './errors';
+
+const LOG_CONTEXT = 'RunOn';
 
 /** How many of a source's models a "does not serve" refusal names. */
 const SERVED_MODELS_SHOWN = 5;
@@ -218,9 +221,17 @@ export async function prepareAgentRunOn(
 		throw new Error('A Run on source target resolved to neither a launch nor a refusal.');
 	}
 
+	const support = agentRunOnSupport(request.toolType);
+	const modelCatalogPath = await prepareModelCatalog(
+		support.supported ? support.modelCatalog : undefined,
+		target.model,
+		checked.contextTokens,
+		remote
+	);
+
 	const ready = (endpoint: LocalModelEndpoint, sourceKey?: string): AgentRunOnPreparation => ({
 		kind: 'ready',
-		runOn: { toolType: request.toolType, target, endpoint, key: sourceKey },
+		runOn: { toolType: request.toolType, target, endpoint, key: sourceKey, modelCatalogPath },
 		model: target.model,
 		label: runOnTargetLabel(target, [endpoint]),
 	});
@@ -228,7 +239,6 @@ export async function prepareAgentRunOn(
 	// An agent that sets the base URL itself is not sent to the source, so its
 	// launch does not depend on the source being up, and starting the model
 	// server for it would load a model nothing asks for.
-	const support = agentRunOnSupport(request.toolType);
 	const routesItself =
 		support.supported &&
 		support.baseUrlEnvVar !== undefined &&
@@ -252,6 +262,33 @@ export async function prepareAgentRunOn(
 		return runOnUnavailable('run-on-model-not-served', target, known, servedDetail(models));
 	}
 	return ready(known, key);
+}
+
+/**
+ * The file that describes the model to a harness that needs one
+ * (`AgentRunOnSupport.modelCatalog`), or undefined to launch without it. A
+ * catalog is a quality of the launch, not a condition of it: one that cannot be
+ * written is logged and the harness runs on its own fallback for an unknown
+ * model. It is written on THIS host, so a launch on an SSH remote goes without.
+ */
+async function prepareModelCatalog(
+	kind: 'codex' | undefined,
+	model: string,
+	contextTokens: number,
+	remote: { name: string } | null
+): Promise<string | undefined> {
+	if (kind !== 'codex') return undefined;
+	if (remote) {
+		logger.info(
+			`No Codex model catalog for ${model}: the agent runs on SSH remote "${remote.name}", and the catalog is written on this machine`,
+			LOG_CONTEXT
+		);
+		return undefined;
+	}
+	const written = await writeCodexModelCatalog(model, contextTokens);
+	if (written.ok) return written.path;
+	logger.warn(`No Codex model catalog for ${model}: ${written.reason}`, LOG_CONTEXT);
+	return undefined;
 }
 
 /** A source, ready to be sent one request: its record (for its address) and its key. */

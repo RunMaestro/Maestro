@@ -83,6 +83,7 @@
 		"refresh-speckit": "node scripts/refresh-speckit.mjs",
 		"refresh-openspec": "node scripts/refresh-openspec.mjs",
 		"refresh-bmad": "node scripts/refresh-bmad.mjs",
+		"refresh-codex-base-instructions": "node scripts/refresh-codex-base-instructions.mjs",
 		"fonts:fetch": "node scripts/fetch-webfonts.mjs",
 		"fonts:check": "node scripts/fetch-webfonts.mjs --check"
 	},
