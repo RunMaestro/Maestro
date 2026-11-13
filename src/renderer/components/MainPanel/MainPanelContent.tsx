@@ -53,6 +53,7 @@ import type {
 import type { SlashCommand } from './types';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../../hooks';
 import type { FileNode } from '../../types/fileTree';
+import { quoteIntoAgentComposer } from '../../services/quoteIntoComposer';
 import type {
 	SummarizeProgress,
 	SummarizeResult,
@@ -121,6 +122,8 @@ export interface MainPanelContentProps {
 	onTerminalCopySelection?: (text: string) => void;
 	/** Send a highlighted terminal selection to another agent (right-click menu handler). */
 	onTerminalSendSelectionToAgent?: (tabId: string, text: string) => void;
+	/** "Send to Agent" on a file editor selection (opens the Send-to-Agent modal). */
+	onFileSendSelectionToAgent?: (text: string, sourceName: string) => void;
 
 	// Layout
 	isMobileLandscape: boolean;
@@ -341,6 +344,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		setTerminalSearchOpen,
 		onTerminalCopySelection,
 		onTerminalSendSelectionToAgent,
+		onFileSendSelectionToAgent,
 		isMobileLandscape,
 		activeTabContextUsage,
 		contextWarningsEnabled,
@@ -928,6 +932,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							// Transient deep-link scroll target. FilePreview clears this
 							// via onPendingScrollToLineConsumed once the editor has
 							// jumped, so subsequent re-renders don't re-scroll.
+							onSendSelectionToAgent={onFileSendSelectionToAgent}
+							onQuoteSelection={(text) => quoteIntoAgentComposer(activeSession.id, text)}
 							pendingScrollToLine={activeFileTab.pendingScrollToLine}
 							onPendingScrollToLineConsumed={() =>
 								useTabStore.getState().clearFileTabPendingScrollToLine(activeFileTabId)

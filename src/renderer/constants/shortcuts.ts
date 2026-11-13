@@ -497,6 +497,48 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Decrease Font Size',
 		keys: ['Meta', '-'],
 	},
+	// File Preview code editor (markdownEditor/codeEditing.ts). Live only while
+	// the editor has focus; ids match CODE_EDITOR_SHORTCUT_IDS there.
+	editorToggleComment: {
+		id: 'editorToggleComment',
+		label: 'File Editor: Toggle Comment',
+		keys: ['Meta', '/'],
+	},
+	editorSelectNextOccurrence: {
+		id: 'editorSelectNextOccurrence',
+		label: 'File Editor: Add Cursor at Next Occurrence',
+		keys: ['Meta', 'd'],
+	},
+	editorMoveLineUp: {
+		id: 'editorMoveLineUp',
+		label: 'File Editor: Move Line Up',
+		keys: ['Alt', 'ArrowUp'],
+	},
+	editorMoveLineDown: {
+		id: 'editorMoveLineDown',
+		label: 'File Editor: Move Line Down',
+		keys: ['Alt', 'ArrowDown'],
+	},
+	editorDuplicateLineUp: {
+		id: 'editorDuplicateLineUp',
+		label: 'File Editor: Duplicate Line Up',
+		keys: ['Alt', 'Shift', 'ArrowUp'],
+	},
+	editorDuplicateLineDown: {
+		id: 'editorDuplicateLineDown',
+		label: 'File Editor: Duplicate Line Down',
+		keys: ['Alt', 'Shift', 'ArrowDown'],
+	},
+	editorAcceptCompletion: {
+		id: 'editorAcceptCompletion',
+		label: 'File Editor: Accept Completion',
+		keys: ['Tab'],
+	},
+	editorReplaceAll: {
+		id: 'editorReplaceAll',
+		label: 'File Editor: Replace All (in the replace field)',
+		keys: ['Meta', 'Enter'],
+	},
 };
 
 // Tab navigation shortcuts (AI mode only)

@@ -7,8 +7,10 @@ import type { MarkdownEditorHandle } from '../../components/FilePreview/markdown
 import {
 	type SearchKind,
 	SEARCH_KIND_CYCLE,
+	buildReplacements,
 	compileSearchRegex,
 	escapeRegExp,
+	findMatchRanges,
 	parseLineQuery,
 } from '../../components/FilePreview/search/queryMatch';
 import { domScrollToLine } from '../../components/FilePreview/lineSync';
@@ -179,6 +181,20 @@ export interface UseFilePreviewSearchReturn {
 	cycleSearchKind: () => void;
 	/** Message for an invalid regex pattern in 'regex' mode, else null. */
 	regexError: string | null;
+	/**
+	 * True when the bar can replace: the CM6 editor is open, the kind is text
+	 * or regex, and the query compiles. Line mode and every read-only view
+	 * have nothing to replace.
+	 */
+	canReplace: boolean;
+	/**
+	 * Replace the current match. In regex mode `$1`-style references expand.
+	 * The next match becomes current and is revealed. Returns false when there
+	 * was nothing to replace.
+	 */
+	replaceCurrent: (replacement: string) => boolean;
+	/** Replace every match in one undoable edit. Returns how many it replaced. */
+	replaceAll: (replacement: string) => number;
 }
 
 export function useFilePreviewSearch({
@@ -276,6 +292,9 @@ export function useFilePreviewSearch({
 	// navigation callbacks below must know which tier produced the matches.
 	const codeRangesRef = useRef<Range[]>([]);
 	const searchInputRef = useRef<HTMLInputElement>(null);
+	// Set by replaceCurrent so the edit-mode effect reveals the match that slid
+	// into the current slot once the edited document comes back as editContent.
+	const revealAfterReplaceRef = useRef(false);
 	const prevSearchQueryRef = useRef<string>('');
 	const prevMatchIndexRef = useRef<number>(0);
 
@@ -573,21 +592,14 @@ export function useFilePreviewSearch({
 			return;
 		}
 
-		const content = editContent;
-		const regex = new RegExp(searchPattern, 'gi');
-
-		const matches: { from: number; to: number }[] = [];
-		let matchResult;
-		while ((matchResult = regex.exec(content)) !== null) {
-			matches.push({ from: matchResult.index, to: matchResult.index + matchResult[0].length });
-			// Guard against zero-length matches infinite-looping.
-			if (matchResult.index === regex.lastIndex) regex.lastIndex++;
-		}
+		const matches = findMatchRanges(editContent, searchPattern);
 
 		setTotalMatches(matches.length);
 		if (matches.length === 0) {
 			setCurrentMatchIndex(-1);
 			clearEditDecos();
+			// Nothing left to reveal (the Replace took the last match).
+			revealAfterReplaceRef.current = false;
 			return;
 		}
 
@@ -610,14 +622,19 @@ export function useFilePreviewSearch({
 			prevSearchQueryRef.current === searchQuery && prevMatchIndexRef.current !== currentMatchIndex;
 		prevSearchQueryRef.current = searchQuery;
 		prevMatchIndexRef.current = currentMatchIndex;
+		// A Replace keeps the index where it was, which now names the NEXT match;
+		// reveal it the same way Enter would.
+		const revealAfterReplace = revealAfterReplaceRef.current;
+		revealAfterReplaceRef.current = false;
 
-		if (isNavigating) {
+		if (isNavigating || revealAfterReplace) {
 			const currentMatch = matches[validIndex];
 			if (currentMatch) {
 				editor.setSelection(currentMatch.from, currentMatch.to, true);
 				// Return focus to the search input so the user can keep typing /
-				// navigating without the caret jumping into the editor.
-				searchInputRef.current?.focus();
+				// navigating without the caret jumping into the editor. After a
+				// Replace, focus stays in the replace field instead.
+				if (!revealAfterReplace) searchInputRef.current?.focus();
 			}
 		}
 
@@ -728,6 +745,40 @@ export function useFilePreviewSearch({
 		setCurrentMatchIndex(count > 0 ? 0 : -1);
 	}, []);
 
+	// Replace reads the editor's live text through the same pattern the match
+	// decorations use, so what gets replaced is exactly what is highlighted.
+	const canReplace =
+		isEditableText && markdownEditMode && !isLineMode && searchMode === 'text' && !!searchPattern;
+
+	const replaceCurrent = useCallback(
+		(replacement: string): boolean => {
+			const editor = editorRef.current;
+			if (!canReplace || !searchPattern || !editor || currentMatchIndex < 0) return false;
+			const edits = buildReplacements(editContent, searchPattern, replacement, {
+				regex: useRegex,
+				onlyIndex: currentMatchIndex,
+			});
+			if (edits.length === 0) return false;
+			revealAfterReplaceRef.current = true;
+			editor.replaceRanges(edits);
+			return true;
+		},
+		[canReplace, searchPattern, editorRef, currentMatchIndex, editContent, useRegex]
+	);
+
+	const replaceAll = useCallback(
+		(replacement: string): number => {
+			const editor = editorRef.current;
+			if (!canReplace || !searchPattern || !editor) return 0;
+			const edits = buildReplacements(editContent, searchPattern, replacement, {
+				regex: useRegex,
+			});
+			if (edits.length > 0) editor.replaceRanges(edits);
+			return edits.length;
+		},
+		[canReplace, searchPattern, editorRef, editContent, useRegex]
+	);
+
 	return {
 		searchQuery,
 		setSearchQuery,
@@ -743,5 +794,8 @@ export function useFilePreviewSearch({
 		setSearchKind,
 		cycleSearchKind,
 		regexError,
+		canReplace,
+		replaceCurrent,
+		replaceAll,
 	};
 }

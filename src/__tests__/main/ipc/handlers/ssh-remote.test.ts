@@ -33,6 +33,15 @@ vi.mock('electron', () => ({
 	},
 }));
 
+const mockCheckSshRemote = vi.fn();
+const mockGetUnreachable = vi.fn(() => [] as unknown[]);
+const mockNoteSshExit = vi.fn();
+vi.mock('../../../../main/ssh-reachability', () => ({
+	checkSshRemote: (...args: unknown[]) => mockCheckSshRemote(...args),
+	getUnreachableSshRemotes: () => mockGetUnreachable(),
+	noteSshExit: (...args: unknown[]) => mockNoteSshExit(...args),
+}));
+
 // Capture registered handlers
 const registeredHandlers: Map<string, (...args: unknown[]) => Promise<unknown>> = new Map();
 
@@ -354,6 +363,50 @@ describe('SSH Remote IPC Handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('SSH remote not found');
+		});
+	});
+
+	describe('ssh-remote reachability', () => {
+		const outage = {
+			remoteId: 'test-id',
+			remoteName: 'Test Remote',
+			reachable: false,
+			message: 'Unable to connect to "Test Remote" over SSH.',
+			since: 1,
+		};
+
+		it('getReachability returns the remotes the tracker holds as down', async () => {
+			mockGetUnreachable.mockReturnValue([outage]);
+			await expect(invokeHandler('ssh-remote:getReachability')).resolves.toEqual({
+				success: true,
+				unreachable: [outage],
+			});
+		});
+
+		it('checkReachability probes and returns the outage when still down', async () => {
+			mockCheckSshRemote.mockResolvedValue(false);
+			mockGetUnreachable.mockReturnValue([outage]);
+			await expect(invokeHandler('ssh-remote:checkReachability', 'test-id')).resolves.toEqual({
+				success: true,
+				reachable: false,
+				event: outage,
+			});
+			expect(mockCheckSshRemote).toHaveBeenCalledWith('test-id');
+		});
+
+		it("a passing Test Connection by id closes that remote's outage", async () => {
+			const config = createMockConfig();
+			mockSettingsStore.get.mockImplementation((key: string) =>
+				key === 'sshRemotes' ? [config] : null
+			);
+			vi.spyOn(sshRemoteManagerModule.sshRemoteManager, 'testConnection').mockResolvedValue({
+				success: true,
+				remoteInfo: { hostname: 'h' },
+			});
+
+			await invokeHandler('ssh-remote:test', config.id);
+
+			expect(mockNoteSshExit).toHaveBeenCalledWith(config.id, 0);
 		});
 	});
 

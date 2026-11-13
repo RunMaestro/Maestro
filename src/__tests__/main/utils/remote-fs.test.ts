@@ -880,7 +880,9 @@ describe('remote-fs', () => {
 			);
 
 			expect(result.success).toBe(false);
-			expect(result.error).toContain('connection refused');
+			expect(result.error).toBe(
+				'Unable to connect to "Test Remote" over SSH. Connection refused. Check host and port.'
+			);
 		});
 
 		it('expands a home-relative path via $HOME so the cd lands in the right directory', async () => {
@@ -1419,6 +1421,39 @@ describe('remote-fs', () => {
 			const result = await statRemote('/file', baseConfig, deps);
 
 			expect(result.success).toBe(false);
+			// ssh's own refusal, not the remote file's permissions.
+			expect(result.error).toBe(
+				'Unable to connect to "Test Remote" over SSH. Authentication failed. Check username and private key.'
+			);
+		});
+
+		it('names the remote and keeps a tunnel error verbatim when the host is unreachable', async () => {
+			// A tailcat ProxyCommand that cannot reach its relay. Not a pattern
+			// describeSshConnectionError knows, so its words are the diagnostic.
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'tailcat Ping: context deadline exceeded\nproxy exited with status 1\n',
+				exitCode: 255,
+			});
+
+			const result = await writeFileRemote('/Users/me/notes.txt', 'body', baseConfig, deps);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe(
+				'Unable to connect to "Test Remote" over SSH. tailcat Ping: context deadline exceeded; proxy exited with status 1'
+			);
+		});
+
+		it('leaves a remote command failure (not exit 255) as the command reported it', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'base64: /nope/x.txt: No such file or directory',
+				exitCode: 1,
+			});
+
+			const result = await writeFileRemote('/nope/x.txt', 'body', baseConfig, deps);
+
+			expect(result.error).toBe('Parent directory not found: /nope/x.txt');
 		});
 
 		it('handles empty response with non-zero exit code', async () => {

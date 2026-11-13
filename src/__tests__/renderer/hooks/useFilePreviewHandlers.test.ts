@@ -512,8 +512,8 @@ describe('useFilePreviewHandlers', () => {
 
 	describe('save when file was moved or deleted on disk', () => {
 		it('prompts for a destination instead of recreating a ghost at the stale path', async () => {
-			// Cached path no longer resolves on disk.
-			mockStat.mockRejectedValue(new Error('ENOENT'));
+			// Cached path no longer resolves on disk: stat answers null for ENOENT.
+			mockStat.mockResolvedValue(null);
 			mockSaveFile.mockResolvedValue('/test/project/src/moved.ts');
 			const session = makeSession();
 			useSessionStore.setState({
@@ -560,7 +560,7 @@ describe('useFilePreviewHandlers', () => {
 		});
 
 		it('returns false and does not write when the redirect dialog is cancelled', async () => {
-			mockStat.mockRejectedValue(new Error('ENOENT'));
+			mockStat.mockResolvedValue(null);
 			mockSaveFile.mockResolvedValue(null);
 
 			const { result } = renderHook(() =>
@@ -581,6 +581,32 @@ describe('useFilePreviewHandlers', () => {
 
 			expect(saveResult!).toBe(false);
 			expect(mockSaveFile).toHaveBeenCalled();
+			expect(mockWriteFile).not.toHaveBeenCalled();
+		});
+
+		it('fails the save, with no dialog, when the existence check cannot reach the host', async () => {
+			// An unreachable SSH host makes stat THROW. That is not "deleted": a
+			// local save dialog for a remote file would be the wrong answer.
+			const unreachable = new Error(
+				'Unable to connect to "pedtome" over SSH. Connection closed by UNKNOWN port 65535'
+			);
+			mockStat.mockRejectedValue(unreachable);
+
+			const { result } = renderHook(() =>
+				useFilePreviewHandlers({
+					activeSession: makeSession(),
+					activeFileTabId: 'file-1',
+					activeFileTab: makeFileTab(),
+				})
+			);
+
+			await act(async () => {
+				await expect(
+					result.current.handleFilePreviewSave('/test/project/src/test.ts', 'updated')
+				).rejects.toBe(unreachable);
+			});
+
+			expect(mockSaveFile).not.toHaveBeenCalled();
 			expect(mockWriteFile).not.toHaveBeenCalled();
 		});
 	});

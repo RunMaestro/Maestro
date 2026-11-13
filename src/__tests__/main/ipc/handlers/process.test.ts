@@ -45,6 +45,11 @@ vi.mock('electron', () => ({
 }));
 
 // Mock the logger
+const mockNoteSshExit = vi.fn();
+vi.mock('../../../../main/ssh-reachability', () => ({
+	noteSshExit: (...args: unknown[]) => mockNoteSshExit(...args),
+}));
+
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
 		info: vi.fn(),
@@ -310,6 +315,8 @@ describe('process IPC handlers', () => {
 		get: ReturnType<typeof vi.fn>;
 		runCommand: ReturnType<typeof vi.fn>;
 		spawnTerminalTab: ReturnType<typeof vi.fn>;
+		on: ReturnType<typeof vi.fn>;
+		off: ReturnType<typeof vi.fn>;
 	};
 	let mockAgentDetector: {
 		getAgent: ReturnType<typeof vi.fn>;
@@ -347,6 +354,9 @@ describe('process IPC handlers', () => {
 			get: vi.fn(),
 			runCommand: vi.fn(),
 			spawnTerminalTab: vi.fn(),
+			// An SSH terminal tab listens for its own exit (reachability tracker).
+			on: vi.fn(),
+			off: vi.fn(),
 		};
 
 		// Create mock agent detector
@@ -2336,6 +2346,32 @@ describe('process IPC handlers', () => {
 
 			expect(mockProcessManager.spawnTerminalTab).not.toHaveBeenCalled();
 			expect(result).toEqual({ pid: 5001, success: true });
+		});
+
+		it('reports the SSH terminal exit to the reachability tracker, once, for its own session', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5001, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			});
+
+			expect(mockProcessManager.on).toHaveBeenCalledWith('exit', expect.any(Function));
+			const onExit = mockProcessManager.on.mock.calls[0][1] as (id: string, code: number) => void;
+
+			// Another session's exit is not this terminal's.
+			onExit('some-other-session', 255);
+			expect(mockNoteSshExit).not.toHaveBeenCalled();
+
+			onExit('session-1-terminal-tab-1', 255);
+			expect(mockNoteSshExit).toHaveBeenCalledWith(mockSshRemoteForTerminal.id, 255);
+			expect(mockProcessManager.off).toHaveBeenCalledWith('exit', onExit);
 		});
 
 		it('should add remote cd command when workingDirOverride is set', async () => {

@@ -52,6 +52,11 @@ vi.mock('../../../../main/stores/getters', () => ({
 	getSshRemoteById: vi.fn(() => null),
 }));
 
+const mockNoteSshExit = vi.fn();
+vi.mock('../../../../main/ssh-reachability', () => ({
+	noteSshExit: (...args: unknown[]) => mockNoteSshExit(...args),
+}));
+
 // For SSH-remote Copilot sessions the events file is read over SSH via
 // remote-fs. Mock the two read paths the shutdown reconciliation uses.
 // The Copilot shutdown wait is the one suspension point inside handleExit, so
@@ -1167,6 +1172,66 @@ describe('ExitHandler', () => {
 			expect(errors).toHaveLength(1);
 
 			mockedMatchSsh.mockReset();
+		});
+	});
+
+	describe('SSH connection failure with no matching pattern (exit 255)', () => {
+		const tunnelStderr =
+			'tailcat Ping: context deadline exceeded\nConnection closed by UNKNOWN port 65535\n';
+
+		it('raises a network_error naming the remote instead of ending the turn silently', async () => {
+			vi.mocked(matchSshErrorPattern).mockReturnValue(null);
+			vi.mocked(getSshRemoteById).mockReturnValue({
+				id: 'remote-1',
+				name: 'pedtome',
+				host: 'pedtome-tailcat',
+			} as ReturnType<typeof getSshRemoteById>);
+
+			processes.set(
+				'test-session',
+				createMockProcess({ sshRemoteId: 'remote-1', stdoutBuffer: '', stderrBuffer: tunnelStderr })
+			);
+			const errors: Array<[string, Record<string, unknown>]> = [];
+			emitter.on('agent-error', (sid: string, err: Record<string, unknown>) =>
+				errors.push([sid, err])
+			);
+
+			await exitHandler.handleExit('test-session', 255);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0][1]).toMatchObject({
+				type: 'network_error',
+				recoverable: true,
+				sshRemoteId: 'remote-1',
+				message:
+					'Unable to connect to "pedtome" over SSH. tailcat Ping: context deadline exceeded; Connection closed by UNKNOWN port 65535',
+			});
+			expect(mockNoteSshExit).toHaveBeenCalledWith('remote-1', 255);
+
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined as never);
+			vi.mocked(matchSshErrorPattern).mockReset();
+		});
+
+		it('stays quiet, and tells the tracker nothing, when the user stopped the turn', async () => {
+			vi.mocked(matchSshErrorPattern).mockReturnValue(null);
+			mockNoteSshExit.mockClear();
+			processes.set(
+				'test-session',
+				createMockProcess({
+					sshRemoteId: 'remote-1',
+					stdoutBuffer: '',
+					stderrBuffer: 'Killed by signal 15.',
+					interrupted: true,
+				})
+			);
+			const errors: unknown[] = [];
+			emitter.on('agent-error', (...args: unknown[]) => errors.push(args));
+
+			await exitHandler.handleExit('test-session', 255);
+
+			expect(errors).toHaveLength(0);
+			expect(mockNoteSshExit).not.toHaveBeenCalled();
+			vi.mocked(matchSshErrorPattern).mockReset();
 		});
 	});
 
