@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ClaudeOutputParser } from '../../../main/parsers/claude-output-parser';
 import { clearRememberedClaudeSessionCosts } from '../../../shared/claudeCostTracker';
+import { classifyRetryableError } from '../../../shared/retryClassification';
 
 describe('ClaudeOutputParser', () => {
 	const parser = new ClaudeOutputParser();
@@ -1753,24 +1754,46 @@ describe('ClaudeOutputParser failed results (is_error: true)', () => {
 	});
 
 	it.each([
-		['tui_exited', /quit before the turn finished/],
-		['timeout', /stopped producing output for too long/],
-		['ready_timeout', /did not finish starting up in time/],
-		['first_byte_timeout', /never began the turn/],
-		['prompt_truncated', /dropped part of the prompt/],
-		['workspace_untrusted', /not been trusted to work in this folder/],
-	])('names the maestro-p failure %s instead of the generic subtype text (#1860)', (code, text) => {
+		['tui_exited', /quit before the turn finished/, 'unknown'],
+		['timeout', /stopped producing output for too long/, 'network_error'],
+		['ready_timeout', /did not finish starting up in time/, 'network_error'],
+		['first_byte_timeout', /never began the turn/, 'network_error'],
+		['prompt_truncated', /dropped part of the prompt/, 'unknown'],
+		['workspace_untrusted', /not been trusted to work in this folder/, 'unknown'],
+	])(
+		'names the maestro-p failure %s instead of the generic subtype text (#1860)',
+		(code, text, type) => {
+			const error = parser.detectErrorFromParsed({
+				type: 'result',
+				subtype: 'error_during_execution',
+				session_id: 'sess-1',
+				duration_ms: 40_000,
+				is_error: true,
+				error: code,
+			});
+
+			expect(error).toMatchObject({ type, recoverable: true });
+			expect(error?.message).toMatch(text);
+		}
+	);
+
+	it.each([
+		['timeout', 'availability'],
+		['ready_timeout', 'availability'],
+		['first_byte_timeout', 'availability'],
+		['prompt_truncated', null],
+		['tui_exited', null],
+	])('hands maestro-p failure %s to Agent Resilience as %s', (code, strategy) => {
 		const error = parser.detectErrorFromParsed({
 			type: 'result',
 			subtype: 'error_during_execution',
 			session_id: 'sess-1',
-			duration_ms: 40_000,
 			is_error: true,
 			error: code,
 		});
 
-		expect(error).toMatchObject({ type: 'unknown', recoverable: true });
-		expect(error?.message).toMatch(text);
+		expect(error).not.toBeNull();
+		expect(classifyRetryableError(error!)).toBe(strategy);
 	});
 
 	it("classifies maestro-p's missing-transcript failure as session_not_found", () => {

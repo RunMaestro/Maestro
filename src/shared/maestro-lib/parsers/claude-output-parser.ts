@@ -186,6 +186,23 @@ const MAESTRO_P_FAILURE_TEXT: Record<string, string> = {
 		'Claude Code has not been trusted to work in this folder. Open claude in it once and choose "Yes, I trust this folder".',
 };
 
+/**
+ * maestro-p failure codes that a plain resend fixes: the turn stalled on the
+ * wire (`timeout`) or never got going on a busy host (`ready_timeout`,
+ * `first_byte_timeout`). Typed `network_error`, which Agent Resilience resends
+ * on its availability backoff, so the user is not left to press Send again
+ * themselves. The resend resumes the same provider session, so work the stalled
+ * turn already finished is in the transcript the model reads.
+ *
+ * `prompt_truncated` is deliberately absent: it repeats for the same prompt on
+ * the same host, so a resend loop would never clear it.
+ */
+const MAESTRO_P_TRANSIENT_FAILURES: ReadonlySet<string> = new Set([
+	'timeout',
+	'ready_timeout',
+	'first_byte_timeout',
+]);
+
 /** True when a message came from a Task subagent rather than the main transcript. */
 function isSubagentMessage(msg: ClaudeRawMessage): boolean {
 	return normalizeParentToolUseId(msg) !== undefined;
@@ -932,8 +949,10 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		if (obj.type === 'result' && obj.is_error === true) {
 			const failureText = this.failedResultText(obj);
 			const match = matchErrorPattern(getErrorPatterns(this.agentId), failureText);
+			const transient =
+				typeof obj.error === 'string' && MAESTRO_P_TRANSIENT_FAILURES.has(obj.error.trim());
 			return {
-				type: match?.type ?? 'unknown',
+				type: match?.type ?? (transient ? 'network_error' : 'unknown'),
 				message: match?.message ?? failureText,
 				recoverable: match?.recoverable ?? true,
 				agentId: this.agentId,
