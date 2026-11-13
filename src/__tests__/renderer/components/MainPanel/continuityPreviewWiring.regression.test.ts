@@ -18,7 +18,10 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const read = (file: string) =>
-	readFileSync(resolve(__dirname, '../../../../renderer/components/MainPanel', file), 'utf8');
+	readFileSync(
+		resolve(__dirname, '../../../../renderer/components/MainPanel', file),
+		'utf8'
+	).replace(/\r\n/g, '\n');
 
 const MAIN_PANEL = read('MainPanel.tsx');
 const TILED_LAYOUT = read('TiledLayout.tsx');

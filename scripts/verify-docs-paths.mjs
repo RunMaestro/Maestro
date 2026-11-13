@@ -30,7 +30,7 @@ export const MAX_INDEX_LINE = 320;
 /** `- **Title:** ...` entries, as [title, line]. */
 function entryLines(text) {
 	return text
-		.split('\n')
+		.split(/\r?\n/)
 		.map((line) => [line.match(/^- \*\*(.+?):\*\*/)?.[1], line])
 		.filter(([title]) => title);
 }

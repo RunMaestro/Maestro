@@ -65,9 +65,9 @@ describe('stored agent context audit', () => {
 		const audit = await auditStoredAgentContextFootprint('selected');
 		expect(audit.subject.agentId).toBe('selected');
 		const text = JSON.stringify(audit);
-		expect(text).toContain(path.join(project, 'AGENTS.md'));
-		expect(text).toContain(instruction);
-		expect(text).toContain(path.join(account, 'memories'));
+		expect(text).toContain(JSON.stringify(path.join(project, 'AGENTS.md')).slice(1, -1));
+		expect(text).toContain(JSON.stringify(instruction).slice(1, -1));
+		expect(text).toContain(JSON.stringify(path.join(account, 'memories')).slice(1, -1));
 		expect(text).toContain('Runtime-dependent System One text is omitted');
 		expect(text).toContain('delivery');
 		expect(fs.readdirSync(root, { recursive: true })).toEqual(before);
@@ -92,9 +92,9 @@ describe('stored agent context audit', () => {
 		});
 		const selected = JSON.stringify(await auditStoredAgentContextFootprint('selected'));
 		const other = JSON.stringify(await auditStoredAgentContextFootprint('other'));
-		expect(selected).not.toContain(otherAccount);
-		expect(other).toContain(path.join(otherAccount, 'AGENTS.md'));
-		expect(other).not.toContain(path.join(account, 'AGENTS.md'));
+		expect(selected).not.toContain(JSON.stringify(otherAccount).slice(1, -1));
+		expect(other).toContain(JSON.stringify(path.join(otherAccount, 'AGENTS.md')).slice(1, -1));
+		expect(other).not.toContain(JSON.stringify(path.join(account, 'AGENTS.md')).slice(1, -1));
 	});
 
 	it.each([

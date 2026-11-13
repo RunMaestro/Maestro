@@ -1077,6 +1077,7 @@ function toVoiceSessionView(snapshot: VoiceSessionSnapshot | null): VoiceSession
 export function syncACappellaAfterExternalSettingsChange(): void {
 	void handsFree?.sync();
 	voiceHotkeys?.sync();
+	getACappellaTransport()?.syncFeatureEnabled();
 }
 
 /**

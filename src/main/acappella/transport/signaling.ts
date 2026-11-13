@@ -108,6 +108,7 @@ export interface SignalingServiceOptions {
 	/** Read fresh per offer, so a settings change applies to the next connection. */
 	getIceSettings: () => IceTransportSettings;
 	getAudioConfig?: () => RemoteAudioConfig;
+	featureEnabled?: () => boolean;
 	now?: () => number;
 	/** A device authenticated. The remote-session coordinator binds here. */
 	onDeviceOnline?: (deviceId: string) => void;
@@ -349,7 +350,12 @@ export class SignalingService {
 		}
 
 		const device = await this.options.pairing.authenticate(message.deviceId, message.token);
-		if (!device) {
+		if (this.sessions.get(session.clientId) !== session) return;
+		if (this.options.featureEnabled && !this.options.featureEnabled()) {
+			session.send({ op: 'closed', reason: 'A Cappella is disabled.' });
+			return;
+		}
+		if (!device || !this.options.pairing.isDeviceActive(device.id)) {
 			session.authAttempts += 1;
 			session.send({
 				op: 'auth-failed',

@@ -32,7 +32,10 @@ function listSources(dir: string, found: string[] = []): string[] {
 
 /** Source without comments, so a sentence that names a function is not a use of it. */
 function code(text: string): string {
-	return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+	return text
+		.replace(/\r\n/g, '\n')
+		.replace(/\/\*[\s\S]*?\*\//g, '')
+		.replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
 }
 
 const FILES = listSources(SRC).map((file) => ({

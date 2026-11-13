@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as syncFs from 'node:fs';
+import { isWindows } from '../../platformDetection';
 import { atomicWriteFile } from '../storage/atomic-json-store';
 import type { TranslationFs } from './fs-port';
 
@@ -14,6 +15,20 @@ export const localTranslationFs: TranslationFs = {
 		await fs.mkdir(directory, options);
 	},
 	createExclusive: async (file, bytes, options) => {
+		// On Windows, fs.open(..., 'wx') follows a dangling symlink instead of
+		// failing with EEXIST; pre-check lstat to preserve exclusive ownership.
+		if (isWindows()) {
+			const existing = await fs.lstat(file).catch((error) => {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+				throw error;
+			});
+			if (existing) {
+				const err: NodeJS.ErrnoException = new Error(`EEXIST: file already exists, open '${file}'`);
+				err.code = 'EEXIST';
+				err.path = file;
+				throw err;
+			}
+		}
 		const handle = await fs.open(file, 'wx', options?.mode ?? 0o600);
 		try {
 			await options?.onCreated?.();

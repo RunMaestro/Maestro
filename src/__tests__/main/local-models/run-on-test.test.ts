@@ -24,6 +24,13 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', async (importOriginal) => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => wrapSpawnWithSsh(...args),
 }));
 
+/** When set, overrides the host platform check that buildAgentLaunchPlan reads. */
+const hostPlatform = vi.hoisted(() => ({ isWindows: false }));
+vi.mock('../../../shared/platformDetection', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../shared/platformDetection')>()),
+	isWindows: () => hostPlatform.isWindows,
+}));
+
 /** When set, what the Windows shell plan answers, in place of this host's own answer. */
 const shellPlan = vi.hoisted(() => ({
 	forced: null as null | { command: string; args: string[]; shell: boolean | string },
@@ -158,6 +165,7 @@ function startedSpec(): TurnProcessSpec {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	hostPlatform.isWindows = false;
 	shellPlan.forced = null;
 	configure();
 });
@@ -188,6 +196,15 @@ describe('testAgentRunOn: a turn on the target', () => {
 		const modelFlag = spec.args.indexOf('--model');
 		expect(spec.args[modelFlag + 1]).toBe('qwen3:latest');
 		expect(spec.args).toContain(RUN_ON_TEST_PROMPT);
+		expect(spec.stdin).toBeUndefined();
+	});
+
+	it('delivers the test prompt over stdin on Windows', async () => {
+		hostPlatform.isWindows = true;
+		await testAgentRunOn({ agentId: 'agent-1' });
+		const spec = startedSpec();
+		expect(spec.stdin).toBe(RUN_ON_TEST_PROMPT);
+		expect(spec.args).not.toContain(RUN_ON_TEST_PROMPT);
 	});
 
 	it('starts a harness directly when this system can, with no shell', async () => {
