@@ -49,6 +49,7 @@ import { useEventListener } from '../utils/useEventListener';
 import { getLiveSessionsSnapshot } from '../session/useLiveSessions';
 import { STEER_SEND_EVENT, steerNewestQueuedMessage } from '../../services/chatSteering';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 
 /**
  * Window event that runs Forced Parallel Send from outside the composer.
@@ -62,10 +63,16 @@ export const FORCED_PARALLEL_SEND_EVENT = 'maestro:forcedParallelSend';
 
 /**
  * Window event that runs Queue Held: queue the draft PAUSED, so it waits on its
- * card until the user resumes it. Raised by the Send button's menu; same bridge
- * as {@link FORCED_PARALLEL_SEND_EVENT}, because the composer owns the draft.
+ * card until the user resumes it. Raised by the Send button's menu and the
+ * command palette; same bridge as {@link FORCED_PARALLEL_SEND_EVENT}, because
+ * the composer owns the draft.
  */
 export const HOLD_SEND_EVENT = 'maestro:holdSend';
+
+/** Ask the composer to run Queue Held on the active tab's draft. */
+export function requestHoldSend(): void {
+	window.dispatchEvent(new CustomEvent(HOLD_SEND_EVENT));
+}
 
 /** Every key the command proposal card answers with (see the card branch). */
 const AI_COMMAND_CARD_KEYS: ReadonlySet<string> = new Set([
@@ -252,8 +259,9 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 	useEventListener(STEER_SEND_EVENT, runSteerSend);
 
 	/**
-	 * Queue Held, from the Send button's menu. Queues the draft paused even on an
-	 * idle agent; an empty draft has nothing to hold, so it does nothing.
+	 * Queue Held, from the Send button's menu or the command palette. Queues the
+	 * draft paused even on an idle agent. An empty draft has nothing to hold; the
+	 * palette entry is always listed, so say so rather than look dead.
 	 */
 	const runHoldSend = useCallback(() => {
 		if (useGroupChatStore.getState().activeGroupChatId) return;
@@ -262,7 +270,14 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 		const stagedImageCount =
 			activeSession.aiTabs?.find((tab) => tab.id === activeSession.activeTabId)?.stagedImages
 				?.length ?? 0;
-		if (getInputValue().trim().length === 0 && stagedImageCount === 0) return;
+		if (getInputValue().trim().length === 0 && stagedImageCount === 0) {
+			notifyCenterFlash({
+				message: 'Nothing to hold',
+				detail: 'The draft is empty.',
+				color: 'yellow',
+			});
+			return;
+		}
 		processInput(undefined, { hold: true });
 	}, [getInputValue, processInput]);
 

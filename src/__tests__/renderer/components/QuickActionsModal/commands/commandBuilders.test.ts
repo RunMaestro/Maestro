@@ -34,6 +34,7 @@ import { createMockAITab } from '../../../../helpers/mockTab';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useTabStore } from '../../../../../renderer/stores/tabStore';
+import { HOLD_SEND_EVENT } from '../../../../../renderer/hooks/input/useInputKeyDown';
 
 const noop = () => {};
 const setSessions = vi.fn();
@@ -1194,6 +1195,43 @@ describe('agent-switch window scoping', () => {
 		expect(
 			buildFeatureCommands({ ...args, activeGroupChatId: 'chat-1' }).find(
 				(a) => a.id === 'editLastQueuedMessage'
+			)
+		).toBeUndefined();
+	});
+
+	it('lists Queue Held for an AI-mode agent and withholds it over a group chat', () => {
+		const session = createMockSession({ id: 's1', inputMode: 'ai' });
+		const args = {
+			activeSession: session,
+			canSummarizeActiveTab: true,
+			hasActiveSessionCapability: () => true,
+			setQuickActionOpen: close,
+			setSuccessFlashNotification: vi.fn(),
+			setAgentSessionsOpen: vi.fn(),
+			setActiveAgentSessionId: vi.fn(),
+			bionifyReadingMode: false,
+			setBionifyReadingMode: vi.fn(),
+			audioFeedbackEnabled: false,
+			setAudioFeedbackEnabled: vi.fn(),
+			idleNotificationEnabled: false,
+			setIdleNotificationEnabled: vi.fn(),
+			showStarredSessionsSection: true,
+			setShowStarredSessionsSection: vi.fn(),
+			shortcuts: {},
+		};
+
+		const hold = buildFeatureCommands(args).find((a) => a.id === 'holdSend');
+		expect(hold?.label).toBe('Queue Held');
+		const held = vi.fn();
+		window.addEventListener(HOLD_SEND_EVENT, held);
+		hold?.action();
+		window.removeEventListener(HOLD_SEND_EVENT, held);
+		expect(held).toHaveBeenCalledTimes(1);
+		expect(close).toHaveBeenCalledWith(false);
+
+		expect(
+			buildFeatureCommands({ ...args, activeGroupChatId: 'chat-1' }).find(
+				(a) => a.id === 'holdSend'
 			)
 		).toBeUndefined();
 	});

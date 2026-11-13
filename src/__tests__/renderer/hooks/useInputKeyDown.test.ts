@@ -54,6 +54,7 @@ import {
 	useInputKeyDown,
 	FORCED_PARALLEL_SEND_EVENT,
 	HOLD_SEND_EVENT,
+	requestHoldSend,
 } from '../../../renderer/hooks/input/useInputKeyDown';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -68,6 +69,7 @@ import {
 	steerNewestQueuedMessage,
 } from '../../../renderer/services/chatSteering';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 
 // The empty-draft steer is a service; assert the routing, not the steer.
 vi.mock('../../../renderer/services/chatSteering', async (importOriginal) => ({
@@ -1496,14 +1498,16 @@ describe('Queue Held (window event)', () => {
 		expect(deps.processInput).toHaveBeenCalledWith(undefined, { hold: true });
 	});
 
-	it('does nothing with an empty draft', () => {
+	it('says there is nothing to hold with an empty draft', () => {
 		setActiveSession({ inputMode: 'ai', activeTabId: 'tab-7' });
+		useCenterFlashStore.getState().setActive(null);
 		const deps = createMockDeps({ inputValue: '   ' });
 		renderHook(() => useInputKeyDown(deps));
 		act(() => {
-			window.dispatchEvent(new CustomEvent(HOLD_SEND_EVENT));
+			requestHoldSend();
 		});
 		expect(deps.processInput).not.toHaveBeenCalled();
+		expect(useCenterFlashStore.getState().active?.message).toBe('Nothing to hold');
 	});
 });
 
