@@ -37,6 +37,9 @@ import type { DeviceCandidateType } from '../../../shared/acappella/device-proto
 import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { logger } from '../../utils/logger';
 
+/** Matches SignalingService.AUTH_ATTEMPT_LIMIT: invalidate an offer after 5 wrong guesses. */
+export const CLAIM_ATTEMPT_LIMIT = 5;
+
 const LOG_CONTEXT = 'ACappella';
 
 /**
@@ -149,7 +152,7 @@ export class PairingService {
 	private closed = false;
 
 	/** The one open pairing window. A second `startPairing` replaces it. */
-	private offer: (PairingOffer & { claimed: boolean }) | null = null;
+	private offer: (PairingOffer & { claimed: boolean; failedAttempts: number }) | null = null;
 
 	/** Claims waiting for, or just given, a decision. */
 	private requests = new Map<
@@ -216,6 +219,7 @@ export class PairingService {
 			expiresAt: now + this.options.pairingTtlMs,
 			fingerprint: this.fingerprint(),
 			claimed: false,
+			failedAttempts: 0,
 		};
 		this.clearPendingRequest();
 		return this.currentOffer() as PairingOffer;
@@ -253,11 +257,15 @@ export class PairingService {
 		remoteAddress?: string;
 	}): PairingClaimResult {
 		const offer = this.currentOffer();
-		if (!offer) return { status: 'rejected', reason: 'expired' };
+		if (!offer || !this.offer) return { status: 'rejected', reason: 'expired' };
+		if (this.offer.claimed) return { status: 'rejected', reason: 'already-used' };
 		if (!constantTimeEquals(input.code.trim().toUpperCase(), offer.code)) {
+			this.offer.failedAttempts += 1;
+			if (this.offer.failedAttempts >= CLAIM_ATTEMPT_LIMIT) {
+				this.offer = null;
+			}
 			return { status: 'rejected', reason: 'unknown-code' };
 		}
-		if (this.offer?.claimed) return { status: 'rejected', reason: 'already-used' };
 		if (this.pendingRequest()) return { status: 'rejected', reason: 'busy' };
 
 		// One-time use: the code is spent the moment it is presented, whether or

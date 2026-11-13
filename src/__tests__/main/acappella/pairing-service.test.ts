@@ -109,10 +109,36 @@ describe('pairing codes', () => {
 		expect(first.status).toBe('pending');
 		if (first.status !== 'pending') return;
 
+		// A claimed offer must refuse without comparing the code.
+		const wrong = offer.code === 'ZZZZZZ' ? '222222' : 'ZZZZZZ';
+		expect(service.claim({ code: wrong, name: 'Probe', platform: 'ios' })).toMatchObject({
+			status: 'rejected',
+			reason: 'already-used',
+		});
+
 		service.deny(first.requestId);
 		// The shoulder-surfer's turn. A denied request must not leave a live code.
 		expect(service.claim({ code: offer.code, name: 'Second', platform: 'ios' })).toMatchObject({
 			status: 'rejected',
+		});
+	});
+
+	it('invalidates the offer after 5 wrong code guesses so the right code is then refused', () => {
+		const service = createService();
+		const offer = service.startPairing();
+		const wrong = offer.code === 'ZZZZZZ' ? '222222' : 'ZZZZZZ';
+
+		for (let i = 0; i < 5; i += 1) {
+			expect(service.claim({ code: wrong, name: 'Guess', platform: 'ios' })).toMatchObject({
+				status: 'rejected',
+				reason: 'unknown-code',
+			});
+		}
+
+		expect(service.currentOffer()).toBeNull();
+		expect(service.claim({ code: offer.code, name: 'Legit', platform: 'ios' })).toMatchObject({
+			status: 'rejected',
+			reason: 'expired',
 		});
 	});
 
