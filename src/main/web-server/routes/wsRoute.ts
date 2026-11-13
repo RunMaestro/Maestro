@@ -366,10 +366,15 @@ export class WsRoute {
 						invoke.type === 'bridge.invoke' &&
 						BACKGROUND_GIT_CHANNELS.has(invoke.channel ?? '')
 					) {
-						void this.backgroundGit.enqueue('dispatch', async () => {
-							await yieldToEventLoop();
-							dispatch(data);
-						});
+						void this.backgroundGit
+							.enqueue('dispatch', async () => {
+								await yieldToEventLoop();
+								dispatch(data);
+							})
+							.catch((error: unknown) => {
+								logger.error('Background git dispatch failed', LOG_CONTEXT, error);
+								socket.close(1011, 'Background dispatch failed');
+							});
 					} else {
 						dispatch(data);
 					}

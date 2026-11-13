@@ -542,6 +542,33 @@ describe('WsRoute', () => {
 			expect(callbacks.handleMessage).not.toHaveBeenCalled();
 		});
 
+		it('fails closed and reports an authorization exception during deferred dispatch', async () => {
+			const connection = createMockConnection();
+			const request = createMockRequest();
+			let broken = false;
+			bindPairedDeviceAuth(request, () => {
+				if (broken) throw new Error('auth backend unavailable');
+				return { id: 'device', username: 'device', displayName: 'Device' };
+			});
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, request);
+			connection.emit(
+				'message',
+				Buffer.from(
+					JSON.stringify({
+						type: 'bridge.invoke',
+						channel: 'git:status',
+						requestId: 1,
+						args: ['/repo'],
+					})
+				)
+			);
+			broken = true;
+			await vi.waitFor(() =>
+				expect(connection.close).toHaveBeenCalledWith(1011, 'Background dispatch failed')
+			);
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+		});
+
 		it('should delegate messages to handleMessage callback', () => {
 			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
 			const connection = createMockConnection();
