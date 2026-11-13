@@ -192,6 +192,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	// See shared/local-models/endpoints.ts.
 	localModelEndpoints: [],
 	defaultTokenProxyMode: 'off',
+	// The proxy default the agents last followed; null until the first sync.
+	// See TOKEN_PROXY_DEFAULT_APPLIED_SETTING in shared/local-models/token-proxy.ts.
+	tokenProxyDefaultApplied: null,
 	// Where Local Models downloads model files from. See
 	// shared/local-models/download-base.ts.
 	localModelsDownloadBase: DEFAULT_DOWNLOAD_BASE,

@@ -1187,7 +1187,7 @@ It reads only these places: the agent's project root (the instruction files, `.m
 | Set tier defaults per harness                   | `models tiers list\|options\|suggest\|set\|reset`                                                                                                 |
 | See what the token proxy did                    | `models proxy status`, `models proxy block <hash> [--original\|--compressed] [--lines <start:end>]`                                               |
 | Inspect or prune the compression cache          | `models proxy cache`, `models proxy cache prune [--older-than <duration>]`                                                                        |
-| Set the proxy mode for new agents               | `settings set defaultTokenProxyMode off\|passthrough\|compress\|compress-early` (existing agents keep theirs)                                     |
+| Set the proxy default for every agent           | `settings set defaultTokenProxyMode off\|passthrough\|compress\|compress-early` (agents that follow it move; overrides keep theirs)               |
 | See what the other models did (Usage Dashboard) | `stats models [--range day\|week\|month\|quarter\|year\|all] [--json]` (see [What the Other Models Did](#what-the-other-models-did-stats-models)) |
 | Check the semantic index                        | `models index`                                                                                                                                    |
 | Index Cue runs for Semantic search              | `settings set semanticIndexCue true\|false`                                                                                                       |

@@ -55,3 +55,4 @@ export { useSystemOneUsage } from './useSystemOneUsage';
 export type { SystemOneUsageState } from './useSystemOneUsage';
 export { useSystemOneAgentAccess } from './useSystemOneAgentAccess';
 export type { SystemOneAgentAccessState } from './useSystemOneAgentAccess';
+export { useTokenProxyDefaultSync } from './useTokenProxyDefaultSync';

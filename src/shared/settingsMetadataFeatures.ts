@@ -101,10 +101,17 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	defaultTokenProxyMode: {
 		description:
-			'Default Maestro proxy mode for new local agents with gateway support: off, passthrough, compress, or compress-early. Explicit gateway, Run on, and group proxy settings take precedence. Choosing an All mode in Settings > Models > Gateway also applies it to existing eligible agents.',
+			'Maestro proxy default for every local agent with gateway support: off, passthrough, compress, or compress-early. An agent follows it while its routing is what the default gives it; an agent set otherwise (its own mode, its own gateway, a group setting) is an override and keeps its setting. Changing it moves every following agent, from Settings > Models > Gateway or from here; a change made while Maestro is closed is applied when it next starts. New agents start on it. SSH remote agents, Run on source agents and providers without gateway support stay direct.',
 		type: 'string',
 		default: 'off',
 		category: 'integrations',
+	},
+	tokenProxyDefaultApplied: {
+		description:
+			'The Maestro proxy default the agents last followed (auto-managed). When defaultTokenProxyMode differs from it, the agents still on this one are moved to the new default.',
+		type: 'string',
+		default: null,
+		category: 'internal',
 	},
 	localModelsDownloadBase: {
 		description:

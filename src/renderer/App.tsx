@@ -149,6 +149,7 @@ import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { useSshReachability } from './hooks/remote/useSshReachability';
+import { useTokenProxyDefaultSync } from './hooks/localModels/useTokenProxyDefaultSync';
 import { installFeedbackLiveStateHook } from './services/feedbackLiveState';
 import { installAutoRunSnapshotResponder } from './services/debugPackage';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
@@ -1776,6 +1777,9 @@ function MaestroConsoleInner() {
 
 	// One dialog per unreachable SSH remote (SshUnreachableModal reads the store).
 	useSshReachability();
+
+	// Agents that follow the Maestro proxy default move with it, wherever it changed.
+	useTokenProxyDefaultSync();
 
 	// --- AGENT IPC LISTENERS ---
 	// Extracted hook for all window.maestro.process.onXxx listeners

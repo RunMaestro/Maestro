@@ -25,6 +25,12 @@
  * given the tool that asks the proxy for a compressed result's original. It is
  * refused unless the proxy compresses for the agent, and it leaves with the
  * proxy the same way.
+ *
+ * The proxy DEFAULT (`defaultTokenProxyMode`) covers every agent that can use
+ * the proxy. An agent follows it while its routing is what the default gives
+ * it; one whose routing differs is an override. Changing the default moves the
+ * followers and leaves the overrides (`syncAgentsToTokenProxyDefault`), so the
+ * Gateway table lists only the overrides, never every agent.
  */
 
 import { canonicalJson } from '../../shared/canonicalJson';
@@ -34,14 +40,17 @@ import {
 	type BackgroundRequests,
 } from '../../shared/local-models/background-requests';
 import { agentGatewaySupport, parseGatewayUrlEdit } from '../../shared/local-models/gateway';
-import { runOnGatewayEditProblem, storedRunOnNamesSource } from '../../shared/local-models/run-on';
+import { runOnGatewayEditProblem } from '../../shared/local-models/run-on';
 import {
+	asTokenProxyMode,
+	followsTokenProxyDefault,
 	gatewayPointsAtTokenProxy,
 	holdsTokenProxyFields,
 	isCompressingTokenProxyMode,
 	OFF_TOKEN_PROXY_FIELDS,
 	parseTokenProxyRetrievalEdit,
 	resolveTokenProxyMode,
+	TOKEN_PROXY_DEFAULT_APPLIED_SETTING,
 	TOKEN_PROXY_NAME,
 	TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION,
 	tokenProxyGatewayUrl,
@@ -158,10 +167,14 @@ async function agentEffectiveModel(session: Session): Promise<string | undefined
  *   route already owns the target. Clearing remains allowed.
  *
  * Resolves once main holds the new values, so the next request uses them.
+ *
+ * `options.port` is the proxy's port when the caller already read it (a sync
+ * over many agents), so `off` does not ask for the full report per agent.
  */
 export async function setAgentTokenProxyMode(
 	sessionId: string,
-	mode: TokenProxyMode
+	mode: TokenProxyMode,
+	options?: { port?: number | null }
 ): Promise<SetAgentTokenProxyModeResult> {
 	const session: Session | undefined = useSessionStore
 		.getState()
@@ -170,7 +183,7 @@ export async function setAgentTokenProxyMode(
 	const proxy = window.maestro.localModels.proxy;
 
 	if (mode === 'off') {
-		const port = (await proxy.report()).status.port;
+		const port = options?.port !== undefined ? options.port : (await proxy.report()).status.port;
 		const onProxy = port !== null && gatewayPointsAtTokenProxy(session.gatewayUrl, port);
 		const gatewayUrl = onProxy ? undefined : session.gatewayUrl;
 		if (gatewayUrl !== session.gatewayUrl || holdsTokenProxyFields(session)) {
@@ -180,16 +193,8 @@ export async function setAgentTokenProxyMode(
 		return { ok: true, mode, gatewayUrl };
 	}
 
-	const problem = runOnGatewayEditProblem(session.runOn, { tokenProxyMode: mode });
-	if (problem) return { ok: false, error: problem };
-	const support = agentGatewaySupport(session.toolType);
-	if (!support.supported) return { ok: false, error: support.reason };
-	if (session.sessionSshRemoteConfig?.enabled) {
-		return {
-			ok: false,
-			error: `The ${TOKEN_PROXY_NAME} listens on this machine's loopback address, which an agent on an SSH remote cannot reach.`,
-		};
-	}
+	const blocker = tokenProxyDefaultBlocker(session);
+	if (blocker) return { ok: false, error: blocker };
 
 	const port = await proxy.ensurePort();
 	let gatewayUrl = session.gatewayUrl;
@@ -216,6 +221,171 @@ export type SetAgentBackgroundRequestsResult =
 	| { ok: false; error: string };
 
 /**
+ * Why an agent cannot be put on the Maestro token proxy, or null when it can.
+ * A Run on source owns the agent's model route; a provider without gateway
+ * support has no base-URL variable to set; an agent on an SSH remote cannot
+ * reach this machine's loopback address. The one rule the per-agent writer,
+ * the proxy default and the Gateway table all apply.
+ */
+export function tokenProxyDefaultBlocker(
+	session: Pick<Session, 'toolType' | 'runOn' | 'sessionSshRemoteConfig'>
+): string | null {
+	const runOnProblem = runOnGatewayEditProblem(session.runOn, { tokenProxyMode: 'compress' });
+	if (runOnProblem) return runOnProblem;
+	const support = agentGatewaySupport(session.toolType);
+	if (!support.supported) return support.reason;
+	if (session.sessionSshRemoteConfig?.enabled) {
+		return `The ${TOKEN_PROXY_NAME} listens on this machine's loopback address, which an agent on an SSH remote cannot reach.`;
+	}
+	return null;
+}
+
+/**
+ * Put one agent back on the proxy default, ending its override. A gateway of
+ * the user's own (not the proxy) is cleared first, so the default replaces it
+ * whether the default is on or off. An agent that cannot use the proxy goes
+ * direct. Resolves once main holds the result.
+ */
+export async function followTokenProxyDefault(
+	sessionId: string
+): Promise<SetAgentTokenProxyModeResult> {
+	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+	if (!session) return { ok: false, error: 'Agent not found' };
+	const port = (await window.maestro.localModels.proxy.report()).status.port;
+	if (
+		session.gatewayUrl &&
+		!(port !== null && gatewayPointsAtTokenProxy(session.gatewayUrl, port))
+	) {
+		const cleared = await setAgentGatewayUrl(sessionId, '');
+		if (!cleared.ok) return cleared;
+	}
+	const mode = tokenProxyDefaultBlocker(session)
+		? 'off'
+		: (useSettingsStore.getState().defaultTokenProxyMode ?? 'off');
+	return setAgentTokenProxyMode(sessionId, mode, { port });
+}
+
+export interface TokenProxyDefaultSyncResult {
+	/** The default the agents now follow. */
+	mode: TokenProxyMode;
+	/** Agents moved from the previous default to this one. */
+	moved: number;
+	/** `<agent>: <reason>` for each agent that could not be moved. */
+	failed: string[];
+}
+
+let tokenProxyDefaultSync: Promise<TokenProxyDefaultSyncResult | null> | null = null;
+
+/** How many failed agents a sync's toast names before it summarizes the rest. */
+const MAX_NAMED_SYNC_FAILURES = 5;
+
+/**
+ * Set the proxy default for every agent: what the Gateway section's Default
+ * buttons call. Saves `defaultTokenProxyMode`, then, with `sync`, moves the
+ * agents that follow the old default (`syncAgentsToTokenProxyDefault`). Only
+ * the window that owns app-wide effects passes `sync`; any other window's
+ * change reaches that window as a settings change, and its
+ * `useTokenProxyDefaultSync()` moves the agents, so two windows never write
+ * the same agents at once. Rejects when the default cannot be saved.
+ */
+export async function chooseTokenProxyDefault(
+	mode: TokenProxyMode,
+	options: { sync: boolean }
+): Promise<TokenProxyDefaultSyncResult | null> {
+	// Record the default the agents follow now, before it changes: on an install
+	// that never synced, the first sync would otherwise take the NEW default as
+	// the baseline and move nobody.
+	const applied = asTokenProxyMode(
+		await window.maestro.settings.get(TOKEN_PROXY_DEFAULT_APPLIED_SETTING)
+	);
+	if (applied === undefined) {
+		await window.maestro.settings.set(
+			TOKEN_PROXY_DEFAULT_APPLIED_SETTING,
+			useSettingsStore.getState().defaultTokenProxyMode ?? 'off'
+		);
+	}
+	await useSettingsStore.getState().setDefaultTokenProxyMode(mode);
+	return options.sync ? syncAgentsToTokenProxyDefault() : null;
+}
+
+/**
+ * Move every agent that follows the previous proxy default onto the current
+ * one (`defaultTokenProxyMode`). An agent follows a default while its routing
+ * is what that default gives it (`followsTokenProxyDefault`); anything else is
+ * an override and is left alone. The default the agents last followed is kept
+ * in `TOKEN_PROXY_DEFAULT_APPLIED_SETTING`, so a default changed while the app
+ * was closed (`maestro-cli settings set defaultTokenProxyMode`) is applied on
+ * the next run.
+ *
+ * Callers share one run: a call while a run is in flight gets that run, and a
+ * default changed during it is applied by another pass before it resolves.
+ * Resolves with the last pass, or null when the agents already followed the
+ * current default. An agent that could not be moved keeps its old routing, so
+ * it shows as an override, and is named in a toast.
+ */
+export function syncAgentsToTokenProxyDefault(): Promise<TokenProxyDefaultSyncResult | null> {
+	if (!tokenProxyDefaultSync) {
+		tokenProxyDefaultSync = runTokenProxyDefaultSync().finally(() => {
+			tokenProxyDefaultSync = null;
+		});
+	}
+	return tokenProxyDefaultSync;
+}
+
+async function runTokenProxyDefaultSync(): Promise<TokenProxyDefaultSyncResult | null> {
+	let result: TokenProxyDefaultSyncResult | null = null;
+	for (;;) {
+		const target = useSettingsStore.getState().defaultTokenProxyMode ?? 'off';
+		const applied = asTokenProxyMode(
+			await window.maestro.settings.get(TOKEN_PROXY_DEFAULT_APPLIED_SETTING)
+		);
+		if (applied === target) break;
+		if (applied === undefined) {
+			// First sync on this install: agents are where earlier versions put
+			// them. Record the default without moving anyone.
+			await window.maestro.settings.set(TOKEN_PROXY_DEFAULT_APPLIED_SETTING, target);
+			break;
+		}
+		const port = (await window.maestro.localModels.proxy.report()).status.port;
+		const followers = useSessionStore
+			.getState()
+			.sessions.filter(
+				(s) =>
+					s.toolType !== 'terminal' &&
+					!tokenProxyDefaultBlocker(s) &&
+					followsTokenProxyDefault(s, applied, port)
+			);
+		let moved = 0;
+		const failed: string[] = [];
+		for (const session of followers) {
+			try {
+				const outcome = await setAgentTokenProxyMode(session.id, target, { port });
+				if (outcome.ok) moved++;
+				else failed.push(`${session.name}: ${outcome.error}`);
+			} catch (error) {
+				failed.push(`${session.name}: ${error instanceof Error ? error.message : String(error)}`);
+			}
+		}
+		await window.maestro.settings.set(TOKEN_PROXY_DEFAULT_APPLIED_SETTING, target);
+		result = { mode: target, moved, failed };
+		if (failed.length > 0) {
+			notifyToast({
+				color: 'yellow',
+				title: `Proxy default not applied to ${failed.length} agent${failed.length === 1 ? '' : 's'}`,
+				// Named up to a few; the rest show as overrides in Settings -> Models -> Gateway.
+				message:
+					failed.slice(0, MAX_NAMED_SYNC_FAILURES).join('\n') +
+					(failed.length > MAX_NAMED_SYNC_FAILURES
+						? `\n...and ${failed.length - MAX_NAMED_SYNC_FAILURES} more, listed as overrides in Settings -> Models -> Gateway.`
+						: ''),
+				dismissible: true,
+			});
+		}
+	}
+	return result;
+}
+
+/**
  * Copy the saved proxy default onto a new local agent before its first turn.
  * Explicit routing and group seeds win. Worktrees inherit their parent's routing
  * instead. Reuse the same writer as the Gateway controls so URL, mode and the
@@ -225,14 +395,7 @@ export async function applyDefaultAgentTokenProxy(sessionId: string): Promise<vo
 	const mode = useSettingsStore.getState().defaultTokenProxyMode;
 	if (!mode || mode === 'off') return;
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-	if (
-		!session ||
-		session.gatewayUrl ||
-		session.tokenProxyMode ||
-		storedRunOnNamesSource(session.runOn) ||
-		session.sessionSshRemoteConfig?.enabled ||
-		!agentGatewaySupport(session.toolType).supported
-	)
+	if (!session || session.gatewayUrl || session.tokenProxyMode || tokenProxyDefaultBlocker(session))
 		return;
 
 	try {
