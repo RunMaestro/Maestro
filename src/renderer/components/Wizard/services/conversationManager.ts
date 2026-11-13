@@ -24,6 +24,8 @@ import {
 	type WizardError,
 } from './wizardErrorDetection';
 import { wizardDebugLogger } from './phaseGenerator';
+import { agentNotInstalledMessage } from '../../../../shared/agentInstall';
+import { getPlatform } from '../../../utils/platformUtils';
 import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../../../utils/grokWizard';
 import {
 	getClaudeTokenSourceFields,
@@ -539,7 +541,12 @@ class ConversationManager {
 							// stdout first, so a JSON error event still wins over a stderr line.
 							const errorText = stderrOutput ? `${rawOutput}\n${stderrOutput}` : rawOutput;
 							const detectedError = this.session
-								? detectWizardError(errorText, this.session.agentType)
+								? detectWizardError(errorText, this.session.agentType, {
+										exitCode: code,
+										stderr: stderrOutput,
+										command: agent.path || agent.command,
+										local: !this.session.sshRemoteConfig?.enabled,
+									})
 								: null;
 
 							if (detectedError) {
@@ -688,9 +695,17 @@ class ConversationManager {
 						error: error.message,
 					});
 					this.cleanupListeners();
+					// A local spawn that never started the binary is the same
+					// missing-CLI case as a non-zero exit, and a raw `spawn ENOENT`
+					// gives the user nothing to act on.
+					const local = !this.session?.sshRemoteConfig?.enabled;
+					const missing = local && (error as NodeJS.ErrnoException).code === 'ENOENT';
 					resolve({
 						success: false,
-						error: `Failed to spawn agent: ${error.message}`,
+						error:
+							missing && this.session
+								? agentNotInstalledMessage(this.session.agentType, 'not-found', getPlatform())
+								: `Failed to spawn agent: ${error.message}`,
 					});
 				});
 		});

@@ -93,6 +93,12 @@ function getRecoveryActionsForError(
 			break;
 		}
 
+		case 'agent_not_installed':
+			// The CLI never started, so neither restarting the agent nor resending
+			// the same turn can work until it is fixed. The error message says
+			// what to fix; there is no in-app recovery to offer.
+			break;
+
 		case 'token_exhaustion':
 			// Context exhausted - offer new session or retry with truncation
 			if (options.onNewSession) {

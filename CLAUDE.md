@@ -208,6 +208,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **The red Stop pill:** `<StopTurnButton>` in `src/renderer/components/ui/StopTurnButton.tsx`.
 - **"Show only providers this machine can run":** `filterToAvailableProviders()` / `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>` in `src/renderer/components/ui/ProviderAvailabilityBar.tsx`.
 - **Whether a login flow can fix an auth failure:** `classifyCredentialKind()` and `credentialKindBlocksLogin()` in `src/shared/providerAuthIdentity.ts`, which also owns `providerAuthKey()` (the credential's shared scope: agent binary + host).
+- **Telling "provider CLI not installed" from a crash, and printing its install command:** `classifyMissingBinary()`, `agentNotInstalledMessage()`, `getAgentInstallInfo()` / `getAgentInstallCommand()`, `agentCliLabel()` in `src/shared/agentInstall.ts`.
 - **Typing a login command into a shell:** `formatAgentLoginCommand(login, syntax?)` and `loginShellSyntaxFor(shellId, isWindows)` in `src/shared/agentMetadata.ts`.
 - **Bucketing Director's Notes bullets:** `bucketNarrativeItems()` / `shouldRenderBuckets()` / `buildNarrativeGroupLookup()` in `src/shared/directorNotesGrouping.ts`, bound to live store state by `useNarrativeGroupLookup()` in `src/renderer/components/DirectorNotes/`.
 - **Which provider generates a synopsis:** `AUTO_SYNOPSIS_PROVIDER`, `synopsisProviderChoice()`, `pickFirstAvailableProvider()` in `src/shared/directorNotesProvider.ts`.

@@ -45,6 +45,29 @@ describe('useAgentErrorRecovery', () => {
 		expect(onNewSession).toHaveBeenCalledTimes(1);
 	});
 
+	describe('agent_not_installed', () => {
+		const notInstalled: AgentError = {
+			...baseError,
+			type: 'agent_not_installed',
+			message: 'Codex CLI not installed. Install it with: npm install -g @openai/codex',
+			agentId: 'codex',
+		};
+
+		it('offers no recovery action, since no button can install the CLI', () => {
+			const { result } = renderHook(() =>
+				useAgentErrorRecovery({
+					error: notInstalled,
+					agentId: 'codex',
+					sessionId: 's1',
+					onRestartAgent: vi.fn(),
+					onRetry: vi.fn(),
+				})
+			);
+
+			expect(result.current.recoveryActions).toEqual([]);
+		});
+	});
+
 	it('offers restart + new session for agent crashes', () => {
 		const onRestartAgent = vi.fn();
 		const onNewSession = vi.fn();
