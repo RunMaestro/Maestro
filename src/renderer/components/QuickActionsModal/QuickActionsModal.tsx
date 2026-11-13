@@ -285,6 +285,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setUngroupedCollapsed = useSettingsStore((s) => s.setUngroupedCollapsed);
 	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
+	const showHiddenGroups = useSettingsStore((s) => s.showHiddenGroups);
+	const setShowHiddenGroups = useSettingsStore((s) => s.setShowHiddenGroups);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 	const batchRunStates = useBatchStore((s) => s.batchRunStates);
@@ -806,6 +808,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setBookmarksCollapsed,
 			groupChatsExpanded,
 			setGroupChatsExpanded,
+			showHiddenGroups,
+			setShowHiddenGroups,
 		}),
 		...buildTabCommands({
 			activeSession,

@@ -83,6 +83,56 @@ describe('QuickActions command builders', () => {
 		expect(management.map((a) => a.id)).toContain('importAgent');
 	});
 
+	it('offers the Show/Hide Hidden Groups toggle only while a group is hidden', () => {
+		const build = (groups: any[], showHiddenGroups: boolean, setShowHiddenGroups = vi.fn()) =>
+			buildAgentPanelCommands({
+				activeSession: undefined,
+				groups,
+				sessions: [],
+				setGroups: vi.fn(),
+				setSessions,
+				setQuickActionOpen: close,
+				setRenameGroupModalOpen: vi.fn(),
+				setRenameGroupId: vi.fn(),
+				setRenameGroupValue: vi.fn(),
+				setRenameGroupEmoji: vi.fn(),
+				setRenameGroupIcon: vi.fn(),
+				setRenameGroupColor: vi.fn(),
+				setCreateGroupModalOpen: vi.fn(),
+				setRightPanelOpen: vi.fn(),
+				setActiveRightTab: vi.fn(),
+				setMode: vi.fn(),
+				resetSelectionToFirst: vi.fn(),
+				ungroupedCollapsed: false,
+				setUngroupedCollapsed: vi.fn(),
+				bookmarksCollapsed: false,
+				setBookmarksCollapsed: vi.fn(),
+				groupChatsExpanded: true,
+				setGroupChatsExpanded: vi.fn(),
+				showHiddenGroups,
+				setShowHiddenGroups,
+			}).find((a) => a.id === 'toggleHiddenGroups');
+
+		expect(build([{ id: 'g1', name: 'G', emoji: 'G', collapsed: false }], false)).toBeUndefined();
+
+		const hiddenGroups = [
+			{ id: 'g1', name: 'G1', emoji: 'G', collapsed: false, hidden: true },
+			{ id: 'g2', name: 'G2', emoji: 'G', collapsed: false, hidden: true },
+			{ id: 'g3', name: 'G3', emoji: 'G', collapsed: false },
+		];
+		const setShow = vi.fn();
+		const show = build(hiddenGroups, false, setShow);
+		expect(show?.label).toBe('Show Hidden Groups (2)');
+		show?.action();
+		expect(setShow).toHaveBeenCalledWith(true);
+
+		const setHide = vi.fn();
+		const hide = build(hiddenGroups, true, setHide);
+		expect(hide?.label).toBe('Hide Hidden Groups (2)');
+		hide?.action();
+		expect(setHide).toHaveBeenCalledWith(false);
+	});
+
 	it('builds agent panel, move-to-group, switcher, and group-chat commands', () => {
 		const session = createMockSession({
 			id: 's1',
@@ -115,6 +165,8 @@ describe('QuickActions command builders', () => {
 				setBookmarksCollapsed: vi.fn(),
 				groupChatsExpanded: true,
 				setGroupChatsExpanded: vi.fn(),
+				showHiddenGroups: false,
+				setShowHiddenGroups: vi.fn(),
 			}).map((a) => a.id)
 		).toContain('expandAllFolders');
 

@@ -65,7 +65,7 @@ import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { rollUpWizardActivityToSessions } from '../../utils/wizardActivity';
 import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
-import { collectHiddenGroupIds } from '../../utils/sidebarMembership';
+import { collectHiddenGroupIds, countHiddenGroups } from '../../utils/sidebarMembership';
 import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
@@ -1039,13 +1039,7 @@ function SessionListInner(props: SessionListProps) {
 		return { ...orderLeftBarGroups(visibleGroups, groupById, groupsPlusEnabled), groupById };
 	}, [groupsPlusEnabled, sortedGroups, hiddenGroupIds]);
 
-	// Counted off the groups themselves, never off `hiddenGroupIds`: that set is
-	// EMPTY while "Show Hidden" is on, so counting it would make the button
-	// announce "0" at exactly the moment it has to offer the way back.
-	const hiddenGroupCount = useMemo(
-		() => sortedGroups.reduce((n, group) => (group.hidden ? n + 1 : n), 0),
-		[sortedGroups]
-	);
+	const hiddenGroupCount = useMemo(() => countHiddenGroups(sortedGroups), [sortedGroups]);
 
 	// Every group that is parked, whether by its own flag or by its parent's.
 	// The fade reads this rather than `group.hidden`: a child renders as its own

@@ -1,6 +1,7 @@
 import type React from 'react';
 import type { Group, RightPanelTab, Session } from '../../../types';
 import { getAllFolderPaths } from '../../../utils/fileExplorer';
+import { countHiddenGroups } from '../../../utils/sidebarMembership';
 import type { QuickAction, QuickActionMode } from '../types';
 
 interface BuildAgentPanelCommandsArgs {
@@ -28,6 +29,9 @@ interface BuildAgentPanelCommandsArgs {
 	setBookmarksCollapsed: (collapsed: boolean) => void;
 	groupChatsExpanded: boolean;
 	setGroupChatsExpanded: (expanded: boolean) => void;
+	/** The Left Bar's "Show Hidden" toggle (the button at the foot of the list). */
+	showHiddenGroups: boolean;
+	setShowHiddenGroups: (value: boolean) => void;
 }
 
 export function buildAgentPanelCommands({
@@ -55,6 +59,8 @@ export function buildAgentPanelCommands({
 	setBookmarksCollapsed,
 	groupChatsExpanded,
 	setGroupChatsExpanded,
+	showHiddenGroups,
+	setShowHiddenGroups,
 }: BuildAgentPanelCommandsArgs): QuickAction[] {
 	const commands: QuickAction[] = [];
 
@@ -97,6 +103,23 @@ export function buildAgentPanelCommands({
 			setQuickActionOpen(false);
 		},
 	});
+
+	// Same toggle and the same gate as the Left Bar button: offered only while
+	// at least one group is hidden.
+	const hiddenGroupCount = countHiddenGroups(groups);
+	if (hiddenGroupCount > 0) {
+		commands.push({
+			id: 'toggleHiddenGroups',
+			label: `${showHiddenGroups ? 'Hide' : 'Show'} Hidden Groups (${hiddenGroupCount})`,
+			subtext: showHiddenGroups
+				? 'Suppress hidden groups from the Left Bar again'
+				: `Reveal ${hiddenGroupCount} hidden group${hiddenGroupCount === 1 ? '' : 's'} in the Left Bar`,
+			action: () => {
+				setShowHiddenGroups(!showHiddenGroups);
+				setQuickActionOpen(false);
+			},
+		});
+	}
 
 	if (groups.some((group) => group.collapsed) || ungroupedCollapsed) {
 		commands.push({

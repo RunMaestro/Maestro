@@ -3,6 +3,7 @@ import {
 	sessionMatchesFilter,
 	passesUnreadFilter,
 	collectHiddenGroupIds,
+	countHiddenGroups,
 	resolveHiddenGroupIds,
 	passesHiddenGroupFilter,
 } from '../../../renderer/utils/sidebarMembership';
@@ -127,6 +128,23 @@ const group = (id: string, overrides: Partial<Group> = {}): Group => ({
 	emoji: '\u{1F4C1}',
 	collapsed: false,
 	...overrides,
+});
+
+describe('countHiddenGroups', () => {
+	it('counts only groups that carry their own hidden flag', () => {
+		expect(
+			countHiddenGroups([
+				group('parent', { hidden: true }),
+				group('child', { parentGroupId: 'parent' }),
+				group('other', { hidden: true }),
+				group('shown'),
+			])
+		).toBe(2);
+	});
+
+	it('is zero when nothing is hidden', () => {
+		expect(countHiddenGroups([group('a'), group('b')])).toBe(0);
+	});
 });
 
 describe('collectHiddenGroupIds', () => {

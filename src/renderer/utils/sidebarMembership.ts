@@ -114,6 +114,20 @@ export function collectHiddenGroupIds(groups: Group[]): ReadonlySet<string> {
 	return hidden;
 }
 
+/**
+ * How many groups carry their own `hidden` flag: the number the "Show Hidden"
+ * toggle (Left Bar foot and command palette) announces. Counted off the flag,
+ * never off {@link resolveHiddenGroupIds}, which is EMPTY while "Show Hidden" is
+ * on and would make the toggle read "0" at the moment it offers the way back.
+ */
+export function countHiddenGroups(groups: Group[]): number {
+	let count = 0;
+	for (const group of groups) {
+		if (group.hidden) count++;
+	}
+	return count;
+}
+
 export interface HiddenGroupContext {
 	/** The "Show Hidden" toggle at the foot of the Left Bar. */
 	showHiddenGroups: boolean;
