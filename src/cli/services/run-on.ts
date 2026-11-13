@@ -26,8 +26,8 @@ import {
 	parseRunOnEdit,
 	parseRunOnSpec,
 	parseRunOnTarget,
+	namedRunOnContextTokens,
 	runOnContextProblem,
-	runOnDefaultContextTokens,
 	storedRunOnNamesSource,
 	type RunOnSourceTarget,
 } from '../../shared/local-models/run-on';
@@ -205,18 +205,18 @@ export function readRunOnFlags(
 		named = spec.target;
 	}
 
-	const sameAsStored =
-		stored !== undefined && stored.endpointId === named.endpointId && stored.model === named.model;
 	const edit = parseRunOnEdit(
 		agent.toolType,
 		{
 			type: 'source',
 			endpointId: named.endpointId,
 			model: named.model,
-			contextTokens:
-				contextTokens ??
-				(sameAsStored ? stored.contextTokens : undefined) ??
-				runOnDefaultContextTokens(named, reportedContextTokens),
+			contextTokens: namedRunOnContextTokens(
+				named,
+				agent.runOn,
+				reportedContextTokens,
+				contextTokens
+			),
 		},
 		readLocalModelEndpoints()
 	);

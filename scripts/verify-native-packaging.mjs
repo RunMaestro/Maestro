@@ -17,6 +17,15 @@
  *      notarization rejects a bundle containing an unsigned nested binary and
  *      the rejection arrives long after the build.
  *
+ * And, for every `.node` addon in `app.asar.unpacked`, that an ABI-tagged one
+ * (a non-Node-API addon such as better-sqlite3, which exports
+ * `node_register_module_v<ABI>`) was built for the Electron that ships. The
+ * packager copies `node_modules` as it finds it (`npmRebuild: false`), so a
+ * checkout last rebuilt for plain Node (`npm run rebuild:node-native`, for the
+ * tests or the CLI) ships a binary the app refuses to load: "compiled against a
+ * different Node.js version using NODE_MODULE_VERSION 147. This version of
+ * Node.js requires NODE_MODULE_VERSION 145".
+ *
  * A runtime whose package is not a dependency yet is reported and skipped: this
  * script fails on things that are broken, not on work that has not started.
  * Passing `--require-all` turns those skips into failures, which is what a
@@ -229,6 +238,11 @@ function main() {
 		});
 	}
 
+	const abiResult = checkAddonAbis(unpackedRoot);
+	if (abiResult.status === 'fail') failures += 1;
+	else if (abiResult.status === 'skip') skipped += 1;
+	results.push(abiResult);
+
 	if (asJson) {
 		console.log(JSON.stringify({ platformKey, app: located.app, results }, null, 2));
 	} else {
@@ -246,6 +260,82 @@ function main() {
 	if (failures > 0) {
 		fail(`${failures} native runtime(s) are not correctly packaged. See the list above.`);
 	}
+}
+
+const ABI_EXPORT = /node_register_module_v(\d+)/;
+const ABI_FIX = 'Run "npm run rebuild:electron-native", then package again.';
+
+/**
+ * The NODE_MODULE_VERSION of the Electron in node_modules, which is the one
+ * electron-builder packages. Asked of Electron itself (run as Node), so no
+ * version-to-ABI table can go stale.
+ */
+function electronAbi() {
+	// Under plain Node, `require('electron')` is the path to the Electron binary.
+	const electronBinary = require('electron');
+	const output = execFileSync(electronBinary, ['-p', 'process.versions.modules'], {
+		env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+		stdio: ['ignore', 'pipe', 'pipe'],
+	});
+	return output.toString().trim();
+}
+
+/** Every `.node` file under a directory. */
+function listAddons(dir) {
+	const found = [];
+	for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+		const full = path.join(dir, entry.name);
+		if (entry.isDirectory()) found.push(...listAddons(full));
+		else if (entry.isFile() && entry.name.endsWith('.node')) found.push(full);
+	}
+	return found;
+}
+
+/**
+ * Fail on any ABI-tagged addon built for a runtime other than the packaged
+ * Electron. Node-API addons carry no tag and load on any ABI, so they pass by
+ * construction. The tag is read from the export table's string, which keeps the
+ * check free of `nm` / `dumpbin` and identical on every platform.
+ */
+function checkAddonAbis(unpackedRoot) {
+	const result = { runtime: 'electron-abi', moduleId: 'native addons' };
+	let expected;
+	try {
+		expected = electronAbi();
+	} catch (error) {
+		return {
+			...result,
+			status: 'skip',
+			reason: `Could not ask Electron for its ABI (${error.message.split('\n')[0]}); addon ABIs not checked.`,
+		};
+	}
+	if (!fs.existsSync(unpackedRoot)) {
+		return { ...result, status: 'skip', reason: 'No app.asar.unpacked; no addons to check.' };
+	}
+
+	const addons = listAddons(unpackedRoot);
+	const mismatched = [];
+	let tagged = 0;
+	for (const addon of addons) {
+		const match = fs.readFileSync(addon).toString('latin1').match(ABI_EXPORT);
+		if (!match) continue;
+		tagged += 1;
+		if (match[1] !== expected)
+			mismatched.push(`${path.relative(unpackedRoot, addon)} (ABI ${match[1]})`);
+	}
+
+	if (mismatched.length) {
+		return {
+			...result,
+			status: 'fail',
+			reason: `built for a runtime other than Electron (ABI ${expected}), the app will refuse to load: ${mismatched.join(', ')}. ${ABI_FIX}`,
+		};
+	}
+	return {
+		...result,
+		status: 'pass',
+		reason: `${tagged} ABI-tagged of ${addons.length} addons, all ABI ${expected}.`,
+	};
 }
 
 /** Dependencies of the package.json that actually shipped inside the bundle. */

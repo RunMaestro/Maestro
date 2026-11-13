@@ -125,6 +125,30 @@ describe('cue-scheduled-tasks', () => {
 			});
 		});
 
+		it('writes the run_on target the Auto Run window picked', () => {
+			const subs = buildScheduledTaskSubscriptions(agent, {
+				agentId: agent.id,
+				kind: 'once',
+				fireAt: '2030-01-01T10:00:00.000Z',
+				autoRun: {
+					documents: ['/proj/a.md'],
+					run_on: {
+						type: 'source',
+						endpointId: 'ep-ollama',
+						model: 'qwen3:latest',
+						contextTokens: 131072,
+					},
+				},
+			});
+
+			expect(subs[0].auto_run?.run_on).toEqual({
+				type: 'source',
+				endpointId: 'ep-ollama',
+				model: 'qwen3:latest',
+				contextTokens: 131072,
+			});
+		});
+
 		it('writes the auto-resume settings and the worktree the run fires in', () => {
 			const subs = buildScheduledTaskSubscriptions(agent, {
 				agentId: agent.id,

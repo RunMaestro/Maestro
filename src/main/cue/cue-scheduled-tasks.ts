@@ -505,6 +505,7 @@ export function buildScheduledTaskSubscriptions(
 		if (input.autoRun!.max_loops !== undefined) autoRunConfig.max_loops = input.autoRun!.max_loops;
 		if (input.autoRun!.model) autoRunConfig.model = input.autoRun!.model;
 		if (input.autoRun!.effort) autoRunConfig.effort = input.autoRun!.effort;
+		if (input.autoRun!.run_on) autoRunConfig.run_on = input.autoRun!.run_on;
 		// `task` is what an absent field means, so only the non-default is written.
 		if (input.autoRun!.task_selection_mode === 'document') {
 			autoRunConfig.task_selection_mode = 'document';

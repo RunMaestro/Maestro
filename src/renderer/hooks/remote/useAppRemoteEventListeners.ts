@@ -968,6 +968,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					maxLoops: config.maxLoops,
 					...(config.model && { model: config.model }),
 					...(config.effort && { effort: config.effort }),
+					// Checked by main (`parseRunOnTarget`) before it is sent here.
+					...(config.runOn && { runOn: config.runOn }),
 					...(config.ignoreModelHints && { ignoreModelHints: true }),
 					// Only the non-default is forwarded; `task` is what the batch
 					// processor does when the field is absent.
@@ -1074,6 +1076,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				maxIterations?: number | null;
 				model?: string;
 				effort?: string;
+				runOn?: import('../../../shared/local-models/run-on').RunOnTarget;
 			};
 			responseChannel: string;
 		};
@@ -1134,6 +1137,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				},
 				...(config.model && { model: config.model }),
 				...(config.effort && { effort: config.effort }),
+				// Checked by main (`parseRunOnTarget`) before it is sent here.
+				...(config.runOn && { runOn: config.runOn }),
 			};
 
 			// Goal mode is document-less, so folderPath is only used for history

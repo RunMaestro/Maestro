@@ -33,6 +33,11 @@ import {
 	resolveTurnOutcome,
 	type TurnFacts,
 } from '../../../shared/maestro-lib/streaming/turn-outcome';
+import {
+	agentNotInstalledMessage,
+	classifyMissingBinary,
+	type MissingBinaryEvidence,
+} from '../../../shared/agentInstall';
 
 interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -268,6 +273,33 @@ export class ExitHandler {
 				}
 			);
 			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText, managedProcess);
+		}
+
+		// A CLI that never started is not a crash. Classified ahead of the parser,
+		// whose fallback for an unrecognized non-zero exit is the bare
+		// "Agent exited with code N" that gives the user nothing to act on. A Stop
+		// is never classified: the stopped turn settles as interrupted below.
+		if (!managedProcess.interrupted && !managedProcess.errorEmitted && code !== 0) {
+			const notInstalled = this.notInstalledError(sessionId, managedProcess, {
+				exitCode: code,
+				stderr: managedProcess.stderrBuffer || '',
+				command: managedProcess.command,
+			});
+			if (notInstalled) {
+				logger.info('[ProcessManager] Agent CLI could not be started', 'ProcessManager', {
+					sessionId,
+					toolType,
+					exitCode: code,
+					command: managedProcess.command,
+				});
+				emitAgentErrorAfterOutput(
+					this.emitter,
+					this.bufferManager,
+					sessionId,
+					managedProcess,
+					notInstalled
+				);
+			}
 		}
 
 		// Turn-completion classification, routed through maestro-lib's shared
@@ -755,6 +787,43 @@ export class ExitHandler {
 	}
 
 	/**
+	 * An `agent_not_installed` error when the evidence says the agent's CLI could
+	 * not be started at all, or null when it ran (and failed some other way).
+	 *
+	 * Local agents only. Over SSH the binary lives on the remote host, where a
+	 * missing CLI is already reported by the SSH error bank - and the install
+	 * command named here would be for the wrong machine. Terminal shells are not
+	 * agents, so a 127 from a command typed into one is the user's business.
+	 */
+	private notInstalledError(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		evidence: MissingBinaryEvidence
+	): AgentError | null {
+		if (managedProcess.sshRemoteId || managedProcess.isTerminal) return null;
+		if (managedProcess.toolType === 'terminal') return null;
+		const missingBinary = classifyMissingBinary(evidence);
+		if (!missingBinary) return null;
+		return {
+			type: 'agent_not_installed',
+			message: agentNotInstalledMessage(
+				managedProcess.toolType,
+				missingBinary.reason,
+				process.platform,
+				missingBinary.runtime
+			),
+			recoverable: true,
+			agentId: managedProcess.toolType,
+			sessionId,
+			timestamp: Date.now(),
+			raw: {
+				exitCode: evidence.exitCode ?? undefined,
+				stderr: evidence.stderr,
+			},
+		};
+	}
+
+	/**
 	 * Handle process error event (spawn failures, etc.)
 	 */
 	handleError(sessionId: string, error: Error): void {
@@ -765,8 +834,20 @@ export class ExitHandler {
 			error: error.message,
 		});
 
-		// Emit agent error for process spawn failures
-		if (managedProcess && !managedProcess.errorEmitted) {
+		// Emit agent error for process spawn failures. ENOENT means the binary is
+		// not there at all, which the user fixes by installing it - not by
+		// restarting an agent that can never start.
+		const notInstalled = managedProcess
+			? this.notInstalledError(sessionId, managedProcess, {
+					errorCode: (error as NodeJS.ErrnoException).code,
+					stderr: error.message,
+					command: managedProcess.command,
+				})
+			: null;
+		if (managedProcess && !managedProcess.errorEmitted && notInstalled) {
+			managedProcess.errorEmitted = true;
+			this.emitter.emit('agent-error', sessionId, notInstalled);
+		} else if (managedProcess && !managedProcess.errorEmitted) {
 			managedProcess.errorEmitted = true;
 			const agentError: AgentError = {
 				type: 'agent_crashed',

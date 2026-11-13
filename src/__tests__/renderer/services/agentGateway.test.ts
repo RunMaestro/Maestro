@@ -6,18 +6,26 @@
  * And the background requests target, which belongs to the proxy: refused for
  * an agent that is not on it, and gone when the agent leaves it. And the
  * retrieval switch, refused unless the proxy compresses, and cleared the same way.
+ * And the proxy default: the agents that follow it move with it, overrides stay.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	applyDefaultAgentTokenProxy,
+	chooseTokenProxyDefault,
 	flushAgentToStore,
+	followTokenProxyDefault,
 	setAgentBackgroundRequests,
 	setAgentGatewayUrl,
 	setAgentTokenProxyMode,
 	setAgentTokenProxyRetrieval,
+	syncAgentsToTokenProxyDefault,
+	tokenProxyDefaultBlocker,
 } from '../../../renderer/services/agentGateway';
-import { TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION } from '../../../shared/local-models/token-proxy';
+import {
+	TOKEN_PROXY_DEFAULT_APPLIED_SETTING,
+	TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION,
+} from '../../../shared/local-models/token-proxy';
 import { BACKGROUND_REQUESTS_NEEDS_PROXY } from '../../../shared/local-models/background-requests';
 import { RUN_ON_GATEWAY_SKIPPED_REASON } from '../../../shared/local-models/run-on';
 import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
@@ -82,6 +90,11 @@ beforeEach(() => {
 	vi.mocked(proxy.report).mockResolvedValue(proxyReport(PROXY_PORT) as never);
 	vi.mocked(window.maestro.agents.getCustomEnvVars).mockReset();
 	vi.mocked(window.maestro.agents.getCustomEnvVars).mockResolvedValue(null);
+	// `settingsFile()` gives a test a settings file it can read back; reset it.
+	vi.mocked(window.maestro.settings.get).mockReset();
+	vi.mocked(window.maestro.settings.get).mockResolvedValue(undefined);
+	vi.mocked(window.maestro.settings.set).mockReset();
+	vi.mocked(window.maestro.settings.set).mockResolvedValue(undefined);
 	useSettingsStore.setState({
 		shellEnvVars: {},
 		localModelEndpoints: [OLLAMA, CLOUD],
@@ -163,6 +176,213 @@ describe('applyDefaultAgentTokenProxy', () => {
 				}),
 			])
 		);
+	});
+});
+
+/** Several agents at once, for the proxy default. */
+function seedMany(...sessions: Array<Partial<Session> & { id: string }>): void {
+	useSessionStore.setState({
+		sessions: sessions.map(
+			(overrides) =>
+				({
+					name: overrides.id,
+					toolType: 'claude-code',
+					aiTabs: [],
+					...overrides,
+				}) as unknown as Session
+		),
+	});
+}
+
+function agentById(id: string): Session | undefined {
+	return useSessionStore.getState().sessions.find((s) => s.id === id);
+}
+
+/** A settings file the service reads back what it wrote to. */
+function settingsFile(initial: Record<string, unknown> = {}): Map<string, unknown> {
+	const file = new Map<string, unknown>(Object.entries(initial));
+	vi.mocked(window.maestro.settings.get).mockImplementation(async (key: string) => file.get(key));
+	vi.mocked(window.maestro.settings.set).mockImplementation(async (key: string, value: unknown) => {
+		file.set(key, value);
+	});
+	return file;
+}
+
+describe('tokenProxyDefaultBlocker', () => {
+	it('names why an agent cannot use the proxy, and passes one that can', () => {
+		expect(tokenProxyDefaultBlocker(seed())).toBeNull();
+		expect(tokenProxyDefaultBlocker(seed({ runOn: { type: 'provider' } }))).toBeNull();
+		expect(tokenProxyDefaultBlocker(seed({ runOn: QWEN }))).toBe(RUN_ON_GATEWAY_SKIPPED_REASON);
+		expect(
+			tokenProxyDefaultBlocker(seed({ sessionSshRemoteConfig: { enabled: true, remoteId: 'box' } }))
+		).toMatch(/SSH remote/);
+		expect(tokenProxyDefaultBlocker(seed({ toolType: 'copilot-cli' }))).toEqual(expect.any(String));
+	});
+});
+
+describe('syncAgentsToTokenProxyDefault', () => {
+	it('moves the agents that followed the old default and leaves the overrides', async () => {
+		const file = settingsFile({ [TOKEN_PROXY_DEFAULT_APPLIED_SETTING]: 'off' });
+		seedMany(
+			{ id: 'follower' },
+			{ id: 'external', gatewayUrl: 'https://external.example.com' },
+			{ id: 'remote', sessionSshRemoteConfig: { enabled: true, remoteId: 'box' } },
+			{ id: 'routed', runOn: QWEN }
+		);
+		useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
+
+		const result = await syncAgentsToTokenProxyDefault();
+
+		expect(result).toEqual({ mode: 'compress', moved: 1, failed: [] });
+		expect(agentById('follower')).toMatchObject({
+			gatewayUrl: proxyUrl('/anthropic'),
+			tokenProxyMode: 'compress',
+		});
+		expect(agentById('external')?.gatewayUrl).toBe('https://external.example.com');
+		expect(agentById('remote')?.gatewayUrl).toBeUndefined();
+		expect(agentById('routed')?.gatewayUrl).toBeUndefined();
+		expect(file.get(TOKEN_PROXY_DEFAULT_APPLIED_SETTING)).toBe('compress');
+	});
+
+	it('takes the followers off the proxy and keeps an agent set to another mode', async () => {
+		settingsFile({ [TOKEN_PROXY_DEFAULT_APPLIED_SETTING]: 'compress' });
+		seedMany(
+			{ id: 'follower', gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress' },
+			{ id: 'counter', gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'passthrough' }
+		);
+		useSettingsStore.setState({ defaultTokenProxyMode: 'off' });
+
+		const result = await syncAgentsToTokenProxyDefault();
+
+		expect(result).toEqual({ mode: 'off', moved: 1, failed: [] });
+		expect(agentById('follower')?.gatewayUrl).toBeUndefined();
+		expect(agentById('follower')?.tokenProxyMode).toBeUndefined();
+		expect(agentById('counter')).toMatchObject({ tokenProxyMode: 'passthrough' });
+		// The port is read once for the pass, not once per agent.
+		expect(window.maestro.localModels.proxy.report).toHaveBeenCalledTimes(1);
+	});
+
+	it('records the first default it sees without moving anyone', async () => {
+		const file = settingsFile();
+		const original = seed();
+		useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
+
+		expect(await syncAgentsToTokenProxyDefault()).toBeNull();
+		expect(stored()).toBe(original);
+		expect(file.get(TOKEN_PROXY_DEFAULT_APPLIED_SETTING)).toBe('compress');
+	});
+
+	it('does nothing when the agents already follow the current default', async () => {
+		settingsFile({ [TOKEN_PROXY_DEFAULT_APPLIED_SETTING]: 'off' });
+		const original = seed();
+		expect(await syncAgentsToTokenProxyDefault()).toBeNull();
+		expect(stored()).toBe(original);
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('shares one run between callers', async () => {
+		settingsFile({ [TOKEN_PROXY_DEFAULT_APPLIED_SETTING]: 'off' });
+		seed();
+		useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
+		const [first, second] = [syncAgentsToTokenProxyDefault(), syncAgentsToTokenProxyDefault()];
+		expect(second).toBe(first);
+		expect(await first).toEqual({ mode: 'compress', moved: 1, failed: [] });
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+	});
+
+	it('names an agent it could not move, keeps its routing and still records the default', async () => {
+		const file = settingsFile({ [TOKEN_PROXY_DEFAULT_APPLIED_SETTING]: 'off' });
+		seedMany({ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' });
+		useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
+		vi.mocked(window.maestro.localModels.proxy.ensurePort).mockRejectedValueOnce(
+			new Error('Port unavailable')
+		);
+
+		const result = await syncAgentsToTokenProxyDefault();
+
+		expect(result).toEqual({ mode: 'compress', moved: 1, failed: ['Alpha: Port unavailable'] });
+		expect(agentById('a')?.gatewayUrl).toBeUndefined();
+		expect(agentById('b')?.tokenProxyMode).toBe('compress');
+		expect(file.get(TOKEN_PROXY_DEFAULT_APPLIED_SETTING)).toBe('compress');
+		expect(useNotificationStore.getState().toasts).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					title: 'Proxy default not applied to 1 agent',
+					message: 'Alpha: Port unavailable',
+				}),
+			])
+		);
+	});
+});
+
+describe('chooseTokenProxyDefault', () => {
+	it('saves the default and moves the followers', async () => {
+		const file = settingsFile({ [TOKEN_PROXY_DEFAULT_APPLIED_SETTING]: 'off' });
+		seed();
+		const result = await chooseTokenProxyDefault('passthrough', { sync: true });
+		expect(result).toEqual({ mode: 'passthrough', moved: 1, failed: [] });
+		expect(file.get('defaultTokenProxyMode')).toBe('passthrough');
+		expect(useSettingsStore.getState().defaultTokenProxyMode).toBe('passthrough');
+		expect(stored().tokenProxyMode).toBe('passthrough');
+	});
+
+	it('records the old default first on an install that never synced', async () => {
+		const file = settingsFile();
+		seed();
+		await chooseTokenProxyDefault('compress', { sync: true });
+		// The baseline was off, so the agent with no gateway followed it and moved.
+		expect(stored().tokenProxyMode).toBe('compress');
+		expect(file.get(TOKEN_PROXY_DEFAULT_APPLIED_SETTING)).toBe('compress');
+	});
+
+	it('leaves the agents to the owning window when told not to sync', async () => {
+		settingsFile({ [TOKEN_PROXY_DEFAULT_APPLIED_SETTING]: 'off' });
+		const original = seed();
+		expect(await chooseTokenProxyDefault('compress', { sync: false })).toBeNull();
+		expect(useSettingsStore.getState().defaultTokenProxyMode).toBe('compress');
+		expect(stored()).toBe(original);
+	});
+
+	it('changes no agent when the default cannot be saved', async () => {
+		settingsFile({ [TOKEN_PROXY_DEFAULT_APPLIED_SETTING]: 'off' });
+		const original = seed();
+		vi.mocked(window.maestro.settings.set).mockRejectedValueOnce(new Error('Write failed'));
+		await expect(chooseTokenProxyDefault('compress', { sync: true })).rejects.toThrow(
+			'Write failed'
+		);
+		expect(useSettingsStore.getState().defaultTokenProxyMode).toBe('off');
+		expect(stored()).toBe(original);
+	});
+});
+
+describe('followTokenProxyDefault', () => {
+	it('puts an agent that opted out back on an on default', async () => {
+		useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
+		seed();
+		const result = await followTokenProxyDefault('agent-1');
+		expect(result).toMatchObject({ ok: true, mode: 'compress' });
+		expect(stored()).toMatchObject({
+			gatewayUrl: proxyUrl('/anthropic'),
+			tokenProxyMode: 'compress',
+		});
+	});
+
+	it('replaces a gateway set by hand with the default', async () => {
+		useSettingsStore.setState({ defaultTokenProxyMode: 'off' });
+		seed({ gatewayUrl: 'https://external.example.com' });
+		expect(await followTokenProxyDefault('agent-1')).toMatchObject({ ok: true, mode: 'off' });
+		expect(stored().gatewayUrl).toBeUndefined();
+	});
+
+	it('sends an agent that cannot use the proxy direct', async () => {
+		useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
+		seed({
+			gatewayUrl: 'https://external.example.com',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+		});
+		expect(await followTokenProxyDefault('agent-1')).toMatchObject({ ok: true, mode: 'off' });
+		expect(stored().gatewayUrl).toBeUndefined();
+		expect(window.maestro.localModels.proxy.ensurePort).not.toHaveBeenCalled();
 	});
 });
 

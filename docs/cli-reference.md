@@ -535,17 +535,19 @@ maestro-cli playbook <playbook-id> --wait --json
 
 Launch a Goal-Driven Auto Run: pursue a free-text goal until done
 
-| Option                   | Description                                                                   | Default |
-| ------------------------ | ----------------------------------------------------------------------------- | ------- |
-| `--exit-criteria <text>` | What "done" looks like and when to declare a deadlock                         | -       |
-| `--max-iterations <n>`   | Cap iterations (default: infinite)                                            | -       |
-| `--no-history`           | Do not write history entries                                                  | -       |
-| `--json`                 | Output as JSON lines (for scripting)                                          | -       |
-| `--verbose`              | Show full prompt sent to agent on each iteration                              | -       |
-| `--visible`              | Run inside the Maestro desktop app (visible Auto Run) instead of headlessly   | -       |
-| `--wait`                 | With --visible, wait for the agent to become available if busy                | -       |
-| `--model <model>`        | Model to use for this run only, overriding the agent's configured default     | -       |
-| `--effort <effort>`      | Reasoning effort for this run only, overriding the agent's configured default | -       |
+| Option                      | Description                                                                                           | Default |
+| --------------------------- | ----------------------------------------------------------------------------------------------------- | ------- |
+| `--exit-criteria <text>`    | What "done" looks like and when to declare a deadlock                                                 | -       |
+| `--max-iterations <n>`      | Cap iterations (default: infinite)                                                                    | -       |
+| `--no-history`              | Do not write history entries                                                                          | -       |
+| `--json`                    | Output as JSON lines (for scripting)                                                                  | -       |
+| `--verbose`                 | Show full prompt sent to agent on each iteration                                                      | -       |
+| `--visible`                 | Run inside the Maestro desktop app (visible Auto Run) instead of headlessly                           | -       |
+| `--wait`                    | With --visible, wait for the agent to become available if busy                                        | -       |
+| `--model <model>`           | Model to use for this run only, overriding the agent's configured default                             | -       |
+| `--effort <effort>`         | Reasoning effort for this run only, overriding the agent's configured default                         | -       |
+| `--run-on <target>`         | Where this run's model runs, overriding the agent's Run on target: <source id>:<model>, or "provider" | -       |
+| `--run-on-context <tokens>` | Context size for the --run-on source                                                                  | -       |
 
 ```bash
 maestro-cli goal-run <agent-id> "Make the build pass" --exit-criteria "npm test exits 0" --max-iterations 5
@@ -1369,25 +1371,27 @@ maestro-cli refresh-auto-run --agent <agent-id>
 
 Configure and optionally launch an auto-run with documents
 
-| Option                        | Description                                                                                                             | Default |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------- |
-| `-a, --agent <id>`            | Target agent by ID (use "maestro-cli list agents" to find IDs)                                                          | -       |
-| `-p, --prompt <text>`         | Custom prompt for the auto-run                                                                                          | -       |
-| `--loop`                      | Enable looping                                                                                                          | -       |
-| `--max-loops <n>`             | Maximum loop count (implies --loop)                                                                                     | -       |
-| `--save-as <name>`            | Save as a playbook with this name (don't launch)                                                                        | -       |
-| `--launch`                    | Start the auto-run immediately (default: just configure)                                                                | -       |
-| `--reset-on-completion`       | Enable reset-on-completion for all documents                                                                            | -       |
-| `--worktree`                  | Run the auto-run inside a git worktree (requires --launch, --branch, --worktree-path)                                   | -       |
-| `--branch <name>`             | Branch name for the worktree (created if it does not exist)                                                             | -       |
-| `--base-branch <name>`        | Ref the new branch should be based on when it does not yet exist (e.g. "rc" or "main"). Defaults to the main repo HEAD. | -       |
-| `--worktree-path <path>`      | Filesystem path for the worktree (must be a sibling of the repo)                                                        | -       |
-| `--create-pr`                 | Open a GitHub PR when the auto-run completes successfully                                                               | -       |
-| `--pr-target-branch <branch>` | Target branch for the PR (defaults to the repo default branch)                                                          | -       |
-| `--model <model>`             | Model to use for this run only, overriding the agent's configured default                                               | -       |
-| `--effort <effort>`           | Reasoning effort for this run only, overriding the agent's configured default                                           | -       |
-| `--ignore-model-hints`        | Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)             | -       |
-| `--json`                      | Output as JSON (for scripting)                                                                                          | -       |
+| Option                        | Description                                                                                                                                                 | Default |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`            | Target agent by ID (use "maestro-cli list agents" to find IDs)                                                                                              | -       |
+| `-p, --prompt <text>`         | Custom prompt for the auto-run                                                                                                                              | -       |
+| `--loop`                      | Enable looping                                                                                                                                              | -       |
+| `--max-loops <n>`             | Maximum loop count (implies --loop)                                                                                                                         | -       |
+| `--save-as <name>`            | Save as a playbook with this name (don't launch)                                                                                                            | -       |
+| `--launch`                    | Start the auto-run immediately (default: just configure)                                                                                                    | -       |
+| `--reset-on-completion`       | Enable reset-on-completion for all documents                                                                                                                | -       |
+| `--worktree`                  | Run the auto-run inside a git worktree (requires --launch, --branch, --worktree-path)                                                                       | -       |
+| `--branch <name>`             | Branch name for the worktree (created if it does not exist)                                                                                                 | -       |
+| `--base-branch <name>`        | Ref the new branch should be based on when it does not yet exist (e.g. "rc" or "main"). Defaults to the main repo HEAD.                                     | -       |
+| `--worktree-path <path>`      | Filesystem path for the worktree (must be a sibling of the repo)                                                                                            | -       |
+| `--create-pr`                 | Open a GitHub PR when the auto-run completes successfully                                                                                                   | -       |
+| `--pr-target-branch <branch>` | Target branch for the PR (defaults to the repo default branch)                                                                                              | -       |
+| `--model <model>`             | Model to use for this run only, overriding the agent's configured default                                                                                   | -       |
+| `--effort <effort>`           | Reasoning effort for this run only, overriding the agent's configured default                                                                               | -       |
+| `--ignore-model-hints`        | Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)                                                 | -       |
+| `--run-on <target>`           | Where this run's model runs, overriding the agent's Run on target: <source id>:<model> (a Local Models source), or "provider" for the provider's own models | -       |
+| `--run-on-context <tokens>`   | Context size for the --run-on source (default: what the source reports, or the agent's own when it is the same source and model)                            | -       |
+| `--json`                      | Output as JSON (for scripting)                                                                                                                              | -       |
 
 ```bash
 maestro-cli auto-run ./phase-01.md ./phase-02.md --agent <agent-id> --launch
@@ -1743,6 +1747,8 @@ Create a scheduled task (or --list / --cancel / --reschedule / --pause)
 | `--max-loops <n>`                | With --auto-run: loop ceiling (implies --loop)                                                                                                                               | -       |
 | `--per-document`                 | With --auto-run: one agent turn per document instead of one per task                                                                                                         | -       |
 | `--ignore-model-hints`           | With --auto-run: ignore the documents' MAESTRO:MODEL hints                                                                                                                   | -       |
+| `--run-on <target>`              | With --auto-run: where the run's model runs, <source id>:<model> or "provider" (as auto-run --run-on)                                                                        | -       |
+| `--run-on-context <tokens>`      | With --auto-run: context size for the --run-on source                                                                                                                        | -       |
 | `--no-auto-resume`               | With --auto-run: stay paused after an agent error                                                                                                                            | -       |
 | `--auto-resume-after <minutes>`  | With --auto-run: minutes between auto-resume attempts                                                                                                                        | -       |
 | `--max-auto-resumes <n>`         | With --auto-run: auto-resume attempt ceiling                                                                                                                                 | -       |

@@ -30,7 +30,7 @@ describe('sshOutageStore', () => {
 	it('opens an outage on an unreachable push and ends it on recovery, returning what ended', () => {
 		const store = useSshOutageStore.getState();
 		expect(store.applyReachability(down('r1'))).toBeUndefined();
-		expect(selectOpenSshOutages(useSshOutageStore.getState())).toHaveLength(1);
+		expect(selectOpenSshOutages(useSshOutageStore.getState(), 'r1')).toHaveLength(1);
 
 		const ended = useSshOutageStore.getState().applyReachability(up('r1'));
 		expect(ended?.event.remoteId).toBe('r1');
@@ -50,7 +50,7 @@ describe('sshOutageStore', () => {
 		const outage = useSshOutageStore.getState().outages.r1;
 		expect(outage.dismissed).toBe(true);
 		expect(outage.event.message).toBe('newer reason');
-		expect(selectOpenSshOutages(useSshOutageStore.getState())).toEqual([]);
+		expect(selectOpenSshOutages(useSshOutageStore.getState(), 'r1')).toEqual([]);
 	});
 
 	it('reopens for the next outage after a recovery', () => {
@@ -59,7 +59,7 @@ describe('sshOutageStore', () => {
 		store.dismiss('r1');
 		useSshOutageStore.getState().applyReachability(up('r1'));
 		useSshOutageStore.getState().applyReachability(down('r1'));
-		expect(selectOpenSshOutages(useSshOutageStore.getState())).toHaveLength(1);
+		expect(selectOpenSshOutages(useSshOutageStore.getState(), 'r1')).toHaveLength(1);
 	});
 
 	it('hydrates without clobbering a known outage, and lists open ones oldest first', () => {
@@ -67,10 +67,45 @@ describe('sshOutageStore', () => {
 		store.applyReachability(down('r2', 5));
 		store.dismiss('r2');
 		useSshOutageStore.getState().hydrate([down('r2', 5), down('r3', 9), down('r1', 2), up('r4')]);
+		useSshOutageStore.getState().surface('r1');
+		useSshOutageStore.getState().surface('r2');
+		useSshOutageStore.getState().surface('r3');
 
 		const open = selectOpenSshOutages(useSshOutageStore.getState());
 		expect(open.map((o) => o.event.remoteId)).toEqual(['r1', 'r3']);
 		expect(useSshOutageStore.getState().outages.r4).toBeUndefined();
+	});
+
+	describe('only what matters reaches the screen', () => {
+		it('keeps an outage on a remote the user is not working with off screen', () => {
+			useSshOutageStore.getState().applyReachability(down('r1'));
+			expect(selectOpenSshOutages(useSshOutageStore.getState())).toEqual([]);
+			expect(selectOpenSshOutages(useSshOutageStore.getState(), 'other')).toEqual([]);
+		});
+
+		it('shows it once the user is on an agent of that remote', () => {
+			useSshOutageStore.getState().applyReachability(down('r1'));
+			expect(selectOpenSshOutages(useSshOutageStore.getState(), 'r1')).toHaveLength(1);
+		});
+
+		it('shows it anywhere once a live turn surfaced it, and keeps that across a repeat push', () => {
+			useSshOutageStore.getState().applyReachability(down('r1'));
+			useSshOutageStore.getState().surface('r1');
+			useSshOutageStore.getState().applyReachability({ ...down('r1'), message: 'again' });
+
+			expect(selectOpenSshOutages(useSshOutageStore.getState(), 'other')).toHaveLength(1);
+			expect(useSshOutageStore.getState().applyReachability(up('r1'))?.surfaced).toBe(true);
+		});
+
+		it('reports an unsurfaced recovery as not surfaced, so it raises no toast', () => {
+			useSshOutageStore.getState().applyReachability(down('r1'));
+			expect(useSshOutageStore.getState().applyReachability(up('r1'))?.surfaced).toBe(false);
+		});
+
+		it('surface is a no-op for a remote that is not down', () => {
+			useSshOutageStore.getState().surface('nope');
+			expect(useSshOutageStore.getState().outages).toEqual({});
+		});
 	});
 });
 

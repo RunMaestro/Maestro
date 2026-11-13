@@ -20,7 +20,7 @@ import { useActiveSession } from '../../../hooks/session/useActiveSession';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useComposerInputStore, selectAiComposerValue } from '../../../stores/composerInputStore';
 import { getModalActions } from '../../../stores/modalStore';
-import { FORCED_PARALLEL_SEND_EVENT, HOLD_SEND_EVENT } from '../../../hooks/input/useInputKeyDown';
+import { FORCED_PARALLEL_SEND_EVENT, requestHoldSend } from '../../../hooks/input/useInputKeyDown';
 import { requestSteerSend } from '../../../services/chatSteering';
 import { openAgentSettings } from '../../../services/agentNavigation';
 import { openUrl } from '../../../utils/openUrl';
@@ -143,7 +143,7 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 				window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
 				return;
 			case 'hold':
-				window.dispatchEvent(new CustomEvent(HOLD_SEND_EVENT));
+				requestHoldSend();
 				return;
 			case 'steer':
 				requestSteerSend();

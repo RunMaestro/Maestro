@@ -50,7 +50,11 @@ import {
 } from '../../../stores/retryStore';
 import { scheduleAutoResume } from '../../../stores/autoRunResumeStore';
 import { reportAuthFailure } from '../../../stores/authOutageStore';
-import { isSshRemoteDown, isSshTransportError } from '../../../stores/sshOutageStore';
+import {
+	isSshRemoteDown,
+	isSshTransportError,
+	useSshOutageStore,
+} from '../../../stores/sshOutageStore';
 import { maybeAutoResetCodexUsage } from '../../../services/codexAutoReset';
 import { isEffortFallbackArmed, observeEffortRejection } from '../../../services/effortRejection';
 import type { AgentError, GroupChatMessage, LogEntry, SessionState } from '../../../types';
@@ -533,13 +537,15 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 								? '- Agent Resilience is retrying this automatically; the run will continue on its own once the provider recovers.'
 								: agentError.type === 'auth_expired'
 									? '- Re-authenticate with the provider (e.g., run `claude login` in terminal)'
-									: agentError.type === 'token_exhaustion'
-										? '- Start a new session to reset the context window'
-										: agentError.type === 'rate_limited'
-											? '- Wait a few minutes before retrying'
-											: agentError.type === 'network_error'
-												? '- Check your internet connection and try again'
-												: '- Review the error message and take appropriate action',
+									: agentError.type === 'agent_not_installed'
+										? '- Fix the provider CLI as the error message describes, then resume'
+										: agentError.type === 'token_exhaustion'
+											? '- Start a new session to reset the context window'
+											: agentError.type === 'rate_limited'
+												? '- Wait a few minutes before retrying'
+												: agentError.type === 'network_error'
+													? '- Check your internet connection and try again'
+													: '- Review the error message and take appropriate action',
 							'',
 							willAutoRetryBatch
 								? 'You can also cancel the auto-retry to resume, skip, or abort manually.'
@@ -614,7 +620,10 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 						// keeps its error either way.
 						const remoteId = agentError.sshRemoteId;
 						void isSshRemoteDown(remoteId).then((down) => {
-							if (!down) openModal('agentError', { sessionId: actualSessionId });
+							// A live turn died on it: show the outage even if the user
+							// is looking at another agent.
+							if (down) useSshOutageStore.getState().surface(remoteId);
+							else openModal('agentError', { sessionId: actualSessionId });
 						});
 					} else {
 						openModal('agentError', { sessionId: actualSessionId });

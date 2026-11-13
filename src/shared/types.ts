@@ -982,6 +982,13 @@ export interface BatchRunConfig {
 	/** Per-run overrides; never change the session's interactive settings. */
 	model?: string;
 	effort?: string;
+	/**
+	 * Where this run's model runs, in place of the agent's own Run on target:
+	 * a model on a Local Models source, or `provider` to run a source-backed
+	 * agent on its provider's model (`model` then names it). Absent: the
+	 * agent's own target. A document's tier hint still wins for its tasks.
+	 */
+	runOn?: RunOnTarget;
 	ignoreModelHints?: boolean;
 	/** Missing auto-resume fields use resolveAutoResumePolicy's defaults. */
 	autoResumeOnError?: boolean;
@@ -1100,6 +1107,7 @@ export type AgentErrorType =
 	| 'rate_limited' // Too many requests, quota exceeded
 	| 'network_error' // Connection failed, timeout
 	| 'agent_crashed' // Process exited unexpectedly
+	| 'agent_not_installed' // Provider CLI not found on PATH, or its runtime (Node) missing
 	| 'permission_denied' // Agent lacks required permissions
 	| 'session_not_found' // Session was deleted or doesn't exist
 	| 'hitl_gate' // Playbook reached a human-in-the-loop review marker

@@ -508,6 +508,36 @@ export function resolveTokenProxyMode(input: {
 }
 
 /**
+ * The internal setting that names the proxy default the agents last followed.
+ * When `defaultTokenProxyMode` differs from it, the agents still on the old
+ * default are moved to the new one, then it is written. Absent on an install
+ * that has never synced: the first sync records the default and moves nobody.
+ */
+export const TOKEN_PROXY_DEFAULT_APPLIED_SETTING = 'tokenProxyDefaultApplied';
+
+/**
+ * Whether an agent's stored routing is what a proxy default of `mode` gives it,
+ * so it follows that default rather than overriding it. Off: no gateway at all
+ * (a gateway of the user's own is a choice, not the default). Any other mode:
+ * the gateway is the proxy and the stored mode is `mode`. Says nothing about
+ * whether the agent CAN use the proxy; the caller checks that first.
+ */
+export function followsTokenProxyDefault(
+	agent: { gatewayUrl?: string | null; tokenProxyMode?: unknown },
+	mode: TokenProxyMode,
+	port: number | null
+): boolean {
+	if (mode === 'off') return !agent.gatewayUrl?.trim();
+	return (
+		resolveTokenProxyMode({
+			gatewayUrl: agent.gatewayUrl,
+			storedMode: agent.tokenProxyMode,
+			port,
+		}) === mode
+	);
+}
+
+/**
  * Which route an agent's traffic takes through the proxy, or null with the
  * reason when it cannot use the proxy at all. `env` is the agent's effective
  * environment (`resolveAgentEnvironment`): Codex with an API key talks to

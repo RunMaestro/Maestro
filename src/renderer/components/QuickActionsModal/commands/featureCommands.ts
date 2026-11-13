@@ -3,6 +3,7 @@ import type { ActiveTabInfo, QuickAction } from '../types';
 import { editClipboardImage } from '../../ImageAnnotator/editClipboardImage';
 import { requestEditLastQueuedMessage } from '../../../services/editQueuedMessage';
 import { requestSteerSend } from '../../../services/chatSteering';
+import { requestHoldSend } from '../../../hooks/input/useInputKeyDown';
 import { useGroupChatStore } from '../../../stores/groupChatStore';
 import { useModalStore } from '../../../stores/modalStore';
 
@@ -242,6 +243,17 @@ export function buildFeatureCommands({
 				action: () => {
 					setQuickActionOpen(false);
 					requestSteerSend();
+				},
+			});
+			// The Send menu's fourth row. No chord of its own, so the palette is
+			// its only keyboard path.
+			commands.push({
+				id: 'holdSend',
+				label: 'Queue Held',
+				subtext: 'Queue the draft paused; it waits on its card until you resume it',
+				action: () => {
+					setQuickActionOpen(false);
+					requestHoldSend();
 				},
 			});
 		}

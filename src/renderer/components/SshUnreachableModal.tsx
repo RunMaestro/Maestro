@@ -8,15 +8,22 @@
  * lists the agents that cannot work until it is back, and closes by itself
  * when a background re-probe finds the host again.
  *
+ * Shown only when it matters: the agent the user is looking at runs on the
+ * remote, or a live turn died on it (`surfaced`). An outage on a remote the
+ * user is not working with is tracked silently and appears the moment they go
+ * to one of its agents.
+ *
  * Self-sourced from `sshOutageStore`; mounted once by `AppAgentModals`.
  */
 
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { Server, Users } from 'lucide-react';
 
 import { Modal } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { selectOpenSshOutages, useSshOutageStore } from '../stores/sshOutageStore';
+import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
+import { getSessionSshRemoteId, isSessionRemote } from '../utils/sessionHelpers';
 import { formatRelativeTime } from '../../shared/formatters';
 import { ipcErrorMessage } from '../../shared/serializeError';
 import { SSH_RECOVERY_PROBE_INTERVAL_SECONDS } from '../../shared/sshConnection';
@@ -43,8 +50,16 @@ export const SshUnreachableModal = memo(function SshUnreachableModal({
 	// Select the stable record and derive: a selector returning a fresh array
 	// re-renders forever under useSyncExternalStore.
 	const outages = useSshOutageStore((s) => s.outages);
-	const openOutages = useMemo(() => selectOpenSshOutages({ outages }), [outages]);
+	const activeRemoteId = useSessionStore((s) => {
+		const active = selectActiveSession(s);
+		return isSessionRemote(active) ? getSessionSshRemoteId(active) : undefined;
+	});
+	const openOutages = useMemo(
+		() => selectOpenSshOutages({ outages }, activeRemoteId),
+		[outages, activeRemoteId]
+	);
 	const dismiss = useSshOutageStore((s) => s.dismiss);
+	const surface = useSshOutageStore((s) => s.surface);
 	// The oldest open outage. A second remote down at the same time gets its
 	// own dialog once this one is dismissed or resolves.
 	const outage = openOutages[0];
@@ -57,6 +72,12 @@ export const SshUnreachableModal = memo(function SshUnreachableModal({
 		() => (remoteId ? agentsOnRemote(sessions, remoteId) : []),
 		[sessions, remoteId]
 	);
+
+	// Once on screen, the outage stays the user's business: it announces its
+	// recovery, and stays up if they switch to another agent mid-outage.
+	useEffect(() => {
+		if (remoteId) surface(remoteId);
+	}, [remoteId, surface]);
 
 	if (!outage || !remoteId) return null;
 	const { remoteName, message, since } = outage.event;

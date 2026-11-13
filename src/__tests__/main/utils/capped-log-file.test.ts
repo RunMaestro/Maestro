@@ -4,7 +4,9 @@
  * The capped log against a real folder: it appends across opens, moves the file
  * to `.1` when a write would pass the cap (replacing the one before, so two
  * files at most), keeps the newest part of a chunk larger than the cap, and
- * turns a failure into one report and silence rather than a throw.
+ * turns a failure into one report and silence rather than a throw. Reading
+ * the tail joins the previous file to the current one within a byte budget and
+ * never starts on half a line.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -12,7 +14,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { CAPPED_LOG_PREVIOUS_SUFFIX, openCappedLogFile } from '../../../main/utils/capped-log-file';
+import {
+	CAPPED_LOG_PREVIOUS_SUFFIX,
+	openCappedLogFile,
+	readCappedLogTail,
+	statCappedLog,
+} from '../../../main/utils/capped-log-file';
 
 let dir: string;
 
@@ -95,5 +102,86 @@ describe('openCappedLogFile', () => {
 		expect(() => log.write('lost\n')).not.toThrow();
 		log.write('lost too\n');
 		expect(onError).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('readCappedLogTail', () => {
+	it('reports a log that was never written', async () => {
+		const tail = await readCappedLogTail(path.join(dir, 'none.log'), 1024);
+		expect(tail).toEqual({ exists: false, text: '', truncated: false, size: 0, mtimeMs: 0 });
+	});
+
+	it('returns a small file whole, with its stamp', async () => {
+		const file = path.join(dir, 'server.log');
+		fs.writeFileSync(file, 'one\ntwo\n');
+
+		const tail = await readCappedLogTail(file, 1024);
+		expect(tail.exists).toBe(true);
+		expect(tail.text).toBe('one\ntwo\n');
+		expect(tail.truncated).toBe(false);
+		expect(tail.size).toBe(8);
+		expect(tail.mtimeMs).toBe(fs.statSync(file).mtimeMs);
+	});
+
+	it('keeps the newest bytes and starts on a whole line', async () => {
+		const file = path.join(dir, 'server.log');
+		fs.writeFileSync(file, 'first line\nsecond\nthird\n');
+
+		const tail = await readCappedLogTail(file, 12);
+		expect(tail.text).toBe('third\n');
+		expect(tail.truncated).toBe(true);
+	});
+
+	it('keeps a whole line when the cut falls right after a newline', async () => {
+		const file = path.join(dir, 'server.log');
+		fs.writeFileSync(file, 'first line\nsecond\nthird\n');
+
+		// The last 13 bytes are exactly "second\nthird\n".
+		const tail = await readCappedLogTail(file, 13);
+		expect(tail.text).toBe('second\nthird\n');
+	});
+
+	it('puts the end of the previous file before the current one', async () => {
+		const file = path.join(dir, 'server.log');
+		fs.writeFileSync(file + CAPPED_LOG_PREVIOUS_SUFFIX, 'old one\nold two\n');
+		fs.writeFileSync(file, 'new\n');
+
+		const whole = await readCappedLogTail(file, 1024);
+		expect(whole.text).toBe('old one\nold two\nnew\n');
+		expect(whole.truncated).toBe(false);
+		expect(whole.size).toBe(4);
+
+		const cut = await readCappedLogTail(file, 12);
+		expect(cut.text).toBe('old two\nnew\n');
+		expect(cut.truncated).toBe(true);
+	});
+
+	it('leaves the previous file out when the current one fills the budget', async () => {
+		const file = path.join(dir, 'server.log');
+		fs.writeFileSync(file + CAPPED_LOG_PREVIOUS_SUFFIX, 'old\n');
+		fs.writeFileSync(file, 'new\n');
+
+		const tail = await readCappedLogTail(file, 4);
+		expect(tail.text).toBe('new\n');
+		expect(tail.truncated).toBe(true);
+	});
+
+	it('reads a log that only has a previous file', async () => {
+		const file = path.join(dir, 'server.log');
+		fs.writeFileSync(file + CAPPED_LOG_PREVIOUS_SUFFIX, 'old\n');
+
+		const tail = await readCappedLogTail(file, 1024);
+		expect(tail.exists).toBe(true);
+		expect(tail.text).toBe('old\n');
+		expect(tail.size).toBe(0);
+	});
+});
+
+describe('statCappedLog', () => {
+	it('is null for a missing file and the stamp otherwise', async () => {
+		const file = path.join(dir, 'server.log');
+		expect(await statCappedLog(file)).toBeNull();
+		fs.writeFileSync(file, 'x');
+		expect(await statCappedLog(file)).toEqual({ size: 1, mtimeMs: fs.statSync(file).mtimeMs });
 	});
 });

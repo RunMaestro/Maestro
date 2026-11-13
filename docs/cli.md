@@ -1187,7 +1187,7 @@ It reads only these places: the agent's project root (the instruction files, `.m
 | Set tier defaults per harness                   | `models tiers list\|options\|suggest\|set\|reset`                                                                                                 |
 | See what the token proxy did                    | `models proxy status`, `models proxy block <hash> [--original\|--compressed] [--lines <start:end>]`                                               |
 | Inspect or prune the compression cache          | `models proxy cache`, `models proxy cache prune [--older-than <duration>]`                                                                        |
-| Set the proxy mode for new agents               | `settings set defaultTokenProxyMode off\|passthrough\|compress\|compress-early` (existing agents keep theirs)                                     |
+| Set the proxy default for every agent           | `settings set defaultTokenProxyMode off\|passthrough\|compress\|compress-early` (agents that follow it move; overrides keep theirs)               |
 | See what the other models did (Usage Dashboard) | `stats models [--range day\|week\|month\|quarter\|year\|all] [--json]` (see [What the Other Models Did](#what-the-other-models-did-stats-models)) |
 | Check the semantic index                        | `models index`                                                                                                                                    |
 | Index Cue runs for Semantic search              | `settings set semanticIndexCue true\|false`                                                                                                       |
@@ -1677,6 +1677,23 @@ All four Auto Run entry points - `playbook`, `run-doc`, `goal-run`, and
 per-task synopsis and goal-handoff spawns) and take precedence over the agent's
 configured model, but nothing is written back to the agent. When the run ends,
 the agent is exactly as it was.
+
+`auto-run`, `goal-run`, and `cue schedule --auto-run` also take `--run-on
+
+<source id>:<model>`, which runs this run on a model a Local Models source serves
+(Ollama, LM Studio, the Maestro model server) in place of the agent's own Run on
+target, and `--run-on provider`, which runs an agent that normally runs on a
+source on its provider's own models for this run (`--model` names which one).
+`--run-on-context <tokens>` sets the window; without it the run uses what the
+source reports, or the agent's own window when it names the agent's own source
+and model. A source that is not configured is refused before anything starts.
+A document's tier marker still decides its own tasks. These are the choices the
+Auto Run window's **Model for this run** picker offers.
+
+```bash
+maestro-cli auto-run doc1.md --agent <agent-id> --launch --run-on <source-id>:deepseek-v4.1-flash:cloud
+maestro-cli goal-run <agent-id> "Ship the migration" --run-on provider --model gpt-6.1-terra
+```
 
 `playbook`, `run-doc`, and `auto-run` also take `--ignore-model-hints`. It skips
 every `MAESTRO:MODEL` marker in the run's documents, so each task runs at

@@ -791,6 +791,35 @@ describe('modalStore', () => {
 		});
 	});
 
+	describe('integration: log viewer', () => {
+		it('openLogViewer opens on the source it names, closing Settings', () => {
+			getModalActions().openSettings('models', undefined, 'sources');
+			getModalActions().openLogViewer({ source: 'model-server' });
+
+			expect(useModalStore.getState().isOpen('settings')).toBe(false);
+			expect(useModalStore.getState().isOpen('logViewer')).toBe(true);
+			expect(useModalStore.getState().getData('logViewer')).toEqual({ source: 'model-server' });
+		});
+
+		it('closeLogViewer reopens Settings where the viewer was opened from', () => {
+			const returnTo: SettingsModalData = { tab: 'models', subTab: 'sources' };
+			getModalActions().openLogViewer({ source: 'model-server', returnTo });
+			getModalActions().closeLogViewer();
+
+			expect(useModalStore.getState().isOpen('logViewer')).toBe(false);
+			expect(useModalStore.getState().isOpen('settings')).toBe(true);
+			expect(useModalStore.getState().getData('settings')).toEqual(returnTo);
+		});
+
+		it('closeLogViewer with nowhere to return to only closes', () => {
+			getModalActions().setLogViewerOpen(true);
+			getModalActions().closeLogViewer();
+
+			expect(useModalStore.getState().isOpen('logViewer')).toBe(false);
+			expect(useModalStore.getState().isOpen('settings')).toBe(false);
+		});
+	});
+
 	describe('integration: group settings flow', () => {
 		it('openGroupSettings opens the modal on the given group', () => {
 			getModalActions().openGroupSettings('group-1');

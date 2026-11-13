@@ -168,7 +168,7 @@ describe('ProcessManager.spawn against a real process', () => {
 		expect(types(heard).filter((type) => type === 'exit')).toHaveLength(1);
 		expect(types(heard).filter((type) => type === 'agent-error')).toHaveLength(1);
 		const error = heard.find((entry) => entry.type === 'agent-error')!;
-		expect(error.args[0]).toMatchObject({ type: 'agent_crashed' });
+		expect(error.args[0]).toMatchObject({ type: 'agent_not_installed' });
 		expect(manager.get(SESSION_ID)).toBeUndefined();
 	});
 

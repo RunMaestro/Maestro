@@ -542,9 +542,10 @@ async function handleProcessSpawnImpl(
 	// renderer's spawn request, for the reason the gateway is (see below).
 	// The one thing the request may say is `runOnOverride`: a tier's target for
 	// this turn (an Auto Run task on a tier the agent or the harness default
-	// sends elsewhere). A caller that leaves it out gets the agent's own target,
-	// and one that sets it is checked like a stored one, so it cannot name a
-	// place the Run on path would not launch on.
+	// sends elsewhere), or the target an Auto Run picked for itself. A caller
+	// that leaves it out gets the agent's own target, and one that sets it is
+	// checked like a stored one, so it cannot name a place the Run on path
+	// would not launch on.
 	const launchAgentId = agentIdFromProcessId(config.sessionId);
 	const launchAgent = (
 		deps.sessionsStore.get('sessions', []) as Array<{

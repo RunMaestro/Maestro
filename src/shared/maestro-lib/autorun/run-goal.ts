@@ -26,6 +26,7 @@ import { prependNewSessionMessage } from '../../newSessionMessage';
 import { PROMPT_IDS } from '../../promptDefinitions';
 import { substituteTemplateVariables, type TemplateContext } from '../../templateVariables';
 import type { SessionInfo, UsageStats } from '../../types';
+import type { RunOnTarget } from '../../local-models/run-on';
 import type { AutoRunDeps, AutoRunEvent } from './engine-types';
 import {
 	buildErrorPauseEntry,
@@ -49,6 +50,11 @@ export interface RunGoalOptions {
 	model?: string;
 	/** Run-scoped reasoning effort override (same contract as `model`). */
 	effort?: string;
+	/**
+	 * Run-scoped Run on target, in place of the agent's own, for every
+	 * iteration and handoff (same contract as `model`).
+	 */
+	runOn?: RunOnTarget;
 	/**
 	 * Stop the run. The iteration in flight is aborted and the run ends with
 	 * `stopped-by-user` (never as a failed iteration).
@@ -77,7 +83,7 @@ async function requestHandoffBlurb(
 	session: SessionInfo,
 	agentSessionId: string,
 	deps: AutoRunDeps,
-	runOverrides: { model?: string; effort?: string; signal?: AbortSignal } = {}
+	runOverrides: { model?: string; effort?: string; runOn?: RunOnTarget; signal?: AbortSignal } = {}
 ): Promise<{ blurb: string; usageStats?: UsageStats }> {
 	try {
 		const result = await deps.turns.run({
@@ -86,6 +92,7 @@ async function requestHandoffBlurb(
 			resumeSessionId: agentSessionId,
 			model: runOverrides.model ?? session.customModel,
 			effort: runOverrides.effort ?? session.customEffort,
+			...(runOverrides.runOn ? { runOn: runOverrides.runOn } : {}),
 			signal: runOverrides.signal,
 		});
 		if (result.success) {
@@ -116,6 +123,7 @@ export async function* runGoal(
 		verbose = false,
 		model: runModel,
 		effort: runEffort,
+		runOn: runRunOn,
 		signal,
 	} = options;
 	const { clock, log, controller } = deps;
@@ -238,6 +246,7 @@ export async function* runGoal(
 				prompt,
 				model: runModel ?? session.customModel,
 				effort: runEffort ?? session.customEffort,
+				...(runRunOn ? { runOn: runRunOn } : {}),
 				signal,
 			});
 			const elapsedMs = clock.now() - iterationStart;
@@ -415,6 +424,8 @@ export async function* runGoal(
 				const handoff = await requestHandoffBlurb(session, result.agentSessionId, deps, {
 					model: runModel,
 					effort: runEffort,
+					// Resume where the iteration ran.
+					runOn: runRunOn,
 					signal,
 				});
 				if (handoff.usageStats) {

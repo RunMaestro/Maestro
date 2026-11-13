@@ -1,8 +1,9 @@
 /**
- * Tests for LocalModelsGatewaySection - the table of agents and the gateway
- * each one's provider traffic goes through. Also the Maestro token proxy on
- * the same surface: the per-agent mode control, the totals, and the list of
- * recent compressions with its diff.
+ * Tests for LocalModelsGatewaySection - the Maestro proxy default that covers
+ * every agent, and the table of overrides: agents whose gateway or proxy mode
+ * differs from it. Also the Maestro token proxy on the same surface: the
+ * per-agent mode control, the totals, and the list of recent compressions with
+ * its diff.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -14,6 +15,7 @@ import { describeProxyListener } from '../../../../../renderer/components/Settin
 import {
 	describeAddedLatency,
 	describeTokensSaved,
+	TOKEN_PROXY_DEFAULT_APPLIED_SETTING,
 	type StoredTokenProxyMode,
 	type TokenProxyReport,
 } from '../../../../../shared/local-models/token-proxy';
@@ -47,7 +49,7 @@ function seed(...sessions: Session[]) {
 }
 
 function addAgent(name: string) {
-	fireEvent.click(screen.getByRole('button', { name: 'Add agent gateway' }));
+	fireEvent.click(screen.getByRole('button', { name: 'Add agent override' }));
 	fireEvent.click(screen.getByRole('option', { name }));
 }
 
@@ -71,6 +73,19 @@ function runningProxy(agentIds: string[], extra: Partial<TokenProxyReport> = {})
 	});
 }
 
+function defaultButton(mode: string): HTMLElement {
+	return screen.getByTestId(`gateway-proxy-default-${mode}`);
+}
+
+function listedIds(): string[] {
+	return screen
+		.queryAllByTestId('local-models-gateway-row')
+		.map((el) => el.getAttribute('data-agent-id') ?? '');
+}
+
+/** The settings file, read back by the proxy default sync. */
+let settingsFile: Map<string, unknown>;
+
 function modeSelect(agentId: string): HTMLSelectElement {
 	return screen.getByTestId(`gateway-proxy-mode-${agentId}`) as HTMLSelectElement;
 }
@@ -86,14 +101,24 @@ beforeEach(() => {
 	vi.mocked(proxy.block).mockReset();
 	vi.mocked(proxy.block).mockResolvedValue(null);
 	useSettingsStore.setState({ shellEnvVars: {}, defaultTokenProxyMode: 'off' });
+	// An install that has synced before: the agents follow Off.
+	settingsFile = new Map<string, unknown>([[TOKEN_PROXY_DEFAULT_APPLIED_SETTING, 'off']]);
+	vi.mocked(window.maestro.settings.get).mockReset();
+	vi.mocked(window.maestro.settings.get).mockImplementation(async (key: string) =>
+		settingsFile.get(key)
+	);
+	vi.mocked(window.maestro.settings.set).mockReset();
+	vi.mocked(window.maestro.settings.set).mockImplementation(async (key: string, value: unknown) => {
+		settingsFile.set(key, value);
+	});
 });
 
 describe('LocalModelsGatewaySection', () => {
-	it('includes an explicit Provider target in blanket compression', async () => {
+	it('includes an explicit Provider target in the default', async () => {
 		seed(agent({ id: 'a', name: 'Alpha', runOn: { type: 'provider' } }));
 		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(runningProxy([]));
 		render(<LocalModelsGatewaySection theme={theme} />);
-		fireEvent.click(screen.getByTestId('gateway-proxy-all-compress'));
+		fireEvent.click(defaultButton('compress'));
 		await waitFor(() =>
 			expect(useSessionStore.getState().sessions[0].tokenProxyMode).toBe('compress')
 		);
@@ -116,33 +141,150 @@ describe('LocalModelsGatewaySection', () => {
 		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
 	});
 
-	it('lets an agent opt out of blanket compression without changing the saved default or other agents', async () => {
-		seed(agent({ id: 'a', name: 'Alpha' }), agent({ id: 'b', name: 'Beta' }));
+	it.each<StoredTokenProxyMode>(['passthrough', 'compress', 'compress-early'])(
+		'moves every following agent to a %s default and lists none of them',
+		async (mode) => {
+			seed(
+				agent({ id: 'a', name: 'Alpha' }),
+				agent({ id: 'b', name: 'Beta' }),
+				agent({ id: 'e', name: 'External', gatewayUrl: 'https://old.example.com' }),
+				agent({
+					id: 'r',
+					name: 'Remote',
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+				}),
+				agent({ id: 'c', name: 'Copilot', toolType: 'copilot-cli' }),
+				agent({ id: 't', name: 'Shell', toolType: 'terminal' })
+			);
+			vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(runningProxy([]));
+			render(<LocalModelsGatewaySection theme={theme} />);
+			await waitFor(() => expect(listedIds()).toEqual(['e']));
+
+			fireEvent.click(defaultButton(mode));
+
+			await waitFor(() =>
+				expect(screen.getByRole('status')).toHaveTextContent('Moved 2 agents to')
+			);
+			const sessions = useSessionStore.getState().sessions;
+			expect(useSettingsStore.getState().defaultTokenProxyMode).toBe(mode);
+			expect(settingsFile.get('defaultTokenProxyMode')).toBe(mode);
+			expect(settingsFile.get(TOKEN_PROXY_DEFAULT_APPLIED_SETTING)).toBe(mode);
+			for (const id of ['a', 'b']) {
+				expect(sessions.find((s) => s.id === id)).toMatchObject({
+					gatewayUrl: proxyUrl('/anthropic'),
+					tokenProxyMode: mode,
+				});
+			}
+			// A gateway of the user's own is an override and stays.
+			expect(sessions.find((s) => s.id === 'e')?.gatewayUrl).toBe('https://old.example.com');
+			for (const id of ['r', 'c', 't']) {
+				expect(sessions.find((s) => s.id === id)?.gatewayUrl).toBeUndefined();
+			}
+			// The followers are not added to the table.
+			expect(listedIds()).toEqual(['e']);
+		}
+	);
+
+	it('keeps overrides when the default changes and moves only its followers', async () => {
+		settingsFile.set(TOKEN_PROXY_DEFAULT_APPLIED_SETTING, 'compress');
+		useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
+		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(runningProxy(['a', 'p']));
+		seed(
+			agent({
+				id: 'a',
+				name: 'Alpha',
+				gatewayUrl: proxyUrl('/anthropic'),
+				tokenProxyMode: 'compress',
+			}),
+			agent({
+				id: 'p',
+				name: 'Pass',
+				gatewayUrl: proxyUrl('/anthropic'),
+				tokenProxyMode: 'passthrough',
+			}),
+			agent({ id: 'o', name: 'Opted out' })
+		);
+		render(<LocalModelsGatewaySection theme={theme} />);
+		await waitFor(() => expect(listedIds()).toEqual(['o', 'p']));
+
+		fireEvent.click(defaultButton('off'));
+
+		await waitFor(() =>
+			expect(screen.getByRole('status')).toHaveTextContent('Moved 1 agent to Off.')
+		);
+		const sessions = useSessionStore.getState().sessions;
+		expect(sessions.find((s) => s.id === 'a')?.gatewayUrl).toBeUndefined();
+		expect(sessions.find((s) => s.id === 'p')?.tokenProxyMode).toBe('passthrough');
+		// Opted out of an on default, it now matches Off and follows it.
+		await waitFor(() => expect(listedIds()).toEqual(['p']));
+	});
+
+	it('lists nothing while an on default waits for the proxy port', async () => {
+		useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
+		let answer: (report: TokenProxyReport) => void = () => {};
+		vi.mocked(window.maestro.localModels.proxy.report).mockReturnValue(
+			new Promise((resolve) => {
+				answer = resolve;
+			}) as never
+		);
+		seed(
+			agent({
+				id: 'a',
+				name: 'Alpha',
+				gatewayUrl: proxyUrl('/anthropic'),
+				tokenProxyMode: 'compress',
+			}),
+			agent({ id: 'o', name: 'Opted out' })
+		);
+		render(<LocalModelsGatewaySection theme={theme} />);
+		expect(listedIds()).toEqual([]);
+		await act(async () => answer(runningProxy(['a'])));
+		await waitFor(() => expect(listedIds()).toEqual(['o']));
+	});
+
+	it('lets an agent opt out of the default without changing it or other agents', async () => {
+		settingsFile.set(TOKEN_PROXY_DEFAULT_APPLIED_SETTING, 'compress');
+		useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
 		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(runningProxy(['a', 'b']));
+		seed(
+			agent({
+				id: 'a',
+				name: 'Alpha',
+				gatewayUrl: proxyUrl('/anthropic'),
+				tokenProxyMode: 'compress',
+			}),
+			agent({
+				id: 'b',
+				name: 'Beta',
+				gatewayUrl: proxyUrl('/anthropic'),
+				tokenProxyMode: 'compress',
+			})
+		);
 		const view = render(<LocalModelsGatewaySection theme={theme} />);
-		fireEvent.click(screen.getByTestId('gateway-proxy-all-compress'));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Add agent override' })).toBeEnabled()
+		);
+		expect(listedIds()).toEqual([]);
+		addAgent('Alpha');
 		await waitFor(() => expect(modeSelect('a')).toHaveValue('compress'));
-		await waitFor(() => expect(modeSelect('a')).toBeEnabled());
 
 		fireEvent.change(modeSelect('a'), { target: { value: 'off' } });
 		await waitFor(() => expect(modeSelect('a')).toHaveValue('off'));
 		expect(useSettingsStore.getState().defaultTokenProxyMode).toBe('compress');
-		expect(modeSelect('b')).toHaveValue('compress');
 		expect(window.maestro.sessions.setMany).toHaveBeenLastCalledWith(
 			[expect.objectContaining({ id: 'a', gatewayUrl: undefined, tokenProxyMode: undefined })],
 			[]
 		);
 
-		// Reopening Settings must not reapply the saved default to an excluded agent.
+		// Reopened, the opted-out agent is listed as an override; the follower is not.
 		view.unmount();
 		render(<LocalModelsGatewaySection theme={theme} />);
-		addAgent('Alpha');
-		await waitFor(() => expect(modeSelect('a')).toHaveValue('off'));
-		expect(modeSelect('b')).toHaveValue('compress');
+		await waitFor(() => expect(listedIds()).toEqual(['a']));
+		expect(modeSelect('a')).toHaveValue('off');
 		expect(useSettingsStore.getState().defaultTokenProxyMode).toBe('compress');
 	});
 
-	it('lets an agent opt into compression while the default and other agents remain off', async () => {
+	it('lets an agent opt into compression while the default and other agents stay off', async () => {
 		seed(agent({ id: 'a', name: 'Alpha' }), agent({ id: 'b', name: 'Beta' }));
 		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(runningProxy([]));
 		const view = render(<LocalModelsGatewaySection theme={theme} />);
@@ -153,157 +295,98 @@ describe('LocalModelsGatewaySection', () => {
 		expect(
 			useSessionStore.getState().sessions.find((s) => s.id === 'b')?.gatewayUrl
 		).toBeUndefined();
-		expect(window.maestro.sessions.setMany).toHaveBeenLastCalledWith(
-			[
-				expect.objectContaining({
-					id: 'a',
-					gatewayUrl: proxyUrl('/anthropic'),
-					tokenProxyMode: 'compress',
-				}),
-			],
-			[]
-		);
 
 		view.unmount();
 		render(<LocalModelsGatewaySection theme={theme} />);
-		await waitFor(() => expect(modeSelect('a')).toHaveValue('compress'));
-		expect(useSettingsStore.getState().defaultTokenProxyMode).toBe('off');
-		expect(
-			useSessionStore.getState().sessions.find((s) => s.id === 'b')?.gatewayUrl
-		).toBeUndefined();
+		await waitFor(() => expect(listedIds()).toEqual(['a']));
+		expect(modeSelect('a')).toHaveValue('compress');
 	});
 
-	it.each<StoredTokenProxyMode>(['passthrough', 'compress', 'compress-early'])(
-		'applies %s to all eligible agents, skipping SSH, unsupported providers, and terminals',
-		async (mode) => {
-			seed(
-				agent({ id: 'a', name: 'Alpha' }),
-				agent({ id: 'b', name: 'Beta', gatewayUrl: 'https://old.example.com' }),
-				agent({
-					id: 'r',
-					name: 'Remote',
-					sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
-				}),
-				agent({ id: 'c', name: 'Copilot', toolType: 'copilot-cli' }),
-				agent({ id: 't', name: 'Shell', toolType: 'terminal' })
-			);
-			render(<LocalModelsGatewaySection theme={theme} />);
-			await waitFor(() => expect(window.maestro.localModels.proxy.report).toHaveBeenCalled());
-			vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(
-				runningProxy(['a', 'b'])
-			);
-
-			fireEvent.click(screen.getByTestId(`gateway-proxy-all-${mode}`));
-
-			await waitFor(() =>
-				expect(screen.getByRole('status')).toHaveTextContent('to 2 agents. Skipped 2')
-			);
-			const sessions = useSessionStore.getState().sessions;
-			expect(useSettingsStore.getState().defaultTokenProxyMode).toBe(mode);
-			expect(window.maestro.settings.set).toHaveBeenCalledWith('defaultTokenProxyMode', mode);
-			for (const id of ['a', 'b']) {
-				expect(sessions.find((s) => s.id === id)).toMatchObject({
-					gatewayUrl: proxyUrl('/anthropic'),
-					tokenProxyMode: mode,
-				});
-				await waitFor(() => expect(modeSelect(id)).toHaveValue(mode));
-			}
-			for (const id of ['r', 'c', 't']) {
-				expect(sessions.find((s) => s.id === id)?.gatewayUrl).toBeUndefined();
-			}
-			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(2);
-			expect(window.maestro.localModels.proxy.report).toHaveBeenCalledTimes(2);
-		}
-	);
-
-	it('turns all proxy agents off while preserving external gateways', async () => {
-		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(runningProxy(['a', 'b']));
-		seed(
-			agent({ id: 'a', gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress' }),
-			agent({ id: 'b', gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress-early' }),
-			agent({ id: 'e', gatewayUrl: 'https://external.example.com' })
-		);
+	it('puts an override back on the default and drops its row', async () => {
+		settingsFile.set(TOKEN_PROXY_DEFAULT_APPLIED_SETTING, 'compress');
+		useSettingsStore.setState({ defaultTokenProxyMode: 'compress' });
+		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(runningProxy([]));
+		seed(agent({ id: 'o', name: 'Opted out' }));
 		render(<LocalModelsGatewaySection theme={theme} />);
+		await waitFor(() => expect(listedIds()).toEqual(['o']));
 
-		fireEvent.click(screen.getByTestId('gateway-proxy-all-off'));
+		fireEvent.click(screen.getByRole('button', { name: 'Use the default for Opted out' }));
 
-		await waitFor(() =>
-			expect(screen.getByRole('status')).toHaveTextContent('Applied Off to 3 agents.')
-		);
-		const sessions = useSessionStore.getState().sessions;
-		for (const id of ['a', 'b']) {
-			expect(sessions.find((s) => s.id === id)?.gatewayUrl).toBeUndefined();
-			expect(sessions.find((s) => s.id === id)?.tokenProxyMode).toBeUndefined();
-		}
-		expect(sessions.find((s) => s.id === 'e')?.gatewayUrl).toBe('https://external.example.com');
-		// Off confirms main's copy even when an external gateway stays unchanged.
-		expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(3);
-		expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
-			[expect.objectContaining({ id: 'e', gatewayUrl: 'https://external.example.com' })],
-			[]
-		);
+		await waitFor(() => expect(listedIds()).toEqual([]));
+		expect(useSessionStore.getState().sessions[0]).toMatchObject({
+			gatewayUrl: proxyUrl('/anthropic'),
+			tokenProxyMode: 'compress',
+		});
 	});
 
-	it('reports a failed agent, continues with the rest, and unlocks the controls', async () => {
+	it('replaces a gateway set by hand when its agent goes back on the default', async () => {
+		seed(agent({ id: 'e', name: 'External', gatewayUrl: 'https://external.example.com' }));
+		render(<LocalModelsGatewaySection theme={theme} />);
+		expect(listedIds()).toEqual(['e']);
+		fireEvent.click(screen.getByRole('button', { name: 'Use the default for External' }));
+		await waitFor(() => expect(listedIds()).toEqual([]));
+		expect(useSessionStore.getState().sessions[0].gatewayUrl).toBeUndefined();
+	});
+
+	it('lists an agent that could not move as an override and unlocks the controls', async () => {
 		vi.mocked(window.maestro.localModels.proxy.ensurePort).mockRejectedValueOnce(
 			new Error('Port unavailable')
 		);
+		vi.mocked(window.maestro.localModels.proxy.report).mockResolvedValue(runningProxy([]));
 		seed(agent({ id: 'a', name: 'Alpha' }), agent({ id: 'b', name: 'Beta' }));
 		render(<LocalModelsGatewaySection theme={theme} />);
-		addAgent('Alpha');
 
-		fireEvent.click(screen.getByTestId('gateway-proxy-all-compress'));
-		expect(screen.getByTestId('gateway-proxy-all-off')).toBeDisabled();
-		expect(modeSelect('a')).toBeDisabled();
-		expect(within(row('a')).getByRole('textbox')).toBeDisabled();
+		fireEvent.click(defaultButton('compress'));
+		expect(defaultButton('off')).toBeDisabled();
 
 		await waitFor(() =>
-			expect(screen.getByRole('alert')).toHaveTextContent('Alpha: Port unavailable')
+			expect(screen.getByRole('status')).toHaveTextContent(
+				'Moved 1 agent to Compress tool results. 1 could not move and is listed below as an override.'
+			)
 		);
-		expect(screen.getByRole('status')).toHaveTextContent('to 1 agent.');
 		expect(
 			useSessionStore.getState().sessions.find((s) => s.id === 'a')?.gatewayUrl
 		).toBeUndefined();
 		expect(useSessionStore.getState().sessions.find((s) => s.id === 'b')?.tokenProxyMode).toBe(
 			'compress'
 		);
-		expect(screen.getByTestId('gateway-proxy-all-off')).toBeEnabled();
-		expect(modeSelect('a')).toBeEnabled();
+		await waitFor(() => expect(listedIds()).toEqual(['a']));
+		expect(defaultButton('off')).toBeEnabled();
 	});
 
-	it('keeps default choices available when no existing agents can use the local proxy', () => {
-		seed(agent({ id: 'c', toolType: 'copilot-cli' }));
+	it('says how many agents cannot use the proxy and keeps every default choice available', () => {
+		seed(
+			agent({ id: 'c', toolType: 'copilot-cli' }),
+			agent({ id: 'r', sessionSshRemoteConfig: { enabled: true, remoteId: 'box' } })
+		);
 		render(<LocalModelsGatewaySection theme={theme} />);
-
-		for (const mode of ['passthrough', 'compress', 'compress-early']) {
-			expect(screen.getByTestId(`gateway-proxy-all-${mode}`)).toBeEnabled();
+		expect(screen.getByText(/2 agents cannot use the proxy/)).toBeInTheDocument();
+		for (const mode of ['off', 'passthrough', 'compress', 'compress-early']) {
+			expect(defaultButton(mode)).toBeEnabled();
 		}
-		expect(screen.getByTestId('gateway-proxy-all-off')).toBeEnabled();
 	});
 
-	it('saves a future default before the first agent exists', async () => {
+	it('saves a default before the first agent exists', async () => {
 		seed();
 		render(<LocalModelsGatewaySection theme={theme} />);
-		fireEvent.click(screen.getByTestId('gateway-proxy-all-passthrough'));
+		fireEvent.click(defaultButton('passthrough'));
 		await waitFor(() =>
-			expect(screen.getByTestId('gateway-proxy-default')).toHaveTextContent('Passthrough')
+			expect(screen.getByRole('status')).toHaveTextContent('Moved 0 agents to Passthrough')
 		);
 		expect(useSettingsStore.getState().defaultTokenProxyMode).toBe('passthrough');
-		expect(screen.getByRole('status')).toHaveTextContent(
-			'Default saved for future eligible agents.'
-		);
+		expect(defaultButton('passthrough')).toHaveAttribute('aria-checked', 'true');
 		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
 	});
 
-	it('keeps an existing Run on target when applying the proxy to all agents', async () => {
+	it('keeps an existing Run on target when the default changes', async () => {
 		const routed = agent({
 			id: 'routed',
 			runOn: { type: 'source', endpointId: 'local', model: 'model' },
 		});
 		seed(routed);
 		render(<LocalModelsGatewaySection theme={theme} />);
-		fireEvent.click(screen.getByTestId('gateway-proxy-all-compress'));
-		await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Skipped 1'));
+		fireEvent.click(defaultButton('compress'));
+		await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Moved 0 agents'));
 		expect(useSessionStore.getState().sessions[0]).toBe(routed);
 		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
 		expect(useSettingsStore.getState().defaultTokenProxyMode).toBe('compress');
@@ -313,7 +396,7 @@ describe('LocalModelsGatewaySection', () => {
 		seed(agent({ id: 'a' }));
 		vi.mocked(window.maestro.settings.set).mockRejectedValueOnce(new Error('Write failed'));
 		render(<LocalModelsGatewaySection theme={theme} />);
-		fireEvent.click(screen.getByTestId('gateway-proxy-all-compress'));
+		fireEvent.click(defaultButton('compress'));
 		await waitFor(() =>
 			expect(screen.getByRole('alert')).toHaveTextContent(
 				'Could not save proxy default: Write failed'
@@ -321,10 +404,10 @@ describe('LocalModelsGatewaySection', () => {
 		);
 		expect(useSettingsStore.getState().defaultTokenProxyMode).toBe('off');
 		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
-		expect(screen.getByTestId('gateway-proxy-all-off')).toBeEnabled();
+		expect(defaultButton('off')).toBeEnabled();
 	});
 
-	it('lists configured agents and adds an unconfigured agent from the filtered picker', () => {
+	it('lists overrides and adds a following agent from the filtered picker', () => {
 		seed(
 			agent({ id: 'z', name: 'Zed', toolType: 'codex', gatewayUrl: 'http://localhost:4000' }),
 			agent({ id: 'a', name: 'Alpha' }),
@@ -333,54 +416,32 @@ describe('LocalModelsGatewaySection', () => {
 
 		render(<LocalModelsGatewaySection theme={theme} />);
 
-		expect(screen.getAllByTestId('local-models-gateway-row')).toHaveLength(1);
-		fireEvent.click(screen.getByRole('button', { name: 'Add agent gateway' }));
+		expect(listedIds()).toEqual(['z']);
+		fireEvent.click(screen.getByRole('button', { name: 'Add agent override' }));
 		expect(screen.queryByRole('option', { name: 'Zed' })).not.toBeInTheDocument();
 		expect(screen.queryByRole('option', { name: 'Shell' })).not.toBeInTheDocument();
 		fireEvent.change(screen.getByRole('textbox', { name: 'Filter agents...' }), {
 			target: { value: 'ALP' },
 		});
 		fireEvent.keyDown(screen.getByRole('textbox', { name: 'Filter agents...' }), { key: 'Enter' });
-		const rows = screen.getAllByTestId('local-models-gateway-row');
-		expect(rows.map((el) => el.getAttribute('data-agent-id'))).toEqual(['a', 'z']);
+		expect(listedIds()).toEqual(['a', 'z']);
 		expect(within(row('z')).getByRole('textbox')).toHaveValue('http://localhost:4000');
 		expect(within(row('z')).getByText('Codex')).toBeInTheDocument();
 		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
-		expect(screen.getByRole('button', { name: 'Add agent gateway' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Add agent override' })).toBeDisabled();
 	});
 
-	it('hides the table until an entry is added and keeps bulk actions available', () => {
+	it('says there are no overrides until one is added, and drops an unchanged one', () => {
 		seed(agent({ id: 'a', name: 'Alpha' }));
 		render(<LocalModelsGatewaySection theme={theme} />);
-		expect(screen.getByText('No agent gateways configured.')).toBeInTheDocument();
+		expect(screen.getByText('No overrides. Every agent follows the default.')).toBeInTheDocument();
 		expect(screen.queryByTestId('local-models-gateway-table')).not.toBeInTheDocument();
-		expect(screen.getByTestId('gateway-proxy-all-compress')).toBeEnabled();
+		expect(defaultButton('compress')).toBeEnabled();
 		addAgent('Alpha');
 		expect(row('a')).toBeInTheDocument();
-		fireEvent.click(screen.getByRole('button', { name: 'Remove gateway for Alpha' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Use the default for Alpha' }));
 		expect(screen.queryByTestId('local-models-gateway-table')).not.toBeInTheDocument();
 		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
-	});
-
-	it('removes a configured gateway and proxy mode through the shared writer', async () => {
-		seed(
-			agent({
-				id: 'a',
-				name: 'Alpha',
-				gatewayUrl: proxyUrl('/anthropic'),
-				tokenProxyMode: 'compress',
-			})
-		);
-		render(<LocalModelsGatewaySection theme={theme} />);
-		fireEvent.click(screen.getByRole('button', { name: 'Remove gateway for Alpha' }));
-		await waitFor(() =>
-			expect(screen.queryByTestId('local-models-gateway-row')).not.toBeInTheDocument()
-		);
-		expect(useSessionStore.getState().sessions[0].gatewayUrl).toBeUndefined();
-		expect(useSessionStore.getState().sessions[0].tokenProxyMode).toBeUndefined();
-		expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
-		addAgent('Alpha');
-		expect(within(row('a')).getByRole('textbox')).toHaveValue('');
 	});
 
 	it('says there are no agents when there are none', () => {

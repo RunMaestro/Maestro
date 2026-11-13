@@ -11,6 +11,11 @@ import type {
 } from '../../../renderer/types';
 import { gitService } from '../../../renderer/services/git';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import {
+	getModalActions,
+	selectModalOpen,
+	useModalStore,
+} from '../../../renderer/stores/modalStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -740,13 +745,13 @@ describe('MainPanel', () => {
 			expect(screen.queryByTestId('terminal-output')).not.toBeInTheDocument();
 		});
 
-		it('should close LogViewer and call setLogViewerOpen when close button is clicked', () => {
-			const setLogViewerOpen = vi.fn();
-			renderMainPanel({ logViewerOpen: true, setLogViewerOpen: setLogViewerOpen });
+		it('should close LogViewer through the modal store when close button is clicked', () => {
+			getModalActions().openLogViewer();
+			renderMainPanel({ logViewerOpen: true });
 
 			fireEvent.click(screen.getByTestId('log-viewer-close'));
 
-			expect(setLogViewerOpen).toHaveBeenCalledWith(false);
+			expect(selectModalOpen('logViewer')(useModalStore.getState())).toBe(false);
 		});
 
 		it('should render AgentSessionsBrowser when agentSessionsOpen is true', () => {

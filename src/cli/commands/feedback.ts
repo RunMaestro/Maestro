@@ -28,6 +28,7 @@ import {
 	type FeedbackConversationSubmitPayload,
 	type FeedbackGhLoginCommand,
 	type FeedbackIssueMatch,
+	type FeedbackSubmitResponse,
 } from '../../shared/feedback';
 import {
 	isSecretScreenRefusal,
@@ -76,11 +77,22 @@ interface SubscribeOptions extends JsonOption {
 }
 
 /** Print a failure in the caller's format and exit with `code`. */
-function fail(message: string, options: JsonOption, code: ExitCode, extra?: object): never {
+function fail(
+	message: string,
+	options: JsonOption,
+	code: ExitCode,
+	extra?: Pick<FeedbackSubmitResponse, 'warnings'>
+): never {
 	if (options.json) {
 		console.log(JSON.stringify({ success: false, error: message, ...extra }));
 	} else {
 		console.error(`Error: ${message}`);
+		const warnings = extra?.warnings;
+		if (Array.isArray(warnings)) {
+			for (const warning of warnings) {
+				console.error(`Warning: ${String(warning)}`);
+			}
+		}
 	}
 	return exitWith(code);
 }
@@ -433,7 +445,7 @@ export async function feedbackSubmit(options: SubmitOptions): Promise<void> {
 		...(options.allowSecrets === true ? { allowSecrets: true } : {}),
 	};
 
-	let result: SecretScreenFields & { success: boolean; issueUrl?: string; error?: string };
+	let result: FeedbackSubmitResponse;
 	try {
 		result = await withMaestroClient((client) =>
 			client.sendCommand(
@@ -447,13 +459,19 @@ export async function feedbackSubmit(options: SubmitOptions): Promise<void> {
 	}
 	failOnSecretFindings(result, options);
 	if (!result.success) {
-		fail(result.error || 'Failed to file feedback', options, ExitCode.GeneralError);
+		fail(result.error || 'Failed to file feedback', options, ExitCode.GeneralError, {
+			warnings: result.warnings,
+		});
 	}
 
+	const warnings = result.warnings ?? [];
 	if (options.json) {
-		console.log(JSON.stringify({ success: true, issueUrl: result.issueUrl ?? null }));
+		console.log(JSON.stringify({ success: true, issueUrl: result.issueUrl ?? null, warnings }));
 	} else {
 		console.log(`Feedback filed: ${result.issueUrl ?? '(GitHub did not return a URL)'}`);
+		for (const warning of warnings) {
+			console.log(`Warning: ${warning}`);
+		}
 	}
 }
 

@@ -121,7 +121,9 @@ The run configuration modal has **Model** and **Effort** pickers, both defaultin
 
 Below the pickers, **Ignore model hints in documents** (off by default) runs every task at the picked model and effort and skips the documents' `MAESTRO:MODEL` markers entirely, both the document-wide ones and the ones on single tasks. With the pickers left on **Use agent default**, that means the agent's own settings. Reach for it when one model should run the whole playbook regardless of what its author chose: rerunning an expensive playbook cheaply, or forcing the top model onto a playbook that marked its phases `low`. Like the pickers, it resets each time the modal opens. Goal-Driven runs do not show it, because they have no documents.
 
-The same override is available from the CLI as `--model` / `--effort` on `auto-run`, `playbook`, `run-doc`, and `goal-run`, and the switch as `--ignore-model-hints` on `auto-run`, `playbook`, and `run-doc`. See [CLI](cli.md#per-run-model-override).
+The **Model** picker lists the provider's own models and, for a provider that can run on a Local Models source (Claude Code, Codex, OpenCode, Copilot CLI), every model each source serves, grouped by source. Picking a source model runs this Auto Run on it; picking a provider model on an agent that normally runs on a source runs this Auto Run on the provider. The first option, **Use agent default**, names what the agent is set to. A document's `MAESTRO:MODEL` tier still decides its own tasks.
+
+The same override is available from the CLI as `--model` / `--effort` on `auto-run`, `playbook`, `run-doc`, and `goal-run`, the source choice as `--run-on` on `auto-run`, `goal-run`, and `cue schedule --auto-run`, and the switch as `--ignore-model-hints` on `auto-run`, `playbook`, and `run-doc`. See [CLI](cli.md#per-run-model-override).
 
 ### Staging Documents from the Files Tab
 

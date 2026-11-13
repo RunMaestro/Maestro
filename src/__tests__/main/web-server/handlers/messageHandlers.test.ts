@@ -4527,6 +4527,72 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
+		it('should forward a valid runOn target', async () => {
+			(callbacks.configureAutoRun as any).mockResolvedValue({ success: true });
+			const runOn = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				launch: true,
+				runOn,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.configureAutoRun).toHaveBeenCalledWith(
+					'session-1',
+					expect.objectContaining({ runOn })
+				);
+			});
+		});
+
+		it('should forward a goal run runOn target, and refuse a malformed one', async () => {
+			const launchGoalRun = vi.fn().mockResolvedValue({ success: true, tabId: 't1' });
+			handler.setCallbacks({ launchGoalRun });
+			const runOn = { type: 'provider' };
+
+			handler.handleMessage(client, {
+				type: 'launch_goal_run',
+				sessionId: 'session-1',
+				goal: 'ship it',
+				runOn,
+			});
+			await vi.waitFor(() => {
+				expect(launchGoalRun).toHaveBeenCalledWith(
+					'session-1',
+					expect.objectContaining({ goal: 'ship it', runOn })
+				);
+			});
+
+			launchGoalRun.mockClear();
+			(client.socket.send as any).mockClear();
+			handler.handleMessage(client, {
+				type: 'launch_goal_run',
+				sessionId: 'session-1',
+				goal: 'ship it',
+				runOn: { type: 'source' },
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('runOn:');
+			expect(launchGoalRun).not.toHaveBeenCalled();
+		});
+
+		it('should reject a malformed runOn target rather than drop it', () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				runOn: { type: 'source' },
+			});
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('runOn:');
+			expect(callbacks.configureAutoRun).not.toHaveBeenCalled();
+		});
+
 		it('should reject a non-boolean ignoreModelHints', () => {
 			handler.handleMessage(client, {
 				type: 'configure_auto_run',

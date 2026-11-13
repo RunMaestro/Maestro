@@ -40,6 +40,7 @@ import { PROMPT_IDS } from '../../promptDefinitions';
 import { isFailedSynopsisResponse, parseSynopsis } from '../../synopsis';
 import { substituteTemplateVariables, type TemplateContext } from '../../templateVariables';
 import type { Playbook, SessionInfo, UsageStats } from '../../types';
+import type { RunOnTarget } from '../../local-models/run-on';
 import type { AutoRunDeps, AutoRunEvent } from './engine-types';
 import {
 	buildAutoRunSummaryEntry,
@@ -67,6 +68,11 @@ export interface RunPlaybookOptions {
 	model?: string;
 	/** Run-scoped reasoning effort override (same contract as `model`). */
 	effort?: string;
+	/**
+	 * Run-scoped Run on target, in place of the agent's own for every task (a
+	 * document's tier hint still decides its own tasks). Same contract as `model`.
+	 */
+	runOn?: RunOnTarget;
 	/**
 	 * Skip the documents' MAESTRO:MODEL markers, so every task runs at the run
 	 * override, then the agent's settings. Same run-scoped contract.
@@ -101,9 +107,13 @@ export async function* runPlaybook(
 		skipSynopsis = false,
 		model: runModel,
 		effort: runEffort,
+		runOn: runRunOn,
 		ignoreModelHints = false,
 		signal,
 	} = options;
+	// The run's target stands in for the agent's own everywhere this run reads
+	// it (tier routing, each task's launch, the synopsis), as `model` does.
+	if (runRunOn) session = { ...session, runOn: runRunOn };
 	const { clock, log, controller } = deps;
 	const policy = deps.policy ?? CLI_AUTORUN_POLICY;
 	// Pausing needs somebody to answer. Without a controller a gate is reported and skipped, and a
@@ -648,8 +658,10 @@ export async function* runPlaybook(
 					// Same content and baseline the model hint is resolved from below, so
 					// the boundary the prompt names and the settings the run uses cannot
 					// disagree.
-					const tierRouting = deps.tierRouting?.() ?? {
-						tierTargets: session.tierTargets,
+					// The adapter's routing reads the agent as stored, so the run's own
+					// target is laid over it here.
+					const tierRouting = {
+						...(deps.tierRouting?.() ?? { tierTargets: session.tierTargets }),
 						runOn: session.runOn,
 					};
 					const hintSegment = ignoreModelHints

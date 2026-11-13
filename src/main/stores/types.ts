@@ -186,6 +186,7 @@ export interface MaestroSettings {
 	// user runs). API keys are referenced by env-var name, never stored here.
 	localModelEndpoints: LocalModelEndpoint[];
 	defaultTokenProxyMode: TokenProxyMode;
+	tokenProxyDefaultApplied: TokenProxyMode | null;
 	// Where Local Models downloads model files from (a mirror of Hugging Face
 	// for networks that block it). See shared/local-models/download-base.ts.
 	localModelsDownloadBase: string;

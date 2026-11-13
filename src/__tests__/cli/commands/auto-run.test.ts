@@ -24,6 +24,33 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 	resolveTargetSessionId: vi.fn(),
 }));
 
+// The stores `--run-on` is read against: the agent, and the saved sources.
+vi.mock('../../../cli/services/storage', () => ({
+	readSessions: vi.fn(() => [
+		{
+			id: 'agent-123',
+			toolType: 'codex',
+			runOn: {
+				type: 'source',
+				endpointId: 'ep-ollama',
+				model: 'qwen3:latest',
+				contextTokens: 524288,
+			},
+		},
+	]),
+	readLocalModelEndpoints: vi.fn(() => [
+		{
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		},
+	]),
+	readSettingValue: vi.fn(),
+	readSshRemotes: vi.fn(() => []),
+}));
+
 import { autoRun } from '../../../cli/commands/auto-run';
 import { withMaestroClient, resolveTargetSessionId } from '../../../cli/services/maestro-client';
 import { existsSync } from 'fs';
@@ -528,6 +555,70 @@ describe('auto-run command', () => {
 			});
 
 			expect(getSent()!.ignoreModelHints).toBe(true);
+		});
+
+		it("should send the run's Run on target from --run-on", async () => {
+			const getSent = captureSentMessage();
+
+			await autoRun(['/path/to/doc.md'], {
+				agent: 'agent-123',
+				launch: true,
+				runOn: 'ep-ollama:deepseek-v4.1-flash:cloud',
+				runOnContext: '1000000',
+			});
+
+			expect(getSent()!.runOn).toEqual({
+				type: 'source',
+				endpointId: 'ep-ollama',
+				model: 'deepseek-v4.1-flash:cloud',
+				contextTokens: 1000000,
+			});
+		});
+
+		it("should keep the agent's own context when --run-on names its own source and model", async () => {
+			const getSent = captureSentMessage();
+
+			await autoRun(['/path/to/doc.md'], {
+				agent: 'agent-123',
+				launch: true,
+				runOn: 'ep-ollama:qwen3:latest',
+			});
+
+			expect(getSent()!.runOn).toMatchObject({ model: 'qwen3:latest', contextTokens: 524288 });
+		});
+
+		it('should send the provider for --run-on provider', async () => {
+			const getSent = captureSentMessage();
+
+			await autoRun(['/path/to/doc.md'], {
+				agent: 'agent-123',
+				launch: true,
+				runOn: 'provider',
+				model: 'o3',
+			});
+
+			expect(getSent()).toMatchObject({ model: 'o3', runOn: { type: 'provider' } });
+		});
+
+		it('should refuse a --run-on source that is not configured', async () => {
+			captureSentMessage();
+
+			await autoRun(['/path/to/doc.md'], {
+				agent: 'agent-123',
+				launch: true,
+				runOn: 'ep-gone:qwen3:latest',
+			});
+
+			expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('--run-on'));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('should omit runOn entirely when --run-on is not given', async () => {
+			const getSent = captureSentMessage();
+
+			await autoRun(['/path/to/doc.md'], { agent: 'agent-123', launch: true });
+
+			expect('runOn' in getSent()!).toBe(false);
 		});
 
 		it('should omit ignoreModelHints entirely when the flag is not given', async () => {

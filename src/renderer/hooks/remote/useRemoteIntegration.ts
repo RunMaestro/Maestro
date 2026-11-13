@@ -2232,6 +2232,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					maxIterations?: number | null;
 					model?: string;
 					effort?: string;
+					runOn?: import('../../../shared/local-models/run-on').RunOnTarget;
 				},
 				responseChannel: string
 			) => {

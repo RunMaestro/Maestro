@@ -18,6 +18,7 @@ import { parseConsultChain } from '../../consultBudget';
 import type { AgentRecord } from '../store/records';
 import { parseProcessId } from '../client/bridge-frames';
 import type { ThinkingMode, UsageStats } from '../../types';
+import type { RunOnTarget } from '../../local-models/run-on';
 import type {
 	AgentCreateInput,
 	AgentImportQueuedMessage,
@@ -833,6 +834,9 @@ export function createRequestHandler(
 						...(str(message.model) ? { model: str(message.model) } : {}),
 						...(str(message.effort) ? { effort: str(message.effort) } : {}),
 						...(message.ignoreModelHints === true ? { ignoreModelHints: true } : {}),
+						// Checked by `validateAutoRunLaunch` in the runtime: a malformed
+						// target is refused there, never dropped.
+						...(message.runOn !== undefined ? { runOn: message.runOn as RunOnTarget } : {}),
 					})
 				);
 			}
@@ -845,6 +849,7 @@ export function createRequestHandler(
 						: {}),
 					...(str(message.model) ? { model: str(message.model) } : {}),
 					...(str(message.effort) ? { effort: str(message.effort) } : {}),
+					...(message.runOn !== undefined ? { runOn: message.runOn as RunOnTarget } : {}),
 				});
 				return outcome('launch_goal_run_result', result, (value) =>
 					value.tabId ? { tabId: value.tabId } : {}

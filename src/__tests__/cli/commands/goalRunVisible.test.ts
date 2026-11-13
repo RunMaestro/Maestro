@@ -14,6 +14,19 @@ import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 
 vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: vi.fn(),
+	// The saved sources `--run-on` is checked against.
+	readLocalModelEndpoints: vi.fn(() => [
+		{
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		},
+	]),
+	readSessions: vi.fn(() => []),
+	readSettingValue: vi.fn(),
+	readSshRemotes: vi.fn(() => []),
 }));
 
 vi.mock('../../../cli/services/agent-busy', () => ({
@@ -137,6 +150,45 @@ describe('goal-run --visible', () => {
 		);
 		expect(runGoal).not.toHaveBeenCalled();
 		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	it("sends the run's Run on target from --run-on", async () => {
+		const sendCommand = mockDesktop({ success: true, tabId: 'tab-9' });
+
+		await goalRun('agent-123', 'ship it', {
+			visible: true,
+			runOn: 'ep-ollama:qwen3:latest',
+			runOnContext: '131072',
+		});
+
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				type: 'launch_goal_run',
+				runOn: {
+					type: 'source',
+					endpointId: 'ep-ollama',
+					model: 'qwen3:latest',
+					contextTokens: 131072,
+				},
+			}),
+			'launch_goal_run_result',
+			expect.any(Number)
+		);
+	});
+
+	it('refuses a --run-on source that is not configured before contacting the desktop', async () => {
+		const sendCommand = mockDesktop({ success: true, tabId: 'tab-9' });
+
+		await expectExit(
+			goalRun('agent-123', 'ship it', { visible: true, runOn: 'ep-gone:qwen3:latest' })
+		);
+
+		expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('--run-on'));
+		expect(sendCommand).not.toHaveBeenCalledWith(
+			expect.objectContaining({ type: 'launch_goal_run' }),
+			expect.anything(),
+			expect.anything()
+		);
 	});
 
 	it('omits max-iterations as null so the desktop runs indefinitely', async () => {

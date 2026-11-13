@@ -22,6 +22,7 @@ import type { ConductorBadge } from '../constants/conductorBadges';
 import type { AgentSettingsTabId } from '../components/AgentSettings/agentSettingsTabs';
 import { UI_SURFACES } from '../../shared/uiSurfaces';
 import type { DelegationGraphScope } from '../../shared/delegationGraph';
+import type { LogSourceId } from '../../shared/logSources';
 import { logger } from '../utils/logger';
 import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 
@@ -82,6 +83,18 @@ export interface SettingsModalData {
 	/** An inner tab of `tab` to open on (Models > System One), the way `--sub-tab`
 	 *  reaches one. A setting jump needs none: the searchable entry names its own. */
 	subTab?: string;
+}
+
+/** System Log Viewer data */
+export interface LogViewerModalData {
+	/** The log source pill to open on. Omitted, the viewer opens on Maestro's own log. */
+	source?: LogSourceId;
+	/**
+	 * Where Escape (or the close button) goes back to. The viewer is opened from
+	 * a Settings control (Models > Sources > Open log) and Settings closes for it,
+	 * since only one destination is up at a time, so closing reopens Settings there.
+	 */
+	returnTo?: SettingsModalData;
 }
 
 /** New instance modal data */
@@ -668,6 +681,7 @@ export interface ModalDataMap {
 	cueYamlEditor: CueYamlEditorData;
 	delegationGraph: DelegationGraphModalData;
 	quitConfirm: QuitConfirmModalData;
+	logViewer: LogViewerModalData;
 }
 
 // Helper type to get data type for a modal ID
@@ -1005,6 +1019,14 @@ export function getModalActions() {
 
 		// Log Viewer
 		setLogViewerOpen: (open: boolean) => (open ? openModal('logViewer') : closeModal('logViewer')),
+		/** Open the System Log Viewer on one source, optionally returning to Settings on close. */
+		openLogViewer: (data?: LogViewerModalData) => openModal('logViewer', data ?? {}),
+		/** Close the viewer the way Escape does: back to Settings when it came from there. */
+		closeLogViewer: () => {
+			const returnTo = useModalStore.getState().getData('logViewer')?.returnTo;
+			closeModal('logViewer');
+			if (returnTo) openModal('settings', returnTo);
+		},
 
 		// Process Monitor
 		setProcessMonitorOpen: (open: boolean) =>

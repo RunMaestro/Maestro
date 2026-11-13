@@ -836,6 +836,8 @@ export class CallbackRegistry {
 			/** Per-run model/effort override - wins over the session model for this run only. */
 			model?: string;
 			effort?: string;
+			/** Per-run Run on target (CLI `--run-on`), in place of the agent's own. */
+			runOn?: import('../../../shared/local-models/run-on').RunOnTarget;
 			/** Skip the documents' MAESTRO:MODEL markers for this run (CLI `--ignore-model-hints`). */
 			ignoreModelHints?: boolean;
 			worktree?: {

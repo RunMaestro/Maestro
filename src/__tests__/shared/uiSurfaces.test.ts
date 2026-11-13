@@ -276,6 +276,14 @@ describe('resolveUiSurfaceTarget', () => {
 		});
 	});
 
+	it('gives the System Log Viewer one tab per log source', () => {
+		const logs = resolveUiSurface('logs')!;
+		expect(logs.tabs?.map((tab) => tab.id)).toEqual(['maestro', 'model-server']);
+		expect(resolveUiSurfaceTarget(logs, { tab: 'model-server' })).toMatchObject({
+			tab: { id: 'model-server', label: 'Model server' },
+		});
+	});
+
 	it('says a surface without tabs has none', () => {
 		const about = resolveUiSurface('about')!;
 		expect(resolveUiSurfaceTarget(about, { tab: 'x' })).toEqual({
