@@ -13,6 +13,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app } from 'electron';
 import { logger } from '../utils/logger';
+import { isSqliteCorruptionError } from '../../shared/sqliteErrors';
 import type {
 	QueryEvent,
 	AutoRunSession,
@@ -726,8 +727,9 @@ export class StatsDB {
 		// Remove stale WAL/SHM files that may cause false corruption detection
 		this.removeStaleWalFiles(this.dbPath);
 
+		let db: Database.Database | null = null;
 		try {
-			const db = new Database(this.dbPath);
+			db = new Database(this.dbPath);
 
 			const result = db.pragma('integrity_check') as Array<{ integrity_check: string }>;
 			if (result.length === 1 && result[0].integrity_check === 'ok') {
@@ -739,6 +741,14 @@ export class StatsDB {
 
 			db.close();
 		} catch (error) {
+			db?.close();
+			// Only SQLite saying the file is damaged justifies moving it aside. A
+			// native addon built for the wrong runtime (NODE_MODULE_VERSION
+			// mismatch), a lock, or a permission error throws from the same
+			// constructor against a perfectly healthy file; "recovering" from
+			// those renamed the user's whole history to stats.db.corrupted.* and
+			// left the Usage Dashboard empty. Leave the file alone and fail init.
+			if (!isSqliteCorruptionError(error)) throw error;
 			void captureException(error);
 			logger.error(`Failed to open database: ${error}`, LOG_CONTEXT);
 		}

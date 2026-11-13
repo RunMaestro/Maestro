@@ -474,24 +474,6 @@ export function isCueDbReady(): boolean {
 }
 
 /**
- * True when `err` is SQLite saying the file itself is damaged: `SQLITE_CORRUPT`
- * ("database disk image is malformed", plus its extended codes) or
- * `SQLITE_NOTADB` ("file is not a database"). better-sqlite3 puts the result
- * code on `SqliteError.code`.
- *
- * These do not heal on a retry or a restart: the same bytes fail the same way
- * on every boot. Lock contention (`SQLITE_BUSY`), a full disk or a permission
- * error are not corruption and stay out of this set.
- */
-export function isCueDbCorruptionError(err: unknown): boolean {
-	const code = (err as { code?: unknown } | null)?.code;
-	if (typeof code !== 'string') return false;
-	return (
-		code === 'SQLITE_NOTADB' || code === 'SQLITE_CORRUPT' || code.startsWith('SQLITE_CORRUPT_')
-	);
-}
-
-/**
  * Move a damaged Cue database aside so the next initCueDb() starts clean.
  *
  * Closes the live handle first, then renames `cue.db` and its `-wal` / `-shm`

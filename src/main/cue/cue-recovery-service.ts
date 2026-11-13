@@ -22,10 +22,10 @@ import {
 	failOrphanedRunningEvents,
 	getLastHeartbeat,
 	initCueDb,
-	isCueDbCorruptionError,
 	pruneCueEvents,
 	quarantineCorruptCueDb,
 } from './cue-db';
+import { isSqliteCorruptionError } from '../../shared/sqliteErrors';
 import {
 	reconcileMissedTimeEvents,
 	type ReconcileConfig,
@@ -117,7 +117,7 @@ export function createCueRecoveryService(deps: CueRecoveryServiceDeps): CueRecov
 				// Cue never starts again until the user finds and deletes the file.
 				// Corruption can surface in initCueDb() or only on the first write
 				// (pruneCueEvents), which is why the whole open sequence is retried.
-				if (!isCueDbCorruptionError(error) || !quarantineCorruptCueDb()) throw error;
+				if (!isSqliteCorruptionError(error) || !quarantineCorruptCueDb()) throw error;
 				deps.onLog(
 					'warn',
 					'[CUE] Cue database was corrupt - moved it aside and started a new one. Past Cue activity history is not shown.'
