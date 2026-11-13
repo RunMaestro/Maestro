@@ -9,6 +9,7 @@ import {
 	FederationBadge,
 	federationBadgeCopy,
 } from '../../../../renderer/components/SessionList/FederationBadge';
+import { formatTimestamp } from '../../../../shared/formatters';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 describe('federationBadgeCopy', () => {
@@ -88,5 +89,50 @@ describe('FederationBadge', () => {
 			"Maestro moves it onto the remote's host automatically. A turn is running."
 		);
 		expect(copy.blocked).toBeUndefined();
+	});
+
+	describe('remote reachability', () => {
+		const ssh = { kind: 'ssh' as const, remoteName: 'build', hostReady: false, canFederate: true };
+		const since = new Date(2026, 10, 13, 9, 30).getTime();
+
+		it('stays amber with no strike while the remote is reachable', () => {
+			render(<FederationBadge theme={mockTheme} mode={ssh} />);
+			const badge = screen.getByTestId('federation-badge-ssh');
+			expect(badge).toHaveTextContent('SSH');
+			expect(badge).toHaveStyle({ color: mockTheme.colors.warning });
+			expect(badge.style.textDecoration).toBe('');
+			fireEvent.mouseEnter(badge.parentElement as HTMLElement);
+			expect(screen.queryByTestId('federation-badge-unreachable')).toBeNull();
+		});
+
+		it('turns the same chip red and strikes the label when the remote is down', () => {
+			render(
+				<FederationBadge
+					theme={mockTheme}
+					mode={{
+						...ssh,
+						unreachable: { remoteName: 'build', since, message: 'Connection refused.' },
+					}}
+				/>
+			);
+			const badge = screen.getByTestId('federation-badge-ssh');
+			expect(badge).toHaveTextContent('SSH');
+			expect(badge).toHaveStyle({ color: mockTheme.colors.error });
+			expect(badge.style.textDecoration).toBe('line-through');
+			fireEvent.mouseEnter(badge.parentElement as HTMLElement);
+			const line = screen.getByTestId('federation-badge-unreachable');
+			expect(line).toHaveTextContent(
+				`Can't reach "build" over SSH since ${formatTimestamp(since)}. Connection refused.`
+			);
+			expect(line).toHaveStyle({ color: mockTheme.colors.error });
+		});
+
+		it('leaves the reason off when the probe gave none', () => {
+			const copy = federationBadgeCopy({ ...ssh, unreachable: { remoteName: 'build', since } });
+			expect(copy.unreachable).toBe(
+				`Can't reach "build" over SSH since ${formatTimestamp(since)}.`
+			);
+			expect(federationBadgeCopy(ssh).unreachable).toBeUndefined();
+		});
 	});
 });

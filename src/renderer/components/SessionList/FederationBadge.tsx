@@ -12,6 +12,11 @@
  * card on an SSH agent also says what the next step is (Move to Host, which sets a host up first
  * when the remote has none). A local agent gets no badge, and an agent that moved already shows
  * `LiftedPointerChip` instead.
+ *
+ * An SSH agent whose remote is down (the main process confirmed it with a probe) keeps the same
+ * chip in the same place, in the error color with the label struck through. That is the whole
+ * signal: the chip never opens a dialog or raises a toast, so a fleet with many remotes down stays
+ * quiet until the user goes to one of those agents.
  */
 
 import { memo } from 'react';
@@ -19,6 +24,16 @@ import type { Theme } from '../../types';
 import { HoverTooltip } from '../ui/HoverTooltip';
 import { MiniBadge } from '../ui/MiniBadge';
 import type { AutoFederationAgentState } from '../../../shared/federationAuto';
+import { formatTimestamp } from '../../../shared/formatters';
+
+/** An SSH agent's remote that the reachability probe says is down (`SshReachabilityEvent`). */
+export interface FederationBadgeUnreachable {
+	remoteName: string;
+	/** Epoch ms the remote went down. */
+	since: number;
+	/** Why, from `describeSshUnreachable()`. */
+	message?: string;
+}
 
 /** What automatic Federation says about an SSH agent (`AutoFederationAgentStatus`). */
 export interface FederationBadgeAuto {
@@ -34,6 +49,7 @@ export type FederationBadgeMode =
 			hostReady: boolean;
 			canFederate: boolean;
 			auto?: FederationBadgeAuto;
+			unreachable?: FederationBadgeUnreachable;
 	  }
 	| { kind: 'hosted'; peerName: string };
 
@@ -44,6 +60,8 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 	lines: string[];
 	/** Automatic Federation could not move the agent: the reason and what to do. */
 	blocked?: { reason?: string; fix?: string };
+	/** The remote is down: the line the card shows in the error color. */
+	unreachable?: string;
 } {
 	if (mode.kind === 'hosted') {
 		return {
@@ -77,7 +95,14 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 			next,
 		],
 		...(auto?.state === 'blocked' ? { blocked: { reason: auto.reason, fix: auto.fix } } : {}),
+		...(mode.unreachable ? { unreachable: unreachableLine(mode.unreachable) } : {}),
 	};
+}
+
+function unreachableLine({ remoteName, since, message }: FederationBadgeUnreachable): string {
+	const line = `Can't reach "${remoteName}" over SSH since ${formatTimestamp(since)}.`;
+	const reason = message?.trim();
+	return reason ? `${line} ${reason}` : line;
 }
 
 export const FederationBadge = memo(function FederationBadge({
@@ -91,7 +116,7 @@ export const FederationBadge = memo(function FederationBadge({
 	const color =
 		mode.kind === 'hosted'
 			? theme.colors.accent
-			: copy.blocked
+			: copy.blocked || copy.unreachable
 				? theme.colors.error
 				: theme.colors.warning;
 	return (
@@ -101,6 +126,15 @@ export const FederationBadge = memo(function FederationBadge({
 			label={
 				<span className="block text-left" data-testid="federation-badge-card">
 					<span className="block font-semibold mb-1">{copy.title}</span>
+					{copy.unreachable && (
+						<span
+							className="block mb-1"
+							style={{ color: theme.colors.error }}
+							data-testid="federation-badge-unreachable"
+						>
+							{copy.unreachable}
+						</span>
+					)}
 					{copy.lines.map((line) => (
 						<span key={line} className="block mt-0.5">
 							{line}
@@ -123,6 +157,7 @@ export const FederationBadge = memo(function FederationBadge({
 				label={copy.label}
 				theme={theme}
 				color={color}
+				style={copy.unreachable ? { textDecoration: 'line-through' } : undefined}
 				testId={`federation-badge-${mode.kind}`}
 			/>
 		</HoverTooltip>
