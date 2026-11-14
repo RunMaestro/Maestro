@@ -131,6 +131,13 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 	const trailingSize = weekly ? TRAILING_WEEKS : TRAILING_DAYS;
 	const trailingLabel = weekly ? `${TRAILING_WEEKS}-week average` : `${TRAILING_DAYS}-day average`;
 	const totalQueries = slots.reduce((sum, slot) => sum + slot.count, 0);
+	// The chart image is one accessible element, so its name carries the range
+	// a sighted reader takes from the y axis.
+	const measuredMeans = slotMeans(slots).filter((v): v is number => v !== null);
+	const rangeText =
+		measuredMeans.length > 0
+			? ` Range from ${formatDurationHuman(Math.min(...measuredMeans))} to ${formatDurationHuman(Math.max(...measuredMeans))}.`
+			: '';
 
 	const xLabels = useMemo(() => slots.map(slotLabel), [slots]);
 	const series = useMemo<LineSeries[]>(() => {
@@ -205,7 +212,7 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 			) : (
 				<MultiLineChart
 					theme={theme}
-					ariaLabel={`Mean query duration per ${weekly ? 'week' : 'day'}`}
+					ariaLabel={`Mean query duration per ${weekly ? 'week' : 'day'}.${rangeText}`}
 					xLabels={xLabels}
 					series={series}
 					formatValue={formatDurationHuman}

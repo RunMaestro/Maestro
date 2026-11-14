@@ -20,6 +20,7 @@ import {
 	SummaryCards,
 	countActiveDays,
 	findBestDay,
+	getCardStyles,
 	lastDaysSeries,
 } from '../../../../renderer/components/UsageDashboard/SummaryCards';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
@@ -682,18 +683,17 @@ describe('MetricCard', () => {
 		expect(screen.getByText('3 failed')).toBeInTheDocument();
 	});
 
+	// jsdom drops 8-digit hex colors from inline styles, so the variant is
+	// checked on the style object rather than on the rendered element.
 	it('tints the filled variant with the accent override', () => {
-		render(
-			<MetricCard
-				icon={<span />}
-				label="Cost"
-				value="$1"
-				theme={theme}
-				variant="filled"
-				accentColor="#112233"
-			/>
-		);
-		expect(screen.getByTestId('metric-card')).toHaveStyle({ border: '1px solid #1122334D' });
+		expect(getCardStyles('filled', theme, '#112233')).toMatchObject({
+			backgroundColor: '#11223326',
+			border: '1px solid #1122334D',
+		});
+		expect(getCardStyles('elevated', theme)).toMatchObject({
+			backgroundColor: theme.colors.bgActivity,
+			borderTop: `2px solid ${theme.colors.accent}`,
+		});
 	});
 });
 

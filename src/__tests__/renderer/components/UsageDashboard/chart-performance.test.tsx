@@ -366,9 +366,13 @@ describe('Chart Performance: Recharts NOT Used (Custom SVG Charts)', () => {
 
 			const { container } = render(<DurationTrendsChart data={singlePoint} theme={theme} />);
 
-			// Should render 1 data point
-			const circles = container.querySelectorAll('circle');
-			expect(circles.length).toBe(1);
+			// A point with no neighbours is drawn as a dot: a zero-length round-capped line.
+			const dots = Array.from(container.querySelectorAll('line')).filter(
+				(l) =>
+					l.getAttribute('x1') === l.getAttribute('x2') &&
+					l.getAttribute('y1') === l.getAttribute('y2')
+			);
+			expect(dots.length).toBe(1);
 		});
 
 		it('handles very large duration values without overflow', () => {

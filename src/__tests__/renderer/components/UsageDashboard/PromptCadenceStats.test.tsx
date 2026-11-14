@@ -39,16 +39,17 @@ describe('PromptCadenceStats', () => {
 		expect(screen.queryByTestId('prompt-total')).toBeNull();
 	});
 
-	it('renders the cadence figures on the tiles', () => {
+	it('renders the cadence figures on the tiles', async () => {
 		render(<PromptCadenceStats cadence={weekCadence()} theme={theme} />);
-		expect(within(screen.getByTestId('prompt-total')).getByText('7')).toBeInTheDocument();
+		// The dashboard's MetricCard counts its headline up from 0, so wait for it.
+		expect(await within(screen.getByTestId('prompt-total')).findByText('7')).toBeInTheDocument();
 		expect(
 			within(screen.getByTestId('prompt-total')).getByText('4 of 7 days active')
 		).toBeInTheDocument();
 		// (2 + 0 + 1 + 3 + 0 + 0) / 6 complete days
-		expect(within(screen.getByTestId('prompt-average')).getByText('1')).toBeInTheDocument();
-		expect(within(screen.getByTestId('prompt-max')).getByText('3')).toBeInTheDocument();
-		expect(within(screen.getByTestId('prompt-min')).getByText('1')).toBeInTheDocument();
+		expect(await within(screen.getByTestId('prompt-average')).findByText('1')).toBeInTheDocument();
+		expect(await within(screen.getByTestId('prompt-max')).findByText('3')).toBeInTheDocument();
+		expect(await within(screen.getByTestId('prompt-min')).findByText('1')).toBeInTheDocument();
 		expect(within(screen.getByTestId('prompt-peak-hour')).getByText('10 AM')).toBeInTheDocument();
 	});
 

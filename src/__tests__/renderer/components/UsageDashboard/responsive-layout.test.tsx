@@ -471,17 +471,18 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 		});
 
-		it('renders all 14 metric cards regardless of column count', async () => {
+		it('renders all 13 metric cards regardless of column count', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Card count grew from 10 to 12 (Interactive % / Local % were
-			// replaced with Current Streak / Best Day / Active Days / Worktree %).
+			// 13 range and live cards. The Peak Hour card moved to the radial
+			// Activity by Hour chart, and the Interactive vs Delegated card is
+			// hidden because the mocked delegation split tracked no time.
 			const metricCards = screen.getAllByTestId('metric-card');
-			expect(metricCards).toHaveLength(14);
+			expect(metricCards).toHaveLength(13);
 		});
 	});
 

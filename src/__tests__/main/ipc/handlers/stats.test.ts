@@ -200,7 +200,6 @@ describe('stats IPC handlers', () => {
 				'stats:record-task',
 				'stats:get-stats',
 				'stats:get-autorun-sessions',
-				'stats:get-autorun-tasks',
 				'stats:get-autorun-turns-by-hour',
 				'stats:get-shortcut-usage-by-shortcut',
 				'stats:get-aggregation',

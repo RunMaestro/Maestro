@@ -324,11 +324,12 @@ describe('Chart Accessibility - General ARIA Patterns', () => {
 			expect(button.tabIndex).not.toBe(-1);
 		});
 
-		// Grid cells should be focusable
-		const cells = screen.getAllByRole('gridcell');
-		cells.forEach((cell) => {
-			expect(cell).toHaveAttribute('tabIndex', '0');
-		});
+		// The heatmap grid is ONE tab stop (arrow keys move between cells), so a
+		// year of cells does not cost a keyboard user hundreds of Tab presses.
+		expect(screen.getByTestId('activity-heatmap-grid')).toHaveAttribute('tabIndex', '0');
+		const cells = screen.getAllByTestId('activity-heatmap-cell');
+		expect(cells.length).toBeGreaterThan(0);
+		cells.forEach((cell) => expect(cell).not.toHaveAttribute('tabIndex', '0'));
 	});
 });
 
@@ -354,7 +355,7 @@ describe('Chart Accessibility - Screen Reader Announcements', () => {
 	});
 
 	it('DurationTrendsChart announces data range in SVG', () => {
-		render(<DurationTrendsChart data={mockStatsData} timeRange="week" theme={mockTheme} />);
+		render(<DurationTrendsChart data={mockStatsData} theme={mockTheme} />);
 		const svg = screen.getByRole('img');
 		const label = svg.getAttribute('aria-label') || '';
 
@@ -363,11 +364,11 @@ describe('Chart Accessibility - Screen Reader Announcements', () => {
 	});
 
 	it('ActivityHeatmap cells announce date and value', () => {
-		render(<ActivityHeatmap data={mockStatsData} timeRange="week" theme={mockTheme} />);
-		const cells = screen.getAllByRole('gridcell');
+		render(<ActivityHeatmap data={mockStatsData} theme={mockTheme} />);
+		const cells = screen.getAllByTestId('activity-heatmap-cell');
 
-		// Each cell should announce its date and query count
-		// Format: "Dec 24 0:00: 0 queries" or "Dec 24 AM: 0 queries"
+		// Each cell announces its date, its hour span, and its real query count,
+		// e.g. "Mon, Jan 20, 12 AM - 1 AM: 0 queries (0ms)".
 		const firstCellLabel = cells[0].getAttribute('aria-label') || '';
 		expect(firstCellLabel).toMatch(/\w+ \d+/); // Month and day (e.g., "Dec 24")
 		expect(firstCellLabel).toContain('quer'); // query or queries

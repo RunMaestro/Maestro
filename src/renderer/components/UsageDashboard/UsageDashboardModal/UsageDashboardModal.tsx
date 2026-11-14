@@ -246,7 +246,9 @@ export function UsageDashboardModal({
 		() =>
 			getSectionsForViewMode(viewMode, {
 				hasWorktreeAnalytics,
-				hasRemoteQueries: (data?.byLocation.remote ?? 0) > 0,
+				// `byLocation` may be absent from a payload cached or served by an
+				// older main; it must not take the whole dashboard down.
+				hasRemoteQueries: (data?.byLocation?.remote ?? 0) > 0,
 			}),
 		[viewMode, hasWorktreeAnalytics, data]
 	);

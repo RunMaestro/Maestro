@@ -526,8 +526,10 @@ describe('exportUsageData', () => {
 		expect(written.appVersion).toBe('9.9.9');
 		expect(written.cueStats.totals).toEqual(cueTotals);
 		expect(written.delegation.totals).toEqual(delegationTotals);
+		// The token query is the dashboard's: a calendar-aligned lower bound,
+		// with the accessor choosing the slice size from the window.
 		expect(mockGetTokenUsageAggregate).toHaveBeenCalledWith(
-			expect.objectContaining({ granularity: 'day' })
+			expect.objectContaining({ sinceMs: expect.any(Number) })
 		);
 	});
 

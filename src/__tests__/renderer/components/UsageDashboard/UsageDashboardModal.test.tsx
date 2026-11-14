@@ -711,8 +711,11 @@ describe('UsageDashboardModal - group detail stays live', () => {
 		render(
 			<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} sessions={[member]} />
 		);
+		// Find outside act(): an async act scope holds React's commits until it
+		// ends, so a query awaited inside it never sees the loaded tab.
+		const openGroup = await screen.findByText('Open group g1');
 		await act(async () => {
-			fireEvent.click(await screen.findByText('Open group g1'));
+			fireEvent.click(openGroup);
 		});
 		const detail = await screen.findByTestId('group-detail-mock');
 		expect(detail).toHaveAttribute('data-name', 'Client');

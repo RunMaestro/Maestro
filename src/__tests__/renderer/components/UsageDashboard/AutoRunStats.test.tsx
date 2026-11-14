@@ -147,7 +147,10 @@ describe('LongestAutoRunsTable', () => {
 		expect(rows[0]).toHaveTextContent('Claude Code');
 		expect(rows[3]).toHaveTextContent('unfinished');
 
-		fireEvent.click(screen.getByTestId('longest-autoruns-sort-duration'));
+		// SortableTh puts the test id on the <th>; the click target is its button.
+		fireEvent.click(
+			within(screen.getByTestId('longest-autoruns-sort-duration')).getByRole('button')
+		);
 		const ascending = screen.getAllByTestId('longest-autoruns-row');
 		expect(ascending[0]).toHaveTextContent('unfinished');
 	});

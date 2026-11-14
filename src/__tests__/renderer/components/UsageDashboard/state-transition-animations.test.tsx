@@ -473,9 +473,12 @@ describe('Usage Dashboard State Transition Animations', () => {
 				expect(heatmap).toHaveClass('dashboard-section-enter');
 				expect(heatmap).toHaveStyle({ animationDelay: '0ms' });
 
+				// Weekday vs Weekend is gone, so Duration Trends is the next step in
+				// the stagger after the heatmap.
+				expect(screen.queryByTestId('section-weekday-comparison')).toBeNull();
 				const trends = screen.getByTestId('section-duration-trends');
 				expect(trends).toHaveClass('dashboard-section-enter');
-				expect(trends).toHaveStyle({ animationDelay: '100ms' });
+				expect(trends).toHaveStyle({ animationDelay: '50ms' });
 			});
 		});
 

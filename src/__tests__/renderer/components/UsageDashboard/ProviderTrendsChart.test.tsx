@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { ProviderTrendsChart } from '../../../../renderer/components/UsageDashboard/ProviderTrendsChart';
@@ -48,7 +49,7 @@ function makeData(overrides: Partial<StatsAggregation> = {}): StatsAggregation {
 }
 
 beforeEach(() => {
-	localStorage.clear();
+	installLocalStorageMock();
 	mockTokenSeries.value = { series: null, loading: false, error: null };
 });
 

@@ -492,7 +492,10 @@ describe('CueStats', () => {
 			render(<CueStats timeRange="week" theme={theme} />);
 			await screen.findByTestId('cue-stats-slowest-runs');
 
-			fireEvent.click(screen.getByTestId('cue-stats-slow-sort-subscription'));
+			// SortableTh puts the test id on the <th>; the click target is its button.
+			fireEvent.click(
+				within(screen.getByTestId('cue-stats-slow-sort-subscription')).getByRole('button')
+			);
 			const runs = screen.getAllByTestId('cue-stats-slow-run');
 			expect(within(runs[0]).getByText('sub-leaf')).toBeInTheDocument();
 			expect(within(runs[2]).getByText('sub-watch-files')).toBeInTheDocument();

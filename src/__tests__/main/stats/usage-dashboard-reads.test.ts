@@ -13,6 +13,8 @@ const mockDb = {
 	getResilienceEvents: vi.fn(() => []),
 	getShortcutUsageByDay: vi.fn(() => []),
 	getShortcutUsageTotal: vi.fn(() => 0),
+	getShortcutUsageByShortcut: vi.fn(() => []),
+	getAutoRunTurnsByHour: vi.fn(() => []),
 	getSessionLifecycleEvents: vi.fn(() => []),
 };
 vi.mock('../../../main/stats/singleton', () => ({ getStatsDB: () => mockDb }));
@@ -131,6 +133,8 @@ describe('getUsageActivityStats', () => {
 		const stats = getUsageActivityStats('day', NOW);
 		expect(mockDb.getWizardRuns).toHaveBeenCalledWith('day');
 		expect(mockDb.getShortcutUsageTotal).toHaveBeenCalledWith('day');
+		expect(mockDb.getShortcutUsageByShortcut).toHaveBeenCalledWith('day');
+		expect(mockDb.getAutoRunTurnsByHour).toHaveBeenCalledWith('day');
 		expect(stats.totals.shortcutPresses).toBe(5);
 		expect(stats.byDay).toHaveLength(1);
 	});

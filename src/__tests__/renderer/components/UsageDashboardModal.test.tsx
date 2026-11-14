@@ -4,6 +4,7 @@
  * data loading states, and CSV export functionality
  */
 
+import { emptyPromptCadence } from '../../../shared/promptCadence';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
@@ -101,7 +102,6 @@ const mockGetAggregation = vi.fn();
 const mockExportUsage = vi.fn();
 const mockOnStatsUpdate = vi.fn(() => vi.fn()); // Returns unsubscribe function
 const mockGetAutoRunSessions = vi.fn(() => Promise.resolve([]));
-const mockGetAutoRunTasks = vi.fn(() => Promise.resolve([]));
 const mockGetDatabaseSize = vi.fn();
 
 // Mock dialog and fs API
@@ -123,7 +123,9 @@ const mockMaestro = {
 		exportUsage: mockExportUsage,
 		onStatsUpdate: mockOnStatsUpdate,
 		getAutoRunSessions: mockGetAutoRunSessions,
-		getAutoRunTasks: mockGetAutoRunTasks,
+		getAutoRunTurnsByHour: vi.fn(() => Promise.resolve([])),
+		getSessionLifecycle: vi.fn(() => Promise.resolve([])),
+		getShortcutUsageByShortcut: vi.fn(() => Promise.resolve([])),
 		getDatabaseSize: mockGetDatabaseSize,
 		getShortcutUsageByDay: mockGetShortcutUsageByDay,
 		getShortcutUsageTotal: mockGetShortcutUsageTotal,
@@ -221,7 +223,13 @@ const createSampleData = () => ({
 	byAgentByDay: {},
 	bySessionByDay: {},
 	bySessionSource: {},
+	bySessionLastQuery: {},
+	bySessionTokens: {},
+	worktreeQueries: 0,
+	parentQueries: 150,
+	imageAnnotations: 0,
 	byAgentWorktree: {},
+	prompts: emptyPromptCadence(),
 });
 
 describe('UsageDashboardModal', () => {

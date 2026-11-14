@@ -12,6 +12,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import React from 'react';
 import { SourceDistributionChart } from '../../../../renderer/components/UsageDashboard/SourceDistributionChart';
@@ -57,7 +58,7 @@ function legendText(): string[] {
 }
 
 beforeEach(() => {
-	localStorage.clear();
+	installLocalStorageMock();
 	mockTokenSeries.value = { series: null, loading: false, error: null };
 });
 
