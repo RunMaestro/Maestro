@@ -916,6 +916,50 @@ export function getCueEventGroupCounts(options: {
 	}));
 }
 
+/** How often one subscription has fired, for `maestro-cli cue list`. */
+export interface CueSubscriptionTriggerStat {
+	sessionId: string;
+	/** Raw `subscription_name`, as the YAML names it. */
+	subscriptionName: string;
+	/** Every recorded run, whatever its outcome. */
+	triggerCount: number;
+	/** `created_at` of the newest run (epoch ms). */
+	lastTriggered: number;
+}
+
+/**
+ * Per-subscription trigger counts and last-trigger times across all retained
+ * Cue history. Unlike {@link getCueEventGroupCounts}, this does NOT apply
+ * {@link CUE_EVENT_WORTH_SHOWING_SQL}: a quiet heartbeat that completes with
+ * no output still fired, and `cue list` must say so.
+ *
+ * Returns `[]` when the DB is not initialized, so `cue list` falls back to
+ * "never triggered" instead of throwing.
+ */
+export function getCueSubscriptionTriggerStats(): CueSubscriptionTriggerStat[] {
+	if (!db) return [];
+	const rows = db
+		.prepare(
+			`SELECT session_id, subscription_name,
+				COUNT(*) AS trigger_count,
+				MAX(created_at) AS last_triggered
+			FROM cue_events
+			GROUP BY session_id, subscription_name`
+		)
+		.all() as Array<{
+		session_id: string;
+		subscription_name: string;
+		trigger_count: number;
+		last_triggered: number;
+	}>;
+	return rows.map((row) => ({
+		sessionId: row.session_id,
+		subscriptionName: row.subscription_name,
+		triggerCount: row.trigger_count,
+		lastTriggered: row.last_triggered,
+	}));
+}
+
 /**
  * Cue's contribution to the delegation split: how many runs finished and how
  * much wall-clock time they took, over all retained history or since `sinceMs`.
