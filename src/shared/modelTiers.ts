@@ -54,6 +54,7 @@ import { runOnModelFacts, type RunOnPickerSource } from './local-models/run-on-p
 import { getAgentCapabilities } from './maestro-lib/providers/capabilities';
 import { asTierLevel, TIER_LEVELS, type EffortLevel, type ModelTier } from './tierLevels';
 import { getEffortRejection, type EffortRejection } from './effortRejection';
+import { ownModel } from './autoModel';
 
 // The vocabulary itself (`low | medium | high`) lives in `tierLevels.ts`, a leaf
 // with no imports, and is re-exported here so every caller keeps one import.
@@ -331,6 +332,13 @@ export interface TierRouting {
 export interface TierTargetAgent extends Pick<TierRouting, 'tierTargets' | 'runOn'> {
 	/** The agent's harness, e.g. `claude-code`. */
 	toolType: ToolType;
+	/**
+	 * The model the turn runs on when no tier applies: the agent's own, or the
+	 * run's override. `auto` and empty name none. The built-in table does not
+	 * replace a model outside every tier family it knows (see
+	 * {@link isModelOutsideTierFamilies}).
+	 */
+	customModel?: string | null;
 }
 
 /**
@@ -340,6 +348,11 @@ export interface TierTargetAgent extends Pick<TierRouting, 'tierTargets' | 'runO
  *   - `tier-agent-runs-on-source`: only the built-in table names one, and the
  *     agent runs on a Local Models source. The table names the provider's cloud
  *     models; applying it would send the turn where the user chose not to.
+ *   - `tier-agent-model-pinned`: only the built-in table names one, and the
+ *     agent runs a model outside every tier family Maestro knows for the
+ *     harness (a fine-tune, a private deployment, an access-program model such
+ *     as `gpt-daybreak-blue-latest`). The table would swap it for a stock model
+ *     the user did not pick, so the tier does not apply.
  *   - `tier-invalid-target`: the layer's stored target is malformed.
  *   - `tier-unsupported-source`: the target is a source, and this harness has
  *     no model source recipe.
@@ -347,6 +360,7 @@ export interface TierTargetAgent extends Pick<TierRouting, 'tierTargets' | 'runO
 export type TierTargetRefusalCode =
 	| 'tier-unmapped'
 	| 'tier-agent-runs-on-source'
+	| 'tier-agent-model-pinned'
 	| 'tier-invalid-target'
 	| 'tier-unsupported-source';
 
@@ -382,7 +396,7 @@ export type TierTargetResolution = ResolvedTierTarget | TierTargetRefusal;
  * through: the next layer's target is a different model than the one the user
  * picked. The built-in table is the one layer the user did not write, so it is
  * the one layer that does not apply to an agent whose model source is a
- * source.
+ * source, or whose model is outside every tier family the table follows.
  *
  * Only the target's shape and the harness's model source recipe are checked here.
  * Whether the source exists, is enabled and serves the model needs the saved
@@ -455,6 +469,15 @@ export function resolveTierTarget(
 			blocksLaunch: false,
 		};
 	}
+	const agentModel = ownModel(agent.customModel?.trim());
+	if (agentModel && isModelOutsideTierFamilies(toolType, agentModel)) {
+		return {
+			kind: 'refused',
+			code: 'tier-agent-model-pinned',
+			message: `tier="${tier}" is ${builtIn} (${TIER_TARGET_SOURCE_LABELS['built-in']}), and this agent runs ${agentModel}, which is not ${tierFamiliesPhrase(toolType)}, so the tier was ignored; using the agent's model. Set the tier on the agent or in the harness default to send it elsewhere.`,
+			blocksLaunch: false,
+		};
+	}
 	return {
 		kind: 'resolved',
 		target: { type: 'provider-model', model: builtIn },
@@ -496,7 +519,12 @@ export function tierLaunchKey(
 	let launch: { model: string | undefined; runOn?: RunOnTarget } = { model: agentModel };
 	if (tier) {
 		const resolved = resolveTierTarget(
-			{ toolType, tierTargets: routing?.tierTargets, runOn: routing?.runOn },
+			{
+				toolType,
+				tierTargets: routing?.tierTargets,
+				runOn: routing?.runOn,
+				customModel: agentModel,
+			},
 			tier,
 			routing?.harnessDefaults
 		);
@@ -532,7 +560,12 @@ export function tierPillLabel(
 	endpoints: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[] = []
 ): string | undefined {
 	const resolved = resolveTierTarget(
-		{ toolType, tierTargets: routing?.tierTargets, runOn: routing?.runOn },
+		{
+			toolType,
+			tierTargets: routing?.tierTargets,
+			runOn: routing?.runOn,
+			customModel: agentModel,
+		},
 		tier,
 		routing?.harnessDefaults
 	);
@@ -720,6 +753,9 @@ export function tierHarnessProblem(harness: string): string | null {
 /** What a layer badge reads for a tier no layer maps. */
 export const TIER_NOT_MAPPED_LABEL = 'Not mapped';
 
+/** What a layer badge reads for a tier that keeps the agent's own model (`tier-agent-model-pinned`). */
+export const TIER_AGENT_MODEL_PINNED_LABEL = 'Agent model';
+
 /** One tier of an agent, as a launch would resolve it. */
 export interface AgentTierRow {
 	tier: ModelTier;
@@ -733,6 +769,8 @@ export interface AgentTierRow {
 	problem?: string;
 	/** Why the tier does not apply here. The launch runs on the agent's own model and says so. */
 	note?: string;
+	/** Which refusal produced `note` or `problem`. */
+	code?: TierTargetRefusalCode;
 }
 
 /**
@@ -753,11 +791,18 @@ export function agentTierRows(
 			return { tier, target: resolved.target, source: resolved.source, builtIn };
 		}
 		if (!resolved.blocksLaunch) {
-			return { tier, target: null, source: null, builtIn, note: resolved.message };
+			return {
+				tier,
+				target: null,
+				source: null,
+				builtIn,
+				note: resolved.message,
+				code: resolved.code,
+			};
 		}
 		// A refusal that blocks comes from the first layer that sets the tier.
 		const source: TierTargetSource = ownTargets[tier] !== undefined ? 'agent' : 'harness-default';
-		return { tier, target: null, source, builtIn, problem: resolved.message };
+		return { tier, target: null, source, builtIn, problem: resolved.message, code: resolved.code };
 	});
 }
 
@@ -1050,6 +1095,28 @@ export function modelIdInTierFamily(harness: string, tier: ModelTier, modelId: s
 	if (id === resolveTierModel(toolType, tier)?.toLowerCase()) return true;
 	const family = TIER_FAMILIES[toolType]?.[tier];
 	return family !== undefined && id.split(/[^a-z0-9]+/).includes(family);
+}
+
+/**
+ * Whether a model is outside every tier this harness's built-in table follows:
+ * no tier's own id and no tier's family ({@link modelIdInTierFamily}). Such a
+ * model was picked for something the stock tiers do not give (a fine-tune, a
+ * private deployment, an access program like Codex's Daybreak Blue), so the
+ * built-in table must not replace it: `gpt-6.1-sol` is not a cheaper Daybreak
+ * Blue, it is a different model with different permissions. False for a
+ * harness with no built-in row, since there is nothing to replace it with.
+ */
+export function isModelOutsideTierFamilies(harness: string, modelId: string): boolean {
+	if (modelId.trim() === '' || !supportsTierSelection(harness as ToolType)) return false;
+	return !TIER_LEVELS.some((tier) => modelIdInTierFamily(harness, tier, modelId));
+}
+
+/** The families a harness's tiers follow, for a sentence: "a Haiku, Sonnet or Opus model". */
+function tierFamiliesPhrase(harness: ToolType): string {
+	const families = TIER_FAMILIES[harness];
+	if (!families) return `one of ${getAgentDisplayName(harness)}'s built-in tier models`;
+	const names = TIER_LEVELS.map((tier) => capitalize(families[tier]));
+	return `a ${names.slice(0, -1).join(', ')} or ${names[names.length - 1]} model`;
 }
 
 /** The word in a catalogue's own description that places a model in a tier. */

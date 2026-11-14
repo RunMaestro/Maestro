@@ -180,7 +180,12 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void | Pr
 		const tiers = tierHarnessProblem(agent.toolType)
 			? []
 			: agentTierRows(
-					{ toolType: agent.toolType, tierTargets: agent.tierTargets, runOn: agent.runOn },
+					{
+						toolType: agent.toolType,
+						tierTargets: agent.tierTargets,
+						runOn: agent.runOn,
+						customModel: agent.customModel,
+					},
 					readHarnessTierDefaults()
 				).map((row) => tierRowRecord(row, endpoints));
 

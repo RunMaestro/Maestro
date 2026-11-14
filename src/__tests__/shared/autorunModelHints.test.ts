@@ -486,6 +486,22 @@ describe('resolveTurnSettings', () => {
 			expect(resolved.warnings[0]).toContain('model source');
 		});
 
+		it("keeps an agent's model outside the built-in families, and says so", () => {
+			// A Daybreak Blue agent with tier="medium" used to launch on gpt-6.1-sol,
+			// which carries no Daybreak access and refused the task.
+			const resolved = resolveTurnSettings(
+				'codex',
+				hintFor('medium'),
+				'gpt-daybreak-blue-latest',
+				'medium'
+			);
+			expect(resolved.model).toBe('gpt-daybreak-blue-latest');
+			expect(resolved.refusal).toBeUndefined();
+			expect(resolved.notes).toEqual([]);
+			expect(resolved.warnings).toHaveLength(1);
+			expect(resolved.warnings[0]).toContain('gpt-daybreak-blue-latest');
+		});
+
 		it('does not consult the layers for tier="default" or no tier', () => {
 			const routing = { tierTargets: { low: { type: 'source' } as never } };
 			for (const hint of [null, hintFor('default')]) {

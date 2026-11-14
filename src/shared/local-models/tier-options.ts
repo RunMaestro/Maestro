@@ -138,13 +138,15 @@ export function buildTierTargetOptionGroups(input: TierTargetOptionInput): RunOn
  * would use. The layer that value comes from is the badge beside the picker.
  */
 export function agentTierFallthroughLabel(
-	fallthrough: Pick<AgentTierRow, 'target' | 'problem'>,
+	fallthrough: Pick<AgentTierRow, 'target' | 'problem' | 'code'>,
 	endpoints: readonly Pick<LocalModelEndpoint, 'id' | 'name'>[] = []
 ): string {
 	const value = fallthrough.target
 		? tierTargetLabel(fallthrough.target, endpoints)
 		: fallthrough.problem
 			? 'cannot be used'
-			: TIER_NOT_MAPPED_LABEL.toLowerCase();
+			: fallthrough.code === 'tier-agent-model-pinned'
+				? TIER_AGENT_MODEL_LABEL.toLowerCase()
+				: TIER_NOT_MAPPED_LABEL.toLowerCase();
 	return `${TIER_TARGET_SOURCE_LABELS['harness-default']} (${value})`;
 }

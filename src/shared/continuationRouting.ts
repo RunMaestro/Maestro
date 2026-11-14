@@ -144,7 +144,12 @@ export function describeContinuationRouting(input: ContinuationRoutingInput): Co
 					? { kind: 'unsupported', label: runOnSupport.reason }
 					: { kind: 'source', label: runOnTargetLabel(runOn.target, endpoints) },
 		tiers: agentTierRows(
-			{ toolType: input.toolType, tierTargets: input.tierTargets, runOn: input.runOn },
+			{
+				toolType: input.toolType,
+				tierTargets: input.tierTargets,
+				runOn: input.runOn,
+				customModel: pickSetting(input.tabModel, input.agentModel).value,
+			},
 			input.harnessTierDefaults
 		).map(
 			(row): RoutingTierFact => ({

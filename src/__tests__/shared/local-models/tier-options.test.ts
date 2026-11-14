@@ -149,6 +149,14 @@ describe('agentTierFallthroughLabel', () => {
 		expect(agentTierFallthroughLabel(low)).toBe('Harness default (not mapped)');
 	});
 
+	it("names the agent's model when the built-in table would replace a pinned model", () => {
+		const [low] = agentTierRows({ toolType: 'codex', customModel: 'gpt-daybreak-blue-latest' });
+		expect(low).toMatchObject({ target: null, source: null, code: 'tier-agent-model-pinned' });
+		expect(agentTierFallthroughLabel(low)).toBe(
+			`Harness default (${TIER_AGENT_MODEL_LABEL.toLowerCase()})`
+		);
+	});
+
 	it('says so when the harness default cannot be used', () => {
 		const [low] = agentTierRows({ toolType: 'factory-droid' }, { 'factory-droid': { low: LOCAL } });
 		expect(agentTierFallthroughLabel(low)).toBe('Harness default (cannot be used)');

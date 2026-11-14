@@ -108,7 +108,12 @@ export function resolveTurnSettings(
 	// The two only differ when scopes merge, upstream of this.
 	if (hint?.tier && hint.tier !== 'default') {
 		const resolved = resolveTierTarget(
-			{ toolType, tierTargets: routing?.tierTargets, runOn: routing?.runOn },
+			{
+				toolType,
+				tierTargets: routing?.tierTargets,
+				runOn: routing?.runOn,
+				customModel: agentModel,
+			},
 			hint.tier,
 			routing?.harnessDefaults
 		);

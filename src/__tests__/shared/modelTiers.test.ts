@@ -12,6 +12,7 @@ import {
 	cheapResumeTurnSettings,
 	cheapTurnSettings,
 	CODEX_TIER_FAMILIES,
+	isModelOutsideTierFamilies,
 	modelIdInTierFamily,
 	parseHarnessTierDefaults,
 	parseTierTarget,
@@ -506,6 +507,67 @@ describe('resolveTierTarget', () => {
 			resolveTierTarget({ toolType: 'claude-code', runOn: { type: 'source' } }, 'high')
 		).toMatchObject({ code: 'tier-agent-runs-on-source' });
 	});
+
+	it("does not apply the built-in table over a model outside the harness's tier families", () => {
+		// An access-program model is not a stock tier: swapping it for Sol drops
+		// the program, which is how a Daybreak Blue Auto Run got refused.
+		const agent = { toolType: 'codex' as const, customModel: 'gpt-daybreak-blue-latest' };
+		for (const tier of TIER_LEVELS) {
+			const resolved = resolveTierTarget(agent, tier);
+			expect(resolved).toMatchObject({
+				kind: 'refused',
+				code: 'tier-agent-model-pinned',
+				blocksLaunch: false,
+			});
+			expect(resolved.kind === 'refused' && resolved.message).toContain('gpt-daybreak-blue-latest');
+			expect(resolved.kind === 'refused' && resolved.message).toContain('Luna, Sol or Astra');
+		}
+		// A layer the user wrote still applies.
+		expect(
+			resolveTierTarget(agent, 'low', {
+				codex: { low: { type: 'provider-model', model: 'gpt-6-luna' } },
+			})
+		).toMatchObject({ kind: 'resolved', source: 'harness-default' });
+		expect(
+			resolveTierTarget(
+				{ ...agent, tierTargets: { high: { type: 'provider-model', model: 'gpt-6-astra' } } },
+				'high'
+			)
+		).toMatchObject({ kind: 'resolved', source: 'agent' });
+	});
+
+	it('applies the built-in table over a model in one of its families, Auto, or none', () => {
+		for (const customModel of [
+			'gpt-6.1-sol',
+			'gpt-5.6-luna',
+			'opus',
+			'claude-sonnet-4-5-20250929',
+			'auto',
+			'',
+			undefined,
+		]) {
+			const toolType = customModel && /opus|sonnet/.test(customModel) ? 'claude-code' : 'codex';
+			expect(resolveTierTarget({ toolType, customModel }, 'low')).toMatchObject({
+				kind: 'resolved',
+				source: 'built-in',
+			});
+		}
+	});
+});
+
+describe('isModelOutsideTierFamilies', () => {
+	it('is true only for a model no built-in tier or family names', () => {
+		expect(isModelOutsideTierFamilies('codex', 'gpt-daybreak-blue-latest')).toBe(true);
+		expect(isModelOutsideTierFamilies('claude-code', 'my-fine-tune')).toBe(true);
+		expect(isModelOutsideTierFamilies('codex', 'gpt-6-astra')).toBe(false);
+		expect(isModelOutsideTierFamilies('claude-code', 'claude-3-5-haiku-latest')).toBe(false);
+		expect(isModelOutsideTierFamilies('factory-droid', 'claude-opus-4-5-20251101')).toBe(false);
+	});
+
+	it('is false where there is no table to replace the model with', () => {
+		expect(isModelOutsideTierFamilies('opencode', 'anything')).toBe(false);
+		expect(isModelOutsideTierFamilies('codex', '  ')).toBe(false);
+	});
 });
 
 describe('what a resolved tier does to a launch', () => {
@@ -588,6 +650,8 @@ describe('tierPillLabel', () => {
 		).toBeUndefined();
 		// Only the built-in table maps it, and the agent runs on a source.
 		expect(tierPillLabel('claude-code', 'high', 'sonnet', { runOn: ON_OLLAMA })).toBeUndefined();
+		// Only the built-in table maps it, and the agent runs a model outside its families.
+		expect(tierPillLabel('codex', 'medium', 'gpt-daybreak-blue-latest')).toBeUndefined();
 		// The provider, on a model nobody named.
 		expect(
 			tierPillLabel('claude-code', 'medium', undefined, {
@@ -604,6 +668,12 @@ describe('tierLaunchKey', () => {
 		};
 		expect(tierLaunchKey('claude-code', 'medium', 'sonnet', routing)).toBe(
 			tierLaunchKey('claude-code', undefined, 'sonnet', routing)
+		);
+	});
+
+	it('does not split a document at a built-in tier the agent model is outside of', () => {
+		expect(tierLaunchKey('codex', 'medium', 'gpt-daybreak-blue-latest')).toBe(
+			tierLaunchKey('codex', undefined, 'gpt-daybreak-blue-latest')
 		);
 	});
 

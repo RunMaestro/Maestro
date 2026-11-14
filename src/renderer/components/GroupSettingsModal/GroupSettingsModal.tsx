@@ -815,6 +815,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 												clearError('tierTargets');
 											}}
 											runOn={own.runOn}
+											model={own.customModel}
 											error={errorFor('tierTargets')}
 											testId="group-settings-tier-targets"
 										/>

@@ -1738,6 +1738,7 @@ export function EditAgentModal({
 										setTierTargetsError(undefined);
 									}}
 									runOn={runOn}
+									model={agentConfig.model?.trim()}
 									error={tierTargetsError}
 									testId="edit-agent-tier-targets"
 								/>
