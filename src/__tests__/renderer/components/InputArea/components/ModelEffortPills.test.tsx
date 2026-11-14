@@ -132,6 +132,41 @@ describe('ModelEffortPills', () => {
 		});
 	});
 
+	it('opens both menus from the left edge by default', () => {
+		renderPills({ modelMenuOpen: true });
+		expect(screen.getByTestId('model-picker')).toHaveClass('left-0');
+		expect(screen.getByTestId('model-picker')).not.toHaveClass('right-0');
+	});
+
+	describe('menuAlign="end" (pills pushed to the right of their container)', () => {
+		it('opens the model menu leftward from the pill and resizes upward and leftward', () => {
+			renderPills({ modelMenuOpen: true, menuAlign: 'end' });
+			const picker = screen.getByTestId('model-picker');
+			expect(picker).toHaveClass('right-0');
+			expect(picker).not.toHaveClass('left-0');
+			expect(screen.queryByTestId('modal-resize-handle-e')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('modal-resize-handle-ne')).not.toBeInTheDocument();
+
+			const width = parseFloat(picker.style.width);
+			const height = parseFloat(picker.style.height);
+			fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-nw'), {
+				clientX: 0,
+				clientY: 0,
+			});
+			fireEvent.mouseMove(document, { clientX: -30, clientY: -20 });
+			fireEvent.mouseUp(document);
+			fireEvent.click(document);
+			expect(picker).toHaveStyle({ width: `${width + 30}px`, height: `${height + 20}px` });
+		});
+
+		it('opens the effort menu leftward from the pill too', () => {
+			renderPills({ effortMenuOpen: true, menuAlign: 'end' });
+			const menu = screen.getByRole('button', { name: 'low' }).closest('.absolute');
+			expect(menu).toHaveClass('right-0');
+			expect(menu).not.toHaveClass('left-0');
+		});
+	});
+
 	it('opens model menu and closes effort menu when model pill is clicked', () => {
 		const setModelMenuOpen = vi.fn();
 		const setEffortMenuOpen = vi.fn();

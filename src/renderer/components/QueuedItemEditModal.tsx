@@ -356,6 +356,7 @@ export function QueuedItemEditModal({
 							<ModelEffortPills
 								isVisible={nativeAgent?.toolType !== 'grok'}
 								theme={theme}
+								menuAlign="end"
 								currentModel={turnSettings.model ?? providerOptions.defaultModel}
 								currentEffort={turnSettings.effort ?? providerOptions.defaultEffort}
 								availableModels={modelOptions}
