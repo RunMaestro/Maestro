@@ -103,6 +103,8 @@ A compact card per active agent, sized for scanning the whole fleet in one scree
 
 A fuzzy filter above the grid narrows the cards live as you type, matching on the agent name (with or without its leading emoji) and on a worktree's branch name.
 
+**Agents Over Time** charts how many agents existed at the end of each day in the selected range, with the current count and how many agents were created and deleted in that range. It counts every agent still in the Left Bar from the day it was created, plus deleted agents from the day they were created to the day they were deleted. Terminals are not counted. Deleted agents appear only while their records are inside the stats retention window.
+
 <Tip>
 Agent Overview and **Agents** answer different questions. Agent Overview is the wide, shallow view - who is busy right now. Agents is the deep one, with per-agent stats, sorting, and a drill-down into individual tabs.
 </Tip>

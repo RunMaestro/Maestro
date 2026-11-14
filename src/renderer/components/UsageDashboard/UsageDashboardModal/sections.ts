@@ -17,11 +17,13 @@ export const AGENTS_SECTIONS = ['agent-overview-cards'] as const;
 export const GROUPS_SECTIONS = ['group-overview-cards'] as const;
 export const AGENT_OVERVIEW_SECTIONS = [
 	'session-stats',
+	'agent-count-trend',
 	'agent-efficiency',
 	'agent-usage',
 ] as const;
 export const AGENT_OVERVIEW_WITH_WORKTREE_SECTIONS = [
 	'session-stats',
+	'agent-count-trend',
 	'worktree-analytics',
 	'agent-efficiency',
 	'agent-usage',
@@ -66,6 +68,7 @@ const SECTION_LABELS: Record<SectionId, string> = {
 	'agent-overview-cards': 'Active Agents Overview',
 	'group-overview-cards': 'Group Usage Overview',
 	'session-stats': 'Agent Statistics',
+	'agent-count-trend': 'Agents Over Time',
 	'worktree-analytics': 'Worktree Analytics',
 	'anthropic-usage': 'Anthropic Usage',
 	'codex-usage': 'OpenAI Usage',

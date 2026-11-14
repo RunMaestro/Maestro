@@ -8,7 +8,8 @@ import type Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 import { PerformanceMetrics } from '../../shared/performance-metrics';
 import type { StatsTimeRange } from '../../shared/stats-types';
-import { startOfLocalDay, toLocalYmd } from '../../shared/localDay';
+import { toLocalYmd } from '../../shared/localDay';
+import { getTimeRangeStart } from '../../shared/statsTimeRange';
 
 export const LOG_CONTEXT = '[StatsDB]';
 
@@ -75,31 +76,10 @@ export function isStatsCollectionEnabled(settingsStore?: StatsSettingsStore): bo
 }
 
 /**
- * Get timestamp for start of time range
+ * Get timestamp for start of time range.
+ * Re-exported from `src/shared/statsTimeRange.ts`, its canonical home.
  */
-export function getTimeRangeStart(range: StatsTimeRange): number {
-	const now = Date.now();
-	const day = 24 * 60 * 60 * 1000;
-
-	switch (range) {
-		case 'day':
-			// "Today" is the local calendar day, not a rolling 24 hours.
-			return startOfLocalDay(now);
-		case 'week':
-			return now - 7 * day;
-		case 'month':
-			return now - 30 * day;
-		case 'quarter':
-			return now - 90 * day;
-		case 'year':
-			return now - 365 * day;
-		case 'all':
-			return 0;
-		default:
-			// Exhaustive check - should never reach here
-			return 0;
-	}
-}
+export { getTimeRangeStart } from '../../shared/statsTimeRange';
 
 /**
  * Normalize file paths to use forward slashes consistently across platforms.

@@ -443,7 +443,12 @@ describe('Usage Dashboard State Transition Animations', () => {
 				expect(sessionStatsSection).toHaveClass('dashboard-section-enter');
 				expect(sessionStatsSection).toHaveStyle({ animationDelay: '0ms' });
 
-				// Agent efficiency is second with 50ms delay
+				// Agents Over Time follows it with a 15ms delay
+				const countTrendSection = screen.getByTestId('section-agent-count-trend');
+				expect(countTrendSection).toHaveClass('dashboard-section-enter');
+				expect(countTrendSection).toHaveStyle({ animationDelay: '15ms' });
+
+				// Agent efficiency comes next with 50ms delay
 				const efficiencySection = screen.getByTestId('section-agent-efficiency');
 				expect(efficiencySection).toHaveClass('dashboard-section-enter');
 				expect(efficiencySection).toHaveStyle({ animationDelay: '50ms' });
