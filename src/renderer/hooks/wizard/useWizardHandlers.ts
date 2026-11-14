@@ -88,12 +88,13 @@ import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 export interface UseWizardHandlersDeps {
 	/** Inline wizard context - the full return value from useInlineWizard */
 	inlineWizardContext: UseInlineWizardReturn;
-	/** Onboarding wizard context - state, completeWizard, clearResumeState, openWizard, restoreState */
+	/** Onboarding wizard context - state, completeWizard, clearResumeState, openWizard, resetWizard, restoreState */
 	wizardContext: {
 		state: WizardState;
 		completeWizard: (sessionId: string | null) => Promise<void>;
 		clearResumeState: () => Promise<void>;
 		openWizard: () => void;
+		resetWizard: () => void;
 		restoreState: (state: Partial<WizardState>) => void;
 	};
 	/** Spawn a background synopsis for /history command */
@@ -1464,6 +1465,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		setWizardResumeModalOpen(false);
 		// Clear any saved resume state
 		await wizardContext.clearResumeState();
+		// Drop the in-memory progress too: closing the wizard keeps its state, so
+		// opening without a reset would show the unfinished run again (#2038).
+		wizardContext.resetWizard();
 		// Open a fresh wizard
 		wizardContext.openWizard();
 		// Clear the resume state holder
