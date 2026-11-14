@@ -780,6 +780,7 @@ describe('QuickActions command builders', () => {
 		}).map((a) => a.id);
 		expect(supportIds).toContain('createDebugPackage');
 		expect(supportIds).toContain('leaderboard');
+		expect(supportIds).toContain('privacy');
 
 		const debugCommandIds = buildDebugCommands({
 			activeSession: createMockSession({

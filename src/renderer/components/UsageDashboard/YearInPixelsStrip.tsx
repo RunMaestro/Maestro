@@ -22,6 +22,7 @@ import {
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import type { StatsTimeRange } from '../../../shared/stats-types';
+import { STATS_RANGE_DAYS } from '../../../shared/statsTimeRange';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 import { COLORBLIND_HEATMAP_SCALE } from '../../constants/colorblindPalettes';
 import { ChartTooltip } from './ChartTooltip';
@@ -41,13 +42,6 @@ const RANGE_TITLES: Record<StatsTimeRange, string> = {
 	quarter: 'Past Quarter',
 	year: 'Past Year',
 	all: 'All Time',
-};
-
-const FIXED_RANGE_DAYS: Partial<Record<StatsTimeRange, number>> = {
-	week: 7,
-	month: 30,
-	quarter: 90,
-	year: 365,
 };
 
 interface DayCell {
@@ -140,7 +134,7 @@ export const YearInPixelsStrip = memo(function YearInPixelsStrip({
 
 		// Resolve total day count for the active range. For 'all' we span from
 		// the earliest recorded day to today; for fixed ranges we use the
-		// canonical lookback (matches getTimeRangeStart in main/stats/utils.ts).
+		// canonical lookback shared with getTimeRangeStart.
 		const today = new Date();
 		today.setHours(0, 0, 0, 0);
 		let total: number;
@@ -164,7 +158,7 @@ export const YearInPixelsStrip = memo(function YearInPixelsStrip({
 				total = Math.max(1, diffDays + 1);
 			}
 		} else {
-			total = FIXED_RANGE_DAYS[timeRange] ?? 1;
+			total = STATS_RANGE_DAYS[timeRange] ?? 1;
 		}
 
 		const arr: DayCell[] = [];

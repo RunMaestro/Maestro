@@ -1,3 +1,4 @@
+import { AgentCountTrendChart } from '../../AgentCountTrendChart';
 import { AgentEfficiencyChart } from '../../AgentEfficiencyChart';
 import { AgentUsageChart } from '../../AgentUsageChart';
 import { ChartErrorBoundary } from '../../ChartErrorBoundary';
@@ -34,6 +35,19 @@ export function AgentOverviewView({
 						theme={theme}
 						colorBlindMode={colorBlindMode}
 					/>
+				</ChartErrorBoundary>
+			</DashboardSection>
+
+			<DashboardSection
+				sectionId="agent-count-trend"
+				focusedSection={focusedSection}
+				setSectionRef={setSectionRef}
+				handleSectionKeyDown={handleSectionKeyDown}
+				theme={theme}
+				style={{ minHeight: '200px', animationDelay: '15ms' }}
+			>
+				<ChartErrorBoundary theme={theme} chartName="Agents Over Time">
+					<AgentCountTrendChart sessions={sessions} timeRange={timeRange} theme={theme} />
 				</ChartErrorBoundary>
 			</DashboardSection>
 
