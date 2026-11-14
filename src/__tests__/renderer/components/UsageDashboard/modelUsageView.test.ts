@@ -190,7 +190,7 @@ describe('latency bars', () => {
 	});
 });
 
-describe('Run on agents', () => {
+describe('model source agents', () => {
 	it('keeps only the agents that launched a turn on another model', () => {
 		expect(runOnAgents(BUSY_MODEL_USAGE.byAgent).map((agent) => agent.name)).toEqual(['Alpha']);
 	});

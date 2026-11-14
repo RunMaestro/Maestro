@@ -1,5 +1,5 @@
 /**
- * Tests for shared/local-models/run-on-picker - the choices an agent's Run on
+ * Tests for shared/local-models/run-on-picker - the choices an agent's model source
  * picker offers, and what the Library says about each one.
  */
 

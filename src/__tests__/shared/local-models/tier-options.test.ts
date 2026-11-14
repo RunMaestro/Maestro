@@ -72,7 +72,7 @@ describe('buildTierTargetOptionGroups', () => {
 		expect(groups[3].options).toEqual([{ value: 'ep-ollama:qwen3:latest', label: 'qwen3:latest' }]);
 	});
 
-	it('labels a model on the Maestro server as the Run on picker does', () => {
+	it('labels a model on the Maestro server as the model source picker does', () => {
 		const server = groupsFor(CLAUDE, undefined)[2];
 		const entry = getLocalModel(GPT_OSS_20B_ID);
 
@@ -81,7 +81,7 @@ describe('buildTierTargetOptionGroups', () => {
 		expect(server.options[0].label).toContain('Agent-ready');
 	});
 
-	it('offers no source to a harness with no Run on recipe', () => {
+	it('offers no source to a harness with no model source recipe', () => {
 		const droid: HarnessTierOptions = {
 			...CLAUDE,
 			harness: 'factory-droid',

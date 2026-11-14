@@ -98,7 +98,7 @@ describe('listHarnessTierOptions', () => {
 		]);
 	});
 
-	it('gives a harness with no Run on recipe its reason and no sources', async () => {
+	it('gives a harness with no model source recipe its reason and no sources', async () => {
 		const rows = await listHarnessTierOptions();
 		const droid = rows[2];
 

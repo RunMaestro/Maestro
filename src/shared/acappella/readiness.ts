@@ -26,6 +26,19 @@ import type { VoiceProviderRole } from './providers';
 export type VoiceSlot = VoiceProviderRole | 'wake-word' | 'microphone';
 
 /**
+ * The name of each slot as the user reads it. The gate prefixes every unready
+ * `detail` with it, and Voice Setup names a ready slot with it, so a list of
+ * verdicts always says which slot each line is about.
+ */
+export const VOICE_SLOT_LABELS: Readonly<Record<VoiceSlot, string>> = {
+	microphone: 'Microphone',
+	stt: 'Speech-to-Text',
+	tts: 'Text-to-Speech',
+	brain: 'Conductor Brain',
+	'wake-word': 'Wake word',
+};
+
+/**
  * Why a slot is not satisfied. Closed on purpose: a reason with no matching
  * suggested action is a dead end in front of the user, so adding one here means
  * adding its recovery too.

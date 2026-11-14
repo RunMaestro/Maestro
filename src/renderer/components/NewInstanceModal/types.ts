@@ -126,7 +126,7 @@ export interface NewInstanceModalProps {
 		codexTransport?: CodexTransport,
 		/** Local Models gateway URL, already validated; `undefined` sets none. */
 		gatewayUrl?: string,
-		/** Run on target, already validated; `undefined` means the provider's model. */
+		/** Model source, already validated; `undefined` means the provider's model. */
 		runOn?: RunOnSourceTarget,
 		/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
 		peerGrants?: PeerGrants,
@@ -177,7 +177,7 @@ export interface EditAgentModalProps {
 		codexTransport?: CodexTransport,
 		/** Local Models gateway URL, already validated; `undefined` clears it. */
 		gatewayUrl?: string,
-		/** Run on target, already validated; `undefined` means the provider's model. */
+		/** Model source, already validated; `undefined` means the provider's model. */
 		runOn?: RunOnSourceTarget,
 		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
 		tierTargets?: TierTargets,
@@ -284,6 +284,12 @@ export interface AgentPickerGridProps {
 	 * form edits them in its Provider panel instead.
 	 */
 	hideEnvVars?: boolean;
+	/**
+	 * Leave the model options (model, effort, context window) out of each
+	 * provider's settings panel. The tabbed New Agent form draws the selected
+	 * provider's on its Models tab instead.
+	 */
+	hideModelOptions?: boolean;
 	/** Offer Auto in each provider's model field (`AgentConfigPanelProps.autoModelFor`). */
 	autoModelFor?: Pick<TierTargetAgent, 'tierTargets' | 'runOn'>;
 	/** Native protocol mode, per agent id. Defaults to current. */

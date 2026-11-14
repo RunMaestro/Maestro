@@ -1,5 +1,5 @@
 /**
- * useRunOnSources - every source an agent's Run on picker can offer, with the
+ * useRunOnSources - every source an agent's model source picker can offer, with the
  * models each one lists right now.
  *
  * The Maestro model server comes first, then each enabled saved source in the

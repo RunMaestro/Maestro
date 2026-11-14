@@ -1194,8 +1194,8 @@ describe('EditAgentModal', () => {
 				render(modal(session));
 				await act(async () => {});
 				await act(() => vi.advanceTimersByTimeAsync(300));
-				// Model and effort live on the Provider tab.
-				openTab('Provider');
+				// Model and effort live on the Models tab.
+				openTab('Models');
 				const request = {
 					providerId: 'grok',
 					context: expect.objectContaining({
@@ -1281,8 +1281,8 @@ describe('EditAgentModal', () => {
 				const view = render(modal(first));
 				await act(async () => {});
 				await act(() => vi.advanceTimersByTimeAsync(300));
-				// Model and effort live on the Provider tab.
-				openTab('Provider');
+				// Model and effort live on the Models tab.
+				openTab('Models');
 				fireEvent.click(screen.getByTitle('Refresh available models'));
 				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(
 					expect.objectContaining({ forceRefresh: true })
@@ -1366,8 +1366,8 @@ describe('EditAgentModal', () => {
 			});
 			await act(() => vi.advanceTimersByTimeAsync(300));
 			expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(calls);
-			// Model and effort live on the Provider tab.
-			openTab('Provider');
+			// Model and effort live on the Models tab.
+			openTab('Models');
 			expect(screen.getByDisplayValue('reopened-model')).toBeInTheDocument();
 			expect(screen.getByDisplayValue('reopened-effort')).toBeInTheDocument();
 			expect(screen.queryByDisplayValue('closed-model')).not.toBeInTheDocument();
@@ -1424,8 +1424,8 @@ describe('EditAgentModal', () => {
 				const view = render(modal(session));
 				await act(async () => {});
 				await act(() => vi.advanceTimersByTimeAsync(300));
-				// Model and effort live on the Provider tab.
-				openTab('Provider');
+				// Model and effort live on the Models tab.
+				openTab('Models');
 				fireEvent.click(screen.getByTitle('Refresh available models'));
 				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(
 					expect.objectContaining({ forceRefresh: true })
@@ -1440,16 +1440,19 @@ describe('EditAgentModal', () => {
 							available: true,
 						} as AgentConfig,
 					]);
+					// The provider picker lives on the Provider tab, the model on Models.
+					openTab('Provider');
 					fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 					// Grok -> Claude Code is a declared (unverified) carry-over direction.
 					fireEvent.click(screen.getByRole('option', { name: 'Claude Code Carry Over' }));
+					openTab('Models');
 				} else {
 					// Execution location lives on the SSH tab.
 					openTab('SSH');
 					fireEvent.change(screen.getByDisplayValue('Local Execution'), {
 						target: { value: change === 'remote' ? 'new-host' : '' },
 					});
-					openTab('Provider');
+					openTab('Models');
 				}
 				await act(async () => {});
 				await act(() => vi.advanceTimersByTimeAsync(300));
@@ -1481,11 +1484,15 @@ describe('EditAgentModal', () => {
 					view.rerender(modal(session));
 					await act(async () => {});
 					await act(() => vi.advanceTimersByTimeAsync(300));
+					openTab('Models');
 				}
 				if (change === 'provider') {
+					// The picker is on the Provider tab; the model options are on Models.
+					openTab('Provider');
 					expect(screen.getByRole('button', { name: 'Agent Provider' })).toHaveTextContent(
 						'Claude Code'
 					);
+					openTab('Models');
 					expect(screen.queryByTestId('config-option-note-model')).not.toBeInTheDocument();
 					fireEvent.change(screen.getByDisplayValue('claude-sonnet'), {
 						target: { value: 'model' },
@@ -1592,7 +1599,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
-			openTab('Provider');
+			openTab('Models');
 
 			// 'max' (session override), not 'high' (agent-level config)
 			expect(await screen.findByDisplayValue('max')).toBeInTheDocument();
@@ -1642,7 +1649,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
-			openTab('Provider');
+			openTab('Models');
 
 			const effortSelect = await screen.findByDisplayValue('max');
 			fireEvent.change(effortSelect, { target: { value: 'low' } });
@@ -2272,7 +2279,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
-				openTab('Provider');
+				openTab('Models');
 
 				await screen.findByDisplayValue('200000');
 				// Names the window actually in use, so the number in the field is not
@@ -2295,7 +2302,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
-				openTab('Provider');
+				openTab('Models');
 
 				await screen.findByDisplayValue('120000');
 				// The value is winning, so there is nothing to explain.
@@ -2313,7 +2320,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
-				openTab('Provider');
+				openTab('Models');
 
 				await screen.findByDisplayValue('200000');
 				// An unflagged report may be a parser-injected static fallback, so the
@@ -2347,7 +2354,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
-				openTab('Provider');
+				openTab('Models');
 
 				await screen.findByDisplayValue('200000');
 				expect(note()).not.toBeInTheDocument();
@@ -2381,7 +2388,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
-				openTab('Provider');
+				openTab('Models');
 
 				await screen.findByDisplayValue('200000');
 				expect(note()).toHaveTextContent('1.0M');
@@ -2415,15 +2422,17 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
-				openTab('Provider');
+				openTab('Models');
 
 				// Note is present before the switch...
 				await screen.findByDisplayValue('200000');
 				expect(note()).toBeInTheDocument();
 
-				// ...and gone once a different provider is selected.
+				// ...and gone once a different provider is selected (on the Provider tab).
+				openTab('Provider');
 				fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 				fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+				openTab('Models');
 				// The control itself is still on screen - the note is gone, not the panel.
 				await waitFor(() => expect(note()).not.toBeInTheDocument());
 				expect(screen.getByDisplayValue('200000')).toBeInTheDocument();
@@ -2446,7 +2455,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
-				openTab('Provider');
+				openTab('Models');
 
 				await screen.findByDisplayValue('200000');
 				expect(note()).toHaveTextContent(/selected model/i);
@@ -2477,7 +2486,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
-			openTab('Provider');
+			openTab('Models');
 
 			// Seeded from the agent-level config because the session has none.
 			expect(await screen.findByDisplayValue('200000')).toBeInTheDocument();
@@ -2506,7 +2515,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
-			openTab('Provider');
+			openTab('Models');
 
 			const input = await screen.findByDisplayValue('100000');
 			fireEvent.change(input, { target: { value: '' } });
@@ -2529,7 +2538,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
-			openTab('Provider');
+			openTab('Models');
 
 			const input = await screen.findByDisplayValue('100000');
 			fireEvent.change(input, { target: { value: '120000' } });
@@ -3736,13 +3745,13 @@ describe('EditAgentModal', () => {
 			await waitFor(() => screen.getByTestId('edit-agent-tier-targets-low'));
 		}
 
-		it('sits on the Models tab between Run on and the gateway', async () => {
+		it('sits on the Models tab between the model and the gateway', async () => {
 			await renderOnModels(createSession());
 
-			const runOn = screen.getByTestId('edit-agent-run-on');
+			const model = await screen.findByTestId('edit-agent-model');
 			const tiers = screen.getByTestId('edit-agent-tiers');
 			const gateway = screen.getByTestId('edit-agent-gateway');
-			expect(runOn.compareDocumentPosition(tiers) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+			expect(model.compareDocumentPosition(tiers) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 			expect(
 				tiers.compareDocumentPosition(gateway) & Node.DOCUMENT_POSITION_FOLLOWING
 			).toBeTruthy();
@@ -3788,7 +3797,7 @@ describe('EditAgentModal', () => {
 			});
 		});
 
-		it('reads the built-in table as not applying once Run on is a source', async () => {
+		it('reads the built-in table as not applying once the model is a source model', async () => {
 			await renderOnModels(createSession({ runOn: { ...LOCAL, contextTokens: 65_536 } }));
 
 			expect(layer('low')).toBe('Not mapped');
@@ -3836,7 +3845,9 @@ describe('EditAgentModal', () => {
 		});
 	});
 
-	describe('Run on', () => {
+	// The Model field is the model source picker: it lists the provider's models,
+	// then every model each Local Models source serves, grouped by source.
+	describe('Model source', () => {
 		const OLLAMA: LocalModelEndpoint = {
 			id: 'ep-ollama',
 			name: 'Ollama',
@@ -3850,9 +3861,19 @@ describe('EditAgentModal', () => {
 			model: 'qwen3:latest',
 			contextTokens: 65_536,
 		};
+		const QWEN_SPEC = 'ep-ollama:qwen3:latest';
 		let savedEndpoints: LocalModelEndpoint[];
 
 		beforeEach(() => {
+			// The real Claude Code definition, so the Models tab draws its Model field.
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{
+					...getAgentDefinition('claude-code')!,
+					capabilities: getAgentCapabilities('claude-code'),
+					available: true,
+					path: '/usr/local/bin/claude',
+				} as AgentConfig,
+			]);
 			savedEndpoints = useSettingsStore.getState().localModelEndpoints;
 			useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
 			// The Maestro model server lists nothing; Ollama lists one model.
@@ -3887,46 +3908,76 @@ describe('EditAgentModal', () => {
 			return result;
 		}
 
-		const picker = () => screen.getByTestId('edit-agent-run-on-field-select') as HTMLSelectElement;
+		const modelInput = () => screen.getByRole('textbox', { name: 'Model' }) as HTMLInputElement;
+		const chip = () => screen.queryByTestId('model-source-chip');
 		const contextSelect = () =>
-			screen.getByTestId('edit-agent-run-on-field-context-select') as HTMLSelectElement;
+			screen.getByTestId('edit-agent-model-source-context-select') as HTMLSelectElement;
 		const contextInput = () =>
 			screen
-				.getByTestId('edit-agent-run-on-field-context')
+				.getByTestId('edit-agent-model-source-context')
 				.querySelector('input') as HTMLInputElement;
-		const listed = () =>
-			waitFor(() =>
-				expect(
-					Array.from(picker().options).some((option) => option.value === 'ep-ollama:qwen3:latest')
-				).toBe(true)
-			);
+		/** Open the Model field's list. */
+		const openModelMenu = async () =>
+			fireEvent.click(await screen.findByRole('button', { name: 'Show model options' }));
+		/** The source option for `spec`, once its source has listed it. */
+		const sourceOption = (spec: string) =>
+			waitFor(() => {
+				const option = screen
+					.queryAllByTestId('model-source-option')
+					.find((candidate) => candidate.getAttribute('data-value') === spec);
+				expect(option).toBeDefined();
+				return option!;
+			});
 
-		it('reads Provider for an agent with no target, and saves none', async () => {
+		it('reads the provider for an agent with no source, and saves none', async () => {
 			renderOnModels(createSession());
 
-			expect(picker().value).toBe('provider');
-			expect(screen.queryByTestId('edit-agent-run-on-field-context')).not.toBeInTheDocument();
+			await waitFor(() => expect(modelInput().value).toBe('claude-sonnet'));
+			expect(chip()).not.toBeInTheDocument();
+			expect(
+				screen.queryByTestId('edit-agent-model-source-context-select')
+			).not.toBeInTheDocument();
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toBeUndefined();
 		});
 
-		it("shows the agent's stored target and saves it unchanged", async () => {
+		it("shows the agent's stored source model and saves it unchanged", async () => {
 			renderOnModels(createSession({ runOn: QWEN }));
 
-			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
+			expect(await screen.findByTestId('model-source-chip')).toHaveTextContent('Ollama');
+			expect(modelInput().value).toBe('qwen3:latest');
 			expect(contextSelect().value).toBe('65536');
-			expect(screen.queryByTestId('edit-agent-run-on-field-context')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('edit-agent-model-source-context')).not.toBeInTheDocument();
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toEqual(QWEN);
+			// The provider model is kept for when the agent runs on its provider again.
+			expect(onSave.mock.calls[0][8]).toBe('claude-sonnet');
+		});
+
+		it('lists the provider models under the provider, then each source', async () => {
+			renderOnModels(createSession());
+
+			await openModelMenu();
+			const option = await sourceOption(QWEN_SPEC);
+
+			expect(option).toHaveTextContent('qwen3:latest');
+			const groups = screen.getAllByTestId('model-source-group');
+			expect(groups).toHaveLength(1);
+			expect(groups[0]).toHaveTextContent('Ollama');
+			expect(groups[0]).toContainElement(option);
+			expect(screen.getByRole('button', { name: 'claude-opus' })).toBeInTheDocument();
+			expect(screen.getByText('3 models from 2 sources')).toBeInTheDocument();
 		});
 
 		it('saves a model picked from a source, at the smallest agent context', async () => {
 			renderOnModels(createSession());
 
-			await listed();
-			fireEvent.change(picker(), { target: { value: 'ep-ollama:qwen3:latest' } });
+			await openModelMenu();
+			fireEvent.click(await sourceOption(QWEN_SPEC));
+			expect(await screen.findByTestId('model-source-chip')).toHaveTextContent('Ollama');
+			expect(modelInput().value).toBe('qwen3:latest');
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toEqual({
@@ -3937,14 +3988,29 @@ describe('EditAgentModal', () => {
 			});
 		});
 
-		it('clears the target when Provider is chosen', async () => {
+		it('clears the source when a provider model is picked', async () => {
 			renderOnModels(createSession({ runOn: QWEN }));
 
-			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
-			fireEvent.change(picker(), { target: { value: 'provider' } });
+			await screen.findByTestId('model-source-chip');
+			await openModelMenu();
+			fireEvent.click(screen.getByRole('button', { name: 'claude-opus' }));
+			expect(chip()).not.toBeInTheDocument();
+			expect(modelInput().value).toBe('claude-opus');
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			expect(onSave).toHaveBeenCalledTimes(1);
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toBeUndefined();
+			expect(onSave.mock.calls[0][8]).toBe('claude-opus');
+		});
+
+		it('clears the source with Clear', async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await screen.findByTestId('model-source-chip');
+			fireEvent.click(screen.getByRole('button', { name: 'Clear model override' }));
+			expect(chip()).not.toBeInTheDocument();
+			fireEvent.click(screen.getByText('Save Changes'));
+
 			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toBeUndefined();
 		});
 
@@ -3971,37 +4037,39 @@ describe('EditAgentModal', () => {
 
 			expect(onSave).not.toHaveBeenCalled();
 			expect(onClose).not.toHaveBeenCalled();
-			expect(screen.getByTestId('edit-agent-run-on-field-status')).toHaveTextContent(
+			expect(screen.getByTestId('edit-agent-model-source-status')).toHaveTextContent(
 				`at least ${RUN_ON_MIN_CONTEXT_TOKENS} tokens`
 			);
 			expect(screen.getByTestId('edit-agent-tab-models-error')).toBeInTheDocument();
 		});
 
-		it('shows a stored target that cannot be read as Provider, with the reason', async () => {
+		it('shows a stored source that cannot be read as the provider, with the reason', async () => {
 			renderOnModels(createSession({ runOn: { type: 'source', endpointId: OLLAMA.id } as never }));
 
-			expect(picker().value).toBe('provider');
-			expect(screen.getByTestId('edit-agent-run-on-field-status')).toHaveTextContent(
-				'The stored Run on target cannot be used'
+			expect(await screen.findByTestId('edit-agent-model-source-status')).toHaveTextContent(
+				'The stored model source cannot be used'
 			);
+			expect(chip()).not.toBeInTheDocument();
+			expect(modelInput().value).toBe('claude-sonnet');
 		});
 
-		it('disables both gateway controls while a source is chosen, and says why', async () => {
+		it('disables both gateway controls while a source model is chosen, and says why', async () => {
 			renderOnModels(createSession({ runOn: QWEN, gatewayUrl: 'http://127.0.0.1:8787' }));
 
-			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
+			await screen.findByTestId('model-source-chip');
 			const gateway = screen
 				.getByTestId('edit-agent-gateway')
 				.querySelector('input') as HTMLInputElement;
 			expect(gateway).toBeDisabled();
-			// The stored URL is kept: it applies again when Run on is Provider.
+			// The stored URL is kept: it applies again when the agent runs on its provider.
 			expect(gateway.value).toBe('http://127.0.0.1:8787');
 			expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent(
-				'Not applied while Run on is a source'
+				'Not applied while the model source is a Local Models source'
 			);
 			expect(screen.getByTestId('edit-agent-proxy-mode')).toBeDisabled();
 
-			fireEvent.change(picker(), { target: { value: 'provider' } });
+			await openModelMenu();
+			fireEvent.click(screen.getByRole('button', { name: 'claude-opus' }));
 			expect(gateway).not.toBeDisabled();
 		});
 
@@ -4016,11 +4084,10 @@ describe('EditAgentModal', () => {
 			});
 			renderOnModels(createSession({ runOn: QWEN }));
 
-			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
-			fireEvent.click(screen.getByTestId('edit-agent-run-on-field-test'));
+			fireEvent.click(await screen.findByTestId('edit-agent-model-source-test'));
 
 			await waitFor(() =>
-				expect(screen.getByTestId('edit-agent-run-on-field-test-result')).toHaveTextContent(
+				expect(screen.getByTestId('edit-agent-model-source-test-result')).toHaveTextContent(
 					'qwen3:latest on Ollama answered in 4.2 s: ready'
 				)
 			);
@@ -4048,10 +4115,9 @@ describe('EditAgentModal', () => {
 			});
 			renderOnModels(createSession({ runOn: QWEN }));
 
-			await waitFor(() => expect(picker().value).toBe('ep-ollama:qwen3:latest'));
-			fireEvent.click(screen.getByTestId('edit-agent-run-on-field-test'));
+			fireEvent.click(await screen.findByTestId('edit-agent-model-source-test'));
 
-			const result = await screen.findByTestId('edit-agent-run-on-field-test-result');
+			const result = await screen.findByTestId('edit-agent-model-source-test-result');
 			expect(result).toHaveAttribute('data-ok', 'false');
 			expect(result).toHaveTextContent('does not serve "qwen3:latest"');
 		});

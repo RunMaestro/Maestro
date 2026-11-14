@@ -80,7 +80,7 @@ export const ADD_QUERY_EVENT_TOKEN_COLUMNS = [
  * Where a turn's model ran, and what Auto's router chose for it, on
  * `query_events` (see `QueryEvent` in shared/stats-types.ts). All TEXT.
  *
- * `run_on_endpoint` and `run_on_model` are the Run on source the turn launched
+ * `run_on_endpoint` and `run_on_model` are the model source the turn launched
  * on, set together, and `routed_tier` is the router's tier. Nullable with no
  * default, like the token columns: NULL means a turn on the provider's own
  * model (or one not sent on Auto), and every row from before the columns.

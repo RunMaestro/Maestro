@@ -857,6 +857,7 @@ const mockMaestro = {
 					models: [],
 					loadedModels: [],
 					keyStorage: null,
+					startOnLaunch: false,
 					logPath: '/tmp/maestro-test/logs/model-server.log',
 				},
 				engine: {

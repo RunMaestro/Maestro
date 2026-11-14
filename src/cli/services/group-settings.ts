@@ -48,8 +48,8 @@ export interface GroupSettingsFlagOptions
 	extends PeerFlagOptions, AgentSettingFlagOptions, SshFlagOptions {
 	cwd?: string;
 	provider?: string;
-	runOn?: string;
-	runOnContext?: string;
+	modelSource?: string;
+	modelSourceContext?: string;
 	shortLabel?: string;
 	clear?: boolean;
 	publish?: boolean;
@@ -181,7 +181,7 @@ const VALID_PROVIDER_TYPES: ReadonlySet<string> = new Set(
  * refuse (a clear beside a set, a publish of a clear).
  *
  * `group` is the stored group, read so a value that builds on another can see
- * it: a peer note needs the row it annotates, and a Run on context needs the
+ * it: a peer note needs the row it annotates, and a model source context needs the
  * profile's provider.
  */
 export function readGroupSettingsFlags(
@@ -216,12 +216,12 @@ export function readGroupSettingsFlags(
 		}
 	}
 
-	if (options.runOn !== undefined || options.runOnContext !== undefined) {
+	if (options.modelSource !== undefined || options.modelSourceContext !== undefined) {
 		const toolType =
 			patch.toolType !== undefined ? (patch.toolType as string | null) : group.defaults?.toolType;
 		if (!toolType) {
 			throw new Error(
-				'--run-on needs a default provider, which this group has none of. Set one with --provider in this call or before it.'
+				'--model-source needs a default provider, which this group has none of. Set one with --provider in this call or before it.'
 			);
 		}
 		const edit = readRunOnFlags(options, { toolType, runOn: group.defaults?.runOn });

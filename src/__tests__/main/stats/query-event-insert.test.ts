@@ -120,7 +120,7 @@ describe('bindQueryEvent', () => {
 		expect(row.routed_tier).toBeNull();
 	});
 
-	it('writes the Run on source whole or not at all', () => {
+	it('writes the model source whole or not at all', () => {
 		// One fact in two columns. Half of it names no place a turn could have run,
 		// and a row with an endpoint and no model would be counted under a source
 		// with nothing to group it by.

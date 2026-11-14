@@ -9,7 +9,7 @@
  * Four tables feed it, each read once:
  *
  *   - `local_model_runs` - the task router's and System One's runs;
- *   - `query_events`     - agent turns, on a Run on source or on the provider;
+ *   - `query_events`     - agent turns, on a model source or on the provider;
  *   - `proxy_requests`   - the token proxy's totals and effectiveness (from
  *                          `getProxyRequestUsage()`, the one aggregation the
  *                          Gateway section and the CLI share), and the
@@ -241,7 +241,7 @@ interface TurnRow {
 }
 
 /**
- * Agent turns: one on a Run on source is that source's work and its agent's,
+ * Agent turns: one on a model source is that source's work and its agent's,
  * and one on the provider's own model is the provider's, for comparison.
  * Returns the tier split of the turns Auto routed.
  */
@@ -303,7 +303,7 @@ function scanTurns(
 
 /**
  * Background requests the token proxy sent to a Local Models target in place
- * of the provider. `routed_to` is a Run on spelling (`<source id>:<model>`).
+ * of the provider. `routed_to` is a model source spelling (`<source id>:<model>`).
  * Returns how many there were.
  */
 function scanRoutedRequests(db: Database.Database, startTime: number, acc: UsageAcc): number {

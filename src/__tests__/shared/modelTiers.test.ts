@@ -331,7 +331,7 @@ describe('a stored tier target', () => {
 		});
 	});
 
-	it('reads a Run on target through the Run on parser, dropping unknown keys', () => {
+	it('reads a model source through the Run on parser, dropping unknown keys', () => {
 		expect(parseTierTarget({ type: 'provider', extra: 1 })).toEqual({
 			ok: true,
 			target: { type: 'provider' },
@@ -467,7 +467,7 @@ describe('resolveTierTarget', () => {
 		);
 	});
 
-	it('refuses a source on a harness with no Run on recipe', () => {
+	it('refuses a source on a harness with no model source recipe', () => {
 		const resolved = resolveTierTarget(
 			{ toolType: 'factory-droid', tierTargets: { low: LOCAL } },
 			'low'
@@ -500,7 +500,7 @@ describe('resolveTierTarget', () => {
 				'claude-code': { high: { type: 'provider-model', model: 'opus' } },
 			})
 		).toMatchObject({ kind: 'resolved', source: 'harness-default' });
-		// A stored Run on target that is malformed counts: its launch is refused,
+		// A stored model source that is malformed counts: its launch is refused,
 		// and it never runs on the provider.
 		expect(
 			resolveTierTarget({ toolType: 'claude-code', runOn: { type: 'source' } }, 'high')

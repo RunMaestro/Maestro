@@ -664,7 +664,7 @@ export interface AgentDetailDisplay {
 	tokenProxyMode?: string | null;
 	/** Whether the model may ask the token proxy for a compressed result's original. */
 	tokenProxyRetrieval?: boolean;
-	/** The Run on target; a source target carries its context size. */
+	/** The model source; a source target carries its context size. */
 	runOn?: unknown;
 	runOnLabel?: string | null;
 	runOnProblem?: string | null;
@@ -789,12 +789,12 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	if (agent.tokenProxyRetrieval) addConfig('Retrieval', 'on');
 	// Shown only for an agent on a source: the provider's own model is the default.
 	if (agent.runOnProblem) {
-		addConfig('Run on', c('red', `unusable target: ${agent.runOnProblem}`));
+		addConfig('Model source', c('red', `unusable: ${agent.runOnProblem}`));
 	} else if (agent.runOnLabel) {
 		const contextTokens = (agent.runOn as { contextTokens?: unknown } | null | undefined)
 			?.contextTokens;
 		addConfig(
-			'Run on',
+			'Model source',
 			typeof contextTokens === 'number'
 				? `${agent.runOnLabel} ${dim(`(context ${contextTokens} tokens)`)}`
 				: agent.runOnLabel
@@ -1536,7 +1536,7 @@ function decisionOutcomeLine(counts: ModelUsageDecisionCounts): string {
  * `maestro-cli stats models`: what every model other than a provider's own did
  * in the range, the way the Usage Dashboard's Models tab draws it: the sources
  * (with the providers' own cloud for comparison), the tasks, the agents that
- * ran turns on a Run on source, System One's decisions and the token proxy.
+ * ran turns on a model source, System One's decisions and the token proxy.
  */
 export function formatModelUsage(usage: ModelUsage): string {
 	const { totals } = usage;
@@ -1602,7 +1602,7 @@ export function formatModelUsage(usage: ModelUsage): string {
 
 	const runOnAgents = usage.byAgent.filter((agent) => agent.turns > 0);
 	if (runOnAgents.length > 0) {
-		lines.push('', bold('Agents (Run on turns)'));
+		lines.push('', bold('Agents (model source turns)'));
 		for (const agent of runOnAgents) {
 			const targets = agent.targets
 				.map((target) => `${target.model} on ${target.sourceLabel} ${target.turns}`)
@@ -1693,6 +1693,12 @@ export function formatModelServerReport(report: ModelServerReport): string {
 	);
 	if (status.pid !== null) lines.push(row('Process', `pid ${status.pid}`));
 	if (status.startedAt !== null) lines.push(row('Up since', formatRelativeTime(status.startedAt)));
+	lines.push(
+		row(
+			'At launch',
+			status.startOnLaunch ? 'starts with Maestro' : dim('stays stopped when Maestro starts')
+		)
+	);
 
 	if (report.installing) {
 		const { phase, bytes, totalBytes, choice } = report.installing;

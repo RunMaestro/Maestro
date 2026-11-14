@@ -41,7 +41,7 @@ describe('ComposerOptionsSheet', () => {
 	it('keeps Run on configuration out of the quick model section on phones', () => {
 		renderSheet();
 		fireEvent.click(screen.getByTestId('composer-options-model'));
-		expect(screen.queryByText('Run on')).not.toBeInTheDocument();
+		expect(screen.queryByText('Model source')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('composer-run-on')).not.toBeInTheDocument();
 	});
 
@@ -99,7 +99,7 @@ describe('ComposerOptionsSheet', () => {
 		expect(onModelChange).toHaveBeenCalledWith('');
 	});
 
-	it('names the Run on target and explains the override while keeping Auto selectable', () => {
+	it('names the model source and explains the override while keeping Auto selectable', () => {
 		const onModelChange = vi.fn();
 		renderSheet({
 			runOn: 'qwen3:latest · Ollama',
@@ -110,21 +110,21 @@ describe('ComposerOptionsSheet', () => {
 		expect(model).toHaveTextContent('qwen3:latest · Ollama');
 		expect(model).not.toHaveTextContent('gpt-5');
 		fireEvent.click(model);
-		expect(screen.getByText(/This target overrides named provider models/)).toHaveTextContent(
-			'Change Run on in Edit Agent > Models.'
+		expect(screen.getByText(/This source overrides named provider models/)).toHaveTextContent(
+			'Change the model source in Edit Agent > Models.'
 		);
 		fireEvent.click(screen.getByRole('button', { name: 'Auto' }));
 		expect(onModelChange).toHaveBeenCalledWith('auto');
 	});
 
-	it('shows the Run on target and its explanation without provider model discovery', () => {
+	it('shows the model source and its explanation without provider model discovery', () => {
 		renderSheet({
 			runOn: 'qwen3:latest · Ollama',
 			availableModels: [],
 			onModelChange: undefined,
 		});
 		fireEvent.click(screen.getByTestId('composer-options-model'));
-		expect(screen.getByText(/Run on: qwen3:latest · Ollama/)).toBeInTheDocument();
+		expect(screen.getByText(/Model source: qwen3:latest · Ollama/)).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: '(default)' })).not.toBeInTheDocument();
 	});
 

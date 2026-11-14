@@ -1586,7 +1586,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				gatewayUrl = edit.gatewayUrl ?? undefined;
 			}
 
-			// The Run on target (`create-agent --run-on`), checked the same way and
+			// The model source (`create-agent --model-source`), checked the same way and
 			// for the same reason: against this provider and the saved sources, so
 			// the agent's first launch is not refused for a target nobody could
 			// have picked. A gateway beside a source target is refused as the
@@ -1600,7 +1600,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				);
 				const problem = edit.ok ? runOnGatewayEditProblem(edit.target, { gatewayUrl }) : edit.error;
 				if (!edit.ok || problem) {
-					logger.error(`[Remote] Refused create-agent Run on target: ${problem}`);
+					logger.error(`[Remote] Refused create-agent model source: ${problem}`);
 					window.maestro.process.sendRemoteCreateSessionResponse(responseChannel, null);
 					return;
 				}
@@ -2166,7 +2166,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'customEnvVars',
 			// Local Models gateway. Validated below, never written as given.
 			'gatewayUrl',
-			// Run on target (`update-agent --run-on`). Validated below as well.
+			// Model source (`update-agent --model-source`). Validated below as well.
 			'runOn',
 			// Tier targets (`update-agent --tier`): a PATCH, one target per tier
 			// named, merged onto the agent's own below.
@@ -2260,7 +2260,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			Object.assign(updated, OFF_TOKEN_PROXY_FIELDS);
 		}
 
-		// A Run on target goes through the check the Edit Agent dialog saves with,
+		// A model source goes through the check the Edit Agent dialog saves with,
 		// plus the saved sources, since this caller typed the source's id: a target
 		// for a provider with no recipe, or for a source that does not exist, would
 		// refuse every launch. `null` (the CLI's `provider`) clears it. The write
@@ -2302,7 +2302,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 
 		// `auto` as the model is stored as the word, and only for an agent Auto
-		// can act on, judged against the tiers and the Run on target this same
+		// can act on, judged against the tiers and the model source this same
 		// patch leaves it with. An Auto that would change nothing is refused by
 		// name, the way no picker offers it.
 		if (isAutoModel(updated.customModel)) {

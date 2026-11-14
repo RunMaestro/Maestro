@@ -722,7 +722,7 @@ describe('task router channel', () => {
 		expect(suggestTabCleanup).toHaveBeenCalledWith();
 	});
 
-	it('hands a Run on test its request untouched and returns the verdict', async () => {
+	it('hands a model source test its request untouched and returns the verdict', async () => {
 		const request = {
 			agentId: 'agent-1',
 			target: { type: 'source', endpointId: 'ep-1', model: 'm' },

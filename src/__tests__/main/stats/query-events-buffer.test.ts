@@ -219,7 +219,7 @@ describe('query-events-buffer', () => {
 		expect(stmt.run).toHaveBeenCalledTimes(1);
 		const args = stmt.run.mock.calls[0];
 		// 19 columns: the 10 identity/timing/flag columns, the Web Login
-		// sender, the five token and cost columns, plus the Run on source
+		// sender, the five token and cost columns, plus the model source
 		// (endpoint, model) and the routed tier. This used to be 9 - the
 		// buffered statement had silently dropped is_worktree, so every
 		// interactive turn wrote NULL there while the direct insert path
@@ -263,7 +263,7 @@ describe('query-events-buffer', () => {
 		expect(stmt.run.mock.calls[0].slice(16)).toEqual([null, null, null]);
 	});
 
-	it('carries the Run on source and the routed tier through the buffer', () => {
+	it('carries the model source and the routed tier through the buffer', () => {
 		// The buffered statement is the one production uses, and it is the one
 		// that once dropped a column the direct path wrote.
 		const { db, stmt } = makeMockDb();

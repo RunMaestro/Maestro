@@ -5,6 +5,7 @@ export * from './BrowseFolderButton';
 export * from './GeneralTab';
 export * from './ProviderTab';
 export * from './ModelsTab';
+export * from './AgentModelSection';
 export * from './ProviderEnvironmentSection';
 export * from './PeersTab';
 export * from './SshTab';

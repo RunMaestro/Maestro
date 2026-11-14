@@ -4,7 +4,7 @@ description: Run Maestro's housekeeping tasks on models that live on your machin
 icon: hard-drive
 ---
 
-Maestro does a lot of small model work besides your agents' own turns: it names new tabs, writes context summaries, turns a plain-English request into a shell command, and more. By default most of that runs through the **Utility Agent**, an ordinary agent spawn. **Local Models** lets you point each of those jobs somewhere else: a small model Maestro downloads and runs itself, or a model server you already run, such as Ollama or LM Studio. A model on one of those can also be the model behind one of your agents: see [Run on](#run-on).
+Maestro does a lot of small model work besides your agents' own turns: it names new tabs, writes context summaries, turns a plain-English request into a shell command, and more. By default most of that runs through the **Utility Agent**, an ordinary agent spawn. **Local Models** lets you point each of those jobs somewhere else: a small model Maestro downloads and runs itself, or a model server you already run, such as Ollama or LM Studio. A model on one of those can also be the model behind one of your agents: see [Model source](#model-source).
 
 Open it from **Settings -> Models**, or run **Open Models Settings** from the command palette. From a terminal, `maestro-cli open settings --tab models` opens it, and `--sub-tab system-one` (or `overview`, `library`, `sources`, `system-two`, `gateway`) lands on one of its panels. A Library section takes a path: `--sub-tab library/speech` (or `library/engines`, `library/agents`, `library/housekeeping`, `library/search`, `library/custom`). The old name still works: `--tab local-models` opens the same tab. It is a core part of Maestro, not an Encore Feature, and it starts empty. The whole tab also works from the web interface: downloads, endpoints, the model server, System One, and every task run on the computer running Maestro, whichever screen you press the button on. Two controls stay in the desktop app: the model server key's **Copy** and VoiceStudio's **Check connection** (see [Sources in the web interface](#sources-in-the-web-interface)). The fit labels and the **Memory** tile describe that computer too, not the device the browser runs on, and download progress shows on every screen that has the tab open.
 
@@ -48,7 +48,7 @@ Below that line is a strip of sections, one shown at a time. **Cmd+[** and **Cmd
 | Section             | What it lists                                                                                                          |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | **Engines**         | The [engines](#engines) that run the models. First, because no model runs without one.                                 |
-| **Agent Models**    | Text models strong enough to be the model behind an agent. Pick one as an agent's [Run on](#run-on) target.            |
+| **Agent Models**    | Text models strong enough to be the model behind an agent. Pick one as an agent's [model source](#model-source).       |
 | **Housekeeping**    | Smaller text models for Maestro's own tasks: tab names, summaries, shell commands, fast yes or no answers, and images. |
 | **Speech**          | Speech-to-text, text-to-speech, and the wake word, for voice and dictation. One card per kind.                         |
 | **Search & Safety** | Embeddings for search by meaning, and the classifiers that screen text for prompt injection. One card per kind.        |
@@ -87,7 +87,7 @@ A text model is listed once: in **Agent Models** when it can drive an agent, oth
 
 The text models are all Apache-2.0. The licenses of the others are under [Licenses](#licenses).
 
-**Agent Models** is not a claim from a model card. A model is in that section only after it fixed a bug in a scratch repository through a real harness (Claude Code, Codex, or OpenCode driving the model), and its **Agent-ready** badge names the harnesses it passed with ("Agent-ready: Claude Code, Codex"). That is what makes it a safe [Run on](#run-on) target: the agent keeps its harness and its tools, and the model behind it is the local one.
+**Agent Models** is not a claim from a model card. A model is in that section only after it fixed a bug in a scratch repository through a real harness (Claude Code, Codex, or OpenCode driving the model), and its **Agent-ready** badge names the harnesses it passed with ("Agent-ready: Claude Code, Codex"). That is what makes it a safe [model source](#model-source): the agent keeps its harness and its tools, and the model behind it is the local one.
 
 Each row shows what the model is good at, its size, the repo and revision it comes from, its license, where its files are on disk, and what uses it right now ("In use by ..."): the tasks assigned to it, and the A Cappella voice slot when voice uses it. A status badge says **Not installed**, **Downloading**, **Verifying**, **Paused**, **Installed**, or **Corrupt**. A model this build cannot run shows the reason in place of a **Download** button.
 
@@ -904,7 +904,8 @@ The Maestro model server shares the models in your Library over HTTP, so an agen
 
 The card is on **Models -> Sources**, below the endpoints. It is a core part of Maestro, not an Encore Feature, and it has no shortcut; Settings search finds **Model server**. The card shows the state (**Stopped**, **Starting**, **Running**, **Restarting**, **Stopping**, or **Failed**), the build in use and what it **Runs on** (for example **Metal**, **Vulkan (NVIDIA ...)**, or **CPU**), the address, the key, and the models loaded now with the memory their weights take. `maestro-cli models server status` prints the same, plus the log path, and exits non-zero when the server is **Failed**.
 
-- **It never starts on its own.** Press **Start** (`maestro-cli models server start`, which waits until the server answers). It also starts when something you turned on needs it, such as a task you assigned to it. It stops when you press **Stop** (`maestro-cli models server stop`) and when Maestro quits. **Start** stays disabled until the engine is installed, and a start with no text model downloaded is refused: "No text model is downloaded for the Maestro model server to serve. Download one in Settings > Models > Library."
+- **It starts when you choose it.** Press **Start** (`maestro-cli models server start`, which waits until the server answers). It also starts when something you turned on needs it, such as a task you assigned to it. It stops when you press **Stop** (`maestro-cli models server stop`) and when Maestro quits.
+- **A server you started comes back.** **Start** turns on **Start with Maestro** and **Stop** turns it off, so a server you left running starts again the next time Maestro starts. A server that only a task started does not. Change it with the **Start with Maestro** switch, or `maestro-cli models server set --start-on-launch on|off`. A launch start that fails leaves the server **Failed** with its reason on the card, the same as a failed **Start**. **Start** stays disabled until the engine is installed, and a start with no text model downloaded is refused: "No text model is downloaded for the Maestro model server to serve. Download one in Settings > Models > Library."
 - **Install the engine first.** Under **Hosting engine (llama-server)**, pick a build in **Engine build** and press **Install hosting engine** (**Install again** once one is installed). This is a separate install from the llama.cpp engine in **Models -> Library -> Engines**; both use the same downloaded model files. The default build is Metal on an Apple Silicon Mac, CPU on an Intel Mac, and Vulkan on Windows and Linux, which runs on any GPU vendor. Windows and Linux also offer the CPU build, and on x64 the CUDA and ROCm builds; those are large downloads and need a matching driver. Progress shows on the card in every window. A running server keeps serving while a new build installs, then restarts on it. (`maestro-cli models server set --build default|cpu|cuda|rocm`)
 - **The card says what the build runs on.** After an install Maestro checks the build on this computer. If it finds no GPU, only a software renderer, or the Vulkan loader missing, the card says so and offers **Install the CPU build**. Maestro never swaps a build without telling you. A build older than the one Maestro expects shows "This build is older than the one Maestro expects. Install it again to update it."
 - **The port is chosen once and kept.** The **Address** row shows `http://127.0.0.1:<port>` with a **Copy address** button; before the first start it says the port is chosen then. An address you gave a harness keeps working across restarts. If another program holds the port, the start fails and names the address; the server does not move.
@@ -929,7 +930,7 @@ Choose Network only on a network you trust. The key travels in clear text over p
 
 ### Point a harness at it by hand
 
-To make one of your agents use the server, set its [Run on](#run-on) target: Maestro then sets the variables and arguments below for you, on every launch. Do it by hand only for a harness that Maestro does not run. Read the address with `maestro-cli models server status` and the key with `maestro-cli models server key`, then use the model's catalog id (for example `qwen3-1.7b-instruct-q4km`) as the model name.
+To make one of your agents use the server, set its [model source](#model-source): Maestro then sets the variables and arguments below for you, on every launch. Do it by hand only for a harness that Maestro does not run. Read the address with `maestro-cli models server status` and the key with `maestro-cli models server key`, then use the model's catalog id (for example `qwen3-1.7b-instruct-q4km`) as the model name.
 
 ```bash
 # Claude Code
@@ -990,29 +991,31 @@ The last section of **Models -> Sources** points Maestro at VoiceStudio, a speec
 
 From a terminal, set the same fields with `maestro-cli settings set acappella.voiceStudio.baseUrl <url>`, `acappella.voiceStudio.engine <id>`, and `acappella.voiceStudio.seed <n>`. They are checked by the same rules as the card.
 
-## Run on
+## Model source
 
-**Run on** keeps an agent's provider CLI and changes the model behind it. The agent is still Claude Code, Codex, OpenCode, or Copilot CLI. Its tool loop, permission prompts, transcripts and Maestro's session handling are the same. Only the model that answers changes, from the provider's cloud model to a model on one of your [sources](#endpoints): the [Maestro model server](#model-server), a server you run (Ollama, LM Studio), or a cloud endpoint you added.
+**Model source** keeps an agent's provider CLI and changes the model behind it. The agent is still Claude Code, Codex, OpenCode, or Copilot CLI. Its tool loop, permission prompts, transcripts and Maestro's session handling are the same. Only the model that answers changes, from the provider's cloud model to a model on one of your [sources](#endpoints): the [Maestro model server](#model-server), a server you run (Ollama, LM Studio), or a cloud endpoint you added.
 
-Set it in the agent's **Models** tab, in **New Agent** or **Edit Agent**. **Group Settings -> Models** has the same field without **Test**: the target is copied onto each agent created in the group. The picker lists **Provider (default)**, then the models of each source, grouped by source. The Maestro model server comes first and lists the models you have installed. A saved source is listed only while it is enabled. Opening the tab starts nothing: the server's list comes from disk and the server is never started for it, and each enabled saved source is asked for its models.
+Set it with the **Model** field at the top of the agent's **Models** tab, in **New Agent** or **Edit Agent**. One field picks both the model and where it runs: it lists the provider's own models first, under the provider's name, then the models of each source, grouped by source. Pick a provider model to run on the provider; pick a source model to run on that source, and the field shows the source's name beside the model. **Clear** goes back to the provider's default model. **Group Settings -> Models** has the same field without **Test**: the choice is copied onto each agent created in the group. The Maestro model server is the first source and lists the models you have installed. A saved source is listed only while it is enabled. Opening the tab starts nothing: the server's list comes from disk and the server is never started for it, and each enabled saved source is asked for its models.
+
+The model options that used to sit on the **Provider** tab (Model, Effort, Reasoning Summary, Context Window) are all on **Models** now, for every provider. **Provider** keeps the harness: path, arguments, environment, token source, transport and Agent Resilience. The Group Chat moderator's settings have the same **Models** tab, with the Model field and effort; the moderator runs on its provider's own models, so its field lists no sources.
 
 | Control                   | What it does                                                                                                                                                                       |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Run on**                | The model, by source. Each model from the Maestro model server shows its [fit label](#will-it-run-on-this-computer) and **Agent-ready** when it passed with this agent's provider. |
+| **Model**                 | The model, by source. Each model from the Maestro model server shows its [fit label](#will-it-run-on-this-computer) and **Agent-ready** when it passed with this agent's provider. |
 | **Context size (tokens)** | The window the harness is told it has. It starts at the model's context on the server (40,960 for any other source) and cannot be lower than 40,960.                               |
 | **Test**                  | Sends one short, read-only turn through the agent's real launch and shows the reply or the reason it failed.                                                                       |
 
-Under the picker, Maestro says what the launch will do: that a source was removed or is disabled, that a loopback source cannot be reached from the agent's SSH remote, or that the agent's own variable takes precedence. A model without the **Agent-ready** badge shows "Not tested as an agent. Turns may fail or loop."
+Under the Model field, while a source model is chosen, Maestro says what the launch will do: that a source was removed or is disabled, that a loopback source cannot be reached from the agent's SSH remote, or that the agent's own variable takes precedence. A model without the **Agent-ready** badge shows "Not tested as an agent. Turns may fail or loop."
 
 A turn's pill names where it ran, in place of the model: `gpt-oss 20B (MXFP4) · Maestro`, `qwen3:latest · Ollama`.
 
-Before sending, the composer's model pill and the phone options sheet show the effective **Run on** model and source. A source target overrides named provider model choices; change it in **Edit Agent > Models**. Selecting **Auto** shows Auto instead, because routing can choose a different target for the turn.
+Before sending, the composer's model pill and the phone options sheet show the effective **Model source** model and source. A source model overrides named provider model choices; change it in **Edit Agent > Models**. Selecting **Auto** shows Auto instead, because routing can choose a different target for the turn.
 
-The [Usage Dashboard](./usage-dashboard#models)'s **Models** tab has a **Run On Agents** card: one tile per agent whose turns ran on a Run on target, with **Turns**, **Tokens in**, **Tokens out** and **p50 turn**. `maestro-cli stats models` prints the same numbers under **Agents (Run on turns)**.
+The [Usage Dashboard](./usage-dashboard#models)'s **Models** tab has a **Model Source Agents** card: one tile per agent whose turns ran on a model source, with **Turns**, **Tokens in**, **Tokens out** and **p50 turn**. `maestro-cli stats models` prints the same numbers under **Agents (model source turns)**.
 
 ### Which providers can run on a source
 
-Maestro maps a provider only after the recipe ran against the real CLI. A provider without a recipe keeps its picker disabled and says why.
+Maestro maps a provider only after the recipe ran against the real CLI. For a provider without a recipe, the Model field lists only the provider's own models and says why.
 
 | Provider                      | Runs on a source   | How Maestro points it at the source                                                                                                                                                                                                                                                             |
 | ----------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1042,18 +1045,18 @@ An agent on a source keeps to the mode its recipe was measured in. Claude Code r
 - **The Maestro model server starts for the launch.** An agent set to run on it is something you turned on, so its first turn starts the server and loads the model, as an assignment does.
 - **A saved source is asked on every launch.** Maestro reads its model list (5 second budget) to know it answers and serves the model.
 
-| What is wrong                                            | What you see                                                                  | Code                          |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------- |
-| The provider has no recipe                               | The provider's reason, and "Set Run on to Provider to run the agent"          | `run-on-unsupported-provider` |
-| The stored target is not a source and a model            | What is missing. Pick a model again                                           | `run-on-invalid-target`       |
-| The source was removed                                   | "its source (`<id>`) is no longer configured"                                 | `run-on-source-missing`       |
-| The source is disabled                                   | The source's name, and to enable it                                           | `run-on-source-disabled`      |
-| The agent is on an SSH remote and the source is loopback | The remote's name and the address it cannot reach                             | `run-on-loopback-on-remote`   |
-| The source did not answer                                | The source's name and what it said                                            | `run-on-source-unreachable`   |
-| The source does not serve the model                      | The model, and up to five that the source does serve                          | `run-on-model-not-served`     |
-| The Maestro model server could not serve it              | The server's own reason: engine not installed, port in use, not enough memory | `run-on-server-failed`        |
+| What is wrong                                            | What you see                                                                   | Code                          |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------- |
+| The provider has no recipe                               | The provider's reason, and "Set the model source to Provider to run the agent" | `run-on-unsupported-provider` |
+| The stored target is not a source and a model            | What is missing. Pick a model again                                            | `run-on-invalid-target`       |
+| The source was removed                                   | "its source (`<id>`) is no longer configured"                                  | `run-on-source-missing`       |
+| The source is disabled                                   | The source's name, and to enable it                                            | `run-on-source-disabled`      |
+| The agent is on an SSH remote and the source is loopback | The remote's name and the address it cannot reach                              | `run-on-loopback-on-remote`   |
+| The source did not answer                                | The source's name and what it said                                             | `run-on-source-unreachable`   |
+| The source does not serve the model                      | The model, and up to five that the source does serve                           | `run-on-model-not-served`     |
+| The Maestro model server could not serve it              | The server's own reason: engine not installed, port in use, not enough memory  | `run-on-server-failed`        |
 
-Every refusal says how to recover, and every one offers to set Run on to Provider. The same message is what a Cue run, an Auto Run and `maestro-cli send` report.
+Every refusal says how to recover, and every one offers to set the model source to Provider. The same message is what a Cue run, an Auto Run and `maestro-cli send` report.
 
 ### What it covers
 
@@ -1062,7 +1065,7 @@ The target applies to the turns the agent runs: chat, Auto Run, Cue runs, `maest
 <Warning>
 	**Some short jobs still reach the provider.** Tab naming, context grooming, the Group Chat
 	moderator, and the A Cappella voice Conductor are separate spawns, and they do not follow an
-	agent's Run on target. For an agent on a source, the text they read can still reach the
+	agent's model source. For an agent on a source, the text they read can still reach the
 	provider's cloud model. To keep tab naming and summaries on your machine, assign them to a
 	local model on **Models -> System Two**.
 </Warning>
@@ -1073,9 +1076,9 @@ A remote host cannot reach `127.0.0.1` on this machine, so an agent on an SSH re
 
 Over SSH a blank variable is not exported. A provider key that the remote host's own shell profile exports (`ANTHROPIC_API_KEY`, or Copilot CLI's `COPILOT_PROVIDER_BEARER_TOKEN`, `COPILOT_PROVIDER_API_KEY_COMMAND` and `COPILOT_PROVIDER_HEADERS`) is outside what a launch controls.
 
-### Run on and the gateway
+### Model source and the gateway
 
-Run on and the [gateway](#gateway) do not combine. A gateway routes requests to a cloud provider, and an agent on a source sends its requests to the source. While the target is a source, both gateway controls on the Models tab are disabled with that reason. A stored gateway URL stays in the field, and is used again when you set Run on back to Provider. The launch skips the gateway and logs that it did. `maestro-cli update-agent --gateway-url` and `--proxy-mode` are refused for such an agent, but clearing them is allowed.
+A model source and the [gateway](#gateway) do not combine. A gateway routes requests to a cloud provider, and an agent on a source sends its requests to the source. While the target is a source, both gateway controls on the Models tab are disabled with that reason. A stored gateway URL stays in the field, and is used again when you set the model source back to Provider. The launch skips the gateway and logs that it did. `maestro-cli update-agent --gateway-url` and `--proxy-mode` are refused for such an agent, but clearing them is allowed.
 
 ### Which model should I pick?
 
@@ -1100,17 +1103,17 @@ From the command line the test runs on what is stored, so set the target first.
 
 ```bash
 maestro-cli models endpoints list                                           # source ids
-maestro-cli update-agent <agent-id> --run-on maestro-server:<model-id>      # the Maestro model server
-maestro-cli update-agent <agent-id> --run-on <source-id>:qwen3:latest --run-on-context 65536
-maestro-cli update-agent <agent-id> --run-on-context 131072                 # the context alone
+maestro-cli update-agent <agent-id> --model-source maestro-server:<model-id>      # the Maestro model server
+maestro-cli update-agent <agent-id> --model-source <source-id>:qwen3:latest --model-source-context 65536
+maestro-cli update-agent <agent-id> --model-source-context 131072                 # the context alone
 maestro-cli agent test-run-on <agent-id> [--json]                           # one short turn on the stored target
-maestro-cli update-agent <agent-id> --run-on provider                       # back to the provider's model
-maestro-cli create-agent "Local Coder" -d . -t claude-code --run-on maestro-server:<model-id>
-maestro-cli update-group-settings <group-id> --run-on <source-id>:<model> [--run-on-context <tokens>]   # for new agents in the group
+maestro-cli update-agent <agent-id> --model-source provider                       # back to the provider's model
+maestro-cli create-agent "Local Coder" -d . -t claude-code --model-source maestro-server:<model-id>
+maestro-cli update-group-settings <group-id> --model-source <source-id>:<model> [--model-source-context <tokens>]   # for new agents in the group
 maestro-cli show agent <agent-id> --json   # runOn, runOnSpec, runOnLabel, runOnProblem
 ```
 
-`show agent` without `--json` prints a `Run on:` line with the target and its context, or the reason the stored target cannot be used.
+`show agent` without `--json` prints a `Model source:` line with the target and its context, or the reason the stored target cannot be used.
 
 A target is written `provider` or `<source id>:<model>`. The source id ends at the first colon, so a model name may hold one. `maestro-server` is the Maestro model server; other ids are in `models endpoints list`. A source id that names nothing, a provider with no recipe, and a context under 40,960 are refused at the write. Whether the source serves the model is not asked at the write: `agent test-run-on` asks. A disabled source is accepted and is refused by name at launch until you enable it.
 
@@ -1120,14 +1123,14 @@ Two rules for what changes around a target. Switching an agent's provider keeps 
 
 A **tier** says how much model a job needs: `low`, `medium` or `high`. An Auto Run task asks for one with `<!-- MAESTRO:MODEL tier="low" -->` (see [Model Tier and Effort](./autorun-playbooks#model-tier-and-effort)), and a Cue subscription with `tier: low`. Maestro turns the tier into a model when the task launches.
 
-Run on gives an agent one target. Tiers let one agent use several: a `low` task can launch on a model on this machine, and the next `high` task on the provider. A switch happens only between tasks, because each task is a new process.
+A model source gives an agent one target. Tiers let one agent use several: a `low` task can launch on a model on this machine, and the next `high` task on the provider. A switch happens only between tasks, because each task is a new process.
 
 A tier's **target** is one of two things:
 
-| Target              | Spelling                          | What launches                                                                      |
-| ------------------- | --------------------------------- | ---------------------------------------------------------------------------------- |
-| A provider model    | `provider:<model>`, or `provider` | The provider's own model. `provider` alone means the agent's own model             |
-| A model on a source | `<source id>:<model>`             | The same harness, running on that model, as if the agent's Run on target were that |
+| Target              | Spelling                          | What launches                                                                     |
+| ------------------- | --------------------------------- | --------------------------------------------------------------------------------- |
+| A provider model    | `provider:<model>`, or `provider` | The provider's own model. `provider` alone means the agent's own model            |
+| A model on a source | `<source id>:<model>`             | The same harness, running on that model, as if the agent's model source were that |
 
 ### Where a tier's target comes from
 
@@ -1148,7 +1151,7 @@ Every surface that shows a tier also shows which layer it came from: **Agent**, 
 **Settings -> Models -> System Two -> Tier defaults** has one row per installed harness that can select a model, with a picker for each of `low`, `medium` and `high`, and the layer beside each value. A picker lists what that harness can run on this computer:
 
 - the harness's own list of models (Maestro reads it from the harness, for example Codex's model cache or `opencode models`), and
-- every [Run on](#run-on) target the harness can use: the Maestro model server and each enabled source.
+- every [model source](#model-source) the harness can use: the Maestro model server and each enabled source.
 
 Opening System Two reads those lists. Nothing is written until you press **Save** on a row, because a document has to resolve the same way until you change it.
 
@@ -1165,12 +1168,12 @@ A value the harness no longer lists is flagged on its row, with the model **Sugg
 
 ### Per agent
 
-**Edit Agent -> Models -> Tiers** has one picker per tier. The first choice is **Harness default (`<value>`)**, which follows the table above. The others are the same targets the Tier defaults table offers. Tiers save with the dialog, like Run on. Switching an agent's provider starts its tiers over, because a tier names a model. New Agent has no Tiers block: a new agent follows the harness defaults, and you can edit it afterwards. **Group Settings -> Models -> Tiers** has the same pickers, and copies them onto each agent created in the group.
+**Edit Agent -> Models -> Tiers** has one picker per tier. The first choice is **Harness default (`<value>`)**, which follows the table above. The others are the same targets the Tier defaults table offers. Tiers save with the dialog, like the model source. Switching an agent's provider starts its tiers over, because a tier names a model. New Agent has no Tiers block: a new agent follows the harness defaults, and you can edit it afterwards. **Group Settings -> Models -> Tiers** has the same pickers, and copies them onto each agent created in the group.
 
 ### The rules
 
 - **A tier that names a target that cannot run fails the task by name.** The task does not start, and it does not fall through to the next layer or to the provider. A layer you wrote is never replaced by one you did not.
-- **The built-in table does not apply to an agent that runs on a source.** The table names the provider's cloud models, and sending that agent there is the spend Run on is meant to prevent. Such an agent keeps its own Run on target, and the task says the tier was ignored. A tier you set on the agent or in the harness default does move it.
+- **The built-in table does not apply to an agent that runs on a source.** The table names the provider's cloud models, and sending that agent there is the spend a model source is meant to prevent. Such an agent keeps its own model source, and the task says the tier was ignored. A tier you set on the agent or in the harness default does move it.
 - **A source target launches at the default context**, 40,960 tokens. The tiers have no context field.
 - **The pill names the target.** An Auto Run marker reads `low · qwen3.5-4b · Maestro` or `high · opus`. A tier no layer maps keeps the plain `low model`.
 - **Auto Run splits a document where the model or the place changes.** A `low` task on the Maestro model server and a `high` task on the provider run as two dispatches.
@@ -1319,7 +1322,7 @@ maestro-cli models assign model-routing endpoint:<endpoint>:<model>     # a judg
 maestro-cli models assign model-routing system-one                      # the System One engine in force
 maestro-cli models assign model-routing off
 
-maestro-cli update-agent <agent-id> --model auto       # as the Provider tab's picker; refused where Auto would change nothing
+maestro-cli update-agent <agent-id> --model auto       # as the Models tab's picker; refused where Auto would change nothing
 maestro-cli tab model <tab-id> auto                    # the composer's choice, for one tab
 maestro-cli send <agent> "<message>" --model auto      # route this one turn
 maestro-cli s1 route "<prompt>" [--agent <id>] [--json]  # a dry run: tier, effort, router, latency. Sends nothing
@@ -1365,7 +1368,7 @@ Maestro maps a provider only after a test proves its CLI reads the setting: the 
 
 Maestro does not check a setting you make yourself in an agent's environment variables or a provider's config file.
 
-A gateway sends an agent's requests to its cloud provider by another route. To send them to a model on another server instead, use [Run on](#run-on). The two do not combine: while an agent's Run on target is a source, its gateway is not applied, and the field says "Not applied while Run on is a source".
+A gateway sends an agent's requests to its cloud provider by another route. To send them to a model on another server instead, set a [model source](#model-source). The two do not combine: while an agent's model source is a Local Models source, its gateway is not applied, and the field says "Not applied while the model source is a Local Models source".
 
 Under the field a line says what happens at the next start: "Sets `<variable>` when this agent starts." for Claude Code and Codex, "Adds the gateway to `OPENCODE_CONFIG_CONTENT` when this agent starts." for OpenCode. A URL must be `http://` or `https://` with a host and no query or fragment; a trailing slash is removed. A blank field, or `none` on the command line, clears it. Setting a gateway URL of your own also clears the agent's Maestro proxy mode, Retrieval, and Background requests target.
 
@@ -1409,7 +1412,7 @@ The proxy listens on `127.0.0.1` only, on one port for every provider. It starts
 
 - Choosing a default moves every agent that follows the current one, and leaves the overrides alone. The status line says how many agents moved. New agents start on the default.
 - The table under **Overrides** lists only the overrides, never the agents that follow the default, so it stays short however many agents you have. **Add override** puts an agent in the table so you can change its mode or gateway. The **X** on a row puts that agent back on the default: a gateway of your own is cleared, then the default is applied.
-- Agents on an SSH remote, agents whose Run on is a source, and agents whose provider has no gateway cannot use the proxy. They go direct, the section says how many there are, and they are listed only when they have a gateway of their own.
+- Agents on an SSH remote, agents whose model source is a Local Models source, and agents whose provider has no gateway cannot use the proxy. They go direct, the section says how many there are, and they are listed only when they have a gateway of their own.
 - If an agent cannot be moved (for example, an OpenCode agent whose model names no `anthropic/` or `openai/` provider), it keeps its routing, shows in the table as an override, and a toast names it.
 - A worktree agent takes its parent's settings. If the default cannot be set on a new agent, a toast says **Proxy default was not applied** with the agent's name and the reason, and the agent stays off the proxy.
 
@@ -1493,7 +1496,7 @@ The agent's main loop never changes model in the middle of a session. A routed r
 - **The provider's credentials never go to the target.** A routed request carries the target's key as a bearer token. The client's `Authorization`, `x-api-key` and `cookie` headers are removed from it.
 - **Nothing starts for a turn.** The target is looked up, and the Maestro model server started, only for a request already decided to be a background request.
 - **A model that thinks makes a page take a minute.** The request states no thinking setting, so the server applies the model's own template, and a thinking model reasons first. Pick a model that answers without thinking.
-- **The target leaves with the proxy.** Turning the proxy mode Off, setting another gateway URL, or switching the agent's provider clears the background target. An agent whose [Run on](#run-on) is a source is not on the proxy, so it cannot have one.
+- **The target leaves with the proxy.** Turning the proxy mode Off, setting another gateway URL, or switching the agent's provider clears the background target. An agent whose [model source](#model-source) is a Local Models source is not on the proxy, so it cannot have one.
 
 **What a session showed.** Measured on Claude Code 2.1.296 with a three-turn session (a build log, a fetched page, a one word reply) and Qwen3.5 4B on the Maestro model server:
 
@@ -1524,7 +1527,7 @@ A downloaded model runs inside Maestro, so the text it reads never leaves your m
 
 An endpoint at any other address is a network service. Text sent to it leaves this machine, the same as text sent to an agent's provider. Point a task at a remote endpoint only if you would send that text there yourself.
 
-An agent set to [Run on](#run-on) a source sends it the whole conversation: your prompts, the files the agent reads, and every tool result. A model on this machine keeps that text here. A cloud endpoint, or a server at another address, receives it, so choose one only if you would send that text there yourself.
+An agent whose [model source](#model-source) is a Local Models source sends it the whole conversation: your prompts, the files the agent reads, and every tool result. A model on this machine keeps that text here. A cloud endpoint, or a server at another address, receives it, so choose one only if you would send that text there yourself.
 
 [System One](#system-one) on Jev sends the text of each request (a Cue event, for the Cue gate) to TypeSafe, and on OpenJev to the server you named. Secrets are removed first. The local judge sends it to the model assigned to the Local judge task, which is on this machine unless that task is on a remote endpoint. System One is off until you choose an engine.
 

@@ -56,7 +56,7 @@ import {
 export interface GroupDefaultsPatchContext {
 	/** Expands `~` in an additional directory the profile already holds. */
 	homeDir?: string;
-	/** The saved sources, so a Run on or tier target that names none is refused. */
+	/** The saved sources, so a model source or tier target that names none is refused. */
 	endpoints?: readonly LocalModelEndpoint[];
 	/** The harness tier defaults, so `auto` is refused where it would change nothing. */
 	harnessTierDefaults?: HarnessTierDefaults | null;
@@ -86,7 +86,7 @@ const PROVIDER_BOUND_KEYS: Readonly<Record<string, string>> = {
 	maestroPMode: '--token-source',
 	maestroPPath: '--maestro-p-path',
 	codexTransport: '--codex-transport',
-	runOn: '--run-on',
+	runOn: '--model-source',
 	tierTargets: '--tier',
 	backgroundRequests: '--background-requests',
 	gatewayUrl: '--gateway-url',
@@ -403,7 +403,7 @@ export function applyGroupDefaultsPatch(
 	}
 
 	// `auto` is stored as the word, and only where it can act, judged against
-	// the tiers and Run on target this patch leaves the profile with.
+	// the tiers and model source this patch leaves the profile with.
 	if (isAutoModel(form.customModel) && toolType) {
 		const problem = autoModelProblem(
 			{ toolType, tierTargets: form.tierTargets, runOn: form.runOn },

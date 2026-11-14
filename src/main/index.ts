@@ -235,7 +235,11 @@ import { refreshSemanticIndexer, stopSemanticIndexer } from './local-models/sema
 import { startSemanticIndex } from './local-models/semantic-index-startup';
 import { configureTabCleanup } from './local-models/tab-cleanup';
 import { configureTokenProxy, syncTokenProxy } from './local-models/proxy/service';
-import { configureModelServer, stopModelServerNow } from './local-models/server/supervisor';
+import {
+	configureModelServer,
+	resumeModelServerAtLaunch,
+	stopModelServerNow,
+} from './local-models/server/supervisor';
 import { configureAgentSystemOne } from './local-models/system-one/agent-service';
 import { configureSystemOne } from './local-models/system-one/service';
 import { configureAgentRunOn } from './local-models/run-on';
@@ -4258,9 +4262,11 @@ app
 		});
 		void syncTokenProxy();
 
-		// The model server never starts itself: only Start, or a feature the user
-		// turned on that needs it. Wiring it starts nothing; app quit stops it.
+		// The model server starts only because the user chose it: Start, a feature
+		// they turned on that needs it, or having left it on when Maestro last ran
+		// (Start records that, Stop clears it). App quit stops it.
 		configureModelServer({ safeSend });
+		void resumeModelServerAtLaunch();
 
 		// System One is off until the user chooses an engine. Wiring it reads no
 		// key and sends nothing: only a task assigned to it, or Test, asks.

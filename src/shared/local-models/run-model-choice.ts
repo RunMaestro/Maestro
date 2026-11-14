@@ -12,16 +12,16 @@
  * both, fit label and "Agent-ready" badge included.
  *
  * What a choice launches ({@link runModelChoiceLaunch}) is the run's model and
- * Run on target, as `BatchRunConfig.model` / `runOn` carry them:
+ * model source, as `BatchRunConfig.model` / `runOn` carry them:
  *
  * - The agent's default, or the agent's own source and model: nothing. The run
  *   takes whatever the agent is set to.
  * - A provider model on an agent that runs on a source: that model, AND the
  *   provider as the run's target. Without the target the launch would replace
- *   the model with the source's (Run on rule 4) and the pick would do nothing.
+ *   the model with the source's (model source rule 4) and the pick would do nothing.
  * - A source model: that target, with the context the agent already gives it
  *   when it is the agent's own source and model, else what the source reports
- *   (`namedRunOnContextTokens`, the rule `--run-on` follows).
+ *   (`namedRunOnContextTokens`, the rule `--model-source` follows).
  */
 
 import { getAgentDisplayName } from '../agentMetadata';
@@ -51,7 +51,7 @@ export const RUN_MODEL_DEFAULT_SPEC = TIER_TARGET_DEFAULT_SPEC;
 export interface RunModelAgent {
 	toolType: string;
 	customModel?: string;
-	/** The agent's stored Run on target, as data. */
+	/** The agent's stored model source, as data. */
 	runOn?: unknown;
 }
 

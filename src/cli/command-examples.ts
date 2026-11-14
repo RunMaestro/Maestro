@@ -214,7 +214,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'auto-run': [
 		'maestro-cli auto-run ./phase-01.md ./phase-02.md --agent <agent-id> --launch',
 		'maestro-cli auto-run ./phase-01.md --agent <agent-id> --save-as "Release prep"',
-		'maestro-cli auto-run ./phase-01.md --agent <agent-id> --launch --run-on <source-id>:<model>',
+		'maestro-cli auto-run ./phase-01.md --agent <agent-id> --launch --model-source <source-id>:<model>',
 	],
 	'stop-auto-run': ['maestro-cli stop-auto-run --agent <agent-id>'],
 	'resume-auto-run': ['maestro-cli resume-auto-run --agent <agent-id>'],
@@ -287,7 +287,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	// Agents and groups
 	'create-agent': [
 		'maestro-cli create-agent "API Worker" --cwd ~/code/api --type claude-code --group <group-id>',
-		'maestro-cli create-agent "Local Coder" --cwd . --run-on maestro-server:<model-id>',
+		'maestro-cli create-agent "Local Coder" --cwd . --model-source maestro-server:<model-id>',
 	],
 	'create-group': ['maestro-cli create-group "Backend" --emoji "🛠️" --color "#9146FF"'],
 	'remove-group': ['maestro-cli remove-group <group-id> --force'],
@@ -314,7 +314,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'update-agent': [
 		'maestro-cli update-agent <agent-id> --model opus --effort high',
 		'maestro-cli update-agent <agent-id> --provider codex --convert --accept-translation-limitations',
-		'maestro-cli update-agent <agent-id> --run-on maestro-server:<model-id> --run-on-context 65536',
+		'maestro-cli update-agent <agent-id> --model-source maestro-server:<model-id> --model-source-context 65536',
 		'maestro-cli update-agent <agent-id> --peer docs-agent:r --remove-peer legacy-agent',
 	],
 	'agent test-run-on': ['maestro-cli agent test-run-on <agent-id> --json'],
@@ -572,7 +572,10 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'models server status': ['maestro-cli models server status --json'],
 	'models server start': ['maestro-cli models server start'],
 	'models server stop': ['maestro-cli models server stop'],
-	'models server set': ['maestro-cli models server set --bind local --max-models 2'],
+	'models server set': [
+		'maestro-cli models server set --bind local --max-models 2',
+		'maestro-cli models server set --start-on-launch off',
+	],
 	'models server key': ['maestro-cli models server key'],
 	'models tiers list': ['maestro-cli models tiers list --harness claude-code'],
 	'models tiers options': ['maestro-cli models tiers options claude-code --refresh'],

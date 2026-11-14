@@ -164,7 +164,7 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void | Pr
 			{ sshEnabled: agent.sessionSshRemoteConfig?.enabled === true }
 		);
 
-		// Where the agent's model runs (the Models tab's Run on picker). An agent
+		// Where the agent's model runs (the Models tab's model source picker). An agent
 		// with no stored target runs on its provider's model, which is a value, not
 		// an unset field. A stored target that cannot be read is reported as it is
 		// stored, with the reason: every launch of that agent is refused for it.
@@ -249,8 +249,8 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void | Pr
 			// Retrieval (settable with `update-agent --proxy-retrieval on|off`).
 			// False is the default: the model has no retrieve tool.
 			tokenProxyRetrieval: agent.tokenProxyRetrieval === true,
-			// Run on (settable with `update-agent --run-on` / `--run-on-context`).
-			// `runOnSpec` is the spelling `--run-on` takes, so a read can be written
+			// Model source (settable with `update-agent --model-source` / `--model-source-context`).
+			// `runOnSpec` is the spelling `--model-source` takes, so a read can be written
 			// back; `runOnLabel` is the target as the desktop names it.
 			runOn: runOn.ok ? runOn.target : (agent.runOn ?? null),
 			runOnSpec: runOn.ok ? formatRunOnSpec(runOn.target) : null,

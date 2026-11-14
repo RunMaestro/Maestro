@@ -1,7 +1,7 @@
 /**
- * Run on, in a process that can reach the sources.
+ * Model source, in a process that can reach the sources.
  *
- * `resolveRunOnLaunch` (shared) decides what an agent's Run on target does to a
+ * `resolveRunOnLaunch` (shared) decides what an agent's model source does to a
  * launch from data it is handed. This module hands it that data: the source's
  * record, its key, and the answer to "can this source serve the model right
  * now". Every spawn surface goes through it, so none can send a turn to the
@@ -92,7 +92,7 @@ export interface AgentRunOnDeps {
 
 let deps: AgentRunOnDeps | null = null;
 
-/** Point Run on at this process's stores and model server. Starts nothing. */
+/** Point the model source lookup at this process's stores and model server. Starts nothing. */
 export function configureAgentRunOn(next: AgentRunOnDeps): void {
 	deps = next;
 }
@@ -107,7 +107,7 @@ function requireDeps(): AgentRunOnDeps {
 		// A programming error, and one that must not be survivable: carrying on
 		// would run the agent on its provider's model.
 		throw new Error(
-			'An agent with a Run on target was launched before configureAgentRunOn() was called.'
+			'An agent with a model source was launched before configureAgentRunOn() was called.'
 		);
 	}
 	return deps;
@@ -181,7 +181,7 @@ function servedDetail(models: readonly EndpointModel[]): string {
 }
 
 /**
- * Look an agent's Run on target up and make sure its source can serve the
+ * Look an agent's model source up and make sure its source can serve the
  * model: the step every launch takes before it is planned. `none` for an agent
  * on its provider's model, which costs one parse and reads no store.
  */
@@ -198,7 +198,7 @@ export async function prepareAgentRunOn(
 			target: request.target as RunOnTarget,
 		});
 		if (refusal.kind === 'refused') return refusal;
-		throw new Error('A malformed Run on target was not refused.');
+		throw new Error('A malformed model source was not refused.');
 	}
 	if (parsed.target.type === 'provider') return { kind: 'none' };
 	const target = parsed.target;
@@ -218,7 +218,7 @@ export async function prepareAgentRunOn(
 	if (checked.kind !== 'inject' || !known) {
 		// A source target is injected or refused. Anything else is a bug, and it
 		// must not read as "runs on the provider".
-		throw new Error('A Run on source target resolved to neither a launch nor a refusal.');
+		throw new Error('A model source naming a source resolved to neither a launch nor a refusal.');
 	}
 
 	const support = agentRunOnSupport(request.toolType);
@@ -391,7 +391,7 @@ export type SpawnRunOnResult =
 	| { ok: false; error: string };
 
 /**
- * Apply an agent's Run on target to a spawn that does not build a launch plan
+ * Apply an agent's model source to a spawn that does not build a launch plan
  * (a Group Chat participant, a cross-agent consult). The same steps the
  * plan-based paths take, in one call so a new spawn site cannot do half of
  * them: read the agent's stored target, make sure its source can serve the
@@ -400,7 +400,7 @@ export type SpawnRunOnResult =
  * the spawn with; it never falls back to the provider's model.
  *
  * When `runOn` comes back set, the caller must NOT apply the agent's gateway
- * (`applyAgentGatewayToSpawn`): a Run on target takes its place.
+ * (`applyAgentGatewayToSpawn`): a model source takes its place.
  */
 export async function applyAgentRunOnToSpawn(input: SpawnRunOnInput): Promise<SpawnRunOnResult> {
 	const unchanged: SpawnRunOnResult = {
@@ -428,7 +428,7 @@ export async function applyAgentRunOnToSpawn(input: SpawnRunOnInput): Promise<Sp
 	if (resolved.kind !== 'inject') {
 		// As in prepareAgentRunOn: a prepared source target never resolves to
 		// nothing, and must not be spawned as if it had.
-		throw new Error('A prepared Run on target resolved to neither a launch nor a refusal.');
+		throw new Error('A prepared model source resolved to neither a launch nor a refusal.');
 	}
 
 	const applied = applyRunOnToLaunch({
@@ -466,7 +466,7 @@ export function logRunOnLaunch(
 	launch: { sessionId: string; toolType: string },
 	runOn: LaunchPlanRunOn
 ): void {
-	logger.info(`Running ${launch.toolType} on ${runOn.model} (Run on)`, logContext, {
+	logger.info(`Running ${launch.toolType} on ${runOn.model} (model source)`, logContext, {
 		sessionId: launch.sessionId,
 		model: runOn.model,
 		contextTokens: runOn.contextTokens,

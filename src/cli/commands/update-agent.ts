@@ -81,8 +81,8 @@ interface UpdateAgentOptions extends PeerFlagOptions, AgentSettingFlagOptions, S
 	provider?: string;
 	convert?: boolean;
 	force?: boolean;
-	runOn?: string;
-	runOnContext?: string;
+	modelSource?: string;
+	modelSourceContext?: string;
 	dryRun?: boolean;
 	acceptTranslationLimitations?: boolean;
 	migration?: 'plan' | 'apply' | 'status' | 'recover' | 'rollback';
@@ -115,9 +115,10 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		failFromError(error, options.json);
 	}
 
-	// `--run-on` / `--run-on-context` are read once the agent is: the target is
+	// `--model-source` / `--model-source-context` are read once the agent is: the target is
 	// checked against the agent's provider and builds on the target it has.
-	const runOnFlagsPresent = options.runOn !== undefined || options.runOnContext !== undefined;
+	const runOnFlagsPresent =
+		options.modelSource !== undefined || options.modelSourceContext !== undefined;
 
 	if (
 		options.group === undefined &&
@@ -130,7 +131,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		options.migration === undefined
 	) {
 		failCommand(
-			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --env-park, --additional-dir, --retry-on-availability, --gateway-url, --proxy-mode, --proxy-retrieval, --run-on, --tier, --background-requests, --system-one, --peer, --group-peers). Run "maestro-cli update-agent --help" for the full list.',
+			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --env-park, --additional-dir, --retry-on-availability, --gateway-url, --proxy-mode, --proxy-retrieval, --model-source, --tier, --background-requests, --system-one, --peer, --group-peers). Run "maestro-cli update-agent --help" for the full list.',
 			options.json
 		);
 	}
@@ -204,8 +205,8 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		configPatch.gatewayUrl = edit.gatewayUrl;
 	}
 
-	// `--run-on provider|<source id>:<model>` and `--run-on-context <n>`: the
-	// Models tab's Run on picker and its context field. Read into the target the
+	// `--model-source provider|<source id>:<model>` and `--model-source-context <n>`: the
+	// Models tab's model source picker and its context field. Read into the target the
 	// picker would store, with the provider and the saved sources checked, so the
 	// CLI cannot store a target every launch would refuse. `provider` clears it
 	// (`null` on the wire). The app runs the same check before it writes.
@@ -254,7 +255,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 
 	// `--model auto`: the Auto choice of the Provider tab's model picker. It is
 	// stored as the word, and only for an agent Auto can act on, judged against
-	// the tiers and the Run on target this same call leaves it with. The picker
+	// the tiers and the model source this same call leaves it with. The picker
 	// does not offer an Auto that would change nothing; the CLI refuses it by
 	// name. The app runs the same check before it writes.
 	if (configPatch !== undefined && isAutoModel(configPatch.customModel)) {
@@ -620,7 +621,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			gatewayUrl: 'Gateway URL',
 			tokenProxyMode: 'Token proxy mode',
 			tokenProxyRetrieval: 'Retrieval',
-			runOn: 'Run on',
+			runOn: 'Model source',
 			tierTargets: 'Tiers',
 			backgroundRequests: 'Background requests',
 			systemOneOptOut: 'System One',

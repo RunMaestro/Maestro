@@ -8,11 +8,11 @@
  * - `modelOptions`: the provider's models, with Auto after the leading default
  *   entry when Auto can act on this agent (`useAutoModelChoice`).
  * - `autoModelTitle`: Auto's tooltip (which axes it acts on, who decides).
- * - `runOn`: where the model runs when a Run on target replaces the named
+ * - `runOn`: where the model runs when a model source replaces the named
  *   model, or undefined while Auto is picked (Auto chooses the target).
  *
  * `agent` is the tab's projection of the agent (`projectTabProvider`), so a tab
- * pinned to another provider, or carrying its own Run on, is what is shown.
+ * pinned to another provider, or carrying its own model source, is what is shown.
  */
 
 import { useMemo } from 'react';

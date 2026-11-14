@@ -215,8 +215,8 @@ export function resolveTierModel(toolType: ToolType, tier: ModelTier): string | 
 }
 
 /**
- * Where one tier launches: a model on the harness's own provider, or a Run on
- * target (`shared/local-models/run-on.ts`).
+ * Where one tier launches: a model on the harness's own provider, or a model
+ * source (`shared/local-models/run-on.ts`).
  *
  *   - `provider-model` with a `model`: the provider, on that model.
  *   - `provider-model` with no `model`, or `provider`: the provider, on the
@@ -250,7 +250,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /**
  * Read one stored target and put it in the form that is stored: trimmed, with
  * no unknown keys. A source goes through `parseRunOnTarget`, so a tier cannot
- * hold a source a Run on launch would refuse as malformed.
+ * hold a source a model source launch would refuse as malformed.
  */
 export function parseTierTarget(value: unknown): TierTargetParse {
 	if (!isPlainObject(value)) {
@@ -321,7 +321,7 @@ export function parseHarnessTierDefaults(value: unknown): HarnessTierDefaults {
 export interface TierRouting {
 	/** The agent's own targets (`tierTargets` on its record). */
 	tierTargets?: TierTargets | null;
-	/** The agent's own Run on target (`runOn` on its record), as stored. */
+	/** The agent's own model source (`runOn` on its record), as stored. */
 	runOn?: unknown;
 	/** The `harnessTierDefaults` setting. */
 	harnessDefaults?: HarnessTierDefaults | null;
@@ -342,7 +342,7 @@ export interface TierTargetAgent extends Pick<TierRouting, 'tierTargets' | 'runO
  *     models; applying it would send the turn where the user chose not to.
  *   - `tier-invalid-target`: the layer's stored target is malformed.
  *   - `tier-unsupported-source`: the target is a source, and this harness has
- *     no Run on recipe.
+ *     no model source recipe.
  */
 export type TierTargetRefusalCode =
 	| 'tier-unmapped'
@@ -381,10 +381,10 @@ export type TierTargetResolution = ResolvedTierTarget | TierTargetRefusal;
  * A layer that sets the tier to something unusable REFUSES. It does not fall
  * through: the next layer's target is a different model than the one the user
  * picked. The built-in table is the one layer the user did not write, so it is
- * the one layer that does not apply to an agent whose Run on target is a
+ * the one layer that does not apply to an agent whose model source is a
  * source.
  *
- * Only the target's shape and the harness's Run on recipe are checked here.
+ * Only the target's shape and the harness's model source recipe are checked here.
  * Whether the source exists, is enabled and serves the model needs the saved
  * sources and the network, which `resolveRunOnLaunch` and the main process
  * decide at launch.
@@ -451,7 +451,7 @@ export function resolveTierTarget(
 		return {
 			kind: 'refused',
 			code: 'tier-agent-runs-on-source',
-			message: `tier="${tier}" is ${builtIn} on ${getAgentDisplayName(toolType)}'s own models (${TIER_TARGET_SOURCE_LABELS['built-in']}), and this agent runs on a Local Models source, so the tier was ignored; using the agent's Run on target. Set the tier on the agent or in the harness default to send it elsewhere.`,
+			message: `tier="${tier}" is ${builtIn} on ${getAgentDisplayName(toolType)}'s own models (${TIER_TARGET_SOURCE_LABELS['built-in']}), and this agent runs on a Local Models source, so the tier was ignored; using the agent's model source. Set the tier on the agent or in the harness default to send it elsewhere.`,
 			blocksLaunch: false,
 		};
 	}
@@ -464,8 +464,8 @@ export function resolveTierTarget(
 
 /**
  * What a resolved target does to one launch: the model it runs, and where,
- * when the target decides where. `runOn` absent means the agent's own Run on
- * target stands, which is the built-in table's case (it only applies to an
+ * when the target decides where. `runOn` absent means the agent's own model
+ * source stands, which is the built-in table's case (it only applies to an
  * agent that is on its provider already). Shared by the join that launches a
  * task (`resolveTurnSettings`) and the one that splits a document where the
  * settings change (`countTasksUnderActiveHint`), so the two cannot disagree.
@@ -845,7 +845,7 @@ export const TIER_TARGET_SPEC_FORMS = `${TIER_TARGET_DEFAULT_SPEC}, ${RUN_ON_PRO
  * A tier's target as one word, on a command line and as a picker option's
  * value: `default` for none (the next layer answers), `provider` for the
  * provider on the agent's own model, `provider:<model>` for a provider model,
- * and the Run on spelling `<source id>:<model>` for a source.
+ * and the model source spelling `<source id>:<model>` for a source.
  */
 export function formatTierTargetSpec(target: TierTarget | null | undefined): string {
 	if (!target) return TIER_TARGET_DEFAULT_SPEC;
@@ -862,7 +862,7 @@ export type TierTargetEdit =
 /**
  * Read a spelling written by {@link formatTierTargetSpec}. `provider:` is the
  * provider-model prefix here, so a source is never read out of it. Source ids
- * are generated, and the Run on spelling keeps the word `provider` already.
+ * are generated, and the model source spelling keeps the word `provider` already.
  */
 export function parseTierTargetSpec(spec: string): TierTargetEdit {
 	const trimmed = spec.trim();
@@ -887,7 +887,7 @@ export function parseTierTargetSpec(spec: string): TierTargetEdit {
  * harness defaults: the Tier defaults table, `maestro-cli models tiers set`,
  * and the agent's own tier writers. On top of {@link parseTierTarget} a source
  * goes through `parseRunOnEdit`, so a tier cannot hold a source the harness has
- * no Run on recipe for, or (when `endpoints` is passed) a source id that names
+ * no model source recipe for, or (when `endpoints` is passed) a source id that names
  * nothing. `undefined` clears the tier.
  */
 export function parseTierTargetEdit(
@@ -1290,7 +1290,7 @@ const TIER_NEIGHBOURS: Readonly<Record<ModelTier, readonly ModelTier[]>> = {
 
 /**
  * A suggestion for each tier of a harness, from what it can run on this
- * machine: its own catalogue, and the Run on targets the sources list. Suggest
+ * machine: its own catalogue, and the model sources the sources list. Suggest
  * always makes a choice when there is anything to choose from; a tier is blank
  * only when the harness lists no model and no local model qualifies.
  *
@@ -1307,7 +1307,7 @@ const TIER_NEIGHBOURS: Readonly<Record<ModelTier, readonly ModelTier[]>> = {
  *
  * When those name NO tier:
  *
- *   5. When the harness has a Run on recipe, the local models that passed the
+ *   5. When the harness has a model source recipe, the local models that passed the
  *      agent qualification with this harness, ranked by parameter count:
  *      smallest is low, largest is high, and the lower central one is medium
  *      when at least three sizes are listed. A local model is only ever ranked

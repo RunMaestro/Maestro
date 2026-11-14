@@ -7,7 +7,7 @@
  * from four tables of `stats.db`:
  *
  *   - `local_model_runs` - a run the task router or a System One engine made;
- *   - `query_events`     - an agent turn, on a Run on source or on the provider;
+ *   - `query_events`     - an agent turn, on a model source or on the provider;
  *   - `proxy_requests`   - what the token proxy carried, and the background
  *                          requests it sent to a Local Models target;
  *   - `s1_decisions`     - what System One decided (kept 30 days).
@@ -103,7 +103,7 @@ export function modelUsageRunSource(
 }
 
 /**
- * The source an endpoint id names: a Run on source on an agent turn
+ * The source an endpoint id names: a model source on an agent turn
  * (`query_events.run_on_endpoint`), or the target of a background request the
  * token proxy routed. `maestro-server` is the Maestro model server.
  */
@@ -261,7 +261,7 @@ export function describeModelUsageRequestSplit(
 /**
  * Which duration a source's latency reads from, and what one sample of it is.
  * A source that ran model calls reads `latency` (one request). One that only
- * launched agent turns (a provider's own cloud, a Run on target with no
+ * launched agent turns (a provider's own cloud, a model source with no
  * housekeeping work) has no request latency on record, so it reads
  * `turnDuration` (one whole turn, start to exit). The two are never compared
  * without saying which is which: a turn is many requests and the tools between
@@ -316,7 +316,7 @@ export interface ModelUsageTask {
 	sources: ModelUsageTaskSource[];
 }
 
-/** One Run on target of an agent, and the turns it took. */
+/** One model source of an agent, and the turns it took. */
 export interface ModelUsageAgentTarget {
 	sourceKey: string;
 	sourceLabel: string;
@@ -326,20 +326,20 @@ export interface ModelUsageAgentTarget {
 
 /**
  * One agent that used a model other than its provider's: it launched turns on
- * a Run on source, or runs were filed for it (a Cue gate, a model routing, its
+ * a model source, or runs were filed for it (a Cue gate, a model routing, its
  * own System One requests). Its turns on the provider's own model are not here.
  */
 export interface ModelUsageAgent {
 	agentId: string;
 	/** Null for an agent that no longer exists. */
 	name: string | null;
-	/** The provider harness its Run on turns ran behind. Null with no turn. */
+	/** The provider harness its model source turns ran behind. Null with no turn. */
 	agentType: string | null;
-	/** Turns launched on a Run on source. */
+	/** Turns launched on a model source. */
 	turns: number;
 	/** Runs filed for the agent. */
 	runs: number;
-	/** Tokens of the Run on turns. */
+	/** Tokens of the model source turns. */
 	tokensIn: number;
 	tokensOut: number;
 	turnDuration: DurationPercentiles;

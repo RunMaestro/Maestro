@@ -1,5 +1,5 @@
 /**
- * Run on: the model an agent's harness talks to.
+ * Model source: the model an agent's harness talks to.
  *
  * An agent keeps its provider's CLI (Claude Code's tool loop, permissions and
  * transcripts, Maestro's parsers and session storage) and only the model behind
@@ -95,10 +95,10 @@ export const RUN_ON_MIN_CONTEXT_TOKENS = MODEL_SERVER_AGENT_MIN_CONTEXT;
  */
 export function runOnContextProblem(contextTokens: unknown): string | null {
 	if (typeof contextTokens !== 'number' || !Number.isInteger(contextTokens) || contextTokens <= 0) {
-		return 'A Run on context size is a whole number of tokens above zero.';
+		return 'A model source context size is a whole number of tokens above zero.';
 	}
 	if (contextTokens < RUN_ON_MIN_CONTEXT_TOKENS) {
-		return `A Run on context size is at least ${RUN_ON_MIN_CONTEXT_TOKENS} tokens: an agent harness cannot hold its own first prompt in less.`;
+		return `A model source context size is at least ${RUN_ON_MIN_CONTEXT_TOKENS} tokens: an agent harness cannot hold its own first prompt in less.`;
 	}
 	return null;
 }
@@ -111,7 +111,7 @@ export function runOnContextProblem(contextTokens: unknown): string | null {
 export const RUN_ON_PLACEHOLDER_KEY = 'maestro-run-on';
 
 /**
- * The variable a harness reads its Run on key from, when the harness lets the
+ * The variable a harness reads its model source key from, when the harness lets the
  * launch name one: Codex's `env_key`, OpenCode's `{env:...}` reference.
  */
 export const RUN_ON_KEY_ENV_VAR = 'MAESTRO_RUN_ON_KEY';
@@ -134,7 +134,7 @@ const RUN_ON_PROVIDER_ID = 'maestro';
  */
 const COPILOT_NEUTRAL_MODEL_ID = 'maestro-run-on';
 
-/** Re-exported for the callers that name it beside the Run on recipe. */
+/** Re-exported for the callers that name it beside the model source recipe. */
 export { OPENCODE_CONFIG_ENV_VAR };
 
 /**
@@ -447,7 +447,7 @@ function tomlLiteral(url: string): string {
 const ARG_SAFE_PATH = /^[A-Za-z0-9_\-.:/\\][A-Za-z0-9_\-.:/\\~]*$/;
 
 /**
- * Whether a file path can go on a harness's command line as a Run on argument
+ * Whether a file path can go on a harness's command line as a model source argument
  * (`modelCatalogPath`). Null when it can; otherwise why not, for the log.
  */
 export function runOnArgPathProblem(filePath: string): string | null {
@@ -485,17 +485,17 @@ export type RunOnTargetParse = { ok: true; target: RunOnTarget } | { ok: false; 
 export function parseRunOnTarget(value: unknown): RunOnTargetParse {
 	if (value === undefined || value === null) return { ok: true, target: { type: 'provider' } };
 	if (typeof value !== 'object' || Array.isArray(value)) {
-		return { ok: false, error: 'A Run on target is an object with a type.' };
+		return { ok: false, error: 'A model source is an object with a type.' };
 	}
 	const record = value as Record<string, unknown>;
 	if (record.type === 'provider') return { ok: true, target: { type: 'provider' } };
 	if (record.type !== 'source') {
-		return { ok: false, error: 'A Run on target is "provider" or a source and a model.' };
+		return { ok: false, error: 'A model source is "provider" or a source and a model.' };
 	}
 	const endpointId = typeof record.endpointId === 'string' ? record.endpointId.trim() : '';
-	if (endpointId === '') return { ok: false, error: 'A Run on target names a source.' };
+	if (endpointId === '') return { ok: false, error: 'A model source names a source.' };
 	const model = typeof record.model === 'string' ? record.model.trim() : '';
-	if (model === '') return { ok: false, error: 'A Run on target names a model.' };
+	if (model === '') return { ok: false, error: 'A model source names a model.' };
 	if (record.contextTokens === undefined || record.contextTokens === null) {
 		return { ok: true, target: { type: 'source', endpointId, model } };
 	}
@@ -530,7 +530,7 @@ export function parseRunOnSpec(spec: string, contextTokens?: number): RunOnTarge
 	if (separator < 0) {
 		return {
 			ok: false,
-			error: `A Run on target is "${RUN_ON_PROVIDER_SPEC}" or <source id>:<model>.`,
+			error: `A model source is "${RUN_ON_PROVIDER_SPEC}" or <source id>:<model>.`,
 		};
 	}
 	return parseRunOnTarget({
@@ -547,7 +547,7 @@ export function parseRunOnSpec(spec: string, contextTokens?: number): RunOnTarge
  * size), the most the source says the model holds (`reportedContextTokens`,
  * from its model listing), and otherwise the smallest agent context. Never
  * under {@link RUN_ON_MIN_CONTEXT_TOKENS}. The picker's field and the CLI's
- * `--run-on` both start here.
+ * `--model-source` both start here.
  */
 export function runOnDefaultContextTokens(
 	target: Pick<RunOnSourceTarget, 'endpointId' | 'model'>,
@@ -566,7 +566,7 @@ export function runOnDefaultContextTokens(
  * else the agent's own when it already runs on that source and model (naming
  * the same target again keeps its context, as re-picking it in the dialog
  * does), else where the picker's field starts (`runOnDefaultContextTokens`).
- * One rule for `--run-on` on the CLI and a per-run pick in the Auto Run dialog.
+ * One rule for `--model-source` on the CLI and a per-run pick in the Auto Run dialog.
  */
 export function namedRunOnContextTokens(
 	named: Pick<RunOnSourceTarget, 'endpointId' | 'model'>,
@@ -648,7 +648,7 @@ export type RunOnEdit =
 
 /**
  * Check a target someone is about to store on an agent: the Edit Agent dialog,
- * `create-agent` / `update-agent --run-on`, and the bridge that applies them.
+ * `create-agent` / `update-agent --model-source`, and the bridge that applies them.
  * On top of {@link parseRunOnTarget} it refuses a source for a provider whose
  * harness has no recipe, with that provider's reason, so no writer can store a
  * target every launch would then refuse.
@@ -704,14 +704,14 @@ export function runOnTargetLabel(
 }
 
 /**
- * Why an agent's gateway and token proxy mode do not apply while its Run on
- * target is a source. Shown beside both controls, which are disabled for it.
+ * Why an agent's gateway and token proxy mode do not apply while its model
+ * source is a source. Shown beside both controls, which are disabled for it.
  */
 export const RUN_ON_GATEWAY_SKIPPED_REASON =
-	'Not applied while Run on is a source: the gateway routes requests to the provider, and this agent sends its requests to the source. Set Run on to Provider to use it.';
+	'Not applied while the model source is a Local Models source: the gateway routes requests to the provider, and this agent sends its requests to the source. Set the model source to Provider to use it.';
 
 /**
- * Why a gateway edit cannot be stored on an agent whose Run on target is
+ * Why a gateway edit cannot be stored on an agent whose model source is
  * `runOn`, or null when it can. The dialog disables both gateway controls for
  * such an agent; a writer that takes typed values (the CLI, the bridge) refuses
  * with the same reason, so nobody is told a gateway was set that no launch will
@@ -877,10 +877,10 @@ export type ResolvedRunOn = Pick<
 	'toolType' | 'target' | 'endpoint' | 'key' | 'modelCatalogPath'
 >;
 
-const RECOVERY = 'Fix the source, or set Run on to Provider.';
+const RECOVERY = 'Fix the source, or set the model source to Provider.';
 
 /**
- * Decide what an agent's Run on target does to one launch. The single answer
+ * Decide what an agent's model source does to one launch. The single answer
  * behind every spawn surface.
  */
 export function resolveRunOnLaunch(input: RunOnLaunchInput): RunOnLaunchResolution {
@@ -891,7 +891,7 @@ export function resolveRunOnLaunch(input: RunOnLaunchInput): RunOnLaunchResoluti
 		return {
 			kind: 'refused',
 			code: 'run-on-invalid-target',
-			message: `This agent's Run on target cannot be used: ${parsed.error} Pick a model again, or set Run on to Provider.`,
+			message: `This agent's model source cannot be used: ${parsed.error} Pick a model again, or set the model source to Provider.`,
 		};
 	}
 	if (parsed.target.type === 'provider') return { kind: 'none' };
@@ -904,7 +904,7 @@ export function resolveRunOnLaunch(input: RunOnLaunchInput): RunOnLaunchResoluti
 		return {
 			kind: 'refused',
 			code: 'run-on-unsupported-provider',
-			message: `This agent is set to run on ${label}, but ${lowerFirst(support.reason)} Set Run on to Provider to run the agent.`,
+			message: `This agent is set to run on ${label}, but ${lowerFirst(support.reason)} Set the model source to Provider to run the agent.`,
 		};
 	}
 
@@ -912,7 +912,7 @@ export function resolveRunOnLaunch(input: RunOnLaunchInput): RunOnLaunchResoluti
 		return {
 			kind: 'refused',
 			code: 'run-on-source-missing',
-			message: `This agent is set to run on ${label}, but its source (${target.endpointId}) is no longer configured. Pick a model again, or set Run on to Provider.`,
+			message: `This agent is set to run on ${label}, but its source (${target.endpointId}) is no longer configured. Pick a model again, or set the model source to Provider.`,
 		};
 	}
 
@@ -920,7 +920,7 @@ export function resolveRunOnLaunch(input: RunOnLaunchInput): RunOnLaunchResoluti
 		return {
 			kind: 'refused',
 			code: 'run-on-source-disabled',
-			message: `This agent is set to run on ${label}, but the source "${endpoint.name}" is disabled. Enable it, or set Run on to Provider.`,
+			message: `This agent is set to run on ${label}, but the source "${endpoint.name}" is disabled. Enable it, or set the model source to Provider.`,
 		};
 	}
 
@@ -933,7 +933,7 @@ export function resolveRunOnLaunch(input: RunOnLaunchInput): RunOnLaunchResoluti
 		return {
 			kind: 'refused',
 			code: 'run-on-loopback-on-remote',
-			message: `This agent is set to run on ${label} (${endpoint.baseUrl}), which is a loopback address on this machine that SSH remote "${input.remote.name}" cannot reach. Pick a source the remote host can reach, or set Run on to Provider.`,
+			message: `This agent is set to run on ${label} (${endpoint.baseUrl}), which is a loopback address on this machine that SSH remote "${input.remote.name}" cannot reach. Pick a source the remote host can reach, or set the model source to Provider.`,
 		};
 	}
 
@@ -1003,14 +1003,14 @@ function lowerFirst(text: string): string {
 	return /^(A|An|The) /.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text;
 }
 
-/** The prompt a Run on test sends: one word back proves the whole route. */
+/** The prompt a model source test sends: one word back proves the whole route. */
 export const RUN_ON_TEST_PROMPT = 'Reply with the single word: ready';
 
 /** How much of the model's reply a test result carries. */
 export const RUN_ON_TEST_REPLY_MAX_CHARS = 400;
 
 /**
- * The parts of an agent a Run on test launches with. The stored agent supplies
+ * The parts of an agent a model source test launches with. The stored agent supplies
  * them; a form that is not saved yet (New Agent, an Edit Agent with changes)
  * sends its own values on top.
  */

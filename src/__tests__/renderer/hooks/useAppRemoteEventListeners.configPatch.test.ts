@@ -258,7 +258,7 @@ describe('remoteUpdateSessionConfig - token proxy mode', () => {
 	});
 });
 
-describe('remoteUpdateSessionConfig - Run on target', () => {
+describe('remoteUpdateSessionConfig - model source', () => {
 	const OLLAMA = {
 		id: 'ep-ollama',
 		name: 'Ollama',
@@ -475,7 +475,7 @@ describe('remoteUpdateSessionConfig - tier targets', () => {
 		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
 	});
 
-	it('refuses a source on a harness with no Run on recipe', async () => {
+	it('refuses a source on a harness with no model source recipe', async () => {
 		const reply = await refusePatch(makeSession({ toolType: 'factory-droid' }), {
 			tierTargets: { high: LOCAL },
 		});

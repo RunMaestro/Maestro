@@ -7,7 +7,7 @@
  * read-only override of it, or the user's own config. So a launch that points
  * OpenCode somewhere ADDS to the document it would otherwise carry, never
  * replaces it: replacing it would drop `question: deny` and hang batch mode.
- * The Run on recipe and the Local Models gateway both build on these helpers.
+ * The model source recipe and the Local Models gateway both build on these helpers.
  */
 
 /** The variable OpenCode reads an inline config document from. */

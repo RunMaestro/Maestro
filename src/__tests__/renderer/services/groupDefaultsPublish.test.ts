@@ -287,14 +287,14 @@ describe('notifyGroupDefaultsPublished', () => {
 			publishId: 'publish-1',
 			agentCount: 1,
 			agents: [{ id: 'a', name: 'Scraper' }],
-			skipped: [{ agentName: 'Scraper', label: 'Run On', reason: 'Cannot reach it.' }],
+			skipped: [{ agentName: 'Scraper', label: 'Model Source', reason: 'Cannot reach it.' }],
 		});
 
 		expect(toasts().map((toast) => toast.title)).toEqual([
 			'Published to 1 agent',
 			'Some settings were not published',
 		]);
-		expect(toasts()[1].message).toBe('Scraper: Run On. Cannot reach it.');
+		expect(toasts()[1].message).toBe('Scraper: Model Source. Cannot reach it.');
 		expect(toasts()[1].dismissible).toBe(true);
 	});
 });

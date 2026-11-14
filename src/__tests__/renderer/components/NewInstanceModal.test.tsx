@@ -2359,8 +2359,8 @@ describe('NewInstanceModal', () => {
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
-				// The provider card, with its model and effort, is on the Provider tab.
-				openTab('Provider');
+				// The model and its effort are on the Models tab.
+				openTab('Models');
 				expect(screen.getByRole('textbox', { name: 'Model' })).toHaveValue(draft.customModel ?? '');
 				expect(screen.getByRole('textbox', { name: 'Reasoning Effort' })).toHaveValue(
 					draft.customEffort ?? ''
@@ -2428,21 +2428,26 @@ describe('NewInstanceModal', () => {
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
-				openTab('Provider');
+				// The model and its effort are on the Models tab.
+				openTab('Models');
 				for (const [name, value] of [
 					['Model', 'grok-4.5'],
 					['Reasoning Effort', 'high'],
-					['Path', '/synthetic/edited-grok'],
 				]) {
 					const input = screen.getByRole('textbox', { name });
 					fireEvent.change(input, { target: { value } });
 					fireEvent.blur(input);
 				}
 				// The model field lists Auto, so it is a filter box that commits a typed
-				// model on its delayed blur.
+				// model on its delayed blur. Let it fire before the tab changes.
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(150);
 				});
+				// The path and the environment are on the Provider tab.
+				openTab('Provider');
+				const path = screen.getByRole('textbox', { name: 'Path' });
+				fireEvent.change(path, { target: { value: '/synthetic/edited-grok' } });
+				fireEvent.blur(path);
 				fireEvent.click(screen.getByTitle('Remove variable'));
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
@@ -2531,7 +2536,7 @@ describe('NewInstanceModal', () => {
 					undefined,
 					'/synthetic/unverified-grok',
 				]);
-				// harnessControlMode, after the gateway, Run on, peers and seed extras.
+				// harnessControlMode, after the gateway, model source, peers and seed extras.
 				expect(onCreate.mock.calls[0][26]).toBeUndefined();
 				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			}
@@ -2643,12 +2648,14 @@ describe('NewInstanceModal', () => {
 				{ providerId: 'grok', context },
 				'reasoningEffort'
 			);
+			// The discovery note stays with the provider card; the fields are on Models.
 			openTab('Provider');
-			expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
-			expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
 			expect(
 				screen.getByText(/Model discovery unavailable for this configuration/)
 			).toBeInTheDocument();
+			openTab('Models');
+			expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
 			if (!remote) {
 				const modelInput = screen.getByDisplayValue('stored-model');
 				fireEvent.change(modelInput, { target: { value: 'manual-model' } });
@@ -2703,7 +2710,8 @@ describe('NewInstanceModal', () => {
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
-				openTab('Provider');
+				// The Model field, with its refresh button and count, is on the Models tab.
+				openTab('Models');
 				if (forced) {
 					models.mockReturnValueOnce(old);
 					fireEvent.click(screen.getByTitle('Refresh available models'));
@@ -2721,7 +2729,7 @@ describe('NewInstanceModal', () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
 				// A new source starts the form on General again.
-				openTab('Provider');
+				openTab('Models');
 				expect(models).toHaveBeenLastCalledWith({
 					providerId: 'grok',
 					context: expect.objectContaining({
@@ -2827,23 +2835,30 @@ describe('NewInstanceModal', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(300);
 			});
-			// The working directory is on General; the provider card is on Provider.
+			// The working directory is on General, the provider card on Provider, and
+			// the model and effort on Models.
 			const dir = screen.getByDisplayValue('~/project', { normalizer: (value) => value });
 			fireEvent.change(dir, { target: { value: '~/unsaved-project' } });
 			fireEvent.blur(dir);
+			const editFields = (edits: string[][]) => {
+				for (const [previous, value] of edits) {
+					const input = screen.getByDisplayValue(previous, { normalizer: (value) => value });
+					fireEvent.change(input, { target: { value } });
+					fireEvent.blur(input);
+				}
+			};
 			openTab('Provider');
-			expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
-			expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
-			for (const [previous, value] of [
+			editFields([
 				['/synthetic/bin/grok', '/synthetic/bin/edited'],
 				['/synthetic/account-a', ''],
+			]);
+			openTab('Models');
+			expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
+			editFields([
 				['stored-model', 'manual-model'],
 				['stored-effort', 'manual-effort'],
-			]) {
-				const input = screen.getByDisplayValue(previous, { normalizer: (value) => value });
-				fireEvent.change(input, { target: { value } });
-				fireEvent.blur(input);
-			}
+			]);
 			let resolveDetection!: (agents: AgentConfig[]) => void;
 			const detected = await window.maestro.agents.detect();
 			vi.mocked(window.maestro.agents.detect).mockReturnValueOnce(
@@ -2957,9 +2972,12 @@ describe('NewInstanceModal', () => {
 					'reasoningEffort'
 				);
 				if (pending === 'refresh') {
+					// The Model field's refresh button is on the Models tab.
+					openTab('Models');
 					models.mockReturnValueOnce(old);
 					fireEvent.click(screen.getByTitle('Refresh available models'));
 					expect(models).toHaveBeenLastCalledWith(expect.objectContaining({ forceRefresh: true }));
+					openTab('Provider');
 				}
 				if (transition === 'reopen') {
 					view.rerender(<NewInstanceModal {...props} isOpen={false} sourceSession={source} />);
@@ -2997,9 +3015,11 @@ describe('NewInstanceModal', () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
 				expect([models.mock.calls.length, efforts.mock.calls.length]).toEqual(counts);
+				expect(screen.getByText(/Effort discovery unavailable/)).toBeInTheDocument();
+				// The Model field and its count are on the Models tab.
+				openTab('Models');
 				expect(screen.getByText('1 model available')).toBeInTheDocument();
 				expect(screen.queryByText('2 models available')).not.toBeInTheDocument();
-				expect(screen.getByText(/Effort discovery unavailable/)).toBeInTheDocument();
 				expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
 				expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
 			}
@@ -3135,7 +3155,8 @@ describe('NewInstanceModal', () => {
 				});
 			}
 
-			// Should show model count
+			// The Model field, with its count, is on the Models tab.
+			openTab('Models');
 			await waitFor(() => {
 				expect(screen.getByText('3 models available')).toBeInTheDocument();
 			});
@@ -3253,10 +3274,54 @@ describe('NewInstanceModal', () => {
 				});
 			}
 
-			// Should show refresh button with correct title
+			// The Model field, with its refresh button, is on the Models tab.
+			openTab('Models');
 			await waitFor(() => {
 				expect(screen.getByTitle('Refresh available models')).toBeInTheDocument();
 			});
+		});
+
+		it("loads the selected provider's models once when the Models tab is opened first", async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({
+					id: 'opencode',
+					name: 'OpenCode',
+					available: true,
+					capabilities: { ...getAgentCapabilities('opencode'), supportsModelSelection: true },
+					configOptions: [
+						{
+							key: 'model',
+							type: 'text',
+							label: 'Model',
+							description: 'Model to use',
+							default: '',
+						},
+					],
+				}),
+			]);
+			vi.mocked(window.maestro.agents.getModels).mockResolvedValue(['model1', 'model2']);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+			// The provider card was never expanded, so the tab asks for the list itself.
+			openTab('Models');
+
+			await waitFor(() => {
+				expect(screen.getByText('2 models available')).toBeInTheDocument();
+			});
+			expect(window.maestro.agents.getModels).toHaveBeenCalledWith('opencode', false);
+
+			openTab('General');
+			openTab('Models');
+			expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -4975,7 +5040,7 @@ describe('NewInstanceModal', () => {
 			});
 		});
 
-		describe('Run on', () => {
+		describe('Model source', () => {
 			const OLLAMA = {
 				id: 'ep-ollama',
 				name: 'Ollama',
@@ -4989,13 +5054,31 @@ describe('NewInstanceModal', () => {
 				model: 'qwen3:latest',
 				contextTokens: 40_960,
 			};
-			// runOn is the 24th argument of onCreate.
+			const QWEN_SPEC = 'ep-ollama:qwen3:latest';
+			// runOn is the 24th argument of onCreate, customModel the 9th.
 			const RUN_ON_ARG = 23;
+			const MODEL_ARG = 8;
 			let savedEndpoints: ReturnType<typeof useSettingsStore.getState>['localModelEndpoints'];
 
 			beforeEach(() => {
 				savedEndpoints = useSettingsStore.getState().localModelEndpoints;
 				useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+				// The source models are listed in the Model field, so the provider has to
+				// offer one.
+				vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+					createAgentConfig({
+						capabilities: getAgentCapabilities('claude-code'),
+						configOptions: [
+							{
+								key: 'model',
+								type: 'text',
+								label: 'Model',
+								description: 'Model to use',
+								default: '',
+							},
+						],
+					}),
+				]);
 				vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
 					async (endpoint) =>
 						typeof endpoint === 'string'
@@ -5010,26 +5093,43 @@ describe('NewInstanceModal', () => {
 					ok: true,
 					models: [],
 				});
+				vi.mocked(window.maestro.agents.getModels).mockResolvedValue([]);
 			});
 
-			const picker = async () =>
-				(await screen.findByTestId('new-agent-run-on-field-select')) as HTMLSelectElement;
+			const modelInput = () => screen.getByRole('textbox', { name: 'Model' }) as HTMLInputElement;
+			/** The Model field's entry for a source model, once its list is open and loaded. */
+			const sourceOption = (spec: string) =>
+				waitFor(() => {
+					fireEvent.focus(modelInput());
+					const match = screen
+						.getAllByTestId('model-source-option')
+						.find((candidate) => candidate.getAttribute('data-value') === spec);
+					expect(match).toBeDefined();
+					return match as HTMLElement;
+				});
 			const pickQwen = async () => {
-				const select = await picker();
-				await waitFor(() =>
-					expect(
-						Array.from(select.options).some((option) => option.value === 'ep-ollama:qwen3:latest')
-					).toBe(true)
-				);
-				fireEvent.change(select, { target: { value: 'ep-ollama:qwen3:latest' } });
+				fireEvent.click(await sourceOption(QWEN_SPEC));
 			};
 
-			it('saves the model picked on the Models tab onto the created agent', async () => {
+			it("lists each source's models in the Model field under the source's name", async () => {
+				renderModal();
+				await fillRequired();
+				openTab('Models');
+
+				const option = await sourceOption(QWEN_SPEC);
+				expect(option).toHaveTextContent('qwen3:latest');
+				const group = option.closest('[data-testid="model-source-group"]') as HTMLElement;
+				expect(within(group).getByText('Ollama')).toBeInTheDocument();
+			});
+
+			it('saves the source model picked on the Models tab onto the created agent', async () => {
 				renderModal();
 				await fillRequired();
 				openTab('Models');
 
 				await pickQwen();
+				expect(modelInput().value).toBe('qwen3:latest');
+				expect(screen.getByTestId('model-source-chip')).toHaveTextContent('Ollama');
 				await act(async () => {
 					fireEvent.click(screen.getByText('Create Agent'));
 				});
@@ -5038,7 +5138,46 @@ describe('NewInstanceModal', () => {
 				expect(onCreate.mock.calls[0][RUN_ON_ARG]).toEqual(QWEN);
 			});
 
-			it('disables the gateway field while a source is chosen', async () => {
+			it('puts the agent back on its provider when a provider model is picked', async () => {
+				vi.mocked(window.maestro.agents.getModels).mockResolvedValue(['sonnet', 'opus']);
+				renderModal();
+				await fillRequired();
+				openTab('Models');
+				await pickQwen();
+
+				// Typing narrows the list; the provider's models are picked from it.
+				fireEvent.change(modelInput(), { target: { value: 'son' } });
+				fireEvent.click(await screen.findByRole('button', { name: 'sonnet' }));
+
+				expect(screen.queryByTestId('model-source-chip')).not.toBeInTheDocument();
+				expect(modelInput().value).toBe('sonnet');
+				await act(async () => {
+					fireEvent.click(screen.getByText('Create Agent'));
+				});
+
+				expect(onCreate).toHaveBeenCalledTimes(1);
+				expect(onCreate.mock.calls[0][MODEL_ARG]).toBe('sonnet');
+				expect(onCreate.mock.calls[0][RUN_ON_ARG]).toBeUndefined();
+			});
+
+			it('puts the agent back on its provider when the Model field is cleared', async () => {
+				renderModal();
+				await fillRequired();
+				openTab('Models');
+				await pickQwen();
+
+				fireEvent.click(screen.getByRole('button', { name: 'Clear model override' }));
+
+				expect(screen.queryByTestId('model-source-chip')).not.toBeInTheDocument();
+				expect(modelInput().value).toBe('');
+				await act(async () => {
+					fireEvent.click(screen.getByText('Create Agent'));
+				});
+
+				expect(onCreate.mock.calls[0][RUN_ON_ARG]).toBeUndefined();
+			});
+
+			it('disables the gateway field while a source model is chosen', async () => {
 				renderModal();
 				await fillRequired();
 				openTab('Models');
@@ -5048,7 +5187,7 @@ describe('NewInstanceModal', () => {
 
 				expect(await gatewayInput()).toBeDisabled();
 				expect(screen.getByTestId('new-agent-gateway-url-status')).toHaveTextContent(
-					'Not applied while Run on is a source'
+					'Not applied while the model source is a Local Models source'
 				);
 			});
 
@@ -5058,7 +5197,7 @@ describe('NewInstanceModal', () => {
 				openTab('Models');
 				await pickQwen();
 
-				fireEvent.click(screen.getByTestId('new-agent-run-on-field-test'));
+				fireEvent.click(screen.getByTestId('new-agent-model-source-test'));
 
 				await waitFor(() =>
 					expect(window.maestro.localModels.runOn.test).toHaveBeenCalledWith({
@@ -5085,7 +5224,13 @@ describe('NewInstanceModal', () => {
 				});
 				openTab('Models');
 
-				await waitFor(async () => expect((await picker()).value).toBe('ep-ollama:qwen3:latest'));
+				await waitFor(() =>
+					expect(screen.getByTestId('model-source-chip')).toHaveTextContent('Ollama')
+				);
+				expect(modelInput().value).toBe('qwen3:latest');
+				expect(
+					(screen.getByTestId('new-agent-model-source-context-select') as HTMLSelectElement).value
+				).toBe('65536');
 			});
 		});
 

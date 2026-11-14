@@ -4736,7 +4736,7 @@ describe('TerminalOutput', () => {
 
 		it('draws the Auto pill for a turn that carries nothing but its stamp', () => {
 			// The router was off and the agent names no model: no model, effort or
-			// Run on label is on the entry, and the pill still has to say so.
+			// model source label is on the entry, and the pill still has to say so.
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
 				createLogEntry({
@@ -5335,7 +5335,7 @@ describe('collapseAiResponseLogs', () => {
 	});
 
 	it("carries a turn's Auto stamp onto the combined entry", () => {
-		// Like the Run on label, the stamp may sit on any entry of the group, and
+		// Like the model source label, the stamp may sit on any entry of the group, and
 		// the bubble is drawn from the first.
 		const turnAuto = {
 			status: 'routed' as const,

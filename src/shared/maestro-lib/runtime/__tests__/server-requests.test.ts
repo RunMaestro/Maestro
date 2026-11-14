@@ -929,7 +929,7 @@ describe('live tab state and the host queue', () => {
 			sessions: Array<Record<string, unknown>>;
 		};
 		expect(reply.sessions[0]).toMatchObject({ id: 'a1', state: 'busy' });
-		// Each tab also carries its provider projection (provider, model, Run on).
+		// Each tab also carries its provider projection (provider, model, model source).
 		expect(reply.sessions[0].aiTabs).toEqual([
 			expect.objectContaining({
 				id: 't1',

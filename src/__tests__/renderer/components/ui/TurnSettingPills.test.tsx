@@ -113,7 +113,7 @@ describe('TurnSettingPills', () => {
 			expect(getByTestId('turn-auto-pill').textContent).toBe('Auto \u2192 haiku (kept)');
 		});
 
-		it('names the Run on target over the model when Auto chose the place', () => {
+		it('names the model source over the model when Auto chose the place', () => {
 			const { getByTestId } = renderPills({
 				model: 'opus',
 				runOn: 'qwen3:latest \u00b7 Ollama',

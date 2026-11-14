@@ -77,7 +77,7 @@ export interface SpawnAgentOptions {
 	/** Overrides session.customEffort for this spawn only */
 	effortOverride?: string;
 	/**
-	 * The Run on target this spawn launches on in place of the agent's own: the
+	 * The model source this spawn launches on in place of the agent's own: the
 	 * target of the tier an Auto Run task resolved (`ResolvedTurnSettings.runOn`).
 	 * Absent means the agent's stored target, which the spawn handler reads.
 	 */
@@ -768,7 +768,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomEffort: options?.effortOverride ?? session.customEffort,
 							sessionCustomContextWindow: session.customContextWindow,
 							// A tier that names a place (a local source for `low`, the provider
-							// for `high`) launches there, through the Run on path. Sent with
+							// for `high`) launches there, through the model source path. Sent with
 							// the model above: a source's model name means nothing to the
 							// provider, so one without the other would fail the task.
 							runOnOverride: options?.runOnOverride,

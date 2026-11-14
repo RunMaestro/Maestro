@@ -2,10 +2,14 @@
  * The Maestro model server's lifecycle: llama.cpp's `llama-server`, run in
  * router mode and watched by Maestro.
  *
- * 1. **It never starts itself.** `startModelServer()` is the user pressing
- *    Start. `ensureModelServerFor()` is something the user turned on that needs
- *    it: an agent that runs on a server model, a task assigned to one. Nothing
- *    calls either at app start, and app quit stops it (`stopModelServerNow()`).
+ * 1. **It starts only because the user chose it.** `startModelServer()` is the
+ *    user pressing Start. `ensureModelServerFor()` is something the user turned
+ *    on that needs it: an agent that runs on a server model, a task assigned to
+ *    one. App quit stops it (`stopModelServerNow()`). At app start,
+ *    `resumeModelServerAtLaunch()` starts it only when the user left it on:
+ *    Start records that choice (`startOnLaunch` in `config-store.ts`) and Stop
+ *    clears it, so a server the user started survives a restart and one only a
+ *    task started does not.
  * 2. **The port is chosen once and kept** (`config-store.ts`). A port another
  *    program holds fails the start by name; the server does not move.
  * 3. **Every start uses the key.** Local only listens on `127.0.0.1` and Network
@@ -759,22 +763,47 @@ async function stopLocked(): Promise<void> {
 	await fs.rm(keyFilePath(), { force: true }).catch(() => {});
 }
 
+export interface ModelServerLifecycleOptions {
+	/**
+	 * Record this start or stop as the user's choice for the next launch
+	 * (`startOnLaunch`). Default true: Start and Stop are the user's. An engine
+	 * install that stops and restarts the server around itself passes false.
+	 */
+	remember?: boolean;
+}
+
+/** Record whether the server should start with Maestro, when it changed. */
+async function rememberStartOnLaunch(startOnLaunch: boolean): Promise<void> {
+	const config = await readModelServerConfig(dataDir());
+	if (config.startOnLaunch === startOnLaunch) return;
+	await writeModelServerSettings(dataDir(), { startOnLaunch });
+}
+
 /**
  * Start the server: the user pressed Start. Resolves with the status once it
  * answers; rejects with a `ModelServerError` naming why it could not.
+ *
+ * The choice is recorded once the server answers: a start that fails (no
+ * engine, port taken) leaves the next launch as it was.
  */
-export function startModelServer(): Promise<ModelServerStatus> {
+export function startModelServer(
+	options: ModelServerLifecycleOptions = {}
+): Promise<ModelServerStatus> {
 	return lifecycle.enqueue(LIFECYCLE_KEY, async () => {
 		// Asked for directly, so earlier crashes no longer count against it.
 		restarts = 0;
 		await startLocked();
+		if (options.remember !== false) await rememberStartOnLaunch(true);
 		return getModelServerStatus();
 	});
 }
 
 /** Stop the server and wait for it to exit. A pending restart is cancelled. */
-export function stopModelServer(): Promise<ModelServerStatus> {
+export function stopModelServer(
+	options: ModelServerLifecycleOptions = {}
+): Promise<ModelServerStatus> {
 	return lifecycle.enqueue(LIFECYCLE_KEY, async () => {
+		if (options.remember !== false) await rememberStartOnLaunch(false);
 		cancelRestart();
 		restarts = 0;
 		lastError = null;
@@ -782,6 +811,31 @@ export function stopModelServer(): Promise<ModelServerStatus> {
 		setState('stopped');
 		return getModelServerStatus();
 	});
+}
+
+/**
+ * At app start: start the server when the user left it on (`startOnLaunch`).
+ * Never throws. A start that fails is logged, and the card shows its reason in
+ * `lastError` with the server left `failed`, the same as a failed Start.
+ */
+export async function resumeModelServerAtLaunch(): Promise<void> {
+	let config;
+	try {
+		config = await readModelServerConfig(dataDir());
+	} catch (error) {
+		logger.warn(
+			`The ${MODEL_SERVER_NAME} settings could not be read at launch: ${errorMessage(error)}`,
+			LOG_CONTEXT
+		);
+		return;
+	}
+	if (!config.startOnLaunch) return;
+	logger.info(`Starting the ${MODEL_SERVER_NAME}, which was left on`, LOG_CONTEXT);
+	try {
+		await startModelServer({ remember: false });
+	} catch {
+		// startLocked() already logged it and set lastError for the card.
+	}
 }
 
 /**
@@ -818,8 +872,9 @@ export interface ModelServerConfigPatch extends ModelServerSettingsPatch {
 }
 
 /**
- * Change the bind mode, the model count, or the key. A running server is
- * restarted to apply it, since all three are read at launch.
+ * Change the bind mode, the model count, the key, or whether it starts with
+ * Maestro. A running server is restarted to apply the first three, since they
+ * are read at launch; start-on-launch changes nothing about a running server.
  */
 export function updateModelServerConfig(patch: ModelServerConfigPatch): Promise<ModelServerStatus> {
 	return lifecycle.enqueue(LIFECYCLE_KEY, async () => {
@@ -827,6 +882,7 @@ export function updateModelServerConfig(patch: ModelServerConfigPatch): Promise<
 		const after = await writeModelServerSettings(dataDir(), {
 			bind: patch.bind,
 			maxModels: patch.maxModels,
+			startOnLaunch: patch.startOnLaunch,
 		});
 		if (patch.rotateKey) {
 			await rotateModelServerKey(dataDir(), osSeal());
@@ -1063,6 +1119,7 @@ export async function getModelServerStatus(): Promise<ModelServerStatus> {
 		models: ready && current ? [...current.models] : [],
 		loadedModels,
 		keyStorage: config.keyStorage,
+		startOnLaunch: config.startOnLaunch,
 		logPath: modelServerLogPath(),
 	};
 }

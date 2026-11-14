@@ -199,7 +199,7 @@ describe('model usage summaries', () => {
 			unit: 'request',
 			distribution: requests,
 		});
-		// A provider's own cloud, or a Run on target with no housekeeping work.
+		// A provider's own cloud, or a model source with no housekeeping work.
 		expect(modelUsageSourceLatency({ latency: emptyPercentiles(), turnDuration: turns })).toEqual({
 			unit: 'turn',
 			distribution: turns,

@@ -214,8 +214,8 @@ describe('update-group-settings command', () => {
 			await refused({ clear: true, publish: true }, 'Clear on its own');
 		});
 
-		it('refuses --run-on when the group has no provider', async () => {
-			await refused({ runOn: 'ollama:qwen3' }, 'default provider');
+		it('refuses --model-source when the group has no provider', async () => {
+			await refused({ modelSource: 'ollama:qwen3' }, 'default provider');
 		});
 
 		it('refuses a peer note on a peer with no row', async () => {
@@ -275,7 +275,7 @@ describe('update-group-settings command', () => {
 					{ id: 'agent-0', name: 'Scraper' },
 					{ id: 'agent-1', name: 'API' },
 				],
-				skipped: [{ agentName: 'API', label: 'Run On', reason: 'Cannot reach it.' }],
+				skipped: [{ agentName: 'API', label: 'Model Source', reason: 'Cannot reach it.' }],
 				changed: ['Nudge Message'],
 				unpublished: ['Working Directory'],
 				replaced: [],
@@ -308,7 +308,7 @@ describe('update-group-settings command', () => {
 			expect(out).toContain('Published to 2 agents');
 			expect(out).toContain('Scraper, API');
 			expect(out).toContain('Not published (new agents only): Working Directory');
-			expect(out).toContain('Skipped on API: Run On. Cannot reach it.');
+			expect(out).toContain('Skipped on API: Model Source. Cannot reach it.');
 		});
 
 		it('asks on a terminal, and sends only when the answer is yes', async () => {

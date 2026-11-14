@@ -501,7 +501,7 @@ export function handleLocalModelsServerStop(
 
 /**
  * Handle local_models_server_set - change the bind mode or model count, rotate
- * the key, and/or install a build of the engine (`maestro-cli models server
+ * the key, turn start-on-launch on or off, and/or install a build of the engine (`maestro-cli models server
  * set`). The settings apply first, then the build, each through the function
  * the card's controls call. A running server restarts to apply either.
  */
@@ -515,6 +515,7 @@ export function handleLocalModelsServerSet(
 		if (message.bind !== undefined) patch.bind = message.bind;
 		if (message.maxModels !== undefined) patch.maxModels = message.maxModels;
 		if (message.rotateKey === true) patch.rotateKey = true;
+		if (message.startOnLaunch !== undefined) patch.startOnLaunch = message.startOnLaunch;
 		if (Object.keys(patch).length > 0) await updateModelServerConfigRequest(patch);
 		if (message.build !== undefined) await installModelServerEngine(message.build);
 		return { report: await getModelServerReport() };

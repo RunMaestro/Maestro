@@ -559,6 +559,8 @@ describe('GroupChatModal', () => {
 				rerender(ui({ ...groupChat, moderatorConfig: saved }));
 				await act(async () => {});
 				await openProviderSettings();
+				// The discovery note sits with the model fields, on Models.
+				openTab('Models');
 				expect(
 					screen.getByText(/unavailable until the moderator workspace is known/i)
 				).toBeInTheDocument();
@@ -568,6 +570,7 @@ describe('GroupChatModal', () => {
 						context: expect.objectContaining({ cwd: undefined }),
 					})
 				);
+				openTab('Provider');
 				fireEvent.change(screen.getByPlaceholderText('--flag value --another-flag'), {
 					target: { value: '--synthetic' },
 				});
@@ -644,22 +647,26 @@ describe('GroupChatModal', () => {
 				})
 			);
 			const { onSave } = await openGrokEditor();
-			const model = screen.getByPlaceholderText('model-id');
-			const effort = screen.getByPlaceholderText('effort-id');
-			fireEvent.change(model, { target: { value: 'manual-model' } });
-			fireEvent.change(effort, { target: { value: 'manual-effort' } });
+			// Model and effort are on Models; the path re-detect stays on Provider.
+			openTab('Models');
+			const model = () => screen.getByPlaceholderText('model-id');
+			const effort = () => screen.getByPlaceholderText('effort-id');
+			fireEvent.change(model(), { target: { value: 'manual-model' } });
+			fireEvent.change(effort(), { target: { value: 'manual-effort' } });
 			await act(async () => {
 				finishConfig({ model: 'provider-model', reasoningEffort: 'provider-effort' });
 			});
 			vi.mocked(window.maestro.agents.getConfig).mockClear();
+			openTab('Provider');
 			fireEvent.click(screen.getByTitle('Re-detect agent path'));
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(300);
 			});
 			expect(window.maestro.agents.getConfig).toHaveBeenCalledWith('grok');
-			expect(model).toHaveValue('manual-model');
-			expect(effort).toHaveValue('manual-effort');
-			fireEvent.blur(effort);
+			openTab('Models');
+			expect(model()).toHaveValue('manual-model');
+			expect(effort()).toHaveValue('manual-effort');
+			fireEvent.blur(effort());
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(150);
 			});
@@ -739,6 +746,8 @@ describe('GroupChatModal', () => {
 				await act(async () => {
 					finishModels({ status: 'discovered', options: ['stale-account-model'] });
 				});
+				// The model list and the Model field are on Models.
+				openTab('Models');
 				expect(screen.queryByText(/1 model available/i)).not.toBeInTheDocument();
 				if (change !== 'provider')
 					expect(screen.getByPlaceholderText('model-id')).toHaveValue('saved-model');
@@ -935,6 +944,7 @@ describe('GroupChatModal', () => {
 			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
 				'General',
 				'Provider',
+				'Models',
 				'SSH',
 			]);
 			expect(selectedTab()).toHaveTextContent('Provider');
@@ -1058,14 +1068,15 @@ describe('GroupChatModal', () => {
 				createMockGroupChat({ moderatorConfig: { customModel: 'chat-model' } })
 			);
 			await waitForModerator();
-			openTab('Provider');
+			// The moderator's model is on its Models tab.
+			openTab('Models');
 			await waitFor(() => expect(window.maestro.agents.getConfig).toHaveBeenCalled());
 			expect(screen.getByDisplayValue('chat-model')).toBeInTheDocument();
 			fireEvent.change(screen.getByDisplayValue('chat-model'), {
 				target: { value: 'new-chat-model' },
 			});
 			fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
-			openTab('Provider');
+			openTab('Models');
 			expect(screen.getByDisplayValue('new-chat-model')).toBeInTheDocument();
 			fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
 			fireEvent.click(screen.getByRole('button', { name: /^save$/i }));

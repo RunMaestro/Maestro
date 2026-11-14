@@ -54,7 +54,7 @@ export interface TierTargetsFieldProps {
 	value: TierTargets;
 	onChange: (next: TierTargets) => void;
 	/**
-	 * The form's Run on target. The built-in table names the provider's own
+	 * The form's model source. The built-in table names the provider's own
 	 * models, so it does not apply to an agent that runs on a source.
 	 */
 	runOn: RunOnTarget;

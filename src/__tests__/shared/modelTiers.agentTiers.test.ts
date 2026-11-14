@@ -144,7 +144,7 @@ describe('parseTierTargetsEdit', () => {
 		});
 	});
 
-	it('refuses a source on a harness with no Run on recipe, naming the tier', () => {
+	it('refuses a source on a harness with no model source recipe, naming the tier', () => {
 		const edit = parseTierTargetsEdit('factory-droid', { medium: LOCAL });
 
 		expect(edit.ok).toBe(false);

@@ -65,8 +65,17 @@ export const EDIT_AGENT_TAB_IDS: readonly AgentSettingsTabId[] = [
 	AUDIT_LOG_TAB_ID,
 ];
 
-/** The moderator has no gateway (no Models tab) and a group chat has no peers. */
-export const MODERATOR_TAB_IDS: readonly AgentSettingsTabId[] = ['general', 'provider', 'ssh'];
+/**
+ * The moderator form: the agent form without Peers, because a group chat has
+ * no peers. Its Models tab holds the model picker and nothing else, since the
+ * moderator has no tiers, gateway or System One.
+ */
+export const MODERATOR_TAB_IDS: readonly AgentSettingsTabId[] = [
+	'general',
+	'provider',
+	'models',
+	'ssh',
+];
 
 /**
  * The tab each validation field lives on. Keys are the field ids the modals
@@ -86,9 +95,11 @@ export const AGENT_SETTINGS_FIELD_TAB: Readonly<Record<string, AgentSettingsTabI
 	provider: 'provider',
 	customPath: 'provider',
 	customArgs: 'provider',
-	model: 'provider',
-	effort: 'provider',
-	contextWindow: 'provider',
+	model: 'models',
+	effort: 'models',
+	reasoningEffort: 'models',
+	reasoningSummary: 'models',
+	contextWindow: 'models',
 	gateway: 'models',
 	gatewayUrl: 'models',
 	tokenProxyMode: 'models',
@@ -101,6 +112,16 @@ export const AGENT_SETTINGS_FIELD_TAB: Readonly<Record<string, AgentSettingsTabI
 	sshRemote: 'ssh',
 	remoteWorkingDir: 'ssh',
 };
+
+/**
+ * Whether a provider config option (`AgentConfigOption.key`) is a model setting:
+ * the model, its effort and reasoning summary, and its context window. Those are
+ * drawn on the Models tab; every other option stays with its harness on the
+ * Provider tab. The field map above decides, so the two can never disagree.
+ */
+export function isModelConfigOption(key: string): boolean {
+	return AGENT_SETTINGS_FIELD_TAB[key] === 'models';
+}
 
 /** The tabs, out of `visibleTabs`, whose panels hold at least one of `errorFields`. */
 export function tabsWithErrors(

@@ -29,6 +29,7 @@ const STOPPED: ModelServerStatus = {
 	models: [],
 	loadedModels: [],
 	keyStorage: 'os',
+	startOnLaunch: false,
 	logPath: '/data/logs/model-server.log',
 };
 
@@ -241,6 +242,9 @@ describe('installModelServerEngine', () => {
 		await installModelServerEngine('default');
 
 		expect(order).toEqual(['download', 'stop', 'promote', 'start']);
+		// The install's own stop and start are not the user's: start-on-launch stays as it was.
+		expect(supervisor.stopModelServer).toHaveBeenCalledWith({ remember: false });
+		expect(supervisor.startModelServer).toHaveBeenCalledWith({ remember: false });
 	});
 
 	it('leaves a stopped server stopped', async () => {
@@ -277,7 +281,15 @@ describe('updateModelServerConfigRequest', () => {
 		});
 	});
 
-	it.each([[null], ['network'], [[1]], [{ rotateKey: 'yes' }]])(
+	it('passes start-on-launch through', async () => {
+		await updateModelServerConfigRequest({ startOnLaunch: false });
+		expect(supervisor.updateModelServerConfig).toHaveBeenCalledWith({
+			rotateKey: false,
+			startOnLaunch: false,
+		});
+	});
+
+	it.each([[null], ['network'], [[1]], [{ rotateKey: 'yes' }], [{ startOnLaunch: 'on' }]])(
 		'refuses %o without touching the supervisor',
 		async (patch) => {
 			await expect(updateModelServerConfigRequest(patch)).rejects.toBeInstanceOf(ModelServerError);

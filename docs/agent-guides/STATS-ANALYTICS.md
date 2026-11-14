@@ -40,22 +40,22 @@ Uses WAL (Write-Ahead Logging) journal mode for better concurrent access.
 
 Tracks individual AI query/response cycles:
 
-| Column            | Type             | Description                                                                      |
-| ----------------- | ---------------- | -------------------------------------------------------------------------------- |
-| `id`              | TEXT PK          | UUID                                                                             |
-| `session_id`      | TEXT NOT NULL    | Maestro session ID                                                               |
-| `agent_type`      | TEXT NOT NULL    | Agent type (e.g. `claude-code`)                                                  |
-| `source`          | TEXT NOT NULL    | `'user'` or `'auto'` (Auto Run)                                                  |
-| `start_time`      | INTEGER NOT NULL | Unix timestamp (ms)                                                              |
-| `duration`        | INTEGER NOT NULL | Duration in ms                                                                   |
-| `project_path`    | TEXT             | Normalized project path                                                          |
-| `tab_id`          | TEXT             | AI tab that issued the query                                                     |
-| `is_remote`       | INTEGER          | SSH remote flag (added in v2)                                                    |
-| `is_worktree`     | INTEGER          | Worktree agent flag (v5)                                                         |
-| `user_name`       | TEXT             | Web Login sender (v12)                                                           |
-| `run_on_endpoint` | TEXT             | Run on source the turn launched on: saved endpoint id, or `maestro-server` (v20) |
-| `run_on_model`    | TEXT             | The model that source ran, written WITH `run_on_endpoint` (v20)                  |
-| `routed_tier`     | TEXT             | Tier Auto's router chose: `low`, `medium` or `high` (v20)                        |
+| Column            | Type             | Description                                                                     |
+| ----------------- | ---------------- | ------------------------------------------------------------------------------- |
+| `id`              | TEXT PK          | UUID                                                                            |
+| `session_id`      | TEXT NOT NULL    | Maestro session ID                                                              |
+| `agent_type`      | TEXT NOT NULL    | Agent type (e.g. `claude-code`)                                                 |
+| `source`          | TEXT NOT NULL    | `'user'` or `'auto'` (Auto Run)                                                 |
+| `start_time`      | INTEGER NOT NULL | Unix timestamp (ms)                                                             |
+| `duration`        | INTEGER NOT NULL | Duration in ms                                                                  |
+| `project_path`    | TEXT             | Normalized project path                                                         |
+| `tab_id`          | TEXT             | AI tab that issued the query                                                    |
+| `is_remote`       | INTEGER          | SSH remote flag (added in v2)                                                   |
+| `is_worktree`     | INTEGER          | Worktree agent flag (v5)                                                        |
+| `user_name`       | TEXT             | Web Login sender (v12)                                                          |
+| `run_on_endpoint` | TEXT             | model source the turn launched on: saved endpoint id, or `maestro-server` (v20) |
+| `run_on_model`    | TEXT             | The model that source ran, written WITH `run_on_endpoint` (v20)                 |
+| `routed_tier`     | TEXT             | Tier Auto's router chose: `low`, `medium` or `high` (v20)                       |
 
 `user_name` is the Web Login account that SENT the turn, and NULL means "nobody
 was signed in" - a turn typed at the desktop, which is every turn while Web
@@ -66,7 +66,7 @@ written by the desktop renderer's exit listener even for a turn a browser sent.
 The three v20 columns are the Models tab's only record of where an agent turn ran, and
 `turnModelStatsFields({ runOn, auto })` in `src/shared/autoTurn.ts` shapes them for both writers of the
 row (the renderer's exit listener and the Auto Run spawn). They are frozen at SEND from the tab's
-`turnRunOnSource` and `turnAuto` stamps, never read from the live agent record, so a Run on target edited
+`turnRunOnSource` and `turnAuto` stamps, never read from the live agent record, so a model source edited
 mid-turn does not refile the turn. `run_on_endpoint` and `run_on_model` are written together or not at
 all, and `routed_tier` is bound only when it is one of the three levels. NULL in all three means the turn
 ran on the provider's own cloud, which is what the Models tab compares everything else against.
@@ -328,30 +328,30 @@ The singleton is lazy-initialized on first call to `getStatsDB()`. The `StatsDB`
 
 Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorded in the `_migrations` table. The current schema version is stored in SQLite's `user_version` pragma.
 
-| Version | Description                                                                                                          |
-| ------- | -------------------------------------------------------------------------------------------------------------------- |
-| v1      | Initial schema: `query_events`, `auto_run_sessions`, `auto_run_tasks`                                                |
-| v2      | Add `is_remote` column to `query_events` for SSH tracking                                                            |
-| v3      | Add `session_lifecycle` table                                                                                        |
-| v4      | Add compound indexes on `query_events` for dashboard performance                                                     |
-| v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`                                                   |
-| v6      | Add `image_annotations` table                                                                                        |
-| v7      | Add `shortcut_usage_daily` table                                                                                     |
-| v8      | Add `multi_window_usage_daily` table                                                                                 |
-| v9      | Add per-turn token and cost columns to `query_events`                                                                |
-| v10     | Add `resilience_events` table                                                                                        |
-| v11     | Add `wizard_runs` table                                                                                              |
-| v12     | Add `user_name` column to `query_events` for Web Login attribution                                                   |
-| v13     | Add `active_ms` column to `wizard_runs`                                                                              |
-| v14     | Add `kind` column to `auto_run_sessions`                                                                             |
-| v15     | Add `local_model_runs` table for Local Models task router runs                                                       |
-| v16     | Add `proxy_requests` table for the Maestro token proxy                                                               |
-| v17     | Add `routed_to` column to `proxy_requests`                                                                           |
-| v18     | Add `s1_decisions` table for the System One decision ledger                                                          |
-| v19     | Add `tab_id` and `cached` columns to `s1_decisions`                                                                  |
-| v20     | Rebuild `local_model_runs` (wider `source_type`, `agent_id`); add Run on and `routed_tier` columns to `query_events` |
-| v21     | Add the provider's token counts (`provider_*_tokens`) to `proxy_requests`                                            |
-| v22     | Add `effective_mode`, block counts and provider reportedness to `proxy_requests`                                     |
+| Version | Description                                                                                                                |
+| ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| v1      | Initial schema: `query_events`, `auto_run_sessions`, `auto_run_tasks`                                                      |
+| v2      | Add `is_remote` column to `query_events` for SSH tracking                                                                  |
+| v3      | Add `session_lifecycle` table                                                                                              |
+| v4      | Add compound indexes on `query_events` for dashboard performance                                                           |
+| v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`                                                         |
+| v6      | Add `image_annotations` table                                                                                              |
+| v7      | Add `shortcut_usage_daily` table                                                                                           |
+| v8      | Add `multi_window_usage_daily` table                                                                                       |
+| v9      | Add per-turn token and cost columns to `query_events`                                                                      |
+| v10     | Add `resilience_events` table                                                                                              |
+| v11     | Add `wizard_runs` table                                                                                                    |
+| v12     | Add `user_name` column to `query_events` for Web Login attribution                                                         |
+| v13     | Add `active_ms` column to `wizard_runs`                                                                                    |
+| v14     | Add `kind` column to `auto_run_sessions`                                                                                   |
+| v15     | Add `local_model_runs` table for Local Models task router runs                                                             |
+| v16     | Add `proxy_requests` table for the Maestro token proxy                                                                     |
+| v17     | Add `routed_to` column to `proxy_requests`                                                                                 |
+| v18     | Add `s1_decisions` table for the System One decision ledger                                                                |
+| v19     | Add `tab_id` and `cached` columns to `s1_decisions`                                                                        |
+| v20     | Rebuild `local_model_runs` (wider `source_type`, `agent_id`); add model source and `routed_tier` columns to `query_events` |
+| v21     | Add the provider's token counts (`provider_*_tokens`) to `proxy_requests`                                                  |
+| v22     | Add `effective_mode`, block counts and provider reportedness to `proxy_requests`                                           |
 
 To add a new migration:
 
@@ -580,7 +580,7 @@ knows: the saved endpoints, the OpenJev URL and agent names. The record has six 
 | `totals`    | the other blocks                                     | requests, tokens, errors, and the on-this-machine share                              |
 | `sources`   | `local_model_runs`, `query_events`, `proxy_requests` | one row per source: kind, location, units, tokens, errors, latency                   |
 | `byTask`    | `local_model_runs`                                   | per task, with where each ran                                                        |
-| `byAgent`   | `local_model_runs`, `query_events`                   | any agent that used another model; the tab shows `turns > 0` as Run on               |
+| `byAgent`   | `local_model_runs`, `query_events`                   | any agent that used another model; the tab shows `turns > 0` as model source         |
 | `systemOne` | `s1_decisions`, `query_events`                       | outcome split per task and engine, Auto's `routedTiers`, `coversRange`               |
 | `proxy`     | `proxy_requests`                                     | totals, `byMode` and `effectiveness` from `getProxyRequestUsage()`, estimates marked |
 
@@ -596,7 +596,7 @@ Rules a new reader of the record needs:
   divide tokens by it. `modelUsageSourceLatency()` names the unit a latency is in: a request when the source
   answered model calls, a turn only when it has none on record.
 - **Latency is answered work only.** A failed run's duration is its timeout.
-- **A provider's own cloud is a source kind** (`provider:<agent type>`) from `query_events` rows with no Run on
+- **A provider's own cloud is a source kind** (`provider:<agent type>`) from `query_events` rows with no model source
   source. `errors` is always 0 there, because `query_events` records no outcome, and cache tokens are
   `cachedTokensIn`, never folded into `tokensIn`.
 - **`onDevice` is three-valued.** The in-process engine and the model server are `true`. An endpoint is

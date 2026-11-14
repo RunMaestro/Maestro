@@ -106,7 +106,7 @@ interface ProcessConfig {
 	sessionCustomModel?: string;
 	sessionCustomEffort?: string;
 	sessionCustomContextWindow?: number;
-	// The Run on target this turn launches on in place of the agent's stored
+	// The model source this turn launches on in place of the agent's stored
 	// one: a tier's target, set only by a spawn that resolved a tier.
 	runOnOverride?: import('../shared/local-models/run-on').RunOnTarget;
 	// The consult chain this turn runs IN, already at its own depth, when

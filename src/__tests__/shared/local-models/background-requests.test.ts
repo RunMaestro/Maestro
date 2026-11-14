@@ -147,7 +147,7 @@ describe('backgroundRequestsSupport', () => {
 });
 
 describe('the background requests spelling', () => {
-	it('spells off as none and a target as the Run on spelling', () => {
+	it('spells off as none and a target as the model source spelling', () => {
 		expect(formatBackgroundRequestsSpec(undefined)).toBe('none');
 		expect(formatBackgroundRequestsSpec(null)).toBe('none');
 		expect(formatBackgroundRequestsSpec({ target: ON_OLLAMA })).toBe('ep-ollama:qwen3:4b');

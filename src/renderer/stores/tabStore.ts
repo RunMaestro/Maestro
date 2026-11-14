@@ -313,7 +313,7 @@ export interface TabStoreActions {
 	 * Set per-tab model override. Pass undefined to clear and fall back to session/agent default.
 	 */
 	setTabModel: (tabId: string, model: string | undefined) => void;
-	/** Validate model, effort and Run on without changing the tab's native ownership. */
+	/** Validate model, effort and model source without changing the tab's native ownership. */
 	setTabSettings: (
 		sessionId: string,
 		tabId: string,
@@ -810,7 +810,7 @@ export const useTabStore = create<TabStore>()((set) => ({
 					(snapshot.sessionSshRemoteConfig?.enabled || snapshot.sshRemoteId) &&
 					patch.runOn.type === 'source'
 				)
-					throw new Error('Run on sources are not available for SSH tabs.');
+					throw new Error('Model sources are not available for SSH tabs.');
 			}
 		}
 		if (

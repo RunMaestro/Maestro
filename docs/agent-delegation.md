@@ -43,7 +43,7 @@ The two squares combine into four labels, which are the ones the agent reads:
 | off | lit | **Delegate only**                                                          |
 | off | off | **No access** (an exclusion, see [Precedence](#precedence-and-exclusions)) |
 
-A consult runs **as the peer**. It takes the peer's own model, Run on target, and gateway, so the answer is what the peer would have said. A hand-off from an agent is marked in that agent's transcript so you can see who reached whom.
+A consult runs **as the peer**. It takes the peer's own model, model source, and gateway, so the answer is what the peer would have said. A hand-off from an agent is marked in that agent's transcript so you can see who reached whom.
 
 ### A Relationship Has One Direction
 

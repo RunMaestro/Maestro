@@ -15,8 +15,8 @@
  *   agent), which is the absence of a target;
  * - the provider on the agent's own model;
  * - every model in the harness's own catalogue;
- * - for a harness with a Run on recipe, every model each source lists, from the
- *   Run on picker's own builder, so a model carries the same fit label and
+ * - for a harness with a model source recipe, every model each source lists, from the
+ *   model source picker's own builder, so a model carries the same fit label and
  *   "Agent-ready" badge in both pickers;
  * - the CURRENT target when nothing lists it, labeled with the reason, because
  *   a `<select>` whose value matches no option shows its first option.
@@ -65,7 +65,7 @@ export interface HarnessTierOptions {
 	catalog: HarnessCatalogModel[];
 	/** Whether the harness can run on a source, and the reason when it cannot. */
 	runOn: { supported: true } | { supported: false; reason: string };
-	/** Each source that lists a model. Empty for a harness with no Run on recipe. */
+	/** Each source that lists a model. Empty for a harness with no model source recipe. */
 	sources: RunOnPickerSource[];
 	/** Sources that could not be listed, so a missing model has a reason. */
 	problems: TierSourceProblem[];
@@ -101,7 +101,7 @@ export function buildTierTargetOptionGroups(input: TierTargetOptionInput): RunOn
 		});
 	}
 
-	// The Run on picker's own groups, so the two pickers label a model alike.
+	// The model source picker's own groups, so the two pickers label a model alike.
 	// Its head holds "Provider (default)", which a tier spells differently, and
 	// the current source target when no source lists it.
 	const runOnGroups = buildRunOnOptionGroups({

@@ -54,7 +54,7 @@ export interface QueryEvent {
 	/** Cost in USD for this turn, when the provider reports one. */
 	costUsd?: number;
 	/**
-	 * The Run on source this turn launched on (`RunOnSourceTarget`): the
+	 * The model source this turn launched on (`RunOnSourceTarget`): the
 	 * endpoint's id (`maestro-server` for the Maestro model server) and the model
 	 * name that source serves. Set together. Both absent for a turn on the
 	 * provider's own model, and for rows recorded before the columns existed.

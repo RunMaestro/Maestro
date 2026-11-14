@@ -63,7 +63,7 @@ export interface SpawnGroupChatAgentConfig extends Pick<
 	customEnvVars?: Record<string, string>;
 	/**
 	 * The Left Bar agent this process runs AS, when there is one (a participant,
-	 * a cross-agent consult target). Its Run on target, or failing that its Local
+	 * a cross-agent consult target). Its model source, or failing that its Local
 	 * Models gateway, is applied to the spawn, so the turn runs on the same model
 	 * by the same route as that agent's own tab. Omit for a process that is
 	 * nobody's agent (the moderator, synthesis): both are per-agent settings and
@@ -227,8 +227,8 @@ export async function spawnGroupChatAgent(
 	});
 	// Where the agent's model runs, applied before anything below reads the
 	// arguments or the env, so the local, maestro-p and SSH paths all carry it:
-	// its Run on target first, and its Local Models gateway only when it has
-	// none (a Run on target takes the gateway's place, since the gateway routes
+	// its model source first, and its Local Models gateway only when it has
+	// none (a model source takes the gateway's place, since the gateway routes
 	// to the provider). Either one that cannot be used (a source that is down, a
 	// loopback address for a remote host, a proxy that will not start) refuses
 	// the turn by name rather than running it somewhere the user did not choose.

@@ -117,7 +117,7 @@ export interface SessionLifecycleReturn {
 		codexTransport?: CodexTransport,
 		/** Local Models gateway URL, already validated; `undefined` clears it. */
 		gatewayUrl?: string,
-		/** Run on target, already validated; `undefined` means the provider's model. */
+		/** model source, already validated; `undefined` means the provider's model. */
 		runOn?: RunOnSourceTarget,
 		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
 		tierTargets?: TierTargets,
@@ -225,7 +225,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			codexTransport?: CodexTransport,
 			/** Local Models gateway URL, already validated; `undefined` clears it. */
 			gatewayUrl?: string,
-			/** Run on target, already validated; `undefined` means the provider's model. */
+			/** model source, already validated; `undefined` means the provider's model. */
 			runOn?: RunOnSourceTarget,
 			/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
 			tierTargets?: TierTargets,
@@ -359,7 +359,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			// the debounced persistence would not reach for two seconds. Flush now
 			// so a message sent straight after this save goes where the user just
 			// said it should.
-			// The same holds for the Run on target, and a miss there sends a turn to
+			// The same holds for the model source, and a miss there sends a turn to
 			// the provider's cloud model the user just turned away from.
 			// And for the tier targets: the CLI's Auto Run reads them from the store.
 			if (

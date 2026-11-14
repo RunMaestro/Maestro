@@ -26,7 +26,7 @@
  * `server:installEngine` downloads the model server engine and `server:start`
  * launches it, each because the user pressed that button; nothing here starts
  * the server on its own. `runOn:test` starts an agent's harness for one short
- * read-only turn on its Run on target, because the user pressed Test.
+ * read-only turn on its model source, because the user pressed Test.
  *
  * Progress is BROADCAST, matching the multi-window invariant in
  * `src/main/utils/safe-send.ts`. A dictation is the exception: it belongs to

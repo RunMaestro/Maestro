@@ -108,7 +108,7 @@ export function backgroundRequestsSupport(
 /** How "not routed" is spelled on a command line. `provider` reads the same. */
 export const BACKGROUND_REQUESTS_OFF_SPEC = 'none';
 
-/** The setting as one word: `none`, or the Run on spelling `<source id>:<model>`. */
+/** The setting as one word: `none`, or the model source spelling `<source id>:<model>`. */
 export function formatBackgroundRequestsSpec(
 	backgroundRequests: BackgroundRequests | null | undefined
 ): string {
@@ -177,7 +177,7 @@ export const BACKGROUND_REQUESTS_OFF_LABEL = 'Off (send them to the provider)';
 
 /**
  * The choices the Background requests picker offers: Off, then every model of
- * each source that serves the Anthropic Messages route, from the Run on
+ * each source that serves the Anthropic Messages route, from the model source
  * picker's own builder so a model reads the same in both. A source that does
  * not serve the route is left out, because choosing it would be refused. The
  * current target is listed even when nothing lists it, with the reason.

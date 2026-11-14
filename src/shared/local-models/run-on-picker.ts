@@ -1,5 +1,5 @@
 /**
- * The choices an agent's Run on picker offers, as plain data so the rules are
+ * The choices an agent's model source picker offers, as plain data so the rules are
  * testable without rendering a `<select>`.
  *
  * - Provider (default), always.

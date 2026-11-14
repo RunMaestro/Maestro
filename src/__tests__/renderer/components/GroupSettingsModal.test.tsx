@@ -15,6 +15,7 @@ import { useNotificationStore } from '../../../renderer/stores/notificationStore
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { AgentConfig, Group, Session } from '../../../renderer/types';
+import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockTheme } from '../../helpers/mockTheme';
 
@@ -351,16 +352,105 @@ describe('GroupSettingsModal', () => {
 			});
 		});
 
+		it('draws the model options on the Models tab, not here', async () => {
+			renderModal(createGroup({ defaults: { toolType: 'claude-code' } }));
+			openTab('Provider');
+
+			await waitFor(() => expect(screen.getByText('Claude Code Settings')).toBeInTheDocument());
+			expect(screen.queryByRole('textbox', { name: 'Model' })).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Models tab', () => {
+		const OLLAMA: LocalModelEndpoint = {
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		};
+
 		it('does not write the provider model back as a group default', async () => {
 			const group = createGroup({ defaults: { toolType: 'claude-code' } });
 			renderModal(group);
-			openTab('Provider');
+			openTab('Models');
 
-			// The panel shows the provider's own model; the group has no opinion on it.
+			// The Model field shows the provider's own model; the group has no opinion on it.
 			await waitFor(() => expect(screen.getByDisplayValue('claude-sonnet')).toBeInTheDocument());
+			expect(screen.getByTestId('group-settings-model')).toBeInTheDocument();
 			fireEvent.click(screen.getByText('Save'));
 
 			expect(written(group)[0].defaults).toEqual({ toolType: 'claude-code' });
+		});
+
+		it('asks for a provider before it offers a model', () => {
+			renderModal(createGroup());
+			openTab('Models');
+
+			expect(screen.getByTestId('group-settings-models-no-provider')).toHaveTextContent(
+				'Choose a provider on the Provider tab to set its model'
+			);
+			expect(screen.queryByTestId('group-settings-model')).not.toBeInTheDocument();
+		});
+
+		it('saves a source model picked in the Model field as the group model source', async () => {
+			const savedEndpoints = useSettingsStore.getState().localModelEndpoints;
+			useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+			vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+				async (endpoint) =>
+					typeof endpoint === 'string'
+						? { ok: true, models: [] }
+						: { ok: true, models: [{ id: 'qwen3:latest' }] }
+			);
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{
+					id: 'claude-code',
+					name: 'Claude Code',
+					available: true,
+					path: '/usr/local/bin/claude',
+					binaryName: 'claude',
+					hidden: false,
+					capabilities: { supportsModelSelection: true },
+					configOptions: [{ key: 'model', type: 'text', label: 'Model', default: '' }],
+				} as unknown as AgentConfig,
+			]);
+			// No provider model, so opening the list filters nothing out.
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+			try {
+				const group = createGroup({ defaults: { toolType: 'claude-code' } });
+				renderModal(group);
+				openTab('Models');
+
+				const field = await screen.findByTestId('group-settings-model');
+				fireEvent.click(await within(field).findByRole('button', { name: 'Show model options' }));
+				const option = await waitFor(() => {
+					const found = field.querySelector(
+						'[data-testid="model-source-option"][data-value="ep-ollama:qwen3:latest"]'
+					);
+					expect(found).not.toBeNull();
+					return found as HTMLElement;
+				});
+				fireEvent.click(option);
+
+				expect(within(field).getByTestId('model-source-chip')).toHaveTextContent('Ollama');
+				expect(within(field).getByRole('textbox', { name: 'Model' })).toHaveValue('qwen3:latest');
+
+				fireEvent.click(screen.getByText('Save'));
+				expect(written(group)[0].defaults).toEqual({
+					toolType: 'claude-code',
+					runOn: expect.objectContaining({
+						type: 'source',
+						endpointId: OLLAMA.id,
+						model: 'qwen3:latest',
+					}),
+				});
+			} finally {
+				useSettingsStore.setState({ localModelEndpoints: savedEndpoints });
+				vi.mocked(window.maestro.localModels.endpoints.listModels).mockResolvedValue({
+					ok: true,
+					models: [],
+				});
+			}
 		});
 	});
 

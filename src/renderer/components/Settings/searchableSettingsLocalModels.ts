@@ -92,7 +92,7 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 		...inPanel('library', 'agents'),
 		label: 'Agent Models',
 		description:
-			'Local models strong enough to be the model behind an agent, set as its Run on target',
+			'Local models strong enough to be the model behind an agent, set as its model source',
 		keywords: [
 			'agent models',
 			'agent-ready',

@@ -42,7 +42,7 @@ export interface AutoRunLaunchInput {
 	prompt?: string;
 	/** Skip the documents' `MAESTRO:MODEL` markers for this run (`--ignore-model-hints`). */
 	ignoreModelHints?: boolean;
-	/** Where this run's model runs, in place of the agent's own target (`--run-on`). */
+	/** Where this run's model runs, in place of the agent's own target (`--model-source`). */
 	runOn?: RunOnTarget;
 }
 
@@ -53,7 +53,7 @@ export interface GoalRunLaunchInput {
 	maxIterations?: number | null;
 	model?: string;
 	effort?: string;
-	/** Where this run's model runs, in place of the agent's own target (`--run-on`). */
+	/** Where this run's model runs, in place of the agent's own target (`--model-source`). */
 	runOn?: RunOnTarget;
 }
 
@@ -140,5 +140,5 @@ function checkRunOn(
 	const parsed = parseRunOnTarget(value);
 	return parsed.ok
 		? { ok: true, value: parsed.target }
-		: { ok: false, reason: `Run on: ${parsed.error}` };
+		: { ok: false, reason: `Model source: ${parsed.error}` };
 }

@@ -14,7 +14,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	resolveGroupId: vi.fn(),
 	getSessionById: vi.fn(),
-	// The saved sources `--run-on`, `--tier` and `--background-requests` are
+	// The saved sources `--model-source`, `--tier` and `--background-requests` are
 	// checked against.
 	readLocalModelEndpoints: vi.fn(() => [
 		{
@@ -526,7 +526,7 @@ describe('update-agent command', () => {
 		});
 	});
 
-	describe('--run-on', () => {
+	describe('--model-source', () => {
 		const QWEN = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
 
 		function mockAgent(agent: Record<string, unknown> = {}) {
@@ -565,7 +565,7 @@ describe('update-agent command', () => {
 		it('sends the target the picker would store, at its default context', async () => {
 			const sendCommand = mockAgent();
 
-			await updateAgent('agent-1', { runOn: 'ep-ollama:qwen3:latest' });
+			await updateAgent('agent-1', { modelSource: 'ep-ollama:qwen3:latest' });
 
 			expect(sendCommand).toHaveBeenCalledWith(
 				{
@@ -576,24 +576,27 @@ describe('update-agent command', () => {
 				'update_session_config_result'
 			);
 			expect(consoleSpy).toHaveBeenCalledWith(
-				'  Run on: ep-ollama:qwen3:latest (context 40960 tokens)'
+				'  Model source: ep-ollama:qwen3:latest (context 40960 tokens)'
 			);
 		});
 
 		it.each(['provider', 'PROVIDER'])('clears the target for %j', async (value) => {
 			const sendCommand = mockAgent({ runOn: QWEN });
 
-			await updateAgent('agent-1', { runOn: value });
+			await updateAgent('agent-1', { modelSource: value });
 
 			// `null` on the wire: the app stores the absence of a target.
 			expect(sentPatch(sendCommand)).toEqual({ runOn: null });
-			expect(consoleSpy).toHaveBeenCalledWith('  Run on: provider');
+			expect(consoleSpy).toHaveBeenCalledWith('  Model source: provider');
 		});
 
 		it('stores the context it is given', async () => {
 			const sendCommand = mockAgent();
 
-			await updateAgent('agent-1', { runOn: 'ep-ollama:qwen3:latest', runOnContext: '131072' });
+			await updateAgent('agent-1', {
+				modelSource: 'ep-ollama:qwen3:latest',
+				modelSourceContext: '131072',
+			});
 
 			expect(sentPatch(sendCommand)).toEqual({ runOn: { ...QWEN, contextTokens: 131_072 } });
 		});
@@ -601,7 +604,7 @@ describe('update-agent command', () => {
 		it("changes only the context of the agent's current target, given the context alone", async () => {
 			const sendCommand = mockAgent({ runOn: { ...QWEN, contextTokens: 131_072 } });
 
-			await updateAgent('agent-1', { runOnContext: '65536' });
+			await updateAgent('agent-1', { modelSourceContext: '65536' });
 
 			expect(sentPatch(sendCommand)).toEqual({ runOn: { ...QWEN, contextTokens: 65_536 } });
 		});
@@ -609,7 +612,7 @@ describe('update-agent command', () => {
 		it('rides in the same patch as another setting', async () => {
 			const sendCommand = mockAgent();
 
-			await updateAgent('agent-1', { runOn: 'ep-ollama:qwen3:latest', nudge: 'be brief' });
+			await updateAgent('agent-1', { modelSource: 'ep-ollama:qwen3:latest', nudge: 'be brief' });
 
 			expect(sendCommand).toHaveBeenCalledTimes(2);
 			expect(sendCommand).toHaveBeenNthCalledWith(
@@ -633,14 +636,14 @@ describe('update-agent command', () => {
 						}
 					: { success: true }
 			);
-			await updateAgent('agent-1', { runOn: 'ep-ollama:qwen3:latest' });
+			await updateAgent('agent-1', { modelSource: 'ep-ollama:qwen3:latest' });
 			expect(sentPatch(sendCommand)).toEqual({ runOn: { ...QWEN, contextTokens: 131_072 } });
 		});
 
 		it('reports the target in JSON, the form show agent reads back', async () => {
 			mockAgent();
 
-			await updateAgent('agent-1', { runOn: 'ep-ollama:qwen3:latest', json: true });
+			await updateAgent('agent-1', { modelSource: 'ep-ollama:qwen3:latest', json: true });
 
 			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
 				success: true,
@@ -650,24 +653,29 @@ describe('update-agent command', () => {
 		});
 
 		it.each([
-			['a spelling that is not a target', {}, { runOn: 'qwen3' }, '--run-on:'],
-			['a source id that names nothing', {}, { runOn: 'ep-typo:qwen3' }, 'No source has the id'],
+			['a spelling that is not a target', {}, { modelSource: 'qwen3' }, '--model-source:'],
+			[
+				'a source id that names nothing',
+				{},
+				{ modelSource: 'ep-typo:qwen3' },
+				'No source has the id',
+			],
 			[
 				'a context under the agent minimum',
 				{},
-				{ runOn: 'ep-ollama:qwen3', runOnContext: '8192' },
+				{ modelSource: 'ep-ollama:qwen3', modelSourceContext: '8192' },
 				'at least 40960 tokens',
 			],
 			[
 				'a context alone for an agent on its provider',
 				{},
-				{ runOnContext: '65536' },
-				'Pass --run-on',
+				{ modelSourceContext: '65536' },
+				'Pass --model-source',
 			],
 			[
 				'a source for a provider with no recipe',
 				{ toolType: 'gemini-cli' },
-				{ runOn: 'ep-ollama:qwen3' },
+				{ modelSource: 'ep-ollama:qwen3' },
 				'speaks only the Gemini API',
 			],
 		])('refuses %s before it reaches the app', async (_name, agent, flags, expected) => {
@@ -683,7 +691,7 @@ describe('update-agent command', () => {
 		it('still clears a target left on a provider with no recipe', async () => {
 			const sendCommand = mockAgent({ toolType: 'gemini-cli', runOn: QWEN });
 
-			await updateAgent('agent-1', { runOn: 'provider' });
+			await updateAgent('agent-1', { modelSource: 'provider' });
 
 			expect(sentPatch(sendCommand)).toEqual({ runOn: null });
 			expect(processExitSpy).not.toHaveBeenCalled();
@@ -692,7 +700,7 @@ describe('update-agent command', () => {
 		it('counts as a field to update on its own', async () => {
 			mockAgent();
 
-			await updateAgent('agent-1', { runOn: 'provider' });
+			await updateAgent('agent-1', { modelSource: 'provider' });
 
 			expect(formatError).not.toHaveBeenCalledWith(
 				expect.stringContaining('Specify at least one field to update')
@@ -702,7 +710,7 @@ describe('update-agent command', () => {
 		it('cannot be combined with --provider, like any other settings edit', async () => {
 			const sendCommand = mockAgent();
 
-			await refused({ runOn: 'provider', provider: 'codex', force: true });
+			await refused({ modelSource: 'provider', provider: 'codex', force: true });
 
 			expect(formatError).toHaveBeenCalledWith(
 				expect.stringContaining('Provider migration must be a separate operation')
@@ -720,7 +728,9 @@ describe('update-agent command', () => {
 				await refused(flags);
 
 				expect(formatError).toHaveBeenCalledWith(
-					expect.stringContaining(`${flag}: Not applied while Run on is a source`)
+					expect.stringContaining(
+						`${flag}: Not applied while the model source is a Local Models source`
+					)
 				);
 				expect(processExitSpy).toHaveBeenCalledWith(1);
 				expect(sendCommand).not.toHaveBeenCalled();
@@ -729,10 +739,13 @@ describe('update-agent command', () => {
 			it('refuses a gateway set in the same call as a source target', async () => {
 				const sendCommand = mockAgent();
 
-				await refused({ runOn: 'ep-ollama:qwen3:latest', gatewayUrl: 'http://127.0.0.1:8787' });
+				await refused({
+					modelSource: 'ep-ollama:qwen3:latest',
+					gatewayUrl: 'http://127.0.0.1:8787',
+				});
 
 				expect(formatError).toHaveBeenCalledWith(
-					expect.stringContaining('Not applied while Run on is a source')
+					expect.stringContaining('Not applied while the model source is a Local Models source')
 				);
 				expect(sendCommand).not.toHaveBeenCalled();
 			});
@@ -752,7 +765,10 @@ describe('update-agent command', () => {
 			it('allows a gateway in the call that moves the agent back to its provider', async () => {
 				const sendCommand = mockAgent({ runOn: QWEN });
 
-				await updateAgent('agent-1', { runOn: 'provider', gatewayUrl: 'http://127.0.0.1:8787' });
+				await updateAgent('agent-1', {
+					modelSource: 'provider',
+					gatewayUrl: 'http://127.0.0.1:8787',
+				});
 
 				expect(sentPatch(sendCommand)).toEqual({
 					gatewayUrl: 'http://127.0.0.1:8787',
@@ -1104,7 +1120,7 @@ describe('update-agent command', () => {
 			expect(formatError).toHaveBeenCalledWith(expect.stringContaining(message));
 		});
 
-		it('refuses a source tier on a harness with no Run on recipe', async () => {
+		it('refuses a source tier on a harness with no model source recipe', async () => {
 			mockAgent({ toolType: 'factory-droid' });
 
 			await refused({ tier: ['high=ep-ollama:qwen3:latest'] });

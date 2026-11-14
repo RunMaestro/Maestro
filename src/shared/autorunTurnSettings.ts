@@ -49,7 +49,7 @@ export interface ResolvedTurnSettings {
 	/**
 	 * Where the turn launches, when the tier's target decides it: the provider,
 	 * or a source (then `model` is the source's model). `undefined` means the
-	 * agent's own Run on target stands.
+	 * agent's own model source stands.
 	 */
 	runOn?: RunOnTarget;
 	/** The layer the tier's target came from. Absent when no tier was applied. */
@@ -172,7 +172,7 @@ export function resolveTurnSettings(
 }
 
 /**
- * The Run on target a resolved turn launches on, as data for the Run on path
+ * The model source a resolved turn launches on, as data for the model source path
  * (`prepareLaunchRunOn`, which validates it): the tier's target when a layer
  * the user wrote decided the place, else the agent's own stored one. Every
  * surface that launches a resolved turn passes this, never the agent's `runOn`

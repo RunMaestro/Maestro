@@ -153,7 +153,7 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		gatewayUrl: params.parentSession.gatewayUrl,
 		tokenProxyMode: params.parentSession.tokenProxyMode,
 		tokenProxyRetrieval: params.parentSession.tokenProxyRetrieval,
-		// And the same Run on target: a worktree agent on the provider's cloud
+		// And the same model source: a worktree agent on the provider's cloud
 		// model while its parent runs on a local one would spend money the user
 		// chose not to spend.
 		runOn: params.parentSession.runOn,

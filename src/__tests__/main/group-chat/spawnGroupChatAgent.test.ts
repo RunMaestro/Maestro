@@ -51,7 +51,7 @@ vi.mock('../../../main/local-models/proxy/service', () => ({
 	applyAgentGatewayToSpawn: (...args: unknown[]) => mockApplyGateway(...args),
 }));
 
-// The agent's Run on target: stubbed the same way (run-on.test.ts covers how the
+// The agent's model source: stubbed the same way (run-on.test.ts covers how the
 // answer is reached). By default the agent has none, so the spawn is unchanged.
 const mockApplyRunOn = vi.fn();
 const mockStoredRunOn = vi.fn();
@@ -371,7 +371,7 @@ describe('spawnGroupChatAgent', () => {
 		});
 	});
 
-	describe("the agent's Run on target", () => {
+	describe("the agent's model source", () => {
 		const QWEN = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
 		const applied = {
 			model: 'qwen3:latest',
@@ -431,7 +431,7 @@ describe('spawnGroupChatAgent', () => {
 				customEnvVars: { FOO: '1' },
 				remote: null,
 			});
-			// A Run on target takes the gateway's place: it is not even asked.
+			// A model source takes the gateway's place: it is not even asked.
 			expect(mockApplyGateway).not.toHaveBeenCalled();
 			const spawned = spawnSpy.mock.calls[0][0] as {
 				args: string[];

@@ -70,8 +70,8 @@ describe('useComposerModelChoices', () => {
 		});
 	});
 
-	describe('the Run on label', () => {
-		it("shows the agent's Run on target in place of the model", () => {
+	describe('the model source label', () => {
+		it("shows the agent's model source in place of the model", () => {
 			const agent = createInputAreaSession({
 				runOn: { type: 'source', endpointId: 'ollama', model: 'deepseek-v4.1-flash:cloud' },
 			});

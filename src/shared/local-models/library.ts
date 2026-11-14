@@ -94,7 +94,7 @@ export const LOCAL_MODEL_LIBRARY_SECTIONS: Readonly<
 		id: 'agents',
 		label: 'Agent Models',
 		description:
-			"Models strong enough to be the model behind an agent. Each one fixed a bug in a test repository through the harness its badge names, so it can stand in for the provider's own model. Pick one as an agent's Run on target in its settings.",
+			"Models strong enough to be the model behind an agent. Each one fixed a bug in a test repository through the harness its badge names, so it can stand in for the provider's own model. Pick one as an agent's model source in its settings.",
 		groups: Object.freeze(['agent'] as const),
 	}),
 	housekeeping: Object.freeze({

@@ -113,7 +113,7 @@ interface ModelUsageResponse {
 
 /**
  * `maestro-cli stats models` - what every model other than a provider's own
- * did in a time range: the sources, the tasks, the agents on a Run on source,
+ * did in a time range: the sources, the tasks, the agents on a model source,
  * System One's decisions and the token proxy. The record the Usage Dashboard's
  * Models tab draws, from the same main-process read.
  *

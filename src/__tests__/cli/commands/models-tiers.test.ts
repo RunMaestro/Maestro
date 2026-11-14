@@ -5,7 +5,7 @@
  * suggest cross the WS bridge in the shape the desktop handler expects, and the
  * writers check and store through the same shared helpers as the Tier defaults
  * table (a source named by id prefix is stored by full id, a source on a
- * harness with no Run on recipe is refused, `default` clears one tier).
+ * harness with no model source recipe is refused, `default` clears one tier).
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -270,7 +270,7 @@ describe('models tiers commands', () => {
 			expect(printed()).toMatch(/Claude Code low -> provider:haiku \(Built-in\)/);
 		});
 
-		it('refuses a source for a harness with no Run on recipe', () => {
+		it('refuses a source for a harness with no model source recipe', () => {
 			expect(() => modelsTiersSet('factory-droid', 'low', 'aaaa:qwen3', {})).toThrow('__exit__');
 			expect(writeHarnessTierDefaults).not.toHaveBeenCalled();
 			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);

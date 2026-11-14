@@ -4,7 +4,7 @@
  * Verifies:
  * - the skeleton shows until the record arrives
  * - a seeded record draws every block: the cards, the sources table, the
- *   latency bars, the tasks, the Run on agents, System One and the token proxy
+ *   latency bars, the tasks, the model source agents, System One and the token proxy
  * - the sources and tasks tables sort from their headers
  * - a range with nothing on another model shows the empty state, which says
  *   what fills the tab and opens Settings > Models
@@ -257,7 +257,7 @@ describe('ModelUsageStats', () => {
 			expect(tile).toHaveTextContent('Claude Code');
 			expect(tile).toHaveAttribute(
 				'aria-label',
-				'Alpha: 4 Run on turns on qwen3-coder on Maestro model server'
+				'Alpha: 4 model source turns on qwen3-coder on Maestro model server'
 			);
 			// Beta had runs filed for it and launched nothing on another model.
 			expect(screen.queryByTestId('model-usage-agent-agent-beta-0002')).not.toBeInTheDocument();
@@ -972,7 +972,7 @@ describe('ModelUsageStats', () => {
 			expect(screen.getByTestId('model-usage-tasks-empty')).toHaveTextContent(
 				'Settings > Models > System Two'
 			);
-			expect(screen.getByTestId('model-usage-agents-empty')).toHaveTextContent('Run on target');
+			expect(screen.getByTestId('model-usage-agents-empty')).toHaveTextContent('model source');
 			expect(screen.getByTestId('model-usage-system-one-empty')).toHaveTextContent(
 				'Settings > Models > System One'
 			);

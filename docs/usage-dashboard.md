@@ -218,7 +218,7 @@ Speed is measured from Claude Code and Codex transcripts. Other providers do not
 
 What every model other than a provider's own did in the selected range: the Maestro model server, local servers such as Ollama and LM Studio, cloud endpoints, and System One engines such as Jev. The providers' own cloud sits beside them in the table, so you can compare.
 
-Where Tokens reads transcripts, Models reads what Maestro itself recorded: one row per housekeeping task run, per [System One](./local-models#system-one) decision, per background request the [token proxy](./local-models#the-maestro-proxy) routed, and per agent turn that ran on a [Run on](./local-models#run-on) target. It loads that record on its own, so it fills in even when no agent turn is recorded in the range, and it refreshes when new stats arrive.
+Where Tokens reads transcripts, Models reads what Maestro itself recorded: one row per housekeeping task run, per [System One](./local-models#system-one) decision, per background request the [token proxy](./local-models#the-maestro-proxy) routed, and per agent turn that ran on a [model source](./local-models#model-source). It loads that record on its own, so it fills in even when no agent turn is recorded in the range, and it refreshes when new stats arrive.
 
 To open it from a terminal, run `maestro-cli open usage-dashboard --tab models`. The tab has no shortcut or command palette entry of its own: open the dashboard and move to it with `Cmd+Shift+[` / `Cmd+Shift+]`.
 
@@ -236,7 +236,7 @@ To open it from a terminal, run `maestro-cli open usage-dashboard --tab models`.
 | **Sources**             | One row per source: its kind (**In-process**, **Model server**, **Endpoint**, **System One**, or **Provider cloud**), the models it ran, where it ran (**This machine**, **Remote**, or **Unknown**), requests with the runs / turns / routed split, **Tokens in**, **Tokens out**, **Errors**, **p50** and **p95**. Click a column header to sort; the busiest source is first |
 | **Latency by Source**   | Two charts, **One request** and **One agent turn**. Each bar is solid to the median and faint to p95, fastest first, on a log scale because one chart holds a 4 ms lookup and a 4 s judge                                                                                                                                                                                       |
 | **Tasks**               | One sortable row per task: housekeeping tasks, System One tasks, and `agent:<verb>` for requests agents sent with `maestro-cli s1`. Columns are **Runs**, **Errors**, **Tokens**, **p50**, **p95** and **Where it ran**                                                                                                                                                         |
-| **Run On Agents**       | One tile per agent whose turns ran on a Run on target: the model and source, the harness, **Turns**, **Tokens in**, **Tokens out** and **p50 turn**                                                                                                                                                                                                                             |
+| **Model Source Agents** | One tile per agent whose turns ran on a model source: the model and source, the harness, **Turns**, **Tokens in**, **Tokens out** and **p50 turn**                                                                                                                                                                                                                              |
 | **System One**          | **How decisions ended** (**Answered**, **Failed open**, **Failed closed**, **No answer**, **Cancelled**), with how many were answered from the cache, timed out, and the spend. **Auto routing, by tier** (**Low**, **Medium**, **High**). A per-task table with a **Timed out** column, and a line per engine                                                                  |
 | **Token Proxy Savings** | Three headline figures, a daily chart, splits by mode, provider route and algorithm, the provider's own usage, then a row for **All agents** and one per agent. Marked **Estimate**. See **Token Proxy Savings, top to bottom** below                                                                                                                                           |
 
@@ -248,7 +248,7 @@ A few things to know when reading it:
 - **A timeout is not its own outcome.** It is why a decision failed, so it is counted in the failed slices and also shown on its own.
 - **System One reads a 30-day ledger.** On a quarter, year or all-time range the tab says the decision outcomes reach back only that far. The Auto routing split and the request counts in Sources go back the whole range.
 - **Token savings are estimates.** The proxy counts at 4 characters per token. A smaller outgoing payload does not establish billed token or cost savings. **Tokens saved** reads `-` for an agent whose requests only passed through.
-- **Cue runs and headless `maestro-cli send` are not in Run On Agents.** They write no turn record, so a Run on target used there does not appear.
+- **Cue runs and headless `maestro-cli send` are not in Model Source Agents.** They write no turn record, so a model source used there does not appear.
 
 **Token Proxy Savings, top to bottom:**
 
@@ -274,7 +274,7 @@ Each section that has nothing in the range stays, says so, and links to where it
 | Section                 | Empty link                                                                                                    |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------- |
 | **Tasks**               | **Settings > Models > System One** and **Settings > Models > System Two**                                     |
-| **Run On Agents**       | **Open _agent_'s Models settings**, for the active agent, which opens the Models tab of that agent's settings |
+| **Model Source Agents** | **Open _agent_'s Models settings**, for the active agent, which opens the Models tab of that agent's settings |
 | **System One**          | **Settings > Models > System One**                                                                            |
 | **Token Proxy Savings** | **Settings > Models > Gateway**                                                                               |
 

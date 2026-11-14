@@ -26,7 +26,7 @@ interface ModelEffortPillsProps {
 	 */
 	shortcutKeys?: string[];
 	currentModel?: string;
-	/** Effective Run on model and source, when they override the provider model. */
+	/** Effective model source (model and source), when they override the provider model. */
 	runOn?: string;
 	currentEffort?: string;
 	availableModels: string[];
@@ -116,7 +116,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 						}}
 						title={
 							runOn
-								? `Run on: ${runOn}. This target overrides named provider models. Change Run on in Edit Agent > Models.`
+								? `Model source: ${runOn}. This source overrides named provider models. Change the model source in Edit Agent > Models.`
 								: isAutoModel(currentModel) && autoModelTitle
 									? `${autoModelTitle} Click to change${shortcutSuffix(shortcutKeys)}`
 									: `Change model${shortcutSuffix(shortcutKeys)}`
@@ -162,8 +162,8 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 							/>
 							{runOn && (
 								<p className="px-3 py-2 text-xs" style={{ color: theme.colors.textDim }}>
-									Run on: {runOn}. This target overrides named provider models. Change Run on in
-									Edit Agent &gt; Models.
+									Model source: {runOn}. This source overrides named provider models. Change the
+									model source in Edit Agent &gt; Models.
 								</p>
 							)}
 							<div className="shrink-0 flex p-2">

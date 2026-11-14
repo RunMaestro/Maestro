@@ -166,8 +166,8 @@ describe('_maestro-cli.md names the verbs of this branch', () => {
 
 	test('every model and peer flag it names is declared where the map says', () => {
 		const both = [
-			'--run-on',
-			'--run-on-context',
+			'--model-source',
+			'--model-source-context',
 			'--gateway-url',
 			'--model',
 			'--peer',

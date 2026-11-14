@@ -865,7 +865,7 @@ describe('routing facts', () => {
 		expect(text).toMatch(
 			/Configured routing \(read from the settings as they stand now, not from a launch: nothing below says where a turn will actually go\)/
 		);
-		expect(text).toMatch(/Run on: Provider\./);
+		expect(text).toMatch(/Model source: Provider\./);
 		expect(signalsOf([user()], { routing }).routing).toBe(routing);
 		expect(signalsOf([user()]).routing).toBeNull();
 		expect(formatContextSignals(signalsOf([user()]))).not.toMatch(/Configured routing/);

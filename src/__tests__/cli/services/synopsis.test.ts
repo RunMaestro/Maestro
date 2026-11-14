@@ -117,7 +117,7 @@ describe('requestCliSynopsis', () => {
 		});
 	});
 
-	it("runs on the agent's Run on target, where the conversation it resumes ran", async () => {
+	it("runs on the agent's model source, where the conversation it resumes ran", async () => {
 		const runOn = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
 
 		await requestCliSynopsis(mockSession({ runOn } as never), 's', {

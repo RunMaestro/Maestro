@@ -11,7 +11,7 @@
  * Values come from the entry's send-time stamp. An unset provider is unknown;
  * unset model/effort mean the provider's defaults. Omit them instead of guessing.
  *
- * A turn that ran on a Run on source (`LogEntry.turnRunOn`) names the model and
+ * A turn that ran on a model source (`LogEntry.turnRunOn`) names the model and
  * the source in the model pill's place (`qwen3:latest · Ollama`): the agent's
  * own model was not the one asked, so it is not the one shown.
  *
@@ -42,7 +42,7 @@ export interface TurnSettingPillsProps {
 	model?: string;
 	/** Effort/reasoning level the turn ran under, or undefined for the default. */
 	effort?: string;
-	/** The model and source a Run on turn ran on. Takes the model pill's place. */
+	/** The model and source a model source turn ran on. Takes the model pill's place. */
 	runOn?: string;
 	/** Set for a turn sent on the Auto model. Takes the model pill's place too. */
 	auto?: AutoTurnStamp;

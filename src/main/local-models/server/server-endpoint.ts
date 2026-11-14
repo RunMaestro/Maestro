@@ -4,7 +4,7 @@
  *
  * The endpoint service routes every call that names that id here, so the paths
  * that already take an endpoint (task assignments, model listing, Test, and
- * later an agent's Run on) reach the server with no second code path. Three
+ * later an agent's model source) reach the server with no second code path. Three
  * things set it apart from a saved endpoint:
  *
  *   - **It is never saved.** The record is built per call from where the server
@@ -111,7 +111,7 @@ export type ModelServerForHarness =
 	| { ok: false; error: string };
 
 /**
- * {@link modelServerCallTarget} for a harness (an agent's Run on target): the
+ * {@link modelServerCallTarget} for a harness (an agent's model source): the
  * server's root and key, or the reason it cannot serve the model, as a result.
  * A result and not a throw because it crosses the CLI bridge, and because its
  * caller refuses a launch with the reason rather than catching an error.

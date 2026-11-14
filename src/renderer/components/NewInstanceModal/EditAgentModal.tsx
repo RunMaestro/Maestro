@@ -42,15 +42,15 @@ import { validateEditSession } from '../../utils/sessionValidation';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { ModalTabStrip, useModalTabCycling, useModalTabs } from '../ui/ModalTabStrip';
-import { AgentConfigPanel } from '../shared/AgentConfigPanel';
+import { AgentConfigPanel, type AgentConfigOptionsProps } from '../shared/AgentConfigPanel';
 import { agentEnvVarHandlers } from '../shared/agentEnvVarHandlers';
 import { useHomeDir } from '../../hooks/utils/useHomeDir';
 import { usePeerFleet } from '../../hooks/agent/usePeerFleet';
 import { GatewayUrlField } from '../shared/GatewayUrlField';
-import { RunOnField } from '../shared/RunOnField';
 import { TierTargetsField } from '../shared/TierTargetsField';
 import {
 	AGENT_FORM_TAB_IDS,
+	AgentModelSection,
 	AgentProviderSelect,
 	AUDIT_LOG_TAB_ID,
 	AuditLogTab,
@@ -563,7 +563,7 @@ export function EditAgentModal({
 		setRunOnError(
 			storedRunOn.ok
 				? undefined
-				: `The stored Run on target cannot be used: ${storedRunOn.error} Saving sets it to what is chosen here.`
+				: `The stored model source cannot be used: ${storedRunOn.error} Saving sets it to what is chosen here.`
 		);
 		setTierTargets(isProviderSwitch ? {} : { ...session.tierTargets });
 		setTierTargetsError(undefined);
@@ -866,7 +866,7 @@ export function EditAgentModal({
 			return;
 		}
 
-		// The Run on target goes through the validator every writer shares, so
+		// The model source goes through the validator every writer shares, so
 		// nothing is stored that the launch would refuse as malformed.
 		const runOnEdit = parseRunOnEdit(selectedToolType, runOn);
 		if (!runOnEdit.ok) {
@@ -1264,10 +1264,79 @@ export function EditAgentModal({
 		Object.keys(customEnvVars).length > 0
 			? customEnvVars
 			: (globalConfigRef.current.customEnvVars as Record<string, string> | undefined);
-	// A Run on target takes the gateway's place: both gateway controls say so.
+	// A source model takes the gateway's place: both gateway controls say so.
 	const gatewaySkippedReason = isRunOnSourceTarget(runOn)
 		? RUN_ON_GATEWAY_SKIPPED_REASON
 		: undefined;
+
+	// The provider's config options, shared by the Provider tab (the harness
+	// options) and the Models tab (the model options), so a field reads and saves
+	// the same way on either tab.
+	const configOptionProps = agent
+		? ({
+				theme,
+				agent,
+				autoModelFor,
+				configOptionNotes:
+					selectedToolType === 'grok'
+						? {
+								...configOptionNotes,
+								model:
+									grokOptions.modelStatus === 'discovered'
+										? undefined
+										: 'Model discovery unavailable. Keep or enter a model manually.',
+								[getEffortConfigKey(agent)]:
+									grokOptions.effortStatus === 'discovered'
+										? undefined
+										: 'Effort discovery unavailable. Keep or enter an effort manually.',
+							}
+						: configOptionNotes,
+				agentConfig,
+				onConfigChange: (key, value) => {
+					setAgentConfig((prev) => ({ ...prev, [key]: value }));
+				},
+				onConfigBlur: (key, value) => {
+					// model, contextWindow and effort are per-session: they are saved on
+					// modal save and must never leak into the agent-level config, which
+					// only supplies the defaults for newly created agents.
+					const effortKey = getEffortConfigKey(agent);
+					if (key === 'model' || key === 'contextWindow' || key === effortKey) return;
+
+					// agents:setConfig replaces the whole object, so rebuild from the
+					// agent-level config we loaded: dropping the per-session keys from
+					// `agentConfig` alone would erase the agent-level model/effort
+					// defaults every time an unrelated option was edited.
+					const {
+						model: _model,
+						contextWindow: _contextWindow,
+						[effortKey]: _effort,
+						...otherConfig
+					} = { ...agentConfig, [key]: value };
+					void window.maestro.agents
+						.setConfig(selectedToolType, {
+							...globalConfigRef.current,
+							...otherConfig,
+						})
+						.catch((error) => {
+							logger.error(`Failed to persist config for ${selectedToolType}:`, undefined, error);
+						});
+				},
+				availableModels: selectedToolType === 'grok' ? grokOptions.models : availableModels,
+				loadingModels:
+					selectedToolType === 'grok'
+						? !!grokDiscoveryContext && !grokOptions.loaded
+						: loadingModels,
+				onRefreshModels: refreshModels,
+				dynamicOptions:
+					selectedToolType === 'grok'
+						? { [getEffortConfigKey(agent)]: grokOptions.efforts }
+						: editDynamicOptions,
+				loadingDynamicOptions:
+					selectedToolType === 'grok'
+						? !!grokDiscoveryContext && !grokOptions.loaded
+						: editLoadingDynamicOptions,
+			} satisfies AgentConfigOptionsProps)
+		: null;
 
 	return (
 		<Modal
@@ -1567,7 +1636,7 @@ export function EditAgentModal({
 								{/* Provider settings (path, args, agent-specific options). Its env
 								    vars live in the Provider environment section. Per-session values are saved
 								    on modal save, not on blur. */}
-								{agent && (
+								{configOptionProps && (
 									<div>
 										<div
 											className="block text-xs font-bold opacity-70 uppercase mb-2"
@@ -1576,25 +1645,9 @@ export function EditAgentModal({
 											{agentName} Settings
 										</div>
 										<AgentConfigPanel
-											theme={theme}
-											agent={agent}
+											{...configOptionProps}
+											hideModelOptions
 											hideEnvVars
-											autoModelFor={autoModelFor}
-											configOptionNotes={
-												selectedToolType === 'grok'
-													? {
-															...configOptionNotes,
-															model:
-																grokOptions.modelStatus === 'discovered'
-																	? undefined
-																	: 'Model discovery unavailable. Keep or enter a model manually.',
-															[getEffortConfigKey(agent)]:
-																grokOptions.effortStatus === 'discovered'
-																	? undefined
-																	: 'Effort discovery unavailable. Keep or enter an effort manually.',
-														}
-													: configOptionNotes
-											}
 											customPath={customPath}
 											onCustomPathChange={setCustomPath}
 											onCustomPathBlur={() => {
@@ -1606,59 +1659,6 @@ export function EditAgentModal({
 												/* Saved on modal save */
 											}}
 											{...envVarProps}
-											agentConfig={agentConfig}
-											onConfigChange={(key, value) => {
-												setAgentConfig((prev) => ({ ...prev, [key]: value }));
-											}}
-											onConfigBlur={(key, value) => {
-												// model, contextWindow and effort are per-session: they are saved on
-												// modal save and must never leak into the agent-level config, which
-												// only supplies the defaults for newly created agents.
-												const effortKey = getEffortConfigKey(agent);
-												if (key === 'model' || key === 'contextWindow' || key === effortKey) return;
-
-												// agents:setConfig replaces the whole object, so rebuild from the
-												// agent-level config we loaded: dropping the per-session keys from
-												// `agentConfig` alone would erase the agent-level model/effort
-												// defaults every time an unrelated option was edited.
-												const {
-													model: _model,
-													contextWindow: _contextWindow,
-													[effortKey]: _effort,
-													...otherConfig
-												} = { ...agentConfig, [key]: value };
-												void window.maestro.agents
-													.setConfig(selectedToolType, {
-														...globalConfigRef.current,
-														...otherConfig,
-													})
-													.catch((error) => {
-														logger.error(
-															`Failed to persist config for ${selectedToolType}:`,
-															undefined,
-															error
-														);
-													});
-											}}
-											availableModels={
-												selectedToolType === 'grok' ? grokOptions.models : availableModels
-											}
-											loadingModels={
-												selectedToolType === 'grok'
-													? !!grokDiscoveryContext && !grokOptions.loaded
-													: loadingModels
-											}
-											onRefreshModels={refreshModels}
-											dynamicOptions={
-												selectedToolType === 'grok'
-													? { [getEffortConfigKey(agent)]: grokOptions.efforts }
-													: editDynamicOptions
-											}
-											loadingDynamicOptions={
-												selectedToolType === 'grok'
-													? !!grokDiscoveryContext && !grokOptions.loaded
-													: editLoadingDynamicOptions
-											}
 											onRefreshAgent={handleRefreshAgent}
 											refreshingAgent={refreshingAgent}
 											isSshEnabled={isSshEnabled}
@@ -1706,23 +1706,26 @@ export function EditAgentModal({
 					<ModelsTab
 						theme={theme}
 						idPrefix="edit-agent"
-						runOn={
-							<div data-testid="edit-agent-run-on">
-								<RunOnField
-									theme={theme}
-									toolType={selectedToolType}
-									value={runOn}
-									onChange={(target) => {
-										setRunOn(target);
-										setRunOnError(undefined);
-									}}
-									userEnvVars={effectiveEnvVars}
-									sshRemoteName={sshRemoteName}
-									error={runOnError}
-									onTest={handleTestRunOn}
-									testId="edit-agent-run-on-field"
-								/>
-							</div>
+						model={
+							configOptionProps && (
+								<div data-testid="edit-agent-model">
+									<AgentModelSection
+										{...configOptionProps}
+										modelSource={{
+											value: runOn,
+											onChange: (target) => {
+												setRunOn(target);
+												setRunOnError(undefined);
+											},
+											userEnvVars: effectiveEnvVars,
+											sshRemoteName,
+											error: runOnError,
+											onTest: handleTestRunOn,
+											testId: 'edit-agent-model-source',
+										}}
+									/>
+								</div>
+							)
 						}
 						tiers={
 							<div data-testid="edit-agent-tiers">

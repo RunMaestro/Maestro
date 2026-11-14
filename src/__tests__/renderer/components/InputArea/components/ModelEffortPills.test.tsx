@@ -47,7 +47,7 @@ describe('ModelEffortPills', () => {
 	});
 	it('keeps Run on configuration out of the quick model menu', () => {
 		renderPills({ modelMenuOpen: true });
-		expect(screen.queryByText('Run on')).not.toBeInTheDocument();
+		expect(screen.queryByText('Model source')).not.toBeInTheDocument();
 		expect(screen.queryByTestId('composer-run-on')).not.toBeInTheDocument();
 	});
 
@@ -57,9 +57,9 @@ describe('ModelEffortPills', () => {
 		expect(
 			screen.getByRole('button', { name: 'deepseek-v4.1-flash:cloud · Ollama' })
 		).toHaveAttribute('title', expect.stringContaining('overrides named provider models'));
-		expect(screen.getByText(/Run on: deepseek-v4.1-flash:cloud · Ollama\./)).toHaveTextContent(
-			'Change Run on in Edit Agent > Models.'
-		);
+		expect(
+			screen.getByText(/Model source: deepseek-v4.1-flash:cloud · Ollama\./)
+		).toHaveTextContent('Change the model source in Edit Agent > Models.');
 		expect(screen.queryByTestId('composer-run-on')).not.toBeInTheDocument();
 	});
 

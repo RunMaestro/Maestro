@@ -39,6 +39,7 @@ import { lifecycleGroupFor } from '../../services/groupLifecycle';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getEffortConfigKey } from '../../utils/agentEffort';
 import {
+	AgentModelSection,
 	AGENT_FORM_TAB_IDS,
 	AgentProviderSelect,
 	BrowseFolderButton,
@@ -55,11 +56,10 @@ import {
 } from '../AgentSettings';
 import { ConfirmModal } from '../ConfirmModal';
 import { SUPPORTED_AGENTS } from '../NewInstanceModal/types';
-import { AgentConfigPanel } from '../shared/AgentConfigPanel';
+import { AgentConfigPanel, type AgentConfigOptionsProps } from '../shared/AgentConfigPanel';
 import { agentEnvVarHandlers } from '../shared/agentEnvVarHandlers';
 import { BackgroundRequestsField } from '../shared/BackgroundRequestsField';
 import { GatewayUrlField } from '../shared/GatewayUrlField';
-import { RunOnField } from '../shared/RunOnField';
 import { TierTargetsField } from '../shared/TierTargetsField';
 import { TokenProxyModeField, tokenProxyModeBlocker } from '../shared/TokenProxyModeField';
 import { FormFieldLabel, FormInput, Modal, ModalFooter, ToggleSwitch } from '../ui';
@@ -240,10 +240,12 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 		enabled: true,
 	});
 
-	// The provider's own config and models load while the Provider tab shows.
+	// The provider's own config loads while the Provider tab shows, and its
+	// models while either tab that draws a provider field does (the Model field
+	// is on Models).
 	const { setConfigExpanded } = ac;
 	useEffect(() => {
-		setConfigExpanded(activeTab === 'provider');
+		setConfigExpanded(activeTab === 'provider' || activeTab === 'models');
 	}, [activeTab, setConfigExpanded]);
 
 	const toolType = ac.selectedAgent as ToolType | null;
@@ -289,7 +291,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 			setOwn((prev) => ({
 				...prev,
 				...PROVIDER_BOUND_DEFAULTS,
-				// A Run on target names a source and a model, not a provider, so it
+				// A model source names a source and a model, not a provider, so it
 				// is carried across. A provider whose harness cannot use one starts over.
 				runOn: next && agentRunOnSupport(next).supported ? prev.runOn : { type: 'provider' },
 			}));
@@ -480,7 +482,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 			? ac.customEnvVars
 			: (ac.agentConfig.customEnvVars as Record<string, string> | undefined);
 
-	// A Run on target takes the gateway's place: both gateway controls say so.
+	// A source model takes the gateway's place: both gateway controls say so.
 	const gatewaySkippedReason = isRunOnSourceTarget(own.runOn)
 		? RUN_ON_GATEWAY_SKIPPED_REASON
 		: undefined;
@@ -489,6 +491,40 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 	const proxyMode = proxyBlocker ? 'off' : own.tokenProxyMode;
 	const offersBackgroundRequests =
 		!!toolType && backgroundRequestsSupport(toolType).supported && proxyMode !== 'off';
+
+	// The provider's config options, shared by the Provider tab (the harness
+	// options) and the Models tab (the model options).
+	const groupOptionProps =
+		toolType && selectedAgentConfig
+			? ({
+					theme,
+					agent: selectedAgentConfig,
+					autoModelFor: { tierTargets: own.tierTargets, runOn: own.runOn },
+					agentConfig: panelConfig,
+					onConfigChange: (key, value) => {
+						// Model, effort and context window belong to the group once
+						// touched. Every other option is the provider's own config,
+						// as it is in every other form that mounts this panel.
+						if (key === 'model') setField('customModel', value);
+						else if (key === effortKey) setField('customEffort', value);
+						else if (key === 'contextWindow') setField('customContextWindow', value);
+						else {
+							const next = { ...ac.agentConfig, [key]: value };
+							ac.setAgentConfig(next);
+							ac.agentConfigRef.current = next;
+						}
+					},
+					onConfigBlur: async (key) => {
+						if (key === 'model' || key === effortKey || key === 'contextWindow') return;
+						await ac.saveAgentConfig(toolType);
+					},
+					availableModels: ac.availableModels,
+					loadingModels: ac.loadingModels,
+					onRefreshModels: ac.refreshModels,
+					dynamicOptions: ac.dynamicOptions,
+					loadingDynamicOptions: ac.loadingDynamicOptions,
+				} satisfies AgentConfigOptionsProps)
+			: null;
 
 	return (
 		<>
@@ -656,18 +692,18 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 									</AgentProviderSelect>
 
 									{/* Provider settings (path, args, provider-specific options). Its
-									    env vars share this Provider tab. Path, args, model, effort
-									    and context window are saved with the group. */}
-									{toolType && selectedAgentConfig && (
+									    env vars share this Provider tab; the model options are on
+									    the Models tab. Path, args, model, effort and context window
+									    are saved with the group. */}
+									{groupOptionProps && (
 										<div>
 											<FormFieldLabel theme={theme}>
-												{getAgentDisplayName(toolType)} Settings
+												{getAgentDisplayName(groupOptionProps.agent.id)} Settings
 											</FormFieldLabel>
 											<AgentConfigPanel
-												theme={theme}
-												agent={selectedAgentConfig}
+												{...groupOptionProps}
 												hideEnvVars
-												autoModelFor={{ tierTargets: own.tierTargets, runOn: own.runOn }}
+												hideModelOptions
 												customPath={ac.customPath}
 												onCustomPathChange={ac.setCustomPath}
 												onCustomPathBlur={() => {
@@ -679,30 +715,6 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 													/* Saved on modal save */
 												}}
 												{...envVarProps}
-												agentConfig={panelConfig}
-												onConfigChange={(key, value) => {
-													// Model, effort and context window belong to the group once
-													// touched. Every other option is the provider's own config,
-													// as it is in every other form that mounts this panel.
-													if (key === 'model') setField('customModel', value);
-													else if (key === effortKey) setField('customEffort', value);
-													else if (key === 'contextWindow') setField('customContextWindow', value);
-													else {
-														const next = { ...ac.agentConfig, [key]: value };
-														ac.setAgentConfig(next);
-														ac.agentConfigRef.current = next;
-													}
-												}}
-												onConfigBlur={async (key) => {
-													if (key === 'model' || key === effortKey || key === 'contextWindow')
-														return;
-													await ac.saveAgentConfig(toolType);
-												}}
-												availableModels={ac.availableModels}
-												loadingModels={ac.loadingModels}
-												onRefreshModels={ac.refreshModels}
-												dynamicOptions={ac.dynamicOptions}
-												loadingDynamicOptions={ac.loadingDynamicOptions}
 												onRefreshAgent={ac.refreshAgent}
 												refreshingAgent={ac.refreshingAgent}
 												isSshEnabled={sshRemoteChosen}
@@ -756,31 +768,38 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 						<ModelsTab
 							theme={theme}
 							idPrefix={TAB_ID_PREFIX}
-							runOn={
-								toolType ? (
-									<div data-testid="group-settings-run-on">
-										<RunOnField
-											theme={theme}
-											toolType={toolType}
-											value={own.runOn}
-											onChange={(target) => {
-												setField('runOn', target);
-												clearError('runOn');
+							model={
+								groupOptionProps ? (
+									<div data-testid="group-settings-model">
+										<AgentModelSection
+											{...groupOptionProps}
+											modelSource={{
+												value: own.runOn,
+												onChange: (target) => {
+													setField('runOn', target);
+													clearError('runOn');
+												},
+												userEnvVars: effectiveEnvVars,
+												sshRemoteName,
+												error: errorFor('runOn'),
+												testId: 'group-settings-model-source',
 											}}
-											userEnvVars={effectiveEnvVars}
-											sshRemoteName={sshRemoteName}
-											error={errorFor('runOn')}
-											testId="group-settings-run-on-field"
 										/>
 									</div>
+								) : toolType ? (
+									ac.isDetecting ? (
+										<p className="text-sm" style={{ color: theme.colors.textDim }}>
+											Detecting agents...
+										</p>
+									) : undefined
 								) : (
 									<p
 										className="text-sm"
 										style={{ color: theme.colors.textDim }}
 										data-testid="group-settings-models-no-provider"
 									>
-										Choose a provider on the Provider tab to set where its model runs, its tiers and
-										its gateway. A model target belongs to one provider's harness.
+										Choose a provider on the Provider tab to set its model, its tiers and its
+										gateway. A model belongs to one provider's harness.
 									</p>
 								)
 							}

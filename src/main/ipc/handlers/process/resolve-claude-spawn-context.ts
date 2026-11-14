@@ -105,7 +105,7 @@ export async function resolveClaudeSpawnContext(
 		 */
 		envLayers: ClaudeSpawnEnvLayers;
 		/**
-		 * The agent's stored Run on target, as data. One that names a source
+		 * The agent's stored model source, as data. One that names a source
 		 * keeps the turn on `claude --print` (`runOnHarnessMode`).
 		 */
 		runOn?: unknown;

@@ -2010,7 +2010,7 @@ Rules that are easy to break:
 
 - **A queued item keeps the word.** `captureQueuedTurnSettings()` stores `model: 'auto'`, never a
   resolution of it. What is frozen at queue time is the SETTING and the router's ANSWER. Rule 1 and
-  the tier's target are read when the turn takes the tab, the same split the Run on label already
+  the tier's target are read when the turn takes the tab, the same split the model source label already
   follows: the launch reads the agent's target when the turn spawns.
 - **An edit to a queued message drops its answer.** The answer is about the item's text.
   `applyQueuedItemEdit()` removes `route` when the text changed, and the dispatch routes the new
@@ -2067,12 +2067,12 @@ The renderer reads it through one hook, `useAutoModelChoice(agent)`
 `withAutoModelOption(models, choice)` puts the word in a model list, after the leading
 `(default)` entry, and `modelChoiceLabel(model)` draws it as `Auto`.
 
-| Picker                                   | How it gets the choice                                                                                                   |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Provider tab, New Agent and Edit Agent   | `<AgentConfigPanel autoModelFor={{ tierTargets, runOn }}>`, judged against the form's working copy, not the stored agent |
-| Composer model pill, and its phone sheet | `ToolbarControls` calls the hook with the session and hands `ModelEffortPills` and `ComposerOptionsSheet` the list       |
-| Model & Effort console                   | `ModelEffortModal` calls the hook. The wheel's caption is the axes note; the tooltip is the full title                   |
-| Queued-message editor                    | `QueuedItemEditModal` calls the hook. An item with no capture is seeded from `captureQueuedTurnSettings()`               |
+| Picker                                   | How it gets the choice                                                                                                    |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Models tab, New Agent and Edit Agent     | `<AgentModelSection autoModelFor={{ tierTargets, runOn }}>`, judged against the form's working copy, not the stored agent |
+| Composer model pill, and its phone sheet | `ToolbarControls` calls the hook with the session and hands `ModelEffortPills` and `ComposerOptionsSheet` the list        |
+| Model & Effort console                   | `ModelEffortModal` calls the hook. The wheel's caption is the axes note; the tooltip is the full title                    |
+| Queued-message editor                    | `QueuedItemEditModal` calls the hook. An item with no capture is seeded from `captureQueuedTurnSettings()`                |
 
 `autoModelFor` is opt-in on `AgentConfigPanel`. The Group Chat moderator, the wizard and
 `AgentCreationDialog` do not pass it, because their turns are never routed: offering Auto there
@@ -2102,7 +2102,7 @@ tab is not the one the turn will run at.
 
 | Verb                                        | What it does                                                                                                                                                                                                              |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `update-agent --model auto`, `create-agent` | Sets the agent's model to Auto, as the Provider tab's picker does                                                                                                                                                         |
+| `update-agent --model auto`, `create-agent` | Sets the agent's model to Auto, as the Models tab's picker does                                                                                                                                                           |
 | `send --model <model>`                      | This ONE turn's model, in place of the agent's own. `auto` routes the message. Sent to the desktop as `model` on `plugins_send_agent` (the headless runner's `turn.model`), or resolved by `resolveCliAutoTurn()` locally |
 | `s1 route "<prompt>"`                       | A dry run: the tier, the effort, the router and its latency. Nothing is sent to an agent                                                                                                                                  |
 | `s1 route "<prompt>" --agent <id>`          | Also what a turn on Auto would launch on for that agent, through `resolveAutoTurn()`, as a turn that starts a session (rule 1 needs a session a dry run does not have)                                                    |
@@ -2121,17 +2121,17 @@ when a router was asked and gave none.
 A turn's `query_events` row says where its model ran and what the router chose (stats migration
 v20). All three columns are NULL for a turn on a named model on the provider.
 
-| Column                            | Holds                                                                                                                             |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `run_on_endpoint`, `run_on_model` | The Run on source the turn launched on: the endpoint's id (`maestro-server` for the model server) and the model. Written together |
-| `routed_tier`                     | The tier the router chose, `low`, `medium` or `high`. NULL with no decision (`router-off`, `no-decision`, a named model)          |
+| Column                            | Holds                                                                                                                            |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `run_on_endpoint`, `run_on_model` | The model source the turn launched on: the endpoint's id (`maestro-server` for the model server) and the model. Written together |
+| `routed_tier`                     | The tier the router chose, `low`, `medium` or `high`. NULL with no decision (`router-off`, `no-decision`, a named model)         |
 
 `turnModelStatsFields({ runOn, auto })` in `src/shared/autoTurn.ts` shapes them, and both writers of
 the row call it, so one turn is filed one way:
 
 - **An interactive turn** (`useAgentExitListener`) reads the tab's send-time stamps:
   `AITab.turnRunOnSource`, the source frozen beside the `turnRunOn` label by `codifiedRunOn()`, and
-  `AITab.turnAuto`. It never reads the live agent record. Settings are codified at send, so a Run on
+  `AITab.turnAuto`. It never reads the live agent record. Settings are codified at send, so a model source
   target edited while a turn runs does not refile that turn.
 - **An Auto Run task** (`useAgentExecution`) reads what the spawn was sent with:
   `turnRunOnTarget({ runOn: options.runOnOverride }, session.runOn)` and `options.autoStamp`, which
@@ -2146,7 +2146,7 @@ renderer.
 
 Not recorded: `query_events` has one writer, the renderer's `stats:record-query`. A turn the main
 process runs with no tab (a Cue run, a headless `maestro-cli send`) writes no row there on any
-model, so its Run on and Auto launch is not in the table.
+model, so its model source and Auto launch is not in the table.
 
 ### The embedding router: `getEmbeddingRouter().route(source, text)`
 
@@ -2872,7 +2872,7 @@ override), so the gateway ADDS to it instead of setting it. The mapping is a thi
   `enabled_providers` to those two (narrowed by the document's own list, when it has one). A model
   from any other provider then fails by name ("Model unavailable") instead of running direct while
   the agent is shown as proxied. The launch applies it as `gateway.envVarMerges`, last, on the value
-  every layer settled on (`gatewayEnvVarMerges` in `resolveAgentEnvVars()`), the way a Run on
+  every layer settled on (`gatewayEnvVarMerges` in `resolveAgentEnvVars()`), the way a model source
   recipe's merge is applied. `applyAgentGatewayToSpawn()` builds it on the provider default.
 - Rule 1 reads the document: an agent whose own `OPENCODE_CONFIG_CONTENT` names a base URL for
   either provider wins (`user-override` with `inDocument`); a document that does not is the base the
@@ -2906,7 +2906,7 @@ and nothing of the user's config read or written:
 
 Not verified: an OpenCode login other than an API key (a Claude or ChatGPT subscription through an
 OpenCode auth plugin), and an OpenCode older than `--standalone`, which fails the launch on the
-unknown option (as it does for Run on).
+unknown option (as it does for a model source).
 
 ### Copilot CLI: a BYOK variable only
 
@@ -2943,7 +2943,7 @@ BYOK switch, not a base URL for the subscription:
 
 The `copilot-cli` reason says this. A BYOK user who wants the Maestro proxy can set
 `COPILOT_PROVIDER_BASE_URL` to the proxy URL in the agent's own environment variables; Maestro does
-not do that for them (not measured end to end). Run on (`run-on.ts`) uses the same
+not do that for them (not measured end to end). The model source (`run-on.ts`) uses the same
 variable on purpose, to put the agent on a local model.
 
 ### Factory Droid: not verified
@@ -3700,7 +3700,7 @@ launch plan, because the binding has to be in the base URL the plan hands the pr
 2. The gateway agent is the agent the bridge's run proof names (`baseSessionId`). An Auto Run
    task (`{id}-batch-{ts}`) or a History synopsis (`{id}-synopsis-{ts}`) spawns under another id,
    gets no bridge, and stays on `complete`.
-3. No Run on target takes the gateway's place, and `agentHasTokenProxyRetrieval()` is true (the
+3. No model source takes the gateway's place, and `agentHasTokenProxyRetrieval()` is true (the
    switch on, the proxy compressing for this local agent).
 4. `ensureTokenProxyForGateway()` has the proxy up, then `registerTokenProxyRecoveryLaunch()`
    with `{ kind: 'mcp-retrieve-tool' }` returns the bound URL, which goes into the plan. The
@@ -4303,8 +4303,12 @@ CUDA and ROCm zips expand past the zip reader's default bomb cap, so those asset
   row (the count resets after 60 s up); the next crash leaves it `failed`, with a red toast and a
   Sentry message. stdout and stderr go to `userData/logs/model-server.log` through
   `openCappedLogFile` (5 MiB, one `.1` file).
-- **Lifecycle.** It never starts itself. `stopModelServerNow()` runs on app quit, killing the whole
-  process tree.
+- **Lifecycle.** It starts only because the user chose it. `stopModelServerNow()` runs on app quit,
+  killing the whole process tree. `startOnLaunch` in `model-server.json` records the user's choice:
+  a successful `startModelServer()` sets it and `stopModelServer()` clears it (an engine install's
+  own stop and restart pass `{ remember: false }`, and `ensureModelServerFor()` never touches it).
+  At app start `resumeModelServerAtLaunch()` starts the server when it is set, and a failure there
+  is logged and shown in `lastError`, never thrown.
 
 ### The server as a source
 
@@ -4468,7 +4472,7 @@ and its own `CLAUDE_CONFIG_DIR`. Codex on the Responses route as a provider of i
 `CODEX_HOME`. The output budget matters: Claude Code holds back its maximum output (32,000 tokens
 by default) from the window before deciding to compact. At 40,960 that leaves about 9K, under its
 own system prompt in most tokenizers, so it compacted on every turn and gave up ("Autocompact is
-thrashing"). That first pass failed Gemma 4 12B on the recipe, not the model. Phase 06 (Run on)
+thrashing"). That first pass failed Gemma 4 12B on the recipe, not the model. Phase 06 (model source)
 needs the same budget.
 
 ### Result: 2026-10-12, darwin-arm64 (Apple M5 Max, 128 GB), engine `b11559` Metal, Claude Code 2.1.296, Codex 0.162.1
@@ -4506,16 +4510,16 @@ Claude Code retries for about 3 minutes and Codex reports "high demand". Two sys
 Anthropic `system` field are merged and work (probed directly). These models may well drive a
 harness once the request is reshaped: fold a later system message into the first, or into the
 user turn, either in a per-model chat template the server passes with `--chat-template-file` or in
-the token proxy. That is a change to what Maestro serves, so it is left to Phase 06 (Run on), and
+the token proxy. That is a change to what Maestro serves, so it is left to Phase 06 (model source), and
 they keep no `agent` role until a run passes.
 
 **Not measured:** a second machine, or a smaller memory budget. Every result here is from the
 128 GB Mac. Gemma 4 E4B (5.2 GB) and gpt-oss 20B (11.3 GB) are the qualified models a 16 GB
 machine could hold.
 
-## Run on, end to end
+## Model source, end to end
 
-**Run on** keeps an agent's harness and swaps the model behind it: the agent record carries
+**Model source** keeps an agent's harness and swaps the model behind it: the agent record carries
 `runOn` (Provider, or a source and a model), `resolveRunOnLaunch()` in
 `src/shared/local-models/run-on.ts` turns it into variables and arguments for that harness, and
 `prepareLaunchRunOn()` in `src/main/local-models/run-on.ts` makes sure the source can serve the
@@ -4587,7 +4591,7 @@ The first run failed on two harnesses, and both failures were real:
   with `PWD` unset it boots in its real one. The test now drops `PWD` from its own environment
   (`providerCliEnv`). **Maestro's launches do not set `PWD`**, so a Maestro process that has one
   (`maestro-cli` run from a shell, or a dev build started from a terminal) starts an OpenCode
-  agent in the caller's directory. That is not a Run on fault and is not fixed here; the fix is
+  agent in the caller's directory. That is not a model source fault and is not fixed here; the fix is
   for the launch to set `PWD` to the directory it spawns in.
 
 **Not measured:** a source other than the Maestro model server, an SSH remote, a turn that uses a
@@ -4599,7 +4603,7 @@ have.
 ## Cross-platform coverage
 
 Every on-device result in this document is from one machine: darwin-arm64, an Apple M5 Max.
-**Nothing in the model server, the fit rule, Run on or tier routing has run on Windows or Linux
+**Nothing in the model server, the fit rule, model sources or tier routing has run on Windows or Linux
 hardware.** The 2026-10-13 review read each of those code paths for what differs there and pinned
 each difference with a unit test that stands the platform's values in (`process.platform`, a
 Windows path, an exit status, Electron's `safeStorage` and GPU info as that platform reports
@@ -4628,11 +4632,11 @@ prints `obscured (this system has no OS key store)`.
 
 ### What the review changed
 
-| Id  | Finding                                                                                                                                                                                                                                                                                                                                                                                           | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| F1  | On Windows an agent is started through a shell, PowerShell by default. Codex's Run on arguments held double quotes and spaces (`{name="Maestro", base_url="..."}`). Windows PowerShell hands a program such an argument with the quotes dropped and split at the spaces. Measured on macOS with Codex CLI 0.162.1: given the arguments in that split form, Codex exits with "unexpected argument" | The recipe writes TOML literal strings and no spaces: `{name='Maestro',base_url='...',env_key='MAESTRO_RUN_ON_KEY',wire_api='responses'}` and `model_provider='maestro'`. A single quote in the address is written `%27`. Measured on the same run: Codex reached `/v1/responses` at the given address with the given key. `windowsSpawnShell.test.ts` pins what cmd.exe and PowerShell are handed, and `run-on.test.ts` refuses a double quote or a space in any recipe argument |
-| F2  | The Run on Test (`testAgentRunOn()`) started the harness directly. On Windows a harness that npm installed is a `.cmd` shim, which Node refuses to spawn without a shell ("spawn EINVAL")                                                                                                                                                                                                         | The local test turn takes the step a tab spawn takes, `planSpawnShell()`. Off Windows it changes nothing                                                                                                                                                                                                                                                                                                                                                                          |
-| F3  | Linux gives Electron a GPU's PCI ids and no description, so Maestro names the device by its vendor (`NVIDIA GPU 0x2882`). That name never matched the engine's description of the same card, and the hardware line listed the card twice                                                                                                                                                          | `resolveHardwareProfile()` treats a vendor-only name as the same device when the engine's description is that vendor's product                                                                                                                                                                                                                                                                                                                                                    |
+| Id  | Finding                                                                                                                                                                                                                                                                                                                                                                                                 | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1  | On Windows an agent is started through a shell, PowerShell by default. Codex's model source arguments held double quotes and spaces (`{name="Maestro", base_url="..."}`). Windows PowerShell hands a program such an argument with the quotes dropped and split at the spaces. Measured on macOS with Codex CLI 0.162.1: given the arguments in that split form, Codex exits with "unexpected argument" | The recipe writes TOML literal strings and no spaces: `{name='Maestro',base_url='...',env_key='MAESTRO_RUN_ON_KEY',wire_api='responses'}` and `model_provider='maestro'`. A single quote in the address is written `%27`. Measured on the same run: Codex reached `/v1/responses` at the given address with the given key. `windowsSpawnShell.test.ts` pins what cmd.exe and PowerShell are handed, and `run-on.test.ts` refuses a double quote or a space in any recipe argument |
+| F2  | The model source Test (`testAgentRunOn()`) started the harness directly. On Windows a harness that npm installed is a `.cmd` shim, which Node refuses to spawn without a shell ("spawn EINVAL")                                                                                                                                                                                                         | The local test turn takes the step a tab spawn takes, `planSpawnShell()`. Off Windows it changes nothing                                                                                                                                                                                                                                                                                                                                                                          |
+| F3  | Linux gives Electron a GPU's PCI ids and no description, so Maestro names the device by its vendor (`NVIDIA GPU 0x2882`). That name never matched the engine's description of the same card, and the hardware line listed the card twice                                                                                                                                                                | `resolveHardwareProfile()` treats a vendor-only name as the same device when the engine's description is that vendor's product                                                                                                                                                                                                                                                                                                                                                    |
 
 ### What is still open
 
@@ -4650,7 +4654,7 @@ prints `obscured (this system has no OS key store)`.
 - **R3. A profile path outside ASCII on Windows.** See Known limits under Model server.
 - **R4. The PowerShell behavior behind F1 was not reproduced on Windows.** What was measured is
   that Codex refuses the split form and accepts the new one. Claude Code, OpenCode and Copilot CLI
-  take their Run on settings from variables, so they have no argument to mangle.
+  take their model source settings from variables, so they have no argument to mangle.
 - **R5. `os.totalmem()` inside a memory limit.** In a container or a systemd slice with a memory
   limit, Linux reports the host's RAM, so a fit verdict can be too generous there.
 - **R6. A model path with `;` or `#` in it.** It is refused by name on every platform. On Windows
@@ -4745,21 +4749,21 @@ One engine picker and its Test button), and the worktree's own `maestro-cli` bui
 `MAESTRO_USER_DATA` set to the profile for the `open` verbs and for `create-agent`. Values were read
 from the DOM by `data-testid`, from the session store, and from the CLI's read verbs.
 
-| #   | Check                                          | Result                                                                                                                                                                                                                                                                                                             |
-| --- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | Settings opens on Models, five inner tabs      | PASS. `open settings --tab models` opened on Library. Tabs: Library, Sources, System One, System Two, Gateway                                                                                                                                                                                                      |
-| 1   | The System One and System Two split            | PASS. System One draws 9 tasks, System Two draws 6, and each list is the `system` field of `LOCAL_MODEL_TASKS` in order. On a new profile `tab-naming`, `tab-summary` and `ai-command` read Utility Agent; the other three System Two tasks read Off                                                               |
-| 2   | Install the server engine                      | PASS. The card's Install button fetched the default build (11.5 MB). The card then read "Metal build of llama-server b11559, 51.6 MB on disk. Runs on: Metal (Apple M5 Max)"                                                                                                                                       |
-| 2   | Install the smallest catalog text model        | PASS. Qwen3 1.7B Instruct (Q4_K_M), 1.0 GB, with the 39.4 MB in-process engine the same button fetches. The row went Not installed, Downloading (with speed and time left), Installed. The summary read On disk `1.0 GB`, Installed `1`                                                                            |
-| 2   | Start the server from the card, healthy        | PASS. State Running at `http://127.0.0.1:50266`, key "Stored sealed by the system key store". `GET /health` answered 200 `{"status":"ok"}`. `GET /v1/models` with no key answered 401. `models server status` agreed and listed the model under Serves                                                             |
-| 3   | An agent with Run on set to the Maestro server | PASS. `create-agent --run-on maestro-server:qwen3-1.7b-instruct-q4km` stored the target with a context of 40,960 tokens. Edit Agent > Models showed the model as the Run on choice, with "Not tested as an agent. Turns may fail or loop."                                                                         |
-| 3   | One turn, and the pills name the target        | PASS. "Reply with the single word: pong", typed in the composer, came back as `pong`. The reply carries one pill, `turn-run-on-pill`: "Qwen3 1.7B Instruct (Q4_K_M) · Maestro", and no model or effort pill. The harness ran as `claude --print --model qwen3-1.7b-instruct-q4km` with `ANTHROPIC_API_KEY` cleared |
-| 4   | The dashboard Models tab shows that turn       | PASS. `open usage-dashboard --tab models`: 1 request, 24.4K tokens in, 98 out, 100% on this machine. Sources lists the Maestro model server (Model server, This machine) with the model, 1 turn, p50 12.5 s. `stats models` printed the same numbers, with Local Coder under "Agents (Run on turns)"               |
-| 5   | The System One Test button answers             | PASS. A key resolved from `~/.config/typesafe/api_key`, with no key stored in Maestro. With Jev chosen in the card, Test read "Jev (TypeSafe cloud) answered yes (P(yes) 0.97) in 184 ms on jev-1.13.0."                                                                                                           |
-| 5   | A new agent's system prompt carries System One | PASS. An agent made after the engine was chosen got a `## System One` section (2,268 characters) in `--append-system-prompt`, read from the process arguments during a turn. Engine line: "Jev (TypeSafe cloud), calibrated". No `{{...}}` variable was left in it                                                 |
-| 6   | Edit Agent: the Peers tab lists peers          | PASS. `open agent-settings --agent <id> --tab peers` opened the form on Peers (the first run of this verb against a live app). Rows: Peers in my group (disabled, "This agent is not in a group"), Worktree family, Beta with R and W lit and its note, Gamma with R lit                                           |
-| 6   | The Delegation Graph opens                     | PASS. `open delegation-graph`: 5 agents, 2 edges. Local Coder to Beta is a solid arrow marked C D, Local Coder to Gamma a dashed arrow marked C. The two agents with no peers are drawn dashed with "No peers"                                                                                                     |
-| -   | Shutdown                                       | PASS. The instance was ended with `kill` on the process that held the CDP port. Both `llama-server` processes (the router and the model's own) and Vite ended with it. Nothing was left on any port                                                                                                                |
+| #   | Check                                                | Result                                                                                                                                                                                                                                                                                                             |
+| --- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Settings opens on Models, five inner tabs            | PASS. `open settings --tab models` opened on Library. Tabs: Library, Sources, System One, System Two, Gateway                                                                                                                                                                                                      |
+| 1   | The System One and System Two split                  | PASS. System One draws 9 tasks, System Two draws 6, and each list is the `system` field of `LOCAL_MODEL_TASKS` in order. On a new profile `tab-naming`, `tab-summary` and `ai-command` read Utility Agent; the other three System Two tasks read Off                                                               |
+| 2   | Install the server engine                            | PASS. The card's Install button fetched the default build (11.5 MB). The card then read "Metal build of llama-server b11559, 51.6 MB on disk. Runs on: Metal (Apple M5 Max)"                                                                                                                                       |
+| 2   | Install the smallest catalog text model              | PASS. Qwen3 1.7B Instruct (Q4_K_M), 1.0 GB, with the 39.4 MB in-process engine the same button fetches. The row went Not installed, Downloading (with speed and time left), Installed. The summary read On disk `1.0 GB`, Installed `1`                                                                            |
+| 2   | Start the server from the card, healthy              | PASS. State Running at `http://127.0.0.1:50266`, key "Stored sealed by the system key store". `GET /health` answered 200 `{"status":"ok"}`. `GET /v1/models` with no key answered 401. `models server status` agreed and listed the model under Serves                                                             |
+| 3   | An agent with its model source on the Maestro server | PASS. `create-agent --model-source maestro-server:qwen3-1.7b-instruct-q4km` stored the target with a context of 40,960 tokens. Edit Agent > Models showed the model as the model source choice, with "Not tested as an agent. Turns may fail or loop."                                                             |
+| 3   | One turn, and the pills name the target              | PASS. "Reply with the single word: pong", typed in the composer, came back as `pong`. The reply carries one pill, `turn-run-on-pill`: "Qwen3 1.7B Instruct (Q4_K_M) · Maestro", and no model or effort pill. The harness ran as `claude --print --model qwen3-1.7b-instruct-q4km` with `ANTHROPIC_API_KEY` cleared |
+| 4   | The dashboard Models tab shows that turn             | PASS. `open usage-dashboard --tab models`: 1 request, 24.4K tokens in, 98 out, 100% on this machine. Sources lists the Maestro model server (Model server, This machine) with the model, 1 turn, p50 12.5 s. `stats models` printed the same numbers, with Local Coder under "Agents (model source turns)"         |
+| 5   | The System One Test button answers                   | PASS. A key resolved from `~/.config/typesafe/api_key`, with no key stored in Maestro. With Jev chosen in the card, Test read "Jev (TypeSafe cloud) answered yes (P(yes) 0.97) in 184 ms on jev-1.13.0."                                                                                                           |
+| 5   | A new agent's system prompt carries System One       | PASS. An agent made after the engine was chosen got a `## System One` section (2,268 characters) in `--append-system-prompt`, read from the process arguments during a turn. Engine line: "Jev (TypeSafe cloud), calibrated". No `{{...}}` variable was left in it                                                 |
+| 6   | Edit Agent: the Peers tab lists peers                | PASS. `open agent-settings --agent <id> --tab peers` opened the form on Peers (the first run of this verb against a live app). Rows: Peers in my group (disabled, "This agent is not in a group"), Worktree family, Beta with R and W lit and its note, Gamma with R lit                                           |
+| 6   | The Delegation Graph opens                           | PASS. `open delegation-graph`: 5 agents, 2 edges. Local Coder to Beta is a solid arrow marked C D, Local Coder to Gamma a dashed arrow marked C. The two agents with no peers are drawn dashed with "No peers"                                                                                                     |
+| -   | Shutdown                                             | PASS. The instance was ended with `kill` on the process that held the CDP port. Both `llama-server` processes (the router and the model's own) and Vite ended with it. Nothing was left on any port                                                                                                                |
 
 **The turn, measured.** The model loaded on the first request. The server's own timing: 24,369
 prompt tokens in 6.0 s (4,056 tokens per second), 98 output tokens at 96 per second. The whole turn
@@ -4769,9 +4773,9 @@ took 12.5 s, the load included. The harness prompt took 59% of the 40,960 tokens
 
 | Id  | Finding                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Whose                                                                 |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| F1  | A turn on a local model shows a dollar cost. The agent header read `$0.12` after the one turn, and `maestro-cli send --json` reported `totalCostUsd: 0.122` for a turn on the same model. The figure is the harness's own `total_cost_usd`, priced from its table for a model it does not know. The model server charges nothing. Cost enters Maestro in several places (the stream parser, the exit handler, the usage listener, the session readers that price a transcript), so the fix is a design choice (zero, or "unknown" for a cloud source) and not one line | This branch (Run on)                                                  |
-| F2  | A Run on turn sent with `maestro-cli send` is not in the Models tab. Three such turns ran on the model server and answered; the tab still showed 1 turn. The stats row of an interactive turn is written by the renderer's exit listener, and a turn the CLI starts itself writes none. Not checked: whether `rc` leaves every `send` turn out of the dashboard                                                                                                                                                                                                        | Open                                                                  |
-| F3  | The tab counts agent turns, not what the server did. The synopsis turn that followed the first turn (a resume at low effort, with the same Run on environment) ran on the model server too and is in no count                                                                                                                                                                                                                                                                                                                                                          | This branch, as designed ("1 turn"); recorded so it is not a surprise |
+| F1  | A turn on a local model shows a dollar cost. The agent header read `$0.12` after the one turn, and `maestro-cli send --json` reported `totalCostUsd: 0.122` for a turn on the same model. The figure is the harness's own `total_cost_usd`, priced from its table for a model it does not know. The model server charges nothing. Cost enters Maestro in several places (the stream parser, the exit handler, the usage listener, the session readers that price a transcript), so the fix is a design choice (zero, or "unknown" for a cloud source) and not one line | This branch (model source)                                            |
+| F2  | A model source turn sent with `maestro-cli send` is not in the Models tab. Three such turns ran on the model server and answered; the tab still showed 1 turn. The stats row of an interactive turn is written by the renderer's exit listener, and a turn the CLI starts itself writes none. Not checked: whether `rc` leaves every `send` turn out of the dashboard                                                                                                                                                                                                  | Open                                                                  |
+| F3  | The tab counts agent turns, not what the server did. The synopsis turn that followed the first turn (a resume at low effort, with the same model source environment) ran on the model server too and is in no count                                                                                                                                                                                                                                                                                                                                                    | This branch, as designed ("1 turn"); recorded so it is not a surprise |
 | F4  | One request with no key reached the model server at about the moment the first turn ended and its synopsis turn started. The server refused it with 401. Its sender was not found. It is not the smoke test's own `/v1/models` probe, which is an earlier line of the server log                                                                                                                                                                                                                                                                                       | Open                                                                  |
 | F5  | In a dev build the System One section tells the agent to run `node "/Applications/Maestro.app/Contents/Resources/maestro-cli.js" s1`: the installed release, which can be older than the build that wrote the prompt and can lack `s1`. Not checked in a packaged build, where the path is the app's own                                                                                                                                                                                                                                                               | Dev builds only, as far as this run shows                             |
 | F6  | The composer toolbar draws its pills on top of each other when the composer is narrow and the window is not. At a 1600 px window with a 470 px Left Bar and a 575 px Right Bar the composer was 473 px wide: the effort pill covered History and part of Full Access. The left group is `flex-1 min-w-0` and shrinks under its own content. `origin/rc` has the same classes, and this branch did not change them                                                                                                                                                      | `rc`                                                                  |
@@ -4780,12 +4784,12 @@ took 12.5 s, the load included. The harness prompt took 59% of the 40,960 tokens
 
 **Not run.**
 
-- Run on with Codex or OpenCode. Only Claude Code was used.
+- A model source with Codex or OpenCode. Only Claude Code was used.
 - A turn that calls a tool, and a model that passed the agent qualification. Qwen3 1.7B is the
   smallest text model, not an agent-grade one, and the turn asked for one word.
-- The New Agent dialog. The agent was made with `create-agent --run-on`, the same writer, and the
+- The New Agent dialog. The agent was made with `create-agent --model-source`, the same writer, and the
   stored target was then read in Edit Agent.
-- The Run on Test button, a tier target, the token proxy, the Auto model, and any System One verb
+- The model source Test button, a tier target, the token proxy, the Auto model, and any System One verb
   asked by an agent. The ledger held no decision after the Test button: the test is not a decision.
 - The server's Stop button, a key rotation, the Network bind mode, and a second loaded model.
 - Anything on Windows or Linux.

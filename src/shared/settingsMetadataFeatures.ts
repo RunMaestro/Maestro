@@ -101,7 +101,7 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	defaultTokenProxyMode: {
 		description:
-			'Maestro proxy default for every local agent with gateway support: off, passthrough, compress, or compress-early. An agent follows it while its routing is what the default gives it; an agent set otherwise (its own mode, its own gateway, a group setting) is an override and keeps its setting. Changing it moves every following agent, from Settings > Models > Gateway or from here; a change made while Maestro is closed is applied when it next starts. New agents start on it. SSH remote agents, Run on source agents and providers without gateway support stay direct.',
+			'Maestro proxy default for every local agent with gateway support: off, passthrough, compress, or compress-early. An agent follows it while its routing is what the default gives it; an agent set otherwise (its own mode, its own gateway, a group setting) is an override and keeps its setting. Changing it moves every following agent, from Settings > Models > Gateway or from here; a change made while Maestro is closed is applied when it next starts. New agents start on it. SSH remote agents, agents on a model source and providers without gateway support stay direct.',
 		type: 'string',
 		default: 'off',
 		category: 'integrations',
@@ -136,7 +136,7 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	harnessTierDefaults: {
 		description:
-			"Tier defaults: where each harness launches a model tier for an agent that does not set the tier itself. Keyed by harness id (claude-code, codex, opencode, ...), then by tier (low, medium, high); each value is { type: 'provider-model', model } (a model on the harness's own provider), { type: 'provider' } (the provider, on the agent's own model), or { type: 'source', endpointId, model, contextTokens? } (a Run on target). A tier with no entry uses the built-in table. An agent's own tier target wins over this.",
+			"Tier defaults: where each harness launches a model tier for an agent that does not set the tier itself. Keyed by harness id (claude-code, codex, opencode, ...), then by tier (low, medium, high); each value is { type: 'provider-model', model } (a model on the harness's own provider), { type: 'provider' } (the provider, on the agent's own model), or { type: 'source', endpointId, model, contextTokens? } (a model source). A tier with no entry uses the built-in table. An agent's own tier target wins over this.",
 		type: 'object',
 		default: {},
 		category: 'integrations',

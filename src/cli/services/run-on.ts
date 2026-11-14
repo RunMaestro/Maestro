@@ -1,5 +1,5 @@
 /**
- * Run on, for the agents `maestro-cli` launches in its own process: `send`,
+ * Model source, for the agents `maestro-cli` launches in its own process: `send`,
  * Auto Run and playbooks, goal runs, the synopsis, and the standalone Cue
  * engine.
  *
@@ -79,7 +79,7 @@ function shellEnvVars(): Record<string, string> {
 }
 
 /**
- * Point Run on at this process's view of the stores. Reads nothing until a
+ * Point the model source lookup at this process's view of the stores. Reads nothing until a
  * launch needs it. Safe to call more than once.
  */
 export async function configureCliRunOn(): Promise<void> {
@@ -104,7 +104,7 @@ export interface CliRunOnRequest {
 }
 
 /**
- * Look a CLI launch's Run on target up, ready for `buildAgentLaunchPlan`. An
+ * Look a CLI launch's model source up, ready for `buildAgentLaunchPlan`. An
  * agent on its provider's model costs one parse: nothing is imported, read or
  * asked.
  */
@@ -122,10 +122,10 @@ export async function prepareCliRunOn(request: CliRunOnRequest): Promise<AgentRu
 	});
 }
 
-/** `--run-on` and `--run-on-context`, as typed. */
+/** `--model-source` and `--model-source-context`, as typed. */
 export interface RunOnFlags {
-	runOn?: string;
-	runOnContext?: string;
+	modelSource?: string;
+	modelSourceContext?: string;
 }
 
 export type RunOnFlagsEdit =
@@ -136,17 +136,17 @@ export type RunOnFlagsEdit =
 	| { kind: 'refused'; error: string };
 
 /**
- * Read `create-agent` / `update-agent`'s Run on flags into the target the
+ * Read `create-agent` / `update-agent`'s model source flags into the target the
  * Models tab's picker would store for the same choice.
  *
- * - `--run-on provider` clears the target.
- * - `--run-on <source id>:<model>` names one. With no `--run-on-context` the
+ * - `--model-source provider` clears the target.
+ * - `--model-source <source id>:<model>` names one. With no `--model-source-context` the
  *   context is the one the picker's field starts at (`runOnDefaultContextTokens`,
  *   given what the source reports through `reportedContextTokens`, which
  *   {@link reportedRunOnFlagContext} asks for), unless the agent already runs on
  *   that source and model: naming the same target again keeps the context it
  *   has, as re-picking it in the dialog does.
- * - `--run-on-context <n>` alone changes the context of the target the agent
+ * - `--model-source-context <n>` alone changes the context of the target the agent
  *   already has, which is the picker's context field on its own.
  *
  * The target is checked with `parseRunOnEdit` against the agent's provider and
@@ -159,20 +159,21 @@ export function readRunOnFlags(
 	agent: { toolType: string; runOn?: unknown },
 	reportedContextTokens?: number
 ): RunOnFlagsEdit {
-	if (flags.runOn === undefined && flags.runOnContext === undefined) return { kind: 'unchanged' };
+	if (flags.modelSource === undefined && flags.modelSourceContext === undefined)
+		return { kind: 'unchanged' };
 
 	let contextTokens: number | undefined;
-	if (flags.runOnContext !== undefined) {
-		const raw = flags.runOnContext.trim();
+	if (flags.modelSourceContext !== undefined) {
+		const raw = flags.modelSourceContext.trim();
 		if (!/^\d+$/.test(raw)) {
 			return {
 				kind: 'refused',
-				error: `--run-on-context expects a whole number of tokens, got "${flags.runOnContext}"`,
+				error: `--model-source-context expects a whole number of tokens, got "${flags.modelSourceContext}"`,
 			};
 		}
 		contextTokens = Number(raw);
 		const problem = runOnContextProblem(contextTokens);
-		if (problem) return { kind: 'refused', error: `--run-on-context: ${problem}` };
+		if (problem) return { kind: 'refused', error: `--model-source-context: ${problem}` };
 	}
 
 	const storedParse = parseRunOnTarget(agent.runOn);
@@ -180,24 +181,24 @@ export function readRunOnFlags(
 		storedParse.ok && storedParse.target.type === 'source' ? storedParse.target : undefined;
 
 	let named: Pick<RunOnSourceTarget, 'endpointId' | 'model'>;
-	if (flags.runOn === undefined) {
+	if (flags.modelSource === undefined) {
 		if (!stored) {
 			return {
 				kind: 'refused',
 				error:
-					"--run-on-context sets the context size of a Run on source, and this agent runs on its provider's model. Pass --run-on <source id>:<model> with it.",
+					"--model-source-context sets the context size of a model source, and this agent runs on its provider's model. Pass --model-source <source id>:<model> with it.",
 			};
 		}
 		named = stored;
 	} else {
-		const spec = parseRunOnSpec(flags.runOn);
-		if (!spec.ok) return { kind: 'refused', error: `--run-on: ${spec.error}` };
+		const spec = parseRunOnSpec(flags.modelSource);
+		if (!spec.ok) return { kind: 'refused', error: `--model-source: ${spec.error}` };
 		if (spec.target.type === 'provider') {
 			if (contextTokens !== undefined) {
 				return {
 					kind: 'refused',
 					error:
-						'--run-on-context does not apply to --run-on provider: the provider sets its own context.',
+						'--model-source-context does not apply to --model-source provider: the provider sets its own context.',
 				};
 			}
 			return { kind: 'set', target: undefined };
@@ -220,13 +221,13 @@ export function readRunOnFlags(
 		},
 		readLocalModelEndpoints()
 	);
-	if (!edit.ok) return { kind: 'refused', error: `--run-on: ${edit.error}` };
+	if (!edit.ok) return { kind: 'refused', error: `--model-source: ${edit.error}` };
 	return { kind: 'set', target: edit.target };
 }
 
 /**
- * The context the source named by `--run-on` states for its model, so a target
- * named without `--run-on-context` starts where the picker starts it. Asked
+ * The context the source named by `--model-source` states for its model, so a target
+ * named without `--model-source-context` starts where the picker starts it. Asked
  * only when it can matter: a source other than the Maestro model server (whose
  * catalog already answers) and no context given. The running app lists the
  * source, as the picker's listing does; any failure leaves the size unknown and
@@ -234,8 +235,8 @@ export function readRunOnFlags(
  * source that did not answer.
  */
 export async function reportedRunOnFlagContext(flags: RunOnFlags): Promise<number | undefined> {
-	if (flags.runOn === undefined || flags.runOnContext !== undefined) return undefined;
-	const spec = parseRunOnSpec(flags.runOn);
+	if (flags.modelSource === undefined || flags.modelSourceContext !== undefined) return undefined;
+	const spec = parseRunOnSpec(flags.modelSource);
 	if (!spec.ok || spec.target.type !== 'source') return undefined;
 	if (spec.target.endpointId === MODEL_SERVER_ENDPOINT_ID) return undefined;
 	const { endpointId, model } = spec.target;

@@ -654,10 +654,10 @@ program
 		"Reasoning effort for this run only, overriding the agent's configured default"
 	)
 	.option(
-		'--run-on <target>',
-		'Where this run\'s model runs, overriding the agent\'s Run on target: <source id>:<model>, or "provider"'
+		'--model-source <target>',
+		'Where this run\'s model runs, overriding the agent\'s model source: <source id>:<model>, or "provider"'
 	)
-	.option('--run-on-context <tokens>', 'Context size for the --run-on source')
+	.option('--model-source-context <tokens>', 'Context size for the model named by --model-source')
 	.action(async (agentId: string, goal: string, options: Record<string, unknown>) => {
 		const { goalRun } = await import('./commands/goal-run');
 		return goalRun(agentId, goal, options);
@@ -1429,12 +1429,12 @@ program
 		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
 	)
 	.option(
-		'--run-on <target>',
-		"Where this run's model runs, overriding the agent's Run on target: <source id>:<model> (a Local Models source), or \"provider\" for the provider's own models"
+		'--model-source <target>',
+		"Where this run's model runs, overriding the agent's model source: <source id>:<model> (a Local Models source), or \"provider\" for the provider's own models"
 	)
 	.option(
-		'--run-on-context <tokens>',
-		"Context size for the --run-on source (default: what the source reports, or the agent's own when it is the same source and model)"
+		'--model-source-context <tokens>',
+		"Context size for the model named by --model-source (default: what the source reports, or the agent's own when it is the same source and model)"
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(autoRun);
@@ -1720,10 +1720,13 @@ cue
 	.option('--per-document', 'With --auto-run: one agent turn per document instead of one per task')
 	.option('--ignore-model-hints', "With --auto-run: ignore the documents' MAESTRO:MODEL hints")
 	.option(
-		'--run-on <target>',
-		'With --auto-run: where the run\'s model runs, <source id>:<model> or "provider" (as auto-run --run-on)'
+		'--model-source <target>',
+		'With --auto-run: where the run\'s model runs, <source id>:<model> or "provider" (as auto-run --model-source)'
 	)
-	.option('--run-on-context <tokens>', 'With --auto-run: context size for the --run-on source')
+	.option(
+		'--model-source-context <tokens>',
+		'With --auto-run: context size for the model named by --model-source'
+	)
 	.option('--no-auto-resume', 'With --auto-run: stay paused after an agent error')
 	.option('--auto-resume-after <minutes>', 'With --auto-run: minutes between auto-resume attempts')
 	.option('--max-auto-resumes <n>', 'With --auto-run: auto-resume attempt ceiling')
@@ -2281,12 +2284,12 @@ program
 		"Local Models gateway: an HTTP proxy this agent's provider traffic goes through, set as its base-URL variable at launch. Set the Maestro token proxy mode afterwards with update-agent --proxy-mode"
 	)
 	.option(
-		'--run-on <target>',
+		'--model-source <target>',
 		"Where this agent's model runs: provider (the default), or <source id>:<model> for a model on a Local Models source (maestro-server for the Maestro model server; ids from models endpoints list). The agent keeps its provider's CLI"
 	)
 	.option(
-		'--run-on-context <tokens>',
-		"Context size the harness is told a --run-on source has (at least 40960; default: the model's catalog context on the Maestro model server, elsewhere the context the source reports for the model, else 40960)"
+		'--model-source-context <tokens>',
+		"Context size the harness is told a --model-source source has (at least 40960; default: the model's catalog context on the Maestro model server, elsewhere the context the source reports for the model, else 40960)"
 	)
 	// The Peers tab of the New Agent dialog, spelled as on update-agent.
 	.option(
@@ -2482,12 +2485,12 @@ program
 		'Local Models gateway URL ("none" clears). Not combinable with --proxy-mode'
 	)
 	.option(
-		'--run-on <target>',
+		'--model-source <target>',
 		'Where new agents run their model: provider, or <source id>:<model> on a Local Models source'
 	)
 	.option(
-		'--run-on-context <tokens>',
-		'Context size the harness is told the Run on source has (at least 40960)'
+		'--model-source-context <tokens>',
+		'Context size the harness is told the model source has (at least 40960)'
 	)
 	.option(
 		'--proxy-mode <mode>',
@@ -2704,12 +2707,12 @@ program
 		'Local Models gateway: an HTTP proxy this agent\'s provider traffic goes through, set as its base-URL variable at launch ("none" clears)'
 	)
 	.option(
-		'--run-on <target>',
+		'--model-source <target>',
 		"Where this agent's model runs: provider (its provider's own model; clears a target), or <source id>:<model> for a model on a Local Models source (maestro-server for the Maestro model server; ids from models endpoints list). Check it with agent test-run-on"
 	)
 	.option(
-		'--run-on-context <tokens>',
-		"Context size the harness is told the Run on source has (at least 40960). Alone, it changes the context of the agent's current target"
+		'--model-source-context <tokens>',
+		"Context size the harness is told the model source has (at least 40960). Alone, it changes the context of the agent's current model source"
 	)
 	.option(
 		'--proxy-mode <mode>',
@@ -2850,7 +2853,7 @@ const agentCmd = program.command('agent').description('Act on one agent');
 agentCmd
 	.command('test-run-on <agent-id>')
 	.description(
-		"Send one short read-only turn through the agent's harness on its Run on target and report the reply (requires the desktop app)"
+		"Send one short read-only turn through the agent's harness on its model source and report the reply (requires the desktop app)"
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agentId, options) => agentTestRunOn(agentId, options));
@@ -4795,6 +4798,10 @@ modelServer
 	.option('--max-models <n>', 'Models loaded at the same time (1 to 16, default 1)')
 	.option('--rotate-key', 'Replace the API key; whatever used the old key needs the new one')
 	.option(
+		'--start-on-launch <on|off>',
+		'Whether it starts when Maestro starts (start turns this on, stop turns it off)'
+	)
+	.option(
 		'--build <choice>',
 		'Install this engine build: default | cpu | cuda | rocm (cuda and rocm on Windows and Linux x64 only)'
 	)
@@ -4969,7 +4976,7 @@ modelTiers
 modelTiers
 	.command('options <harness>')
 	.description(
-		'What a harness can launch a tier on: its own catalogue and the Run on targets, each in the spelling "tiers set" takes (requires the desktop app)'
+		'What a harness can launch a tier on: its own catalogue and the model sources, each in the spelling "tiers set" takes (requires the desktop app)'
 	)
 	.option('--refresh', "Ask the harness again instead of using the app's cached list")
 	.option('--json', 'Output as JSON (for scripting)')
@@ -5652,7 +5659,7 @@ const statsCommand = encoreCommand(program, 'stats', 'usageStats', encoreFlags)
 statsCommand
 	.command('models')
 	.description(
-		"Show what every model other than a provider's own did: sources, tasks, Run on agents, System One and the token proxy (the Usage Dashboard's Models tab)"
+		"Show what every model other than a provider's own did: sources, tasks, agents on a model source, System One and the token proxy (the Usage Dashboard's Models tab)"
 	)
 	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
 	.option('--json', 'Output the full model usage record as JSON')

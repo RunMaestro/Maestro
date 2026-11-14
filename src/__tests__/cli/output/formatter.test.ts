@@ -1080,30 +1080,30 @@ describe('formatter', () => {
 			expect(claude).not.toContain('Codex transport:');
 		});
 
-		it('should show the Run on target only for an agent on a source', () => {
+		it('should show the model source only for an agent on a source', () => {
 			const onSource = formatAgentDetail({
 				...baseAgent,
 				runOn: { type: 'source', endpointId: 'ep-ollama', model: 'qwen3', contextTokens: 65536 },
 				runOnLabel: 'qwen3 on Ollama',
 			});
-			expect(onSource).toContain('Run on:');
+			expect(onSource).toContain('Model source:');
 			expect(onSource).toContain('qwen3 on Ollama');
 			expect(onSource).toContain('(context 65536 tokens)');
 
 			// The provider's own model is the default, like any unset setting.
 			const onProvider = formatAgentDetail({ ...baseAgent, runOn: { type: 'provider' } });
-			expect(onProvider).not.toContain('Run on:');
+			expect(onProvider).not.toContain('Model source:');
 		});
 
-		it('should say why a stored Run on target cannot be used', () => {
+		it('should say why a stored model source cannot be used', () => {
 			const result = formatAgentDetail({
 				...baseAgent,
 				runOn: { type: 'source' },
-				runOnProblem: 'A Run on target names a source.',
+				runOnProblem: 'A model source names a source.',
 			});
 
-			expect(result).toContain('Run on:');
-			expect(result).toContain('unusable target: A Run on target names a source.');
+			expect(result).toContain('Model source:');
+			expect(result).toContain('unusable: A model source names a source.');
 		});
 
 		it('should show every tier with the layer its value came from', () => {
@@ -1244,9 +1244,9 @@ describe('formatter', () => {
 
 			const broken = formatAgentDetail({
 				...baseAgent,
-				backgroundRequestsProblem: 'A Run on target names a model.',
+				backgroundRequestsProblem: 'A model source names a model.',
 			});
-			expect(broken).toContain('unusable target: A Run on target names a model.');
+			expect(broken).toContain('unusable target: A model source names a model.');
 		});
 
 		it('should show auto run folder when provided', () => {

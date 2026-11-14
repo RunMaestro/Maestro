@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 
 vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: vi.fn(),
-	// The saved sources `--run-on` is checked against.
+	// The saved sources `--model-source` is checked against.
 	readLocalModelEndpoints: vi.fn(() => [
 		{
 			id: 'ep-ollama',
@@ -152,13 +152,13 @@ describe('goal-run --visible', () => {
 		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
-	it("sends the run's Run on target from --run-on", async () => {
+	it("sends the run's model source from --model-source", async () => {
 		const sendCommand = mockDesktop({ success: true, tabId: 'tab-9' });
 
 		await goalRun('agent-123', 'ship it', {
 			visible: true,
-			runOn: 'ep-ollama:qwen3:latest',
-			runOnContext: '131072',
+			modelSource: 'ep-ollama:qwen3:latest',
+			modelSourceContext: '131072',
 		});
 
 		expect(sendCommand).toHaveBeenCalledWith(
@@ -176,14 +176,14 @@ describe('goal-run --visible', () => {
 		);
 	});
 
-	it('refuses a --run-on source that is not configured before contacting the desktop', async () => {
+	it('refuses a --model-source source that is not configured before contacting the desktop', async () => {
 		const sendCommand = mockDesktop({ success: true, tabId: 'tab-9' });
 
 		await expectExit(
-			goalRun('agent-123', 'ship it', { visible: true, runOn: 'ep-gone:qwen3:latest' })
+			goalRun('agent-123', 'ship it', { visible: true, modelSource: 'ep-gone:qwen3:latest' })
 		);
 
-		expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('--run-on'));
+		expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('--model-source'));
 		expect(sendCommand).not.toHaveBeenCalledWith(
 			expect.objectContaining({ type: 'launch_goal_run' }),
 			expect.anything(),

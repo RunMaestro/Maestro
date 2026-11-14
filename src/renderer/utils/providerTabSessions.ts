@@ -80,7 +80,7 @@ export type CodifiedTurn = Pick<
  * undefined means the agent's own default applies, and consumers render
  * nothing rather than inventing a label.
  *
- * `turnRunOn` is where the turn ran when the agent's Run on target is a source
+ * `turnRunOn` is where the turn ran when the agent's model source is a source
  * (`qwen3:latest · Ollama`). It is a label for the transcript, kept apart from
  * `turnModel` on purpose: `turnModel` is handed to the spawn as the agent's
  * model, and the launch replaces it with the target's own. `turnRunOnSource` is
@@ -380,7 +380,7 @@ export function queuedTurnPills(settings: QueuedTurnSettings | undefined): {
  * the bug this exists to prevent.
  *
  * Provider-scoped captures project that provider's parked state for launch.
- * Legacy items follow the effective tab provider. New captures freeze Run on and
+ * Legacy items follow the effective tab provider. New captures freeze the model source and
  * Auto routing inputs alongside the selection. Dispatch reads only that
  * snapshot; cache eligibility is checked against the resumed native slot.
  */

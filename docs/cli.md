@@ -723,11 +723,11 @@ maestro-cli models proxy cache prune         # prune the compression cache now
 
 # Run the agent's model on a Local Models source, behind the same provider CLI
 maestro-cli models endpoints list                                          # source ids
-maestro-cli update-agent <agent-id> --run-on maestro-server:<model-id>     # the Maestro model server
-maestro-cli update-agent <agent-id> --run-on <source-id>:qwen3:latest --run-on-context 65536
-maestro-cli update-agent <agent-id> --run-on-context 131072                # the context alone
+maestro-cli update-agent <agent-id> --model-source maestro-server:<model-id>     # the Maestro model server
+maestro-cli update-agent <agent-id> --model-source <source-id>:qwen3:latest --model-source-context 65536
+maestro-cli update-agent <agent-id> --model-source-context 131072                # the context alone
 maestro-cli agent test-run-on <agent-id>                                   # one short turn on the target
-maestro-cli update-agent <agent-id> --run-on provider                      # back to the provider's model
+maestro-cli update-agent <agent-id> --model-source provider                      # back to the provider's model
 
 # Tiers: where a low, medium or high task of this agent launches (repeatable; =default follows the harness again)
 maestro-cli update-agent <agent-id> --tier low=maestro-server:<model-id> --tier high=provider:opus
@@ -803,7 +803,7 @@ maestro-cli update-agent <agent-id> --sync-history-to-remote true
 
 The group update reuses the same write path as drag-and-drop in the Left Bar. The cwd update moves the agent as a whole: the working directory, the project root the Files panel and Edit dialog read, and an Auto Run folder that lives inside the old directory all follow the new path (an Auto Run folder elsewhere is left where you put it). Provider conversations stored under the old path may not resume from the new one. Stop the agent before changing its cwd or SSH config; the underlying PTY's working directory and spawn target are fixed at launch time, so the renderer refuses those updates while the agent is busy or its process is alive and surfaces the reason on stderr. The remaining settings (nudge, messages, model, effort, env, token source, etc.) are spawn-time values and apply on the next launch, so they are accepted even while the agent is running.
 
-For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--gateway-url` sets the agent's [Local Models gateway](/local-models#gateway): the URL becomes the provider's base-URL variable (`ANTHROPIC_BASE_URL` for Claude Code, `OPENAI_BASE_URL` for Codex) the next time the agent starts, unless the agent's own environment variables already set that variable. It is refused for a provider that cannot use a gateway (Copilot CLI ignores base-URL variables), and an agent on an SSH remote does not start with a loopback gateway, because the remote host cannot reach it. `--run-on` sets where the agent's model runs, the Run on picker on the Models tab: `provider` is the provider's own model, and `<source id>:<model>` is a model on a Local Models source (`maestro-server` for the Maestro model server, or an id from `models endpoints list`). The source's id ends at the first colon, so a model name may hold one. The agent keeps its provider's CLI and only the model behind it changes. The target is refused for a provider whose CLI Maestro cannot point at another model server, for a source id that names nothing, and for a context under 40960 tokens. Whether the source serves the model is not asked at this point: `agent test-run-on` sends one short turn to find out, and a launch that cannot run on its target is refused by name, never moved to the provider's model. While the target is a source, `--gateway-url` and `--proxy-mode` are refused (clearing them is not), because a gateway routes requests to the provider. `show agent --json` reports the target as `runOn`, with `runOnSpec` in the spelling `--run-on` takes. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit. The `tui` and `dynamic` modes need the [maestro-p helper](https://runmaestro.ai/maestro-p/) on PATH; it is bundled locally, but for SSH remotes it must be installed on the remote host. See [Provider Notes](/provider-notes#token-source). `--codex-transport` only carries meaning for Codex agents: `exec` (the default) runs `codex exec`, and `app-server` is an experimental opt-in that lets a running local chat turn be steered. SSH, image, Auto Run, and Cue turns keep using `codex exec` either way.
+For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--gateway-url` sets the agent's [Local Models gateway](/local-models#gateway): the URL becomes the provider's base-URL variable (`ANTHROPIC_BASE_URL` for Claude Code, `OPENAI_BASE_URL` for Codex) the next time the agent starts, unless the agent's own environment variables already set that variable. It is refused for a provider that cannot use a gateway (Copilot CLI ignores base-URL variables), and an agent on an SSH remote does not start with a loopback gateway, because the remote host cannot reach it. `--model-source` sets where the agent's model runs, the Model source picker on the Models tab: `provider` is the provider's own model, and `<source id>:<model>` is a model on a Local Models source (`maestro-server` for the Maestro model server, or an id from `models endpoints list`). The source's id ends at the first colon, so a model name may hold one. The agent keeps its provider's CLI and only the model behind it changes. The target is refused for a provider whose CLI Maestro cannot point at another model server, for a source id that names nothing, and for a context under 40960 tokens. Whether the source serves the model is not asked at this point: `agent test-run-on` sends one short turn to find out, and a launch that cannot run on its target is refused by name, never moved to the provider's model. While the target is a source, `--gateway-url` and `--proxy-mode` are refused (clearing them is not), because a gateway routes requests to the provider. `show agent --json` reports the target as `runOn`, with `runOnSpec` in the spelling `--model-source` takes. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit. The `tui` and `dynamic` modes need the [maestro-p helper](https://runmaestro.ai/maestro-p/) on PATH; it is bundled locally, but for SSH remotes it must be installed on the remote host. See [Provider Notes](/provider-notes#token-source). `--codex-transport` only carries meaning for Codex agents: `exec` (the default) runs `codex exec`, and `app-server` is an experimental opt-in that lets a running local chat turn be steered. SSH, image, Auto Run, and Cue turns keep using `codex exec` either way.
 
 The rest of the Models tab, and the settings the Edit Agent form groups under Resilience and Directories, have flags too:
 
@@ -856,8 +856,8 @@ Read a tab's provider back with `maestro-cli tab show <tab-id>`. The **Provider*
 | `--gateway-url <url\|none>`             | Local Models gateway: a proxy this agent's provider traffic goes through. `none` clears                                                                                                         | -       |
 | `--proxy-mode <mode>`                   | [Maestro's own proxy](/local-models#the-maestro-proxy) for this agent: `off`, `passthrough`, `compress` or `compress-early`. Not with `--gateway-url`                                           | -       |
 | `--proxy-retrieval <on\|off>`           | Whether the model may ask the proxy for the original lines of a block it shortened. Compress modes only; turned off with the proxy                                                              | -       |
-| `--run-on <target>`                     | [Run on](/local-models): `provider` (clears a target), or `<source id>:<model>` on a Local Models source                                                                                        | -       |
-| `--run-on-context <tokens>`             | Context size for the Run on source (at least 40960). Alone, it changes the current target's context                                                                                             | -       |
+| `--model-source <target>`               | [Model source](/local-models#model-source): `provider` (clears a target), or `<source id>:<model>` on a Local Models source                                                                     | -       |
+| `--model-source-context <tokens>`       | Context size for the model source (at least 40960). Alone, it changes the current target's context                                                                                              | -       |
 | `--tier <tier=target>`                  | Where a `low`, `medium` or `high` task of this agent launches (repeatable): `low=<source id>:<model>`, `high=provider:<model>`, `medium=provider`, or `low=default` to follow the harness again | -       |
 | `--background-requests <target>`        | Where the token proxy sends this agent's side requests: `<source id>:<model>`, or `none`. Claude Code agents on the proxy only                                                                  | -       |
 | `--system-one <on\|off>`                | Whether this agent may ask System One with `s1`: `off` for this agent only, `on` follows the global switch                                                                                      | -       |
@@ -906,8 +906,8 @@ The flag table below covers `create-agent`:
 | `--sync-history-to-remote <bool>`  | Sync history entries to `.maestro/history/` on the remote host (`true` or `false`; needs `--ssh-remote`)                                                                                                                         | -                          |
 | `--auto-run-folder <path>`         | Auto Run / playbooks folder for this agent                                                                                                                                                                                       | `<cwd>/.maestro/playbooks` |
 | `--gateway-url <url\|none>`        | [Local Models gateway](/local-models#gateway), as on the New Agent Models tab. Checked against the provider like `update-agent --gateway-url`. Choose a proxy mode afterwards with `update-agent --proxy-mode`                   | -                          |
-| `--run-on <target>`                | Where the model runs, as on the New Agent Models tab: `provider` (default), or `<source id>:<model>` on a Local Models source. Checked like `update-agent --run-on`                                                              | -                          |
-| `--run-on-context <tokens>`        | Context size the harness is told a `--run-on` source has (at least 40960; default: the model's catalog context on the Maestro model server, elsewhere the context the source reports for the model, else 40960)                  | -                          |
+| `--model-source <target>`          | Where the model runs, as on the New Agent Models tab: `provider` (default), or `<source id>:<model>` on a Local Models source. Checked like `update-agent --model-source`                                                        | -                          |
+| `--model-source-context <tokens>`  | Context size the harness is told a `--model-source` source has (at least 40960; default: the model's catalog context on the Maestro model server, elsewhere the context the source reports for the model, else 40960)            | -                          |
 | `--peer <agent:access>`            | Set one explicit peer row (repeatable), as `update-agent --peer` does: `r`, `w`, `rw` or `none`                                                                                                                                  | -                          |
 | `--peer-note <agent:text>`         | Set the note on a peer row (repeatable)                                                                                                                                                                                          | -                          |
 | `--group-peers <r\|w\|rw\|off>`    | Grant access to every other agent in the same group, resolved live                                                                                                                                                               | -                          |
@@ -1072,7 +1072,7 @@ maestro-cli run-group-lifecycle <group-id> onboarding --agent <agent-id>
 
 `group-settings` prints the group's defaults, or **no defaults** when it holds none, and its pill label. When the group has no label of its own, the abbreviation Maestro derives from the name is printed and marked as automatic. It reads the stored group and does not need the app to be running. `--json` returns `group` with `defaults`, `lifecycle`, `shortLabel`, `badgeLabel` and `badgeLabelSource` (`custom` or `automatic`). It also lists the group's [Onboarding and Offboarding](./features#onboarding-and-offboarding) prompts.
 
-`update-group-settings` needs the desktop app. It accepts the settings flags of [`update-agent`](#creating-updating-and-removing-agents) that map to a default (`--provider`, `--cwd`, `--nudge`, `--new-session-message`, `--custom-path`, `--custom-args`, `--env`, `--clear-env`, `--model`, `--effort`, `--context-window`, `--gateway-url`, `--proxy-mode`, `--background-requests`, `--run-on`, `--tier`, `--system-one`, the five peer flags, `--ssh-remote`, `--ssh-cwd`, and the rest), and it builds the profile with the same validation the dialog uses, so a flag and a click store the same thing. A provider-bound value for a group with no provider, or for another provider, is refused by name.
+`update-group-settings` needs the desktop app. It accepts the settings flags of [`update-agent`](#creating-updating-and-removing-agents) that map to a default (`--provider`, `--cwd`, `--nudge`, `--new-session-message`, `--custom-path`, `--custom-args`, `--env`, `--clear-env`, `--model`, `--effort`, `--context-window`, `--gateway-url`, `--proxy-mode`, `--background-requests`, `--model-source`, `--tier`, `--system-one`, the five peer flags, `--ssh-remote`, `--ssh-cwd`, and the rest), and it builds the profile with the same validation the dialog uses, so a flag and a click store the same thing. A provider-bound value for a group with no provider, or for another provider, is refused by name.
 
 Notes on behavior:
 
@@ -1184,33 +1184,33 @@ It reads only these places: the agent's project root (the instruction files, `.m
 
 `models` is the command-line form of **Settings > Models**: the Library, the engines, the model server, the endpoints you run, which model each housekeeping task uses, tier defaults, and the token proxy. Each verb reaches the same main-process function as its button, so a download started here is the download the Library shows. The concepts are in [Local Models](/local-models); this section is the verb map.
 
-| To do this                                      | Run                                                                                                                                               |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| See which models are installed                  | `models list [--kind text-gen\|embedding\|classifier\|stt\|tts\|wake-word] [--fit]`                                                               |
-| Download, pause, cancel, verify, or drop one    | `models install <id>`, `models pause <id>`, `models cancel <id>`, `models verify <id>`, `models remove <id> [--force]`                            |
-| Resume a paused download                        | `models install <id>` (there is no separate resume verb)                                                                                          |
-| Open the Models tab on one panel                | `open settings --tab models --sub-tab overview\|library\|library/<section>\|sources\|system-one\|system-two\|gateway`                             |
-| Add a GGUF model from Hugging Face              | `models add-hf <repo> <file> [--dry-run]`, `models remove-hf <id>`                                                                                |
-| Install or update an engine                     | `models runtimes list`, `models runtimes install onnx\|llama`                                                                                     |
-| Point a task at a model                         | `models assign <task> off\|utility-agent\|system-one\|local:<id>\|endpoint:<endpoint>:<model>`                                                    |
-| Choose the Utility source                       | `settings set utilitySource '<json>'`, `settings set utilityAgentId\|utilityModelId <value>`                                                      |
-| Choose what a task does with no answer          | `s1 set fail-policy <task> open\|closed\|default`                                                                                                 |
-| Set the language a speech model dictates in     | `models assign dictation local:<id>?language=de`                                                                                                  |
-| See what each task runs on, and if it can       | `models tasks`, `models status [<task>]`                                                                                                          |
-| Run a task now                                  | `models run <task> --input "<text>"`, `models run git-drafts --cwd <repo>`, `models run dictation --audio <wav>`                                  |
-| See and drive the model server                  | `models server status\|start\|stop\|key`, `models server set --bind local\|network --max-models <n> --rotate-key --build <choice>`                |
-| Use a model server you run                      | `models endpoints list\|add\|update\|remove\|models\|test\|detect`                                                                                |
-| Read the model server log                       | `models server status` prints the path, then `open-file <path>`                                                                                   |
-| Point Maestro at VoiceStudio                    | `settings set acappella.voiceStudio.baseUrl\|engine\|seed <value>` (no verb checks the connection)                                                |
-| Set tier defaults per harness                   | `models tiers list\|options\|suggest\|set\|reset`                                                                                                 |
-| See what the token proxy did                    | `models proxy status`, `models proxy block <hash> [--original\|--compressed] [--lines <start:end>]`                                               |
-| Inspect or prune the compression cache          | `models proxy cache`, `models proxy cache prune [--older-than <duration>]`                                                                        |
-| Set the proxy default for every agent           | `settings set defaultTokenProxyMode off\|passthrough\|compress\|compress-early` (agents that follow it move; overrides keep theirs)               |
-| See what the other models did (Usage Dashboard) | `stats models [--range day\|week\|month\|quarter\|year\|all] [--json]` (see [What the Other Models Did](#what-the-other-models-did-stats-models)) |
-| Check the semantic index                        | `models index`                                                                                                                                    |
-| Index Cue runs for Semantic search              | `settings set semanticIndexCue true\|false`                                                                                                       |
-| Search past work by meaning                     | `search "<query>" --semantic` (see [Searching Past Work](#searching-past-work-search))                                                            |
-| Change where model files come from              | `models config show`, `models config set download-base <url\|default>`                                                                            |
+| To do this                                      | Run                                                                                                                                                          |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| See which models are installed                  | `models list [--kind text-gen\|embedding\|classifier\|stt\|tts\|wake-word] [--fit]`                                                                          |
+| Download, pause, cancel, verify, or drop one    | `models install <id>`, `models pause <id>`, `models cancel <id>`, `models verify <id>`, `models remove <id> [--force]`                                       |
+| Resume a paused download                        | `models install <id>` (there is no separate resume verb)                                                                                                     |
+| Open the Models tab on one panel                | `open settings --tab models --sub-tab overview\|library\|library/<section>\|sources\|system-one\|system-two\|gateway`                                        |
+| Add a GGUF model from Hugging Face              | `models add-hf <repo> <file> [--dry-run]`, `models remove-hf <id>`                                                                                           |
+| Install or update an engine                     | `models runtimes list`, `models runtimes install onnx\|llama`                                                                                                |
+| Point a task at a model                         | `models assign <task> off\|utility-agent\|system-one\|local:<id>\|endpoint:<endpoint>:<model>`                                                               |
+| Choose the Utility source                       | `settings set utilitySource '<json>'`, `settings set utilityAgentId\|utilityModelId <value>`                                                                 |
+| Choose what a task does with no answer          | `s1 set fail-policy <task> open\|closed\|default`                                                                                                            |
+| Set the language a speech model dictates in     | `models assign dictation local:<id>?language=de`                                                                                                             |
+| See what each task runs on, and if it can       | `models tasks`, `models status [<task>]`                                                                                                                     |
+| Run a task now                                  | `models run <task> --input "<text>"`, `models run git-drafts --cwd <repo>`, `models run dictation --audio <wav>`                                             |
+| See and drive the model server                  | `models server status\|start\|stop\|key`, `models server set --bind local\|network --max-models <n> --rotate-key --start-on-launch on\|off --build <choice>` |
+| Use a model server you run                      | `models endpoints list\|add\|update\|remove\|models\|test\|detect`                                                                                           |
+| Read the model server log                       | `models server status` prints the path, then `open-file <path>`                                                                                              |
+| Point Maestro at VoiceStudio                    | `settings set acappella.voiceStudio.baseUrl\|engine\|seed <value>` (no verb checks the connection)                                                           |
+| Set tier defaults per harness                   | `models tiers list\|options\|suggest\|set\|reset`                                                                                                            |
+| See what the token proxy did                    | `models proxy status`, `models proxy block <hash> [--original\|--compressed] [--lines <start:end>]`                                                          |
+| Inspect or prune the compression cache          | `models proxy cache`, `models proxy cache prune [--older-than <duration>]`                                                                                   |
+| Set the proxy default for every agent           | `settings set defaultTokenProxyMode off\|passthrough\|compress\|compress-early` (agents that follow it move; overrides keep theirs)                          |
+| See what the other models did (Usage Dashboard) | `stats models [--range day\|week\|month\|quarter\|year\|all] [--json]` (see [What the Other Models Did](#what-the-other-models-did-stats-models))            |
+| Check the semantic index                        | `models index`                                                                                                                                               |
+| Index Cue runs for Semantic search              | `settings set semanticIndexCue true\|false`                                                                                                                  |
+| Search past work by meaning                     | `search "<query>" --semantic` (see [Searching Past Work](#searching-past-work-search))                                                                       |
+| Change where model files come from              | `models config show`, `models config set download-base <url\|default>`                                                                                       |
 
 ```bash
 # What is installed, and what will fit on this computer
@@ -1243,7 +1243,7 @@ Notes:
 - **Endpoints.** `models endpoints remove` removes at once, even when a task is assigned to the endpoint; the card names those tasks and asks first. `models endpoints test` tests a saved endpoint only; there is no verb for testing the form before you save it. `detect` and `test` run on the computer running Maestro. See [Endpoints](/local-models#endpoints) and [Model server](/local-models#model-server).
 - **Dictation.** `models run dictation --audio <file.wav>` transcribes a 16-bit PCM WAV file (at most 512 MB) with the same [Dictation](/local-models#dictation) assignment the microphone uses, and prints the transcript. `--audio` is refused for every other task, and it cannot be combined with `--input`, `--system`, `--max-tokens`, `--cwd` or `--base`. Dictating live from the microphone has no verb.
 - **Housekeeping tasks.** `models assign <task> utility-agent` only points a task at the [Utility source](/local-models#utility-source); the source itself is the three settings above. Some tasks have their own verbs: `tab suggest-cleanup` (Tab cleanup suggestions), `cue gate` and `cue schedule --gate` (Cue gate), `cue screen` (Prompt-injection screen), `computer-history config --digest-source` (Computer History digests), and `--allow-secrets` on `gist create`, `support-package`, `feedback submit` and `feedback subscribe` (Secret screen). See [The tasks](/local-models#the-tasks).
-- **Agents.** Point one agent at a model with `update-agent --run-on`, `--tier`, `--background-requests` and `--proxy-mode` (see [Creating, Updating, and Removing Agents](#creating-updating-and-removing-agents)), and test the target with `agent test-run-on <agent-id>`.
+- **Agents.** Point one agent at a model with `update-agent --model-source`, `--tier`, `--background-requests` and `--proxy-mode` (see [Creating, Updating, and Removing Agents](#creating-updating-and-removing-agents)), and test the target with `agent test-run-on <agent-id>`.
 
 ### System One (`s1`)
 
@@ -1284,7 +1284,7 @@ maestro-cli s1 usage --since 1d
 
 ### What the Other Models Did (`stats models`)
 
-`stats models` is the Usage Dashboard's **Models** tab as data: what every model other than a provider's own did, by source and by task, plus the Run on agents, System One and what the token proxy saved. It has no side effects.
+`stats models` is the Usage Dashboard's **Models** tab as data: what every model other than a provider's own did, by source and by task, plus the agents on a model source, System One and what the token proxy saved. It has no side effects.
 
 ```bash
 maestro-cli stats models --range week
@@ -1294,7 +1294,7 @@ maestro-cli open usage-dashboard --tab models
 
 `--range` takes `day`, `week`, `month`, `quarter`, `year` or `all`, as `stats` does, and defaults to `week`. `--range` and `--json` may be written before or after `models`. `stats` itself prints the rest of the dashboard.
 
-The text output starts with a headline (requests, tokens in and out, the share that ran on this machine, errors), then the sections **Sources**, **Tasks**, **Agents (Run on turns)**, **System One** and **Token proxy**. Every section after **Sources** is left out when it holds nothing. The System One section notes `decisions are kept 30 days` when the range reaches further back than that, and when Auto turns ran it ends with an `Auto routing` line that splits them into low, medium and high. A range in which nothing ran is not a failure: it prints "Nothing ran in this range." and points at `maestro-cli models status`, which shows what is set up to run on another model. `--json` prints the whole record the tab draws: `range`, `since`, `totals`, `sources`, `byTask`, `byAgent`, `systemOne` and `proxy`.
+The text output starts with a headline (requests, tokens in and out, the share that ran on this machine, errors), then the sections **Sources**, **Tasks**, **Agents (model source turns)**, **System One** and **Token proxy**. Every section after **Sources** is left out when it holds nothing. The System One section notes `decisions are kept 30 days` when the range reaches further back than that, and when Auto turns ran it ends with an `Auto routing` line that splits them into low, medium and high. A range in which nothing ran is not a failure: it prints "Nothing ran in this range." and points at `maestro-cli models status`, which shows what is set up to run on another model. `--json` prints the whole record the tab draws: `range`, `since`, `totals`, `sources`, `byTask`, `byAgent`, `systemOne` and `proxy`.
 
 The desktop app must be running. A range that is not one of the six exits `2` with `Invalid range "<range>". Must be one of: day, week, month, quarter, year, all`. The app not running, an older build, or no answer exits `3` to `5`, and a read that fails exits `1` with `Model usage could not be read`. Like every `stats` verb, it belongs to the **Usage & Stats** Encore Feature: while that is off the verb is hidden from `--help` and refuses with "Usage & Stats is turned off. Turn it on in Settings > Plugins, or run: maestro-cli encore enable usage-stats" (`--json` code `USAGE_STATS_DISABLED`).
 
@@ -1696,21 +1696,21 @@ per-task synopsis and goal-handoff spawns) and take precedence over the agent's
 configured model, but nothing is written back to the agent. When the run ends,
 the agent is exactly as it was.
 
-`auto-run`, `goal-run`, and `cue schedule --auto-run` also take `--run-on
+`auto-run`, `goal-run`, and `cue schedule --auto-run` also take `--model-source
 
 <source id>:<model>`, which runs this run on a model a Local Models source serves
-(Ollama, LM Studio, the Maestro model server) in place of the agent's own Run on
-target, and `--run-on provider`, which runs an agent that normally runs on a
+(Ollama, LM Studio, the Maestro model server) in place of the agent's own model
+source, and `--model-source provider`, which runs an agent that normally runs on a
 source on its provider's own models for this run (`--model` names which one).
-`--run-on-context <tokens>` sets the window; without it the run uses what the
+`--model-source-context <tokens>` sets the window; without it the run uses what the
 source reports, or the agent's own window when it names the agent's own source
 and model. A source that is not configured is refused before anything starts.
 A document's tier marker still decides its own tasks. These are the choices the
 Auto Run window's **Model for this run** picker offers.
 
 ```bash
-maestro-cli auto-run doc1.md --agent <agent-id> --launch --run-on <source-id>:deepseek-v4.1-flash:cloud
-maestro-cli goal-run <agent-id> "Ship the migration" --run-on provider --model gpt-6.1-terra
+maestro-cli auto-run doc1.md --agent <agent-id> --launch --model-source <source-id>:deepseek-v4.1-flash:cloud
+maestro-cli goal-run <agent-id> "Ship the migration" --model-source provider --model gpt-6.1-terra
 ```
 
 `playbook`, `run-doc`, and `auto-run` also take `--ignore-model-hints`. It skips

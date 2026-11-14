@@ -1,6 +1,6 @@
 /**
  * Tests for maestro-lib/autorun/launch - the checks every Auto Run launch
- * passes before it is sent, here for the run's own Run on target.
+ * passes before it is sent, here for the run's own model source.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -34,7 +34,7 @@ describe('validateAutoRunLaunch: runOn', () => {
 		const checked = validateAutoRunLaunch({ documents, runOn: { type: 'source' } as never });
 		expect(checked.ok).toBe(false);
 		if (checked.ok) throw new Error('expected a refusal');
-		expect(checked.reason).toMatch(/^Run on: /);
+		expect(checked.reason).toMatch(/^Model source: /);
 	});
 
 	it('leaves runOn out when none was given', () => {

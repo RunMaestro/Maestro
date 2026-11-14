@@ -825,7 +825,7 @@ export function useGoalRunner({
 								customModel: config.model || session.customModel,
 								customEffort: config.effort || session.customEffort,
 								// Resume where the iteration ran: a session started on the run's
-								// Run on target lives on that source, not the agent's own.
+								// model source lives on that source, not the agent's own.
 								...(config.runOn && { runOnOverride: config.runOn }),
 								customContextWindow: session.customContextWindow,
 								enableMaestroP: session.enableMaestroP,

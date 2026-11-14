@@ -125,11 +125,11 @@ describe('readGroupSettingsFlags', () => {
 		expect(request.configPatch).toEqual({ customContextWindow: 500000 });
 	});
 
-	it('reads --run-on against the provider this same call sets', () => {
+	it('reads --model-source against the provider this same call sets', () => {
 		// The saved sources are read from storage, which holds none: the id is
 		// refused by name, which proves the provider was found.
 		expect(() =>
-			readGroupSettingsFlags({ provider: 'claude-code', runOn: 'ollama:qwen3' }, GROUP)
+			readGroupSettingsFlags({ provider: 'claude-code', modelSource: 'ollama:qwen3' }, GROUP)
 		).toThrow(/ollama/);
 	});
 

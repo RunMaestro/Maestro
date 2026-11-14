@@ -1,23 +1,25 @@
 /**
- * RunOnField - the one control for where an agent's model runs.
+ * The model source half of an agent's model picker: which Local Models sources
+ * the Model field also lists, and what a source model needs under the field.
  *
- * It lists "Provider (default)" and then, grouped by source, every model the
- * Maestro model server and each enabled source serves, from the same option
- * builder the tests read (`buildRunOnOptionGroups`). A model on the Maestro
- * server carries what the Library says about it: its fit on this computer and
- * the "Agent-ready" badge when it qualified with this agent's harness.
+ * The agent's Model field (`AgentConfigOptions`, the `model` option) lists the
+ * provider's own models first and then, grouped by source, every model the
+ * Maestro model server and each enabled source serves. Picking a source model
+ * sets the agent's model source (stored as `runOn`); picking a provider model
+ * sets it back to the provider. This file supplies both halves of that:
  *
- * Under the picker it says what the launch will do with the choice, from the
- * same `resolveRunOnLaunch` the launch plan runs:
+ * - {@link useModelSourceChoices} builds the source groups from the same option
+ *   builder the tests read (`buildRunOnOptionGroups`). A model on the Maestro
+ *   server carries what the Library says about it: its fit on this computer and
+ *   the "Agent-ready" badge when it qualified with this agent's harness.
+ * - {@link ModelSourceDetails} says what the launch will do with the choice,
+ *   from the same `resolveRunOnLaunch` the launch plan runs: a source that is
+ *   gone or disabled, a loopback source for an agent on an SSH remote, a recipe
+ *   variable the agent sets itself, and a model that has not passed the agent
+ *   qualification. It holds the context size and the Test button, which sends
+ *   one short read-only turn through the real harness (`onTest`).
  *
- * - a provider with no verified recipe shows the picker DISABLED with the reason;
- * - a source that is gone or disabled, and a loopback source for an agent on an
- *   SSH remote, are flagged before the launch refuses them;
- * - a recipe variable the agent sets itself is named, because it wins;
- * - a model that has not passed the agent qualification carries a warning.
- *
- * Test sends one short read-only turn through the real harness (`onTest`) and
- * shows the reply or the reason it failed.
+ * A provider with no verified recipe offers no sources at all.
  *
  * Controlled, and it stores nothing: the host decides when a value is saved.
  */
@@ -39,6 +41,7 @@ import {
 	runOnContextChoices,
 	runOnContextProblem,
 	RUN_ON_MIN_CONTEXT_TOKENS,
+	RUN_ON_PROVIDER_SPEC,
 	type RunOnLaunchResolution,
 	type RunOnSourceTarget,
 	type RunOnTarget,
@@ -49,26 +52,23 @@ import {
 	reportedRunOnContextTokens,
 	runOnModelFacts,
 	RUN_ON_UNTESTED_WARNING,
+	type RunOnOptionGroup,
 } from '../../../shared/local-models/run-on-picker';
 import { formatCount } from '../../../shared/formatters';
-import { modelsSettingsLocation } from '../../../shared/local-models/settings-location';
 import { useLocalModelsHardware, useRunOnSources } from '../../hooks/localModels';
 import type { Theme } from '../../types';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
-import { AssignmentOptionElements } from '../Settings/tabs/LocalModelsTab/AssignmentOptionElements';
 import { CardButton } from '../Settings/tabs/LocalModelsTab/CardButton';
 import { FormFieldLabel } from '../ui/FormFieldLabel';
 import { FormInput } from '../ui/FormInput';
 
-export interface RunOnFieldProps {
-	theme: Theme;
-	/** The agent's provider, e.g. `claude-code`. */
-	toolType: string;
+/** How a form binds an agent's model source to the Model field. */
+export interface ModelSourceBinding {
 	value: RunOnTarget;
 	onChange: (target: RunOnTarget) => void;
 	/**
 	 * The agent's effective custom vars (its own, or the provider-level set
-	 * when it has none), so the field can say when one of them wins.
+	 * when it has none), so the details can say when one of them wins.
 	 */
 	userEnvVars?: Record<string, string>;
 	/** Name of the SSH remote the agent runs on, when it runs on one. */
@@ -81,6 +81,28 @@ export interface RunOnFieldProps {
 	testBlockedReason?: string;
 	testId?: string;
 }
+
+/** What the Model field offers beyond the provider's own models. */
+export interface ModelSourceChoices {
+	/** One group per source, each labeled with the source's name. Empty while none lists a model. */
+	groups: readonly ModelSourceGroup[];
+	/** The source model the agent runs on, or null while it runs on its provider. */
+	selected: { spec: string; sourceName: string; model: string } | null;
+	/** Run on the source model a spec names (`<source id>:<model>`). */
+	onSelect: (spec: string) => void;
+	/** Run on the provider again. The provider model is the field's own value. */
+	onProvider: () => void;
+}
+
+export interface ModelSourceGroup {
+	label: string;
+	options: RunOnOptionGroup['options'];
+	/** The group of a current target no source lists, not a source of its own. */
+	unlisted?: true;
+}
+
+/** The group a current target no source lists falls into, so it still shows. */
+const UNLISTED_GROUP_LABEL = 'Not listed by any source';
 
 type StatusTone = 'dim' | 'warning' | 'error';
 interface StatusLine {
@@ -110,14 +132,35 @@ export function describeRunOnStatus(resolution: RunOnLaunchResolution): StatusLi
 }
 
 /**
+ * The source groups of the Model field, split out of the option builder's
+ * output: its ungrouped head holds the provider entry (the Model field lists
+ * the provider's models itself) and a current target no source lists, which
+ * gets a group of its own so the field can still show and highlight it.
+ */
+export function modelSourceGroups(groups: readonly RunOnOptionGroup[]): ModelSourceGroup[] {
+	const result: ModelSourceGroup[] = [];
+	for (const group of groups) {
+		if (group.label !== null) {
+			result.push({ label: group.label, options: group.options });
+			continue;
+		}
+		const unlisted = group.options.filter((option) => option.value !== RUN_ON_PROVIDER_SPEC);
+		if (unlisted.length > 0) {
+			result.push({ label: UNLISTED_GROUP_LABEL, options: unlisted, unlisted: true });
+		}
+	}
+	return result;
+}
+
+/**
  * The settings a source target takes out of force, per provider: an agent on a
  * source keeps to the mode its recipe was measured in (`runOnHarnessMode`).
  */
 const HARNESS_MODE_NOTES: Readonly<Record<string, string>> = {
 	'claude-code':
-		'While a source is chosen, Claude Code runs as claude --print. The token source on the Provider tab does not apply.',
+		'While a source model is chosen, Claude Code runs as claude --print. The token source on the Provider tab does not apply.',
 	codex:
-		'While a source is chosen, Codex runs as codex exec. The transport on the Provider tab does not apply.',
+		'While a source model is chosen, Codex runs as codex exec. The transport on the Provider tab does not apply.',
 };
 
 /** The context dropdown's last option, which opens the number field. */
@@ -132,14 +175,128 @@ function contextHelpText(maxContextTokens: number | undefined): string {
 	return `What the harness is told it has. At least ${formatCount(RUN_ON_MIN_CONTEXT_TOKENS)}; a project with large instruction files needs more, because the harness sends them on every turn.${holds}`;
 }
 
+/** The source listings behind the field, shared by the choices and the details. */
+export interface ModelSourceState {
+	choices: ModelSourceChoices | undefined;
+	sources: ReturnType<typeof useRunOnSources>['sources'];
+	endpoints: ReturnType<typeof useRunOnSources>['endpoints'];
+	loading: boolean;
+	problems: ReturnType<typeof useRunOnSources>['problems'];
+	hardware: ReturnType<typeof useLocalModelsHardware>['profile'];
+	/** Why this provider is offered no sources, when it is not. */
+	unsupportedReason?: string;
+}
+
+/**
+ * What the Model field offers beyond the provider for an agent on `toolType`,
+ * bound to its model source. `choices` is undefined for a provider with no
+ * verified recipe: it runs on its own models only.
+ */
+export function useModelSourceChoices(
+	toolType: string,
+	binding: Pick<ModelSourceBinding, 'value' | 'onChange'>
+): ModelSourceState {
+	const support = agentRunOnSupport(toolType);
+	const { sources, endpoints, loading, problems } = useRunOnSources();
+	const hardware = useLocalModelsHardware();
+	const { value, onChange } = binding;
+
+	const groups = useMemo(
+		() =>
+			modelSourceGroups(
+				buildRunOnOptionGroups({
+					toolType,
+					current: value,
+					sources,
+					endpoints,
+					hardware: hardware.profile,
+				})
+			),
+		[toolType, value, sources, endpoints, hardware.profile]
+	);
+
+	const choices = useMemo<ModelSourceChoices | undefined>(() => {
+		if (!support.supported) return undefined;
+		const selected =
+			value.type === 'source'
+				? {
+						spec: formatRunOnSpec(value),
+						sourceName: sourceName(value, endpoints, groups),
+						model: value.model,
+					}
+				: null;
+		return {
+			groups,
+			selected,
+			onSelect: (spec) => {
+				const parsed = parseRunOnSpec(spec);
+				if (!parsed.ok || parsed.target.type !== 'source') return;
+				// The context starts at what the Library runs this model at, stated on
+				// the target so the harness and the server are told the same size.
+				onChange({
+					...parsed.target,
+					contextTokens: runOnModelFacts(
+						toolType,
+						parsed.target,
+						hardware.profile,
+						reportedRunOnContextTokens(sources, parsed.target)
+					).defaultContextTokens,
+				});
+			},
+			onProvider: () => {
+				if (value.type !== 'provider') onChange({ type: 'provider' });
+			},
+		};
+	}, [support.supported, value, endpoints, groups, onChange, toolType, hardware.profile, sources]);
+
+	return {
+		choices,
+		sources,
+		endpoints,
+		loading,
+		problems,
+		hardware: hardware.profile,
+		unsupportedReason: support.supported ? undefined : support.reason,
+	};
+}
+
+/** The name a person knows a target's source by. */
+function sourceName(
+	target: RunOnSourceTarget,
+	endpoints: readonly { id: string; name: string }[],
+	groups: readonly ModelSourceGroup[]
+): string {
+	const spec = formatRunOnSpec(target);
+	const listed = groups.find(
+		(group) => !group.unlisted && group.options.some((option) => option.value === spec)
+	);
+	if (listed) return listed.label;
+	return endpoints.find((endpoint) => endpoint.id === target.endpointId)?.name ?? target.endpointId;
+}
+
 type TestState =
 	| { status: 'idle' }
 	| { status: 'testing' }
 	| { status: 'done'; result: RunOnTestResult };
 
-export function RunOnField({
+export interface ModelSourceDetailsProps extends ModelSourceBinding {
+	theme: Theme;
+	/** The agent's provider, e.g. `claude-code`. */
+	toolType: string;
+	/** The listings `useModelSourceChoices` read for the same agent. */
+	state: ModelSourceState;
+}
+
+/**
+ * Everything under the Model field that is about the model source: why a
+ * source cannot list its models, and for a source model its status, context
+ * size and Test button. Draws nothing while the agent runs on its provider
+ * with every source listing cleanly.
+ */
+export function ModelSourceDetails({
 	theme,
 	toolType,
+	state,
 	value,
 	onChange,
 	userEnvVars,
@@ -147,31 +304,17 @@ export function RunOnField({
 	error,
 	onTest,
 	testBlockedReason,
-	testId = 'run-on-field',
-}: RunOnFieldProps) {
-	const support = agentRunOnSupport(toolType);
-	const { sources, endpoints, loading, problems } = useRunOnSources();
-	const hardware = useLocalModelsHardware();
-
-	const groups = useMemo(
-		() =>
-			buildRunOnOptionGroups({
-				toolType,
-				current: value,
-				sources,
-				endpoints,
-				hardware: hardware.profile,
-			}),
-		[toolType, value, sources, endpoints, hardware.profile]
-	);
-
+	testId = 'model-source',
+}: ModelSourceDetailsProps) {
+	const { sources, endpoints, loading, problems, hardware } = state;
+	const supported = state.choices !== undefined;
 	const source = value.type === 'source' ? value : null;
 	// What the source's listing says the model holds, so the picker starts there
 	// and offers no size past it.
 	const reportedContext = source ? reportedRunOnContextTokens(sources, source) : undefined;
 	const facts = useMemo(
-		() => (source ? runOnModelFacts(toolType, source, hardware.profile, reportedContext) : null),
-		[toolType, source, hardware.profile, reportedContext]
+		() => (source ? runOnModelFacts(toolType, source, hardware, reportedContext) : null),
+		[toolType, source, hardware, reportedContext]
 	);
 
 	const status = useMemo(() => {
@@ -220,26 +363,6 @@ export function RunOnField({
 		setTest({ status: 'idle' });
 	}, [targetKey, toolType]);
 
-	const choose = (spec: string) => {
-		const parsed = parseRunOnSpec(spec);
-		if (!parsed.ok) return;
-		if (parsed.target.type === 'provider') {
-			onChange(parsed.target);
-			return;
-		}
-		// The context starts at what the Library runs this model at, stated on the
-		// target so the harness and the server are told the same size.
-		onChange({
-			...parsed.target,
-			contextTokens: runOnModelFacts(
-				toolType,
-				parsed.target,
-				hardware.profile,
-				reportedRunOnContextTokens(sources, parsed.target)
-			).defaultContextTokens,
-		});
-	};
-
 	const commitContext = (text: string) => {
 		setContextDraft(text);
 		if (!source) return;
@@ -283,10 +406,11 @@ export function RunOnField({
 		setTest({ status: 'done', result });
 	};
 
+	// A provider with no verified recipe says why it lists no sources.
 	const line: StatusLine | null = error
 		? { tone: 'error', text: error }
-		: !support.supported
-			? { tone: 'dim', text: support.reason }
+		: state.unsupportedReason
+			? { tone: 'dim', text: state.unsupportedReason }
 			: status;
 	const toneColor = (tone: StatusTone) =>
 		tone === 'error'
@@ -294,60 +418,39 @@ export function RunOnField({
 			: tone === 'warning'
 				? theme.colors.warning
 				: theme.colors.textDim;
-	const selectId = `${testId}-select`;
 	const testBlocked =
 		testBlockedReason ?? (contextProblem ? 'Fix the context size first.' : undefined);
 
+	if (!supported && !line) return null;
+
 	return (
 		<div className="w-full space-y-2" data-testid={testId}>
-			<div>
-				<FormFieldLabel theme={theme} htmlFor={selectId}>
-					Run on
-				</FormFieldLabel>
-				<select
-					id={selectId}
-					value={formatRunOnSpec(value)}
-					onChange={(e) => choose(e.target.value)}
-					disabled={!support.supported}
-					className="w-full p-2 text-sm rounded border bg-transparent outline-none disabled:opacity-40"
-					style={{
-						borderColor: theme.colors.border,
-						color: theme.colors.textMain,
-						backgroundColor: theme.colors.bgMain,
-					}}
-					data-testid={selectId}
+			{line && (
+				<p
+					className="text-xs select-text"
+					style={{ color: toneColor(line.tone) }}
+					data-testid={`${testId}-status`}
+					data-tone={line.tone}
 				>
-					<AssignmentOptionElements groups={groups} />
-				</select>
-				{line && (
+					{line.text}
+				</p>
+			)}
+			{supported && loading && (
+				<p className="text-xs" style={{ color: theme.colors.textDim }}>
+					Listing source models...
+				</p>
+			)}
+			{supported &&
+				problems.map((problem) => (
 					<p
-						className="mt-1 text-xs select-text"
-						style={{ color: toneColor(line.tone) }}
-						data-testid={`${testId}-status`}
-						data-tone={line.tone}
+						key={problem.endpointId}
+						className="text-xs select-text"
+						style={{ color: theme.colors.textDim }}
+						data-testid={`${testId}-source-problem`}
 					>
-						{line.text}
+						{problem.name}: {problem.message}
 					</p>
-				)}
-				{support.supported && !source && (
-					<p className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
-						The agent keeps its harness. Choose a model to run it on a source from{' '}
-						{modelsSettingsLocation('sources')} or on the Maestro model server.
-						{loading ? ' Listing models...' : ''}
-					</p>
-				)}
-				{support.supported &&
-					problems.map((problem) => (
-						<p
-							key={problem.endpointId}
-							className="mt-1 text-xs select-text"
-							style={{ color: theme.colors.textDim }}
-							data-testid={`${testId}-source-problem`}
-						>
-							{problem.name}: {problem.message}
-						</p>
-					))}
-			</div>
+				))}
 
 			{source && facts && (
 				<>
@@ -487,5 +590,3 @@ export function RunOnField({
 		</div>
 	);
 }
-
-export default RunOnField;

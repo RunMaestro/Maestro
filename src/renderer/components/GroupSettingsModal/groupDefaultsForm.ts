@@ -125,7 +125,7 @@ export function sshRemoteConfigToForm(
  * Form values for a group's stored defaults. Arrays and records are cloned, so
  * editing a row never mutates the group in the store before Save.
  *
- * A stored Run on or Background requests value that cannot be read is shown as
+ * A stored model source or Background requests value that cannot be read is shown as
  * its default. Saving then drops it, which is the only thing a form can do with
  * a value it cannot draw.
  */
@@ -179,7 +179,7 @@ export function groupDefaultsToForm(defaults: GroupAgentDefaults | undefined): G
  * and resets them itself.
  *
  * Not reset: env vars (they are not tied to a provider, which is what lets a
- * group pin `CLAUDE_CONFIG_DIR` and nothing else), the Run on target (it names
+ * group pin `CLAUDE_CONFIG_DIR` and nothing else), the model source (it names
  * a source and a model; the modal drops it only for a provider whose harness
  * cannot use one), resilience, peers, SSH, and everything on General.
  */

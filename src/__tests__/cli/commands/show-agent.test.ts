@@ -26,7 +26,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	// Environment, and the provider-level set.
 	readSettingValue: vi.fn(() => undefined),
 	readAgentConfigValue: vi.fn(() => undefined),
-	// The saved sources a Run on target is labeled from.
+	// The saved sources a model source is labeled from.
 	readLocalModelEndpoints: vi.fn(() => [
 		{
 			id: 'ep-ollama',
@@ -548,7 +548,7 @@ describe('show-agent command', () => {
 			expect(JSON.parse(consoleSpy.mock.calls[0][0]).gatewayUrl).toBeNull();
 		});
 
-		it("reports the agent's Run on target, the read for update-agent --run-on", () => {
+		it("reports the agent's model source, the read for update-agent --model-source", () => {
 			const runOn = {
 				type: 'source' as const,
 				endpointId: 'ep-ollama',
@@ -563,7 +563,7 @@ describe('show-agent command', () => {
 
 			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
 				runOn,
-				// The spelling `--run-on` takes, so the read can be written back.
+				// The spelling `--model-source` takes, so the read can be written back.
 				runOnSpec: 'ep-ollama:qwen3:latest',
 				runOnLabel: 'qwen3:latest on Ollama',
 				runOnProblem: null,
@@ -597,7 +597,7 @@ describe('show-agent command', () => {
 				runOn: stored,
 				runOnSpec: null,
 				runOnLabel: null,
-				runOnProblem: 'A Run on target names a model.',
+				runOnProblem: 'A model source names a model.',
 			});
 		});
 
@@ -716,7 +716,7 @@ describe('show-agent command', () => {
 			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
 				backgroundRequests: stored,
 				backgroundRequestsSpec: null,
-				backgroundRequestsProblem: 'A Run on target names a model.',
+				backgroundRequestsProblem: 'A model source names a model.',
 			});
 		});
 

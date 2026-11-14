@@ -472,7 +472,7 @@ describe('previewContinuity', () => {
 				'Configured routing (read from the settings as they stand now'
 			);
 			expect(text(result)).toContain('model tab-model (set on the tab)');
-			expect(text(result)).toMatch(/Run on: .*qwen3/);
+			expect(text(result)).toMatch(/Model source: .*qwen3/);
 			expect(text(result)).toMatch(/Background requests: configured to go to .*tiny/);
 			expect(result.continuity?.signals?.routing).toHaveLength(5);
 			expect(text(result)).toMatch(/Not checked: whether a source is enabled, reachable/);

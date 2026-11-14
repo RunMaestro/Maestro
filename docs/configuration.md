@@ -264,7 +264,7 @@ maestro-cli update-agent <agent-id> --clear-env   # remove all per-agent variabl
 
 To send an agent's provider traffic through a proxy, prefer the agent's [Local Models gateway](/local-models#gateway) over setting a base-URL variable by hand: it picks the right variable for the provider and refuses a URL the agent could not reach. A base-URL variable you set here still wins over the gateway.
 
-To run an agent's model on a Local Models source (the Maestro model server, or a server such as Ollama or LM Studio), set its [Run on](/local-models#run-on) target on the **Models** tab instead (`maestro-cli update-agent <agent-id> --run-on <source id>:<model>`). It sets the variables for Claude Code, Codex, Copilot CLI, and OpenCode. A variable you set here wins over Run on as well, and the field names it: **Not applied in full**.
+To run an agent's model on a Local Models source (the Maestro model server, or a server such as Ollama or LM Studio), set its [model source](/local-models#model-source) on the **Models** tab instead (`maestro-cli update-agent <agent-id> --model-source <source id>:<model>`). It sets the variables for Claude Code, Codex, Copilot CLI, and OpenCode. A variable you set here wins over the model source as well, and the field names it: **Not applied in full**.
 
 The eye button parks a variable here too: the row keeps its key and value and stays editable, but the variable is not passed to the agent. Parked variables are stored separately and are never merged into a spawned process.
 

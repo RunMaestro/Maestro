@@ -1,17 +1,30 @@
 /**
- * Tests for RunOnField - the one control for where an agent's model runs, and
- * the lines under it that say what the launch will do with the choice.
+ * Tests for the model source half of an agent's model picker:
+ * `useModelSourceChoices` (the source groups the Model field lists after the
+ * provider's models, and what picking one hands up), `ModelSourceDetails` (the
+ * lines under the Model field that say what the launch will do with a source
+ * model, its context size and its Test button), `modelSourceGroups` and
+ * `describeRunOnStatus`.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { RunOnField, describeRunOnStatus } from '../../../../renderer/components/shared/RunOnField';
+import {
+	ModelSourceDetails,
+	describeRunOnStatus,
+	modelSourceGroups,
+	useModelSourceChoices,
+	type ModelSourceDetailsProps,
+	type ModelSourceState,
+} from '../../../../renderer/components/shared/ModelSourceDetails';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import type { LocalModelEndpoint } from '../../../../shared/local-models/endpoints';
 import { GPT_OSS_20B_ID, QWEN3_1_7B_ID } from '../../../../shared/local-models/model-catalog';
 import { MODEL_SERVER_ENDPOINT_ID } from '../../../../shared/local-models/model-server';
 import {
+	agentRunOnSupport,
 	RUN_ON_MIN_CONTEXT_TOKENS,
+	RUN_ON_PROVIDER_SPEC,
 	type RunOnSourceTarget,
 	type RunOnTarget,
 	type RunOnTestResult,
@@ -52,25 +65,51 @@ function listSources(serverModels: string[] = [GPT_OSS_20B_ID, QWEN3_1_7B_ID]) {
 	);
 }
 
-function renderField(props: Partial<React.ComponentProps<typeof RunOnField>> = {}) {
-	const onChange = vi.fn();
-	const view = render(
-		<RunOnField
+type HarnessProps = Partial<Omit<ModelSourceDetailsProps, 'theme' | 'state'>>;
+
+/** What `useModelSourceChoices` returned on the latest render. */
+let latest: ModelSourceState;
+
+/**
+ * The hook and the details bound the way `AgentModelSection` binds them: one
+ * model source, read by both. The Model field itself is `AgentConfigOptions`,
+ * covered in AgentConfigPanel.test.tsx; here the choices are read and driven
+ * straight off the hook.
+ */
+function Harness({
+	toolType = 'claude-code',
+	value = { type: 'provider' },
+	onChange = () => {},
+	...details
+}: HarnessProps) {
+	const state = useModelSourceChoices(toolType, { value, onChange });
+	latest = state;
+	return (
+		<ModelSourceDetails
 			theme={mockTheme}
-			toolType="claude-code"
-			value={{ type: 'provider' }}
+			toolType={toolType}
+			state={state}
+			value={value}
 			onChange={onChange}
-			{...props}
+			{...details}
 		/>
 	);
+}
+
+function renderField(props: HarnessProps = {}) {
+	const onChange = vi.fn();
+	const view = render(<Harness onChange={onChange} {...props} />);
 	return { onChange, ...view };
 }
 
-const picker = () => screen.getByTestId('run-on-field-select') as HTMLSelectElement;
-const status = () => screen.queryByTestId('run-on-field-status');
-const optionLabels = () => Array.from(picker().options).map((option) => option.textContent);
+const choices = () => latest.choices!;
+const groupLabels = () => choices().groups.map((group) => group.label);
+const optionLabels = () =>
+	choices().groups.flatMap((group) => group.options.map((option) => option.label));
+const status = () => screen.queryByTestId('model-source-status');
 const sourcesListed = () =>
-	waitFor(() => expect(picker().querySelectorAll('optgroup').length).toBeGreaterThan(0));
+	waitFor(() => expect(latest.choices?.groups.length ?? 0).toBeGreaterThan(0));
+const select = (spec: string) => act(() => choices().onSelect(spec));
 
 beforeEach(() => {
 	savedEndpoints = useSettingsStore.getState().localModelEndpoints;
@@ -88,22 +127,20 @@ afterEach(() => {
 	});
 });
 
-describe('RunOnField: the picker', () => {
-	it('lists Provider first, then each source with what it serves', async () => {
+describe('useModelSourceChoices: the source groups', () => {
+	it('lists each source with what it serves, and no provider entry', async () => {
 		renderField();
-		await sourcesListed();
+		await waitFor(() => expect(groupLabels()).toEqual(['Maestro model server', 'Ollama']));
 
 		expect(optionLabels()).toEqual([
-			'Provider (default)',
 			'gpt-oss 20B (MXFP4) (Fits, Agent-ready)',
 			'Qwen3 1.7B Instruct (Q4_K_M) (Fits)',
 			'qwen3:latest',
 		]);
-		expect(Array.from(picker().querySelectorAll('optgroup')).map((group) => group.label)).toEqual([
-			'Maestro model server',
-			'Ollama',
-		]);
-		expect(picker().value).toBe('provider');
+		expect(
+			choices().groups.flatMap((group) => group.options.map((option) => option.value))
+		).not.toContain(RUN_ON_PROVIDER_SPEC);
+		expect(choices().selected).toBeNull();
 	});
 
 	it('asks the Maestro model server what it serves without starting it', async () => {
@@ -121,6 +158,7 @@ describe('RunOnField: the picker', () => {
 		renderField();
 		await sourcesListed();
 
+		expect(groupLabels()).toEqual(['Maestro model server']);
 		expect(optionLabels()).not.toContain('qwen3:latest');
 		// The one call is the Maestro model server's, which answers from disk.
 		expect(vi.mocked(window.maestro.localModels.endpoints.listModels).mock.calls).toEqual([
@@ -128,37 +166,115 @@ describe('RunOnField: the picker', () => {
 		]);
 	});
 
-	it('hands up a picked model at the context the Library runs it at', async () => {
-		const { onChange } = renderField();
-		await sourcesListed();
+	it('names the selected source model and the source that lists it', async () => {
+		renderField({ value: QWEN });
+		await waitFor(() => expect(groupLabels()).toContain('Ollama'));
 
-		fireEvent.change(picker(), {
-			target: { value: `${MODEL_SERVER_ENDPOINT_ID}:${GPT_OSS_20B_ID}` },
+		expect(choices().selected).toEqual({
+			spec: `${OLLAMA.id}:qwen3:latest`,
+			sourceName: 'Ollama',
+			model: 'qwen3:latest',
 		});
-
-		expect(onChange).toHaveBeenCalledWith(onServer(GPT_OSS_20B_ID));
 	});
 
-	it('hands up Provider with no context', async () => {
-		const { onChange } = renderField({ value: QWEN });
-		await sourcesListed();
-
-		fireEvent.change(picker(), { target: { value: 'provider' } });
-
-		expect(onChange).toHaveBeenCalledWith({ type: 'provider' });
-	});
-
-	it('keeps a current target no source lists, with the reason', async () => {
+	it('keeps a current target no source lists in a group of its own, with the reason', async () => {
 		renderField({ value: { type: 'source', endpointId: 'ep-gone', model: 'm' } });
-		await sourcesListed();
 
-		expect(picker().value).toBe('ep-gone:m');
-		expect(optionLabels()).toContain('m (source removed)');
+		// The unlisted target's group is there from the first render; the sources follow.
+		await waitFor(() =>
+			expect(groupLabels()).toEqual(['Not listed by any source', 'Maestro model server', 'Ollama'])
+		);
+		expect(choices().groups[0].options).toEqual([
+			{ value: 'ep-gone:m', label: 'm (source removed)' },
+		]);
+		// A source that no longer exists is named by its id, the only name left.
+		expect(choices().selected).toEqual({ spec: 'ep-gone:m', sourceName: 'ep-gone', model: 'm' });
 		// And the launch refusal is shown before a turn meets it.
 		expect(status()).toHaveTextContent('is no longer configured');
 		expect(status()).toHaveAttribute('data-tone', 'error');
 	});
 
+	it('offers no choices for a provider with no recipe, and says why', async () => {
+		renderField({ toolType: 'gemini-cli' });
+
+		expect(latest.choices).toBeUndefined();
+		expect(latest.unsupportedReason).toBe(agentRunOnSupportReason('gemini-cli'));
+		const status = screen.getByTestId('model-source-status');
+		expect(status).toHaveTextContent(agentRunOnSupportReason('gemini-cli'));
+		expect(status).toHaveAttribute('data-tone', 'dim');
+		// Nothing about sources is listed for it.
+		expect(screen.queryByText('Listing source models...')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-source-problem')).not.toBeInTheDocument();
+	});
+});
+
+/** The reason the launch gives for a provider it has no recipe for. */
+function agentRunOnSupportReason(toolType: string): string {
+	const support = agentRunOnSupport(toolType);
+	if (support.supported) throw new Error(`${toolType} has a recipe`);
+	return support.reason;
+}
+
+describe('useModelSourceChoices: picking', () => {
+	it('hands up a picked model at the context the Library runs it at', async () => {
+		const { onChange } = renderField();
+		await sourcesListed();
+
+		select(`${MODEL_SERVER_ENDPOINT_ID}:${GPT_OSS_20B_ID}`);
+
+		expect(onChange).toHaveBeenCalledWith(onServer(GPT_OSS_20B_ID));
+	});
+
+	it('starts a picked model at the size its source reports', async () => {
+		vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+			async (endpoint) =>
+				typeof endpoint === 'string'
+					? { ok: true, models: [] }
+					: { ok: true, models: [{ id: 'deepseek-v4.1-flash:cloud', contextTokens: 1_048_576 }] }
+		);
+		const { onChange } = renderField();
+		await waitFor(() => expect(groupLabels()).toEqual(['Ollama']));
+
+		select(`${OLLAMA.id}:deepseek-v4.1-flash:cloud`);
+
+		expect(onChange).toHaveBeenCalledWith({
+			type: 'source',
+			endpointId: OLLAMA.id,
+			model: 'deepseek-v4.1-flash:cloud',
+			contextTokens: 1_048_576,
+		});
+	});
+
+	it('ignores a spec that does not name a source model', async () => {
+		const { onChange } = renderField();
+		await sourcesListed();
+
+		select(RUN_ON_PROVIDER_SPEC);
+		select('not a spec');
+
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
+	it('hands up Provider, with no context, when a provider model is chosen', async () => {
+		const { onChange } = renderField({ value: QWEN });
+		await sourcesListed();
+
+		act(() => choices().onProvider());
+
+		expect(onChange).toHaveBeenCalledWith({ type: 'provider' });
+	});
+
+	it('hands up nothing when the agent already runs on its provider', async () => {
+		const { onChange } = renderField();
+		await sourcesListed();
+
+		act(() => choices().onProvider());
+
+		expect(onChange).not.toHaveBeenCalled();
+	});
+});
+
+describe('ModelSourceDetails: the sources', () => {
 	it('says why a source lists nothing', async () => {
 		vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
 			async (endpoint) =>
@@ -168,45 +284,54 @@ describe('RunOnField: the picker', () => {
 		);
 		renderField();
 
-		expect(await screen.findByTestId('run-on-field-source-problem')).toHaveTextContent(
+		expect(await screen.findByTestId('model-source-source-problem')).toHaveTextContent(
 			'Maestro model server: The engine is not downloaded.'
 		);
 	});
 
-	it('is disabled for a provider with no recipe, with the reason', async () => {
-		renderField({ toolType: 'gemini-cli' });
+	it('says so while the sources are still listing', async () => {
+		renderField();
 
-		expect(picker()).toBeDisabled();
-		expect(status()).toHaveTextContent('speaks only the Gemini API');
-		expect(status()).toHaveAttribute('data-tone', 'dim');
+		expect(screen.getByText('Listing source models...')).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.queryByText('Listing source models...')).not.toBeInTheDocument()
+		);
 	});
 
 	it('shows a save error from the host over its own status', async () => {
-		renderField({ value: QWEN, error: 'A Run on target names a model.' });
+		renderField({ value: QWEN, error: 'A model source names a model.' });
 
-		expect(status()).toHaveTextContent('A Run on target names a model.');
+		expect(status()).toHaveTextContent('A model source names a model.');
 		expect(status()).toHaveAttribute('data-tone', 'error');
+	});
+
+	it('uses the test id prefix the host gives', async () => {
+		renderField({ value: QWEN, testId: 'edit-agent-model-source' });
+
+		expect(screen.getByTestId('edit-agent-model-source')).toBeInTheDocument();
+		expect(screen.getByTestId('edit-agent-model-source-context-select')).toBeInTheDocument();
+		expect(screen.queryByTestId('model-source')).not.toBeInTheDocument();
 	});
 });
 
-describe('RunOnField: what it says about a chosen model', () => {
+describe('ModelSourceDetails: what it says about a chosen model', () => {
 	it('warns about a model that has not passed the agent qualification', async () => {
 		renderField({ value: QWEN });
 
-		expect(screen.getByTestId('run-on-field-untested')).toHaveTextContent(RUN_ON_UNTESTED_WARNING);
+		expect(screen.getByTestId('model-source-untested')).toHaveTextContent(RUN_ON_UNTESTED_WARNING);
 	});
 
 	it('does not warn about a model that qualified with this harness', async () => {
 		renderField({ value: onServer(GPT_OSS_20B_ID) });
 
-		expect(screen.queryByTestId('run-on-field-untested')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-untested')).not.toBeInTheDocument();
 	});
 
 	it('warns when the model qualified with another harness only', async () => {
 		// gpt-oss 20B has no qualification run with OpenCode.
 		renderField({ toolType: 'opencode', value: onServer(GPT_OSS_20B_ID) });
 
-		expect(screen.getByTestId('run-on-field-untested')).toBeInTheDocument();
+		expect(screen.getByTestId('model-source-untested')).toBeInTheDocument();
 	});
 
 	it('says when a model does not fit this computer', async () => {
@@ -219,7 +344,7 @@ describe('RunOnField: what it says about a chosen model', () => {
 		});
 		renderField({ value: onServer(GPT_OSS_20B_ID) });
 
-		expect(await screen.findByTestId('run-on-field-fit')).toHaveTextContent('Too large');
+		expect(await screen.findByTestId('model-source-fit')).toHaveTextContent('Too large');
 	});
 
 	it('flags a loopback source for an agent on an SSH remote', async () => {
@@ -240,27 +365,30 @@ describe('RunOnField: what it says about a chosen model', () => {
 		);
 	});
 
-	it('says which Provider tab setting a source takes out of force', async () => {
+	it('says which Provider tab setting a source model takes out of force', async () => {
 		renderField({ value: QWEN });
 		expect(screen.getByText(/runs as claude --print/)).toBeInTheDocument();
 	});
 
-	it('shows nothing about a model while the target is Provider', async () => {
+	it('shows nothing about a model while the agent runs on its provider', async () => {
 		renderField();
+		await sourcesListed();
 
 		expect(status()).toBeNull();
-		expect(screen.queryByTestId('run-on-field-context')).not.toBeInTheDocument();
-		expect(screen.queryByTestId('run-on-field-test')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-untested')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-context-select')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-context')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-test')).not.toBeInTheDocument();
 	});
 });
 
-describe('RunOnField: the context size', () => {
+describe('ModelSourceDetails: the context size', () => {
 	const contextSelect = () =>
-		screen.getByTestId('run-on-field-context-select') as HTMLSelectElement;
+		screen.getByTestId('model-source-context-select') as HTMLSelectElement;
 	const contextLabels = () =>
 		Array.from(contextSelect().options).map((option) => option.textContent);
 	const contextInput = () =>
-		screen.getByTestId('run-on-field-context').querySelector('input') as HTMLInputElement;
+		screen.getByTestId('model-source-context').querySelector('input') as HTMLInputElement;
 
 	it("offers the common sizes by name, then Custom, with the target's size chosen", () => {
 		renderField({ value: QWEN });
@@ -276,7 +404,7 @@ describe('RunOnField: the context size', () => {
 			'Custom...',
 		]);
 		expect(contextSelect().value).toBe('65536');
-		expect(screen.queryByTestId('run-on-field-context')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-context')).not.toBeInTheDocument();
 	});
 
 	it('hands up a size picked from the list', () => {
@@ -301,28 +429,6 @@ describe('RunOnField: the context size', () => {
 		expect(screen.getByText(/This model holds up to 160,000 tokens/)).toBeInTheDocument();
 	});
 
-	it('starts a picked model at the size its source reports', async () => {
-		vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
-			async (endpoint) =>
-				typeof endpoint === 'string'
-					? { ok: true, models: [] }
-					: { ok: true, models: [{ id: 'deepseek-v4.1-flash:cloud', contextTokens: 1_048_576 }] }
-		);
-		const { onChange } = renderField();
-		await sourcesListed();
-
-		fireEvent.change(picker(), {
-			target: { value: `${OLLAMA.id}:deepseek-v4.1-flash:cloud` },
-		});
-
-		expect(onChange).toHaveBeenCalledWith({
-			type: 'source',
-			endpointId: OLLAMA.id,
-			model: 'deepseek-v4.1-flash:cloud',
-			contextTokens: 1_048_576,
-		});
-	});
-
 	it('shows a size no choice names in the Custom field', () => {
 		renderField({ value: { ...QWEN, contextTokens: 1_000_000 } });
 
@@ -344,7 +450,7 @@ describe('RunOnField: the context size', () => {
 	it('says so under the field when the size is under the agent minimum', () => {
 		renderField({ value: { ...QWEN, contextTokens: 8192 } });
 
-		expect(screen.getByTestId('run-on-field-context')).toHaveTextContent(
+		expect(screen.getByTestId('model-source-context')).toHaveTextContent(
 			`at least ${RUN_ON_MIN_CONTEXT_TOKENS} tokens`
 		);
 	});
@@ -359,7 +465,7 @@ describe('RunOnField: the context size', () => {
 		renderField({ value: { ...QWEN, contextTokens: 150_000 } });
 
 		await waitFor(() =>
-			expect(screen.getByTestId('run-on-field-context-past-model')).toHaveTextContent(
+			expect(screen.getByTestId('model-source-context-past-model')).toHaveTextContent(
 				'More than the 131,072 tokens this model holds'
 			)
 		);
@@ -370,14 +476,14 @@ describe('RunOnField: the context size', () => {
 
 		fireEvent.change(contextInput(), { target: { value: 'lots' } });
 		expect(onChange).not.toHaveBeenCalled();
-		expect(screen.getByTestId('run-on-field-context')).toHaveTextContent('whole number');
+		expect(screen.getByTestId('model-source-context')).toHaveTextContent('whole number');
 
 		fireEvent.blur(contextInput());
 		expect(contextInput().value).toBe('100000');
 	});
 });
 
-describe('RunOnField: Test', () => {
+describe('ModelSourceDetails: Test', () => {
 	const PASSED: RunOnTestResult = {
 		ok: true,
 		model: 'qwen3:latest',
@@ -386,12 +492,12 @@ describe('RunOnField: Test', () => {
 		durationMs: 12_340,
 		contextTokens: 65_536,
 	};
-	const button = () => screen.getByTestId('run-on-field-test') as HTMLButtonElement;
+	const button = () => screen.getByTestId('model-source-test') as HTMLButtonElement;
 
 	it('draws no button when the host cannot run a test', () => {
 		renderField({ value: QWEN });
 
-		expect(screen.queryByTestId('run-on-field-test')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-test')).not.toBeInTheDocument();
 	});
 
 	it('runs one turn on the target shown and shows the reply', async () => {
@@ -402,7 +508,7 @@ describe('RunOnField: Test', () => {
 		expect(button()).toBeDisabled();
 		expect(button()).toHaveTextContent('Testing...');
 
-		const result = await screen.findByTestId('run-on-field-test-result');
+		const result = await screen.findByTestId('model-source-test-result');
 		expect(onTest).toHaveBeenCalledWith(QWEN);
 		expect(result).toHaveAttribute('data-ok', 'true');
 		expect(result).toHaveTextContent('qwen3:latest on Ollama answered in 12.3 s: ready');
@@ -422,7 +528,7 @@ describe('RunOnField: Test', () => {
 
 		fireEvent.click(button());
 
-		const result = await screen.findByTestId('run-on-field-test-result');
+		const result = await screen.findByTestId('model-source-test-result');
 		expect(result).toHaveAttribute('data-ok', 'false');
 		expect(result).toHaveTextContent('Prompt is too long');
 	});
@@ -435,29 +541,21 @@ describe('RunOnField: Test', () => {
 
 		fireEvent.click(button());
 
-		expect(await screen.findByTestId('run-on-field-test-result')).toHaveTextContent('boom');
+		expect(await screen.findByTestId('model-source-test-result')).toHaveTextContent('boom');
 	});
 
 	it('drops the verdict when the target changes: it described another one', async () => {
 		const onTest = vi.fn(async () => PASSED);
 		const { rerender, onChange } = renderField({ value: QWEN, onTest });
 		fireEvent.click(button());
-		await screen.findByTestId('run-on-field-test-result');
+		await screen.findByTestId('model-source-test-result');
 
 		const next: RunOnTarget = { ...QWEN, contextTokens: 131_072 };
 		await act(async () => {
-			rerender(
-				<RunOnField
-					theme={mockTheme}
-					toolType="claude-code"
-					value={next}
-					onChange={onChange}
-					onTest={onTest}
-				/>
-			);
+			rerender(<Harness value={next} onChange={onChange} onTest={onTest} />);
 		});
 
-		expect(screen.queryByTestId('run-on-field-test-result')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-test-result')).not.toBeInTheDocument();
 	});
 
 	it('is disabled with the reason the host gives', () => {
@@ -473,6 +571,50 @@ describe('RunOnField: Test', () => {
 		renderField({ value: { ...QWEN, contextTokens: 8192 }, onTest });
 
 		expect(button()).toBeDisabled();
+		expect(screen.getByText('Fix the context size first.')).toBeInTheDocument();
+	});
+});
+
+describe('modelSourceGroups', () => {
+	it('drops the provider entry from the ungrouped head and keeps every source group', () => {
+		expect(
+			modelSourceGroups([
+				{ label: null, options: [{ value: RUN_ON_PROVIDER_SPEC, label: 'Provider (default)' }] },
+				{ label: 'Ollama', options: [{ value: 'ep-ollama:qwen3:latest', label: 'qwen3:latest' }] },
+			])
+		).toEqual([
+			{ label: 'Ollama', options: [{ value: 'ep-ollama:qwen3:latest', label: 'qwen3:latest' }] },
+		]);
+	});
+
+	it('puts a current target no source lists in a group of its own, first', () => {
+		expect(
+			modelSourceGroups([
+				{
+					label: null,
+					options: [
+						{ value: RUN_ON_PROVIDER_SPEC, label: 'Provider (default)' },
+						{ value: 'ep-gone:m', label: 'm (source removed)' },
+					],
+				},
+				{ label: 'Ollama', options: [{ value: 'ep-ollama:qwen3:latest', label: 'qwen3:latest' }] },
+			])
+		).toEqual([
+			{
+				label: 'Not listed by any source',
+				options: [{ value: 'ep-gone:m', label: 'm (source removed)' }],
+				unlisted: true,
+			},
+			{ label: 'Ollama', options: [{ value: 'ep-ollama:qwen3:latest', label: 'qwen3:latest' }] },
+		]);
+	});
+
+	it('is empty when only the provider is offered', () => {
+		expect(
+			modelSourceGroups([
+				{ label: null, options: [{ value: RUN_ON_PROVIDER_SPEC, label: 'Provider (default)' }] },
+			])
+		).toEqual([]);
 	});
 });
 

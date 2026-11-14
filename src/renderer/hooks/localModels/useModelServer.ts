@@ -37,6 +37,8 @@ export interface ModelServerHookState {
 	stop: () => Promise<void>;
 	setBind: (bind: ModelServerBind) => Promise<void>;
 	setMaxModels: (maxModels: number) => Promise<void>;
+	/** Whether it starts when Maestro starts. Start and Stop also set it. */
+	setStartOnLaunch: (startOnLaunch: boolean) => Promise<void>;
 	rotateKey: () => Promise<void>;
 	/** The key, for Copy. Null when it could not be read (the error says why). */
 	readKey: () => Promise<string | null>;
@@ -124,6 +126,10 @@ export function useModelServer(): ModelServerHookState {
 		),
 		setMaxModels: useCallback(
 			(maxModels: number) => act('set', () => server().set({ maxModels })),
+			[act]
+		),
+		setStartOnLaunch: useCallback(
+			(startOnLaunch: boolean) => act('set', () => server().set({ startOnLaunch })),
 			[act]
 		),
 		rotateKey: useCallback(() => act('rotate', () => server().set({ rotateKey: true })), [act]),

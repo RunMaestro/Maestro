@@ -8,7 +8,7 @@
  * is believed, so a stale or hand-edited setting cannot make a provider look
  * able to do what it cannot:
  *
- *  - Run on: `agentRunOnSupport`, then `parseRunOnTarget` and `runOnTargetLabel`
+ *  - Model source: `agentRunOnSupport`, then `parseRunOnTarget` and `runOnTargetLabel`
  *    (`local-models/run-on`).
  *  - Tiers: `agentTierRows` and `tierTargetLabel` (`modelTiers`), which are
  *    `resolveTierTarget` per tier, harness gate included.
@@ -51,7 +51,7 @@ export interface ContinuationRoutingInput {
 	agentModel?: string;
 	tabEffort?: string;
 	agentEffort?: string;
-	/** The agent's stored Run on target. */
+	/** The agent's stored model source. */
 	runOn?: unknown;
 	/** The agent's own tier targets. */
 	tierTargets?: TierTargets | null;
@@ -196,7 +196,7 @@ export function describeRoutingLines(routing: ContinuationRouting): string[] {
 	}[backgroundRequests.status]();
 	return [
 		`Provider ${routing.provider}; model ${model.value ?? 'default'} (${where(model.setOn)}); effort ${effort.value ?? 'default'} (${where(effort.setOn)}).`,
-		`Run on: ${runOnText}.`,
+		`Model source: ${runOnText}.`,
 		`Tier targets: ${tierText}.`,
 		`Background requests: ${backgroundText}.`,
 		`Not checked: ${routing.notChecked.join(', ')}.`,

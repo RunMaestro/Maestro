@@ -37,7 +37,7 @@ import {
 	type VoiceCredentialService,
 } from '../../../../shared/acappella/provider-catalog';
 import type { VoiceProviderRole } from '../../../../shared/acappella/providers';
-import type { VoiceSlotReadiness } from '../../../../shared/acappella/readiness';
+import { VOICE_SLOT_LABELS, type VoiceSlotReadiness } from '../../../../shared/acappella/readiness';
 import { VOICE_ROUTING_TASK_ID } from '../../../../shared/acappella/voice-routing';
 import { taskAssignmentLocation } from '../../../../shared/local-models/settings-location';
 import type {
@@ -222,6 +222,7 @@ export function VoiceProvidersPanel({
 							key={slot.slot}
 							theme={theme}
 							readiness={slot}
+							named
 							onDownload={(modelId) => void models.download(modelId)}
 						/>
 					))}
@@ -302,6 +303,7 @@ export function VoiceProvidersPanel({
 							key={slot.slot}
 							theme={theme}
 							readiness={slot}
+							named
 							onDownload={(modelId) => void models.download(modelId)}
 						/>
 					))}
@@ -462,14 +464,20 @@ function SlotSelector({
  * The gate already carries a sentence naming the missing piece and a suggested
  * action for every unsatisfied reason, so this renders those rather than writing
  * its own: a second wording would be a second thing to keep true.
+ *
+ * `named` is for a list of verdicts with no slot heading beside each one (the
+ * On this Mac and Realtime summaries): a ready slot then reads "Microphone:
+ * Ready." the way the gate already words an unready one ("Microphone: ...").
  */
 function SlotStatus({
 	theme,
 	readiness,
+	named = false,
 	onDownload,
 }: {
 	theme: Theme;
 	readiness?: VoiceSlotReadiness;
+	named?: boolean;
 	onDownload: (modelId: string) => void;
 }) {
 	if (!readiness) return null;
@@ -477,6 +485,11 @@ function SlotStatus({
 	if (readiness.satisfied) {
 		return (
 			<div className="text-xs" style={{ color: theme.colors.success }}>
+				{named && (
+					<span style={{ color: theme.colors.textMain }}>
+						{VOICE_SLOT_LABELS[readiness.slot]}:{' '}
+					</span>
+				)}
 				Ready.
 			</div>
 		);

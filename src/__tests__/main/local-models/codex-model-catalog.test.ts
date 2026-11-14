@@ -1,7 +1,7 @@
 /**
  * @file codex-model-catalog.test.ts
  *
- * The model catalog Maestro hands Codex for a Run on target: the entry is
+ * The model catalog Maestro hands Codex for a model source: the entry is
  * Codex's own fallback for an unknown model with the target's window, and the
  * file is named by its content, written once, and never put on the command
  * line when a shell could change its path.

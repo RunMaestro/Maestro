@@ -159,7 +159,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSshRemotes: () => mockReadSshRemotes(),
 }));
 
-// The agent's Run on target: how its source is looked up is run-on.test.ts's
+// The agent's model source: how its source is looked up is run-on.test.ts's
 // business. Here the answer is decided, and the tests say what the spawner does
 // with it. By default the agent has none.
 const mockPrepareCliRunOn = vi.fn();
@@ -3462,7 +3462,7 @@ Some text with [x] in it that's not a checkbox
 		});
 	});
 
-	describe("spawnAgent: the agent's Run on target", () => {
+	describe("spawnAgent: the agent's model source", () => {
 		isolateAgentEnv();
 
 		const OLLAMA = {

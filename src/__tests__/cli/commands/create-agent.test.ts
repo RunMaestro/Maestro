@@ -10,7 +10,7 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 	withMaestroClient: vi.fn(),
 }));
 
-// The saved sources `--run-on` is checked against. Mocked so the real settings
+// The saved sources `--model-source` is checked against. Mocked so the real settings
 // file is never read.
 vi.mock('../../../cli/services/storage', () => ({
 	readLocalModelEndpoints: vi.fn(() => [
@@ -353,7 +353,7 @@ describe('create-agent command', () => {
 		});
 	});
 
-	describe('--run-on', () => {
+	describe('--model-source', () => {
 		let sentPayload: Record<string, unknown>;
 		const QWEN = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
 
@@ -378,12 +378,12 @@ describe('create-agent command', () => {
 			await createAgent('Agent', {
 				cwd: '/tmp',
 				type: 'claude-code',
-				runOn: 'ep-ollama:qwen3:latest',
+				modelSource: 'ep-ollama:qwen3:latest',
 			});
 
 			expect(sentPayload.runOn).toEqual({ ...QWEN, contextTokens: 40_960 });
 			expect(consoleSpy).toHaveBeenCalledWith(
-				'  Run on: ep-ollama:qwen3:latest (context 40960 tokens)'
+				'  Model source: ep-ollama:qwen3:latest (context 40960 tokens)'
 			);
 			expect(processExitSpy).not.toHaveBeenCalled();
 		});
@@ -416,7 +416,7 @@ describe('create-agent command', () => {
 			await createAgent('Agent', {
 				cwd: '/tmp',
 				type: 'claude-code',
-				runOn: 'ep-ollama:qwen3:latest',
+				modelSource: 'ep-ollama:qwen3:latest',
 			});
 
 			expect(sentPayload.runOn).toEqual({ ...QWEN, contextTokens: 262_144 });
@@ -426,8 +426,8 @@ describe('create-agent command', () => {
 			await createAgent('Agent', {
 				cwd: '/tmp',
 				type: 'codex',
-				runOn: 'ep-ollama:qwen3:latest',
-				runOnContext: '131072',
+				modelSource: 'ep-ollama:qwen3:latest',
+				modelSourceContext: '131072',
 				json: true,
 			});
 
@@ -439,7 +439,7 @@ describe('create-agent command', () => {
 			});
 		});
 
-		it.each([[{ runOn: 'provider' }], [{}]])(
+		it.each([[{ modelSource: 'provider' }], [{}]])(
 			'sends no target for the provider (%j): it is the absence of one',
 			async (flags) => {
 				await createAgent('Agent', { cwd: '/tmp', type: 'claude-code', ...flags, json: true });
@@ -451,18 +451,18 @@ describe('create-agent command', () => {
 		);
 
 		it.each([
-			['a spelling that is not a target', { runOn: 'qwen3' }, '--run-on:'],
-			['a source id that names nothing', { runOn: 'ep-typo:qwen3' }, 'No source has the id'],
+			['a spelling that is not a target', { modelSource: 'qwen3' }, '--model-source:'],
+			['a source id that names nothing', { modelSource: 'ep-typo:qwen3' }, 'No source has the id'],
 			[
 				'a context under the agent minimum',
-				{ runOn: 'ep-ollama:qwen3', runOnContext: '8192' },
+				{ modelSource: 'ep-ollama:qwen3', modelSourceContext: '8192' },
 				'at least 40960 tokens',
 			],
-			['a context with no target', { runOnContext: '65536' }, 'Pass --run-on'],
+			['a context with no target', { modelSourceContext: '65536' }, 'Pass --model-source'],
 			[
 				'a gateway beside a source target',
-				{ runOn: 'ep-ollama:qwen3', gatewayUrl: 'http://127.0.0.1:8787' },
-				'--gateway-url: Not applied while Run on is a source',
+				{ modelSource: 'ep-ollama:qwen3', gatewayUrl: 'http://127.0.0.1:8787' },
+				'--gateway-url: Not applied while the model source is a Local Models source',
 			],
 		])('refuses %s before it reaches the app', async (_name, flags, expected) => {
 			await createAgent('Bad', { cwd: '/tmp', type: 'claude-code', ...flags });
@@ -475,7 +475,7 @@ describe('create-agent command', () => {
 			await createAgent('Bad', {
 				cwd: '/tmp',
 				type: 'gemini-cli',
-				runOn: 'ep-ollama:qwen3',
+				modelSource: 'ep-ollama:qwen3',
 				json: true,
 			});
 
@@ -629,7 +629,7 @@ describe('create-agent command', () => {
 							success: true,
 							sessionId: 'id-1',
 							seededFromGroup: 'group-1',
-							skipped: ['Run On: the source is on this machine'],
+							skipped: ['Model Source: the source is on this machine'],
 						});
 					}),
 				};
@@ -653,7 +653,7 @@ describe('create-agent command', () => {
 			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
 				success: true,
 				seededFromGroup: 'group-1',
-				seedSkipped: ['Run On: the source is on this machine'],
+				seedSkipped: ['Model Source: the source is on this machine'],
 			});
 		});
 
@@ -682,7 +682,7 @@ describe('create-agent command', () => {
 			const lines = consoleSpy.mock.calls.map((call) => String(call[0]));
 			expect(lines).toContainEqual(expect.stringContaining('Group defaults: from "Work"'));
 			expect(lines).toContainEqual(
-				expect.stringContaining('Not applied: Run On: the source is on this machine')
+				expect.stringContaining('Not applied: Model Source: the source is on this machine')
 			);
 		});
 

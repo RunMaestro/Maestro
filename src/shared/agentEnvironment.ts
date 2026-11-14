@@ -231,7 +231,7 @@ export function stripBlankEnvVars(
  * A variable whose value is built from the one the launch would otherwise
  * carry, when replacing that value would lose something the launch needs.
  * OpenCode's `OPENCODE_CONFIG_CONTENT` is one JSON document: it holds Maestro's
- * permission block, or the user's own config, and a Run on target adds its
+ * permission block, or the user's own config, and a model source adds its
  * provider to that document instead of taking its place.
  */
 export type EnvVarMerge = (current: string | undefined) => string;

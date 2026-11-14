@@ -28,14 +28,14 @@ interface AutoRunOptions {
 	effort?: string;
 	/** Skip the documents' MAESTRO:MODEL markers for this run (--ignore-model-hints). */
 	ignoreModelHints?: boolean;
-	/** This run's Run on target (`<source id>:<model>` or `provider`), and its context. */
-	runOn?: string;
-	runOnContext?: string;
+	/** This run's model source (`<source id>:<model>` or `provider`), and its context. */
+	modelSource?: string;
+	modelSourceContext?: string;
 	json?: boolean;
 }
 
 /**
- * The run's Run on target from `--run-on` / `--run-on-context`, read by the
+ * The run's model source from `--model-source` / `--model-source-context`, read by the
  * rules `update-agent` uses (`readRunOnFlags`), against the agent the run
  * belongs to. `provider` sends a source-backed agent's run to its provider.
  */
@@ -43,7 +43,8 @@ async function readRunOnOverride(
 	options: AutoRunOptions,
 	sessionId: string
 ): Promise<RunOnTarget | undefined> {
-	if (options.runOn === undefined && options.runOnContext === undefined) return undefined;
+	if (options.modelSource === undefined && options.modelSourceContext === undefined)
+		return undefined;
 	const agent = readSessions().find((session) => session.id === sessionId);
 	if (!agent) failCommand(`Agent not found: ${sessionId}`, options.json);
 	const reported = await reportedRunOnFlagContext(options);

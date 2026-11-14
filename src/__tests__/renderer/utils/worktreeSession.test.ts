@@ -92,7 +92,7 @@ describe('buildWorktreeSession', () => {
 		expect(session.tokenProxyMode).toBe('compress');
 		// And whether its model can ask the proxy for a compressed original.
 		expect(session.tokenProxyRetrieval).toBe(true);
-		// And the Run on target: a worktree agent on the provider's cloud model
+		// And the model source: a worktree agent on the provider's cloud model
 		// while its parent runs on a local one would spend money silently.
 		expect(session.runOn).toEqual({
 			type: 'source',

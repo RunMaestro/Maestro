@@ -7994,6 +7994,17 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			expect(lastResponse()).toMatchObject({ success: true });
 		});
 
+		it('local_models_server_set passes start-on-launch through', async () => {
+			vi.mocked(updateModelServerConfigRequest).mockClear();
+			handler.handleMessage(client, {
+				type: 'local_models_server_set',
+				startOnLaunch: false,
+				requestId: 'ms-sol',
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('ms-sol'));
+			expect(updateModelServerConfigRequest).toHaveBeenCalledWith({ startOnLaunch: false });
+		});
+
 		it('local_models_server_set with only a build leaves the settings alone', async () => {
 			// The previous case called it once, and this file does not reset mocks between cases.
 			vi.mocked(updateModelServerConfigRequest).mockClear();

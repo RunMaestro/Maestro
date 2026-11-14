@@ -296,11 +296,11 @@ at the top of this page.
 There is no account to split. A local runtime such as Ollama or LM Studio has no
 login and no quota, so a second "account" buys you nothing. What you can vary
 per agent is the **endpoint and the model**. For Claude Code, Codex, OpenCode
-and Copilot CLI, set the agent's [Run on](/local-models#run-on) target and
+and Copilot CLI, set the agent's [model source](/local-models#model-source) and
 Maestro sets the variables for each launch:
 
 ```bash
-maestro-cli update-agent <agent-id> --run-on <source-id>:<model>
+maestro-cli update-agent <agent-id> --model-source <source-id>:<model>
 ```
 
 For any other provider, or to do it by hand, point the provider's base-URL
@@ -444,7 +444,7 @@ its provider when the agent switches, and a turn in flight always finishes on
 the provider that started it.
 
 While a provider switch holds the agent's turns, changing a tab's model,
-effort or Run on target fails with "Finish the current provider translation before
+effort or model source fails with "Finish the current provider translation before
 changing providers."
 
 To read a tab's provider from the CLI:

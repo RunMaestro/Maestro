@@ -1609,7 +1609,7 @@ describe('send command', () => {
 			expect(vi.mocked(spawnAgent).mock.calls[1][4]).toMatchObject({ customModel: 'opus[1m]' });
 		});
 
-		it("runs the turn and its synopsis on the agent's Run on target", async () => {
+		it("runs the turn and its synopsis on the agent's model source", async () => {
 			const runOn = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
 			ready({ runOn });
 			vi.mocked(spawnAgent)

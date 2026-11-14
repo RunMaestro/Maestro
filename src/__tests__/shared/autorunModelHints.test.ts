@@ -483,7 +483,7 @@ describe('resolveTurnSettings', () => {
 			expect(resolved.runOn).toBeUndefined();
 			expect(resolved.refusal).toBeUndefined();
 			expect(resolved.warnings).toHaveLength(1);
-			expect(resolved.warnings[0]).toContain('Run on target');
+			expect(resolved.warnings[0]).toContain('model source');
 		});
 
 		it('does not consult the layers for tier="default" or no tier', () => {

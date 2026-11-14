@@ -9,9 +9,11 @@ import {
 	AGENT_SETTINGS_TABS,
 	AUDIT_LOG_TAB_ID,
 	EDIT_AGENT_TAB_IDS,
+	AGENT_SETTINGS_FIELD_TAB,
 	MODERATOR_TAB_IDS,
 	buildAgentSettingsTabs,
 	firstTabWithError,
+	isModelConfigOption,
 	tabsWithErrors,
 } from '../../../../renderer/components/AgentSettings/agentSettingsTabs';
 import { AGENT_SETTINGS_TAB_IDS } from '../../../../shared/agentSettingsTabs';
@@ -57,8 +59,46 @@ describe('agentSettingsTabs', () => {
 		expect(MODERATOR_TAB_IDS).not.toContain(AUDIT_LOG_TAB_ID);
 	});
 
-	it('gives the moderator no Models and no Peers tab', () => {
-		expect(MODERATOR_TAB_IDS).toEqual(['general', 'provider', 'ssh']);
+	// The moderator's Models tab holds its model picker; a group chat has no peers.
+	it('gives the moderator a Models tab and no Peers tab', () => {
+		expect(MODERATOR_TAB_IDS).toEqual(['general', 'provider', 'models', 'ssh']);
+	});
+
+	it('puts the model, its effort, reasoning summary and context window on Models', () => {
+		for (const field of [
+			'model',
+			'effort',
+			'reasoningEffort',
+			'reasoningSummary',
+			'contextWindow',
+		]) {
+			expect(AGENT_SETTINGS_FIELD_TAB[field]).toBe('models');
+		}
+		expect(AGENT_SETTINGS_FIELD_TAB.customPath).toBe('provider');
+		expect(AGENT_SETTINGS_FIELD_TAB.customArgs).toBe('provider');
+	});
+
+	describe('isModelConfigOption', () => {
+		it('is true for the config options drawn on the Models tab', () => {
+			expect(isModelConfigOption('model')).toBe(true);
+			expect(isModelConfigOption('effort')).toBe(true);
+			expect(isModelConfigOption('reasoningEffort')).toBe(true);
+			expect(isModelConfigOption('reasoningSummary')).toBe(true);
+			expect(isModelConfigOption('contextWindow')).toBe(true);
+		});
+
+		it('is false for harness options and for keys the field map does not know', () => {
+			expect(isModelConfigOption('customPath')).toBe(false);
+			expect(isModelConfigOption('envVars')).toBe(false);
+			expect(isModelConfigOption('yoloMode')).toBe(false);
+			expect(isModelConfigOption('')).toBe(false);
+		});
+
+		it('agrees with the field map for every field', () => {
+			for (const [field, tab] of Object.entries(AGENT_SETTINGS_FIELD_TAB)) {
+				expect(isModelConfigOption(field)).toBe(tab === 'models');
+			}
+		});
 	});
 
 	describe('firstTabWithError', () => {
@@ -77,11 +117,13 @@ describe('agentSettingsTabs', () => {
 			expect(firstTabWithError(['directory'], AGENT_FORM_TAB_IDS)).toBe('general');
 			expect(firstTabWithError(['workingDir'], AGENT_FORM_TAB_IDS)).toBe('general');
 			expect(firstTabWithError(['envVars'], AGENT_FORM_TAB_IDS)).toBe('provider');
+			expect(firstTabWithError(['model'], AGENT_FORM_TAB_IDS)).toBe('models');
+			expect(firstTabWithError(['contextWindow'], MODERATOR_TAB_IDS)).toBe('models');
 		});
 
 		it('skips a tab the surface does not show', () => {
-			expect(firstTabWithError(['gateway'], MODERATOR_TAB_IDS)).toBeNull();
-			expect(firstTabWithError(['gateway', 'sshRemote'], MODERATOR_TAB_IDS)).toBe('ssh');
+			expect(firstTabWithError(['peers'], MODERATOR_TAB_IDS)).toBeNull();
+			expect(firstTabWithError(['peers', 'sshRemote'], MODERATOR_TAB_IDS)).toBe('ssh');
 		});
 
 		it('ignores fields it does not know', () => {

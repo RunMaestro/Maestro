@@ -1,7 +1,7 @@
-// `maestro-cli agent test-run-on <agent>` - the Run on picker's Test button.
+// `maestro-cli agent test-run-on <agent>` - the model source picker's Test button.
 //
-// One short read-only turn through the agent's own harness on its stored Run on
-// target, run by the desktop app (the same `testAgentRunOn` the button calls),
+// One short read-only turn through the agent's own harness on its stored model
+// source, run by the desktop app (the same `testAgentRunOn` the button calls),
 // because the app owns the model server and the agent's launch. Only the
 // agent's id is sent: the test launches what is stored.
 
@@ -45,7 +45,7 @@ export async function agentTestRunOn(agentRef: string, options: TestRunOnOptions
 	}
 
 	if (!reply.success || !reply.result) {
-		failCommand(reply.error || 'The Run on test did not run', options.json);
+		failCommand(reply.error || 'The model source test did not run', options.json);
 	}
 	const result = reply.result;
 
