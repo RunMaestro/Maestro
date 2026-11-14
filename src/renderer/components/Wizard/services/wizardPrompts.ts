@@ -11,6 +11,12 @@ import {
 	type TemplateContext,
 } from '../../../utils/templateVariables';
 import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
+import type { AdditionalDirectory } from '../../../../shared/types';
+import {
+	formatAdditionalDirectoriesForPrompt,
+	normalizeAdditionalDirectories,
+} from '../../../../shared/additionalDirectories';
+import { getHomeDir } from '../../../utils/homeDir';
 
 let cachedWizardSystemPrompt: string | null = null;
 let cachedWizardSystemContinuationPrompt: string | null = null;
@@ -110,6 +116,8 @@ export interface SystemPromptConfig {
 	historyFilePath?: string;
 	/** Conductor profile (user's About Me from settings) */
 	conductorProfile?: string;
+	/** Extra folders granted on the Directory screen ("Add Different Folder") */
+	additionalDirectories?: AdditionalDirectory[];
 }
 
 /**
@@ -174,6 +182,7 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 		autoRunFolderPath,
 		historyFilePath,
 		conductorProfile,
+		additionalDirectories,
 	} = config;
 	const projectName = agentName || 'this project';
 
@@ -223,7 +232,34 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 	// Substitute any remaining template variables using the central function
 	prompt = substituteTemplateVariables(prompt, templateContext);
 
+	// Name the extra folders explicitly. Without this block the agent knows only
+	// its working directory and cannot find a reference project by name.
+	const additionalDirsSection = formatAdditionalDirectoriesForPrompt(
+		wizardReadableDirectories(additionalDirectories)
+	);
+	if (additionalDirsSection) {
+		prompt += `\n\n${additionalDirsSection}\n`;
+	}
+
 	return prompt + existingDocsSection;
+}
+
+/**
+ * The folders granted on the wizard's Directory screen, as the wizard may use
+ * them during planning and document generation.
+ *
+ * The wizard writes only to the Auto Run folder, so each readable grant is
+ * handed over as read-only and write-only grants are dropped. The result feeds
+ * both the system-prompt block and the provider's native grant flags
+ * (`sessionAdditionalDirectories`, e.g. Claude's `--add-dir`).
+ */
+export function wizardReadableDirectories(
+	dirs: AdditionalDirectory[] | undefined
+): AdditionalDirectory[] | undefined {
+	const readable = normalizeAdditionalDirectories(dirs, getHomeDir())
+		?.filter((dir) => dir.read)
+		.map((dir) => ({ ...dir, write: false }));
+	return readable?.length ? readable : undefined;
 }
 
 /**
