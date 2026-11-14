@@ -1015,27 +1015,47 @@ describe('Grok hints with selected-model effort evidence', () => {
 		}
 	});
 
+	// The agent model sits in one of the harness's tier families, so the built-in
+	// table applies; a model outside them keeps itself (tier-agent-model-pinned).
 	it.each([
-		{ provider: 'claude-code' as const, model: 'opus', effort: 'max', count: 1 },
+		{
+			provider: 'claude-code' as const,
+			agentModel: 'sonnet',
+			model: 'opus',
+			effort: 'max',
+			count: 1,
+		},
 		// acappella's built-in Codex tier table resolves `high` to its own model.
-		{ provider: 'codex' as const, model: 'gpt-6-astra', effort: 'xhigh', count: 1 },
-		{ provider: 'opencode' as const, model: 'chosen-model', effort: 'high', count: 2 },
+		{
+			provider: 'codex' as const,
+			agentModel: 'gpt-6-sol',
+			model: 'gpt-6-astra',
+			effort: 'xhigh',
+			count: 1,
+		},
+		{
+			provider: 'opencode' as const,
+			agentModel: 'chosen-model',
+			model: 'chosen-model',
+			effort: 'high',
+			count: 2,
+		},
 	])(
 		'leaves $provider dispatch and inspection unchanged when supplied a Grok menu',
-		({ provider, model, effort, count }) => {
+		({ provider, agentModel, model, effort, count }) => {
 			const doc = [
 				'- [ ] hinted <!-- MAESTRO:MODEL tier="high" effort="high" -->',
 				'- [ ] baseline',
 			].join('\n');
 			const hint = findActiveModelHint(doc);
-			const baseline = resolveTurnSettings(provider, hint, 'chosen-model', 'high');
+			const baseline = resolveTurnSettings(provider, hint, agentModel, 'high');
 			expect(baseline).toMatchObject({ model, effort });
 			for (const menu of [[], ['minimal', 'medium', 'max']]) {
+				expect(resolveTurnSettings(provider, hint, agentModel, 'high', undefined, menu)).toEqual(
+					baseline
+				);
 				expect(
-					resolveTurnSettings(provider, hint, 'chosen-model', 'high', undefined, menu)
-				).toEqual(baseline);
-				expect(
-					countTasksUnderActiveHint(doc, provider, 'chosen-model', 'high', undefined, menu)
+					countTasksUnderActiveHint(doc, provider, agentModel, 'high', undefined, menu)
 				).toEqual({
 					count,
 					total: 2,

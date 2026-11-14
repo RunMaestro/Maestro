@@ -447,6 +447,7 @@ describe('the rows of a harness', () => {
 			target: null,
 			source: null,
 			builtIn: null,
+			code: 'tier-unmapped',
 		});
 	});
 

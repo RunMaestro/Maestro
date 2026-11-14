@@ -3825,6 +3825,12 @@ describe('EditAgentModal', () => {
 		});
 
 		it('starts the tiers over on a provider switch: a tier names a model', async () => {
+			// The suite's config mock answers Claude's model for every provider. A Codex
+			// form holding `claude-sonnet` would pin the tier to the agent's model, so
+			// Codex gets a config of its own, as it would have in the app.
+			vi.mocked(window.maestro.agents.getConfig).mockImplementation(async (toolType) =>
+				toolType === 'codex' ? {} : { model: 'claude-sonnet', contextWindow: 200000 }
+			);
 			await renderOnModels(createSession({ tierTargets: { low: LOCAL } }));
 
 			openTab('Provider');
