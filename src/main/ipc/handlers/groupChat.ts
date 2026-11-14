@@ -81,6 +81,8 @@ import {
 // Group chat router imports
 import {
 	routeUserMessage,
+	abortActiveWorkflowRun,
+	announceToChat,
 	clearPendingParticipants,
 	routeAgentResponse,
 	markParticipantResponded,
@@ -88,6 +90,12 @@ import {
 	spawnModeratorSynthesis,
 	steerRunningRound,
 } from '../../group-chat/group-chat-router';
+import {
+	abortWorkflowRun,
+	clearWorkflowRun,
+	getWorkflowRun,
+	setWorkflowRunChangedEmitter,
+} from '../../group-chat/workflow-run-registry';
 
 // Agent detector import
 import { AgentDetector } from '../../agents';
@@ -319,6 +327,9 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 	const { getMainWindow, getProcessManager, getAgentDetector, getCustomEnvVars, getAgentConfig } =
 		deps;
 	const safeSend = createSafeSend(getMainWindow);
+	groupChatEmitters.emitWorkflowRunChanged = (id, run) =>
+		safeSend('groupChat:workflowRunChanged', id, run);
+	setWorkflowRunChangedEmitter(groupChatEmitters.emitWorkflowRunChanged);
 
 	// ========== Storage Handlers ==========
 
@@ -403,6 +414,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			await killModerator(id, processManager ?? undefined);
 			await clearAllParticipantSessions(id, processManager ?? undefined);
 			clearPendingParticipants(id);
+			await clearWorkflowRun(id);
 
 			// Delete the group chat data
 			await deleteGroupChat(id);
@@ -424,6 +436,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					const processManager = getProcessManager();
 					await killModerator(id, processManager ?? undefined);
 					await clearAllParticipantSessions(id, processManager ?? undefined);
+					await clearWorkflowRun(id);
 				}
 
 				const updated = await updateGroupChat(id, { archived });
@@ -431,6 +444,37 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				return updated;
 			}
 		)
+	);
+
+	ipcMain.handle(
+		'groupChat:getWorkflowRun',
+		withIpcErrorLogging(
+			handlerOpts('getWorkflowRun'),
+			async (id: string) => getWorkflowRun(id) ?? null
+		)
+	);
+	ipcMain.handle(
+		'groupChat:approveWorkflowPlan',
+		withIpcErrorLogging(handlerOpts('approveWorkflowPlan'), async (id: string): Promise<void> => {
+			const processManager = getProcessManager();
+			const agentDetector = getAgentDetector();
+			if (!processManager || !agentDetector)
+				throw new Error('Group Chat is not ready to start a workflow');
+			await routeUserMessage(id, 'go', processManager, agentDetector, undefined, undefined);
+		})
+	);
+	ipcMain.handle(
+		'groupChat:cancelWorkflowRun',
+		withIpcErrorLogging(handlerOpts('cancelWorkflowRun'), async (id: string) => {
+			const aborted = await abortActiveWorkflowRun(id, 'user-cancelled');
+			const fallback = !aborted ? abortWorkflowRun(id, 'user-cancelled') : undefined;
+			const run = aborted ?? fallback;
+			if (run) {
+				clearPendingParticipants(id);
+				settleGroupChatToIdle(id);
+			}
+			return run ?? null;
+		})
 	);
 
 	// Rename a group chat
@@ -788,6 +832,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 	ipcMain.handle(
 		'groupChat:stopModerator',
 		withIpcErrorLogging(handlerOpts('stopModerator'), async (id: string): Promise<void> => {
+			await abortActiveWorkflowRun(id, 'moderator-stopped');
 			const processManager = getProcessManager();
 			await killModerator(id, processManager ?? undefined);
 			logger.info(`Stopped moderator for group chat: ${id}`, LOG_CONTEXT);
@@ -800,6 +845,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		withIpcErrorLogging(handlerOpts('stopAll'), async (id: string): Promise<void> => {
 			const processManager = getProcessManager();
 			logger.info(`Stopping all activity in group chat: ${id}`, LOG_CONTEXT);
+			await abortActiveWorkflowRun(id, 'moderator-stopped');
 
 			// Kill moderator and all participant sessions
 			await killModerator(id, processManager ?? undefined);
@@ -981,6 +1027,22 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				if (removal) {
 					if (removal.removed) {
 						groupChatEmitters.emitParticipantsChanged?.(id, removal.chat.participants);
+						const run = getWorkflowRun(id);
+						if (run?.status === 'running') {
+							const laterStages = run.plan.stages
+								.slice(run.currentStageIndex + 1)
+								.filter(
+									(stage) => stage.agents.includes(name) || stage.autoRun?.participantName === name
+								)
+								.map((stage) => stage.name);
+							if (laterStages.length > 0) {
+								await announceToChat(
+									id,
+									removal.chat.logPath,
+									`Note: @${name} was removed but is assigned to later workflow stages: ${laterStages.join(', ')}. Add a replacement before those stages begin.`
+								);
+							}
+						}
 					}
 					logger.info(
 						removal.removed

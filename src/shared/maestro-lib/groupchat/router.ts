@@ -431,6 +431,17 @@ export interface GroupChatEngineOptions {
 		 */
 		forModerator(input: { isSsh: boolean }): string | undefined;
 	};
+	/** Host-owned, transient context appended to every moderator and synthesis prompt. */
+	promptSupplement?: (groupChatId: string) => string | undefined;
+	/** Host-owned projection of the moderator's chat history, when raw history is unsuitable. */
+	projectHistory?: (groupChatId: string, history: GroupChatRoomMessage[]) => string | undefined;
+	/** Gives a host a chance to own terminal workflow cleanup after a turn times out. */
+	onTurnTimeout?: (input: {
+		groupChatId: string;
+		participantName?: string;
+		reason: string;
+		timeoutMs: number;
+	}) => boolean | Promise<boolean>;
 }
 
 /**
@@ -458,7 +469,18 @@ export interface AddParticipantByAgentIdResult {
  * its own.
  */
 export function createGroupChatEngine(options: GroupChatEngineOptions) {
-	const { store, events, agents, prompts, power, metrics, systemPrompts } = options;
+	const {
+		store,
+		events,
+		agents,
+		prompts,
+		power,
+		metrics,
+		systemPrompts,
+		promptSupplement,
+		projectHistory,
+		onTurnTimeout,
+	} = options;
 	const { loadGroupChat, updateParticipant, addGroupChatHistoryEntry, getGroupChatDir } = store;
 
 	const moderators = createGroupChatModerators({ store, prompts, power });
@@ -633,7 +655,7 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 	): void {
 		clearModeratorResponseTimeout(groupChatId);
 
-		const giveUp = (reason: string, budgetMs: number): void => {
+		const giveUp = async (reason: string, budgetMs: number): Promise<void> => {
 			moderatorTimeouts.delete(groupChatId);
 			console.warn(
 				`[GroupChat:Debug] Moderator ${reason} after ${budgetMs / 1000}s for ${groupChatId} - killing and resetting to idle`
@@ -662,9 +684,20 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 				from: 'system',
 				content: `⚠️ Moderator ${reason} after ${budgetMs / 60000} minutes and was stopped. Resetting to idle. You can send another message to retry.`,
 			});
+			try {
+				await (onTurnTimeout?.({ groupChatId, reason, timeoutMs: budgetMs }) ?? false);
+			} catch (error) {
+				logger.error('Group chat timeout cleanup failed', LOG_CONTEXT, { groupChatId, error });
+			}
 
 			events.stateChange(groupChatId, 'idle');
 			power.unblock(`groupchat:${groupChatId}`);
+		};
+
+		const fire = (reason: string, budgetMs: number): void => {
+			void giveUp(reason, budgetMs).catch((error) =>
+				logger.error('Moderator timeout handler failed', LOG_CONTEXT, { groupChatId, error })
+			);
 		};
 
 		moderatorTimeouts.set(
@@ -672,8 +705,8 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 			createIdleWatchdog({
 				idleMs: MODERATOR_RESPONSE_TIMEOUT_MS,
 				maxMs: MODERATOR_MAX_DURATION_MS,
-				onIdle: () => giveUp('went silent', MODERATOR_RESPONSE_TIMEOUT_MS),
-				onMax: () => giveUp('exceeded the single-turn limit', MODERATOR_MAX_DURATION_MS),
+				onIdle: () => fire('went silent', MODERATOR_RESPONSE_TIMEOUT_MS),
+				onMax: () => fire('exceeded the single-turn limit', MODERATOR_MAX_DURATION_MS),
 			})
 		);
 	}
@@ -791,6 +824,17 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 				events.autoRunBatchComplete(groupChatId, participantName);
 				autoRunSet.delete(participantName);
 				if (autoRunSet.size === 0) autoRunParticipantTracker.delete(groupChatId);
+			}
+
+			const timeoutHandled = await (onTurnTimeout?.({
+				groupChatId,
+				participantName,
+				reason,
+				timeoutMs: budgetMs,
+			}) ?? false);
+			if (timeoutHandled) {
+				settleGroupChatToIdle(groupChatId);
+				return;
 			}
 
 			// Same close-out as a normal reply, via the shared helper: a timed-out
@@ -1358,10 +1402,12 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 				const chatHistory = await readLog(chat.logPath);
 				logger.debug(`[GroupChat:Debug] Chat history entries: ${chatHistory.length}`);
 
-				const historyContext = chatHistory
-					.slice(-20)
-					.map((m) => `[${m.from}]: ${m.content}`)
-					.join('\n');
+				const historyContext =
+					projectHistory?.(groupChatId, chatHistory) ??
+					chatHistory
+						.slice(-20)
+						.map((m) => `[${m.from}]: ${m.content}`)
+						.join('\n');
 
 				// Build image context if user attached images
 				let imageContext = '';
@@ -1398,7 +1444,7 @@ Rejected response:
 ${routingRetry.previousResponse}`
 					: message;
 
-				const fullPrompt = `${baseSystemPrompt}
+				const fullPrompt = `${baseSystemPrompt}${promptSupplement?.(groupChatId) ? `\n\n${promptSupplement(groupChatId)}` : ''}
 
 ## Current Participants:
 ${participantContext}${availableSessionsContext}
@@ -2697,7 +2743,8 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 	 */
 	async function spawnModeratorSynthesis(
 		groupChatId: string,
-		launcher: GroupChatLauncher
+		launcher: GroupChatLauncher,
+		workflowCorrection?: string
 	): Promise<void> {
 		logger.debug(`[GroupChat:Debug] ========== SPAWN MODERATOR SYNTHESIS ==========`);
 		logger.debug(`[GroupChat:Debug] Group Chat ID: ${groupChatId}`);
@@ -2769,10 +2816,12 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 		const chatHistory = await readLog(chat.logPath);
 		logger.debug(`[GroupChat:Debug] Chat history entries for synthesis: ${chatHistory.length}`);
 
-		const historyContext = chatHistory
-			.slice(-30)
-			.map((m) => `[${m.from}]: ${m.content}`)
-			.join('\n');
+		const historyContext =
+			projectHistory?.(groupChatId, chatHistory) ??
+			chatHistory
+				.slice(-30)
+				.map((m) => `[${m.from}]: ${m.content}`)
+				.join('\n');
 
 		// Build participant context for potential follow-up @mentions
 		// Use normalized names (spaces → hyphens) so moderator can @mention them properly
@@ -2796,7 +2845,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 			synthModeratorSettings.conductorProfile || '(No conductor profile set)'
 		);
 
-		const synthesisPrompt = `${synthBasePrompt}
+		const synthesisPrompt = `${synthBasePrompt}${promptSupplement?.(groupChatId) ? `\n\n${promptSupplement(groupChatId)}` : ''}${workflowCorrection ? `\n\n${workflowCorrection}` : ''}
 
 ${getModeratorSynthesisPrompt()}
 

@@ -22,6 +22,7 @@ import type {
 	ModeratorUsage,
 	ParticipantState,
 } from '../../shared/maestro-lib/groupchat/types';
+import type { GroupChatWorkflowRun } from '../../shared/group-chat-workflow-types';
 
 export type { ModeratorUsage, ParticipantState };
 
@@ -45,4 +46,5 @@ export const groupChatEmitters: {
 	emitAutoRunTriggered?: (groupChatId: string, participantName: string, filename?: string) => void;
 	/** Tells the renderer to force-complete the batch run for a participant (clears stuck AUTO badge). */
 	emitAutoRunBatchComplete?: (groupChatId: string, participantName: string) => void;
+	emitWorkflowRunChanged?: (groupChatId: string, run: GroupChatWorkflowRun | null) => void;
 } = {};

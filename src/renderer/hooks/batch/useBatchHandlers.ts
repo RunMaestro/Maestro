@@ -585,7 +585,11 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			if (gcAutoRun) {
 				const summary = groupChatAutoRunSummary(info);
 				window.maestro.groupChat
-					.reportAutoRunComplete(gcAutoRun.groupChatId, gcAutoRun.participantName, summary)
+					.reportAutoRunComplete(
+						gcAutoRun.groupChatId,
+						gcAutoRun.participantName,
+					info.result || summary
+					)
 					.catch((err) => {
 						logger.error('[GroupChat] Failed to report auto run complete:', undefined, err);
 						// Surface the failure so the user knows synthesis will not trigger automatically.
