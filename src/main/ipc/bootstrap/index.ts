@@ -426,7 +426,6 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Register Stats handlers for usage tracking
 	registerStatsHandlers({
-		getMainWindow: deps.getMainWindow,
 		settingsStore: deps.settingsStore,
 	});
 

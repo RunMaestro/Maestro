@@ -3,17 +3,13 @@
  *
  * "Active" here is a RANGE question, not a live-status one. An agent is active
  * when it recorded at least one query event inside the dashboard's selected
- * time range - interactive turns, Auto Run tasks, execution-queue drains and
- * Cue runs all land in `query_events`, so one lookup covers every way an agent
- * can do work. Switching the range from This Month to Year to Date therefore
- * widens the answer for free.
+ * time range. Interactive turns and Auto Run tasks both land in `query_events`;
+ * Cue runs do not (they are recorded in cue.db), so an agent driven only by Cue
+ * reads as inactive here. Switching the range from Last 30 Days to Last 365 Days
+ * therefore widens the answer for free.
  *
- * This deliberately does NOT reuse the dashboard's per-card query count, which
- * falls back to the PROVIDER total when a session has no rows of its own and is
- * the only visible session for that provider. That fallback is right for a card
- * showing "roughly how busy is this provider", and wrong here: it would mark an
- * agent that never ran anything as active because a sibling agent on the same
- * provider did.
+ * Counted from the agent's OWN rows only, never a provider-wide total: crediting
+ * a sibling agent's work would mark an agent that never ran anything as active.
  */
 
 import type { StatsAggregation } from './stats-types';

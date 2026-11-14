@@ -544,7 +544,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				// Fire-and-forget. A failed IPC must never block a shortcut from
 				// taking effect; the daily counter is best-effort telemetry.
-				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
+				void window.maestro?.stats?.recordShortcutUsage?.(Date.now(), shortcutId);
 			};
 
 			// Cmd+F while the output find bar is already open: bring focus back to its

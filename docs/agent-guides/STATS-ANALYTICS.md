@@ -1,4 +1,4 @@
-<!-- Verified 2026-04-10 against origin/rc (06e5a2eb3) -->
+<!-- Verified 2026-11-14 against main (Usage Dashboard overhaul) -->
 
 # Stats and Analytics System
 
@@ -13,11 +13,12 @@ Renderer (Usage Dashboard)        Main Process
 | SummaryCards          | ------> | getStatsDB() singleton    |
 | ActivityHeatmap       |         | StatsDB class             |
 | AgentUsageChart       |         |   +-- query-events.ts     |
-| PeakHoursChart        |         |   +-- auto-run.ts         |
+| RadialActivityChart   |         |   +-- auto-run.ts         |
 | SessionStats          |         |   +-- session-lifecycle.ts |
 | ...charts...          | <------ |   +-- aggregations.ts     |
-+-----------------------+ stats:  |   +-- data-management.ts  |
++-----------------------+ stats:  |   +-- usage-export.ts     |
                          updated  +---------------------------+
+                         (table)
                                           |
                                     +-----v-----+
                                     | stats.db   |  (SQLite, WAL mode)
@@ -43,7 +44,7 @@ Tracks individual AI query/response cycles:
 | Column         | Type             | Description                     |
 | -------------- | ---------------- | ------------------------------- |
 | `id`           | TEXT PK          | UUID                            |
-| `session_id`   | TEXT NOT NULL    | Maestro session ID              |
+| `session_id`   | TEXT NOT NULL    | Maestro agent id (no tab part)  |
 | `agent_type`   | TEXT NOT NULL    | Agent type (e.g. `claude-code`) |
 | `source`       | TEXT NOT NULL    | `'user'` or `'auto'` (Auto Run) |
 | `start_time`   | INTEGER NOT NULL | Unix timestamp (ms)             |
@@ -60,7 +61,11 @@ Login is off. It is stamped by `stats:record-query` from what the spawn noted
 (`resolveTurnActor`), never from the acting user at write time: the row is
 written by the desktop renderer's exit listener even for a turn a browser sent.
 
-**Indexes**: `start_time`, `agent_type`, `source`, `session_id`, `project_path`, `is_remote`, `is_worktree`, `user_name`, compound `(start_time, agent_type)`, `(start_time, project_path)`, `(start_time, source)`
+**Indexes**: `start_time`, `agent_type`, `source`, `session_id`, `project_path`, `is_remote`, `is_worktree`, `user_name`, compound `(start_time, agent_type)`, `(start_time, project_path)`, `(start_time, source)`, `(start_time, session_id)` (v14)
+
+`session_id` is the Maestro agent id (`Session.id`), never a tab or process id,
+so `COUNT(DISTINCT session_id)` is "agents with a query", which is what
+`StatsAggregation.totalSessions` reports.
 
 Note there is deliberately **no index on `tab_id` and no aggregation that groups by it**. The one consumer, the Usage Dashboard's per-tab breakdown (`UsageDashboard/TabBreakdown.tsx`), groups client-side over the rows `AgentDetailModal` has already fetched for a single agent via `getStats('all', { sessionId })`. That set is one agent's events, not the whole table, so it stays cheap and needs no new IPC. Reach for a real index only if something ever needs to query by tab across all agents.
 
@@ -136,12 +141,15 @@ totals. The renderer side of that state machine is `src/renderer/services/wizard
 
 #### `session_lifecycle` (Migration v3)
 
-Tracks session creation and closure for duration analytics:
+Tracks when an agent was created and deleted. Its one dashboard reader is the
+Agent Overview's Agents Over Time chart (`AgentCountTrendChart`, via
+`stats:get-session-lifecycle`), the only record of an agent that no longer
+exists. The aggregation does not read it:
 
 | Column         | Type                 | Description                       |
 | -------------- | -------------------- | --------------------------------- |
 | `id`           | TEXT PK              | UUID                              |
-| `session_id`   | TEXT NOT NULL UNIQUE | Maestro session ID                |
+| `session_id`   | TEXT NOT NULL UNIQUE | Maestro agent id                  |
 | `agent_type`   | TEXT NOT NULL        | Agent type                        |
 | `project_path` | TEXT                 | Project path                      |
 | `created_at`   | INTEGER NOT NULL     | Creation timestamp (ms)           |
@@ -190,7 +198,8 @@ closeStatsDB();
 The singleton is lazy-initialized on first call to `getStatsDB()`. The `StatsDB` class constructor sets the database path to `{userData}/stats.db`. The `initialize()` method handles:
 
 1. Directory creation
-2. Corruption detection and recovery (integrity check, backup restore)
+2. Corruption detection and recovery (integrity check, backup restore), recorded
+   for the renderer's one-shot notice (see Integrity and Recovery)
 3. WAL mode enablement
 4. Migration execution
 5. Daily backup creation (keeps 7 days)
@@ -215,6 +224,7 @@ Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorde
 | v11     | Add `wizard_runs` table                                               |
 | v12     | Add `user_name` column to `query_events` for Web Login attribution    |
 | v13     | Add `active_ms` column to `wizard_runs`                               |
+| v14     | Add `shortcut_usage_by_id` and the `(start_time, session_id)` index   |
 
 To add a new migration:
 
@@ -292,88 +302,160 @@ interface StatsFilters {
 
 ### Aggregation Type
 
+`StatsAggregation` is the contract between `aggregations.ts` and every dashboard
+panel. The fields that are easy to misread:
+
 ```typescript
 interface StatsAggregation {
 	totalQueries: number;
 	totalDuration: number;
 	avgDuration: number;
+	queryDurationPercentiles: DurationPercentiles;
+	queryDurationPercentilesByAgent: Record<string, DurationPercentiles>;
+	autoRunTaskDurationPercentiles: DurationPercentiles;
 	byAgent: Record<string, { count: number; duration: number }>;
 	bySource: { user: number; auto: number };
+	// GAP-FILLED: one row per local day from window.startYmd to window.endYmd
 	byDay: Array<{ date: string; count: number; duration: number }>;
+	// Sparse: (local day, hour) cells with at least one query
+	byDayHour: Array<{ date: string; hour: number; count: number; duration: number }>;
+	// The range's first local day (All Time: day of the first query, or today) and today
+	window: { startYmd: string; endYmd: string };
+	earliestQueryAt: number | null; // first query ever, any range
+	streak: { current: number; longest: number }; // over ALL history, not the range
 	byLocation: { local: number; remote: number };
-	byHour: Array<{ hour: number; count: number; duration: number }>;
-	totalSessions: number;
-	sessionsByAgent: Record<string, number>;
-	sessionsByDay: Array<{ date: string; count: number }>;
-	avgSessionDuration: number;
-	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
-	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+	byHour: Array<{ hour: number; count: number; duration: number }>; // sparse
+	totalSessions: number; // distinct AGENTS with at least one query in range
+	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>; // sparse
+	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>; // sparse
+	bySessionSource: Record<string, { user: number; auto: number }>;
+	bySessionLastQuery: Record<string, number>;
+	bySessionTokens: Record<string, SessionTokenTotals>; // agents with no priced row omitted
+	worktreeQueries: number;
+	parentQueries: number;
+	// Per provider, from the is_worktree flag on each row (NULL counts as parent)
+	byAgentWorktree: Record<string, { worktree: Slice; parent: Slice }>;
+	imageAnnotations: number;
+	prompts: PromptCadence; // interactive turns only, same calendar window
 }
 ```
 
+Per-entity day series (`byAgentByDay`, `bySessionByDay`) stay sparse. To draw one
+on a time axis, fill it over `window` with `fillDaySeries()` /
+`localDaysBetween()` from `src/shared/daySeries.ts`; never plot sparse rows by
+index, which squeezes idle days out of the chart.
+
+Every bounded range is CALENDAR-ALIGNED: `getTimeRangeStart()` in
+`src/shared/statsTimeRange.ts` returns local midnight N-1 days before today
+(`STATS_RANGE_DAYS`), so "Last 7 days" is seven whole local days, today included,
+and every day bucket is a full day. There is no retention: All Time is
+everything since the stats database was created (or last reset after
+corruption), and `earliestQueryAt` says when that was.
+
 ## IPC Handlers
 
-Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollectionEnabled` in settings before recording data.
+Registered in `src/main/ipc/handlers/stats.ts`. Every handler that STARTS a
+record checks `statsCollectionEnabled` and records nothing when it is off.
+Handlers that only finish an existing record (`stats:end-autorun`,
+`stats:record-session-closed`) do not check it: a run or agent that began while
+collection was on must still be closed, or it would be left with a zero
+duration forever.
 
 ### Recording
 
-| Handler                        | Description                                                             |
-| ------------------------------ | ----------------------------------------------------------------------- |
-| `stats:record-query`           | Insert a `QueryEvent`. Broadcasts `stats:updated` to renderer.          |
-| `stats:start-autorun`          | Insert an `AutoRunSession` with `duration: 0`. Returns the ID.          |
-| `stats:end-autorun`            | Update an `AutoRunSession` with final `duration` and `tasksCompleted`.  |
-| `stats:record-task`            | Insert an `AutoRunTask` for a completed task within an Auto Run.        |
-| `stats:record-session-created` | Insert a `SessionLifecycleEvent` (session launched).                    |
-| `stats:record-session-closed`  | Update `SessionLifecycleEvent` with `closedAt` and computed `duration`. |
+| Handler                         | Description                                                             |
+| ------------------------------- | ----------------------------------------------------------------------- |
+| `stats:record-query`            | Buffer a `QueryEvent` (see Broadcast for when it is announced).         |
+| `stats:start-autorun`           | Insert an `AutoRunSession` with `duration: 0`. Returns the ID.          |
+| `stats:end-autorun`             | Update an `AutoRunSession` with final `duration` and `tasksCompleted`.  |
+| `stats:record-task`             | Insert an `AutoRunTask` for a completed task within an Auto Run.        |
+| `stats:record-session-created`  | Insert a `SessionLifecycleEvent` (session launched).                    |
+| `stats:record-session-closed`   | Update `SessionLifecycleEvent` with `closedAt` and computed `duration`. |
+| `stats:record-resilience`       | Insert a resolved Agent Resilience outage.                              |
+| `stats:record-wizard-run`       | Upsert one Auto Run wizard run (every milestone).                       |
+| `stats:record-shortcut-usage`   | Bump the day's (and the shortcut's) firing counter.                     |
+| `stats:record-image-annotation` | Insert an image annotation save.                                        |
 
 ### Querying
 
-| Handler                        | Description                                                            |
-| ------------------------------ | ---------------------------------------------------------------------- |
-| `stats:get-stats`              | Get `QueryEvent[]` with time range and optional filters                |
-| `stats:get-autorun-sessions`   | Get `AutoRunSession[]` within a time range                             |
-| `stats:get-autorun-tasks`      | Get `AutoRunTask[]` for a specific Auto Run session                    |
-| `stats:get-aggregation`        | Get `StatsAggregation` for a time range (used by dashboard)            |
-| `stats:get-session-lifecycle`  | Get `SessionLifecycleEvent[]` within a time range                      |
-| `stats:get-earliest-timestamp` | Get the earliest recorded event timestamp (used for "all time" ranges) |
+| Handler                       | Description                                                 |
+| ----------------------------- | ----------------------------------------------------------- |
+| `stats:get-stats`             | Get `QueryEvent[]` with time range and optional filters     |
+| `stats:get-autorun-sessions`  | Get `AutoRunSession[]` within a time range                  |
+| `stats:get-autorun-tasks`     | Get `AutoRunTask[]` for a specific Auto Run session         |
+| `stats:get-aggregation`       | Get `StatsAggregation` for a time range (used by dashboard) |
+| `stats:get-session-lifecycle` | Get `SessionLifecycleEvent[]` within a time range           |
+
+The first query ever recorded is `StatsAggregation.earliestQueryAt`; there is no
+separate read for it.
 
 ### Data Management
 
 | Handler                             | Description                                                                          |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
 | `stats:export`                      | Export every stats table, token usage, and Cue runs for a range as JSON or a CSV zip |
-| `stats:clear-old-data`              | Delete records older than N days (transactional across all tables)                   |
 | `stats:get-database-size`           | Get the database file size in bytes                                                  |
-| `stats:get-initialization-result`   | Get the result of the one-shot DB initialization (used by the settings health panel) |
-| `stats:clear-initialization-result` | Clear the cached initialization result                                               |
+| `stats:get-initialization-result`   | What opening the DB had to do to a damaged file (null when it opened cleanly)        |
+| `stats:clear-initialization-result` | Forget that result once the renderer has shown it                                    |
+
+There is no cleanup handler: nothing prunes the stats database. The export logic
+lives in `usage-export.ts` (shared with `maestro-cli stats-export`), and the
+delegation merge in `usage-dashboard-reads.ts`.
 
 ### Broadcast
 
-When data is recorded, `stats:updated` is sent to the renderer via `mainWindow.webContents.send()`. The dashboard components listen for this event to trigger a refresh.
+Every write broadcasts `stats:updated` with the `StatsTable` it touched as the
+event argument (`'query_events'`, `'auto_run'`, `'session_lifecycle'`,
+`'shortcut_usage'`, `'image_annotations'`, `'wizard_runs'`, `'resilience'`), to
+EVERY window (`BrowserWindow.getAllWindows()`, since any window can open the
+dashboard) and to web-desktop bridge clients.
+
+Query events are buffered (`query-events-buffer.ts`, flushed every 500ms or 50
+events), so `stats:record-query` does not broadcast. The buffer's flush listener
+announces `'query_events'` once the batch is COMMITTED, so a panel refetching on
+the event reads the new rows instead of racing the flush timer.
+
+On the renderer side, `useDashboardResource(key, fetcher, operation, { tables })`
+refetches only for the tables a panel reads and collapses a burst into one
+trailing refetch (`DASHBOARD_RESOURCE_DEBOUNCE_MS`).
 
 ## Query Patterns
 
 ### Aggregation Queries
 
-The `getAggregatedStats()` function in `src/main/stats/aggregations.ts` decomposes the aggregation into focused sub-queries:
+`getAggregatedStats()` in `src/main/stats/aggregations.ts` runs a handful of
+grouped passes and rolls each up in JS:
 
-| Sub-query             | SQL Pattern                                                  | Purpose                    |
-| --------------------- | ------------------------------------------------------------ | -------------------------- |
-| `queryTotals`         | `COUNT(*), SUM(duration)`                                    | Total queries and duration |
-| `queryByAgent`        | `GROUP BY agent_type`                                        | Breakdown by agent         |
-| `queryBySource`       | `GROUP BY source`                                            | User vs Auto Run split     |
-| `queryByLocation`     | `GROUP BY is_remote`                                         | Local vs SSH remote        |
-| `queryByDay`          | `GROUP BY date(start_time/1000, 'unixepoch', 'localtime')`   | Daily counts               |
-| `queryByAgentByDay`   | `GROUP BY agent_type, date(...)`                             | Per-agent daily counts     |
-| `queryByHour`         | `GROUP BY strftime('%H', ...)`                               | Hourly distribution        |
-| `querySessionStats`   | `COUNT(DISTINCT session_id)`, `AVG(duration)` from lifecycle | Session metrics            |
-| `queryBySessionByDay` | `GROUP BY session_id, date(...)`                             | Per-session daily counts   |
+| Pass              | SQL shape                                                                  | Feeds                                                                                                        |
+| ----------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| bounds            | `MIN(start_time)` overall and for `source != 'auto'`                       | `earliestQueryAt`, All Time `window`, prompt window                                                          |
+| activity cube     | `GROUP BY` local day, hour, provider, source, remote, worktree             | totals, `byAgent`, `bySource`, `byLocation`, `byDay`, `byDayHour`, `byHour`, `byAgentByDay`, worktree splits |
+| per agent         | `GROUP BY session_id`, local day, source (+ token sums, `MAX(start_time)`) | `totalSessions`, `bySessionByDay`, `bySessionSource`, `bySessionLastQuery`, `bySessionTokens`                |
+| query percentiles | `ROW_NUMBER() OVER (...)` overall and per provider                         | `queryDurationPercentiles*` (only the rows at a percentile rank come back)                                   |
+| task percentiles  | same, over `auto_run_tasks`                                                | `autoRunTaskDurationPercentiles`                                                                             |
+| prompt times      | `start_time` of non-auto rows in the window (one column)                   | `prompts` (gaps between prompts need raw timestamps)                                                         |
+| active days       | `SELECT DISTINCT` local day, all history (skipped for All Time)            | `streak`                                                                                                     |
+| image annotations | `COUNT(*)`                                                                 | `imageAnnotations`                                                                                           |
 
-All sub-queries filter by `start_time >= ?` using `getTimeRangeStart(range)` which converts the `StatsTimeRange` enum to a millisecond timestamp.
+Every range-scoped pass binds `start_time >= getTimeRangeStart(range)`. The
+percentile SQL picks the same ranks `percentileOfSorted()` does
+(`min(n - 1, floor(p / 100 * n))`), and the JS side hands them to
+`percentilesFromSorted()` in a sparse array, so the index rule lives in one
+place.
+
+### Memo
+
+The result is memoized per range in the main process and reused until the
+database changes or the local day rolls over. The key is
+`total_changes()` (moves on every write through this connection: the query
+buffer flush, Auto Run, everything) plus `PRAGMA data_version` (moves when
+another connection commits, such as a repair script) plus today's date. A new
+connection (startup, corruption recovery) or `StatsDB.close()` drops it. The
+all-history streak is cached once per key and shared by every range.
 
 ### Statement Caching
 
-The `StatementCache` class (in `utils.ts`) caches prepared statements per SQL string to avoid re-preparing on every call. Caches are cleared when the database is closed.
+The `StatementCache` class (in `utils.ts`) caches prepared statements per SQL string to avoid re-preparing on every call. Caches are cleared when the database is closed; the aggregation's cache also clears itself when it sees a different connection.
 
 ### Performance Monitoring
 
@@ -393,6 +475,10 @@ On startup, the database runs `PRAGMA integrity_check`. If corruption is detecte
 2. Available backups are tested for integrity
 3. The most recent valid backup is restored
 4. If no backup is valid, a fresh database is created
+5. `StatsDB.getInitializationResult()` records what happened (`describeRecovery()`
+   builds the message). The renderer's lifecycle-owner window reads it through
+   `stats:get-initialization-result` on startup, shows a sticky "Usage Statistics
+   Reset" toast, and clears it, so a reset is never silent.
 
 ### Backup System
 
@@ -410,31 +496,31 @@ On startup, the database runs `PRAGMA integrity_check`. If corruption is detecte
 
 Located in `src/renderer/components/UsageDashboard/`:
 
-| Component                       | Purpose                                                     |
-| ------------------------------- | ----------------------------------------------------------- |
-| `UsageDashboardModal.tsx`       | Top-level modal with time range selector and tab layout     |
-| `SummaryCards.tsx`              | Top-level KPI cards (total queries, avg duration, sessions) |
-| `ActivityHeatmap.tsx`           | Calendar heatmap of daily activity                          |
-| `AgentUsageChart.tsx`           | Bar/line chart comparing queries per agent over time        |
-| `AgentComparisonChart.tsx`      | Side-by-side agent comparison                               |
-| `AgentEfficiencyChart.tsx`      | Duration efficiency by agent                                |
-| `PeakHoursChart.tsx`            | Hourly distribution of queries                              |
-| `DurationTrendsChart.tsx`       | Duration trends over time                                   |
-| `SourceDistributionChart.tsx`   | User vs Auto Run pie chart                                  |
-| `LocationDistributionChart.tsx` | Local vs SSH remote distribution                            |
-| `WeekdayComparisonChart.tsx`    | Weekday activity comparison                                 |
-| `TasksByHourChart.tsx`          | Auto Run tasks by hour                                      |
-| `AutoRunStats.tsx`              | Auto Run session statistics and details                     |
-| `WizardStats.tsx`               | Auto Run wizard usage: time, runs, documents, tasks         |
-| `MetricCard.tsx`                | Shared labeled single-number tile for those metric rows     |
-| `LongestAutoRunsTable.tsx`      | Table of longest Auto Run sessions                          |
-| `SessionStats.tsx`              | Session lifecycle statistics                                |
-| `ChartErrorBoundary.tsx`        | Error boundary for individual charts                        |
-| `ChartSkeletons.tsx`            | Loading skeletons for chart placeholders                    |
-| `EmptyState.tsx`                | Empty state when no data exists                             |
-| `UsageDashboardFooter.tsx`      | Status bar: range label, per-tab summary, Esc hint          |
-| `footerSummary.ts`              | All footer summary copy, as pure builders (see below)       |
-| `useFooterSummary.ts`           | Store letting a panel publish its own footer line           |
+| Component                       | Purpose                                                    |
+| ------------------------------- | ---------------------------------------------------------- |
+| `UsageDashboardModal.tsx`       | Top-level modal with time range selector and tab layout    |
+| `SummaryCards.tsx`              | Overview KPI cards (agents, queries, tokens, streak, ...)  |
+| `ActivityHeatmap.tsx`           | Calendar heatmap of daily activity                         |
+| `AgentUsageChart.tsx`           | Bar/line chart comparing queries per agent over time       |
+| `AgentComparisonChart.tsx`      | Side-by-side agent comparison                              |
+| `RadialActivityChart.tsx`       | Hour-of-day and day-of-week polar charts                   |
+| `DurationTrendsChart.tsx`       | Duration trends over time                                  |
+| `SourceDistributionChart.tsx`   | User vs Auto Run pie chart                                 |
+| `LocationDistributionChart.tsx` | Local vs SSH remote distribution                           |
+| `TasksByHourChart.tsx`          | Auto Run tasks by hour                                     |
+| `AutoRunStats.tsx`              | Auto Run session statistics and details                    |
+| `WizardStats.tsx`               | Auto Run wizard usage: time, runs, documents, tasks        |
+| `LongestAutoRunsTable.tsx`      | Table of longest Auto Run sessions                         |
+| `SessionStats.tsx`              | Agent Overview fleet statistics (Agent Statistics section) |
+| `AgentCountTrendChart.tsx`      | Agents Over Time (reads `session_lifecycle`)               |
+| `DashboardPanelState.tsx`       | Shared loading / error / empty wrapper for a panel         |
+| `useDashboardResource.ts`       | Cached panel fetch, refetched per `stats:updated` table    |
+| `ChartErrorBoundary.tsx`        | Error boundary for individual charts                       |
+| `ChartSkeletons.tsx`            | Loading skeletons for chart placeholders                   |
+| `EmptyState.tsx`                | Empty state when no data exists                            |
+| `UsageDashboardFooter.tsx`      | Status bar: range label, per-tab summary, Esc hint         |
+| `footerSummary.ts`              | All footer summary copy, as pure builders (see below)      |
+| `useFooterSummary.ts`           | Store letting a panel publish its own footer line          |
 
 ### Range-Scoped vs Lifetime Token Totals
 
@@ -449,7 +535,7 @@ counter:
 
 `usageStats` is a counter that only ever grows, so it **cannot** move when the
 range selector does. The Overview tab's Tokens and Cost cards were summing it,
-and reported the same figure on This Week as on This Year while every other card
+and reported the same figure on Last 7 Days as on Last 365 Days while every other card
 on the tab changed (issue #1399). Anything rendered under a range selector reads
 `bySessionTokens` through `aggregateRangeUsage()`; the per-agent detail modal,
 which has no range at all, legitimately keeps the lifetime figure.
@@ -501,21 +587,23 @@ copy rather than a rewrite.
 
 All stats code is in `src/main/stats/`:
 
-| File                   | Purpose                                                                                       |
-| ---------------------- | --------------------------------------------------------------------------------------------- |
-| `index.ts`             | Module barrel - re-exports all public APIs                                                    |
-| `stats-db.ts`          | Core `StatsDB` class: lifecycle, integrity, VACUUM, backup/restore                            |
-| `singleton.ts`         | Singleton instance management and performance metrics API                                     |
-| `schema.ts`            | SQL table/index definitions and `runStatements()` utility                                     |
-| `migrations.ts`        | Migration registry and execution engine                                                       |
-| `types.ts`             | Internal types (IntegrityCheckResult, BackupResult, Migration, etc.)                          |
-| `query-events.ts`      | QueryEvent CRUD with statement caching                                                        |
-| `auto-run.ts`          | AutoRunSession and AutoRunTask CRUD                                                           |
-| `session-lifecycle.ts` | SessionLifecycleEvent CRUD                                                                    |
-| `aggregations.ts`      | Aggregation sub-queries and orchestrator                                                      |
-| `data-management.ts`   | Data cleanup (transactional) and CSV export                                                   |
-| `row-mappers.ts`       | SQLite row to TypeScript object mappers                                                       |
-| `utils.ts`             | Shared utilities (ID generation, time range, path normalization, StatementCache, PerfMetrics) |
+| File                       | Purpose                                                                                       |
+| -------------------------- | --------------------------------------------------------------------------------------------- |
+| `index.ts`                 | Module barrel - re-exports all public APIs                                                    |
+| `stats-db.ts`              | Core `StatsDB` class: lifecycle, integrity, VACUUM, backup/restore                            |
+| `singleton.ts`             | Singleton instance management and performance metrics API                                     |
+| `schema.ts`                | SQL table/index definitions and `runStatements()` utility                                     |
+| `migrations.ts`            | Migration registry and execution engine                                                       |
+| `types.ts`                 | Internal types (IntegrityCheckResult, BackupResult, Migration, etc.)                          |
+| `query-events.ts`          | QueryEvent CRUD with statement caching                                                        |
+| `auto-run.ts`              | AutoRunSession and AutoRunTask CRUD                                                           |
+| `session-lifecycle.ts`     | SessionLifecycleEvent CRUD                                                                    |
+| `aggregations.ts`          | Grouped aggregation passes, rollups, streak, and the per-range memo                           |
+| `query-events-buffer.ts`   | Batched query-event writes and the post-commit flush listener                                 |
+| `usage-export.ts`          | Dashboard export (JSON or CSV zip), shared by IPC and the CLI                                 |
+| `usage-dashboard-reads.ts` | Reads shared by the IPC handlers and the CLI (delegation, Cue, quota)                         |
+| `row-mappers.ts`           | SQLite row to TypeScript object mappers                                                       |
+| `utils.ts`                 | Shared utilities (ID generation, time range, path normalization, StatementCache, PerfMetrics) |
 
 ## Key Source Files
 
@@ -528,7 +616,9 @@ All stats code is in `src/main/stats/`:
 | `src/main/stats/aggregations.ts`          | Dashboard aggregation queries |
 | `src/main/stats/query-events.ts`          | Query event CRUD              |
 | `src/main/stats/session-lifecycle.ts`     | Session lifecycle CRUD        |
-| `src/main/stats/data-management.ts`       | Cleanup and CSV export        |
+| `src/main/stats/usage-export.ts`          | Dashboard export              |
+| `src/shared/statsTimeRange.ts`            | Calendar-aligned range starts |
+| `src/shared/daySeries.ts`                 | Gap-filling day series        |
 | `src/main/ipc/handlers/stats.ts`          | IPC handler registration      |
 | `src/shared/stats-types.ts`               | Shared type definitions       |
 | `src/renderer/components/UsageDashboard/` | Dashboard UI components       |

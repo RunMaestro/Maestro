@@ -322,7 +322,6 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	// Register stats handlers for usage tracking
 	registerStatsHandlers({
-		getMainWindow: deps.getMainWindow,
 		settingsStore: deps.settingsStore,
 	});
 	// Register Cue Stats handlers for the Cue Dashboard aggregation query

@@ -228,3 +228,50 @@ describe('spawnWorktreeAgentAndDispatch parent-scoped reuse', () => {
 		expect(result).toBe('own-child');
 	});
 });
+
+describe('spawnWorktreeAgentAndDispatch lifecycle recording', () => {
+	it('records the new worktree agent in session_lifecycle as a worktree', async () => {
+		vi.mocked(window.maestro.stats.recordSessionCreated).mockClear();
+
+		const result = await spawnWorktreeAgentAndDispatch(parentSession, makeConfig());
+
+		expect(result).toBeTruthy();
+		expect(window.maestro.stats.recordSessionCreated).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: result, isWorktree: true })
+		);
+	});
+
+	it('records nothing when it reuses an existing child', async () => {
+		vi.mocked(window.maestro.stats.recordSessionCreated).mockClear();
+		const resolvedPath = '/repos/other-checkout/feat-autorun';
+		useSessionStore.setState({
+			sessions: [
+				parentSession,
+				{
+					id: 'own-child',
+					name: 'feat-autorun',
+					cwd: resolvedPath,
+					fullPath: resolvedPath,
+					projectRoot: resolvedPath,
+					parentSessionId: 'parent-1',
+					worktreeBranch: 'feat-autorun',
+					state: 'idle',
+					toolType: 'claude-code',
+					inputMode: 'ai',
+					aiTabs: [],
+				},
+			],
+			activeSessionId: 'parent-1',
+			sessionsLoaded: true,
+		} as any);
+		mockGit.worktreeSetup.mockResolvedValue({
+			success: true,
+			alreadyExisted: true,
+			existingPath: resolvedPath,
+		});
+
+		await spawnWorktreeAgentAndDispatch(parentSession, makeConfig());
+
+		expect(window.maestro.stats.recordSessionCreated).not.toHaveBeenCalled();
+	});
+});

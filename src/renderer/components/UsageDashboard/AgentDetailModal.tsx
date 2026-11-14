@@ -1,10 +1,12 @@
 /**
  * AgentDetailModal
  *
- * Per-agent stats sub-modal opened by double-clicking an agent card on the
- * Usage Dashboard's Agents tab. Stays scoped to stats - no recent-queries list.
+ * Per-agent stats sub-modal opened by clicking an agent card on the Usage
+ * Dashboard's Agents tab (or a member row in a group's detail modal). Stays
+ * scoped to stats - no recent-queries list.
  *
- * Every figure covers the dashboard's SELECTED RANGE. Tokens and cost come from
+ * Every figure covers the dashboard's SELECTED RANGE, the Auto Run block
+ * included. Tokens and cost come from
  * `data.bySessionTokens[session.id]` (per-turn rows in the stats database) with
  * a coverage note, because rows recorded before the token columns existed carry
  * none. The agent's running lifetime total (`session.usageStats`) is shown on
@@ -12,17 +14,20 @@
  * putting an agent's whole history beside a 30-day query count.
  *
  * Reuses `data.bySessionByDay[session.id]` (already fetched by the dashboard)
- * for cheap aggregates and daily activity. Pulls the raw query events for the
- * session in the same range via `stats.getStats(timeRange, { sessionId })` to
- * compute the duration distribution (median, p95) and user/auto split, since
- * those aren't already aggregated per session.
+ * for cheap aggregates and daily activity, zero-filled over the range's
+ * calendar window. Pulls the raw query events for the session in the same
+ * range via `stats.getStats(timeRange, { sessionId })` to compute the time
+ * distribution (median, p95) and user/auto split, since those aren't already
+ * aggregated per session. Both fetches go through `useDashboardResource`, so a
+ * failure renders as an error rather than as "no data".
  */
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef } from 'react';
 import { LogIn, Settings } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import type { QueryEvent, StatsAggregation, StatsTimeRange } from '../../../shared/stats-types';
 import {
+	formatCalendarDay,
 	formatCost,
 	formatDurationHuman,
 	formatNumber,
@@ -38,11 +43,13 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { computePercentiles } from '../../../shared/percentiles';
 import { useElementWidth } from '../../hooks/ui/useElementWidth';
-import { logger } from '../../utils/logger';
-import { Sparkline } from './Sparkline';
+import { Sparkline } from '../widgets';
 import { Kpi, MetaField, SectionHeading } from './DetailPrimitives';
 import { TabBreakdown } from './TabBreakdown';
 import { usageCoverageNote } from './usageCoverage';
+import { useDashboardResource } from './useDashboardResource';
+import { DashboardPanelState } from './DashboardPanelState';
+import { buildRangeActivity } from './agentOverviewUtils';
 
 interface AgentDetailModalProps {
 	session: Session;
@@ -81,45 +88,30 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 	onClose,
 	onCloseDashboard,
 }: AgentDetailModalProps) {
-	const [events, setEvents] = useState<QueryEvent[] | null>(null);
-	const [autoRuns, setAutoRuns] = useState<AutoRunSessionRow[] | null>(null);
+	// Raw query events scoped to this agent and range - needed for the time
+	// percentiles and the user/auto split. `bySessionByDay` only carries daily
+	// totals, not per-event durations.
+	const eventsResource = useDashboardResource<QueryEvent[]>(
+		`agent-detail-events:${session.id}:${timeRange}`,
+		async () =>
+			(await window.maestro.stats.getStats(timeRange, { sessionId: session.id })) as QueryEvent[],
+		'fetchAgentDetailEvents',
+		{ tables: ['query_events'] }
+	);
+	const events = eventsResource.data ?? null;
 
-	useEffect(() => {
-		let cancelled = false;
-		setEvents(null);
-		setAutoRuns(null);
-
-		// Raw query events scoped to this session - needed for median/p95 and the
-		// user/auto source split. The aggregated `bySessionByDay` only carries
-		// daily totals, not per-event durations, so we fetch raw rows here.
-		window.maestro.stats
-			.getStats(timeRange, { sessionId: session.id })
-			.then((rows) => {
-				if (!cancelled) setEvents(rows as QueryEvent[]);
-			})
-			.catch((error) => {
-				logger.error('Failed to load per-agent query events', undefined, error);
-				if (!cancelled) setEvents([]);
-			});
-
-		// Auto Run sessions across all-time, filtered client-side. The IPC has
-		// no sessionId filter for auto runs, but the volume is small.
-		window.maestro.stats
-			.getAutoRunSessions('all')
-			.then((rows) => {
-				if (!cancelled) {
-					setAutoRuns(rows.filter((r) => r.sessionId === session.id) as AutoRunSessionRow[]);
-				}
-			})
-			.catch((error) => {
-				logger.error('Failed to load per-agent auto-run sessions', undefined, error);
-				if (!cancelled) setAutoRuns([]);
-			});
-
-		return () => {
-			cancelled = true;
-		};
-	}, [session.id, timeRange]);
+	// Auto Run sessions in the SAME range as every other figure here. The IPC
+	// has no agent filter, so the range's runs are filtered client-side.
+	const autoRunResource = useDashboardResource<AutoRunSessionRow[]>(
+		`agent-detail-autoruns:${timeRange}`,
+		async () => (await window.maestro.stats.getAutoRunSessions(timeRange)) as AutoRunSessionRow[],
+		'fetchAgentDetailAutoRuns',
+		{ tables: ['auto_run'] }
+	);
+	const autoRuns = useMemo(
+		() => autoRunResource.data?.filter((run) => run.sessionId === session.id) ?? null,
+		[autoRunResource.data, session.id]
+	);
 
 	const aggregates = useMemo(() => {
 		const byDay = data.bySessionByDay?.[session.id] ?? [];
@@ -128,8 +120,18 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 		const avgDuration = totalQueries > 0 ? totalDuration / totalQueries : 0;
 		const activeDays = byDay.filter((d) => d.count > 0);
 		const firstActive = activeDays[0]?.date ?? null;
-		const lastActive = activeDays[activeDays.length - 1]?.date ?? null;
-		return { byDay, totalQueries, totalDuration, avgDuration, firstActive, lastActive };
+		// The exact time of the last query, not the day it fell on: a day string
+		// read as a timestamp lands on midnight (UTC midnight, even, once parsed).
+		const lastQueryAt = data.bySessionLastQuery?.[session.id] ?? null;
+		return {
+			byDay,
+			totalQueries,
+			totalDuration,
+			avgDuration,
+			activeDayCount: activeDays.length,
+			firstActive,
+			lastQueryAt,
+		};
 	}, [data, session.id]);
 
 	// Token/cost for the selected range, from the per-turn stats rows.
@@ -190,10 +192,15 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 		return { parent: null, siblings: children.length, children };
 	}, [session, allSessions]);
 
-	// Sparkline for the entire byDay window (not capped at 7 days like the card).
-	// The modal is resizable, so the chart's width has to be measured rather than
-	// hard-coded - an inline SVG needs real pixels for its viewBox.
-	const fullSparkline = useMemo(() => aggregates.byDay.map((d) => d.count), [aggregates]);
+	// Daily activity over every calendar day of the range, zero-filled, so idle
+	// days read as idle instead of being squeezed out. The modal is resizable, so
+	// the chart's width has to be measured rather than hard-coded - an inline SVG
+	// needs real pixels for its viewBox.
+	const rangeActivity = useMemo(
+		() => buildRangeActivity(aggregates.byDay, data.window),
+		[aggregates.byDay, data.window]
+	);
+	const fullSparkline = useMemo(() => rangeActivity.map((d) => d.count), [rangeActivity]);
 	const activityRef = useRef<HTMLDivElement>(null);
 	const activityWidth = useElementWidth(activityRef);
 
@@ -277,10 +284,18 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 						)}
 						{session.cwd && <MetaField label="Path" value={session.cwd} theme={theme} mono />}
 						{aggregates.firstActive && (
-							<MetaField label="First active" value={aggregates.firstActive} theme={theme} />
+							<MetaField
+								label="First active"
+								value={formatCalendarDay(aggregates.firstActive)}
+								theme={theme}
+							/>
 						)}
-						{aggregates.lastActive && (
-							<MetaField label="Last active" value={aggregates.lastActive} theme={theme} />
+						{aggregates.lastQueryAt !== null && (
+							<MetaField
+								label="Last active"
+								value={formatRelativeTime(aggregates.lastQueryAt)}
+								theme={theme}
+							/>
 						)}
 					</div>
 				</section>
@@ -289,22 +304,18 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 				<section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
 					<Kpi label="Total queries" value={formatNumber(aggregates.totalQueries)} theme={theme} />
 					<Kpi
-						label="Total duration"
+						label="Total time"
 						value={
 							aggregates.totalDuration > 0 ? formatDurationHuman(aggregates.totalDuration) : '-'
 						}
 						theme={theme}
 					/>
 					<Kpi
-						label="Avg duration"
+						label="Avg time per query"
 						value={aggregates.avgDuration > 0 ? formatDurationHuman(aggregates.avgDuration) : '-'}
 						theme={theme}
 					/>
-					<Kpi
-						label="Active days"
-						value={formatNumber(aggregates.byDay.filter((d) => d.count > 0).length)}
-						theme={theme}
-					/>
+					<Kpi label="Active days" value={formatNumber(aggregates.activeDayCount)} theme={theme} />
 				</section>
 
 				{/* Token & cost for the selected range, from per-turn stats rows. */}
@@ -359,8 +370,8 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 					</section>
 				)}
 
-				{/* Daily activity sparkline (full window) */}
-				{fullSparkline.length > 0 && (
+				{/* Daily activity across the whole range, zero-filled */}
+				{aggregates.totalQueries > 0 && (
 					<section>
 						<SectionHeading theme={theme}>Daily Activity</SectionHeading>
 						<div
@@ -384,71 +395,95 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 								className="flex justify-between mt-1 text-2xs"
 								style={{ color: theme.colors.textDim }}
 							>
-								<span>{aggregates.byDay[0]?.date ?? ''}</span>
-								<span>{aggregates.byDay[aggregates.byDay.length - 1]?.date ?? ''}</span>
+								<span>{formatCalendarDay(rangeActivity[0]?.date ?? '')}</span>
+								<span>
+									{formatCalendarDay(rangeActivity[rangeActivity.length - 1]?.date ?? '')}
+								</span>
 							</div>
 						</div>
 					</section>
 				)}
 
-				{/* Duration distribution */}
+				{/* Time per query distribution */}
 				<section>
-					<SectionHeading theme={theme}>Duration Distribution</SectionHeading>
-					<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-						<Kpi
-							label="Min"
-							value={distribution ? formatDurationHuman(distribution.min) : '…'}
-							theme={theme}
-							compact
-						/>
-						<Kpi
-							label="Median"
-							value={distribution ? formatDurationHuman(distribution.p50) : '…'}
-							theme={theme}
-							compact
-						/>
-						<Kpi
-							label="p95"
-							value={distribution ? formatDurationHuman(distribution.p95) : '…'}
-							theme={theme}
-							compact
-						/>
-						<Kpi
-							label="Max"
-							value={distribution ? formatDurationHuman(distribution.max) : '…'}
-							theme={theme}
-							compact
-						/>
-					</div>
+					<SectionHeading theme={theme}>Time per Query</SectionHeading>
+					<DashboardPanelState
+						theme={theme}
+						loading={eventsResource.loading}
+						error={eventsResource.error}
+						empty={!events}
+						onRetry={() => void eventsResource.refresh()}
+						minHeight={48}
+						testId="agent-detail-distribution"
+					>
+						<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+							<Kpi
+								label="Min"
+								value={distribution ? formatDurationHuman(distribution.min) : '-'}
+								theme={theme}
+								compact
+							/>
+							<Kpi
+								label="Median"
+								value={distribution ? formatDurationHuman(distribution.p50) : '-'}
+								theme={theme}
+								compact
+							/>
+							<Kpi
+								label="p95"
+								value={distribution ? formatDurationHuman(distribution.p95) : '-'}
+								theme={theme}
+								compact
+							/>
+							<Kpi
+								label="Max"
+								value={distribution ? formatDurationHuman(distribution.max) : '-'}
+								theme={theme}
+								compact
+							/>
+						</div>
+					</DashboardPanelState>
 				</section>
 
 				{/* Source split */}
 				<section>
 					<SectionHeading theme={theme}>Query Source</SectionHeading>
-					{sourceSplit ? (
-						<SourceSplitBar user={sourceSplit.user} auto={sourceSplit.auto} theme={theme} />
-					) : (
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Loading…
-						</div>
-					)}
+					<DashboardPanelState
+						theme={theme}
+						loading={eventsResource.loading}
+						error={eventsResource.error}
+						empty={!sourceSplit}
+						onRetry={() => void eventsResource.refresh()}
+						minHeight={48}
+						testId="agent-detail-source"
+					>
+						{sourceSplit && (
+							<SourceSplitBar user={sourceSplit.user} auto={sourceSplit.auto} theme={theme} />
+						)}
+					</DashboardPanelState>
 				</section>
 
-				{/* Auto Run summary */}
+				{/* Auto Run summary, for the selected range */}
 				<section>
 					<SectionHeading theme={theme}>Auto Run</SectionHeading>
-					{autoRunSummary ? (
-						autoRunSummary.total === 0 ? (
-							<div className="text-xs" style={{ color: theme.colors.textDim }}>
-								No Auto Run sessions for this agent.
-							</div>
-						) : (
+					<DashboardPanelState
+						theme={theme}
+						loading={autoRunResource.loading}
+						error={autoRunResource.error}
+						empty={!autoRunSummary || autoRunSummary.total === 0}
+						emptyMessage="No Auto Runs for this agent in this range."
+						onRetry={() => void autoRunResource.refresh()}
+						minHeight={48}
+						testId="agent-detail-autorun"
+					>
+						{autoRunSummary && (
 							<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
 								<Kpi
-									label="Sessions"
+									label="Runs"
 									value={formatNumber(autoRunSummary.total)}
 									theme={theme}
 									compact
+									testId="agent-detail-autorun-runs"
 								/>
 								<Kpi
 									label="Tasks completed"
@@ -469,12 +504,8 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 									compact
 								/>
 							</div>
-						)
-					) : (
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Loading…
-						</div>
-					)}
+						)}
+					</DashboardPanelState>
 				</section>
 
 				{/* Worktree relationship */}
@@ -507,13 +538,28 @@ export const AgentDetailModal = memo(function AgentDetailModal({
 				    fold. */}
 				<section>
 					<SectionHeading theme={theme}>Tabs</SectionHeading>
-					<TabBreakdown session={session} theme={theme} events={events} />
+					<DashboardPanelState
+						theme={theme}
+						loading={eventsResource.loading}
+						error={eventsResource.error}
+						empty={!events}
+						onRetry={() => void eventsResource.refresh()}
+						minHeight={48}
+						testId="agent-detail-tabs"
+					>
+						<TabBreakdown session={session} theme={theme} events={events} />
+					</DashboardPanelState>
 				</section>
 
-				{/* Footer note: when the most recent activity was, formatted relative */}
-				{aggregates.lastActive && (
-					<div className="text-2xs text-right" style={{ color: theme.colors.textDim }}>
-						Last active {formatRelativeTime(new Date(aggregates.lastActive).getTime())}
+				{/* Footer note: when the last query ran, formatted relative */}
+				{aggregates.lastQueryAt !== null && (
+					<div
+						className="text-2xs text-right"
+						style={{ color: theme.colors.textDim }}
+						title={new Date(aggregates.lastQueryAt).toLocaleString()}
+						data-testid="agent-detail-last-active"
+					>
+						Last active {formatRelativeTime(aggregates.lastQueryAt)}
 					</div>
 				)}
 			</div>

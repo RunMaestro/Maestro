@@ -241,7 +241,6 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getCuePipeline: vi.fn().mockResolvedValue(null),
 		setCuePipeline: vi.fn().mockResolvedValue({ ok: true }),
 		removeCuePipeline: vi.fn().mockResolvedValue({ ok: true }),
-		getUsageDashboard: vi.fn().mockResolvedValue({}),
 		getAchievements: vi.fn().mockResolvedValue([]),
 		writeToTerminal: vi.fn().mockReturnValue(true),
 		resizeTerminal: vi.fn().mockReturnValue(true),

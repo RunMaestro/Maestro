@@ -61,7 +61,9 @@ function buildData(overrides: Partial<StatsAggregation> = {}): StatsAggregation 
 				pricedQueries: 10,
 			},
 		},
+		bySessionLastQuery: {},
 		byAgent: {},
+		window: { startYmd: '2026-07-20', endYmd: '2026-08-02' },
 		...overrides,
 	} as unknown as StatsAggregation;
 }
@@ -137,12 +139,12 @@ describe('GroupDetailModal', () => {
 		expect(rowTotals.reduce((a, b) => a + b, 0)).toBe(16);
 	});
 
-	it('renders an em-dash for a member with no recorded token usage', () => {
+	it('renders a hyphen placeholder for a member with no recorded token usage', () => {
 		// s1 has queries but no bySessionTokens entry - unknown spend, not free.
 		renderModal();
 
 		const row = screen.getByText('Acme API').closest('tr')!;
-		expect(within(row).getByTestId('group-detail-member-cost')).toHaveTextContent('—');
+		expect(within(row).getByTestId('group-detail-member-cost')).toHaveTextContent('-');
 	});
 
 	it('sorts members by queries descending on open', () => {
@@ -199,6 +201,38 @@ describe('GroupDetailModal', () => {
 
 		const row = screen.getByText('Acme Web').closest('tr')!;
 		expect(row).not.toHaveClass('cursor-pointer');
+		expect(screen.queryByTestId('group-detail-member-open')).not.toBeInTheDocument();
+	});
+
+	it('opens a member from the keyboard through a real button on its name', () => {
+		const onSelectAgent = vi.fn();
+		renderModal({ onSelectAgent });
+
+		const button = screen.getByRole('button', { name: 'View detailed stats for Acme API' });
+		expect(button.tagName).toBe('BUTTON');
+		// A native button fires click on Enter/Space; the click must not also
+		// bubble into the row's own handler and open the agent twice.
+		fireEvent.click(button);
+
+		expect(onSelectAgent).toHaveBeenCalledTimes(1);
+		expect(onSelectAgent.mock.calls[0][0].id).toBe('s1');
+	});
+
+	it('reads Last active from the exact last-query time', () => {
+		const data = buildData({
+			bySessionLastQuery: { s2: Date.now() - 5 * 60 * 1000 },
+		} as Partial<StatsAggregation>);
+		renderModal({}, data);
+
+		const row = screen.getByText('Acme Web').closest('tr')!;
+		expect(within(row).getByTestId('group-detail-member-last-active')).toHaveTextContent('5m ago');
+		const other = screen.getByText('Acme API').closest('tr')!;
+		expect(within(other).getByTestId('group-detail-member-last-active')).toHaveTextContent('-');
+	});
+
+	it('labels the duration KPI "Time"', () => {
+		renderModal();
+		expect(screen.getByTestId('group-detail-duration')).toHaveTextContent(/^Time/);
 	});
 
 	it('explains the cost coverage when only some queries carry usage', () => {
@@ -214,7 +248,7 @@ describe('GroupDetailModal', () => {
 		const data = buildData({ bySessionTokens: {} } as Partial<StatsAggregation>);
 		renderModal({}, data);
 
-		expect(screen.getByTestId('group-detail-cost')).toHaveTextContent('—');
+		expect(screen.getByTestId('group-detail-cost')).toHaveTextContent('-');
 		expect(screen.getByRole('note')).toHaveTextContent(/No token usage recorded/);
 	});
 

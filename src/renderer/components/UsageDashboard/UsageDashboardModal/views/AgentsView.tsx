@@ -42,7 +42,7 @@ export function AgentsView({
 				style={{ animationDelay: '0ms' }}
 			>
 				{sessions.some((session) => session.toolType !== 'terminal') ? (
-					<ChartErrorBoundary theme={theme} chartName="Agent Overview">
+					<ChartErrorBoundary theme={theme} chartName="Agents">
 						<AgentOverviewCards
 							sessions={sessions}
 							data={data}
@@ -61,7 +61,7 @@ export function AgentsView({
 							color: theme.colors.textDim,
 						}}
 					>
-						No active agents
+						No agents
 					</div>
 				)}
 			</DashboardSection>

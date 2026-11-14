@@ -134,9 +134,7 @@ import type {
 	TriggerCueSubscriptionCallback,
 	CueSubscriptionInfo,
 	CueActivityEntry,
-	GetUsageDashboardCallback,
 	GetAchievementsCallback,
-	UsageDashboardData,
 	AchievementData,
 	GenerateDirectorNotesSynopsisCallback,
 	DirectorNotesSynopsisResult,
@@ -269,7 +267,6 @@ export interface WebServerCallbacks {
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
 	triggerCueSubscription: TriggerCueSubscriptionCallback | null;
-	getUsageDashboard: GetUsageDashboardCallback | null;
 	getAchievements: GetAchievementsCallback | null;
 	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
 	notifyToast: NotifyToastCallback | null;
@@ -379,7 +376,6 @@ export class CallbackRegistry {
 		toggleCueSubscription: null,
 		getCueActivity: null,
 		triggerCueSubscription: null,
-		getUsageDashboard: null,
 		getAchievements: null,
 		generateDirectorNotesSynopsis: null,
 		notifyToast: null,
@@ -1032,21 +1028,6 @@ export class CallbackRegistry {
 		return this.callbacks.triggerCueSubscription(subscriptionName, prompt, sourceAgentId);
 	}
 
-	async getUsageDashboard(
-		timeRange: 'day' | 'week' | 'month' | 'all'
-	): Promise<UsageDashboardData> {
-		if (!this.callbacks.getUsageDashboard) {
-			return {
-				totalTokensIn: 0,
-				totalTokensOut: 0,
-				totalCost: 0,
-				sessionBreakdown: [],
-				dailyUsage: [],
-			};
-		}
-		return this.callbacks.getUsageDashboard(timeRange);
-	}
-
 	async getAchievements(): Promise<AchievementData[]> {
 		if (!this.callbacks.getAchievements) return [];
 		return this.callbacks.getAchievements();
@@ -1511,10 +1492,6 @@ export class CallbackRegistry {
 
 	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
 		this.callbacks.triggerCueSubscription = callback;
-	}
-
-	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
-		this.callbacks.getUsageDashboard = callback;
 	}
 
 	setGetAchievementsCallback(callback: GetAchievementsCallback): void {

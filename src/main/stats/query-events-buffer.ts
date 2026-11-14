@@ -44,6 +44,17 @@ const stmtCache = new StatementCache();
 let buffer: PendingEvent[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let lastDb: Database.Database | null = null;
+let flushListener: ((count: number) => void) | null = null;
+
+/**
+ * Register the one callback told when a batch is committed (the stats IPC
+ * module broadcasts `stats:updated` from it). Announcing the write here rather
+ * than at enqueue time means a dashboard that refetches on the event reads the
+ * new rows instead of racing the flush timer. Pass null to unregister.
+ */
+export function setQueryEventsFlushListener(listener: ((count: number) => void) | null): void {
+	flushListener = listener;
+}
 
 /**
  * Enqueue a query event for batched persistence.
@@ -153,7 +164,12 @@ export function flushQueryEventsSync(): void {
 		});
 		// Don't re-buffer - events are lost rather than risk an infinite
 		// retry loop if the DB is in a permanently bad state.
+		return;
 	}
+
+	// Outside the try: a throwing listener is a bug in the listener, not a
+	// failed flush, and must not be reported as one.
+	flushListener?.(events.length);
 }
 
 /** Number of events currently waiting to flush. Test/diagnostic helper. */
@@ -173,4 +189,5 @@ export function resetQueryEventBufferForTests(): void {
 	buffer = [];
 	stmtCache.clear();
 	lastDb = null;
+	flushListener = null;
 }

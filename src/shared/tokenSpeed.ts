@@ -134,12 +134,20 @@ export interface TokenSpeedSummary {
 	/** Per model key, for the busiest models only (see {@link TOKEN_SPEED_TIMELINE_MODELS}). */
 	timelineByModel: Record<string, TokenSpeedPoint[]>;
 	busiestHour: TokenSpeedBusiestHour | null;
-	/** Provider ids whose transcripts carry per-call timing. */
+	/** Provider ids with at least one timed call in the window. */
 	measuredAgents: string[];
 }
 
 /** How many models get their own speed-over-time series. */
 export const TOKEN_SPEED_TIMELINE_MODELS = 6;
+
+/**
+ * Provider ids whose transcripts time each API call (see
+ * `createClaudeSpeedSampler` and `CodexTokenSpeedTracker`). The empty state
+ * names these, so it can say which providers speed is measured for even when
+ * the window has no calls.
+ */
+export const TOKEN_SPEED_AGENTS: readonly string[] = ['claude-code', 'codex'];
 
 // ---------------------------------------------------------------------------
 // Bucketing
@@ -450,8 +458,12 @@ export class TokenSpeedAccumulator {
 	}
 }
 
-/** Pick a timeline granularity that gives a readable number of points for a span. */
-export function tokenSpeedGranularityFor(spanMs: number): TokenSpeedGranularity {
+/**
+ * Pick a timeline granularity that gives a readable number of points for a
+ * span. One rule for the Tokens tab's consumption timeline and its speed
+ * charts, so the two always slice time the same way.
+ */
+export function tokenGranularityFor(spanMs: number): TokenSpeedGranularity {
 	const day = 24 * 60 * 60 * 1000;
 	if (spanMs <= 2 * day) return 'hour';
 	if (spanMs <= 92 * day) return 'day';
@@ -460,13 +472,53 @@ export function tokenSpeedGranularityFor(spanMs: number): TokenSpeedGranularity 
 }
 
 /** Start of the timeline slice containing `ms` (local time; weeks start Monday). */
-export function tokenSpeedSliceStart(ms: number, granularity: TokenSpeedGranularity): number {
+export function tokenSliceStart(ms: number, granularity: TokenSpeedGranularity): number {
 	if (granularity === 'hour') return localHourStart(ms);
 	const d = new Date(ms);
 	d.setHours(0, 0, 0, 0);
 	if (granularity === 'week') d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
 	else if (granularity === 'month') d.setDate(1);
 	return d.getTime();
+}
+
+/**
+ * Start of the slice AFTER the one starting at `startMs`, i.e. the exclusive
+ * end of that slice. Calendar arithmetic, so a DST day or a 31-day month is
+ * the length the clock says it is.
+ */
+export function tokenSliceEnd(startMs: number, granularity: TokenSpeedGranularity): number {
+	const d = new Date(startMs);
+	if (granularity === 'hour') d.setHours(d.getHours() + 1);
+	else if (granularity === 'day') d.setDate(d.getDate() + 1);
+	else if (granularity === 'week') d.setDate(d.getDate() + 7);
+	else d.setMonth(d.getMonth() + 1);
+	return d.getTime();
+}
+
+/** Hard stop for {@link tokenSliceStarts}, so a corrupt window cannot hang the aggregation. */
+const MAX_TIMELINE_SLICES = 2_000;
+
+/**
+ * Every slice start from the slice containing `fromMs` through the one
+ * containing `toMs`, so a timeline can draw idle slices instead of skipping
+ * them (which would make a quiet month look continuous).
+ */
+export function tokenSliceStarts(
+	fromMs: number,
+	toMs: number,
+	granularity: TokenSpeedGranularity
+): number[] {
+	if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs < fromMs) return [];
+	const starts: number[] = [];
+	const last = tokenSliceStart(toMs, granularity);
+	for (
+		let start = tokenSliceStart(fromMs, granularity);
+		start <= last && starts.length < MAX_TIMELINE_SLICES;
+		start = tokenSliceEnd(start, granularity)
+	) {
+		starts.push(start);
+	}
+	return starts;
 }
 
 /** One session's buckets plus who produced them. */
@@ -486,6 +538,17 @@ export interface TokenSpeedSummaryOptions {
 	modelLabel: (modelKey: string) => string;
 	/** Fixes "now" for the span of an open-ended window (tests). */
 	nowMs?: number;
+	/**
+	 * Timeline granularity. The token-usage accessor passes the one it uses for
+	 * the consumption timeline so both charts slice time alike; omitted, it is
+	 * picked from the window's span.
+	 */
+	granularity?: TokenSpeedGranularity;
+	/**
+	 * First instant the timeline covers when `sinceMs` is open (All Time). The
+	 * accessor passes the earliest activity it saw; omitted, the earliest bucket.
+	 */
+	windowStartMs?: number;
 }
 
 function toGroups(map: Map<string, TokenSpeedAccumulator>, label: (key: string) => string) {
@@ -498,6 +561,17 @@ function toPoints(map: Map<number, TokenSpeedAccumulator>): TokenSpeedPoint[] {
 	return [...map.entries()]
 		.sort((a, b) => a[0] - b[0])
 		.map(([startMs, acc]) => ({ startMs, ...acc.stats() }));
+}
+
+/** Add an empty accumulator for every slice start the map does not have yet. */
+function fillSlices(
+	map: Map<number, TokenSpeedAccumulator>,
+	starts: readonly number[]
+): Map<number, TokenSpeedAccumulator> {
+	for (const start of starts) {
+		if (!map.has(start)) map.set(start, new TokenSpeedAccumulator());
+	}
+	return map;
 }
 
 function getOrCreate<K, V>(map: Map<K, V>, key: K, make: () => V): V {
@@ -560,11 +634,13 @@ export function summarizeTokenSpeed(
 	const inWindow = [...merged.values()];
 
 	const nowMs = options.nowMs ?? Date.now();
-	const spanStart = Number.isFinite(sinceMs) ? sinceMs : earliest;
+	const spanStart = Number.isFinite(sinceMs)
+		? sinceMs
+		: Math.min(options.windowStartMs ?? Infinity, earliest);
 	const spanEnd = Number.isFinite(untilMs) ? untilMs : nowMs;
-	const granularity = tokenSpeedGranularityFor(
-		Number.isFinite(spanStart) ? Math.max(0, spanEnd - spanStart) : 0
-	);
+	const granularity =
+		options.granularity ??
+		tokenGranularityFor(Number.isFinite(spanStart) ? Math.max(0, spanEnd - spanStart) : 0);
 
 	const overall = new TokenSpeedAccumulator();
 	const byAgent = new Map<string, TokenSpeedAccumulator>();
@@ -578,7 +654,7 @@ export function summarizeTokenSpeed(
 
 	for (const { agentType, bucket } of inWindow) {
 		const modelKey = bucket.model;
-		const slice = tokenSpeedSliceStart(bucket.startMs, granularity);
+		const slice = tokenSliceStart(bucket.startMs, granularity);
 		overall.add(bucket);
 		getOrCreate(byAgent, agentType, make).add(bucket);
 		getOrCreate(byModel, modelKey, make).add(bucket);
@@ -618,7 +694,14 @@ export function summarizeTokenSpeed(
 		byModel: modelGroups,
 		byHourOfDay: byHourOfDay.map((acc) => acc.stats()),
 		granularity,
-		timeline: toPoints(timeline),
+		// Dense over the window: a slice with no calls is an explicit empty point
+		// (the chart draws it as a gap), so idle stretches keep their width.
+		timeline: toPoints(
+			fillSlices(
+				timeline,
+				Number.isFinite(spanStart) ? tokenSliceStarts(spanStart, spanEnd, granularity) : []
+			)
+		),
 		timelineByAgent: Object.fromEntries(
 			[...timelineByAgent].map(([agent, points]) => [agent, toPoints(points)])
 		),

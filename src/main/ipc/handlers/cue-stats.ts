@@ -14,9 +14,13 @@
 
 import { ipcMain } from 'electron';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
-import { getCueStatsAggregation } from '../../cue/stats/cue-stats-query';
+import { getCueStatsAggregation, getCueStatsSourceTotals } from '../../cue/stats/cue-stats-query';
 import { getHistoricalConductorCreditMs } from '../../cue/cue-db';
-import type { CueStatsAggregation, CueStatsTimeRange } from '../../../shared/cue-stats-types';
+import type {
+	CueStatsAggregation,
+	CueStatsSourceTotals,
+	CueStatsTimeRange,
+} from '../../../shared/cue-stats-types';
 import { resolveEncoreFeatures } from '../../../shared/encoreFeatureDefaults';
 import type { CueEngine } from '../../cue/cue-engine';
 
@@ -124,6 +128,26 @@ export function registerCueStatsHandlers(deps: CueStatsHandlerDependencies): voi
 				? excludeTriggerTypes.filter((t): t is string => typeof t === 'string' && t.length > 0)
 				: [];
 			return wrappedAggregation(event, range, excluded);
+		}
+	);
+
+	// Runs, run time and tokens only, for the Overview's source chart. Same
+	// gate and sentinel as the full aggregation.
+	const wrappedSourceTotals = withIpcErrorLogging(
+		handlerOpts('getSourceTotals'),
+		async (range: CueStatsTimeRange): Promise<CueStatsSourceTotals> =>
+			getCueStatsSourceTotals(range)
+	);
+	ipcMain.handle(
+		'cue-stats:get-source-totals',
+		async (
+			event: Electron.IpcMainInvokeEvent,
+			range: CueStatsTimeRange
+		): Promise<CueStatsSourceTotals> => {
+			if (!isCueStatsEnabled(settingsStore)) {
+				throw new Error('CueStatsDisabled');
+			}
+			return wrappedSourceTotals(event, range);
 		}
 	);
 

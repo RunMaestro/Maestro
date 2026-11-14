@@ -186,7 +186,6 @@ import {
 	handleDeletePlaybook,
 } from './playbooks';
 import {
-	handleGetUsageDashboard,
 	handleGetStatsAggregation,
 	handleGetTokenUsage,
 	handleGetStatsIndexing,
@@ -194,6 +193,14 @@ import {
 	handleGetAchievements,
 	handleGenerateDirectorNotesSynopsis,
 } from './stats';
+import {
+	handleGetDelegationStats,
+	handleGetCueStats,
+	handleGetPlanUsage,
+	handleGetAgentCountStats,
+	handleGetActivityStats,
+	handleStatsExport,
+} from './usageDashboard';
 
 /**
  * WebSocket Message Handler Class
@@ -626,10 +633,6 @@ export class WebSocketMessageHandler {
 				handleCuePipelineRemove(this.ctx, client, message);
 				break;
 
-			case 'get_usage_dashboard':
-				handleGetUsageDashboard(this.ctx, client, message);
-				break;
-
 			case 'get_achievements':
 				handleGetAchievements(this.ctx, client, message);
 				break;
@@ -648,6 +651,30 @@ export class WebSocketMessageHandler {
 
 			case 'stats_query':
 				handleStatsQuery(this.ctx, client, message);
+				break;
+
+			case 'get_delegation_stats':
+				handleGetDelegationStats(this.ctx, client, message);
+				break;
+
+			case 'get_cue_stats':
+				handleGetCueStats(this.ctx, client, message);
+				break;
+
+			case 'get_plan_usage':
+				handleGetPlanUsage(this.ctx, client, message);
+				break;
+
+			case 'get_agent_count_stats':
+				handleGetAgentCountStats(this.ctx, client, message);
+				break;
+
+			case 'get_activity_stats':
+				handleGetActivityStats(this.ctx, client, message);
+				break;
+
+			case 'stats_export':
+				handleStatsExport(this.ctx, client, message);
 				break;
 
 			case 'generate_director_notes_synopsis':

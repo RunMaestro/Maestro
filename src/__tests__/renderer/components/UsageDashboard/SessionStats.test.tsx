@@ -1,8 +1,8 @@
 /**
  * Tests for SessionStats component
  *
- * Verifies the worktree vs regular session breakdown introduced in
- * Doc 1 of the Dashboard Enhancements playbook (worktree differentiation).
+ * Agent Statistics: the four cards (via the widget StatCard), provider rows
+ * labeled by provider, and the range-scoped "active" footnote.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -43,101 +43,87 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 	} as Session;
 }
 
-describe('SessionStats - worktree breakdown', () => {
-	it('renders the Regular | Worktree stat pair when sessions exist', () => {
-		const sessions = [
-			makeSession(),
-			makeSession({ parentSessionId: 'parent-1' }),
-			makeSession({ parentSessionId: 'parent-1' }),
-		];
+describe('SessionStats - cards', () => {
+	it('labels the git card as agents in Git repos and counts worktree parents', () => {
+		const parent = makeSession({ id: 'p1', isGitRepo: true });
+		const child = makeSession({ parentSessionId: 'p1', isGitRepo: true });
+		const configuredOnly = makeSession({
+			isGitRepo: true,
+			worktreeConfig: { basePath: '/tmp/wt', watchEnabled: true },
+		});
 
-		render(<SessionStats sessions={sessions} theme={theme} />);
+		render(<SessionStats sessions={[parent, child, configuredOnly]} theme={theme} />);
 
-		const breakdown = screen.getByTestId('worktree-breakdown');
-		expect(breakdown).toBeInTheDocument();
-		expect(breakdown.textContent).toContain('Regular:');
-		expect(breakdown.textContent).toContain('1');
-		expect(breakdown.textContent).toContain('Worktree:');
-		expect(breakdown.textContent).toContain('2');
+		expect(screen.getByText('Agents in Git Repos')).toBeInTheDocument();
+		// Only the agent a worktree was actually spawned from is a parent.
+		expect(screen.getByText('1 with worktrees')).toBeInTheDocument();
 	});
 
-	it('counts parent agents (worktreeConfig set) as Regular, not Worktree', () => {
-		const sessions = [
-			makeSession({ worktreeConfig: { basePath: '/tmp/wt', watchEnabled: true } }),
-			makeSession({ parentSessionId: 'parent-1' }),
-		];
-
-		render(<SessionStats sessions={sessions} theme={theme} />);
-
-		const breakdown = screen.getByTestId('worktree-breakdown');
-		expect(breakdown).toHaveAttribute('aria-label', 'Regular: 1 | Worktree: 1');
-	});
-
-	it('shows zero counts when there are no worktree children', () => {
-		const sessions = [makeSession(), makeSession()];
-
-		render(<SessionStats sessions={sessions} theme={theme} />);
-
-		const breakdown = screen.getByTestId('worktree-breakdown');
-		expect(breakdown).toHaveAttribute('aria-label', 'Regular: 2 | Worktree: 0');
-	});
-
-	it('excludes terminal sessions from the worktree breakdown', () => {
-		const sessions = [
-			makeSession({ toolType: 'terminal' }),
-			makeSession({ toolType: 'terminal', parentSessionId: 'p1' }),
-			makeSession(),
-			makeSession({ parentSessionId: 'p2' }),
-		];
-
-		render(<SessionStats sessions={sessions} theme={theme} />);
-
-		const breakdown = screen.getByTestId('worktree-breakdown');
-		expect(breakdown).toHaveAttribute('aria-label', 'Regular: 1 | Worktree: 1');
-	});
-
-	it('does not render the breakdown row when no agent sessions exist', () => {
-		render(<SessionStats sessions={[]} theme={theme} />);
-
+	it('no longer renders the duplicated Regular | Worktree line', () => {
+		render(
+			<SessionStats
+				sessions={[makeSession({ id: 'p9' }), makeSession({ parentSessionId: 'p9' })]}
+				theme={theme}
+			/>
+		);
 		expect(screen.queryByTestId('worktree-breakdown')).not.toBeInTheDocument();
+	});
+
+	it('counts an agent as remote from its typed SSH fields', () => {
+		const sessions = [
+			makeSession({ sshRemoteId: 'remote-1' }),
+			makeSession({
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			}),
+			makeSession(),
+		];
+
+		render(<SessionStats sessions={sessions} theme={theme} />);
+
+		expect(screen.getByText('2 remote')).toBeInTheDocument();
+	});
+
+	it('excludes terminal sessions from every count', () => {
+		render(
+			<SessionStats
+				sessions={[makeSession({ toolType: 'terminal' }), makeSession()]}
+				theme={theme}
+			/>
+		);
+		const cards = screen.getByTestId('session-stats-cards');
+		expect(cards.textContent).toContain('Total Agents');
+		expect(cards.textContent).toContain('1');
+		expect(cards.textContent).not.toContain('2');
+	});
+
+	it('says "No agents registered" when there are none', () => {
+		render(<SessionStats sessions={[]} theme={theme} />);
+		expect(screen.getByText('No agents registered')).toBeInTheDocument();
 	});
 });
 
-describe('SessionStats - agent type display names', () => {
-	it('shows the user-assigned name when only one session of that type exists', () => {
+describe('SessionStats - provider rows', () => {
+	it('labels a provider row with the provider name even when one agent uses it', () => {
 		const sessions = [makeSession({ name: 'Backend API', toolType: 'claude-code' })];
 
 		render(<SessionStats sessions={sessions} theme={theme} />);
 
-		expect(screen.getByText('Backend API')).toBeInTheDocument();
-		expect(screen.queryByText('Claude Code')).not.toBeInTheDocument();
-	});
-
-	it('shows the prettified type when multiple sessions share the type', () => {
-		const sessions = [
-			makeSession({ name: 'Frontend', toolType: 'claude-code' }),
-			makeSession({ name: 'Backend', toolType: 'claude-code' }),
-		];
-
-		render(<SessionStats sessions={sessions} theme={theme} />);
-
 		expect(screen.getByText('Claude Code')).toBeInTheDocument();
-		expect(screen.queryByText('Frontend')).not.toBeInTheDocument();
-		expect(screen.queryByText('Backend')).not.toBeInTheDocument();
+		expect(screen.queryByText('Backend API')).not.toBeInTheDocument();
 	});
 
-	it('uses canonical display names for known agent types via shared resolver', () => {
+	it('uses canonical display names for known providers', () => {
 		const sessions = [
 			makeSession({ name: 'A', toolType: 'opencode' }),
 			makeSession({ name: 'B', toolType: 'opencode' }),
 			makeSession({ name: 'C', toolType: 'factory-droid' }),
-			makeSession({ name: 'D', toolType: 'factory-droid' }),
 		];
 
 		render(<SessionStats sessions={sessions} theme={theme} />);
 
 		expect(screen.getByText('OpenCode')).toBeInTheDocument();
 		expect(screen.getByText('Factory Droid')).toBeInTheDocument();
+		expect(screen.getByText('Agents by Provider')).toBeInTheDocument();
 	});
 });
 
@@ -155,9 +141,6 @@ describe('SessionStats - active agents in range', () => {
 			byDay: [],
 			byHour: [],
 			totalSessions: 0,
-			sessionsByAgent: {},
-			sessionsByDay: [],
-			avgSessionDuration: 0,
 			byAgentByDay: {},
 			bySessionByDay,
 			bySessionSource: {},
@@ -175,7 +158,7 @@ describe('SessionStats - active agents in range', () => {
 			/>
 		);
 
-		expect(screen.getByText('1 active')).toBeInTheDocument();
+		expect(screen.getByText('1 active in range')).toBeInTheDocument();
 	});
 
 	it('shares the footnote line with the bookmarked count', () => {
@@ -190,7 +173,7 @@ describe('SessionStats - active agents in range', () => {
 			/>
 		);
 
-		expect(screen.getByText('1 active \u00b7 1 bookmarked')).toBeInTheDocument();
+		expect(screen.getByText('1 active in range \u00b7 1 bookmarked')).toBeInTheDocument();
 	});
 
 	it('omits the active line entirely when no stats are supplied', () => {

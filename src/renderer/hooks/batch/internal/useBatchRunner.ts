@@ -584,6 +584,8 @@ export function useBatchRunner({
 			// Collect Claude session IDs and track completion
 			const agentSessionIds: string[] = [];
 			let totalCompletedTasks = 0;
+			// Agent invocations recorded to auto_run_tasks, productive or not.
+			let agentTurnIndex = 0;
 			let loopIteration = 0;
 
 			// Register this Auto Run for emergency stats/history flush on force-kill.
@@ -1078,14 +1080,18 @@ export function useBatchRunner({
 							totalCompletedTasks += tasksCompletedThisRun;
 							loopTasksCompleted += tasksCompletedThisRun;
 
-							// Record this task in stats database (if stats tracking is active)
-							if (statsAutoRunId && tasksCompletedThisRun > 0) {
+							// Record this agent TURN in the stats database (if stats tracking
+							// is active). Every invocation is recorded, including turns that
+							// ticked no checkbox, so the dashboard's turn durations and
+							// time-of-day chart see stalled turns too; checkbox counts come
+							// from the run row, not from here.
+							if (statsAutoRunId) {
 								try {
 									await window.maestro.stats.recordAutoTask({
 										autoRunSessionId: statsAutoRunId,
 										sessionId: sessionId,
 										agentType: session.toolType,
-										taskIndex: totalCompletedTasks - 1, // 0-indexed
+										taskIndex: agentTurnIndex++, // 0-indexed turn within the run
 										taskContent: shortSummary || undefined,
 										startTime: Date.now() - elapsedTimeMs,
 										duration: elapsedTimeMs,
@@ -1732,10 +1738,14 @@ export function useBatchRunner({
 				// End stats tracking for this Auto Run session
 				if (statsAutoRunId) {
 					try {
+						// A looping run ticks the same checkboxes once per loop, so its
+						// completions can pass the start-time total; report the larger
+						// figure (the same one the run's own summary shows).
 						await window.maestro.stats.endAutoRun(
 							statsAutoRunId,
 							finalTotals.totalElapsedMs,
-							finalTotals.totalCompletedTasks
+							finalTotals.totalCompletedTasks,
+							Math.max(initialTotalTasks, finalTotals.totalCompletedTasks)
 						);
 					} catch (statsError) {
 						// Don't fail cleanup if stats tracking fails

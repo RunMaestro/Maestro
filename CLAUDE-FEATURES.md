@@ -20,8 +20,7 @@ src/renderer/components/UsageDashboard/
 ├── GroupOverviewCards.tsx       # Per-group cards (Groups tab); GroupDetailModal.tsx is its sub-modal
 ├── EntityTile.tsx               # Shared card-grid tile behind the agent grid and the group grid (and MetricCard)
 ├── MetricCard.tsx               # Metric tile; MetricModeToggle.tsx switches its mode
-├── SessionStats.tsx             # Session statistics (Agent Overview tab)
-├── AgentEfficiencyChart.tsx     # Agent efficiency chart (Agent Overview tab)
+├── SessionStats.tsx             # Fleet statistics (Agent Overview tab); AgentCountTrendChart.tsx beside it (Agents Over Time)
 ├── AgentComparisonChart.tsx     # Bar chart comparing provider usage
 ├── AgentUsageChart.tsx          # Per-agent usage over time
 ├── WorktreeAnalytics.tsx        # Worktree-child session analytics
@@ -30,28 +29,27 @@ src/renderer/components/UsageDashboard/
 ├── RadialActivityChart.tsx      # Polar chart pair: hour-of-day + day-of-week (replaces flat Peak Hours)
 ├── YearInPixelsStrip.tsx        # Time-range-adaptive day-cell hero strip on the Overview tab (week/month/quarter/year/all)
 ├── ActivityHeatmap.tsx          # Weekly activity heatmap (GitHub-style)
-├── WeekdayComparisonChart.tsx   # Weekday vs weekend comparison (Activity tab)
 ├── DurationTrendsChart.tsx      # Line chart for duration over time
 ├── AutoRunStats.tsx             # Auto Run-specific statistics
 ├── TasksByHourChart.tsx         # Auto Run tasks-by-hour chart
 ├── LongestAutoRunsTable.tsx     # Longest Auto Runs leaderboard
-├── CueStats.tsx                 # Cue automation analytics (Cue tab, gated on Encore flags)
+├── CueStats/                    # Cue automation analytics (Cue tab, gated on Encore flags), one file per panel
 ├── TokenStats.tsx               # Tokens tab; with TokenSpeedStats, TokenSpeedCards, TokenSeriesContext, useTokenUsage.ts
 ├── DelegationScoreCard.tsx      # Delegation analytics; with DelegationSplitBar, DelegationTrendChart
-├── KeyboardStats.tsx            # Shortcuts tab; siblings WizardStats, ResilienceStats, PromptCadenceStats, PercentilesCard, ProviderTrendsChart, PeakHoursChart
+├── KeyboardStats.tsx            # Shortcuts tab; siblings WizardStats, ResilienceStats, PromptCadenceStats, PercentilesCard, ProviderTrendsChart
 ├── ClaudePlanUsage.tsx          # Provider quota tabs (CodexPlanUsage.tsx); shared pieces in quota/
 ├── UsageDashboardFooter.tsx     # Footer summary (useFooterSummary.ts)
-├── useDashboardResource.ts      # useCachedResource + stats:updated refresh for dashboard panels
-├── *Utils.ts                    # Pure helpers beside their chart (activityHeatmapUtils, agentOverviewUtils, autoRunStatsUtils, ...)
+├── useDashboardResource.ts      # useCachedResource + debounced, per-table stats:updated refresh for dashboard panels
+├── DashboardPanelState.tsx      # Shared loading / error / empty wrapper: a failed fetch shows an error, never "no data"
+├── *Utils.ts                    # Pure helpers beside their chart (activityHeatmapUtils, agentOverviewUtils, autoRunTableUtils, ...); Auto Run math lives in src/shared/autoRunMetrics.ts
 ├── chartUtils.ts                # Shared chart helpers (palettes, tooltip clamping)
 ├── ChartSkeletons.tsx           # Loading skeleton components (ChartLoadingOverlay.tsx, DetailPrimitives.tsx beside it)
-├── Sparkline.tsx                # Re-export shim over components/widgets/output/Sparkline
 ├── ChartErrorBoundary.tsx       # Re-export shim over components/widgets/output/ChartErrorBoundary
 ├── ChartTooltip.tsx             # Re-export shim over components/widgets/output/ChartTooltip
 └── EmptyState.tsx               # Empty state when no data
 ```
 
-`Sparkline`, `ChartErrorBoundary`, and `ChartTooltip` live in the widget library (`src/renderer/components/widgets/output/`); the files here are one-line shims kept for the old import path. Import from `components/widgets` in new code.
+`Sparkline`, `ChartErrorBoundary`, and `ChartTooltip` live in the widget library (`src/renderer/components/widgets/output/`); the `ChartErrorBoundary` and `ChartTooltip` files here are one-line shims kept for the old import path. Import from `components/widgets` in new code.
 
 ### Backend Components
 
@@ -59,14 +57,26 @@ src/renderer/components/UsageDashboard/
 src/main/
 ├── stats/                       # SQLite database (better-sqlite3) with WAL mode, split across ~25 modules
 │   ├── stats-db.ts              # The StatsDB class; schema.ts + migrations.ts own the tables
-│   ├── aggregations.ts          # Dashboard aggregate queries
-│   ├── query-events-buffer.ts   # Buffered query_events inserts
+│   ├── aggregations.ts          # StatsAggregation: a few grouped passes, memoized per range until the DB changes
+│   ├── query-events-buffer.ts   # Buffered query_events inserts; announces 'query_events' after each commit
 │   ├── wizard-runs.ts           # wizard_runs reads/writes
-│   ├── usage-export.ts          # Export
+│   ├── usage-export.ts          # Export (JSON or CSV zip), shared with maestro-cli stats-export
+│   ├── usage-dashboard-reads.ts # Reads shared by IPC and the CLI (delegation, Cue, quota)
 │   └── tables: query_events, auto_run_sessions, auto_run_tasks, session_lifecycle, image_annotations,
-│       shortcut_usage_daily, multi_window_usage_daily, resilience_events, wizard_runs, _meta, _migrations
+│       shortcut_usage_daily, shortcut_usage_by_id, multi_window_usage_daily, resilience_events, wizard_runs,
+│       _meta, _migrations
 └── ipc/handlers/stats.ts        # IPC handlers for stats operations
 ```
+
+There is NO retention: nothing prunes `stats.db`, so All Time means "since the
+database was created (or last reset after corruption)", and
+`StatsAggregation.earliestQueryAt` says when that was. Every bounded range is
+calendar-aligned (`getTimeRangeStart()` in `src/shared/statsTimeRange.ts`): N
+whole local days, today included. `byDay` is gap-filled over
+`StatsAggregation.window`; per-entity day series stay sparse, so fill them with
+`fillDaySeries()` from `src/shared/daySeries.ts` before drawing.
+`totalSessions` is distinct AGENTS with at least one query in the range. Full
+field list and the aggregation passes: `docs/agent-guides/STATS-ANALYTICS.md`.
 
 `src/main/utils/statsCache.ts` is NOT dashboard caching: it caches Claude session statistics for the session browser.
 
@@ -75,16 +85,17 @@ src/main/
 **Real-time Updates:**
 
 ```typescript
-// Backend broadcasts after each database write
-mainWindow?.webContents.send('stats:updated');
+// Backend: every write names the table it touched, and reaches every window
+// plus web-desktop clients (query events: after the buffer commits them)
+safeSend('stats:updated', 'auto_run');
 
-// Frontend subscribes with debouncing
-useEffect(() => {
-	const unsubscribe = window.maestro.stats.onStatsUpdate(() => {
-		debouncedRefresh();
-	});
-	return () => unsubscribe?.();
-}, []);
+// Frontend panel: refetch only for the tables it reads, debounced
+const { data, loading, error } = useDashboardResource(
+	`autorun-sessions:${timeRange}`,
+	() => window.maestro.stats.getAutoRunSessions(timeRange),
+	'fetchAutoRunStats',
+	{ tables: ['auto_run'] }
+);
 ```
 
 **Colorblind-Friendly Palettes:**
@@ -106,7 +117,7 @@ import { COLORBLIND_AGENT_PALETTE, getColorBlindAgentColor } from '../constants/
 
 ```typescript
 // In settingsStore.ts
-statsCollectionEnabled: boolean; // Enable/disable stats collection (default: true)
+statsCollectionEnabled: boolean; // Record new stats (default: true); kept in sync with the Usage & Stats Encore toggle. Closing an existing Auto Run or agent record still works when off
 defaultStatsTimeRange: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'; // Default time filter (default: 'week')
 colorBlindMode: boolean; // Use accessible color palettes
 preventSleepEnabled: boolean; // Prevent system sleep while agents are busy (default: false)

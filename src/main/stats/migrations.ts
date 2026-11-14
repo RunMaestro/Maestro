@@ -28,6 +28,8 @@ import {
 	CREATE_IMAGE_ANNOTATIONS_SQL,
 	CREATE_IMAGE_ANNOTATIONS_INDEXES_SQL,
 	CREATE_SHORTCUT_USAGE_DAILY_SQL,
+	CREATE_SHORTCUT_USAGE_BY_ID_SQL,
+	CREATE_QUERY_START_SESSION_INDEX_SQL,
 	CREATE_MULTI_WINDOW_USAGE_DAILY_SQL,
 	ADD_QUERY_EVENT_TOKEN_COLUMNS,
 	CREATE_RESILIENCE_EVENTS_SQL,
@@ -132,6 +134,13 @@ function getMigrations(): Migration[] {
 			description: 'Add active_ms column to wizard_runs so wizard time excludes idle tabs',
 			up: (db) => migrateV13(db),
 			isApplied: (db) => hasColumn(db, 'wizard_runs', 'active_ms'),
+		},
+		{
+			version: 14,
+			description:
+				'Add shortcut_usage_by_id table and the (start_time, session_id) index on query_events',
+			up: (db) => migrateV14(db),
+			isApplied: (db) => hasTable(db, 'shortcut_usage_by_id'),
 		},
 	];
 }
@@ -490,6 +499,21 @@ function migrateV13(db: Database.Database): void {
 		db.prepare('ALTER TABLE wizard_runs ADD COLUMN active_ms INTEGER').run();
 	}
 	logger.debug('Added active_ms column to wizard_runs', LOG_CONTEXT);
+}
+
+/**
+ * Migration v14:
+ * - `shortcut_usage_by_id`: per-shortcut, per-day firing counts, so the
+ *   Shortcuts tab can show which shortcuts get used. History before this
+ *   version only has the daily total, so the per-shortcut list starts empty.
+ * - `idx_query_start_session`: covers the dashboard's "distinct agents with a
+ *   query in range" count.
+ * Both statements are idempotent, so a partially applied run is safe to repeat.
+ */
+function migrateV14(db: Database.Database): void {
+	db.prepare(CREATE_SHORTCUT_USAGE_BY_ID_SQL).run();
+	db.prepare(CREATE_QUERY_START_SESSION_INDEX_SQL).run();
+	logger.debug('Created shortcut_usage_by_id table and idx_query_start_session', LOG_CONTEXT);
 }
 
 /**

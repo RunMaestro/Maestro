@@ -7,10 +7,10 @@
  * That is the difference from the dashboard's "Queries", which counts every
  * agent turn including Auto Run.
  *
- * The per-day figures are CALENDAR-true, which a rolling window is not: a
- * "week" is the last seven local days including today, zero days included, so
- * an average per day really divides by days rather than by days that happened
- * to have activity. Today is still in progress, so it counts toward the total,
+ * The per-day figures are CALENDAR-true: the window is the dashboard's
+ * calendar-aligned range (`getTimeRangeStart`), so "Last 7 days" is the last
+ * seven local days including today, zero days included, and an average per day
+ * really divides by days rather than by days that happened to have activity. Today is still in progress, so it counts toward the total,
  * the active-day count and the streaks, but is left out of every per-day
  * distribution (average, median, min, weekday averages); otherwise each
  * morning would drag the average down and report today as the quietest day.
@@ -23,7 +23,7 @@
 import { percentilesFromSorted, emptyPercentiles, type DurationPercentiles } from './percentiles';
 import { addLocalDays, parseLocalYmd, toLocalYmd } from './localDay';
 import type { StatsTimeRange } from './stats-types';
-import { STATS_RANGE_DAYS } from './statsTimeRange';
+import { getTimeRangeStart } from './statsTimeRange';
 
 /**
  * Two prompts further apart than this belong to different working stretches.
@@ -31,13 +31,6 @@ import { STATS_RANGE_DAYS } from './statsTimeRange';
  * the time-between-prompts distribution.
  */
 export const PROMPT_STRETCH_BREAK_MS = 30 * 60 * 1000;
-
-/**
- * Calendar days (today included) each bounded range covers. The same day
- * counts as every other range, read as whole calendar days rather than a
- * rolling window back from now.
- */
-export const PROMPT_WINDOW_DAYS = STATS_RANGE_DAYS;
 
 /** One local calendar day and how many prompts were sent on it. */
 export interface PromptDay {
@@ -71,7 +64,13 @@ export interface PromptCadence {
 	busiestDay: PromptDay | null;
 	/** Complete day with the fewest prompts among days that had any. */
 	quietestActiveDay: PromptDay | null;
-	/** Consecutive days with a prompt, ending today (or yesterday, if today has none yet). */
+	/**
+	 * Consecutive days with a prompt, ending today (or yesterday, if today has
+	 * none yet), counted INSIDE the window: a range cannot see further back, so
+	 * a seven-day range caps it at seven. The dashboard labels it "in range".
+	 * (`StatsAggregation.streak` is the all-history figure, but it counts every
+	 * query, Auto Run included, so it is not the same measure.)
+	 */
 	currentStreak: number;
 	/** Longest run of consecutive days with a prompt in the window. */
 	longestStreak: number;
@@ -101,10 +100,11 @@ export interface PromptCadenceInput {
 }
 
 /**
- * The local day the window opens on: N calendar days back including today for
- * a bounded range, the first prompt ever for 'all'. Never earlier than the
- * first prompt ever, so a week-old install does not average a month over
- * three weeks in which Maestro did not exist.
+ * The local day the window opens on: the dashboard range's first day
+ * (`getTimeRangeStart`, so every tab reads the same calendar window), or the
+ * first prompt ever for 'all'. Never earlier than the first prompt ever, so a
+ * week-old install does not average a month over three weeks in which Maestro
+ * did not exist.
  */
 export function promptWindowStart(
 	range: StatsTimeRange,
@@ -114,7 +114,7 @@ export function promptWindowStart(
 	if (firstPromptAt === null) return null;
 	const first = toLocalYmd(firstPromptAt);
 	if (range === 'all') return first;
-	const rangeStart = addLocalDays(toLocalYmd(now), -(PROMPT_WINDOW_DAYS[range] - 1));
+	const rangeStart = toLocalYmd(getTimeRangeStart(range, now));
 	return rangeStart > first ? rangeStart : first;
 }
 

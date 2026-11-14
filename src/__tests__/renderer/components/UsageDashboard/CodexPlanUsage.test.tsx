@@ -1,16 +1,16 @@
 /**
  * Tests for CodexPlanUsage
  *
- * Mirrors the ClaudePlanUsage coverage for the Codex quota widget:
- *   - empty state when no Codex accounts are configured
+ * Mirrors the ClaudePlanUsage coverage for the Codex quota widget (both are
+ * the shared PlanUsagePanel, which always lists every account):
  *   - configured CODEX_HOME accounts with no cached snapshot
- *   - multi-account tab selection
+ *   - every account listed, plan chip
  *   - accessible quota progress bars
  *   - non-authenticated/error rows
  *   - refresh IPC wiring, incl. the Cmd+R hotkey
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { CodexPlanUsage } from '../../../../renderer/components/UsageDashboard/CodexPlanUsage';
 import { useCodexUsageStore } from '../../../../renderer/stores/codexUsageStore';
@@ -47,6 +47,14 @@ beforeEach(() => {
 	useModalStore.getState().closeAll();
 	useAuthOutageStore.setState({ outages: {} });
 	cleanup();
+	// The fixtures' reset times are in May 2026; pin "now" before them so a
+	// window is not read as already reset (which draws it at 0%).
+	vi.useFakeTimers({ toFake: ['Date'] });
+	vi.setSystemTime(new Date('2026-05-15T01:00:00.000Z'));
+});
+
+afterEach(() => {
+	vi.useRealTimers();
 });
 
 function seedSnapshots(snapshots: Record<string, any>) {
@@ -64,15 +72,6 @@ function seedSessions(codexHomes: string[]) {
 	useSessionStore.setState({ sessions } as any);
 }
 
-describe('CodexPlanUsage - empty state', () => {
-	it('renders the empty message when no Codex accounts are configured and no snapshots are cached', () => {
-		render(<CodexPlanUsage theme={theme} />);
-
-		expect(screen.getByTestId('codex-plan-empty')).toBeInTheDocument();
-		expect(screen.queryByTestId('codex-plan-row-default')).toBeNull();
-	});
-});
-
 describe('CodexPlanUsage - configured account without snapshot', () => {
 	it('renders a "hit Refresh" CTA for a session-configured account with no snapshot yet', () => {
 		seedSessions(['/Users/me/.codex-pending']);
@@ -83,7 +82,7 @@ describe('CodexPlanUsage - configured account without snapshot', () => {
 		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
 	});
 
-	it('mixes a configured-but-empty tab with an authenticated one', () => {
+	it('lists a configured-but-empty account beside an authenticated one', () => {
 		seedSnapshots({
 			'/Users/me/.codex': {
 				sampledAt: '2026-05-15T00:00:00.000Z',
@@ -97,12 +96,9 @@ describe('CodexPlanUsage - configured account without snapshot', () => {
 
 		render(<CodexPlanUsage theme={theme} />);
 
-		expect(screen.getByTestId('codex-plan-tab-default')).toBeInTheDocument();
-		expect(screen.getByTestId('codex-plan-tab-pending')).toBeInTheDocument();
-
-		fireEvent.click(screen.getByTestId('codex-plan-tab-pending'));
+		expect(screen.getByTestId('codex-plan-row-default')).toBeInTheDocument();
 		expect(screen.getByTestId('codex-plan-row-pending-pending')).toBeInTheDocument();
-		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
+		expect(screen.getAllByRole('progressbar')).toHaveLength(2);
 	});
 });
 
@@ -158,13 +154,14 @@ describe('CodexPlanUsage - window length labels', () => {
 	});
 });
 
-describe('CodexPlanUsage - multi-account tabs', () => {
-	it('renders a tab per account but only one selected row at a time', () => {
+describe('CodexPlanUsage - multi-account list', () => {
+	it('lists every account with no tab bar, and the plan as a badge', () => {
 		seedSnapshots({
 			'/Users/me/.codex': {
 				sampledAt: '2026-05-15T00:00:00.000Z',
 				codexHomeKey: '/Users/me/.codex',
 				authState: 'authenticated',
+				planType: 'pro',
 				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
 				weekly: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
 			},
@@ -179,41 +176,12 @@ describe('CodexPlanUsage - multi-account tabs', () => {
 
 		render(<CodexPlanUsage theme={theme} />);
 
-		expect(screen.getByTestId('codex-plan-account-tabs')).toBeInTheDocument();
-		expect(screen.getByTestId('codex-plan-tab-default')).toBeInTheDocument();
-		expect(screen.getByTestId('codex-plan-tab-work')).toBeInTheDocument();
-
+		expect(screen.queryByTestId('codex-plan-account-tabs')).toBeNull();
 		expect(screen.getByTestId('codex-plan-row-default')).toBeInTheDocument();
-		expect(screen.queryByTestId('codex-plan-row-work')).toBeNull();
-		expect(screen.getAllByRole('progressbar')).toHaveLength(2);
-	});
-
-	it('switches the visible row when another Codex account tab is clicked', () => {
-		seedSnapshots({
-			'/Users/me/.codex': {
-				sampledAt: '2026-05-15T00:00:00.000Z',
-				codexHomeKey: '/Users/me/.codex',
-				authState: 'authenticated',
-				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
-				weekly: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
-			},
-			'/Users/me/.codex-work': {
-				sampledAt: '2026-05-15T00:00:00.000Z',
-				codexHomeKey: '/Users/me/.codex-work',
-				authState: 'authenticated',
-				session: { percent: 97, resetsAt: '2026-05-15T05:00:00.000Z' },
-				weekly: { percent: 80, resetsAt: '2026-05-22T00:00:00.000Z' },
-			},
-		});
-
-		render(<CodexPlanUsage theme={theme} />);
-
-		fireEvent.click(screen.getByTestId('codex-plan-tab-work'));
-
-		expect(screen.queryByTestId('codex-plan-row-default')).toBeNull();
 		expect(screen.getByTestId('codex-plan-row-work')).toBeInTheDocument();
+		expect(screen.getAllByRole('progressbar')).toHaveLength(4);
+		expect(screen.getByTestId('codex-plan-plan-default')).toHaveTextContent('pro');
 	});
-
 	it('exposes percentage values via aria-valuenow on each quota bar', () => {
 		seedSnapshots({
 			'/Users/me/.codex-work': {
@@ -282,7 +250,7 @@ describe('CodexPlanUsage - non-authenticated row', () => {
 			},
 		});
 
-		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+		render(<CodexPlanUsage theme={theme} />);
 		fireEvent.click(screen.getByTestId('codex-plan-row-banaco-unauthenticated-login'));
 
 		await waitFor(() => expect(selectModalData('reauth')(useModalStore.getState())).toBeDefined());
@@ -308,7 +276,7 @@ describe('CodexPlanUsage - non-authenticated row', () => {
 			},
 		});
 
-		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+		render(<CodexPlanUsage theme={theme} />);
 		fireEvent.click(screen.getByTestId('codex-plan-row-default-missing_auth-login'));
 
 		await waitFor(() => expect(selectModalData('reauth')(useModalStore.getState())).toBeDefined());
@@ -414,7 +382,7 @@ describe('CodexPlanUsage - refresh wiring', () => {
 	});
 });
 
-describe('CodexPlanUsage - hide/show accounts (list view)', () => {
+describe('CodexPlanUsage - hide/show accounts', () => {
 	function seedTwoAccounts() {
 		seedSnapshots({
 			'/Users/me/.codex': {
@@ -436,7 +404,7 @@ describe('CodexPlanUsage - hide/show accounts (list view)', () => {
 
 	it('hides a row, surfaces Show all, and brings it back when unhidden', () => {
 		seedTwoAccounts();
-		render(<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<CodexPlanUsage theme={theme} />);
 
 		// Both rows render; no Show all button until something is hidden.
 		expect(screen.getByTestId('codex-plan-account-default')).toBeInTheDocument();
@@ -461,36 +429,26 @@ describe('CodexPlanUsage - hide/show accounts (list view)', () => {
 
 	it('persists the hidden set through uiStore so it survives a remount', () => {
 		seedTwoAccounts();
-		const { unmount } = render(
-			<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />
-		);
+		const { unmount } = render(<CodexPlanUsage theme={theme} />);
 
 		fireEvent.click(screen.getByTestId('codex-plan-visibility-work'));
 		expect(useUIStore.getState().hiddenQuotaAccounts['codex']).toEqual(['/Users/me/.codex-work']);
 
 		unmount();
-		render(<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<CodexPlanUsage theme={theme} />);
 		expect(screen.queryByTestId('codex-plan-account-work')).toBeNull();
 		expect(screen.getByTestId('codex-plan-show-all')).toHaveTextContent('Show all (1)');
 	});
 
 	it('shows an all-hidden hint when every account is hidden', () => {
 		seedTwoAccounts();
-		render(<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<CodexPlanUsage theme={theme} />);
 
 		fireEvent.click(screen.getByTestId('codex-plan-visibility-default'));
 		fireEvent.click(screen.getByTestId('codex-plan-visibility-work'));
 
 		expect(screen.getByTestId('codex-plan-all-hidden')).toBeInTheDocument();
 		expect(screen.getByTestId('codex-plan-show-all')).toHaveTextContent('Show all (2)');
-	});
-
-	it('does not render per-row hide toggles in tab (single-account) view', () => {
-		seedTwoAccounts();
-		render(<CodexPlanUsage theme={theme} />);
-
-		expect(screen.queryByTestId('codex-plan-visibility-default')).toBeNull();
-		expect(screen.queryByTestId('codex-plan-show-all')).toBeNull();
 	});
 });
 
@@ -510,7 +468,7 @@ describe('CodexPlanUsage - agent count badge', () => {
 		});
 		seedSessions(['/Users/me/.codex-work', '/Users/me/.codex-work', '/Users/me/.codex-side']);
 
-		render(<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<CodexPlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('codex-plan-agents-work')).toHaveTextContent('2 agents');
 		expect(screen.getByTestId('codex-plan-agents-side')).toHaveTextContent('1 agent');
@@ -519,7 +477,7 @@ describe('CodexPlanUsage - agent count badge', () => {
 	it('shows the count on an account that has no snapshot yet', () => {
 		seedSessions(['/Users/me/.codex-pending']);
 
-		render(<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<CodexPlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('codex-plan-row-pending-pending')).toBeInTheDocument();
 		expect(screen.getByTestId('codex-plan-agents-pending')).toHaveTextContent('1 agent');
@@ -541,7 +499,7 @@ describe('CodexPlanUsage - sample age', () => {
 			},
 		});
 
-		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+		render(<CodexPlanUsage theme={theme} />);
 		expect(screen.queryByTestId('codex-plan-last-refreshed')).toBeNull();
 		expect(screen.queryByText(/Last refreshed/)).toBeNull();
 	});

@@ -3,6 +3,7 @@ import { afterEach, vi } from 'vitest';
 import React from 'react';
 import { clearCachedResources } from '../renderer/hooks/utils/useCachedResource';
 import { emptyTokenSpeedSummary } from '../shared/tokenSpeed';
+import { toLocalYmd } from '../shared/localDay';
 
 // Create a mock icon component factory
 const createMockIcon = (name: string) => {
@@ -664,8 +665,14 @@ const mockMaestro = {
 			},
 			speed: emptyTokenSpeedSummary(),
 			coverageByAgent: {},
+			excluded: { unsupportedAgents: [], remoteProjects: 0 },
+			granularity: 'day',
+			windowStartMs: 0,
+			windowEndMs: 0,
 			generatedAtMs: 0,
 		}),
+		// An empty range: every StatsAggregation field present, so a panel that
+		// reads `window` or `streak` renders its empty state instead of throwing.
 		getAggregation: vi.fn().mockResolvedValue({
 			totalQueries: 0,
 			totalDuration: 0,
@@ -673,6 +680,22 @@ const mockMaestro = {
 			byAgent: {},
 			bySource: { user: 0, auto: 0 },
 			byDay: [],
+			byDayHour: [],
+			window: { startYmd: toLocalYmd(Date.now()), endYmd: toLocalYmd(Date.now()) },
+			earliestQueryAt: null,
+			streak: { current: 0, longest: 0 },
+			byLocation: { local: 0, remote: 0 },
+			byHour: [],
+			totalSessions: 0,
+			byAgentByDay: {},
+			bySessionByDay: {},
+			bySessionSource: {},
+			bySessionLastQuery: {},
+			bySessionTokens: {},
+			worktreeQueries: 0,
+			parentQueries: 0,
+			byAgentWorktree: {},
+			imageAnnotations: 0,
 		}),
 		// Interactive vs autonomous split (delegation surfaces). Zeroed so the
 		// dashboard renders the "nothing tracked yet" state rather than throwing.
@@ -687,7 +710,6 @@ const mockMaestro = {
 		endAutoRun: vi.fn().mockResolvedValue(true),
 		recordAutoTask: vi.fn().mockResolvedValue('task-id'),
 		getAutoRunSessions: vi.fn().mockResolvedValue([]),
-		getAutoRunTasks: vi.fn().mockResolvedValue([]),
 		exportUsage: vi.fn().mockResolvedValue({ path: '', format: 'json', rowCounts: {}, notes: [] }),
 		onStatsUpdate: vi.fn().mockReturnValue(() => {}),
 		recordResilience: vi.fn().mockResolvedValue('outage-id'),
@@ -696,13 +718,9 @@ const mockMaestro = {
 		recordWizardRun: vi.fn().mockResolvedValue('wizard-run-id'),
 		getWizardRuns: vi.fn().mockResolvedValue([]),
 		getDatabaseSize: vi.fn().mockResolvedValue(1024 * 1024), // 1MB mock
-		getEarliestTimestamp: vi.fn().mockResolvedValue(null),
-		clearOldData: vi.fn().mockResolvedValue({
-			success: true,
-			deletedQueryEvents: 0,
-			deletedAutoRunSessions: 0,
-			deletedAutoRunTasks: 0,
-		}),
+		// Stats database reset notice (null = opened cleanly)
+		getInitializationResult: vi.fn().mockResolvedValue(null),
+		clearInitializationResult: vi.fn().mockResolvedValue(true),
 		// Session lifecycle tracking
 		recordSessionCreated: vi.fn().mockResolvedValue('lifecycle-id'),
 		recordSessionClosed: vi.fn().mockResolvedValue(true),
@@ -711,6 +729,13 @@ const mockMaestro = {
 		recordShortcutUsage: vi.fn().mockResolvedValue(null),
 		getShortcutUsageByDay: vi.fn().mockResolvedValue([]),
 		getShortcutUsageTotal: vi.fn().mockResolvedValue(0),
+		getShortcutUsageByShortcut: vi.fn().mockResolvedValue([]),
+		// Auto Run agent turns per hour of day (Usage Dashboard, Auto Run tab)
+		getAutoRunTurnsByHour: vi
+			.fn()
+			.mockResolvedValue(
+				Array.from({ length: 24 }, (_, hour) => ({ hour, count: 0, successCount: 0 }))
+			),
 	},
 	sshRemote: {
 		getConfigs: vi.fn().mockResolvedValue({ success: true, configs: [] }),

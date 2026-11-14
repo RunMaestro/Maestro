@@ -4,7 +4,7 @@ import type { StatsTimeRange, UsageExportFormat } from '../../../../../shared/st
 import { useClickOutside } from '../../../../hooks/ui/useClickOutside';
 import { usePhoneLayout } from '../../../../hooks/ui/useViewportBreakpoint';
 import { AchievementShareButton } from '../../../AchievementShareButton';
-import { TIME_RANGE_OPTIONS } from '../constants';
+import { TIME_RANGE_OPTIONS, getTimeRangeLabel } from '../constants';
 import type { UsageDashboardModalProps } from '../types';
 import { elevatedSurfaceStyle } from '../../../../utils/elevatedSurface';
 
@@ -17,6 +17,8 @@ interface UsageDashboardHeaderProps {
 	theme: UsageDashboardModalProps['theme'];
 	showNewDataIndicator: boolean;
 	timeRange: StatsTimeRange;
+	/** First query ever recorded (ms), so All Time can say where it starts. */
+	earliestQueryAt?: number | null;
 	onTimeRangeChange: (timeRange: StatsTimeRange) => void;
 	onExport: (format: UsageExportFormat) => void;
 	isExporting: boolean;
@@ -32,6 +34,7 @@ export function UsageDashboardHeader({
 	theme,
 	showNewDataIndicator,
 	timeRange,
+	earliestQueryAt = null,
 	onTimeRangeChange,
 	onExport,
 	isExporting,
@@ -123,7 +126,7 @@ export function UsageDashboardHeader({
 					>
 						{TIME_RANGE_OPTIONS.map((option) => (
 							<option key={option.value} value={option.value}>
-								{option.label}
+								{getTimeRangeLabel(option.value, earliestQueryAt)}
 							</option>
 						))}
 					</select>

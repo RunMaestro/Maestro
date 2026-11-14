@@ -18,7 +18,7 @@ import { mockTheme } from '../../../helpers/mockTheme';
 // Mock theme for testing
 
 // Mock data for testing
-const mockStatsData: StatsAggregation = {
+const mockStatsData = {
 	totalQueries: 150,
 	totalDuration: 7200000, // 2 hours
 	avgDuration: 48000, // 48 seconds
@@ -41,18 +41,16 @@ const mockStatsData: StatsAggregation = {
 		{ hour: 9, count: 50, duration: 2400000 },
 		{ hour: 14, count: 100, duration: 4800000 },
 	],
+	byDayHour: [],
+	window: { startYmd: '2025-01-20', endYmd: '2025-01-22' },
+	earliestQueryAt: null,
+	streak: { current: 3, longest: 3 },
 	totalSessions: 25,
-	sessionsByAgent: { 'claude-code': 15, opencode: 6, 'gemini-cli': 4 },
-	sessionsByDay: [
-		{ date: '2025-01-20', count: 8 },
-		{ date: '2025-01-21', count: 9 },
-		{ date: '2025-01-22', count: 8 },
-	],
-	avgSessionDuration: 288000,
 	byAgentByDay: {},
 	bySessionByDay: {},
 	bySessionSource: {},
-};
+	byAgentWorktree: {},
+} as unknown as StatsAggregation;
 
 describe('Chart Accessibility - AgentComparisonChart', () => {
 	it('has role="figure" on the container', () => {
@@ -64,52 +62,37 @@ describe('Chart Accessibility - AgentComparisonChart', () => {
 	it('has descriptive aria-label on the container', () => {
 		render(<AgentComparisonChart data={mockStatsData} theme={mockTheme} />);
 		const figure = screen.getByRole('figure');
-		expect(figure).toHaveAttribute('aria-label');
 		expect(figure.getAttribute('aria-label')).toContain('Provider comparison chart');
-		expect(figure.getAttribute('aria-label')).toContain('3 providers displayed');
-	});
-
-	it('has proper aria attributes on meter elements', () => {
-		render(<AgentComparisonChart data={mockStatsData} theme={mockTheme} />);
-		const meters = screen.getAllByRole('meter');
-
-		// Component now shows unified view with meter elements for each agent bar
-		expect(meters.length).toBeGreaterThanOrEqual(1);
-		meters.forEach((meter) => {
-			expect(meter).toHaveAttribute('aria-valuenow');
-			expect(meter).toHaveAttribute('aria-valuemin', '0');
-			expect(meter).toHaveAttribute('aria-valuemax', '100');
-		});
+		expect(figure.getAttribute('aria-label')).toContain('3 rows displayed');
 	});
 
 	it('has role="list" on the data container', () => {
 		render(<AgentComparisonChart data={mockStatsData} theme={mockTheme} />);
-		const list = screen.getByRole('list', { name: /agent usage data/i });
+		const list = screen.getByRole('list', { name: /provider usage data/i });
 		expect(list).toBeInTheDocument();
 	});
 
-	it('has role="listitem" on each agent row', () => {
+	it('labels each provider row with all three measures', () => {
 		render(<AgentComparisonChart data={mockStatsData} theme={mockTheme} />);
-		const listItems = screen.getAllByRole('listitem');
-		// 3 agent rows + up to 6 legend items
-		expect(listItems.length).toBeGreaterThanOrEqual(3);
-	});
-
-	it('has role="meter" on progress bars', () => {
-		render(<AgentComparisonChart data={mockStatsData} theme={mockTheme} />);
-		const meters = screen.getAllByRole('meter');
-		expect(meters).toHaveLength(3);
-		meters.forEach((meter) => {
-			expect(meter).toHaveAttribute('aria-valuenow');
-			expect(meter).toHaveAttribute('aria-valuemin', '0');
-			expect(meter).toHaveAttribute('aria-valuemax', '100');
+		const list = screen.getByRole('list', { name: /provider usage data/i });
+		const rows = within(list).getAllByRole('listitem');
+		expect(rows).toHaveLength(3);
+		rows.forEach((row) => {
+			const label = row.getAttribute('aria-label') || '';
+			expect(label).toMatch(/quer(y|ies)/);
+			expect(label).toContain('total');
+			expect(label).toContain('average');
 		});
 	});
 
-	it('has legend with role="list"', () => {
+	it('has aria-pressed on the metric toggle buttons', () => {
 		render(<AgentComparisonChart data={mockStatsData} theme={mockTheme} />);
-		const legend = screen.getByRole('list', { name: /chart legend/i });
-		expect(legend).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /show query count/i })).toHaveAttribute(
+			'aria-pressed'
+		);
+		expect(screen.getByRole('button', { name: /show average time per query/i })).toHaveAttribute(
+			'aria-pressed'
+		);
 	});
 });
 
@@ -120,26 +103,25 @@ describe('Chart Accessibility - SourceDistributionChart', () => {
 		expect(figure).toBeInTheDocument();
 	});
 
-	it('has descriptive aria-label mentioning session type', () => {
+	it('has descriptive aria-label naming the query source', () => {
 		render(<SourceDistributionChart data={mockStatsData} theme={mockTheme} />);
 		const figure = screen.getByRole('figure');
-		expect(figure.getAttribute('aria-label')).toContain('Session Type');
+		expect(figure.getAttribute('aria-label')).toContain('Query source chart');
 	});
 
 	it('has aria-pressed on toggle buttons', () => {
 		render(<SourceDistributionChart data={mockStatsData} theme={mockTheme} />);
 		const countButton = screen.getByRole('button', { name: /show query count/i });
-		const durationButton = screen.getByRole('button', { name: /show total duration/i });
+		const tokensButton = screen.getByRole('button', { name: /show token usage/i });
 
 		expect(countButton).toHaveAttribute('aria-pressed');
-		expect(durationButton).toHaveAttribute('aria-pressed');
+		expect(tokensButton).toHaveAttribute('aria-pressed');
 	});
 
 	it('has role="img" on the SVG donut chart', () => {
 		render(<SourceDistributionChart data={mockStatsData} theme={mockTheme} />);
 		const svgChart = screen.getByRole('img');
-		expect(svgChart).toHaveAttribute('aria-label');
-		expect(svgChart.getAttribute('aria-label')).toContain('Donut chart');
+		expect(svgChart.getAttribute('aria-label')).toContain('Query source');
 	});
 
 	it('has legend with role="list" and listitem roles', () => {
@@ -165,129 +147,70 @@ describe('Chart Accessibility - SourceDistributionChart', () => {
 });
 
 describe('Chart Accessibility - ActivityHeatmap', () => {
-	it('has role="figure" on the container', () => {
-		render(<ActivityHeatmap data={mockStatsData} timeRange="week" theme={mockTheme} />);
-		const figure = screen.getByRole('figure');
-		expect(figure).toBeInTheDocument();
-	});
-
-	it('has descriptive aria-label mentioning activity heatmap', () => {
-		render(<ActivityHeatmap data={mockStatsData} timeRange="week" theme={mockTheme} />);
+	it('has a figure with a descriptive aria-label', () => {
+		render(<ActivityHeatmap data={mockStatsData} theme={mockTheme} />);
 		const figure = screen.getByRole('figure');
 		expect(figure.getAttribute('aria-label')).toContain('Activity heatmap');
 		expect(figure.getAttribute('aria-label')).toContain('days');
 	});
 
 	it('has aria-pressed on toggle buttons', () => {
-		render(<ActivityHeatmap data={mockStatsData} timeRange="week" theme={mockTheme} />);
-		const countButton = screen.getByRole('button', { name: /show query count/i });
-		const durationButton = screen.getByRole('button', { name: /show total duration/i });
-
-		expect(countButton).toHaveAttribute('aria-pressed');
-		expect(durationButton).toHaveAttribute('aria-pressed');
+		render(<ActivityHeatmap data={mockStatsData} theme={mockTheme} />);
+		expect(screen.getByRole('button', { name: /show query count/i })).toHaveAttribute(
+			'aria-pressed'
+		);
+		expect(screen.getByRole('button', { name: /show total duration/i })).toHaveAttribute(
+			'aria-pressed'
+		);
 	});
 
-	it('has role="gridcell" on heatmap cells', () => {
-		render(<ActivityHeatmap data={mockStatsData} timeRange="week" theme={mockTheme} />);
-		const cells = screen.getAllByRole('gridcell');
+	it('cells carry descriptive aria-labels with real counts', () => {
+		render(<ActivityHeatmap data={mockStatsData} theme={mockTheme} />);
+		const cells = screen.getAllByTestId('activity-heatmap-cell');
 		expect(cells.length).toBeGreaterThan(0);
-	});
-
-	it('heatmap cells have descriptive aria-labels', () => {
-		render(<ActivityHeatmap data={mockStatsData} timeRange="week" theme={mockTheme} />);
-		const cells = screen.getAllByRole('gridcell');
-
 		cells.forEach((cell) => {
-			expect(cell).toHaveAttribute('aria-label');
-			const label = cell.getAttribute('aria-label') || '';
-			expect(label).toMatch(/\d+ quer(y|ies)/); // Contains query count
+			expect(cell.getAttribute('aria-label') || '').toMatch(/\d+ quer(y|ies)/);
 		});
 	});
 
-	it('heatmap cells are keyboard focusable', () => {
-		render(<ActivityHeatmap data={mockStatsData} timeRange="week" theme={mockTheme} />);
-		const cells = screen.getAllByRole('gridcell');
-
-		cells.forEach((cell) => {
-			expect(cell).toHaveAttribute('tabIndex', '0');
+	it('is one tab stop (roving), not one per cell', () => {
+		render(<ActivityHeatmap data={mockStatsData} theme={mockTheme} />);
+		expect(screen.getByTestId('activity-heatmap-grid')).toHaveAttribute('tabIndex', '0');
+		screen.getAllByTestId('activity-heatmap-cell').forEach((cell) => {
+			expect(cell).not.toHaveAttribute('tabIndex');
 		});
 	});
 
-	it('legend has role="list" with descriptive items', () => {
-		render(<ActivityHeatmap data={mockStatsData} timeRange="week" theme={mockTheme} />);
-		const legend = screen.getByRole('list', { name: /intensity scale/i });
-		expect(legend).toBeInTheDocument();
-
-		const legendItems = within(legend).getAllByRole('listitem');
-		expect(legendItems).toHaveLength(5); // 5 intensity levels
-	});
-
-	it('legend items describe intensity levels', () => {
-		render(<ActivityHeatmap data={mockStatsData} timeRange="week" theme={mockTheme} />);
+	it('legend has role="list" with five described levels', () => {
+		render(<ActivityHeatmap data={mockStatsData} theme={mockTheme} />);
 		const legend = screen.getByRole('list', { name: /intensity scale/i });
 		const legendItems = within(legend).getAllByRole('listitem');
-
+		expect(legendItems).toHaveLength(5);
 		const labels = legendItems.map((item) => item.getAttribute('aria-label') || '');
 		expect(labels.some((l) => l.includes('No activity'))).toBe(true);
 		expect(labels.some((l) => l.includes('High'))).toBe(true);
 	});
 });
-
 describe('Chart Accessibility - DurationTrendsChart', () => {
-	it('has role="figure" on the container', () => {
-		render(<DurationTrendsChart data={mockStatsData} timeRange="week" theme={mockTheme} />);
+	it('has a figure whose aria-label names what is plotted', () => {
+		render(<DurationTrendsChart data={mockStatsData} theme={mockTheme} />);
 		const figure = screen.getByRole('figure');
-		expect(figure).toBeInTheDocument();
+		expect(figure.getAttribute('aria-label')).toContain('Mean query duration');
 	});
 
-	it('has descriptive aria-label mentioning duration trends', () => {
-		render(<DurationTrendsChart data={mockStatsData} timeRange="week" theme={mockTheme} />);
-		const figure = screen.getByRole('figure');
-		expect(figure.getAttribute('aria-label')).toContain('Duration trends chart');
+	it('draws the line chart as one labeled image with no per-point tab stops', () => {
+		const { container } = render(<DurationTrendsChart data={mockStatsData} theme={mockTheme} />);
+		const chart = screen.getByRole('img');
+		expect(chart.getAttribute('aria-label')).toContain('Mean query duration');
+		expect(container.querySelectorAll('[tabindex="0"]')).toHaveLength(0);
 	});
 
-	it('has role="img" on the SVG chart', () => {
-		render(<DurationTrendsChart data={mockStatsData} timeRange="week" theme={mockTheme} />);
-		const svgChart = screen.getByRole('img');
-		expect(svgChart).toHaveAttribute('aria-label');
-		expect(svgChart.getAttribute('aria-label')).toContain('Line chart');
-	});
-
-	it('data points have role="graphics-symbol"', () => {
-		render(<DurationTrendsChart data={mockStatsData} timeRange="week" theme={mockTheme} />);
-		const dataPoints = screen.getAllByRole('graphics-symbol');
-		expect(dataPoints).toHaveLength(3); // 3 data points in mock data
-	});
-
-	it('data points have descriptive aria-labels', () => {
-		render(<DurationTrendsChart data={mockStatsData} timeRange="week" theme={mockTheme} />);
-		const dataPoints = screen.getAllByRole('graphics-symbol');
-
-		dataPoints.forEach((point) => {
-			expect(point).toHaveAttribute('aria-label');
-			const label = point.getAttribute('aria-label') || '';
-			expect(label).toContain('Average duration');
-			expect(label).toMatch(/\d+ quer(y|ies)/);
-		});
-	});
-
-	it('data points are keyboard focusable', () => {
-		render(<DurationTrendsChart data={mockStatsData} timeRange="week" theme={mockTheme} />);
-		const dataPoints = screen.getAllByRole('graphics-symbol');
-
-		dataPoints.forEach((point) => {
-			// SVG elements use tabindex (lowercase) attribute
-			expect(point.getAttribute('tabindex') || point.getAttribute('tabIndex')).toBe('0');
-		});
-	});
-
-	it('smoothing toggle has aria-label', () => {
-		render(<DurationTrendsChart data={mockStatsData} timeRange="week" theme={mockTheme} />);
-		const toggleButton = screen.getByRole('button', { name: /smoothing/i });
-		expect(toggleButton).toBeInTheDocument();
+	it('smoothing is a labeled switch', () => {
+		render(<DurationTrendsChart data={mockStatsData} theme={mockTheme} />);
+		const toggle = screen.getByRole('switch', { name: /trailing/i });
+		expect(toggle).toHaveAttribute('aria-checked', 'false');
 	});
 });
-
 describe('Chart Accessibility - SummaryCards', () => {
 	it('has role="region" on the container', () => {
 		render(<SummaryCards data={mockStatsData} theme={mockTheme} />);
@@ -298,7 +221,7 @@ describe('Chart Accessibility - SummaryCards', () => {
 	it('each metric card has role="group"', () => {
 		render(<SummaryCards data={mockStatsData} theme={mockTheme} />);
 		const metricCards = screen.getAllByTestId('metric-card');
-		expect(metricCards).toHaveLength(14); // 14 metric cards
+		expect(metricCards).toHaveLength(13); // 13 metric cards (no delegation split passed)
 		metricCards.forEach((card) => {
 			expect(card).toHaveAttribute('role', 'group');
 		});
@@ -308,20 +231,17 @@ describe('Chart Accessibility - SummaryCards', () => {
 		render(<SummaryCards data={mockStatsData} theme={mockTheme} />);
 		const metricCards = screen.getAllByTestId('metric-card');
 
-		// Card list updated: Interactive % / Local % were replaced with the
-		// streak-momentum row (Current Streak / Best Day / Active Days /
-		// Image Annotations).
+		// The peak hour lives on the radial Activity by Hour chart, not here.
 		const expectedLabels = [
-			/Agents/i,
-			/Open Tabs/i,
+			/Agents \(now\)/i,
+			/Open Tabs \(now\)/i,
 			/Total Queries/i,
-			/Queries\/Session/i,
+			/Queries\/Agent/i,
 			/Tokens/i,
 			/Cost/i,
 			/Total Time/i,
 			/Avg Duration/i,
-			/Peak Hour/i,
-			/Top Agent/i,
+			/Top Provider/i,
 			/Current Streak/i,
 			/Best Day/i,
 			/Active Days/i,
@@ -359,7 +279,7 @@ describe('Chart Accessibility - General ARIA Patterns', () => {
 		const { unmount: u2 } = render(
 			<SourceDistributionChart data={mockStatsData} theme={mockTheme} />
 		);
-		expect(screen.getByRole('heading', { level: 3, name: /session type/i })).toBeInTheDocument();
+		expect(screen.getByRole('heading', { level: 3, name: /query source/i })).toBeInTheDocument();
 		u2();
 
 		const { unmount: u3 } = render(
@@ -377,22 +297,9 @@ describe('Chart Accessibility - General ARIA Patterns', () => {
 		u4();
 	});
 
-	it('meter elements use proper ARIA attributes', () => {
-		const { unmount: u1 } = render(<AgentComparisonChart data={mockStatsData} theme={mockTheme} />);
-		// Component now shows unified view with meter elements for each agent bar
-		const meters = screen.getAllByRole('meter');
-		expect(meters.length).toBeGreaterThanOrEqual(1);
-		// Each meter should have aria-valuenow, aria-valuemin, aria-valuemax
-		meters.forEach((meter) => {
-			expect(meter).toHaveAttribute('aria-valuenow');
-			expect(meter).toHaveAttribute('aria-valuemin');
-			expect(meter).toHaveAttribute('aria-valuemax');
-		});
-		u1();
-	});
-
 	it('empty states are properly announced', () => {
-		const emptyData: StatsAggregation = {
+		const emptyData = {
+			...mockStatsData,
 			totalQueries: 0,
 			totalDuration: 0,
 			avgDuration: 0,
@@ -402,16 +309,10 @@ describe('Chart Accessibility - General ARIA Patterns', () => {
 			byDay: [],
 			byHour: [],
 			totalSessions: 0,
-			sessionsByAgent: {},
-			sessionsByDay: [],
-			avgSessionDuration: 0,
-			byAgentByDay: {},
-			bySessionByDay: {},
-			bySessionSource: {},
-		};
+		} as StatsAggregation;
 
 		render(<AgentComparisonChart data={emptyData} theme={mockTheme} />);
-		expect(screen.getByText(/no agent data available/i)).toBeInTheDocument();
+		expect(screen.getByText(/no queries in this range/i)).toBeInTheDocument();
 	});
 
 	it('interactive elements are keyboard accessible', () => {
@@ -436,11 +337,10 @@ describe('Chart Accessibility - Screen Reader Announcements', () => {
 		render(<AgentComparisonChart data={mockStatsData} theme={mockTheme} />);
 		const figure = screen.getByRole('figure');
 
-		// Should describe what the chart shows (now unified count and duration)
+		// Names the measure the active mode plots (queries by default).
 		const ariaLabel = figure.getAttribute('aria-label') || '';
-		expect(ariaLabel).toContain('query counts');
-		expect(ariaLabel).toContain('duration');
-		expect(ariaLabel).toContain('providers displayed');
+		expect(ariaLabel).toContain('queries by provider');
+		expect(ariaLabel).toContain('rows displayed');
 	});
 
 	it('SourceDistributionChart provides percentage summary in SVG', () => {

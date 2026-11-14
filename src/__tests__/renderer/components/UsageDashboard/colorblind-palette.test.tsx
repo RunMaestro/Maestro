@@ -182,12 +182,12 @@ describe('AgentComparisonChart with colorBlindMode', () => {
 describe('SourceDistributionChart with colorBlindMode', () => {
 	it('renders with colorBlindMode=false by default', () => {
 		render(<SourceDistributionChart data={mockData} theme={theme} />);
-		expect(screen.getByText('Session Type')).toBeInTheDocument();
+		expect(screen.getByText('Query Source')).toBeInTheDocument();
 	});
 
 	it('renders with colorBlindMode=true', () => {
 		render(<SourceDistributionChart data={mockData} theme={theme} colorBlindMode={true} />);
-		expect(screen.getByText('Session Type')).toBeInTheDocument();
+		expect(screen.getByText('Query Source')).toBeInTheDocument();
 	});
 
 	it('renders both Interactive and Auto Run labels', () => {
@@ -199,21 +199,17 @@ describe('SourceDistributionChart with colorBlindMode', () => {
 
 describe('ActivityHeatmap with colorBlindMode', () => {
 	it('renders with colorBlindMode=false by default', () => {
-		render(<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />);
+		render(<ActivityHeatmap data={mockData} theme={theme} />);
 		expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
 	});
 
 	it('renders with colorBlindMode=true', () => {
-		render(
-			<ActivityHeatmap data={mockData} timeRange="week" theme={theme} colorBlindMode={true} />
-		);
+		render(<ActivityHeatmap data={mockData} theme={theme} colorBlindMode={true} />);
 		expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
 	});
 
 	it('renders legend with intensity scale', () => {
-		render(
-			<ActivityHeatmap data={mockData} timeRange="week" theme={theme} colorBlindMode={true} />
-		);
+		render(<ActivityHeatmap data={mockData} theme={theme} colorBlindMode={true} />);
 		expect(screen.getByText('Less')).toBeInTheDocument();
 		expect(screen.getByText('More')).toBeInTheDocument();
 	});
@@ -221,22 +217,18 @@ describe('ActivityHeatmap with colorBlindMode', () => {
 
 describe('DurationTrendsChart with colorBlindMode', () => {
 	it('renders with colorBlindMode=false by default', () => {
-		render(<DurationTrendsChart data={mockData} timeRange="week" theme={theme} />);
+		render(<DurationTrendsChart data={mockData} theme={theme} />);
 		expect(screen.getByText('Duration Trends')).toBeInTheDocument();
 	});
 
 	it('renders with colorBlindMode=true', () => {
-		render(
-			<DurationTrendsChart data={mockData} timeRange="week" theme={theme} colorBlindMode={true} />
-		);
+		render(<DurationTrendsChart data={mockData} theme={theme} colorBlindMode={true} />);
 		expect(screen.getByText('Duration Trends')).toBeInTheDocument();
 	});
 
 	it('renders smoothing toggle', () => {
-		render(
-			<DurationTrendsChart data={mockData} timeRange="week" theme={theme} colorBlindMode={true} />
-		);
-		expect(screen.getByText('Smoothing:')).toBeInTheDocument();
+		render(<DurationTrendsChart data={mockData} theme={theme} colorBlindMode={true} />);
+		expect(screen.getByRole('switch', { name: /trailing/i })).toBeInTheDocument();
 	});
 });
 

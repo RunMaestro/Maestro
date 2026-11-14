@@ -1479,26 +1479,6 @@ export type TriggerCueSubscriptionCallback = (
 // Usage Dashboard Types
 // =============================================================================
 
-/** Usage dashboard aggregate data for web interface */
-export interface UsageDashboardData {
-	totalTokensIn: number;
-	totalTokensOut: number;
-	totalCost: number;
-	sessionBreakdown: Array<{
-		sessionId: string;
-		sessionName: string;
-		tokensIn: number;
-		tokensOut: number;
-		cost: number;
-	}>;
-	dailyUsage: Array<{
-		date: string;
-		tokensIn: number;
-		tokensOut: number;
-		cost: number;
-	}>;
-}
-
 /** Achievement data for web interface */
 export interface AchievementData {
 	id: string;
@@ -1514,9 +1494,6 @@ export interface AchievementData {
 // Usage Dashboard Callback Types
 // =============================================================================
 
-export type GetUsageDashboardCallback = (
-	timeRange: 'day' | 'week' | 'month' | 'all'
-) => Promise<UsageDashboardData>;
 export type GetAchievementsCallback = () => Promise<AchievementData[]>;
 
 // =============================================================================

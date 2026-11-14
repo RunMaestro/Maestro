@@ -5,7 +5,7 @@
  * Displays AI usage patterns across all sessions and agents with time-based filtering.
  *
  * Features:
- * - Time range selector (Day, Week, Month, Year, All Time)
+ * - Time range selector (Today, Last 7/30/90/365 Days, All Time)
  * - View mode tabs for different visualization focuses
  * - Summary stats cards
  * - Activity heatmap, agent comparison, source distribution charts
@@ -23,7 +23,7 @@ import { DashboardSkeleton } from '../ChartSkeletons';
 import { CueStats } from '../CueStats';
 import { TokenSeriesProvider } from '../TokenSeriesContext';
 import { buildModalOwnedFooterSummary } from '../footerSummary';
-import type { GroupStatRollup } from '../../../../shared/statsGroupRollup';
+import { rollUpGroupStats, type GroupStatRollup } from '../../../../shared/statsGroupRollup';
 import type { Session } from '../../../types';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
 import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
@@ -36,7 +36,7 @@ import { useCodexUsageStore } from '../../../stores/codexUsageStore';
 import { useGlobalAgentStats } from '../../../hooks/stats/useGlobalAgentStats';
 import type { UsageDashboardModalProps } from './types';
 import { getSectionsForViewMode, type SectionId } from './sections';
-import { TIME_RANGE_OPTIONS } from './constants';
+import { getTimeRangeLabel } from './constants';
 import { formatDatabaseSize } from './formatters';
 import {
 	hasUsefulAnthropicQuotaDetails,
@@ -50,7 +50,7 @@ import {
 	useUsageDashboardLayout,
 	useUsageDashboardTabs,
 } from './hooks';
-import { UsageDashboardHeader, UsageDashboardTabs } from './components';
+import { DashboardSection, UsageDashboardHeader, UsageDashboardTabs } from './components';
 import { UsageDashboardFooter } from '../UsageDashboardFooter';
 import {
 	ActivityView,
@@ -106,6 +106,21 @@ export function UsageDashboardModal({
 
 	const phone = usePhoneLayout();
 	const [timeRange, setTimeRange] = useState<StatsTimeRange>(defaultTimeRange);
+	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
+	const containerRef = useRef<HTMLDivElement>(null);
+	const contentRef = useRef<HTMLDivElement>(null);
+	const tabsRef = useRef<HTMLDivElement>(null);
+	const sectionRefs = useRef<Map<SectionId, HTMLDivElement>>(new Map());
+	const onCloseRef = useRef(onClose);
+	onCloseRef.current = onClose;
+	const handleViewModeChanged = useCallback(() => setFocusedSection(null), []);
+	const { viewMode, viewModeRef, viewModeTabs, switchViewMode } = useUsageDashboardTabs({
+		cueTabEnabled,
+		hasAnthropicUsageDetails,
+		hasCodexUsageDetails,
+		contentRef,
+		onViewModeChanged: handleViewModeChanged,
+	});
 	const {
 		data,
 		cueSourceTotals,
@@ -121,8 +136,9 @@ export function UsageDashboardModal({
 		isOpen,
 		timeRange,
 		cueTabEnabled,
+		// Only the Overview's source chart draws the Cue slice.
+		needsCueTotals: viewMode === 'overview',
 	});
-	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
 	const [detailSession, setDetailSession] = useState<Session | null>(null);
 	// Provider-profile filter for the Agents grid. Owned here (rather than
 	// inside the grid) so the quota tabs' "N agents" chips can select an account
@@ -132,26 +148,22 @@ export function UsageDashboardModal({
 	// the only consumer, and threading them through AppInfoModals would add a
 	// prop to a component that has no other reason to know about groups.
 	const groups = useSessionStore((s) => s.groups);
-	// The group whose detail modal is open. Holds the whole rollup rather than an
-	// id: the modal renders the same totals the clicked tile showed, and
-	// re-deriving them would let the two disagree if the aggregation refreshed
-	// underneath (the dashboard polls stats:updated) while the modal was open.
-	const [detailGroup, setDetailGroup] = useState<GroupStatRollup | null>(null);
-
-	const containerRef = useRef<HTMLDivElement>(null);
-	const contentRef = useRef<HTMLDivElement>(null);
-	const tabsRef = useRef<HTMLDivElement>(null);
-	const sectionRefs = useRef<Map<SectionId, HTMLDivElement>>(new Map());
-	const onCloseRef = useRef(onClose);
-	onCloseRef.current = onClose;
-	const handleViewModeChanged = useCallback(() => setFocusedSection(null), []);
-	const { viewMode, viewModeRef, viewModeTabs, switchViewMode } = useUsageDashboardTabs({
-		cueTabEnabled,
-		hasAnthropicUsageDetails,
-		hasCodexUsageDetails,
-		contentRef,
-		onViewModeChanged: handleViewModeChanged,
-	});
+	// The group whose detail modal is open, by id. Its rollup is re-derived from
+	// the live aggregation every render with the same `rollUpGroupStats` the
+	// tiles use, so the header and the per-agent rows (which GroupDetailModal
+	// also computes from `data`) always describe the same refresh. A rollup
+	// captured at click time froze the header while the rows moved on.
+	const [detailGroupId, setDetailGroupId] = useState<string | null>(null);
+	const detailGroup = useMemo<GroupStatRollup | null>(() => {
+		if (!detailGroupId || !data) return null;
+		const agents = sessions.filter((session) => session.toolType !== 'terminal');
+		return (
+			rollUpGroupStats(groups, agents, data, {
+				includeEmptyGroups: true,
+				includeEmptyUngrouped: true,
+			}).find((rollup) => rollup.groupId === detailGroupId) ?? null
+		);
+	}, [detailGroupId, groups, sessions, data]);
 
 	// Clicking an account's "N agents" chip on a quota tab answers the question
 	// the chip raises - WHICH agents? - by opening the Agents grid narrowed to
@@ -169,7 +181,10 @@ export function UsageDashboardModal({
 	// the totals on the tile. It does NOT switch tabs: the Agents tab answers a
 	// different question ("show me every agent"), and its own group dropdown
 	// covers narrowing that grid.
-	const handleSelectGroup = useCallback((rollup: GroupStatRollup) => setDetailGroup(rollup), []);
+	const handleSelectGroup = useCallback(
+		(rollup: GroupStatRollup) => setDetailGroupId(rollup.groupId),
+		[]
+	);
 
 	// An agent row inside the group modal opens the per-agent modal ON TOP,
 	// rather than replacing it - the group stays behind so Escape walks back to
@@ -217,18 +232,23 @@ export function UsageDashboardModal({
 	// The footer is presentational: it takes finished strings rather than the
 	// range enum and a byte count, so it stays the one component both the split
 	// modal and its own test can drive.
+	const earliestQueryAt = data?.earliestQueryAt ?? null;
 	const footerRangeLabel =
 		data && data.totalQueries > 0
-			? `Showing ${TIME_RANGE_OPTIONS.find((option) => option.value === timeRange)?.label.toLowerCase()} data`
-			: 'No data for selected time range';
+			? `Showing ${getTimeRangeLabel(timeRange, earliestQueryAt)}`
+			: 'No queries in this range';
 	const footerDatabaseSizeLabel = databaseSize !== null ? formatDatabaseSize(databaseSize) : null;
 	const footerSummary = useMemo(
 		() => buildModalOwnedFooterSummary(viewMode, { data, sessions }),
 		[viewMode, data, sessions]
 	);
 	const currentSections = useMemo(
-		() => getSectionsForViewMode(viewMode, { hasWorktreeAnalytics }),
-		[viewMode, hasWorktreeAnalytics]
+		() =>
+			getSectionsForViewMode(viewMode, {
+				hasWorktreeAnalytics,
+				hasRemoteQueries: (data?.byLocation.remote ?? 0) > 0,
+			}),
+		[viewMode, hasWorktreeAnalytics, data]
 	);
 	const { handleTabKeyDown, handleSectionKeyDown, setSectionRef } = useUsageDashboardKeyboard({
 		isOpen,
@@ -237,7 +257,6 @@ export function UsageDashboardModal({
 		viewModeTabs,
 		switchViewMode,
 		currentSections,
-		data,
 		tabsRef,
 		sectionRefs,
 		setFocusedSection,
@@ -301,7 +320,16 @@ export function UsageDashboardModal({
 		}
 
 		if (viewMode === 'shortcuts') {
-			return <ShortcutsView key={viewMode} timeRange={timeRange} theme={theme} />;
+			return (
+				<ShortcutsView
+					key={viewMode}
+					timeRange={timeRange}
+					theme={theme}
+					focusedSection={focusedSection}
+					setSectionRef={setSectionRef}
+					handleSectionKeyDown={handleSectionKeyDown}
+				/>
+			);
 		}
 
 		// Token usage is read from each agent's on-disk transcripts, not the stats
@@ -314,6 +342,9 @@ export function UsageDashboardModal({
 					timeRange={timeRange}
 					theme={theme}
 					colorBlindMode={colorBlindMode}
+					focusedSection={focusedSection}
+					setSectionRef={setSectionRef}
+					handleSectionKeyDown={handleSectionKeyDown}
 				/>
 			);
 		}
@@ -332,32 +363,15 @@ export function UsageDashboardModal({
 			);
 		}
 
-		if (
-			!data ||
-			(data.totalQueries === 0 && data.bySource.user === 0 && data.bySource.auto === 0)
-		) {
+		if (!data) {
 			return <EmptyState theme={theme} />;
 		}
 
+		// Tabs that do not read query events render even when the range has none:
+		// Agent Overview, Agents and Groups describe the live agent list, Auto Run
+		// reads the auto_run tables, and Cue reads cue.db. Only Overview and
+		// Activity, which chart queries, fall through to the empty state below.
 		switch (viewMode) {
-			case 'overview':
-				return (
-					<OverviewView
-						key={viewMode}
-						data={data}
-						timeRange={timeRange}
-						theme={theme}
-						colorBlindMode={colorBlindMode}
-						sessions={sessions}
-						layout={layout}
-						cueSourceTotals={cueSourceTotals}
-						delegationTotals={delegationTotals}
-						lifetimeDelegation={lifetimeDelegation}
-						focusedSection={focusedSection}
-						setSectionRef={setSectionRef}
-						handleSectionKeyDown={handleSectionKeyDown}
-					/>
-				);
 			case 'agents':
 				return (
 					<AgentsView
@@ -382,7 +396,7 @@ export function UsageDashboardModal({
 						theme={theme}
 						sessions={sessions}
 						groups={groups}
-						activeGroupId={detailGroup?.groupId ?? null}
+						activeGroupId={detailGroupId}
 						onSelectGroup={handleSelectGroup}
 						focusedSection={focusedSection}
 						setSectionRef={setSectionRef}
@@ -398,20 +412,6 @@ export function UsageDashboardModal({
 						theme={theme}
 						colorBlindMode={colorBlindMode}
 						sessions={sessions}
-						focusedSection={focusedSection}
-						setSectionRef={setSectionRef}
-						handleSectionKeyDown={handleSectionKeyDown}
-					/>
-				);
-			case 'activity':
-				return (
-					<ActivityView
-						key={viewMode}
-						data={data}
-						timeRange={timeRange}
-						theme={theme}
-						colorBlindMode={colorBlindMode}
-						delegationByDay={delegationByDay}
 						focusedSection={focusedSection}
 						setSectionRef={setSectionRef}
 						handleSectionKeyDown={handleSectionKeyDown}
@@ -433,8 +433,55 @@ export function UsageDashboardModal({
 			case 'cue':
 				return (
 					<DashboardTabPanel key={viewMode} viewMode="cue">
-						<CueStats timeRange={timeRange} theme={theme} colorBlindMode={colorBlindMode} />
+						<DashboardSection
+							sectionId="cue-stats"
+							focusedSection={focusedSection}
+							setSectionRef={setSectionRef}
+							handleSectionKeyDown={handleSectionKeyDown}
+							theme={theme}
+						>
+							<CueStats timeRange={timeRange} theme={theme} colorBlindMode={colorBlindMode} />
+						</DashboardSection>
 					</DashboardTabPanel>
+				);
+		}
+
+		if (data.totalQueries === 0 && data.bySource.user === 0 && data.bySource.auto === 0) {
+			return <EmptyState theme={theme} />;
+		}
+
+		switch (viewMode) {
+			case 'overview':
+				return (
+					<OverviewView
+						key={viewMode}
+						data={data}
+						timeRange={timeRange}
+						theme={theme}
+						colorBlindMode={colorBlindMode}
+						sessions={sessions}
+						layout={layout}
+						cueSourceTotals={cueSourceTotals}
+						delegationTotals={delegationTotals}
+						lifetimeDelegation={lifetimeDelegation}
+						focusedSection={focusedSection}
+						setSectionRef={setSectionRef}
+						handleSectionKeyDown={handleSectionKeyDown}
+					/>
+				);
+			case 'activity':
+				return (
+					<ActivityView
+						key={viewMode}
+						data={data}
+						timeRange={timeRange}
+						theme={theme}
+						colorBlindMode={colorBlindMode}
+						delegationByDay={delegationByDay}
+						focusedSection={focusedSection}
+						setSectionRef={setSectionRef}
+						handleSectionKeyDown={handleSectionKeyDown}
+					/>
 				);
 			default:
 				return null;
@@ -484,6 +531,7 @@ export function UsageDashboardModal({
 					theme={theme}
 					showNewDataIndicator={showNewDataIndicator}
 					timeRange={timeRange}
+					earliestQueryAt={earliestQueryAt}
 					onTimeRangeChange={setTimeRange}
 					onExport={handleExport}
 					isExporting={isExporting}
@@ -532,7 +580,7 @@ export function UsageDashboardModal({
 					sessions={sessions}
 					data={data}
 					theme={theme}
-					onClose={() => setDetailGroup(null)}
+					onClose={() => setDetailGroupId(null)}
 					onSelectAgent={handleSelectGroupMember}
 				/>
 			)}

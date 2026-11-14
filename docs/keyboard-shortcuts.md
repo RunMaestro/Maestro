@@ -496,6 +496,15 @@ on top of it.
 
 ## Usage Dashboard
 
+These keys move between the dashboard's tabs while it is open. See
+[Keyboard Navigation](./usage-dashboard#keyboard-navigation) for the keys that
+move between sections inside a tab.
+
+| Action       | macOS         | Windows/Linux  |
+| ------------ | ------------- | -------------- |
+| Previous tab | `Cmd+Shift+[` | `Ctrl+Shift+[` |
+| Next tab     | `Cmd+Shift+]` | `Ctrl+Shift+]` |
+
 The Agents and Groups tabs draw one tile per agent or group. The tile size is
 yours to set, and it is remembered across restarts. See
 [Usage Dashboard](./usage-dashboard).

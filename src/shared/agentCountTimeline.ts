@@ -5,9 +5,11 @@
  *
  * - The LIVE agent list. Every agent still in the Left Bar carries its own
  *   `createdAt`, including agents created before `session_lifecycle` existed or
- *   whose creation row was pruned by stats retention.
+ *   by a path that did not record a creation row.
  * - The `session_lifecycle` table. It is the only record of an agent that was
- *   deleted: its creation and closure timestamps.
+ *   deleted: its creation and closure timestamps. Stats rows are never pruned,
+ *   so a deleted agent is missing here only when it was created before the
+ *   table existed, or by a creation path that never recorded a row.
  *
  * An agent counts on day D when it existed at the END of D (created before the
  * next local midnight, not yet deleted then). Today's point is therefore the

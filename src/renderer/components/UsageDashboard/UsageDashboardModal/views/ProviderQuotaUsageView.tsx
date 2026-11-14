@@ -3,6 +3,7 @@ import type { Theme } from '../../../../types';
 import { ChartErrorBoundary } from '../../ChartErrorBoundary';
 import { ClaudePlanUsage } from '../../ClaudePlanUsage';
 import { CodexPlanUsage } from '../../CodexPlanUsage';
+import type { PlanUsagePanelProps } from '../../quota/PlanUsagePanel';
 import { DashboardSection } from '../components';
 import type { SectionId } from '../sections';
 import type { SectionNavigationProps } from './types';
@@ -18,14 +19,6 @@ interface ProviderQuotaUsageViewProps extends SectionNavigationProps {
 	onShowAccountAgents?: (toolType: string, accountKey: string) => void;
 }
 
-interface ProviderUsageComponentProps {
-	theme: Theme;
-	showAllAccounts?: boolean;
-	autoRefresh?: boolean;
-	refreshHotkey?: boolean;
-	onShowAccountAgents?: (accountKey: string) => void;
-}
-
 const PROVIDER_CONFIG: Record<
 	ProviderQuotaUsageViewProps['provider'],
 	{
@@ -34,7 +27,7 @@ const PROVIDER_CONFIG: Record<
 		chartName: string;
 		/** Agent `toolType` these quota rows describe, for the account filter. */
 		toolType: string;
-		Component: ComponentType<ProviderUsageComponentProps>;
+		Component: ComponentType<PlanUsagePanelProps>;
 	}
 > = {
 	anthropic: {
@@ -86,13 +79,7 @@ export function ProviderQuotaUsageView({
 					 * LOOKING at may answer the chord, and this view renders exactly one
 					 * provider at a time - which is what makes the claim unambiguous here.
 					 */}
-					<Component
-						theme={theme}
-						showAllAccounts
-						autoRefresh={false}
-						refreshHotkey
-						onShowAccountAgents={showAccountAgents}
-					/>
+					<Component theme={theme} refreshHotkey onShowAccountAgents={showAccountAgents} />
 				</ChartErrorBoundary>
 			</DashboardSection>
 		</DashboardTabPanel>

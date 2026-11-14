@@ -247,7 +247,11 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **Keeping toasts off a surface the user works in:** `useToastAvoidZone()`, `toastBottomInset()` in `src/renderer/hooks/ui/useToastAvoidZone.ts`
 - **Usage Dashboard card tile:** `<EntityTile>` in `src/renderer/components/UsageDashboard/EntityTile.tsx`.
 - **A label that must not truncate:** `useOptionalLabelFits(rowRef)` in `src/renderer/hooks/ui/useOptionalLabelFits.ts`
-- **Usage Dashboard metric tile:** `MetricCard` in `src/renderer/components/UsageDashboard/MetricCard.tsx`
+- **Usage Dashboard metric tile:** `MetricCard` in `src/renderer/components/UsageDashboard/SummaryCards.tsx`; outside the Overview use the widget `StatCard`.
+- **Loading / error / empty states for a dashboard panel:** `useDashboardResource(key, fetcher, operation, { tables })` (refetches only when a `StatsTable` it reads changes, debounced) with `<DashboardPanelState>` in `src/renderer/components/UsageDashboard/`.
+- **Per-day chart series with idle days kept:** `fillDaySeries()`, `localDaysBetween()` in `src/shared/daySeries.ts`, over `StatsAggregation.window`; the range window itself is `usageReadWindow()` in `src/shared/statsTimeRange.ts`.
+- **Auto Run run and task totals:** `computeAutoRunMetrics()` in `src/shared/autoRunMetrics.ts` (goal runs and unfinished runs stay out of task math), shared by the Auto Run tab and `maestro-cli stats-activity`.
+- **Usage Dashboard reads for the CLI and export:** `src/main/stats/usage-dashboard-reads.ts` (main entry points) over the pure builders in `src/shared/usageDashboardReads.ts`.
 - **Recording wizard usage:** `beginWizardRun()`, `recordWizardDocuments()` in `src/renderer/services/wizardStats.ts`
 - **Naming an agent from its folder (vs naming the project):** `projectNameFromPath()`, `defaultAgentNameForPath()` in `src/renderer/components/Wizard/shared/projectIdentity.ts`
 - **Creating a tab straight into a tile:** `tileNewTab()` / `canTileNewTab()` in `src/renderer/hooks/tabs/tileNewTab.ts`.

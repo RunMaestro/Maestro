@@ -1018,12 +1018,28 @@ describe('useAppInitialization', () => {
 			await act(flushPromises);
 
 			expect(mockNotifyToast).toHaveBeenCalledWith({
-				type: 'warning',
-				title: 'Statistics Database',
+				color: 'yellow',
+				title: 'Usage Statistics Reset',
 				message: 'Database was reset due to corruption',
-				duration: 10000,
+				dismissible: true,
 			});
 			expect(mockClearInitializationResult).toHaveBeenCalled();
+		});
+
+		it('leaves the notice to the lifecycle owner so it is shown once', async () => {
+			const { notifyToast: mockNotifyToast } =
+				await import('../../../renderer/stores/notificationStore');
+			mockIsLifecycleOwner = false;
+			mockGetInitializationResult.mockResolvedValue({
+				userMessage: 'Database was reset due to corruption',
+			});
+
+			renderHook(() => useAppInitialization());
+			await act(flushPromises);
+
+			expect(mockGetInitializationResult).not.toHaveBeenCalled();
+			expect(mockNotifyToast).not.toHaveBeenCalled();
+			expect(mockClearInitializationResult).not.toHaveBeenCalled();
 		});
 
 		it('should not show toast when no corruption', async () => {

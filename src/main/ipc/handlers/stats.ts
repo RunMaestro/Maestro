@@ -12,7 +12,6 @@
  * - Usage export (JSON, or a zip of CSVs) for data analysis
  */
 
-import path from 'path';
 import { ipcMain, BrowserWindow, app } from 'electron';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
@@ -21,9 +20,13 @@ import { createSafeSend, SafeSendFn } from '../../utils/safe-send';
 import { getStatsDB } from '../../stats';
 import { isStatsCollectionEnabled } from '../../stats/utils';
 import { flushTelemetry } from '../../cue/cue-telemetry';
-import { getCueRunTotals, getCueRunTotalsByDay, getRecentCueEvents } from '../../cue/cue-db';
-import { buildUsageExport, countUsageExportRows, writeUsageExport } from '../../stats/usage-export';
-import { enqueueQueryEvent, flushQueryEventsSync } from '../../stats/query-events-buffer';
+import { exportUsageData } from '../../stats/usage-export';
+import { getDelegationByDay, getDelegationTotals } from '../../stats/usage-dashboard-reads';
+import {
+	enqueueQueryEvent,
+	flushQueryEventsSync,
+	setQueryEventsFlushListener,
+} from '../../stats/query-events-buffer';
 import { getActingUser } from '../../web-server/auth/acting-user';
 import { resolveTurnActor } from '../../web-server/auth/turn-attribution';
 import {
@@ -34,13 +37,13 @@ import {
 	ResilienceEvent,
 	WizardRun,
 	StatsTimeRange,
+	StatsTable,
 	StatsFilters,
 	UsageExportFormat,
 	UsageExportResult,
 } from '../../../shared/stats-types';
 import type { DelegationDay, DelegationTotals } from '../../../shared/delegation';
-import { getTimeRangeStart } from '../../stats/utils';
-import type { TokenUsageAggregate, TokenUsageQuery } from '../../../shared/tokenUsage';
+import type { TokenUsageQuery } from '../../../shared/tokenUsage';
 import { getTokenUsageAggregate } from '../../stats/token-usage/token-usage-accessor';
 import {
 	STATS_INDEXING_CHANNEL,
@@ -61,17 +64,18 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
  * Dependencies for stats handlers
  */
 export interface StatsHandlerDependencies {
-	getMainWindow: () => BrowserWindow | null;
 	settingsStore?: {
 		get: (key: string) => unknown;
 	};
 }
 
 /**
- * Broadcast stats update to renderer and web-desktop bridge clients.
+ * Broadcast a stats update to every window and web-desktop bridge client,
+ * naming the table that changed so a dashboard panel can skip refetches for
+ * tables it does not read.
  */
-function broadcastStatsUpdate(safeSend: SafeSendFn): void {
-	safeSend('stats:updated');
+function broadcastStatsUpdate(safeSend: SafeSendFn, table: StatsTable): void {
+	safeSend('stats:updated', table);
 }
 
 /**
@@ -86,13 +90,18 @@ function broadcastStatsUpdate(safeSend: SafeSendFn): void {
  * - Export every stats table for a range (JSON, or a zip of CSVs)
  */
 export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
-	const { getMainWindow, settingsStore } = deps;
-	const safeSend = createSafeSend(getMainWindow);
+	const { settingsStore } = deps;
 
-	// Indexing progress reaches every window (and web-desktop clients): a scan
-	// started from one window's dashboard blocks the same caches for all of them.
+	// Every window (and web-desktop client) can open the Usage Dashboard, so
+	// stats updates and indexing progress reach all of them, not just the main
+	// window.
 	const broadcastToAllWindows = createSafeSend(() => BrowserWindow.getAllWindows());
+	const safeSend = broadcastToAllWindows;
 	setStatsIndexingBroadcaster((state) => broadcastToAllWindows(STATS_INDEXING_CHANNEL, state));
+
+	// Query events are buffered, so the update is announced when the batch is
+	// committed: a dashboard that refetches on the event then reads the new rows.
+	setQueryEventsFlushListener(() => broadcastStatsUpdate(safeSend, 'query_events'));
 
 	// PR-B 1.5: flush any buffered query events synchronously before the app
 	// exits so we don't drop them. The handler is fire-and-forget - if it
@@ -150,10 +159,8 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				source: event.source,
 				duration: event.duration,
 			});
-			// Notify renderer that stats may have changed soon. The actual
-			// write happens asynchronously; the dashboard is best-effort
-			// realtime, so a small lag (≤500ms) is acceptable.
-			broadcastStatsUpdate(safeSend);
+			// No broadcast here: the flush listener announces the write once the
+			// batch is committed (at most QUERY_EVENT_FLUSH_INTERVAL_MS later).
 			return id;
 		})
 	);
@@ -180,7 +187,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 					sessionId: session.sessionId,
 					documentPath: session.documentPath,
 				});
-				broadcastStatsUpdate(safeSend);
+				broadcastStatsUpdate(safeSend, 'auto_run');
 				return id;
 			}
 		)
@@ -191,9 +198,16 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		'stats:end-autorun',
 		withIpcErrorLogging(
 			handlerOpts('endAutoRun'),
-			async (id: string, duration: number, tasksCompleted: number) => {
+			async (id: string, duration: number, tasksCompleted: number, tasksTotal?: number) => {
 				const db = getStatsDB();
-				const updated = db.updateAutoRunSession(id, { duration, tasksCompleted });
+				// Raises tasks_total to at least tasks_completed, so a looping run
+				// cannot report more than 100% done (see finishAutoRunSession).
+				const updated = db.finishAutoRunSession(
+					id,
+					duration,
+					tasksCompleted,
+					typeof tasksTotal === 'number' && Number.isFinite(tasksTotal) ? tasksTotal : undefined
+				);
 				if (updated) {
 					logger.info(`Ended Auto Run session: ${id}`, LOG_CONTEXT, {
 						duration,
@@ -202,7 +216,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				} else {
 					logger.warn(`Auto Run session not found: ${id}`, LOG_CONTEXT);
 				}
-				broadcastStatsUpdate(safeSend);
+				broadcastStatsUpdate(safeSend, 'auto_run');
 
 				// Cue telemetry - autorun completion is the user's natural quiet
 				// window, so we flush the outbox here. Fire-and-forget: a failed
@@ -237,7 +251,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				taskIndex: task.taskIndex,
 				success: task.success,
 			});
-			broadcastStatsUpdate(safeSend);
+			broadcastStatsUpdate(safeSend, 'auto_run');
 			return id;
 		})
 	);
@@ -263,12 +277,13 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		})
 	);
 
-	// Get tasks for a specific Auto Run session
+	// Auto Run agent turns per local hour of day over a range, in one grouped
+	// query (24 entries, zero-filled).
 	ipcMain.handle(
-		'stats:get-autorun-tasks',
-		withIpcErrorLogging(handlerOpts('getAutoRunTasks'), async (autoRunSessionId: string) => {
+		'stats:get-autorun-turns-by-hour',
+		withIpcErrorLogging(handlerOpts('getAutoRunTurnsByHour'), async (range: StatsTimeRange) => {
 			const db = getStatsDB();
-			return db.getAutoRunTasks(autoRunSessionId);
+			return db.getAutoRunTurnsByHour(range);
 		})
 	);
 
@@ -282,29 +297,14 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	);
 
 	// Interactive vs autonomous (Auto Run + Cue) split for the delegation
-	// surfaces. This is the ONE place the two stats systems are joined: turn
-	// rows live in the stats DB, Cue runs in the Cue DB, and neither knows the
-	// other exists. Doing the merge here rather than in the renderer means the
-	// Overview ratio card, the delegation score, and the Activity trend chart
-	// cannot disagree about what counts as delegated.
-	//
-	// Ungated on purpose: Cue history is real work whether or not the Cue tab
-	// is currently switched on, and `getCueRunTotals` already resolves to zero
-	// when the Cue DB was never initialized.
+	// surfaces. The merge of the two stats systems lives in
+	// usage-dashboard-reads.ts so `maestro-cli stats-delegation` reads the same
+	// function.
 	ipcMain.handle(
 		'stats:get-delegation-totals',
 		withIpcErrorLogging(
 			handlerOpts('getDelegationTotals'),
-			async (range: StatsTimeRange = 'all'): Promise<DelegationTotals> => {
-				const db = getStatsDB();
-				const querySources = db.getQuerySourceTotals(range);
-				const cue = getCueRunTotals(getTimeRangeStart(range));
-				return {
-					interactive: querySources.interactive,
-					autoRun: querySources.autoRun,
-					cue,
-				};
-			}
+			async (range: StatsTimeRange = 'all'): Promise<DelegationTotals> => getDelegationTotals(range)
 		)
 	);
 
@@ -315,35 +315,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		'stats:get-delegation-by-day',
 		withIpcErrorLogging(
 			handlerOpts('getDelegationByDay'),
-			async (range: StatsTimeRange = 'all'): Promise<DelegationDay[]> => {
-				const db = getStatsDB();
-				const startTime = getTimeRangeStart(range);
-				const byDate = new Map<string, DelegationDay>();
-				const dayFor = (date: string): DelegationDay => {
-					let day = byDate.get(date);
-					if (!day) {
-						day = {
-							date,
-							interactive: { count: 0, durationMs: 0 },
-							autoRun: { count: 0, durationMs: 0 },
-							cue: { count: 0, durationMs: 0 },
-						};
-						byDate.set(date, day);
-					}
-					return day;
-				};
-
-				for (const row of db.getQuerySourceByDay(range)) {
-					const day = dayFor(row.date);
-					day.interactive = row.interactive;
-					day.autoRun = row.autoRun;
-				}
-				for (const row of getCueRunTotalsByDay(startTime)) {
-					dayFor(row.date).cue = { count: row.count, durationMs: row.durationMs };
-				}
-
-				return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
-			}
+			async (range: StatsTimeRange = 'all'): Promise<DelegationDay[]> => getDelegationByDay(range)
 		)
 	);
 
@@ -370,8 +342,8 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		)
 	);
 
-	// Export everything the Usage Dashboard reads for a range. Main writes the
-	// file itself because the CSV form is a binary zip.
+	// Export everything the Usage Dashboard reads for a range. The work lives in
+	// usage-export.ts so `maestro-cli stats-export` runs the same function.
 	ipcMain.handle(
 		'stats:export',
 		withIpcErrorLogging(
@@ -380,66 +352,15 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				range: StatsTimeRange,
 				format: UsageExportFormat,
 				filePath: string
-			): Promise<UsageExportResult> => {
-				if (format !== 'json' && format !== 'csv') {
-					throw new Error(`Unsupported export format: ${String(format)}`);
-				}
-				if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) {
-					throw new Error('Export path must be absolute');
-				}
-
-				const sinceMs = getTimeRangeStart(range);
-				const notes: string[] = [];
-
-				// Same gate as the Cue stats handler: the dashboard only shows Cue
-				// data when both flags are on.
-				const ef = (settingsStore?.get('encoreFeatures') ?? {}) as Record<string, unknown>;
-				const cueEnabled = ef.usageStats === true && ef.maestroCue === true;
-				const cueEvents = cueEnabled ? getRecentCueEvents(sinceMs) : null;
-				if (!cueEnabled) {
-					notes.push('Cue runs are not included because Maestro Cue is off.');
-				} else if (range !== 'day' && range !== 'week') {
-					notes.push('Cue keeps 7 days of run history, so older Cue runs are not included.');
-				}
-
-				let tokenUsage: TokenUsageAggregate | null = null;
-				try {
-					tokenUsage = await getTokenUsageAggregate(range === 'all' ? {} : { sinceMs });
-				} catch (err) {
-					notes.push(
-						`Token usage is not included: ${err instanceof Error ? err.message : String(err)}`
-					);
-					void captureException(err, { operation: 'stats.export.tokenUsage' });
-				}
-
-				const bundle = buildUsageExport({
-					db: getStatsDB(),
+			): Promise<UsageExportResult> =>
+				exportUsageData({
 					range,
-					sinceMs,
+					format,
+					filePath,
+					settingsStore: settingsStore ?? { get: () => undefined },
 					appVersion: app.getVersion(),
-					cueEvents,
-					tokenUsage,
-					notes,
-				});
-				await writeUsageExport(filePath, format, bundle);
-				logger.info(`Exported usage data (${format}, ${range}) to ${filePath}`, LOG_CONTEXT);
-				return { path: filePath, format, rowCounts: countUsageExportRows(bundle), notes };
-			}
+				})
 		)
-	);
-
-	// Clear old stats data (older than specified number of days)
-	ipcMain.handle(
-		'stats:clear-old-data',
-		withIpcErrorLogging(handlerOpts('clearOldData'), async (olderThanDays: number) => {
-			const db = getStatsDB();
-			const result = db.clearOldData(olderThanDays);
-			if (result.success) {
-				// Broadcast update so any open dashboards refresh
-				broadcastStatsUpdate(safeSend);
-			}
-			return result;
-		})
 	);
 
 	// Get database size (for UI display)
@@ -477,7 +398,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 					agentType: event.agentType,
 					projectPath: event.projectPath,
 				});
-				broadcastStatsUpdate(safeSend);
+				broadcastStatsUpdate(safeSend, 'session_lifecycle');
 				return id;
 			}
 		)
@@ -500,13 +421,12 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				if (updated) {
 					logger.debug(`Recorded session closed: ${sessionId}`, LOG_CONTEXT);
 				}
-				broadcastStatsUpdate(safeSend);
+				broadcastStatsUpdate(safeSend, 'session_lifecycle');
 				return updated;
 			}
 		)
 	);
 
-	// Get session lifecycle events within a time range
 	// Agent Resilience: record a RESOLVED outage (recovered or user-stopped).
 	// Called fire-and-forget from the renderer's retryStore at resolution time;
 	// live countdowns are never recorded.
@@ -518,7 +438,9 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				return null;
 			}
 			const db = getStatsDB();
-			return db.recordResilienceEvent(event);
+			const id = db.recordResilienceEvent(event);
+			broadcastStatsUpdate(safeSend, 'resilience');
+			return id;
 		})
 	);
 
@@ -541,7 +463,9 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				return null;
 			}
 			const db = getStatsDB();
-			return db.recordWizardRun(run);
+			const id = db.recordWizardRun(run);
+			broadcastStatsUpdate(safeSend, 'wizard_runs');
+			return id;
 		})
 	);
 
@@ -553,6 +477,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		})
 	);
 
+	// Get session lifecycle events within a time range
 	ipcMain.handle(
 		'stats:get-session-lifecycle',
 		withIpcErrorLogging(handlerOpts('getSessionLifecycle'), async (range: StatsTimeRange) => {
@@ -566,24 +491,30 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	// every invocation increments the daily counter by 1.
 	ipcMain.handle(
 		'stats:record-shortcut-usage',
-		withIpcErrorLogging(handlerOpts('recordShortcutUsage'), async (firedAt: number) => {
-			if (!isStatsCollectionEnabled(settingsStore)) {
-				return null;
-			}
+		withIpcErrorLogging(
+			handlerOpts('recordShortcutUsage'),
+			async (firedAt: number, shortcutId?: unknown) => {
+				if (!isStatsCollectionEnabled(settingsStore)) {
+					return null;
+				}
 
-			const db = getStatsDB();
-			// Shortcut usage is fire-and-forget analytics. A shortcut can fire
-			// during early startup before the stats DB has finished initializing;
-			// skip silently in that window rather than throwing "Database not
-			// initialized" - an unactionable error that otherwise propagates
-			// across the IPC bridge and into Sentry. (MAESTRO-SP)
-			if (!db.isReady()) {
-				return null;
+				const db = getStatsDB();
+				// Shortcut usage is fire-and-forget analytics. A shortcut can fire
+				// during early startup before the stats DB has finished initializing;
+				// skip silently in that window rather than throwing "Database not
+				// initialized" - an unactionable error that otherwise propagates
+				// across the IPC bridge and into Sentry. (MAESTRO-SP)
+				if (!db.isReady()) {
+					return null;
+				}
+				const date = db.incrementShortcutUsage(
+					firedAt,
+					typeof shortcutId === 'string' && shortcutId.length > 0 ? shortcutId : undefined
+				);
+				broadcastStatsUpdate(safeSend, 'shortcut_usage');
+				return date;
 			}
-			const date = db.incrementShortcutUsage(firedAt);
-			broadcastStatsUpdate(safeSend);
-			return date;
-		})
+		)
 	);
 
 	// Get per-day shortcut usage counts within a time range
@@ -604,6 +535,18 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		})
 	);
 
+	// Firings per shortcut id within a time range, most used first
+	ipcMain.handle(
+		'stats:get-shortcut-usage-by-shortcut',
+		withIpcErrorLogging(
+			handlerOpts('getShortcutUsageByShortcut'),
+			async (range: StatsTimeRange) => {
+				const db = getStatsDB();
+				return db.getShortcutUsageByShortcut(range);
+			}
+		)
+	);
+
 	// Record an image annotation save event
 	ipcMain.handle(
 		'stats:record-image-annotation',
@@ -616,35 +559,27 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 			const db = getStatsDB();
 			const id = db.insertImageAnnotation(createdAt);
 			logger.debug(`Recorded image annotation: ${id}`, LOG_CONTEXT);
-			broadcastStatsUpdate(safeSend);
+			broadcastStatsUpdate(safeSend, 'image_annotations');
 			return id;
 		})
 	);
 
-	// Get earliest timestamp across all stats tables
-	ipcMain.handle(
-		'stats:get-earliest-timestamp',
-		withIpcErrorLogging(handlerOpts('getEarliestTimestamp'), async () => {
-			const db = getStatsDB();
-			return db.getEarliestTimestamp();
-		})
-	);
-
-	// Get initialization result (for showing database reset notification)
+	// What opening the database had to do to a damaged file (restored from a
+	// backup, or started fresh), for the renderer's one-shot warning toast.
+	// Null when it opened cleanly or the notice was already shown.
 	ipcMain.handle(
 		'stats:get-initialization-result',
 		withIpcErrorLogging(handlerOpts('getInitializationResult'), async () => {
-			// This feature is not yet implemented - return null for now
-			// Future implementation would track if DB was reset due to corruption
-			return null;
+			return getStatsDB().getInitializationResult();
 		})
 	);
 
-	// Clear initialization result (after user has acknowledged the notification)
+	// Clear the initialization result once the renderer has shown it, so a
+	// second window (or a reload) does not repeat the toast.
 	ipcMain.handle(
 		'stats:clear-initialization-result',
 		withIpcErrorLogging(handlerOpts('clearInitializationResult'), async () => {
-			// This feature is not yet implemented - return true for now
+			getStatsDB().clearInitializationResult();
 			return true;
 		})
 	);

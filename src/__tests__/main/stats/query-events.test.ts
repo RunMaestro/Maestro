@@ -206,21 +206,47 @@ describe('Stats aggregation and filtering', () => {
 
 	describe('aggregation queries', () => {
 		it('should compute aggregated stats correctly', async () => {
-			mockStatement.get.mockReturnValue({ count: 100, total_duration: 500000 });
-			mockStatement.all.mockReturnValue([
-				{ agent_type: 'claude-code', count: 70, duration: 350000 },
-				{ agent_type: 'opencode', count: 30, duration: 150000 },
-			]);
-
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
 			db.initialize();
+			// The activity cube is the aggregation's first row pass; everything
+			// else in it (totals, provider split) is rolled up from those rows.
+			const today = new Date().toISOString().slice(0, 10);
+			mockStatement.all.mockReset();
+			mockStatement.all
+				.mockReturnValueOnce([
+					{
+						date: today,
+						hour: 9,
+						agent_type: 'claude-code',
+						source: 'user',
+						remote: 0,
+						worktree: 0,
+						count: 70,
+						duration: 350000,
+					},
+					{
+						date: today,
+						hour: 9,
+						agent_type: 'opencode',
+						source: 'user',
+						remote: 0,
+						worktree: 0,
+						count: 30,
+						duration: 150000,
+					},
+				])
+				.mockReturnValue([]);
 
 			const stats = db.getAggregatedStats('week');
 
 			expect(stats.totalQueries).toBe(100);
 			expect(stats.totalDuration).toBe(500000);
 			expect(stats.avgDuration).toBe(5000);
+			expect(stats.byAgent).toEqual({
+				'claude-code': { count: 70, duration: 350000 },
+				opencode: { count: 30, duration: 150000 },
+			});
 		});
 
 		it('should handle empty results for aggregation', async () => {
@@ -548,28 +574,25 @@ describe('Query events recorded for interactive sessions', () => {
 
 	describe('aggregation includes interactive session data', () => {
 		it('should include interactive sessions in aggregated stats', async () => {
-			mockStatement.get.mockReturnValue({ count: 10, total_duration: 50000 });
-
-			// The aggregation calls mockStatement.all multiple times for different queries
-			// We return based on the call sequence: byAgent, bySource, byDay
-			let callCount = 0;
-			mockStatement.all.mockImplementation(() => {
-				callCount++;
-				if (callCount === 1) {
-					// byAgent breakdown
-					return [{ agent_type: 'claude-code', count: 10, duration: 50000 }];
-				}
-				if (callCount === 2) {
-					// bySource breakdown
-					return [{ source: 'user', count: 10 }];
-				}
-				// byDay breakdown
-				return [{ date: '2024-12-28', count: 10, duration: 50000 }];
-			});
-
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
 			db.initialize();
+			// First row pass: the activity cube (day, hour, provider, source, ...).
+			mockStatement.all.mockReset();
+			mockStatement.all
+				.mockReturnValueOnce([
+					{
+						date: '2024-12-28',
+						hour: 10,
+						agent_type: 'claude-code',
+						source: 'user',
+						remote: 0,
+						worktree: 0,
+						count: 10,
+						duration: 50000,
+					},
+				])
+				.mockReturnValue([]);
 
 			const stats = db.getAggregatedStats('week');
 
@@ -581,25 +604,23 @@ describe('Query events recorded for interactive sessions', () => {
 		});
 
 		it('should correctly separate user vs auto queries in bySource', async () => {
-			mockStatement.get.mockReturnValue({ count: 15, total_duration: 75000 });
-
-			// Return by-source breakdown with both user and auto on second call
-			let callCount = 0;
-			mockStatement.all.mockImplementation(() => {
-				callCount++;
-				if (callCount === 2) {
-					// bySource breakdown
-					return [
-						{ source: 'user', count: 10 },
-						{ source: 'auto', count: 5 },
-					];
-				}
-				return [];
-			});
-
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
 			db.initialize();
+			const cell = {
+				date: '2024-12-28',
+				hour: 10,
+				agent_type: 'claude-code',
+				remote: 0,
+				worktree: 0,
+			};
+			mockStatement.all.mockReset();
+			mockStatement.all
+				.mockReturnValueOnce([
+					{ ...cell, source: 'user', count: 10, duration: 50000 },
+					{ ...cell, source: 'auto', count: 5, duration: 25000 },
+				])
+				.mockReturnValue([]);
 
 			const stats = db.getAggregatedStats('month');
 

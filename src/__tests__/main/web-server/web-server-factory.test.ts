@@ -2127,18 +2127,11 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('usageAchievementsCallbacks smoke', () => {
-		it('setGetUsageDashboardCallback forwards to the renderer', () => {
+		it('registers no usage dashboard callback (no renderer answers it)', () => {
 			const createWebServer = createWebServerFactory(deps);
 			const server = createWebServer() as any;
-			const callback = server.setGetUsageDashboardCallback.mock.calls[0][0];
 
-			void callback('week');
-
-			expect(mockWebContents.send).toHaveBeenCalledWith(
-				'remote:getUsageDashboard',
-				'week',
-				expect.any(String)
-			);
+			expect(server.setGetUsageDashboardCallback).not.toHaveBeenCalled();
 		});
 
 		it('setGetAchievementsCallback forwards to the renderer', () => {

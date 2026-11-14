@@ -7,6 +7,7 @@ import {
 	PROMPT_STRETCH_BREAK_MS,
 } from '../../shared/promptCadence';
 import { toLocalYmd } from '../../shared/localDay';
+import { getTimeRangeStart } from '../../shared/statsTimeRange';
 
 // Fixed local "now": Friday 2026-10-16, 15:00.
 const NOW = new Date(2026, 9, 16, 15, 0).getTime();
@@ -21,6 +22,14 @@ describe('promptWindowStart', () => {
 	it('opens a bounded range N-1 local days before today', () => {
 		expect(promptWindowStart('week', at(1, 9), NOW)).toBe('2026-10-10');
 		expect(promptWindowStart('day', at(1, 9), NOW)).toBe('2026-10-16');
+	});
+
+	it('opens on the same day as every other dashboard query', () => {
+		for (const range of ['day', 'week', 'month', 'quarter', 'year'] as const) {
+			expect(promptWindowStart(range, at(1, 9) - 400 * 86_400_000, NOW)).toBe(
+				toLocalYmd(getTimeRangeStart(range, NOW))
+			);
+		}
 	});
 
 	it('never opens before the first prompt ever', () => {

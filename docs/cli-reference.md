@@ -2368,6 +2368,63 @@ Run a read-only SQL query against the stats database (SELECT / read PRAGMA only)
 | `-p, --param <value>` | Bind a value to a positional ? placeholder (repeatable, in order) | `[]`    |
 | `--json`              | Output rows as JSON instead of a tab-separated table              | -       |
 
+## `maestro-cli stats-delegation`
+
+Show the delegation split (interactive turns vs Auto Run tasks vs Cue runs) for a range and per day
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output totals, delegated share, and the per-day split as JSON    | -       |
+
+## `maestro-cli stats-cue`
+
+Show the Usage Dashboard Cue tab: run totals, durations, and per-pipeline breakdowns
+
+| Option                     | Description                                                          | Default |
+| -------------------------- | -------------------------------------------------------------------- | ------- |
+| `-r, --range <range>`      | Time range: day, week, month, quarter, year, all (default: week)     | -       |
+| `--exclude-trigger <type>` | Leave out a trigger type, like the Cue tab filter chips (repeatable) | `[]`    |
+| `--json`                   | Output the full Cue statistics object as JSON                        | -       |
+
+## `maestro-cli stats-plan-usage`
+
+Show the last sampled plan usage per Anthropic (Claude) and OpenAI (Codex) account
+
+| Option                  | Description                        | Default |
+| ----------------------- | ---------------------------------- | ------- |
+| `--provider <provider>` | Only one provider: claude or codex | -       |
+| `--json`                | Output the accounts as JSON        | -       |
+
+## `maestro-cli stats-agents`
+
+Show Agents Over Time: agents that existed each day, plus created and deleted
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output the daily series as JSON                                  | -       |
+
+## `maestro-cli stats-activity`
+
+Show Auto Run runs, wizard runs, resilience outages, and shortcut presses for a range and per day
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output totals and the daily counts as JSON                       | -       |
+
+## `maestro-cli stats-export`
+
+Export everything the Usage Dashboard reads for a range (the Export button)
+
+| Option                  | Description                                                      | Default |
+| ----------------------- | ---------------------------------------------------------------- | ------- |
+| `-o, --output <path>`   | File to write (a .zip of CSVs, or a .json file)                  | -       |
+| `-f, --format <format>` | csv (a zip of CSV files) or json (default: csv)                  | -       |
+| `-r, --range <range>`   | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`                | Output the result (path, row counts, notes) as JSON              | -       |
+
 ## `maestro-cli plugin`
 
 Author, validate, sign, and package Maestro plugins

@@ -5,17 +5,24 @@
  * - The four questions the section exists to answer (time, runs, docs, tasks)
  * - Derived metrics: hit rate, tasks per document, docs per productive run
  * - Duration comes from each run's active time, never its open-to-close window
- * - Empty state when no wizard runs are in range
- * - Refetches when the dashboard broadcasts a stats update
+ * - Empty state when no wizard runs are in range; error state when the read fails
+ * - Refetches when the dashboard broadcasts a wizard_runs update
+ * - The timeline covers every calendar day of the range and is one tab stop
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import type { WizardRun } from '../../../../shared/stats-types';
 import { WizardStats } from '../../../../renderer/components/UsageDashboard/WizardStats';
 import { THEMES } from '../../../../shared/themes';
 
 const theme = THEMES['dracula'];
+
+/** A StatCard tile by its label: label span -> label row -> card. */
+async function tile(label: string): Promise<HTMLElement> {
+	const labelEl = await screen.findByText(label);
+	return labelEl.parentElement!.parentElement as HTMLElement;
+}
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -60,10 +67,17 @@ describe('WizardStats', () => {
 	it('shows the empty state when no runs are in range', async () => {
 		render(<WizardStats timeRange="week" theme={theme} />);
 
-		await waitFor(() => {
-			expect(screen.getByText(/No wizard runs in this time range/i)).toBeInTheDocument();
-		});
-		expect(screen.queryByTestId('wizard-stats')).not.toBeInTheDocument();
+		expect(await screen.findByTestId('wizard-stats-empty')).toHaveTextContent(
+			/No wizard runs in this time range/i
+		);
+	});
+
+	it('shows an error, not the empty state, when the read fails', async () => {
+		mockStatsApi.getWizardRuns.mockRejectedValueOnce(new Error('db locked'));
+		render(<WizardStats timeRange="week" theme={theme} />);
+
+		expect(await screen.findByTestId('wizard-stats-error')).toHaveTextContent(/db locked/);
+		expect(screen.queryByTestId('wizard-stats-empty')).not.toBeInTheDocument();
 	});
 
 	it('sums active time, not the open-to-close window of a tab left open', async () => {
@@ -86,8 +100,9 @@ describe('WizardStats', () => {
 
 		render(<WizardStats timeRange="week" theme={theme} />);
 
-		const tile = await screen.findByLabelText(/^Time in the Wizard: 30m/i);
-		expect(tile).toHaveAccessibleName(/15m 0s per run/i);
+		const card = await tile('Time in the Wizard');
+		expect(card).toHaveTextContent(/30m/);
+		expect(card).toHaveTextContent(/15m 0s per run/i);
 	});
 
 	it('leaves runs recorded before active time out of the time figures', async () => {
@@ -104,8 +119,8 @@ describe('WizardStats', () => {
 
 		render(<WizardStats timeRange="week" theme={theme} />);
 
-		const tile = await screen.findByLabelText(/^Time in the Wizard: 12m/i);
-		expect(tile).toHaveAccessibleName(/12m 0s per run · 1 earlier untimed/i);
+		const card = await tile('Time in the Wizard');
+		expect(card).toHaveTextContent(/12m 0s per run · 1 earlier untimed/i);
 	});
 
 	it('shows a dash rather than 0m when no run in range was timed', async () => {
@@ -113,8 +128,9 @@ describe('WizardStats', () => {
 
 		render(<WizardStats timeRange="week" theme={theme} />);
 
-		const tile = await screen.findByLabelText(/^Time in the Wizard: -/i);
-		expect(tile).toHaveAccessibleName(/1 earlier untimed/i);
+		const card = await tile('Time in the Wizard');
+		expect(card).toHaveTextContent(/^Time in the Wizard-/);
+		expect(card).toHaveTextContent(/1 earlier untimed/i);
 	});
 
 	it('counts runs and splits them by surface', async () => {
@@ -126,9 +142,10 @@ describe('WizardStats', () => {
 
 		render(<WizardStats timeRange="week" theme={theme} />);
 
-		const tile = await screen.findByLabelText(/^Wizard Runs: 3/i);
-		expect(tile).toHaveAccessibleName(/2 inline/i);
-		expect(tile).toHaveAccessibleName(/1 onboarding/i);
+		const card = await tile('Wizard Runs');
+		expect(card).toHaveTextContent(/^Wizard Runs3/);
+		expect(card).toHaveTextContent(/2 inline/i);
+		expect(card).toHaveTextContent(/1 onboarding/i);
 	});
 
 	it('totals documents and tasks across runs with per-document math', async () => {
@@ -139,9 +156,10 @@ describe('WizardStats', () => {
 
 		render(<WizardStats timeRange="week" theme={theme} />);
 
-		expect(await screen.findByLabelText(/^Docs Produced: 4/i)).toBeInTheDocument();
-		const tasksTile = await screen.findByLabelText(/^Tasks Written: 24/i);
-		expect(tasksTile).toHaveAccessibleName(/6 per document/i);
+		expect(await tile('Docs Produced')).toHaveTextContent(/^Docs Produced4/);
+		const tasksTile = await tile('Tasks Written');
+		expect(tasksTile).toHaveTextContent(/^Tasks Written24/);
+		expect(tasksTile).toHaveTextContent(/6 per document/i);
 	});
 
 	it('reports the share of runs that actually produced documents', async () => {
@@ -154,9 +172,10 @@ describe('WizardStats', () => {
 
 		render(<WizardStats timeRange="week" theme={theme} />);
 
-		const tile = await screen.findByLabelText(/^Runs That Shipped: 50%/i);
-		expect(tile).toHaveAccessibleName(/2 of 4/i);
-		expect(tile).toHaveAccessibleName(/1 revised existing docs/i);
+		const card = await tile('Runs That Shipped');
+		expect(card).toHaveTextContent(/50%/);
+		expect(card).toHaveTextContent(/2 of 4/i);
+		expect(card).toHaveTextContent(/1 revised existing docs/i);
 	});
 
 	it('counts every message sent, including runs that produced nothing', async () => {
@@ -167,30 +186,37 @@ describe('WizardStats', () => {
 
 		render(<WizardStats timeRange="week" theme={theme} />);
 
-		const tile = await screen.findByLabelText(/^Messages Sent: 8/i);
-		expect(tile).toHaveAccessibleName(/4 per run/i);
+		const card = await tile('Messages Sent');
+		expect(card).toHaveTextContent(/^Messages Sent8/);
+		expect(card).toHaveTextContent(/4 per run/i);
 	});
 
 	it('refetches when the dashboard broadcasts a stats update', async () => {
-		let broadcast: (() => void) | undefined;
-		mockStatsApi.onStatsUpdate.mockImplementation((cb: () => void) => {
+		let broadcast: ((table?: string) => void) | undefined;
+		mockStatsApi.onStatsUpdate.mockImplementation((cb: (table?: string) => void) => {
 			broadcast = cb;
 			return () => {};
 		});
 		mockStatsApi.getWizardRuns.mockResolvedValue([makeRun()]);
 
 		render(<WizardStats timeRange="week" theme={theme} />);
-		await screen.findByTestId('wizard-stats');
+		await tile('Wizard Runs');
 
 		mockStatsApi.getWizardRuns.mockResolvedValue([makeRun(), makeRun({ id: 'b' })]);
-		broadcast?.();
+		// A write to another table does not refetch; a wizard_runs write does.
+		broadcast?.('shortcut_usage');
+		broadcast?.('wizard_runs');
 
-		await waitFor(() => {
-			expect(screen.getByLabelText(/^Wizard Runs: 2/i)).toBeInTheDocument();
-		});
+		await waitFor(
+			async () => {
+				expect(await tile('Wizard Runs')).toHaveTextContent(/^Wizard Runs2/);
+			},
+			{ timeout: 3000 }
+		);
+		expect(mockStatsApi.getWizardRuns).toHaveBeenCalledTimes(2);
 	});
 
-	it('renders a bar per calendar day between the first run and today', async () => {
+	it('renders a bar per calendar day of the range, behind one tab stop', async () => {
 		const now = Date.now();
 		mockStatsApi.getWizardRuns.mockResolvedValue([
 			makeRun({ id: 'a', startedAt: now - 2 * 24 * HOUR, endedAt: now - 2 * 24 * HOUR + MINUTE }),
@@ -199,8 +225,27 @@ describe('WizardStats', () => {
 
 		render(<WizardStats timeRange="week" theme={theme} />);
 
-		const timeline = await screen.findByRole('img', { name: /Wizard runs per day/i });
-		// Two days back plus today, with the quiet middle day kept as a gap.
+		const timeline = await screen.findByRole('group', { name: /Wizard runs per day/i });
+		// Every day of the 7-day range, quiet days kept as gaps.
+		expect(timeline.children).toHaveLength(7);
+		expect(timeline).toHaveAttribute('tabindex', '0');
+
+		fireEvent.keyDown(timeline, { key: 'End' });
+		expect(await screen.findByTestId('wizard-timeline-tooltip')).toHaveTextContent(
+			/1 run produced 2 docs/
+		);
+	});
+
+	it('starts an all-time timeline at the first run', async () => {
+		const now = Date.now();
+		mockStatsApi.getWizardRuns.mockResolvedValue([
+			makeRun({ id: 'a', startedAt: now - 2 * 24 * HOUR, endedAt: now - 2 * 24 * HOUR + MINUTE }),
+			makeRun({ id: 'b', startedAt: now, endedAt: now + MINUTE }),
+		]);
+
+		render(<WizardStats timeRange="all" theme={theme} />);
+
+		const timeline = await screen.findByRole('group', { name: /Wizard runs per day/i });
 		expect(timeline.children).toHaveLength(3);
 	});
 });

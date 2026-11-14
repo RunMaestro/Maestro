@@ -5,7 +5,7 @@
  * corruption recovery, VACUUM scheduling, and connection management.
  *
  * CRUD operations are delegated to focused modules (query-events, auto-run,
- * session-lifecycle, aggregations, data-management).
+ * session-lifecycle, aggregations, ...).
  */
 
 import Database from 'better-sqlite3';
@@ -17,6 +17,7 @@ import type {
 	QueryEvent,
 	AutoRunSession,
 	AutoRunTask,
+	AutoRunTurnsByHour,
 	SessionLifecycleEvent,
 	ResilienceEvent,
 	WizardRun,
@@ -29,6 +30,7 @@ import type {
 	BackupResult,
 	CorruptionRecoveryResult,
 	MigrationRecord,
+	StatsInitializationResult,
 } from './types';
 import { LOG_CONTEXT } from './utils';
 import { CREATE_META_TABLE_SQL } from './schema';
@@ -44,9 +46,11 @@ import { flushQueryEventsSync } from './query-events-buffer';
 import {
 	insertAutoRunSession,
 	updateAutoRunSession,
+	finishAutoRunSession,
 	getAutoRunSessions,
 	insertAutoRunTask,
 	getAutoRunTasks,
+	getAutoRunTurnsByHour,
 	clearAutoRunCache,
 } from './auto-run';
 import {
@@ -57,14 +61,13 @@ import {
 } from './session-lifecycle';
 import { recordResilienceEvent, getResilienceEvents, clearResilienceCache } from './resilience';
 import { recordWizardRun, getWizardRuns, clearWizardRunsCache } from './wizard-runs';
-import { getAggregatedStats } from './aggregations';
+import { getAggregatedStats, clearAggregationCache } from './aggregations';
 import {
 	getQuerySourceTotals,
 	getQuerySourceByDay,
 	type QuerySourceTotals,
 	type QuerySourceDay,
 } from './delegation';
-import { clearOldData } from './data-management';
 import {
 	insertImageAnnotation,
 	clearImageAnnotationCache,
@@ -74,6 +77,7 @@ import {
 	incrementShortcutUsage,
 	getShortcutUsageByDay,
 	getShortcutUsageTotal,
+	getShortcutUsageByShortcut,
 	clearShortcutUsageCache,
 } from './shortcut-usage';
 import {
@@ -81,7 +85,11 @@ import {
 	getMultiWindowUsage,
 	clearMultiWindowUsageCache,
 } from './multi-window-usage';
-import type { ShortcutUsageDay, MultiWindowUsage } from '../../shared/stats-types';
+import type {
+	ShortcutUsageDay,
+	ShortcutUsageByShortcut,
+	MultiWindowUsage,
+} from '../../shared/stats-types';
 import { captureException } from '../utils/sentry';
 
 /**
@@ -101,12 +109,49 @@ function isExpectedSidecarError(error: unknown): boolean {
 }
 
 /**
+ * The one-shot notice for a damaged database that `initialize()` replaced.
+ * Exported for tests.
+ */
+export function describeRecovery(
+	recovery: CorruptionRecoveryResult,
+	opened: boolean
+): StatsInitializationResult {
+	const kept = recovery.corruptedPath
+		? ` The damaged file was kept at ${recovery.corruptedPath}.`
+		: '';
+	let userMessage: string;
+	if (!opened) {
+		userMessage =
+			'The usage statistics database was damaged and could not be recreated, so usage is not being recorded this session.' +
+			kept;
+	} else if (recovery.restoredFromBackup) {
+		const backupDay = recovery.backupPath?.match(/(\d{4}-\d{2}-\d{2})$/)?.[1];
+		userMessage =
+			`The usage statistics database was damaged and has been restored from ${backupDay ? `the backup of ${backupDay}` : 'a backup'}. Usage recorded after that backup is no longer shown.` +
+			kept;
+	} else {
+		userMessage =
+			'The usage statistics database was damaged and no usable backup was found, so a new one was started. Earlier Usage Dashboard history is no longer shown.' +
+			kept;
+	}
+	return {
+		success: opened,
+		wasReset: true,
+		backupPath: recovery.corruptedPath,
+		error: recovery.error,
+		userMessage,
+	};
+}
+
+/**
  * StatsDB manages the SQLite database for usage statistics.
  */
 export class StatsDB {
 	private db: Database.Database | null = null;
 	private dbPath: string;
 	private initialized = false;
+	/** Set when `initialize()` had to replace a damaged database; see getInitializationResult. */
+	private initializationResult: StatsInitializationResult | null = null;
 
 	constructor() {
 		this.dbPath = path.join(app.getPath('userData'), 'stats.db');
@@ -215,6 +260,7 @@ export class StatsDB {
 			clearImageAnnotationCache();
 			clearShortcutUsageCache();
 			clearMultiWindowUsageCache();
+			clearAggregationCache();
 
 			logger.info('Stats database closed', LOG_CONTEXT);
 		}
@@ -595,6 +641,7 @@ export class StatsDB {
 	 */
 	private recoverFromCorruption(): CorruptionRecoveryResult {
 		logger.warn('Attempting to recover from database corruption...', LOG_CONTEXT);
+		let corruptedPath: string | undefined;
 
 		try {
 			// Close current database if open
@@ -614,6 +661,7 @@ export class StatsDB {
 				const corruptedBackupPath = `${this.dbPath}.corrupted.${timestamp}`;
 				try {
 					fs.renameSync(this.dbPath, corruptedBackupPath);
+					corruptedPath = corruptedBackupPath;
 					logger.warn(`Corrupted database moved to: ${corruptedBackupPath}`, LOG_CONTEXT);
 				} catch {
 					logger.error('Failed to backup corrupted database', LOG_CONTEXT);
@@ -656,6 +704,7 @@ export class StatsDB {
 								recovered: true,
 								backupPath: backup.path,
 								restoredFromBackup: true,
+								corruptedPath,
 							};
 						}
 					} else {
@@ -675,6 +724,7 @@ export class StatsDB {
 			return {
 				recovered: true,
 				restoredFromBackup: false,
+				corruptedPath,
 			};
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
@@ -682,6 +732,7 @@ export class StatsDB {
 			return {
 				recovered: false,
 				error: errorMessage,
+				corruptedPath,
 			};
 		}
 	}
@@ -754,14 +805,17 @@ export class StatsDB {
 				// No file exists (recovery may not have restored a backup) - create fresh
 				const db = new Database(this.dbPath);
 				logger.info('Fresh database created after corruption recovery', LOG_CONTEXT);
+				this.initializationResult = describeRecovery(recoveryResult, true);
 				return db;
 			}
 			const db = new Database(this.dbPath);
 			logger.info('Database opened after corruption recovery', LOG_CONTEXT);
+			this.initializationResult = describeRecovery(recoveryResult, true);
 			return db;
 		} catch (error) {
 			void captureException(error);
 			logger.error(`Failed to create database after recovery: ${error}`, LOG_CONTEXT);
+			this.initializationResult = describeRecovery(recoveryResult, false);
 			return null;
 		}
 	}
@@ -820,6 +874,19 @@ export class StatsDB {
 
 	getAutoRunTasks(autoRunSessionId: string): AutoRunTask[] {
 		return getAutoRunTasks(this.database, autoRunSessionId);
+	}
+
+	finishAutoRunSession(
+		id: string,
+		duration: number,
+		tasksCompleted: number,
+		tasksTotal?: number
+	): boolean {
+		return finishAutoRunSession(this.database, id, duration, tasksCompleted, tasksTotal);
+	}
+
+	getAutoRunTurnsByHour(range: StatsTimeRange): AutoRunTurnsByHour[] {
+		return getAutoRunTurnsByHour(this.database, range);
 	}
 
 	// ============================================================================
@@ -900,8 +967,8 @@ export class StatsDB {
 	// Shortcut Usage (delegated)
 	// ============================================================================
 
-	incrementShortcutUsage(firedAt: number): string {
-		return incrementShortcutUsage(this.database, firedAt);
+	incrementShortcutUsage(firedAt: number, shortcutId?: string): string {
+		return incrementShortcutUsage(this.database, firedAt, shortcutId);
 	}
 
 	getShortcutUsageByDay(range: StatsTimeRange): ShortcutUsageDay[] {
@@ -910,6 +977,10 @@ export class StatsDB {
 
 	getShortcutUsageTotal(range: StatsTimeRange): number {
 		return getShortcutUsageTotal(this.database, range);
+	}
+
+	getShortcutUsageByShortcut(range: StatsTimeRange): ShortcutUsageByShortcut[] {
+		return getShortcutUsageByShortcut(this.database, range);
 	}
 
 	// ============================================================================
@@ -925,61 +996,20 @@ export class StatsDB {
 	}
 
 	// ============================================================================
-	// Data Management (delegated)
-	// ============================================================================
-
-	clearOldData(olderThanDays: number) {
-		if (!this.db) {
-			return {
-				success: false,
-				deletedQueryEvents: 0,
-				deletedAutoRunSessions: 0,
-				deletedAutoRunTasks: 0,
-				deletedSessionLifecycle: 0,
-				error: 'Database not initialized',
-			};
-		}
-		return clearOldData(this.database, olderThanDays);
-	}
-
-	// ============================================================================
-	// Timestamps
+	// Initialization Result
 	// ============================================================================
 
 	/**
-	 * Get the earliest timestamp across all stats tables.
-	 * Returns null if no stats data exists.
+	 * What the last `initialize()` had to do to a damaged database, for the
+	 * one-shot warning toast. Null when the database opened cleanly (or the
+	 * notice was already shown and cleared).
 	 */
-	getEarliestTimestamp(): number | null {
-		try {
-			const queryResult = this.database
-				.prepare('SELECT MIN(start_time) as earliest FROM query_events')
-				.get() as { earliest: number | null } | undefined;
+	getInitializationResult(): StatsInitializationResult | null {
+		return this.initializationResult;
+	}
 
-			const autoRunResult = this.database
-				.prepare('SELECT MIN(start_time) as earliest FROM auto_run_sessions')
-				.get() as { earliest: number | null } | undefined;
-
-			const lifecycleResult = this.database
-				.prepare('SELECT MIN(created_at) as earliest FROM session_lifecycle')
-				.get() as { earliest: number | null } | undefined;
-
-			// Find the minimum across all tables
-			const timestamps = [
-				queryResult?.earliest,
-				autoRunResult?.earliest,
-				lifecycleResult?.earliest,
-			].filter((t): t is number => t !== null && t !== undefined);
-
-			if (timestamps.length === 0) {
-				return null;
-			}
-
-			return Math.min(...timestamps);
-		} catch (error) {
-			void captureException(error);
-			logger.error(`Failed to get earliest timestamp: ${error}`, LOG_CONTEXT);
-			return null;
-		}
+	/** Forget the initialization result once the user has been told. */
+	clearInitializationResult(): void {
+		this.initializationResult = null;
 	}
 }

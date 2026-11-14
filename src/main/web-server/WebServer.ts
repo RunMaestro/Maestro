@@ -180,7 +180,6 @@ import type {
 	GetCueActivityCallback,
 	CueActivityEntry,
 	CueSubscriptionInfo,
-	GetUsageDashboardCallback,
 	GetAchievementsCallback,
 	GenerateDirectorNotesSynopsisCallback,
 	NotifyToastCallback,
@@ -881,10 +880,6 @@ export class WebServer {
 		this.callbackRegistry.setGetCueActivityCallback(callback);
 	}
 
-	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
-		this.callbackRegistry.setGetUsageDashboardCallback(callback);
-	}
-
 	setGetAchievementsCallback(callback: GetAchievementsCallback): void {
 		this.callbackRegistry.setGetAchievementsCallback(callback);
 	}
@@ -1410,8 +1405,6 @@ export class WebServer {
 				const { removePipelineOnDisk } = await import('../cue/pipeline-layout-mutations');
 				return removePipelineOnDisk(identifier);
 			},
-			getUsageDashboard: async (timeRange: 'day' | 'week' | 'month' | 'all') =>
-				this.callbackRegistry.getUsageDashboard(timeRange),
 			getAchievements: async () => this.callbackRegistry.getAchievements(),
 			generateDirectorNotesSynopsis: async (lookbackDays: number, provider: string) =>
 				this.callbackRegistry.generateDirectorNotesSynopsis(lookbackDays, provider),

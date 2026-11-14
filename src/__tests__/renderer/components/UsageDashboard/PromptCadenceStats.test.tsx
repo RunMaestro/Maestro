@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { PromptCadenceStats } from '../../../../renderer/components/UsageDashboard/PromptCadenceStats';
 import { computePromptCadence, emptyPromptCadence } from '../../../../shared/promptCadence';
 import { THEMES } from '../../../../shared/themes';
@@ -70,5 +70,22 @@ describe('PromptCadenceStats', () => {
 		expect(screen.queryByTestId('prompt-cadence-chart')).toBeNull();
 		expect(screen.queryByTestId('prompt-cadence-by-weekday')).toBeNull();
 		expect(screen.getByTestId('prompt-cadence-by-hour')).toBeInTheDocument();
+	});
+
+	it('labels the streak as counted within the range', () => {
+		render(<PromptCadenceStats cadence={weekCadence()} theme={theme} />);
+		const streak = screen.getByTestId('prompt-streak');
+		expect(within(streak).getByText('Streak in Range')).toBeInTheDocument();
+		expect(streak.textContent).toContain('longest in range');
+	});
+
+	it('shows a bar tooltip at the cursor through the shared ChartTooltip', () => {
+		render(<PromptCadenceStats cadence={weekCadence()} theme={theme} />);
+		const bars = screen.getAllByTestId('prompt-cadence-bar');
+		fireEvent.mouseEnter(bars[3], { clientX: 120, clientY: 80 });
+		const tooltip = screen.getByTestId('prompt-cadence-tooltip');
+		expect(tooltip.textContent).toContain('3 prompts');
+		fireEvent.mouseLeave(bars[3]);
+		expect(screen.queryByTestId('prompt-cadence-tooltip')).toBeNull();
 	});
 });

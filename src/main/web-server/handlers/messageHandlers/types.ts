@@ -26,7 +26,6 @@ import type {
 	AddGroupChatParticipantResult,
 	CueSubscriptionInfo,
 	CueActivityEntry,
-	UsageDashboardData,
 	AchievementData,
 	CreateSessionConfig,
 	DirectorNotesSynopsisResult,
@@ -408,7 +407,6 @@ export interface MessageHandlerCallbacks {
 	removeCuePipeline: (
 		identifier: string
 	) => Promise<{ ok: true } | { ok: false; code: string; message: string }>;
-	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;
 	generateDirectorNotesSynopsis: (
 		lookbackDays: number,
