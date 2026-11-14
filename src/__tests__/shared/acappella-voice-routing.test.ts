@@ -44,7 +44,7 @@ describe('the voice-routing assignment as the Brain', () => {
 			ENDPOINT_BRAIN_PROVIDER_ID
 		);
 		expect(assignedBrainProviderId({ type: 'off' })).toBeNull();
-		expect(assignedBrainProviderId({ type: 'utility-agent' })).toBeNull();
+		expect(assignedBrainProviderId({ type: 'housekeeping-model' })).toBeNull();
 	});
 
 	it('knows which provider ids are never a stored choice', () => {
@@ -61,7 +61,7 @@ describe('the voice-routing assignment as the Brain', () => {
 		expect(resolveVoiceBrainSource({ 'voice-routing': { type: 'off' } }, ENDPOINTS)).toBeNull();
 		// This task has no agent path, so the assignment is unusable and reads as off.
 		expect(
-			resolveVoiceBrainSource({ 'voice-routing': { type: 'utility-agent' } }, ENDPOINTS)
+			resolveVoiceBrainSource({ 'voice-routing': { type: 'housekeeping-model' } }, ENDPOINTS)
 		).toBeNull();
 		// Another task's assignment is not this one's.
 		expect(

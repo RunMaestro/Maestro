@@ -820,37 +820,45 @@ Result, 2026-10-10, darwin-arm64 (Apple Silicon), Prompt Guard 2 22M (quantized)
 
 A **task** is a named job (`tab-naming`, `git-drafts`, `semantic-search`, ...), never a model.
 `LOCAL_MODEL_TASKS` in `src/shared/local-models/tasks.ts` lists each one with the kind of model it
-`needs`, whether it may inherit the Utility source (`allowsUtilityAgent`), whether its caller keeps
+`needs`, whether it may follow a Model Map slot (`allowsModelMap`), whether its caller keeps
 a provider agent spawn (`hasAgentPath`), its `defaultAssignment`, and its `system`. The user's choice per task is a `LocalModelAssignment`:
 
 | Assignment                                | Meaning                                                                                                                                                                                       |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `{ type: 'off' }`                         | The task does not run.                                                                                                                                                                        |
-| `{ type: 'utility-agent' }`               | Inherit `utilitySource`: a local model, endpoint, or provider (`utilityAgentId` / `utilityModelId`, or the tab's agent).                                                                      |
+| `{ type: 'agent-model' }`                 | Follow the Model Map's Agent slot: a local model, endpoint, or provider (a named agent and model override, or the tab's agent).                                                               |
+| `{ type: 'housekeeping-model' }`          | Follow the Model Map's Housekeeping slot, on the same terms. The legacy `utility-agent` reads as this.                                                                                        |
 | `{ type: 'local', modelId }`              | A catalog model of the needed kind, run on this machine.                                                                                                                                      |
 | `{ type: 'endpoint', endpointId, model }` | A model on one of the user's `localModelEndpoints`.                                                                                                                                           |
 | `{ type: 'system-one' }`                  | The System One engine in force answers the task's typed questions. Only for a task that declares `systemOneQuestions`. See [System One](#system-one-engines-the-router-entry-and-the-ledger). |
 
 The `localModelAssignments` setting is SPARSE: only tasks the user changed are stored, and
-`resolveLocalModelAssignment()` falls back to the registry default. Tab naming, summaries, and AI
-command mode default to `utility-agent`, inheriting the shared source. Existing installs retain
-their `utilityAgentId` / `utilityModelId` provider choice. The other System Two tasks (git drafts,
-spoken notices, token proxy, history digests) also default to `utility-agent` but have no agent
-path: while `utilitySource` is the provider, `resolveLocalModelAssignment()` resolves them to `off`,
-and readiness names that cause (`inheritsProviderWithoutAgentPath()`). System One tasks default to
-`off`. The migration is
-`parseLocalModelAssignments()`, run on every load: unknown tasks, malformed entries, and
-`utility-agent` on a task that does not accept it are dropped back to the default. A model id the
+`resolveLocalModelAssignment()` falls back to the registry default. Summaries and git drafts
+default to `agent-model`, the other System Two tasks to `housekeeping-model`. Tab naming, summaries, and AI command mode keep a provider spawn
+of their own; the other System Two tasks (git drafts, spoken notices, token proxy, history digests)
+have no agent path, so while their slot is a provider `resolveLocalModelAssignment()` resolves them
+to `off`, and readiness names the slot (`inheritsProviderWithoutAgentPath()` returns it). System
+One tasks default to `off`. The migration is `parseLocalModelAssignments()`, run on every load:
+unknown tasks, malformed entries, and a Model Map slot on a task that does not accept it are dropped
+back to the default, and a stored `utility-agent` reads as `housekeeping-model`. A model id the
 catalog no longer knows is KEPT, so the router can name it as unavailable instead of the task
 quietly changing source. Save-time checks (catalog membership, matching kind) are
 `localModelAssignmentProblem()`.
 
-`parseUtilitySource()` defaults old settings to the provider path.
-`readLocalModelAssignments()` resolves shared-source inheritance for both execution and readiness;
-task pickers keep the stored `utility-agent` choice. `resolveUtilityProvider()` reads provider
-overrides only while the shared source is on the provider path. A parked provider choice must not
-override a local source. Tool-based grooming and transfer keep the owning session's provider when
-the shared source is local or an endpoint.
+**The Model Map** (`src/shared/local-models/model-map.ts`, setting `modelMap`) holds the two slots,
+`agent` and `housekeeping`. A slot is `{ type: 'provider', agentId?, modelId? }` (no `agentId`
+follows the session's provider), a catalog text model, or an endpoint model. `readModelMap(read)`
+takes a settings getter so main, renderer, and CLI read it alike; without a stored map it builds the
+Housekeeping slot from the old `utilitySource` / `utilityAgentId` / `utilityModelId` keys, so an
+install from before the map keeps its setup with no one-shot write. `readLocalModelAssignments()`
+resolves a slot on a model for both execution and readiness; task pickers keep the stored slot
+choice. For a provider slot the router answers `use-provider` and the caller asks
+`resolveTaskProvider(read, taskId, sessionProvider)` for the agent and model override of the slot
+that task follows. A local or endpoint slot never hands its caller a provider choice parked
+underneath it. Tool-based grooming and transfer read only the Housekeeping slot
+(`resolveSlotProvider(map.housekeeping, ...)`) and keep the owning session's provider while it is a
+model. A summary turn through `groomContext` (`cheapTurn` with tools allowed) asks
+`resolveTaskProvider(read, 'tab-summary', ...)` instead, so it follows the Summaries slot.
 
 One task takes two kinds of catalog model. `model-routing` declares `needs: 'text-gen'` and
 `alsoAcceptsLocal: ['embedding']`, and does its job a different way on each (see
@@ -894,12 +902,12 @@ as `subTab`, and `useModelsSettingsNav().open()` in the renderer applies it.
 `runLocalTask(taskId, input)` in `src/main/local-models/task-router.ts` is the one choke point a
 housekeeping task calls. It reads the task's assignment and answers:
 
-| Assignment      | Result                                                                                       |
-| --------------- | -------------------------------------------------------------------------------------------- |
-| `off`           | `{ status: 'off' }`. No model is touched.                                                    |
-| `utility-agent` | `{ status: 'use-utility-agent' }`. The CALLER keeps its existing spawn path; none is copied. |
-| `local`         | `generateText` on that model: `ok`, or `unavailable` with the classified `code`.             |
-| `endpoint`      | `generateText` on that endpoint: `ok`, or `unavailable` with the classified `code`.          |
+| Assignment                     | Result                                                                                  |
+| ------------------------------ | --------------------------------------------------------------------------------------- |
+| `off`                          | `{ status: 'off' }`. No model is touched.                                               |
+| a Model Map slot on a provider | `{ status: 'use-provider' }`. The CALLER keeps its existing spawn path; none is copied. |
+| `local`                        | `generateText` on that model: `ok`, or `unavailable` with the classified `code`.        |
+| `endpoint`                     | `generateText` on that endpoint: `ok`, or `unavailable` with the classified `code`.     |
 
 A caller abort is `cancelled`, not a failure. `unavailable` carries a `reason` that names the model
 or endpoint and what to do. **There is no fallback**: an unavailable local model is never swapped for
@@ -918,7 +926,7 @@ sampleRate })` runs `needs: 'stt'` tasks (`dictation`) through `transcribeSpeech
 Every call that reaches a model is recorded in the stats database as a `local_model_runs` row (stats
 migration v15, rebuilt in v20: task, source type, model, endpoint id, agent id, start, sleep-aware
 duration, `ok` / `error` / `cancelled`, error code, tokens), honoring `statsCollectionEnabled`. A
-stats write that fails is reported to Sentry and never fails the task. `off` and `use-utility-agent`
+stats write that fails is reported to Sentry and never fails the task. `off` and `use-provider`
 record nothing.
 
 The source type is where the model was, one of `LOCAL_MODEL_RUN_SOURCE_TYPES`:
@@ -963,12 +971,12 @@ every unavailable verdict carries a closed `reason`, a `detail` sentence, and a 
 Shapes live in `src/shared/local-models/task-readiness.ts` (`LocalModelTaskReadiness`,
 `LOCAL_MODEL_TASK_UNREADY_REASONS`, `isTaskRunnable()`).
 
-| Assignment      | Checked, in order                                                                                  | Reasons                                                                                                                                                        |
-| --------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `off`           | nothing (state `off`, with how to assign one)                                                      | -                                                                                                                                                              |
-| `utility-agent` | nothing (state `utility-agent`; the caller's own path)                                             | -                                                                                                                                                              |
-| `local`         | catalog entry, kind, runtime WITHOUT loading it (`knownNativeRuntimeUnavailability`), model status | `model-unknown`, `model-wrong-kind`, `runtime-unavailable`, `model-not-installed`, `model-corrupt`                                                             |
-| `endpoint`      | need is servable (`endpointServesNeed`), saved and enabled, one model listing, model is listed     | `endpoint-unsupported`, `endpoint-unknown`, `endpoint-disabled`, `endpoint-key-missing`, `endpoint-rejected`, `endpoint-unreachable`, `endpoint-model-missing` |
+| Assignment           | Checked, in order                                                                                  | Reasons                                                                                                                                                        |
+| -------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `off`                | nothing (state `off`, with how to assign one)                                                      | -                                                                                                                                                              |
+| a slot on a provider | nothing (state `provider`; the caller's own path)                                                  | -                                                                                                                                                              |
+| `local`              | catalog entry, kind, runtime WITHOUT loading it (`knownNativeRuntimeUnavailability`), model status | `model-unknown`, `model-wrong-kind`, `runtime-unavailable`, `model-not-installed`, `model-corrupt`                                                             |
+| `endpoint`           | need is servable (`endpointServesNeed`), saved and enabled, one model listing, model is listed     | `endpoint-unsupported`, `endpoint-unknown`, `endpoint-disabled`, `endpoint-key-missing`, `endpoint-rejected`, `endpoint-unreachable`, `endpoint-model-missing` |
 
 Runtime is checked before the model for the same reason the voice gate does: a runtime that will not
 load is not fixed by a download. Local checks never re-hash and never dlopen; only an endpoint
@@ -1523,7 +1531,7 @@ No answer includes no engine chosen: code `off`, the policy applies, nothing is 
 says where to choose one. **There is no fallback**: no other engine and no model is asked. An
 unclassified failure inside an engine still throws (a bug, for Sentry) and is not recorded. A model
 twin (`runLocalTask`) now REFUSES a task assigned to System One by name, where it used to read any
-non-model assignment as the Utility Agent.
+non-model assignment as the provider path.
 
 **Fail policy.** `failPolicy` is `open` or `closed` per task, defaulted on the task definition (the
 Cue gate is `open`, the injection screen is `closed`) and changed by the user (`s1 set fail-policy`).
@@ -4068,7 +4076,7 @@ crossover in total cost.
 agent's gateway (`applyAgentGatewayToSpawn()`), so an agent in `compress` mode is shortened there
 too and its requests are counted under it.
 
-**Still direct:** jobs that hold no agent id. Tab naming on the Utility Agent path and
+**Still direct:** jobs that hold no agent id. Tab naming on a provider slot and
 `groomContext()` (context grooming, Director's Notes, AI command on the agent path) build their own
 environment and are not given the id of a Left Bar agent, and the Group Chat moderator is nobody's
 agent. Someone who runs a gateway as a REQUIRED route (a company proxy that holds the key) should

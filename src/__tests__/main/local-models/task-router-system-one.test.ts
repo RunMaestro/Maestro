@@ -18,7 +18,7 @@
  *   - **Every run that reached System One is recorded with its outcome**, and a
  *     record that cannot be kept never fails the run.
  *   - **A model twin refuses a task assigned to System One** instead of
- *     treating it as the Utility Agent.
+ *     handing it to a provider agent path.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -454,7 +454,7 @@ describe('runSystemOneTask', () => {
 });
 
 describe('a model twin and a task assigned to System One', () => {
-	it('refuses the task by name instead of handing it to the Utility Agent path', async () => {
+	it('refuses the task by name instead of handing it to a provider agent path', async () => {
 		await gateOnJev();
 
 		await expect(runLocalTask('cue-gate', { prompt: 'Should this run?' })).rejects.toThrow(

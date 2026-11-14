@@ -157,7 +157,7 @@ import {
 	modelsEndpointsUpdate,
 } from './commands/models-endpoints';
 import { modelsConfigSet, modelsConfigShow } from './commands/models-config';
-import { modelsAssign, modelsTasks } from './commands/models-assign';
+import { modelsAssign, modelsMap, modelsTasks } from './commands/models-assign';
 import { loadUserLocalModels } from './services/storage';
 import {
 	modelsAddHf,
@@ -4671,10 +4671,18 @@ models
 models
 	.command('assign <task-id> <assignment>')
 	.description(
-		'Choose what a task runs on: off | utility-agent | system-one | local:<model-id> | endpoint:<endpoint>:<model>'
+		'Choose what a task runs on: off | agent-model | housekeeping-model | system-one | local:<model-id> | endpoint:<endpoint>:<model>'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsAssign);
+
+models
+	.command('map [slot] [source]')
+	.description(
+		'Show the Model Map, or set a slot (agent | housekeeping) to: provider | provider:<agent-id>[:<model>] | local:<model-id> | endpoint:<endpoint>:<model>'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsMap);
 
 models
 	.command('tasks')

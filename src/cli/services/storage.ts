@@ -29,6 +29,7 @@ import {
 	type LocalModelAssignments,
 } from '../../shared/local-models/tasks';
 import { setUserLocalModels } from '../../shared/local-models/model-catalog';
+import { readModelMap, type ModelMap } from '../../shared/local-models/model-map';
 import { parseHarnessTierDefaults, type HarnessTierDefaults } from '../../shared/modelTiers';
 import {
 	USER_LOCAL_MODELS_FILE,
@@ -892,6 +893,19 @@ export function readLocalModelAssignments(): LocalModelAssignments {
 /** Write the assignments back; the settings watcher reloads every window. */
 export function writeLocalModelAssignments(assignments: LocalModelAssignments): void {
 	writeSettingValue('localModelAssignments', assignments);
+}
+
+/**
+ * The Model Map, read by the same reader the desktop uses, so an install that
+ * still has the old Utility source keys reads its Housekeeping slot from them.
+ */
+export function readStoredModelMap(): ModelMap {
+	return readModelMap(readSettingValue);
+}
+
+/** Write the whole map back; the settings watcher reloads every window. */
+export function writeModelMap(map: ModelMap): void {
+	writeSettingValue('modelMap', map);
 }
 
 /**

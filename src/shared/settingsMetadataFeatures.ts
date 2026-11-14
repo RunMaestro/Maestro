@@ -122,7 +122,7 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	localModelAssignments: {
 		description:
-			"Local Models task assignments: which source each housekeeping task (tab naming, summaries, AI command mode, git drafts, semantic search, Cue gate, screens, dictation, spoken notices, voice routing, token proxy) runs on. Keyed by task id; each value is { type: 'off' }, { type: 'utility-agent' } (inherits utilitySource, whose provider path honors utilityAgentId / utilityModelId), { type: 'local', modelId }, { type: 'endpoint', endpointId, model }, or { type: 'system-one' } (the System One engine in force answers the task's typed questions; only a task that declares them accepts it). A task with no entry uses its default.",
+			"Local Models task assignments: which source each housekeeping task (tab naming, summaries, AI command mode, git drafts, semantic search, Cue gate, screens, dictation, spoken notices, voice routing, token proxy) runs on. Keyed by task id; each value is { type: 'off' }, { type: 'agent-model' } or { type: 'housekeeping-model' } (inherits that slot of modelMap), { type: 'local', modelId }, { type: 'endpoint', endpointId, model }, or { type: 'system-one' } (the System One engine in force answers the task's typed questions; only a task that declares them accepts it). A task with no entry uses its default.",
 		type: 'object',
 		default: {},
 		category: 'integrations',

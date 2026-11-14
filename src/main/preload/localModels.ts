@@ -485,7 +485,7 @@ export function createLocalModelsApi() {
 
 		/**
 		 * Run a text-generation task through the user's assignment for it. Answers
-		 * `off` or `use-utility-agent` without touching a model; the caller keeps
+		 * `off` or `use-provider` without touching a model; the caller keeps
 		 * its existing path for the latter. Never falls back to another source.
 		 */
 		runTask: (

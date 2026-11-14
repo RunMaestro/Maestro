@@ -5305,7 +5305,7 @@ maestro-cli models verify <model-id>
 
 ## `maestro-cli models assign <task-id> <assignment>`
 
-Choose what a task runs on: off | utility-agent | system-one | local:&lt;model-id> | endpoint:&lt;endpoint>:&lt;model>
+Choose what a task runs on: off | agent-model | housekeeping-model | system-one | local:&lt;model-id> | endpoint:&lt;endpoint>:&lt;model>
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -5314,7 +5314,22 @@ Choose what a task runs on: off | utility-agent | system-one | local:&lt;model-i
 ```bash
 maestro-cli models assign tab-naming local:<model-id>
 maestro-cli models assign model-routing endpoint:<endpoint>:<model>
+maestro-cli models assign git-drafts agent-model
 maestro-cli models assign cue-gate off
+```
+
+## `maestro-cli models map [slot] [source]`
+
+Show the Model Map, or set a slot (agent | housekeeping) to: provider | provider:&lt;agent-id>[:&lt;model>] | local:&lt;model-id> | endpoint:&lt;endpoint>:&lt;model>
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli models map
+maestro-cli models map housekeeping local:<model-id>
+maestro-cli models map agent provider:claude-code:sonnet
 ```
 
 ## `maestro-cli models tasks`

@@ -4,7 +4,10 @@
  *
  * A task is offered only sources that can do its job:
  * - Off, always.
- * - Utility Agent, only when the task has an agent path to fall back on.
+ * - Agent model and Housekeeping model (the Model Map slots), only for a task
+ *   that accepts them (`allowsModelMap`). Each label names what its slot runs
+ *   on when the map is passed, so the picker reads "Housekeeping model: Qwen3
+ *   1.7B" rather than a bare role.
  * - System One, only when the task declares typed questions for an engine
  *   (`taskAcceptsSystemOne`) and an engine is chosen. Its label names the engine
  *   in force (`systemOneAssignmentLabel`), so a local judge is never read as Jev.
@@ -45,13 +48,28 @@ import {
 	endpointServesNeed,
 	formatLocalModelAssignmentSpec,
 	isLocalModelOfferedForTask,
+	LOCAL_MODEL_TASKS,
 	localModelAssignmentSourceLabel,
+	OFF_ASSIGNMENT,
 	SYSTEM_ONE_ASSIGNMENT,
 	taskAcceptsLocalKind,
 	taskAcceptsSystemOne,
 	type LocalModelAssignment,
 	type LocalModelTaskDefinition,
 } from '../../../../../shared/local-models/tasks';
+import {
+	isRecommendedForModelMapRole,
+	MODEL_MAP_ASSIGNMENTS,
+	MODEL_MAP_REFERENCE_TASK,
+	MODEL_MAP_ROLE_LABELS,
+	MODEL_MAP_ROLES,
+	modelMapSlotLabel,
+	parseModelMapSlotSpec,
+	type ModelMap,
+	type ModelMapRole,
+	type ModelMapSlot,
+} from '../../../../../shared/local-models/model-map';
+import { LOCAL_MODEL_ROLE_LABELS } from '../../../../../shared/local-models/library';
 import type { EndpointModelsState } from '../../../../hooks/localModels';
 
 export interface AssignmentOption {
@@ -61,7 +79,7 @@ export interface AssignmentOption {
 }
 
 export interface AssignmentOptionGroup {
-	/** `null` for the ungrouped head (Off, Utility Agent). */
+	/** `null` for the ungrouped head (Off, the Model Map slots). */
 	label: string | null;
 	options: AssignmentOption[];
 }
@@ -76,6 +94,8 @@ export interface AssignmentOptionSources {
 	 * that does not read it, or a report still loading) reads as no engine.
 	 */
 	systemOneEngine?: SystemOneEngineChoice;
+	/** The Model Map in force, so each slot option names what it runs on. */
+	modelMap?: ModelMap;
 }
 
 export const LOCAL_MODELS_GROUP_LABEL = 'Local models';
@@ -143,9 +163,19 @@ function unlistedLabel(
 	// System One is offered whenever an engine is chosen, so this is a task left
 	// on it after the engine was switched off. The label says so.
 	if (assignment.type === 'system-one') return systemOneAssignmentLabel(systemOneEngine);
-	// Off and Utility Agent are always offered when they are valid, so this is
-	// only reached for a Utility Agent assignment the task does not accept.
-	return 'Utility Agent (not available for this task)';
+	// Off and the Model Map slots are always offered when they are valid, so
+	// this is only reached for a slot the task does not accept.
+	return 'Model Map slot (not available for this task)';
+}
+
+/** A Model Map slot option's label: the slot, and what it runs on when the map is known. */
+export function modelMapOptionLabel(
+	role: ModelMapRole,
+	modelMap: ModelMap | undefined,
+	endpoints: readonly LocalModelEndpoint[]
+): string {
+	const label = MODEL_MAP_ROLE_LABELS[role];
+	return modelMap ? `${label}: ${modelMapSlotLabel(modelMap[role], endpoints)}` : label;
 }
 
 export function buildAssignmentOptionGroups(
@@ -162,7 +192,14 @@ export function buildAssignmentOptionGroups(
 	});
 
 	const head: AssignmentOption[] = [{ value: 'off', label: 'Off' }];
-	if (task.allowsUtilityAgent) head.push({ value: 'utility-agent', label: 'Utility source' });
+	if (task.allowsModelMap) {
+		for (const role of MODEL_MAP_ROLES) {
+			head.push({
+				value: formatLocalModelAssignmentSpec(MODEL_MAP_ASSIGNMENTS[role]),
+				label: modelMapOptionLabel(role, sources.modelMap, sources.endpoints),
+			});
+		}
+	}
 	const systemOneOption =
 		taskAcceptsSystemOne(task) && systemOneEngine !== 'off'
 			? option(SYSTEM_ONE_ASSIGNMENT, systemOneAssignmentLabel(systemOneEngine))
@@ -220,6 +257,56 @@ export function buildAssignmentOptionGroups(
 			value: currentValue,
 			label: unlistedLabel(current, sources.endpoints, installedIds, systemOneEngine),
 		});
+	}
+	return groups;
+}
+
+/**
+ * The model choices a Model Map slot offers, after its provider choices: the
+ * installed text models and endpoint models a text task's picker offers, with
+ * the local models the Library recommends for this slot (Agent-ready for the
+ * Agent model, Housekeeping for the Housekeeping model) grouped first. A slot's
+ * current local model or endpoint is always present, labeled with why it is
+ * not offered, for the same reason a task picker keeps its current choice.
+ */
+export function buildModelMapSlotOptionGroups(
+	role: ModelMapRole,
+	slot: ModelMapSlot,
+	sources: AssignmentOptionSources
+): AssignmentOptionGroup[] {
+	const current: LocalModelAssignment = slot.type === 'provider' ? OFF_ASSIGNMENT : slot;
+	const groups: AssignmentOptionGroup[] = [];
+	for (const group of buildAssignmentOptionGroups(
+		LOCAL_MODEL_TASKS[MODEL_MAP_REFERENCE_TASK],
+		current,
+		sources
+	)) {
+		if (group.label === null) {
+			// The head: Off and the slots themselves are not choices for a slot.
+			// What is left is a current source no other group covers.
+			const unlisted = group.options.filter(
+				(option) => option.value !== 'off' && parseModelMapSlotSpec(option.value) !== null
+			);
+			if (unlisted.length > 0) groups.push({ label: null, options: unlisted });
+		} else if (group.label === LOCAL_MODELS_GROUP_LABEL) {
+			const isRecommended = (option: AssignmentOption) => {
+				const parsed = parseModelMapSlotSpec(option.value);
+				return parsed?.type === 'local' && isRecommendedForModelMapRole(parsed.modelId, role);
+			};
+			const recommended = group.options.filter(isRecommended);
+			const others = group.options.filter((option) => !isRecommended(option));
+			if (recommended.length > 0) {
+				groups.push({ label: `${LOCAL_MODEL_ROLE_LABELS[role]} models`, options: recommended });
+			}
+			if (others.length > 0) {
+				groups.push({
+					label: recommended.length > 0 ? 'Other local models' : LOCAL_MODELS_GROUP_LABEL,
+					options: others,
+				});
+			}
+		} else {
+			groups.push(group);
+		}
 	}
 	return groups;
 }

@@ -50,14 +50,14 @@ vi.mock('uuid', () => ({
 	v4: vi.fn(() => 'mock-uuid-1234'),
 }));
 
-// The Local Models router answers `use-utility-agent` (the default assignment)
+// The Local Models router answers `use-provider` (the default assignment)
 // unless a test says otherwise, so every agent-path test runs unchanged.
 vi.mock('../../../../main/local-models/task-router', () => ({
 	runLocalTask: vi.fn(),
 }));
 
 beforeEach(() => {
-	(runLocalTask as Mock).mockResolvedValue({ status: 'use-utility-agent' });
+	(runLocalTask as Mock).mockResolvedValue({ status: 'use-provider' });
 	resetLocalTaskNotices();
 });
 
@@ -140,6 +140,17 @@ vi.mock('fs', async (importOriginal) => {
 // Capture registered handlers
 const registeredHandlers: Map<string, (...args: unknown[]) => Promise<unknown>> = new Map();
 
+/**
+ * A Model Map whose Housekeeping slot is a provider agent: the slot tab naming
+ * follows by default, so its spawn runs on that agent.
+ */
+function housekeepingProvider(agentId: string, modelId?: string | null) {
+	return {
+		agent: { type: 'provider' },
+		housekeeping: { type: 'provider', agentId, ...(modelId ? { modelId } : {}) },
+	};
+}
+
 describe('Tab Naming IPC Handlers', () => {
 	let mockProcessManager: {
 		spawn: Mock;
@@ -217,13 +228,9 @@ describe('Tab Naming IPC Handlers', () => {
 		};
 
 		mockSettingsStore = {
-			// Return the provided default for utility-agent keys (null) so the
-			// resolver falls back to the session agent; other keys default to {}.
-			get: vi.fn((key: string, defaultValue?: unknown) =>
-				key === 'utilityAgentId' || key === 'utilityModelId'
-					? (defaultValue ?? null)
-					: (defaultValue ?? {})
-			),
+			// Every key defaults to {}. For `modelMap` that is an empty map, whose
+			// slots follow the session's provider, so naming stays on the session agent.
+			get: vi.fn((key: string, defaultValue?: unknown) => defaultValue ?? {}),
 			set: vi.fn(),
 		};
 
@@ -301,7 +308,7 @@ describe('Tab Naming IPC Handlers', () => {
 					agentType: 'codex',
 					cwd: '/remote',
 					sessionSshRemoteConfig: { enabled: true, remoteId },
-					useUtilityAgent: false,
+					useModelMap: false,
 				}
 			);
 			expect(result).toBeNull();
@@ -354,7 +361,7 @@ describe('Tab Naming IPC Handlers', () => {
 				agentType,
 				cwd: '/remote',
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
-				useUtilityAgent: false,
+				useModelMap: false,
 				enableMaestroP: false,
 			},
 			controller.signal
@@ -427,9 +434,59 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Login Form Implementation');
 		});
 
-		it('routes naming to the configured utility agent instead of the session agent', async () => {
-			// A cheaper/faster utility agent (codex) is configured; tab naming for a
-			// claude-code session must resolve to codex for detection AND the spawn.
+		it('routes naming to the Housekeeping model provider instead of the session agent', async () => {
+			// A cheaper/faster provider (codex) is the Housekeeping model; tab naming
+			// for a claude-code session must resolve to codex for detection AND the spawn.
+			const mockCodexAgent: AgentConfig = {
+				id: 'codex',
+				name: 'OpenAI Codex',
+				command: 'codex',
+				path: '/usr/local/bin/codex',
+				args: [],
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockCodexAgent);
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) =>
+				key === 'modelMap' ? housekeepingProvider('codex', 'gpt-4o-mini') : (defaultValue ?? {})
+			);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// Detection and spawn must both use the mapped provider, not claude-code.
+			expect(mockAgentDetector.getAgent).toHaveBeenCalledWith('codex');
+			expect(vi.mocked(applyAgentConfigOverrides)).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.anything(),
+				expect.objectContaining({ sessionCustomModel: 'gpt-4o-mini' })
+			);
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ toolType: 'codex' })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Login Form Implementation');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
+		it('reads the old Utility provider keys as the Housekeeping model until a map is saved', async () => {
+			// An install from before the Model Map: the old utility keys name codex,
+			// and no `modelMap` is stored, so the Housekeeping slot is built from them.
 			const mockCodexAgent: AgentConfig = {
 				id: 'codex',
 				name: 'OpenAI Codex',
@@ -439,6 +496,7 @@ describe('Tab Naming IPC Handlers', () => {
 			};
 			mockAgentDetector.getAgent.mockResolvedValue(mockCodexAgent);
 			mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+				if (key === 'modelMap') return undefined;
 				if (key === 'utilityAgentId') return 'codex';
 				if (key === 'utilityModelId') return 'gpt-4o-mini';
 				return defaultValue ?? {};
@@ -463,7 +521,7 @@ describe('Tab Naming IPC Handlers', () => {
 				expect(mockProcessManager.spawn).toHaveBeenCalled();
 			});
 
-			// Detection and spawn must both use the utility agent, not claude-code.
+			// Detection and spawn must both use the migrated provider, not claude-code.
 			expect(mockAgentDetector.getAgent).toHaveBeenCalledWith('codex');
 			expect(vi.mocked(applyAgentConfigOverrides)).toHaveBeenCalledWith(
 				expect.anything(),
@@ -479,12 +537,10 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 
-		it('pins plugin title generation to the authorized agent despite a utility agent setting', async () => {
-			mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
-				if (key === 'utilityAgentId') return 'codex';
-				if (key === 'utilityModelId') return 'gpt-4o-mini';
-				return defaultValue ?? {};
-			});
+		it('pins plugin title generation to the authorized agent despite a mapped provider', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) =>
+				key === 'modelMap' ? housekeepingProvider('codex', 'gpt-4o-mini') : (defaultValue ?? {})
+			);
 			const controller = new AbortController();
 			const pending = generateTabName(
 				{
@@ -501,7 +557,7 @@ describe('Tab Naming IPC Handlers', () => {
 					userMessage: 'Build a login form',
 					agentType: 'claude-code',
 					cwd: '/test/project',
-					useUtilityAgent: false,
+					useModelMap: false,
 				},
 				controller.signal
 			);
@@ -510,13 +566,13 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({ toolType: 'claude-code' })
 			);
-			expect(mockSettingsStore.get).not.toHaveBeenCalledWith('utilityAgentId', null);
+			expect(mockSettingsStore.get).not.toHaveBeenCalledWith('modelMap');
 			controller.abort();
 			await expect(pending).resolves.toBeNull();
 		});
 
-		it('uses the session agent when no utility agent is configured (backward compatible)', async () => {
-			// Default settings (utilityAgentId = null) must leave the session agent untouched.
+		it('uses the session agent when the Model Map follows the session (backward compatible)', async () => {
+			// Default settings (both slots on the session provider) must leave the session agent untouched.
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 			mockProcessManager.on.mockImplementation(
@@ -980,7 +1036,6 @@ describe('Tab Naming IPC Handlers', () => {
 				const title = 'Donation Appeal Pages Japanese Translation Dates';
 				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
 					if (key === 'shortenLongTabNames') return shorten;
-					if (key === 'utilityAgentId' || key === 'utilityModelId') return defaultValue ?? null;
 					return defaultValue ?? {};
 				});
 				const listeners = new Map<string, (...args: any[]) => void>();
@@ -1934,7 +1989,6 @@ describe('Tab Naming IPC Handlers', () => {
 			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
 			mockSettingsStore.get.mockImplementation((key: string, fallback?: unknown) => {
 				if (key === 'shellEnvVars') return { CLAUDE_CONFIG_DIR: '/home/u/.claude' };
-				if (key === 'utilityAgentId' || key === 'utilityModelId') return fallback ?? null;
 				return fallback ?? {};
 			});
 			const finish = wireProcessEvents();
@@ -2246,7 +2300,7 @@ describe('Tab Naming IPC Handlers', () => {
 		// provenance, a distinct fallback validated for the selected model,
 		// account, host and version), so the first failure stands with one spawn.
 		// The agent double has no prompt file, so the cheap effort of the
-		// REQUESTED provider is what reaches the Grok utility agent: the only way
+		// REQUESTED provider is what reaches the Grok mapped provider: the only way
 		// the retry branch could fire, and so the case the Grok guard must hold.
 		describe('Grok effort refusal keeps the first failure', () => {
 			const GROK_REFUSAL = {
@@ -2260,13 +2314,9 @@ describe('Tab Naming IPC Handlers', () => {
 			const NAMING_SESSION = 'tab-naming-mock-uuid-1234';
 			const grokAgent = { ...mockClaudeAgent, id: 'grok', name: 'Grok', command: 'grok' };
 
-			function useGrokUtility(model: string | null = 'grok-utility') {
+			function useGrokMappedProvider(model: string | null = 'grok-utility') {
 				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) =>
-					key === 'utilityAgentId'
-						? 'grok'
-						: key === 'utilityModelId'
-							? model
-							: (defaultValue ?? {})
+					key === 'modelMap' ? housekeepingProvider('grok', model) : (defaultValue ?? {})
 				);
 				mockAgentDetector.getAgent.mockImplementation(async (id: string) =>
 					id === 'grok' ? grokAgent : null
@@ -2279,9 +2329,9 @@ describe('Tab Naming IPC Handlers', () => {
 				);
 			}
 
-			it('a Grok utility agent refusing the requested provider cheap effort keeps the failure with one spawn', async () => {
+			it('a Grok mapped provider refusing the requested provider cheap effort keeps the failure with one spawn', async () => {
 				const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
-				useGrokUtility();
+				useGrokMappedProvider();
 				const callbacks = captureListeners();
 
 				const resultPromise = invokeHandler('tabNaming:generateTabName', {
@@ -2323,7 +2373,7 @@ describe('Tab Naming IPC Handlers', () => {
 			});
 
 			it('keeps an uppercase refusal with no selectable menu, read from the output alone', async () => {
-				useGrokUtility();
+				useGrokMappedProvider();
 				const callbacks = captureListeners();
 
 				const resultPromise = invokeHandler('tabNaming:generateTabName', {
@@ -2348,7 +2398,7 @@ describe('Tab Naming IPC Handlers', () => {
 
 			it('a distinct value on the refusal menu is a diagnostic, not a fallback to retry on', async () => {
 				const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
-				useGrokUtility();
+				useGrokMappedProvider();
 				// The agent's own configured (inherited) Grok effort: what a retry would fall back to.
 				mockAgentConfigsStore.get.mockReturnValue({ grok: { effort: 'low' } });
 				const callbacks = captureListeners();
@@ -2376,7 +2426,7 @@ describe('Tab Naming IPC Handlers', () => {
 				});
 			});
 
-			it('a Grok session agent (no utility agent) keeps its refusal with one spawn', async () => {
+			it('a Grok session agent (no mapped provider) keeps its refusal with one spawn', async () => {
 				mockAgentDetector.getAgent.mockResolvedValue(grokAgent);
 				const callbacks = captureListeners();
 
@@ -2399,14 +2449,10 @@ describe('Tab Naming IPC Handlers', () => {
 				expect(mockAgentDetector.getAgent).toHaveBeenCalledExactlyOnceWith('grok');
 			});
 
-			it('the Grok rule keys on the agent that ran: a Grok session named by a Codex utility agent still retries once', async () => {
+			it('the Grok rule keys on the agent that ran: a Grok session named by a Codex mapped provider still retries once', async () => {
 				const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
 				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) =>
-					key === 'utilityAgentId'
-						? 'codex'
-						: key === 'utilityModelId'
-							? null
-							: (defaultValue ?? {})
+					key === 'modelMap' ? housekeepingProvider('codex') : (defaultValue ?? {})
 				);
 				mockAgentDetector.getAgent.mockResolvedValue({ ...mockClaudeAgent, id: 'codex' });
 				const callbacks = captureListeners();
@@ -2439,7 +2485,7 @@ describe('Tab Naming IPC Handlers', () => {
 			});
 
 			it('a Grok refusal followed by a clean exit is not retried and reads the answer it gave', async () => {
-				useGrokUtility();
+				useGrokMappedProvider();
 				const callbacks = captureListeners();
 
 				const resultPromise = invokeHandler('tabNaming:generateTabName', {
@@ -2460,7 +2506,7 @@ describe('Tab Naming IPC Handlers', () => {
 			});
 
 			it('an ordinary Grok failure is not reported as an effort refusal', async () => {
-				useGrokUtility();
+				useGrokMappedProvider();
 				const callbacks = captureListeners();
 
 				const resultPromise = invokeHandler('tabNaming:generateTabName', {
@@ -2552,7 +2598,7 @@ describe('Tab Naming IPC Handlers', () => {
 					grok: { model: 'grok-default', customEnvVars: { GROK_HOME: '/utility-account' } },
 				});
 				mockSettingsStore.get.mockImplementation((key, fallback) =>
-					key === 'utilityAgentId' ? 'grok' : key === 'utilityModelId' ? 'grok-utility' : fallback
+					key === 'modelMap' ? housekeepingProvider('grok', 'grok-utility') : fallback
 				);
 
 				const userMessage =
@@ -2682,8 +2728,7 @@ describe('Tab Naming IPC Handlers', () => {
 				};
 				const configs = { grok: provider };
 				const settings = {
-					utilityAgentId: utility ? 'grok' : null,
-					utilityModelId: utility ? 'selected-utility-model' : null,
+					modelMap: utility ? housekeepingProvider('grok', 'selected-utility-model') : null,
 					shellEnvVars: { GROK_HOME: '/selected-global', SNAPSHOT_GLOBAL: 'selected' },
 				};
 				mockAgentConfigsStore.get.mockReturnValue(configs);
@@ -2757,8 +2802,7 @@ describe('Tab Naming IPC Handlers', () => {
 					model: 'replacement-model',
 					customEnvVars: { GROK_HOME: '/replacement-provider' },
 				};
-				settings.utilityAgentId = 'codex';
-				settings.utilityModelId = 'replacement-utility-model';
+				settings.modelMap = housekeepingProvider('codex', 'replacement-utility-model');
 				settings.shellEnvVars.GROK_HOME = '/edited-global';
 				settings.shellEnvVars.SNAPSHOT_GLOBAL = 'edited';
 				customPaths.grok = '/replacement/grok';
@@ -3087,7 +3131,7 @@ describe('Tab Naming IPC Handlers', () => {
 					userMessage: 'add dark mode to the React app',
 					agentType: 'claude-code',
 					cwd: '/test/project',
-					useUtilityAgent: false,
+					useModelMap: false,
 				}
 			);
 			await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalledOnce());
@@ -3162,7 +3206,7 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 		});
 
-		it('keeps the existing agent spawn path for use-utility-agent', async () => {
+		it('keeps the existing agent spawn path for use-provider', async () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 			mockProcessManager.on.mockImplementation(
@@ -3253,13 +3297,9 @@ describe('tab naming diagnostic logging', () => {
 		};
 
 		mockSettingsStore = {
-			// Return the provided default for utility-agent keys (null) so the
-			// resolver falls back to the session agent; other keys default to {}.
-			get: vi.fn((key: string, defaultValue?: unknown) =>
-				key === 'utilityAgentId' || key === 'utilityModelId'
-					? (defaultValue ?? null)
-					: (defaultValue ?? {})
-			),
+			// Every key defaults to {}. For `modelMap` that is an empty map, whose
+			// slots follow the session's provider, so naming stays on the session agent.
+			get: vi.fn((key: string, defaultValue?: unknown) => defaultValue ?? {}),
 			set: vi.fn(),
 		};
 
@@ -3534,11 +3574,7 @@ describe('extractTabName utility', () => {
 			};
 
 			mockSettingsStore = {
-				get: vi.fn((key: string, defaultValue?: unknown) =>
-					key === 'utilityAgentId' || key === 'utilityModelId'
-						? (defaultValue ?? null)
-						: (defaultValue ?? {})
-				),
+				get: vi.fn((key: string, defaultValue?: unknown) => defaultValue ?? {}),
 				set: vi.fn(),
 			};
 

@@ -8,14 +8,16 @@
  * ({@link runClassifierTask}), one clip of audio for a speech-to-text task
  * ({@link runSpeechToTextTask}), one prompt for the embedding router
  * ({@link runEmbeddingRouteTask}). The router reads the user's assignment for that task
- * (`localModelAssignments`, with utility-source inheritance and registry defaults in
+ * (`localModelAssignments`, with Model Map inheritance and registry defaults in
  * `src/shared/local-models/tasks.ts`) and answers with one of:
  *
  *   - `off`               - the task does not run. The caller hides or skips it.
- *   - `use-utility-agent` - the caller keeps its EXISTING agent path. The router
- *                           never spawns an agent: that path already exists at
- *                           every caller, honors `utilityAgentId` /
- *                           `utilityModelId`, and a second copy here would drift.
+ *   - `use-provider`      - the task inherits a Model Map slot that is a provider
+ *                           agent, so the caller keeps its EXISTING agent path.
+ *                           The router never spawns an agent: that path already
+ *                           exists at every caller, resolves the slot's provider
+ *                           (`resolveTaskProvider`), and a second copy here would
+ *                           drift.
  *   - `ok`                - the assigned local model or endpoint answered.
  *   - `unavailable`       - the assigned source could not run (not downloaded,
  *                           runtime will not load, server down, key missing).
@@ -131,7 +133,7 @@ export interface LocalTaskInput extends LocalTaskAttribution {
 
 export type LocalTaskResult =
 	| { status: 'off' }
-	| { status: 'use-utility-agent' }
+	| { status: 'use-provider' }
 	| {
 			status: 'ok';
 			text: string;
@@ -171,7 +173,7 @@ export interface EmbeddingTaskInput extends LocalTaskAttribution {
 }
 
 /**
- * An embedding task's verdict. No `use-utility-agent`: an agent cannot produce
+ * An embedding task's verdict. No `use-provider`: an agent cannot produce
  * vectors, so no embedding task accepts that assignment.
  */
 export type EmbeddingTaskResult =
@@ -194,7 +196,7 @@ export interface ClassifierTaskInput extends LocalTaskAttribution {
 }
 
 /**
- * A classifier task's verdict. No `use-utility-agent`: no classifier task has
+ * A classifier task's verdict. No `use-provider`: no classifier task has
  * an agent path to hand back to.
  */
 export type ClassifierTaskResult =
@@ -218,7 +220,7 @@ export interface SpeechToTextTaskInput extends LocalTaskAttribution {
 }
 
 /**
- * A speech-to-text task's verdict. No `use-utility-agent`: an agent cannot hear,
+ * A speech-to-text task's verdict. No `use-provider`: an agent cannot hear,
  * so no speech-to-text task accepts that assignment.
  */
 export type SpeechToTextTaskResult =
@@ -303,9 +305,9 @@ export async function runEmbeddingTask(
 			}),
 		{ agentId: input.agentId, background: input.background === true }
 	);
-	if (verdict.status === 'use-utility-agent') {
+	if (verdict.status === 'use-provider') {
 		// The registry refuses this assignment for every embedding task.
-		throw new Error(`${LOCAL_MODEL_TASKS[taskId].label} cannot run on the Utility Agent.`);
+		throw new Error(`${LOCAL_MODEL_TASKS[taskId].label} cannot run on a provider agent.`);
 	}
 	if (verdict.status !== 'ok') return verdict;
 	return {
@@ -333,9 +335,9 @@ export async function runClassifierTask(
 		(source) => classifyText(source, input.text, input.signal ? { signal: input.signal } : {}),
 		{ agentId: input.agentId }
 	);
-	if (verdict.status === 'use-utility-agent') {
+	if (verdict.status === 'use-provider') {
 		// The registry refuses this assignment for every classifier task.
-		throw new Error(`${LOCAL_MODEL_TASKS[taskId].label} cannot run on the Utility Agent.`);
+		throw new Error(`${LOCAL_MODEL_TASKS[taskId].label} cannot run on a provider agent.`);
 	}
 	if (verdict.status !== 'ok') return verdict;
 	return {
@@ -366,9 +368,9 @@ export async function runSpeechToTextTask(
 			}),
 		{ agentId: input.agentId }
 	);
-	if (verdict.status === 'use-utility-agent') {
+	if (verdict.status === 'use-provider') {
 		// The registry refuses this assignment for every speech-to-text task.
-		throw new Error(`${LOCAL_MODEL_TASKS[taskId].label} cannot run on the Utility Agent.`);
+		throw new Error(`${LOCAL_MODEL_TASKS[taskId].label} cannot run on a provider agent.`);
 	}
 	if (verdict.status !== 'ok') return verdict;
 	return {
@@ -389,7 +391,7 @@ export interface EmbeddingRouteTaskInput extends LocalTaskAttribution {
 }
 
 /**
- * The embedding router's verdict. No `use-utility-agent`: an agent cannot
+ * The embedding router's verdict. No `use-provider`: an agent cannot
  * produce vectors, so no task that takes an embedding model accepts it.
  */
 export type EmbeddingRouteTaskResult =
@@ -430,9 +432,9 @@ export async function runEmbeddingRouteTask(
 			getEmbeddingRouter().route(source, input.text, input.signal ? { signal: input.signal } : {}),
 		{ agentId: input.agentId }
 	);
-	if (verdict.status === 'use-utility-agent') {
+	if (verdict.status === 'use-provider') {
 		// The registry refuses this assignment for every such task.
-		throw new Error(`${task.label} cannot run on the Utility Agent.`);
+		throw new Error(`${task.label} cannot run on a provider agent.`);
 	}
 	if (verdict.status !== 'ok') return verdict;
 	return {
@@ -622,7 +624,7 @@ interface AssignedRunOptions<T> extends LocalTaskAttribution {
 
 type AssignedVerdict<T> =
 	| { status: 'off' }
-	| { status: 'use-utility-agent' }
+	| { status: 'use-provider' }
 	| { status: 'ok'; value: T; source: LocalModelSource; durationMs: number }
 	| LocalTaskUnavailable
 	| { status: 'cancelled'; source: LocalModelSource };
@@ -676,7 +678,7 @@ async function runThroughAssignment<T>(
 		);
 	}
 	const source = sourceForAssignment(assignment);
-	if (!source) return { status: assignment.type === 'off' ? 'off' : 'use-utility-agent' };
+	if (!source) return { status: assignment.type === 'off' ? 'off' : 'use-provider' };
 
 	const startedAt = Date.now();
 	const span = beginSleepAwareSpan();

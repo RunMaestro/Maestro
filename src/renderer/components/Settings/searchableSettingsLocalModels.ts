@@ -2,7 +2,7 @@
  * Models tab searchable-settings entries.
  *
  * One entry per section of `ModelsSettingsTab` and per Library section, plus the
- * Utility Agent controls, the tier defaults table and the semantic index card
+ * Model Map card, the tier defaults table and the semantic index card
  * beside the task tables; each `id` matches a rendered `data-setting-id`, and
  * each `subTab` is the sub-tab path of the place that renders it.
  */
@@ -434,7 +434,8 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 			'readiness',
 			'ready',
 			'generation',
-			'utility agent',
+			'agent model',
+			'housekeeping model',
 			'tab naming',
 			'tab summary',
 			'ai command',
@@ -444,12 +445,17 @@ export const LOCAL_MODELS_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
-		id: 'local-models-utility-agent',
+		id: 'local-models-model-map',
 		...inPanel('system-two'),
-		label: 'Utility source',
+		label: 'Model Map',
 		description:
-			'Choose a shared provider, local text model, or endpoint for tab naming, summaries and AI command mode, with per-task overrides',
+			'Choose the Agent model and the Housekeeping model: a provider, local text model, or endpoint that tasks like tab naming, summaries and AI command mode point at',
 		keywords: [
+			'model map',
+			'agent model',
+			'housekeeping model',
+			'housekeeping',
+			'map',
 			'utility',
 			'utility agent',
 			'utility source',

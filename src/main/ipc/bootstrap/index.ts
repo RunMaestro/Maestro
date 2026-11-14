@@ -546,7 +546,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
-		// Grooming reads the utility-agent selection at spawn time.
+		// Grooming reads the Model Map at spawn time.
 		settingsStore: deps.settingsStore,
 	});
 

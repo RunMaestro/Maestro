@@ -29,6 +29,7 @@ import {
 import { secretScreenSystemOneRequest, type SecretScreenSystemOneInput } from '../secretScan';
 import { tabCleanupSystemOneRequest, type TabCleanupSystemOneInput } from '../tabCleanup';
 import type { LocalModelEndpoint } from './endpoints';
+import type { ModelMap, ModelMapRole } from './model-map';
 import { QWEN3_1_7B_ID, getLocalModel } from './model-catalog';
 import { modelRoutingSystemOneRequest, type ModelRoutingInput } from './model-routing-task';
 import { MODEL_SERVER_ENDPOINT_ID, MODEL_SERVER_NAME } from './model-server';
@@ -46,14 +47,14 @@ export type LocalModelTaskNeed = Extract<
  *
  * - `off`: the task does not run. A consumer with no model-free fallback hides
  *   its affordance.
- * - `utility-agent`: inherit the shared `utilitySource` setting. A local model
- *   or endpoint runs through the task router. The provider choice uses
- *   `utilityAgentId` / `utilityModelId`, or the session's provider when unset.
- *   The router never spawns a provider: it hands that path back to the caller.
- *   Every text task accepts it ({@link LocalModelTaskDefinition.allowsUtilityAgent});
- *   a task with no provider path of its own
- *   ({@link LocalModelTaskDefinition.hasAgentPath}) is off while the shared
- *   source is the provider.
+ * - `agent-model` / `housekeeping-model`: inherit that slot of the Model Map
+ *   (`modelMap` setting, `./model-map.ts`). A slot on a local model or an
+ *   endpoint runs through the task router. A slot on a provider agent hands the
+ *   work back to the caller's own spawn path: the router never spawns a
+ *   provider. Every text task accepts both
+ *   ({@link LocalModelTaskDefinition.allowsModelMap}); a task with no provider
+ *   path of its own ({@link LocalModelTaskDefinition.hasAgentPath}) is off while
+ *   its slot is a provider.
  * - `local`: a catalog model run on this machine.
  * - `endpoint`: a model served by one of the user's `localModelEndpoints`.
  * - `system-one`: the System One engine in force (Jev, an OpenJev server or the
@@ -64,18 +65,18 @@ export type LocalModelTaskNeed = Extract<
  */
 export type LocalModelAssignment =
 	| { type: 'off' }
-	| { type: 'utility-agent' }
+	| { type: 'agent-model' }
+	| { type: 'housekeeping-model' }
 	| { type: 'local'; modelId: string; language?: string }
 	| { type: 'endpoint'; endpointId: string; model: string }
 	| { type: 'system-one' };
 
 export type LocalModelAssignmentType = LocalModelAssignment['type'];
 
-/** Shared source inherited by tasks assigned to `utility-agent`. The provider
- * path retains the existing utilityAgentId / utilityModelId settings. */
-export type UtilitySource = Extract<
+/** An assignment that inherits a slot of the Model Map instead of naming a source. */
+export type ModelMapAssignment = Extract<
 	LocalModelAssignment,
-	{ type: 'utility-agent' | 'local' | 'endpoint' }
+	{ type: 'agent-model' | 'housekeeping-model' }
 >;
 
 /**
@@ -105,16 +106,39 @@ export function endpointServesNeed(need: LocalModelTaskNeed): boolean {
 
 export const LOCAL_MODEL_ASSIGNMENT_TYPES: readonly LocalModelAssignmentType[] = Object.freeze([
 	'off',
-	'utility-agent',
+	'agent-model',
+	'housekeeping-model',
 	'local',
 	'endpoint',
 	'system-one',
 ]);
 
 export const OFF_ASSIGNMENT: LocalModelAssignment = Object.freeze({ type: 'off' });
-export const UTILITY_AGENT_ASSIGNMENT: UtilitySource = Object.freeze({
-	type: 'utility-agent',
+export const AGENT_MODEL_ASSIGNMENT: ModelMapAssignment = Object.freeze({ type: 'agent-model' });
+export const HOUSEKEEPING_MODEL_ASSIGNMENT: ModelMapAssignment = Object.freeze({
+	type: 'housekeeping-model',
 });
+
+/**
+ * The stored and CLI spelling an install from before the Model Map used for
+ * "inherit the shared Utility source". That source became the Housekeeping
+ * slot, so the spelling reads as `housekeeping-model`.
+ */
+const LEGACY_UTILITY_SPELLING = 'utility-agent';
+
+/** Whether an assignment inherits a Model Map slot rather than naming a source. */
+export function isModelMapAssignment(
+	assignment: LocalModelAssignment
+): assignment is ModelMapAssignment {
+	return assignment.type === 'agent-model' || assignment.type === 'housekeeping-model';
+}
+
+/** The Model Map slot an assignment inherits, or `null` when it names its own source. */
+export function modelMapRoleOf(assignment: LocalModelAssignment): ModelMapRole | null {
+	if (assignment.type === 'agent-model') return 'agent';
+	if (assignment.type === 'housekeeping-model') return 'housekeeping';
+	return null;
+}
 export const SYSTEM_ONE_ASSIGNMENT: LocalModelAssignment = Object.freeze({ type: 'system-one' });
 
 export const LOCAL_MODEL_TASK_IDS = [
@@ -214,13 +238,13 @@ export interface LocalModelTaskDefinition {
 	 * Text-to-Speech choice when it is local, the system voice otherwise).
 	 */
 	readonly alsoNeeds?: readonly LocalModelTaskNeed[];
-	/** Whether `utility-agent` (inherit the shared Utility source) is a valid assignment. */
-	readonly allowsUtilityAgent: boolean;
+	/** Whether `agent-model` and `housekeeping-model` (inherit a Model Map slot) are valid assignments. */
+	readonly allowsModelMap: boolean;
 	/**
 	 * Whether the task's caller keeps a provider agent spawn of its own, used
-	 * when the inherited Utility source is the provider. A task without one
-	 * inherits only a local model or an endpoint: while the Utility source is
-	 * the provider, it resolves to `off` ({@link resolveLocalModelAssignment}).
+	 * when the inherited Model Map slot is a provider. A task without one
+	 * inherits only a local model or an endpoint: while its slot is a provider,
+	 * it resolves to `off` ({@link resolveLocalModelAssignment}).
 	 */
 	readonly hasAgentPath: boolean;
 	/** The assignment a task has until the user picks one. */
@@ -259,11 +283,11 @@ export interface LocalModelTaskDefinition {
 }
 
 function defineTask(task: LocalModelTaskDefinition): LocalModelTaskDefinition {
-	if (task.defaultAssignment.type === 'utility-agent' && !task.allowsUtilityAgent) {
-		throw new Error(`Task "${task.id}" defaults to the Utility Agent but does not allow it.`);
+	if (isModelMapAssignment(task.defaultAssignment) && !task.allowsModelMap) {
+		throw new Error(`Task "${task.id}" defaults to the Model Map but does not allow it.`);
 	}
-	if (task.hasAgentPath && !task.allowsUtilityAgent) {
-		throw new Error(`Task "${task.id}" has an agent path but does not allow the Utility Agent.`);
+	if (task.hasAgentPath && !task.allowsModelMap) {
+		throw new Error(`Task "${task.id}" has an agent path but does not allow the Model Map.`);
 	}
 	if (task.systemOneQuestions && task.system !== 'one') {
 		throw new Error(
@@ -283,12 +307,14 @@ function defineTask(task: LocalModelTaskDefinition): LocalModelTaskDefinition {
 }
 
 /**
- * Every task, keyed by id. Every System Two task defaults to `utility-agent`,
- * the shared Utility source. Tasks that already ran through an agent (tab
- * naming, summaries, AI command mode) keep that agent path, so nothing changes
- * until the user picks a local model. The System Two tasks new with Local
- * Models have no agent path, so they stay off until the Utility source is a
- * local model or an endpoint. System One tasks default to `off`.
+ * Every task, keyed by id. Every System Two task follows a Model Map slot by
+ * default: Summaries and Git drafts, whose text a person reads closely, the
+ * Agent model; the rest the Housekeeping model (which is where the old shared
+ * Utility source went). Tasks that already ran through an agent
+ * (tab naming, summaries, AI command mode) keep that agent path, so nothing
+ * changes until the user maps a model. The System Two tasks new with Local
+ * Models have no agent path, so they stay off until their slot is a local
+ * model or an endpoint. System One tasks default to `off`.
  */
 export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTaskDefinition>> =
 	Object.freeze({
@@ -298,9 +324,9 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			label: 'Tab naming',
 			description: 'Names a new AI tab from the first message sent in it.',
 			needs: 'text-gen',
-			allowsUtilityAgent: true,
+			allowsModelMap: true,
 			hasAgentPath: true,
-			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
+			defaultAssignment: HOUSEKEEPING_MODEL_ASSIGNMENT,
 		}),
 		'tab-summary': defineTask({
 			id: 'tab-summary',
@@ -309,9 +335,9 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description:
 				'Writes context summaries for Summarize & Continue and the group chat participant summary.',
 			needs: 'text-gen',
-			allowsUtilityAgent: true,
+			allowsModelMap: true,
 			hasAgentPath: true,
-			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
+			defaultAssignment: AGENT_MODEL_ASSIGNMENT,
 		}),
 		'tab-cleanup': defineTask({
 			id: 'tab-cleanup',
@@ -320,7 +346,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description:
 				'Suggests tabs to close, snooze, or bring back from snooze. Every action still needs your confirmation.',
 			needs: 'text-gen',
-			allowsUtilityAgent: false,
+			allowsModelMap: false,
 			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 			// No fail policy: a list of suggestions gates nothing, so a run with no
@@ -333,9 +359,9 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			label: 'AI command mode',
 			description: 'Turns a plain-English request in command mode into a shell command.',
 			needs: 'text-gen',
-			allowsUtilityAgent: true,
+			allowsModelMap: true,
 			hasAgentPath: true,
-			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
+			defaultAssignment: HOUSEKEEPING_MODEL_ASSIGNMENT,
 			// Measured on 2026-10-11 and again, on eight requests, on 2026-10-12
 			// (`llama-housekeeping-e2e.test.ts`, recorded in
 			// docs/architecture/local-models.md): Qwen3 1.7B wrote one command of
@@ -356,9 +382,9 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description:
 				'Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits.',
 			needs: 'text-gen',
-			allowsUtilityAgent: true,
+			allowsModelMap: true,
 			hasAgentPath: false,
-			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
+			defaultAssignment: AGENT_MODEL_ASSIGNMENT,
 		}),
 		'semantic-search': defineTask({
 			id: 'semantic-search',
@@ -366,7 +392,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			label: 'Semantic search',
 			description: 'Finds history, transcripts, and documents by meaning rather than exact words.',
 			needs: 'embedding',
-			allowsUtilityAgent: false,
+			allowsModelMap: false,
 			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 		}),
@@ -377,7 +403,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description:
 				'Checks a Cue subscription gate condition against the event before an agent is started.',
 			needs: 'text-gen',
-			allowsUtilityAgent: false,
+			allowsModelMap: false,
 			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 			// A model that is down must not silently stop automation the user
@@ -391,7 +417,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			label: 'Prompt-injection screen',
 			description: 'Scores untrusted text for prompt injection before Cue passes it to an agent.',
 			needs: 'classifier',
-			allowsUtilityAgent: false,
+			allowsModelMap: false,
 			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 			// The screen exists to keep unscreened text out of a run.
@@ -405,7 +431,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description:
 				'Extra model coverage when scanning content for secrets before it is published. Pattern detection always runs.',
 			needs: 'classifier',
-			allowsUtilityAgent: false,
+			allowsModelMap: false,
 			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 			// No fail policy: this pass is extra coverage, so it can neither stop a
@@ -418,7 +444,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			label: 'Dictation',
 			description: 'Transcribes speech into any text box without starting a voice session.',
 			needs: 'stt',
-			allowsUtilityAgent: false,
+			allowsModelMap: false,
 			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 		}),
@@ -429,7 +455,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description:
 				'Corrects misheard agent names and custom vocabulary after speech recognition. Uses only dictionary replacements, keeps the original on failure, and adds a bounded pass before sending. Off preserves the recognizer output.',
 			needs: 'text-gen',
-			allowsUtilityAgent: false,
+			allowsModelMap: false,
 			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 		}),
@@ -441,9 +467,9 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 				'Writes the short summary a spoken notice adds when an agent finishes a turn. Off speaks the agent name alone. Turn notices on in Settings > Notifications.',
 			needs: 'text-gen',
 			alsoNeeds: ['tts'],
-			allowsUtilityAgent: true,
+			allowsModelMap: true,
 			hasAgentPath: false,
-			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
+			defaultAssignment: HOUSEKEEPING_MODEL_ASSIGNMENT,
 		}),
 		'voice-routing': defineTask({
 			id: 'voice-routing',
@@ -452,7 +478,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description:
 				'Decides which agent and tab a spoken request is for. Off keeps the voice brain chosen in A Cappella settings. On System One the engine picks the agent and tab, and that voice brain still writes what is spoken.',
 			needs: 'text-gen',
-			allowsUtilityAgent: false,
+			allowsModelMap: false,
 			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 			// No fail policy: a request with no route is refused out loud, by name.
@@ -478,7 +504,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			needs: 'text-gen',
 			alsoAcceptsLocal: ['embedding'],
 			localFirst: true,
-			allowsUtilityAgent: false,
+			allowsModelMap: false,
 			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 			// No fail policy: a turn with no decision runs at the agent's default
@@ -502,9 +528,9 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			label: 'Token proxy',
 			description: 'Summarizes large tool output for the token-conservation proxy.',
 			needs: 'text-gen',
-			allowsUtilityAgent: true,
+			allowsModelMap: true,
 			hasAgentPath: false,
-			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
+			defaultAssignment: HOUSEKEEPING_MODEL_ASSIGNMENT,
 		}),
 		'history-digests': defineTask({
 			id: 'history-digests',
@@ -514,11 +540,11 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 				'Writes the 15-minute digests and 6-hour roll-ups of Computer History. Used while the digest source in the Computer History settings is the local model.',
 			needs: 'text-gen',
 			// The other writer is the digest AGENT, chosen in the Computer History
-			// settings (`digests.source`). The Utility source here only supplies
+			// settings (`digests.source`). The Model Map here only supplies
 			// the model the local writer runs on.
-			allowsUtilityAgent: true,
+			allowsModelMap: true,
 			hasAgentPath: false,
-			defaultAssignment: UTILITY_AGENT_ASSIGNMENT,
+			defaultAssignment: HOUSEKEEPING_MODEL_ASSIGNMENT,
 		}),
 		'local-judge': defineTask({
 			id: 'local-judge',
@@ -527,7 +553,7 @@ export const LOCAL_MODEL_TASKS: Readonly<Record<LocalModelTaskId, LocalModelTask
 			description:
 				'The text model the System One local judge answers on: yes or no, pick one, or rate on a rubric. Its answers are not calibrated.',
 			needs: 'text-gen',
-			allowsUtilityAgent: false,
+			allowsModelMap: false,
 			hasAgentPath: false,
 			defaultAssignment: OFF_ASSIGNMENT,
 		}),
@@ -608,8 +634,11 @@ export function parseLocalModelAssignment(
 	switch (record.type) {
 		case 'off':
 			return OFF_ASSIGNMENT;
-		case 'utility-agent':
-			return LOCAL_MODEL_TASKS[taskId].allowsUtilityAgent ? UTILITY_AGENT_ASSIGNMENT : null;
+		case 'agent-model':
+			return LOCAL_MODEL_TASKS[taskId].allowsModelMap ? AGENT_MODEL_ASSIGNMENT : null;
+		case 'housekeeping-model':
+		case LEGACY_UTILITY_SPELLING:
+			return LOCAL_MODEL_TASKS[taskId].allowsModelMap ? HOUSEKEEPING_MODEL_ASSIGNMENT : null;
 		case 'local': {
 			const modelId = nonEmptyString(record.modelId);
 			const language = nonEmptyString(record.language);
@@ -633,11 +662,13 @@ export function parseLocalModelAssignment(
  *
  * - Anything that is not a plain object reads as empty, so an install from
  *   before Local Models (no setting at all) gets every default. Because the
- *   tasks that already ran through an agent default to `utility-agent`, a user
- *   who set `utilityAgentId` / `utilityModelId` keeps exactly the behavior they
- *   configured: `utilitySource` defaults to the existing provider path.
+ *   tasks that already ran through an agent default to `housekeeping-model`,
+ *   and the Housekeeping slot is built from the old `utilitySource` /
+ *   `utilityAgentId` / `utilityModelId` (`readModelMap`), a user keeps exactly
+ *   the behavior they configured. A stored `utility-agent` reads as
+ *   `housekeeping-model`.
  * - Unknown task ids (a task a later build dropped) and unusable entries (a
- *   malformed record, `utility-agent` on a task that does not accept it, or
+ *   malformed record, a Model Map slot on a task that does not accept it, or
  *   `system-one` on a task with no typed questions) are dropped, which leaves
  *   that task on its default.
  * - An entry equal to its task's default is dropped too, so the stored record
@@ -656,36 +687,6 @@ export function parseLocalModelAssignments(value: unknown): LocalModelAssignment
 	return assignments;
 }
 
-/** Older installs retain their provider choice. Missing models and endpoints
- * remain selected so readiness reports them instead of choosing a provider. */
-export function parseUtilitySource(value: unknown): UtilitySource {
-	const assignment = parseLocalModelAssignment('tab-naming', value);
-	return assignment &&
-		(assignment.type === 'utility-agent' ||
-			assignment.type === 'local' ||
-			assignment.type === 'endpoint')
-		? assignment
-		: UTILITY_AGENT_ASSIGNMENT;
-}
-
-/** Provider settings belong to the shared source only while it is on the
- * provider path. A parked provider choice cannot override a local source. */
-export function resolveUtilityProvider(
-	settings: { utilitySource?: unknown; utilityAgentId?: unknown; utilityModelId?: unknown },
-	sessionProvider: string
-) {
-	const provider =
-		parseUtilitySource(settings.utilitySource).type === 'utility-agent'
-			? nonEmptyString(settings.utilityAgentId)
-			: null;
-	return {
-		agentType: provider ?? sessionProvider,
-		modelId: provider ? (nonEmptyString(settings.utilityModelId) ?? undefined) : undefined,
-		usesUtilityProvider: provider !== null,
-		changesProvider: provider !== null && provider !== sessionProvider,
-	};
-}
-
 export function isSameLocalModelAssignment(
 	a: LocalModelAssignment,
 	b: LocalModelAssignment
@@ -699,50 +700,53 @@ export function isSameLocalModelAssignment(
 	return true;
 }
 
-/** The stored task choice, else its default. Passing the shared utility source
- * resolves inheritance; omitting it preserves the choice shown by task pickers.
- * A task with no agent path resolves to `off` while the shared source is the
- * provider ({@link inheritsProviderWithoutAgentPath}). */
+/**
+ * The stored task choice, else its default. Passing the Model Map resolves a
+ * slot the task inherits; omitting it keeps the choice shown by task pickers.
+ * A slot on a local model or an endpoint resolves to that source. A slot on a
+ * provider stays the inheriting assignment, which the router hands back to the
+ * caller's own spawn path, or resolves to `off` for a task that has none
+ * ({@link inheritsProviderWithoutAgentPath}).
+ */
 export function resolveLocalModelAssignment(
 	assignments: LocalModelAssignments | undefined,
 	taskId: LocalModelTaskId,
-	utilitySource?: UtilitySource
+	modelMap?: ModelMap
 ): LocalModelAssignment {
 	const stored = assignments?.[taskId];
 	const parsed = stored === undefined ? null : parseLocalModelAssignment(taskId, stored);
 	const assignment = parsed ?? LOCAL_MODEL_TASKS[taskId].defaultAssignment;
-	if (assignment.type !== 'utility-agent' || !utilitySource) return assignment;
-	if (utilitySource.type === 'utility-agent' && !LOCAL_MODEL_TASKS[taskId].hasAgentPath) {
-		return OFF_ASSIGNMENT;
-	}
-	return utilitySource;
+	const role = modelMapRoleOf(assignment);
+	if (!role || !modelMap) return assignment;
+	const slot = modelMap[role];
+	if (slot.type !== 'provider') return slot;
+	return LOCAL_MODEL_TASKS[taskId].hasAgentPath ? assignment : OFF_ASSIGNMENT;
 }
 
 /**
- * Whether a task is off only because it inherits a Utility source that is the
- * provider, and it has no provider path of its own. Readiness says so by name
- * rather than reporting a plain `off` the picker does not show.
+ * The Model Map slot a task is off because of: the slot it inherits is a
+ * provider, and the task has no provider path of its own. `null` when that is
+ * not why. Readiness names the slot rather than reporting a plain `off` the
+ * picker does not show.
  */
 export function inheritsProviderWithoutAgentPath(
 	assignments: LocalModelAssignments | undefined,
 	taskId: LocalModelTaskId,
-	utilitySource: UtilitySource
-): boolean {
-	return (
-		!LOCAL_MODEL_TASKS[taskId].hasAgentPath &&
-		utilitySource.type === 'utility-agent' &&
-		resolveLocalModelAssignment(assignments, taskId).type === 'utility-agent'
-	);
+	modelMap: ModelMap
+): ModelMapRole | null {
+	if (LOCAL_MODEL_TASKS[taskId].hasAgentPath) return null;
+	const role = modelMapRoleOf(resolveLocalModelAssignment(assignments, taskId));
+	return role !== null && modelMap[role].type === 'provider' ? role : null;
 }
 
 /** Every task's effective assignment, for a surface that lists them all. */
 export function resolveLocalModelAssignments(
 	assignments: LocalModelAssignments | undefined,
-	utilitySource?: UtilitySource
+	modelMap?: ModelMap
 ): Record<LocalModelTaskId, LocalModelAssignment> {
 	const resolved = {} as Record<LocalModelTaskId, LocalModelAssignment>;
 	for (const taskId of LOCAL_MODEL_TASK_IDS) {
-		resolved[taskId] = resolveLocalModelAssignment(assignments, taskId, utilitySource);
+		resolved[taskId] = resolveLocalModelAssignment(assignments, taskId, modelMap);
 	}
 	return resolved;
 }
@@ -766,8 +770,12 @@ export function localModelAssignmentProblem(
 	if (!assignment) {
 		const type =
 			typeof value === 'object' && value !== null ? (value as { type?: unknown }).type : undefined;
-		if (type === 'utility-agent') {
-			return `${task.label} cannot use the Utility source. Choose off, a local model, or an endpoint.`;
+		if (
+			type === 'agent-model' ||
+			type === 'housekeeping-model' ||
+			type === LEGACY_UTILITY_SPELLING
+		) {
+			return `${task.label} cannot use the Model Map. Choose ${otherSourceChoices(task)}.`;
 		}
 		if (type === 'system-one') {
 			const why =
@@ -802,7 +810,7 @@ export function localModelAssignmentProblem(
 /** The sources a task takes besides System One, for a refusal that names them. */
 function otherSourceChoices(task: LocalModelTaskDefinition): string {
 	const choices = ['off'];
-	if (task.allowsUtilityAgent) choices.push('the Utility Agent');
+	if (task.allowsModelMap) choices.push('the Agent model', 'the Housekeeping model');
 	choices.push('a local model');
 	if (endpointServesNeed(task.needs)) choices.push('an endpoint');
 	return `${choices.slice(0, -1).join(', ')} or ${choices[choices.length - 1]}`;
@@ -857,10 +865,10 @@ export function withLocalModelAssignment(
 export function tasksUsingLocalModel(
 	assignments: LocalModelAssignments | undefined,
 	modelId: string,
-	utilitySource?: UtilitySource
+	modelMap?: ModelMap
 ): LocalModelTaskDefinition[] {
 	return LOCAL_MODEL_TASK_IDS.filter((taskId) => {
-		const assignment = resolveLocalModelAssignment(assignments, taskId, utilitySource);
+		const assignment = resolveLocalModelAssignment(assignments, taskId, modelMap);
 		return assignment.type === 'local' && assignment.modelId === modelId;
 	}).map((taskId) => LOCAL_MODEL_TASKS[taskId]);
 }
@@ -888,10 +896,10 @@ export function tasksForSystem(system: LocalModelSystem): LocalModelTaskDefiniti
 export function tasksUsingEndpoint(
 	assignments: LocalModelAssignments | undefined,
 	endpointId: string,
-	utilitySource?: UtilitySource
+	modelMap?: ModelMap
 ): LocalModelTaskDefinition[] {
 	return LOCAL_MODEL_TASK_IDS.filter((taskId) => {
-		const assignment = resolveLocalModelAssignment(assignments, taskId, utilitySource);
+		const assignment = resolveLocalModelAssignment(assignments, taskId, modelMap);
 		return assignment.type === 'endpoint' && assignment.endpointId === endpointId;
 	}).map((taskId) => LOCAL_MODEL_TASKS[taskId]);
 }
@@ -899,7 +907,7 @@ export function tasksUsingEndpoint(
 /**
  * What a person calls the model a `local` or `endpoint` assignment runs on: the
  * catalog display name, or `<model> on <endpoint name>`. `null` for `off` and
- * `utility-agent`, which name no model of their own, and for `system-one`,
+ * the Model Map slots, which name no model of their own, and for `system-one`,
  * whose name depends on the engine in force (`systemOneAssignmentLabel` in
  * `system-one-settings.ts`).
  *
@@ -927,8 +935,8 @@ export function localModelAssignmentSourceLabel(
 }
 
 /**
- * The one-string spelling of an assignment: `off`, `utility-agent`,
- * `system-one`, `local:<model-id>`, or `endpoint:<endpoint-id>:<model>`. The
+ * The one-string spelling of an assignment: `off`, `agent-model`,
+ * `housekeeping-model`, `system-one`, `local:<model-id>`, or `endpoint:<endpoint-id>:<model>`. The
  * settings picker
  * uses it as an option value and `maestro-cli models assign` takes it as an
  * argument, so the two cannot disagree about what a choice means. Endpoint ids
@@ -938,7 +946,8 @@ export function localModelAssignmentSourceLabel(
 export function formatLocalModelAssignmentSpec(assignment: LocalModelAssignment): string {
 	switch (assignment.type) {
 		case 'off':
-		case 'utility-agent':
+		case 'agent-model':
+		case 'housekeeping-model':
 		case 'system-one':
 			return assignment.type;
 		case 'local':
@@ -956,7 +965,10 @@ export function formatLocalModelAssignmentSpec(assignment: LocalModelAssignment)
 export function parseLocalModelAssignmentSpec(spec: string): LocalModelAssignment | null {
 	const trimmed = spec.trim();
 	if (trimmed === 'off') return OFF_ASSIGNMENT;
-	if (trimmed === 'utility-agent') return UTILITY_AGENT_ASSIGNMENT;
+	if (trimmed === 'agent-model') return AGENT_MODEL_ASSIGNMENT;
+	if (trimmed === 'housekeeping-model' || trimmed === LEGACY_UTILITY_SPELLING) {
+		return HOUSEKEEPING_MODEL_ASSIGNMENT;
+	}
 	if (trimmed === 'system-one') return SYSTEM_ONE_ASSIGNMENT;
 	if (trimmed.startsWith('local:')) {
 		const rest = trimmed.slice('local:'.length);

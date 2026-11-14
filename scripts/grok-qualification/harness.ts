@@ -11022,7 +11022,7 @@ const runTabNamingLeg: UtilityLegRunner = async (spec, s, r) => {
 						agentType: 'grok',
 						cwd: made.project,
 						sessionCustomEnvVars: { [envVar]: s.accountRoot! },
-						useUtilityAgent: false,
+						useModelMap: false,
 					}),
 					consumerDeadlineMs(s, 1)
 				)

@@ -112,7 +112,8 @@ import { cheapTurnSettings } from '../../../shared/modelTiers';
 import type { AgentErrorType, ToolType } from '../../../shared/types';
 import { getPrompt } from '../../prompt-manager';
 import { runLocalTask } from '../../local-models/task-router';
-import { resolveUtilityProvider } from '../../../shared/local-models/tasks';
+import { resolveTaskProvider } from '../../../shared/local-models/model-map';
+import { settingsReader } from '../../local-models/sources';
 import { clearLocalTaskNotice, reportLocalTaskUnavailable } from '../../local-models/task-notices';
 import {
 	getClaudeTokenSourceFields,
@@ -1091,7 +1092,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 				// local machine, where that session does not exist (issue #1416).
 				const participantSshRemoteConfig = resolveParticipantSshRemoteConfig(participant);
 
-				// Local Models assignment first. Only `use-utility-agent` (the
+				// Local Models assignment first. Only `use-provider` (the
 				// default) continues to the agent turn below, unchanged.
 				const assigned = await summarizeParticipantWithAssignedModel({
 					logPath: chat.logPath,
@@ -1100,13 +1101,9 @@ Respond with ONLY the summary text, no additional commentary.`;
 					safeSend,
 				});
 
-				const settings = getSettingsStore();
-				const utility = resolveUtilityProvider(
-					{
-						utilitySource: settings.get('utilitySource'),
-						utilityAgentId: settings.get('utilityAgentId', null),
-						utilityModelId: settings.get('utilityModelId', null),
-					},
+				const utility = resolveTaskProvider(
+					settingsReader(getSettingsStore()),
+					'tab-summary',
 					participant.agentId
 				);
 				const cheapSummary = cheapTurnSettings(utility.agentType as ToolType);
@@ -1120,14 +1117,12 @@ Respond with ONLY the summary text, no additional commentary.`;
 							{
 								projectRoot: effectiveCwd,
 								agentType: utility.agentType,
-								prompt: utility.usesUtilityProvider ? assigned.utilityPrompt : summaryPrompt,
-								// A utility provider gets the chat transcript in a fresh turn;
+								prompt: utility.usesMappedProvider ? assigned.providerPrompt : summaryPrompt,
+								// A mapped provider gets the chat transcript in a fresh turn;
 								// the participant's native session belongs to its own provider.
-								agentSessionId: utility.usesUtilityProvider
-									? undefined
-									: participant.agentSessionId,
+								agentSessionId: utility.usesMappedProvider ? undefined : participant.agentSessionId,
 								readOnlyMode: true, // Summary is read-only
-								disableTools: utility.usesUtilityProvider || undefined,
+								disableTools: utility.usesMappedProvider || undefined,
 								timeoutMs: 60000, // 60 second timeout for summary
 								// Pinned to the bottom of both ladders, same as a history
 								// synopsis. Safe because this is a LEAF turn: it resumes the
@@ -1135,15 +1130,15 @@ Respond with ONLY the summary text, no additional commentary.`;
 								// `response` and `durationMs`, discarding any session id - so
 								// the cheap model cannot follow the conversation forward into
 								// the participant's next real turn.
-								sessionCustomModel: utility.usesUtilityProvider
+								sessionCustomModel: utility.usesMappedProvider
 									? utility.modelId
 									: cheapSummary.model,
-								sessionCustomEffort: utility.usesUtilityProvider ? undefined : cheapSummary.effort,
-								agentConfigValues: utility.usesUtilityProvider
+								sessionCustomEffort: utility.usesMappedProvider ? undefined : cheapSummary.effort,
+								agentConfigValues: utility.usesMappedProvider
 									? (getAgentConfigsStore().get('configs', {})[utility.agentType] ?? {})
 									: undefined,
 								sessionSshRemoteConfig: participantSshRemoteConfig,
-								claudeTokenSource: utility.usesUtilityProvider
+								claudeTokenSource: utility.usesMappedProvider
 									? undefined
 									: resolveParticipantClaudeTokenSource(participant),
 								acceptWorkspaceTrust: resolveParticipantWorkspaceTrust(participant, effectiveCwd),
@@ -1476,14 +1471,14 @@ Respond with ONLY the summary text, no additional commentary.`;
 }
 
 type AssignedParticipantSummary =
-	| { handled: false; utilityPrompt: string }
+	| { handled: false; providerPrompt: string }
 	| { handled: true; summary: string | null };
 
 /**
  * Summarize a participant with the `tab-summary` Local Models assignment, when
  * it is a local model or an endpoint.
  *
- * `use-utility-agent` (the default) is not handled here: the caller keeps its
+ * `use-provider` (the default) is not handled here: the caller keeps its
  * agent turn. Every other verdict is handled, and none falls back to an agent:
  *   - `off` skips the summary. The reset itself does not depend on it.
  *   - `unavailable` skips it and tells the user once why.
@@ -1527,8 +1522,8 @@ async function summarizeParticipantWithAssignedModel(options: {
 		return { handled: true, summary: null };
 	}
 	switch (verdict.status) {
-		case 'use-utility-agent':
-			return { handled: false, utilityPrompt: `${system}\n\n${prompt}` };
+		case 'use-provider':
+			return { handled: false, providerPrompt: `${system}\n\n${prompt}` };
 		case 'off':
 			return { handled: true, summary: null };
 		case 'cancelled':

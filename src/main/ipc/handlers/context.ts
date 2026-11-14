@@ -30,7 +30,12 @@ import { cheapTurnSettings } from '../../../shared/modelTiers';
 import type { ToolType } from '../../../shared/types';
 import { MAX_TASK_MAX_TOKENS, runLocalTask } from '../../local-models/task-router';
 import type { ClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
-import { resolveUtilityProvider } from '../../../shared/local-models/tasks';
+import {
+	readModelMap,
+	resolveSlotProvider,
+	resolveTaskProvider,
+} from '../../../shared/local-models/model-map';
+import { settingsReader } from '../../local-models/sources';
 
 const LOG_CONTEXT = '[ContextMerge]';
 
@@ -188,7 +193,8 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 				// Chat's tab routing) is cheap too, but it is a question with a
 				// one-word answer, not a summary: it must not be sent to the summary
 				// model, with the summary's token budget and timeout.
-				if (options?.cheapTurn && !options.disableTools) {
+				const isSummary = options?.cheapTurn === true && !options.disableTools;
+				if (isSummary) {
 					const assigned = await summarizeWithAssignedModel(prompt);
 					if (assigned !== null) return assigned;
 				}
@@ -196,19 +202,16 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 				const processManager = requireDependency(getProcessManager, 'Process manager');
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
-				// Resolve the agent: use the utility agent if configured, otherwise the
-				// requested agent. Null/empty leaves behavior unchanged (session agent).
-				// Local utility sources handle the text tasks above. Tool-based
-				// grooming and transfer stay on the owning session's provider, not
-				// a provider choice left over from an earlier utility configuration.
-				const utility = resolveUtilityProvider(
-					{
-						utilitySource: settingsStore.get('utilitySource'),
-						utilityAgentId: settingsStore.get('utilityAgentId', null),
-						utilityModelId: settingsStore.get('utilityModelId', null),
-					},
-					agentType
-				);
+				// Resolve the agent. A summary follows the Model Map slot
+				// `tab-summary` is on (the Agent model by default); grooming,
+				// transfer and answer-only turns follow the Housekeeping slot. Either
+				// way a slot that is a provider names the agent; a slot on a local
+				// model or an endpoint leaves the requested agent, since the summary
+				// already ran on it above and grooming and transfer need tools.
+				const read = settingsReader(settingsStore);
+				const utility = isSummary
+					? resolveTaskProvider(read, 'tab-summary', agentType)
+					: resolveSlotProvider(readModelMap(read).housekeeping, agentType);
 				const effectiveAgentType = utility.agentType;
 
 				// Look up agent-level config values for override resolution
@@ -217,14 +220,14 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 
 				// The session's executable overrides describe the SESSION's agent: a
 				// pinned binary path, its CLI flags, its env. Carrying them onto a
-				// different utility agent would launch the wrong executable, or feed
-				// one agent's flags to another. The utility agent's own settings come
+				// different mapped provider would launch the wrong executable, or feed
+				// one agent's flags to another. The mapped provider's own settings come
 				// from `agentConfigValues`, which is already keyed by the effective id.
 				//
 				// `sshRemoteConfig` is deliberately NOT dropped: it says WHERE the work
 				// runs, not WHICH binary runs it, and grooming a remote agent's context
 				// on the local machine would look at the wrong filesystem.
-				const usingUtilityAgent = utility.changesProvider;
+				const usingMappedProvider = utility.changesProvider;
 
 				// Only summarization opts in (see `cheapTurn` above). Left undefined
 				// for grooming and transfer, which keep the agent's configured model.
@@ -238,7 +241,7 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						projectRoot,
 						agentType: effectiveAgentType,
 						prompt,
-						// Only apply the model override when a utility agent is actually in use.
+						// Only a mapped provider carries a model override.
 						modelId: utility.modelId,
 						// Pass SSH and custom config for remote execution support.
 						// The store lets groomContext resolve `remoteId` and actually
@@ -248,21 +251,21 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						sshStore: options?.sshRemoteConfig?.enabled
 							? createSshRemoteStoreAdapter(getSettingsStore())
 							: undefined,
-						// A utility agent runs as ITSELF, so the calling session's own
+						// A mapped provider runs as ITSELF, so the calling session's own
 						// binary path / args / env must not leak into its spawn.
-						sessionCustomPath: usingUtilityAgent ? undefined : options?.customPath,
-						sessionCustomArgs: usingUtilityAgent ? undefined : options?.customArgs,
-						sessionCustomEnvVars: usingUtilityAgent ? undefined : options?.customEnvVars,
+						sessionCustomPath: usingMappedProvider ? undefined : options?.customPath,
+						sessionCustomArgs: usingMappedProvider ? undefined : options?.customArgs,
+						sessionCustomEnvVars: usingMappedProvider ? undefined : options?.customEnvVars,
 						// Undefined unless the caller asked for a cheap turn, and
 						// undefined means "inherit the agent's own value" all the way
 						// down - so grooming and transfer are untouched by this. An
 						// explicit tier is not the caller's own setting leaking, so it
-						// applies to a utility agent too.
+						// applies to a mapped provider too.
 						sessionCustomModel: utility.modelId ?? cheapTurn?.model,
 						sessionCustomEffort: cheapTurn?.effort,
 						// The token source belongs to the session's agent, like its path
-						// and env above, so a utility agent runs on its own default.
-						claudeTokenSource: usingUtilityAgent ? undefined : options?.claudeTokenSource,
+						// and env above, so a mapped provider runs on its own default.
+						claudeTokenSource: usingMappedProvider ? undefined : options?.claudeTokenSource,
 						agentConfigValues,
 						readOnlyMode: options?.readOnly,
 						disableTools: options?.disableTools,
@@ -295,7 +298,7 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
  *
  * Compaction is something the user asked for, and it cannot happen without a
  * model, so the verdicts differ from a cosmetic task like tab naming:
- *   - `use-utility-agent` (the default) and `off` keep the agent path. `off`
+ *   - `use-provider` (the default) and `off` keep the agent path. `off`
  *     cannot mean "skip": a skipped compaction is a failed one.
  *   - `unavailable` does NOT fall back to an agent: it fails the compaction
  *     with the reason, which the "Compaction Failed" toast shows. That toast is
@@ -317,7 +320,7 @@ async function summarizeWithAssignedModel(prompt: string): Promise<string | null
 			signal: AbortSignal.any([controller.signal, AbortSignal.timeout(LOCAL_SUMMARY_TIMEOUT_MS)]),
 		});
 		switch (verdict.status) {
-			case 'use-utility-agent':
+			case 'use-provider':
 			case 'off':
 				return null;
 			case 'cancelled':

@@ -4,8 +4,8 @@
  * The Local Models task router, with `generateText` and the stats database
  * mocked. Properties worth protecting:
  *
- *   - **Every assignment branch answers as itself.** `off` and `utility-agent`
- *     never touch a model; `local` and `endpoint` call `generateText` with the
+ *   - **Every assignment branch answers as itself.** `off` and a Model Map slot
+ *     on a provider never touch a model; `local` and `endpoint` call `generateText` with the
  *     source the user picked.
  *   - **No fallback.** A source that cannot run is reported `unavailable`,
  *     naming it, and nothing else is tried.
@@ -149,16 +149,16 @@ describe('runLocalTask', () => {
 			expect(stats.recordLocalModelRun).not.toHaveBeenCalled();
 		});
 
-		it('answers off when the user switched a Utility Agent task off', async () => {
+		it('answers off when the user switched a Model Map task off', async () => {
 			assign('tab-naming', { type: 'off' });
 			await expect(runLocalTask('tab-naming', { prompt: 'hi' })).resolves.toEqual({
 				status: 'off',
 			});
 		});
 
-		it('hands a Utility Agent task back to its caller without spawning anything', async () => {
+		it('hands a task on a provider slot back to its caller without spawning anything', async () => {
 			await expect(runLocalTask('tab-naming', { prompt: 'hi' })).resolves.toEqual({
-				status: 'use-utility-agent',
+				status: 'use-provider',
 			});
 			expect(generate.generateText).not.toHaveBeenCalled();
 			expect(stats.recordLocalModelRun).not.toHaveBeenCalled();
@@ -171,11 +171,14 @@ describe('runLocalTask', () => {
 		});
 	});
 
-	describe('the shared utility source', () => {
-		it.each(['tab-naming', 'tab-summary', 'ai-command'] as const)(
-			'runs inherited %s on the shared local model and records the actual source',
+	describe('the Model Map', () => {
+		const housekeeping = (slot: unknown) =>
+			settings.set('modelMap', { agent: { type: 'provider' }, housekeeping: slot });
+
+		it.each(['tab-naming', 'ai-command'] as const)(
+			'runs inherited %s on the mapped local model and records the actual source',
 			async (taskId) => {
-				settings.set('utilitySource', LOCAL);
+				housekeeping(LOCAL);
 				generate.generateText.mockResolvedValue(okReply(LOCAL));
 				await expect(runLocalTask(taskId, { prompt: 'hi' })).resolves.toMatchObject({
 					status: 'ok',
@@ -188,8 +191,34 @@ describe('runLocalTask', () => {
 			}
 		);
 
-		it('uses the shared endpoint until a task overrides it', async () => {
-			settings.set('utilitySource', ENDPOINT);
+		it('hands Summaries back to its caller while its default Agent model is a provider', async () => {
+			housekeeping(LOCAL);
+			await expect(runLocalTask('tab-summary', { prompt: 'hi' })).resolves.toEqual({
+				status: 'use-provider',
+			});
+			expect(generate.generateText).not.toHaveBeenCalled();
+		});
+
+		it('runs Summaries on the Agent model by default, not the Housekeeping model', async () => {
+			settings.set('modelMap', { agent: ENDPOINT, housekeeping: LOCAL });
+			generate.generateText.mockResolvedValue(okReply(ENDPOINT));
+			await expect(runLocalTask('tab-summary', { prompt: 'hi' })).resolves.toMatchObject({
+				status: 'ok',
+				source: ENDPOINT,
+			});
+		});
+
+		it('reads an old Utility source as the Housekeeping model until a map is saved', async () => {
+			settings.set('utilitySource', LOCAL);
+			generate.generateText.mockResolvedValue(okReply(LOCAL));
+			await expect(runLocalTask('tab-naming', { prompt: 'hi' })).resolves.toMatchObject({
+				status: 'ok',
+				source: LOCAL,
+			});
+		});
+
+		it('uses the mapped endpoint until a task overrides it', async () => {
+			housekeeping(ENDPOINT);
 			generate.generateText.mockResolvedValue(okReply(ENDPOINT));
 			await expect(runLocalTask('tab-naming', { prompt: 'hi' })).resolves.toMatchObject({
 				status: 'ok',
@@ -208,7 +237,7 @@ describe('runLocalTask', () => {
 		});
 
 		it('reports an inherited endpoint failure without handing work to a provider', async () => {
-			settings.set('utilitySource', SERVER_ENDPOINT);
+			housekeeping(SERVER_ENDPOINT);
 			generate.generateText.mockRejectedValue(serverError('network'));
 			await expect(runLocalTask('tab-naming', { prompt: 'hi' })).resolves.toMatchObject({
 				status: 'unavailable',
@@ -858,7 +887,7 @@ describe('runLocalTaskRequest / parseLocalTaskInput', () => {
 
 	it('runs a valid request through the router', async () => {
 		await expect(runLocalTaskRequest('tab-naming', { prompt: 'x' })).resolves.toEqual({
-			status: 'use-utility-agent',
+			status: 'use-provider',
 		});
 	});
 

@@ -5,8 +5,8 @@
  *
  * The semantic index card sits below the System One rows because it is what
  * one of them (Semantic search) builds once it is assigned a source. The
- * Utility Agent controls, which define the picker's "Utility Agent" choice,
- * belong to System Two and are mounted by the tab, not here.
+ * Model Map card, which defines the picker's Agent model and Housekeeping
+ * model choices, belongs to System Two and is mounted by the tab, not here.
  *
  * Nothing about readiness is decided here. Every verdict comes from the main
  * process (`resolveTaskReadiness`, through `useLocalModelTaskReadiness`), the
@@ -56,6 +56,7 @@ import {
 	type SystemOneEngineChoice,
 	type SystemOneFailPolicyRow,
 } from '../../../../../shared/local-models/system-one-settings';
+import type { ModelMap } from '../../../../../shared/local-models/model-map';
 import type { LocalModelTaskReadiness } from '../../../../../shared/local-models/task-readiness';
 import {
 	useLocalModelTaskReadiness,
@@ -115,7 +116,7 @@ export function LocalModelsAssignmentsSection({
 }: LocalModelsAssignmentsSectionProps) {
 	const tasks = useMemo(() => tasksForSystem(system), [system]);
 	const assignments = useSettingsStore((s) => s.localModelAssignments);
-	const utilitySource = useSettingsStore((s) => s.utilitySource);
+	const modelMap = useSettingsStore((s) => s.modelMap);
 	const setLocalModelAssignments = useSettingsStore((s) => s.setLocalModelAssignments);
 	// The last refused pick per task, shown under its row until the next pick.
 	const [problems, setProblems] = useState<Partial<Record<LocalModelTaskId, string>>>({});
@@ -127,7 +128,7 @@ export function LocalModelsAssignmentsSection({
 		() =>
 			JSON.stringify([
 				assignments,
-				utilitySource,
+				modelMap,
 				endpoints.endpoints,
 				models.listings.map((listing) => [listing.entry.id, listing.status.status]),
 				systemOneEngine?.engine ?? null,
@@ -135,7 +136,7 @@ export function LocalModelsAssignmentsSection({
 			]),
 		[
 			assignments,
-			utilitySource,
+			modelMap,
 			endpoints.endpoints,
 			models.listings,
 			systemOneEngine?.engine,
@@ -203,12 +204,13 @@ export function LocalModelsAssignmentsSection({
 						models={models}
 						endpoints={endpoints}
 						systemOneEngine={systemOneEngine?.engine}
+						modelMap={modelMap}
 						readiness={readiness.readiness[task.id]}
 						checking={readiness.loading}
 						problem={problems[task.id]}
 						caution={localModelAssignmentCaution(
 							task.id,
-							resolveLocalModelAssignment(assignments, task.id, utilitySource)
+							resolveLocalModelAssignment(assignments, task.id, modelMap)
 						)}
 						onChoose={(spec) => choose(task.id, spec)}
 						onRecheck={readiness.refresh}
@@ -230,6 +232,8 @@ interface TaskAssignmentRowProps {
 	endpoints: LocalModelEndpointsState;
 	/** The System One engine in force, for the label of its source option. */
 	systemOneEngine: SystemOneEngineChoice | undefined;
+	/** The Model Map in force, so the slot options name what they run on. */
+	modelMap: ModelMap;
 	readiness: LocalModelTaskReadiness | undefined;
 	checking: boolean;
 	problem: string | undefined;
@@ -251,6 +255,7 @@ function TaskAssignmentRow({
 	models,
 	endpoints,
 	systemOneEngine,
+	modelMap,
 	readiness,
 	checking,
 	problem,
@@ -265,8 +270,17 @@ function TaskAssignmentRow({
 				endpoints: endpoints.endpoints,
 				endpointModels: endpoints.models,
 				...(systemOneEngine ? { systemOneEngine } : {}),
+				modelMap,
 			}),
-		[task, assignment, models.listings, endpoints.endpoints, endpoints.models, systemOneEngine]
+		[
+			task,
+			assignment,
+			models.listings,
+			endpoints.endpoints,
+			endpoints.models,
+			systemOneEngine,
+			modelMap,
+		]
 	);
 	const selectId = `local-models-task-source-${task.id}`;
 
@@ -387,7 +401,7 @@ export function TaskReadinessLine({
 	const dotColor =
 		readiness.state === 'ready'
 			? theme.colors.success
-			: readiness.state === 'utility-agent'
+			: readiness.state === 'provider'
 				? theme.colors.accent
 				: readiness.state === 'unavailable'
 					? theme.colors.warning
@@ -395,8 +409,8 @@ export function TaskReadinessLine({
 	const headline =
 		readiness.state === 'ready'
 			? 'Ready'
-			: readiness.state === 'utility-agent'
-				? 'Utility source'
+			: readiness.state === 'provider'
+				? 'Provider agent'
 				: readiness.state === 'off'
 					? 'Off'
 					: 'Unavailable';

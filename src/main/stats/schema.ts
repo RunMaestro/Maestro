@@ -304,7 +304,7 @@ function localModelRunsTableSql(table: string): string {
 /**
  * One row per run that reached a model other than a provider's own (see
  * `LocalModelRun` in shared/stats-types.ts). A task that was off, or handed
- * back to its Utility Agent path, ran nothing here and is not recorded.
+ * back to its provider agent path, ran nothing here and is not recorded.
  *
  * `source_type` says where the model was (`LOCAL_MODEL_RUN_SOURCE_TYPES`), and
  * the other columns read by it:

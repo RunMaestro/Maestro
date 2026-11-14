@@ -25,12 +25,13 @@ import type { LocalModelAssignment, LocalModelTaskId, LocalModelTaskNeed } from 
  *
  * - `ready`         - the assigned local model or endpoint should answer, or
  *                     the System One engine in force is set up to.
- * - `utility-agent` - the task runs on its existing agent path; nothing here
- *                     to check (the router never spawns that agent).
+ * - `provider`      - the task inherits a Model Map slot that is a provider
+ *                     agent, so it runs on its existing agent path; nothing
+ *                     here to check (the router never spawns that agent).
  * - `off`           - the task is switched off. Not a fault.
  * - `unavailable`   - the assigned source cannot run; `reason` says why.
  */
-export type LocalModelTaskReadinessState = 'ready' | 'utility-agent' | 'off' | 'unavailable';
+export type LocalModelTaskReadinessState = 'ready' | 'provider' | 'off' | 'unavailable';
 
 /**
  * Why an assigned source cannot run. Closed on purpose, and an array so the
@@ -90,8 +91,8 @@ export interface LocalModelTaskReadiness {
 
 /**
  * Whether a call to this task would reach a source right now. `off` is not
- * runnable; `utility-agent` is, on the caller's own path.
+ * runnable; `provider` is, on the caller's own path.
  */
 export function isTaskRunnable(readiness: Pick<LocalModelTaskReadiness, 'state'>): boolean {
-	return readiness.state === 'ready' || readiness.state === 'utility-agent';
+	return readiness.state === 'ready' || readiness.state === 'provider';
 }

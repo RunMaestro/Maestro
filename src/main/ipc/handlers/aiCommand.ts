@@ -5,7 +5,7 @@
  * describes what they want in plain English and a model returns ONE shell
  * command line, which Maestro shows for a yes/no before running it. Which model
  * is the `ai-command` Local Models assignment: the tab's own provider by
- * default (`utility-agent`), or a local model or endpoint the user assigned.
+ * default (`housekeeping-model`, while that slot is a provider), or a model the user mapped.
  *
  * This handler is only the model round trip. It never executes anything - the
  * accepted command goes back through the renderer's ordinary command-mode path
@@ -50,7 +50,8 @@ import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
 import type { ClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
-import { resolveUtilityProvider } from '../../../shared/local-models/tasks';
+import { resolveTaskProvider } from '../../../shared/local-models/model-map';
+import { settingsReader } from '../../local-models/sources';
 
 const LOG_CONTEXT = '[AICommand]';
 
@@ -153,7 +154,7 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 				// prompt (and the bill) for every suggestion.
 				const recentCommands = (config.recentCommands ?? []).slice(-AI_COMMAND_HISTORY_LIMIT);
 
-				// Local Models assignment first. Only `use-utility-agent` (the default)
+				// Local Models assignment first. Only `use-provider` (the default)
 				// continues to the tab's own provider below, unchanged. It runs before
 				// the provider is looked up because an assigned model does not need
 				// the tab's agent to be installed.
@@ -175,12 +176,9 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 				const processManager = requireDependency(getProcessManager, 'Process manager');
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
-				const utility = resolveUtilityProvider(
-					{
-						utilitySource: settingsStore.get('utilitySource'),
-						utilityAgentId: settingsStore.get('utilityAgentId', null),
-						utilityModelId: settingsStore.get('utilityModelId', null),
-					},
+				const utility = resolveTaskProvider(
+					settingsReader(settingsStore),
+					'ai-command',
 					config.agentType
 				);
 				const agent = await agentDetector.getAgent(utility.agentType);
@@ -229,10 +227,8 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 							sessionCustomPath: utility.changesProvider ? undefined : config.customPath,
 							sessionCustomArgs: utility.changesProvider ? undefined : config.customArgs,
 							sessionCustomEnvVars: utility.changesProvider ? undefined : config.customEnvVars,
-							sessionCustomModel: utility.usesUtilityProvider
-								? utility.modelId
-								: config.customModel,
-							sessionCustomEffort: utility.usesUtilityProvider ? undefined : config.customEffort,
+							sessionCustomModel: utility.usesMappedProvider ? utility.modelId : config.customModel,
+							sessionCustomEffort: utility.usesMappedProvider ? undefined : config.customEffort,
 							claudeTokenSource: utility.changesProvider ? undefined : config.claudeTokenSource,
 							// `cwd` is the requesting agent's own directory (resolveCommandCwd).
 							acceptWorkspaceTrust: true,
@@ -274,14 +270,14 @@ const LOCAL_AI_COMMAND_MAX_TOKENS = 256;
 
 /**
  * Suggest the command with the `ai-command` Local Models assignment, when it is
- * a local model or an endpoint. Returns null for `use-utility-agent`: the
+ * a local model or an endpoint. Returns null for `use-provider`: the
  * caller keeps the tab's own provider, which is the default, so nothing changes
  * until the user assigns a model.
  *
  * Every other verdict is answered here, and none of them falls back to an
  * agent:
  *   - `off` refuses and says where the switch is. The feature cannot work
- *     without a model, but Off sits beside Utility Agent in the same picker, so
+ *     without a model, but Off sits beside the Model Map slots in the same picker, so
  *     it is the user choosing "no model", and the tab's provider is not used
  *     behind their back. It cannot skip silently either: the user is waiting on
  *     a spinner in the composer.
@@ -318,7 +314,7 @@ async function suggestWithAssignedModel(
 	});
 
 	switch (verdict.status) {
-		case 'use-utility-agent':
+		case 'use-provider':
 			return null;
 		case 'off':
 			return {

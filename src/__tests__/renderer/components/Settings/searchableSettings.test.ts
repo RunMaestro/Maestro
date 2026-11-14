@@ -517,9 +517,11 @@ describe('searchableSettings', () => {
 			['cue gate', 'local-models-system-one'],
 			['system two', 'local-models-system-two'],
 			['tab naming', 'local-models-system-two'],
-			['utility agent', 'local-models-utility-agent'],
-			['utility source', 'local-models-utility-agent'],
-			['context grooming', 'local-models-utility-agent'],
+			['model map', 'local-models-model-map'],
+			['housekeeping model', 'local-models-model-map'],
+			['utility agent', 'local-models-model-map'],
+			['utility source', 'local-models-model-map'],
+			['context grooming', 'local-models-model-map'],
 			['semantic index', 'local-models-semantic-index'],
 			['explore index', 'local-models-semantic-index'],
 			['clear semantic index', 'local-models-semantic-index'],
@@ -580,14 +582,14 @@ describe('searchableSettings', () => {
 				'local-models-system-one': 'system-one',
 				'local-models-semantic-index': 'system-one',
 				'local-models-system-two': 'system-two',
-				'local-models-utility-agent': 'system-two',
+				'local-models-model-map': 'system-two',
 				'models-tier-defaults': 'system-two',
 				'local-models-gateway': 'gateway',
 			});
 		});
 
 		it('reads an inner tab back by setting id, and none for a plain tab', () => {
-			expect(settingSubTab('local-models-utility-agent')).toBe('system-two');
+			expect(settingSubTab('local-models-model-map')).toBe('system-two');
 			expect(settingSubTab('local-models-download-source')).toBeUndefined();
 			expect(settingSubTab('general-tab-behavior')).toBeUndefined();
 			expect(settingSubTab('no-such-setting')).toBeUndefined();

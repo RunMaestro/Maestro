@@ -25,8 +25,6 @@ import {
 	parseLocalModelAssignmentSpec,
 	parseLocalModelAssignment,
 	parseLocalModelAssignments,
-	parseUtilitySource,
-	resolveUtilityProvider,
 	tasksForSystem,
 	tasksNeedingKind,
 	tasksUsingEndpoint,
@@ -34,10 +32,14 @@ import {
 	resolveLocalModelAssignment,
 	resolveLocalModelAssignments,
 	inheritsProviderWithoutAgentPath,
-	UTILITY_AGENT_ASSIGNMENT,
+	AGENT_MODEL_ASSIGNMENT,
+	HOUSEKEEPING_MODEL_ASSIGNMENT,
+	isModelMapAssignment,
+	modelMapRoleOf,
 	withLocalModelAssignment,
 	type LocalModelTaskId,
 	type SystemOneTaskId,
+	type SystemOneTaskInputs,
 } from '../../shared/local-models/tasks';
 import {
 	systemOneQuestionsProblem,
@@ -53,15 +55,36 @@ import {
 } from '../../shared/local-models/model-catalog';
 import { SETTINGS_METADATA } from '../../shared/settingsMetadata';
 import { SETTINGS_DEFAULTS } from '../../main/stores/defaults';
+import {
+	DEFAULT_MODEL_MAP,
+	SESSION_PROVIDER_SLOT,
+	type ModelMap,
+	type ModelMapSlot,
+} from '../../shared/local-models/model-map';
 
-const UTILITY_AGENT_TASKS: LocalModelTaskId[] = ['tab-naming', 'tab-summary', 'ai-command'];
-/** System Two tasks that inherit the Utility source but have no provider path of their own. */
-const MODEL_ONLY_UTILITY_TASKS: LocalModelTaskId[] = [
+/** A Model Map whose Housekeeping slot is `housekeeping`, the Agent slot on the session provider. */
+function housekeepingOn(housekeeping: ModelMapSlot): ModelMap {
+	return { agent: SESSION_PROVIDER_SLOT, housekeeping };
+}
+
+/** System Two tasks that follow a Model Map slot and keep a provider path of their own. */
+const AGENT_PATH_TASKS: LocalModelTaskId[] = ['tab-naming', 'tab-summary', 'ai-command'];
+/** System Two tasks that follow a Model Map slot but have no provider path of their own. */
+const MODEL_ONLY_MAP_TASKS: LocalModelTaskId[] = [
 	'git-drafts',
 	'spoken-notices',
 	'token-proxy',
 	'history-digests',
 ];
+/** System Two tasks whose text a person reads closely: they default to the Agent model. */
+const AGENT_MODEL_DEFAULT_TASKS: LocalModelTaskId[] = ['tab-summary', 'git-drafts'];
+
+/** The slot a System Two task follows until the user picks. */
+function systemTwoDefault(id: LocalModelTaskId) {
+	return AGENT_MODEL_DEFAULT_TASKS.includes(id)
+		? { type: 'agent-model' }
+		: { type: 'housekeeping-model' };
+}
 
 describe('LOCAL_MODEL_TASKS registry', () => {
 	it('has one entry per task id, keyed by its own id', () => {
@@ -149,32 +172,49 @@ describe('LOCAL_MODEL_TASKS registry', () => {
 		expect(judge.system).toBe('one');
 		expect(judge.defaultAssignment).toEqual({ type: 'off' });
 		expect(judge.description).toMatch(/not calibrated/);
-		expect(localModelAssignmentProblem(LOCAL_JUDGE_TASK_ID, { type: 'utility-agent' })).toMatch(
-			/cannot use the Utility source/
-		);
+		expect(
+			localModelAssignmentProblem(LOCAL_JUDGE_TASK_ID, { type: 'housekeeping-model' })
+		).toMatch(/cannot use the Model Map/);
 	});
 
-	it('defaults the tasks that already run through an agent to that agent path', () => {
-		for (const id of UTILITY_AGENT_TASKS) {
-			expect(LOCAL_MODEL_TASKS[id].allowsUtilityAgent).toBe(true);
+	it('defaults the tasks that already run through an agent to a Model Map slot, keeping that agent path', () => {
+		for (const id of AGENT_PATH_TASKS) {
+			expect(LOCAL_MODEL_TASKS[id].allowsModelMap).toBe(true);
 			expect(LOCAL_MODEL_TASKS[id].hasAgentPath).toBe(true);
-			expect(LOCAL_MODEL_TASKS[id].defaultAssignment).toEqual({ type: 'utility-agent' });
+			expect(LOCAL_MODEL_TASKS[id].defaultAssignment).toEqual(systemTwoDefault(id));
 		}
 	});
 
-	it('defaults every other System Two task to the Utility source, with no agent path', () => {
-		for (const id of MODEL_ONLY_UTILITY_TASKS) {
-			expect(LOCAL_MODEL_TASKS[id].allowsUtilityAgent).toBe(true);
+	it('defaults every other System Two task to a Model Map slot, with no agent path', () => {
+		for (const id of MODEL_ONLY_MAP_TASKS) {
+			expect(LOCAL_MODEL_TASKS[id].allowsModelMap).toBe(true);
 			expect(LOCAL_MODEL_TASKS[id].hasAgentPath).toBe(false);
-			expect(LOCAL_MODEL_TASKS[id].defaultAssignment).toEqual({ type: 'utility-agent' });
+			expect(LOCAL_MODEL_TASKS[id].defaultAssignment).toEqual(systemTwoDefault(id));
 		}
 	});
 
-	it('defaults every System One task to off, with no Utility source', () => {
+	it('defaults Summaries and Git drafts to the Agent model and the rest of System Two to the Housekeeping model', () => {
+		const systemTwo = LOCAL_MODEL_TASK_IDS.filter((id) => LOCAL_MODEL_TASKS[id].system === 'two');
+		const byDefault = (type: string) =>
+			systemTwo.filter((id) => LOCAL_MODEL_TASKS[id].defaultAssignment.type === type);
+		expect(byDefault('agent-model')).toEqual(['tab-summary', 'git-drafts']);
+		expect(byDefault('housekeeping-model')).toEqual(
+			systemTwo.filter((id) => id !== 'tab-summary' && id !== 'git-drafts')
+		);
+		expect(byDefault('housekeeping-model')).toEqual([
+			'tab-naming',
+			'ai-command',
+			'spoken-notices',
+			'token-proxy',
+			'history-digests',
+		]);
+	});
+
+	it('defaults every System One task to off, with no Model Map', () => {
 		for (const id of LOCAL_MODEL_TASK_IDS) {
-			if (UTILITY_AGENT_TASKS.includes(id) || MODEL_ONLY_UTILITY_TASKS.includes(id)) continue;
+			if (AGENT_PATH_TASKS.includes(id) || MODEL_ONLY_MAP_TASKS.includes(id)) continue;
 			expect(LOCAL_MODEL_TASKS[id].system).toBe('one');
-			expect(LOCAL_MODEL_TASKS[id].allowsUtilityAgent).toBe(false);
+			expect(LOCAL_MODEL_TASKS[id].allowsModelMap).toBe(false);
 			expect(LOCAL_MODEL_TASKS[id].hasAgentPath).toBe(false);
 			expect(LOCAL_MODEL_TASKS[id].defaultAssignment).toEqual({ type: 'off' });
 		}
@@ -198,16 +238,27 @@ describe('parseLocalModelAssignment', () => {
 		expect(
 			parseLocalModelAssignment('cue-gate', { type: 'endpoint', endpointId: 'ep', model: 'llama3' })
 		).toEqual({ type: 'endpoint', endpointId: 'ep', model: 'llama3' });
-		expect(parseLocalModelAssignment('tab-naming', { type: 'utility-agent' })).toEqual({
-			type: 'utility-agent',
+		expect(parseLocalModelAssignment('tab-naming', { type: 'housekeeping-model' })).toEqual({
+			type: 'housekeeping-model',
+		});
+		expect(parseLocalModelAssignment('tab-naming', { type: 'agent-model' })).toEqual({
+			type: 'agent-model',
 		});
 	});
 
-	it('refuses the Utility source on a task that does not accept it', () => {
+	it('reads the old Utility source spelling as the Housekeeping model', () => {
+		expect(parseLocalModelAssignment('tab-naming', { type: 'utility-agent' })).toEqual(
+			HOUSEKEEPING_MODEL_ASSIGNMENT
+		);
 		expect(parseLocalModelAssignment('cue-gate', { type: 'utility-agent' })).toBeNull();
-		expect(parseLocalModelAssignment('git-drafts', { type: 'utility-agent' })).toEqual({
-			type: 'utility-agent',
-		});
+	});
+
+	it('refuses a Model Map slot on a task that does not accept it', () => {
+		expect(parseLocalModelAssignment('cue-gate', { type: 'housekeeping-model' })).toBeNull();
+		expect(parseLocalModelAssignment('cue-gate', { type: 'agent-model' })).toBeNull();
+		expect(parseLocalModelAssignment('git-drafts', { type: 'agent-model' })).toEqual(
+			AGENT_MODEL_ASSIGNMENT
+		);
 	});
 
 	it('refuses malformed records', () => {
@@ -234,13 +285,18 @@ describe('parseLocalModelAssignments (settings migration)', () => {
 		}
 	});
 
-	it('keeps an existing Utility Agent setup working with no stored assignments', () => {
+	it('keeps an existing provider setup working with no stored assignments', () => {
 		// An install from before Local Models has utilityAgentId set and no
-		// localModelAssignments at all. The utility-agent default is what keeps
-		// tab naming, summaries, and AI command mode on the path they used.
+		// localModelAssignments at all. The housekeeping-model default (whose
+		// slot reads that old provider choice) keeps tab naming and AI command
+		// mode on the path they used. Summaries move to the Agent model on
+		// purpose; both slots are providers, so every one keeps its agent path.
 		const resolved = resolveLocalModelAssignments(parseLocalModelAssignments(undefined));
-		for (const id of UTILITY_AGENT_TASKS) {
-			expect(resolved[id]).toEqual({ type: 'utility-agent' });
+		expect(resolved['tab-naming']).toEqual({ type: 'housekeeping-model' });
+		expect(resolved['ai-command']).toEqual({ type: 'housekeeping-model' });
+		expect(resolved['tab-summary']).toEqual({ type: 'agent-model' });
+		for (const id of AGENT_PATH_TASKS) {
+			expect(LOCAL_MODEL_TASKS[id].hasAgentPath).toBe(true);
 		}
 	});
 
@@ -248,14 +304,16 @@ describe('parseLocalModelAssignments (settings migration)', () => {
 		expect(
 			parseLocalModelAssignments({
 				'retired-task': { type: 'off' },
-				'cue-gate': { type: 'utility-agent' },
-				'git-drafts': { type: 'utility-agent' },
+				'cue-gate': { type: 'housekeeping-model' },
+				'git-drafts': { type: 'agent-model' },
 				'tab-naming': { type: 'utility-agent' },
+				'tab-summary': { type: 'housekeeping-model' },
 				'token-proxy': { type: 'off' },
 				'ai-command': { type: 'off' },
 				'semantic-search': { type: 'endpoint', endpointId: 'ep', model: 'nomic-embed-text' },
 			})
 		).toEqual({
+			'tab-summary': { type: 'housekeeping-model' },
 			'token-proxy': { type: 'off' },
 			'ai-command': { type: 'off' },
 			'semantic-search': { type: 'endpoint', endpointId: 'ep', model: 'nomic-embed-text' },
@@ -265,38 +323,67 @@ describe('parseLocalModelAssignments (settings migration)', () => {
 
 describe('resolveLocalModelAssignment', () => {
 	it('falls back to the task default when nothing usable is stored', () => {
-		expect(resolveLocalModelAssignment(undefined, 'tab-naming')).toEqual({ type: 'utility-agent' });
+		expect(resolveLocalModelAssignment(undefined, 'tab-naming')).toEqual({
+			type: 'housekeeping-model',
+		});
 		expect(resolveLocalModelAssignment({}, 'cue-gate')).toEqual({ type: 'off' });
 		expect(
-			resolveLocalModelAssignment({ 'cue-gate': { type: 'utility-agent' } }, 'cue-gate')
+			resolveLocalModelAssignment({ 'cue-gate': { type: 'housekeeping-model' } }, 'cue-gate')
 		).toEqual({ type: 'off' });
 		expect(resolveLocalModelAssignment(undefined, 'git-drafts')).toEqual({
-			type: 'utility-agent',
+			type: 'agent-model',
+		});
+		expect(resolveLocalModelAssignment(undefined, 'tab-summary')).toEqual({
+			type: 'agent-model',
 		});
 	});
 
-	it('turns a model-only task off while the inherited Utility source is the provider', () => {
-		for (const id of MODEL_ONLY_UTILITY_TASKS) {
-			expect(resolveLocalModelAssignment(undefined, id, UTILITY_AGENT_ASSIGNMENT)).toEqual({
+	it('turns a model-only task off while the slot it inherits is a provider', () => {
+		for (const id of MODEL_ONLY_MAP_TASKS) {
+			expect(resolveLocalModelAssignment(undefined, id, DEFAULT_MODEL_MAP)).toEqual({
 				type: 'off',
 			});
-			expect(inheritsProviderWithoutAgentPath(undefined, id, UTILITY_AGENT_ASSIGNMENT)).toBe(true);
+			expect(inheritsProviderWithoutAgentPath(undefined, id, DEFAULT_MODEL_MAP)).toBe(
+				id === 'git-drafts' ? 'agent' : 'housekeeping'
+			);
 		}
-		for (const id of UTILITY_AGENT_TASKS) {
-			expect(resolveLocalModelAssignment(undefined, id, UTILITY_AGENT_ASSIGNMENT)).toEqual({
-				type: 'utility-agent',
-			});
-			expect(inheritsProviderWithoutAgentPath(undefined, id, UTILITY_AGENT_ASSIGNMENT)).toBe(false);
+		for (const id of AGENT_PATH_TASKS) {
+			expect(resolveLocalModelAssignment(undefined, id, DEFAULT_MODEL_MAP)).toEqual(
+				systemTwoDefault(id)
+			);
+			expect(inheritsProviderWithoutAgentPath(undefined, id, DEFAULT_MODEL_MAP)).toBeNull();
 		}
 		const local = { type: 'local' as const, modelId: QWEN3_1_7B_ID };
-		expect(inheritsProviderWithoutAgentPath(undefined, 'git-drafts', local)).toBe(false);
 		expect(
-			inheritsProviderWithoutAgentPath(
-				{ 'git-drafts': local },
-				'git-drafts',
-				UTILITY_AGENT_ASSIGNMENT
-			)
-		).toBe(false);
+			inheritsProviderWithoutAgentPath(undefined, 'spoken-notices', housekeepingOn(local))
+		).toBeNull();
+		// Git drafts follows the Agent slot, so a local Housekeeping model does not help it.
+		expect(inheritsProviderWithoutAgentPath(undefined, 'git-drafts', housekeepingOn(local))).toBe(
+			'agent'
+		);
+		expect(
+			inheritsProviderWithoutAgentPath(undefined, 'git-drafts', {
+				agent: local,
+				housekeeping: SESSION_PROVIDER_SLOT,
+			})
+		).toBeNull();
+		expect(
+			inheritsProviderWithoutAgentPath({ 'git-drafts': local }, 'git-drafts', DEFAULT_MODEL_MAP)
+		).toBeNull();
+	});
+
+	it('names the Agent slot when a model-only task on it is off', () => {
+		const map: ModelMap = {
+			agent: SESSION_PROVIDER_SLOT,
+			housekeeping: { type: 'local', modelId: QWEN3_1_7B_ID },
+		};
+		const stored = { 'spoken-notices': AGENT_MODEL_ASSIGNMENT };
+		expect(resolveLocalModelAssignment(stored, 'spoken-notices', map)).toEqual({ type: 'off' });
+		expect(inheritsProviderWithoutAgentPath(stored, 'spoken-notices', map)).toBe('agent');
+		expect(resolveLocalModelAssignment(undefined, 'spoken-notices', map)).toEqual(map.housekeeping);
+		// Git drafts is on the Agent slot by default.
+		expect(resolveLocalModelAssignment(undefined, 'git-drafts', map)).toEqual({ type: 'off' });
+		expect(inheritsProviderWithoutAgentPath(undefined, 'git-drafts', map)).toBe('agent');
 	});
 
 	it('returns the stored assignment', () => {
@@ -316,7 +403,8 @@ describe('resolveLocalModelAssignment', () => {
 
 describe('localModelAssignmentProblem', () => {
 	it('accepts a fitting assignment', () => {
-		expect(localModelAssignmentProblem('tab-naming', { type: 'utility-agent' })).toBeNull();
+		expect(localModelAssignmentProblem('tab-naming', { type: 'housekeeping-model' })).toBeNull();
+		expect(localModelAssignmentProblem('tab-naming', { type: 'agent-model' })).toBeNull();
 		expect(
 			localModelAssignmentProblem('git-drafts', { type: 'local', modelId: QWEN3_1_7B_ID })
 		).toBeNull();
@@ -351,16 +439,20 @@ describe('localModelAssignmentProblem', () => {
 				modelId: PROMPT_GUARD_2_22M_ID,
 			})
 		).toMatch(/is a classifier model, but Model routing needs a text-gen or embedding model\./);
-		expect(localModelAssignmentProblem('model-routing', { type: 'utility-agent' })).toMatch(
-			/cannot use the Utility source/
+		expect(localModelAssignmentProblem('model-routing', { type: 'agent-model' })).toMatch(
+			/cannot use the Model Map/
 		);
 	});
 
-	it('names the task when it cannot use the Utility source', () => {
-		expect(localModelAssignmentProblem('cue-gate', { type: 'utility-agent' })).toMatch(
-			/Cue gate cannot use the Utility source/
+	it('names the task when it cannot use the Model Map', () => {
+		expect(localModelAssignmentProblem('cue-gate', { type: 'housekeeping-model' })).toMatch(
+			/Cue gate cannot use the Model Map/
 		);
-		expect(localModelAssignmentProblem('git-drafts', { type: 'utility-agent' })).toBeNull();
+		// The old spelling is refused the same way.
+		expect(localModelAssignmentProblem('cue-gate', { type: 'utility-agent' })).toMatch(
+			/Cue gate cannot use the Model Map/
+		);
+		expect(localModelAssignmentProblem('git-drafts', { type: 'housekeeping-model' })).toBeNull();
 	});
 
 	it('refuses an unknown model and a model of the wrong kind', () => {
@@ -380,7 +472,7 @@ describe('localModelAssignmentProblem', () => {
 			localModelAssignmentProblem('git-drafts', { type: 'endpoint', endpointId: 'ep' })
 		).toMatch(/endpoint id and a model name/);
 		expect(localModelAssignmentProblem('git-drafts', { type: 'cloud' })).toMatch(
-			/must be one of: off, utility-agent, local, endpoint, system-one\./
+			/must be one of: off, agent-model, housekeeping-model, local, endpoint, system-one\./
 		);
 	});
 
@@ -438,9 +530,10 @@ describe('localModelAssignmentSourceLabel', () => {
 		).toBe('qwen3:latest');
 	});
 
-	it('names nothing for off and the Utility Agent', () => {
+	it('names nothing for off and the Model Map slots', () => {
 		expect(localModelAssignmentSourceLabel({ type: 'off' }, endpoints)).toBeNull();
-		expect(localModelAssignmentSourceLabel({ type: 'utility-agent' }, endpoints)).toBeNull();
+		expect(localModelAssignmentSourceLabel(AGENT_MODEL_ASSIGNMENT, endpoints)).toBeNull();
+		expect(localModelAssignmentSourceLabel(HOUSEKEEPING_MODEL_ASSIGNMENT, endpoints)).toBeNull();
 	});
 });
 
@@ -451,7 +544,12 @@ describe('withLocalModelAssignment', () => {
 			modelId: QWEN3_1_7B_ID,
 		});
 		expect(changed).toEqual({ 'tab-naming': { type: 'local', modelId: QWEN3_1_7B_ID } });
-		expect(withLocalModelAssignment(changed, 'tab-naming', { type: 'utility-agent' })).toEqual({});
+		expect(withLocalModelAssignment(changed, 'tab-naming', HOUSEKEEPING_MODEL_ASSIGNMENT)).toEqual(
+			{}
+		);
+		expect(withLocalModelAssignment({}, 'tab-naming', AGENT_MODEL_ASSIGNMENT)).toEqual({
+			'tab-naming': { type: 'agent-model' },
+		});
 	});
 
 	it('does not mutate its input', () => {
@@ -464,7 +562,10 @@ describe('withLocalModelAssignment', () => {
 describe('isSameLocalModelAssignment', () => {
 	it('compares by type and every id', () => {
 		expect(isSameLocalModelAssignment({ type: 'off' }, { type: 'off' })).toBe(true);
-		expect(isSameLocalModelAssignment({ type: 'off' }, { type: 'utility-agent' })).toBe(false);
+		expect(isSameLocalModelAssignment({ type: 'off' }, HOUSEKEEPING_MODEL_ASSIGNMENT)).toBe(false);
+		expect(isSameLocalModelAssignment(AGENT_MODEL_ASSIGNMENT, HOUSEKEEPING_MODEL_ASSIGNMENT)).toBe(
+			false
+		);
 		expect(
 			isSameLocalModelAssignment({ type: 'local', modelId: 'a' }, { type: 'local', modelId: 'b' })
 		).toBe(false);
@@ -485,16 +586,24 @@ describe('localModelAssignments setting', () => {
 	});
 });
 
-describe('shared utility source', () => {
+describe('Model Map inheritance', () => {
 	const local = { type: 'local', modelId: QWEN3_1_7B_ID } as const;
 	const endpoint = { type: 'endpoint', endpointId: 'ep-1', model: 'qwen3' } as const;
 
-	it('preserves provider defaults for older installs and rejects recursive or off sources', () => {
-		for (const value of [undefined, null, {}, { type: 'off' }, { type: 'system-one' }]) {
-			expect(parseUtilitySource(value)).toEqual({ type: 'utility-agent' });
-		}
-		expect(SETTINGS_METADATA.utilitySource.default).toEqual({ type: 'utility-agent' });
-		expect(SETTINGS_DEFAULTS.utilitySource).toEqual({ type: 'utility-agent' });
+	it('stores no map until one is saved, so the old Utility source is read instead', () => {
+		expect(SETTINGS_METADATA.modelMap.default).toBeNull();
+		expect(SETTINGS_METADATA.modelMap.type).toBe('object');
+		expect(SETTINGS_DEFAULTS.modelMap).toBeNull();
+	});
+
+	it('tells the slot assignments apart from the sources a task names itself', () => {
+		expect(isModelMapAssignment(AGENT_MODEL_ASSIGNMENT)).toBe(true);
+		expect(isModelMapAssignment(HOUSEKEEPING_MODEL_ASSIGNMENT)).toBe(true);
+		expect(isModelMapAssignment({ type: 'off' })).toBe(false);
+		expect(isModelMapAssignment(local)).toBe(false);
+		expect(modelMapRoleOf(AGENT_MODEL_ASSIGNMENT)).toBe('agent');
+		expect(modelMapRoleOf(HOUSEKEEPING_MODEL_ASSIGNMENT)).toBe('housekeeping');
+		expect(modelMapRoleOf(SYSTEM_ONE_ASSIGNMENT)).toBeNull();
 	});
 
 	it.each([local, endpoint])(
@@ -505,54 +614,40 @@ describe('shared utility source', () => {
 					'tab-naming': { type: 'off' },
 					'tab-summary': endpoint,
 				},
-				source
+				housekeepingOn(source)
 			);
 			expect(resolved['tab-naming']).toEqual({ type: 'off' });
 			expect(resolved['tab-summary']).toEqual(endpoint);
 			expect(resolved['ai-command']).toEqual(source);
-			expect(resolved['git-drafts']).toEqual(source);
+			// Git drafts follows the Agent slot, which is still the session provider.
+			expect(resolved['git-drafts']).toEqual({ type: 'off' });
 			expect(resolved['semantic-search']).toEqual({ type: 'off' });
 		}
 	);
 
-	it('retains removed sources so readiness can report the problem', () => {
-		expect(parseUtilitySource({ type: 'local', modelId: 'removed-model' })).toEqual({
-			type: 'local',
-			modelId: 'removed-model',
-		});
-		expect(parseUtilitySource(endpoint)).toEqual(endpoint);
-	});
-
-	it('resolves provider defaults and ignores parked overrides on a local source', () => {
+	it('resolves each task through the slot it points at', () => {
+		const map: ModelMap = { agent: endpoint, housekeeping: local };
+		const resolved = resolveLocalModelAssignments(
+			{ 'tab-naming': AGENT_MODEL_ASSIGNMENT, 'git-drafts': HOUSEKEEPING_MODEL_ASSIGNMENT },
+			map
+		);
+		expect(resolved['tab-naming']).toEqual(endpoint);
+		expect(resolved['git-drafts']).toEqual(local);
+		// The defaults: Summaries on the Agent model, AI command mode on the Housekeeping model.
+		expect(resolved['tab-summary']).toEqual(endpoint);
+		expect(resolved['ai-command']).toEqual(local);
+		// Without the map, a picker shows the stored choice.
 		expect(
-			resolveUtilityProvider(
-				{ utilityAgentId: 'codex', utilityModelId: 'gpt-model' },
-				'claude-code'
-			)
-		).toEqual({
-			agentType: 'codex',
-			modelId: 'gpt-model',
-			usesUtilityProvider: true,
-			changesProvider: true,
-		});
-		expect(
-			resolveUtilityProvider(
-				{ utilitySource: local, utilityAgentId: 'codex', utilityModelId: 'gpt-model' },
-				'claude-code'
-			)
-		).toEqual({
-			agentType: 'claude-code',
-			modelId: undefined,
-			usesUtilityProvider: false,
-			changesProvider: false,
-		});
+			resolveLocalModelAssignment({ 'tab-summary': AGENT_MODEL_ASSIGNMENT }, 'tab-summary')
+		).toEqual(AGENT_MODEL_ASSIGNMENT);
 	});
 
 	it('includes inherited tasks in model and endpoint removal warnings', () => {
 		expect(
-			tasksUsingLocalModel({ 'tab-summary': { type: 'off' } }, local.modelId, local).map(
-				(task) => task.id
-			)
+			tasksUsingLocalModel({ 'tab-summary': { type: 'off' } }, local.modelId, {
+				agent: local,
+				housekeeping: local,
+			}).map((task) => task.id)
 		).toEqual([
 			'tab-naming',
 			'ai-command',
@@ -562,9 +657,10 @@ describe('shared utility source', () => {
 			'history-digests',
 		]);
 		expect(
-			tasksUsingEndpoint({ 'ai-command': local }, endpoint.endpointId, endpoint).map(
-				(task) => task.id
-			)
+			tasksUsingEndpoint({ 'ai-command': local }, endpoint.endpointId, {
+				agent: endpoint,
+				housekeeping: endpoint,
+			}).map((task) => task.id)
 		).toEqual([
 			'tab-naming',
 			'tab-summary',
@@ -573,6 +669,11 @@ describe('shared utility source', () => {
 			'token-proxy',
 			'history-digests',
 		]);
+		// Only the slot a task follows counts: a model on the Housekeeping slot
+		// alone is not used by Summaries or Git drafts.
+		expect(
+			tasksUsingLocalModel(undefined, local.modelId, housekeepingOn(local)).map((task) => task.id)
+		).toEqual(['tab-naming', 'ai-command', 'spoken-notices', 'token-proxy', 'history-digests']);
 	});
 });
 
@@ -629,13 +730,13 @@ describe('tasksForSystem', () => {
 		]);
 	});
 
-	it('Computer History digests is a text task that inherits the Utility source, with no agent path', () => {
+	it('Computer History digests is a text task that inherits the Housekeeping model, with no agent path', () => {
 		const task = LOCAL_MODEL_TASKS['history-digests'];
-		expect(task.allowsUtilityAgent).toBe(true);
+		expect(task.allowsModelMap).toBe(true);
 		expect(task.hasAgentPath).toBe(false);
-		expect(task.defaultAssignment).toEqual({ type: 'utility-agent' });
+		expect(task.defaultAssignment).toEqual({ type: 'housekeeping-model' });
 		// The other writer is the digest agent, which is not an assignment.
-		expect(localModelAssignmentProblem('history-digests', { type: 'utility-agent' })).toBeNull();
+		expect(localModelAssignmentProblem('history-digests', { type: 'agent-model' })).toBeNull();
 		expect(localModelAssignmentProblem('history-digests', { type: 'system-one' })).toMatch(
 			/writes text/
 		);
@@ -686,7 +787,8 @@ describe('assignment spec', () => {
 	it('round-trips every assignment type', () => {
 		for (const assignment of [
 			{ type: 'off' },
-			{ type: 'utility-agent' },
+			{ type: 'agent-model' },
+			{ type: 'housekeeping-model' },
 			{ type: 'system-one' },
 			{ type: 'local', modelId: BGE_SMALL_EN_ID },
 			{ type: 'endpoint', endpointId: 'ep-1', model: 'qwen3' },
@@ -695,6 +797,13 @@ describe('assignment spec', () => {
 				assignment
 			);
 		}
+	});
+
+	it('reads the old utility-agent spelling as the Housekeeping model', () => {
+		expect(parseLocalModelAssignmentSpec('utility-agent')).toEqual(HOUSEKEEPING_MODEL_ASSIGNMENT);
+		expect(formatLocalModelAssignmentSpec(HOUSEKEEPING_MODEL_ASSIGNMENT)).toBe(
+			'housekeeping-model'
+		);
 	});
 
 	it('spells System One as one word, with no engine in it', () => {
@@ -786,7 +895,7 @@ describe('the system-one assignment', () => {
 	it('is refused at save with the reason and the sources the task does take', () => {
 		// A System Two task writes text, which no engine returns.
 		expect(localModelAssignmentProblem('tab-naming', SYSTEM_ONE_ASSIGNMENT)).toBe(
-			'Tab naming cannot run on System One: it writes text, and System One answers typed questions only. Choose off, the Utility Agent, a local model or an endpoint.'
+			'Tab naming cannot run on System One: it writes text, and System One answers typed questions only. Choose off, the Agent model, the Housekeeping model, a local model or an endpoint.'
 		);
 		// A System One task with no questions, and a need no endpoint serves.
 		expect(localModelAssignmentProblem('dictation', SYSTEM_ONE_ASSIGNMENT)).toBe(

@@ -239,7 +239,7 @@ describe('AssignedBrainProvider', () => {
 		});
 	});
 
-	it.each(['off', 'use-utility-agent'] as const)(
+	it.each(['off', 'use-provider'] as const)(
 		'refuses by name when the assignment answers %s, and reaches for nothing else',
 		async (status) => {
 			const { provider, runTask } = providerWith({ status });

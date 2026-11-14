@@ -4,7 +4,7 @@ description: Run Maestro's housekeeping tasks on models that live on your machin
 icon: hard-drive
 ---
 
-Maestro does a lot of small model work besides your agents' own turns: it names new tabs, writes context summaries, turns a plain-English request into a shell command, and more. By default most of that runs through the **Utility Agent**, an ordinary agent spawn. **Local Models** lets you point each of those jobs somewhere else: a small model Maestro downloads and runs itself, or a model server you already run, such as Ollama or LM Studio. A model on one of those can also be the model behind one of your agents: see [Model source](#model-source).
+Maestro does a lot of small model work besides your agents' own turns: it names new tabs, writes context summaries, turns a plain-English request into a shell command, and more. By default most of that runs through the **Housekeeping model** of the [Model Map](#model-map), which starts as an ordinary spawn of the session's own agent. **Local Models** lets you point each of those jobs somewhere else: a small model Maestro downloads and runs itself, or a model server you already run, such as Ollama or LM Studio. A model on one of those can also be the model behind one of your agents: see [Model source](#model-source).
 
 Open it from **Settings -> Models**, or run **Open Models Settings** from the command palette. From a terminal, `maestro-cli open settings --tab models` opens it, and `--sub-tab system-one` (or `overview`, `library`, `sources`, `system-two`, `gateway`) lands on one of its panels. A Library section takes a path: `--sub-tab library/speech` (or `library/engines`, `library/agents`, `library/housekeeping`, `library/search`, `library/custom`). The old name still works: `--tab local-models` opens the same tab. It is a core part of Maestro, not an Encore Feature, and it starts empty. The whole tab also works from the web interface: downloads, endpoints, the model server, System One, and every task run on the computer running Maestro, whichever screen you press the button on. Two controls stay in the desktop app: the model server key's **Copy** and VoiceStudio's **Check connection** (see [Sources in the web interface](#sources-in-the-web-interface)). The fit labels and the **Memory** tile describe that computer too, not the device the browser runs on, and download progress shows on every screen that has the tab open.
 
@@ -13,8 +13,9 @@ The tab has no shortcut of its own: **Open Settings** (`Cmd+,` / `Ctrl+,`) opens
 <Note>
 	**Nothing downloads on its own.** Opening the tab, or enabling anything else in Maestro, fetches
 	no model and calls no server. Every download, every server probe, and every test is a button you
-	press. Every task also starts where it was: the ones that already ran through the Utility Agent stay
-	there, and every new task starts **Off**.
+	press. Every task also starts where it was: the ones that already ran through an agent follow a
+	[Model Map](#model-map) slot, and both slots start as the session's provider. Every new task starts
+	**Off**.
 </Note>
 
 Clicking **Models** in the Settings sidebar opens the **Overview**. A row of tiles across the top shows where this computer stands: **On disk** (downloaded model files), **Installed**, **Engines** (installed and current), **Active tasks**, **Endpoints**, and **Memory**, the memory every model's fit is judged against. The Overview only reads: it downloads, probes, and calls nothing. A **task** is one of Maestro's background jobs (naming a tab, screening text, routing a voice request); it is active once you give it a source, and the rest are off. A model that failed verification shows a warning under the tiles, and clicking it opens the Library section that lists it. Below the tiles, a card for each panel says what it is for; click one to open it.
@@ -26,7 +27,7 @@ The five panels are listed under **Models** in the sidebar; click one to open it
 | **Library**    | The [models](#models) Maestro downloads, in sections, and the [engines](#engines) that run them.                                                    |
 | **Sources**    | The [endpoints](#endpoints) you have added, the [Maestro model server](#model-server), and the local [VoiceStudio](#voicestudio) speech service.    |
 | **System One** | The tasks whose answer is a judgment: a decision, label, score, vector, or transcript. See [System One and System Two](#system-one-and-system-two). |
-| **System Two** | The tasks that write text for someone to read or run, plus the shared Utility source settings.                                                      |
+| **System Two** | The tasks that write text for someone to read or run, plus the [Model Map](#model-map): the Agent model and the Housekeeping model.                 |
 | **Gateway**    | Per-agent gateway URLs, the token proxy mode for each agent, and what the token proxy carried and saved. See [Gateway](#gateway).                   |
 
 ### System One and System Two
@@ -249,7 +250,7 @@ Assignments choose what each task runs on. There is one row per task, each with 
 The picker only offers sources that can do the job:
 
 - **Off**: the feature does not use a model.
-- **Utility source**: inherit the shared source on **System Two** (see [Utility source](#utility-source)). Every System Two task offers it, and it is their default. Git drafts, Spoken notices, Token proxy, and Computer History digests run only on a model: while the Utility source is a provider, they are off, and the readiness line says so. The General tab keeps only the switch for automatic tab naming, with a link to System Two for the model choice.
+- **Agent model** and **Housekeeping model**: follow that slot of the [Model Map](#model-map) on **System Two**. Each option names what its slot runs on, for example **Housekeeping model: Qwen3 1.7B**. Every System Two task offers both. Summaries and Git drafts default to **Agent model**, and the other System Two tasks to **Housekeeping model**. Git drafts, Spoken notices, Token proxy, and Computer History digests run only on a model: while their slot is a provider, they are off, and the readiness line says so. The General tab keeps only the switch for automatic tab naming, with a link to System Two for the model choice.
 - **An installed model** of the kind the task needs.
 - **A model on an enabled endpoint**, for tasks an endpoint can serve (text generation, embeddings, and speech-to-text).
 - **System One**, for a task that asks typed questions, while an [engine](#system-one-engines) is chosen. See [System One](#system-one).
@@ -261,7 +262,7 @@ The readiness line under each row has one of four headlines:
 | Headline           | What it means                                                                                                                                                                                                                                                                       |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Ready**          | The source is set up. The line names it.                                                                                                                                                                                                                                            |
-| **Utility source** | The task runs on the Utility Agent.                                                                                                                                                                                                                                                 |
+| **Provider agent** | The task follows a Model Map slot that is a provider agent. The line names the slot.                                                                                                                                                                                                |
 | **Off**            | The task does not use a model.                                                                                                                                                                                                                                                      |
 | **Unavailable**    | The source cannot run. The line says why and what to do, and offers the fix when Maestro can make it: **Download**, **Resume**, or **Re-download** a model (a model that failed verification), **Enable** a switched-off endpoint, or **Check again** when a server did not answer. |
 
@@ -269,57 +270,65 @@ Some fixes are outside Maestro (for example, starting Ollama), and the line tell
 
 ```bash
 maestro-cli models tasks                          # every task, its assignment, and readiness
-maestro-cli models assign <task-id> <source>      # off, utility-agent, system-one, local:<model-id>, or endpoint:<endpoint>:<model>
-maestro-cli models status <task-id>               # would it run; exits 0 only when ready or on the Utility source
+maestro-cli models assign <task-id> <source>      # off, agent-model, housekeeping-model, system-one, local:<model-id>, or endpoint:<endpoint>:<model>
+maestro-cli models status <task-id>               # would it run; exits 0 only when ready or on a provider agent
 ```
 
 `models assign` works with Maestro closed. It prints the same caution the row shows, and tells you when the endpoint you named is disabled.
 
-### Utility source
+### Model Map
 
-The **Utility source** card at the top of **Models -> System Two** sets the source for every task left on **Utility source**. Its **Source** picker offers:
+The **Model Map** card at the top of **Models -> System Two** holds the two models the tasks can point at:
 
-- **Default (same as session)**: each task uses the provider of the agent it works for. This is the default.
-- A provider under **Providers**: every such task runs on that provider. A **Model override** field takes a model name for it (leave it empty for the provider's default model).
-- An installed text model, or a model on an enabled endpoint.
+- **Agent model**: for writing a person reads closely, such as summaries and pull request drafts.
+- **Housekeeping model**: for quick background jobs, such as tab names and shell commands.
 
-On a local model or an endpoint, context grooming and transfer still use the session's provider, because they need tools. If the provider you picked is no longer installed, the card says so and those tasks fail until you pick another one or return to **Default (same as session)**.
+A task set to **Agent model** or **Housekeeping model** follows that slot, so changing a slot moves every task that uses it. Any task can also pick a model of its own instead. Under each slot, **Used by** lists the tasks that follow it.
 
-The card has no `models` verb. It is three settings:
+Each slot's picker offers:
+
+- **Session provider (same as the tab)**: each task uses the provider of the agent it works for. This is the default for both slots.
+- A provider under **Providers**: every task on the slot runs on that provider. A **Model override** field takes a model name for it (leave it empty for the provider's default model).
+- An installed text model. The models the [Library](#models) recommends for the slot come first, under **Agent-ready models** or **Housekeeping models**, then **Other local models**.
+- A model on an enabled endpoint.
+
+Context grooming and transfer need tools, so they use the Housekeeping model only while it is a provider, and the session's provider otherwise. Summarize & Continue follows the slot that Summaries is on. If the provider a slot names is no longer installed, the card says so, and the tasks on that slot fail until you pick another one or return to **Session provider (same as the tab)**.
+
+An install from before the Model Map keeps its old **Utility source** choice: it becomes the Housekeeping model. Summaries and Git drafts move to the Agent model, which starts as the session's provider; point them back with `maestro-cli models assign tab-summary housekeeping-model` if you want the old behavior.
 
 ```bash
-maestro-cli settings set utilitySource '{"type":"local","modelId":"<model-id>"}'
-maestro-cli settings set utilitySource '{"type":"utility-agent"}'         # a provider, or Default (same as session)
-maestro-cli settings set utilityAgentId claude-code                       # the provider; reset it for Default (same as session)
-maestro-cli settings set utilityModelId haiku                             # the Model override
-maestro-cli settings reset utilityAgentId
+maestro-cli models map                                     # both slots, what they run on, and the tasks that follow them
+maestro-cli models map housekeeping local:<model-id>       # an installed text model
+maestro-cli models map agent provider:claude-code:sonnet   # a provider, with a model override
+maestro-cli models map agent provider                      # back to the session's provider
+maestro-cli models assign git-drafts agent-model           # point a task at a slot
 ```
 
 ### The tasks
 
-| Task                            | System | Needs                              | Default                                                                                                                                                                | What it does                                                                                                                    |
-| ------------------------------- | ------ | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Tab naming                      | Two    | Text generation                    | Utility source                                                                                                                                                         | Names a new AI tab from the first message sent in it.                                                                           |
-| Summaries                       | Two    | Text generation                    | Utility source                                                                                                                                                         | Writes context summaries for Summarize & Continue and the group chat participant summary.                                       |
-| AI command mode                 | Two    | Text generation                    | Utility source                                                                                                                                                         | Turns a plain-English request in command mode into a shell command. You review it before it runs.                               |
-| Tab cleanup suggestions         | One    | Text generation                    | Off                                                                                                                                                                    | Suggests tabs to close, snooze, or bring back. Every action still needs your confirmation.                                      |
-| Git drafts                      | Two    | Text generation                    | Utility source Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits.                                 |
-| Semantic search                 | One    | Embeddings                         | Off                                                                                                                                                                    | Finds history, transcripts, and documents by meaning rather than exact words. See [Semantic search](#semantic-search).          |
-| Cue gate                        | One    | Text generation                    | Off                                                                                                                                                                    | Checks a Cue subscription's gate condition against the event before an agent starts.                                            |
-| Prompt-injection screen         | One    | Classifier                         | Off                                                                                                                                                                    | Scores untrusted text for prompt injection before Cue passes it to an agent.                                                    |
-| Secret screen                   | One    | Classifier                         | Off                                                                                                                                                                    | Adds model coverage when scanning content for secrets before it is published. Pattern detection always runs.                    |
-| Dictation                       | One    | Speech-to-text                     | Off                                                                                                                                                                    | Transcribes speech into any text box without starting a voice session.                                                          |
-| Dictation vocabulary correction | One    | Text generation                    | Off                                                                                                                                                                    | Corrects misheard names in dictation and A Cappella transcripts using validated vocabulary replacements.                        |
-| Spoken notices                  | Two    | Text generation and text-to-speech | Utility source Writes the short summary a spoken notice adds when an agent finishes a turn. See [Spoken notices](#spoken-notices).                                     |
-| Voice routing                   | One    | Text generation                    | Off                                                                                                                                                                    | Decides which agent and tab a spoken request is for. See [Voice routing](#voice-routing).                                       |
-| Model routing                   | One    | Embeddings or text generation      | Off                                                                                                                                                                    | Decides how much model and effort a turn needs, for an agent on Auto. See [Model routing and Auto](#model-routing-and-auto).    |
-| Token proxy                     | Two    | Text generation                    | Utility source Summarizes large tool output for the token-conservation proxy.                                                                                          |
-| Computer History digests        | Two    | Text generation                    | Utility source Writes the 15-minute digests and 6-hour roll-ups of [Computer History](./computer-history#digests-optional) while its digest source is the local model. |
-| Local judge                     | One    | Text generation                    | Off                                                                                                                                                                    | The text model the System One local judge answers on: yes or no, pick one, or rate on a rubric. Its answers are not calibrated. |
+| Task                            | System | Needs                              | Default            | What it does                                                                                                                                            |
+| ------------------------------- | ------ | ---------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab naming                      | Two    | Text generation                    | Housekeeping model | Names a new AI tab from the first message sent in it.                                                                                                   |
+| Summaries                       | Two    | Text generation                    | Agent model        | Writes context summaries for Summarize & Continue and the group chat participant summary.                                                               |
+| AI command mode                 | Two    | Text generation                    | Housekeeping model | Turns a plain-English request in command mode into a shell command. You review it before it runs.                                                       |
+| Tab cleanup suggestions         | One    | Text generation                    | Off                | Suggests tabs to close, snooze, or bring back. Every action still needs your confirmation.                                                              |
+| Git drafts                      | Two    | Text generation                    | Agent model        | Drafts a pull request title and description from the branch commits and changed files. Fills the fields, never submits.                                 |
+| Semantic search                 | One    | Embeddings                         | Off                | Finds history, transcripts, and documents by meaning rather than exact words. See [Semantic search](#semantic-search).                                  |
+| Cue gate                        | One    | Text generation                    | Off                | Checks a Cue subscription's gate condition against the event before an agent starts.                                                                    |
+| Prompt-injection screen         | One    | Classifier                         | Off                | Scores untrusted text for prompt injection before Cue passes it to an agent.                                                                            |
+| Secret screen                   | One    | Classifier                         | Off                | Adds model coverage when scanning content for secrets before it is published. Pattern detection always runs.                                            |
+| Dictation                       | One    | Speech-to-text                     | Off                | Transcribes speech into any text box without starting a voice session.                                                                                  |
+| Dictation vocabulary correction | One    | Text generation                    | Off                | Corrects misheard names in dictation and A Cappella transcripts using validated vocabulary replacements.                                                |
+| Spoken notices                  | Two    | Text generation and text-to-speech | Housekeeping model | Writes the short summary a spoken notice adds when an agent finishes a turn. See [Spoken notices](#spoken-notices).                                     |
+| Voice routing                   | One    | Text generation                    | Off                | Decides which agent and tab a spoken request is for. See [Voice routing](#voice-routing).                                                               |
+| Model routing                   | One    | Embeddings or text generation      | Off                | Decides how much model and effort a turn needs, for an agent on Auto. See [Model routing and Auto](#model-routing-and-auto).                            |
+| Token proxy                     | Two    | Text generation                    | Housekeeping model | Summarizes large tool output for the token-conservation proxy.                                                                                          |
+| Computer History digests        | Two    | Text generation                    | Housekeeping model | Writes the 15-minute digests and 6-hour roll-ups of [Computer History](./computer-history#digests-optional) while its digest source is the local model. |
+| Local judge                     | One    | Text generation                    | Off                | The text model the System One local judge answers on: yes or no, pick one, or rate on a rubric. Its answers are not calibrated.                         |
 
 **Off** keeps the behavior a feature had before it could use a model. For Summaries that means Summarize & Continue still runs through an agent, as it did before; only the group chat participant summary is not written.
 
-For AI command mode, **Utility source** follows the shared choice. When that choice is **Default (same as session)**, it uses the tab's provider at its current model and effort. On a local model or an endpoint, the [AI Command Mode](./general-usage#ai-command-mode) strip names that model, and the proposed command comes with one line that says what it does.
+For AI command mode, a Model Map slot works like any other task. When its slot is **Session provider (same as the tab)**, it uses the tab's provider at its current model and effort. On a local model or an endpoint, the [AI Command Mode](./general-usage#ai-command-mode) strip names that model, and the proposed command comes with one line that says what it does.
 
 **Git drafts** adds a **Draft with local model** button to the Create Pull Request form once it is assigned a source. It reads the branch's commit subjects and the list of changed files (not the diff itself), and fills the title and description for you to edit. It never creates the pull request: that is still the Create PR button. While the task is off the button is not shown, and when the assigned model or endpoint is not ready the button is disabled with the reason beside it. A draft adds a note naming the model that wrote it; review it before you create the pull request. The draft reads the local checkout, so it does not work for an agent on an SSH remote. From the command line, `maestro-cli models run git-drafts --cwd <repo> [--base <branch>]` prints the title, a blank line, and the body, and pushes nothing. Without `--base` it compares against `main`, then `master`.
 
@@ -516,10 +525,10 @@ maestro-cli notify speak "Maestro finished: this is how a spoken notice sounds."
 
 The **Spoken notices** task on **Settings -> Models -> System Two** decides how much the line says. It chooses the words only. It never decides whether a notice is spoken.
 
-- **Off** (the default): the line is the agent's name and "finished", for example "Backend finished". The name is the one the Left Bar shows. This needs no model.
-- **A local model or an endpoint**: the model reads the start of your request (the first 400 characters) and the end of the agent's reply (the last 2,400 characters) and writes a short summary. Maestro puts the agent's name in front, for example "Backend finished: tests pass, two files changed". An assigned endpoint receives that text.
+- **Off**, or a Model Map slot that is a provider agent (the default, since the Housekeeping model starts as the session's provider): the line is the agent's name and "finished", for example "Backend finished". The name is the one the Left Bar shows. This needs no model.
+- **A local model or an endpoint**, chosen for the task or through a Model Map slot: the model reads the start of your request (the first 400 characters) and the end of the agent's reply (the last 2,400 characters) and writes a short summary. Maestro puts the agent's name in front, for example "Backend finished: tests pass, two files changed". An assigned endpoint receives that text.
 
-The task has no Utility Agent option. While notices are on, a line under the setting says which case applies: "The line adds a short summary written by" and the source when a model is ready, or how to assign one when the task is off. When the assigned model is not ready, the line turns yellow, names the problem and the fix, and ends "Until then the line is "<agent name> finished"."
+The task runs only on a model, never on a provider agent. While notices are on, a line under the setting says which case applies: "The line adds a short summary written by" and the source when a model is ready, or how to assign one when the task is off. When the assigned model is not ready, the line turns yellow, names the problem and the fix, and ends "Until then the line is "<agent name> finished"."
 
 If the assigned model is not ready, takes longer than 20 seconds, or gives no usable summary, the plain line is spoken instead, and a model that is not ready is reported once in a toast. A notice is never skipped because of the model.
 
@@ -1586,7 +1595,8 @@ maestro-cli models server key                    # prints only the key
 
 maestro-cli models tasks                         # every task, its assignment, and readiness
 maestro-cli models assign <task-id> off
-maestro-cli models assign <task-id> utility-agent
+maestro-cli models assign <task-id> agent-model|housekeeping-model   # follow a Model Map slot
+maestro-cli models map [agent|housekeeping <source>]   # show the Model Map, or set a slot (see "Model Map")
 maestro-cli models assign <task-id> local:<model-id>
 maestro-cli models assign <task-id> endpoint:<endpoint>:<model>
 maestro-cli models assign cue-gate system-one    # ask the System One engine in force (a task with typed questions only)

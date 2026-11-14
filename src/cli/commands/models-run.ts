@@ -4,8 +4,8 @@
 // It runs in the desktop over the WS bridge, through the same task router as
 // the `localModels:runTask` IPC channel, so the CLI and an in-app caller read
 // the same assignment, call the same model, and record the same stats row. The
-// CLI never picks a source itself: a task that is off or assigned to the
-// Utility Agent reports that and produces no text.
+// CLI never picks a source itself: a task that is off or follows a Model Map
+// slot on a provider agent reports that and produces no text.
 //
 // Only `ok` exits 0, with the generated text alone on stdout, so
 // `name=$(maestro-cli models run tab-naming --input "...")` captures text or
@@ -77,7 +77,7 @@ interface RunOptions {
  * that could not answer (`NoAnswer`: it may next time).
  */
 function verdictExitCode(status: string): ExitCode {
-	return status === 'off' || status === 'use-utility-agent' ? ExitCode.Refused : ExitCode.NoAnswer;
+	return status === 'off' || status === 'use-provider' ? ExitCode.Refused : ExitCode.NoAnswer;
 }
 
 /** Why a non-`ok` verdict produced no text, for a person. */
@@ -91,8 +91,8 @@ function describeVerdict(
 			return `${label} is off. Assign it a local model or an endpoint in ${
 				isLocalModelTaskId(taskId) ? taskAssignmentLocation(taskId) : MODELS_SETTINGS_LOCATION
 			}.`;
-		case 'use-utility-agent':
-			return `${label} is assigned to the Utility Agent, which runs inside the app, not through models run.`;
+		case 'use-provider':
+			return `${label} follows a Model Map slot on a provider agent, which runs inside the app, not through models run.`;
 		case 'unavailable':
 			return `${result.reason} [${result.code}]`;
 		case 'cancelled':

@@ -84,7 +84,7 @@ describe('useSemanticSearchReady', () => {
 		expect(await readyFor('ready')).toBe(true);
 		expect(await readyFor('off')).toBe(false);
 		expect(await readyFor('unavailable')).toBe(false);
-		expect(await readyFor('utility-agent')).toBe(false);
+		expect(await readyFor('provider')).toBe(false);
 	});
 
 	it('asks about the one task, and is false until the answer lands', async () => {

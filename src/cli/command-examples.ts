@@ -548,9 +548,15 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'models assign': [
 		'maestro-cli models assign tab-naming local:<model-id>',
 		'maestro-cli models assign model-routing endpoint:<endpoint>:<model>',
+		'maestro-cli models assign git-drafts agent-model',
 		'maestro-cli models assign cue-gate off',
 	],
 	'models tasks': ['maestro-cli models tasks --json'],
+	'models map': [
+		'maestro-cli models map',
+		'maestro-cli models map housekeeping local:<model-id>',
+		'maestro-cli models map agent provider:claude-code:sonnet',
+	],
 	'models run': [
 		'maestro-cli models run <task-id> --input "Name this tab: fix the login redirect"',
 		'maestro-cli models run git-drafts --cwd ~/code/api --base main',

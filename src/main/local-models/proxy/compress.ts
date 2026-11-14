@@ -889,10 +889,10 @@ export async function summarizeToolResult(
 			signal,
 		});
 		switch (verdict.status) {
-			// A provider Utility source resolves this task to `off`: there is no
-			// agent path, so `use-utility-agent` is unreachable.
+			// A provider Model Map slot resolves this task to `off`: there is no
+			// agent path, so `use-provider` is unreachable.
 			case 'off':
-			case 'use-utility-agent':
+			case 'use-provider':
 				return { status: 'skipped' };
 			case 'cancelled':
 				logger.warn('Token proxy summary timed out', LOG_CONTEXT, { source: verdict.source });

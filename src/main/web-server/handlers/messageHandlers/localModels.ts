@@ -334,7 +334,7 @@ export function handleLocalModelsEndpointTest(
 
 /**
  * Handle local_models_run_task - one text-generation task through the task
- * router. Every router verdict (`off`, `use-utility-agent`, `unavailable`, ...)
+ * router. Every router verdict (`off`, `use-provider`, `unavailable`, ...)
  * is a successful round trip and rides in `result`; only a bad request (an
  * unknown task, a non-text task, a malformed input) comes back as an error.
  */

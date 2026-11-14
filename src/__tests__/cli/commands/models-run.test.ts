@@ -89,7 +89,7 @@ describe('models run command', () => {
 
 	it.each([
 		[{ status: 'off' }, /Tab naming is off/, ExitCode.Refused],
-		[{ status: 'use-utility-agent' }, /assigned to the Utility Agent/, ExitCode.Refused],
+		[{ status: 'use-provider' }, /follows a Model Map slot on a provider agent/, ExitCode.Refused],
 		[
 			{
 				status: 'unavailable',

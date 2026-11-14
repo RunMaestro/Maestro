@@ -29,8 +29,8 @@ vi.mock('../../../main/prompt-manager', () => ({
 vi.mock('../../../main/utils/sentry', () => sentry);
 vi.mock('../../../main/local-models/task-router', () => router);
 vi.mock('../../../main/local-models/task-notices', () => notices);
-// What the real reader returns with nothing stored: the inherited provider
-// Utility source, resolved to off for a task with no agent path.
+// What the real reader returns with nothing stored: the inherited Housekeeping
+// model is the session provider, resolved to off for a task with no agent path.
 vi.mock('../../../main/local-models/sources', () => ({
 	readLocalModelAssignments: vi.fn(() => ({ 'history-digests': { type: 'off' } })),
 }));
@@ -245,15 +245,15 @@ describe('createHistoryDigestWriter: the verdicts', () => {
 		expect(notices.clearLocalTaskNotice).not.toHaveBeenCalled();
 	});
 
-	it('an empty reply and a Utility Agent assignment are failures, not digests', async () => {
+	it('an empty reply and a provider Model Map slot are failures, not digests', async () => {
 		expect(await writer(() => ok('   ')).write(request())).toEqual({
 			success: false,
 			error: 'The assigned model returned an empty digest.',
 		});
-		const agent = await writer(() => ({ status: 'use-utility-agent' })).write(request());
+		const agent = await writer(() => ({ status: 'use-provider' })).write(request());
 		expect(agent.success).toBe(false);
 		expect(agent).toMatchObject({
-			error: expect.stringMatching(/cannot run on the Utility Agent/),
+			error: expect.stringMatching(/cannot run on a provider agent/),
 		});
 	});
 
@@ -288,7 +288,7 @@ describe('createHistoryDigestWriter: hasModel', () => {
 			readAssignments: () => ({ 'history-digests': SOURCE }),
 		});
 		expect(assigned.hasModel()).toBe(true);
-		// The assignments arrive resolved: an inherited provider Utility source is
+		// The assignments arrive resolved: an inherited provider Model Map slot is
 		// already `off` for a task with no agent path.
 		expect(
 			createHistoryDigestWriter({
@@ -419,7 +419,8 @@ describe('digest budgets', () => {
 			SMALL_DIGEST_BUDGET
 		);
 		expect(digestBudgetFor({ type: 'off' }, endpoints)).toBe(SMALL_DIGEST_BUDGET);
-		expect(digestBudgetFor({ type: 'utility-agent' }, endpoints)).toBe(SMALL_DIGEST_BUDGET);
+		expect(digestBudgetFor({ type: 'housekeeping-model' }, endpoints)).toBe(SMALL_DIGEST_BUDGET);
+		expect(digestBudgetFor({ type: 'agent-model' }, endpoints)).toBe(SMALL_DIGEST_BUDGET);
 	});
 
 	it('fits a full piece, the reply, and the rest of the call inside its context', () => {

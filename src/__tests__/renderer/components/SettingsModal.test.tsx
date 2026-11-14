@@ -677,7 +677,7 @@ describe('SettingsModal', () => {
 				<SettingsModal
 					{...createDefaultProps({
 						initialTab: 'models',
-						initialSettingId: 'local-models-utility-agent',
+						initialSettingId: 'local-models-model-map',
 					})}
 				/>
 			);
@@ -687,9 +687,7 @@ describe('SettingsModal', () => {
 			});
 
 			expect(screen.getByTitle('System Two')).toHaveAttribute('aria-current', 'page');
-			expect(
-				document.querySelector('[data-setting-id="local-models-utility-agent"]')
-			).not.toBeNull();
+			expect(document.querySelector('[data-setting-id="local-models-model-map"]')).not.toBeNull();
 		});
 
 		it('should switch to shortcuts tab when clicked', async () => {

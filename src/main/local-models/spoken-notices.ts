@@ -302,7 +302,7 @@ async function writeNoticeLine(
 
 	switch (verdict.status) {
 		case 'off':
-		case 'use-utility-agent':
+		case 'use-provider':
 			return fallback;
 		case 'cancelled':
 			logger.warn('The notice summary timed out; speaking the plain line', LOG_CONTEXT, {

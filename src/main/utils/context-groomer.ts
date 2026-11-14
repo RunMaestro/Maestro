@@ -179,7 +179,7 @@ export interface GroomContextOptions {
 	agentSessionId?: string;
 	/** Use read-only mode (default: false) */
 	readOnlyMode?: boolean;
-	/** Optional model ID override (e.g., when using a utility agent) */
+	/** Optional model ID override (e.g., for a Model Map provider) */
 	modelId?: string;
 	/** Custom timeout in ms (default: 5 minutes) */
 	timeoutMs?: number;
@@ -235,7 +235,7 @@ export interface GroomContextOptions {
 	 * getClaudeTokenSourceFields). Set it whenever the turn belongs to one agent,
 	 * so an agent set to TUI runs this turn through maestro-p like its chat
 	 * turns. Left undefined the turn runs `claude --print`, which is right for a
-	 * caller with no owning agent (Director's Notes, a utility agent).
+	 * caller with no owning agent (Director's Notes, a Model Map provider).
 	 */
 	claudeTokenSource?: ClaudeTokenSourceFields;
 	/**

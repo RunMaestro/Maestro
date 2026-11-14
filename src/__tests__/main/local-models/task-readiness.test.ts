@@ -124,8 +124,11 @@ beforeEach(() => {
 });
 
 describe('resolveTaskReadiness', () => {
-	it('checks the shared local model for inherited tasks and honors explicit overrides', async () => {
-		settings.set('utilitySource', local(QWEN3_1_7B_ID));
+	it('checks the mapped local model for inherited tasks and honors explicit overrides', async () => {
+		settings.set('modelMap', {
+			agent: { type: 'provider' },
+			housekeeping: local(QWEN3_1_7B_ID),
+		});
 		const options = healthy();
 		const verdict = await resolveTaskReadiness('tab-naming', options);
 		expect(verdict).toMatchObject({ state: 'ready', assignment: local(QWEN3_1_7B_ID) });
@@ -135,10 +138,12 @@ describe('resolveTaskReadiness', () => {
 	});
 
 	it('reports an inherited missing model as unavailable rather than as a provider', async () => {
+		// An install from before the Model Map: the old local Utility source is
+		// read as the Housekeeping slot.
 		settings.set('utilitySource', local(QWEN3_1_7B_ID));
 		expect(
 			await resolveTaskReadiness(
-				'tab-summary',
+				'tab-naming',
 				healthy({
 					readModelStatus: async () => status('not-installed'),
 				})
@@ -165,10 +170,18 @@ describe('resolveTaskReadiness', () => {
 			taskId: 'tab-naming',
 			label: 'Tab naming',
 			needs: 'text-gen',
-			assignment: { type: 'utility-agent' },
-			state: 'utility-agent',
+			assignment: { type: 'housekeeping-model' },
+			state: 'provider',
+			detail: 'Tab naming runs on the Housekeeping model, a provider agent.',
 		});
 		expect(isTaskRunnable(tabNaming)).toBe(true);
+
+		const summaries = await resolveTaskReadiness('tab-summary', healthy());
+		expect(summaries).toMatchObject({
+			assignment: { type: 'agent-model' },
+			state: 'provider',
+			detail: 'Summaries runs on the Agent model, a provider agent.',
+		});
 
 		const search = await resolveTaskReadiness('semantic-search', healthy());
 		expect(search.state).toBe('off');
@@ -176,25 +189,51 @@ describe('resolveTaskReadiness', () => {
 		expect(isTaskRunnable(search)).toBe(false);
 	});
 
-	it('runs a model-only task on an inherited local Utility source', async () => {
-		settings.set('utilitySource', local(QWEN3_1_7B_ID));
-		const verdict = await resolveTaskReadiness('git-drafts', healthy());
+	it('runs a model-only task on an inherited local Housekeeping model', async () => {
+		settings.set('modelMap', {
+			agent: { type: 'provider' },
+			housekeeping: local(QWEN3_1_7B_ID),
+		});
+		const verdict = await resolveTaskReadiness('token-proxy', healthy());
 		expect(verdict).toMatchObject({ state: 'ready', assignment: local(QWEN3_1_7B_ID) });
 	});
 
-	it('names a provider Utility source as the reason a model-only task is off', async () => {
-		const verdict = await resolveTaskReadiness('git-drafts', healthy());
+	it('runs Git drafts on its default Agent model, not the Housekeeping model', async () => {
+		settings.set('modelMap', {
+			agent: local(QWEN3_1_7B_ID),
+			housekeeping: { type: 'provider' },
+		});
+		const options = healthy();
+		const verdict = await resolveTaskReadiness('git-drafts', options);
+		expect(verdict).toMatchObject({ state: 'ready', assignment: local(QWEN3_1_7B_ID) });
+		expect(options.readModelStatus).toHaveBeenCalledWith(QWEN3_1_7B_ID);
+	});
+
+	it('names a provider Housekeeping model as the reason a model-only task is off', async () => {
+		const verdict = await resolveTaskReadiness('spoken-notices', healthy());
 		expect(verdict).toMatchObject({ state: 'off', assignment: { type: 'off' } });
-		expect(verdict.detail).toMatch(/uses the Utility source, which is a provider agent/);
+		expect(verdict.detail).toMatch(/uses the Housekeeping model, which is a provider agent/);
 		expect(verdict.suggestedAction).toMatch(
-			/Set the Utility source to a local model or an endpoint/
+			/Set the Housekeeping model to a local model or an endpoint/
 		);
 		expect(isTaskRunnable(verdict)).toBe(false);
 
 		const all = await resolveAllTaskReadiness(healthy());
 		expect(all.find((entry) => entry.taskId === 'token-proxy')?.detail).toMatch(
-			/uses the Utility source/
+			/uses the Housekeeping model/
 		);
+	});
+
+	it('names the Agent model when a model-only task follows it while it is a provider', async () => {
+		settings.set('modelMap', {
+			agent: { type: 'provider', agentId: 'codex' },
+			housekeeping: local(QWEN3_1_7B_ID),
+		});
+		// Git drafts follows the Agent model by default.
+		const verdict = await resolveTaskReadiness('git-drafts', healthy());
+		expect(verdict).toMatchObject({ state: 'off', assignment: { type: 'off' } });
+		expect(verdict.detail).toMatch(/uses the Agent model, which is a provider agent/);
+		expect(verdict.suggestedAction).toMatch(/Set the Agent model to a local model or an endpoint/);
 	});
 
 	it('offers only a local model for an off task an endpoint cannot serve', async () => {

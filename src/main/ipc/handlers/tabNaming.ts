@@ -45,7 +45,12 @@ import { truncateAtWordBoundary } from '../../../shared/formatters';
 import type { ProcessManager } from '../../process-manager';
 import type { SafeSendFn } from '../../utils/safe-send';
 import { runLocalTask, type LocalTaskResult } from '../../local-models/task-router';
-import { resolveUtilityProvider } from '../../../shared/local-models/tasks';
+import {
+	resolveTaskProvider,
+	SESSION_PROVIDER_SLOT,
+	resolveSlotProvider,
+} from '../../../shared/local-models/model-map';
+import { settingsReader } from '../../local-models/sources';
 import { clearLocalTaskNotice, reportLocalTaskUnavailable } from '../../local-models/task-notices';
 import type { ProcessConfig } from '../../process-manager/types';
 import type { AgentDetector } from '../../agents';
@@ -135,8 +140,8 @@ export interface TabNamingConfig {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
-	/** Plugin calls pin the authorized agent; ordinary tab naming may use the utility agent. */
-	useUtilityAgent?: boolean;
+	/** Plugin calls pin the authorized agent; ordinary tab naming follows the Model Map. */
+	useModelMap?: boolean;
 }
 
 /** Shared isolated naming turn for UI tabs and brokered plugin titles.
@@ -158,10 +163,10 @@ export async function generateTabName(
 	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore } = deps;
 
 	// Local Models assignment first, for ordinary tab naming only. A plugin
-	// title pins the authorized agent (`useUtilityAgent: false`), and a local
-	// model is not that agent any more than the Utility Agent is. Only
-	// `use-utility-agent` (the default) continues to the agent spawn below.
-	if (config.useUtilityAgent !== false) {
+	// title pins the authorized agent (`useModelMap: false`), and a local
+	// model is not that agent any more than a mapped provider is. Only
+	// `use-provider` (the default) continues to the agent spawn below.
+	if (config.useModelMap !== false) {
 		let assigned: AssignedNamingOutcome;
 		try {
 			assigned = await nameTabWithAssignedModel(
@@ -205,18 +210,12 @@ export async function generateTabName(
 			return null;
 		}
 		const sshRemote = selectedRemote ? structuredClone(selectedRemote) : null;
-		// Resolve the agent: use the utility agent if configured, otherwise the
-		// session agent. Null/empty leaves behavior unchanged (session agent).
-		const utility = resolveUtilityProvider(
-			config.useUtilityAgent === false
-				? {}
-				: {
-						utilitySource: settingsStore.get('utilitySource'),
-						utilityAgentId: settingsStore.get('utilityAgentId', null),
-						utilityModelId: settingsStore.get('utilityModelId', null),
-					},
-			config.agentType
-		);
+		// Resolve the agent: the provider of the Model Map slot tab naming
+		// inherits, else the session agent. A plugin title pins the session agent.
+		const utility =
+			config.useModelMap === false
+				? resolveSlotProvider(SESSION_PROVIDER_SLOT, config.agentType)
+				: resolveTaskProvider(settingsReader(settingsStore), 'tab-naming', config.agentType);
 		const effectiveAgentType = utility.agentType;
 		privatePrompt = effectiveAgentType === 'grok';
 		const agentConfigValues = structuredClone(
@@ -234,7 +233,7 @@ export async function generateTabName(
 		if (!agent) {
 			logger.warn('Agent not found for tab naming', LOG_CONTEXT, {
 				agentType: effectiveAgentType,
-				isUtilityAgent: utility.usesUtilityProvider,
+				isMappedProvider: utility.usesMappedProvider,
 			});
 			return null;
 		}
@@ -282,7 +281,7 @@ export async function generateTabName(
 			prompt: fullPrompt,
 			cwd: effectiveCwd,
 			readOnlyMode,
-			// Only apply the model override when a utility agent is actually in use.
+			// Only a mapped provider carries a model override.
 			modelId: utility.modelId,
 		});
 
@@ -854,7 +853,7 @@ type AssignedNamingOutcome = { handled: false } | { handled: true; name: string 
  * Name the tab with the `tab-naming` Local Models assignment, when it is a
  * local model or an endpoint.
  *
- * `use-utility-agent` is not handled here: the caller keeps its agent spawn,
+ * `use-provider` is not handled here: the caller keeps its agent spawn,
  * which is the default, so nothing changes until the user assigns a model.
  * Every other verdict IS handled, and none of them falls back to an agent:
  *   - `off` skips naming. Naming is cosmetic, so a skipped turn just leaves the
@@ -879,7 +878,7 @@ async function nameTabWithAssignedModel(
 		signal: AbortSignal.timeout(TAB_NAMING_TIMEOUT_MS),
 	});
 	switch (verdict.status) {
-		case 'use-utility-agent':
+		case 'use-provider':
 			return { handled: false };
 		case 'off':
 			return { handled: true, name: null };

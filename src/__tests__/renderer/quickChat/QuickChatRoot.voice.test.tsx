@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { QuickChatVoice } from '../../../renderer/hooks/voice/useQuickChatVoice';
 import { EMPTY_QUICK_CHAT_SNAPSHOT, type QuickChatSnapshot } from '../../../shared/quickChat';
 import { useVoiceSessionStore } from '../../../renderer/stores/voiceSessionStore';
@@ -89,6 +89,34 @@ describe('the microphone', () => {
 			'aria-label',
 			'Talk to Pedsidian. Click to start, or hold to talk.'
 		);
+	});
+
+	it('Cmd+M toggles it, once per press, and the overlay names the chord', async () => {
+		await renderRoot();
+
+		const event = new KeyboardEvent('keydown', { key: 'm', metaKey: true, cancelable: true });
+		await act(async () => {
+			window.dispatchEvent(event);
+			fireEvent.keyDown(window, { key: 'm', metaKey: true, repeat: true });
+		});
+		expect(event.defaultPrevented).toBe(true);
+		expect(voice.toggle).toHaveBeenCalledTimes(1);
+
+		fireEvent.mouseEnter(screen.getByTestId('quick-chat-voice-button').parentElement!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent('Talk to Pedsidian.');
+		expect(screen.getByRole('tooltip')).toHaveTextContent(/M$/);
+	});
+
+	it('leaves Cmd+M alone with A Cappella off', async () => {
+		voice = makeVoice({ enabled: false });
+		await renderRoot();
+
+		const event = new KeyboardEvent('keydown', { key: 'm', metaKey: true, cancelable: true });
+		await act(async () => {
+			window.dispatchEvent(event);
+		});
+		expect(event.defaultPrevented).toBe(false);
+		expect(voice.toggle).not.toHaveBeenCalled();
 	});
 });
 

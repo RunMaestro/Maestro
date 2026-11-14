@@ -365,7 +365,7 @@ export type LocalModelRunSourceType = (typeof LOCAL_MODEL_RUN_SOURCE_TYPES)[numb
  * called a local model, the Maestro model server or an endpoint for a task (see
  * `src/main/local-models/task-router.ts`), or a System One request was sent to
  * a remote engine (see `src/main/local-models/system-one/decisions.ts`). A task
- * that was off, or handed back to its Utility Agent path, is not a run.
+ * that was off, or handed back to its provider agent path, is not a run.
  */
 export interface LocalModelRun {
 	id: string;

@@ -120,7 +120,7 @@ export function LocalModelsModelsSection({
 	onSectionChange,
 }: LocalModelsModelsSectionProps) {
 	const assignments = useSettingsStore((s) => s.localModelAssignments);
-	const utilitySource = useSettingsStore((s) => s.utilitySource);
+	const modelMap = useSettingsStore((s) => s.modelMap);
 	const hardware = useLocalModelsHardware();
 	const showTooLarge = usePersistedToggle(SHOW_TOO_LARGE_MODELS_STORAGE_KEY, false);
 	// The model whose removal is waiting on the in-use warning, if any.
@@ -185,14 +185,12 @@ export function LocalModelsModelsSection({
 	const tasksByModel = useMemo(() => {
 		const byModel: Record<string, string[]> = {};
 		for (const listing of models.listings) {
-			byModel[listing.entry.id] = tasksUsingLocalModel(
-				assignments,
-				listing.entry.id,
-				utilitySource
-			).map((task) => task.label);
+			byModel[listing.entry.id] = tasksUsingLocalModel(assignments, listing.entry.id, modelMap).map(
+				(task) => task.label
+			);
 		}
 		return byModel;
-	}, [assignments, models.listings, utilitySource]);
+	}, [assignments, models.listings, modelMap]);
 
 	const footprintBytes = models.footprint?.bytes ?? 0;
 	const installedCount = models.listings.filter(

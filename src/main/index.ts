@@ -3397,7 +3397,7 @@ app
 							enableMaestroP: session.enableMaestroP,
 							maestroPMode: session.maestroPMode,
 							maestroPPath: session.maestroPPath,
-							useUtilityAgent: false,
+							useModelMap: false,
 						},
 						signal
 					);

@@ -383,6 +383,113 @@ describe('keyboard chords', () => {
 	});
 });
 
+describe('Cmd+A attaches images', () => {
+	function composer() {
+		return screen.getByPlaceholderText('Ask Pedsidian anything') as HTMLTextAreaElement;
+	}
+
+	it('opens the image picker from an empty draft, and the overlay names the chord', async () => {
+		await renderWith(snapshot());
+		const click = vi.spyOn(screen.getByTestId('quick-chat-image-input'), 'click');
+		const event = new KeyboardEvent('keydown', {
+			key: 'a',
+			metaKey: true,
+			cancelable: true,
+			bubbles: true,
+		});
+		await act(async () => {
+			composer().dispatchEvent(event);
+		});
+		expect(event.defaultPrevented).toBe(true);
+		expect(click).toHaveBeenCalledTimes(1);
+
+		fireEvent.mouseEnter(screen.getByRole('button', { name: /^Attach images\./ }).parentElement!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent(/A$/);
+	});
+
+	it('leaves select-all to a draft with text in it', async () => {
+		await renderWith(snapshot());
+		const click = vi.spyOn(screen.getByTestId('quick-chat-image-input'), 'click');
+		fireEvent.change(composer(), { target: { value: 'hello' } });
+		const event = new KeyboardEvent('keydown', {
+			key: 'a',
+			metaKey: true,
+			cancelable: true,
+			bubbles: true,
+		});
+		await act(async () => {
+			composer().dispatchEvent(event);
+		});
+		expect(event.defaultPrevented).toBe(false);
+		expect(click).not.toHaveBeenCalled();
+	});
+});
+
+describe('Cmd+N', () => {
+	/** The engine's answers: a new chat lands on `defaultTab`, a choice is shown as made. */
+	function engine(defaultTab: 'auto' | 'new') {
+		vi.mocked(window.maestro.quickChat.command).mockImplementation(async (command) => ({
+			ok: true,
+			snapshot: snapshot({
+				next:
+					command.type === 'setTab' && command.choice.kind !== 'tab'
+						? { kind: command.choice.kind }
+						: { kind: defaultTab },
+			}),
+		}));
+	}
+	const press = () => act(async () => fireEvent.keyDown(window, { key: 'n', metaKey: true }));
+
+	it('starts a new chat, then flips the next message between the two defaults', async () => {
+		engine('auto');
+		await renderWith(snapshot({ messages: [{ id: 'm', role: 'user', text: 'hi' }] }));
+
+		await press();
+		await press();
+		await press();
+
+		expect(vi.mocked(window.maestro.quickChat.command).mock.calls.map(([c]) => c)).toEqual([
+			{ type: 'new' },
+			{ type: 'setTab', choice: { kind: 'new' } },
+			{ type: 'setTab', choice: { kind: 'auto' } },
+		]);
+		expect(screen.getByTestId('quick-chat-tab-button')).toHaveTextContent('Choose tab');
+	});
+
+	it('flips from New tab when that is the default', async () => {
+		engine('new');
+		await renderWith(snapshot());
+
+		await press();
+		await press();
+
+		expect(window.maestro.quickChat.command).toHaveBeenLastCalledWith({
+			type: 'setTab',
+			choice: { kind: 'auto' },
+		});
+		expect(screen.getByTestId('quick-chat-tab-button')).toHaveTextContent('Choose tab');
+	});
+
+	it('starts another new chat once something was typed', async () => {
+		engine('auto');
+		await renderWith(snapshot());
+
+		await press();
+		fireEvent.change(screen.getByPlaceholderText('Ask Pedsidian anything'), {
+			target: { value: 'x' },
+		});
+		fireEvent.change(screen.getByPlaceholderText('Ask Pedsidian anything'), {
+			target: { value: '' },
+		});
+		await press();
+
+		expect(vi.mocked(window.maestro.quickChat.command).mock.calls.map(([c]) => c)).toEqual([
+			{ type: 'new' },
+			{ type: 'new' },
+		]);
+	});
+});
+
 describe('Open in Maestro', () => {
 	it('Cmd+Shift+T opens the chat as a tab once there is one, and the overlay names the chord', async () => {
 		const open = snapshot({ tabId: 't1', messages: [{ id: 'm', role: 'user', text: 'hi' }] });

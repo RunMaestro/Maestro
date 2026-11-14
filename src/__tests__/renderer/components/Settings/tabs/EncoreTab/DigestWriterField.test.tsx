@@ -20,6 +20,7 @@ import {
 	QWEN3_1_7B_ID,
 	getLocalModel,
 } from '../../../../../../shared/local-models/model-catalog';
+import { DEFAULT_MODEL_MAP } from '../../../../../../shared/local-models/model-map';
 import { mockTheme } from '../../../../../helpers/mockTheme';
 
 const AGENTS = [
@@ -55,7 +56,11 @@ function optionLabels(select: HTMLElement): string[] {
 beforeEach(() => {
 	vi.mocked(window.maestro.localModels.list).mockReset().mockResolvedValue([]);
 	vi.mocked(window.maestro.localModels.taskReadiness).mockReset().mockResolvedValue([]);
-	useSettingsStore.setState({ localModelAssignments: {}, localModelEndpoints: [] });
+	useSettingsStore.setState({
+		localModelAssignments: {},
+		localModelEndpoints: [],
+		modelMap: DEFAULT_MODEL_MAP,
+	});
 });
 
 describe('DigestWriterField', () => {
@@ -74,10 +79,11 @@ describe('DigestWriterField', () => {
 	it('with no text model installed, says where to get one', async () => {
 		mount(digests());
 		expect(await screen.findByTestId('computer-history-digest-no-models')).toBeTruthy();
-		// The task inherits the Utility source by default, so that choice is offered too.
+		// The task inherits the Housekeeping model by default, so both Model Map slots are offered too.
 		expect(optionLabels(screen.getByLabelText('Digest model'))).toEqual([
 			CHOOSE_MODEL_LABEL,
-			'Utility source',
+			'Agent model: Session provider',
+			'Housekeeping model: Session provider',
 		]);
 		expect(screen.getByTestId('computer-history-digest-no-models').textContent).toContain(
 			'Settings > Models > Library'
@@ -93,7 +99,12 @@ describe('DigestWriterField', () => {
 		const select = screen.getByLabelText('Digest model') as HTMLSelectElement;
 		const model = getLocalModel(QWEN3_1_7B_ID)!.displayName;
 		await waitFor(() =>
-			expect(optionLabels(select)).toEqual([CHOOSE_MODEL_LABEL, 'Utility source', model])
+			expect(optionLabels(select)).toEqual([
+				CHOOSE_MODEL_LABEL,
+				'Agent model: Session provider',
+				'Housekeeping model: Session provider',
+				model,
+			])
 		);
 		expect(screen.queryByTestId('computer-history-digest-no-models')).toBeNull();
 
@@ -118,7 +129,7 @@ describe('DigestWriterField', () => {
 		const select = screen.getByLabelText('Digest model') as HTMLSelectElement;
 		expect(select.value).toBe(`local:${QWEN3_1_7B_ID}`);
 		fireEvent.change(select, { target: { value: 'off' } });
-		// Off is no longer the default (the Utility source is), so it is stored.
+		// Off is no longer the default (the Housekeeping model is), so it is stored.
 		expect(useSettingsStore.getState().localModelAssignments).toEqual({
 			'history-digests': { type: 'off' },
 		});

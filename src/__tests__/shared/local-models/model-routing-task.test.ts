@@ -255,10 +255,10 @@ describe('modelRouterKind', () => {
 		expect(modelRouterKind({ type: 'local', modelId: PROMPT_GUARD_2_22M_ID })).toBe('local-judge');
 	});
 
-	it('reads System One as itself, and off or the Utility Agent as no router', () => {
+	it('reads System One as itself, and off or a Model Map slot as no router', () => {
 		expect(modelRouterKind({ type: 'system-one' })).toBe('system-one');
 		expect(modelRouterKind({ type: 'off' })).toBeNull();
-		expect(modelRouterKind({ type: 'utility-agent' })).toBeNull();
+		expect(modelRouterKind({ type: 'housekeeping-model' })).toBeNull();
 	});
 });
 

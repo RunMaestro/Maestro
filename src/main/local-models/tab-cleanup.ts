@@ -397,12 +397,12 @@ export async function suggestTabCleanup(
 		case 'off':
 			// The assignment changed between the check above and the call.
 			return fail('off', offMessage);
-		case 'use-utility-agent':
+		case 'use-provider':
 			// The registry refuses this assignment for the task; a hand-edited
 			// settings file is the only way here. There is no agent path to keep.
 			return fail(
 				'unavailable',
-				`${task.label} cannot run on the Utility Agent. Assign it a local model or an endpoint in ${ASSIGNMENT_LOCATION}.`
+				`${task.label} cannot run on a provider agent. Assign it a local model or an endpoint in ${ASSIGNMENT_LOCATION}.`
 			);
 		case 'cancelled':
 			logger.warn('Tab cleanup timed out', LOG_CONTEXT, { source: verdict.source });

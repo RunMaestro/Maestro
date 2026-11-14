@@ -40,6 +40,7 @@ import { availableShortcuts } from '../../../renderer/utils/encoreShortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
 import { TYPOGRAPHY_PRESETS } from '../../../shared/typographyPresets';
 import * as runtimeContext from '../../../renderer/utils/runtimeContext';
+import { DEFAULT_MODEL_MAP } from '../../../shared/local-models/model-map';
 
 // Pull defaults from a freshly-initialized store so tests don't need to re-import them.
 // Deep-cloned so test mutations can't affect the captured reference.
@@ -94,7 +95,7 @@ function getBadgeLevelForTime(cumulativeTimeMs: number): number {
  */
 function resetStore() {
 	useSettingsStore.setState({
-		utilitySource: { type: 'utility-agent' },
+		modelMap: DEFAULT_MODEL_MAP,
 		settingsLoaded: false,
 		conductorProfile: '',
 		globalShowHotkey: [],
@@ -2214,30 +2215,63 @@ describe('settingsStore', () => {
 		});
 
 		describe('localModelAssignments', () => {
-			it('hydrates the shared utility source and keeps per-task choices separate', async () => {
-				const utilitySource = { type: 'endpoint', endpointId: 'ep-1', model: 'qwen3' } as const;
+			it('hydrates the Model Map and keeps per-task choices separate', async () => {
+				const modelMap = {
+					agent: { type: 'provider', agentId: 'codex', modelId: 'gpt-5' },
+					housekeeping: { type: 'endpoint', endpointId: 'ep-1', model: 'qwen3' },
+				} as const;
 				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
-					utilitySource,
+					modelMap,
+					// Ignored once a map is stored.
+					utilitySource: { type: 'local', modelId: 'old-model' },
 					localModelAssignments: { 'tab-naming': { type: 'off' } },
 				});
 				await loadAllSettings();
-				expect(useSettingsStore.getState().utilitySource).toEqual(utilitySource);
+				expect(useSettingsStore.getState().modelMap).toEqual(modelMap);
 				expect(useSettingsStore.getState().localModelAssignments).toEqual({
 					'tab-naming': { type: 'off' },
 				});
-				useSettingsStore.getState().setUtilitySource({ type: 'local', modelId: 'local-model' });
-				expect(window.maestro.settings.set).toHaveBeenCalledWith('utilitySource', {
+				useSettingsStore.getState().setModelMap({
+					...modelMap,
+					housekeeping: { type: 'local', modelId: 'local-model' },
+				});
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('modelMap', {
+					agent: { type: 'provider', agentId: 'codex', modelId: 'gpt-5' },
+					housekeeping: { type: 'local', modelId: 'local-model' },
+				});
+			});
+
+			it('migrates the old Utility source into the Housekeeping slot', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					utilitySource: { type: 'utility-agent' },
+					utilityAgentId: 'agent-1',
+					utilityModelId: 'haiku',
+				});
+				await loadAllSettings();
+				expect(useSettingsStore.getState().modelMap).toEqual({
+					agent: { type: 'provider' },
+					housekeeping: { type: 'provider', agentId: 'agent-1', modelId: 'haiku' },
+				});
+
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					utilitySource: { type: 'local', modelId: 'local-model' },
+					utilityAgentId: 'agent-1',
+				});
+				await loadAllSettings();
+				// A parked provider choice cannot override a local source.
+				expect(useSettingsStore.getState().modelMap.housekeeping).toEqual({
 					type: 'local',
 					modelId: 'local-model',
 				});
 			});
 
-			it('drops unusable entries and keeps the Utility Agent default for an existing install', async () => {
+			it('drops unusable entries and reads the old utility-agent spelling as the Housekeeping model', async () => {
 				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
-					utilityAgentId: 'agent-1',
 					localModelAssignments: {
 						'tab-naming': { type: 'utility-agent' },
-						'git-drafts': { type: 'utility-agent' },
+						'git-drafts': { type: 'agent-model' },
+						'tab-summary': { type: 'utility-agent' },
+						'semantic-search': { type: 'housekeeping-model' },
 						'cue-gate': { type: 'endpoint', endpointId: 'ep-1', model: 'llama3' },
 						'not-a-task': { type: 'off' },
 					},
@@ -2245,11 +2279,15 @@ describe('settingsStore', () => {
 
 				await loadAllSettings();
 
+				// tab-naming's legacy spelling is its default, and so is git-drafts on the
+				// Agent model. Summaries defaults to the Agent model, so its legacy spelling
+				// (the Housekeeping model) is a real choice and is kept. Semantic search
+				// takes no slot.
 				expect(useSettingsStore.getState().localModelAssignments).toEqual({
+					'tab-summary': { type: 'housekeeping-model' },
 					'cue-gate': { type: 'endpoint', endpointId: 'ep-1', model: 'llama3' },
 				});
-				expect(useSettingsStore.getState().utilityAgentId).toBe('agent-1');
-				expect(useSettingsStore.getState().utilitySource).toEqual({ type: 'utility-agent' });
+				expect(useSettingsStore.getState().modelMap).toEqual(DEFAULT_MODEL_MAP);
 			});
 		});
 

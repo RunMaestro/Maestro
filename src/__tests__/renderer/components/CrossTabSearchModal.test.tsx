@@ -290,7 +290,7 @@ describe('CrossTabSearchModal semantic mode', () => {
 			.mockResolvedValue({ status: 'ok', mode: 'semantic', hits: HITS, durationMs: 1 } as never);
 	});
 
-	it.each(['off', 'unavailable', 'utility-agent'])(
+	it.each(['off', 'unavailable', 'provider'])(
 		'does not offer the toggle while the task is %s',
 		async (state) => {
 			setReadiness(state);

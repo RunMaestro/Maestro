@@ -1210,7 +1210,7 @@ const TASK_READINESS_STATE: Record<
 	{ label: string; color: keyof typeof colors }
 > = {
 	ready: { label: 'ready', color: 'green' },
-	'utility-agent': { label: 'utility agent', color: 'blue' },
+	provider: { label: 'provider agent', color: 'blue' },
 	off: { label: 'off', color: 'gray' },
 	unavailable: { label: 'unavailable', color: 'red' },
 };
@@ -1965,6 +1965,35 @@ export function formatLocalModelTasks(
 	if (readinessError) {
 		lines.push('');
 		lines.push(dim(`Readiness unavailable (${readinessError}). Assignments are from settings.`));
+	}
+	return lines.join('\n');
+}
+
+/** One slot of the Model Map, as `models map` prints it. */
+export interface ModelMapSlotDisplay {
+	role: string;
+	label: string;
+	/** The slot in its `models map` spelling. */
+	spec: string;
+	/** What a person calls the slot's choice. */
+	source: string;
+	/** Labels of the tasks that inherit the slot. */
+	tasks: string[];
+}
+
+/** `maestro-cli models map`: each slot, what it runs on, and the tasks that inherit it. */
+export function formatModelMap(rows: ModelMapSlotDisplay[]): string {
+	const lines: string[] = [bold(c('cyan', 'MODEL MAP')), ''];
+	const roleWidth = Math.max(...rows.map((row) => row.role.length));
+	for (const row of rows) {
+		lines.push(
+			`  ${c('white', row.role.padEnd(roleWidth))}  ${c('blue', row.spec)}  ${dim(row.source)}`
+		);
+		const indent = ' '.repeat(roleWidth + 4);
+		lines.push(`${indent}${dim(row.label)}`);
+		lines.push(
+			`${indent}${dim(`used by: ${row.tasks.length > 0 ? row.tasks.join(', ') : 'no task'}`)}`
+		);
 	}
 	return lines.join('\n');
 }

@@ -10,7 +10,8 @@ import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilitie
 import type { MultiWindowState } from '../../shared/window-types';
 import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 import type { TokenProxyMode } from '../../shared/local-models/token-proxy';
-import type { LocalModelAssignments, UtilitySource } from '../../shared/local-models/tasks';
+import type { LocalModelAssignments } from '../../shared/local-models/tasks';
+import type { ModelMap } from '../../shared/local-models/model-map';
 import type { HarnessTierDefaults } from '../../shared/modelTiers';
 import type { SpokenNoticeMode } from '../../shared/spokenNotices';
 import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
@@ -169,12 +170,11 @@ export interface MaestroSettings {
 	// Throughput Gauge (Encore Feature): scope, metric, layout, style, and rate
 	// window. See src/shared/throughputGauge.ts.
 	throughputGaugeSettings: ThroughputGaugeSettings;
-	// Utility agent for auxiliary tasks (tab naming, context grooming). When null,
-	// the task uses the session's own agent (fully backward compatible).
-	utilityAgentId: string | null;
-	utilitySource: UtilitySource;
-	// Optional model override for the utility agent. When null, the agent default model is used.
-	utilityModelId: string | null;
+	// Model Map: the Agent and Housekeeping models System Two tasks point at.
+	// Null until first saved; `readModelMap()` then builds it from the old
+	// `utilitySource` / `utilityAgentId` / `utilityModelId` keys, which nothing
+	// writes any more.
+	modelMap: ModelMap | null;
 	// Days of Maestro Cue run history kept in cue.db. Read by the Cue engine's
 	// prune pass at startup; declared explicitly (rather than left to the index
 	// signature) so main-process readers get `number` instead of `any`.

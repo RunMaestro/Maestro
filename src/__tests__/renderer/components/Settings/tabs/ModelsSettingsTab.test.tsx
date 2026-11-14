@@ -5,7 +5,7 @@
  * nav that says which is open.
  *
  * Verifies each panel's sections, that each system panel lists exactly its own
- * tasks, that the Utility Agent sits under System Two, that Sources contains the
+ * tasks, that the Model Map sits under System Two, that Sources contains the
  * model server without cloud-only or download mirror sections, that the last
  * panel and Library section are remembered and a sub-tab path moves them, and
  * that opening the tab only reads what is on disk (nothing downloads or probes
@@ -277,7 +277,7 @@ describe('ModelsSettingsTab', () => {
 			expect(screen.queryByTestId(`local-models-task-${task.id}`)).toBeNull();
 		}
 		expect(screen.getByTestId('semantic-index-settings')).toBeInTheDocument();
-		expect(document.querySelector('[data-setting-id="local-models-utility-agent"]')).toBeNull();
+		expect(document.querySelector('[data-setting-id="local-models-model-map"]')).toBeNull();
 	});
 
 	it('puts the decision ledger under the System One tasks, and on no other inner tab', async () => {
@@ -357,7 +357,7 @@ describe('ModelsSettingsTab', () => {
 		expect(screen.queryByTestId('local-models-assignments-columns')).toBeNull();
 	});
 
-	it('lists only System Two tasks on System Two, with the Utility Agent above them', () => {
+	it('lists only System Two tasks on System Two, with the Model Map above them', () => {
 		render(<Harness />);
 		openPanel('System Two');
 
@@ -370,13 +370,15 @@ describe('ModelsSettingsTab', () => {
 		expect(screen.queryByTestId('semantic-index-settings')).toBeNull();
 
 		const assignments = screen.getByTestId('local-models-assignments-section-two');
-		const utility = document.querySelector('[data-setting-id="local-models-utility-agent"]');
-		expect(utility).not.toBeNull();
-		// Configure the shared agent before choosing which tasks use it.
+		const modelMap = document.querySelector('[data-setting-id="local-models-model-map"]');
+		expect(modelMap).not.toBeNull();
+		// Map the two models before choosing which tasks use them.
 		expect(
-			utility!.compareDocumentPosition(assignments) & Node.DOCUMENT_POSITION_FOLLOWING
+			modelMap!.compareDocumentPosition(assignments) & Node.DOCUMENT_POSITION_FOLLOWING
 		).toBeTruthy();
-		expect(utility).toHaveTextContent('Choose the default for tasks set to Utility source below.');
+		expect(modelMap).toHaveTextContent('Model Map');
+		expect(screen.getByTestId('model-map-agent')).toBeInTheDocument();
+		expect(screen.getByTestId('model-map-housekeeping')).toBeInTheDocument();
 	});
 
 	it('shows the tier defaults table on System Two, and on no other inner tab', () => {
@@ -391,10 +393,10 @@ describe('ModelsSettingsTab', () => {
 		const tiers = document.querySelector('[data-setting-id="models-tier-defaults"]');
 		expect(tiers).not.toBeNull();
 		expect(screen.getByTestId('tier-defaults-section')).toBeInTheDocument();
-		// Tier defaults follow both the Utility Agent and the task assignments.
-		const utility = document.querySelector('[data-setting-id="local-models-utility-agent"]');
+		// Tier defaults follow both the Model Map and the task assignments.
+		const modelMap = document.querySelector('[data-setting-id="local-models-model-map"]');
 		expect(
-			utility!.compareDocumentPosition(tiers!) & Node.DOCUMENT_POSITION_FOLLOWING
+			modelMap!.compareDocumentPosition(tiers!) & Node.DOCUMENT_POSITION_FOLLOWING
 		).toBeTruthy();
 	});
 

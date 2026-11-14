@@ -135,11 +135,11 @@ export async function evaluateCueGate(request: CueGateRequest): Promise<CueGateC
 	switch (verdict.status) {
 		case 'off':
 			return unavailable(offReason);
-		case 'use-utility-agent':
+		case 'use-provider':
 			// The registry refuses this assignment for the task; a hand-edited
 			// settings file is the only way here. There is no agent path to keep.
 			return unavailable(
-				`${task.label} cannot run on the Utility Agent. Assign it a local model or an endpoint in ${ASSIGNMENT_LOCATION}.`
+				`${task.label} cannot run on a provider agent. Assign it a local model or an endpoint in ${ASSIGNMENT_LOCATION}.`
 			);
 		case 'cancelled':
 			logger.warn('Cue gate timed out', LOG_CONTEXT, {

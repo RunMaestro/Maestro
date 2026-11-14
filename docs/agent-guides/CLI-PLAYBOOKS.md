@@ -453,7 +453,8 @@ maestro-cli models verify <model-id> [--json]
 Which source each Local Models task runs on. Implemented in `src/cli/commands/models-assign.ts`.
 
 ```bash
-maestro-cli models assign <task-id> <off|utility-agent|local:<model-id>|endpoint:<endpoint>:<model>> [--json]
+maestro-cli models assign <task-id> <off|agent-model|housekeeping-model|system-one|local:<model-id>|endpoint:<endpoint>:<model>> [--json]
+maestro-cli models map [agent|housekeeping <provider[:<agent-id>[:<model>]]|local:<model-id>|endpoint:<endpoint>:<model>>] [--json]
 maestro-cli models tasks [--json]
 ```
 
@@ -506,7 +507,7 @@ Runs a text task through its assignment, or the two file and repository forms be
 maestro-cli models run <task-id> --input <text> [--system <text>] [--max-tokens <n>] [--json]
 ```
 
-- Exit codes follow the split `s1 route` uses: `6` when the task is switched off or assigned to the Utility Agent (nothing local will answer; do not retry), `7` when the task ran and could not answer (unavailable, cancelled, no changes), `2` for a bad invocation, `3`/`4`/`5` for the app.
+- Exit codes follow the split `s1 route` uses: `6` when the task is switched off or follows a Model Map slot on a provider agent (nothing local will answer; do not retry), `7` when the task ran and could not answer (unavailable, cancelled, no changes), `2` for a bad invocation, `3`/`4`/`5` for the app.
 
 ### `models server status|start|stop|set|key`
 

@@ -189,7 +189,7 @@ export class AssignedBrainProvider implements BrainProvider {
 					{ kind: 'timeout', providerId: this.id }
 				);
 			case 'off':
-			case 'use-utility-agent':
+			case 'use-provider':
 				// The assignment was switched off under a pipeline built for it. Refused
 				// by name; the next session resolves the Brain that is now in force.
 				throw new VoiceProviderError(NOT_ASSIGNED_MESSAGE, {

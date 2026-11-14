@@ -63,7 +63,7 @@ describe('context IPC handlers: Local Models routing', () => {
 			handlers.set(channel, handler as never);
 			return undefined as never;
 		});
-		vi.mocked(runLocalTask).mockResolvedValue({ status: 'use-utility-agent' });
+		vi.mocked(runLocalTask).mockResolvedValue({ status: 'use-provider' });
 		vi.mocked(groomContext).mockResolvedValue({ response: 'agent summary' } as never);
 
 		registerContextHandlers({
@@ -87,10 +87,11 @@ describe('context IPC handlers: Local Models routing', () => {
 		expect(groomContext).toHaveBeenCalledTimes(2);
 	});
 
-	it('does not use a hidden provider override when the utility source is local', async () => {
-		settings.set('utilitySource', localSource);
-		settings.set('utilityAgentId', 'codex');
-		settings.set('utilityModelId', 'utility-model');
+	it('does not use a hidden provider override when the Housekeeping model is local', async () => {
+		settings.set('modelMap', {
+			agent: { type: 'provider', agentId: 'codex', modelId: 'agent-model' },
+			housekeeping: localSource,
+		});
 		await groom({ customPath: '/bin/claude' });
 		expect(groomContext).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -103,7 +104,62 @@ describe('context IPC handlers: Local Models routing', () => {
 		);
 	});
 
-	it('retains the configured provider and model on the provider utility path', async () => {
+	it('runs grooming on the Housekeeping model when it is a provider, never the Agent model', async () => {
+		settings.set('modelMap', {
+			agent: { type: 'provider', agentId: 'opencode', modelId: 'agent-model' },
+			housekeeping: { type: 'provider', agentId: 'codex', modelId: 'utility-model' },
+		});
+		await groom();
+		expect(groomContext).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentType: 'codex',
+				modelId: 'utility-model',
+			}),
+			expect.anything(),
+			expect.anything()
+		);
+	});
+
+	it('runs a summary on the Agent model when it is a provider, since Summaries follows it by default', async () => {
+		settings.set('modelMap', {
+			agent: { type: 'provider', agentId: 'opencode', modelId: 'agent-model' },
+			housekeeping: { type: 'provider', agentId: 'codex', modelId: 'utility-model' },
+		});
+		await groom({ cheapTurn: true });
+		expect(groomContext).toHaveBeenCalledWith(
+			expect.objectContaining({ agentType: 'opencode', modelId: 'agent-model' }),
+			expect.anything(),
+			expect.anything()
+		);
+	});
+
+	it('runs a summary on the Housekeeping model when Summaries is pointed at it', async () => {
+		settings.set('modelMap', {
+			agent: { type: 'provider', agentId: 'opencode', modelId: 'agent-model' },
+			housekeeping: { type: 'provider', agentId: 'codex', modelId: 'utility-model' },
+		});
+		settings.set('localModelAssignments', { 'tab-summary': { type: 'housekeeping-model' } });
+		await groom({ cheapTurn: true });
+		expect(groomContext).toHaveBeenCalledWith(
+			expect.objectContaining({ agentType: 'codex', modelId: 'utility-model' }),
+			expect.anything(),
+			expect.anything()
+		);
+	});
+
+	it('keeps a summary on the session provider when only the old Utility keys exist', async () => {
+		// The old keys become the Housekeeping model; Summaries follows the Agent model.
+		settings.set('utilityAgentId', 'codex');
+		settings.set('utilityModelId', 'utility-model');
+		await groom({ cheapTurn: true });
+		expect(groomContext).toHaveBeenCalledWith(
+			expect.objectContaining({ agentType: 'claude-code', modelId: undefined }),
+			expect.anything(),
+			expect.anything()
+		);
+	});
+
+	it('reads the old Utility provider keys as the Housekeeping model until a map is saved', async () => {
 		settings.set('utilityAgentId', 'codex');
 		settings.set('utilityModelId', 'utility-model');
 		await groom();
@@ -112,6 +168,18 @@ describe('context IPC handlers: Local Models routing', () => {
 				agentType: 'codex',
 				modelId: 'utility-model',
 			}),
+			expect.anything(),
+			expect.anything()
+		);
+	});
+
+	it('reads an old local Utility source as the Housekeeping model, so grooming stays on the session', async () => {
+		settings.set('utilitySource', localSource);
+		settings.set('utilityAgentId', 'codex');
+		settings.set('utilityModelId', 'utility-model');
+		await groom();
+		expect(groomContext).toHaveBeenCalledWith(
+			expect.objectContaining({ agentType: 'claude-code', modelId: undefined }),
 			expect.anything(),
 			expect.anything()
 		);
@@ -129,7 +197,7 @@ describe('context IPC handlers: Local Models routing', () => {
 		expect(groomContext).toHaveBeenCalledTimes(1);
 	});
 
-	it('keeps the agent path for a summary on use-utility-agent', async () => {
+	it('keeps the agent path for a summary on use-provider', async () => {
 		expect(await groom({ cheapTurn: true })).toBe('agent summary');
 
 		expect(runLocalTask).toHaveBeenCalledWith(
