@@ -109,6 +109,23 @@ describe('isSelfContainedCard', () => {
 });
 
 describe('canAppendToLogEntry', () => {
+	it('keeps a committed translation marker separate from subsequent system and assistant streams', () => {
+		const card = entry({
+			source: 'system',
+			contextTranslation: {
+				operationId: 'op',
+				source: { provider: 'claude-code', version: 'source-version' },
+				destination: { provider: 'codex', version: 'destination-version' },
+				verification: 'unverified',
+				counts: { records: 1, artifacts: 0, bytes: 100 },
+				limitations: [],
+			},
+		});
+		expect(isSelfContainedCard(card)).toBe(true);
+		expect(canAppendToLogEntry(card, 'system')).toBe(false);
+		expect(canAppendToLogEntry(card, 'stdout')).toBe(false);
+	});
+
 	it('allows appending to a plain entry of the same source', () => {
 		expect(canAppendToLogEntry(entry({ source: 'stdout' }), 'stdout')).toBe(true);
 		expect(canAppendToLogEntry(entry({ source: 'stderr' }), 'stderr')).toBe(true);

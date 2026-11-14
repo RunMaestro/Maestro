@@ -76,6 +76,12 @@ export interface ComposerCapabilities {
 	thinking: boolean;
 	/** Model and effort pills, and their rows in the phone sheet. */
 	modelEffort: boolean;
+	/**
+	 * The Enter-to-send toggle in the toolbar row. The AI composer leaves it to
+	 * Settings > General to keep its pill row short; its terminal mode, which
+	 * draws no pills, and a room keep it inline.
+	 */
+	enterToSendToggle: boolean;
 }
 
 /**
@@ -92,6 +98,7 @@ export const GROUP_CHAT_COMPOSER_CAPABILITIES: Readonly<ComposerCapabilities> = 
 	permission: false,
 	thinking: false,
 	modelEffort: false,
+	enterToSendToggle: true,
 });
 
 export interface GroupChatComposerCapabilitiesInput {
@@ -153,11 +160,14 @@ export function deriveAiComposerCapabilities(
 	const isAiMode = input.inputMode === 'ai';
 	return {
 		imageAttach: isAiMode && aiCanAttachImages(input),
-		upload: isAiMode,
+		// The AI composer attaches images only; uploading arbitrary files to the
+		// host is a room affordance.
+		upload: false,
 		voice: isAiMode,
 		saveToHistory: isAiMode,
 		permission: isAiMode && input.hasCapability('supportsReadOnlyMode'),
 		thinking: isAiMode && input.supportsThinking,
 		modelEffort: isAiMode,
+		enterToSendToggle: !isAiMode,
 	};
 }

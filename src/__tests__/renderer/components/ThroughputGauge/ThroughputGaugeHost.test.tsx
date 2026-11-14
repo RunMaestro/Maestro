@@ -45,6 +45,7 @@ import {
 import type { CallUsage, UsageStats } from '../../../../shared/types';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import { createMockSession } from '../../../helpers/mockSession';
+import { createMockAITab } from '../../../helpers/mockTab';
 import { PUBLISH_INTERVAL_MS } from '../../../../renderer/utils/windowStoreMirror';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -241,6 +242,69 @@ describe('ThroughputGaugeHost', () => {
 		for (const metric of ['in', 'out', 'combined'] as const) {
 			expect(history[metric].every((reading) => reading === 0)).toBe(true);
 		}
+	});
+
+	it.each(['usage', 'call'] as const)(
+		'accounts for the captured owner of closed tabs in %s reports',
+		(kind) => {
+			vi.useFakeTimers();
+			setFlag(true);
+			const session = createMockSession({
+				id: 'agent-1',
+				toolType: 'claude-code',
+				orphanedThinkingTabs: [
+					createMockAITab({
+						id: 'tab-1',
+						state: 'busy',
+						tabProvider: 'claude-code',
+						turnProvider: 'codex',
+					}),
+				],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+			act(() => {
+				const report =
+					kind === 'usage'
+						? listeners.onUsage.mock.calls[0][0]
+						: listeners.onCallUsage.mock.calls[0][0];
+				report(
+					AI_TAB_ID,
+					usage({ inputTokens: 1000, cacheReadInputTokens: 900, outputTokens: 100 })
+				);
+				vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+			});
+			// Codex includes cached reads in input; Claude does not.
+			expect(useThroughputGaugeStore.getState().rates.in).toBeCloseTo(10);
+			expect(useThroughputGaugeStore.getState().rates.out).toBeCloseTo(10);
+		}
+	);
+
+	it('retains a raw process owner when another turn changes the tab stamp', () => {
+		vi.useFakeTimers();
+		setFlag(true);
+		const tab = createMockAITab({
+			id: 'tab-1',
+			tabProvider: 'codex',
+			turnProvider: 'codex',
+			state: 'busy',
+		});
+		useSessionStore.setState({ sessions: [createMockSession({ id: 'agent-1', aiTabs: [tab] })] });
+		render(<ThroughputGaugeHost theme={mockTheme} />);
+		act(() => {
+			listeners.onThinkingChunk.mock.calls[0][0](AI_TAB_ID + '-fp-123', 'hello');
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'agent-1', aiTabs: [{ ...tab, turnProvider: 'claude-code' }] }),
+				],
+			});
+			listeners.onUsage.mock.calls[0][0](
+				AI_TAB_ID + '-fp-123',
+				usage({ inputTokens: 1000, cacheReadInputTokens: 900 })
+			);
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+		expect(useThroughputGaugeStore.getState().rates.in).toBeCloseTo(10);
 	});
 
 	it('live output and usage move the published rate above zero and record a peak', () => {

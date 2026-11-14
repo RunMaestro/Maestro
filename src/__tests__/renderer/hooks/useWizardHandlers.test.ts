@@ -1,3 +1,4 @@
+import { agentCommandScope } from '../../../renderer/utils/agentCommands';
 /**
  * Tests for useWizardHandlers hook
  *
@@ -307,6 +308,32 @@ describe('useWizardHandlers', () => {
 	// ========================================================================
 	// Slash command discovery effect
 	// ========================================================================
+	it('starts an existing wizard on the pinned harness with that harness configuration', () => {
+		const session = createMockSession({
+			toolType: 'claude-code',
+			customPath: '/bin/claude',
+			providerOverrides: { codex: { customPath: '/bin/codex-work', customModel: 'gpt-work' } },
+			aiTabs: [createMockTab({ id: 'tab-1', tabProvider: 'codex' })],
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		const deps = createMockDeps();
+		const { result } = renderHook(() => useWizardHandlers(deps));
+		act(() => result.current.handleWizardCommand('ship'));
+		expect(deps.inlineWizardContext.startWizard).toHaveBeenCalledWith(
+			'ship',
+			expect.anything(),
+			session.projectRoot,
+			'codex',
+			session.name,
+			'tab-1',
+			session.id,
+			session.autoRunFolderPath,
+			session.sessionSshRemoteConfig,
+			expect.anything(),
+			expect.objectContaining({ customPath: '/bin/codex-work', customModel: 'gpt-work' })
+		);
+	});
+
 	describe('ephemeral Grok command discovery', () => {
 		let session: Session;
 		let receipt: GrokCommandDiscoveryResult;
@@ -415,12 +442,14 @@ describe('useWizardHandlers', () => {
 									next.cwd,
 									next.customPath,
 									undefined,
-									...(toolType === 'codex' ? [next.customEnvVars] : []),
+									// Discovery runs on the selected account for every provider.
+									next.customEnvVars,
 								],
 							];
 				expect(discover.mock.calls).toEqual(expectedCalls);
 				expect(vi.mocked(window.maestro.claude.getCommands).mock.calls).toEqual(
-					toolType === 'claude-code' ? [[next.projectRoot]] : []
+					// A local agent: no SSH remote id rides along.
+					toolType === 'claude-code' ? [[next.projectRoot, undefined]] : []
 				);
 				expect(useSessionStore.getState().sessions).toEqual([
 					session,
@@ -428,6 +457,8 @@ describe('useWizardHandlers', () => {
 						? next
 						: {
 								...next,
+								// The commands are stamped with the provider, account and host they came from.
+								agentCommandsScope: expect.any(String),
 								agentCommands: [
 									{
 										command: '/legacy-skill',
@@ -732,6 +763,85 @@ describe('useWizardHandlers', () => {
 	});
 
 	describe('slash command discovery effect', () => {
+		it('discovers a pinned provider using its own account and binary, excluding agent commands', async () => {
+			const session = createMockSession({
+				toolType: 'claude-code',
+				customPath: '/bin/claude',
+				agentCommands: [{ command: '/claude-only', description: 'Claude' }],
+				providerOverrides: {
+					codex: { customPath: '/bin/codex-work', customEnvVars: { CODEX_HOME: '/accounts/work' } },
+				},
+				aiTabs: [createMockTab({ id: 'tab-1', tabProvider: 'codex' })],
+			});
+			session.agentCommandsScope = agentCommandScope(session);
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect(window.maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'codex',
+				session.cwd,
+				'/bin/codex-work',
+				undefined,
+				{ CODEX_HOME: '/accounts/work' }
+			);
+			expect(window.maestro.claude.getCommands).not.toHaveBeenCalled();
+		});
+
+		it('reads custom Claude commands from the pinned account', async () => {
+			const session = createMockSession({
+				toolType: 'codex',
+				providerOverrides: {
+					'claude-code': { customEnvVars: { CLAUDE_CONFIG_DIR: '/work/claude' } },
+				},
+				aiTabs: [createMockTab({ id: 'tab-1', tabProvider: 'claude-code' })],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect(window.maestro.claude.getCommands).toHaveBeenCalledWith(
+				session.projectRoot,
+				'/work/claude'
+			);
+			expect(window.maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
+				'claude-code',
+				session.cwd,
+				undefined,
+				undefined,
+				{ CLAUDE_CONFIG_DIR: '/work/claude' }
+			);
+		});
+
+		it('discards discovery replies after the selected provider changes', async () => {
+			let finish!: (commands: { name: string }[]) => void;
+			vi.mocked(window.maestro.agents.discoverSlashCommands).mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finish = resolve;
+					})
+			);
+			const session = createMockSession({ toolType: 'codex' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {
+				useSessionStore.setState({
+					sessions: [
+						{
+							...session,
+							aiTabs: session.aiTabs.map((tab) => ({ ...tab, tabProvider: 'claude-code' })),
+						},
+					],
+				});
+			});
+			await act(async () => {
+				finish([{ name: 'codex-only' }]);
+			});
+			expect(
+				useSessionStore
+					.getState()
+					.sessions[0].agentCommands?.some((command) => command.command === '/codex-only')
+			).not.toBe(true);
+		});
+
 		it('waits for host recovery before discovering commands and resumes without another edit', async () => {
 			const state = window as unknown as Record<string, unknown>;
 			state.__MAESTRO_BRIDGE_STATE__ = 'restoring';
@@ -896,7 +1006,7 @@ describe('useWizardHandlers', () => {
 				await new Promise((r) => setTimeout(r, 50));
 			});
 
-			expect((window as any).maestro.claude.getCommands).toHaveBeenCalledWith('/projects/test');
+			expect((window as any).maestro.claude.getCommands.mock.calls[0][0]).toBe('/projects/test');
 			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledWith(
 				'claude-code',
 				'/projects/test',
@@ -941,6 +1051,7 @@ describe('useWizardHandlers', () => {
 			const session = createMockSession({
 				agentCommands: [{ command: '/existing', description: 'Existing' }],
 			});
+			session.agentCommandsScope = agentCommandScope(session, session.aiTabs[0]);
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 
 			const deps = createMockDeps();
@@ -3572,6 +3683,77 @@ describe('useWizardHandlers', () => {
 			expect(sessions[0].customArgs).toBe('--verbose');
 			expect(sessions[0].customEnvVars).toEqual({ API_KEY: '123' });
 			expect(sessions[0].sessionSshRemoteConfig).toEqual(sshConfig);
+		});
+
+		describe('Peer grants', () => {
+			const launchWith = async (peerState: Record<string, unknown>) => {
+				useSessionStore.setState({ sessions: [], activeSessionId: null });
+
+				const deps = createMockDeps({
+					wizardContext: {
+						state: {
+							currentStep: 'review' as any,
+							isOpen: true,
+							selectedAgent: 'claude-code',
+							availableAgents: [],
+							agentName: 'Peer Project',
+							directoryPath: '/projects/peers',
+							additionalDirectories: [],
+							generatedDocuments: [],
+							wantsTour: false,
+							...peerState,
+						} as any,
+						completeWizard: vi.fn().mockResolvedValue(undefined),
+						clearResumeState: vi.fn().mockResolvedValue(undefined),
+					},
+				});
+
+				const { result } = renderHook(() => useWizardHandlers(deps));
+				await act(async () => {
+					await result.current.handleWizardLaunchSession(false);
+				});
+
+				return useSessionStore.getState().sessions[0];
+			};
+
+			it('carries the rows and both grants onto the new agent', async () => {
+				const newSession = await launchWith({
+					peerAgents: [
+						{ sessionId: 'agent-a', read: true, write: false, description: '  Docs  ' },
+						// Neither square lit: an exclusion. The launch must keep it.
+						{ sessionId: 'agent-b', read: false, write: false },
+					],
+					groupPeerAccess: { read: true, write: false },
+					worktreePeerAccess: { read: true, write: true },
+				});
+
+				// Normalized on the way in, the same as the agent forms: the note is trimmed.
+				expect(newSession.peerAgents).toEqual([
+					{ sessionId: 'agent-a', read: true, write: false, description: 'Docs' },
+					{ sessionId: 'agent-b', read: false, write: false },
+				]);
+				expect(newSession.groupPeerAccess).toEqual({ read: true, write: false });
+				expect(newSession.worktreePeerAccess).toEqual({ read: true, write: true });
+			});
+
+			it('drops a row with no agent picked and stores an empty list as absent', async () => {
+				const newSession = await launchWith({
+					peerAgents: [{ sessionId: '', read: true, write: false, description: '' }],
+				});
+
+				expect(newSession.peerAgents).toBeUndefined();
+				expect(newSession.groupPeerAccess).toBeUndefined();
+				expect(newSession.worktreePeerAccess).toBeUndefined();
+			});
+
+			it('creates an agent with no peers from a wizard state that predates the fields', async () => {
+				// A resume state saved by an older build has none of the three keys.
+				const newSession = await launchWith({});
+
+				expect(newSession.peerAgents).toBeUndefined();
+				expect(newSession.groupPeerAccess).toBeUndefined();
+				expect(newSession.worktreePeerAccess).toBeUndefined();
+			});
 		});
 	});
 

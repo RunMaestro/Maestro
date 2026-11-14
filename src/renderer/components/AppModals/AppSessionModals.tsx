@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { AdditionalDirectory, Theme, Session, ToolType } from '../../types';
+import type { AdditionalDirectory, Theme, Session } from '../../types';
 
 // Session Management Modal Components
 import { NewInstanceModal, EditAgentModal } from '../NewInstanceModal';
@@ -13,6 +13,9 @@ import { useModalStore, selectModalOpen, selectModalData } from '../../stores/mo
 import { useTabStore } from '../../stores/tabStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
+import type { PeerGrants } from '../../../shared/peerAgents';
+import type { GroupDefaultsCreateExtras } from '../../../shared/groupAgentDefaults';
 import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 
 /**
@@ -56,6 +59,14 @@ export interface AppSessionModalsProps {
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
+		/** Local Models gateway URL, already validated; `undefined` sets none. */
+		gatewayUrl?: string,
+		/** model source, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget,
+		/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
+		peerGrants?: PeerGrants,
+		/** Group defaults the create form has no control for; stamped onto the new agent. */
+		seedExtras?: GroupDefaultsCreateExtras,
 		harnessControlMode?: HarnessControlMode
 	) => void;
 	existingSessions: Session[];
@@ -66,40 +77,7 @@ export interface AppSessionModalsProps {
 	// EditAgentModal
 	editAgentModalOpen: boolean;
 	onCloseEditAgentModal: () => void;
-	onSaveEditAgent: (
-		sessionId: string,
-		name: string,
-		toolType?: ToolType,
-		nudgeMessage?: string,
-		newSessionMessage?: string,
-		customPath?: string,
-		customArgs?: string,
-		customEnvVars?: Record<string, string>,
-		customModel?: string,
-		customEffort?: string,
-		customContextWindow?: number,
-		sessionSshRemoteConfig?: {
-			enabled: boolean;
-			remoteId: string | null;
-			workingDirOverride?: string;
-		},
-		enableMaestroP?: boolean,
-		maestroPPath?: string,
-		maestroPMode?: 'interactive' | 'dynamic',
-		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean,
-		additionalDirectories?: AdditionalDirectory[],
-		/** Provenance of `customContextWindow` (finding AD1). */
-		contextWindowSource?: 'user-edited',
-		/** Env vars parked with the eye button: kept, but never handed to a spawn. */
-		customEnvVarsDisabled?: Record<string, string>,
-		workingDirectory?: string,
-		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean,
-		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport,
-		harnessControlMode?: HarnessControlMode
-	) => void;
+	onSaveEditAgent: import('../NewInstanceModal/types').EditAgentModalProps['onSave'];
 	editAgentSession: Session | null;
 
 	// RenameSessionModal

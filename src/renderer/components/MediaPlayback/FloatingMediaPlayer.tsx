@@ -457,7 +457,7 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 				    close button that only hid it would leave sound coming from
 				    nowhere. */}
 				<GhostIconButton
-					onClick={dismiss}
+					onClick={() => dismiss()}
 					onMouseDown={(e) => e.stopPropagation()}
 					title="Minimize to the Left Bar (keeps playing)"
 					ariaLabel="Minimize player to the Left Bar"

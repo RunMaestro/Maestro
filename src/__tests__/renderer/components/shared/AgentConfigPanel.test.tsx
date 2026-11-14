@@ -8,17 +8,22 @@
 import { useState, useCallback } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { AgentConfigPanel } from '../../../../renderer/components/shared/AgentConfigPanel';
+import {
+	AgentConfigOptions,
+	AgentConfigPanel,
+} from '../../../../renderer/components/shared/AgentConfigPanel';
+import type { ModelSourceChoices } from '../../../../renderer/components/shared/ModelSourceDetails';
 import type { AgentConfig, AgentCapabilities } from '../../../../renderer/types';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 import { createMockTheme } from '../../../helpers/mockTheme';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/definitions';
-import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { resetStore } from '../../../helpers/resetStores';
 
-// Mock lucide-react icons
-vi.mock('lucide-react', () => ({
+// Mock lucide-react icons; the rest (the settings tab icons) stay real
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	RefreshCw: ({ className }: { className?: string }) => (
 		<span data-testid="refresh-icon" className={className}>
 			🔄
@@ -409,6 +414,159 @@ describe('AgentConfigPanel', () => {
 		});
 	});
 
+	// Auto in the model field is opt-in (`autoModelFor`): only a surface whose
+	// agent has an Auto send path passes it, and even then only for an agent Auto
+	// can act on.
+	describe('Model field: the Auto choice', () => {
+		const modelOption = {
+			key: 'model',
+			label: 'Model',
+			type: 'text' as const,
+			description: 'Model to use',
+			default: '',
+		};
+		const capabilities = {
+			supportsModelSelection: true,
+		} as Partial<AgentCapabilities> as AgentCapabilities;
+		const claudeAgent = createMockAgent({ configOptions: [modelOption], capabilities });
+		const openCodeAgent = createMockAgent({
+			id: 'opencode',
+			name: 'OpenCode',
+			configOptions: [modelOption],
+			capabilities,
+		});
+		const MODELS = ['opus', 'sonnet'];
+		const BOTH_AXES = 'picks the model and the effort for each turn';
+
+		beforeEach(() => {
+			// The shipped defaults: no harness tier overrides, the model router off.
+			useSettingsStore.setState({
+				harnessTierDefaults: {},
+				localModelAssignments: {},
+				localModelEndpoints: [],
+			});
+		});
+
+		function renderModelField(overrides: Parameters<typeof createDefaultProps>[0] = {}) {
+			return render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						agent: claudeAgent,
+						agentConfig: { model: '' },
+						availableModels: MODELS,
+						...overrides,
+					})}
+				/>
+			);
+		}
+
+		/** Focus the model input, which opens its dropdown, and return the rows. */
+		function openModelDropdown(): HTMLElement[] {
+			const input = screen
+				.getByTestId('chevron-down-icon')
+				.closest('.relative')!
+				.querySelector('input')!;
+			fireEvent.focus(input);
+			const anchor = screen.queryByText('opus') ?? screen.queryByText('Auto');
+			return anchor
+				? Array.from(anchor.closest('button')!.parentElement!.querySelectorAll('button'))
+				: [];
+		}
+
+		it('lists Auto first, with what it acts on beside it', () => {
+			renderModelField({ autoModelFor: {} });
+
+			const rows = openModelDropdown();
+			expect(rows).toHaveLength(3);
+			expect(rows[0]).toHaveTextContent(`Auto${BOTH_AXES}`);
+			expect(rows[0].getAttribute('title')).toContain(`Auto: ${BOTH_AXES}.`);
+			expect(rows[1]).toHaveTextContent('opus');
+			// A named model carries no note and no tooltip.
+			expect(rows[1].textContent).toBe('opus');
+			expect(rows[1]).not.toHaveAttribute('title');
+			// The count line is about the provider's own models.
+			expect(screen.getByText('2 models available')).toBeInTheDocument();
+		});
+
+		it('commits the word when Auto is picked', () => {
+			const onConfigChange = vi.fn();
+			const onConfigBlur = vi.fn();
+			renderModelField({ autoModelFor: {}, onConfigChange, onConfigBlur });
+
+			fireEvent.click(openModelDropdown()[0]);
+
+			expect(onConfigChange).toHaveBeenCalledWith('model', 'auto');
+			expect(onConfigBlur).toHaveBeenCalledWith('model', 'auto');
+		});
+
+		it('says under the field what Auto does while the model is Auto', () => {
+			renderModelField({ autoModelFor: {}, agentConfig: { model: 'auto' } });
+
+			const note = screen.getByTestId('auto-model-note');
+			expect(note).toHaveTextContent(`Auto: ${BOTH_AXES}.`);
+			// The router is off by default, and the note says so.
+			expect(note).toHaveTextContent('The model router is off');
+		});
+
+		it('names the router in the note once one is assigned', () => {
+			useSettingsStore.setState({
+				localModelAssignments: { 'model-routing': { type: 'system-one' } },
+			});
+			renderModelField({ autoModelFor: {}, agentConfig: { model: 'auto' } });
+
+			expect(screen.getByTestId('auto-model-note')).toHaveTextContent('Decided by System One.');
+		});
+
+		it('shows no note on a named model', () => {
+			renderModelField({ autoModelFor: {}, agentConfig: { model: 'opus' } });
+
+			expect(screen.queryByTestId('auto-model-note')).not.toBeInTheDocument();
+		});
+
+		it('offers Auto alone when the provider lists no models', () => {
+			renderModelField({ autoModelFor: {}, availableModels: [] });
+
+			const rows = openModelDropdown();
+			expect(rows).toHaveLength(1);
+			expect(rows[0]).toHaveTextContent(`Auto${BOTH_AXES}`);
+			expect(screen.queryByText(/models? available/)).not.toBeInTheDocument();
+		});
+
+		it('offers no Auto when the surface does not opt in, even with models listed', () => {
+			renderModelField();
+
+			const rows = openModelDropdown();
+			expect(rows.map((row) => row.textContent)).toEqual(MODELS);
+			expect(screen.queryByText('Auto')).not.toBeInTheDocument();
+		});
+
+		it('shows no note when the surface does not opt in, whatever the value', () => {
+			renderModelField({ agentConfig: { model: 'auto' } });
+
+			expect(screen.queryByTestId('auto-model-note')).not.toBeInTheDocument();
+		});
+
+		it('offers no Auto for an agent it would change nothing for', () => {
+			// OpenCode has no effort ladder Maestro can name, and none of this
+			// agent's tiers is mapped to a model.
+			renderModelField({ agent: openCodeAgent, autoModelFor: {} });
+
+			expect(openModelDropdown().map((row) => row.textContent)).toEqual(MODELS);
+		});
+
+		it('offers Auto for that agent once the form maps one of its tiers', () => {
+			renderModelField({
+				agent: openCodeAgent,
+				autoModelFor: { tierTargets: { medium: { type: 'provider-model', model: 'opus' } } },
+			});
+
+			const rows = openModelDropdown();
+			expect(rows[0]).toHaveTextContent(
+				'Autopicks the model; this provider has no effort levels to pick'
+			);
+		});
+	});
+
 	describe('Grok manual model and effort controls', () => {
 		const agent = createMockAgent({
 			...getAgentDefinition('grok'),
@@ -623,6 +781,24 @@ describe('AgentConfigPanel', () => {
 			render(<AgentConfigPanel {...createDefaultProps()} />);
 
 			expect(screen.getByText('Environment Variables (optional)')).toBeInTheDocument();
+		});
+
+		it('should skip the environment variables section when hideEnvVars is set', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						hideEnvVars: true,
+						showBuiltInEnvVars: true,
+						customEnvVars: { MY_VAR: 'x' },
+					})}
+				/>
+			);
+
+			// A tabbed form mounts AgentEnvVarsSection on its Environment tab instead.
+			expect(screen.queryByText('Environment Variables (optional)')).not.toBeInTheDocument();
+			expect(screen.queryByText('MAESTRO_SESSION_RESUMED')).not.toBeInTheDocument();
+			expect(screen.queryByDisplayValue('MY_VAR')).not.toBeInTheDocument();
+			expect(screen.getByText('Custom Arguments (optional)')).toBeInTheDocument();
 		});
 	});
 
@@ -1359,9 +1535,405 @@ describe('AgentConfigPanel blur callbacks', () => {
 
 		fireEvent.blur(screen.getByDisplayValue('on'));
 
-		expect(onEnvVarsBlur).toHaveBeenCalled();
+		expect(onEnvVarsBlur).toHaveBeenCalledTimes(1);
 		for (const call of onEnvVarsBlur.mock.calls) {
 			expect(call).toEqual([]);
 		}
+	});
+});
+
+// =============================================================================
+// MODEL OPTIONS: THE PROVIDER TAB / MODELS TAB SPLIT
+// =============================================================================
+
+// A tabbed agent form draws the model options (model, effort, reasoning
+// summary, context window) on its Models tab and the rest on Provider; both
+// halves come from the same `AgentConfigOptions` with the same props.
+describe('AgentConfigPanel - model options and harness options', () => {
+	const capabilities = {
+		supportsModelSelection: true,
+	} as Partial<AgentCapabilities> as AgentCapabilities;
+	const splitAgent = createMockAgent({
+		id: 'codex',
+		name: 'Codex',
+		capabilities,
+		configOptions: [
+			{ key: 'model', label: 'Model', type: 'text', description: 'Model to use', default: '' },
+			{
+				key: 'reasoningEffort',
+				label: 'Reasoning Effort',
+				type: 'text',
+				description: 'How hard it thinks',
+				default: '',
+			},
+			{
+				key: 'contextWindow',
+				label: 'Context Window',
+				type: 'number',
+				description: 'Tokens it holds',
+				default: 0,
+			},
+			{
+				key: 'yoloMode',
+				label: 'YOLO Mode',
+				type: 'checkbox',
+				description: 'Skip approvals',
+				default: false,
+			},
+		],
+	});
+	// Each option's fieldset opens with its label (a checkbox has a second one).
+	const optionLabels = () =>
+		Array.from(document.querySelectorAll('fieldset > label:first-child')).map(
+			(label) => label.textContent
+		);
+
+	it('draws every config option by default', () => {
+		render(<AgentConfigPanel {...createDefaultProps({ agent: splitAgent })} />);
+
+		expect(optionLabels()).toEqual(['Model', 'Reasoning Effort', 'Context Window', 'YOLO Mode']);
+	});
+
+	it('draws only the harness options with hideModelOptions', () => {
+		render(
+			<AgentConfigPanel {...createDefaultProps({ agent: splitAgent, hideModelOptions: true })} />
+		);
+
+		expect(optionLabels()).toEqual(['YOLO Mode']);
+		expect(screen.queryByRole('textbox', { name: 'Model' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('spinbutton', { name: 'Context Window' })).not.toBeInTheDocument();
+		// The rest of the panel is untouched.
+		expect(screen.getByLabelText('Custom Arguments')).toBeInTheDocument();
+	});
+
+	describe('AgentConfigOptions', () => {
+		function renderOptions(props: Partial<Parameters<typeof AgentConfigOptions>[0]> = {}) {
+			return render(
+				<AgentConfigOptions
+					theme={createMockTheme()}
+					agent={splitAgent}
+					agentConfig={{}}
+					onConfigChange={vi.fn()}
+					onConfigBlur={vi.fn()}
+					{...props}
+				/>
+			);
+		}
+
+		it('draws the model options alone with scope="model"', () => {
+			renderOptions({ scope: 'model' });
+
+			expect(optionLabels()).toEqual(['Model', 'Reasoning Effort', 'Context Window']);
+		});
+
+		it('draws the harness options alone with scope="harness"', () => {
+			renderOptions({ scope: 'harness' });
+
+			expect(optionLabels()).toEqual(['YOLO Mode']);
+		});
+
+		it('draws both with scope="all", the default', () => {
+			renderOptions();
+
+			expect(optionLabels()).toEqual(['Model', 'Reasoning Effort', 'Context Window', 'YOLO Mode']);
+		});
+
+		it('draws nothing when the provider has no option in scope', () => {
+			const { container } = renderOptions({
+				scope: 'harness',
+				agent: createMockAgent({
+					capabilities,
+					configOptions: [
+						{ key: 'model', label: 'Model', type: 'text', description: 'Model', default: '' },
+					],
+				}),
+			});
+
+			expect(container).toBeEmptyDOMElement();
+		});
+
+		it('reads and saves an option the same way on either tab', () => {
+			const onConfigChange = vi.fn();
+			const onConfigBlur = vi.fn();
+			renderOptions({
+				scope: 'model',
+				agentConfig: { contextWindow: 128000 },
+				onConfigChange,
+				onConfigBlur,
+			});
+
+			const contextWindow = screen.getByRole('spinbutton', { name: 'Context Window' });
+			expect(contextWindow).toHaveValue(128000);
+			fireEvent.blur(contextWindow);
+			expect(onConfigBlur).toHaveBeenCalledWith('contextWindow', 128000);
+
+			fireEvent.change(contextWindow, { target: { value: '200000' } });
+			expect(onConfigChange).toHaveBeenCalledWith('contextWindow', 200000);
+		});
+
+		it('draws the model source details at the foot of the Model field only', () => {
+			renderOptions({
+				scope: 'model',
+				modelSourceDetails: <div data-testid="source-details" />,
+			});
+
+			const details = screen.getByTestId('source-details');
+			expect(details.closest('fieldset')).toBe(
+				screen.getByRole('textbox', { name: 'Model' }).closest('fieldset')
+			);
+			expect(screen.getAllByTestId('source-details')).toHaveLength(1);
+		});
+
+		it('draws no model source details while the model options are out of scope', () => {
+			renderOptions({
+				scope: 'harness',
+				modelSourceDetails: <div data-testid="source-details" />,
+			});
+
+			expect(screen.queryByTestId('source-details')).not.toBeInTheDocument();
+		});
+	});
+});
+
+// =============================================================================
+// MODEL FIELD: LOCAL MODELS SOURCE MODELS
+// =============================================================================
+
+// The Model field is the one picker for the agent's model and where it runs:
+// the provider's models first, then each source's, grouped by source.
+describe('AgentConfigPanel - Model field source models', () => {
+	const capabilities = {
+		supportsModelSelection: true,
+	} as Partial<AgentCapabilities> as AgentCapabilities;
+	const modelAgent = createMockAgent({
+		capabilities,
+		configOptions: [
+			{ key: 'model', label: 'Model', type: 'text', description: 'Model to use', default: '' },
+		],
+	});
+	const PROVIDER_MODELS = ['opus', 'sonnet'];
+	const OLLAMA_QWEN = 'ep-ollama:qwen3:latest';
+
+	function makeSources(overrides: Partial<ModelSourceChoices> = {}): ModelSourceChoices {
+		return {
+			groups: [
+				{
+					label: 'Maestro model server',
+					options: [{ value: 'maestro-server:gpt-oss-20b', label: 'gpt-oss 20B (Fits)' }],
+				},
+				{
+					label: 'Ollama',
+					options: [
+						{ value: OLLAMA_QWEN, label: 'qwen3:latest' },
+						{ value: 'ep-ollama:llama3:8b', label: 'llama3:8b' },
+					],
+				},
+			],
+			selected: null,
+			onSelect: vi.fn(),
+			onProvider: vi.fn(),
+			...overrides,
+		};
+	}
+
+	const QWEN_SELECTED: ModelSourceChoices['selected'] = {
+		spec: OLLAMA_QWEN,
+		sourceName: 'Ollama',
+		model: 'qwen3:latest',
+	};
+
+	function renderField(overrides: Parameters<typeof createDefaultProps>[0] = {}) {
+		const props = createDefaultProps({
+			agent: modelAgent,
+			agentConfig: { model: '' },
+			availableModels: PROVIDER_MODELS,
+			...overrides,
+		});
+		render(<AgentConfigPanel {...props} />);
+		return props;
+	}
+
+	const modelInput = () => screen.getByRole('textbox', { name: 'Model' }) as HTMLInputElement;
+	const sourceOption = (spec: string) =>
+		screen
+			.getAllByTestId('model-source-option')
+			.find((option) => option.getAttribute('data-value') === spec)!;
+
+	it('lists each source after the provider, under its own header', () => {
+		renderField({ modelSources: makeSources() });
+		expect(screen.queryByText('Claude Code')).not.toBeInTheDocument();
+
+		fireEvent.focus(modelInput());
+
+		// The provider's models are headed by the agent's name while sources are listed.
+		expect(screen.getByText('Claude Code')).toBeInTheDocument();
+		const groups = screen.getAllByTestId('model-source-group');
+		expect(groups.map((group) => group.firstElementChild?.textContent)).toEqual([
+			'Maestro model server',
+			'Ollama',
+		]);
+		expect(
+			screen
+				.getAllByTestId('model-source-option')
+				.map((option) => option.getAttribute('data-value'))
+		).toEqual(['maestro-server:gpt-oss-20b', OLLAMA_QWEN, 'ep-ollama:llama3:8b']);
+		// Provider models come before the first source group.
+		const sonnet = screen.getByRole('button', { name: 'sonnet' });
+		expect(
+			sonnet.compareDocumentPosition(groups[0]) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+	});
+
+	it('counts the source models and their sources under the field', () => {
+		renderField({ modelSources: makeSources() });
+
+		expect(screen.getByText('5 models from 3 sources')).toBeInTheDocument();
+	});
+
+	it('keeps the plain count, with no provider header, when no source lists a model', () => {
+		renderField({ modelSources: makeSources({ groups: [] }) });
+
+		expect(screen.getByText('2 models available')).toBeInTheDocument();
+		fireEvent.focus(modelInput());
+		expect(screen.queryByText('Claude Code')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-group')).not.toBeInTheDocument();
+	});
+
+	it('hands a picked source model to onSelect and leaves the provider model alone', async () => {
+		const sources = makeSources();
+		const { onConfigChange, onConfigBlur } = renderField({ modelSources: sources });
+
+		fireEvent.focus(modelInput());
+		fireEvent.click(sourceOption(OLLAMA_QWEN));
+
+		expect(sources.onSelect).toHaveBeenCalledWith(OLLAMA_QWEN);
+		expect(sources.onProvider).not.toHaveBeenCalled();
+		expect(onConfigChange).not.toHaveBeenCalled();
+		expect(onConfigBlur).not.toHaveBeenCalled();
+		expect(screen.queryByTestId('model-source-group')).not.toBeInTheDocument();
+		// The blur that follows the click must not commit anything either.
+		fireEvent.blur(modelInput());
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(onConfigChange).not.toHaveBeenCalled();
+		expect(sources.onProvider).not.toHaveBeenCalled();
+	});
+
+	it('shows the selected source model in the field, with a chip naming its source', () => {
+		renderField({
+			agentConfig: { model: 'sonnet' },
+			modelSources: makeSources({ selected: QWEN_SELECTED }),
+		});
+
+		expect(modelInput().value).toBe('qwen3:latest');
+		const chip = screen.getByTestId('model-source-chip');
+		expect(chip).toHaveTextContent('Ollama');
+		expect(chip).toHaveAttribute('title', 'Runs on Ollama');
+	});
+
+	it('shows no chip while the agent runs on its provider', () => {
+		renderField({ agentConfig: { model: 'sonnet' }, modelSources: makeSources() });
+
+		expect(modelInput().value).toBe('sonnet');
+		expect(screen.queryByTestId('model-source-chip')).not.toBeInTheDocument();
+	});
+
+	it('sets the model source back to the provider when a provider model is picked', () => {
+		const sources = makeSources({ selected: QWEN_SELECTED });
+		const { onConfigChange, onConfigBlur } = renderField({ modelSources: sources });
+
+		fireEvent.change(modelInput(), { target: { value: 'son' } });
+		fireEvent.click(screen.getByRole('button', { name: 'sonnet' }));
+
+		expect(onConfigChange).toHaveBeenCalledWith('model', 'sonnet');
+		expect(onConfigBlur).toHaveBeenCalledWith('model', 'sonnet');
+		expect(sources.onProvider).toHaveBeenCalledTimes(1);
+		expect(sources.onSelect).not.toHaveBeenCalled();
+	});
+
+	it('sets the model source back to the provider when a model name is typed', async () => {
+		const sources = makeSources({ selected: QWEN_SELECTED });
+		const { onConfigChange, onConfigBlur } = renderField({ modelSources: sources });
+
+		fireEvent.focus(modelInput());
+		fireEvent.change(modelInput(), { target: { value: 'my-custom-model' } });
+		fireEvent.blur(modelInput());
+
+		await waitFor(() => {
+			expect(onConfigChange).toHaveBeenCalledWith('model', 'my-custom-model');
+			expect(onConfigBlur).toHaveBeenCalledWith('model', 'my-custom-model');
+			expect(sources.onProvider).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	it('offers Clear while a source model is selected, even with no provider model', () => {
+		renderField({ modelSources: makeSources({ selected: QWEN_SELECTED }) });
+
+		expect(screen.getByText('Clear')).toBeInTheDocument();
+	});
+
+	it('Clear resets both the provider model and the model source', () => {
+		const sources = makeSources({ selected: QWEN_SELECTED });
+		const { onConfigChange, onConfigBlur } = renderField({
+			agentConfig: { model: 'sonnet' },
+			modelSources: sources,
+		});
+
+		fireEvent.click(screen.getByText('Clear'));
+
+		expect(onConfigChange).toHaveBeenCalledWith('model', '');
+		expect(onConfigBlur).toHaveBeenCalledWith('model', '');
+		expect(sources.onProvider).toHaveBeenCalledTimes(1);
+	});
+
+	it('narrows the source groups with the typed filter, by model or by source name', () => {
+		renderField({ modelSources: makeSources() });
+
+		fireEvent.change(modelInput(), { target: { value: '8b' } });
+		expect(
+			screen
+				.getAllByTestId('model-source-option')
+				.map((option) => option.getAttribute('data-value'))
+		).toEqual(['ep-ollama:llama3:8b']);
+		expect(screen.getAllByTestId('model-source-group')).toHaveLength(1);
+
+		fireEvent.change(modelInput(), { target: { value: 'ollama' } });
+		expect(
+			screen
+				.getAllByTestId('model-source-option')
+				.map((option) => option.getAttribute('data-value'))
+		).toEqual([OLLAMA_QWEN, 'ep-ollama:llama3:8b']);
+	});
+
+	it('lists source models for a provider that lists none of its own', () => {
+		renderField({ availableModels: [], modelSources: makeSources() });
+
+		fireEvent.focus(modelInput());
+
+		expect(screen.getAllByTestId('model-source-option')).toHaveLength(3);
+		// No provider header without provider models to head.
+		expect(screen.queryByText('Claude Code')).not.toBeInTheDocument();
+	});
+
+	it('offers no source models to an option other than the Model field', () => {
+		const effortAgent = createMockAgent({
+			capabilities,
+			configOptions: [
+				{ key: 'effort', label: 'Effort', type: 'text', description: 'Effort', default: '' },
+			],
+		});
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({
+					agent: effortAgent,
+					agentConfig: { effort: '' },
+					dynamicOptions: { effort: ['low', 'high'] },
+					modelSources: makeSources({ selected: QWEN_SELECTED }),
+				})}
+			/>
+		);
+
+		fireEvent.focus(screen.getByRole('textbox', { name: 'Effort' }));
+		expect(screen.queryByTestId('model-source-option')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-chip')).not.toBeInTheDocument();
 	});
 });

@@ -235,10 +235,11 @@ export function useBatchRunner({
 			// spawn uses the session's configured model, then the agent default.
 			// Nothing here is written back to the session.
 			const runOverrides: DocumentRunOverrides | undefined =
-				config.model || config.effort || config.ignoreModelHints
+				config.model || config.effort || config.runOn || config.ignoreModelHints
 					? {
 							...(config.model && { modelOverride: config.model }),
 							...(config.effort && { effortOverride: config.effort }),
+							...(config.runOn && { runOnOverride: config.runOn }),
 							...(config.ignoreModelHints && { ignoreModelHints: true }),
 						}
 					: undefined;

@@ -1,4 +1,6 @@
-import * as fs from 'node:fs/promises';
+// Grok reads and writes local files directly; its host seams are local only.
+import { localTranslationFs } from './local-fs';
+import type { TranslationFs } from './fs-port';
 import * as path from 'node:path';
 import { generateUUID } from '../../uuid';
 import { encodeClaudeProjectPath } from '../../pathUtils';
@@ -12,6 +14,7 @@ import {
 	extractGrokConversation,
 	extractNativeConversation,
 } from './native-records';
+import { activeContextRecords } from './context-window';
 import { nativeRecordKey, recordKey, translationHash } from './identity';
 import { TranslationRegistry } from './registry';
 import { TRANSLATION_DIRECTIONS, TRANSLATION_PROVIDER_VERSIONS } from './support';
@@ -37,11 +40,11 @@ export function projectConversation(
 	conversation: PortableConversation,
 	provider: 'claude-code' | 'codex',
 	sessionId: string,
-	destinationVersion: string = TRANSLATION_PROVIDER_VERSIONS['claude-code'][0]
+	destinationVersion: string = TRANSLATION_PROVIDER_VERSIONS['claude-code'].testedVersions[0]
 ): ProjectedNativeRecord[] {
 	const projected: ProjectedNativeRecord[] = [];
 	let parentUuid: string | null = null;
-	for (const record of conversation.records) {
+	for (const record of activeContextRecords(conversation.records)) {
 		if (
 			record.native &&
 			typeof record.native === 'object' &&
@@ -97,6 +100,7 @@ export function projectConversation(
 					break;
 				}
 				case 'tool-call':
+					if (block.interrupted) break;
 					if (provider === 'claude-code') {
 						let input = block.input;
 						if (typeof input === 'string') {
@@ -213,9 +217,12 @@ async function stageClaude(
 	conversation: PortableConversation,
 	context: TranslationStageContext
 ): Promise<TranslationTabMapping> {
+	const nativeFs = context.nativeFs ?? localTranslationFs;
+	const paths = nativeFs.paths ?? path;
 	const sessionId = generateUUID();
-	const file = path.join(
-		context.destination.nativeSessionRoot ?? path.join(context.destination.accountRoot, 'projects'),
+	const file = paths.join(
+		context.destination.nativeSessionRoot ??
+			paths.join(context.destination.accountRoot, 'projects'),
 		encodeClaudeProjectPath(context.destination.projectRoot),
 		`${sessionId}.jsonl`
 	);
@@ -244,24 +251,25 @@ async function stageClaude(
 	await context.recordIntent(mapping);
 	await assertTranslationTarget(
 		file,
-		context.destination.nativeSessionRoot ?? context.destination.accountRoot
+		context.destination.nativeSessionRoot ?? context.destination.accountRoot,
+		nativeFs
 	);
-	await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+	await nativeFs.mkdir(paths.dirname(file), { recursive: true, mode: 0o700 });
 	await assertTranslationTarget(
 		file,
-		context.destination.nativeSessionRoot ?? context.destination.accountRoot
+		context.destination.nativeSessionRoot ?? context.destination.accountRoot,
+		nativeFs
 	);
 	// Exclusive new file: a provider or another process can never lose an existing transcript.
-	const handle = await fs.open(file, 'wx', 0o600);
-	try {
-		mapping.artifacts[0].created = true;
-		await context.recordIntent(mapping);
-		await handle.writeFile(bytes);
-		await handle.sync();
-	} finally {
-		await handle.close();
-	}
-	if (translationHash(await fs.readFile(file)) !== mapping.artifacts[0].sha256)
+	await nativeFs.createExclusive(file, bytes, {
+		mode: 0o600,
+		durable: true,
+		onCreated: async () => {
+			mapping.artifacts[0].created = true;
+			await context.recordIntent(mapping);
+		},
+	});
+	if (translationHash(await nativeFs.readFile(file)) !== mapping.artifacts[0].sha256)
 		throw new Error('Claude destination readback failed');
 	return mapping;
 }
@@ -270,6 +278,8 @@ async function stageCodex(
 	conversation: PortableConversation,
 	context: TranslationStageContext
 ): Promise<TranslationTabMapping> {
+	const nativeFs = context.nativeFs ?? localTranslationFs;
+	const paths = nativeFs.paths ?? path;
 	if (!context.codex) throw new Error('Codex native import channel unavailable; no exec fallback');
 	const rows = projectConversation(conversation, 'codex', 'pending');
 	const items = rows.map((row) => {
@@ -300,10 +310,10 @@ async function stageCodex(
 	const sessionId = started.thread?.id;
 	if (!sessionId || !started.thread.path)
 		throw new Error('Codex did not return a durable native thread identity');
-	const relative = path.relative(context.destination.accountRoot, started.thread.path);
-	if (relative.startsWith('..') || path.isAbsolute(relative))
+	const relative = paths.relative(context.destination.accountRoot, started.thread.path);
+	if (relative.startsWith('..') || paths.isAbsolute(relative))
 		throw new Error('Codex returned a rollout outside the selected account');
-	await assertTranslationTarget(started.thread.path, context.destination.accountRoot);
+	await assertTranslationTarget(started.thread.path, context.destination.accountRoot, nativeFs);
 	const mapping: TranslationTabMapping = {
 		...intent,
 		destinationSessionId: sessionId,
@@ -316,7 +326,7 @@ async function stageCodex(
 		items,
 	});
 	// Read persisted bytes, not a successful RPC response or a flattened UI projection.
-	const bytes = await fs.readFile(started.thread.path);
+	const bytes = await nativeFs.readFile(started.thread.path);
 	const readback = extractNativeConversation(
 		context.destination,
 		conversation.tabId,
@@ -347,13 +357,13 @@ async function stageCodex(
 
 export const claudeTranslationAdapter: TranslationAdapter = {
 	provider: 'claude-code',
-	versions: TRANSLATION_PROVIDER_VERSIONS['claude-code'],
+	...TRANSLATION_PROVIDER_VERSIONS['claude-code'],
 	extract: extractNativeConversation,
 	stage: stageClaude,
 };
 export const codexTranslationAdapter: TranslationAdapter = {
 	provider: 'codex',
-	versions: TRANSLATION_PROVIDER_VERSIONS.codex,
+	...TRANSLATION_PROVIDER_VERSIONS.codex,
 	extract: extractNativeConversation,
 	stage: stageCodex,
 };
@@ -377,19 +387,21 @@ function grokConfinementRoot(identity: TranslationIdentity): string {
 async function readGrokSessionFile(
 	file: string,
 	root: string,
-	maxBytes: number
+	maxBytes: number,
+	nativeFs: TranslationFs = localTranslationFs
 ): Promise<Buffer | null> {
-	await assertTranslationTarget(file, root);
+	await assertTranslationTarget(file, root, nativeFs);
 	let stat;
 	try {
-		stat = await fs.lstat(file);
+		stat = await nativeFs.lstat(file);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
 		throw error;
 	}
-	if (!stat.isFile()) throw new Error('Grok session file is not a regular file');
+	const regular = stat.isFile ? stat.isFile() : !stat.isDirectory() && !stat.isSymbolicLink();
+	if (!regular) throw new Error('Grok session file is not a regular file');
 	if (stat.size > maxBytes) throw new RangeError('Grok session file exceeds the reader limit');
-	const bytes = await fs.readFile(file);
+	const bytes = await nativeFs.readFile(file);
 	if (bytes.length > maxBytes) throw new RangeError('Grok session file exceeds the reader limit');
 	return bytes;
 }
@@ -403,7 +415,8 @@ async function readGrokSessionFile(
  */
 export async function readGrokSessionSnapshot(
 	identity: TranslationIdentity,
-	sessionId: string
+	sessionId: string,
+	nativeFs: TranslationFs = localTranslationFs
 ): Promise<{ bytes: Buffer; sessionDir: string; transcriptPath: string }> {
 	if (identity.provider !== 'grok') throw new Error('Not a Grok translation identity');
 	if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) throw new Error('Unsafe native session ID');
@@ -411,7 +424,7 @@ export async function readGrokSessionSnapshot(
 	const confinement = grokConfinementRoot(identity);
 	const cwds = new Set([path.resolve(identity.projectRoot).replace(/[/\\]+$/, '') || '/']);
 	try {
-		cwds.add(await fs.realpath(identity.projectRoot));
+		cwds.add(await nativeFs.realpath(identity.projectRoot));
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 	}
@@ -420,9 +433,9 @@ export async function readGrokSessionSnapshot(
 		const folder = encodeGrokCwdDirname(cwd);
 		if (!folder) continue;
 		const dir = path.join(root, folder, sessionId);
-		await assertTranslationTarget(path.join(dir, 'summary.json'), confinement);
+		await assertTranslationTarget(path.join(dir, 'summary.json'), confinement, nativeFs);
 		try {
-			const stat = await fs.lstat(dir);
+			const stat = await nativeFs.lstat(dir);
 			if (stat.isDirectory()) found.push(dir);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -438,10 +451,14 @@ export async function readGrokSessionSnapshot(
 	const summaryPath = path.join(sessionDir, 'summary.json');
 	const transcriptPath = path.join(sessionDir, 'chat_history.jsonl');
 	const sample = async () => ({
-		summary: await readGrokSessionFile(summaryPath, confinement, GROK_SUMMARY_MAX_BYTES),
+		summary: await readGrokSessionFile(summaryPath, confinement, GROK_SUMMARY_MAX_BYTES, nativeFs),
 		transcript:
-			(await readGrokSessionFile(transcriptPath, confinement, GROK_TRANSCRIPT_MAX_BYTES)) ??
-			Buffer.alloc(0),
+			(await readGrokSessionFile(
+				transcriptPath,
+				confinement,
+				GROK_TRANSCRIPT_MAX_BYTES,
+				nativeFs
+			)) ?? Buffer.alloc(0),
 	});
 	const first = await sample();
 	const second = await sample();
@@ -716,9 +733,10 @@ async function stageGrok(
 	if (!rows.length) throw new Error('No model-visible history to stage for Grok');
 	if (rows.length > GROK_TRANSCRIPT_MAX_ROWS)
 		throw new RangeError('Projected Grok history exceeds the reader row limit');
+	const nativeFs = context.nativeFs ?? localTranslationFs;
 	const root = grokSessionsRoot(destination);
 	const confinement = grokConfinementRoot(destination);
-	const cwd = await fs.realpath(destination.projectRoot);
+	const cwd = await nativeFs.realpath(destination.projectRoot);
 	const folder = encodeGrokCwdDirname(cwd);
 	if (!folder)
 		throw new Error(
@@ -751,29 +769,34 @@ async function stageGrok(
 		),
 	};
 	await context.recordIntent(mapping);
-	await assertTranslationTarget(summaryPath, confinement);
-	await fs.mkdir(path.dirname(sessionDir), { recursive: true, mode: 0o700 });
-	await assertTranslationTarget(summaryPath, confinement);
+	await assertTranslationTarget(summaryPath, confinement, nativeFs);
+	await nativeFs.mkdir(path.dirname(sessionDir), { recursive: true, mode: 0o700 });
+	await assertTranslationTarget(summaryPath, confinement, nativeFs);
 	// Exclusive: an existing session directory is a conflict, never reused.
-	await fs.mkdir(sessionDir, { mode: 0o700 });
-	await assertTranslationTarget(summaryPath, confinement);
+	await nativeFs.mkdir(sessionDir, { recursive: false, mode: 0o700 });
+	await assertTranslationTarget(summaryPath, confinement, nativeFs);
 	for (const [index, bytes] of [transcript, summary].entries()) {
-		const handle = await fs.open(mapping.artifacts[index].path, 'wx', 0o600);
-		try {
-			mapping.artifacts[index].created = true;
-			await context.recordIntent(mapping);
-			await handle.writeFile(bytes);
-			await handle.sync();
-		} finally {
-			await handle.close();
-		}
+		await nativeFs.createExclusive(mapping.artifacts[index].path, bytes, {
+			mode: 0o600,
+			durable: true,
+			onCreated: async () => {
+				mapping.artifacts[index].created = true;
+				await context.recordIntent(mapping);
+			},
+		});
 	}
 	const readTranscript = await readGrokSessionFile(
 		transcriptPath,
 		confinement,
-		GROK_TRANSCRIPT_MAX_BYTES
+		GROK_TRANSCRIPT_MAX_BYTES,
+		nativeFs
 	);
-	const readSummary = await readGrokSessionFile(summaryPath, confinement, GROK_SUMMARY_MAX_BYTES);
+	const readSummary = await readGrokSessionFile(
+		summaryPath,
+		confinement,
+		GROK_SUMMARY_MAX_BYTES,
+		nativeFs
+	);
 	if (
 		!readTranscript ||
 		!readSummary ||
@@ -817,7 +840,7 @@ async function stageGrok(
  */
 export const grokTranslationAdapter: TranslationAdapter = {
 	provider: 'grok',
-	versions: TRANSLATION_PROVIDER_VERSIONS.grok,
+	...TRANSLATION_PROVIDER_VERSIONS.grok,
 	extract: extractGrokConversation,
 	stage: stageGrok,
 };

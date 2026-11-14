@@ -106,6 +106,45 @@ describe('executeCueAutoRun', () => {
 		});
 	});
 
+	it('hands the run_on target to the launch, and omits it when unset', async () => {
+		launchCueAutoRunMock.mockResolvedValue({ success: true });
+
+		await executeCueAutoRun({
+			runId: 'run-1',
+			session: createSession(),
+			subscription: createSubscription(),
+			event,
+			autoRun: {
+				documents: ['/proj/a.md'],
+				run_on: {
+					type: 'source',
+					endpointId: 'ep-ollama',
+					model: 'qwen3:latest',
+					contextTokens: 131072,
+				},
+			},
+			launch: launchCueAutoRunMock,
+			onLog: vi.fn(),
+		});
+		await executeCueAutoRun({
+			runId: 'run-2',
+			session: createSession(),
+			subscription: createSubscription(),
+			event,
+			autoRun: { documents: ['/proj/a.md'] },
+			launch: launchCueAutoRunMock,
+			onLog: vi.fn(),
+		});
+
+		expect(launchCueAutoRunMock.mock.calls[0][0].runOn).toEqual({
+			type: 'source',
+			endpointId: 'ep-ollama',
+			model: 'qwen3:latest',
+			contextTokens: 131072,
+		});
+		expect(launchCueAutoRunMock.mock.calls[1][0]).not.toHaveProperty('runOn');
+	});
+
 	it('hands the auto-resume settings and the worktree target to the launch', async () => {
 		launchCueAutoRunMock.mockResolvedValue({ success: true });
 

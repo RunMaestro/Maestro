@@ -12,6 +12,11 @@ import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { notifyToast } from '../../stores/notificationStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { captureException } from '../../utils/sentry';
+import {
+	codifyTurnSettings,
+	projectTabProvider,
+	resolveTabNativeProvider,
+} from '../../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { resolveTurnProvider } from '../../../shared/maestro-lib/agents/providerSwap';
 
@@ -36,7 +41,10 @@ export function useForkConversation() {
 		const rawLogIndex = sourceTab.logs.findIndex((l) => l.id === logId);
 		if (rawLogIndex === -1) return;
 
-		if (session.toolType === 'grok' || resolveTurnProvider(sourceTab, session) === 'grok') {
+		if (
+			resolveTabNativeProvider(sourceTab, session) === 'grok' ||
+			resolveTurnProvider(sourceTab, session) === 'grok'
+		) {
 			// The path below is a prompt-based context fork. Rendered log indices
 			// cannot identify Grok's native targetPromptIndex or preserve its tool
 			// ancestry. Do not substitute it for an unavailable native mutation.
@@ -140,6 +148,9 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 		});
 		if (!tabResult) return;
 
+		// A fork continues the source harness, independent of the agent default.
+		tabResult.tab.tabProvider = resolveTabNativeProvider(sourceTab, session);
+		const launchSession = projectTabProvider(session, tabResult.tab).agent;
 		const newTabId = tabResult.tab.id;
 		const sourceTabId = sourceTab.id;
 		// The fork carries the source tab's permission mode, resolved by the one rule
@@ -162,6 +173,7 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 					const insertIdx = sourceIdx >= 0 ? sourceIdx + 1 : s.aiTabs.length;
 					const busyTab = {
 						...tabResult.tab,
+						...codifyTurnSettings(tabResult.tab, session),
 						...permissionModeFields(forkPermissionMode),
 						state: 'busy' as const,
 						thinkingStartTime: Date.now(),
@@ -216,27 +228,27 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 		// 7. Spawn agent async (follows Send-to-Agent pattern)
 		(async () => {
 			try {
-				const agent = await window.maestro.agents.get(session.toolType);
-				if (!agent) throw new Error(`${session.toolType} agent not found`);
+				const agent = await window.maestro.agents.get(launchSession.toolType);
+				if (!agent) throw new Error(`${launchSession.toolType} agent not found`);
 
 				const isReadOnly = forkPermissionMode === 'readonly';
 				const baseArgs = agent.args ?? [];
 				const commandToUse = agent.path || agent.command;
 				if (!commandToUse) {
-					throw new Error(`${session.toolType} agent has no command configured`);
+					throw new Error(`${launchSession.toolType} agent has no command configured`);
 				}
 
 				const effectivePrompt = contextMessage;
 
 				const appendSystemPrompt = await prepareMaestroSystemPrompt({
-					session,
+					session: launchSession,
 					activeTabId: newTabId,
 				});
 
 				const spawnSessionId = `${session.id}-ai-${newTabId}`;
 				await window.maestro.process.spawn({
 					sessionId: spawnSessionId,
-					toolType: session.toolType,
+					toolType: launchSession.toolType,
 					cwd: session.cwd,
 					command: commandToUse,
 					args: isReadOnly ? filterYoloArgs(baseArgs, agent) : [...baseArgs],
@@ -244,20 +256,20 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 					appendSystemPrompt,
 					readOnlyMode: isReadOnly,
 					permissionMode: forkPermissionMode,
-					sessionCustomPath: session.customPath,
-					sessionCustomArgs: session.customArgs,
+					sessionCustomPath: launchSession.customPath,
+					sessionCustomArgs: launchSession.customArgs,
 					sessionAdditionalDirectories: session.additionalDirectories,
-					sessionCustomEnvVars: session.customEnvVars,
-					sessionCustomModel: session.customModel,
-					sessionCustomEffort: session.customEffort,
-					sessionCustomContextWindow: session.customContextWindow,
+					sessionCustomEnvVars: launchSession.customEnvVars,
+					sessionCustomModel: launchSession.customModel,
+					sessionCustomEffort: launchSession.customEffort,
+					sessionCustomContextWindow: launchSession.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
 			} catch (error) {
 				captureException(error, {
 					extra: {
 						sessionId: session.id,
-						toolType: session.toolType,
+						toolType: launchSession.toolType,
 						newTabId,
 						operation: 'fork-conversation-spawn',
 					},

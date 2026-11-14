@@ -2,9 +2,13 @@ import { parseCuePluginSource } from '../triggers/cue-plugin-trigger-source';
 import picomatch from 'picomatch';
 import {
 	CUE_EVENT_TYPES,
+	CUE_GATE_MAX_CONDITION_LENGTH,
+	CUE_GATE_ON_UNAVAILABLE,
 	CUE_GITHUB_LABEL_TARGETS,
 	CUE_GITHUB_STATES,
 	CUE_SCHEDULE_DAYS,
+	DEFAULT_CUE_INJECTION_THRESHOLD,
+	cueInjectionThresholdProblem,
 	type CueGitHubLabelTarget,
 	type CueGitHubState,
 	type CueScheduleDay,
@@ -12,6 +16,7 @@ import {
 } from '../../../shared/cue';
 import { parseCueAutoRunWorktree } from '../../../shared/cue/autorun-worktree';
 import { TIER_LEVELS, asTierLevel } from '../../../shared/modelTiers';
+import { parseRunOnTarget } from '../../../shared/local-models/run-on';
 
 function validateGlobPattern(pattern: string, prefix: string, errors: string[]): void {
 	// Path-traversal guard: the watcher resolves `watchGlob` against `projectRoot`
@@ -149,6 +154,13 @@ function validateAutoRunField(value: unknown, prefix: string, errors: string[]):
 		if (cfg[key] !== undefined && typeof cfg[key] !== 'string') {
 			errors.push(`${prefix}: "auto_run.${key}" must be a string when provided`);
 		}
+	}
+
+	// Refused, not dropped: a run that silently lost its target would run on
+	// the agent's own model, which may be a paid provider the author avoided.
+	if (cfg.run_on !== undefined) {
+		const runOn = parseRunOnTarget(cfg.run_on);
+		if (!runOn.ok) errors.push(`${prefix}: "auto_run.run_on": ${runOn.error}`);
 	}
 
 	for (const key of ['loop_enabled', 'ignore_model_hints', 'auto_resume_on_error'] as const) {
@@ -377,6 +389,42 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 				`${prefix}: "fan_in_timeout_minutes" must be a positive integer between 1 and 1440`
 			);
 		}
+	}
+
+	if (subRecord.gate !== undefined) {
+		if (typeof subRecord.gate !== 'string' || subRecord.gate.trim().length === 0) {
+			errors.push(
+				`${prefix}: "gate" must be a non-empty string (a condition the event must meet, in plain language)`
+			);
+		} else if (subRecord.gate.length > CUE_GATE_MAX_CONDITION_LENGTH) {
+			errors.push(
+				`${prefix}: "gate" must be at most ${CUE_GATE_MAX_CONDITION_LENGTH} characters (one sentence is enough)`
+			);
+		}
+	}
+	if (subRecord.gate_on_unavailable !== undefined) {
+		if (
+			typeof subRecord.gate_on_unavailable !== 'string' ||
+			!(CUE_GATE_ON_UNAVAILABLE as readonly string[]).includes(subRecord.gate_on_unavailable)
+		) {
+			errors.push(
+				`${prefix}: "gate_on_unavailable" must be one of: ${CUE_GATE_ON_UNAVAILABLE.join(', ')} (what a gate does when its model cannot answer; omitted = run)`
+			);
+		}
+	}
+
+	if (subRecord.screen_injection !== undefined && typeof subRecord.screen_injection !== 'boolean') {
+		errors.push(
+			`${prefix}: "screen_injection" must be true or false (omitted = screen shell commands that use untrusted text)`
+		);
+	}
+	if (
+		subRecord.injection_threshold !== undefined &&
+		cueInjectionThresholdProblem(subRecord.injection_threshold) !== null
+	) {
+		errors.push(
+			`${prefix}: "injection_threshold" must be a number above 0 and at most 1 (omitted = ${DEFAULT_CUE_INJECTION_THRESHOLD})`
+		);
 	}
 
 	if (subRecord.filter !== undefined) {

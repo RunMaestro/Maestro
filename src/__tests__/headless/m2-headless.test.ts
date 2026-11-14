@@ -104,11 +104,13 @@ describe('M2 end-to-end: headless runtime with swap-and-back', () => {
 		...extra,
 	});
 
-	async function startRuntime(sessions: unknown[] = [seedAgent()]): Promise<MaestroRuntime> {
-		fs.writeFileSync(
-			path.join(dir, 'maestro-sessions.json'),
-			JSON.stringify({ sessions, activeSessionId: 'a1' }, null, '\t')
-		);
+	async function startRuntime(sessions?: unknown[]): Promise<MaestroRuntime> {
+		if (sessions || !fs.existsSync(path.join(dir, 'maestro-sessions.json'))) {
+			fs.writeFileSync(
+				path.join(dir, 'maestro-sessions.json'),
+				JSON.stringify({ sessions: sessions ?? [seedAgent()], activeSessionId: 'a1' }, null, '\t')
+			);
+		}
 		const started = await createMaestroRuntime({
 			dataDir: dir,
 			mode: 'tui',
@@ -176,7 +178,16 @@ describe('M2 end-to-end: headless runtime with swap-and-back', () => {
 
 	it('creates an agent, chats on two tabs, swaps providers and back, then reloads with everything intact', async () => {
 		// Start the runtime in-process mode (no desktop).
-		let runtime = await startRuntime();
+		// Native slots let the fake provider test parking without native translation.
+		let runtime = await startRuntime([
+			seedAgent({
+				aiTabs: seedAgent().aiTabs.map((tab) => ({
+					...tab,
+					agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID,
+					providerSessions: { opencode: { agentSessionId: CAPTURED_OPENCODE_SESSION_ID } },
+				})),
+			}),
+		]);
 
 		// Send a message on tab 1.
 		const tab1 = watchTab(runtime, 't1');
@@ -205,11 +216,11 @@ describe('M2 end-to-end: headless runtime with swap-and-back', () => {
 		// Swap the provider to opencode.
 		value(await runtime.agents.update('a1', { provider: 'opencode' }));
 
-		// Both tabs should reset their session ids to null.
+		// Both tabs restore the selected provider's parked native identity.
 		tab1Data = await tabOf(runtime, 't1');
 		tab2Data = await tabOf(runtime, 't2');
-		expect(tab1Data.agentSessionId).toBeNull();
-		expect(tab2Data.agentSessionId).toBeNull();
+		expect(tab1Data.agentSessionId).toBe(CAPTURED_OPENCODE_SESSION_ID);
+		expect(tab2Data.agentSessionId).toBe(CAPTURED_OPENCODE_SESSION_ID);
 
 		// Send a message on tab 1 with the new provider.
 		const tab1OpenCode = watchTab(runtime, 't1');
@@ -273,11 +284,9 @@ describe('M2 end-to-end: headless runtime with swap-and-back', () => {
 		tab1Data = await tabOf(runtime, 't1');
 		tab2Data = await tabOf(runtime, 't2');
 		const restoredProviderSessions = tab1Data.providerSessions as Record<string, any>;
-		if (restoredProviderSessions) {
-			// Both provider session IDs should be stored.
-			expect(restoredProviderSessions['claude-code']).toBeDefined();
-			expect(restoredProviderSessions['opencode']).toBeDefined();
-		}
+		expect(tab1Data.agentSessionId).toBe(CAPTURED_CLAUDE_CODE_SESSION_ID);
+		expect(restoredProviderSessions.opencode.agentSessionId).toBe(CAPTURED_OPENCODE_SESSION_ID);
+		expect(restoredProviderSessions['claude-code']).toBeUndefined();
 
 		// Most importantly: check history is persisted and contains all turn records.
 		const reloadedHistory = readHistory(runtime.paths, 'a1');

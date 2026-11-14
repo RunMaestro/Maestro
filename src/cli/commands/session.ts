@@ -20,8 +20,10 @@ import { formatRelativeTime } from '../../shared/formatters';
 import type {
 	DesktopTabEntry as DesktopSessionEntry,
 	DesktopStripTabEntry,
+	TabProviderInspection,
 } from '../../shared/desktopTabs';
 import type { TabStripVisibility } from '../../shared/tabStripMembership';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 
 export interface SessionListOptions {
 	json?: boolean;
@@ -49,7 +51,7 @@ interface SessionMessage {
 	timestamp: string;
 }
 
-interface SessionShowResult {
+interface SessionShowResult extends TabProviderInspection {
 	success: true;
 	tabId: string;
 	sessionId: string;
@@ -213,7 +215,7 @@ export async function sessionList(options: SessionListOptions): Promise<void> {
 		exitIfMaestroNotRunning(error, { json: true, indent: 2 });
 		const msg = error instanceof Error ? error.message : String(error);
 		emitErrorJson(`Failed to list sessions: ${msg}`, 'COMMAND_FAILED');
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 
@@ -226,7 +228,7 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 				`Invalid --since value: ${options.since} (expected ISO-8601 or epoch number)`,
 				'INVALID_OPTION'
 			);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 			return;
 		}
 		sinceMs = parsed;
@@ -244,7 +246,7 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 				`Invalid --tail value: ${options.tail} (expected non-negative integer)`,
 				'INVALID_OPTION'
 			);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 			return;
 		}
 		tail = Number(trimmedTail);
@@ -252,16 +254,18 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 
 	try {
 		const result = await withMaestroClient(async (client) => {
-			return client.sendCommand<{
-				success?: boolean;
-				error?: string;
-				code?: string;
-				tabId?: string;
-				sessionId?: string;
-				agentId?: string;
-				agentSessionId?: string | null;
-				messages?: SessionMessage[];
-			}>(
+			return client.sendCommand<
+				{
+					success?: boolean;
+					error?: string;
+					code?: string;
+					tabId?: string;
+					sessionId?: string;
+					agentId?: string;
+					agentSessionId?: string | null;
+					messages?: SessionMessage[];
+				} & TabProviderInspection
+			>(
 				{
 					type: 'get_session_history',
 					tabId,
@@ -274,7 +278,7 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 
 		if (!result.success) {
 			emitErrorJson(result.error ?? 'Unknown error', result.code ?? 'UNKNOWN');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 			return;
 		}
 
@@ -285,6 +289,14 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 			agentId: result.agentId ?? '',
 			agentSessionId: result.agentSessionId ?? null,
 			messages: result.messages ?? [],
+			provider: result.provider,
+			agentProvider: result.agentProvider,
+			tabProvider: result.tabProvider,
+			turnProvider: result.turnProvider,
+			pendingTranslation: result.pendingTranslation,
+			effectiveModel: result.effectiveModel,
+			effectiveEffort: result.effectiveEffort,
+			runOn: result.runOn,
 		};
 
 		if (options.json) {
@@ -297,6 +309,7 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 		// follow-up `session show --since "<timestamp>"` call without having to
 		// re-parse a localized datetime.
 		const headerParts = [`Tab: ${payload.tabId}`, `Agent: ${payload.agentId || '(unknown)'}`];
+		if (payload.provider) headerParts.push(`Provider: ${payload.provider}`);
 		if (payload.agentSessionId) headerParts.push(`Session: ${payload.agentSessionId}`);
 		headerParts.push(`Messages: ${payload.messages.length}`);
 		console.log(headerParts.join('  '));
@@ -316,6 +329,6 @@ export async function sessionShow(tabId: string, options: SessionShowOptions): P
 		exitIfMaestroNotRunning(error, { json: true, indent: 2 });
 		const msg = error instanceof Error ? error.message : String(error);
 		emitErrorJson(`Failed to show session: ${msg}`, 'COMMAND_FAILED');
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }

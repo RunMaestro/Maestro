@@ -35,6 +35,13 @@ export interface CueNotifyToastParams {
 	 * `red` so they do not read as a routine automation ping.
 	 */
 	color?: 'green' | 'yellow' | 'orange' | 'red' | 'theme';
+	/**
+	 * Who fired the toast, for its header strip. The renderer otherwise
+	 * resolves the name from `agentId`, which shows nothing when that agent is
+	 * not loaded in the window that draws the toast. A security notice passes
+	 * it so the user always sees which agent's automation was stopped.
+	 */
+	sourceAgent?: string;
 }
 
 /**
@@ -75,6 +82,7 @@ export function emitCueNotifyToast(
 			color: params.color ?? ('theme' as const),
 			dismissible: params.sticky === true,
 			sessionId: params.agentId,
+			...(params.sourceAgent ? { sourceAgent: params.sourceAgent } : {}),
 			clickAction,
 		});
 	} catch (err) {

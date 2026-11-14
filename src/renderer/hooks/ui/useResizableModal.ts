@@ -21,8 +21,9 @@ export type ModalResizeDirection = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 
  * trigger, a popover. There the dragged corner moves 1:1 with the cursor. Such
  * a surface should expose only the `s`, `e` and `se` handles: dragging `n` or
  * `w` would have to move the anchor, which this hook does not do.
+ * `bottom-left` pins a menu above its trigger and exposes `n`, `e` and `ne`.
  */
-export type ModalResizeAnchor = 'center' | 'top-left';
+export type ModalResizeAnchor = 'center' | 'top-left' | 'bottom-left';
 
 export interface UseResizableModalOptions {
 	resizeKey: ModalResizeKey;
@@ -30,6 +31,8 @@ export interface UseResizableModalOptions {
 	minSize?: Partial<ModalSize>;
 	maxSize?: Partial<ModalSize>;
 	enabled?: boolean;
+	/** Let content set the height until a manual resize; resetting restores automatic growth. */
+	autoHeight?: boolean;
 	viewportPadding?: number;
 	externalRef?: RefObject<HTMLDivElement>;
 	/**
@@ -42,6 +45,8 @@ export interface UseResizableModalOptions {
 	 * `top-left` is for a free-positioned window pinned by its top-left corner.
 	 * Its origin does not move, so the delta applies 1:1 - doubling it there
 	 * would make the frame race away from the pointer at twice its speed.
+	 * `bottom-left` uses the same 1:1 deltas for a menu above its trigger;
+	 * expose only `n`, `e` and `ne` handles so its bottom-left stays pinned.
 	 */
 	anchor?: ModalResizeAnchor;
 }
@@ -92,6 +97,7 @@ export function useResizableModal({
 	minSize,
 	maxSize,
 	enabled = true,
+	autoHeight = false,
 	viewportPadding,
 	externalRef,
 	anchor = 'center',
@@ -100,6 +106,7 @@ export function useResizableModal({
 	const internalRef = useRef<HTMLDivElement>(null) as React.RefObject<HTMLDivElement>;
 	const modalRef = externalRef ?? internalRef;
 	const savedSize = useSettingsStore((state) => state.modalSizes[resizeKey]);
+	const usesAutoHeight = autoHeight && savedSize === undefined;
 	const setModalSize = useSettingsStore((state) => state.setModalSize);
 	const resetModalSize = useSettingsStore((state) => state.resetModalSize);
 	const [size, setSize] = useState<ModalSize>(() =>
@@ -125,10 +132,10 @@ export function useResizableModal({
 	);
 
 	const applySize = useCallback(
-		(next: ModalSize) => {
+		(next: ModalSize, fitHeight = false) => {
 			if (modalRef.current) {
 				modalRef.current.style.width = `${next.width}px`;
-				modalRef.current.style.height = `${next.height}px`;
+				modalRef.current.style.height = fitHeight ? 'auto' : `${next.height}px`;
 			}
 		},
 		[modalRef]
@@ -144,7 +151,7 @@ export function useResizableModal({
 			viewportPadding,
 		});
 		setSize(next);
-		applySize(next);
+		applySize(next, usesAutoHeight);
 	}, [
 		applySize,
 		defaultWidth,
@@ -156,6 +163,7 @@ export function useResizableModal({
 		minHeight,
 		savedSize,
 		viewportPadding,
+		usesAutoHeight,
 	]);
 
 	const { debouncedCallback: persistResizedSize, cancel: cancelPersistResizedSize } =
@@ -170,8 +178,8 @@ export function useResizableModal({
 			if (!enabled) return;
 			setSize((current) => {
 				const next = clamp(current);
-				applySize(next);
-				if (next.width !== current.width || next.height !== current.height) {
+				applySize(next, usesAutoHeight);
+				if (!usesAutoHeight && (next.width !== current.width || next.height !== current.height)) {
 					persistResizedSize(resizeKey, next);
 				}
 				return next;
@@ -197,11 +205,15 @@ export function useResizableModal({
 			// up a new drag so they aren't orphaned for the life of the page.
 			cleanupRef.current?.();
 
-			setIsResizing(true);
-
 			const startX = event.clientX;
 			const startY = event.clientY;
-			const startSize = clamp(size);
+			const rect = usesAutoHeight ? modalRef.current?.getBoundingClientRect() : undefined;
+			const startSize = clamp({
+				width: rect?.width || size.width,
+				height: rect?.height || size.height,
+			});
+			setSize(startSize);
+			setIsResizing(true);
 			let currentSize = startSize;
 
 			const commit = () => {
@@ -268,7 +280,18 @@ export function useResizableModal({
 			document.addEventListener('mouseup', handleMouseUp);
 			window.addEventListener('blur', handleWindowBlur);
 		},
-		[applySize, cancelPersistResizedSize, clamp, edgeScale, enabled, resizeKey, setModalSize, size]
+		[
+			applySize,
+			cancelPersistResizedSize,
+			clamp,
+			edgeScale,
+			enabled,
+			modalRef,
+			resizeKey,
+			setModalSize,
+			size,
+			usesAutoHeight,
+		]
 	);
 
 	// Clearing the saved size re-runs the resolve effect above, which recomputes
@@ -290,7 +313,7 @@ export function useResizableModal({
 		canReset: enabled && savedSize !== undefined,
 		style: {
 			width: `${size.width}px`,
-			height: `${size.height}px`,
+			height: usesAutoHeight && !isResizing ? 'auto' : `${size.height}px`,
 			maxWidth: '90vw',
 			maxHeight: '90vh',
 		},

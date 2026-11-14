@@ -19,7 +19,7 @@ import {
 	ExternalLink,
 } from 'lucide-react';
 import { getBasename } from '../../../shared/formatters';
-import { useSettingsStore } from '../../stores/settingsStore';
+import { selectACappellaEnabled, useSettingsStore } from '../../stores/settingsStore';
 import { useGitDetail } from '../../contexts/GitStatusContext';
 import { buildChangedAncestors, buildFileChangeMap } from '../../utils/gitChangeMap';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../../constants/rightPanel';
@@ -61,6 +61,7 @@ import { useFileContextMenu } from './hooks/useFileContextMenu';
 
 // Utils
 import { formatBytes } from './utils/pathHelpers';
+import { canRevealOnHost } from '../../services/hostShell';
 
 /** localStorage key remembering that the user dismissed the "not all files loaded" banner. */
 export const TRUNCATION_BANNER_DISMISSED_KEY = 'fileExplorer.truncationBanner.dismissed';
@@ -103,6 +104,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 	const dotfilesToggleHidden = useSettingsStore((s) => s.dotfilesToggleHidden);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const voiceEnabled = useSettingsStore(selectACappellaEnabled);
 	const htmlDoubleClickOpensInBrowser = useSettingsStore((s) => s.htmlDoubleClickOpensInBrowser);
 	// Two ways to fit the toolbar in a narrow panel, by what is scarce: a narrow
 	// DESKTOP panel (`compact`) drops the icons and keeps the words for a mouse
@@ -415,6 +417,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleOpenNewFile,
 		handleOpenNewFolder,
 		handleNewAgentHere,
+		handleTalkWithDocument,
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
@@ -604,8 +607,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						{!compact && <Search className="w-3 h-3" />}
 						{!iconOnly && 'Find'}
 					</button>
-					{/* Open in file manager - local sessions only */}
-					{!sshRemoteId && (
+					{/* Open in file manager - the host's: desktop and local agents only */}
+					{canRevealOnHost(sshRemoteId) && (
 						<button
 							onClick={() =>
 								window.maestro?.shell?.openPath(session.fullPath || session.projectRoot)
@@ -1106,6 +1109,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenNewFile={handleOpenNewFile}
 					onOpenNewFolder={handleOpenNewFolder}
 					onNewAgentHere={handleNewAgentHere}
+					voiceEnabled={voiceEnabled}
+					onTalkWithDocument={handleTalkWithDocument}
 					onPreviewFile={handlePreviewFile}
 					onPreviewAllInFolder={handlePreviewAllInFolder}
 					autoRunStagedCount={autoRunStagedDocs.length}

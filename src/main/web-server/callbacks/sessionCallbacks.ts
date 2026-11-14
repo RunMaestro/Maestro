@@ -1,3 +1,4 @@
+import { inspectTabProvider } from '../../../shared/desktopTabs';
 import { sameCurrentTurnCursor } from '../../../shared/currentTurn';
 import { getPendingQuestionsSnapshot } from '../../permission-relay/registry';
 import { nativeCurrentTurns } from '../../pianola/current-turn';
@@ -79,6 +80,7 @@ export function registerSessionCallbacks(
 				s.aiTabs?.map((tab: any) => ({
 					id: tab.id,
 					agentSessionId: tab.agentSessionId || null,
+					...inspectTabProvider(tab, s),
 					name: tab.name || null,
 					origin: tab.origin,
 					starred: tab.starred || false,
@@ -217,6 +219,7 @@ export function registerSessionCallbacks(
 					agentId: s.id,
 					agentName: s.name,
 					toolType: s.toolType,
+					...inspectTabProvider(tab as any, s),
 					name: typeof tab.name === 'string' ? tab.name : null,
 					agentSessionId: typeof tab.agentSessionId === 'string' ? tab.agentSessionId : null,
 					state,
@@ -444,6 +447,7 @@ export function registerSessionCallbacks(
 				sessionId: tabId,
 				agentId: s.id,
 				agentSessionId: typeof tab.agentSessionId === 'string' ? tab.agentSessionId : null,
+				...inspectTabProvider(tab as any, s),
 				projectPath: typeof s.cwd === 'string' ? s.cwd : undefined,
 				messages,
 			};
@@ -463,6 +467,9 @@ export function registerSessionCallbacks(
 		// AI logs include thinking and tool entries for UX parity with desktop
 		let aiLogs: any[] = [];
 		const targetTabId = tabId || session.activeTabId;
+		const selectedTab =
+			session.aiTabs?.find((t: any) => t.id === targetTabId) ??
+			(!tabId ? session.aiTabs?.[0] : undefined);
 		// The provider session id belongs to the tab whose logs are returned. The
 		// agent-level field is whichever tab last reported one (Grok and Codex
 		// write it on every capture; Claude never does), so reporting it beside
@@ -501,6 +508,7 @@ export function registerSessionCallbacks(
 
 		return {
 			id: session.id,
+			...(selectedTab ? inspectTabProvider(selectedTab as any, session) : {}),
 			name: session.name,
 			toolType: session.toolType,
 			state: isAgentBusy(session, getProcessManager()) ? 'busy' : session.state,

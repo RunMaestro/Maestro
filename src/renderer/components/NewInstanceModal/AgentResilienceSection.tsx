@@ -13,7 +13,7 @@ import React from 'react';
 
 import type { Theme } from '../../types';
 
-interface AgentResilienceSectionProps {
+export interface AgentResilienceSectionProps {
 	theme: Theme;
 	retryOnAvailabilityErrors: boolean;
 	retryOnTokenExhaustion: boolean;

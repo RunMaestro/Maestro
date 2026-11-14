@@ -72,6 +72,7 @@ export interface TurnAgent {
 }
 
 export interface TurnTab {
+	tabProvider?: import('../../types').ToolType;
 	id: string;
 	agentSessionId?: string | null;
 	customModel?: string;

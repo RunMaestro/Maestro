@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GistPublishModal } from '../../../renderer/components/GistPublishModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { useSecretScreenStore } from '../../../renderer/stores/secretScreenStore';
 import type { Theme } from '../../../renderer/types';
 
 // Mock lucide-react
@@ -187,7 +188,14 @@ describe('GistPublishModal', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Publish Secret' }));
 
 			await waitFor(() => {
-				expect(mockCreateGist).toHaveBeenCalledWith('test.js', 'const x = 1;', '', false);
+				expect(mockCreateGist).toHaveBeenCalledWith(
+					'test.js',
+					'const x = 1;',
+					'',
+					false,
+					undefined,
+					{ allowSecrets: false }
+				);
 			});
 		});
 
@@ -206,7 +214,14 @@ describe('GistPublishModal', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Publish Public' }));
 
 			await waitFor(() => {
-				expect(mockCreateGist).toHaveBeenCalledWith('test.js', 'const x = 1;', '', true);
+				expect(mockCreateGist).toHaveBeenCalledWith(
+					'test.js',
+					'const x = 1;',
+					'',
+					true,
+					undefined,
+					{ allowSecrets: false }
+				);
 			});
 		});
 
@@ -644,6 +659,93 @@ describe('GistPublishModal', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	// The main process refuses a publish whose content holds a possible secret
+	// and returns the findings masked. The modal asks through the shared
+	// confirm (drawn by SecretScreenConfirmHost, driven here through its store).
+	describe('secret screen', () => {
+		const refusal = {
+			success: false,
+			error: 'Found 1 possible secret in the gist. Nothing was sent.',
+			code: 'SECRETS_FOUND',
+			secretFindings: [{ kind: 'github-token', line: 2, preview: '••••••••abcd' }],
+		};
+
+		const pendingRequest = async () => {
+			await waitFor(() => {
+				expect(useSecretScreenStore.getState().queue).toHaveLength(1);
+			});
+			return useSecretScreenStore.getState().queue[0];
+		};
+
+		beforeEach(() => {
+			mockCreateGist.mockReset();
+			useSecretScreenStore.setState({ queue: [] });
+		});
+
+		it('asks before publishing and repeats the publish with allowSecrets on yes', async () => {
+			mockCreateGist
+				.mockResolvedValueOnce(refusal)
+				.mockResolvedValueOnce({ success: true, gistUrl: 'https://gist.github.com/abc' });
+			const onSuccess = vi.fn();
+			const onClose = vi.fn();
+			renderWithLayerStack(
+				<GistPublishModal
+					theme={testTheme}
+					filename="test.js"
+					content="const x = 1;"
+					onClose={onClose}
+					onSuccess={onSuccess}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Publish Secret' }));
+
+			const request = await pendingRequest();
+			expect(request.subject).toBe('this gist');
+			expect(request.confirmLabel).toBe('Publish anyway');
+			expect(request.findings).toEqual(refusal.secretFindings);
+			expect(mockCreateGist).toHaveBeenCalledTimes(1);
+			expect(onSuccess).not.toHaveBeenCalled();
+
+			useSecretScreenStore.getState().settle(request.id, true);
+
+			await waitFor(() => {
+				expect(onSuccess).toHaveBeenCalledWith('https://gist.github.com/abc', false);
+			});
+			expect(mockCreateGist).toHaveBeenCalledTimes(2);
+			expect(mockCreateGist.mock.calls[1][5]).toEqual({ allowSecrets: true });
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('publishes nothing and shows no error when the confirm is cancelled', async () => {
+			mockCreateGist.mockResolvedValueOnce(refusal);
+			const onSuccess = vi.fn();
+			const onClose = vi.fn();
+			renderWithLayerStack(
+				<GistPublishModal
+					theme={testTheme}
+					filename="test.js"
+					content="const x = 1;"
+					onClose={onClose}
+					onSuccess={onSuccess}
+				/>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Publish Secret' }));
+			const request = await pendingRequest();
+			useSecretScreenStore.getState().settle(request.id, false);
+
+			// Back to the publish view, ready to try again.
+			await waitFor(() => {
+				expect(screen.getByRole('button', { name: 'Publish Secret' })).not.toBeDisabled();
+			});
+			expect(mockCreateGist).toHaveBeenCalledTimes(1);
+			expect(onSuccess).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
+			expect(screen.queryByText(/possible secret/i)).not.toBeInTheDocument();
 		});
 	});
 });

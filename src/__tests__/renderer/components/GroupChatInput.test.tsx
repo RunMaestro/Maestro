@@ -12,10 +12,17 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useVoiceSessionStore } from '../../../renderer/stores/voiceSessionStore';
+import { useVoiceUiStore } from '../../../renderer/stores/voiceUiStore';
+import { openVoiceMic } from '../../../renderer/services/voiceListening';
+vi.mock('../../../renderer/services/voiceListening', () => ({
+	openVoiceMic: vi.fn(async () => {}),
+	notifyVoiceStartFailed: vi.fn(),
+}));
 import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
@@ -108,8 +115,68 @@ function typeInTextarea(textarea: HTMLTextAreaElement, value: string) {
 // =============================================================================
 
 describe('GroupChatInput', () => {
+	it.each([true, false])(
+		'pins the toolbar to the composer bottom with A Cappella enabled: %s',
+		(voiceEnabled) => {
+			useSettingsStore.setState({ encoreFeatures: { aCappella: voiceEnabled } } as never);
+			render(<GroupChatInput {...createDefaultProps({ onOpenPromptComposer: vi.fn() })} />);
+
+			const toolbar = screen.getByTitle('Attach Image').parentElement?.parentElement;
+			expect(toolbar).toHaveClass('mt-auto');
+			expect(toolbar?.parentElement).toHaveClass('flex', 'flex-col');
+			expect(toolbar).toContainElement(screen.getByTitle(/^Open Prompt Composer/));
+			expect(toolbar).toContainElement(screen.getByText('Read-Only'));
+			expect(toolbar).toContainElement(screen.getByTitle(/to send/));
+		}
+	);
+
+	it('applies a read-only toggle to the next spoken turn in an active room', async () => {
+		useVoiceSessionStore.setState({
+			state: 'listening',
+			scope: { kind: 'group-chat', groupChatId: 'room', readOnly: false },
+		});
+		const props = createDefaultProps({ groupChatId: 'room', readOnlyMode: false });
+		const { rerender } = render(<GroupChatInput {...props} />);
+		rerender(<GroupChatInput {...props} readOnlyMode />);
+		expect(window.maestro.voice.setScope).toHaveBeenCalledWith({
+			kind: 'group-chat',
+			groupChatId: 'room',
+			readOnly: true,
+		});
+	});
+
+	it('offers a gated room microphone and preserves read-only mode', async () => {
+		useSettingsStore.setState({ encoreFeatures: { aCappella: true } } as never);
+		render(
+			<GroupChatInput
+				{...createDefaultProps({
+					groupChatId: 'room',
+					groupChatName: 'Review',
+					readOnlyMode: true,
+				})}
+			/>
+		);
+		await act(async () =>
+			fireEvent.click(screen.getByRole('button', { name: 'Talk to group chat' }))
+		);
+		expect(openVoiceMic).toHaveBeenCalledWith({
+			honorListenMode: true,
+			scope: { kind: 'group-chat', groupChatId: 'room', name: 'Review', readOnly: true },
+		});
+	});
+	it('hides the room microphone when A Cappella is disabled', () => {
+		render(<GroupChatInput {...createDefaultProps()} />);
+		expect(screen.queryByRole('button', { name: 'Talk to group chat' })).not.toBeInTheDocument();
+	});
 	beforeEach(() => {
-		resetStores(useSessionStore, useImageAnnotatorStore, useGroupChatStore);
+		resetStores(
+			useSessionStore,
+			useImageAnnotatorStore,
+			useSettingsStore,
+			useVoiceSessionStore,
+			useGroupChatStore
+		);
+		useVoiceUiStore.setState({ loaded: true });
 		vi.mocked(notifyCenterFlash).mockClear();
 		setCapabilitiesCache('claude-code', {
 			...DEFAULT_CAPABILITIES,

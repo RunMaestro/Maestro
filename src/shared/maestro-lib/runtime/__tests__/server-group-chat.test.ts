@@ -263,9 +263,14 @@ describe('group chats and consults over the wire', () => {
 				targetAgentId: 'a2',
 				question: 'What is the answer?',
 				fromAgentId: 'a1',
+				consultChain: { chainId: 'chain-admitted', depth: 3 },
 			})
 		);
 		expect(answer).toEqual({ answer: 'The answer is 42.', agentName: 'Beta' });
+		expect(provider.callsFor('consult')[0].spec.env).toMatchObject({
+			MAESTRO_CONSULT_CHAIN: 'chain-admitted',
+			MAESTRO_CONSULT_DEPTH: '3',
+		});
 		// The target's tabs are what they were: the exchange lives on a hidden tab.
 		expect(value(await client.tabs.list('a2')).map((tab) => tab.id)).toEqual(['a2-t1']);
 	});

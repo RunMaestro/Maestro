@@ -18,9 +18,12 @@ import { formatEnterToSend, formatEnterToSendTooltip } from '../../../utils/shor
 import { getPermissionModeLabel, getPermissionModeTooltip } from '../../../../shared/agentMetadata';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { shortcutSuffix } from '../../ui/ShortcutHint';
+import { DictationButton } from '../../ui/DictationButton';
+import type { DictationTarget } from '../../../utils/dictationTargets';
 import { isCoarsePointer } from '../../../utils/touch';
 import { useViewportBreakpoint } from '../../../hooks/ui';
 import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
+import { useOptionalContentFits } from '../../../hooks/ui/useOptionalLabelFits';
 import { nextPermissionMode } from '../../../utils/tabHelpers';
 import { ImageAttachInput, type ComposerCapabilities } from '../../ChatComposer';
 import { ComposerOptionsSheet, type PermissionMode } from './ComposerOptionsSheet';
@@ -44,8 +47,8 @@ export interface ToolbarControlsProps {
 	agentId?: string;
 	onUploadFiles?: (files: File[]) => void;
 	/**
-	 * Surface-specific controls, drawn in the toggle group just before the
-	 * Enter-to-send toggle. Not drawn on a phone; see `sheetExtras`.
+	 * Surface-specific controls, drawn after the toggle pills and just before
+	 * the Enter-to-send toggle. Not drawn on a phone; see `sheetExtras`.
 	 */
 	toolbarExtras?: ReactNode;
 	/**
@@ -87,6 +90,20 @@ export interface ToolbarControlsProps {
 	isVoiceListening?: boolean;
 	/** Toggle voice dictation on/off. Stable identity (see InputArea). */
 	onToggleVoiceInput?: () => void;
+	/**
+	 * A Cappella owns the composer's microphone, so this row must not draw the
+	 * Web Speech one. The A Cappella button lives under Send in the send column,
+	 * where it is visible on every pointer type; on a phone, where that column is
+	 * gone, this row draws it instead. Without this flag a touch device with the
+	 * Encore Feature on would show two microphones wired to the same toggle.
+	 */
+	voiceHandledElsewhere?: boolean;
+	/**
+	 * Where a dictated transcript lands in this composer. Dictation is not a
+	 * voice session: it types into the draft and nothing is sent or routed. The
+	 * button draws itself only when the `dictation` Local Models task is on.
+	 */
+	dictationTarget?: DictationTarget;
 	onOpenPromptComposer?: () => void;
 	shortcuts?: Record<string, Shortcut>;
 	showFlashNotification?: (message: string) => void;
@@ -95,6 +112,10 @@ export interface ToolbarControlsProps {
 	tabShowThinking?: ThinkingMode;
 	onToggleTabShowThinking?: () => void;
 	currentModel?: string;
+	/** Where the model runs when the agent has a model source: the model pill shows it instead. */
+	runOn?: string;
+	/** Tooltip for the Auto model choice, when `availableModels` offers it. */
+	autoModelTitle?: string;
 	currentEffort?: string;
 	availableModels?: string[];
 	availableEfforts?: string[];
@@ -146,6 +167,8 @@ export const ToolbarControls = memo(function ToolbarControls({
 	voiceSupported,
 	isVoiceListening,
 	onToggleVoiceInput,
+	voiceHandledElsewhere = false,
+	dictationTarget,
 	onOpenPromptComposer,
 	shortcuts,
 	showFlashNotification,
@@ -154,6 +177,8 @@ export const ToolbarControls = memo(function ToolbarControls({
 	tabShowThinking = 'off',
 	onToggleTabShowThinking,
 	currentModel,
+	runOn,
+	autoModelTitle,
 	currentEffort,
 	availableModels = NO_OPTIONS,
 	availableEfforts = NO_OPTIONS,
@@ -205,13 +230,38 @@ export const ToolbarControls = memo(function ToolbarControls({
 	// supported AND the primary pointer is coarse (touch), so mouse/keyboard
 	// desktop users never see it.
 	const showVoiceButton =
-		capabilities.voice && !!voiceSupported && !!onToggleVoiceInput && isCoarsePointer();
+		capabilities.voice &&
+		!!voiceSupported &&
+		!!onToggleVoiceInput &&
+		!voiceHandledElsewhere &&
+		isCoarsePointer();
+
+	// A Cappella owns the microphone through the send column, and that whole
+	// column is dropped on a phone (see the phone branch below), so this row is
+	// the only place left to draw one there. Web Speech support is beside the
+	// point for it: the voice session runs in the main process, not in the
+	// browser's recognizer. Without this the one layout with no keyboard is also
+	// the one layout with no microphone.
+	const showACappellaVoiceButton =
+		phone && capabilities.voice && !!onToggleVoiceInput && voiceHandledElsewhere;
 
 	// Hide `standard` for agents without a working relay: if a stale tab is
 	// somehow in `standard`, display it as `full` so we never surface a
 	// non-functional mode.
 	const currentPermissionMode: 'full' | 'standard' | 'readonly' =
 		rawPermissionMode === 'standard' && !hasStandardCapability ? 'full' : rawPermissionMode;
+
+	// The toggle pills drop their labels to icons when the row is too narrow for
+	// them, instead of wrapping onto a second line. `toggleCount` reserves the
+	// icon row so wrapping never clips an action.
+	const toggleGroupRef = useRef<HTMLDivElement>(null);
+	const showSaveToHistoryToggle = capabilities.saveToHistory && !!onToggleTabSaveToHistory;
+	const showThinkingToggle = capabilities.thinking && !!onToggleTabShowThinking;
+	const toggleCount =
+		Number(showSaveToHistoryToggle) + Number(capabilities.permission) + Number(showThinkingToggle);
+	const toggleLabelsFit = useOptionalContentFits(toggleGroupRef, {
+		contentKey: `${showToggleGroup}:${showSaveToHistoryToggle}:${capabilities.permission}:${showThinkingToggle}:${agentId}:${currentPermissionMode}:${tabShowThinking}`,
+	});
 
 	// Advertise the full-screen model/effort switcher from inside the dropdowns
 	// the user already opened, which is where they are thinking about the
@@ -290,7 +340,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 						</button>
 					)}
 					{fileUploadControl}
-					{showVoiceButton && (
+					{(showVoiceButton || showACappellaVoiceButton) && (
 						<button
 							type="button"
 							onClick={onToggleVoiceInput}
@@ -350,6 +400,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 				</div>
 				{sheetHasContent && (
 					<ComposerOptionsSheet
+						key={agentId}
 						open={optionsSheetOpen}
 						onClose={() => setOptionsSheetOpen(false)}
 						theme={theme}
@@ -366,7 +417,9 @@ export const ToolbarControls = memo(function ToolbarControls({
 						tabShowThinking={tabShowThinking}
 						onThinkingModeChange={onToggleTabShowThinking ? onThinkingModeChange : undefined}
 						currentModel={currentModel}
+						runOn={runOn}
 						availableModels={availableModels}
+						autoModelTitle={autoModelTitle}
 						onModelChange={capabilities.modelEffort ? onModelChange : undefined}
 						currentEffort={currentEffort}
 						availableEfforts={availableEfforts}
@@ -378,9 +431,13 @@ export const ToolbarControls = memo(function ToolbarControls({
 		);
 	}
 
+	// mt-auto pins the row to the bottom of the composer box. The A Cappella
+	// microphone makes the Send column taller than the textarea, and the box
+	// stretches to match it - without this the pills float in the middle with
+	// dead space under them.
 	return (
-		<div className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 pt-1">
-			<div className="flex min-w-0 flex-1 gap-1 items-center">
+		<div className="mt-auto flex min-w-0 flex-wrap items-center gap-2 px-2 pb-2 pt-1">
+			<div className="flex min-w-0 flex-wrap items-center gap-1">
 				{isTerminalMode && (
 					<div
 						className="text-xs font-mono opacity-60 px-2 truncate"
@@ -427,15 +484,25 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<Mic className="w-4 h-4" />
 					</button>
 				)}
+				{dictationTarget && (
+					<DictationButton
+						theme={theme}
+						target={dictationTarget}
+						testId="composer-dictation-button"
+					/>
+				)}
 				{imageFileInput}
 				<ModelEffortPills
+					key={agentId}
 					isVisible={capabilities.modelEffort}
 					theme={theme}
 					shortcutKeys={modelEffortKeys}
 					currentModel={currentModel}
+					runOn={runOn}
 					currentEffort={currentEffort}
 					availableModels={availableModels}
 					availableEfforts={availableEfforts}
+					autoModelTitle={autoModelTitle}
 					onModelChange={onModelChange}
 					onEffortChange={onEffortChange}
 					onRefreshModels={onRefreshModels}
@@ -470,116 +537,140 @@ export const ToolbarControls = memo(function ToolbarControls({
 			)}
 
 			<div
-				className={`flex items-center gap-2 ${isNarrowViewport ? '' : 'ml-auto'} ${showToggleGroup ? '' : 'hidden'}`}
+				ref={toggleGroupRef}
+				className={`ml-auto min-w-0 flex-1 overflow-hidden ${showToggleGroup ? '' : 'hidden'}`}
+				// Reserve the icon row so wrapping never clips an action. The rest
+				// of the available space decides whether the full labels fit.
+				style={{ minWidth: `${toggleCount * 1.75 + Math.max(0, toggleCount - 1) * 0.25}rem` }}
 				data-tour="toolbar-toggles"
 			>
-				{capabilities.saveToHistory && onToggleTabSaveToHistory && (
-					<button
-						onClick={onToggleTabSaveToHistory}
-						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
-							tabSaveToHistory ? '' : 'opacity-40 hover:opacity-70'
-						}`}
-						style={{
-							backgroundColor: tabSaveToHistory ? `${theme.colors.accent}25` : 'transparent',
-							color: tabSaveToHistory ? theme.colors.accent : theme.colors.textDim,
-							border: tabSaveToHistory
-								? `1px solid ${theme.colors.accent}50`
-								: '1px solid transparent',
-						}}
-						title={`Save to History${shortcutSuffix(tabShortcuts.toggleSaveToHistory?.keys)} - Synopsis added after each completion`}
-					>
-						<History className="w-3 h-3" />
-						<span>History</span>
-					</button>
-				)}
-				{capabilities.permission && (
-					<button
-						onClick={() =>
-							onPermissionModeChange(
-								nextPermissionMode(currentPermissionMode, hasStandardCapability)
-							)
-						}
-						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
-							currentPermissionMode === 'standard' ? 'opacity-40 hover:opacity-70' : ''
-						}`}
-						style={{
-							backgroundColor:
-								currentPermissionMode === 'readonly'
-									? `${theme.colors.warning}25`
-									: currentPermissionMode === 'full'
-										? `${theme.colors.accent}25`
-										: 'transparent',
-							color:
-								currentPermissionMode === 'readonly'
-									? theme.colors.warning
-									: currentPermissionMode === 'full'
-										? theme.colors.accent
-										: theme.colors.textDim,
-							border:
-								currentPermissionMode === 'readonly'
-									? `1px solid ${theme.colors.warning}50`
-									: currentPermissionMode === 'full'
-										? `1px solid ${theme.colors.accent}50`
-										: '1px solid transparent',
-						}}
-						title={`${getPermissionModeTooltip(
-							currentPermissionMode,
-							agentId
-						)}${shortcutSuffix(tabShortcuts.toggleReadOnlyMode?.keys)}`}
-					>
-						<Eye className="w-3 h-3" />
-						<span>{getPermissionModeLabel(currentPermissionMode, agentId)}</span>
-					</button>
-				)}
-				{capabilities.thinking && onToggleTabShowThinking && (
-					<button
-						onClick={onToggleTabShowThinking}
-						className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
-							tabShowThinking !== 'off' ? '' : 'opacity-40 hover:opacity-70'
-						}`}
-						style={{
-							backgroundColor:
-								tabShowThinking === 'sticky'
-									? `${theme.colors.warning}30`
+				<div className="ml-auto flex w-max items-center gap-1">
+					{showSaveToHistoryToggle && (
+						<button
+							onClick={onToggleTabSaveToHistory}
+							className={`inline-flex h-7 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap text-2xs rounded-full cursor-pointer transition-all ${toggleLabelsFit ? 'px-2' : 'w-7'} ${
+								tabSaveToHistory ? '' : 'opacity-40 hover:opacity-70'
+							}`}
+							style={{
+								backgroundColor: tabSaveToHistory ? `${theme.colors.accent}25` : 'transparent',
+								color: tabSaveToHistory ? theme.colors.accent : theme.colors.textDim,
+								border: tabSaveToHistory
+									? `1px solid ${theme.colors.accent}50`
+									: '1px solid transparent',
+							}}
+							title={`Save to History${shortcutSuffix(tabShortcuts.toggleSaveToHistory?.keys)} - Synopsis added after each completion`}
+							aria-label={`Save to History: ${tabSaveToHistory ? 'on' : 'off'}`}
+							aria-pressed={tabSaveToHistory}
+						>
+							<History className="w-3.5 h-3.5" />
+							{toggleLabelsFit && <span>History</span>}
+						</button>
+					)}
+					{capabilities.permission && (
+						<button
+							onClick={() =>
+								onPermissionModeChange(
+									nextPermissionMode(currentPermissionMode, hasStandardCapability)
+								)
+							}
+							className={`inline-flex h-7 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap text-2xs rounded-full cursor-pointer transition-all ${toggleLabelsFit ? 'px-2' : 'w-7'} ${
+								currentPermissionMode === 'standard' ? 'opacity-40 hover:opacity-70' : ''
+							}`}
+							style={{
+								backgroundColor:
+									currentPermissionMode === 'readonly'
+										? `${theme.colors.warning}25`
+										: currentPermissionMode === 'full'
+											? `${theme.colors.accent}25`
+											: 'transparent',
+								color:
+									currentPermissionMode === 'readonly'
+										? theme.colors.warning
+										: currentPermissionMode === 'full'
+											? theme.colors.accent
+											: theme.colors.textDim,
+								border:
+									currentPermissionMode === 'readonly'
+										? `1px solid ${theme.colors.warning}50`
+										: currentPermissionMode === 'full'
+											? `1px solid ${theme.colors.accent}50`
+											: '1px solid transparent',
+							}}
+							title={`${getPermissionModeTooltip(
+								currentPermissionMode,
+								agentId
+							)}${shortcutSuffix(tabShortcuts.toggleReadOnlyMode?.keys)}`}
+							aria-label={getPermissionModeLabel(currentPermissionMode, agentId)}
+						>
+							<Eye className="w-3.5 h-3.5" />
+							{toggleLabelsFit && (
+								<span>{getPermissionModeLabel(currentPermissionMode, agentId)}</span>
+							)}
+						</button>
+					)}
+					{showThinkingToggle && (
+						<button
+							onClick={onToggleTabShowThinking}
+							className={`relative inline-flex h-7 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap text-2xs rounded-full cursor-pointer transition-all ${toggleLabelsFit ? 'px-2' : 'w-7'} ${
+								tabShowThinking !== 'off' ? '' : 'opacity-40 hover:opacity-70'
+							}`}
+							style={{
+								backgroundColor:
+									tabShowThinking === 'sticky'
+										? `${theme.colors.warning}30`
+										: tabShowThinking === 'on'
+											? `${theme.colors.accentText}25`
+											: 'transparent',
+								color:
+									tabShowThinking === 'sticky'
+										? theme.colors.warning
+										: tabShowThinking === 'on'
+											? theme.colors.accentText
+											: theme.colors.textDim,
+								border:
+									tabShowThinking === 'sticky'
+										? `1px solid ${theme.colors.warning}50`
+										: tabShowThinking === 'on'
+											? `1px solid ${theme.colors.accentText}50`
+											: '1px solid transparent',
+							}}
+							title={`${
+								tabShowThinking === 'off'
+									? 'Show Thinking - Click to stream AI reasoning'
 									: tabShowThinking === 'on'
-										? `${theme.colors.accentText}25`
-										: 'transparent',
-							color:
-								tabShowThinking === 'sticky'
-									? theme.colors.warning
-									: tabShowThinking === 'on'
-										? theme.colors.accentText
-										: theme.colors.textDim,
-							border:
-								tabShowThinking === 'sticky'
-									? `1px solid ${theme.colors.warning}50`
-									: tabShowThinking === 'on'
-										? `1px solid ${theme.colors.accentText}50`
-										: '1px solid transparent',
-						}}
-						title={`${
-							tabShowThinking === 'off'
-								? 'Show Thinking - Click to stream AI reasoning'
-								: tabShowThinking === 'on'
-									? 'Thinking (temporary) - Click for sticky mode'
-									: 'Thinking (sticky) - Click to turn off'
-						}${shortcutSuffix(tabShortcuts.toggleShowThinking?.keys)}`}
-					>
-						<Brain className="w-3 h-3" />
-						<span>Thinking</span>
-						{tabShowThinking === 'sticky' && <Pin className="w-2.5 h-2.5" />}
-					</button>
-				)}
-				{toolbarExtras}
-				<button
-					onClick={() => setEnterToSend(!enterToSend)}
-					className="flex items-center gap-1 text-2xs opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
-					title={formatEnterToSendTooltip(enterToSend)}
-				>
-					<Keyboard className="w-3 h-3" />
-					{formatEnterToSend(enterToSend)}
-				</button>
+										? 'Thinking (temporary) - Click for sticky mode'
+										: 'Thinking (sticky) - Click to turn off'
+							}${shortcutSuffix(tabShortcuts.toggleShowThinking?.keys)}`}
+							aria-label={`Thinking: ${tabShowThinking === 'on' ? 'temporary' : tabShowThinking}`}
+							aria-pressed={tabShowThinking !== 'off'}
+						>
+							<Brain className="w-3.5 h-3.5" />
+							{toggleLabelsFit && <span>Thinking</span>}
+							{tabShowThinking === 'sticky' && (
+								<Pin className={`w-2.5 h-2.5 ${toggleLabelsFit ? '' : 'absolute right-0 top-0'}`} />
+							)}
+						</button>
+					)}
+				</div>
 			</div>
+
+			{/* Surface extras and the Enter toggle sit outside the collapsing pill
+			    group: they have no icon-only form, so they must never be clipped. */}
+			{(toolbarExtras || capabilities.enterToSendToggle) && (
+				<div className={`flex shrink-0 items-center gap-1 ${showToggleGroup ? '' : 'hidden'}`}>
+					{toolbarExtras}
+					{capabilities.enterToSendToggle && (
+						<button
+							onClick={() => setEnterToSend(!enterToSend)}
+							className="flex items-center gap-1 text-2xs opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5 whitespace-nowrap"
+							title={formatEnterToSendTooltip(enterToSend)}
+						>
+							<Keyboard className="w-3 h-3" />
+							{formatEnterToSend(enterToSend)}
+						</button>
+					)}
+				</div>
+			)}
 		</div>
 	);
 });

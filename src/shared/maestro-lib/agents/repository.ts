@@ -225,6 +225,11 @@ export interface AgentRepository {
 		begin: TurnBegin,
 		guard?: TabWriteGuard
 	): Promise<ClientResult<void>>;
+	/** Internal translation write, serialized and fenced against the full stored record. */
+	updateTranslation(
+		agentId: string,
+		update: (agent: AgentRecord) => AgentRecord
+	): Promise<ClientResult<void>>;
 	/**
 	 * Record what `provider` said about the tab's conversation (its session id, its usage), on
 	 * the slot that provider owns. A turn that outlives a provider swap writes its resume token
@@ -1114,6 +1119,21 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 			guard
 		);
 
+	const updateTranslation = (agentId: string, update: (agent: AgentRecord) => AgentRecord) =>
+		run<void>('agents.update', () => {
+			const agent = findAgent(agentId);
+			if (!agent) return noAgent('agents.update', agentId);
+			const next = update(agent);
+			return {
+				ok: true,
+				plan: {
+					value: undefined,
+					sessions: withAgents(new Map([[agentId, next]])),
+					events: updateEvents(agent, next),
+				},
+			};
+		});
+
 	function openConsultTab(
 		agentId: string,
 		open: ConsultTabOpen
@@ -1232,6 +1252,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		appendTranscript,
 		beginTurn,
 		recordTabSession: recordSession,
+		updateTranslation,
 		openConsultTab,
 		recordConsultAnswer,
 	};

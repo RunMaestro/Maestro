@@ -32,6 +32,7 @@ import {
 	type MediaOpenMode,
 } from '../../shared/mediaTypes';
 import { resolveTargetAgent } from '../utils/owning-agent';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface OpenFileOptions {
@@ -56,14 +57,14 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 
 	if (!remote && !fs.existsSync(target.absolutePath)) {
 		console.error(`Error: File not found: ${target.absolutePath}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	if (options.queue && !remote && !isMediaFile(target.absolutePath)) {
 		const error = `--queue only applies to audio and video files: ${target.absolutePath}`;
 		if (options.json) console.log(JSON.stringify({ success: false, error }));
 		else console.error(`Error: ${error}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 	const mediaMode: MediaOpenMode = options.queue ? 'queue' : 'play';
 	const displayName = remote
@@ -110,14 +111,14 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 			const error = result.error || 'Failed to open file';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 
@@ -132,7 +133,7 @@ function resolveUrlTarget(url: string, options: OpenFileOptions): ResolvedTarget
 		new URL(url);
 	} catch {
 		console.error(`Error: Not a valid URL: ${url}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 	return { sessionId: resolveAgentOrExit(null, options), absolutePath: url };
 }
@@ -156,7 +157,7 @@ function resolveAgentOrExit(absolutePath: string | null, options: OpenFileOption
 	const resolved = resolveTargetAgent(absolutePath, options.agent);
 	if ('error' in resolved) {
 		console.error(`Error: ${resolved.error}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 	if (resolved.others.length > 0) {
 		const others = resolved.others.map((s) => s.name);

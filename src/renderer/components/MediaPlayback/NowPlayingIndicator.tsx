@@ -48,6 +48,8 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 	const playing = useMediaPlaybackStore((s) => s.playing);
 	const restore = useMediaPlaybackStore((s) => s.restore);
 	const requestToggle = useMediaPlaybackStore((s) => s.requestToggle);
+	// Click handlers must call these without the event: desktop replicas forward
+	// every argument over IPC, which cannot serialize a React event.
 
 	if (!minimized || !active) return null;
 
@@ -80,7 +82,7 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 			<button
 				type="button"
 				data-testid="now-playing-toggle"
-				onClick={requestToggle}
+				onClick={() => requestToggle()}
 				className={`items-center gap-1 rounded-l-[3px] text-2xs font-bold transition-colors hover:bg-white/10 ${
 					compact
 						? 'flex justify-center px-2 py-1'
@@ -105,7 +107,7 @@ export const NowPlayingIndicator = memo(function NowPlayingIndicator({
 			<button
 				type="button"
 				data-testid="now-playing-restore"
-				onClick={restore}
+				onClick={() => restore()}
 				className="flex items-center justify-center shrink-0 px-2 rounded-r-[3px] transition-colors hover:bg-white/10"
 				style={{ color: theme.colors.textDim }}
 				title="Show the media player"

@@ -1,5 +1,11 @@
 import { pianolaNewTabSpawns } from '../../../pianola/pianola-new-tab-dispatch';
 import {
+	projectTabProvider,
+	type NativeSessionBinding,
+	type ProviderSwitchAgent,
+	type ProviderSwitchTab,
+} from '../../../../shared/maestro-lib/agents/providerSwap';
+import {
 	acquireProviderSessionWriter,
 	bindProviderSessionWriter,
 } from '../../../utils/provider-session-writer';
@@ -53,6 +59,13 @@ import {
 	withoutCallerIdentityEnv,
 	CALLER_RUN_PROOF_FILE_ENV_VAR,
 } from '../../../../shared/agentDelegation';
+import {
+	buildConsultChainEnv,
+	parseConsultChain,
+	withoutConsultChainEnv,
+} from '../../../../shared/consultBudget';
+import { hasPeerGrant } from '../../../../shared/peerAgents';
+import { newConsultChainId } from '../../../peer-consults/consult-budget';
 import { grokLaunchArgsProblem, requestedPermissionMode } from '../../../process-manager/types';
 import { canonicalJson } from '../../../../shared/canonicalJson';
 import { fingerprintGrokSpawnSelection } from '../../../../shared/grokSpawnSelection';
@@ -66,6 +79,7 @@ import { QUERY_USER_ENV_VAR } from '../../../../shared/webLogin';
 import { getActingUser } from '../../../web-server/auth/acting-user';
 import { noteTurnActor } from '../../../web-server/auth/turn-attribution';
 import { REGEX_AI_SUFFIX, REGEX_AI_TAB_ID } from '../../../constants';
+import { agentIdFromProcessId } from '../../../utils/process-ids';
 import { addBreadcrumb, captureException } from '../../../utils/sentry';
 import {
 	DORMANT_PIANOLA_MESSAGE,
@@ -86,15 +100,11 @@ import { awaitSynopsisWriters } from '../../../process-manager/utils/synopsisWri
 import { probeClaudeSlashCommandsCached } from '../../../agents/claude-slash-command-probe';
 import { buildExpandedEnv } from '../../../../shared/pathUtils';
 import { observeGrokLaunchScope as observeSharedGrokLaunchScope } from '../../../../shared/agentAccountDir';
-import type {
-	NativeSessionBinding,
-	ProviderSwitchTab,
-} from '../../../../shared/maestro-lib/agents/providerSwap';
 import { getProductionDataPath } from '../../../stores';
 import { observePathRemote } from '../../../utils/remote-fs';
 import { isExpectedSessionReadError } from '../../../utils/session-read-errors';
 import { isExpectedRemoteError } from '../../../storage/remote-error-utils';
-import type { SshRemoteConfig } from '../../../../shared/types';
+import type { PeerAccess, PeerAgent, SshRemoteConfig } from '../../../../shared/types';
 import { powerManager } from '../../../power-manager';
 import { MaestroSettings } from '../persistence';
 import { getDefaultShell } from '../../../stores/defaults';
@@ -123,13 +133,23 @@ import {
 import { sshUnresolvedRemoteMessage } from '../../../utils/ssh-spawn-wrapper';
 import {
 	buildAgentLaunchPlan,
-	type LaunchPermissionDecision,
 	type AgentLaunchInput,
+	type LaunchPermissionDecision,
+	type LaunchPlanRunOn,
 } from '../../../../shared/maestro-lib/launch/launch-plan';
+import { turnRunOnTarget } from '../../../../shared/autorunTurnSettings';
+import { runOnHarnessMode } from '../../../../shared/local-models/run-on';
+import { logRunOnLaunch, prepareLaunchRunOn } from '../../../local-models/run-on';
 import {
 	resolvePromptDelivery,
 	type PromptDelivery,
 } from '../../../../shared/maestro-lib/launch/prompt-delivery';
+import {
+	agentHasTokenProxyRetrieval,
+	ensureTokenProxyForGateway,
+	registerTokenProxyRecoveryLaunch,
+	tokenProxyLaunchGatewayUrl,
+} from '../../../local-models/proxy/service';
 import { newRemotePromptFileDestination } from '../../../utils/ssh-command-builder';
 import {
 	applySystemPromptDelivery as placeSystemPrompt,
@@ -284,7 +304,12 @@ export async function handleProcessSpawn(
 				controller.signal,
 				admissionGuard
 			);
-			if (!result.success) cleanupSessionRelay(config.sessionId);
+			if (!result.success) {
+				cleanupSessionRelay(config.sessionId);
+				// A refusal after a run proof or a token proxy launch binding was
+				// issued must not leave it live. Idempotent after a native failure.
+				proofCleanup.release?.();
+			}
 			if (!result.success || config.toolType === 'terminal') onExit(config.sessionId);
 			return result;
 		} catch (error) {
@@ -508,10 +533,52 @@ async function handleProcessSpawnImpl(
 		sessionCustomEnvVars: config.sessionCustomEnvVars,
 	};
 
+	// The agent this spawn runs AS, and the model source it launches on. Looked up by
+	// `agentIdFromProcessId`, which strips every process suffix: an Auto Run task
+	// (`{agentId}-batch-{ts}`) and the History synopsis (`{agentId}-synopsis-{ts}`)
+	// are the agent's own work and run where its typed turns run. The synopsis
+	// resumes the agent's conversation, so missing it here would send that
+	// conversation to the provider's cloud. Read from the store, not from the
+	// renderer's spawn request, for the reason the gateway is (see below).
+	// The one thing the request may say is `runOnOverride`: a tier's target for
+	// this turn (an Auto Run task on a tier the agent or the harness default
+	// sends elsewhere), or the target an Auto Run picked for itself. A caller
+	// that leaves it out gets the agent's own target, and one that sets it is
+	// checked like a stored one, so it cannot name a place the model source path
+	// would not launch on.
+	const launchAgentId = agentIdFromProcessId(config.sessionId);
+	const launchAgent = (
+		deps.sessionsStore.get('sessions', []) as Array<{
+			id?: string;
+			toolType?: import('../../../../shared/types').ToolType;
+			aiTabs?: Array<ProviderSwitchTab & { id: string }>;
+			providerOverrides?: ProviderSwitchAgent['providerOverrides'];
+			gatewayUrl?: string;
+			runOn?: unknown;
+			// The three sources of its peer roster (see the consult chain below).
+			peerAgents?: PeerAgent[];
+			groupPeerAccess?: PeerAccess;
+			worktreePeerAccess?: PeerAccess;
+		}>
+	).find((s) => s?.id === launchAgentId);
+	const launchTabId = config.sessionId.startsWith(`${launchAgentId}-ai-`)
+		? config.sessionId.slice(`${launchAgentId}-ai-`.length)
+		: undefined;
+	const launchTab = launchAgent?.aiTabs?.find((tab) => tab.id === launchTabId);
+	const providerAgent = launchAgent?.toolType
+		? projectTabProvider(
+				launchAgent as typeof launchAgent & ProviderSwitchAgent,
+				launchTab,
+				config.toolType as import('../../../../shared/types').ToolType
+			).agent
+		: launchAgent;
+	const launchRunOn = turnRunOnTarget({ runOn: config.runOnOverride }, providerAgent?.runOn);
+
 	const claudeContext = await resolveClaudeSpawnContext(config, agent, {
 		sessionsStore: deps.sessionsStore,
 		settingsStore,
 		envLayers: claudeEnvLayers,
+		runOn: launchRunOn,
 	});
 	signal.throwIfAborted();
 	const contextSelectionProblem = grokSelectionProblem();
@@ -530,12 +597,17 @@ async function handleProcessSpawnImpl(
 	// Codex transport (exec default, app-server opt-in), read from the persisted
 	// agent record so a stale renderer cannot route the turn differently from
 	// what is saved. Handed to ProcessManager.spawn() below.
-	const codexTransport = resolveCodexSpawnTransport(config, baseSessionId, deps.sessionsStore);
-	const harnessControlMode = resolveHarnessControlSpawnMode(
-		config,
-		baseSessionId,
-		deps.sessionsStore,
-		config.sessionId
+	// An agent that runs on a source keeps to `codex exec`, the transport its
+	// recipe was measured on.
+	const codexTransport = runOnHarnessMode(
+		launchRunOn,
+		resolveCodexSpawnTransport(config, baseSessionId, deps.sessionsStore),
+		'exec'
+	);
+	const harnessControlMode = runOnHarnessMode(
+		launchRunOn,
+		resolveHarnessControlSpawnMode(config, baseSessionId, deps.sessionsStore, config.sessionId),
+		'current'
 	);
 
 	let finalArgs = buildAgentArgs(agent, {
@@ -631,7 +703,52 @@ async function handleProcessSpawnImpl(
 	// the FINAL prompt (system prompt and preambles folded in), with the same
 	// shared function.
 	// ========================================================================
+	// The agent's stored record. Read here for the one thing only it can say
+	// under this id: whether it is Pianola (further down).
+	const storedAgent = (
+		deps.sessionsStore.get('sessions', []) as Array<{
+			id?: string;
+			isPianola?: boolean;
+		}>
+	).find((s) => s?.id === baseSessionId);
+
+	// The agent whose gateway this spawn uses: `launchAgent`, read above. NOT
+	// the record under `baseSessionId`, which strips only the `-ai-{tab}` suffix:
+	// an Auto Run task spawns as `{agentId}-batch-{ts}` and the History synopsis
+	// as `{agentId}-synopsis-{ts}`, so looking the gateway up by `baseSessionId`
+	// found no agent for either and sent both direct, while the agent's typed
+	// turns went through the gateway. The gateway is read from the store, not
+	// from the renderer's spawn request, because a dozen-odd renderer call sites
+	// build that request and one that forgot the field would send the agent's
+	// traffic direct with nothing to show for it. Every surface that edits a
+	// gateway flushes the agent to this store before reporting success.
+	const gatewayAgentId = launchAgentId;
+	const gatewayAgent = providerAgent;
+
+	// Only verified local provider configs can reach the localhost MCP bridge.
+	// SSH is skipped. The interactive Claude path (maestro-p) is reachable: the
+	// bridge flags are merged into `finalArgs` here, and
+	// `applyLocalInteractiveSpawnDecision()` later puts the maestro-p script path
+	// ahead of all of them, so Node still reads the script first. maestro-p
+	// forwards `--mcp-config <json>` to claude verbatim (a variadic pass-through
+	// flag in `src/maestro-p/args.ts`), checked against the real binaries.
+	const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];
+	const mcpBridgeReachable = mcpCap?.verified === true && !config.sessionSshRemoteConfig?.enabled;
+	// The token proxy launch binding that says this launch was given the
+	// `retrieve_compressed_original` tool, so its `compress-early` requests may
+	// be decided with the lossy `full` profile. Registered only for a launch
+	// whose bridge carries the tool, and released with the run proofs (exit,
+	// refusal, failed spawn), so a binding never outlives the tool it proves.
+	let tokenProxyLaunch: { gatewayUrl: string; release: () => void } | undefined;
+	const releaseTokenProxyLaunch = (): void => {
+		const launch = tokenProxyLaunch;
+		tokenProxyLaunch = undefined;
+		launch?.release();
+	};
+
 	let effectiveCustomEnvVars: Record<string, string> | undefined;
+	// What the agent's model source did to this launch, when it has one.
+	let appliedRunOn: LaunchPlanRunOn | undefined;
 	let launchPermission: LaunchPermissionDecision | undefined;
 	let launchInput: AgentLaunchInput | undefined;
 	let plannedFile: Extract<PromptDelivery, { via: 'file' }> | undefined;
@@ -661,6 +778,61 @@ async function handleProcessSpawnImpl(
 			})
 		: undefined;
 	if (config.toolType !== 'terminal') {
+		const sshStore = createSshRemoteStoreAdapter(settingsStore);
+		const providerCustomEnvVars = agentConfigValues.customEnvVars as
+			| Record<string, string>
+			| undefined;
+		// The agent's model source: its source looked up and asked whether it
+		// can serve the model (starting the Maestro model server when the target
+		// is one of its models). A target that cannot run refuses the spawn by
+		// name; it never runs the turn on the provider's model.
+		const preparedRunOn = await prepareLaunchRunOn({
+			toolType: config.toolType,
+			target: launchRunOn,
+			userEnvVars: config.sessionCustomEnvVars ?? providerCustomEnvVars,
+			sshRemoteConfig: config.sessionSshRemoteConfig,
+			sshStore,
+		});
+		if (preparedRunOn.kind === 'refused') {
+			logger.error('Model source cannot run; not spawning', LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				reason: preparedRunOn.code,
+			});
+			reportSpawnRefusal(deps, config.sessionId, preparedRunOn.message);
+			return { success: false, pid: 0 };
+		}
+		// A gateway that is the Maestro token proxy is given to the process with
+		// this agent's id in its path, which is how the proxy knows whose request
+		// it carries and which mode (passthrough or compress) the agent chose.
+		// Any other gateway comes back unchanged.
+		let launchGatewayUrl = await tokenProxyLaunchGatewayUrl(
+			gatewayAgentId,
+			gatewayAgent?.gatewayUrl
+		);
+		// An agent with retrieval in effect gets the retrieve tool on the MCP
+		// bridge (below), and this launch is bound to the proxy so it knows the
+		// model can ask for an original. The binding needs a running proxy, and
+		// it must be in the base URL the plan hands the process. The bridge's run
+		// proof names `baseSessionId`, so the gateway agent must be that agent
+		// (an Auto Run task or a synopsis spawns under another id and gets no
+		// bridge). A model source takes the gateway's place: nothing to bind.
+		if (
+			launchGatewayUrl &&
+			mcpBridgeReachable &&
+			gatewayAgentId === baseSessionId &&
+			preparedRunOn.kind !== 'ready' &&
+			(await agentHasTokenProxyRetrieval(gatewayAgentId)) &&
+			(await ensureTokenProxyForGateway(launchGatewayUrl)).ok
+		) {
+			const bound = await registerTokenProxyRecoveryLaunch(gatewayAgentId, launchGatewayUrl, {
+				kind: 'mcp-retrieve-tool',
+			});
+			if (bound) {
+				tokenProxyLaunch = bound;
+				proofCleanup.release = releaseTokenProxyLaunch;
+				launchGatewayUrl = bound.gatewayUrl;
+			}
+		}
 		launchInput = {
 			surface: 'desktop',
 			agent: agent ?? undefined,
@@ -685,12 +857,14 @@ async function handleProcessSpawnImpl(
 					: undefined,
 			hasImages: !!config.images?.length,
 			globalShellEnvVars,
-			agentCustomEnvVars: agentConfigValues.customEnvVars as Record<string, string> | undefined,
+			agentCustomEnvVars: providerCustomEnvVars,
 			sessionCustomEnvVars: config.sessionCustomEnvVars,
 			readOnlyMode: isReadOnly,
+			gateway: { toolType: config.toolType, url: launchGatewayUrl },
+			runOn: preparedRunOn.kind === 'ready' ? preparedRunOn.runOn : undefined,
 			permissionMode: requestedPermissionMode(config),
 			sshRemoteConfig: config.sessionSshRemoteConfig,
-			sshStore: createSshRemoteStoreAdapter(settingsStore),
+			sshStore,
 		};
 		const planResult = buildAgentLaunchPlan(launchInput);
 		if (!planResult.ok) {
@@ -713,7 +887,11 @@ async function handleProcessSpawnImpl(
 					reason: planResult.reason,
 				});
 			} else {
-				logger.error('SSH remote could not be resolved; not spawning', LOG_CONTEXT, {
+				// The SSH remote could not be resolved, the agent's gateway cannot be
+				// used, or its model source cannot run; `reason` says which. Each
+				// refuses the spawn rather than run the turn somewhere the user did
+				// not choose.
+				logger.error('Launch plan refused; not spawning', LOG_CONTEXT, {
 					sessionId: config.sessionId,
 					remoteId: config.sessionSshRemoteConfig?.remoteId,
 					reason: planResult.reason,
@@ -725,7 +903,47 @@ async function handleProcessSpawnImpl(
 		if (config.toolType === 'grok' && planResult.plan.target.kind === 'remote') {
 			grokLaunchRemote = structuredClone(planResult.plan.target.remote);
 		}
+		// The binding proves something only when the process is given it. A user
+		// base-URL variable that wins over the gateway leaves the proxy unbound.
+		if (tokenProxyLaunch && planResult.plan.gateway?.url !== tokenProxyLaunch.gatewayUrl) {
+			releaseTokenProxyLaunch();
+		}
 		effectiveCustomEnvVars = planResult.plan.envVars;
+		// This handler places the prompt itself, so it spawns from the plan's
+		// `launchArgs`: `finalArgs` with the gateway's config arguments in front
+		// (a provider whose base-URL variable is not enough, Codex), or with the
+		// model source's root arguments and its model. That model takes the
+		// place of the agent's own (its stored model, a tier model, the
+		// synopsis's cheap model): each names something the source does not serve.
+		finalArgs = planResult.plan.launchArgs;
+		if (planResult.plan.runOn) {
+			appliedRunOn = planResult.plan.runOn;
+			logRunOnLaunch(
+				LOG_CONTEXT,
+				{ sessionId: config.sessionId, toolType: config.toolType },
+				appliedRunOn
+			);
+		}
+		if (planResult.plan.gateway) {
+			logger.info(`Routing ${config.toolType} through its Local Models gateway`, LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				envVar: planResult.plan.gateway.envVar,
+				gatewayUrl: planResult.plan.gateway.url,
+			});
+			// When that gateway is the Maestro token proxy, it has to be up before
+			// the turn is sent to its port. A proxy that cannot start (its port is
+			// held by another program) refuses the spawn by name: the agent's
+			// request, credentials included, must not go to whatever holds the port.
+			const proxy = await ensureTokenProxyForGateway(planResult.plan.gateway.url);
+			if (!proxy.ok) {
+				logger.error('Token proxy unavailable; not spawning', LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					gatewayUrl: planResult.plan.gateway.url,
+				});
+				reportSpawnRefusal(deps, config.sessionId, proxy.error);
+				return { success: false, pid: 0 };
+			}
+		}
 		launchPermission = planResult.plan.permission;
 		if (planResult.plan.prompt.via === 'file') {
 			plannedFile = planResult.plan.prompt;
@@ -756,17 +974,40 @@ async function handleProcessSpawnImpl(
 	// and tell it its own id (MAESTRO_AGENT_ID) so it never acts on itself.
 	// Injected into effectiveCustomEnvVars so it flows through both the local
 	// and SSH env-merge paths below.
-	const isPianolaSession =
-		isPianolaEnabled(encoreFeatures) &&
-		(deps.sessionsStore.get('sessions', []) as Array<{ id?: string; isPianola?: boolean }>).some(
-			(s) => s?.id === baseSessionId && s?.isPianola === true
-		);
+	const isPianolaSession = isPianolaEnabled(encoreFeatures) && storedAgent?.isPianola === true;
 	if (isPianolaSession) {
 		effectiveCustomEnvVars = {
 			...(effectiveCustomEnvVars || {}),
 			MAESTRO_CLI_JS: resolveMaestroCliScriptPath(),
 			MAESTRO_AGENT_ID: baseSessionId,
 		};
+	}
+
+	// Consult chain: tell the agent's shell which user message its peer consults
+	// and delegations are counted against (MAESTRO_CONSULT_CHAIN) and how many
+	// hops from that message it is (MAESTRO_CONSULT_DEPTH), so a `maestro-cli
+	// ask` or `dispatch` it runs spends the one budget the whole chain shares
+	// (see shared/consultBudget.ts). A spawn that arrives carrying a chain is a
+	// descendant and keeps it whatever its own peer configuration: an agent
+	// with no roster in the middle of a chain must not hand what it starts a
+	// fresh budget. A spawn that carries none is the root of a user message. It
+	// mints a chain at depth 0, and only when the agent has a peer grant, so an
+	// agent with no roster carries no new environment. Injected into
+	// effectiveCustomEnvVars so it flows through both the local and SSH
+	// env-merge paths below. A terminal is a shell the user drives, not an
+	// agent turn, so it never carries a chain.
+	if (config.toolType !== 'terminal') {
+		const consultChain =
+			parseConsultChain(config.consultChain) ??
+			(launchAgent && hasPeerGrant({ ...launchAgent, id: launchAgentId })
+				? { chainId: newConsultChainId(), depth: 0 }
+				: undefined);
+		if (consultChain) {
+			effectiveCustomEnvVars = {
+				...(effectiveCustomEnvVars || {}),
+				...buildConsultChainEnv(consultChain),
+			};
+		}
 	}
 
 	// Tell the agent's shell who it is, so a `maestro-cli dispatch` or `ask` it
@@ -840,7 +1081,12 @@ async function handleProcessSpawnImpl(
 				}
 			});
 		}
-		if (exitListener.current) processManager.off('exit', exitListener.current);
+		// Cleanup runs from several paths (the refusal, the wrapper, the exit), so
+		// the listener is removed once and forgotten.
+		const listener = exitListener.current;
+		exitListener.current = undefined;
+		if (listener) processManager.off('exit', listener);
+		releaseTokenProxyLaunch();
 		if (token) pluginToolRunIdentity.revoke(token);
 		callerProof?.dispose();
 		if (file) {
@@ -895,9 +1141,6 @@ async function handleProcessSpawnImpl(
 			logger.warn('Caller run identity unavailable', LOG_CONTEXT);
 		}
 	}
-	// MCP plugin tools remain gated separately. Only verified local provider
-	// configs can reach the localhost bridge; SSH and maestro-p are skipped.
-	const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];
 	// One pure admission rule (`mcpInjectionProblem`; the CLI and Cue spawners
 	// still gate on `verified` alone, which refuses Grok the same way): unverified or
 	// version-unqualified strategies, remote targets and a user-owned config
@@ -916,21 +1159,20 @@ async function handleProcessSpawnImpl(
 		const nativeConfig = await readGrokNativeMcpConfigFacts(mcpContext.env, config.cwd);
 		mcpProblem = mcpInjectionProblem(mcpCap, { ...mcpContext, nativeConfig });
 	}
-	if (
-		mcpCap &&
-		!mcpProblem &&
-		isPluginsFeatureEnabled() &&
-		// Skip the electron-as-node interactive path (claude maestro-p): there
-		// argv[0] is a script path, so prepending global flags ahead of it would
-		// make Node reject the launch. API-mode/codex spawn the agent binary
-		// directly, where leading flags are valid.
-		!(claudeResolvedMode === 'interactive' && resolvedMaestroPBinPath)
-	) {
-		const mcpTools = getActivePluginManager()?.getContributions().tools ?? [];
+	// A launch bound for retrieval above was promised the retrieve tool. A bridge
+	// the admission rule refuses never carries it, so the binding goes too.
+	if (mcpProblem && tokenProxyLaunch) releaseTokenProxyLaunch();
+	// The MCP bridge carries plugin tools (Plugins on, at least one tool) and
+	// the core retrieve tool (a launch bound above). With retrieval alone,
+	// `tools/list` answers that one tool. Neither: no bridge arguments at all.
+	if (mcpCap && mcpBridgeReachable && !mcpProblem) {
+		const mcpTools = isPluginsFeatureEnabled()
+			? (getActivePluginManager()?.getContributions().tools ?? [])
+			: [];
 		const storedAgent = (deps.sessionsStore.get('sessions', []) as Array<{ id?: string }>).some(
 			(session) => session?.id === baseSessionId
 		);
-		if (mcpTools.length > 0 && storedAgent) {
+		if ((mcpTools.length > 0 || tokenProxyLaunch) && storedAgent) {
 			pluginRunToken = pluginToolRunIdentity.issue(
 				baseSessionId,
 				undefined,
@@ -988,11 +1230,13 @@ async function handleProcessSpawnImpl(
 				...mcpInjection.env,
 			};
 			logger.debug(
-				`[Plugins] MCP tool bridge enabled for ${config.toolType} (${mcpTools.length} tools)`,
+				`[Plugins] MCP tool bridge enabled for ${config.toolType} (${mcpTools.length} plugin tools${tokenProxyLaunch ? ', retrieve tool' : ''})`,
 				LOG_CONTEXT
 			);
 		}
 	}
+	// A binding whose bridge was not injected proves a tool the model lacks.
+	if (tokenProxyLaunch && !pluginRunToken) releaseTokenProxyLaunch();
 
 	// ========================================================================
 	// Standard permission mode (Claude Code, API/print path): route tool
@@ -1289,10 +1533,11 @@ async function handleProcessSpawnImpl(
 	signal.throwIfAborted();
 	// Get contextWindow: session-level override takes priority over agent-level config
 	// Falls back to the agent's configOptions default (e.g., 400000 for Codex, 128000 for OpenCode)
+	// A model source states its own: the window the harness was told it has.
 	const contextWindow = getContextWindowValue(
 		agent,
 		agentConfigValues,
-		config.sessionCustomContextWindow
+		appliedRunOn?.contextTokens ?? config.sessionCustomContextWindow
 	);
 
 	// ========================================================================
@@ -1509,9 +1754,10 @@ async function handleProcessSpawnImpl(
 			// env) so the same logical config maps to one catalog across platforms and
 			// matches the detector's default-identity warm-up. The caller identity is
 			// dropped for the same reason: it names the agent, not its configuration.
+			// So is the consult chain, whose id is new on every root spawn.
 			ompModelCatalogKey = computeOmpCatalogKey(
 				ompPrimeBinaryPath,
-				withoutCallerIdentityEnv(effectiveCustomEnvVars)
+				withoutConsultChainEnv(withoutCallerIdentityEnv(effectiveCustomEnvVars))
 			);
 			// Bounded await: block the spawn only briefly so the first turn resolves
 			// correctly on a warm/fast catalog, and proceed (letting the prime finish
@@ -1554,7 +1800,7 @@ async function handleProcessSpawnImpl(
 		if (sessionId !== config.sessionId) return;
 		cleanupRunProofs();
 	};
-	if ((pluginRunToken || callerRunProof) && exitListener.current)
+	if ((pluginRunToken || callerRunProof || tokenProxyLaunch) && exitListener.current)
 		processManager.on('exit', exitListener.current);
 	const sendPromptViaStdin =
 		promptDelivery.via === 'stdin' && promptDelivery.format === 'stream-json';

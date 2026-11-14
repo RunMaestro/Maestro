@@ -2,6 +2,8 @@ import { BACKGROUND_STOP_GRACE_MS } from '../../src/shared/maestro-lib/control/t
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { canonicalJson } from '../../src/shared/canonicalJson';
+import { fileTimestampSlug } from '../../src/shared/formatters';
 import { withMaestroClient } from '../../src/cli/services/maestro-client';
 import { getSessionById, readSettings, readAgentConfig } from '../../src/cli/services/storage';
 import { resolveAgentAccountKey } from '../../src/shared/providerProfiles';
@@ -18,23 +20,186 @@ import {
 	nativeRecordKey,
 	recordKey,
 } from '../../src/shared/maestro-lib/translation/identity';
-import { TRANSLATION_KNOWLEDGE_ENV_VAR } from '../../src/shared/maestro-lib/translation/knowledge-binding';
+import {
+	TRANSLATION_KNOWLEDGE_ENV_VAR,
+	translationKnowledgeRoot,
+	assertTranslationKnowledgeDirectory,
+} from '../../src/shared/maestro-lib/translation/knowledge-binding';
+import {
+	commitTranslationSession,
+	type TranslatableSession,
+} from '../../src/shared/maestro-lib/translation/session';
+import { activeContextRecords } from '../../src/shared/maestro-lib/translation/context-window';
 import {
 	TranslationArchive,
 	createTranslationRegistry,
-	planTranslation,
-	applyTranslation,
+	planTabTranslation,
+	applyTabTranslation,
+	prepareTabForSend,
+	limitationsNeedingAcceptance,
+	projectConversation,
 	collectTranslationResources,
 	reconcileConversation,
 	planResourceProjections,
+	TRANSLATION_PROVIDER_VERSIONS,
+	translationVersionLimitation,
 	type TranslationIdentity,
 	type TranslationJournal,
+	type TranslationPlan,
+	type TranslationResult,
+	type PortableConversation,
 } from '../../src/shared/maestro-lib/translation';
 
 export const GUINEA_PIG = {
 	agentId: '92eb2f16-433d-4ecd-bb87-885c8a64b2f7',
 	tabId: 'a77c0b6c-83c5-4275-baa9-9098994993f1',
 };
+
+export function acceptanceProviderVersion(
+	provider: keyof typeof TRANSLATION_PROVIDER_VERSIONS,
+	output: string
+): string {
+	// Preserve prerelease/build tags so a prerelease never becomes a tested release.
+	const version =
+		/(?:^|\s)(v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?=\s|$)/.exec(
+			output
+		)?.[1] ?? '';
+	const limitation = translationVersionLimitation(
+		provider,
+		version,
+		TRANSLATION_PROVIDER_VERSIONS[provider]
+	);
+	if (limitation?.severity === 'block') throw new Error(limitation.message);
+	return version;
+}
+
+/** Acceptance allows only the two expected, explicitly recorded warnings. */
+export function assertAcceptancePlan(plan: TranslationPlan): void {
+	const refused = plan.limitations.filter(
+		(limit) =>
+			limit.severity === 'block' ||
+			(limit.severity === 'warning' &&
+				!['unverified-native-resume', 'untested-version'].includes(limit.code))
+	);
+	if (plan.status !== 'ready' || refused.length)
+		throw new Error(
+			`Acceptance preflight refused: ${plan.status}; ${refused.map((l) => l.code).join(', ')}`
+		);
+	if (plan.tabs.length !== 1 || plan.tabs[0].tabId !== plan.tabId)
+		throw new Error('Acceptance requires a single-tab plan');
+}
+
+/** Compare persisted native payloads before continuation, including summary order and archived exclusion. */
+export function assertAcceptanceContextWindow(
+	source: PortableConversation,
+	readback: PortableConversation
+): void {
+	const provider = readback.identity.provider;
+	if (provider !== 'codex' && provider !== 'claude-code')
+		throw new Error('Unsupported acceptance destination');
+	const payload = (native: unknown): unknown => {
+		const row = native as Record<string, unknown>;
+		if (provider === 'codex') return row.payload;
+		const message = row.message as Record<string, unknown>;
+		return { role: message.role, content: message.content };
+	};
+	const expected = projectConversation(source, provider, readback.nativeSessionId!).map((row) =>
+		payload(provider === 'codex' ? { payload: row.item } : row.item)
+	);
+	const actual = activeContextRecords(readback.records)
+		.filter((record) => record.role === 'user' || record.role === 'assistant')
+		.map((record) => payload(record.native));
+	if (!expected.length || canonicalJson(expected) !== canonicalJson(actual))
+		throw new Error('Destination did not retain the source active compaction window');
+}
+
+/** Exercise the shared send gate with an isolated session, never the desktop test agent. */
+export async function applyAcceptanceHop(
+	journal: TranslationJournal,
+	apply: () => Promise<TranslationResult>,
+	throughSend: boolean
+): Promise<TranslationResult> {
+	const { plan } = journal;
+	assertAcceptancePlan(plan);
+	if (!throughSend) return apply();
+	let session: TranslatableSession = {
+		id: plan.agentId,
+		toolType: plan.source.provider,
+		aiTabs: [{ id: plan.tabId!, agentSessionId: plan.tabs[0].sourceSessionId }],
+		providerMigration: {
+			operationId: plan.id,
+			destination: plan.destination.provider,
+			state: 'committed',
+			verification: 'unverified',
+			acceptedDirections: [
+				{
+					source: plan.source.provider,
+					destination: plan.destination.provider,
+					sourceVersion: plan.source.version,
+					destinationVersion: plan.destination.version,
+					warnings: limitationsNeedingAcceptance(plan.limitations).map(canonicalJson),
+				},
+			],
+		},
+	};
+	let result: TranslationResult | undefined;
+	const resumed = await prepareTabForSend(plan.tabId!, plan.destination.provider, {
+		getSession: () => session,
+		isBusy: () => false,
+		translate: async (request) => {
+			if (
+				request.agentId !== plan.agentId ||
+				request.tabId !== plan.tabId ||
+				request.destination !== plan.destination.provider
+			)
+				throw new Error('Translate-at-send selected a different tab or provider');
+			if (request.action === 'plan') return { success: true, plan };
+			if (request.action !== 'apply' || request.planId !== plan.id || !request.acceptLimitations)
+				throw new Error('Translate-at-send did not apply the reviewed plan');
+			result = await apply();
+			if (result.success && result.state === 'committed')
+				session = commitTranslationSession(
+					session,
+					plan.destination.provider,
+					plan.id,
+					result.mappings,
+					journal.knowledgeDirectory,
+					plan.source.provider,
+					plan.tabId
+				);
+			return { success: result.success, plan, result };
+		},
+	});
+	if (!result || resumed !== result.mappings[0]?.destinationSessionId)
+		throw new Error('Translate-at-send returned a different native session');
+	return result;
+}
+
+/** Seed only isolated managed memory, preserving the finalized native import checkpoint. */
+export async function seedAcceptanceMemoryDelta(
+	archive: TranslationArchive,
+	plan: TranslationPlan,
+	identity: TranslationIdentity,
+	knowledge: string
+): Promise<void> {
+	const checkpoint = await archive.checkpoint(plan.agentId);
+	if (!checkpoint) throw new Error('Native import did not persist its checkpoint');
+	const topic = path.join(knowledge, 'memory', 'acceptance-delta.md');
+	await fs.mkdir(path.dirname(topic), { recursive: true });
+	await fs.writeFile(topic, 'Isolated acceptance memory: violet heron.\n', {
+		flag: 'wx',
+		mode: 0o600,
+	});
+	await fs.appendFile(
+		path.join(knowledge, 'memory', 'MEMORY.md'),
+		'\n[Isolated acceptance memory](acceptance-delta.md)\n',
+		{ mode: 0o600 }
+	);
+	const updated = await collectTranslationResources(identity, plan.scope, knowledge);
+	assertAcceptancePlan({ ...plan, limitations: [...plan.limitations, ...updated.limitations] });
+	checkpoint.resources = updated.artifacts;
+	await archive.saveCheckpoint(plan.agentId, checkpoint);
+}
 
 export function validateAcceptanceInputs(
 	workspace: string,
@@ -155,6 +320,7 @@ export async function runIsolatedAcceptance(workspace: string, args: string[]): 
 	);
 	const env = {
 		...process.env,
+		MAESTRO_USER_DATA: path.join(root, 'maestro-data'),
 		HOME: home,
 		CLAUDE_CONFIG_DIR: claudeHome,
 		CODEX_HOME: codexHome,
@@ -164,7 +330,6 @@ export async function runIsolatedAcceptance(workspace: string, args: string[]): 
 		XDG_DATA_HOME: path.join(home, '.local/share'),
 	};
 	const originalEnvironment = { ...process.env };
-	Object.assign(process.env, env);
 	const credentials = [
 		[inputs.claudeAuth, path.join(claudeHome, '.credentials.json')],
 		[inputs.codexAuth, path.join(codexHome, 'auth.json')],
@@ -199,10 +364,13 @@ export async function runIsolatedAcceptance(workspace: string, args: string[]): 
 		);
 		wrappers[provider] = wrapper;
 	}
-	const versions: Record<string, string> = {};
-	for (const provider of ['claude-code', 'codex']) {
+	const versions = {} as Record<keyof typeof TRANSLATION_PROVIDER_VERSIONS, string>;
+	for (const provider of ['claude-code', 'codex'] as const) {
 		const probe = await execFileNoThrow(wrappers[provider], ['--version'], undefined, { env });
-		versions[provider] = /\d+\.\d+\.\d+/.exec(probe.stdout)?.[0] ?? '';
+		versions[provider] = acceptanceProviderVersion(
+			provider,
+			probe.exitCode === 0 ? probe.stdout : ''
+		);
 	}
 	const originalIdentity: TranslationIdentity = {
 		provider: 'claude-code',
@@ -243,6 +411,32 @@ export async function runIsolatedAcceptance(workspace: string, args: string[]): 
 	let knowledge: string | undefined;
 	let committedOperation: string | undefined;
 	const evidence: Array<Record<string, unknown>> = [];
+	const evidenceDirectory = path.join(
+		workspace,
+		'.maestro',
+		'scratch',
+		'provider-translation-acceptance'
+	);
+	await fs.mkdir(evidenceDirectory, { recursive: true, mode: 0o700 });
+	const evidenceFile = path.join(
+		evidenceDirectory,
+		`evidence-${fileTimestampSlug()}-${Date.now()}.json`
+	);
+	const saveEvidence = async (): Promise<void> => {
+		await atomicWriteFile(
+			evidenceFile,
+			JSON.stringify({
+				schemaVersion: 1,
+				createdAt: new Date().toISOString(),
+				testedVersions: versions,
+				originalSourceSha256: originalHash,
+				hops: evidence,
+				verification: 'unverified',
+			}),
+			{ mode: 0o600, durable: true }
+		);
+	};
+	const knowledgeRoot = translationKnowledgeRoot(env.MAESTRO_USER_DATA);
 	const assertOriginal = async (): Promise<void> => {
 		if (translationHash(await fs.readFile(originalTranscript)) !== originalHash)
 			throw new Error('Original transcript changed during isolated acceptance');
@@ -254,200 +448,302 @@ export async function runIsolatedAcceptance(workspace: string, args: string[]): 
 				throw new Error('Original knowledge changed during isolated acceptance');
 		}
 	};
+	// Launch planning resolves the trusted data directory from the host environment.
+	// Change it only while inside the restoration boundary, after setup has succeeded.
+	Object.assign(process.env, env);
 	try {
-		for (const provider of ['codex', 'claude-code', 'codex'] as const) {
-			await assertOriginal();
-			const raw = await fs.readFile(nativeFile);
-			const input = registry
-				.get(current.provider)!
-				.extract(current, GUINEA_PIG.tabId, nativeId, raw);
-			const checkpoint = await archive.checkpoint('isolated-guinea-pig');
-			const reconciled = reconcileConversation(input, checkpoint);
-			const selectedResources = structuredClone(checkpoint?.resources ?? resources.artifacts);
-			const destination: TranslationIdentity = {
-				provider,
-				version: versions[provider],
-				accountRoot: provider === 'codex' ? codexHome : claudeHome,
-				projectRoot: project,
-			};
-			const projections = await planResourceProjections(selectedResources, destination, checkpoint);
-			const plan = planTranslation({
-				agentId: 'isolated-guinea-pig',
-				source: current,
-				destination,
-				scope,
-				conversations: [reconciled.conversation],
-				registry,
-				resources: selectedResources,
-				limitations: [...resources.limitations, ...projections.limitations],
-			});
-			if (plan.status === 'blocked')
-				throw new Error(plan.limitations.map((l) => l.message).join('\n'));
-			const journal: TranslationJournal = {
-				schemaVersion: 1,
-				plan,
-				state: 'planned',
-				conversations: [reconciled.conversation],
-				resources: selectedResources,
-				mappings: [],
-				resourceWrites: [],
-				projections: projections.projections,
-				checkpoint: checkpoint ?? {
-					observed: {},
-					lineage: {},
-					conversations: [],
-					resources: [],
-					resourceBases: {},
-					providerRoots: {},
+		for (const [hopIndex, provider] of (['codex', 'claude-code', 'codex'] as const).entries()) {
+			const startedAt = performance.now();
+			const hop = {
+				direction: { source: current.provider, destination: provider },
+				versions: { source: current.version, destination: versions[provider] },
+				path: hopIndex === 1 ? 'translate-at-send' : 'single-tab',
+				planStatus: null as TranslationPlan['status'] | null,
+				limitations: [] as TranslationPlan['limitations'],
+				recall: { answer: null as string | null, passed: false },
+				memoryDelta: { expected: hopIndex > 0, found: false },
+				duplicateImport: {
+					passed: false,
+					importedNewRecords: null as number | null,
+					records: 0,
+					newRecords: 0,
 				},
+				originalSourceSha256: { before: null as string | null, after: null as string | null },
+				compactionWindow: { present: false, passed: false, activeRecords: 0, archivedRecords: 0 },
+				managedKnowledge: false,
+				archivePreserved: false,
+				payloadClasses: [] as string[],
+				passed: false,
+				error: null as string | null,
+				wallTimeMs: 0,
 			};
-			for (const record of input.records)
-				journal.checkpoint!.observed[nativeRecordKey(current, nativeId, record.nativeId)] =
-					record.semanticHash;
-			const connection =
-				provider === 'codex'
-					? await openCodexTranslationConnection({ binary: wrappers.codex, cwd: project, env })
-					: undefined;
-			let result;
+			evidence.push(hop);
 			try {
-				result = await applyTranslation(
-					archive,
-					registry,
-					journal,
-					{
-						codex: connection,
-						assertSourceUnchanged: async () => {
-							await assertOriginal();
-							if (translationHash(await fs.readFile(nativeFile)) !== translationHash(raw))
-								throw new Error('Isolated source changed since snapshot');
-						},
-						setMigration: async () => {},
-						isCommitted: async (id) => committedOperation === id,
-						commit: async (operation) => {
-							await atomicWriteFile(
-								path.join(root, 'mapping.json'),
-								JSON.stringify(operation.mappings),
-								{ mode: 0o600, durable: true }
-							);
-							committedOperation = operation.plan.id;
-						},
-					},
-					true
+				hop.originalSourceSha256.before = translationHash(await fs.readFile(originalTranscript));
+				await assertOriginal();
+				const raw = await fs.readFile(nativeFile);
+				const input = registry
+					.get(current.provider)!
+					.extract(current, GUINEA_PIG.tabId, nativeId, raw);
+				const checkpoint = await archive.checkpoint('isolated-guinea-pig');
+				const reconciled = reconcileConversation(input, checkpoint);
+				const selectedResources = structuredClone(checkpoint?.resources ?? resources.artifacts);
+				const destination: TranslationIdentity = {
+					provider,
+					version: versions[provider],
+					accountRoot: provider === 'codex' ? codexHome : claudeHome,
+					projectRoot: project,
+				};
+				const projections = await planResourceProjections(
+					selectedResources,
+					destination,
+					checkpoint
 				);
-			} finally {
-				connection?.close();
-			}
-			if (!result.success || !result.mappings[0]?.destinationSessionId)
-				throw new Error(result.error ?? 'Native apply refused');
-			current = destination;
-			nativeId = result.mappings[0].destinationSessionId;
-			nativeFile = result.mappings[0].artifacts[0].path;
-			knowledge = journal.knowledgeDirectory;
-			const turn = await planSessionTurn({
-				agentId: provider,
-				command: wrappers[provider],
-				cwd: project,
-				resumeSessionId: nativeId,
-				prompt: inputs.question,
-				readOnly: true,
-				envVars: { ...env, ...(knowledge && { [TRANSLATION_KNOWLEDGE_ENV_VAR]: knowledge }) },
-			});
-			if (!turn.ok) throw new Error(turn.error);
-			const completed = await runToCompletion(turn.spec, {
-				agentId: provider,
-				sessionId: 'isolated-acceptance',
-				stopGraceMs: BACKGROUND_STOP_GRACE_MS,
-			});
-			if (completed.outcome !== 'completed' || !completed.answerText?.includes(inputs.expected))
-				throw new Error('Native continuation failed to recall the expected earlier fact');
-			if (completed.sessionId && completed.sessionId !== nativeId)
-				throw new Error('Continuation returned a different native identity');
-			// Isolated source-only memory delta. It is supplied through the actual launch binding on the next native continuation.
-			if (provider === 'codex' && evidence.length === 0 && knowledge) {
-				const topic = path.join(knowledge, 'memory', 'acceptance-delta.md');
-				await fs.mkdir(path.dirname(topic), { recursive: true });
-				await fs.writeFile(topic, 'Isolated acceptance memory: violet heron.\n');
-				const index = path.join(knowledge, 'memory', 'MEMORY.md');
-				await fs.appendFile(index, '\n[Isolated acceptance memory](acceptance-delta.md)\n');
-				journal.checkpoint!.resources = [
-					...selectedResources,
-					{
-						id: translationHash(topic),
-						kind: 'memory',
-						sourcePath: topic,
-						relativePath: 'memory/acceptance-delta.md',
-						sha256: translationHash(await fs.readFile(topic)),
-						bytesBase64: (await fs.readFile(topic)).toString('base64'),
-						scope: 'project',
+				const plan = planTabTranslation({
+					agentId: 'isolated-guinea-pig',
+					tabId: GUINEA_PIG.tabId,
+					source: current,
+					destination,
+					scope,
+					conversations: [reconciled.conversation],
+					registry,
+					resources: selectedResources,
+					limitations: [...resources.limitations, ...projections.limitations],
+				});
+				hop.planStatus = plan.status;
+				hop.limitations = plan.limitations;
+				assertAcceptancePlan(plan);
+				const journal: TranslationJournal = {
+					schemaVersion: 1,
+					plan,
+					state: 'planned',
+					conversations: [reconciled.conversation],
+					resources: selectedResources,
+					mappings: [],
+					resourceWrites: [],
+					projections: projections.projections,
+					checkpoint: checkpoint ?? {
+						observed: {},
+						lineage: {},
+						conversations: [],
+						resources: [],
+						resourceBases: {},
+						providerRoots: {},
 					},
-				];
-				for (const artifact of journal.checkpoint!.resources) {
-					const file = path.join(knowledge, artifact.relativePath);
-					try {
-						const bytes = await fs.readFile(file);
-						artifact.bytesBase64 = bytes.toString('base64');
-						artifact.sha256 = translationHash(bytes);
-					} catch {
-						/* Non-memory native resources retain their archived bodies. */
-					}
+				};
+				for (const record of input.records)
+					journal.checkpoint!.observed[nativeRecordKey(current, nativeId, record.nativeId)] =
+						record.semanticHash;
+				const connection =
+					provider === 'codex'
+						? await openCodexTranslationConnection({ binary: wrappers.codex, cwd: project, env })
+						: undefined;
+				let result;
+				try {
+					result = await applyAcceptanceHop(
+						journal,
+						() =>
+							applyTabTranslation(
+								archive,
+								registry,
+								journal,
+								{
+									knowledgeRoot,
+									codex: connection,
+									assertSourceUnchanged: async () => {
+										await assertOriginal();
+										if (translationHash(await fs.readFile(nativeFile)) !== translationHash(raw))
+											throw new Error('Isolated source changed since snapshot');
+									},
+									setMigration: async () => {},
+									isCommitted: async (id) => committedOperation === id,
+									commit: async (operation) => {
+										await atomicWriteFile(
+											path.join(root, 'mapping.json'),
+											JSON.stringify(operation.mappings),
+											{ mode: 0o600, durable: true }
+										);
+										committedOperation = operation.plan.id;
+									},
+								},
+								true
+							),
+						hopIndex === 1
+					);
+				} finally {
+					connection?.close();
 				}
-				await archive.saveCheckpoint('isolated-guinea-pig', journal.checkpoint!);
-			}
-			if (evidence.length > 0 && knowledge) {
-				const memoryTurn = await planSessionTurn({
+				if (
+					!result.success ||
+					result.state !== 'committed' ||
+					!result.mappings[0]?.destinationSessionId
+				)
+					throw new Error(result.error ?? 'Native apply refused');
+				const archived = await archive.read(plan.agentId, plan.id);
+				hop.archivePreserved =
+					canonicalJson(archived.conversations) === canonicalJson(journal.conversations) &&
+					archived.conversations.some((conversation) =>
+						conversation.artifacts.some(
+							(artifact) =>
+								artifact.kind === 'transcript' && artifact.sha256 === translationHash(raw)
+						)
+					);
+				if (!hop.archivePreserved)
+					throw new Error('Source bytes or portable records are absent from the archive');
+				current = destination;
+				nativeId = result.mappings[0].destinationSessionId;
+				nativeFile = result.mappings[0].artifacts[0].path;
+				knowledge = journal.knowledgeDirectory;
+				if (!knowledge) throw new Error('Translation returned no managed knowledge directory');
+				assertTranslationKnowledgeDirectory(knowledge, knowledgeRoot);
+				if (isPathAtOrUnderRoot(knowledge, project))
+					throw new Error('Managed knowledge was written into the project');
+				for (const resource of selectedResources) {
+					if (resource.kind !== 'memory' && resource.kind !== 'instruction') continue;
+					if (
+						translationHash(await fs.readFile(path.join(knowledge, resource.relativePath))) !==
+						resource.sha256
+					)
+						throw new Error('Managed knowledge differs from the selected resource');
+				}
+				hop.managedKnowledge = true;
+				const staged = registry
+					.get(provider)!
+					.extract(current, GUINEA_PIG.tabId, nativeId, await fs.readFile(nativeFile));
+				hop.limitations = [...hop.limitations, ...staged.limitations];
+				assertAcceptancePlan({ ...plan, limitations: hop.limitations });
+				assertAcceptanceContextWindow(reconciled.conversation, staged);
+				const committedCheckpoint = await archive.checkpoint('isolated-guinea-pig');
+				if (!committedCheckpoint) throw new Error('Native import did not persist its checkpoint');
+				const imported = reconcileConversation(staged, committedCheckpoint);
+				hop.duplicateImport.importedNewRecords = imported.newRecords;
+				// Provider metadata has no projected lineage. Every projected row must map
+				// back to an existing source origin rather than count as fresh history.
+				const sourceOrigins = new Set(
+					reconciled.conversation.records.map((record) => recordKey(record.origin))
+				);
+				if (
+					staged.records
+						.filter((record) => record.role === 'user' || record.role === 'assistant')
+						.some((record) => {
+							const origin =
+								committedCheckpoint?.lineage[nativeRecordKey(current, nativeId, record.nativeId)];
+							return !origin || !sourceOrigins.has(recordKey(origin));
+						})
+				)
+					throw new Error('Imported native history lost its original lineage');
+				const active = activeContextRecords(reconciled.conversation.records);
+				hop.compactionWindow = {
+					present: reconciled.conversation.records.some(
+						(r) => r.boundary === 'compaction' || r.window === 'archived'
+					),
+					passed: true,
+					activeRecords: active.length,
+					archivedRecords: reconciled.conversation.records.length - active.length,
+				};
+				const turn = await planSessionTurn({
 					agentId: provider,
 					command: wrappers[provider],
 					cwd: project,
 					resumeSessionId: nativeId,
-					prompt: 'Read the isolated project memory and report the acceptance memory value.',
+					prompt: inputs.question,
 					readOnly: true,
-					envVars: { ...env, [TRANSLATION_KNOWLEDGE_ENV_VAR]: knowledge },
+					envVars: { ...env, ...(knowledge && { [TRANSLATION_KNOWLEDGE_ENV_VAR]: knowledge }) },
 				});
-				if (!memoryTurn.ok) throw new Error(memoryTurn.error);
-				const memoryResult = await runToCompletion(memoryTurn.spec, {
+				if (!turn.ok) throw new Error(turn.error);
+				const completed = await runToCompletion(turn.spec, {
 					agentId: provider,
-					sessionId: 'isolated-memory-acceptance',
+					sessionId: 'isolated-acceptance',
 					stopGraceMs: BACKGROUND_STOP_GRACE_MS,
 				});
+				hop.recall.answer = completed.answerText ?? null;
+				hop.recall.passed =
+					completed.outcome === 'completed' && !!completed.answerText?.includes(inputs.expected);
+				if (!hop.recall.passed)
+					throw new Error('Native continuation failed to recall the expected earlier fact');
+				if (completed.sessionId && completed.sessionId !== nativeId)
+					throw new Error('Continuation returned a different native identity');
+				// Isolated source-only memory delta. It is supplied through the actual launch binding on the next native continuation.
+				if (hopIndex === 0) {
+					await seedAcceptanceMemoryDelta(archive, plan, current, knowledge);
+				}
+				if (hopIndex > 0) {
+					const memoryTurn = await planSessionTurn({
+						agentId: provider,
+						command: wrappers[provider],
+						cwd: project,
+						resumeSessionId: nativeId,
+						prompt: 'Read the isolated project memory and report the acceptance memory value.',
+						readOnly: true,
+						envVars: { ...env, [TRANSLATION_KNOWLEDGE_ENV_VAR]: knowledge },
+					});
+					if (!memoryTurn.ok) throw new Error(memoryTurn.error);
+					const memoryResult = await runToCompletion(memoryTurn.spec, {
+						agentId: provider,
+						sessionId: 'isolated-memory-acceptance',
+						stopGraceMs: BACKGROUND_STOP_GRACE_MS,
+					});
+					hop.memoryDelta.found =
+						memoryResult.outcome === 'completed' &&
+						!!memoryResult.answerText?.includes('violet heron');
+					if (
+						!hop.memoryDelta.found ||
+						(memoryResult.sessionId && memoryResult.sessionId !== nativeId)
+					)
+						throw new Error('Native memory discovery failed');
+				}
+				const after = registry
+					.get(provider)!
+					.extract(current, GUINEA_PIG.tabId, nativeId, await fs.readFile(nativeFile));
+				const delta = reconcileConversation(after, await archive.checkpoint('isolated-guinea-pig'));
+				hop.limitations = [...hop.limitations, ...delta.limitations];
+				assertAcceptancePlan({ ...plan, limitations: hop.limitations });
+				hop.duplicateImport = {
+					passed:
+						new Set(delta.conversation.records.map((r) => recordKey(r.origin))).size ===
+						delta.conversation.records.length,
+					importedNewRecords: imported.newRecords,
+					records: delta.conversation.records.length,
+					newRecords: delta.newRecords,
+				};
+				if (!hop.duplicateImport.passed) throw new Error('Round-trip lineage echoes detected');
+				// Only native payloads read back and resources checked above count as covered.
+				const classes = new Set<string>(['conversation', 'transcript']);
 				if (
-					memoryResult.outcome !== 'completed' ||
-					!memoryResult.answerText?.includes('violet heron')
+					reconciled.conversation.records.some((record) =>
+						record.blocks.some((block) => block.kind === 'opaque')
+					)
 				)
-					throw new Error('Native memory discovery failed');
+					classes.add('opaque');
+				for (const record of staged.records)
+					for (const block of record.blocks)
+						if (block.kind !== 'text' && block.kind !== 'opaque') classes.add(block.kind);
+				for (const resource of selectedResources)
+					if (resource.kind === 'memory' || resource.kind === 'instruction')
+						classes.add(resource.kind);
+				if (hop.compactionWindow.present) classes.add('compaction');
+				hop.payloadClasses = [...classes].sort();
+				await assertOriginal();
+				hop.passed = true;
+			} catch (error) {
+				hop.error = error instanceof Error ? error.message : String(error);
+				throw error;
+			} finally {
+				try {
+					hop.originalSourceSha256.after = translationHash(await fs.readFile(originalTranscript));
+					await assertOriginal();
+				} catch (error) {
+					hop.passed = false;
+					hop.error = error instanceof Error ? error.message : String(error);
+					throw error;
+				} finally {
+					hop.wallTimeMs = performance.now() - startedAt;
+					await saveEvidence();
+				}
 			}
-			const after = registry
-				.get(provider)!
-				.extract(current, GUINEA_PIG.tabId, nativeId, await fs.readFile(nativeFile));
-			const delta = reconcileConversation(after, await archive.checkpoint('isolated-guinea-pig'));
-			if (
-				new Set(delta.conversation.records.map((r) => recordKey(r.origin))).size !==
-				delta.conversation.records.length
-			)
-				throw new Error('Round-trip lineage echoes detected');
-			evidence.push({
-				provider,
-				version: current.version,
-				nativeId,
-				nativeResume: completed.outcome,
-				recalled: true,
-				records: delta.conversation.records.length,
-				newRecords: delta.newRecords,
-				verification: 'unverified',
-			});
-			await assertOriginal();
 		}
-		await atomicWriteFile(
-			path.join(root, 'evidence.json'),
-			JSON.stringify({
-				originalHash,
-				evidence,
-				verification: 'unverified',
-				limits: resources.limitations,
-			}),
-			{ mode: 0o600, durable: true }
-		);
 		console.log(
-			`Isolated acceptance evidence: ${path.join(root, 'evidence.json')}. Registry certification remains unchanged.`
+			`Isolated acceptance evidence: ${evidenceFile}. Registry certification remains unchanged.`
 		);
 	} finally {
 		for (const key of Object.keys(process.env))

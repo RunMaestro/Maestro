@@ -86,6 +86,18 @@ describe('FloatingWidgetFrame', () => {
 		expect(onClose).not.toHaveBeenCalled();
 	});
 
+	it('can minimize on Escape while the close button still stops', () => {
+		const onEscape = vi.fn();
+		const { onClose } = renderFrame({ onEscape });
+		fireEvent.keyDown(window, { key: 'Escape' });
+		expect(onEscape).toHaveBeenCalledTimes(1);
+		expect(onClose).not.toHaveBeenCalled();
+
+		fireEvent.click(screen.getByTestId('floating-widget-close'));
+		expect(onClose).toHaveBeenCalledTimes(1);
+		expect(onEscape).toHaveBeenCalledTimes(1);
+	});
+
 	it('makes the title strip the drag region and its controls no-drag', () => {
 		renderFrame();
 		expect(appRegion(screen.getByTestId('floating-widget-title-strip'))).toBe('drag');

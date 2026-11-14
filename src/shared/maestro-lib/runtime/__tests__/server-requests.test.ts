@@ -93,6 +93,22 @@ describe('update_session_config', () => {
 		return agent.value;
 	};
 
+	it('refuses tab-provider mutations through generic patches and the retired quick-switch verb', async () => {
+		for (const patch of [
+			{ tabId: 't1', tabProvider: 'claude-code', customModel: 'opus' },
+			{ tabId: 't1', tabProviderSelection: { provider: 'claude-code' } },
+		]) {
+			expect(await update(patch)).toMatchObject({
+				success: false,
+				error: expect.stringContaining('parking operation'),
+			});
+		}
+		expect(
+			await handle({ type: 'tab_provider', sessionId: 'a1', tabId: 't1', provider: 'claude-code' })
+		).toMatchObject({ success: false, error: expect.stringContaining('has been removed') });
+		expect((await stored()).toolType).toBe('codex');
+	});
+
 	/** A value each allowlisted key accepts. A key added to the allowlist without one fails the test below. */
 	const SAMPLE: Record<string, unknown> = {
 		nudgeMessage: 'keep going',
@@ -913,10 +929,18 @@ describe('live tab state and the host queue', () => {
 			sessions: Array<Record<string, unknown>>;
 		};
 		expect(reply.sessions[0]).toMatchObject({ id: 'a1', state: 'busy' });
+		// Each tab also carries its provider projection (provider, model, model source).
 		expect(reply.sessions[0].aiTabs).toEqual([
-			{ id: 't1', agentSessionId: null, name: null, state: 'busy', thinkingStartTime: 500 },
-			{ id: 't2', agentSessionId: null, name: null, state: 'idle' },
+			expect.objectContaining({
+				id: 't1',
+				agentSessionId: null,
+				name: null,
+				state: 'busy',
+				thinkingStartTime: 500,
+			}),
+			expect.objectContaining({ id: 't2', agentSessionId: null, name: null, state: 'idle' }),
 		]);
+		expect((reply.sessions[0].aiTabs as unknown[])[1]).not.toHaveProperty('thinkingStartTime');
 	});
 
 	it('holds and releases a waiting message with set_queue_item_paused', async () => {

@@ -121,7 +121,9 @@ The run configuration modal has **Model** and **Effort** pickers, both defaultin
 
 Below the pickers, **Ignore model hints in documents** (off by default) runs every task at the picked model and effort and skips the documents' `MAESTRO:MODEL` markers entirely, both the document-wide ones and the ones on single tasks. With the pickers left on **Use agent default**, that means the agent's own settings. Reach for it when one model should run the whole playbook regardless of what its author chose: rerunning an expensive playbook cheaply, or forcing the top model onto a playbook that marked its phases `low`. Like the pickers, it resets each time the modal opens. Goal-Driven runs do not show it, because they have no documents.
 
-The same override is available from the CLI as `--model` / `--effort` on `auto-run`, `playbook`, `run-doc`, and `goal-run`, and the switch as `--ignore-model-hints` on `auto-run`, `playbook`, and `run-doc`. See [CLI](cli.md#per-run-model-override).
+The **Model** picker lists the provider's own models and, for a provider that can run on a Local Models source (Claude Code, Codex, OpenCode, Copilot CLI), every model each source serves, grouped by source. Picking a source model runs this Auto Run on it; picking a provider model on an agent that normally runs on a source runs this Auto Run on the provider. The first option, **Use agent default**, names what the agent is set to. A document's `MAESTRO:MODEL` tier still decides its own tasks.
+
+The same override is available from the CLI as `--model` / `--effort` on `auto-run`, `playbook`, `run-doc`, and `goal-run`, the source choice as `--model-source` on `auto-run`, `goal-run`, and `cue schedule --auto-run`, and the switch as `--ignore-model-hints` on `auto-run`, `playbook`, and `run-doc`. See [CLI](cli.md#per-run-model-override).
 
 ### Staging Documents from the Files Tab
 
@@ -512,7 +514,7 @@ Per-document mode hands the agent the whole file in one run, and a run has one m
 
 A document that names no markers - which is every playbook written before this feature - is unaffected. It is still a single whole-document dispatch, with the same prompt text it has always had.
 
-The boundary is measured on the resolved model and effort, not on the words. On a provider with no tier table (Codex, Copilot-CLI, OpenCode), `tier="low"` and `tier="high"` both fall back to the agent's own model, so they resolve to the same settings and the run is not split. Ending one dispatch to start another at an identical configuration would cost a turn and buy nothing.
+The boundary is measured on the resolved model and effort, not on the words. On a provider with no tier table (Copilot-CLI, OpenCode), `tier="low"` and `tier="high"` both fall back to the agent's own model, so they resolve to the same settings and the run is not split. Ending one dispatch to start another at an identical configuration would cost a turn and buy nothing.
 
 ### `low`, `medium`, and `high` are positions, not literal values
 
@@ -534,11 +536,13 @@ Providers also retire rungs. If a provider rejects the value a level maps to, Ma
 | ------------- | ----------------------- | ------ |
 | Claude Code   | Yes (haiku/sonnet/opus) | Yes    |
 | Factory Droid | Yes                     | Yes    |
-| Codex         | Agent default           | Yes    |
+| Codex         | Yes (luna/sol/astra)    | Yes    |
 | Copilot-CLI   | Agent default           | Yes    |
 | OpenCode      | Agent default           | None   |
 
-Model tiers ship only where the model identifiers are stable enough that a playbook written today still resolves correctly later. Codex and Copilot-CLI discover their catalogues at runtime and their IDs change per release; OpenCode runs whatever models you configured, which may be local. For those, a `tier` hint falls back to the agent's configured model **and says so** - a warning in the History entry, and a `model_resolution` event on the JSONL stream when run through `maestro-cli`. It never silently substitutes a different model.
+Model tiers ship only where the model identifiers are stable enough that a playbook written today still resolves correctly later. Codex maps by model family: `low` is the newest Luna model (fast and affordable), `medium` the newest Sol (the coding workhorse), and `high` the newest Astra (frontier). Its slugs change each generation, so if one is no longer offered to your account, Codex refuses the turn by name and Maestro's log names the replacement. Copilot-CLI discovers its catalogue at runtime with no stable families, and OpenCode runs whatever models you configured, which may be local. For those, a `tier` hint falls back to the agent's configured model **and says so** - a warning in the History entry, and a `model_resolution` event on the JSONL stream when run through `maestro-cli`. It never silently substitutes a different model.
+
+A tier does not have to mean a provider model. Settings -> Models -> System Two -> Tier defaults sets what `low`, `medium` and `high` launch on for each harness, and Edit Agent -> Models -> Tiers sets it for one agent. Either can name a model on a Local Models source, so a `low` task runs on a model on your machine and a `high` task on the provider. This is also how OpenCode and Copilot-CLI get a tier mapping. See [Tiers](./local-models#tiers).
 
 ### Recording why
 

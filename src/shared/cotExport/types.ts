@@ -25,7 +25,8 @@
  *   - store any of it anywhere but its own encrypted store: not on the agent
  *     (`Session`) object, not in the agent configs, not in settings
  *   - give it a hotkey, a command palette entry, a menu item, or a UI surface
- *     entry. Its only control is a section in the Edit Agent dialog.
+ *     entry. Its only control is the Audit Log tab of the Edit Agent dialog,
+ *     a tab the CLI's `--tab` list must never name.
  * These rules override the project's usual "every UI action has a CLI path"
  * and "three ways in" rules. This feature is the deliberate exception to both.
  *

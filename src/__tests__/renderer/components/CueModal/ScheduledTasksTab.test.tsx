@@ -171,6 +171,75 @@ describe('ScheduledTasksTab', () => {
 		expect(input.fireAt).toMatch(/Z$/);
 	});
 
+	it('the New Task form sends a gate and its policy with the task', async () => {
+		render(<ScheduledTasksTab theme={theme} active agents={agents} defaultAgentId="agent-alpha" />);
+		fireEvent.click(await screen.findByText('New Task'));
+
+		fireEvent.change(screen.getByPlaceholderText(/Summarize what landed/), {
+			target: { value: 'triage the queue' },
+		});
+		fireEvent.change(screen.getByTestId('cue-gate-condition'), {
+			target: { value: '  the queue is not empty  ' },
+		});
+		fireEvent.click(screen.getByText('Schedule task'));
+
+		await waitFor(() => expect(createScheduledTask).toHaveBeenCalledTimes(1));
+		expect(createScheduledTask.mock.calls[0][0]).toMatchObject({
+			gate: 'the queue is not empty',
+			gateOnUnavailable: 'run',
+		});
+	});
+
+	it('a task created without a gate carries no gate fields', async () => {
+		render(<ScheduledTasksTab theme={theme} active agents={agents} defaultAgentId="agent-alpha" />);
+		fireEvent.click(await screen.findByText('New Task'));
+		fireEvent.change(screen.getByPlaceholderText(/Summarize what landed/), {
+			target: { value: 'ship the release' },
+		});
+		fireEvent.click(screen.getByText('Schedule task'));
+
+		await waitFor(() => expect(createScheduledTask).toHaveBeenCalledTimes(1));
+		const input = createScheduledTask.mock.calls[0][0];
+		expect(input).not.toHaveProperty('gate');
+		expect(input).not.toHaveProperty('gateOnUnavailable');
+	});
+
+	it('editing shows the gate a task has, and emptying it removes the gate', async () => {
+		listScheduledTasks.mockResolvedValue({
+			tasks: [task({ gate: 'it is a working day', gateOnUnavailable: 'skip' })],
+			warnings: [],
+		});
+		render(<ScheduledTasksTab theme={theme} active agents={agents} />);
+		// The row says the task is gated before it is opened.
+		expect(await screen.findByText(/nightly-summary · Tasks · gated/)).toBeInTheDocument();
+
+		fireEvent.click(screen.getByLabelText('Edit this task'));
+		const condition = screen.getByTestId('cue-gate-condition');
+		expect(condition).toHaveValue('it is a working day');
+		// The policy the task has is the one selected.
+		expect(screen.getByRole('button', { name: 'If no model can answer' })).toHaveTextContent(
+			'Skip the event'
+		);
+
+		fireEvent.change(condition, { target: { value: '' } });
+		fireEvent.click(screen.getByText('Save changes'));
+
+		await waitFor(() => expect(updateScheduledTask).toHaveBeenCalledTimes(1));
+		expect(updateScheduledTask.mock.calls[0][2]).toMatchObject({ gate: null });
+	});
+
+	it('editing a task with no gate leaves the gate out of the patch', async () => {
+		render(<ScheduledTasksTab theme={theme} active agents={agents} />);
+		await screen.findByText('Nightly summary');
+		fireEvent.click(screen.getByLabelText('Edit this task'));
+		fireEvent.click(screen.getByText('Save changes'));
+
+		await waitFor(() => expect(updateScheduledTask).toHaveBeenCalledTimes(1));
+		const patch = updateScheduledTask.mock.calls[0][2];
+		expect(patch).not.toHaveProperty('gate');
+		expect(patch).not.toHaveProperty('gateOnUnavailable');
+	});
+
 	it('the New Task form sends the picked model tier and effort with the prompt', async () => {
 		render(
 			<ScheduledTasksTab

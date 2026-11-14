@@ -2,6 +2,7 @@ import {
 	requestProviderTranslation,
 	switchProviderWithoutConversion,
 } from '../../services/providerTranslation';
+import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
 /**
  * useSessionLifecycle - extracted from App.tsx (Phase 2H)
  *
@@ -32,6 +33,7 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { offboardBeforeRemoval } from '../../services/groupLifecycle';
 import { collectNamingPrompt, requestTabAutoName } from '../../services/tabAutoNaming';
 import {
 	renameTerminalTab as renameTerminalTabHelper,
@@ -43,11 +45,16 @@ import { resolveActiveNavTab } from './useNavigationHistory';
 import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
+import type { TierTargets } from '../../../shared/modelTiers';
+import type { PeerGrants } from '../../../shared/peerAgents';
 import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { flushGroupsToDisk } from '../../services/groupPersistence';
 import { resolveTurnProvider } from '../../../shared/maestro-lib/agents/providerSwap';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
+import { flushAgentToStore, OFF_TOKEN_PROXY_FIELDS } from '../../services/agentGateway';
 import { killAgentAiProcesses } from '../../services/process';
 import {
 	withWorkingDirectory,
@@ -108,12 +115,21 @@ export interface SessionLifecycleReturn {
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
-		harnessControlMode?: HarnessControlMode,
+		/** Local Models gateway URL, already validated; `undefined` clears it. */
+		gatewayUrl?: string,
+		/** model source, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget,
+		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
+		tierTargets?: TierTargets,
+		/** Peer Agents: the explicit rows and the two grants. An absent field clears that source. */
+		peerGrants?: PeerGrants,
 		acceptTranslationLimitations?: boolean,
 		selectedUserResources?: string[],
 		migrationPlanId?: string,
+		projectResourcesIntoRepo?: boolean,
 		/** On a provider change: convert memory and session history (opt-in) or switch plainly. */
-		convertProviderHistory?: boolean
+		convertProviderHistory?: boolean,
+		harnessControlMode?: HarnessControlMode
 	) => void | Promise<void>;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -207,12 +223,21 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			codexAutoResetOnExhaustion?: boolean,
 			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 			codexTransport?: CodexTransport,
-			harnessControlMode?: HarnessControlMode,
+			/** Local Models gateway URL, already validated; `undefined` clears it. */
+			gatewayUrl?: string,
+			/** model source, already validated; `undefined` means the provider's model. */
+			runOn?: RunOnSourceTarget,
+			/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
+			tierTargets?: TierTargets,
+			/** Peer Agents: the explicit rows and the two grants. An absent field clears that source. */
+			peerGrants?: PeerGrants,
 			acceptTranslationLimitations?: boolean,
 			selectedUserResources?: string[],
 			migrationPlanId?: string,
+			projectResourcesIntoRepo?: boolean,
 			/** On a provider change: convert memory and session history (opt-in) or switch plainly. */
-			convertProviderHistory?: boolean
+			convertProviderHistory?: boolean,
+			harnessControlMode?: HarnessControlMode
 		) => {
 			const before = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 			const switchingProvider = !!toolType && !!before && toolType !== before.toolType;
@@ -238,6 +263,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						action: 'apply',
 						acceptLimitations: acceptTranslationLimitations,
 						selectedUserResources,
+						projectResourcesIntoRepo,
 						planId: migrationPlanId,
 					},
 					{ waitForDeferred: true }
@@ -269,6 +295,13 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// Directory grants are provider-agnostic, so (like resilience) they
 					// survive a provider switch below.
 					additionalDirectories,
+					// Peer grants name other agents, not a provider, so they survive
+					// the switch too. Each field is written, so a grant the form
+					// switched off is removed and not left behind.
+					peerAgents: peerGrants?.peerAgents,
+					peerDescription: peerGrants ? peerGrants.peerDescription : s.peerDescription,
+					groupPeerAccess: peerGrants?.groupPeerAccess,
+					worktreePeerAccess: peerGrants?.worktreePeerAccess,
 					customPath,
 					customArgs,
 					// A conversion leaves the host-resolved account variables on the
@@ -277,6 +310,17 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						? { ...(s.customEnvVars ?? {}), ...(customEnvVars ?? {}) }
 						: customEnvVars,
 					customEnvVarsDisabled,
+					gatewayUrl,
+					// Where the agent's model runs. A target names a source and a
+					// model, not a provider, so (unlike the gateway) the dialog keeps
+					// it across a provider switch when the new harness can use one.
+					runOn,
+					// A proxy mode, and the background requests target beside it,
+					// belong to the gateway they were chosen for.
+					...((current?.gatewayUrl ?? undefined) !== gatewayUrl ? OFF_TOKEN_PROXY_FIELDS : {}),
+					// Where each tier launches. A tier names a model, so the dialog
+					// starts the tiers over on a provider switch, as it does the model.
+					tierTargets,
 					customModel,
 					customEffort,
 					customContextWindow,
@@ -310,6 +354,21 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			// change, so while any agent streams this save could still be unwritten
 			// when the next turn spawns. Write it now.
 			setTimeout(() => flushSessionPersistence(), 0);
+
+			// The desktop spawn reads the gateway from the main-process store, which
+			// the debounced persistence would not reach for two seconds. Flush now
+			// so a message sent straight after this save goes where the user just
+			// said it should.
+			// The same holds for the model source, and a miss there sends a turn to
+			// the provider's cloud model the user just turned away from.
+			// And for the tier targets: the CLI's Auto Run reads them from the store.
+			if (
+				(current?.gatewayUrl ?? undefined) !== gatewayUrl ||
+				canonicalJson(current?.runOn ?? null) !== canonicalJson(runOn ?? null) ||
+				canonicalJson(current?.tierTargets ?? null) !== canonicalJson(tierTargets ?? null)
+			) {
+				void flushAgentToStore(sessionId);
+			}
 		},
 		[flushSessionPersistence]
 	);
@@ -375,7 +434,12 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 
 			updateSessionWith(activeSession.id, (s) => {
 				// Find the tab to get its agentSessionId for persistence
-				const tab = s.aiTabs.find((t) => t.id === renameTabId);
+				const selectedTab = s.aiTabs.find((t) => t.id === renameTabId);
+				const { agent, tab } = projectTabProvider(
+					s,
+					selectedTab,
+					resolveTabNativeProvider(selectedTab, s)
+				);
 				const oldName = tab?.name;
 				const isGrokTab = s.toolType === 'grok' || resolveTurnProvider(tab, s) === 'grok';
 
@@ -397,7 +461,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				if (tab?.agentSessionId && !isGrokTab) {
 					// Persist name to agent session metadata (async, fire and forget)
 					// Use projectRoot (not cwd) for consistent session storage access
-					const agentId = s.toolType || 'claude-code';
+					const agentId = agent.toolType;
 					if (agentId === 'claude-code') {
 						window.maestro.claude
 							.updateSessionName(s.projectRoot, tab.agentSessionId, newName || '')
@@ -426,7 +490,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					}
 					// Also update past history entries with this agentSessionId
 					window.maestro.history
-						.updateSessionName(tab.agentSessionId, newName || '')
+						.updateSessionName(tab.agentSessionId, newName || '', agentId, s.id)
 						.catch((err) => {
 							captureException(err, {
 								extra: {
@@ -487,6 +551,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const performDeleteSession = useCallback(
 		async (session: Session, eraseWorkingDirectory: boolean) => {
 			const id = session.id;
+
+			// The group's Offboarding prompt runs before anything is torn down, and
+			// removal waits for it (or for its time limit, or for "Remove now").
+			await offboardBeforeRemoval(id);
 
 			// Record session closure for Usage Dashboard (before cleanup)
 			window.maestro.stats.recordSessionClosed(id, Date.now());

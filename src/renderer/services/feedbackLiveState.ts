@@ -20,6 +20,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useAutoRunResumeStore } from '../stores/autoRunResumeStore';
 import { useRetryStore } from '../stores/retryStore';
 import { captureAutoRunSnapshots } from './debugPackage';
+import { resolveTabProvider, resolveErrorProvider } from '../utils/providerTabSessions';
 
 /** Provider error text is capped here; main redacts it before use. */
 const MAX_ERROR_MESSAGE_LENGTH = 300;
@@ -47,9 +48,11 @@ export function captureFeedbackLiveState(now = Date.now()): FeedbackRendererLive
 		const resume = resumeEntries[session.id];
 		const sessionRetries = retries.filter((r) => r.sessionId === session.id);
 		const queuedMessages = session.executionQueue?.length ?? 0;
+		const tabs = [...session.aiTabs, ...(session.orphanedThinkingTabs ?? [])];
 
 		const notable =
 			session.state !== 'idle' ||
+			tabs.some((tab) => tab.state === 'busy' || !!tab.agentError) ||
 			!!error ||
 			runActive ||
 			!!resume ||
@@ -61,12 +64,23 @@ export function captureFeedbackLiveState(now = Date.now()): FeedbackRendererLive
 			id: session.id,
 			name: session.name,
 			provider: session.toolType,
+			tabs: tabs.map((tab) => ({
+				id: tab.id,
+				provider: resolveTabProvider(tab, session),
+				...(tab.turnProvider ? { turnProvider: tab.turnProvider } : {}),
+				state: tab.state,
+			})),
 			state: session.state,
 			sshRemote: !!session.sessionSshRemoteConfig?.enabled,
 			queuedMessages,
 			...(error
 				? {
 						error: {
+							provider: resolveErrorProvider(
+								tabs.find((tab) => tab.id === session.agentErrorTabId),
+								session,
+								error
+							),
 							type: error.type,
 							recoverable: error.recoverable,
 							paused: !!session.agentErrorPaused,

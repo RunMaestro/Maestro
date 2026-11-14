@@ -139,7 +139,7 @@ describe('Pianola real CLI adapter and orchestration engine', () => {
 		expect(mocks.dispatch).toHaveBeenCalledWith(
 			'agent',
 			'do work',
-			expect.objectContaining({ newTab: true, background: true })
+			expect.objectContaining({ newTab: true, background: true, skipConsultBudget: true })
 		);
 		expect(plan.tasks[0].status).toBe('needs_review');
 		await tick();
@@ -562,7 +562,7 @@ describe('Pianola real CLI adapter and orchestration engine', () => {
 			expect(mocks.dispatch).toHaveBeenCalledExactlyOnceWith(
 				'agent',
 				expect.stringContaining('captured'),
-				{ newTab: true, background: true }
+				{ newTab: true, background: true, skipConsultBudget: true }
 			);
 		}
 	);

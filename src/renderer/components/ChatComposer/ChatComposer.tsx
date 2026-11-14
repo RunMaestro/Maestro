@@ -45,6 +45,7 @@ import {
 	handleComposerSendKey,
 } from '../../hooks/input/composerKeyDown';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../../utils/textareaSizing';
+import { controlledTextDictationTarget } from '../../utils/dictationTargets';
 import type { Theme, Session, Group, Shortcut } from '../../types';
 import type { ComposerCapabilities } from './capabilities';
 
@@ -102,6 +103,8 @@ export interface ChatComposerProps {
 	aboveComposer?: React.ReactNode;
 	toolbarExtras?: React.ReactNode;
 	sheetExtras?: React.ReactNode;
+	/** Drawn under Send, e.g. the A Cappella microphone. Not drawn on a phone. */
+	sendColumnExtras?: React.ReactNode;
 
 	// Event bridges
 	onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
@@ -148,6 +151,7 @@ export const ChatComposer = React.memo(function ChatComposer({
 	aboveComposer,
 	toolbarExtras,
 	sheetExtras,
+	sendColumnExtras,
 	onPaste,
 	onDrop,
 	onUploadFiles,
@@ -229,6 +233,21 @@ export const ChatComposer = React.memo(function ChatComposer({
 		onTranscriptionChange: onChange,
 		focusRef: inputRef,
 	});
+
+	// Dictation writes through `onChange`, the surface's draft-persisting setter,
+	// so a dictated message survives a draft switch exactly like a typed one,
+	// and the mention picker (which lives in handleChange) never opens for words
+	// nobody typed.
+	const onChangeRef = useRef(onChange);
+	onChangeRef.current = onChange;
+	const dictationTarget = useMemo(
+		() =>
+			controlledTextDictationTarget({
+				getElement: () => inputRef.current,
+				setValue: (next) => onChangeRef.current(next),
+			}),
+		[inputRef]
+	);
 
 	// Cancel voice input on draftKey change
 	const prevDraftKeyRef = useRef(draftKey);
@@ -458,6 +477,7 @@ export const ChatComposer = React.memo(function ChatComposer({
 			enterToSend={enterToSend}
 			setEnterToSend={setEnterToSend}
 			voice={voiceBinding}
+			dictationTarget={dictationTarget}
 			onUploadFiles={onUploadFiles}
 			onOpenPromptComposer={onOpenPromptComposer}
 			shortcuts={shortcuts}
@@ -467,6 +487,7 @@ export const ChatComposer = React.memo(function ChatComposer({
 			sendDisabled={resolvedSendDisabled}
 			sendTone={resolvedSendTone}
 			sendColumnClassName="self-end"
+			sendColumnExtras={sendColumnExtras}
 			className={className}
 			style={style}
 		/>

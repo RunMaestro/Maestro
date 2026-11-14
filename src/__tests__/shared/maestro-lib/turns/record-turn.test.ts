@@ -175,6 +175,7 @@ describe('turn records', () => {
 				text: 'Fixed the login bug in the session handler. Tests pass.',
 				turnModel: 'opus',
 				turnEffort: 'high',
+				turnProvider: 'claude-code',
 			},
 		]);
 		// The desktop reads the same file.
@@ -792,4 +793,11 @@ describe('turn records', () => {
 			expect(fs.existsSync(paths.historyDir)).toBe(false);
 		});
 	});
+});
+
+it('stamps the transcript with the assembled turn provider', () => {
+	const recorded = turn();
+	recorded.assembled.settings.provider = 'codex';
+	const entries = buildTurnTranscript(recorded, context());
+	expect(entries.find((entry) => entry.source === 'stdout')?.turnProvider).toBe('codex');
 });

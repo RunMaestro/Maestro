@@ -10,6 +10,7 @@ import {
 	exitIfMaestroNotRunning,
 	failCommand,
 } from '../services/session-command';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 import { applyDataDirOption, requireDataDirOrExit } from '../services/data-dir-option';
 
 interface CueTriggerOptions {
@@ -108,7 +109,7 @@ export async function cueTrigger(
 				})
 			);
 			if (!result.success) {
-				process.exitCode = 1;
+				process.exitCode = ExitCode.GeneralError;
 			}
 		} else if (result.success) {
 			console.log(
@@ -120,7 +121,7 @@ export async function cueTrigger(
 					result.error ? `: ${result.error}` : ''
 				}`
 			);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json, jsonExtra: { type: 'error' } });
@@ -134,6 +135,6 @@ export async function cueTrigger(
 		} else {
 			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
 		}
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }

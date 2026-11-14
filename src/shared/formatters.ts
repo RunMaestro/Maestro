@@ -5,6 +5,7 @@
  * Functions:
  * - formatSize: File sizes (B, KB, MB, GB, TB)
  * - formatNumber: Large numbers with k/M/B suffixes
+ * - formatCountNoun: An exact count with its noun ("1 request", "1,204 requests")
  * - formatTokens: Token counts with K/M/B suffixes (~prefix)
  * - formatTokensCompact: Token counts without ~prefix
  * - formatTokensPerSecond: Token throughput rates (dash when unmeasured)
@@ -28,7 +29,10 @@
  * - truncateCommand: Truncate command text for display with ellipsis
  * - formatSshTarget: SSH connection target for display (user@host:port)
  * - abbreviateGroupName: Shorten a group name for badge/pill display
+ * - groupBadgeLabel: The text of a group's badge/pill (the user's own label, or the abbreviation)
  */
+
+import type { Group } from './types';
 
 // ============================================================================
 // Cached Intl formatters
@@ -159,6 +163,15 @@ export function formatCount(count: number): string {
 }
 
 /**
+ * A count with its noun, the noun agreeing with the count: `1 request`,
+ * `1,204 requests`. The count is grouped like {@link formatCount}. Pass `many`
+ * for a noun that does not take a plain `s` (`entry`, `entries`).
+ */
+export function formatCountNoun(count: number, one: string, many = `${one}s`): string {
+	return `${formatCount(count)} ${count === 1 ? one : many}`;
+}
+
+/**
  * Format a token count with K/M/B suffix for compact display.
  * Uses approximate (~) prefix for larger numbers.
  *
@@ -184,6 +197,21 @@ export function formatTokensCompact(tokens: number): string {
 	if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
 	if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
 	return tokens.toString();
+}
+
+/**
+ * A model's context window the way a model card states it: `128K` for 131,072,
+ * `1M` for 1,048,576, `200K` for 200,000, and the exact count for anything
+ * else. Binary sizes are named in binary units, so it is not
+ * {@link formatTokensCompact}, which would print 131,072 as `131.1K`.
+ */
+export function formatContextWindow(tokens: number): string {
+	const mebi = 1024 * 1024;
+	if (tokens % mebi === 0) return `${tokens / mebi}M`;
+	if (tokens % 1024 === 0) return `${tokens / 1024}K`;
+	if (tokens % 1_000_000 === 0) return `${tokens / 1_000_000}M`;
+	if (tokens % 1000 === 0) return `${tokens / 1000}K`;
+	return formatCount(tokens);
 }
 
 /**
@@ -418,6 +446,16 @@ export function formatCost(cost: number): string {
 export function estimateTokenCount(text: string): number {
 	if (!text) return 0;
 	return Math.ceil(text.length / 4);
+}
+
+/**
+ * The same ~4 per token rule as {@link estimateTokenCount}, for a size in bytes
+ * (a file nobody has read). UTF-8 text with non-ASCII characters has more bytes
+ * than characters, so this leans high for it: an estimate from file size, never
+ * a measure of what a provider loaded.
+ */
+export function estimateTokensFromBytes(bytes: number): number {
+	return bytes > 0 ? Math.ceil(bytes / 4) : 0;
 }
 
 /**
@@ -676,6 +714,31 @@ export function abbreviateGroupName(
 	const devoweled = first + trimmed.slice(1).replace(/[aeiouAEIOU]/g, '');
 	if (devoweled.length <= max) return devoweled;
 	return devoweled.slice(0, max);
+}
+
+/**
+ * The longest pill label a user may set for a group (`Group.shortLabel`). The
+ * Group Settings input, the CLI flag and the tests all cap at this one number.
+ * It is 12 and not the abbreviator's `max` of 10: a label the user chose earns
+ * two more characters, and the pill has the room.
+ */
+export const GROUP_SHORT_LABEL_MAX_LENGTH = 12;
+
+/**
+ * The text of a group's badge/pill: the user's own `shortLabel` when it is set,
+ * otherwise the automatic abbreviation of the group name.
+ *
+ * A label that is absent, empty or whitespace-only is "not set", so a stored
+ * `''` can never draw an empty pill. A set label is returned trimmed and
+ * otherwise verbatim: it is not abbreviated, and it is not cut here. The cap
+ * (`GROUP_SHORT_LABEL_MAX_LENGTH`) is applied where the label is written.
+ *
+ * Use this wherever a group is drawn as a short badge. Do not call
+ * `abbreviateGroupName(group.name)` directly, or the user's label is ignored.
+ */
+export function groupBadgeLabel(group: Pick<Group, 'name' | 'shortLabel'>): string {
+	const shortLabel = group.shortLabel?.trim();
+	return shortLabel ? shortLabel : abbreviateGroupName(group.name);
 }
 
 /**

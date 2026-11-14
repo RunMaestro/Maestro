@@ -14,6 +14,7 @@ import { isAbsolutePath } from '../../../shared/formatters';
 import { closeFileTab as closeFileTabHelper } from '../../utils/tabHelpers';
 import type { MediaOpenMode } from '../tabs/internal/types';
 import { logger } from '../../utils/logger';
+import { hostShellAvailable, openFileForUser } from '../../services/hostShell';
 
 /**
  * If a remote-file loading tab is still in flight in the target session,
@@ -378,9 +379,11 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 			if (!sshRemoteId && shouldOpenExternally(node.name)) {
 				// Show confirmation modal before opening externally (use openModal atomically)
 				useModalStore.getState().openModal('confirm', {
-					message: `Open "${node.name}" in external application?`,
+					message: hostShellAvailable()
+						? `Open "${node.name}" in external application?`
+						: `Download "${node.name}" to this client?`,
 					onConfirm: async () => {
-						await window.maestro.shell.openPath(fullPath);
+						await openFileForUser(fullPath);
 					},
 				});
 				return;

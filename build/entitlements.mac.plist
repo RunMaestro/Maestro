@@ -8,8 +8,11 @@
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <!-- A Cappella needs the microphone. Without this entitlement the hardened
+         runtime denies capture outright and the user never even sees a prompt,
+         which presents as a session that starts and stays silent forever. -->
     <key>com.apple.security.device.audio-input</key>
-    <false/>
+    <true/>
     <key>com.apple.security.automation.apple-events</key>
     <true/>
 </dict>

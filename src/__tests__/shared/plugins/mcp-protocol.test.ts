@@ -65,6 +65,50 @@ describe('createMcpToolServer - initialize handshake', () => {
 		})) as RpcResponse;
 		expect(res.result?.protocolVersion).toBe(MCP_PROTOCOL_VERSION);
 	});
+
+	const initialize = { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} };
+
+	it('sends instructions when the source has some', async () => {
+		const server = createMcpToolServer({
+			serverInfo,
+			listTools: async () => [],
+			callTool: async () => ({ content: [] }),
+			instructions: async () => 'Use the tool.',
+		});
+		const res = (await server.handleMessage(initialize)) as RpcResponse;
+		expect(res.result?.instructions).toBe('Use the tool.');
+	});
+
+	it('omits instructions when there are none, and when the source fails', async () => {
+		expect(
+			((await makeServer().handleMessage(initialize)) as RpcResponse).result
+		).not.toHaveProperty('instructions');
+		for (const instructions of [async () => undefined, async () => '']) {
+			const server = createMcpToolServer({
+				serverInfo,
+				listTools: async () => [],
+				callTool: async () => ({ content: [] }),
+				instructions,
+			});
+			const res = (await server.handleMessage(initialize)) as RpcResponse;
+			expect(res.result).not.toHaveProperty('instructions');
+		}
+		const errors: string[] = [];
+		const failing = createMcpToolServer({
+			serverInfo,
+			listTools: async () => [],
+			callTool: async () => ({ content: [] }),
+			instructions: async () => {
+				throw new Error('app gone');
+			},
+			onError: (_e, ctx) => errors.push(ctx),
+		});
+		const res = (await failing.handleMessage(initialize)) as RpcResponse;
+		// The handshake still succeeds.
+		expect(res.result?.serverInfo).toEqual(serverInfo);
+		expect(res.result).not.toHaveProperty('instructions');
+		expect(errors).toEqual(['initialize']);
+	});
 });
 
 describe('createMcpToolServer - notifications', () => {

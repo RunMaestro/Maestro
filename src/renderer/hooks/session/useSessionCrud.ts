@@ -15,6 +15,7 @@
  */
 
 import { useCallback, useState } from 'react';
+import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
 import type { AdditionalDirectory, AITab, ToolType, Session } from '../../types';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -25,9 +26,15 @@ import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
+import { startGroupOnboarding } from '../../services/groupLifecycle';
 import { gitService } from '../../services/git';
+import { applySeededTokenProxy } from '../../services/groupDefaultsPublish';
+import { applyDefaultAgentTokenProxy } from '../../services/agentGateway';
 import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/newAgentRecord';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
+import type { PeerGrants } from '../../../shared/peerAgents';
+import type { GroupDefaultsCreateExtras } from '../../../shared/groupAgentDefaults';
 import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { logger } from '../../utils/logger';
 import { killAgentAiProcesses } from '../../services/process';
@@ -90,6 +97,14 @@ export interface UseSessionCrudReturn {
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
+		/** Local Models gateway URL, already validated; `undefined` sets none. */
+		gatewayUrl?: string,
+		/** model source, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget,
+		/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
+		peerGrants?: PeerGrants,
+		/** Group defaults the create form has no control for; stamped onto the new agent. */
+		seedExtras?: GroupDefaultsCreateExtras,
 		harnessControlMode?: HarnessControlMode,
 		/** Permission mode for the fresh initial tab; omitted for ordinary new agents. */
 		permissionMode?: AITab['permissionMode']
@@ -190,6 +205,14 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			codexAutoResetOnExhaustion?: boolean,
 			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 			codexTransport?: CodexTransport,
+			/** Local Models gateway URL, already validated; `undefined` sets none. */
+			gatewayUrl?: string,
+			/** model source, already validated; `undefined` means the provider's model. */
+			runOn?: RunOnSourceTarget,
+			/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
+			peerGrants?: PeerGrants,
+			/** Group defaults the create form has no control for; stamped onto the new agent. */
+			seedExtras?: GroupDefaultsCreateExtras,
 			harnessControlMode?: HarnessControlMode,
 			permissionMode?: AITab['permissionMode']
 		) => {
@@ -296,6 +319,25 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					codexAutoResetOnExhaustion: codexAutoResetOnExhaustion === true ? true : undefined,
 					// Same rule: `exec` is the default, so only the opt-in is stored.
 					codexTransport: codexTransport === 'app-server' ? 'app-server' : undefined,
+					// Set from the New Agent Models tab. The token proxy mode is not set
+					// here: absent reads as `passthrough` when this URL is the proxy's.
+					gatewayUrl: gatewayUrl || undefined,
+					// Set from the New Agent Models tab. Absent means the provider's
+					// own model. A target takes the gateway's place at launch.
+					runOn,
+					// Set from the New Agent Peers tab. Each source is stored only when
+					// it is on: an absent field is what the roster reads as off.
+					peerAgents: peerGrants?.peerAgents,
+					peerDescription: peerGrants?.peerDescription,
+					groupPeerAccess: peerGrants?.groupPeerAccess,
+					worktreePeerAccess: peerGrants?.worktreePeerAccess,
+					// Group defaults the New Agent form has no control for, copied from
+					// the group the agent was created in. The token proxy mode and its
+					// background requests target are not among them: they are applied
+					// below, through the writers that work out the proxy's address.
+					customEnvVarsDisabled: seedExtras?.customEnvVarsDisabled,
+					tierTargets: seedExtras?.tierTargets,
+					systemOneOptOut: seedExtras?.systemOneOptOut,
 					harnessControlMode: harnessControlMode === 'native' ? 'native' : undefined,
 					claudeInteractive: newAgentClaudeInteractive(agentId),
 				};
@@ -307,15 +349,18 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				}
 
 				setSessions((prev) => [...prev, newSession]);
+				// Claim this window's agent before routing setup yields to IPC.
+				void registerNewSession?.(newId);
+				if (seedExtras?.tokenProxyMode) {
+					await applySeededTokenProxy(newId, seedExtras);
+				} else {
+					await applyDefaultAgentTokenProxy(newId);
+				}
 				setActiveSessionId(newId);
 				// The first spawn reads its routing (Codex transport, Claude token mode)
 				// from the persisted record, so do not leave the new agent sitting in a
 				// debounce that any streaming agent keeps re-arming.
 				setTimeout(() => flushSessionPersistence(), 0);
-				// Claim the agent for THIS window before any process spawns, so a
-				// secondary window surfaces it immediately and the primary's catch-all
-				// never flashes it. No-op in the primary window / outside a WindowProvider.
-				void registerNewSession?.(newId);
 				// Publish membership immediately: output from another agent can keep
 				// resetting the debounce, leaving this agent without a host owner.
 				flushSessionPersistence();
@@ -327,6 +372,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					isRemote: !!isRemoteSession,
 					isWorktree: false,
 				});
+				// The group's Onboarding prompt, when it has one. Queued after the
+				// routing above so the first turn launches on the agent's real settings.
+				startGroupOnboarding(newId);
 
 				setActiveFocus('main');
 				setTimeout(() => inputRef.current?.focus(), 50);
@@ -458,13 +506,17 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			setSessions((prev) => {
 				const updated = prev.map((s) => (s.id === sessId ? { ...s, name: newName } : s));
 				const session = updated.find((s) => s.id === sessId);
-				// Derive provider session ID: prefer session-level (legacy), fall back to active/first aiTab
-				const providerSessionId =
-					session?.agentSessionId ||
-					session?.aiTabs?.find((t) => t.id === session.activeTabId)?.agentSessionId ||
-					session?.aiTabs?.[0]?.agentSessionId;
+				const activeTab = session?.aiTabs?.find((t) => t.id === session.activeTabId);
+				const fallback =
+					session &&
+					[activeTab, session.aiTabs?.[0]]
+						.filter((tab) => tab !== undefined)
+						.map((tab) => projectTabProvider(session, tab, resolveTabNativeProvider(tab, session)))
+						.find((native) => native.tab?.agentSessionId);
+				// The legacy ID belongs to the agent default; a tab fallback carries its own owner.
+				const providerSessionId = session?.agentSessionId || fallback?.tab?.agentSessionId;
 				if (providerSessionId && session?.projectRoot) {
-					const agentId = session.toolType || 'claude-code';
+					const agentId = session.agentSessionId ? session.toolType : fallback!.agent.toolType;
 					if (agentId === 'claude-code') {
 						(window as any).maestro.claude
 							.updateSessionName(session.projectRoot, providerSessionId, newName)

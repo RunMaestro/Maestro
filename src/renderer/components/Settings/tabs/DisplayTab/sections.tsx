@@ -400,6 +400,7 @@ export const DISPLAY_SECTIONS: readonly SettingsSectionDef[] = [
 			'display-left-side-panel',
 			'display-left-panel-starred-sessions',
 			'display-left-panel-collapsed-initials',
+			'display-left-panel-group-label',
 		],
 		Component: LeftSidePanel,
 	},

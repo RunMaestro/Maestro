@@ -32,7 +32,7 @@ Each agent shows a color-coded status indicator:
 For agents whose working directory is a git repository, the same set of git actions is reachable three ways:
 
 - **Header branch pill** - hover the pill showing the current branch name (clicking works too).
-- **Left Bar right-click** - right-click the agent in the agent list.
+- **Left Bar right-click** - right-click the agent in the agent list and open **Repository**.
 - **Command palette** (`Cmd+K` / `Ctrl+K`) - search for the action by name, no mouse required.
 
 | Action                  | What it does                                                                                                  |
@@ -71,6 +71,7 @@ The **File Explorer** (Right Panel → Files tab) lets you browse project files.
 - **Parquet tables** with a typed query language, on files far larger than memory
 - **Line numbers** for easy reference
 - **Search within file** (`Cmd+F` / `Ctrl+F`)
+- **Chat with the document** (`Cmd+Shift+\` / `Ctrl+Shift+\`, or the chat button in the bottom-left of the preview) - see below
 - **Built-in code editor** (`Cmd+E` / `Ctrl+E` on any text file): autocomplete, auto-closing brackets and tags, multiple cursors, find and replace, toggle comment and line moves, optional Vim keybindings, and right-click to quote a selection into your message - see **[Editing Files](./file-editor)**
 
 Several formats come with a filtering language built for that format rather than
@@ -106,6 +107,87 @@ way while you are typing: it does nothing in the find bar, in the markdown
 editor, or on a file with no headings. The same command is in the command
 palette (`Cmd+K` / `Ctrl+K`) as **Jump to Heading**, which appears only while a
 markdown file is open in preview.
+
+### Chatting with a Document
+
+The chat button in the **bottom-left** of the preview (`Cmd+Shift+\` /
+`Ctrl+Shift+\`) opens a small chat about the file you are reading, mirroring the
+Table of Contents on the other side. The command palette (`Cmd+K` / `Ctrl+K`)
+has the same action as **File: Chat with Document** while a file preview is the
+active tab. Ask a question and the agent answers in the panel: the agent that
+owns the preview, or the agent you are looking at. It is not limited to the
+file: it reads whatever else it needs and uses its tools normally. It just
+starts from your document rather than from nothing.
+
+The panel sits above the button, which stays visible while the chat is open.
+While the panel is closed, a dot on the button shows the chat has messages, and
+the dot pulses while the agent is working. The header names the file (hover for
+the full path). Press `Escape`, the shortcut again, or the button to close it.
+Clicking the document does not close it, so you can scroll and select text with
+the chat open. Drag the top or right edge to resize the panel; double-click an
+edge to reset it. Its size is remembered, and it grows with the conversation up
+to the size of the preview.
+
+Type into the box, or use the microphone beside Send:
+
+- **Type.** `Enter` sends, `Shift+Enter` breaks a line.
+- **With A Cappella off**, the microphone dictates into the box with the
+  browser's speech recognizer, so you can fix the words before sending. Nothing
+  is spoken back. A build with no speech recognizer shows no microphone.
+- **With [A Cappella](./voice-mode#talking-to-a-document) on**, the microphone
+  starts a voice session about this document and the reply is spoken back.
+
+The microphone works as a hold or as a tap: hold it for one sentence, or tap
+once to leave it running and tap again to stop. How long a press must last to
+count as a hold is **Tap vs hold** in A Cappella's
+[Voice Controls](./voice-mode#the-two-hotkeys) (300 ms by default). Releasing a
+hold sends the utterance and keeps the voice session. Closing the panel ends its
+document voice session.
+
+All inputs land in the **same conversation**, so you can ask something out loud,
+type the follow-up, and read both in the chat. The conversation is an ordinary
+AI tab that Maestro keeps out of your tab strip until you want it, which means:
+
+- **It survives a restart.** Come back to the file tomorrow, open the chat, and
+  the whole conversation is still there.
+- **Each agent has its own chat** about the same file.
+- **It writes no History entries.** Open the conversation in a tab to work with
+  it like any other.
+- **Open in tab** in the panel header reveals the conversation in the tab strip
+  and switches to it. It is available once the chat has started.
+- **Recent chats** lists every conversation about this file with this agent,
+  newest first, and restores the one you pick. Type to search the messages.
+  **New chat** keeps the current thread in that list and starts a fresh session
+  with your next message. Nothing is deleted.
+
+The first message hands the agent the file's path and asks it to read the file
+first. If the agent is busy, your message is queued and shows as queued in the
+chat until the agent takes it. The status line under the messages reads
+_Ready_, the elapsed time while the agent works, _Waiting for your answer_ or
+_Waiting for permission_ when the agent has asked you something, or
+_Queued · waiting for the agent_, plus a count of queued messages.
+
+Attach, paste, or drop images into the composer; images sent with no text ask
+_What can you tell me about these images?_ **Stop** interrupts this document's
+reply and withdraws its queued messages, and leaves the agent's other tabs
+alone. The text size control beside the box sets the chat's text size, which is
+remembered.
+
+With no agent open, a **No agent to chat with** notice says _Open an agent
+before chatting about_ the file, and your draft stays in the box.
+
+The button is offered on any file with text in it. Images (SVG included),
+audio and video, Parquet tables, archives, and compiled binaries give the agent
+nothing to read, so they do not offer it.
+
+Document chat works the same in the [web interface](./remote-control), except
+for voice: A Cappella stays in the desktop app.
+
+From the command line, `maestro-cli open-file <path>` opens the file preview,
+and `maestro-cli voice start --document <path> --agent <id>` starts a voice
+session about the file (see [Talking to a document](./voice-mode#talking-to-a-document)).
+There is no `maestro-cli` verb yet that opens the chat panel or sends a typed
+message to it.
 
 ### CSV and TSV Tables
 
@@ -404,9 +486,10 @@ That request travels with the command. When you ask for a follow-up, the model s
 **How the suggestion is made:**
 
 - **The model only names the command; it never runs anything.** The request is answered with tools disabled and in read-only mode, so a task-shaped request ("clean up the build output") comes back as a command to look at rather than as work already done.
-- **It is the tab's own provider**, billed and configured like any other turn on that tab. The mode strip shows the model and effort it will use.
+- **It is the tab's own provider by default**, billed and configured like any other turn on that tab. The mode strip shows the model and effort it will use.
+- **You can move it to a local model or your own endpoint.** Assign the **AI command mode** task under **Settings → Models → System Two** (see [Local Models](./local-models#the-tasks)), or run `maestro-cli models assign ai-command <source>`. The mode strip then names that model instead, and the proposal adds one line saying what the command does. If the assigned model cannot run, the request fails with the reason. It does not fall back to the tab's provider. **Off** switches AI Command Mode off: a request is refused and tells you where the setting is.
 - **The agent's conversation is untouched.** The request and the suggestion never enter the agent's context, the same as any other command-mode activity.
-- **The prompt is yours to change.** It is a core prompt (`ai-command`), editable under **Settings → Maestro Prompts → Commands**, like every other Maestro prompt. See [Prompt Customization](/prompt-customization).
+- **The prompt is yours to change.** It is a core prompt (`ai-command`, or the shorter `ai-command-local` when a local model or endpoint is assigned), editable under **Settings → Maestro Prompts → Commands**, like every other Maestro prompt. See [Prompt Customization](/prompt-customization).
 
 There is no rung above AI Command Mode, so a `!` typed here is an ordinary character - your request is prose, and prose contains bangs.
 
@@ -703,6 +786,18 @@ Very broad queries are capped so a single character can't stall the UI: 100 matc
 per tab and 500 overall. When a search hits either limit the modal says so, and
 narrowing the query brings the rest into view.
 
+When [Semantic search](./local-models#semantic-search) is assigned a source and
+ready, the modal also shows a **Semantic** toggle. With it on you describe what you
+are looking for instead of typing exact words, and the results are the conversation
+turns in this agent's open tabs ranked by how close they are in meaning, at most 30,
+each with a percentage and the passage that matched. The regex toggle is hidden
+while it is on. A turn in a tab you closed since it was indexed is left out. `Enter`
+jumps to the turn. The Find bar is left alone, since a match by meaning has no text
+to step through. The toggle is not shown while Semantic search is off or its model
+is not ready. From the command line,
+`maestro-cli search "<query>" --semantic --source transcripts --agent <id>` runs the
+same search.
+
 <Note>
 	This search covers the AI tabs of the agent you're currently on, not your whole
 	fleet. Group chats have no AI tabs to search, so the menu entry is hidden there.
@@ -737,6 +832,21 @@ finds it again.
 
 Scripts use `maestro-cli tab pins` (`list`, `add`, `remove`, `rename`, `show`). See
 the [CLI docs](./cli#message-pins).
+
+## Deleting a Message
+
+Hover one of your messages and click the trash icon (**Delete message and response**)
+in its action bar. The icon turns into an inline **Delete?** with **Yes** and **No**.
+**Yes** removes your message and everything after it up to your next message, and
+removes the same exchange from the provider's session, so the agent no longer sees it.
+This works for agents on an SSH remote too: Maestro edits the session on the remote.
+
+If the provider refuses, nothing is removed and a toast says **Message was not
+deleted**: "It remains in the agent's context." followed by the reason. A tab with Grok
+history is never edited; the toast **Grok history deletion unavailable** tells you to
+manage that session in Grok CLI.
+
+There is no `maestro-cli` verb for deleting a message.
 
 ## Agent Task List
 
@@ -869,11 +979,11 @@ If automation needs an instruction on every turn, put it in the New Session Mess
 
 ### Editing Agents
 
-Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. You can change the name, new session message, nudge message, custom paths, arguments, environment variables, additional directories, model, and effort. Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
+Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. The modal has five tabs: **General** (name, group, working directory, additional directories, new session message, nudge message), **Provider** (provider, custom path and arguments, model, effort, context window, environment variables), **Models** (model source, tiers, gateway and token proxy, System One), **Peers** (which other agents this one may [consult or delegate to](./agent-delegation)), and **SSH** (remote execution). `Cmd+Shift+[` and `Cmd+Shift+]` (`Ctrl+Shift+[` and `Ctrl+Shift+]` on Windows and Linux) move between the tabs; in Edit Agent, `Cmd+[` and `Cmd+]` (`Ctrl+[` and `Ctrl+]`) do too. A tab shows a dot when it holds a field with an error, and the modal is resizable and remembers its size. The same tabs make up the New Agent dialog and [Group Settings](./features#groups). Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar. From the command line, `maestro-cli show agent <agent>` reads the same fields and `maestro-cli update-agent <agent>` writes them (see [Creating, Updating, and Removing Agents](./cli#creating-updating-and-removing-agents)).
 
 Changing the **Agent Provider** here is a plain switch by default. Tabs, transcripts, drafts, queued messages, and file previews are kept; each tab starts a new conversation on the new provider, and switching back resumes the old one. The provider's own settings (binary path, arguments, environment, model, effort) are parked per provider, so switching back restores them too.
 
-Where a converter exists (marked **Carry Over**), you can also check **Convert memory and session history** to carry conversations and project memory across. Conversion is opt-in: it opens a native translation preflight that lists any limits, and saving accepts them. Native resume and round-trip conversion remain unverified until live acceptance checks pass. A running turn defers the migration until its final native events are recorded. If the conversion is blocked or fails, a notice says so and saving switches providers without converting.
+Where a converter exists (marked **Carry Over**), you can also check **Convert memory and session history** to carry conversations and project memory across. Conversion is opt-in: it opens a native translation preflight that lists any limits. When the plan has warnings, check **Allow experimental carry-over** beside **Save Changes**; the button stays disabled until you do. Native resume and round-trip conversion remain unverified until live acceptance checks pass. A running turn defers the migration until its final native events are recorded. If the conversion is blocked or fails, a notice says so and saving switches providers without converting.
 
 ### Deleting Agents
 
@@ -929,6 +1039,10 @@ Organize agents into groups for better project management:
 - Click the group header to collapse or expand
 - Groups remember their collapsed state
 
+**Defaults for new agents:**
+
+- Right-click the group header → **Group Settings...** (or `Cmd+K` / `Ctrl+K` → "Group Settings" while an agent in the group is active) to set what a new agent in the group starts with, the text of the group's pill label, and the [Onboarding and Offboarding](./features#onboarding-and-offboarding) prompts the group runs when an agent joins or leaves it. See [Groups](./features#groups).
+
 **Hiding a group:**
 
 Hiding sits between collapsing a group and deleting it. Right-click the group header and choose **Hide Group** to remove the group from the Left Bar. Its agents are not changed: search and the `Cmd+O` / `Ctrl+O` switcher still find them, in a separate tier below the live and idle agents.
@@ -953,19 +1067,22 @@ Right-click any agent for quick actions. The menu is headed by the name of the a
 
 - **Rename** - Change the agent's display name
 - **Edit Agent...** - Open configuration modal
-- **Duplicate...** - Create a new agent with the same settings
-- **Export Agent...** - Save the agent to a bundle file: its settings, playbooks, Cue subscriptions and Claude Code assets. Tick **Exact copy** to restore it later on this machine exactly as it was (see [Sharing Pipelines and Agents](./maestro-cue-bundles#exact-copies))
+- **Agent Tools > Duplicate...** - Create a new agent with the same settings
+- **Agent Tools > Export Agent...** - Save the agent to a bundle file: its settings, playbooks, Cue subscriptions and Claude Code assets. Tick **Exact copy** to restore it later on this machine exactly as it was (see [Sharing Pipelines and Agents](./maestro-cue-bundles#exact-copies))
 - **Add/Remove Bookmark** - Toggle bookmark status
 - **Move to Group** - Organize into groups
 - **Move to Window** - Send the agent to another Maestro window
-- **View Git Log / View Git Diff / Git Pull / Git Push / Change Branch / Create Pull Request** - the full [git menu](#git-actions), for git repositories only
-- **Create Worktree** - Create a git worktree sub-agent (if configured)
-- **Configure Worktrees** - Set up worktree configuration
-- **Configure Maestro Cue** - Set up event-driven automation for this agent
-- **Copy Agent GUID to Clipboard** - Copy the agent's unique identifier
+- **Repository** - the full [git menu](#git-actions), for git repositories only
+- **Repository > Create Worktree** - Create a git worktree sub-agent (if configured)
+- **Repository > Configure Worktrees** - Set up worktree configuration
+- **Agent Tools > Configure Maestro Cue** - Set up event-driven automation for this agent
+- **Agent Tools > View Delegation Graph** - Open the agent's delegation graph when it has connections
+- **Agent Tools > Copy Agent GUID** - Copy the agent's unique identifier
 - **Remove Agent** - Delete the agent from Maestro
 
 The git actions here act on the agent you right-clicked, so you can pull or inspect the log of a background agent without switching to it first.
+
+Hover or click **Repository** or **Agent Tools** to open its submenu. With the category focused, **Right Arrow** enters it; **Left Arrow** or **Escape** returns to the category. Press **Escape** again to close the context menu. Running Git operations remain visible on the Repository row while its submenu is closed.
 
 ### Sidebar Width
 

@@ -1,6 +1,6 @@
 # CLAUDE-FEATURES.md
 
-Feature documentation for Usage Dashboard and Document Graph. For the main guide, see [[CLAUDE.md]].
+Feature documentation for Usage Dashboard, Document Graph, and Delegation Graph. For the main guide, see [[CLAUDE.md]].
 
 ## Usage Dashboard
 
@@ -51,7 +51,46 @@ src/renderer/components/UsageDashboard/
 └── EmptyState.tsx               # Empty state when no data
 ```
 
+### Models tab setup links
+
+`ModelUsage/ModelUsageStats.tsx` supplies setup actions to the empty sections in
+`ModelUsageSections.tsx`. Tasks links open System One or System Two, the System One
+link opens its own panel, and Token Proxy Savings opens Gateway (from its empty line,
+and from a toolbar button once it has data). Use `modelsSettingsLocation()` for labels
+and `modelsSettingsSubTab()` with `getModalActions().openSettings()` for navigation;
+opening Settings closes the dashboard.
+
+The Run On Agents shortcut opens the active non-terminal agent's Models settings
+through `openAgentSettings()`, keeping the dashboard open underneath. Read the live
+session by ID when clicked so the form receives current values. Hide the shortcut
+when there is no active agent or the active session is a terminal.
 `Sparkline`, `ChartErrorBoundary`, and `ChartTooltip` live in the widget library (`src/renderer/components/widgets/output/`); the files here are one-line shims kept for the old import path. Import from `components/widgets` in new code.
+
+### Token Proxy Savings (the Models tab's effectiveness section)
+
+`ProxySavingsSection` in `ModelUsage/ModelUsageSections.tsx` draws the shared token proxy
+report for the selected range, summary first: three `StatCardGrid` figures (the estimated
+reduction with what it is a share of, request coverage, processing time with its sample), a
+`MultiLineChart` of the daily original and sent estimates, the mode and route splits
+(`TypeBreakdown`), the algorithm bars (`AgentActivityBars`), the provider's own usage, the
+per-agent table and the handling lines. It has one fetch owner, `useModelUsage()`: Refresh is
+its `reload`, and "Loaded" is its `loadedAt`, the last successful read. `ModelUsage.since` is
+where the range starts and is never shown as a freshness. The section starts no timer and
+makes no request of its own. Every figure is said through the shared report functions (see
+"Saying the Token Proxy Report" in [STATS-ANALYTICS.md](docs/agent-guides/STATS-ANALYTICS.md)),
+and the builders for the trend axis and the splits are `proxyTrendView()`,
+`proxyModeSlices()` and `proxyRouteSlices()` in `modelUsageView.ts`. Mode configuration stays
+in Settings > Models > Gateway: the section has no control that changes what the proxy does.
+
+`ProxyInspectionDetails.tsx` adds a closed-by-default inspection disclosure. Opening it
+mounts the existing `useTokenProxyReport()` owner once; closing it unmounts that owner.
+`TokenProxyObservations` is shared with Gateway and displays app-lifetime observations
+across agents, independent of the selected date range. An explicit Audit button calls
+`context.getFootprint()` with the selected stored agent ID and renders the canonical
+plain-text inventory, with configured/delivered/window evidence kept distinct. Changing
+agents discards the prior inventory and late replies. Continuity opens the existing
+`continuityPreview` modal for that agent's selected AI tab. No transformation is activated;
+the inspection remains available when range statistics are empty or fail.
 
 ### Backend Components
 
@@ -122,7 +161,7 @@ The Document Graph (`src/renderer/components/DocumentGraph/`) visualizes markdow
 
 It renders to a **single HTML canvas**, not to React Flow. `MindMap.tsx` owns one `<canvas>` and its zoom, pan, and pointer handling; `mindMapCanvas.ts` paints the node cards, pills, icons, and links into it by hand so the painted glyph and the click hit test cannot drift. That is why the graph can hold hundreds of documents without the DOM node count becoming the bottleneck, and it is also the constraint behind most of the patterns below: nothing here is a React component that can be styled or queried, so hit testing, layout, and text truncation are all arithmetic the module has to do itself.
 
-**Three files in this directory are dead.** `DocumentNode.tsx`, `ExternalLinkNode.tsx`, and `layoutAlgorithms.ts` are the React Flow implementation this replaced. They still import `reactflow` and are still referenced by tests, but no production code imports them. Do not extend them, and do not read them to learn how the graph works - they describe a rendering model this feature no longer uses.
+**Two node components in this directory are unused.** `DocumentNode.tsx` and `ExternalLinkNode.tsx` belong to the former React Flow renderer. `layoutAlgorithms.ts` still supplies the Delegation Graph's React Flow editor; it does not drive the Document Graph canvas.
 
 ### Architecture
 
@@ -147,11 +186,12 @@ src/renderer/components/DocumentGraph/
 │
 ├── DocumentNode.tsx             # UNUSED - React Flow leftover
 ├── ExternalLinkNode.tsx         # UNUSED - React Flow leftover
-└── layoutAlgorithms.ts          # UNUSED - React Flow leftover
+└── layoutAlgorithms.ts          # Shared React Flow layouts used by the delegation editor
 
 src/renderer/utils/
 ├── markdownLinkParser.ts        # Parses [[wiki-links]] and [markdown](links)
-└── documentStats.ts             # Document statistics (word count, mtime, description)
+├── documentStats.ts             # Document statistics (word count, mtime, description)
+└── graphEdgeGeometry.ts         # Shared directed-edge routing for canvas and React Flow
 
 src/main/ipc/handlers/
 └── documentGraph.ts             # Chokidar file watcher for real-time updates
@@ -281,3 +321,23 @@ documentGraphLayoutType: DocumentGraphLayoutType; // Default layout (default: 'h
 ### User Documentation
 
 [document-graph.md](docs/document-graph.md) covers the same feature for users: what each layout answers, the scroll modes, and the keyboard summary. A change to the layouts or the shortcuts belongs in both files.
+
+## Delegation Graph
+
+`DelegationGraphView.tsx` reuses `<MindMap>` from the Document Graph in View mode and retains the React Flow relationship editor in Edit mode. `delegationMindMapData()` adapts the live peer-roster model to canvas nodes and directed links. Both canvases use `graphEdgeGeometry()` in `src/renderer/utils/graphEdgeGeometry.ts`; do not add a second arrow router.
+
+`buildDelegationGraph()` accepts all-agent, group, and agent scopes. An agent scope follows incoming and outgoing links transitively across groups to show its connected component. Right-clicking an agent with a resolved peer relationship exposes **View Delegation Graph**. The toolbar can isolate the selected agent's cluster or show all agents again. Cmd/Ctrl+K and the hamburger menu open the global graph; `openDelegationGraph` ships with no shortcut assigned.
+
+The global default is `DEFAULT_GLOBAL_DELEGATION_LAYOUT` (`lobes`); group and agent scopes use `DEFAULT_DELEGATION_LAYOUT` (`hierarchical`). The layout vocabulary reuses the Document Graph's leaf labels and excludes Timeline, since relationships have no document timestamps. Layouts and positions are stored separately under `all`, `group:<groupId>`, and `agent:<sessionId>`.
+
+The toolbar wraps the title, scope, mode, layout, and display controls together, with the modal's close button at the right. Document Graph and Delegation Graph share `GraphLayoutMenu` and `GraphToolbarButton` in `src/renderer/components/ui/`. The layout menu supports keyboard navigation, restores focus to its trigger, and registers Escape through the layer stack. Its trigger shows Manual after a node is dragged. The mode control stays together so neither View nor Edit can be squeezed out. **Hide unconnected** is a toggle button with `aria-pressed`.
+
+Cmd/Ctrl+E toggles View/Edit through the same handler as the mode control, consumes the chord, and ignores held-key repeats. Both modes share Document Graph's `L` layout cycle, `F` fit, `S` scroll-mode switch, and `+/-` spacing controls. Shortcuts bubble through the graph container and leave text editing, composition, and open relationship/confirmation editors alone. Other modifier chords and unmodified shortcuts in selectors are ignored. `L` uses the layout dropdown's existing manual-placement confirmation. The legend exposes clickable key hints. View retains canvas arrow navigation, `O` opens Peers, and Space isolates the selected cluster. The modal focuses the active canvas so shortcuts work on opening and after switching modes.
+
+The React Flow editor lays out weak components separately with graphlib and packs their bounding boxes into rows. Mind Map and Lobes expand the shared canvas arrangement to fit agent cards instead of displacing individual collisions downward. They choose the most connected agent as their default center. Saved positions remain authoritative; apply a layout again to replace an older arrangement.
+
+**Hide unconnected** uses `usePersistedToggle('delegationGraph.hideUnconnected')` and `connectedAgentIds()` to filter displayed nodes in both modes without changing peer rosters. It defaults to off and persists across scopes and reopening. Agents added by hand stay visible in Edit so they can be connected; View hides them until they have a relationship. Keep the full model for scope labels and placement eligibility, even when the filter hides every node.
+
+For the fleet view, `<MindMap clusterAllNodes nodeLabel="agent">` includes disconnected communities in Lobes. Directed links remain visible between every pair of displayed endpoints in every layout. Default Document Graph behavior is unchanged: disconnected documents remain in the orphan band unless the caller requests clustering. A canvas drag supplies all displayed positions to the caller so the existing debounced persistence can save the whole arrangement. Manual placement hides algorithm hulls, and Fit measures the displayed coordinates.
+
+User documentation: [agent-delegation.md](docs/agent-delegation.md#the-delegation-graph).

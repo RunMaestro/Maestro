@@ -40,25 +40,39 @@ Uses WAL (Write-Ahead Logging) journal mode for better concurrent access.
 
 Tracks individual AI query/response cycles:
 
-| Column         | Type             | Description                     |
-| -------------- | ---------------- | ------------------------------- |
-| `id`           | TEXT PK          | UUID                            |
-| `session_id`   | TEXT NOT NULL    | Maestro session ID              |
-| `agent_type`   | TEXT NOT NULL    | Agent type (e.g. `claude-code`) |
-| `source`       | TEXT NOT NULL    | `'user'` or `'auto'` (Auto Run) |
-| `start_time`   | INTEGER NOT NULL | Unix timestamp (ms)             |
-| `duration`     | INTEGER NOT NULL | Duration in ms                  |
-| `project_path` | TEXT             | Normalized project path         |
-| `tab_id`       | TEXT             | AI tab that issued the query    |
-| `is_remote`    | INTEGER          | SSH remote flag (added in v2)   |
-| `is_worktree`  | INTEGER          | Worktree agent flag (v5)        |
-| `user_name`    | TEXT             | Web Login sender (v12)          |
+| Column            | Type             | Description                                                                     |
+| ----------------- | ---------------- | ------------------------------------------------------------------------------- |
+| `id`              | TEXT PK          | UUID                                                                            |
+| `session_id`      | TEXT NOT NULL    | Maestro session ID                                                              |
+| `agent_type`      | TEXT NOT NULL    | Agent type (e.g. `claude-code`)                                                 |
+| `source`          | TEXT NOT NULL    | `'user'` or `'auto'` (Auto Run)                                                 |
+| `start_time`      | INTEGER NOT NULL | Unix timestamp (ms)                                                             |
+| `duration`        | INTEGER NOT NULL | Duration in ms                                                                  |
+| `project_path`    | TEXT             | Normalized project path                                                         |
+| `tab_id`          | TEXT             | AI tab that issued the query                                                    |
+| `is_remote`       | INTEGER          | SSH remote flag (added in v2)                                                   |
+| `is_worktree`     | INTEGER          | Worktree agent flag (v5)                                                        |
+| `user_name`       | TEXT             | Web Login sender (v12)                                                          |
+| `run_on_endpoint` | TEXT             | model source the turn launched on: saved endpoint id, or `maestro-server` (v20) |
+| `run_on_model`    | TEXT             | The model that source ran, written WITH `run_on_endpoint` (v20)                 |
+| `routed_tier`     | TEXT             | Tier Auto's router chose: `low`, `medium` or `high` (v20)                       |
 
 `user_name` is the Web Login account that SENT the turn, and NULL means "nobody
 was signed in" - a turn typed at the desktop, which is every turn while Web
 Login is off. It is stamped by `stats:record-query` from what the spawn noted
 (`resolveTurnActor`), never from the acting user at write time: the row is
 written by the desktop renderer's exit listener even for a turn a browser sent.
+
+The three v20 columns are the Models tab's only record of where an agent turn ran, and
+`turnModelStatsFields({ runOn, auto })` in `src/shared/autoTurn.ts` shapes them for both writers of the
+row (the renderer's exit listener and the Auto Run spawn). They are frozen at SEND from the tab's
+`turnRunOnSource` and `turnAuto` stamps, never read from the live agent record, so a model source edited
+mid-turn does not refile the turn. `run_on_endpoint` and `run_on_model` are written together or not at
+all, and `routed_tier` is bound only when it is one of the three levels. NULL in all three means the turn
+ran on the provider's own cloud, which is what the Models tab compares everything else against.
+`routed_tier` is the router's ANSWER, not the launch: a session Auto kept on its model records the tier
+and the place it stayed. `query_events` has one writer, the renderer, so a Cue run and a headless
+`maestro-cli send` write no row on any model and are not counted there.
 
 **Indexes**: `start_time`, `agent_type`, `source`, `session_id`, `project_path`, `is_remote`, `is_worktree`, `user_name`, compound `(start_time, agent_type)`, `(start_time, project_path)`, `(start_time, source)`
 
@@ -151,6 +165,120 @@ Tracks session creation and closure for duration analytics:
 
 **Indexes**: `created_at`, `agent_type`
 
+#### `local_model_runs` (Migration v15, rebuilt v20)
+
+One row per run that reached a model other than a provider's own. Written by the task router
+(`src/main/stats/local-model-runs.ts`) and, for System One, by `recordSystemOneDecision()`:
+
+| Column        | Type             | Description                                                                                 |
+| ------------- | ---------------- | ------------------------------------------------------------------------------------------- |
+| `id`          | TEXT PK          | UUID                                                                                        |
+| `task_id`     | TEXT NOT NULL    | Local Models task (`agent:<verb>` for a request an agent sent System One)                   |
+| `source_type` | TEXT NOT NULL    | `'local'`, `'endpoint'`, `'server'` or `'system-one'` (CHECK, widened v20)                  |
+| `model_id`    | TEXT NOT NULL    | Catalog id, the server's model name, or the model a System One engine named                 |
+| `endpoint_id` | TEXT             | Saved endpoint id, or the System One engine id. NULL for `local` and `server`               |
+| `started_at`  | INTEGER NOT NULL | Unix timestamp (ms)                                                                         |
+| `duration_ms` | INTEGER NOT NULL | Duration in ms. A failed run's duration is its timeout, so latency reads answered runs only |
+| `outcome`     | TEXT NOT NULL    | `'ok'`, `'error'` or `'cancelled'`                                                          |
+| `error_code`  | TEXT             | Classified failure (`timeout`, `network`, ...), NULL on success                             |
+| `tokens_in`   | INTEGER          | Tokens read, when the source reports them                                                   |
+| `tokens_out`  | INTEGER          | Tokens written, when the source reports them                                                |
+| `agent_id`    | TEXT             | Agent the run was for, NULL when the caller knew none (v20)                                 |
+
+**Indexes**: `started_at`, compound `(task_id, started_at)`, compound `(agent_id, started_at)`
+
+`server` is one source however a run reached the Maestro model server: a task assigned to the
+`maestro-server` endpoint, and a task assigned to a local model the running server already holds. A
+`system-one` row exists for retention: `s1_decisions` is pruned at 30 days and the dashboard's ranges go
+to all time. A decision answered from the cache, with no engine chosen, or decided by a local router
+leaves no run, because the local model's own run is already filed under its real source.
+
+Rows written before v20 are not relabeled. A run on the model server recorded earlier stays
+`endpoint` with `endpoint_id = 'maestro-server'`, and `modelUsageRunSource()` in
+`src/shared/local-models/model-usage.ts` reads that as the server.
+
+The v20 migration rebuilds the table, because SQLite cannot alter a CHECK constraint. `rebuildLocalModelRuns`
+creates `local_model_runs_rebuild`, copies every row by named column, compares the two row counts and
+throws on a mismatch, drops the old table, renames the new one into place and recreates the indexes, all
+inside the runner's one transaction. `CREATE_LOCAL_MODEL_RUNS_SQL` is the current shape, so a fresh database
+has nothing to rebuild.
+
+#### `proxy_requests` (Migration v16; `routed_to` v17, provider counts v21, telemetry v22)
+
+One row per model request the Maestro token proxy carried that held a message list. Written by
+`recordProxyRequest()` (`src/main/stats/proxy-requests.ts`) from `proxyRequestFromLog()`:
+
+| Column                                                                      | Type             | Description                                                                                      |
+| --------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------ |
+| `id`                                                                        | TEXT PK          | UUID                                                                                             |
+| `agent_id`                                                                  | TEXT             | Agent the base URL named, NULL for a launch outside the app                                      |
+| `route`, `kind`                                                             | TEXT NOT NULL    | Route prefix (`anthropic`, `openai`, `chatgpt`) and the API the request spoke                    |
+| `mode`                                                                      | TEXT NOT NULL    | `'passthrough'` or `'compress'` (CHECK). Both compress modes are stored as `compress`            |
+| `started_at`, `duration_ms`                                                 | INTEGER NOT NULL | Unix timestamp (ms) and end-to-end duration                                                      |
+| `status`                                                                    | INTEGER NOT NULL | HTTP status sent to the client, 0 when none was                                                  |
+| `outcome`                                                                   | TEXT NOT NULL    | `completed`, `client-aborted` or `upstream-failed`                                               |
+| `request_bytes`, `sent_bytes`, `response_bytes`                             | INTEGER NOT NULL | Body bytes received, sent on, and returned                                                       |
+| `original_tokens`, `sent_tokens`                                            | INTEGER          | Estimates (characters / 4). NULL unless the proxy read the body                                  |
+| `added_latency_ms`                                                          | INTEGER          | Time the request was held. NULL is unknown, left out of means and percentiles                    |
+| `blocks_compressed`, `cache_hits`                                           | INTEGER NOT NULL | Blocks sent shortened; verdicts reused from Maestro's cache (not provider prompt-cache use)      |
+| `compressor_counts`, `new_blocks`                                           | TEXT (JSON)      | Per-compressor counts; blocks shortened for the first time in this request                       |
+| `skip_reason`                                                               | TEXT             | Why a compress mode body went out unread. Open text; `TOKEN_PROXY_SKIP_REASONS` for this build   |
+| `routed_to`                                                                 | TEXT             | Local Models target a background request was sent to (v17)                                       |
+| `provider_input_tokens`, `provider_cache_read_tokens`                       | INTEGER          | What the provider counted (v21). NULL when the answer named none                                 |
+| `provider_cache_write_tokens`, `provider_output_tokens`                     | INTEGER          | A class the answer did not name is stored as 0; reportedness says which were given               |
+| `effective_mode`                                                            | TEXT             | The mode in force: `passthrough`, `compress` or `compress-early` (v22)                           |
+| `blocks_protected`                                                          | INTEGER          | Left out because the result is recent or carries the cache breakpoint (v22)                      |
+| `blocks_vetoed_failed`, `blocks_vetoed_recovery`, `blocks_vetoed_retrieval` | INTEGER          | Left out because the result failed, was a recovery command's output, or was retrieved text (v22) |
+| `blocks_candidates`, `blocks_below_threshold`                               | INTEGER          | Blocks eligible for a verdict; those under the size threshold (v22)                              |
+| `blocks_kept`, `blocks_store_failed`, `blocks_model_failed`                 | INTEGER          | Kept whole; left alone because the cache failed; model summary failed (v22)                      |
+| `provider_input_reportedness`, `provider_cache_read_reportedness`           | TEXT             | `reported`, `derived`, `not-applicable` or `unreported` for each provider count (v22)            |
+| `provider_cache_write_reportedness`, `provider_output_reportedness`         | TEXT             | The same, for cache writes and output (v22)                                                      |
+
+**Indexes**: `started_at`, compound `(agent_id, started_at)`
+
+The fourteen v22 columns are `ProxyRequest.effectiveMode`, `blockCounts` (one column per count, the
+three vetoes included) and `providerUsageReportedness` (one column per class). **NULL is unknown,
+never zero.** The migration adds them bare: no DEFAULT, no CHECK, no index and no backfill, so a row
+written before v22 is unknown in all fourteen. `effective_mode` is deliberately not filled from `mode`
+(a stored `compress` is `compress` or `compress-early`) or from the agent's current setting, which
+may have changed since the request. The nine counts are written together or not at all, so
+`COUNT(blocks_candidates)` is the number of requests with counts; a counted request that found
+nothing holds 0, and `SUM` over rows that hold none is NULL, not 0. The text columns are open like
+`skip_reason`: a reader treats a value it does not recognize as unknown. A provider token column with
+no `*_reportedness` was written before reportedness was tracked and reads as `legacy` through
+`proxyProviderClassReading()`.
+
+**Who fills them.** `proxyRequestFromLog()` in `src/main/local-models/proxy/request-stats.ts` maps a
+request log entry to a row and `recordProxyRequest()` writes it; `recordTokenProxyRequest()` runs the
+mapping inside its guard, after the statistics gate, so no fault of the mapping can reach the
+server's close handler.
+
+- `effective_mode` is the log entry's own `mode`, stated for every recorded request, passthrough
+  included.
+- The nine counts come from the compressor's `CompressRequestStats` (`protected` is counted by
+  `compressRequestBody()`: per tool result, its text spans minus its eligible ones, so it is 0 in
+  early mode). They exist only for a request the proxy read, shortened as the row says and forwarded
+  as the compressor decided. A passthrough request, a request a background target answered and a
+  request forwarded as it arrived (any `skip_reason`) have none. Counts that break
+  `proxyBlockCountsProblem()` are not stored and are reported once, to the log and to Sentry.
+- **A request forwarded as it arrived credits no reduction in any column**, including a failure
+  after the compressor had returned: `blocks_compressed` and `cache_hits` are 0, there are no
+  `new_blocks` or `compressor_counts`, and `sent_tokens` equals `original_tokens` when the original
+  is known. How long the request was held stays, as a measure of time and not of savings. The
+  server's catch path drops the attempt from its log for the same reason.
+- The four `*_reportedness` columns come from the provider's answer, through
+  `createProviderUsageReader()` (`src/main/local-models/proxy/response-usage.ts`), which records how
+  each class got its number: `reported` (the answer named it, a named zero included), `derived`
+  (OpenAI's uncached input, its prompt total minus its cached tokens, which needs both),
+  `not-applicable` (OpenAI has no cache-write class) or `unreported` (the answer did not name it, and
+  the token column holds a default 0 that says nothing). An OpenAI prompt total with no cache detail
+  is stored as neither uncached input nor a cache read. The mapping writes the four with the four
+  provider tokens or not at all, and an answer that names no class leaves all eight NULL.
+- The INSERT is built from one typed column map, and the telemetry column names come from
+  `ADD_PROXY_REQUEST_TELEMETRY_COLUMNS`, so a column added to the schema must be supplied by the
+  writer to compile. `proxy-requests-telemetry.test.ts` checks that a row which states everything
+  fills every column of the real table.
+
 #### `_migrations`
 
 Migration tracking table:
@@ -200,27 +328,40 @@ The singleton is lazy-initialized on first call to `getStatsDB()`. The `StatsDB`
 
 Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorded in the `_migrations` table. The current schema version is stored in SQLite's `user_version` pragma.
 
-| Version | Description                                                           |
-| ------- | --------------------------------------------------------------------- |
-| v1      | Initial schema: `query_events`, `auto_run_sessions`, `auto_run_tasks` |
-| v2      | Add `is_remote` column to `query_events` for SSH tracking             |
-| v3      | Add `session_lifecycle` table                                         |
-| v4      | Add compound indexes on `query_events` for dashboard performance      |
-| v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`    |
-| v6      | Add `image_annotations` table                                         |
-| v7      | Add `shortcut_usage_daily` table                                      |
-| v8      | Add `multi_window_usage_daily` table                                  |
-| v9      | Add per-turn token and cost columns to `query_events`                 |
-| v10     | Add `resilience_events` table                                         |
-| v11     | Add `wizard_runs` table                                               |
-| v12     | Add `user_name` column to `query_events` for Web Login attribution    |
-| v13     | Add `active_ms` column to `wizard_runs`                               |
+| Version | Description                                                                                                                |
+| ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| v1      | Initial schema: `query_events`, `auto_run_sessions`, `auto_run_tasks`                                                      |
+| v2      | Add `is_remote` column to `query_events` for SSH tracking                                                                  |
+| v3      | Add `session_lifecycle` table                                                                                              |
+| v4      | Add compound indexes on `query_events` for dashboard performance                                                           |
+| v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`                                                         |
+| v6      | Add `image_annotations` table                                                                                              |
+| v7      | Add `shortcut_usage_daily` table                                                                                           |
+| v8      | Add `multi_window_usage_daily` table                                                                                       |
+| v9      | Add per-turn token and cost columns to `query_events`                                                                      |
+| v10     | Add `resilience_events` table                                                                                              |
+| v11     | Add `wizard_runs` table                                                                                                    |
+| v12     | Add `user_name` column to `query_events` for Web Login attribution                                                         |
+| v13     | Add `active_ms` column to `wizard_runs`                                                                                    |
+| v14     | Add `kind` column to `auto_run_sessions`                                                                                   |
+| v15     | Add `local_model_runs` table for Local Models task router runs                                                             |
+| v16     | Add `proxy_requests` table for the Maestro token proxy                                                                     |
+| v17     | Add `routed_to` column to `proxy_requests`                                                                                 |
+| v18     | Add `s1_decisions` table for the System One decision ledger                                                                |
+| v19     | Add `tab_id` and `cached` columns to `s1_decisions`                                                                        |
+| v20     | Rebuild `local_model_runs` (wider `source_type`, `agent_id`); add model source and `routed_tier` columns to `query_events` |
+| v21     | Add the provider's token counts (`provider_*_tokens`) to `proxy_requests`                                                  |
+| v22     | Add `effective_mode`, block counts and provider reportedness to `proxy_requests`                                           |
 
 To add a new migration:
 
 1. Create a `migrateVN()` function in `migrations.ts`
 2. Add it to the `getMigrations()` array
 3. Update `STATS_DB_VERSION` in `src/shared/stats-types.ts`
+4. A column added to a table an earlier migration created goes into that table's `CREATE` statement in
+   `schema.ts` too, because a fresh database runs the old migration with the current definition. The new
+   body adds a column only when `hasColumn()` says it is missing, and the entry declares `isApplied`, so a
+   database another branch stamped past your version still gets it.
 
 ## Shared Types
 
@@ -311,6 +452,69 @@ interface StatsAggregation {
 }
 ```
 
+### Token Proxy Telemetry Types
+
+`ProxyRequest` is one `proxy_requests` row. The telemetry contract adds optional facts that older rows do not have. **Absent means unknown, never zero.**
+
+| Field                       | Meaning                                                                                                                                                                                                                                                                                                          |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`                      | Whether the proxy read and shortened the body. Both compress modes are stored as `compress` (the column and its CHECK constraint are unchanged).                                                                                                                                                                 |
+| `effectiveMode`             | The mode in force: `passthrough`, `compress` or `compress-early`. Absent on a row written before it existed. Never inferred from the agent's current setting.                                                                                                                                                    |
+| `blockCounts`               | What compress mode did with each block of tool-result text: `protected`, `vetoed` (`failed`, `recovery`, `retrieval`), `candidates`, `belowThreshold`, `kept`, `storeFailed`, `modelFailed`. Counts only.                                                                                                        |
+| `skipReason`                | Why the body was forwarded unread. One of `TOKEN_PROXY_SKIP_REASONS`.                                                                                                                                                                                                                                            |
+| `cacheHits`                 | Verdict reuse from Maestro's compression cache. Not provider prompt-cache usage (`providerCacheReadTokens`).                                                                                                                                                                                                     |
+| `providerUsageReportedness` | How each provider count got its number: `reported`, `derived`, `not-applicable` or `unreported`, per class (`input`, `cacheRead`, `cacheWrite`, `output`). Absent on a row written before it was tracked: its provider numbers are `legacy` (unknown), not reported. Read it with `proxyProviderClassReading()`. |
+
+Stored by migration v22 (see the `proxy_requests` table above): `effectiveMode` is `effective_mode`, `blockCounts` is
+the nine `blocks_*` columns, and `providerUsageReportedness` is the four `provider_*_reportedness` columns. A row
+that predates v22 is NULL in all of them.
+
+A figure drawn from rows is one of three kinds (`ProxyEvidenceKind`): `measured`, `estimate` (characters / 4: `originalTokens`, `sentTokens`) or `opportunity` (never stored). The kinds are never added into one savings number. Build figures with `proxyFigure()` and total them only with `addProxyFigures()`; see "How sure a token proxy figure is" in [CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md).
+
+Reads of a compressed block's original are not row facts. `TokenProxyRecoveryObservations` counts them in memory for the life of the process, split by caller: the reads the MCP handler made for `retrieve_compressed_original`, and every other read (actor unknown). Do not store them in a row or add them to a range total.
+
+### Token Proxy Effectiveness (one range)
+
+`getProxyRequestUsage(db, range)` in `src/main/stats/proxy-requests.ts` answers totals by agent, effective mode (`byMode`) and stored provider route (`byRoute`), plus `effectiveness` (`ProxyRequestUsage`). The added fields are optional on the wire, because an older desktop does not send them. One call feeds the Settings Gateway section (`TokenProxyReport.usage`), the Usage Dashboard (`ModelUsage.proxy`) and the CLI, so a new surface reads these fields and never runs a query of its own.
+
+| Field                           | Holds                                                                                                                                                                         |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `byMode`                        | The totals per effective mode. Requests whose row states no mode are one group with `effectiveMode: null`.                                                                    |
+| `byRoute`                       | The totals per stored provider route. Unknown future route strings stay intact; these are transport routes, not an inference from current agent settings.                     |
+| `effectiveness.traffic`         | `carried`, `read`, `skipped`, `shortened` requests and `blocksShortened`. Counts of rows, so never unknown.                                                                   |
+| `effectiveness.blocks`          | `coverage` (requests with counts, out of the requests read) and `counts` (the nine block counts summed, plus `shortened`, `verdictReuse`, `requestsWithCandidates`), or null. |
+| `effectiveness.skips`           | Requests forwarded without the compressor's result, by `TOKEN_PROXY_SKIP_REASONS`; `unrecognized` for a reason another build wrote.                                           |
+| `effectiveness.latency`         | `timed` and `untimed` requests, and the `DurationPercentiles` of the timed ones once there are `PROXY_LATENCY_MIN_SAMPLES`; else a reason.                                    |
+| `effectiveness.algorithms`      | Blocks and requests per algorithm, with `uniqueBlocks`.                                                                                                                       |
+| `effectiveness.providerClasses` | Per provider class: the measured `tokens` (a `ProxyFigure`) and the requests by `ProxyProviderClassReading`.                                                                  |
+| `effectiveness.trend`           | Per local calendar day that has a request: requests, requests read, token estimates, blocks shortened.                                                                        |
+
+Rules a reader of these fields needs:
+
+- **One scan for the cuts.** The per-agent totals, `byMode`, `byRoute` and the grand total are rolled up from one `GROUP BY agent_id, effective_mode, route` scan, so each cut adds up to the total. `getProxyEffectiveness(db, startTime)` in `src/main/stats/proxy-effectiveness.ts` reads one scan grouped by skip reason (traffic, counts, skips and provider readings) and three more for what a roll-up cannot give: the algorithms (each distinct JSON cell is parsed once), the timings (percentiles need the values) and the days. Add a column to a scan before you add a scan.
+- **A historical mode stays unknown.** A row from before v22 has no `effective_mode`, and it is `effectiveMode: null`, a stored passthrough row included. The stored `mode` is not a fallback (a stored `compress` is either compress mode) and neither is the agent's setting today. A mode text this build does not know reads the same way (`asTokenProxyRequestMode()`).
+- **Counts have coverage.** `blocks.coverage.counted` is `COUNT(blocks_candidates)`, the requests the compressor ran on since v22, out of the requests read. `counts` is null when none is counted, and then the counts are unknown, not zero. Every number in `counts` covers the counted requests only, so `candidates = belowThreshold + storeFailed + kept + shortened` holds for the sums. A request read before v22 is in `traffic` and `blocksShortened`, and not in `counts`.
+- **Verdict reuse is not the provider's cache.** `blocks.counts.verdictReuse` is Maestro's compression cache. `providerClasses.cacheRead` is the provider's prompt cache. They are different facts: never add them.
+- **Provider classes are summed where measured.** A class's `tokens` sums the requests whose reading is `reported` or `derived`, and is unknown when none is. `rows` counts every reading, and the six add up to the requests. `totals.provider` still adds the stored numbers for compatibility: it includes default zeros and legacy numbers, so it is not a measured total.
+- **Algorithms overlap.** A block that several algorithms shortened is listed under each of them. The `blocks` of `algorithms.algorithms` add up to more than `uniqueBlocks` then. Never add them to get blocks.
+- **Latency needs samples, and a mean says how many.** The distribution is `percentilesFromSorted()` over the requests with a processing time. It is withheld below `PROXY_LATENCY_MIN_SAMPLES` (`insufficient-samples`), a display policy: 30 samples do not make p95 or p99 stable. A request that was read and has no time is `untimed` and is left out. `avgAddedLatencyMs` divides by the timed requests and is 0 when none is, which reads the same as a measured 0 ms. `timedRequests` on the total, each agent and each mode is the sample of its mean, so 0 there means "no time", not "0 ms". The `latency` block speaks for the whole range. A reader that shows a mean must show it against `timedRequests`.
+- **Days are local.** `trend` uses SQLite `localtime`, the boundary of every per-day stat, and lists only the days that have a request. The first day of a rolling range (week, month) is partial. A chart that wants one slot per day lays the days out itself (`proxyTrendView()` in `ModelUsage/modelUsageView.ts`), with a gap, never a 0, for a day with no request body read.
+- **The reader needs the v22 columns**, as the writer does. A database whose v22 migration failed cannot be read until the next start applies it.
+
+### Saying the Token Proxy Report
+
+A surface does not word `ProxyRequestUsage` itself. `src/shared/local-models/token-proxy-report.ts` turns it into `{ label, text }` lines, and the Settings Gateway card, the Usage Dashboard and `maestro-cli models proxy status` / `stats models` print those lines (see "Saying the token proxy report" in [CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md)). The rules a new line must keep:
+
+- **Say the coverage with the count.** `90 of 100 read requests counted`, `1.2M tokens on 100 of 120 requests`. A count without its denominator is not stated.
+- **Unknown is a word, not a 0.** A mean added latency is read against `timedRequests` (`describeAddedLatency()`): no timed request is `unknown`, a measured zero is `0 ms`, and an older desktop's mean without its sample is `(sample unknown)`. A mode a row never stated is `not recorded`. A provider class nobody reported is `unknown`, with the other requests named by reading.
+- **The old provider sums are not classes.** `totals.provider` adds stored numbers, defaults included. Without `effectiveness` it is printed as `Stored sums` of unknown provenance under its own note; it is never called reported or derived.
+- **Days are the series behind the totals.** `describeProxyTrend()` says each day with the same `describeTokensSaved()` as the totals, lists the latest `PROXY_TREND_TEXT_DAYS` (7) and leaves the rest to `effectiveness.trend` in the JSON. The first day of a rolling range is partial, and `TOKEN_PROXY_TREND_NOTE` says so.
+- **A widget does not word a number.** The Usage Dashboard draws the range with widgets (`StatCardGrid`, `MultiLineChart`, `TypeBreakdown`, `AgentActivityBars`) and says each figure through the functions above: the reduction by `describeTokensSaved()`, the mean by `describeAddedLatency()` with the sentence of `describeProxyLatency()` under it, the first lines of the report by `describeProxyHandling()`, the provider's classes by `describeProviderUsage()` under `describeProviderUsageNote()`, and the algorithm cohort by `describeProxyAlgorithmCohort()`. A figure keeps its denominator on screen, and counts that overlap are never drawn as shares.
+- **Recovery is not a range.** `TokenProxyReport.recovery` is a count of the app's life (`getTokenProxyRecoveryObservations()`). It is printed in its own section, never inside a range, and never subtracted from the tokens saved. The retrieve tool is apart from other reads (actor unknown), receipt by a model is unknown, and no net saving is stated.
+- **Observations have one view.** `TokenProxyReport.recovery` and `readOpportunities` are drawn by `<TokenProxyObservations>` (`src/renderer/components/shared/`), which says them through `describeProxyRecovery()`, `describeProxyOpportunities()` and `describeOpportunityPreview()`. The Settings Gateway card and the Models record mount that one component, under a title that names the scope (since the app started, not part of the range); do not word a count of them in a surface. A reason, kind or route this build does not know is shown as stored.
+- **Diagnostics are the same lines as the CLI.** The Gateway card's Diagnostics disclosure is `describeProxyEffectiveness()` plus the latest days of `describeProxyTrend()`: it adds no count of its own, so an observed skip or a partial range reads in the words `maestro-cli models proxy status` prints. Modes and provider routes are rows of the totals table (`describeProxyMode()`, `describeProxyRoute()`), which keeps a route this build does not know under its stored name.
+- **No money, no quality.** No dollar basis or quality check exists. `TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE` is said wherever a saving is shown.
+
 ## IPC Handlers
 
 Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollectionEnabled` in settings before recording data.
@@ -336,6 +540,7 @@ Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollect
 | `stats:get-aggregation`        | Get `StatsAggregation` for a time range (used by dashboard)            |
 | `stats:get-session-lifecycle`  | Get `SessionLifecycleEvent[]` within a time range                      |
 | `stats:get-earliest-timestamp` | Get the earliest recorded event timestamp (used for "all time" ranges) |
+| `stats:get-model-usage`        | Get the `ModelUsage` record for a range (the Models tab; see below)    |
 
 ### Data Management
 
@@ -346,6 +551,67 @@ Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollect
 | `stats:get-database-size`           | Get the database file size in bytes                                                  |
 | `stats:get-initialization-result`   | Get the result of the one-shot DB initialization (used by the settings health panel) |
 | `stats:clear-initialization-result` | Clear the cached initialization result                                               |
+
+### Model usage (`getModelUsage`)
+
+What every model other than a provider's own did over a range. One record, one aggregation, three readers:
+the Usage Dashboard's **Models** tab, `maestro-cli stats models`, and the WS message `get_model_usage`.
+
+| Layer       | Symbol                                                                                                                                                      |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Aggregation | `getModelUsage(db, range, names)` in `src/main/stats/model-usage.ts` (`StatsDB.getModelUsage`)                                                              |
+| Service     | `readModelUsage(range)` in `src/main/local-models/model-usage.ts`                                                                                           |
+| Types       | `ModelUsage` and the naming rules in `src/shared/local-models/model-usage.ts`                                                                               |
+| IPC / WS    | `stats:get-model-usage`, `window.maestro.stats.getModelUsage(range)`, `get_model_usage` answered as `model_usage`                                           |
+| CLI         | `maestro-cli stats models [--range day\|week\|month\|quarter\|year\|all] [--json]`                                                                          |
+| Renderer    | `useModelUsage(range)` in `src/renderer/hooks/stats/useModelUsage.ts`, drawn by `<ModelUsageStats>` in `src/renderer/components/UsageDashboard/ModelUsage/` |
+
+`useModelUsage` is the tab's one fetch owner: it returns `usage`, `loadedAt`, `loading`, `error` and `reload`.
+`loadedAt` is the moment the last successful read answered, and it is the only freshness the record has
+(`ModelUsage.since` is where the range starts). A failed background refresh keeps the record and its time, a
+failed foreground read or a range change clears both, and `reload` keeps both on screen until the new answer lands.
+
+`readModelUsage` is the one function the IPC channel and the WS message both call. It checks the range
+with `isStatsTimeRange()` (no range reads the week) and hands the aggregation the names only the app
+knows: the saved endpoints, the OpenJev URL and agent names. The record has six blocks:
+
+| Block       | Reads                                                | Holds                                                                                |
+| ----------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `totals`    | the other blocks                                     | requests, tokens, errors, and the on-this-machine share                              |
+| `sources`   | `local_model_runs`, `query_events`, `proxy_requests` | one row per source: kind, location, units, tokens, errors, latency                   |
+| `byTask`    | `local_model_runs`                                   | per task, with where each ran                                                        |
+| `byAgent`   | `local_model_runs`, `query_events`                   | any agent that used another model; the tab shows `turns > 0` as model source         |
+| `systemOne` | `s1_decisions`, `query_events`                       | outcome split per task and engine, Auto's `routedTiers`, `coversRange`               |
+| `proxy`     | `proxy_requests`                                     | totals, `byMode` and `effectiveness` from `getProxyRequestUsage()`, estimates marked |
+
+Rules a new reader of the record needs:
+
+- **Each table is scanned once.** SQLite has no percentile function, so each scan is `ORDER BY` its duration
+  column and every distribution (per source, task, agent and System One task) is sliced from that one pass
+  with `percentilesFromSorted()`. Do not add a second query for a new percentile. `proxy_requests` is the
+  exception: `getProxyRequestUsage()` reads it in a few scans of its own (see "Token Proxy Effectiveness")
+  besides the routed-request scan.
+- **Three units, kept apart.** A source counts `runs` (one model call), `turns` (one agent turn) and `routed`
+  (one background request the proxy sent to a Local Models target). `requests` is their sum, so never
+  divide tokens by it. `modelUsageSourceLatency()` names the unit a latency is in: a request when the source
+  answered model calls, a turn only when it has none on record.
+- **Latency is answered work only.** A failed run's duration is its timeout.
+- **A provider's own cloud is a source kind** (`provider:<agent type>`) from `query_events` rows with no model source
+  source. `errors` is always 0 there, because `query_events` records no outcome, and cache tokens are
+  `cachedTokensIn`, never folded into `tokensIn`.
+- **`onDevice` is three-valued.** The in-process engine and the model server are `true`. An endpoint is
+  `true` only when its URL is loopback. An endpoint that was removed, or OpenJev with no URL, is `null`
+  (shown as Unknown, never as remote) and `totals.onDeviceRequests` does not count it.
+- **The System One block reads the 30-day ledger.** `coversRange` is false for quarter, year and all, and the
+  tab says so. `routedTiers` comes from `query_events` and covers the whole range.
+- **There is no cost per source.** `systemOne.costUsd` is the only cost. There is no per-day block: a trend
+  chart adds a `byDay` to `ModelUsage`, not a second query.
+- **A WS failure replies under its own type with `success: false` and the request id.** `ctx.sendError`
+  sends an `error` message with no id, which the CLI client cannot match, so it would wait out its timeout.
+
+The tab renders above the dashboard's "no query yet" gate, with Tokens and Shortcuts, because a housekeeping
+run on a local model leaves no `query_events` row. `getSectionsForViewMode('models')` returns `[]` like Cue:
+the blocks come from the panel's own fetch, not the shared aggregation.
 
 ### Broadcast
 

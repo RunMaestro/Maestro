@@ -179,6 +179,7 @@ export function releaseMentionHandoff(
 			sourceLogs: turn.priorLogs,
 			sourceCwd: session.cwd,
 			handoffAnswer: turn.answer,
+			...(handoff.sourceConsultChain && { sourceConsultChain: handoff.sourceConsultChain }),
 		});
 	}
 }

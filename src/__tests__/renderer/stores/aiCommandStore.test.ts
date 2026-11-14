@@ -43,6 +43,49 @@ describe('aiCommandStore', () => {
 		});
 	});
 
+	test('resolving keeps the explanation that came with the command', () => {
+		begin();
+		useAiCommandStore
+			.getState()
+			.resolveAiCommand('req-1', 'du -sh *', { explanation: 'Sizes everything here.' });
+		expect(useAiCommandStore.getState().entries[KEY].explanation).toBe('Sizes everything here.');
+	});
+
+	test('a named source replaces the model and effort stamped at request time', () => {
+		// Main read the assignment when it ran, so its name is the fact. A local
+		// model has no effort ladder, so the tab's effort must not stay beside it.
+		useAiCommandStore.getState().beginAiCommand({
+			requestId: 'req-1',
+			sessionId: SESSION,
+			tabId: TAB,
+			request: 'how big is everything',
+			model: 'opus',
+			effort: 'high',
+		});
+		useAiCommandStore.getState().resolveAiCommand('req-1', 'du -sh *', { producedBy: 'Qwen3' });
+
+		const entry = useAiCommandStore.getState().entries[KEY];
+		expect(entry.model).toBe('Qwen3');
+		expect(entry.effort).toBeUndefined();
+	});
+
+	test('a reply from the tab provider leaves the request-time stamp alone', () => {
+		useAiCommandStore.getState().beginAiCommand({
+			requestId: 'req-1',
+			sessionId: SESSION,
+			tabId: TAB,
+			request: 'how big is everything',
+			model: 'opus',
+			effort: 'high',
+		});
+		useAiCommandStore.getState().resolveAiCommand('req-1', 'du -sh *', {});
+
+		expect(useAiCommandStore.getState().entries[KEY]).toMatchObject({
+			model: 'opus',
+			effort: 'high',
+		});
+	});
+
 	test('a reply for a dismissed request is dropped', () => {
 		// Escape must actually mean gone: without the request-id check the card
 		// would pop back onto the screen seconds after the user closed it.

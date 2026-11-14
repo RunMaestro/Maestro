@@ -6,10 +6,10 @@ import { getSessionById, resolveAgentId, readSessions } from '../services/storag
 import {
 	formatPlaybooks,
 	formatPlaybooksByAgent,
-	formatError,
 	PlaybookDisplay,
 	PlaybooksByAgent,
 } from '../output/formatter';
+import { failCommand } from '../services/session-command';
 
 interface ListPlaybooksOptions {
 	agent?: string;
@@ -119,11 +119,6 @@ export function listPlaybooks(options: ListPlaybooksOptions): void {
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to list playbooks: ${message}`));
-		}
-		process.exit(1);
+		failCommand(`Failed to list playbooks: ${message}`, options.json);
 	}
 }

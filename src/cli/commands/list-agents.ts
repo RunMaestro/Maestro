@@ -24,6 +24,7 @@ import {
 	listHostAgents,
 } from '../services/peer-resolver';
 import { formatAgents, formatError, AgentDisplay } from '../output/formatter';
+import { failCommand } from '../services/session-command';
 
 interface ListAgentsOptions {
 	group?: string;
@@ -131,12 +132,7 @@ export function listAgents(options: ListAgentsOptions): void | Promise<void> {
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to list agents: ${message}`));
-		}
-		process.exit(1);
+		failCommand(`Failed to list agents: ${message}`, options.json);
 	}
 }
 

@@ -13,7 +13,11 @@
 
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
-import { useSettingsStore } from '../stores/settingsStore';
+import { notifyVoiceStartFailed, openVoiceMic } from '../services/voiceListening';
+import { useVoiceSessionStore } from '../stores/voiceSessionStore';
+import { useVoiceUiStore } from '../stores/voiceUiStore';
+import { isVoiceSessionActive } from '../../shared/acappella/session-state';
+import { selectACappellaEnabled, useSettingsStore } from '../stores/settingsStore';
 import type { GroupChatQueueState } from '../../shared/group-chat-types';
 import { useSessionStore } from '../stores/sessionStore';
 import { mentionSessionEquality } from '../stores/sessionEquality';
@@ -30,6 +34,7 @@ import type {
 import { QueuedItemsList } from './QueuedItemsList';
 import {
 	ChatComposer,
+	ComposerVoiceSessionButton,
 	deriveGroupChatComposerCapabilities,
 	clipboardHasImage,
 	canModeratorReadImages,
@@ -86,6 +91,8 @@ interface GroupChatInputProps {
 	participants: GroupChatParticipant[];
 	groups?: Group[];
 	groupChatId: string;
+	/** The room's name, shown on the voice HUD while a session is bound to it. */
+	groupChatName?: string;
 	/** The room's moderator provider ID (e.g. 'claude-code', 'codex'). */
 	moderatorAgentId?: string;
 	draftMessage?: string;
@@ -132,6 +139,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	participants: _participants,
 	groups,
 	groupChatId,
+	groupChatName,
 	moderatorAgentId,
 	draftMessage,
 	onDraftChange,
@@ -161,6 +169,45 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const [localReadOnlyMode, setLocalReadOnlyMode] = useState(false);
 	const readOnlyMode = readOnlyModeProp ?? localReadOnlyMode;
 	const setReadOnlyMode = setReadOnlyModeProp ?? setLocalReadOnlyMode;
+
+	// A Cappella: a voice session bound to this room. The microphone sits under
+	// Send; only the Encore Feature draws it.
+	const voiceEnabled = useSettingsStore(selectACappellaEnabled);
+	const voiceActive = useVoiceSessionStore(
+		(s) =>
+			isVoiceSessionActive(s.state) &&
+			s.scope?.kind === 'group-chat' &&
+			s.scope.groupChatId === groupChatId
+	);
+	// Like a typed message, the next spoken turn follows the room's current read-only choice.
+	useEffect(() => {
+		if (!voiceActive) return;
+		const scope = useVoiceSessionStore.getState().scope;
+		if (
+			scope?.kind !== 'group-chat' ||
+			scope.groupChatId !== groupChatId ||
+			(scope.readOnly === true) === readOnlyMode
+		)
+			return;
+		void window.maestro.voice
+			.setScope({ ...scope, readOnly: readOnlyMode })
+			.catch(notifyVoiceStartFailed);
+	}, [voiceActive, groupChatId, readOnlyMode]);
+
+	const startGroupVoice = useCallback(() => {
+		useVoiceSessionStore.getState().setDismissed(false);
+		useVoiceUiStore.getState().setMinimized(false);
+		void useVoiceUiStore
+			.getState()
+			.load()
+			.then(() =>
+				openVoiceMic({
+					honorListenMode: true,
+					scope: { kind: 'group-chat', groupChatId, name: groupChatName, readOnly: readOnlyMode },
+				})
+			)
+			.catch(notifyVoiceStartFailed);
+	}, [groupChatId, groupChatName, readOnlyMode]);
 	// Use global setting if provided, otherwise fall back to local state (default false = Cmd+Enter to send)
 	const [localEnterToSend, setLocalEnterToSend] = useState(false);
 	const enterToSend = enterToSendAIProp ?? localEnterToSend;
@@ -537,6 +584,16 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			toolbarExtras={readOnlyToggle}
 			sheetExtras={readOnlySheetRow}
 			aboveComposer={aboveComposer}
+			sendColumnExtras={
+				voiceEnabled ? (
+					<ComposerVoiceSessionButton
+						theme={theme}
+						active={voiceActive}
+						onToggle={startGroupVoice}
+						label="Talk to group chat"
+					/>
+				) : undefined
+			}
 			onSubmit={handleSend}
 			onBlur={flushDraft}
 		/>

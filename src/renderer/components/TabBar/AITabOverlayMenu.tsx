@@ -2,6 +2,7 @@ import React, { memo } from 'react';
 import {
 	Copy,
 	Edit2,
+	Eye,
 	Star,
 	Link,
 	Mail,
@@ -42,6 +43,7 @@ export interface AITabOverlayMenuProps {
 	onCopyContextClick: (e: React.MouseEvent) => void;
 	onCopyContextWithReasoningClick: (e: React.MouseEvent) => void;
 	onSummarizeAndContinueClick: (e: React.MouseEvent) => void;
+	onPreviewContinuityClick: (e: React.MouseEvent) => void;
 	onMergeWithClick: (e: React.MouseEvent) => void;
 	onSendToAgentClick: (e: React.MouseEvent) => void;
 	onPublishGistClick: (e: React.MouseEvent) => void;
@@ -52,6 +54,8 @@ export interface AITabOverlayMenuProps {
 	onCloseTabsLeftClick: (e: React.MouseEvent) => void;
 	onCloseTabsRightClick: (e: React.MouseEvent) => void;
 	// Optional handler availability (undefined = hidden)
+	/** Read-only evidence preview of this tab (Context: Preview Continuity). */
+	onPreviewContinuity?: (tabId: string) => void;
 	onMergeWith?: (tabId: string) => void;
 	onSendToAgent?: (tabId: string) => void;
 	onSummarizeAndContinue?: (tabId: string) => void;
@@ -88,6 +92,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onCopyContextClick,
 	onCopyContextWithReasoningClick,
 	onSummarizeAndContinueClick,
+	onPreviewContinuityClick,
 	onMergeWithClick,
 	onSendToAgentClick,
 	onPublishGistClick,
@@ -97,6 +102,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onCloseOtherTabsClick,
 	onCloseTabsLeftClick,
 	onCloseTabsRightClick,
+	onPreviewContinuity,
 	onMergeWith,
 	onSendToAgent,
 	onSummarizeAndContinue,
@@ -250,7 +256,11 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 
 				{/* Context Management Section - divider and grouped options */}
 				{(tab.agentSessionId || (tab.logs?.length ?? 0) >= 1) &&
-					(onMergeWith || onSendToAgent || onSummarizeAndContinue || onCopyContext) && (
+					(onMergeWith ||
+						onSendToAgent ||
+						onSummarizeAndContinue ||
+						onPreviewContinuity ||
+						onCopyContext) && (
 						<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 					)}
 
@@ -287,6 +297,18 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					>
 						<Minimize2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						Context: Compact
+					</button>
+				)}
+
+				{/* Context: Preview Continuity - read only, so it needs only one entry to read */}
+				{(tab.logs?.length ?? 0) >= 1 && onPreviewContinuity && (
+					<button
+						onClick={onPreviewContinuityClick}
+						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textMain }}
+					>
+						<Eye className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						Context: Preview Continuity
 					</button>
 				)}
 

@@ -75,4 +75,60 @@ describe('support-package command', () => {
 		await expect(supportPackage({ output: '/tmp' })).rejects.toThrow('__exit__');
 		expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
 	});
+
+	// The package is screened before it is written. With no dialog to answer,
+	// the CLI refuses unless --allow-secrets is passed.
+	describe('secret screen', () => {
+		const refusal = {
+			success: false,
+			error: 'Found 1 possible secret in the support package. Nothing was sent.',
+			code: 'SECRETS_FOUND',
+			secretFindings: [
+				{ kind: 'slack-token', line: 40, preview: '••••••••wxyz', source: 'logs.json' },
+			],
+			secretScreenNote:
+				'Secret screen model did not run: Not installed. Pattern detection still ran.',
+		};
+
+		it('does not send allowSecrets unless the flag is passed', async () => {
+			const cap = mockSend({ success: true, path: '/tmp/x.zip' });
+			await supportPackage({ output: '/tmp' });
+			expect(cap.payload?.options).not.toHaveProperty('allowSecrets');
+		});
+
+		it('sends allowSecrets: true for --allow-secrets', async () => {
+			const cap = mockSend({ success: true, path: '/tmp/x.zip' });
+			await supportPackage({ output: '/tmp', allowSecrets: true });
+			expect((cap.payload?.options as Record<string, unknown>).allowSecrets).toBe(true);
+		});
+
+		it('refuses, exits non-zero, and prints the masked findings', async () => {
+			mockSend(refusal);
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			await expect(supportPackage({ output: '/tmp' })).rejects.toThrow('__exit__');
+
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+			const printed = errorSpy.mock.calls.map(([line]) => line).join('\n');
+			expect(printed).toContain(refusal.error);
+			expect(printed).toContain('Slack token ••••••••wxyz (logs.json, line 40)');
+			expect(printed).toContain(refusal.secretScreenNote);
+			expect(printed).toContain('--allow-secrets');
+		});
+
+		it('carries the findings in --json', async () => {
+			mockSend(refusal);
+			const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+			await expect(supportPackage({ output: '/tmp', json: true })).rejects.toThrow('__exit__');
+
+			expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+				success: false,
+				error: refusal.error,
+				code: 'SECRETS_FOUND',
+				secretFindings: refusal.secretFindings,
+				secretScreenNote: refusal.secretScreenNote,
+			});
+		});
+	});
 });

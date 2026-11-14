@@ -6,7 +6,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
-import { AdditionalDirectoriesSection } from '../../../../renderer/components/shared/AdditionalDirectoriesSection';
+import {
+	AdditionalDirectoriesSection,
+	PermissionSquare,
+} from '../../../../renderer/components/shared/AdditionalDirectoriesSection';
 import { mockTheme } from '../../../helpers/mockTheme';
 import type { AdditionalDirectory } from '../../../../renderer/types';
 
@@ -125,5 +128,61 @@ describe('AdditionalDirectoriesSection', () => {
 		renderSection([{ path: '', read: false, write: false }]);
 
 		expect(screen.queryByText(/No access selected/)).not.toBeInTheDocument();
+	});
+});
+
+// PermissionSquare is exported so the peer section draws the same square. These
+// pin the contract a second consumer relies on.
+describe('PermissionSquare', () => {
+	it('renders one switch named by its title, showing its label', () => {
+		render(
+			<PermissionSquare
+				theme={mockTheme}
+				label="R"
+				title="May consult"
+				active={false}
+				onToggle={vi.fn()}
+			/>
+		);
+
+		const square = screen.getByRole('switch', { name: 'May consult' });
+		expect(square).toHaveTextContent('R');
+		expect(square).toHaveAttribute('aria-checked', 'false');
+	});
+
+	it('reports a lit square as checked', () => {
+		render(
+			<PermissionSquare
+				theme={mockTheme}
+				label="W"
+				title="May delegate"
+				active
+				onToggle={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByRole('switch', { name: 'May delegate' })).toHaveAttribute(
+			'aria-checked',
+			'true'
+		);
+	});
+
+	it('raises onToggle on a click and holds no state of its own', () => {
+		const onToggle = vi.fn();
+		render(
+			<PermissionSquare
+				theme={mockTheme}
+				label="R"
+				title="May consult"
+				active={false}
+				onToggle={onToggle}
+			/>
+		);
+
+		const square = screen.getByRole('switch', { name: 'May consult' });
+		fireEvent.click(square);
+
+		expect(onToggle).toHaveBeenCalledTimes(1);
+		expect(square).toHaveAttribute('aria-checked', 'false');
 	});
 });

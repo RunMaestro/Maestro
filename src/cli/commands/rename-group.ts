@@ -6,7 +6,7 @@ import {
 	sendSimpleCommand,
 	reportResult,
 	failCommand,
-	exitIfMaestroNotRunning,
+	failFromError,
 } from '../services/session-command';
 
 interface RenameGroupOptions {
@@ -27,7 +27,7 @@ export async function renameGroup(
 	try {
 		resolvedGroupId = resolveGroupId(groupId);
 	} catch (error) {
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 
 	try {
@@ -41,7 +41,6 @@ export async function renameGroup(
 			jsonExtra: { groupId: resolvedGroupId, name: trimmed },
 		});
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }

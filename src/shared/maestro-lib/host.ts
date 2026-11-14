@@ -8,8 +8,8 @@
  * where log lines go, where crashes are reported, the desktop's live agent
  * capability snapshots, the content-addressed image store behind
  * `maestro-image://` refs, and Antigravity CLI's on-disk conversation store
- * (a native SQLite read). Those arrive through this module instead of an
- * import.
+ * (a native SQLite read), and the host's SSH translation filesystem adapter.
+ * Those arrive through this module instead of an import.
  *
  * Wiring: the desktop module that owns each service registers it when that
  * module loads (`src/main/utils/logger.ts`, `src/main/utils/sentry.ts`,
@@ -18,6 +18,7 @@
  * `src/main/parsers/antigravity-step-store.ts`). So every process that had the
  * service before - the Electron main process and the CLI, which both load
  * those modules - still has it, with no entry point to remember.
+ * `src/main/utils/ssh-spawn-wrapper.ts` registers the SSH filesystem lazily.
  *
  * Defaults, for a host that registers nothing: log lines and crash reports are
  * dropped, no capability snapshot exists (context windows fall back to the
@@ -29,6 +30,8 @@
  */
 
 import type { AgentCapabilitiesSnapshot } from '../agentCapabilities';
+import type { SshRemoteConfig } from '../types';
+import type { TranslationFs } from './translation/fs-port';
 
 export interface MaestroLibLogger {
 	debug(message: string, context?: string, data?: unknown): void;
@@ -77,6 +80,9 @@ let hostLogger: MaestroLibLogger = NOOP_LOGGER;
 let hostReporter: MaestroLibErrorReporter = NOOP_REPORTER;
 let hostImageRefResolver: ImageRefResolver = () => null;
 let hostCapabilitySnapshot: CapabilitySnapshotLookup = () => undefined;
+let hostSshTranslationFs:
+	| ((remote: SshRemoteConfig) => TranslationFs | Promise<TranslationFs>)
+	| undefined;
 let hostAntigravityStepStore: AntigravityStepStore = {
 	readThinking: () => '',
 	readToolResult: () => '',
@@ -96,6 +102,19 @@ export function setMaestroLibImageRefResolver(next: ImageRefResolver): void {
 
 export function setMaestroLibCapabilitySnapshotLookup(next: CapabilitySnapshotLookup): void {
 	hostCapabilitySnapshot = next;
+}
+
+/** Desktop/CLI register their canonical remote-fs adapter; standalone hosts may supply one. */
+export function setMaestroLibSshTranslationFs(
+	next: ((remote: SshRemoteConfig) => TranslationFs | Promise<TranslationFs>) | undefined
+): void {
+	hostSshTranslationFs = next;
+}
+
+export async function resolveSshTranslationFs(remote: SshRemoteConfig): Promise<TranslationFs> {
+	if (!hostSshTranslationFs)
+		throw new Error('SSH provider knowledge requires a remote filesystem adapter');
+	return hostSshTranslationFs(remote);
 }
 
 export function setMaestroLibAntigravityStepStore(next: AntigravityStepStore): void {

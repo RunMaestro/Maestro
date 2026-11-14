@@ -1,6 +1,7 @@
 import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import { ipcRenderer } from 'electron';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 
 export function createQueueRemoteApi() {
@@ -21,6 +22,7 @@ export function createQueueRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
 				control?: PianolaQueueControl
@@ -40,6 +42,7 @@ export function createQueueRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
 				control?: PianolaQueueControl
@@ -54,6 +57,7 @@ export function createQueueRemoteApi() {
 						images,
 						background,
 						held,
+						consultChain,
 						mentionRouting,
 						dispatchCallback,
 						control

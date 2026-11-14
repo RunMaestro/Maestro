@@ -11,7 +11,13 @@ vi.mock('../../../../renderer/services/providerTranslation', () => ({
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
+import { __resetRememberedModalTabsForTests } from '../../../../renderer/components/ui/ModalTabStrip';
+import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import type { LocalModelEndpoint } from '../../../../shared/local-models/endpoints';
+import { RUN_ON_MIN_CONTEXT_TOKENS } from '../../../../shared/local-models/run-on';
+import type { HarnessTierOptions } from '../../../../shared/local-models/tier-options';
 import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
 import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/definitions';
 import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
@@ -79,6 +85,35 @@ const createSession = (overrides: Partial<Session> = {}): Session =>
 		...overrides,
 	}) as Session;
 
+/**
+ * The 27th `onSave` argument of a form whose Peers tab was never touched: a
+ * session with no peers saves every source of the roster as absent.
+ */
+const NO_PEER_GRANTS = {
+	peerAgents: undefined,
+	peerDescription: undefined,
+	groupPeerAccess: undefined,
+	worktreePeerAccess: undefined,
+};
+
+/**
+ * Positions in `onSave`'s argument list that tests read by slot. Named here so
+ * an argument appended later does not shift what a test thought was "last".
+ */
+const SAVE_ARG = {
+	workingDirectory: 20,
+	codexAutoResetOnExhaustion: 21,
+	codexTransport: 22,
+	gatewayUrl: 23,
+	runOn: 24,
+	tierTargets: 25,
+	peerGrants: 26,
+} as const;
+
+/** Show one tab of the form. Only the active tab's fields are rendered. */
+const openTab = (name: string) =>
+	fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${name}`) }));
+
 describe('EditAgentModal', () => {
 	let theme: Theme;
 	let onClose: ReturnType<typeof vi.fn>;
@@ -110,6 +145,9 @@ describe('EditAgentModal', () => {
 		onSave = vi.fn();
 
 		mockRegisterLayer.mockClear().mockReturnValue('layer-edit-agent-123');
+		// The form remembers its last tab per app session; start every case on General.
+		__resetRememberedModalTabsForTests();
+		useModalStore.getState().closeModal('editAgent');
 		mockUnregisterLayer.mockClear();
 		mockUpdateLayerHandler.mockClear();
 
@@ -250,9 +288,9 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalledTimes(1);
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is third-from-last now that `codexAutoResetOnExhaustion`
-		// and `codexTransport` trail it - anchor on the slot rather than on "last".
-		expect(args[args.length - 3]).toBe('/home/user/moved-project');
+		// Anchored on the slot, not on distance from the end: arguments keep
+		// being appended after it.
+		expect(args[SAVE_ARG.workingDirectory]).toBe('/home/user/moved-project');
 	});
 
 	it('should refuse a local working directory that does not exist', async () => {
@@ -337,9 +375,9 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalled();
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is third-from-last now that `codexAutoResetOnExhaustion`
-		// and `codexTransport` trail it - anchor on the slot rather than on "last".
-		expect(args[args.length - 3]).toBeUndefined(); // workingDirectory unchanged
+		// Anchored on the slot, not on distance from the end: arguments keep
+		// being appended after it.
+		expect(args[SAVE_ARG.workingDirectory]).toBeUndefined(); // workingDirectory unchanged
 	});
 
 	it('should refuse a new SSH working directory the remote reports is not a directory', async () => {
@@ -440,6 +478,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 
 		await waitFor(() => {
 			const providerSelect = screen.getByRole('button', { name: 'Agent Provider' });
@@ -459,6 +498,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 
 		const providerSelect = screen.getByRole('button', { name: 'Agent Provider' });
 
@@ -481,7 +521,7 @@ describe('EditAgentModal', () => {
 		await waitFor(() => {
 			expect(
 				screen.getByText(
-					/Tabs, transcripts, drafts, queue and file previews are kept\. Each tab starts a new Codex conversation; switching back to Claude Code resumes/
+					/Tabs, transcripts, drafts, queue and file previews are kept\. Each tab that follows the agent starts a new Codex conversation; switching back to Claude Code resumes/
 				)
 			).toBeInTheDocument();
 		});
@@ -508,6 +548,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		const hint = screen.getByText(/Some providers support the ability to transfer sessions/);
 		expect(hint).toHaveTextContent(
 			'Some providers support the ability to transfer sessions, memories, subagents, etc between them. They are denoted as Carry Over in the list.'
@@ -538,6 +579,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 		expect(screen.getByRole('option', { name: 'Claude Code Carry Over' })).toBeInTheDocument();
 		expect(screen.getByRole('option', { name: 'Codex' })).toBeInTheDocument();
@@ -554,11 +596,167 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 		expect(screen.queryByRole('option', { name: /Carry Over/ })).not.toBeInTheDocument();
 		expect(
 			screen.getByText(/Some providers support the ability to transfer sessions/)
 		).toBeInTheDocument();
+	});
+
+	it('reviews and applies only the requested pending tab without saving agent defaults', async () => {
+		const session = createSession({ toolType: 'codex' });
+		useModalStore.getState().openModal('editAgent', {
+			session,
+			initialTab: 'provider',
+			translationReview: { tabId: 'pending-tab', provider: 'codex' },
+		});
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={session}
+				existingSessions={[]}
+			/>
+		);
+		await waitFor(() =>
+			expect(requestProviderTranslation).toHaveBeenCalledWith(
+				expect.objectContaining({ action: 'plan', tabId: 'pending-tab', destination: 'codex' })
+			)
+		);
+		fireEvent.click(await screen.findByLabelText('Allow experimental carry-over'));
+		expect(screen.getByRole('button', { name: 'Agent Provider' })).toBeDisabled();
+		vi.mocked(requestProviderTranslation).mockResolvedValue({ success: true });
+		fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+		await waitFor(() =>
+			expect(requestProviderTranslation).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					action: 'apply',
+					tabId: 'pending-tab',
+					destination: 'codex',
+					acceptLimitations: true,
+				}),
+				{ waitForDeferred: true }
+			)
+		);
+		expect(onSave).not.toHaveBeenCalled();
+		expect(onClose).toHaveBeenCalled();
+	});
+	it('summarizes sessions and messages without exposing individual conversation IDs', async () => {
+		const report = await vi.mocked(requestProviderTranslation).getMockImplementation()!({} as any);
+		vi.mocked(requestProviderTranslation).mockResolvedValue({
+			...report,
+			plan: {
+				...report.plan!,
+				tabs: [
+					{
+						tabId: 'compacted',
+						sourceSessionId: 'native',
+						records: 4492,
+						activeRecords: 312,
+						archivedRecords: 4180,
+						newRecords: 0,
+					},
+					{ tabId: 'legacy', sourceSessionId: 'older', records: 12, newRecords: 0 },
+				],
+				deferredTabs: [{ id: 'closed-tab', agentSessionId: 'closed-native' }],
+				counts: { records: 4504, messages: 800, artifacts: 2, bytes: 0 },
+			},
+		});
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={vi.fn()}
+				onSave={vi.fn()}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		openTab('Provider');
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
+		await screen.findByText('Messages');
+		expect(screen.getByText('800')).toBeInTheDocument();
+		expect(screen.getByText('Sessions')).toBeInTheDocument();
+		expect(screen.getByText('2')).toBeInTheDocument();
+		expect(screen.getByText('On next use')).toBeInTheDocument();
+		expect(screen.getByText('1')).toBeInTheDocument();
+		expect(screen.queryByText(/Conversation 1:/)).not.toBeInTheDocument();
+		expect(screen.queryByText('closed-tab')).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/Selected user resource/)).not.toBeInTheDocument();
+		expect(screen.queryByText('Add resource')).not.toBeInTheDocument();
+		expect(screen.queryByText('Review selection')).not.toBeInTheDocument();
+	});
+
+	it('omits conversion metadata and enables Save after experimental carry-over acceptance', async () => {
+		const report = await vi.mocked(requestProviderTranslation).getMockImplementation()!({} as any);
+		const warning = {
+			code: 'context-capacity',
+			severity: 'warning' as const,
+			message: 'Large conversation; source transcript preserved.',
+		};
+		vi.mocked(requestProviderTranslation).mockResolvedValue({
+			...report,
+			plan: {
+				...report.plan!,
+				limitations: [
+					{ ...warning, tabId: 'one' },
+					{ ...warning, tabId: 'two' },
+					{
+						code: 'native-project-memory-unavailable',
+						severity: 'warning',
+						message: 'Generated Codex account memory is excluded from project migration.',
+					},
+					{
+						code: 'untested-version',
+						severity: 'warning',
+						message: 'codex 0.164.0 is untested; tested versions: 0.162.1, 0.163.0.',
+					},
+					{
+						code: 'untested-version',
+						severity: 'warning',
+						message: 'claude-code 2.1.310 is untested; tested versions: 2.1.296, 2.1.302.',
+					},
+					{
+						code: 'unverified-native-resume',
+						severity: 'warning',
+						message: 'Native resume and round-trip continuity have not been verified.',
+					},
+				],
+			},
+		});
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		openTab('Provider');
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
+		const accept = await screen.findByLabelText('Allow experimental carry-over');
+		expect(screen.queryByText(warning.message)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Generated Codex account memory/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/codex 0.164.0 is untested/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/claude-code 2.1.310 is untested/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Native resume and round-trip continuity/)).not.toBeInTheDocument();
+		expect(screen.getByTestId('edit-agent-tab-body')).not.toContainElement(accept);
+		expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled();
+		fireEvent.click(accept);
+		expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled();
+		fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		expect(onSave.mock.calls[0][27]).toBe(true);
+		expect(onSave.mock.calls[0][28]).toEqual([]);
 	});
 
 	it('clears the reading indicator and saves plainly if preflight rejects', async () => {
@@ -573,6 +771,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
@@ -587,9 +786,52 @@ describe('EditAgentModal', () => {
 		).toBeInTheDocument();
 		fireEvent.click(screen.getByText('Save Changes'));
 		await waitFor(() => expect(onSave).toHaveBeenCalled());
-		expect(onSave.mock.calls[0].slice(23)).toEqual([]);
+		expect(onSave.mock.calls[0].slice(27)).toEqual([]);
 	});
 
+	it('requires per-switch consent to install project resources and forwards it with the reviewed plan', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		openTab('Provider');
+		const picker = screen.getByRole('button', { name: 'Agent Provider' });
+		fireEvent.click(picker);
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
+		await screen.findByLabelText('Allow experimental carry-over');
+		const checkbox = screen.getByLabelText(
+			'Also install skills and subagents into the project (git-excluded)'
+		);
+		expect(checkbox).not.toBeChecked();
+		expect(requestProviderTranslation).toHaveBeenLastCalledWith(
+			expect.objectContaining({ action: 'plan', projectResourcesIntoRepo: false })
+		);
+		fireEvent.click(checkbox);
+		await waitFor(() =>
+			expect(requestProviderTranslation).toHaveBeenLastCalledWith(
+				expect.objectContaining({ action: 'plan', projectResourcesIntoRepo: true })
+			)
+		);
+		fireEvent.click(screen.getByLabelText('Allow experimental carry-over'));
+		fireEvent.click(screen.getByText('Save Changes'));
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		expect(onSave.mock.calls[0][30]).toBe(true);
+		fireEvent.click(picker);
+		fireEvent.click(screen.getByRole('option', { name: 'Claude Code' }));
+		fireEvent.click(picker);
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
+		expect(
+			screen.getByLabelText('Also install skills and subagents into the project (git-excluded)')
+		).not.toBeChecked();
+	});
 	it('shows translation activity and locks the provider picker until save completes', async () => {
 		let finishSave!: () => void;
 		onSave.mockImplementation(
@@ -608,15 +850,18 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		const picker = screen.getByRole('button', { name: 'Agent Provider' });
 		fireEvent.click(picker);
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
-		await screen.findByText('Native resume remains unverified');
+		await screen.findByLabelText('Allow experimental carry-over');
+		fireEvent.click(screen.getByLabelText('Allow experimental carry-over'));
 		fireEvent.click(screen.getByText('Save Changes'));
 		expect(screen.getByRole('status')).toHaveTextContent(
 			'Translating memory and session history...'
 		);
+		openTab('Provider');
 		expect(picker).toBeDisabled();
 		finishSave();
 		await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -656,10 +901,12 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 			fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 			fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 			fireEvent.click(screen.getByLabelText('Convert memory and session history'));
-			await screen.findByText('Review conversion');
+			await screen.findByLabelText('Allow experimental carry-over');
+			fireEvent.click(screen.getByLabelText('Allow experimental carry-over'));
 			fireEvent.click(screen.getByText('Save Changes'));
 			expect(screen.getByRole('status')).toHaveTextContent(
 				'Waiting for the current turn to finish...'
@@ -679,6 +926,7 @@ describe('EditAgentModal', () => {
 					],
 				})
 			);
+			openTab('Provider');
 			expect(screen.getByRole('status')).toHaveTextContent(
 				'Translating memory and session history...'
 			);
@@ -689,7 +937,58 @@ describe('EditAgentModal', () => {
 		}
 	});
 
-	it('shows conversion limitations as a notice and saves with them accepted', async () => {
+	it.each([false, true])(
+		'omits informational notes and keeps acceptance beside Save while warnings=%s',
+		async (withWarning) => {
+			const report = await vi.mocked(requestProviderTranslation).getMockImplementation()!(
+				{} as any
+			);
+			vi.mocked(requestProviderTranslation).mockResolvedValue({
+				...report,
+				plan: {
+					...report.plan!,
+					limitations: [
+						...(withWarning ? report.plan!.limitations : []),
+						{
+							code: 'native-cwd-drift',
+							severity: 'info',
+							message: 'Original directories stay archived',
+						},
+					],
+				},
+			});
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={createSession()}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Provider');
+			fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+			fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+			fireEvent.click(screen.getByLabelText('Convert memory and session history'));
+			await screen.findByText('Ready to switch providers.');
+			expect(screen.queryByText('Notes')).not.toBeInTheDocument();
+			expect(screen.queryByText('Original directories stay archived')).not.toBeInTheDocument();
+			openTab('General');
+			const accept = screen.queryByLabelText('Allow experimental carry-over');
+			if (withWarning) {
+				expect(accept).toBeInTheDocument();
+				expect(screen.getByText('Save Changes').closest('button')).toBeDisabled();
+				fireEvent.click(accept!);
+			} else expect(accept).not.toBeInTheDocument();
+			expect(screen.getByText('Save Changes').closest('button')).not.toBeDisabled();
+			fireEvent.click(screen.getByText('Save Changes'));
+			await waitFor(() => expect(onSave).toHaveBeenCalled());
+			expect(onSave.mock.calls[0][27]).toBe(withWarning);
+		}
+	);
+
+	it('requires experimental carry-over acceptance before converting', async () => {
 		render(
 			<EditAgentModal
 				isOpen={true}
@@ -700,20 +999,21 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
-		expect(await screen.findByText('Native resume remains unverified')).toBeInTheDocument();
-		expect(
-			screen.queryByLabelText('Accept the listed conversion limitations')
-		).not.toBeInTheDocument();
+		const accept = await screen.findByLabelText('Allow experimental carry-over');
+		expect(screen.queryByText('Native resume remains unverified')).not.toBeInTheDocument();
 		const save = screen.getByText('Save Changes').closest('button')!;
+		expect(save).toBeDisabled();
+		fireEvent.click(accept);
 		expect(save).not.toBeDisabled();
 		fireEvent.click(save);
 		await waitFor(() => expect(onSave).toHaveBeenCalled());
 		const args = onSave.mock.calls[0];
-		// acceptTranslationLimitations, resources, plan id, convert flag
-		expect(args.slice(24)).toEqual([true, [], 'plan', true]);
+		// Acceptance, resources, plan id, project resources, conversion opt-in.
+		expect(args.slice(27)).toEqual([true, [], 'plan', false, true]);
 	});
 
 	it('switches provider without converting by default', async () => {
@@ -727,6 +1027,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		expect(screen.getByLabelText('Convert memory and session history')).not.toBeChecked();
@@ -738,7 +1039,7 @@ describe('EditAgentModal', () => {
 		const args = onSave.mock.calls[0];
 		expect(args[2]).toBe('codex');
 		// No conversion arguments: the save does a plain switch.
-		expect(args.slice(23)).toEqual([]);
+		expect(args.slice(27)).toEqual([]);
 	});
 
 	it('offers no conversion for a provider pair without an adapter, and still saves', async () => {
@@ -752,6 +1053,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 		fireEvent.click(screen.getByRole('option', { name: 'OpenCode' }));
 		expect(screen.queryByLabelText('Convert memory and session history')).not.toBeInTheDocument();
@@ -786,6 +1088,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
@@ -793,11 +1096,12 @@ describe('EditAgentModal', () => {
 		const save = screen.getByText('Save Changes').closest('button')!;
 		expect(save).not.toBeDisabled();
 		expect(screen.getByText(/The conversion cannot run/)).toBeInTheDocument();
+		expect(screen.getAllByText('Saving switches without converting.').length).toBeGreaterThan(0);
 		fireEvent.click(save);
 		await waitFor(() => expect(onSave).toHaveBeenCalled());
 		const args = onSave.mock.calls[0];
 		expect(args[2]).toBe('codex');
-		expect(args.slice(23)).toEqual([]);
+		expect(args.slice(27)).toEqual([]);
 		await waitFor(() => expect(onClose).toHaveBeenCalled());
 	});
 
@@ -816,6 +1120,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('Provider');
 		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 		const save = screen.getByText('Save Changes').closest('button')!;
@@ -889,6 +1194,8 @@ describe('EditAgentModal', () => {
 				render(modal(session));
 				await act(async () => {});
 				await act(() => vi.advanceTimersByTimeAsync(300));
+				// Model and effort live on the Models tab.
+				openTab('Models');
 				const request = {
 					providerId: 'grok',
 					context: expect.objectContaining({
@@ -974,6 +1281,8 @@ describe('EditAgentModal', () => {
 				const view = render(modal(first));
 				await act(async () => {});
 				await act(() => vi.advanceTimersByTimeAsync(300));
+				// Model and effort live on the Models tab.
+				openTab('Models');
 				fireEvent.click(screen.getByTitle('Refresh available models'));
 				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(
 					expect.objectContaining({ forceRefresh: true })
@@ -1057,6 +1366,8 @@ describe('EditAgentModal', () => {
 			});
 			await act(() => vi.advanceTimersByTimeAsync(300));
 			expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(calls);
+			// Model and effort live on the Models tab.
+			openTab('Models');
 			expect(screen.getByDisplayValue('reopened-model')).toBeInTheDocument();
 			expect(screen.getByDisplayValue('reopened-effort')).toBeInTheDocument();
 			expect(screen.queryByDisplayValue('closed-model')).not.toBeInTheDocument();
@@ -1113,6 +1424,8 @@ describe('EditAgentModal', () => {
 				const view = render(modal(session));
 				await act(async () => {});
 				await act(() => vi.advanceTimersByTimeAsync(300));
+				// Model and effort live on the Models tab.
+				openTab('Models');
 				fireEvent.click(screen.getByTitle('Refresh available models'));
 				expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith(
 					expect.objectContaining({ forceRefresh: true })
@@ -1127,13 +1440,19 @@ describe('EditAgentModal', () => {
 							available: true,
 						} as AgentConfig,
 					]);
+					// The provider picker lives on the Provider tab, the model on Models.
+					openTab('Provider');
 					fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 					// Grok -> Claude Code is a declared (unverified) carry-over direction.
 					fireEvent.click(screen.getByRole('option', { name: 'Claude Code Carry Over' }));
+					openTab('Models');
 				} else {
+					// Execution location lives on the SSH tab.
+					openTab('SSH');
 					fireEvent.change(screen.getByDisplayValue('Local Execution'), {
 						target: { value: change === 'remote' ? 'new-host' : '' },
 					});
+					openTab('Models');
 				}
 				await act(async () => {});
 				await act(() => vi.advanceTimersByTimeAsync(300));
@@ -1165,11 +1484,15 @@ describe('EditAgentModal', () => {
 					view.rerender(modal(session));
 					await act(async () => {});
 					await act(() => vi.advanceTimersByTimeAsync(300));
+					openTab('Models');
 				}
 				if (change === 'provider') {
+					// The picker is on the Provider tab; the model options are on Models.
+					openTab('Provider');
 					expect(screen.getByRole('button', { name: 'Agent Provider' })).toHaveTextContent(
 						'Claude Code'
 					);
+					openTab('Models');
 					expect(screen.queryByTestId('config-option-note-model')).not.toBeInTheDocument();
 					fireEvent.change(screen.getByDisplayValue('claude-sonnet'), {
 						target: { value: 'model' },
@@ -1276,6 +1599,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Models');
 
 			// 'max' (session override), not 'high' (agent-level config)
 			expect(await screen.findByDisplayValue('max')).toBeInTheDocument();
@@ -1306,7 +1630,11 @@ describe('EditAgentModal', () => {
 				undefined, // customEnvVarsDisabled (nothing switched off)
 				undefined, // workingDirectory unchanged
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default
+				'exec', // codexTransport: Standard by default
+				undefined, // gatewayUrl: no Local Models gateway set
+				undefined, // runOn: the provider's own model
+				undefined, // tierTargets: every tier follows its harness default
+				NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 			);
 		});
 
@@ -1321,6 +1649,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Models');
 
 			const effortSelect = await screen.findByDisplayValue('max');
 			fireEvent.change(effortSelect, { target: { value: 'low' } });
@@ -1345,6 +1674,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			const yolo = await screen.findByLabelText('Enabled');
 			fireEvent.click(yolo);
@@ -1407,7 +1737,11 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
-			'exec' // codexTransport: Standard by default
+			'exec', // codexTransport: Standard by default
+			undefined, // gatewayUrl: no Local Models gateway set
+			undefined, // runOn: the provider's own model
+			undefined, // tierTargets: every tier follows its harness default
+			NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -1670,7 +2004,11 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
-			'exec' // codexTransport: Standard by default
+			'exec', // codexTransport: Standard by default
+			undefined, // gatewayUrl: no Local Models gateway set
+			undefined, // runOn: the provider's own model
+			undefined, // tierTargets: every tier follows its harness default
+			NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 		);
 	});
 
@@ -1748,7 +2086,11 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
-			'exec' // codexTransport: Standard by default
+			'exec', // codexTransport: Standard by default
+			undefined, // gatewayUrl: no Local Models gateway set
+			undefined, // runOn: the provider's own model
+			undefined, // tierTargets: every tier follows its harness default
+			NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 		);
 	});
 
@@ -1793,6 +2135,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('SSH');
 
 		// Wait for the SSH dropdown to render with the remote selected
 		const dropdown = (await screen.findByDisplayValue(/Dev Server/)) as HTMLSelectElement;
@@ -1832,7 +2175,11 @@ describe('EditAgentModal', () => {
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
 			false, // codexAutoResetOnExhaustion: off by default
-			'exec' // codexTransport: Standard by default
+			'exec', // codexTransport: Standard by default
+			undefined, // gatewayUrl: no Local Models gateway set
+			undefined, // runOn: the provider's own model
+			undefined, // tierTargets: every tier follows its harness default
+			NO_PEER_GRANTS // peerGrants: nothing granted unless set on the Peers tab
 		);
 	});
 
@@ -1860,6 +2207,7 @@ describe('EditAgentModal', () => {
 				existingSessions={[]}
 			/>
 		);
+		openTab('SSH');
 
 		// SSH selector should appear after SSH configs load
 		await waitFor(() => {
@@ -1931,6 +2279,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Models');
 
 				await screen.findByDisplayValue('200000');
 				// Names the window actually in use, so the number in the field is not
@@ -1953,6 +2302,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Models');
 
 				await screen.findByDisplayValue('120000');
 				// The value is winning, so there is nothing to explain.
@@ -1970,6 +2320,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Models');
 
 				await screen.findByDisplayValue('200000');
 				// An unflagged report may be a parser-injected static fallback, so the
@@ -2003,6 +2354,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Models');
 
 				await screen.findByDisplayValue('200000');
 				expect(note()).not.toBeInTheDocument();
@@ -2036,6 +2388,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Models');
 
 				await screen.findByDisplayValue('200000');
 				expect(note()).toHaveTextContent('1.0M');
@@ -2069,14 +2422,17 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Models');
 
 				// Note is present before the switch...
 				await screen.findByDisplayValue('200000');
 				expect(note()).toBeInTheDocument();
 
-				// ...and gone once a different provider is selected.
+				// ...and gone once a different provider is selected (on the Provider tab).
+				openTab('Provider');
 				fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 				fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+				openTab('Models');
 				// The control itself is still on screen - the note is gone, not the panel.
 				await waitFor(() => expect(note()).not.toBeInTheDocument());
 				expect(screen.getByDisplayValue('200000')).toBeInTheDocument();
@@ -2099,6 +2455,7 @@ describe('EditAgentModal', () => {
 						existingSessions={[]}
 					/>
 				);
+				openTab('Models');
 
 				await screen.findByDisplayValue('200000');
 				expect(note()).toHaveTextContent(/selected model/i);
@@ -2129,6 +2486,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Models');
 
 			// Seeded from the agent-level config because the session has none.
 			expect(await screen.findByDisplayValue('200000')).toBeInTheDocument();
@@ -2157,6 +2515,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Models');
 
 			const input = await screen.findByDisplayValue('100000');
 			fireEvent.change(input, { target: { value: '' } });
@@ -2179,6 +2538,7 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Models');
 
 			const input = await screen.findByDisplayValue('100000');
 			fireEvent.change(input, { target: { value: '120000' } });
@@ -2218,7 +2578,7 @@ describe('EditAgentModal', () => {
 
 		function renderCodex(session: Session) {
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([codexAgent]);
-			return render(
+			const result = render(
 				<EditAgentModal
 					isOpen={true}
 					onClose={onClose}
@@ -2228,6 +2588,8 @@ describe('EditAgentModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
+			return result;
 		}
 
 		const toggle = () =>
@@ -2256,8 +2618,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			// `codexTransport` trails it, so the reset flag is second-from-last.
-			expect(args[args.length - 2]).toBe(true);
+			expect(args[SAVE_ARG.codexAutoResetOnExhaustion]).toBe(true);
 		});
 
 		it('carries an opt-OUT out through Save', async () => {
@@ -2270,7 +2631,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			expect(args[args.length - 2]).toBe(false);
+			expect(args[SAVE_ARG.codexAutoResetOnExhaustion]).toBe(false);
 		});
 
 		it('is absent for a provider with no reset credits', async () => {
@@ -2285,7 +2646,8 @@ describe('EditAgentModal', () => {
 				/>
 			);
 
-			await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+			openTab('Provider');
+			await waitFor(() => expect(screen.getByText('Claude Code Settings')).toBeInTheDocument());
 			expect(screen.queryByTestId('codex-auto-reset-option')).not.toBeInTheDocument();
 		});
 
@@ -2303,7 +2665,7 @@ describe('EditAgentModal', () => {
 				fireEvent.click(screen.getByText('Save Changes'));
 
 				const args = onSave.mock.calls[0];
-				expect(args[args.length - 1]).toBe('exec');
+				expect(args[SAVE_ARG.codexTransport]).toBe('exec');
 			});
 
 			it('reflects a stored app-server choice', async () => {
@@ -2320,7 +2682,7 @@ describe('EditAgentModal', () => {
 				fireEvent.click(screen.getByText('Save Changes'));
 
 				const args = onSave.mock.calls[0];
-				expect(args[args.length - 1]).toBe('app-server');
+				expect(args[SAVE_ARG.codexTransport]).toBe('app-server');
 			});
 
 			it('is absent for a non-Codex agent', async () => {
@@ -2335,19 +2697,21 @@ describe('EditAgentModal', () => {
 					/>
 				);
 
-				await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+				openTab('Provider');
+				await waitFor(() => expect(screen.getByText('Claude Code Settings')).toBeInTheDocument());
 				expect(screen.queryByTestId('codex-transport-option')).not.toBeInTheDocument();
 			});
 		});
 	});
 
-	// The export section saves its own changes into its own store. Nothing of
+	// The Audit Log tab saves its own changes into its own store. Nothing of
 	// it may ride along with Save: Save writes the Session object, and that
 	// object lands in a file the CLI reads.
-	describe('chain of thought export section', () => {
+	describe('Audit Log tab', () => {
 		/** A name unlike anything else in the dialog, so a leak of the folder is found by it. */
 		const LOG_FOLDER = '/audit/turn-log-7f3c91d2';
 		const TOGGLE_LABEL = 'Keep an audit log for this agent';
+		const AUDIT_LOG_TAB = 'Audit Log';
 		const UNSUPPORTED_NOTE = /This provider does not expose its reasoning\./;
 		const INTERACTIVE_NOTE =
 			/Reasoning may be missing while this agent runs through the interactive/;
@@ -2375,7 +2739,8 @@ describe('EditAgentModal', () => {
 			return api;
 		}
 
-		const renderModal = (session: Session = createSession()) =>
+		/** The dialog as it opens, on General. */
+		const renderDialog = (session: Session = createSession()) =>
 			render(
 				<EditAgentModal
 					isOpen={true}
@@ -2387,12 +2752,27 @@ describe('EditAgentModal', () => {
 				/>
 			);
 
-		/** The form, once the agent and its config have loaded: what Save reads. */
-		const formReady = () =>
-			waitFor(() => {
-				expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
-				expect(screen.queryAllByText('Claude Code Settings').length).toBeGreaterThan(0);
-			});
+		/** The dialog, on the Audit Log tab. The API must be installed first. */
+		const renderModal = (session: Session = createSession()) => {
+			const result = renderDialog(session);
+			openTab(AUDIT_LOG_TAB);
+			return result;
+		};
+
+		/**
+		 * The form, once the agent and its config have loaded: what Save reads.
+		 * The config is on Provider and the name on General, so each is checked
+		 * on its own tab before going to `endOn`.
+		 */
+		const formReady = async (endOn?: string) => {
+			openTab('Provider');
+			await waitFor(() =>
+				expect(screen.queryAllByText('Claude Code Settings').length).toBeGreaterThan(0)
+			);
+			openTab('General');
+			expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
+			if (endOn) openTab(endOn);
+		};
 
 		/** The section, once its first status has arrived and its controls are free. */
 		const sectionReady = () =>
@@ -2410,24 +2790,72 @@ describe('EditAgentModal', () => {
 		});
 
 		it('is absent where the API is not exposed', async () => {
-			renderModal();
+			renderDialog();
 
 			await formReady();
-			expect(screen.queryByText('Audit Log')).not.toBeInTheDocument();
+			expect(screen.queryByRole('tab', { name: AUDIT_LOG_TAB })).not.toBeInTheDocument();
+			expect(screen.queryByText(AUDIT_LOG_TAB)).not.toBeInTheDocument();
 		});
 
-		it('mounts directly after Agent Resilience, for the agent being edited', async () => {
+		it('is the last tab, and holds the section for the agent being edited', async () => {
 			const api = installCotExport();
 			renderModal(createSession({ id: 'agent-under-edit' }));
 
-			const section = await screen.findByTestId('cot-export-section');
-			expect(section.previousElementSibling).toHaveTextContent('Agent Resilience');
+			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+				'General',
+				'Provider',
+				'Models',
+				'Peers',
+				'SSH',
+				AUDIT_LOG_TAB,
+			]);
+			const panel = screen.getByRole('tabpanel');
+			expect(panel).toHaveAttribute('id', 'edit-agent-tabpanel-auditLog');
+			expect(panel).toContainElement(await screen.findByTestId('cot-export-section'));
 			expect(api.status).toHaveBeenCalledWith('agent-under-edit');
+		});
+
+		it('includes Audit Log when cycling visible tabs with Cmd brackets', () => {
+			installCotExport();
+			renderDialog();
+			fireEvent.keyDown(screen.getByDisplayValue('My Agent'), { key: '[', metaKey: true });
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-auditLog');
+			fireEvent.keyDown(screen.getByRole('tabpanel'), { key: ']', metaKey: true });
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-general');
+		});
+
+		it('leaves the Provider tab without the section', async () => {
+			installCotExport();
+			renderDialog();
+
+			await formReady();
+			openTab('Provider');
+			expect(screen.getByText('Agent Resilience')).toBeInTheDocument();
+			expect(screen.queryByTestId('cot-export-section')).not.toBeInTheDocument();
+		});
+
+		it('reopens on Audit Log when it was the last tab used', () => {
+			installCotExport();
+			const first = renderModal();
+			first.unmount();
+
+			renderDialog();
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-auditLog');
+		});
+
+		it('falls back to General when the last tab used was Audit Log and it is gone', () => {
+			installCotExport();
+			const first = renderModal();
+			first.unmount();
+			delete (window.maestro as any).cotExport;
+
+			renderDialog();
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-general');
 		});
 
 		it('keeps every export change out of Save', async () => {
 			// What Save hands over with the feature absent...
-			const without = renderModal();
+			const without = renderDialog();
 			await formReady();
 			fireEvent.click(screen.getByText('Save Changes'));
 			const baseline = onSave.mock.calls[0];
@@ -2440,7 +2868,7 @@ describe('EditAgentModal', () => {
 			const selectFolder = vi.fn().mockResolvedValue(LOG_FOLDER);
 			(window.maestro as any).dialog = { ...(window.maestro as any).dialog, selectFolder };
 			renderModal();
-			await formReady();
+			await formReady(AUDIT_LOG_TAB);
 			await sectionReady();
 
 			fireEvent.click(screen.getByText('Choose Folder'));
@@ -2471,7 +2899,7 @@ describe('EditAgentModal', () => {
 			const saved = onSave.mock.calls[0];
 			expect(saved).toEqual(baseline);
 			expect(JSON.stringify(saved)).not.toMatch(
-				/cot[-_ ]?export|chain of thought|turn-log-7f3c91d2/i
+				/cot[-_ ]?export|chain of thought|audit ?log|turn-log-7f3c91d2/i
 			);
 		});
 
@@ -2552,6 +2980,1146 @@ describe('EditAgentModal', () => {
 			await sectionReady();
 
 			expect(screen.queryByText(INTERACTIVE_NOTE)).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Local Models gateway', () => {
+		function renderWith(session: Session) {
+			const result = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			return result;
+		}
+
+		const field = () =>
+			screen.getByTestId('edit-agent-gateway').querySelector('input') as HTMLInputElement;
+
+		it("shows the agent's stored gateway and saves it unchanged", async () => {
+			renderWith(createSession({ gatewayUrl: 'http://127.0.0.1:8787' }));
+
+			await waitFor(() => expect(field().value).toBe('http://127.0.0.1:8787'));
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.gatewayUrl]).toBe('http://127.0.0.1:8787');
+		});
+
+		it('saves a typed gateway in its normalized form', async () => {
+			renderWith(createSession());
+
+			await waitFor(() => expect(field()).toBeInTheDocument());
+			fireEvent.change(field(), { target: { value: ' http://localhost:4000/anthropic/ ' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.gatewayUrl]).toBe('http://localhost:4000/anthropic');
+		});
+
+		it('clears the gateway when the field is emptied', async () => {
+			renderWith(createSession({ gatewayUrl: 'http://127.0.0.1:8787' }));
+
+			await waitFor(() => expect(field().value).toBe('http://127.0.0.1:8787'));
+			fireEvent.change(field(), { target: { value: '' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).toHaveBeenCalledTimes(1);
+			expect(onSave.mock.calls[0][SAVE_ARG.gatewayUrl]).toBeUndefined();
+		});
+
+		it('refuses to save a value that is not a URL, and says why', async () => {
+			renderWith(createSession());
+
+			await waitFor(() => expect(field()).toBeInTheDocument());
+			fireEvent.change(field(), { target: { value: 'nope' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
+			expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent('not a URL');
+		});
+
+		it("says the gateway is not applied when the agent's own variable sets the base URL", async () => {
+			renderWith(
+				createSession({
+					gatewayUrl: 'http://127.0.0.1:8787',
+					customEnvVars: { ANTHROPIC_BASE_URL: 'https://mine.example.com' },
+				})
+			);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent(
+					'Not applied: ANTHROPIC_BASE_URL'
+				)
+			);
+		});
+
+		it('disables the field for Copilot CLI with the reason', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{
+					id: 'copilot-cli',
+					name: 'Copilot CLI',
+					available: true,
+					path: '/usr/local/bin/copilot',
+					binaryName: 'copilot',
+					hidden: false,
+				} as AgentConfig,
+			]);
+			renderWith(
+				createSession({
+					toolType: 'copilot-cli',
+					customPath: undefined,
+					customModel: undefined,
+					customEnvVars: undefined,
+				})
+			);
+
+			await waitFor(() => expect(field()).toBeDisabled());
+			expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent(
+				'reads a base URL only for a BYOK provider'
+			);
+		});
+	});
+
+	describe('tabbed form', () => {
+		const renderModal = (session: Session = createSession(), existingSessions: Session[] = []) =>
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={existingSessions}
+				/>
+			);
+
+		const selectedTab = () =>
+			screen.getAllByRole('tab').find((tab) => tab.getAttribute('aria-selected') === 'true');
+
+		it('renders the five tabs in order, opens on General, and is a resizable frame', () => {
+			const { container } = renderModal();
+
+			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+				'General',
+				'Provider',
+				'Models',
+				'Peers',
+				'SSH',
+			]);
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(
+				container.ownerDocument.querySelector('[data-modal-resize-key="edit-agent"]')
+			).not.toBe(null);
+		});
+
+		it('renders only the active panel', () => {
+			renderModal();
+
+			expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-general');
+			openTab('SSH');
+			expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-ssh');
+		});
+
+		it('reopens on the last tab used', () => {
+			const first = renderModal();
+			openTab('Models');
+			first.unmount();
+
+			renderModal();
+			expect(selectedTab()).toHaveTextContent('Models');
+		});
+
+		it('keeps the environment variables on the Provider tab', async () => {
+			renderModal();
+
+			openTab('Provider');
+			await waitFor(() => expect(screen.getByText('Claude Code Settings')).toBeInTheDocument());
+			expect(screen.getAllByDisplayValue('API_KEY')).toHaveLength(1);
+			expect(screen.getByDisplayValue('API_KEY')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('test-key')).toBeInTheDocument();
+		});
+
+		it('keeps a Provider environment edit through a tab switch and out through Save', async () => {
+			renderModal();
+			openTab('Provider');
+
+			fireEvent.change(screen.getByDisplayValue('test-key'), { target: { value: 'new-key' } });
+			openTab('General');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][7]).toEqual({ API_KEY: 'new-key' });
+		});
+
+		it('dots the General tab and sends Cmd+Enter there from SSH when the name is taken', async () => {
+			renderModal(createSession(), [createSession({ id: 'other', name: 'My Agent' })]);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-tab-general-error')).toBeInTheDocument()
+			);
+			openTab('SSH');
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(screen.getByText('An agent named "My Agent" already exists')).toBeInTheDocument();
+		});
+
+		it('sends Cmd+Enter from SSH to General with the empty name shown as an error', async () => {
+			renderModal();
+			const name = await screen.findByDisplayValue('My Agent');
+			fireEvent.change(name, { target: { value: '' } });
+			// Clearing the name to retype it is not an error yet.
+			expect(screen.queryByText('Enter a name for the agent')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('edit-agent-tab-general-error')).not.toBeInTheDocument();
+			openTab('SSH');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(screen.getByText('Enter a name for the agent')).toBeInTheDocument();
+			expect(screen.getByTestId('edit-agent-tab-general-error')).toBeInTheDocument();
+
+			fireEvent.change(document.getElementById('edit-agent-name-input') as HTMLInputElement, {
+				target: { value: 'Renamed' },
+			});
+			expect(screen.queryByText('Enter a name for the agent')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('edit-agent-tab-general-error')).not.toBeInTheDocument();
+		});
+
+		// `openAgentSettings(session, { tab: 'peers' })`: the Delegation Graph's link.
+		it('opens on the tab its opener asked for', async () => {
+			const session = createSession();
+			useModalStore.getState().openModal('editAgent', { session, initialTab: 'peers' });
+
+			renderModal(session);
+			await screen.findByRole('tab', { name: /^Peers/ });
+
+			expect(selectedTab()).toHaveTextContent('Peers');
+		});
+
+		it('sends Cmd+Enter from Peers to General when the name is empty', async () => {
+			renderModal();
+			const name = await screen.findByDisplayValue('My Agent');
+			fireEvent.change(name, { target: { value: '' } });
+			openTab('Peers');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+		});
+
+		it('lands on Models when Save refuses the gateway', async () => {
+			renderModal();
+			openTab('Models');
+			const gateway = screen
+				.getByTestId('edit-agent-gateway')
+				.querySelector('input') as HTMLInputElement;
+			fireEvent.change(gateway, { target: { value: 'not a url' } });
+			openTab('General');
+
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('Models');
+			expect(screen.getByTestId('edit-agent-tab-models-error')).toBeInTheDocument();
+		});
+
+		it.each([
+			{ metaKey: true, shiftKey: false },
+			{ ctrlKey: true, shiftKey: false },
+			{ metaKey: true, shiftKey: true },
+		])('cycles the tabs from inside the dialog with %j', (modifiers) => {
+			renderModal();
+
+			const name = screen.getByDisplayValue('My Agent');
+			name.focus();
+			expect(fireEvent.keyDown(name, { key: ']', ...modifiers })).toBe(false);
+			expect(selectedTab()).toHaveTextContent('Provider');
+			fireEvent.keyDown(screen.getByRole('tab', { name: 'Provider' }), {
+				key: '[',
+				...modifiers,
+			});
+			fireEvent.keyDown(screen.getByDisplayValue('My Agent'), {
+				key: '[',
+				...modifiers,
+			});
+			expect(selectedTab()).toHaveTextContent('SSH');
+			fireEvent.keyDown(selectedTab()!, { key: ']', ...modifiers });
+			expect(selectedTab()).toHaveTextContent('General');
+		});
+
+		it('steps through every visible tab with Cmd+] and Cmd+[ without saving', () => {
+			renderModal();
+			const tabs = screen.getAllByRole('tab');
+			for (const tab of [...tabs.slice(1), tabs[0]]) {
+				fireEvent.keyDown(screen.getByRole('tabpanel'), { key: ']', metaKey: true });
+				expect(tab).toHaveAttribute('aria-selected', 'true');
+			}
+			for (const tab of [...tabs].reverse()) {
+				fireEvent.keyDown(screen.getByRole('tabpanel'), { key: '[', metaKey: true });
+				expect(tab).toHaveAttribute('aria-selected', 'true');
+			}
+			expect(onSave).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
+		});
+
+		it('shows the Runs on chip on General and Agent Resilience on Provider', async () => {
+			renderModal();
+			expect(screen.getByTestId('edit-agent-runs-on')).toHaveTextContent('Local');
+
+			openTab('Provider');
+			expect(screen.getByText('Agent Resilience')).toBeInTheDocument();
+		});
+
+		describe('Peers tab', () => {
+			afterEach(() => {
+				useSessionStore.setState({ sessions: [], groups: [] } as never);
+			});
+
+			it('draws the Peer Agents section from the live fleet and saves the three grants', () => {
+				const session = createSession({
+					groupId: 'g-backend',
+					peerDescription: 'Builds labs',
+					peerAgents: [
+						{ sessionId: 'peer-infra', read: true, write: false, description: 'Owns the infra' },
+					],
+					groupPeerAccess: { read: true, write: false },
+				});
+				// The fleet and the group name come from the store, not from the
+				// `session` and `existingSessions` props.
+				useSessionStore.setState({
+					sessions: [
+						session,
+						createSession({ id: 'peer-infra', name: 'Infra', groupId: 'g-backend' }),
+						createSession({ id: 'peer-docs', name: 'Docs', groupId: 'g-backend' }),
+					],
+					groups: [{ id: 'g-backend', name: 'Backend', emoji: '🛠', collapsed: false }],
+				} as never);
+
+				renderModal(session);
+				openTab('Peers');
+
+				// The section, seeded from the agent's stored grants.
+				expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'edit-agent-tabpanel-peers');
+				expect(screen.getByText('Peer Agents')).toBeInTheDocument();
+				expect(screen.getByText('2 other agents in Backend')).toBeInTheDocument();
+				expect(screen.getByRole('checkbox', { name: /Peers in my group/ })).toBeChecked();
+				expect(screen.getByRole('checkbox', { name: /Worktree family/ })).not.toBeChecked();
+				expect(screen.getByDisplayValue('Owns the infra')).toBeInTheDocument();
+				expect(screen.getByRole('textbox', { name: 'How peers see this agent' })).toHaveValue(
+					'Builds labs'
+				);
+				fireEvent.change(screen.getByRole('textbox', { name: 'How peers see this agent' }), {
+					target: { value: '  Builds and validates labs  ' },
+				});
+
+				// The agent being edited is not offered as its own peer.
+				const picker = screen.getByRole('button', { name: 'Peer agent' });
+				expect(picker).toHaveTextContent('Infra');
+				fireEvent.click(picker);
+				expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+					'Select an agent...',
+					'Docs',
+					'Infra',
+				]);
+				fireEvent.click(picker);
+
+				// Edit all three sources: delegate on the row, group off, worktree on.
+				fireEvent.click(screen.getByRole('switch', { name: 'Delegate to this peer' }));
+				fireEvent.click(screen.getByRole('checkbox', { name: /Peers in my group/ }));
+				fireEvent.click(screen.getByRole('checkbox', { name: /Worktree family/ }));
+				fireEvent.click(screen.getByText('Save Changes'));
+
+				expect(onSave).toHaveBeenCalledTimes(1);
+				const grants = onSave.mock.calls[0][SAVE_ARG.peerGrants];
+				expect(grants).toEqual({
+					peerAgents: [
+						{ sessionId: 'peer-infra', read: true, write: true, description: 'Owns the infra' },
+					],
+					groupPeerAccess: undefined,
+					worktreePeerAccess: { read: true, write: false },
+					peerDescription: 'Builds and validates labs',
+				});
+				// Off is absent, never a pair of false bits.
+				expect(grants.groupPeerAccess).toBeUndefined();
+			});
+		});
+	});
+
+	describe('Maestro token proxy mode', () => {
+		const PROXY_PORT = 48123;
+		const proxyUrl = `http://127.0.0.1:${PROXY_PORT}/anthropic`;
+		const proxy = () => window.maestro.localModels.proxy;
+
+		const reportWithPort = (port: number | null) => ({
+			status: { port, running: port !== null, agentIds: [], lastError: null, gatewayUrls: null },
+			agents: [],
+			usage: null,
+			recentCompressions: [],
+		});
+
+		function renderOnModels(session: Session) {
+			// The mode write reads and writes the live store entry, as the table does.
+			useSessionStore.setState({ sessions: [session] } as never);
+			const result = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			return result;
+		}
+
+		const modeSelect = () => screen.getByTestId('edit-agent-proxy-mode') as HTMLSelectElement;
+		const gatewayInput = () =>
+			screen.getByTestId('edit-agent-gateway').querySelector('input') as HTMLInputElement;
+
+		beforeEach(() => {
+			vi.mocked(proxy().report).mockReset().mockResolvedValue(reportWithPort(null));
+			vi.mocked(proxy().ensurePort).mockReset().mockResolvedValue(PROXY_PORT);
+			vi.mocked(window.maestro.sessions.setMany)
+				.mockReset()
+				.mockResolvedValue(undefined as never);
+		});
+
+		afterEach(() => {
+			useSessionStore.setState({ sessions: [] } as never);
+		});
+
+		it('sits on the Models tab beside the gateway and reads Off with no proxy', async () => {
+			renderOnModels(createSession());
+
+			await waitFor(() => expect(modeSelect()).not.toBeDisabled());
+			expect(modeSelect()).toHaveValue('off');
+			expect(screen.getByTestId('edit-agent-gateway')).toBeInTheDocument();
+		});
+
+		it('reads the stored mode when the gateway is the proxy', async () => {
+			vi.mocked(proxy().report).mockResolvedValue(reportWithPort(PROXY_PORT));
+			renderOnModels(createSession({ gatewayUrl: proxyUrl, tokenProxyMode: 'compress' }));
+
+			await waitFor(() => expect(modeSelect()).toHaveValue('compress'));
+			expect(screen.getByTestId('edit-agent-proxy-mode-note')).toBeInTheDocument();
+		});
+
+		it('applies a choice at once, and the gateway draft follows so Save keeps it', async () => {
+			renderOnModels(createSession());
+			await waitFor(() => expect(modeSelect()).not.toBeDisabled());
+			vi.mocked(proxy().report).mockResolvedValue(reportWithPort(PROXY_PORT));
+
+			fireEvent.change(modeSelect(), { target: { value: 'passthrough' } });
+
+			await waitFor(() =>
+				expect(useSessionStore.getState().sessions[0]).toMatchObject({
+					gatewayUrl: proxyUrl,
+					tokenProxyMode: 'passthrough',
+				})
+			);
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			await waitFor(() => expect(gatewayInput()).toHaveValue(proxyUrl));
+			await waitFor(() => expect(modeSelect()).toHaveValue('passthrough'));
+
+			fireEvent.click(screen.getByText('Save Changes'));
+			expect(onSave.mock.calls[0][SAVE_ARG.gatewayUrl]).toBe(proxyUrl);
+		});
+
+		it('reads Off once a different gateway is typed over the proxy', async () => {
+			vi.mocked(proxy().report).mockResolvedValue(reportWithPort(PROXY_PORT));
+			renderOnModels(createSession({ gatewayUrl: proxyUrl, tokenProxyMode: 'compress' }));
+			await waitFor(() => expect(modeSelect()).toHaveValue('compress'));
+
+			fireEvent.change(gatewayInput(), { target: { value: 'http://localhost:4000' } });
+
+			expect(modeSelect()).toHaveValue('off');
+		});
+
+		it('waits for a pending provider change, and says why', async () => {
+			renderOnModels(createSession());
+			openTab('Provider');
+			fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+			fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+			openTab('Models');
+
+			expect(modeSelect()).toBeDisabled();
+			expect(screen.getByTestId('edit-agent-proxy-mode-blocked')).toHaveTextContent(
+				'Save the provider change first'
+			);
+		});
+
+		it('is refused for an agent on an SSH remote, before the click', async () => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [{ id: 'remote-1', name: 'Dev Box', host: 'dev', port: 22 }],
+			} as never);
+			renderOnModels(
+				createSession({ sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' } })
+			);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-proxy-mode-blocked')).toHaveTextContent('Dev Box')
+			);
+			expect(modeSelect()).toBeDisabled();
+		});
+	});
+	describe('Background requests', () => {
+		const PROXY_PORT = 48123;
+		const proxyUrl = `http://127.0.0.1:${PROXY_PORT}/anthropic`;
+		const proxy = () => window.maestro.localModels.proxy;
+		const OLLAMA: LocalModelEndpoint = {
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		};
+		const QWEN = { type: 'source' as const, endpointId: OLLAMA.id, model: 'qwen3:4b' };
+		let savedEndpoints: LocalModelEndpoint[];
+
+		const reportWithPort = (port: number | null) => ({
+			status: { port, running: port !== null, agentIds: [], lastError: null, gatewayUrls: null },
+			agents: [],
+			usage: null,
+			recentCompressions: [],
+		});
+
+		function renderOnModels(session: Session) {
+			// The picker writes to, and is drawn from, the live store entry.
+			useSessionStore.setState({ sessions: [session] } as never);
+			const result = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			return result;
+		}
+
+		const picker = () =>
+			screen.getByTestId('edit-agent-background-requests-select') as HTMLSelectElement;
+		const queryPicker = () => screen.queryByTestId('edit-agent-background-requests-select');
+		const modeSelect = () => screen.getByTestId('edit-agent-proxy-mode') as HTMLSelectElement;
+		const stored = () => useSessionStore.getState().sessions[0];
+		const listed = () =>
+			waitFor(() =>
+				expect(
+					Array.from(picker().options).some((option) => option.value === 'ep-ollama:qwen3:4b')
+				).toBe(true)
+			);
+
+		beforeEach(() => {
+			savedEndpoints = useSettingsStore.getState().localModelEndpoints;
+			useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+			vi.mocked(proxy().report).mockReset().mockResolvedValue(reportWithPort(PROXY_PORT));
+			vi.mocked(proxy().ensurePort).mockReset().mockResolvedValue(PROXY_PORT);
+			vi.mocked(window.maestro.sessions.setMany)
+				.mockReset()
+				.mockResolvedValue(undefined as never);
+			vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+				async (endpoint) =>
+					typeof endpoint === 'string'
+						? { ok: true, models: [] }
+						: { ok: true, models: [{ id: 'qwen3:4b' }] }
+			);
+		});
+
+		afterEach(() => {
+			useSessionStore.setState({ sessions: [] } as never);
+			useSettingsStore.setState({ localModelEndpoints: savedEndpoints });
+			vi.mocked(proxy().report).mockResolvedValue(reportWithPort(null));
+			vi.mocked(window.maestro.localModels.endpoints.listModels).mockResolvedValue({
+				ok: true,
+				models: [],
+			});
+		});
+
+		it('is not offered while the agent is off the proxy', async () => {
+			renderOnModels(createSession());
+
+			await waitFor(() => expect(modeSelect()).not.toBeDisabled());
+			expect(modeSelect()).toHaveValue('off');
+			expect(queryPicker()).not.toBeInTheDocument();
+		});
+
+		it('is not offered to a provider the proxy cannot route for', async () => {
+			renderOnModels(createSession({ toolType: 'codex', gatewayUrl: proxyUrl }));
+
+			await waitFor(() => expect(modeSelect()).toHaveValue('passthrough'));
+			expect(queryPicker()).not.toBeInTheDocument();
+		});
+
+		it('is offered to a Claude Code agent on the proxy, reading Off with the reason it exists', async () => {
+			renderOnModels(createSession({ gatewayUrl: proxyUrl, tokenProxyMode: 'passthrough' }));
+
+			await waitFor(() => expect(queryPicker()).toBeInTheDocument());
+			expect(picker()).toHaveValue('none');
+			expect(screen.getByTestId('edit-agent-background-requests')).toHaveTextContent(
+				'side requests'
+			);
+		});
+
+		it('applies a choice at once: the agent holds the target before Save', async () => {
+			renderOnModels(createSession({ gatewayUrl: proxyUrl, tokenProxyMode: 'passthrough' }));
+			await waitFor(() => expect(queryPicker()).toBeInTheDocument());
+			await listed();
+
+			fireEvent.change(picker(), { target: { value: 'ep-ollama:qwen3:4b' } });
+
+			await waitFor(() => expect(stored().backgroundRequests).toEqual({ target: QWEN }));
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+				[expect.objectContaining({ backgroundRequests: { target: QWEN } })],
+				[]
+			);
+			await waitFor(() => expect(picker()).toHaveValue('ep-ollama:qwen3:4b'));
+			expect(onSave).not.toHaveBeenCalled();
+		});
+
+		it('shows the stored target, and turning the proxy off takes it away', async () => {
+			renderOnModels(
+				createSession({
+					gatewayUrl: proxyUrl,
+					tokenProxyMode: 'passthrough',
+					backgroundRequests: { target: QWEN },
+				})
+			);
+			await waitFor(() => expect(queryPicker()).toBeInTheDocument());
+			await listed();
+			expect(picker()).toHaveValue('ep-ollama:qwen3:4b');
+
+			fireEvent.change(modeSelect(), { target: { value: 'off' } });
+
+			await waitFor(() => expect(stored().backgroundRequests).toBeUndefined());
+			await waitFor(() => expect(queryPicker()).not.toBeInTheDocument());
+		});
+
+		it('says so when the stored target cannot be read', async () => {
+			renderOnModels(
+				createSession({
+					gatewayUrl: proxyUrl,
+					tokenProxyMode: 'passthrough',
+					backgroundRequests: { target: { type: 'source' } } as never,
+				})
+			);
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-background-requests-error')).toHaveTextContent(
+					'The stored Background requests target cannot be used'
+				)
+			);
+			expect(picker()).toHaveValue('none');
+		});
+	});
+
+	describe('System One switch', () => {
+		const toggle = () => screen.getByRole('switch', { name: /use System One$/ });
+
+		beforeEach(() => {
+			vi.mocked(window.maestro.sessions.setMany)
+				.mockReset()
+				.mockResolvedValue(undefined as never);
+		});
+
+		afterEach(() => {
+			useSessionStore.setState({ sessions: [] } as never);
+		});
+
+		function renderOnModels(session: Session) {
+			// The switch reads and writes the live store entry, as the proxy mode does.
+			useSessionStore.setState({ sessions: [session] } as never);
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+		}
+
+		it('sits on the Models tab, on for an agent that was never switched off', () => {
+			renderOnModels(createSession());
+
+			expect(screen.getByTestId('edit-agent-system-one')).toBeInTheDocument();
+			expect(toggle()).toHaveAttribute('aria-checked', 'true');
+		});
+
+		it('applies at once and flushes to main, without Save', async () => {
+			renderOnModels(createSession());
+
+			fireEvent.click(toggle());
+
+			await waitFor(() =>
+				expect(useSessionStore.getState().sessions[0].systemOneOptOut).toBe(true)
+			);
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+				[expect.objectContaining({ systemOneOptOut: true })],
+				[]
+			);
+			await waitFor(() => expect(toggle()).toHaveAttribute('aria-checked', 'false'));
+			expect(onSave).not.toHaveBeenCalled();
+		});
+
+		it('reads off for an agent that is switched off', () => {
+			renderOnModels(createSession({ systemOneOptOut: true }));
+
+			expect(toggle()).toHaveAttribute('aria-checked', 'false');
+		});
+	});
+
+	describe('Tiers', () => {
+		const OLLAMA: LocalModelEndpoint = {
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		};
+		const LOCAL = { type: 'source' as const, endpointId: OLLAMA.id, model: 'qwen3:latest' };
+		const row = (harness: 'claude-code' | 'codex'): HarnessTierOptions => ({
+			harness,
+			name: harness === 'codex' ? 'Codex' : 'Claude Code',
+			installed: true,
+			catalog:
+				harness === 'codex'
+					? [{ id: 'gpt-6-luna' }]
+					: [{ id: 'haiku' }, { id: 'sonnet' }, { id: 'opus' }],
+			runOn: { supported: true },
+			sources: [{ endpointId: OLLAMA.id, name: 'Ollama', models: ['qwen3:latest'] }],
+			problems: [],
+		});
+		let savedEndpoints: LocalModelEndpoint[];
+
+		const tierOptions = () => vi.mocked(window.maestro.localModels.tiers.options);
+		const picker = (tier: string) =>
+			screen.getByTestId(`edit-agent-tier-targets-${tier}`) as HTMLSelectElement;
+		const layer = (tier: string) =>
+			screen.getByTestId(`edit-agent-tier-targets-${tier}-source`).textContent;
+
+		beforeEach(() => {
+			savedEndpoints = useSettingsStore.getState().localModelEndpoints;
+			useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+			tierOptions().mockImplementation(async (request) => [
+				row(request?.harness === 'codex' ? 'codex' : 'claude-code'),
+			]);
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ localModelEndpoints: savedEndpoints });
+			tierOptions().mockReset().mockResolvedValue([]);
+		});
+
+		async function renderOnModels(session: Session) {
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			await waitFor(() => screen.getByTestId('edit-agent-tier-targets-low'));
+		}
+
+		it('sits on the Models tab between the model and the gateway', async () => {
+			await renderOnModels(createSession());
+
+			const model = await screen.findByTestId('edit-agent-model');
+			const tiers = screen.getByTestId('edit-agent-tiers');
+			const gateway = screen.getByTestId('edit-agent-gateway');
+			expect(model.compareDocumentPosition(tiers) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+			expect(
+				tiers.compareDocumentPosition(gateway) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+		});
+
+		it('reads Harness default for an agent with no tier, and saves none', async () => {
+			await renderOnModels(createSession());
+
+			expect(picker('low').value).toBe('default');
+			expect(picker('low').selectedOptions[0].textContent).toBe('Harness default (haiku)');
+			expect(layer('low')).toBe('Built-in');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toBeUndefined();
+		});
+
+		it("shows the agent's stored tiers and saves them unchanged", async () => {
+			const tierTargets = {
+				low: LOCAL,
+				high: { type: 'provider-model' as const, model: 'sonnet' },
+			};
+			await renderOnModels(createSession({ tierTargets }));
+
+			expect(picker('low').value).toBe('ep-ollama:qwen3:latest');
+			expect(layer('low')).toBe('Agent');
+			expect(picker('high').value).toBe('provider:sonnet');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toEqual(tierTargets);
+		});
+
+		it('saves a tier that was set and drops one put back on Harness default', async () => {
+			await renderOnModels(createSession({ tierTargets: { high: LOCAL } }));
+
+			fireEvent.change(picker('low'), { target: { value: 'provider:haiku' } });
+			fireEvent.change(picker('high'), { target: { value: 'default' } });
+			expect(layer('low')).toBe('Agent');
+			expect(layer('high')).toBe('Built-in');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toEqual({
+				low: { type: 'provider-model', model: 'haiku' },
+			});
+		});
+
+		it('reads the built-in table as not applying once the model is a source model', async () => {
+			await renderOnModels(createSession({ runOn: { ...LOCAL, contextTokens: 65_536 } }));
+
+			expect(layer('low')).toBe('Not mapped');
+			expect(screen.getByTestId('edit-agent-tier-targets-low-note')).toHaveTextContent(
+				'runs on a Local Models source'
+			);
+		});
+
+		it('refuses to save a stored tier a launch would refuse, and names the tier', async () => {
+			await renderOnModels(createSession({ tierTargets: { high: { type: 'source' } } as never }));
+
+			expect(screen.getByTestId('edit-agent-tier-targets-high-problem')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(screen.getByTestId('edit-agent-tier-targets-error')).toHaveTextContent(/^high: /);
+
+			// Picking a target again clears the refusal and saves.
+			fireEvent.change(picker('high'), { target: { value: 'provider:opus' } });
+			expect(screen.queryByTestId('edit-agent-tier-targets-error')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByText('Save Changes'));
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toEqual({
+				high: { type: 'provider-model', model: 'opus' },
+			});
+		});
+
+		it('starts the tiers over on a provider switch: a tier names a model', async () => {
+			await renderOnModels(createSession({ tierTargets: { low: LOCAL } }));
+
+			openTab('Provider');
+			fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+			fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+			fireEvent.click(screen.getByLabelText('Convert memory and session history'));
+			await screen.findByLabelText('Allow experimental carry-over');
+			fireEvent.click(screen.getByLabelText('Allow experimental carry-over'));
+			openTab('Models');
+			await waitFor(() =>
+				expect(picker('low').selectedOptions[0].textContent).toBe('Harness default (gpt-6-luna)')
+			);
+			expect(picker('low').value).toBe('default');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			await waitFor(() => expect(onSave).toHaveBeenCalled());
+			expect(onSave.mock.calls[0][SAVE_ARG.tierTargets]).toBeUndefined();
+		});
+	});
+
+	// The Model field is the model source picker: it lists the provider's models,
+	// then every model each Local Models source serves, grouped by source.
+	describe('Model source', () => {
+		const OLLAMA: LocalModelEndpoint = {
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		};
+		const QWEN = {
+			type: 'source' as const,
+			endpointId: OLLAMA.id,
+			model: 'qwen3:latest',
+			contextTokens: 65_536,
+		};
+		const QWEN_SPEC = 'ep-ollama:qwen3:latest';
+		let savedEndpoints: LocalModelEndpoint[];
+
+		beforeEach(() => {
+			// The real Claude Code definition, so the Models tab draws its Model field.
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{
+					...getAgentDefinition('claude-code')!,
+					capabilities: getAgentCapabilities('claude-code'),
+					available: true,
+					path: '/usr/local/bin/claude',
+				} as AgentConfig,
+			]);
+			savedEndpoints = useSettingsStore.getState().localModelEndpoints;
+			useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+			// The Maestro model server lists nothing; Ollama lists one model.
+			vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+				async (endpoint) =>
+					typeof endpoint === 'string'
+						? { ok: true, models: [] }
+						: { ok: true, models: [{ id: 'qwen3:latest' }] }
+			);
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ localModelEndpoints: savedEndpoints });
+			vi.mocked(window.maestro.localModels.endpoints.listModels).mockResolvedValue({
+				ok: true,
+				models: [],
+			});
+		});
+
+		function renderOnModels(session: Session) {
+			const result = render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			openTab('Models');
+			return result;
+		}
+
+		const modelInput = () => screen.getByRole('textbox', { name: 'Model' }) as HTMLInputElement;
+		const chip = () => screen.queryByTestId('model-source-chip');
+		const contextSelect = () =>
+			screen.getByTestId('edit-agent-model-source-context-select') as HTMLSelectElement;
+		const contextInput = () =>
+			screen
+				.getByTestId('edit-agent-model-source-context')
+				.querySelector('input') as HTMLInputElement;
+		/** Open the Model field's list. */
+		const openModelMenu = async () =>
+			fireEvent.click(await screen.findByRole('button', { name: 'Show model options' }));
+		/** The source option for `spec`, once its source has listed it. */
+		const sourceOption = (spec: string) =>
+			waitFor(() => {
+				const option = screen
+					.queryAllByTestId('model-source-option')
+					.find((candidate) => candidate.getAttribute('data-value') === spec);
+				expect(option).toBeDefined();
+				return option!;
+			});
+
+		it('reads the provider for an agent with no source, and saves none', async () => {
+			renderOnModels(createSession());
+
+			await waitFor(() => expect(modelInput().value).toBe('claude-sonnet'));
+			expect(chip()).not.toBeInTheDocument();
+			expect(
+				screen.queryByTestId('edit-agent-model-source-context-select')
+			).not.toBeInTheDocument();
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toBeUndefined();
+		});
+
+		it("shows the agent's stored source model and saves it unchanged", async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			expect(await screen.findByTestId('model-source-chip')).toHaveTextContent('Ollama');
+			expect(modelInput().value).toBe('qwen3:latest');
+			expect(contextSelect().value).toBe('65536');
+			expect(screen.queryByTestId('edit-agent-model-source-context')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toEqual(QWEN);
+			// The provider model is kept for when the agent runs on its provider again.
+			expect(onSave.mock.calls[0][8]).toBe('claude-sonnet');
+		});
+
+		it('lists the provider models under the provider, then each source', async () => {
+			renderOnModels(createSession());
+
+			await openModelMenu();
+			const option = await sourceOption(QWEN_SPEC);
+
+			expect(option).toHaveTextContent('qwen3:latest');
+			const groups = screen.getAllByTestId('model-source-group');
+			expect(groups).toHaveLength(1);
+			expect(groups[0]).toHaveTextContent('Ollama');
+			expect(groups[0]).toContainElement(option);
+			expect(screen.getByRole('button', { name: 'claude-opus' })).toBeInTheDocument();
+			expect(screen.getByText('3 models from 2 sources')).toBeInTheDocument();
+		});
+
+		it('saves a model picked from a source, at the smallest agent context', async () => {
+			renderOnModels(createSession());
+
+			await openModelMenu();
+			fireEvent.click(await sourceOption(QWEN_SPEC));
+			expect(await screen.findByTestId('model-source-chip')).toHaveTextContent('Ollama');
+			expect(modelInput().value).toBe('qwen3:latest');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toEqual({
+				type: 'source',
+				endpointId: OLLAMA.id,
+				model: 'qwen3:latest',
+				contextTokens: RUN_ON_MIN_CONTEXT_TOKENS,
+			});
+		});
+
+		it('clears the source when a provider model is picked', async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await screen.findByTestId('model-source-chip');
+			await openModelMenu();
+			fireEvent.click(screen.getByRole('button', { name: 'claude-opus' }));
+			expect(chip()).not.toBeInTheDocument();
+			expect(modelInput().value).toBe('claude-opus');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).toHaveBeenCalledTimes(1);
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toBeUndefined();
+			expect(onSave.mock.calls[0][8]).toBe('claude-opus');
+		});
+
+		it('clears the source with Clear', async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await screen.findByTestId('model-source-chip');
+			fireEvent.click(screen.getByRole('button', { name: 'Clear model override' }));
+			expect(chip()).not.toBeInTheDocument();
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toBeUndefined();
+		});
+
+		it('saves a context size typed into the field', async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(contextSelect().value).toBe('65536'));
+			fireEvent.change(contextSelect(), { target: { value: 'custom' } });
+			expect(contextInput().value).toBe('65536');
+			fireEvent.change(contextInput(), { target: { value: '131072' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave.mock.calls[0][SAVE_ARG.runOn]).toEqual({ ...QWEN, contextTokens: 131_072 });
+		});
+
+		it('refuses a context under the agent minimum, on the Models tab, without saving', async () => {
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			await waitFor(() => expect(contextSelect().value).toBe('65536'));
+			fireEvent.change(contextSelect(), { target: { value: 'custom' } });
+			fireEvent.change(contextInput(), { target: { value: '8192' } });
+			openTab('General');
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			expect(onSave).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
+			expect(screen.getByTestId('edit-agent-model-source-status')).toHaveTextContent(
+				`at least ${RUN_ON_MIN_CONTEXT_TOKENS} tokens`
+			);
+			expect(screen.getByTestId('edit-agent-tab-models-error')).toBeInTheDocument();
+		});
+
+		it('shows a stored source that cannot be read as the provider, with the reason', async () => {
+			renderOnModels(createSession({ runOn: { type: 'source', endpointId: OLLAMA.id } as never }));
+
+			expect(await screen.findByTestId('edit-agent-model-source-status')).toHaveTextContent(
+				'The stored model source cannot be used'
+			);
+			expect(chip()).not.toBeInTheDocument();
+			expect(modelInput().value).toBe('claude-sonnet');
+		});
+
+		it('disables both gateway controls while a source model is chosen, and says why', async () => {
+			renderOnModels(createSession({ runOn: QWEN, gatewayUrl: 'http://127.0.0.1:8787' }));
+
+			await screen.findByTestId('model-source-chip');
+			const gateway = screen
+				.getByTestId('edit-agent-gateway')
+				.querySelector('input') as HTMLInputElement;
+			expect(gateway).toBeDisabled();
+			// The stored URL is kept: it applies again when the agent runs on its provider.
+			expect(gateway.value).toBe('http://127.0.0.1:8787');
+			expect(screen.getByTestId('edit-agent-gateway-url-status')).toHaveTextContent(
+				'Not applied while the model source is a Local Models source'
+			);
+			expect(screen.getByTestId('edit-agent-proxy-mode')).toBeDisabled();
+
+			await openModelMenu();
+			fireEvent.click(screen.getByRole('button', { name: 'claude-opus' }));
+			expect(gateway).not.toBeDisabled();
+		});
+
+		it('tests the target shown with the form as it stands, and shows the reply', async () => {
+			vi.mocked(window.maestro.localModels.runOn.test).mockResolvedValueOnce({
+				ok: true,
+				model: 'qwen3:latest',
+				label: 'qwen3:latest on Ollama',
+				reply: 'ready',
+				durationMs: 4200,
+				contextTokens: 65_536,
+			});
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			fireEvent.click(await screen.findByTestId('edit-agent-model-source-test'));
+
+			await waitFor(() =>
+				expect(screen.getByTestId('edit-agent-model-source-test-result')).toHaveTextContent(
+					'qwen3:latest on Ollama answered in 4.2 s: ready'
+				)
+			);
+			expect(window.maestro.localModels.runOn.test).toHaveBeenCalledWith({
+				agentId: 'session-123',
+				target: QWEN,
+				subject: {
+					toolType: 'claude-code',
+					cwd: '/home/user/project',
+					customPath: '/custom/claude',
+					customArgs: '--verbose',
+					customEnvVars: { API_KEY: 'test-key' },
+					sshRemoteConfig: { enabled: false, remoteId: null },
+				},
+			});
+			// Testing saves nothing.
+			expect(onSave).not.toHaveBeenCalled();
+		});
+
+		it('shows why a test failed', async () => {
+			vi.mocked(window.maestro.localModels.runOn.test).mockResolvedValueOnce({
+				ok: false,
+				code: 'run-on-model-not-served',
+				message: 'The source "Ollama" does not serve "qwen3:latest".',
+			});
+			renderOnModels(createSession({ runOn: QWEN }));
+
+			fireEvent.click(await screen.findByTestId('edit-agent-model-source-test'));
+
+			const result = await screen.findByTestId('edit-agent-model-source-test-result');
+			expect(result).toHaveAttribute('data-ok', 'false');
+			expect(result).toHaveTextContent('does not serve "qwen3:latest"');
 		});
 	});
 });

@@ -41,6 +41,10 @@ export interface FilePreviewHeaderButton {
 	onClick: () => void;
 	/** Draws the icon in the accent color - a toggle that is currently on. */
 	active?: boolean;
+	/** Announces the on/off state to assistive tech. Set it only on a real
+	 *  toggle: `active` also colors buttons whose meaning merely changed (the
+	 *  gist button, once one exists), and claiming those are pressed is a lie. */
+	pressed?: boolean;
 	/** Shortcut shown in the desktop tooltip. Dropped in the sheet: a phone has
 	 *  no keyboard, matching the `data-shortcut-hint` rule. */
 	shortcut?: string | ShortcutChords;
@@ -187,6 +191,7 @@ export function FilePreviewActionsSheet({
 						icon={action.icon}
 						label={action.label}
 						iconColor={action.active ? theme.colors.accent : undefined}
+						pressed={action.pressed}
 						// Every row here either navigates away or changes something the
 						// user can see behind the sheet, so the sheet has done its job
 						// once one is tapped.

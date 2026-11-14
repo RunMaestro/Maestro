@@ -106,7 +106,8 @@ type LayoutFunction = (
 	showExternalLinks: boolean,
 	previewCharLimit: number,
 	spacingScale?: number,
-	showOrphans?: boolean
+	showOrphans?: boolean,
+	clusterAllNodes?: boolean
 ) => LayoutResult;
 
 /** Clamp range and step for the user-adjustable node spacing multiplier. */
@@ -465,7 +466,7 @@ function prepareLayoutInput(
 /**
  * Calculate bounds from positioned nodes.
  */
-function calculateBounds(positionedNodes: MindMapNode[]): LayoutResult['bounds'] {
+export function calculateBounds(positionedNodes: MindMapNode[]): LayoutResult['bounds'] {
 	if (positionedNodes.length === 0) {
 		return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
 	}
@@ -510,7 +511,7 @@ function filterLinks(
 	allLinks.forEach((link) => {
 		if (!positionedNodeIds.has(link.source) || !positionedNodeIds.has(link.target)) return;
 
-		if (!adjacentDepthOnly) {
+		if (!adjacentDepthOnly || link.directed) {
 			usedLinks.push(link);
 			return;
 		}
@@ -1574,7 +1575,8 @@ export const calculateLobesLayout: LayoutFunction = (
 	showExternalLinks,
 	previewCharLimit,
 	spacingScale,
-	showOrphans
+	showOrphans,
+	clusterAllNodes
 ) => {
 	const input = prepareLayoutInput(
 		allNodes,
@@ -1615,7 +1617,9 @@ export const calculateLobesLayout: LayoutFunction = (
 	const linkDistance = (pillMode ? LOBE_PILL_LINK_DISTANCE : LOBE_LINK_DISTANCE) * scale;
 	const lobeGap = LOBE_GAP * scale;
 
-	const docNodes = visibleDocumentNodes;
+	const docNodes = clusterAllNodes
+		? [...visibleDocumentNodes, ...orphanNodes]
+		: visibleDocumentNodes;
 	const docIds = docNodes.map((n) => n.id);
 	const communities = detectCommunities(docIds, adjacency);
 
@@ -1877,7 +1881,9 @@ export const calculateLobesLayout: LayoutFunction = (
 		positionExternalNodesBottom(externalNodes, positionedNodes, centerX, centerY);
 	}
 
-	positionOrphanNodesBottom(orphanNodes, positionedNodes, centerX, centerY, previewCharLimit);
+	if (!clusterAllNodes) {
+		positionOrphanNodesBottom(orphanNodes, positionedNodes, centerX, centerY, previewCharLimit);
+	}
 
 	// Lobes are ABOUT the links, so every link between two placed nodes is drawn
 	// rather than only adjacent-depth ones. A depth filter here would hide the
@@ -2208,7 +2214,8 @@ export function calculateLayout(
 	showExternalLinks: boolean,
 	previewCharLimit: number,
 	spacingScale: number = SPACING_SCALE_DEFAULT,
-	showOrphans: boolean = false
+	showOrphans: boolean = false,
+	clusterAllNodes: boolean = false
 ): LayoutResult {
 	const algorithm = LAYOUT_ALGORITHMS[layoutType] || calculateMindMapLayout;
 	return algorithm(
@@ -2222,6 +2229,7 @@ export function calculateLayout(
 		showExternalLinks,
 		previewCharLimit,
 		spacingScale,
-		showOrphans
+		showOrphans,
+		clusterAllNodes
 	);
 }

@@ -30,6 +30,7 @@
 
 import React, { forwardRef, useId } from 'react';
 import type { Theme } from '../../types';
+import { FormFieldLabel } from './FormFieldLabel';
 import { isImeComposing } from '../../utils/ime';
 
 export interface FormInputProps {
@@ -73,6 +74,8 @@ export interface FormInputProps {
 	testId?: string;
 	/** Whether to select all text when focused */
 	selectOnFocus?: boolean;
+	/** The most characters the input accepts. Omitted means no cap. */
+	maxLength?: number;
 }
 
 /**
@@ -101,6 +104,7 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
 			id: providedId,
 			testId,
 			selectOnFocus = false,
+			maxLength,
 		},
 		ref
 	) => {
@@ -134,13 +138,9 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
 		return (
 			<div className="w-full" data-testid={testId}>
 				{label && (
-					<label
-						htmlFor={inputId}
-						className="block text-xs font-bold opacity-70 uppercase mb-2"
-						style={{ color: theme.colors.textMain }}
-					>
+					<FormFieldLabel theme={theme} htmlFor={inputId}>
 						{label}
-					</label>
+					</FormFieldLabel>
 				)}
 
 				<div className={addon ? 'flex gap-2' : ''}>
@@ -155,6 +155,7 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
 						placeholder={placeholder}
 						disabled={disabled}
 						autoFocus={autoFocus}
+						maxLength={maxLength}
 						className={`
               ${addon ? 'flex-1' : 'w-full'}
               p-3 rounded border bg-transparent outline-none

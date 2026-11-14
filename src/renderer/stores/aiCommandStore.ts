@@ -38,7 +38,16 @@ export interface AiCommandEntry {
 	status: AiCommandStatus;
 	/** The command line the model returned. Present when status is 'proposed'. */
 	command?: string;
-	/** Model/effort the request ran under, for the card's provenance line. */
+	/**
+	 * One sentence on what the proposed command does. Only a Local Models source
+	 * is asked for one, so it is absent when the tab's own provider answered.
+	 */
+	explanation?: string;
+	/**
+	 * Model/effort the request ran under, for the card's provenance line. When
+	 * the `ai-command` task is assigned to a local model or an endpoint, `model`
+	 * names that source and `effort` is unset (see `resolveAiCommandProvenance`).
+	 */
 	model?: string;
 	effort?: string;
 	/** Failure text. Present when status is 'error'. */
@@ -47,11 +56,21 @@ export interface AiCommandEntry {
 	startedAt: number;
 }
 
+/** What came back with a proposal besides the command line. */
+export interface AiCommandReplyDetails {
+	explanation?: string;
+	/**
+	 * The local model or endpoint main says answered. It replaces the stamp taken
+	 * at request time: main read the assignment when it ran, so it is the fact.
+	 */
+	producedBy?: string;
+}
+
 interface AiCommandState {
 	/** Entries keyed by `${sessionId}:${tabId}`. */
 	entries: Record<string, AiCommandEntry>;
 	beginAiCommand: (entry: Omit<AiCommandEntry, 'status' | 'choice' | 'startedAt'>) => void;
-	resolveAiCommand: (requestId: string, command: string) => void;
+	resolveAiCommand: (requestId: string, command: string, details?: AiCommandReplyDetails) => void;
 	failAiCommand: (requestId: string, error: string) => void;
 	setAiCommandChoice: (key: string, choice: AiCommandChoice) => void;
 	clearAiCommand: (key: string) => void;
@@ -91,13 +110,22 @@ export const useAiCommandStore = create<AiCommandState>()((set) => ({
 			},
 		})),
 
-	resolveAiCommand: (requestId, command) =>
+	resolveAiCommand: (requestId, command, details) =>
 		set((s) => {
 			const found = findByRequestId(s.entries, requestId);
 			if (!found) return s;
 			const [key, entry] = found;
 			return {
-				entries: { ...s.entries, [key]: { ...entry, status: 'proposed', command } },
+				entries: {
+					...s.entries,
+					[key]: {
+						...entry,
+						status: 'proposed',
+						command,
+						...(details?.explanation && { explanation: details.explanation }),
+						...(details?.producedBy && { model: details.producedBy, effort: undefined }),
+					},
+				},
 			};
 		}),
 

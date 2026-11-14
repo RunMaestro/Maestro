@@ -1,7 +1,9 @@
 import * as path from 'node:path';
+import { resolveUserDataDir } from '../paths/userDataDir';
+import { getAgentDefinition } from '../providers/definitions';
 import {
 	bindTranslationKnowledge,
-	TRANSLATION_KNOWLEDGE_ENV_VAR,
+	resolveTranslationKnowledgeBinding,
 } from '../translation/knowledge-binding';
 /**
  * The launch plan: one answer to "what exactly do we start for this agent?",
@@ -20,11 +22,24 @@ import {
  * SSH remote that cannot be resolved: that fails on every surface, where
  * desktop and Cue used to run the agent LOCALLY against the remote's path.
  *
- * No spawning. Its only reads are `process.env` (through
- * `buildAgentEnvironment`) and, for a CLI or Cue launch of an agent that
- * declares `requiredSecrets`, those secrets' files (`serverSecrets.ts`). A
- * plan for an SSH remote describes the remote invocation; the caller hands it
- * to the SSH wrapper, which owns building the ssh command.
+ * An agent's Local Models gateway is applied here too, the same way on every
+ * surface: its base-URL variable is set unless the agent's own vars already
+ * set it, and a gateway that cannot work (a loopback URL for an SSH remote, a
+ * provider with no base-URL variable) fails the launch by name rather than
+ * sending the turn to another endpoint.
+ *
+ * So is an agent's model source (`resolveRunOnLaunch`): the variables and root
+ * arguments that point the harness at the source, and the model, which takes
+ * the place of the agent's own in its model flag. A target that cannot run
+ * fails the launch by name; it never runs the turn on the provider's model. A
+ * model source takes the gateway's place: the gateway routes to the provider's
+ * cloud, which is not where the turn is going, so the plan skips it and says so
+ * (`runOn.skippedGatewayUrl`).
+ *
+ * No spawning. Reads include process env, local translated knowledge and,
+ * for CLI/Cue agents declaring `requiredSecrets`, secret files. An SSH plan
+ * validates the knowledge host binding without reading remote files; the SSH
+ * wrapper reads the remote index before building the invocation.
  */
 
 import { isWindows } from '../../platformDetection';
@@ -40,6 +55,14 @@ import {
 } from './agent-args';
 import type { QuerySource } from '../../querySource';
 import type { AdditionalDirectory, AgentSshRemoteConfig, SshRemoteConfig } from '../../types';
+import { resolveAgentGateway, type AgentGatewayRefusalCode } from '../../local-models/gateway';
+import {
+	resolveRunOnLaunch,
+	type ResolvedRunOn,
+	type RunOnLaunchResolution,
+	type RunOnRefusalCode,
+} from '../../local-models/run-on';
+import { buildAdditionalDirArgs, placeSubcommandArgs, replaceModelArg } from './agent-args';
 import {
 	describeSecretProblem,
 	resolveSecrets,
@@ -75,6 +98,80 @@ export interface LaunchPlanAgent extends PromptDeliveryAgent {
 	defaultEnvVars?: Record<string, string>;
 	batchModeEnvVars?: Record<string, string>;
 	readOnlyEnvOverrides?: Record<string, string>;
+	/** The provider's model flag, which a model source's model goes through. */
+	modelArgs?: (modelId: string) => string[];
+	/** The provider's batch subcommand, which a model source's own arguments follow. */
+	batchModePrefix?: string[];
+}
+
+/** What an agent's model source did to a launch. */
+export interface LaunchPlanRunOn {
+	/** The model the harness was told to use, in place of the agent's own. */
+	model: string;
+	/** The context size the harness was told it has. */
+	contextTokens: number;
+	/** The root arguments that point the harness at the source (Codex). */
+	args: string[];
+	/** The arguments added after the provider's batch subcommand (OpenCode). */
+	subcommandArgs: string[];
+	/**
+	 * The NAMES of the variables set for it, a variable it added to
+	 * (`envVarMerges`) included. Never the values: one is a key.
+	 */
+	envVarNames: string[];
+	/** Recipe variables the agent sets itself, which were left alone. */
+	userOverrides: string[];
+	/** The provider's own key variables, set blank so they do not reach the source. */
+	clearedEnvVars: string[];
+	/** The agent's stored gateway, which this launch did not go through. */
+	skippedGatewayUrl?: string;
+}
+
+/**
+ * Turn a resolved model source into what a launch carries: its arguments, and
+ * the record of what was done. The arguments get the target's root arguments in
+ * front, where a CLI reads a global option, its subcommand arguments after the
+ * provider's batch subcommand (`placeSubcommandArgs`), and its model in the
+ * provider's own flag in place of the agent's (`replaceModelArg`). Shared by
+ * the plan and by the spawns that build none (`applyAgentRunOnToSpawn`), so
+ * both refuse the same way.
+ */
+export function applyRunOnToLaunch(input: {
+	agent: Pick<LaunchPlanAgent, 'modelArgs' | 'batchModePrefix'> | null | undefined;
+	toolType: string;
+	args: readonly string[];
+	runOn: Extract<RunOnLaunchResolution, { kind: 'inject' }>;
+	/** The agent's stored gateway, which a model source takes the place of. */
+	gatewayUrl?: string | null;
+}):
+	| { ok: true; args: string[]; runOn: LaunchPlanRunOn }
+	| { ok: false; reason: RunOnRefusalCode; error: string } {
+	const { runOn } = input;
+	const withModel = replaceModelArg(input.agent, input.args, runOn.harnessModel);
+	if (!withModel) {
+		// A recipe with no model flag to carry its model: the harness would ask
+		// the source for whatever model the agent names on its own.
+		return {
+			ok: false,
+			reason: 'run-on-unsupported-provider',
+			error: `This agent is set to run on ${runOn.model}, but Maestro has no model flag for "${input.toolType}" to name it with. Set the model source to Provider to run the agent.`,
+		};
+	}
+	const skippedGatewayUrl = input.gatewayUrl?.trim();
+	return {
+		ok: true,
+		args: [...runOn.args, ...placeSubcommandArgs(input.agent, withModel, runOn.subcommandArgs)],
+		runOn: {
+			model: runOn.model,
+			contextTokens: runOn.contextTokens,
+			args: runOn.args,
+			subcommandArgs: runOn.subcommandArgs,
+			envVarNames: [...Object.keys(runOn.envVars), ...Object.keys(runOn.envVarMerges)],
+			userOverrides: runOn.userOverrides,
+			clearedEnvVars: runOn.clearedEnvVars,
+			...(skippedGatewayUrl ? { skippedGatewayUrl } : {}),
+		},
+	};
 }
 
 export interface AgentLaunchInput {
@@ -133,10 +230,22 @@ export interface AgentLaunchInput {
 	batchMode?: boolean;
 	/** Vars Maestro states about this spawn (caller identity and the like). */
 	maestroEnvVars?: Record<string, string>;
+	/** Trusted host root for translated knowledge; defaults to Maestro's local data directory. */
+	translationKnowledgeRoot?: string;
 	isResuming?: boolean;
 	querySource?: QuerySource;
 	/** Local only: directories to put in front of PATH. */
 	extraPathDirs?: string[];
+	/**
+	 * The agent's Local Models gateway: its provider and its stored URL. Omit
+	 * (or leave the URL blank) for an agent with none.
+	 */
+	gateway?: { toolType: string; url?: string | null };
+	/**
+	 * The agent's model source with its source looked up (`prepareAgentRunOn`).
+	 * Omit for an agent that runs on its provider's model.
+	 */
+	runOn?: ResolvedRunOn;
 	/** Cue only: inherit just the server-mode allowlist (see `filterServerProcessEnv`). */
 	isServerMode?: boolean;
 	/**
@@ -186,6 +295,13 @@ interface LaunchPlanCommon {
 	/** Command and args to hand the process launcher (or the SSH wrapper, for a remote). */
 	command: string;
 	args: string[];
+	/**
+	 * `args` without the prompt: the caller's arguments with the gateway's root
+	 * arguments, or the model source's root arguments and model, applied. For a
+	 * caller that places the prompt itself (desktop), which must spawn from this
+	 * list and not from the one it passed in.
+	 */
+	launchArgs: string[];
 	cwd: string;
 	prompt: Exclude<PromptDelivery, { via: 'refused' }>;
 	/**
@@ -199,6 +315,21 @@ interface LaunchPlanCommon {
 	 * Process Details shows as "set by Maestro".
 	 */
 	envVars: Record<string, string> | undefined;
+	/**
+	 * The gateway this launch goes through, when `envVars` carries its base-URL
+	 * variable (or the config document it was added to, OpenCode). Undefined
+	 * when the agent has none or sets the variable itself. `gateway.args` are
+	 * the provider's config arguments for it (Codex), already placed at the
+	 * FRONT of `args` and `launchArgs`; `gateway.subcommandArgs` were placed
+	 * right after the batch subcommand (OpenCode's `--standalone`).
+	 */
+	gateway: { envVar: string; url: string; args: string[]; subcommandArgs: string[] } | undefined;
+	/**
+	 * The model source this launch uses, when it has one: `envVars` carries its
+	 * variables, and `args` and `launchArgs` already carry its root arguments
+	 * and its model.
+	 */
+	runOn: LaunchPlanRunOn | undefined;
 	/**
 	 * What happened to `requiredSecrets`, by NAME only (safe to log). Absent
 	 * when the agent declares none or the surface does not deliver them.
@@ -237,6 +368,8 @@ export type AgentLaunchPlanResult =
 			ok: false;
 			reason:
 				| Extract<SshLaunchTarget, { kind: 'unresolved' }>['reason']
+				| AgentGatewayRefusalCode
+				| RunOnRefusalCode
 				| 'grok-model-effort-refused'
 				| 'grok-directory-grants-refused'
 				| 'prompt-delivery-refused';
@@ -245,7 +378,10 @@ export type AgentLaunchPlanResult =
 
 /**
  * Plan an agent launch. Fails, before anything is spawned, when SSH is on and
- * no usable remote is configured; never falls back to running locally.
+ * no usable remote is configured (it never falls back to running locally),
+ * when the agent's gateway cannot be used (it never falls back to running
+ * without it), and when its model source cannot run (it never falls back to
+ * the provider's model).
  */
 export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanResult {
 	const target = resolveSshLaunchTarget(input.sshStore, input.sshRemoteConfig);
@@ -298,12 +434,77 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			return { ok: false, reason: 'grok-model-effort-refused', error: error.message };
 		}
 	}
+
+	// The same "own vars replace the provider-level set" rule the layers use.
+	const userEnvVars = input.sessionCustomEnvVars ?? input.agentCustomEnvVars;
+	const remote = target.kind === 'remote' ? { name: target.remote.name } : null;
+
+	const runOn = resolveRunOnLaunch({
+		...input.runOn,
+		toolType: input.runOn?.toolType ?? '',
+		userEnvVars,
+		remote,
+	});
+	if (runOn.kind === 'refused') {
+		return { ok: false, reason: runOn.code, error: runOn.message };
+	}
+
+	// A model source takes the gateway's place, so the gateway is not resolved
+	// at all: one that could not be used must not refuse a launch that was never
+	// going through it.
+	const gateway =
+		runOn.kind === 'inject'
+			? ({ kind: 'none' } as const)
+			: resolveAgentGateway({
+					toolType: input.gateway?.toolType ?? '',
+					gatewayUrl: input.gateway?.url,
+					userEnvVars,
+					remote,
+				});
+	if (gateway.kind === 'refused') {
+		return { ok: false, reason: gateway.code, error: gateway.message };
+	}
+	const planGateway =
+		gateway.kind === 'inject'
+			? {
+					envVar: gateway.envVar,
+					url: gateway.url,
+					args: gateway.args,
+					subcommandArgs: gateway.subcommandArgs,
+				}
+			: undefined;
+
+	let launchArgs = selectionArgs;
+	let planRunOn: LaunchPlanRunOn | undefined;
+	if (runOn.kind === 'inject') {
+		const applied = applyRunOnToLaunch({
+			agent,
+			toolType: input.runOn?.toolType ?? '',
+			args: selectionArgs,
+			runOn,
+			gatewayUrl: input.gateway?.url,
+		});
+		if (!applied.ok) return applied;
+		launchArgs = applied.args;
+		planRunOn = applied.runOn;
+	} else if (planGateway) {
+		// A global option: ahead of the agent's own arguments, subcommand
+		// included. A subcommand option: right after the subcommand.
+		launchArgs = [
+			...planGateway.args,
+			...placeSubcommandArgs(agent, selectionArgs, planGateway.subcommandArgs),
+		];
+	}
 	const layers = {
 		defaultEnvVars: agent?.defaultEnvVars,
 		batchModeEnvVars: input.batchMode ? agent?.batchModeEnvVars : undefined,
 		globalShellEnvVars: input.globalShellEnvVars,
 		agentCustomEnvVars: input.agentCustomEnvVars,
 		sessionCustomEnvVars: input.sessionCustomEnvVars,
+		gatewayEnvVars: gateway.kind === 'inject' ? gateway.envVars : undefined,
+		runOnEnvVars: runOn.kind === 'inject' ? runOn.envVars : undefined,
+		runOnEnvVarMerges: runOn.kind === 'inject' ? runOn.envVarMerges : undefined,
+		gatewayEnvVarMerges: gateway.kind === 'inject' ? gateway.envVarMerges : undefined,
 		readOnlyEnvOverrides: input.readOnlyMode ? agent?.readOnlyEnvOverrides : undefined,
 	};
 	const layered = resolveAgentEnvVars(layers);
@@ -320,19 +521,28 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			? [...new Set(input.requiredSecrets)].sort()
 			: undefined;
 
-	const knowledgeDirectory = envVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR];
-	const launchArgs =
-		target.kind === 'local' && agent?.id === 'claude-code' && knowledgeDirectory
-			? [
-					...selectionArgs,
-					'--settings',
-					JSON.stringify({ autoMemoryDirectory: path.join(knowledgeDirectory, 'memory') }),
-				]
-			: selectionArgs;
+	const knowledge = resolveTranslationKnowledgeBinding(
+		envVars,
+		input.translationKnowledgeRoot ?? path.join(resolveUserDataDir(), 'provider-knowledge'),
+		target.kind === 'remote' ? target.remote : undefined
+	);
+	const knowledgeDirectory = knowledge?.directory;
+	const nativePaths = target.kind === 'remote' ? path.posix : path;
 	const effectivePrompt =
-		target.kind === 'local'
-			? bindTranslationKnowledge(input.prompt, envVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR])
+		target.kind === 'local' && knowledge
+			? bindTranslationKnowledge(input.prompt, knowledge.directory, knowledge.root)
 			: input.prompt;
+	launchArgs =
+		agent?.id === 'claude-code' && knowledgeDirectory
+			? [
+					...launchArgs,
+					...buildAdditionalDirArgs(getAgentDefinition('claude-code'), [
+						{ path: knowledgeDirectory, read: true, write: true },
+					]),
+					'--settings',
+					JSON.stringify({ autoMemoryDirectory: nativePaths.join(knowledgeDirectory, 'memory') }),
+				]
+			: launchArgs;
 	let promptBlocks = input.promptBlocks;
 	if (target.kind === 'local' && knowledgeDirectory && Array.isArray(promptBlocks)) {
 		// Keep ordered content intact, binding staged instructions once to the
@@ -351,7 +561,10 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 		}
 		promptBlocks = promptBlocks.map((block, index) =>
 			index === textIndex && block.type === 'text'
-				? { ...block, text: bindTranslationKnowledge(block.text, knowledgeDirectory)! }
+				? {
+						...block,
+						text: bindTranslationKnowledge(block.text, knowledgeDirectory, knowledge!.root)!,
+					}
 				: block
 		);
 	}
@@ -392,10 +605,13 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 				// A file source is final: the SSH wrapper must not append the prompt
 				// again. Other deliveries retain the wrapper's script placement.
 				args: prompt.via === 'file' ? [...launchArgs, ...prompt.args] : launchArgs,
+				launchArgs,
 				cwd: input.cwd,
 				prompt,
 				stdin: undefined,
 				envVars,
+				gateway: planGateway,
+				runOn: planRunOn,
 				...(declaredSecrets
 					? {
 							secrets: {
@@ -426,10 +642,13 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			target,
 			command: input.command,
 			args,
+			launchArgs,
 			cwd: input.cwd,
 			prompt,
 			stdin: prompt.via === 'stdin' && prompt.format === 'raw' ? effectivePrompt : undefined,
 			envVars,
+			gateway: planGateway,
+			runOn: planRunOn,
 			...(resolved
 				? {
 						secrets: {

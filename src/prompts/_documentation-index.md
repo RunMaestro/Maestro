@@ -46,5 +46,6 @@ When you need detailed guidance on a Maestro feature, fetch the relevant documen
 | **Troubleshooting & Support**                                | https://docs.runmaestro.ai/troubleshooting.md       |
 | **Performance Profiling**                                    | https://docs.runmaestro.ai/performance-profiling.md |
 | **Release notes**                                            | https://docs.runmaestro.ai/releases.md              |
+| **Agent Delegation** (peer rosters, budget, the graph)       | https://docs.runmaestro.ai/agent-delegation.md      |
 
 **When to fetch:** Whenever a user asks about configuring, creating, or troubleshooting any of the above features - especially playbook authoring or multi-agent workflows. Fetch the specific page(s) relevant to the question, read them, and use that knowledge to respond accurately. If the topic isn't in the table, start with the `llms.txt` index to find the right page.

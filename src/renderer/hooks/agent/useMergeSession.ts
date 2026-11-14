@@ -30,11 +30,13 @@ import {
 	contextGroomingService,
 	groomingIdentityOf,
 } from '../../services/contextGroomer';
+import { projectTabProvider } from '../../utils/providerTabSessions';
 import { extractTabContext, formatLogsForContextInjection } from '../../utils/contextExtractor';
 import { resolveContextWindow } from '../../utils/contextWindowPrecedence';
 import { getContextWindowForAgent } from '../../../shared/agentConstants';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { createMergedSession, getActiveTab } from '../../utils/tabHelpers';
+import { applyDefaultAgentTokenProxy } from '../../services/agentGateway';
 import { generateId } from '../../utils/ids';
 import { useOperationStore, selectIsAnyMerging } from '../../stores/operationStore';
 import type { MergeState, TabMergeState } from '../../stores/operationStore';
@@ -65,9 +67,11 @@ const MERGE_CONTEXT_WINDOW_SHARE = 0.5;
  * figure derived from cumulative usage totals.
  */
 function resolveMergeContextBudget(
-	targetSession: Session,
+	targetAgent: Session,
 	targetTab: AITab
 ): { maxTokens: number; windowKnown: boolean } {
+	// The tab's own provider decides the window, not the agent's default one.
+	const { agent: targetSession } = projectTabProvider(targetAgent, targetTab);
 	const { window } = resolveContextWindow({
 		customModel: targetTab.customModel ?? targetSession.customModel,
 		customContextWindow: targetSession.customContextWindow,
@@ -444,16 +448,17 @@ export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
 					},
 				});
 
-				// The source agent's provider runs the turn, so it runs on that
-				// agent's account, binary and host. A merge into an existing tab
-				// grooms the source alone: the target already holds its own
-				// history, and grooming it too would paste it back (duplicate
-				// context).
+				// The source agent runs the grooming turn, on its own account, binary
+				// and host: the content being groomed is the source's, and the target
+				// account or host never sees the raw source. A merge into an existing
+				// tab grooms the source alone: the target already holds its own
+				// history, and grooming it too would paste it back (duplicate context).
+				const groomingAgent = sourceSession;
 				const groomingRequest: MergeRequest = {
 					sources: options.createNewSession ? [sourceContext, targetContext] : [sourceContext],
-					targetAgent: sourceSession.toolType,
-					targetProjectRoot: sourceSession.projectRoot,
-					...groomingIdentityOf(sourceSession),
+					targetAgent: groomingAgent.toolType,
+					targetProjectRoot: groomingAgent.projectRoot,
+					...groomingIdentityOf(groomingAgent),
 				};
 
 				const groomingResult = await groomingServiceRef.current.groomContexts(
@@ -780,6 +785,7 @@ export function useMergeSessionWithSessions(
 
 						// Add new session to state
 						setSessions((prev) => [...prev, newSession]);
+						await applyDefaultAgentTokenProxy(newSession.id);
 
 						// Log merge operation to history
 						const sourceNames = [

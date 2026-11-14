@@ -114,6 +114,11 @@ describe('modalPriorities', () => {
 			expect(MODAL_PRIORITIES.CONFIRM).toBeGreaterThanOrEqual(1000);
 		});
 
+		it('CONFIRM should have higher priority than GROUP_SETTINGS (opens from within)', () => {
+			// Group Settings raises its publish and clear confirmations over itself.
+			expect(MODAL_PRIORITIES.CONFIRM).toBeGreaterThan(MODAL_PRIORITIES.GROUP_SETTINGS);
+		});
+
 		it('QUIT_CONFIRM should be in the highest priority range (1000+)', () => {
 			expect(MODAL_PRIORITIES.QUIT_CONFIRM).toBeGreaterThanOrEqual(1000);
 		});

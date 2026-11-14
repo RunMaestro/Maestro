@@ -19,7 +19,10 @@ import { LightboxModal } from './LightboxModal';
 import { ModelEffortPills } from './InputArea/components/ModelEffortPills';
 import { useModelEffortMenus } from './InputArea/hooks/useModelEffortMenus';
 import { useAgentModelEffortOptions } from '../hooks/agent/useAgentModelEffortOptions';
-import { codifyTurnSettings } from '../utils/providerTabSessions';
+import { captureQueuedTurnSettings, projectTabProvider } from '../utils/providerTabSessions';
+import { useAutoModelChoice } from '../hooks/agent/useAutoModelChoice';
+import { withAutoModelOption } from '../../shared/autoTurn';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 import { isImeComposing } from '../utils/ime';
 
 interface QueuedItemEditModalProps {
@@ -65,8 +68,8 @@ export function QueuedItemEditModal({
 		if (item.turnSettings) return item.turnSettings;
 		if (!session) return {};
 		const tab = session.aiTabs?.find((t) => t.id === item.tabId);
-		const live = codifyTurnSettings(tab, session);
-		return { model: live.turnModel, effort: live.turnEffort };
+		// The selection, not a resolution of it: an agent on Auto keeps the word.
+		return captureQueuedTurnSettings(tab, session);
 	}, [item.turnSettings, item.tabId, session]);
 	const [turnSettings, setTurnSettings] = useState(initialTurnSettings);
 	const [draftOwner, setDraftOwner] = useState({ sessionId: session?.id, itemId: item.id });
@@ -81,37 +84,52 @@ export function QueuedItemEditModal({
 
 	// Options come from the agent's own provider, never a hardcoded list: Claude
 	// Code's thinking levels and Codex's reasoning efforts are different sets.
+	const tab = session?.aiTabs?.find((t) => t.id === item.tabId);
+	const provider = useMemo(
+		() => (session ? projectTabProvider(session, tab, turnSettings.provider) : undefined),
+		[session, tab, turnSettings.provider]
+	);
+	const nativeAgent = provider?.agent;
 	const discoveryContext = useMemo<AgentDiscoveryRequest['context'] | undefined>(
 		() =>
-			session?.cwd?.trim()
+			nativeAgent?.cwd?.trim()
 				? {
 						kind: 'draft',
-						cwd: session.cwd,
-						customPath: session.customPath,
-						customEnvVars: session.customEnvVars,
+						cwd: nativeAgent.cwd,
+						customPath: nativeAgent.customPath,
+						customEnvVars: nativeAgent.customEnvVars,
 						// A captured undefined value means provider default, even if
 						// the agent or tab has acquired an override since queuing.
 						model: turnSettings.model,
 						effort: turnSettings.effort,
-						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-						sshRemoteId: session.sshRemoteId,
+						sessionSshRemoteConfig: nativeAgent.sessionSshRemoteConfig,
+						sshRemoteId: nativeAgent.sshRemoteId,
 					}
 				: undefined,
 		[
-			session?.id,
-			session?.toolType,
-			session?.cwd,
-			session?.customPath,
-			session?.customEnvVars,
-			session?.sessionSshRemoteConfig,
-			session?.sshRemoteId,
+			nativeAgent?.id,
+			nativeAgent?.toolType,
+			nativeAgent?.cwd,
+			nativeAgent?.customPath,
+			nativeAgent?.customEnvVars,
+			nativeAgent?.sessionSshRemoteConfig,
+			nativeAgent?.sshRemoteId,
 			item.id,
 			item.tabId,
 			turnSettings.model,
 			turnSettings.effort,
 		]
 	);
-	const providerOptions = useAgentModelEffortOptions(session?.toolType, discoveryContext);
+	const providerOptions = useAgentModelEffortOptions(
+		nativeAgent?.toolType,
+		getSessionSshRemoteId(session),
+		discoveryContext
+	);
+	const autoModel = useAutoModelChoice(nativeAgent);
+	const modelOptions = useMemo(
+		() => withAutoModelOption(providerOptions.models, autoModel),
+		[providerOptions.models, autoModel]
+	);
 	const menus = useModelEffortMenus();
 	// Currently-viewed image in the local carousel; null when the carousel is closed.
 	const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -336,11 +354,12 @@ export function QueuedItemEditModal({
 						</button>
 						<div className="flex items-center gap-2 ml-auto">
 							<ModelEffortPills
-								isVisible={session?.toolType !== 'grok'}
+								isVisible={nativeAgent?.toolType !== 'grok'}
 								theme={theme}
 								currentModel={turnSettings.model ?? providerOptions.defaultModel}
 								currentEffort={turnSettings.effort ?? providerOptions.defaultEffort}
-								availableModels={providerOptions.models}
+								availableModels={modelOptions}
+								autoModelTitle={autoModel?.title}
 								availableEfforts={providerOptions.efforts}
 								onModelChange={(model) =>
 									setTurnSettings((prev) => ({ ...prev, model: model || undefined }))
@@ -354,7 +373,7 @@ export function QueuedItemEditModal({
 							/>
 						</div>
 					</div>
-					{session?.toolType === 'grok' && (
+					{nativeAgent?.toolType === 'grok' && (
 						<div className="grid grid-cols-2 gap-3 mt-3">
 							{(['model', 'effort'] as const).map((key) => {
 								const options = key === 'model' ? providerOptions.models : providerOptions.efforts;

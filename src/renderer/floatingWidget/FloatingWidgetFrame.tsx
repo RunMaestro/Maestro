@@ -38,6 +38,8 @@ export interface FloatingWidgetFrameProps {
 	/** Extra strip controls, drawn before the close button. Always `no-drag`. */
 	actions?: ReactNode;
 	onClose: () => void;
+	/** Override Escape when hiding and closing have different meanings. */
+	onEscape?: () => void;
 	/** Accessible label and tooltip for the close button. */
 	closeLabel: string;
 	children: ReactNode;
@@ -54,6 +56,7 @@ export function FloatingWidgetFrame({
 	subtitle,
 	actions,
 	onClose,
+	onEscape = onClose,
 	closeLabel,
 	children,
 	insets,
@@ -64,9 +67,9 @@ export function FloatingWidgetFrame({
 			if (e.key !== 'Escape' || e.defaultPrevented) return;
 			if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
 			e.preventDefault();
-			onClose();
+			onEscape();
 		},
-		[onClose]
+		[onEscape]
 	);
 	useEventListener('keydown', handleKeyDown as (e: Event) => void);
 

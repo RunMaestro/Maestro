@@ -1,10 +1,18 @@
 import { Tag } from 'lucide-react';
+import {
+	MODELS_SETTINGS_PANEL_LABELS,
+	taskAssignmentPanel,
+} from '../../../../../../shared/local-models/settings-location';
+import { getModalActions } from '../../../../../stores/modalStore';
 import type { Theme } from '../../../../../types';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
 import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
 import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 type TabPlacement = 'end' | 'after-current';
+
+/** The inner tab of Models that holds the `tab-naming` assignment. */
+const NAMING_PANEL = taskAssignmentPanel('tab-naming');
 
 interface TabBehaviorSectionProps {
 	theme: Theme;
@@ -71,6 +79,18 @@ export function TabBehaviorSection({
 						theme={theme}
 						ariaLabel="Automatically name tabs based on first message"
 					/>
+				</div>
+				<div className="text-xs opacity-70">
+					Which model names them is chosen in{' '}
+					<button
+						type="button"
+						className="underline"
+						style={{ color: theme.colors.accent }}
+						onClick={() => getModalActions().openSettings('models', undefined, NAMING_PANEL)}
+					>
+						Models &gt; {MODELS_SETTINGS_PANEL_LABELS[NAMING_PANEL]}
+					</button>
+					.
 				</div>
 
 				<div

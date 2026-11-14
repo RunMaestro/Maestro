@@ -66,6 +66,9 @@ import {
 	useAgentModelEffortOptions,
 	resolveModelEffort,
 } from '../hooks/agent/useAgentModelEffortOptions';
+import { useAutoModelChoice } from '../hooks/agent/useAutoModelChoice';
+import { isAutoModel } from '../../shared/autoModel';
+import { autoModelAxesNote, modelChoiceLabel, withAutoModelOption } from '../../shared/autoTurn';
 import { getModelFamily } from '../utils/modelFamily';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { readableTextOn } from '../../shared/colorContrast';
@@ -73,6 +76,8 @@ import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { getTabDisplayName } from '../utils/tabHelpers';
 import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
 import { useTabStore } from '../stores/tabStore';
+import { projectTabProvider } from '../utils/providerTabSessions';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 
 export interface ModelEffortModalProps {
 	theme: Theme;
@@ -139,7 +144,7 @@ function isTypeaheadKey(e: React.KeyboardEvent): boolean {
  * 'd' reaches it, while the parentheses stay a display detail.
  */
 function typeaheadText(model: string): string {
-	return (model || 'default').toLowerCase();
+	return (model ? modelChoiceLabel(model) : 'default').toLowerCase();
 }
 
 /**
@@ -171,61 +176,74 @@ function findTypeaheadMatch(models: string[], query: string, from: number): numb
 export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProps) {
 	const activeSession = useSessionStore(selectActiveSession);
 	const tab = activeSession?.aiTabs.find((t) => t.id === tabId);
-	const agentId = activeSession?.toolType;
+	const provider = activeSession ? projectTabProvider(activeSession, tab) : undefined;
+	const agentId = provider?.agent.toolType;
 
-	const sessionId = activeSession?.id;
-	const [picked, setPicked] = useState<{
-		sessionId?: string;
-		agentId?: string;
-		tabId: string;
-		model: string | null;
-		effort: string | null;
-	}>({ sessionId, agentId, tabId, model: null, effort: null });
-	const sameTarget =
-		picked.sessionId === sessionId && picked.agentId === agentId && picked.tabId === tabId;
-	const pickedModel = sameTarget ? picked.model : null;
-	const pickedEffort = sameTarget ? picked.effort : null;
+	const sshRemoteId = getSessionSshRemoteId(activeSession);
+	// What the user picked belongs to one agent, tab, provider and host. A pick
+	// made for another target (the tab switched provider, the agent moved) is
+	// dropped rather than committed somewhere it was never chosen.
+	const selectionKey = JSON.stringify([activeSession?.id, tabId, agentId, sshRemoteId]);
+	const [picks, setPicks] = useState<{ key: string; model?: string; effort?: string }>({
+		key: selectionKey,
+	});
+	const pickedModel = picks.key === selectionKey ? picks.model : undefined;
+	const pickedEffort = picks.key === selectionKey ? picks.effort : undefined;
 	const setPickedModel = useCallback(
-		(model: string) => setPicked({ sessionId, agentId, tabId, model, effort: pickedEffort }),
-		[sessionId, agentId, tabId, pickedEffort]
+		(model: string) =>
+			setPicks((prev) => ({
+				...(prev.key === selectionKey ? prev : {}),
+				key: selectionKey,
+				model,
+			})),
+		[selectionKey]
 	);
 	const setPickedEffort = useCallback(
-		(effort: string) => setPicked({ sessionId, agentId, tabId, model: pickedModel, effort }),
-		[sessionId, agentId, tabId, pickedModel]
+		(effort: string) =>
+			setPicks((prev) => ({
+				...(prev.key === selectionKey ? prev : {}),
+				key: selectionKey,
+				effort,
+			})),
+		[selectionKey]
 	);
+	const nativeAgent = provider?.agent;
+	const nativeTab = provider?.tab;
+	// Grok discovers models for the selected draft (its tab provider's context).
 	const discoveryContext = useMemo<AgentDiscoveryRequest['context'] | undefined>(() => {
-		if (!activeSession?.cwd?.trim() || !tab) return undefined;
+		if (!nativeAgent?.cwd?.trim() || !nativeTab) return undefined;
 		const selection = resolveModelEffort(
 			{
-				customModel: pickedModel ?? tab.customModel,
-				customEffort: pickedEffort ?? tab.customEffort,
+				customModel: pickedModel ?? nativeTab.customModel,
+				customEffort: pickedEffort ?? nativeTab.customEffort,
 			},
-			activeSession,
+			nativeAgent,
 			{ defaultModel: '', defaultEffort: '' }
 		);
 		return {
 			kind: 'draft',
-			cwd: activeSession.cwd,
-			customPath: activeSession.customPath,
-			customEnvVars: activeSession.customEnvVars,
+			cwd: nativeAgent.cwd,
+			customPath: nativeAgent.customPath,
+			customEnvVars: nativeAgent.customEnvVars,
 			model: selection.model || undefined,
 			effort: selection.effort || undefined,
-			sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
-			sshRemoteId: activeSession.sshRemoteId,
+			sessionSshRemoteConfig: nativeAgent.sessionSshRemoteConfig,
+			sshRemoteId: nativeAgent.sshRemoteId,
 		};
+		// Field-level deps: a streaming flush replaces the agent object.
 	}, [
-		activeSession?.id,
-		activeSession?.toolType,
-		activeSession?.cwd,
-		activeSession?.customPath,
-		activeSession?.customEnvVars,
-		activeSession?.customModel,
-		activeSession?.customEffort,
-		activeSession?.sessionSshRemoteConfig,
-		activeSession?.sshRemoteId,
-		tab?.id,
-		tab?.customModel,
-		tab?.customEffort,
+		nativeAgent?.id,
+		nativeAgent?.toolType,
+		nativeAgent?.cwd,
+		nativeAgent?.customPath,
+		nativeAgent?.customEnvVars,
+		nativeAgent?.customModel,
+		nativeAgent?.customEffort,
+		nativeAgent?.sessionSshRemoteConfig,
+		nativeAgent?.sshRemoteId,
+		nativeTab?.id,
+		nativeTab?.customModel,
+		nativeTab?.customEffort,
 		pickedModel,
 		pickedEffort,
 	]);
@@ -239,16 +257,25 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 		effortStatus,
 		refreshModels,
 		refreshingModels,
-	} = useAgentModelEffortOptions(agentId, discoveryContext);
+	} = useAgentModelEffortOptions(agentId, sshRemoteId, discoveryContext);
 	const manualGrokOptions = agentId === 'grok';
-	const { model: currentModel, effort: currentEffort } = resolveModelEffort(tab, activeSession, {
-		defaultModel,
-		defaultEffort,
-	});
+	const { model: currentModel, effort: currentEffort } = resolveModelEffort(
+		provider?.tab,
+		provider?.agent,
+		{
+			defaultModel,
+			defaultEffort,
+		}
+	);
 
 	// '' (inherit the agent default) is always offered as the first choice, the
-	// same way the composer pills offer it.
-	const modelOptions = useMemo(() => (models.includes('') ? models : ['', ...models]), [models]);
+	// same way the composer pills offer it. Auto follows it, for an agent it can
+	// act on.
+	const autoModel = useAutoModelChoice(provider?.agent);
+	const modelOptions = useMemo(
+		() => withAutoModelOption(models.includes('') ? models : ['', ...models], autoModel),
+		[models, autoModel]
+	);
 	const effortOptions = useMemo(() => {
 		if (efforts.length === 0) return [];
 		return efforts.includes('') ? efforts : ['', ...efforts];
@@ -447,15 +474,18 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 	// spells out what '(default)' resolves to, which the row itself can't say.
 	const wheelCaption = useMemo(() => {
 		if (!selectedModel) {
-			return defaultModel ? `Agent default - ${defaultModel}` : 'Agent default';
+			return defaultModel ? `Agent default - ${modelChoiceLabel(defaultModel)}` : 'Agent default';
 		}
+		// Auto is not a vendor's model: say which axes it acts on. Which router
+		// decides is the caption's tooltip, since the line is one row high.
+		if (isAutoModel(selectedModel)) return autoModel ? autoModelAxesNote(autoModel.support) : '';
 		// 'Other' is what the matcher returns when it recognizes nothing, so it
 		// adds no information - show the current marker alone, or nothing.
 		const family = getModelFamily(selectedModel);
 		const vendor = family === 'Other' ? '' : family;
 		if (selectedModel !== currentModel) return vendor;
 		return vendor ? `${vendor} \u00b7 current` : 'current';
-	}, [selectedModel, defaultModel, currentModel]);
+	}, [selectedModel, defaultModel, currentModel, autoModel]);
 
 	const renderWheelRow = ({ offset, model }: { offset: number; model: string }) => {
 		const depth = WHEEL_DEPTH[Math.min(Math.abs(offset), WHEEL_DEPTH.length - 1)];
@@ -494,7 +524,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 						'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease, font-size 220ms ease, color 220ms ease',
 				}}
 			>
-				<span className="truncate">{model || DEFAULT_LABEL}</span>
+				<span className="truncate">{model ? modelChoiceLabel(model) : DEFAULT_LABEL}</span>
 				{isCurrent && !isSelected && (
 					<span
 						className="w-1 h-1 rounded-full shrink-0"
@@ -681,7 +711,10 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 					<div className="relative text-xs py-10" style={{ color: theme.colors.textDim }}>
 						This agent exposes no model or effort options.
 					</div>
-				) : !loaded && !hasModels && !hasEfforts ? (
+				) : !loaded && !models.some(Boolean) && !hasEfforts ? (
+					// Judged on the provider's own list, not `hasModels`: Auto is in
+					// `modelOptions` before the lookups settle, and a wheel of
+					// '(default)' and Auto alone would open on the wrong row.
 					<div className="relative text-xs py-10" style={{ color: theme.colors.textDim }}>
 						Loading options...
 					</div>
@@ -776,6 +809,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 								<div
 									className="h-4 text-2xs uppercase tracking-[0.14em] truncate max-w-full"
 									style={{ color: theme.colors.textDim }}
+									title={isAutoModel(selectedModel) ? autoModel?.title : undefined}
 								>
 									{wheelCaption}
 								</div>

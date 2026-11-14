@@ -31,6 +31,39 @@ const promptComposerModalMock = vi.hoisted(() => ({
 	props: undefined as Record<string, unknown> | undefined,
 }));
 
+const delegationGraphModalMock = vi.hoisted(() => ({
+	props: undefined as Record<string, unknown> | undefined,
+}));
+
+const continuityPreviewModalMock = vi.hoisted(() => ({
+	props: undefined as Record<string, unknown> | undefined,
+	mounts: 0,
+}));
+
+// The continuity preview reads its own tab and draws it; here it only records
+// what the host handed it and how many times it was mounted.
+vi.mock('../../../renderer/components/ContinuityPreviewModal', async () => {
+	const React = await import('react');
+	return {
+		ContinuityPreviewModal: (props: Record<string, unknown>) => {
+			continuityPreviewModalMock.props = props;
+			React.useEffect(() => {
+				continuityPreviewModalMock.mounts += 1;
+			}, []);
+			return <div data-testid="continuity-preview-modal-stub" />;
+		},
+	};
+});
+
+// The Delegation Graph is lazy-loaded and draws a reactflow canvas. Replaced by
+// a marker that records what the host handed it.
+vi.mock('../../../renderer/components/DelegationGraph/DelegationGraphModal', () => ({
+	DelegationGraphModal: (props: Record<string, unknown>) => {
+		delegationGraphModalMock.props = props;
+		return <div data-testid="delegation-graph-modal-stub" />;
+	},
+}));
+
 // Mock ALL sub-components to capture props
 vi.mock('../../../renderer/components/AboutModal', () => ({ AboutModal: () => null }));
 vi.mock('../../../renderer/components/ShortcutsHelpModal', () => ({
@@ -389,6 +422,8 @@ describe('AppModals (Tier 1B self-sourcing)', () => {
 		useModalStore.setState({ modals: new Map() });
 		useComposerInputStore.setState({ aiValue: '', terminalValue: '' });
 		promptComposerModalMock.props = undefined;
+		continuityPreviewModalMock.props = undefined;
+		continuityPreviewModalMock.mounts = 0;
 	});
 
 	describe('sessionStore self-sourcing', () => {
@@ -611,6 +646,70 @@ describe('AppModals (Tier 1B self-sourcing)', () => {
 		});
 	});
 
+	describe('continuity preview (Context: Preview Continuity)', () => {
+		it('draws nothing until an opener puts a tab in the modal store', () => {
+			const { unmount } = render(<AppModals {...createDefaultProps()} />);
+			expect(screen.queryByTestId('continuity-preview-modal-stub')).not.toBeInTheDocument();
+			expect(continuityPreviewModalMock.props).toBeUndefined();
+			unmount();
+		});
+
+		it('opens the modal for the tab in the store, with the theme and nothing else it needs', () => {
+			const { unmount } = render(<AppModals {...createDefaultProps()} />);
+
+			act(() => {
+				useModalStore
+					.getState()
+					.openModal('continuityPreview', { sessionId: 'agent-1', tabId: 'tab-7' });
+			});
+
+			expect(screen.getByTestId('continuity-preview-modal-stub')).toBeInTheDocument();
+			expect(continuityPreviewModalMock.props).toMatchObject({
+				theme: mockTheme,
+				sessionId: 'agent-1',
+				tabId: 'tab-7',
+			});
+			unmount();
+		});
+
+		it('closes through the modal store, so the preview leaves nothing open behind it', () => {
+			const { unmount } = render(<AppModals {...createDefaultProps()} />);
+			act(() => {
+				useModalStore
+					.getState()
+					.openModal('continuityPreview', { sessionId: 'agent-1', tabId: 'tab-7' });
+			});
+
+			act(() => {
+				(continuityPreviewModalMock.props?.onClose as () => void)();
+			});
+
+			expect(screen.queryByTestId('continuity-preview-modal-stub')).not.toBeInTheDocument();
+			expect(useModalStore.getState().modals.get('continuityPreview')?.open ?? false).toBe(false);
+			unmount();
+		});
+
+		it('is ONE modal: a second tab replaces the first instead of stacking, and remounts it', () => {
+			const { unmount } = render(<AppModals {...createDefaultProps()} />);
+			act(() => {
+				useModalStore
+					.getState()
+					.openModal('continuityPreview', { sessionId: 'agent-1', tabId: 'tab-1' });
+			});
+			act(() => {
+				useModalStore
+					.getState()
+					.openModal('continuityPreview', { sessionId: 'agent-1', tabId: 'tab-2' });
+			});
+
+			expect(screen.getAllByTestId('continuity-preview-modal-stub')).toHaveLength(1);
+			expect(continuityPreviewModalMock.props).toMatchObject({ tabId: 'tab-2' });
+			// A fresh mount per target, so a preview of one tab is never shown for another.
+			expect(continuityPreviewModalMock.mounts).toBe(2);
+			unmount();
+		});
+	});
+
 	describe('prop interface changes', () => {
 		it('does not require sessions prop', () => {
 			const props = createDefaultProps();
@@ -710,5 +809,50 @@ describe('AppModals (Tier 1B self-sourcing)', () => {
 			const { unmount } = render(<AppModals {...props} />);
 			unmount();
 		});
+	});
+});
+
+describe('AppModals: Delegation Graph', () => {
+	beforeEach(() => {
+		delegationGraphModalMock.props = undefined;
+		useModalStore.getState().closeAll();
+	});
+
+	it('is not mounted until the modal store opens it', () => {
+		const { unmount } = render(<AppModals {...createDefaultProps()} />);
+
+		expect(screen.queryByTestId('delegation-graph-modal-stub')).not.toBeInTheDocument();
+		unmount();
+	});
+
+	it('mounts from the modal store alone, with the scope it was opened on', async () => {
+		const { unmount } = render(<AppModals {...createDefaultProps()} />);
+
+		act(() => {
+			useModalStore
+				.getState()
+				.openModal('delegationGraph', { scope: { kind: 'group', groupId: 'group-1' } });
+		});
+
+		expect(await screen.findByTestId('delegation-graph-modal-stub')).toBeInTheDocument();
+		expect(delegationGraphModalMock.props?.scope).toEqual({ kind: 'group', groupId: 'group-1' });
+		expect(delegationGraphModalMock.props?.theme).toBe(mockTheme);
+		unmount();
+	});
+
+	it('closes through the modal store', async () => {
+		const { unmount } = render(<AppModals {...createDefaultProps()} />);
+		act(() => {
+			useModalStore.getState().openModal('delegationGraph');
+		});
+		await screen.findByTestId('delegation-graph-modal-stub');
+
+		act(() => {
+			(delegationGraphModalMock.props?.onClose as () => void)();
+		});
+
+		expect(useModalStore.getState().isOpen('delegationGraph')).toBe(false);
+		expect(screen.queryByTestId('delegation-graph-modal-stub')).not.toBeInTheDocument();
+		unmount();
 	});
 });

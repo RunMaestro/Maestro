@@ -10,6 +10,30 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 	withMaestroClient: vi.fn(),
 }));
 
+// The saved sources `--model-source` is checked against. Mocked so the real settings
+// file is never read.
+vi.mock('../../../cli/services/storage', () => ({
+	readLocalModelEndpoints: vi.fn(() => [
+		{
+			id: 'ep-ollama',
+			name: 'Ollama',
+			kind: 'ollama',
+			baseUrl: 'http://127.0.0.1:11434',
+			enabled: true,
+		},
+	]),
+	// The harness tier defaults `--model auto` is judged against.
+	readHarnessTierDefaults: vi.fn(() => ({})),
+	// `--group` is resolved and its defaults read from the stored group list.
+	readGroups: vi.fn(() => []),
+	resolveGroupId: vi.fn((id: string) => id),
+	// `--peer` names an agent the way every agent flag does.
+	resolveAgentId: vi.fn((ref: string) => {
+		if (ref === 'ghost') throw new Error('Agent not found: ghost');
+		return `agent-${ref}`;
+	}),
+}));
+
 // Mock formatter
 vi.mock('../../../cli/output/formatter', () => ({
 	formatError: vi.fn((msg) => `Error: ${msg}`),
@@ -19,6 +43,7 @@ vi.mock('../../../cli/output/formatter', () => ({
 import { createAgent, CREATE_AGENT_TYPES } from '../../../cli/commands/create-agent';
 import { AGENT_IDS } from '../../../shared/agentIds';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
+import { readGroups, readHarnessTierDefaults, resolveGroupId } from '../../../cli/services/storage';
 import { formatError, formatSuccess } from '../../../cli/output/formatter';
 
 describe('create-agent command', () => {
@@ -264,6 +289,276 @@ describe('create-agent command', () => {
 			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('Invalid --env format'));
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
+
+		it('refuses a --gateway-url that is not a URL, by name', async () => {
+			await createAgent('Bad', { cwd: '/tmp', type: 'claude-code', gatewayUrl: 'not a url' });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringMatching(/^--gateway-url: .*not a URL/)
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('refuses a --gateway-url for a provider that cannot use one', async () => {
+			await createAgent('Bad', {
+				cwd: '/tmp',
+				type: 'copilot-cli',
+				gatewayUrl: 'http://127.0.0.1:8787',
+				json: true,
+			});
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('Copilot CLI reads a base URL only for a BYOK provider');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
+	describe('--gateway-url', () => {
+		let sentPayload: Record<string, unknown>;
+
+		beforeEach(() => {
+			sentPayload = {};
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload) => {
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_session_result',
+							success: true,
+							sessionId: 'gw-1',
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+		});
+
+		it('sends the normalized gateway, as the New Agent Models tab stores it', async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'claude-code',
+				gatewayUrl: ' http://127.0.0.1:8787/ ',
+			});
+
+			expect(sentPayload.gatewayUrl).toBe('http://127.0.0.1:8787');
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('sends no gateway for "none"', async () => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', gatewayUrl: 'none' });
+
+			expect(sentPayload).not.toHaveProperty('gatewayUrl');
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('--model-source', () => {
+		let sentPayload: Record<string, unknown>;
+		const QWEN = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+		beforeEach(() => {
+			sentPayload = {};
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload) => {
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_session_result',
+							success: true,
+							sessionId: 'ro-1',
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+		});
+
+		it('sends the target the New Agent picker would store, at its default context', async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'claude-code',
+				modelSource: 'ep-ollama:qwen3:latest',
+			});
+
+			expect(sentPayload.runOn).toEqual({ ...QWEN, contextTokens: 40_960 });
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'  Model source: ep-ollama:qwen3:latest (context 40960 tokens)'
+			);
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('starts the target at the context its source reports for the model', async () => {
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload) => {
+						if (payload.type === 'local_models_endpoint_models') {
+							expect(payload.endpoint).toBe('ep-ollama');
+							return Promise.resolve({
+								success: true,
+								result: {
+									ok: true,
+									models: [{ id: 'qwen3:latest', contextTokens: 262_144 }],
+								},
+							});
+						}
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_session_result',
+							success: true,
+							sessionId: 'ro-1',
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'claude-code',
+				modelSource: 'ep-ollama:qwen3:latest',
+			});
+
+			expect(sentPayload.runOn).toEqual({ ...QWEN, contextTokens: 262_144 });
+		});
+
+		it('sends the context it is given, and reports the target in JSON', async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'codex',
+				modelSource: 'ep-ollama:qwen3:latest',
+				modelSourceContext: '131072',
+				json: true,
+			});
+
+			const target = { ...QWEN, contextTokens: 131_072 };
+			expect(sentPayload.runOn).toEqual(target);
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: true,
+				runOn: target,
+			});
+		});
+
+		it.each([[{ modelSource: 'provider' }], [{}]])(
+			'sends no target for the provider (%j): it is the absence of one',
+			async (flags) => {
+				await createAgent('Agent', { cwd: '/tmp', type: 'claude-code', ...flags, json: true });
+
+				expect(sentPayload).not.toHaveProperty('runOn');
+				expect(JSON.parse(consoleSpy.mock.calls[0][0])).not.toHaveProperty('runOn');
+				expect(processExitSpy).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each([
+			['a spelling that is not a target', { modelSource: 'qwen3' }, '--model-source:'],
+			['a source id that names nothing', { modelSource: 'ep-typo:qwen3' }, 'No source has the id'],
+			[
+				'a context under the agent minimum',
+				{ modelSource: 'ep-ollama:qwen3', modelSourceContext: '8192' },
+				'at least 40960 tokens',
+			],
+			['a context with no target', { modelSourceContext: '65536' }, 'Pass --model-source'],
+			[
+				'a gateway beside a source target',
+				{ modelSource: 'ep-ollama:qwen3', gatewayUrl: 'http://127.0.0.1:8787' },
+				'--gateway-url: Not applied while the model source is a Local Models source',
+			],
+		])('refuses %s before it reaches the app', async (_name, flags, expected) => {
+			await createAgent('Bad', { cwd: '/tmp', type: 'claude-code', ...flags });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining(expected));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('refuses a source for a provider with no recipe, with the reason, in JSON', async () => {
+			await createAgent('Bad', {
+				cwd: '/tmp',
+				type: 'gemini-cli',
+				modelSource: 'ep-ollama:qwen3',
+				json: true,
+			});
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('speaks only the Gemini API');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
+	// `--model auto`: the Auto choice of the New Agent model picker. Stored as
+	// the word, and only for a provider Auto can act on.
+	describe('--model auto', () => {
+		let sentPayload: Record<string, unknown>;
+
+		beforeEach(() => {
+			sentPayload = {};
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload) => {
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_session_result',
+							success: true,
+							sessionId: 'auto-1',
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+		});
+
+		/** Run a call that must be refused before it reaches the app. */
+		async function refused(flags: Parameters<typeof createAgent>[1]) {
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+			await expect(createAgent('Bad', flags)).rejects.toThrow('process.exit');
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		}
+
+		it.each(['auto', 'Auto'])('sends %s as the word auto for claude-code', async (model) => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'claude-code', model });
+
+			expect(sentPayload.customModel).toBe('auto');
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('leaves a named model as it was typed', async () => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'claude-code', model: 'Opus' });
+
+			expect(sentPayload.customModel).toBe('Opus');
+			expect(readHarnessTierDefaults).not.toHaveBeenCalled();
+		});
+
+		it('refuses it by name for a provider Auto cannot act on', async () => {
+			await refused({ cwd: '/tmp', type: 'opencode', model: 'auto' });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringMatching(/^--model auto: Auto would change nothing for this agent/)
+			);
+		});
+
+		it('refuses it as JSON with --json', async () => {
+			await refused({ cwd: '/tmp', type: 'opencode', model: 'auto', json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: false,
+				error: expect.stringMatching(/^--model auto: /),
+			});
+		});
+
+		it('allows it for that provider when a harness default maps a tier', async () => {
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({
+				opencode: { medium: { type: 'provider-model', model: 'some-model' } },
+			});
+
+			await createAgent('Agent', { cwd: '/tmp', type: 'opencode', model: 'auto' });
+
+			expect(sentPayload.customModel).toBe('auto');
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('error handling', () => {
@@ -304,6 +599,352 @@ describe('create-agent command', () => {
 			expect(parsed.success).toBe(false);
 			expect(parsed.error).toBe('Connection refused');
 		});
+	});
+
+	describe('group defaults', () => {
+		const GROUP = {
+			id: 'group-1',
+			name: 'Work',
+			emoji: '💼',
+			collapsed: false,
+			defaults: {
+				toolType: 'codex',
+				projectRoot: '/work/api',
+				customModel: 'gpt-5',
+				sessionSshRemoteConfig: { enabled: false, remoteId: null },
+			},
+		};
+		let sentPayload: Record<string, unknown>;
+
+		beforeEach(() => {
+			sentPayload = {};
+			vi.mocked(resolveGroupId).mockImplementation((id: string) => id);
+			vi.mocked(readGroups).mockReturnValue([GROUP] as never);
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockImplementation((payload) => {
+						sentPayload = payload;
+						return Promise.resolve({
+							type: 'create_session_result',
+							success: true,
+							sessionId: 'id-1',
+							seededFromGroup: 'group-1',
+							skipped: ['Model Source: the source is on this machine'],
+						});
+					}),
+				};
+				return action(mockClient as never);
+			});
+		});
+
+		it('sends the resolved group id, so the app can seed from it', async () => {
+			vi.mocked(resolveGroupId).mockReturnValue('group-1');
+
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', group: 'group-' });
+
+			expect(resolveGroupId).toHaveBeenCalledWith('group-');
+			expect(sentPayload.groupId).toBe('group-1');
+			expect(sentPayload).not.toHaveProperty('seedFromGroup');
+		});
+
+		it('reports the group it seeded from in JSON, and what it left out', async () => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', group: 'group-1', json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: true,
+				seededFromGroup: 'group-1',
+				seedSkipped: ['Model Source: the source is on this machine'],
+			});
+		});
+
+		it('reports no group when the agent was not seeded', async () => {
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				const mockClient = {
+					sendCommand: vi.fn().mockResolvedValue({
+						type: 'create_session_result',
+						success: true,
+						sessionId: 'id-2',
+					}),
+				};
+				return action(mockClient as never);
+			});
+
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', json: true });
+
+			const printed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(printed.seededFromGroup).toBeNull();
+			expect(printed).not.toHaveProperty('seedSkipped');
+		});
+
+		it('says so in the human output, and names what was not applied', async () => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', group: 'group-1' });
+
+			const lines = consoleSpy.mock.calls.map((call) => String(call[0]));
+			expect(lines).toContainEqual(expect.stringContaining('Group defaults: from "Work"'));
+			expect(lines).toContainEqual(
+				expect.stringContaining('Not applied: Model Source: the source is on this machine')
+			);
+		});
+
+		it('sends seedFromGroup: false for --no-group-defaults', async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'codex',
+				group: 'group-1',
+				groupDefaults: false,
+			});
+
+			expect(sentPayload.groupId).toBe('group-1');
+			expect(sentPayload.seedFromGroup).toBe(false);
+		});
+
+		it('does not send a refusal to seed when there is no group', async () => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', groupDefaults: false });
+
+			expect(sentPayload).not.toHaveProperty('seedFromGroup');
+		});
+
+		it("takes the group's provider when --type was not typed", async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'claude-code',
+				typeExplicit: false,
+				group: 'group-1',
+			});
+
+			expect(sentPayload.toolType).toBe('codex');
+		});
+
+		it("keeps the provider that was typed, over the group's", async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'claude-code',
+				typeExplicit: true,
+				group: 'group-1',
+			});
+
+			expect(sentPayload.toolType).toBe('claude-code');
+		});
+
+		it('keeps the default provider when --no-group-defaults is given', async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'claude-code',
+				typeExplicit: false,
+				group: 'group-1',
+				groupDefaults: false,
+			});
+
+			expect(sentPayload.toolType).toBe('claude-code');
+		});
+
+		it("uses the group's working directory when --cwd is not given", async () => {
+			await createAgent('Agent', { type: 'codex', group: 'group-1' });
+
+			expect(sentPayload.cwd).toBe('/work/api');
+		});
+
+		it('prefers --cwd to the group working directory', async () => {
+			await createAgent('Agent', { cwd: '/tmp/mine', type: 'codex', group: 'group-1' });
+
+			expect(sentPayload.cwd).toBe('/tmp/mine');
+		});
+
+		it('passes a remote working directory as stored, not made absolute', async () => {
+			vi.mocked(readGroups).mockReturnValue([
+				{
+					...GROUP,
+					defaults: {
+						projectRoot: 'work/api',
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					},
+				},
+			] as never);
+
+			await createAgent('Agent', { type: 'claude-code', group: 'group-1' });
+
+			expect(sentPayload.cwd).toBe('work/api');
+		});
+
+		it('refuses a create with no --cwd and no group working directory', async () => {
+			vi.mocked(readGroups).mockReturnValue([
+				{ ...GROUP, defaults: { customModel: 'x' } },
+			] as never);
+
+			await createAgent('Agent', { type: 'codex', group: 'group-1' });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('No working directory'));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('refuses a create with no --cwd and no group at all', async () => {
+			await createAgent('Agent', { type: 'codex' });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--cwd'));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('refuses a group that does not exist', async () => {
+			vi.mocked(resolveGroupId).mockImplementation(() => {
+				throw new Error('Group not found: nope');
+			});
+
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex', group: 'nope' });
+
+			expect(formatError).toHaveBeenCalledWith('Group not found: nope');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it("lays --ssh-cwd and --sync-history-to-remote over the group's remote", async () => {
+			vi.mocked(readGroups).mockReturnValue([
+				{
+					...GROUP,
+					defaults: { sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' } },
+				},
+			] as never);
+
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'codex',
+				group: 'group-1',
+				sshCwd: '/srv/app',
+				syncHistoryToRemote: 'true',
+			});
+
+			expect(sentPayload.sessionSshRemoteConfig).toEqual({
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/srv/app',
+				syncHistory: true,
+			});
+		});
+
+		it('still requires --ssh-remote for --sync-history-to-remote when the group has none', async () => {
+			await createAgent('Agent', {
+				cwd: '/tmp',
+				type: 'codex',
+				group: 'group-1',
+				syncHistoryToRemote: 'true',
+			});
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('--sync-history-to-remote requires --ssh-remote')
+			);
+		});
+
+		it('does not read the stored groups for a create with no --group', async () => {
+			await createAgent('Agent', { cwd: '/tmp', type: 'codex' });
+
+			expect(readGroups).not.toHaveBeenCalled();
+			expect(resolveGroupId).not.toHaveBeenCalled();
+		});
+	});
+});
+
+// The New Agent dialog has a Peers tab; `create-agent` had no peer flag, so an
+// agent could not be created with its team. The rows are written after the
+// create, through the message `update-agent --peer` sends.
+describe('create-agent command: peers', () => {
+	let consoleSpy: MockInstance;
+	let consoleErrorSpy: MockInstance;
+	let processExitSpy: MockInstance;
+
+	/** Answer the create, then the peer write, recording both messages. */
+	function mockCreate(peerResult: Record<string, unknown> = { success: true }) {
+		const sent: Array<Record<string, unknown>> = [];
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({
+				sendCommand: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+					sent.push(payload);
+					return Promise.resolve(
+						payload.type === 'create_session'
+							? { type: 'create_session_result', success: true, sessionId: 'new-id-123' }
+							: peerResult
+					);
+				}),
+			} as never)
+		);
+		return sent;
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+	});
+
+	it('creates the agent, then writes its peers through the update-agent message', async () => {
+		const sent = mockCreate();
+
+		await createAgent('Lead', {
+			cwd: '/tmp/project',
+			type: 'claude-code',
+			peer: ['scout:rw'],
+			peerNote: ['scout:reads the logs'],
+			groupPeers: 'r',
+			json: true,
+		});
+
+		expect(sent.map((message) => message.type)).toEqual([
+			'create_session',
+			'update_session_config',
+		]);
+		expect(sent[1]).toEqual({
+			type: 'update_session_config',
+			sessionId: 'new-id-123',
+			configPatch: {
+				peerAgentEdits: {
+					upsert: [{ sessionId: 'agent-scout', read: true, write: true }],
+					notes: [{ sessionId: 'agent-scout', description: 'reads the logs' }],
+				},
+				groupPeerAccess: { read: true, write: false },
+			},
+		});
+		expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toMatchObject({
+			success: true,
+			agentId: 'new-id-123',
+			peers: { groupPeerAccess: { read: true, write: false } },
+		});
+		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	it('sends no second message when no peer flag was passed', async () => {
+		const sent = mockCreate();
+		await createAgent('Solo', { cwd: '/tmp/project', type: 'claude-code', peer: [] });
+		expect(sent.map((message) => message.type)).toEqual(['create_session']);
+	});
+
+	it('creates nothing when a peer flag is misspelled or names no agent', async () => {
+		const sent = mockCreate();
+
+		await createAgent('Lead', { cwd: '/tmp/project', type: 'claude-code', peer: ['scout'] });
+		await createAgent('Lead', { cwd: '/tmp/project', type: 'claude-code', peer: ['ghost:rw'] });
+
+		// The flag is read before the create, so a typo costs no agent.
+		expect(sent).toEqual([]);
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--peer expects'));
+		expect(formatError).toHaveBeenCalledWith('Agent not found: ghost');
+	});
+
+	it('says the agent exists when the app refuses its peers, and exits non-zero', async () => {
+		mockCreate({ success: false, error: 'A peer must be another live agent.' });
+
+		await createAgent('Lead', {
+			cwd: '/tmp/project',
+			type: 'claude-code',
+			peer: ['scout:rw'],
+			json: true,
+		});
+
+		const out = JSON.parse(String(consoleSpy.mock.calls[0][0]));
+		expect(out).toMatchObject({ success: false, agentId: 'new-id-123' });
+		// Both halves: what was made, and what was not.
+		expect(out.error).toContain('new-id-123');
+		expect(out.error).toContain('A peer must be another live agent.');
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(consoleErrorSpy).not.toHaveBeenCalled();
 	});
 });
 
@@ -371,6 +1012,7 @@ describe('create-agent Grok', () => {
 			agentId: 'grok-agent-1',
 			name: 'Grok Worker',
 			type: 'grok',
+			seededFromGroup: null,
 			background: true,
 		});
 	});

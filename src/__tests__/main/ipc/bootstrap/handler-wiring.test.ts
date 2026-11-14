@@ -73,7 +73,7 @@ describe('IPC handler wiring parity', () => {
 	it('uses the composed post-flush Pianola consumer in the live bootstrap', () => {
 		const source = stripComments(readFileSync(BOOTSTRAP_INDEX, 'utf8'));
 		expect(source).toContain(
-			'onSessionsPersisted: pianolaPersistenceConsumer(deps.getPianolaSupervisor)'
+			'pianolaPersistenceConsumer(deps.getPianolaSupervisor)(added, current, removedIds)'
 		);
 		expect(source).toContain("from './pianola-persistence'");
 	});

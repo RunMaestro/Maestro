@@ -291,6 +291,8 @@ export type NewAITabWithPromptCallback = (
 	background?: boolean,
 	/** Create the tab with no chip in the strip (see `AITab.hidden`). */
 	hidden?: boolean,
+	/** Position in the originating consult chain, when dispatch supplies one. */
+	consultChain?: import('../consultBudget').ConsultChain,
 	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
 	mentionRouting?: MentionRouting,
 	control?: PianolaNewTabControl
@@ -309,6 +311,7 @@ export interface PianolaQueueItem {
 	readOnlyMode?: boolean;
 	crossAgentMention?: boolean;
 	crossAgentOnly?: boolean;
+	consultChain?: import('../consultBudget').ConsultChain;
 	mentionRouting?: MentionRouting;
 	turnSettings?: { model?: string; effort?: string };
 	paused?: boolean;

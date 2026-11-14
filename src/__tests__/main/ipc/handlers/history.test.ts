@@ -1646,6 +1646,22 @@ describe('history IPC handlers', () => {
 	});
 
 	describe('history:updateSessionName', () => {
+		it('forwards native provider and owning agent', async () => {
+			await handlers.get('history:updateSessionName')!(
+				{} as any,
+				'native',
+				'Owned',
+				'codex',
+				'agent'
+			);
+			expect(mockHistoryManager.updateSessionNameByClaudeSessionId).toHaveBeenCalledWith(
+				'native',
+				'Owned',
+				'codex',
+				'agent'
+			);
+		});
+
 		it('should update session name for matching entries', async () => {
 			vi.mocked(mockHistoryManager.updateSessionNameByClaudeSessionId).mockReturnValue(5);
 
@@ -1654,7 +1670,9 @@ describe('history IPC handlers', () => {
 
 			expect(mockHistoryManager.updateSessionNameByClaudeSessionId).toHaveBeenCalledWith(
 				'agent-session-123',
-				'New Session Name'
+				'New Session Name',
+				undefined,
+				undefined
 			);
 			expect(result).toBe(5);
 		});

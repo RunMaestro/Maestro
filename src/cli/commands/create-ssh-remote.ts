@@ -5,6 +5,7 @@ import { readSshRemotes, writeSshRemotes, writeSettingValue } from '../services/
 import { formatError, formatSuccess } from '../output/formatter';
 import type { SshRemoteConfig } from '../../shared/types';
 import { parseSshOptionAssignments } from '../../shared/sshOptions';
+import { ExitCode, exitWith } from '../exit-codes';
 import { parseCliBool } from '../utils/parse';
 import { federationFieldFor, isFederationRemote } from '../../shared/federationRemote';
 
@@ -32,7 +33,7 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 		} else {
 			console.error(formatError(msg));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	// Parse port
@@ -46,7 +47,7 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 			} else {
 				console.error(formatError(msg));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	}
 
@@ -63,7 +64,7 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 				} else {
 					console.error(formatError(msg));
 				}
-				process.exit(1);
+				exitWith(ExitCode.GeneralError);
 			}
 			remoteEnv[entry.slice(0, eqIndex)] = entry.slice(eqIndex + 1);
 		}
@@ -78,7 +79,7 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 		} else {
 			console.error(formatError(parsedSshOptions.error));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	let federation: boolean | undefined;
@@ -92,7 +93,7 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 			} else {
 				console.error(formatError(msg));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	}
 
@@ -121,7 +122,7 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 		} else {
 			console.error(formatError(msg));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	if (!config.host.trim()) {
@@ -131,7 +132,7 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 		} else {
 			console.error(formatError(msg));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	// Read, append, write

@@ -5,7 +5,9 @@
  * the running Maestro app. This module owns the app-facing half: it turns the
  * pure {@link createMcpToolServer}'s `listTools`/`callTool` callbacks into
  * `plugins_list_tools` / `plugins_call_tool` requests over the desktop
- * WebSocket, and maintains the MCP-name <-> namespaced-toolId map.
+ * WebSocket, and maintains the MCP-name <-> namespaced-toolId map. The app
+ * may also offer core tools (the token proxy's retrieve tool) to the agent
+ * its run proof names, with the server `instructions` that go with them.
  *
  * The WS `request` fn is injected (the command supplies a real `MaestroClient`),
  * so this is unit-testable with a fake transport. The newline-delimited stdio
@@ -33,11 +35,20 @@ interface AppToolEntry {
 	inputSchema?: Record<string, unknown>;
 }
 
+/** The app's `plugins_list_tools_result`. */
+interface AppToolListResponse {
+	tools?: AppToolEntry[];
+	/** The MCP server's `instructions`, present when a core tool is offered. */
+	instructions?: string;
+}
+
 /** Private desktop reply; the proof is never part of a result. */
 interface AppToolCallResponse {
 	ok?: boolean;
 	result?: unknown;
 	error?: string;
+	/** A core tool's own failure, written for the model; shown even on a verified call. */
+	toolError?: string;
 	blocked?: boolean;
 	reason?: string;
 }
@@ -72,20 +83,26 @@ export function createMcpBridge(deps: McpBridgeDeps): McpBridge {
 	// MCP name -> namespaced toolId, rebuilt on every tools/list. MCP clients list
 	// before they call, so this is always fresh for a subsequent tools/call.
 	const nameToId = new Map<string, string>();
+	// From the last tools/list; the app sends them only with a core tool.
+	let appInstructions: string | undefined;
 
 	async function listTools(): Promise<McpToolDef[]> {
 		let entries: AppToolEntry[] = [];
 		try {
-			const res = await deps.request<{ tools?: AppToolEntry[] }>(
-				// The run proof lets the host record what THIS run was
-				// shown, so listing is evidence the host observed itself.
-				{ type: 'plugins_list_tools', ...(deps.runToken ? { runToken: deps.runToken } : {}) },
+			// The proof names the calling agent, so the app can offer its core
+			// tools and record what THIS run was shown. An invalid proof is not
+			// sent: it would be offered none anyway.
+			const res = await deps.request<AppToolListResponse>(
+				{ type: 'plugins_list_tools', ...(proofValid ? { runToken } : {}) },
 				'plugins_list_tools_result'
 			);
 			entries = Array.isArray(res.tools) ? res.tools : [];
+			appInstructions =
+				typeof res.instructions === 'string' && res.instructions ? res.instructions : undefined;
 		} catch (e) {
 			// App unreachable / not running: advertise zero tools rather than failing
 			// the agent's MCP handshake.
+			appInstructions = undefined;
 			deps.log(
 				proofConfigured
 					? '[mcp] tools/list unavailable'
@@ -152,6 +169,9 @@ export function createMcpBridge(deps: McpBridgeDeps): McpBridge {
 				isError: true,
 			};
 		}
+		if (!res.ok && typeof res.toolError === 'string' && res.toolError) {
+			return { content: [{ type: 'text', text: `Error: ${res.toolError}` }], isError: true };
+		}
 		if (!res.ok) {
 			return {
 				content: [
@@ -171,6 +191,12 @@ export function createMcpBridge(deps: McpBridgeDeps): McpBridge {
 		serverInfo: deps.serverInfo,
 		listTools,
 		callTool,
+		// The app decides what is offered, so ask it once at initialize. A list
+		// that fails leaves no instructions, never a failed handshake.
+		instructions: async () => {
+			await listTools();
+			return appInstructions;
+		},
 		onError: (e, ctx) =>
 			deps.log(
 				proofConfigured

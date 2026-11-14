@@ -30,6 +30,11 @@ import {
 	type FeedbackIssueMatch,
 } from '../../shared/feedback';
 import {
+	isSecretScreenRefusal,
+	secretScreenReportLines,
+	type SecretScreenFields,
+} from '../../shared/secretScan';
+import {
 	describeFeedbackAccountStatus,
 	isFeedbackAccountUsable,
 	type FeedbackAccountsResponse,
@@ -62,10 +67,12 @@ interface SubmitOptions extends JsonOption {
 	attach?: string[];
 	supportPackage?: boolean;
 	force?: boolean;
+	allowSecrets?: boolean;
 }
 
 interface SubscribeOptions extends JsonOption {
 	comment?: string;
+	allowSecrets?: boolean;
 }
 
 /** Print a failure in the caller's format and exit with `code`. */
@@ -76,6 +83,33 @@ function fail(message: string, options: JsonOption, code: ExitCode, extra?: obje
 		console.error(`Error: ${message}`);
 	}
 	return exitWith(code);
+}
+
+/**
+ * Exit on a secret-screen refusal: the masked findings, and how to send anyway.
+ * Returns when `result` is not one, so the caller's ordinary failure path runs.
+ */
+function failOnSecretFindings(
+	result: SecretScreenFields & { error?: string },
+	options: JsonOption
+): void {
+	if (!isSecretScreenRefusal(result)) return;
+	const message = result.error || 'Possible secrets found';
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: false,
+				error: message,
+				code: result.code,
+				secretFindings: result.secretFindings,
+				...(result.secretScreenNote ? { secretScreenNote: result.secretScreenNote } : {}),
+			})
+		);
+	} else {
+		console.error(`Error: ${message}`);
+		for (const line of secretScreenReportLines(result)) console.error(line);
+	}
+	exitWith(ExitCode.GeneralError);
 }
 
 function failFromError(error: unknown, options: JsonOption): never {
@@ -396,9 +430,10 @@ export async function feedbackSubmit(options: SubmitOptions): Promise<void> {
 		additionalContext: options.context,
 		attachments,
 		includeDebugPackage: options.supportPackage === true,
+		...(options.allowSecrets === true ? { allowSecrets: true } : {}),
 	};
 
-	let result: { success: boolean; issueUrl?: string; error?: string };
+	let result: SecretScreenFields & { success: boolean; issueUrl?: string; error?: string };
 	try {
 		result = await withMaestroClient((client) =>
 			client.sendCommand(
@@ -410,6 +445,7 @@ export async function feedbackSubmit(options: SubmitOptions): Promise<void> {
 	} catch (error) {
 		failFromError(error, options);
 	}
+	failOnSecretFindings(result, options);
 	if (!result.success) {
 		fail(result.error || 'Failed to file feedback', options, ExitCode.GeneralError);
 	}
@@ -427,11 +463,16 @@ export async function feedbackSubscribe(issue: string, options: SubscribeOptions
 	if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
 		fail(`"${issue}" is not an issue number.`, options, ExitCode.InvalidUsage);
 	}
-	let result: { success: boolean; error?: string };
+	let result: SecretScreenFields & { success: boolean; error?: string };
 	try {
 		result = await withMaestroClient((client) =>
 			client.sendCommand(
-				{ type: 'feedback_subscribe', issueNumber, comment: options.comment },
+				{
+					type: 'feedback_subscribe',
+					issueNumber,
+					comment: options.comment,
+					...(options.allowSecrets === true ? { allowSecrets: true } : {}),
+				},
 				'feedback_subscribe_result',
 				GH_TIMEOUT_MS
 			)
@@ -439,6 +480,7 @@ export async function feedbackSubscribe(issue: string, options: SubscribeOptions
 	} catch (error) {
 		failFromError(error, options);
 	}
+	failOnSecretFindings(result, options);
 	if (!result.success) {
 		fail(result.error || 'Failed to subscribe to issue', options, ExitCode.GeneralError);
 	}

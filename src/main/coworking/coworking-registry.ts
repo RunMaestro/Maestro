@@ -23,6 +23,8 @@ import type {
 } from './coworking-types';
 import { formatBrowserId, parseBrowserId } from './coworking-types';
 import { DEFAULT_BROWSER_CONFIRM_POLICY } from '../../shared/coworkingBrowser';
+import type { CoworkingBrowserPolicies } from '../../shared/coworkingBrowser';
+import type { ToolType } from '../../shared/types';
 
 type ChangeListener = () => void;
 
@@ -47,6 +49,7 @@ class CoworkingRegistry {
 	// from this so the renderer's approval gate cannot be skipped by a stale or
 	// tampered renderer-local settings read.
 	private browserConfirmPolicy = new Map<string, BrowserConfirmPolicy>();
+	private providerPolicies = new Map<string, CoworkingBrowserPolicies>();
 
 	/** Replace the full set of terminals for a given session. Used on initial sync from renderer. */
 	syncSessionTerminals(sessionId: string, records: CoworkingTerminalRecord[]): void {
@@ -76,6 +79,7 @@ class CoworkingRegistry {
 
 	/** Remove all records for a given session (e.g. when the agent is deleted). */
 	removeSession(sessionId: string): void {
+		this.providerPolicies.delete(sessionId);
 		let mutated = false;
 		for (const [key, rec] of this.records) {
 			if (rec.sessionId === sessionId) {
@@ -131,10 +135,14 @@ class CoworkingRegistry {
 		inputs: CoworkingBrowserInput[],
 		interactionEnabled: boolean,
 		agentType?: string,
-		confirmPolicy?: BrowserConfirmPolicy
+		confirmPolicy?: BrowserConfirmPolicy,
+		providerPolicies?: CoworkingBrowserPolicies
 	): void {
+		if (providerPolicies) this.providerPolicies.set(sessionId, providerPolicies);
+		else this.providerPolicies.delete(sessionId);
 		this.browserInteraction.set(sessionId, interactionEnabled);
 		if (agentType !== undefined) this.sessionAgentType.set(sessionId, agentType);
+		else this.sessionAgentType.delete(sessionId);
 		if (confirmPolicy !== undefined) this.browserConfirmPolicy.set(sessionId, confirmPolicy);
 		let idMap = this.browserIdByTabUuid.get(sessionId);
 		if (!idMap) {
@@ -222,13 +230,18 @@ class CoworkingRegistry {
 
 	/** Whether browser interaction tools are permitted for a session, mirrored
 	 *  from the per-agent setting via syncSessionBrowsers. Defaults to false. */
-	isBrowserInteractionEnabled(sessionId: string): boolean {
+	isBrowserInteractionEnabled(sessionId: string, provider?: ToolType): boolean {
+		if (provider && this.providerPolicies.has(sessionId)) {
+			return this.providerPolicies.get(sessionId)?.[provider]?.interactionEnabled ?? false;
+		}
+		if (provider && provider !== this.getAgentType(sessionId)) return false;
 		return this.browserInteraction.get(sessionId) ?? false;
 	}
 
 	/** Per-call confirm policy for a session's agent, mirrored from the per-agent
 	 *  setting via syncSessionBrowsers. Defaults to the shared default policy. */
-	getBrowserConfirmPolicy(sessionId: string): BrowserConfirmPolicy {
+	getBrowserConfirmPolicy(sessionId: string, provider?: ToolType): BrowserConfirmPolicy {
+		if (provider) return this.providerPolicies.get(sessionId)?.[provider]?.confirmPolicy ?? 'all';
 		return this.browserConfirmPolicy.get(sessionId) ?? DEFAULT_BROWSER_CONFIRM_POLICY;
 	}
 
@@ -240,6 +253,7 @@ class CoworkingRegistry {
 		this.nextBrowserId.clear();
 		this.browserInteraction.clear();
 		this.browserConfirmPolicy.clear();
+		this.providerPolicies.clear();
 		this.sessionAgentType.clear();
 		this.listeners.clear();
 	}

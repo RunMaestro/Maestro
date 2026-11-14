@@ -1,10 +1,19 @@
 import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
+import { formatTranslationRecordCounts } from '../../shared/maestro-lib/translation/context-window';
 // Update agent command - mutate fields on an existing agent in the Maestro
 // desktop app (group assignment, working directory, and SSH execution config).
 //
 // `--group <id>` reuses the existing `move_session_to_group` WS message; pass
 // `--group none` (or `--group ""`) to ungroup. `--cwd <path>` resolves to an
 // absolute path and routes through the `update_session_cwd` WS message.
+//
+// `--peer`, `--peer-note`, `--remove-peer`, `--group-peers` and `--worktree-peers`
+// are the Peers tab: they ride in the `update_session_config` patch as
+// `peerAgentEdits` (a patch on the explicit rows, merged by the app onto the
+// rows it holds) and the two derived grants. See `services/peer-flags.ts`.
+//
+// The editable setting flags and the SSH flags are read by
+// `services/agent-setting-flags.ts`, which `update-group-settings` shares.
 //
 // `--ssh-remote`, `--ssh-cwd`, and `--sync-history-to-remote` build a partial
 // patch sent via the `update_session_ssh` WS message, which merges the patch
@@ -14,158 +23,88 @@ import type { TranslationReport } from '../../shared/maestro-lib/translation/typ
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId, resolveGroupId, getSessionById } from '../services/storage';
-import { formatError, formatSuccess } from '../output/formatter';
-import { toClaudeTokenModeSource, type ClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { ExitCode, exitWith } from '../exit-codes';
+import { formatSuccess, formatError } from '../output/formatter';
 import { AGENT_IDS } from '../../shared/agentIds';
-import { CODEX_TRANSPORTS, isCodexTransport } from '../../shared/codexTransport';
-import { parseCliBool, resolveAgentCwdArg, resolveCliPath } from '../utils/parse';
-import { errorFrameMessage, exitIfMaestroNotRunning } from '../services/session-command';
+import { parseGatewayUrlEdit } from '../../shared/local-models/gateway';
+import {
+	formatRunOnSpec,
+	RUN_ON_PROVIDER_SPEC,
+	runOnGatewayEditProblem,
+	type RunOnSourceTarget,
+} from '../../shared/local-models/run-on';
+import { readRunOnFlags, reportedRunOnFlagContext } from '../services/run-on';
+import {
+	formatBackgroundRequestsSpec,
+	parseBackgroundRequestsEdit,
+	type BackgroundRequests,
+} from '../../shared/local-models/background-requests';
+import {
+	formatTierTargetSpec,
+	parseTierTargetsEdit,
+	TIER_LEVELS,
+	type TierTarget,
+} from '../../shared/modelTiers';
+import { readHarnessTierDefaults, readLocalModelEndpoints } from '../services/storage';
+import { AUTO_MODEL, isAutoModel } from '../../shared/autoModel';
+import { autoModelProblem } from '../../shared/autoTurn';
+import { SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS } from '../../shared/local-models/system-one-agent';
+import {
+	TOKEN_PROXY_RETRIEVAL_DESCRIPTIONS,
+	TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION,
+} from '../../shared/local-models/token-proxy';
+import { applyPeerAgentEdits, peerAccessLabel, type PeerAgentEdits } from '../../shared/peerAgents';
+import type { AdditionalDirectory, PeerAccess } from '../../shared/types';
+import type { EnvParkEdits } from '../../shared/agentConfigExtras';
+import { hasPeerFlags, readPeerFlags, type PeerFlagOptions } from '../services/peer-flags';
+import {
+	buildConfigPatch,
+	buildSshPatch,
+	hasSshFlags,
+	type AgentSettingFlagOptions,
+	type SshFlagOptions,
+} from '../services/agent-setting-flags';
+import { failCommand, failFromError } from '../services/session-command';
+import { errorFrameMessage } from '../services/session-command';
+import { resolveAgentCwdArg, resolveCliPath } from '../utils/parse';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
 const VALID_PROVIDER_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
-interface UpdateAgentOptions {
+// Editable per-session config (the Edit Agent modal fields, plus the Left Bar
+// bookmark) is `AgentSettingFlagOptions`. Empty-string values clear the field;
+// see buildConfigPatch.
+interface UpdateAgentOptions extends PeerFlagOptions, AgentSettingFlagOptions, SshFlagOptions {
 	group?: string;
 	cwd?: string;
-	sshRemote?: string;
-	sshCwd?: string;
-	syncHistoryToRemote?: string;
 	provider?: string;
 	convert?: boolean;
 	force?: boolean;
+	modelSource?: string;
+	modelSourceContext?: string;
 	dryRun?: boolean;
 	acceptTranslationLimitations?: boolean;
 	migration?: 'plan' | 'apply' | 'status' | 'recover' | 'rollback';
 	migrationPlan?: string;
 	translationResource?: string[];
-	// Editable per-session config (the Edit Agent modal fields, plus the Left Bar
-	// bookmark). Empty-string values clear the field; see buildConfigPatch.
-	nudge?: string;
-	newSessionMessage?: string;
-	customPath?: string;
-	customArgs?: string;
-	env?: string[];
-	clearEnv?: boolean;
-	model?: string;
-	effort?: string;
-	contextWindow?: string;
-	tokenSource?: string;
-	maestroPPath?: string;
-	codexTransport?: string;
-	bookmark?: string;
+	projectResources?: boolean;
 	json?: boolean;
 }
 
-function emitError(message: string, options: UpdateAgentOptions): never {
-	if (options.json) {
-		console.log(JSON.stringify({ success: false, error: message }));
-	} else {
-		console.error(formatError(message));
-	}
-	return process.exit(1);
-}
-
-// Parse repeatable `--env KEY=VALUE` flags into a map. The provided set REPLACES
-// the agent's customEnvVars (matching create-agent semantics); use --clear-env to
-// empty it. Throws on a malformed entry.
-function parseEnvVars(entries: string[]): Record<string, string> {
-	const out: Record<string, string> = {};
-	for (const entry of entries) {
-		const eq = entry.indexOf('=');
-		if (eq <= 0) {
-			throw new Error(`Invalid --env "${entry}". Use KEY=VALUE (e.g. FOO=bar).`);
-		}
-		out[entry.slice(0, eq).trim()] = entry.slice(eq + 1);
-	}
-	return out;
-}
-
-// Build the per-session config patch from the editable flags. Only keys the
-// caller touched are included. A `null` value clears the field on the renderer
-// side; for string fields an empty value (e.g. `--nudge ""`) maps to null.
-// `--bookmark` rides along here because it goes through the same allowlisted
-// `update_session_config` message, even though it is UI state rather than a
-// spawn-time setting.
-function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> | undefined {
-	const patch: Record<string, unknown> = {};
-	const strField = (value: string | undefined, key: string) => {
-		if (value === undefined) return;
-		patch[key] = value.trim() === '' ? null : value;
-	};
-
-	strField(options.nudge, 'nudgeMessage');
-	strField(options.newSessionMessage, 'newSessionMessage');
-	strField(options.customPath, 'customPath');
-	strField(options.customArgs, 'customArgs');
-	strField(options.model, 'customModel');
-	strField(options.effort, 'customEffort');
-	strField(options.maestroPPath, 'maestroPPath');
-
-	if (options.bookmark !== undefined) {
-		patch.bookmarked = parseCliBool(options.bookmark, '--bookmark');
-	}
-
-	if (options.clearEnv) {
-		patch.customEnvVars = {};
-	} else if (options.env && options.env.length > 0) {
-		patch.customEnvVars = parseEnvVars(options.env);
-	}
-
-	if (options.contextWindow !== undefined) {
-		const raw = options.contextWindow.trim().toLowerCase();
-		if (raw === '' || raw === 'none' || raw === '0') {
-			patch.customContextWindow = null;
-			// Clearing the value clears its provenance with it.
-			patch.contextWindowSource = null;
-		} else {
-			const n = Number(raw);
-			if (!Number.isFinite(n) || n < 0) {
-				throw new Error(
-					`--context-window expects a positive number, got "${options.contextWindow}"`
-				);
-			}
-			patch.customContextWindow = Math.floor(n);
-			// Typing `--context-window` is unambiguously a deliberate choice, so it
-			// outranks a provider-reported window (finding AD1). No seed to compare
-			// against here, unlike the edit modal.
-			patch.contextWindowSource = 'user-edited';
-		}
-	}
-
-	if (options.tokenSource !== undefined) {
-		const mode = options.tokenSource.trim().toLowerCase();
-		if (mode !== 'api' && mode !== 'tui' && mode !== 'dynamic') {
-			throw new Error(`--token-source expects api, tui, or dynamic, got "${options.tokenSource}"`);
-		}
-		// Map the friendly tri-state to the stored (enableMaestroP, maestroPMode)
-		// pair so every spawn surface reads it consistently. tui -> interactive.
-		const canonical: ClaudeTokenMode = mode === 'tui' ? 'interactive' : mode;
-		const encoded = toClaudeTokenModeSource(canonical);
-		patch.enableMaestroP = encoded.enableMaestroP;
-		patch.maestroPMode = encoded.maestroPMode;
-	}
-
-	if (options.codexTransport !== undefined) {
-		const transport = options.codexTransport.trim().toLowerCase();
-		if (!isCodexTransport(transport)) {
-			throw new Error(
-				`--codex-transport expects ${CODEX_TRANSPORTS.join(' or ')}, got "${options.codexTransport}"`
-			);
-		}
-		// Only the opt-in is stored; `exec` clears the field, matching the Edit
-		// Agent modal, where Standard leaves `codexTransport` unset.
-		patch.codexTransport = transport === 'app-server' ? transport : null;
-	}
-
-	return Object.keys(patch).length > 0 ? patch : undefined;
+// One printed line per change a peer edit made, in the words the Peers tab uses.
+function describePeerAgentEdits(edits: PeerAgentEdits): string[] {
+	return [
+		...(edits.upsert ?? []).map((row) => `Peer ${row.sessionId}: ${peerAccessLabel(row)}`),
+		...(edits.notes ?? []).map(
+			(note) => `Peer note ${note.sessionId}: ${note.description.trim() || '(cleared)'}`
+		),
+		...(edits.remove ?? []).map((id) => `Peer ${id}: removed`),
+	];
 }
 
 export async function updateAgent(agentId: string, options: UpdateAgentOptions): Promise<void> {
-	const sshFlagsPresent =
-		options.sshRemote !== undefined ||
-		options.sshCwd !== undefined ||
-		options.syncHistoryToRemote !== undefined;
+	const sshFlagsPresent = hasSshFlags(options);
 
 	// Build the editable config patch up front so a malformed flag fails before
 	// we touch the running app.
@@ -173,20 +112,27 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 	try {
 		configPatch = buildConfigPatch(options);
 	} catch (error) {
-		emitError(error instanceof Error ? error.message : String(error), options);
+		failFromError(error, options.json);
 	}
+
+	// `--model-source` / `--model-source-context` are read once the agent is: the target is
+	// checked against the agent's provider and builds on the target it has.
+	const runOnFlagsPresent =
+		options.modelSource !== undefined || options.modelSourceContext !== undefined;
 
 	if (
 		options.group === undefined &&
 		options.cwd === undefined &&
 		!sshFlagsPresent &&
 		configPatch === undefined &&
+		!runOnFlagsPresent &&
+		!hasPeerFlags(options) &&
 		options.provider === undefined &&
 		options.migration === undefined
 	) {
-		emitError(
-			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env). Run "maestro-cli update-agent --help" for the full list.',
-			options
+		failCommand(
+			'Specify at least one field to update (e.g. --group, --cwd, --ssh-remote, --nudge, --model, --token-source, --codex-transport, --bookmark, --provider, --env, --env-park, --additional-dir, --retry-on-availability, --gateway-url, --proxy-mode, --proxy-retrieval, --model-source, --tier, --background-requests, --system-one, --peer, --group-peers). Run "maestro-cli update-agent --help" for the full list.',
+			options.json
 		);
 	}
 
@@ -194,13 +140,31 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 	try {
 		sessionId = resolveAgentId(agentId);
 	} catch (error) {
-		emitError(error instanceof Error ? error.message : String(error), options);
+		failFromError(error, options.json);
 	}
 
 	// Read the resolved agent so provider- and token-source-specific rules can
 	// see its current toolType.
 	const session = getSessionById(sessionId);
 	const currentToolType = session?.toolType;
+
+	// `--peer`, `--peer-note`, `--remove-peer`, `--group-peers`, `--worktree-peers`:
+	// the Peers tab. Agents are resolved here, so a name works where an id does,
+	// and the edit is applied to the rows this record holds, so a note on a peer
+	// with no row is refused before it reaches the app. The patch is sent as
+	// typed and the app applies it to the rows it holds.
+	if (hasPeerFlags(options)) {
+		try {
+			const peers = readPeerFlags(options, sessionId);
+			if (peers.peerAgentEdits) {
+				const applied = applyPeerAgentEdits(session?.peerAgents, peers.peerAgentEdits);
+				if (!applied.ok) throw new Error(applied.error);
+			}
+			configPatch = { ...configPatch, ...peers };
+		} catch (error) {
+			failFromError(error, options.json);
+		}
+	}
 
 	// Guard: --token-source only carries meaning for Claude Code. Writing the
 	// maestro-p fields on another provider would be inert and misleading, so
@@ -210,9 +174,9 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		currentToolType !== undefined &&
 		currentToolType !== 'claude-code'
 	) {
-		emitError(
+		failCommand(
 			`--token-source only applies to Claude Code agents; "${sessionId}" is a ${currentToolType} agent.`,
-			options
+			options.json
 		);
 	}
 
@@ -222,37 +186,153 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		currentToolType !== undefined &&
 		currentToolType !== 'codex'
 	) {
-		emitError(
+		failCommand(
 			`--codex-transport only applies to Codex agents; "${sessionId}" is a ${currentToolType} agent.`,
-			options
+			options.json
 		);
 	}
 
+	// Guard: a gateway is refused for a provider that cannot use one and for a
+	// value that is not a URL, with the same function the desktop field uses, so
+	// the CLI cannot store what the launch would then refuse. The stored form is
+	// the normalized one. When the agent's record cannot be read here, the app
+	// runs the same check before it writes.
+	if (typeof configPatch?.gatewayUrl === 'string' && currentToolType !== undefined) {
+		const edit = parseGatewayUrlEdit(currentToolType, configPatch.gatewayUrl);
+		if (!edit.ok) {
+			failCommand(`--gateway-url: ${edit.error}`, options.json);
+		}
+		configPatch.gatewayUrl = edit.gatewayUrl;
+	}
+
+	// `--model-source provider|<source id>:<model>` and `--model-source-context <n>`: the
+	// Models tab's model source picker and its context field. Read into the target the
+	// picker would store, with the provider and the saved sources checked, so the
+	// CLI cannot store a target every launch would refuse. `provider` clears it
+	// (`null` on the wire). The app runs the same check before it writes.
+	if (runOnFlagsPresent) {
+		if (!session) {
+			failCommand(`Agent "${sessionId}" could not be read from the agent store.`, options.json);
+		}
+		// Validate the edit before asking a source for optional default metadata.
+		// Unknown sources, unsupported providers and conflicting flags must not probe.
+		const runOnEdit = readRunOnFlags(options, session);
+		if (runOnEdit.kind === 'refused') failCommand(runOnEdit.error, options.json);
+		if (runOnEdit.kind === 'set') {
+			configPatch = { ...configPatch, runOn: runOnEdit.target ?? null };
+		}
+	}
+
+	// A gateway is not applied to an agent on a source, and the dialog disables
+	// both gateway controls for one. Refused here (and by the app) so the caller
+	// is not told a gateway was set that no launch will use. Clearing is allowed.
+	if (configPatch !== undefined) {
+		const gatewayProblem = runOnGatewayEditProblem(
+			'runOn' in configPatch ? configPatch.runOn : session?.runOn,
+			configPatch
+		);
+		if (gatewayProblem) {
+			failCommand(
+				`${configPatch.tokenProxyMode !== undefined ? '--proxy-mode' : '--gateway-url'}: ${gatewayProblem}`,
+				options.json
+			);
+		}
+	}
+
+	// `--tier`: each target is checked with the function the Edit Agent dialog
+	// saves with, against this agent's provider and the saved sources, so the CLI
+	// cannot store a tier every launch on it would refuse. The patch is sent as
+	// typed; the app runs the same check against the tiers it holds.
+	let tierTargetsAfter = session?.tierTargets;
+	if (configPatch?.tierTargets !== undefined && currentToolType !== undefined) {
+		const edit = parseTierTargetsEdit(currentToolType, configPatch.tierTargets, {
+			base: session?.tierTargets,
+			endpoints: readLocalModelEndpoints(),
+		});
+		if (!edit.ok) failCommand(`--tier ${edit.error}`, options.json);
+		tierTargetsAfter = edit.tierTargets;
+	}
+
+	// `--model auto`: the Auto choice of the Provider tab's model picker. It is
+	// stored as the word, and only for an agent Auto can act on, judged against
+	// the tiers and the model source this same call leaves it with. The picker
+	// does not offer an Auto that would change nothing; the CLI refuses it by
+	// name. The app runs the same check before it writes.
+	if (configPatch !== undefined && isAutoModel(configPatch.customModel)) {
+		if (currentToolType !== undefined) {
+			const problem = autoModelProblem(
+				{
+					toolType: currentToolType,
+					tierTargets: tierTargetsAfter,
+					runOn: 'runOn' in configPatch ? configPatch.runOn : session?.runOn,
+				},
+				readHarnessTierDefaults()
+			);
+			if (problem) failCommand(`--model auto: ${problem}`, options.json);
+		}
+		configPatch.customModel = AUTO_MODEL;
+	}
+
+	// `--background-requests`: the provider, the saved sources and the route the
+	// source serves are checked here. Whether the agent is on the token proxy
+	// needs the proxy's port, which the app checks before it writes.
+	if (
+		configPatch?.backgroundRequests !== undefined &&
+		configPatch.backgroundRequests !== null &&
+		currentToolType !== undefined
+	) {
+		const edit = parseBackgroundRequestsEdit(
+			currentToolType,
+			configPatch.backgroundRequests,
+			readLocalModelEndpoints()
+		);
+		if (!edit.ok) failCommand(`--background-requests: ${edit.error}`, options.json);
+		if (configPatch.tokenProxyMode === 'off' || configPatch.gatewayUrl !== undefined) {
+			failCommand(
+				'--background-requests: background requests are routed by the token proxy, so a target cannot be set in the call that turns the proxy off or sets another gateway.',
+				options.json
+			);
+		}
+	}
+
+	// `--proxy-retrieval on` needs the proxy to compress for the agent. A call
+	// that turns the proxy off or sets another gateway is refused here; the
+	// stored mode against the proxy's port is checked by the app.
+	if (
+		configPatch?.tokenProxyRetrieval === true &&
+		(configPatch.tokenProxyMode === 'off' || configPatch.gatewayUrl !== undefined)
+	) {
+		failCommand(`--proxy-retrieval: ${TOKEN_PROXY_RETRIEVAL_NEEDS_COMPRESSION}`, options.json);
+	}
+
+	// Provider translation is handled separately from settings edits.
 	let providerType: string | undefined;
 	if (options.provider !== undefined) {
 		const requested = options.provider.trim().toLowerCase();
-		if (!VALID_PROVIDER_TYPES.has(requested))
-			emitError(
+		if (!VALID_PROVIDER_TYPES.has(requested)) {
+			failCommand(
 				`Invalid provider "${options.provider}". Must be one of: ${[...VALID_PROVIDER_TYPES].join(', ')}`,
-				options
+				options.json
 			);
+		}
 		providerType = requested;
 	}
 	if (
 		(providerType !== undefined || options.migration !== undefined) &&
 		(configPatch || options.group !== undefined || options.cwd !== undefined || sshFlagsPresent)
 	) {
-		emitError(
+		failCommand(
 			'Provider migration must be a separate operation from settings, directory, group or SSH edits.',
-			options
+			options.json
 		);
 	}
 	if (options.dryRun && providerType === undefined)
-		emitError('--dry-run requires --provider.', options);
+		failCommand('--dry-run requires --provider.', options.json);
 	// Converting memory and session history is opt-in, as in Edit Agent. Every
 	// translation option only means something for a conversion, so it implies one.
 	const converting =
 		options.convert === true ||
+		options.projectResources === true ||
 		options.dryRun === true ||
 		options.acceptTranslationLimitations === true ||
 		options.force === true ||
@@ -263,40 +343,20 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		options.migration &&
 		!['plan', 'apply', 'status', 'recover', 'rollback'].includes(options.migration)
 	)
-		emitError('Invalid migration action.', options);
+		failCommand('Invalid migration action.', options.json);
 	if (options.migrationPlan !== undefined && !options.migrationPlan.trim())
-		emitError('--migration-plan must be a nonempty reviewed operation ID.', options);
+		failCommand('--migration-plan must be a nonempty reviewed operation ID.', options.json);
 	if (options.migrationPlan && providerType === undefined && options.migration === undefined)
-		emitError('--migration-plan requires --provider or --migration.', options);
+		failCommand('--migration-plan requires --provider or --migration.', options.json);
 
 	// Build the SSH patch from the SSH-related flags. Only keys the caller
 	// touched are included so the renderer merges rather than clobbers.
 	let sshPatch: Record<string, unknown> | undefined;
 	if (sshFlagsPresent) {
-		sshPatch = {};
-		if (options.sshRemote !== undefined) {
-			const raw = options.sshRemote.trim();
-			if (raw === '' || raw.toLowerCase() === 'none' || raw.toLowerCase() === 'null') {
-				// Revert to local execution; preserve other fields via the merge.
-				sshPatch.enabled = false;
-				sshPatch.remoteId = null;
-			} else {
-				sshPatch.enabled = true;
-				sshPatch.remoteId = raw;
-			}
-		}
-		if (options.sshCwd !== undefined) {
-			sshPatch.workingDirOverride = options.sshCwd;
-		}
-		if (options.syncHistoryToRemote !== undefined) {
-			try {
-				sshPatch.syncHistory = parseCliBool(
-					options.syncHistoryToRemote,
-					'--sync-history-to-remote'
-				);
-			} catch (error) {
-				emitError(error instanceof Error ? error.message : String(error), options);
-			}
+		try {
+			sshPatch = buildSshPatch(options);
+		} catch (error) {
+			failFromError(error, options.json);
 		}
 	}
 
@@ -309,12 +369,23 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			try {
 				resolvedGroupId = resolveGroupId(raw);
 			} catch (error) {
-				emitError(error instanceof Error ? error.message : String(error), options);
+				failFromError(error, options.json);
 			}
 		}
 	}
 
 	const resolvedCwd = options.cwd !== undefined ? resolveAgentCwdArg(options.cwd) : undefined;
+
+	if (runOnFlagsPresent && session) {
+		const reportedContext = await reportedRunOnFlagContext(options);
+		if (reportedContext !== undefined) {
+			const runOnEdit = readRunOnFlags(options, session, reportedContext);
+			if (runOnEdit.kind === 'refused') failCommand(runOnEdit.error, options.json);
+			if (runOnEdit.kind === 'set') {
+				configPatch = { ...configPatch, runOn: runOnEdit.target ?? null };
+			}
+		}
+	}
 
 	const applied: {
 		group?: string | null;
@@ -450,6 +521,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 						configPatch: {
 							...(providerType && { toolType: providerType }),
 							migrationAction: action,
+							...(options.projectResources && { projectResourcesIntoRepo: true }),
 							acceptTranslationLimitations:
 								options.acceptTranslationLimitations || options.force || false,
 							...(options.migrationPlan && { migrationPlanId: options.migrationPlan.trim() }),
@@ -475,18 +547,27 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 						console.log(
 							`  ${report.plan.tabs.length} conversations; ${report.plan.counts.records} records; ${report.plan.counts.artifacts} artifacts`
 						);
-						for (const limitation of report.plan.limitations)
+						console.log(`  Translated now: ${report.plan.tabs.length}`);
+						for (const tab of report.plan.tabs)
+							console.log(`  ${tab.tabId}: ${formatTranslationRecordCounts(tab)}`);
+						console.log(`  Translated on next use: ${report.plan.deferredTabs?.length ?? 0}`);
+						for (const tab of report.plan.deferredTabs ?? []) console.log(`  ${tab.id}`);
+						for (const limitation of report.plan.limitations.filter((l) => l.severity !== 'info'))
 							console.log(`  [${limitation.severity}] ${limitation.code}: ${limitation.message}`);
+						const notes = report.plan.limitations.filter((l) => l.severity === 'info');
+						if (notes.length) {
+							console.log('Notes:');
+							for (const note of notes) console.log(`  ${note.code}: ${note.message}`);
+						}
 					}
 					if (report.error) console.error(formatError(report.error));
 				}
-				if (!report.success) process.exit(1);
+				if (!report.success) exitWith(ExitCode.GeneralError);
 				return;
 			}
 		});
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		emitError(error instanceof Error ? error.message : String(error), options);
+		failFromError(error, options.json);
 	}
 
 	if (providerType !== undefined || options.migration !== undefined) return;
@@ -524,15 +605,28 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		if ('syncHistory' in applied.ssh) {
 			console.log(`  Sync history to remote: ${applied.ssh.syncHistory}`);
 		}
+		if ('shareHistoryToProjectDir' in applied.ssh) {
+			console.log(`  Share history to project dir: ${applied.ssh.shareHistoryToProjectDir}`);
+		}
 	}
 	if (applied.config !== undefined) {
 		// Friendly labels for the editable config keys; `null` means "cleared".
 		const labels: Record<string, string> = {
 			nudgeMessage: 'Nudge message',
+			peerDescription: 'Peer description',
 			newSessionMessage: 'New session message',
 			customPath: 'Binary path',
 			customArgs: 'Custom args',
 			customEnvVars: 'Env vars',
+			gatewayUrl: 'Gateway URL',
+			tokenProxyMode: 'Token proxy mode',
+			tokenProxyRetrieval: 'Retrieval',
+			runOn: 'Model source',
+			tierTargets: 'Tiers',
+			backgroundRequests: 'Background requests',
+			systemOneOptOut: 'System One',
+			groupPeerAccess: 'Peers in my group',
+			worktreePeerAccess: 'Worktree family peers',
 			customModel: 'Model',
 			customEffort: 'Effort',
 			customContextWindow: 'Context window',
@@ -540,6 +634,10 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			maestroPMode: 'Token mode',
 			maestroPPath: 'maestro-p path',
 			codexTransport: 'Codex transport',
+			retryOnAvailabilityErrors: 'Retry on availability errors',
+			retryOnTokenExhaustion: 'Retry on token exhaustion',
+			codexAutoResetOnExhaustion: 'Codex auto reset',
+			additionalDirectories: 'Additional directories',
 		};
 		for (const [key, value] of Object.entries(applied.config)) {
 			// Derived marker, not something the caller typed - it is implied by
@@ -549,6 +647,51 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			// A cleared transport is not "unset", it is the default transport.
 			if (key === 'codexTransport') {
 				console.log(`  ${label}: ${value ?? 'exec'}`);
+			} else if (key === 'runOn') {
+				// A cleared target is not "unset", it is the provider's own model.
+				const target = value as RunOnSourceTarget | null;
+				console.log(
+					`  ${label}: ${
+						target
+							? `${formatRunOnSpec(target)} (context ${target.contextTokens} tokens)`
+							: RUN_ON_PROVIDER_SPEC
+					}`
+				);
+			} else if (key === 'tierTargets') {
+				// One line per tier named, in the spelling `--tier` takes.
+				const tiers = value as Record<string, TierTarget | null>;
+				for (const tier of TIER_LEVELS) {
+					if (tier in tiers) console.log(`  Tier ${tier}: ${formatTierTargetSpec(tiers[tier])}`);
+				}
+			} else if (key === 'backgroundRequests') {
+				// Off is not "unset", it is every request going to the provider.
+				console.log(
+					`  ${label}: ${formatBackgroundRequestsSpec(value as BackgroundRequests | null)}`
+				);
+			} else if (key === 'tokenProxyRetrieval') {
+				// Off is not "cleared", it is the model without the retrieve tool.
+				const stored = value === true ? 'on' : 'off';
+				console.log(`  ${label}: ${stored}. ${TOKEN_PROXY_RETRIEVAL_DESCRIPTIONS[stored]}`);
+			} else if (key === 'systemOneOptOut') {
+				// On is not "cleared", it is the agent following the switch for all agents.
+				const stored = value === true ? 'off' : 'on';
+				console.log(`  ${label}: ${stored}. ${SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS[stored]}`);
+			} else if (key === 'peerAgentEdits') {
+				for (const line of describePeerAgentEdits(value as PeerAgentEdits)) {
+					console.log(`  ${line}`);
+				}
+			} else if (key === 'groupPeerAccess' || key === 'worktreePeerAccess') {
+				// Off is not "unset" for a grant, it is the checkbox switched off.
+				console.log(`  ${label}: ${value ? peerAccessLabel(value as PeerAccess) : 'off'}`);
+			} else if (key === 'envParkEdits') {
+				const edits = value as EnvParkEdits;
+				if (edits.park?.length) console.log(`  Env vars parked: ${edits.park.join(', ')}`);
+				if (edits.unpark?.length) console.log(`  Env vars switched on: ${edits.unpark.join(', ')}`);
+			} else if (key === 'additionalDirectories' && Array.isArray(value)) {
+				const dirs = value as AdditionalDirectory[];
+				console.log(
+					`  ${label}: ${dirs.map((dir) => `${dir.path} (${dir.write ? 'read and write' : 'read'})`).join(', ')}`
+				);
 			} else if (value === null) {
 				console.log(`  ${label}: (cleared)`);
 			} else if (key === 'customEnvVars' && value && typeof value === 'object') {

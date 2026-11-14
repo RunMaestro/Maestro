@@ -5,7 +5,7 @@
  * Provides type-safe access to what features each agent supports.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ToolType } from '../../types';
 import type { AgentCapabilities } from '../../../shared/types';
 import { DEFAULT_CAPABILITIES } from '../../../shared/types';
@@ -38,6 +38,7 @@ const capabilitiesCache = new Map<string, AgentCapabilities>();
  *
  * @param agentId - The agent identifier (e.g., 'claude-code', 'opencode')
  *                  Can also accept ToolType which includes agents
+ * @param sshRemoteId - Host scope for the capability view and cache.
  * @returns Object with capabilities, loading state, and helper functions
  *
  * @example
@@ -56,74 +57,83 @@ const capabilitiesCache = new Map<string, AgentCapabilities>();
  */
 export function useAgentCapabilities(
 	agentId: string | ToolType | null | undefined,
-	projectKnowledgeDirectory?: string
+	projectKnowledgeDirectory?: string,
+	sshRemoteId?: string
 ): UseAgentCapabilitiesReturn {
-	const [capabilities, setCapabilities] = useState<AgentCapabilities>(
-		agentId && capabilitiesCache.has(agentId)
-			? capabilitiesCache.get(agentId)!
-			: DEFAULT_CAPABILITIES
-	);
-	const [loading, setLoading] = useState<boolean>(!agentId || !capabilitiesCache.has(agentId));
-	const [error, setError] = useState<string | null>(null);
+	const key = sshRemoteId ? JSON.stringify([agentId, sshRemoteId]) : (agentId ?? '');
+	const request = useRef(0);
+	const [result, setResult] = useState<{
+		key: string;
+		capabilities: AgentCapabilities;
+		loading: boolean;
+		error: string | null;
+	}>({
+		key,
+		capabilities: capabilitiesCache.get(key) ?? DEFAULT_CAPABILITIES,
+		loading: !!agentId && !capabilitiesCache.has(key),
+		error: null,
+	});
 
 	const fetchCapabilities = useCallback(
 		async (forceRefresh = false) => {
-			setError(null);
-			if (!agentId) {
-				setCapabilities(DEFAULT_CAPABILITIES);
-				setLoading(false);
+			const currentRequest = ++request.current;
+			const cached = capabilitiesCache.get(key);
+			if (!agentId || (!forceRefresh && cached)) {
+				setResult({
+					key,
+					capabilities: cached ?? DEFAULT_CAPABILITIES,
+					loading: false,
+					error: null,
+				});
 				return;
 			}
-
-			// Check cache first
-			if (!forceRefresh && capabilitiesCache.has(agentId)) {
-				setCapabilities(capabilitiesCache.get(agentId)!);
-				setLoading(false);
-				return;
-			}
-
-			setLoading(true);
-
+			setResult({ key, capabilities: cached ?? DEFAULT_CAPABILITIES, loading: true, error: null });
 			try {
-				const result = await window.maestro.agents.getCapabilities(agentId);
-				// Merge with defaults to ensure all optional fields are defined
-				const fullCapabilities: AgentCapabilities = { ...DEFAULT_CAPABILITIES, ...result };
-				capabilitiesCache.set(agentId, fullCapabilities);
-				setCapabilities(fullCapabilities);
+				// Capabilities are static provider definitions; model discovery alone
+				// takes a host. Keep this view scoped to both provider and host anyway.
+				const fetched = await window.maestro.agents.getCapabilities(agentId);
+				if (request.current !== currentRequest) return;
+				const capabilities = { ...DEFAULT_CAPABILITIES, ...fetched };
+				capabilitiesCache.set(key, capabilities);
+				setResult({ key, capabilities, loading: false, error: null });
 			} catch (err) {
+				if (request.current !== currentRequest) return;
 				logger.error(`Failed to get capabilities for agent ${agentId}:`, undefined, err);
-				setError(err instanceof Error ? err.message : 'Failed to load capabilities');
-				// Use defaults on error
-				setCapabilities(DEFAULT_CAPABILITIES);
-			} finally {
-				setLoading(false);
+				setResult({
+					key,
+					capabilities: DEFAULT_CAPABILITIES,
+					loading: false,
+					error: err instanceof Error ? err.message : 'Failed to load capabilities',
+				});
 			}
 		},
-		[agentId]
+		[agentId, key]
 	);
 
-	// Fetch capabilities on mount or when agentId changes
 	useEffect(() => {
-		fetchCapabilities();
+		void fetchCapabilities();
+		return () => {
+			request.current++;
+		};
 	}, [fetchCapabilities]);
 
-	// Helper to check a specific capability
+	const visible =
+		result.key === key
+			? result
+			: {
+					capabilities: capabilitiesCache.get(key) ?? DEFAULT_CAPABILITIES,
+					loading: !!agentId && !capabilitiesCache.has(key),
+					error: null,
+				};
+	const { capabilities } = visible;
 	const hasCapability = useCallback(
-		(capability: keyof AgentCapabilities): boolean => {
-			return capability === 'supportsProjectMemory' && projectKnowledgeDirectory
+		(capability: keyof AgentCapabilities): boolean =>
+			capability === 'supportsProjectMemory' && projectKnowledgeDirectory
 				? true
-				: !!capabilities[capability];
-		},
+				: !!capabilities[capability],
 		[capabilities, projectKnowledgeDirectory]
 	);
-
-	return {
-		capabilities,
-		loading,
-		error,
-		refresh: () => fetchCapabilities(true),
-		hasCapability,
-	};
+	return { ...visible, refresh: () => fetchCapabilities(true), hasCapability };
 }
 
 /**

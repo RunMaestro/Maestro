@@ -214,10 +214,11 @@ export function useGoalRunner({
 			// spawn uses the session's configured model, then the agent default.
 			// Nothing here is written back to the session.
 			const runOverrides: SpawnAgentRunOverrides | undefined =
-				config.model || config.effort
+				config.model || config.effort || config.runOn
 					? {
 							...(config.model && { modelOverride: config.model }),
 							...(config.effort && { effortOverride: config.effort }),
+							...(config.runOn && { runOnOverride: config.runOn }),
 						}
 					: undefined;
 
@@ -823,6 +824,9 @@ export function useGoalRunner({
 								// back to the session's model exactly as the iteration's spawn did.
 								customModel: config.model || session.customModel,
 								customEffort: config.effort || session.customEffort,
+								// Resume where the iteration ran: a session started on the run's
+								// model source lives on that source, not the agent's own.
+								...(config.runOn && { runOnOverride: config.runOn }),
 								customContextWindow: session.customContextWindow,
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,

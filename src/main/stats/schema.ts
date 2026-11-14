@@ -11,15 +11,7 @@ import type Database from 'better-sqlite3';
 // Migrations Infrastructure
 // ============================================================================
 
-export const CREATE_MIGRATIONS_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS _migrations (
-    version INTEGER PRIMARY KEY,
-    description TEXT NOT NULL,
-    applied_at INTEGER NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('success', 'failed')),
-    error_message TEXT
-  )
-`;
+export { CREATE_MIGRATIONS_TABLE_SQL } from '../utils/sqlite-migrations';
 
 // ============================================================================
 // Metadata Table (for internal key-value storage like vacuum timestamps)
@@ -78,6 +70,25 @@ export const ADD_QUERY_EVENT_TOKEN_COLUMNS = [
 	'cache_read_tokens',
 	'cache_creation_tokens',
 	'cost_usd',
+] as const;
+
+// ============================================================================
+// Query Event Model Columns (Migration v20)
+// ============================================================================
+
+/**
+ * Where a turn's model ran, and what Auto's router chose for it, on
+ * `query_events` (see `QueryEvent` in shared/stats-types.ts). All TEXT.
+ *
+ * `run_on_endpoint` and `run_on_model` are the model source the turn launched
+ * on, set together, and `routed_tier` is the router's tier. Nullable with no
+ * default, like the token columns: NULL means a turn on the provider's own
+ * model (or one not sent on Auto), and every row from before the columns.
+ */
+export const ADD_QUERY_EVENT_MODEL_COLUMNS = [
+	'run_on_endpoint',
+	'run_on_model',
+	'routed_tier',
 ] as const;
 
 // ============================================================================
@@ -259,6 +270,296 @@ export const CREATE_WIZARD_RUNS_SQL = `
 export const CREATE_WIZARD_RUNS_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_wizard_started ON wizard_runs(started_at);
   CREATE INDEX IF NOT EXISTS idx_wizard_surface ON wizard_runs(surface, started_at)
+`;
+
+// ============================================================================
+// Local Model Runs (Migration v15, rebuilt in v20)
+// ============================================================================
+
+/**
+ * The `local_model_runs` table under a given name. The name is a parameter
+ * because SQLite cannot alter a CHECK constraint: migration v20 widens
+ * `source_type` by building the table again beside the old one, copying every
+ * row, and renaming it into place.
+ */
+function localModelRunsTableSql(table: string): string {
+	return `
+  CREATE TABLE IF NOT EXISTS ${table} (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    source_type TEXT NOT NULL CHECK(source_type IN ('local', 'endpoint', 'server', 'system-one')),
+    model_id TEXT NOT NULL,
+    endpoint_id TEXT,
+    started_at INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('ok', 'error', 'cancelled')),
+    error_code TEXT,
+    tokens_in INTEGER,
+    tokens_out INTEGER,
+    agent_id TEXT
+  )
+`;
+}
+
+/**
+ * One row per run that reached a model other than a provider's own (see
+ * `LocalModelRun` in shared/stats-types.ts). A task that was off, or handed
+ * back to its Utility Agent path, ran nothing here and is not recorded.
+ *
+ * `source_type` says where the model was (`LOCAL_MODEL_RUN_SOURCE_TYPES`), and
+ * the other columns read by it:
+ *
+ *   - `local`      - `model_id` is the catalog id; `endpoint_id` is NULL.
+ *   - `server`     - the same, for a run the Maestro model server answered.
+ *   - `endpoint`   - `model_id` is the server's model name; `endpoint_id` is the
+ *                    saved endpoint's id.
+ *   - `system-one` - a request sent to a remote System One engine. `model_id` is
+ *                    the model the engine says answered (the engine's id with no
+ *                    answer); `endpoint_id` is the engine's id; `task_id` may be
+ *                    `agent:<verb>` for a request an agent sent itself.
+ *
+ * `error_code` is the classified failure (`model-not-installed`, `network`,
+ * `timeout`, ...) and NULL on success. `agent_id` is the agent the run was for,
+ * and NULL when the caller knew none.
+ *
+ * Until v20 the CHECK allowed `local` and `endpoint` only, and there was no
+ * `agent_id`. A table created at this version already has the current shape.
+ */
+export const CREATE_LOCAL_MODEL_RUNS_SQL = localModelRunsTableSql('local_model_runs');
+
+/** The name the v20 rebuild gives the new table until it is renamed into place. */
+export const LOCAL_MODEL_RUNS_REBUILD_TABLE = 'local_model_runs_rebuild';
+
+export const CREATE_LOCAL_MODEL_RUNS_REBUILD_SQL = localModelRunsTableSql(
+	LOCAL_MODEL_RUNS_REBUILD_TABLE
+);
+
+/**
+ * The columns of the table as v15 created it: what the v20 rebuild copies. They
+ * are named one by one so the copy does not depend on column order.
+ */
+export const LOCAL_MODEL_RUNS_V15_COLUMNS = [
+	'id',
+	'task_id',
+	'source_type',
+	'model_id',
+	'endpoint_id',
+	'started_at',
+	'duration_ms',
+	'outcome',
+	'error_code',
+	'tokens_in',
+	'tokens_out',
+] as const;
+
+export const CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_local_model_runs_started ON local_model_runs(started_at);
+  CREATE INDEX IF NOT EXISTS idx_local_model_runs_task ON local_model_runs(task_id, started_at)
+`;
+
+/**
+ * Migration v20. Kept apart from the indexes above, which v15 creates: that
+ * migration must stay valid against a table that has no `agent_id` yet.
+ */
+export const CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_local_model_runs_agent ON local_model_runs(agent_id, started_at)
+`;
+
+// ============================================================================
+// Proxy Requests (Migration v16)
+// ============================================================================
+
+/**
+ * One row per model request the Maestro token proxy carried (see `ProxyRequest`
+ * in shared/stats-types.ts). Only requests that hold a message list are
+ * recorded.
+ *
+ * `agent_id` is NULL for a request whose base URL named no agent (a launch
+ * outside the desktop app). `original_tokens`, `sent_tokens` and
+ * `added_latency_ms` are NULL unless the proxy read the body, which it does
+ * only in `compress` mode. `compressor_counts` and `new_blocks` are JSON;
+ * `new_blocks` lists only the blocks shortened for the first time in this
+ * request, so a block appears in one row however many later requests resend it.
+ * `routed_to` (migration v17) is the Local Models target a background request
+ * was sent to in place of the provider, and NULL for every other request. The
+ * `provider_*_tokens` columns (migration v21) are what the provider counted.
+ * The last fourteen columns (migration v22) are the telemetry facts of the
+ * `ProxyRequest` contract: see `ADD_PROXY_REQUEST_TELEMETRY_COLUMNS`.
+ */
+export const CREATE_PROXY_REQUESTS_SQL = `
+  CREATE TABLE IF NOT EXISTS proxy_requests (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT,
+    route TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK(mode IN ('passthrough', 'compress')),
+    started_at INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    status INTEGER NOT NULL,
+    outcome TEXT NOT NULL,
+    request_bytes INTEGER NOT NULL,
+    sent_bytes INTEGER NOT NULL,
+    response_bytes INTEGER NOT NULL,
+    original_tokens INTEGER,
+    sent_tokens INTEGER,
+    added_latency_ms INTEGER,
+    blocks_compressed INTEGER NOT NULL DEFAULT 0,
+    cache_hits INTEGER NOT NULL DEFAULT 0,
+    compressor_counts TEXT,
+    new_blocks TEXT,
+    skip_reason TEXT,
+    routed_to TEXT,
+    provider_input_tokens INTEGER,
+    provider_cache_read_tokens INTEGER,
+    provider_cache_write_tokens INTEGER,
+    provider_output_tokens INTEGER,
+    effective_mode TEXT,
+    blocks_protected INTEGER,
+    blocks_vetoed_failed INTEGER,
+    blocks_vetoed_recovery INTEGER,
+    blocks_vetoed_retrieval INTEGER,
+    blocks_candidates INTEGER,
+    blocks_below_threshold INTEGER,
+    blocks_kept INTEGER,
+    blocks_store_failed INTEGER,
+    blocks_model_failed INTEGER,
+    provider_input_reportedness TEXT,
+    provider_cache_read_reportedness TEXT,
+    provider_cache_write_reportedness TEXT,
+    provider_output_reportedness TEXT
+  )
+`;
+
+/** Migration v17, for a `proxy_requests` table created before the column existed. */
+export const ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL = `
+  ALTER TABLE proxy_requests ADD COLUMN routed_to TEXT
+`;
+
+/**
+ * Migration v21: what the provider counted for each request, from the `usage`
+ * in its answer. NULL when the answer named none, could not be read, or came
+ * from a background target. Like `routed_to`, the v16 table definition above
+ * already holds them, so a new table (or one a repair creates) has nothing for
+ * v21 to add; v21 adds them to a table an older build created.
+ */
+export const ADD_PROXY_REQUEST_PROVIDER_USAGE_COLUMNS = [
+	'provider_input_tokens',
+	'provider_cache_read_tokens',
+	'provider_cache_write_tokens',
+	'provider_output_tokens',
+] as const;
+
+/**
+ * Migration v22: the telemetry facts a request's row can state (see
+ * `ProxyEffectiveMode`, `ProxyBlockCounts` and `ProxyProviderReportedness` in
+ * shared/stats-types.ts), in the order the table lists them. The v16 table
+ * definition above already holds them, so a new table has nothing for v22 to
+ * add; v22 adds them to a table an older build created.
+ *
+ * Every column is NULL for a row written before it, and NULL means UNKNOWN, never
+ * zero or a default:
+ *
+ *   - `effective_mode` is `passthrough`, `compress` or `compress-early`. `mode`
+ *     keeps its CHECK and cannot hold the last, so a row written before v22 does
+ *     not say which compress mode carried it. v22 does not guess: it is not
+ *     filled from `mode`, and not from the agent's current setting, which may
+ *     have changed since.
+ *   - The nine `blocks_*` columns are the `ProxyBlockCounts` of a request the
+ *     proxy read, written all together or not at all (a request forwarded unread
+ *     has none). The blocks shortened are the existing `blocks_compressed`. A
+ *     counted request that found nothing holds 0.
+ *   - The four `provider_*_reportedness` columns say how each of the
+ *     `provider_*_tokens` got its number: `reported`, `derived`, `not-applicable`
+ *     or `unreported`. A row with provider tokens and no reportedness was written
+ *     before it was tracked, and its tokens are legacy: a class the answer never
+ *     named reads as 0 in them.
+ *
+ * No CHECK and no index. A CHECK cannot be widened without the table rebuild v20
+ * needed, so the text columns are open like `skip_reason`: the writer stores
+ * only values of the contract, and a reader treats a value it does not
+ * recognize as unknown. A read filters on `started_at` and `agent_id`, which are
+ * indexed; a column with three or four values would not narrow it.
+ */
+export const ADD_PROXY_REQUEST_TELEMETRY_COLUMNS = [
+	{ name: 'effective_mode', type: 'TEXT' },
+	{ name: 'blocks_protected', type: 'INTEGER' },
+	{ name: 'blocks_vetoed_failed', type: 'INTEGER' },
+	{ name: 'blocks_vetoed_recovery', type: 'INTEGER' },
+	{ name: 'blocks_vetoed_retrieval', type: 'INTEGER' },
+	{ name: 'blocks_candidates', type: 'INTEGER' },
+	{ name: 'blocks_below_threshold', type: 'INTEGER' },
+	{ name: 'blocks_kept', type: 'INTEGER' },
+	{ name: 'blocks_store_failed', type: 'INTEGER' },
+	{ name: 'blocks_model_failed', type: 'INTEGER' },
+	{ name: 'provider_input_reportedness', type: 'TEXT' },
+	{ name: 'provider_cache_read_reportedness', type: 'TEXT' },
+	{ name: 'provider_cache_write_reportedness', type: 'TEXT' },
+	{ name: 'provider_output_reportedness', type: 'TEXT' },
+] as const;
+
+export const CREATE_PROXY_REQUESTS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_proxy_requests_started ON proxy_requests(started_at);
+  CREATE INDEX IF NOT EXISTS idx_proxy_requests_agent ON proxy_requests(agent_id, started_at)
+`;
+
+// ============================================================================
+// System One Decisions (Migration v18, columns added in v19)
+// ============================================================================
+
+/**
+ * One row per request that was handed to a System One engine (see
+ * `SystemOneDecision` in shared/local-models/system-one-ledger.ts), answered or
+ * not. A task whose assignment is not System One ran nothing here and is not
+ * recorded.
+ *
+ * `task_id` is the task that ran, or `agent:<verb>` for a request an agent sent
+ * through `maestro-cli s1`; the prefix is what a day's agent spend is summed
+ * by. `tab_id` is that agent's AI tab, and `cached` is 1 for a request answered
+ * from the answer cache (nothing sent, no tokens, no cost). Both came in v19.
+ *
+ * `engine` is the engine that was asked, or `off` for a task assigned to System
+ * One while no engine was chosen. `outcome` is what the task's fail policy did
+ * and `error_code` is why there was no answer (NULL on `ok`), so a timeout is
+ * `failed-open` or `failed-closed` with the code `timeout`. `question_ids` and
+ * `answers` are JSON; `model`, `answers`, the token counts and `cost_usd` are
+ * NULL with no answer. `agent_id` is NULL when the caller knows no agent.
+ * `input` is the redacted state and questions, and NULL unless "Keep inputs in
+ * the ledger" was on for the run. Rows are pruned after 30 days.
+ */
+export const CREATE_S1_DECISIONS_SQL = `
+  CREATE TABLE IF NOT EXISTS s1_decisions (
+    id TEXT PRIMARY KEY,
+    started_at INTEGER NOT NULL,
+    task_id TEXT NOT NULL,
+    engine TEXT NOT NULL,
+    model TEXT,
+    question_ids TEXT NOT NULL,
+    answers TEXT,
+    outcome TEXT NOT NULL CHECK(outcome IN ('ok', 'failed-open', 'failed-closed', 'unavailable', 'cancelled')),
+    error_code TEXT,
+    latency_ms INTEGER NOT NULL,
+    tokens_in INTEGER,
+    tokens_out INTEGER,
+    cost_usd REAL,
+    agent_id TEXT,
+    input TEXT,
+    tab_id TEXT,
+    cached INTEGER NOT NULL DEFAULT 0
+  )
+`;
+
+/** Migration v19, for an `s1_decisions` table created before the columns existed. */
+export const ADD_S1_DECISION_TAB_ID_COLUMN_SQL = `
+  ALTER TABLE s1_decisions ADD COLUMN tab_id TEXT
+`;
+
+export const ADD_S1_DECISION_CACHED_COLUMN_SQL = `
+  ALTER TABLE s1_decisions ADD COLUMN cached INTEGER NOT NULL DEFAULT 0
+`;
+
+export const CREATE_S1_DECISIONS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_s1_decisions_started ON s1_decisions(started_at);
+  CREATE INDEX IF NOT EXISTS idx_s1_decisions_task ON s1_decisions(task_id, started_at)
 `;
 
 // ============================================================================

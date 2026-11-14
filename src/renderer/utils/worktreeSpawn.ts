@@ -23,6 +23,7 @@ import {
 } from './worktreeDedup';
 import { sanitizeGitBranchName } from '../../shared/gitUtils';
 import { runWorktreeSetupScript } from './worktreeSetupScript';
+import { startGroupOnboarding } from '../services/groupLifecycle';
 
 /**
  * TTL for the pre-`git worktree add` dedup mark. Sized to comfortably outlast a
@@ -257,6 +258,9 @@ export async function spawnWorktreeAgentAndDispatch(
 				newSession,
 			]);
 		dispatchSessionId = newSession.id;
+		// The group's Onboarding prompt, when it has one. It queues in its own tab,
+		// beside whatever this spawn dispatches.
+		startGroupOnboarding(newSession.id);
 	}
 
 	// Step 6: Populate config.worktree for PR creation if requested

@@ -4,12 +4,15 @@
  * tilde expansion, layer stack integration, keyboard shortcuts, custom agent paths
  */
 
+import type React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import type { Theme, Session } from '../../../renderer/types';
 import type { AgentConfig } from '../../../renderer/types';
 import type { AgentDiscoveryResult } from '../../../shared/types';
@@ -57,6 +60,17 @@ const createTheme = (): Theme => ({
 });
 
 // Create test agent configs
+/**
+ * The 25th `onCreate` argument of a form whose Peers tab was never touched:
+ * every source of the roster is absent, which is what the data model reads as off.
+ */
+const NO_PEER_GRANTS = {
+	peerAgents: undefined,
+	peerDescription: undefined,
+	groupPeerAccess: undefined,
+	worktreePeerAccess: undefined,
+};
+
 const createAgentConfig = (overrides: Partial<AgentConfig> = {}): AgentConfig => ({
 	id: 'claude-code',
 	name: 'Claude Code',
@@ -78,6 +92,13 @@ const showAllProviders = async (): Promise<void> => {
 	const toggle = await screen.findByRole('switch', { name: 'Show all supported providers' });
 	fireEvent.click(toggle);
 };
+
+/**
+ * Show one tab of the agent settings form. Only the active panel is rendered,
+ * so a field on another tab is not in the document until its tab is opened.
+ */
+const openTab = (name: string) =>
+	fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${name}`) }));
 
 describe('NewInstanceModal', () => {
 	let theme: Theme;
@@ -179,6 +200,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			expect(screen.getByText('Loading agents...')).toBeInTheDocument();
 		});
@@ -204,6 +226,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -233,6 +256,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Gemini CLI is unavailable, so the default filter hides it. This test is
 			// about ORDER across both buckets, so ask for every row.
@@ -271,6 +295,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load, then click to expand
 			await waitFor(() => {
@@ -298,6 +323,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Not Found')).toBeInTheDocument();
@@ -319,6 +345,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// A coming-soon provider cannot be run, so it is filtered out by default.
 			await showAllProviders();
@@ -343,6 +370,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -400,6 +428,7 @@ describe('NewInstanceModal', () => {
 					}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Codex')).toBeInTheDocument();
@@ -426,6 +455,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -448,6 +478,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const option = screen.getByRole('option', { name: /Claude Code/i });
@@ -470,6 +501,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const options = screen.getAllByRole('option');
@@ -494,6 +526,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -518,6 +551,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -544,6 +578,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// `openai-codex` is not a pickable id, so the default filter hides it.
 			await showAllProviders();
@@ -579,6 +614,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -620,6 +656,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -665,6 +702,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -885,7 +923,11 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				'exec', // codexTransport: Standard by default
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 
@@ -942,7 +984,11 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				'exec', // codexTransport: Standard by default
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 
@@ -999,7 +1045,11 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				'exec', // codexTransport: Standard by default
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 	});
@@ -1057,7 +1107,11 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				'exec', // codexTransport: Standard by default
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1103,6 +1157,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -1126,11 +1181,13 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
 
+			openTab('General');
 			const dirInput = screen.getByPlaceholderText('Select directory...');
 			fireEvent.change(dirInput, { target: { value: '/my/project' } });
 
@@ -1547,6 +1604,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByText('Codex')).toBeInTheDocument();
@@ -1573,6 +1631,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load, then click to expand
 			await waitFor(() => {
@@ -1601,19 +1660,13 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load, then click to expand
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
 			fireEvent.click(screen.getByText('Claude Code'));
-
-			// Fill in required fields
-			const nameInput = screen.getByLabelText('Agent Name');
-			fireEvent.change(nameInput, { target: { value: 'My Session' } });
-
-			const dirInput = screen.getByPlaceholderText('Select directory...');
-			fireEvent.change(dirInput, { target: { value: '/my/project' } });
 
 			await waitFor(() => {
 				expect(screen.getByPlaceholderText('/path/to/claude')).toBeInTheDocument();
@@ -1622,6 +1675,14 @@ describe('NewInstanceModal', () => {
 			// Set custom path
 			const customPathInput = screen.getByPlaceholderText('/path/to/claude');
 			fireEvent.change(customPathInput, { target: { value: '/custom/path/to/claude' } });
+
+			// Fill in required fields
+			openTab('General');
+			const nameInput = screen.getByLabelText('Agent Name');
+			fireEvent.change(nameInput, { target: { value: 'My Session' } });
+
+			const dirInput = screen.getByPlaceholderText('Select directory...');
+			fireEvent.change(dirInput, { target: { value: '/my/project' } });
 
 			// Create agent
 			const createButton = screen.getByText('Create Agent');
@@ -1652,7 +1713,11 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				'exec', // codexTransport: Standard by default
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 
@@ -1670,6 +1735,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load
 			await waitFor(() => {
@@ -1685,6 +1751,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			// Fill in required fields
+			openTab('General');
 			const nameInput = screen.getByLabelText('Agent Name');
 			fireEvent.change(nameInput, { target: { value: 'My Session' } });
 
@@ -1696,6 +1763,7 @@ describe('NewInstanceModal', () => {
 			expect(createButton).toBeDisabled();
 
 			// Set custom path
+			openTab('Provider');
 			const customPathInput = screen.getByPlaceholderText('/path/to/claude');
 			fireEvent.change(customPathInput, { target: { value: '/custom/path/to/claude' } });
 
@@ -1719,6 +1787,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load
 			await waitFor(() => {
@@ -1756,6 +1825,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load
 			await waitFor(() => {
@@ -1774,6 +1844,7 @@ describe('NewInstanceModal', () => {
 			fireEvent.change(customPathInput, { target: { value: '/custom/bin/claude' } });
 
 			// Fill in required fields
+			openTab('General');
 			const nameInput = screen.getByLabelText('Agent Name');
 			fireEvent.change(nameInput, { target: { value: 'Custom Path Agent' } });
 
@@ -1809,7 +1880,11 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				'exec', // codexTransport: Standard by default
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 	});
@@ -1856,6 +1931,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByTitle('Refresh detection')).toBeInTheDocument();
@@ -1914,6 +1990,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const badge = screen.getByText('Available');
@@ -1935,6 +2012,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const badge = screen.getByText('Not Found');
@@ -1978,6 +2056,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const options = screen.getAllByRole('option');
@@ -2018,6 +2097,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const option = screen.getByRole('option', { name: /Claude Code/i });
@@ -2041,6 +2121,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				const option = screen.getByRole('option', { name: /Gemini CLI/i });
@@ -2066,6 +2147,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Two of the three are unavailable, so ask past the default filter.
 			await showAllProviders();
@@ -2092,6 +2174,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// The Coming Soon row only exists past the default filter.
 			await showAllProviders();
@@ -2132,6 +2215,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			await waitFor(() => {
 				expect(screen.getByTitle('Refresh detection')).toBeInTheDocument();
@@ -2275,6 +2359,8 @@ describe('NewInstanceModal', () => {
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
+				// The model and its effort are on the Models tab.
+				openTab('Models');
 				expect(screen.getByRole('textbox', { name: 'Model' })).toHaveValue(draft.customModel ?? '');
 				expect(screen.getByRole('textbox', { name: 'Reasoning Effort' })).toHaveValue(
 					draft.customEffort ?? ''
@@ -2303,6 +2389,10 @@ describe('NewInstanceModal', () => {
 					undefined,
 					false,
 					'exec',
+					undefined, // gatewayUrl
+					undefined, // runOn
+					NO_PEER_GRANTS,
+					undefined, // seedExtras
 					undefined, // harnessControlMode
 					expected
 				);
@@ -2338,15 +2428,26 @@ describe('NewInstanceModal', () => {
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
+				// The model and its effort are on the Models tab.
+				openTab('Models');
 				for (const [name, value] of [
 					['Model', 'grok-4.5'],
 					['Reasoning Effort', 'high'],
-					['Path', '/synthetic/edited-grok'],
 				]) {
 					const input = screen.getByRole('textbox', { name });
 					fireEvent.change(input, { target: { value } });
 					fireEvent.blur(input);
 				}
+				// The model field lists Auto, so it is a filter box that commits a typed
+				// model on its delayed blur. Let it fire before the tab changes.
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(150);
+				});
+				// The path and the environment are on the Provider tab.
+				openTab('Provider');
+				const path = screen.getByRole('textbox', { name: 'Path' });
+				fireEvent.change(path, { target: { value: '/synthetic/edited-grok' } });
+				fireEvent.blur(path);
 				fireEvent.click(screen.getByTitle('Remove variable'));
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
@@ -2407,6 +2508,7 @@ describe('NewInstanceModal', () => {
 				fireEvent.change(screen.getByPlaceholderText('Select directory...'), {
 					target: { value: '/synthetic/project' },
 				});
+				openTab('Provider');
 				fireEvent.click(screen.getByRole('switch', { name: 'Show all supported providers' }));
 				const row = screen.getByRole('option', { name: /Grok CLI/ });
 				fireEvent.keyDown(row, { key });
@@ -2434,7 +2536,8 @@ describe('NewInstanceModal', () => {
 					undefined,
 					'/synthetic/unverified-grok',
 				]);
-				expect(onCreate.mock.calls[0][22]).toBeUndefined();
+				// harnessControlMode, after the gateway, model source, peers and seed extras.
+				expect(onCreate.mock.calls[0][26]).toBeUndefined();
 				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			}
 		);
@@ -2461,11 +2564,13 @@ describe('NewInstanceModal', () => {
 				/>
 			);
 			await act(async () => {});
+			openTab('Provider');
 			fireEvent.click(screen.getByTitle('Refresh detection'));
 			expect(window.maestro.agents.refresh).toHaveBeenLastCalledWith('grok', undefined);
 			expect(screen.getByRole('button', { name: 'Create Agent' })).toBeDisabled();
 			fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
 			expect(onCreate).not.toHaveBeenCalled();
+			openTab('SSH');
 			fireEvent.change(screen.getByDisplayValue('Local Execution'), {
 				target: { value: 'remote-b' },
 			});
@@ -2479,6 +2584,7 @@ describe('NewInstanceModal', () => {
 				agents: [{ ...agent, available: false }],
 				debugInfo: null,
 			});
+			openTab('Provider');
 			fireEvent.click(screen.getByTitle('Refresh detection'));
 			await act(async () => {});
 			expect(window.maestro.agents.refresh).toHaveBeenLastCalledWith('grok', 'remote-b');
@@ -2542,14 +2648,22 @@ describe('NewInstanceModal', () => {
 				{ providerId: 'grok', context },
 				'reasoningEffort'
 			);
-			expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
-			expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
+			// The discovery note stays with the provider card; the fields are on Models.
+			openTab('Provider');
 			expect(
 				screen.getByText(/Model discovery unavailable for this configuration/)
 			).toBeInTheDocument();
+			openTab('Models');
+			expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
 			if (!remote) {
-				fireEvent.change(screen.getByDisplayValue('stored-model'), {
-					target: { value: 'manual-model' },
+				const modelInput = screen.getByDisplayValue('stored-model');
+				fireEvent.change(modelInput, { target: { value: 'manual-model' } });
+				// The model field lists Auto, so it is a filter box that commits a typed
+				// model on its delayed blur.
+				fireEvent.blur(modelInput);
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(150);
 				});
 				fireEvent.change(screen.getByDisplayValue('stored-effort'), {
 					target: { value: 'manual-effort' },
@@ -2596,6 +2710,8 @@ describe('NewInstanceModal', () => {
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
+				// The Model field, with its refresh button and count, is on the Models tab.
+				openTab('Models');
 				if (forced) {
 					models.mockReturnValueOnce(old);
 					fireEvent.click(screen.getByTitle('Refresh available models'));
@@ -2612,6 +2728,8 @@ describe('NewInstanceModal', () => {
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
+				// A new source starts the form on General again.
+				openTab('Models');
 				expect(models).toHaveBeenLastCalledWith({
 					providerId: 'grok',
 					context: expect.objectContaining({
@@ -2717,19 +2835,30 @@ describe('NewInstanceModal', () => {
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(300);
 			});
-			expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
-			expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
-			for (const [previous, value] of [
-				['~/project', '~/unsaved-project'],
+			// The working directory is on General, the provider card on Provider, and
+			// the model and effort on Models.
+			const dir = screen.getByDisplayValue('~/project', { normalizer: (value) => value });
+			fireEvent.change(dir, { target: { value: '~/unsaved-project' } });
+			fireEvent.blur(dir);
+			const editFields = (edits: string[][]) => {
+				for (const [previous, value] of edits) {
+					const input = screen.getByDisplayValue(previous, { normalizer: (value) => value });
+					fireEvent.change(input, { target: { value } });
+					fireEvent.blur(input);
+				}
+			};
+			openTab('Provider');
+			editFields([
 				['/synthetic/bin/grok', '/synthetic/bin/edited'],
 				['/synthetic/account-a', ''],
+			]);
+			openTab('Models');
+			expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
+			editFields([
 				['stored-model', 'manual-model'],
 				['stored-effort', 'manual-effort'],
-			]) {
-				const input = screen.getByDisplayValue(previous, { normalizer: (value) => value });
-				fireEvent.change(input, { target: { value } });
-				fireEvent.blur(input);
-			}
+			]);
 			let resolveDetection!: (agents: AgentConfig[]) => void;
 			const detected = await window.maestro.agents.detect();
 			vi.mocked(window.maestro.agents.detect).mockReturnValueOnce(
@@ -2745,6 +2874,7 @@ describe('NewInstanceModal', () => {
 				await vi.advanceTimersByTimeAsync(300);
 			});
 			const configCalls = vi.mocked(window.maestro.agents.getConfig).mock.calls.length;
+			openTab('SSH');
 			fireEvent.change(screen.getByDisplayValue('Local Execution'), {
 				target: { value: 'remote-b' },
 			});
@@ -2783,6 +2913,7 @@ describe('NewInstanceModal', () => {
 				{ providerId: 'grok', context },
 				'reasoningEffort'
 			);
+			openTab('Provider');
 			expect(
 				screen.getByText(/Model discovery unavailable for this configuration/)
 			).toBeInTheDocument();
@@ -2834,15 +2965,19 @@ describe('NewInstanceModal', () => {
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
+				openTab('Provider');
 				expect(models).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'grok' }));
 				expect(efforts).toHaveBeenCalledWith(
 					expect.objectContaining({ providerId: 'grok' }),
 					'reasoningEffort'
 				);
 				if (pending === 'refresh') {
+					// The Model field's refresh button is on the Models tab.
+					openTab('Models');
 					models.mockReturnValueOnce(old);
 					fireEvent.click(screen.getByTitle('Refresh available models'));
 					expect(models).toHaveBeenLastCalledWith(expect.objectContaining({ forceRefresh: true }));
+					openTab('Provider');
 				}
 				if (transition === 'reopen') {
 					view.rerender(<NewInstanceModal {...props} isOpen={false} sourceSession={source} />);
@@ -2855,10 +2990,13 @@ describe('NewInstanceModal', () => {
 					expect(efforts).toHaveBeenCalledWith('codex', 'reasoningEffort');
 					fireEvent.click(screen.getByRole('option', { name: /Grok CLI/ }));
 				} else {
+					openTab('SSH');
 					fireEvent.change(screen.getByDisplayValue('Local Execution'), {
 						target: { value: 'remote-b' },
 					});
 				}
+				// Reopening starts on General, and the SSH change left the SSH tab up.
+				if (transition !== 'provider') openTab('Provider');
 				await act(async () => {});
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
@@ -2877,9 +3015,11 @@ describe('NewInstanceModal', () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
 				expect([models.mock.calls.length, efforts.mock.calls.length]).toEqual(counts);
+				expect(screen.getByText(/Effort discovery unavailable/)).toBeInTheDocument();
+				// The Model field and its count are on the Models tab.
+				openTab('Models');
 				expect(screen.getByText('1 model available')).toBeInTheDocument();
 				expect(screen.queryByText('2 models available')).not.toBeInTheDocument();
-				expect(screen.getByText(/Effort discovery unavailable/)).toBeInTheDocument();
 				expect(screen.getByDisplayValue('stored-model')).toBeInTheDocument();
 				expect(screen.getByDisplayValue('stored-effort')).toBeInTheDocument();
 			}
@@ -2935,6 +3075,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load and click to expand
 			await waitFor(() => {
@@ -2999,6 +3140,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load and click to expand
 			await waitFor(() => {
@@ -3013,7 +3155,8 @@ describe('NewInstanceModal', () => {
 				});
 			}
 
-			// Should show model count
+			// The Model field, with its count, is on the Models tab.
+			openTab('Models');
 			await waitFor(() => {
 				expect(screen.getByText('3 models available')).toBeInTheDocument();
 			});
@@ -3053,6 +3196,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load and click to expand
 			await waitFor(() => {
@@ -3115,6 +3259,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for agents to load and click to expand
 			await waitFor(() => {
@@ -3129,10 +3274,54 @@ describe('NewInstanceModal', () => {
 				});
 			}
 
-			// Should show refresh button with correct title
+			// The Model field, with its refresh button, is on the Models tab.
+			openTab('Models');
 			await waitFor(() => {
 				expect(screen.getByTitle('Refresh available models')).toBeInTheDocument();
 			});
+		});
+
+		it("loads the selected provider's models once when the Models tab is opened first", async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({
+					id: 'opencode',
+					name: 'OpenCode',
+					available: true,
+					capabilities: { ...getAgentCapabilities('opencode'), supportsModelSelection: true },
+					configOptions: [
+						{
+							key: 'model',
+							type: 'text',
+							label: 'Model',
+							description: 'Model to use',
+							default: '',
+						},
+					],
+				}),
+			]);
+			vi.mocked(window.maestro.agents.getModels).mockResolvedValue(['model1', 'model2']);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+			// The provider card was never expanded, so the tab asks for the list itself.
+			openTab('Models');
+
+			await waitFor(() => {
+				expect(screen.getByText('2 models available')).toBeInTheDocument();
+			});
+			expect(window.maestro.agents.getModels).toHaveBeenCalledWith('opencode', false);
+
+			openTab('General');
+			openTab('Models');
+			expect(window.maestro.agents.getModels).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -3206,6 +3395,15 @@ describe('NewInstanceModal', () => {
 				expected.additionalDirectories,
 				expected.codexAutoResetOnExhaustion,
 				expected.codexTransport,
+				undefined, // No gateway override.
+				undefined, // Provider is the default Run-on target.
+				{
+					peerAgents: undefined,
+					peerDescription: undefined,
+					groupPeerAccess: undefined,
+					worktreePeerAccess: undefined,
+				},
+				undefined, // No group-seeded extras.
 				expected.harnessControlMode,
 				'full' // permissionMode: the source's active tab, copied
 			);
@@ -3646,6 +3844,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('SSH');
 
 			// Wait for the SSH selector to appear even though no agent is available
 			await waitFor(() => {
@@ -3697,6 +3896,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('SSH');
 
 			// Wait for SSH selector (should appear immediately since we have SSH configs)
 			await waitFor(() => {
@@ -3718,6 +3918,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			// Now select the available agent (opencode)
+			openTab('Provider');
 			await waitFor(() => {
 				expect(screen.getByText('OpenCode')).toBeInTheDocument();
 			});
@@ -3735,6 +3936,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			// After selecting an agent, fill in required fields
+			openTab('General');
 			const nameInput = screen.getByLabelText('Agent Name');
 			fireEvent.change(nameInput, { target: { value: 'SSH Test' } });
 
@@ -3789,7 +3991,11 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				'exec', // codexTransport: Standard by default
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 
@@ -3885,6 +4091,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('SSH');
 
 			// Wait for initial detection
 			await waitFor(() => {
@@ -3956,6 +4163,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('SSH');
 
 			// Wait for agents and SSH selector to load
 			await waitFor(() => {
@@ -3967,6 +4175,7 @@ describe('NewInstanceModal', () => {
 			fireEvent.change(dropdown, { target: { value: 'remote-1' } });
 
 			// Select agent
+			openTab('Provider');
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
@@ -3976,6 +4185,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			// Fill in name and remote working directory
+			openTab('General');
 			fireEvent.change(screen.getByLabelText('Agent Name'), {
 				target: { value: 'Remote Agent' },
 			});
@@ -4023,7 +4233,11 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				'exec', // codexTransport: Standard by default
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined // seedExtras: only a form seeded from a group's defaults has any
 			);
 		});
 
@@ -4067,11 +4281,13 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('SSH');
 
 			await waitFor(() => {
 				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
 			});
 			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'remote-1' } });
+			openTab('Provider');
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
@@ -4079,6 +4295,7 @@ describe('NewInstanceModal', () => {
 				fireEvent.click(screen.getByRole('option', { name: /Claude Code/i }));
 			});
 
+			openTab('General');
 			fireEvent.change(screen.getByLabelText('Agent Name'), {
 				target: { value: 'Remote Agent' },
 			});
@@ -4337,6 +4554,10 @@ describe('NewInstanceModal', () => {
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
 				'exec', // codexTransport: Standard by default
+				undefined, // gatewayUrl: none unless set on the Models tab
+				undefined, // runOn: the provider's own model unless chosen on the Models tab
+				NO_PEER_GRANTS, // peerGrants: nothing granted unless set on the Peers tab
+				undefined, // seedExtras: only a form seeded from a group's defaults has any
 				undefined, // harnessControlMode
 				'full' // permissionMode: source has no read-only override
 			);
@@ -4387,6 +4608,7 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+			openTab('Provider');
 
 			// Wait for initial load - agents should be detected and shown
 			await waitFor(() => {
@@ -4394,6 +4616,7 @@ describe('NewInstanceModal', () => {
 			});
 
 			// Wait for SSH selector
+			openTab('SSH');
 			await waitFor(() => {
 				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
 			});
@@ -4403,6 +4626,7 @@ describe('NewInstanceModal', () => {
 			fireEvent.change(dropdown, { target: { value: 'unreachable-remote' } });
 
 			// Wait for connection error to appear
+			openTab('Provider');
 			await waitFor(() => {
 				expect(screen.getByText('Unable to Connect')).toBeInTheDocument();
 				expect(screen.getByText('Connection refused')).toBeInTheDocument();
@@ -4589,6 +4813,864 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByLabelText('Working Directory')).toHaveValue('/source/project');
 			});
 			expect(screen.getByLabelText('Agent Name')).toHaveValue('Source (Copy)');
+		});
+	});
+
+	describe('Tabbed form', () => {
+		const renderModal = (props: Partial<React.ComponentProps<typeof NewInstanceModal>> = {}) =>
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					{...props}
+				/>
+			);
+
+		const selectedTab = () =>
+			screen.getAllByRole('tab').find((tab) => tab.getAttribute('aria-selected') === 'true');
+
+		/** Fill the two required General fields and wait until the provider has loaded. */
+		const fillRequired = async (name = 'Tabbed Agent', dir = '/my/project') => {
+			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: name } });
+			fireEvent.change(screen.getByPlaceholderText('Select directory...'), {
+				target: { value: dir },
+			});
+			await waitFor(() => expect(screen.getByText('Create Agent')).not.toBeDisabled());
+		};
+
+		/** The Models tab's gateway input, once the selected provider is known. */
+		const gatewayInput = async () =>
+			(await screen.findByTestId('new-agent-gateway')).querySelector('input') as HTMLInputElement;
+
+		it('renders the five tabs in order, opens on General, and is a resizable frame', () => {
+			const { container } = renderModal();
+
+			expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+				'General',
+				'Provider',
+				'Models',
+				'Peers',
+				'SSH',
+			]);
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(container.ownerDocument.querySelector('[data-modal-resize-key="new-agent"]')).not.toBe(
+				null
+			);
+		});
+
+		it('renders only the active panel', () => {
+			renderModal();
+
+			expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'new-agent-tabpanel-general');
+			expect(screen.queryByText('Agent Provider')).not.toBeInTheDocument();
+			openTab('Provider');
+			expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'new-agent-tabpanel-provider');
+			expect(screen.queryByLabelText('Agent Name')).not.toBeInTheDocument();
+		});
+
+		it('opens on General again after a close, with no remembered tab', () => {
+			const { rerender } = renderModal();
+			openTab('SSH');
+
+			const props = { onClose, onCreate, theme, existingSessions: [] };
+			rerender(<NewInstanceModal isOpen={false} {...props} />);
+			rerender(<NewInstanceModal isOpen={true} {...props} />);
+
+			expect(selectedTab()).toHaveTextContent('General');
+		});
+
+		it('cycles the tabs with Cmd+Shift+] and Cmd+Shift+[', () => {
+			renderModal();
+
+			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
+			expect(selectedTab()).toHaveTextContent('Provider');
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
+			expect(selectedTab()).toHaveTextContent('SSH');
+		});
+
+		it('sends Cmd+Enter from SSH to General with the empty name shown as an error', async () => {
+			renderModal();
+			fireEvent.change(screen.getByPlaceholderText('Select directory...'), {
+				target: { value: '/my/project' },
+			});
+			expect(screen.queryByText('Enter a name for the agent')).not.toBeInTheDocument();
+			openTab('SSH');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onCreate).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(screen.getByText('Enter a name for the agent')).toBeInTheDocument();
+			expect(screen.getByTestId('new-agent-tab-general-error')).toBeInTheDocument();
+		});
+
+		it('sends Cmd+Enter to General when the working directory is empty', async () => {
+			renderModal();
+			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: 'No Dir' } });
+			openTab('Models');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onCreate).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('General');
+			expect(screen.getByText('Choose a working directory')).toBeInTheDocument();
+		});
+
+		it('sends Cmd+Enter to Provider when the provider cannot run', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: false }),
+			]);
+			renderModal();
+			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: 'Missing' } });
+			fireEvent.change(screen.getByPlaceholderText('Select directory...'), {
+				target: { value: '/my/project' },
+			});
+			openTab('SSH');
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(onCreate).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('Provider');
+		});
+
+		it('saves the gateway set on the Models tab onto the created agent', async () => {
+			renderModal();
+			await fillRequired();
+			openTab('Models');
+
+			fireEvent.change(await gatewayInput(), { target: { value: 'http://127.0.0.1:8787/' } });
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			// gatewayUrl is the 23rd argument, stored in its normalized form.
+			expect(onCreate.mock.calls[0][22]).toBe('http://127.0.0.1:8787');
+		});
+
+		it('refuses a gateway that is not a URL, on the Models tab, without creating', async () => {
+			renderModal();
+			await fillRequired();
+			openTab('Models');
+			fireEvent.change(await gatewayInput(), { target: { value: 'not a url' } });
+			openTab('General');
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			expect(onCreate).not.toHaveBeenCalled();
+			expect(selectedTab()).toHaveTextContent('Models');
+			expect(screen.getByTestId('new-agent-tab-models-error')).toBeInTheDocument();
+			expect(screen.getByTestId('new-agent-gateway-url-status')).toHaveTextContent('not a URL');
+
+			// Editing the field clears the refusal and its dot.
+			fireEvent.change(await gatewayInput(), { target: { value: '' } });
+			expect(screen.queryByTestId('new-agent-tab-models-error')).not.toBeInTheDocument();
+		});
+
+		describe('Peers tab', () => {
+			afterEach(() => {
+				useSessionStore.setState({ sessions: [], groups: [] });
+			});
+
+			it('draws the Peer Agents section for the chosen group and creates the agent with the three grants', async () => {
+				// The fleet and the group name come from the store, not from the
+				// `existingSessions` prop.
+				useSessionStore.setState({
+					sessions: [
+						createMockSession({ id: 'peer-infra', name: 'Infra', groupId: 'group-backend' }),
+						createMockSession({ id: 'peer-docs', name: 'Docs' }),
+					],
+					groups: [{ id: 'group-backend', name: 'Backend', emoji: '🛠', collapsed: false }],
+				});
+				renderModal();
+				await fillRequired();
+
+				// No group chosen yet, so the group grant cannot be used.
+				openTab('Peers');
+				expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'new-agent-tabpanel-peers');
+				expect(screen.getByText('Peer Agents')).toBeInTheDocument();
+				expect(screen.getByRole('checkbox', { name: /Peers in my group/ })).toBeDisabled();
+				fireEvent.change(screen.getByRole('textbox', { name: 'How peers see this agent' }), {
+					target: { value: '  Reviews lab instructions  ' },
+				});
+
+				// Choosing a group on General enables it, and the count follows.
+				openTab('General');
+				fireEvent.click(screen.getByLabelText('Agent Group'));
+				fireEvent.click(await screen.findByRole('option', { name: /Backend/ }));
+				openTab('Peers');
+				const groupGrant = screen.getByRole('checkbox', { name: /Peers in my group/ });
+				expect(groupGrant).toBeEnabled();
+				expect(screen.getByText('1 other agent in Backend')).toBeInTheDocument();
+				fireEvent.click(groupGrant);
+
+				// The new agent has no id yet, so the picker offers the whole fleet.
+				fireEvent.click(screen.getByRole('button', { name: 'Add Peer' }));
+				fireEvent.click(screen.getByRole('button', { name: 'Peer agent' }));
+				expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+					'Select an agent...',
+					'Docs',
+					'Infra',
+				]);
+				fireEvent.click(screen.getByRole('option', { name: 'Docs' }));
+				fireEvent.click(screen.getByRole('switch', { name: 'Delegate to this peer' }));
+
+				await act(async () => {
+					fireEvent.click(screen.getByText('Create Agent'));
+				});
+
+				expect(onCreate).toHaveBeenCalledTimes(1);
+				// peerGrants is the 25th argument. The empty note is not stored.
+				const grants = onCreate.mock.calls[0][24];
+				expect(grants).toEqual({
+					peerAgents: [{ sessionId: 'peer-docs', read: true, write: true }],
+					peerDescription: 'Reviews lab instructions',
+					groupPeerAccess: { read: true, write: false },
+					worktreePeerAccess: undefined,
+				});
+				// Off is absent, never a pair of false bits.
+				expect(grants.worktreePeerAccess).toBeUndefined();
+			});
+		});
+
+		describe('Model source', () => {
+			const OLLAMA = {
+				id: 'ep-ollama',
+				name: 'Ollama',
+				kind: 'ollama' as const,
+				baseUrl: 'http://127.0.0.1:11434',
+				enabled: true,
+			};
+			const QWEN = {
+				type: 'source' as const,
+				endpointId: OLLAMA.id,
+				model: 'qwen3:latest',
+				contextTokens: 40_960,
+			};
+			const QWEN_SPEC = 'ep-ollama:qwen3:latest';
+			// runOn is the 24th argument of onCreate, customModel the 9th.
+			const RUN_ON_ARG = 23;
+			const MODEL_ARG = 8;
+			let savedEndpoints: ReturnType<typeof useSettingsStore.getState>['localModelEndpoints'];
+
+			beforeEach(() => {
+				savedEndpoints = useSettingsStore.getState().localModelEndpoints;
+				useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+				// The source models are listed in the Model field, so the provider has to
+				// offer one.
+				vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+					createAgentConfig({
+						capabilities: getAgentCapabilities('claude-code'),
+						configOptions: [
+							{
+								key: 'model',
+								type: 'text',
+								label: 'Model',
+								description: 'Model to use',
+								default: '',
+							},
+						],
+					}),
+				]);
+				vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+					async (endpoint) =>
+						typeof endpoint === 'string'
+							? { ok: true, models: [] }
+							: { ok: true, models: [{ id: 'qwen3:latest' }] }
+				);
+			});
+
+			afterEach(() => {
+				useSettingsStore.setState({ localModelEndpoints: savedEndpoints });
+				vi.mocked(window.maestro.localModels.endpoints.listModels).mockResolvedValue({
+					ok: true,
+					models: [],
+				});
+				vi.mocked(window.maestro.agents.getModels).mockResolvedValue([]);
+			});
+
+			const modelInput = () => screen.getByRole('textbox', { name: 'Model' }) as HTMLInputElement;
+			/** The Model field's entry for a source model, once its list is open and loaded. */
+			const sourceOption = (spec: string) =>
+				waitFor(() => {
+					fireEvent.focus(modelInput());
+					const match = screen
+						.getAllByTestId('model-source-option')
+						.find((candidate) => candidate.getAttribute('data-value') === spec);
+					expect(match).toBeDefined();
+					return match as HTMLElement;
+				});
+			const pickQwen = async () => {
+				fireEvent.click(await sourceOption(QWEN_SPEC));
+			};
+
+			it("lists each source's models in the Model field under the source's name", async () => {
+				renderModal();
+				await fillRequired();
+				openTab('Models');
+
+				const option = await sourceOption(QWEN_SPEC);
+				expect(option).toHaveTextContent('qwen3:latest');
+				const group = option.closest('[data-testid="model-source-group"]') as HTMLElement;
+				expect(within(group).getByText('Ollama')).toBeInTheDocument();
+			});
+
+			it('saves the source model picked on the Models tab onto the created agent', async () => {
+				renderModal();
+				await fillRequired();
+				openTab('Models');
+
+				await pickQwen();
+				expect(modelInput().value).toBe('qwen3:latest');
+				expect(screen.getByTestId('model-source-chip')).toHaveTextContent('Ollama');
+				await act(async () => {
+					fireEvent.click(screen.getByText('Create Agent'));
+				});
+
+				expect(onCreate).toHaveBeenCalledTimes(1);
+				expect(onCreate.mock.calls[0][RUN_ON_ARG]).toEqual(QWEN);
+			});
+
+			it('puts the agent back on its provider when a provider model is picked', async () => {
+				vi.mocked(window.maestro.agents.getModels).mockResolvedValue(['sonnet', 'opus']);
+				renderModal();
+				await fillRequired();
+				openTab('Models');
+				await pickQwen();
+
+				// Typing narrows the list; the provider's models are picked from it.
+				fireEvent.change(modelInput(), { target: { value: 'son' } });
+				fireEvent.click(await screen.findByRole('button', { name: 'sonnet' }));
+
+				expect(screen.queryByTestId('model-source-chip')).not.toBeInTheDocument();
+				expect(modelInput().value).toBe('sonnet');
+				await act(async () => {
+					fireEvent.click(screen.getByText('Create Agent'));
+				});
+
+				expect(onCreate).toHaveBeenCalledTimes(1);
+				expect(onCreate.mock.calls[0][MODEL_ARG]).toBe('sonnet');
+				expect(onCreate.mock.calls[0][RUN_ON_ARG]).toBeUndefined();
+			});
+
+			it('puts the agent back on its provider when the Model field is cleared', async () => {
+				renderModal();
+				await fillRequired();
+				openTab('Models');
+				await pickQwen();
+
+				fireEvent.click(screen.getByRole('button', { name: 'Clear model override' }));
+
+				expect(screen.queryByTestId('model-source-chip')).not.toBeInTheDocument();
+				expect(modelInput().value).toBe('');
+				await act(async () => {
+					fireEvent.click(screen.getByText('Create Agent'));
+				});
+
+				expect(onCreate.mock.calls[0][RUN_ON_ARG]).toBeUndefined();
+			});
+
+			it('disables the gateway field while a source model is chosen', async () => {
+				renderModal();
+				await fillRequired();
+				openTab('Models');
+
+				expect(await gatewayInput()).not.toBeDisabled();
+				await pickQwen();
+
+				expect(await gatewayInput()).toBeDisabled();
+				expect(screen.getByTestId('new-agent-gateway-url-status')).toHaveTextContent(
+					'Not applied while the model source is a Local Models source'
+				);
+			});
+
+			it('tests the target from the form alone, since no agent exists yet', async () => {
+				renderModal();
+				await fillRequired();
+				openTab('Models');
+				await pickQwen();
+
+				fireEvent.click(screen.getByTestId('new-agent-model-source-test'));
+
+				await waitFor(() =>
+					expect(window.maestro.localModels.runOn.test).toHaveBeenCalledWith({
+						target: QWEN,
+						subject: expect.objectContaining({
+							toolType: 'claude-code',
+							cwd: '/my/project',
+							sshRemoteConfig: { enabled: false, remoteId: null },
+						}),
+					})
+				);
+				expect(onCreate).not.toHaveBeenCalled();
+			});
+
+			it('carries the target of the agent being duplicated', async () => {
+				renderModal({
+					sourceSession: createMockSession({
+						id: 'source-1',
+						name: 'Source',
+						toolType: 'claude-code',
+						cwd: '/source/project',
+						runOn: { ...QWEN, contextTokens: 65_536 },
+					}),
+				});
+				openTab('Models');
+
+				await waitFor(() =>
+					expect(screen.getByTestId('model-source-chip')).toHaveTextContent('Ollama')
+				);
+				expect(modelInput().value).toBe('qwen3:latest');
+				expect(
+					(screen.getByTestId('new-agent-model-source-context-select') as HTMLSelectElement).value
+				).toBe('65536');
+			});
+		});
+
+		it('carries the gateway of the agent being duplicated', async () => {
+			renderModal({
+				sourceSession: createMockSession({
+					id: 'source-1',
+					name: 'Source',
+					toolType: 'claude-code',
+					cwd: '/source/project',
+					gatewayUrl: 'http://127.0.0.1:9000',
+				}),
+			});
+			openTab('Models');
+
+			await waitFor(async () => expect((await gatewayInput()).value).toBe('http://127.0.0.1:9000'));
+		});
+
+		it('edits env vars beside the selected provider settings', async () => {
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+				customEnvVars: { API_KEY: 'test-key' },
+			});
+			renderModal();
+			await fillRequired();
+
+			openTab('Provider');
+			fireEvent.click(screen.getByText('Claude Code'));
+			await waitFor(() =>
+				expect(screen.getByPlaceholderText('/path/to/claude')).toBeInTheDocument()
+			);
+			expect(screen.getAllByDisplayValue('API_KEY')).toHaveLength(1);
+			expect(screen.getByText(/Editing the Claude Code environment\./)).toBeInTheDocument();
+			fireEvent.change(screen.getByDisplayValue('test-key'), { target: { value: 'new-key' } });
+			openTab('General');
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			expect(onCreate.mock.calls[0][7]).toEqual({ API_KEY: 'new-key' });
+		});
+
+		it('shows the Runs on chip on General and Agent Resilience on Provider', async () => {
+			renderModal();
+			expect(screen.getByTestId('new-agent-runs-on')).toHaveTextContent('Local');
+			expect(screen.queryByText('Agent Resilience')).not.toBeInTheDocument();
+
+			openTab('Provider');
+			await waitFor(() => expect(screen.getByText('Agent Resilience')).toBeInTheDocument());
+		});
+	});
+
+	// A group's defaults are copy-at-create: they fill the form once, as it opens
+	// for an agent created in that group.
+	describe('Group defaults seed', () => {
+		// Not 🌳: that emoji marks a worktree group, which has no Group Settings.
+		const GROUP_ID = 'group-backend';
+		const withGroupDefaults = (defaults: Record<string, unknown> | undefined) =>
+			useSessionStore.setState({
+				groups: [
+					{
+						id: GROUP_ID,
+						name: 'Backend',
+						emoji: '📦',
+						collapsed: false,
+						...(defaults ? { defaults } : {}),
+					},
+				] as never,
+			});
+
+		const REMOTE = {
+			id: 'remote-1',
+			name: 'Test Server',
+			host: 'test.example.com',
+			port: 22,
+			username: 'testuser',
+			privateKeyPath: '/path/to/key',
+			enabled: true,
+		};
+
+		const renderSeeded = (props: Partial<React.ComponentProps<typeof NewInstanceModal>> = {}) =>
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					presetGroupId={GROUP_ID}
+					{...props}
+				/>
+			);
+
+		const banner = () => screen.findByTestId('new-agent-group-seed-banner');
+
+		/** Name the agent, give it a directory unless the seed did, and create it. */
+		const create = async (dir: string | null = '/my/project') => {
+			fireEvent.change(screen.getByLabelText('Agent Name'), { target: { value: 'Seeded' } });
+			if (dir !== null) {
+				fireEvent.change(screen.getByLabelText('Working Directory'), { target: { value: dir } });
+			}
+			await waitFor(() => expect(screen.getByText('Create Agent')).not.toBeDisabled());
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			return onCreate.mock.calls[0];
+		};
+
+		beforeEach(() => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+				createAgentConfig({ id: 'codex', name: 'Codex', available: true, binaryName: 'codex' }),
+			]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+		});
+
+		afterEach(() => {
+			useModalStore.getState().closeModal('groupSettings');
+		});
+
+		it('pre-fills the provider, the nudge and the env vars, and says where they came from', async () => {
+			withGroupDefaults({
+				toolType: 'codex',
+				nudgeMessage: 'Be brief.',
+				customEnvVars: { CODEX_HOME: '~/.work' },
+			});
+			renderSeeded();
+
+			expect(await banner()).toHaveTextContent(
+				'Pre-filled from 📦 Backend group settings. Edit anything before creating.'
+			);
+			expect(await screen.findByDisplayValue('Be brief.')).toBeInTheDocument();
+
+			// The seed's provider is selected, not the first one this machine can run.
+			openTab('Provider');
+			expect(await screen.findByText(/Editing the Codex environment\./)).toBeInTheDocument();
+			expect(screen.getByDisplayValue('CODEX_HOME')).toBeInTheDocument();
+			expect(screen.getByDisplayValue('~/.work')).toBeInTheDocument();
+
+			openTab('General');
+			const args = await create();
+			expect(args[0]).toBe('codex');
+			expect(args[3]).toBe('Be brief.');
+			expect(args[7]).toEqual({ CODEX_HOME: '~/.work' });
+			expect(args[13]).toBe(GROUP_ID);
+			// Nothing the form has no control for.
+			expect(args[25]).toBeUndefined();
+		});
+
+		it.each([undefined, 'claude-code'] as const)(
+			'replaces provider env vars with the group environment (provider: %s)',
+			async (toolType) => {
+				vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+					customEnvVars: {
+						CLAUDE_CONFIG_DIR: '~/.claude-other',
+						PEDRAM: 'WAS HERE',
+						ANTHROPIC_API_KEY: 'provider-key',
+					},
+				});
+				withGroupDefaults({ toolType, customEnvVars: { ANTHROPIC_API_KEY: 'group-key' } });
+				renderSeeded();
+				await banner();
+
+				openTab('Provider');
+				expect(await screen.findByDisplayValue('ANTHROPIC_API_KEY')).toBeInTheDocument();
+				expect(screen.getByDisplayValue('group-key')).toBeInTheDocument();
+				expect(screen.queryByDisplayValue('CLAUDE_CONFIG_DIR')).not.toBeInTheDocument();
+				expect(screen.queryByDisplayValue('PEDRAM')).not.toBeInTheDocument();
+
+				openTab('General');
+				const args = await create();
+				expect(args[0]).toBe('claude-code');
+				expect(args[7]).toEqual({ ANTHROPIC_API_KEY: 'group-key' });
+			}
+		);
+
+		it('keeps provider args and env vars when the group does not set them', async () => {
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+				customArgs: '--verbose',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '~/.work' },
+			});
+			withGroupDefaults({ toolType: 'claude-code', nudgeMessage: 'Be brief.' });
+			renderSeeded();
+			await banner();
+
+			const args = await create();
+			expect(args[6]).toBe('--verbose');
+			expect(args[7]).toEqual({ CLAUDE_CONFIG_DIR: '~/.work' });
+		});
+
+		it('carries a resilience flag the group switched off onto whichever provider is picked', async () => {
+			withGroupDefaults({ retryOnTokenExhaustion: false });
+			renderSeeded();
+			await banner();
+
+			const args = await create();
+			expect(args[17]).toBe(true); // retryOnAvailabilityErrors: no opinion, so on
+			expect(args[18]).toBe(false); // retryOnTokenExhaustion
+		});
+
+		it('shows no banner for a group with no defaults', async () => {
+			withGroupDefaults(undefined);
+			renderSeeded();
+
+			const trigger = await screen.findByLabelText('Agent Group');
+			await waitFor(() => expect(trigger).toHaveTextContent(/Backend/));
+			await waitFor(() => expect(screen.getByLabelText('Agent Name')).toBeInTheDocument());
+			expect(screen.queryByTestId('new-agent-group-seed-banner')).not.toBeInTheDocument();
+		});
+
+		it('shows no banner with no preset group', async () => {
+			withGroupDefaults({ nudgeMessage: 'Be brief.' });
+			renderSeeded({ presetGroupId: null });
+
+			await screen.findByLabelText('Agent Group');
+			expect(screen.queryByTestId('new-agent-group-seed-banner')).not.toBeInTheDocument();
+			expect(screen.queryByDisplayValue('Be brief.')).not.toBeInTheDocument();
+		});
+
+		it('never seeds a duplicate: it is its source copy', async () => {
+			withGroupDefaults({ nudgeMessage: 'From the group.' });
+			renderSeeded({
+				sourceSession: createMockSession({
+					id: 'source-1',
+					name: 'Source',
+					toolType: 'claude-code',
+					cwd: '/source/project',
+					groupId: GROUP_ID,
+					nudgeMessage: 'From the source.',
+				}),
+			});
+
+			expect(await screen.findByDisplayValue('From the source.')).toBeInTheDocument();
+			expect(screen.queryByTestId('new-agent-group-seed-banner')).not.toBeInTheDocument();
+		});
+
+		it('does not reseed when another group is picked afterwards', async () => {
+			useSessionStore.setState({
+				groups: [
+					{
+						id: GROUP_ID,
+						name: 'Backend',
+						emoji: '📦',
+						collapsed: false,
+						defaults: { nudgeMessage: 'From Backend.' },
+					},
+					{
+						id: 'group-docs',
+						name: 'Docs',
+						emoji: '📚',
+						collapsed: false,
+						defaults: { nudgeMessage: 'From Docs.' },
+					},
+				] as never,
+			});
+			renderSeeded();
+			expect(await screen.findByDisplayValue('From Backend.')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByLabelText('Agent Group'));
+			fireEvent.click(await screen.findByRole('option', { name: /Docs/ }));
+
+			// The agent moves. What the form holds does not change.
+			expect(screen.getByDisplayValue('From Backend.')).toBeInTheDocument();
+			expect(screen.queryByDisplayValue('From Docs.')).not.toBeInTheDocument();
+			expect(await banner()).toHaveTextContent('📦 Backend');
+			const args = await create();
+			expect(args[13]).toBe('group-docs');
+			expect(args[3]).toBe('From Backend.');
+		});
+
+		it('a working directory the caller named outranks the group default one', async () => {
+			withGroupDefaults({ projectRoot: '/srv/group-default', nudgeMessage: 'Be brief.' });
+			renderSeeded({ presetWorkingDir: '/project/here' });
+			await banner();
+			await screen.findByDisplayValue('Be brief.');
+
+			expect(screen.getByLabelText('Working Directory')).toHaveValue('/project/here');
+		});
+
+		it('seeds the working directory from the group default', async () => {
+			withGroupDefaults({ projectRoot: '/srv/group-default' });
+			renderSeeded();
+
+			await waitFor(() =>
+				expect(screen.getByLabelText('Working Directory')).toHaveValue('/srv/group-default')
+			);
+		});
+
+		it('the group name closes the form and opens Group Settings for that group', async () => {
+			withGroupDefaults({ nudgeMessage: 'Be brief.' });
+			renderSeeded();
+
+			fireEvent.click(within(await banner()).getByRole('button', { name: /Backend/ }));
+
+			expect(onClose).toHaveBeenCalledTimes(1);
+			expect(onCreate).not.toHaveBeenCalled();
+			expect(useModalStore.getState().isOpen('groupSettings')).toBe(true);
+			expect(useModalStore.getState().getData('groupSettings')).toEqual({ groupId: GROUP_ID });
+		});
+
+		describe('SSH remote', () => {
+			beforeEach(() => {
+				// Remote path validation is informational; give it a directory.
+				vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+					size: 4096,
+					createdAt: '2024-01-01T00:00:00.000Z',
+					modifiedAt: '2024-01-15T12:30:00.000Z',
+					isDirectory: true,
+					isFile: false,
+				});
+			});
+
+			it('seeds SSH off with a note when the remote no longer exists', async () => {
+				vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+					success: true,
+					configs: [],
+				});
+				withGroupDefaults({
+					nudgeMessage: 'Be brief.',
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-gone' },
+				});
+				renderSeeded();
+
+				expect(await banner()).toHaveTextContent('SSH remote no longer exists, running locally.');
+				expect(screen.getByTestId('new-agent-runs-on')).toHaveTextContent('Local');
+
+				const args = await create();
+				// Never handed a remote id that resolves to nothing.
+				expect(args[11]).toMatchObject({ enabled: false, remoteId: null });
+				expect(window.maestro.agents.detect).not.toHaveBeenCalledWith('remote-gone');
+			});
+
+			it('seeds the remote, and keeps the seed through the detection the remote causes', async () => {
+				vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+					success: true,
+					configs: [REMOTE],
+				});
+				withGroupDefaults({
+					toolType: 'claude-code',
+					projectRoot: '~/git/app',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '~/.work' },
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				});
+				renderSeeded();
+
+				const seeded = await banner();
+				expect(seeded).not.toHaveTextContent('SSH remote no longer exists');
+				// Turning the remote on makes the form detect providers on it.
+				await waitFor(() => expect(window.maestro.agents.detect).toHaveBeenCalledWith('remote-1'));
+				await waitFor(() =>
+					expect(screen.getByLabelText('Working Directory')).toHaveValue('~/git/app')
+				);
+
+				// That pass must not replace what the seed filled.
+				openTab('Provider');
+				expect(await screen.findByDisplayValue('CLAUDE_CONFIG_DIR')).toBeInTheDocument();
+
+				openTab('General');
+				const args = await create(null);
+				// A remote path keeps its `~`: only the remote shell can expand it.
+				expect(args[1]).toBe('~/git/app');
+				expect(args[7]).toEqual({ CLAUDE_CONFIG_DIR: '~/.work' });
+				expect(args[11]).toMatchObject({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '~/git/app',
+				});
+			});
+		});
+
+		describe('defaults the form has no control for', () => {
+			const TIERS = { low: { type: 'provider-model', model: 'haiku' } };
+
+			it('names them in the banner and hands them to onCreate', async () => {
+				withGroupDefaults({
+					toolType: 'claude-code',
+					tierTargets: TIERS,
+					systemOneOptOut: true,
+					customEnvVarsDisabled: { DEBUG: '1' },
+				});
+				renderSeeded();
+
+				const extras = await screen.findByTestId('new-agent-group-seed-extras');
+				expect(extras).toHaveTextContent(
+					'Also set when the agent is created: Tier Targets, System One, Environment Variables (switched off).'
+				);
+
+				const args = await create();
+				expect(args[25]).toEqual({
+					tierTargets: TIERS,
+					systemOneOptOut: true,
+					customEnvVarsDisabled: { DEBUG: '1' },
+				});
+			});
+
+			it('drops the provider-bound ones when another provider is picked', async () => {
+				withGroupDefaults({
+					toolType: 'claude-code',
+					tierTargets: TIERS,
+					systemOneOptOut: true,
+				});
+				renderSeeded();
+				await screen.findByTestId('new-agent-group-seed-extras');
+
+				openTab('Provider');
+				fireEvent.click(await screen.findByRole('option', { name: /Codex/i }));
+
+				// Judged against the form as it stands, not as it was seeded.
+				await waitFor(() =>
+					expect(screen.getByTestId('new-agent-group-seed-extras')).toHaveTextContent(
+						'Also set when the agent is created: System One.'
+					)
+				);
+				openTab('General');
+				const args = await create();
+				expect(args[0]).toBe('codex');
+				expect(args[25]).toEqual({ systemOneOptOut: true });
+			});
+
+			it('says which default was left out, and why', async () => {
+				withGroupDefaults({ toolType: 'claude-code', tokenProxyMode: 'compress' });
+				renderSeeded();
+				expect(await screen.findByTestId('new-agent-group-seed-extras')).toHaveTextContent(
+					'Maestro Token Proxy'
+				);
+
+				// A gateway typed in the form: the proxy would take its place.
+				openTab('Models');
+				const gateway = (await screen.findByTestId('new-agent-gateway')).querySelector(
+					'input'
+				) as HTMLInputElement;
+				fireEvent.change(gateway, { target: { value: 'http://127.0.0.1:8787' } });
+
+				await waitFor(() =>
+					expect(screen.getByTestId('new-agent-group-seed-skipped')).toHaveTextContent(
+						'Not pre-filled: Maestro Token Proxy.'
+					)
+				);
+				expect(screen.queryByTestId('new-agent-group-seed-extras')).not.toBeInTheDocument();
+			});
 		});
 	});
 });

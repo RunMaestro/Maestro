@@ -103,6 +103,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => {
 		setAutoResumeCheckIntervalHours: mockSetAutoResumeCheckIntervalHours,
 		autoResumeGiveUpDays: 21,
 		setAutoResumeGiveUpDays: mockSetAutoResumeGiveUpDays,
+		maxConsultationsPerTurn: 25,
+		setMaxConsultationsPerTurn: vi.fn(),
 		defaultSaveToHistory: true,
 		setDefaultSaveToHistory: mockSetDefaultSaveToHistory,
 		defaultShowThinking: 'off',

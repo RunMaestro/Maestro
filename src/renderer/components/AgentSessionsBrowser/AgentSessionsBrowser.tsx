@@ -29,6 +29,8 @@ import { SessionListStatsBar } from './components/SessionListStatsBar';
 import { SessionSearchBar } from './components/SessionSearchBar';
 import { SessionListView } from './components/SessionListView';
 import type { SearchMode } from './types';
+import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
+import { getActiveTab } from '../../utils/tabHelpers';
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
@@ -54,15 +56,51 @@ export function AgentSessionsBrowser(props: AgentSessionsBrowserProps) {
 
 function ScopedAgentSessionsBrowser({
 	theme,
-	activeSession,
-	activeAgentSessionId,
+	activeSession: sourceSession,
+	activeAgentSessionId: requestedSessionId,
+	provider,
 	onClose,
-	onResumeSession,
+	onResumeSession: resumeSession,
 	onNewSession,
-	onUpdateTab,
+	onUpdateTab: updateTab,
 	selectionKey,
 }: AgentSessionsBrowserProps & { selectionKey: string }) {
-	const agentId = activeSession?.toolType || 'claude-code';
+	const sourceTab = sourceSession ? getActiveTab(sourceSession) : undefined;
+	const agentId =
+		provider ??
+		(sourceSession ? resolveTabNativeProvider(sourceTab, sourceSession) : 'claude-code');
+	const native = sourceSession ? projectTabProvider(sourceSession, sourceTab, agentId) : undefined;
+	const activeSession = native?.agent;
+	const activeAgentSessionId = sourceTab
+		? (native?.tab?.agentSessionId ?? null)
+		: agentId === sourceSession?.toolType
+			? requestedSessionId
+			: null;
+	// Every resume from this browser is owned by the provider it lists, and lands
+	// in the agent it was opened from unless the caller names another.
+	const onResumeSession = useCallback<AgentSessionsBrowserProps['onResumeSession']>(
+		(id, logs, name, starred, usage, projectPath, opts) =>
+			resumeSession(
+				id,
+				logs?.map((entry) => ({ ...entry, turnProvider: agentId })),
+				name,
+				starred,
+				usage,
+				projectPath,
+				{
+					...opts,
+					provider: agentId,
+					targetSessionId: opts?.targetSessionId ?? sourceSession?.id,
+				}
+			),
+		[resumeSession, agentId, sourceSession?.id]
+	);
+	const onUpdateTab = useCallback<
+		NonNullable<Parameters<typeof useAgentSessionsRename>[0]['onUpdateTab']>
+	>(
+		(id, updates) => updateTab?.(id, updates, agentId, sourceSession?.id),
+		[updateTab, agentId, sourceSession?.id]
+	);
 	const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(activeSession);
 
 	const {

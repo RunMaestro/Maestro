@@ -4,6 +4,10 @@ import { buildAgentPanelCommands } from '../../../../../renderer/components/Quic
 import { buildAgentSwitcherCommands } from '../../../../../renderer/components/QuickActionsModal/commands/agentSwitcherCommands';
 import { buildActiveTabContextCommands } from '../../../../../renderer/components/QuickActionsModal/commands/contextCommands';
 import { buildDebugCommands } from '../../../../../renderer/components/QuickActionsModal/commands/debugCommands';
+import {
+	buildDelegationGraphCommands,
+	delegationGraphGroupCommandId,
+} from '../../../../../renderer/components/QuickActionsModal/commands/delegationGraphCommands';
 import { buildFeatureCommands } from '../../../../../renderer/components/QuickActionsModal/commands/featureCommands';
 import { buildGitWorktreeCommands } from '../../../../../renderer/components/QuickActionsModal/commands/gitWorktreeCommands';
 import {
@@ -30,6 +34,7 @@ import { createMockAITab } from '../../../../helpers/mockTab';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useTabStore } from '../../../../../renderer/stores/tabStore';
+import { HOLD_SEND_EVENT } from '../../../../../renderer/hooks/input/useInputKeyDown';
 
 const noop = () => {};
 const setSessions = vi.fn();
@@ -347,7 +352,27 @@ describe('QuickActions command builders', () => {
 				onGoToPreviousUnread: vi.fn(),
 				shortcuts: {},
 			}).map((a) => a.id)
-		).toEqual(expect.arrayContaining(['nextUnreadTab', 'previousUnreadTab']));
+		).toEqual(
+			expect.arrayContaining(['nextUnreadTab', 'previousUnreadTab', 'openWorkingDirectory'])
+		);
+
+		// No host file manager to open (the web interface passes no openPath): no command.
+		expect(
+			buildNavigationCommands({
+				activeSession: session,
+				activeSessionId: 's1',
+				setQuickActionOpen: close,
+				setLeftSidebarOpen: vi.fn(),
+				setRightPanelOpen: vi.fn(),
+				addNewSession: vi.fn(),
+				deleteSession: vi.fn(),
+				getOpenInLabel: () => 'Open',
+				platform: 'darwin',
+				onGoToNextUnread: vi.fn(),
+				onGoToPreviousUnread: vi.fn(),
+				shortcuts: {},
+			}).map((a) => a.id)
+		).not.toContain('openWorkingDirectory');
 
 		expect(
 			buildNewTabCommands({
@@ -546,7 +571,12 @@ describe('QuickActions command builders', () => {
 			activeSession: fileSession,
 			activeTabType: 'file',
 		});
-		expect(fileCommands.map((a) => a.id)).toEqual(['deletePreviewedFile']);
+		expect(fileCommands.map((a) => a.id)).toEqual([
+			// Chat is offered without the A Cappella flag: typing needs no voice
+			// stack, so gating it would take text chat away from a default install.
+			'chatWithPreviewedDocument',
+			'deletePreviewedFile',
+		]);
 		expect(fileCommands[0].subtext).toBe('notes.md');
 
 		// A file tab selected while the panel shows a terminal is not a live
@@ -1221,6 +1251,43 @@ describe('agent-switch window scoping', () => {
 		).toBeUndefined();
 	});
 
+	it('lists Queue Held for an AI-mode agent and withholds it over a group chat', () => {
+		const session = createMockSession({ id: 's1', inputMode: 'ai' });
+		const args = {
+			activeSession: session,
+			canSummarizeActiveTab: true,
+			hasActiveSessionCapability: () => true,
+			setQuickActionOpen: close,
+			setSuccessFlashNotification: vi.fn(),
+			setAgentSessionsOpen: vi.fn(),
+			setActiveAgentSessionId: vi.fn(),
+			bionifyReadingMode: false,
+			setBionifyReadingMode: vi.fn(),
+			audioFeedbackEnabled: false,
+			setAudioFeedbackEnabled: vi.fn(),
+			idleNotificationEnabled: false,
+			setIdleNotificationEnabled: vi.fn(),
+			showStarredSessionsSection: true,
+			setShowStarredSessionsSection: vi.fn(),
+			shortcuts: {},
+		};
+
+		const hold = buildFeatureCommands(args).find((a) => a.id === 'holdSend');
+		expect(hold?.label).toBe('Queue Held');
+		const held = vi.fn();
+		window.addEventListener(HOLD_SEND_EVENT, held);
+		hold?.action();
+		window.removeEventListener(HOLD_SEND_EVENT, held);
+		expect(held).toHaveBeenCalledTimes(1);
+		expect(close).toHaveBeenCalledWith(false);
+
+		expect(
+			buildFeatureCommands({ ...args, activeGroupChatId: 'chat-1' }).find(
+				(a) => a.id === 'holdSend'
+			)
+		).toBeUndefined();
+	});
+
 	it('withholds toggleStarTab while a group chat owns the view', () => {
 		const session = createMockSession({
 			id: 's1',
@@ -1249,5 +1316,402 @@ describe('agent-switch window scoping', () => {
 		expect(roomCommands.find((a) => a.id === 'toggleStarTab')).toBeUndefined();
 		expect(roomCommands.find((a) => a.id === 'copySessionId')).toBeDefined();
 		expect(roomCommands.find((a) => a.id === 'markTabUnread')).toBeDefined();
+	});
+});
+
+describe('buildTabCommands: Tab Cleanup Suggestions', () => {
+	const args = {
+		activeSession: createMockSession({ id: 's1' }),
+		isAiMode: true,
+		activeTabInfo: {
+			isTerminalMode: false,
+			hasActiveTab: false,
+			activeUnifiedIndex: -1,
+			unifiedTabCount: 0,
+			activeTabType: null,
+		},
+		enterToSendAI: true,
+		shortcuts: {},
+		toggleInputMode: vi.fn(),
+	};
+
+	it('opens the modal and closes the palette', () => {
+		const setQuickActionOpen = vi.fn();
+		const command = buildTabCommands({ ...args, setQuickActionOpen }).find(
+			(a) => a.id === 'tabCleanupSuggestions'
+		);
+
+		expect(command?.label).toBe('Tab Cleanup Suggestions');
+		try {
+			command!.action();
+			expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+			expect(useModalStore.getState().isOpen('tabCleanup')).toBe(true);
+		} finally {
+			useModalStore.getState().closeModal('tabCleanup');
+		}
+	});
+
+	it('shows the chord the user bound, and none by default', () => {
+		const bound = { id: 'tabCleanupSuggestions', label: 'Tab Cleanup Suggestions', keys: ['k'] };
+		const find = (shortcuts: Record<string, unknown>) =>
+			buildTabCommands({ ...args, setQuickActionOpen: vi.fn(), shortcuts }).find(
+				(a) => a.id === 'tabCleanupSuggestions'
+			);
+
+		expect(find({})?.shortcut).toBeUndefined();
+		expect(find({ tabCleanupSuggestions: bound })?.shortcut).toBe(bound);
+	});
+});
+
+describe('buildSupportCommands: Models settings', () => {
+	it('opens Settings on the Models tab and closes the palette', () => {
+		const setQuickActionOpen = vi.fn();
+		const setSettingsModalOpen = vi.fn();
+		const setSettingsTab = vi.fn();
+		const commands = buildSupportCommands({
+			setQuickActionOpen,
+			setSettingsModalOpen,
+			setSettingsTab,
+			setShortcutsHelpOpen: vi.fn(),
+			setAboutModalOpen: vi.fn(),
+			onOpenLeaderboardRegistration: vi.fn(),
+			isLeaderboardRegistered: false,
+			setFeedbackModalOpen: vi.fn(),
+			setLogViewerOpen: vi.fn(),
+			setProcessMonitorOpen: vi.fn(),
+			getFeedbackDraft: () => ({ isMinimized: false, setMinimized: vi.fn() }),
+			createDebugPackage: vi.fn(),
+			notifyToast: vi.fn(),
+			openUrl: vi.fn(),
+			toggleDevtools: vi.fn(),
+			shortcuts: {},
+		});
+
+		const entry = commands.find((c) => c.id === 'openLocalModelsSettings');
+		expect(entry?.label).toBe('Open Models Settings');
+		entry!.action();
+
+		expect(setSettingsModalOpen).toHaveBeenCalledWith(true);
+		expect(setSettingsTab).toHaveBeenCalledWith('models');
+		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+	});
+});
+
+describe('Group Settings command', () => {
+	const setQuickActionOpen = vi.fn();
+
+	function build(group: Record<string, unknown> | null, groupId: string | undefined = 'g1') {
+		return buildAgentPanelCommands({
+			activeSession: createMockSession({ id: 's1', groupId }),
+			groups: group ? [{ id: 'g1', name: 'Backend', emoji: '🚀', collapsed: false, ...group }] : [],
+			sessions: [],
+			setGroups: vi.fn(),
+			setSessions,
+			setQuickActionOpen,
+			setRenameGroupModalOpen: vi.fn(),
+			setRenameGroupId: vi.fn(),
+			setRenameGroupValue: vi.fn(),
+			setRenameGroupEmoji: vi.fn(),
+			setRenameGroupIcon: vi.fn(),
+			setRenameGroupColor: vi.fn(),
+			setCreateGroupModalOpen: vi.fn(),
+			setRightPanelOpen: vi.fn(),
+			setActiveRightTab: vi.fn(),
+			setMode: vi.fn(),
+			resetSelectionToFirst: vi.fn(),
+			ungroupedCollapsed: false,
+			setUngroupedCollapsed: vi.fn(),
+			bookmarksCollapsed: false,
+			setBookmarksCollapsed: vi.fn(),
+			groupChatsExpanded: true,
+			setGroupChatsExpanded: vi.fn(),
+		});
+	}
+
+	beforeEach(() => {
+		setQuickActionOpen.mockClear();
+		useModalStore.getState().closeModal('groupSettings');
+	});
+
+	it("sits directly after Rename Group and names the active agent's group", () => {
+		const ids = build({}).map((command) => command.id);
+		expect(ids.indexOf('groupSettings')).toBe(ids.indexOf('renameGroup') + 1);
+
+		const command = build({}).find((entry) => entry.id === 'groupSettings');
+		expect(command).toMatchObject({
+			label: 'Group Settings',
+			subtext: 'Defaults for new agents in 🚀 Backend',
+		});
+	});
+
+	it('opens Group Settings on that group and closes the palette', () => {
+		build({})
+			.find((entry) => entry.id === 'groupSettings')
+			?.action();
+
+		expect(useModalStore.getState().isOpen('groupSettings')).toBe(true);
+		expect(useModalStore.getState().getData('groupSettings')).toEqual({ groupId: 'g1' });
+		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+	});
+
+	it('is absent for a worktree group, by kind or by the worktree emoji', () => {
+		expect(build({ kind: 'worktree' }).map((command) => command.id)).not.toContain('groupSettings');
+		expect(build({ emoji: '🌳' }).map((command) => command.id)).not.toContain('groupSettings');
+		// Rename Group has no such gate.
+		expect(build({ kind: 'worktree' }).map((command) => command.id)).toContain('renameGroup');
+	});
+
+	it('is absent when the active agent is in no group, or in one that no longer exists', () => {
+		expect(build({}, '').map((command) => command.id)).not.toContain('groupSettings');
+		expect(build(null).map((command) => command.id)).not.toContain('groupSettings');
+	});
+});
+
+describe('buildDelegationGraphCommands', () => {
+	it('opens the Delegation Graph on every agent and closes the palette', () => {
+		const setQuickActionOpen = vi.fn();
+		const [command] = buildDelegationGraphCommands({ setQuickActionOpen });
+
+		expect(command.label).toBe('Delegation Graph');
+		try {
+			command.action();
+			expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+			expect(useModalStore.getState().isOpen('delegationGraph')).toBe(true);
+			// No scope: the graph opens on every agent.
+			expect(useModalStore.getState().getData('delegationGraph')).toBeUndefined();
+		} finally {
+			useModalStore.getState().closeModal('delegationGraph');
+		}
+	});
+
+	it('shows the chord the user bound, and none by default', () => {
+		const bound = { id: 'openDelegationGraph', label: 'Delegation Graph', keys: ['y'] };
+
+		expect(buildDelegationGraphCommands({ setQuickActionOpen: vi.fn() })[0].shortcut).toBe(
+			undefined
+		);
+		expect(
+			buildDelegationGraphCommands({
+				setQuickActionOpen: vi.fn(),
+				openDelegationGraphShortcut: bound,
+			})[0].shortcut
+		).toBe(bound);
+	});
+
+	describe('one command per group', () => {
+		const PLATFORM = { id: 'g-platform', name: 'Platform', emoji: '' };
+		const RESEARCH = { id: 'g-research', name: 'Research', emoji: '🔬' };
+		const bound = { id: 'openDelegationGraph', label: 'Delegation Graph', keys: ['y'] };
+
+		it('adds none when there is no group', () => {
+			expect(buildDelegationGraphCommands({ setQuickActionOpen: vi.fn() })).toHaveLength(1);
+			expect(
+				buildDelegationGraphCommands({ setQuickActionOpen: vi.fn(), groups: [] })
+			).toHaveLength(1);
+		});
+
+		it('follows the all-agents command, in the order the scope picker lists groups', () => {
+			const commands = buildDelegationGraphCommands({
+				setQuickActionOpen: vi.fn(),
+				// Given out of order, and the emoji must not decide the order.
+				groups: [RESEARCH, PLATFORM],
+			});
+
+			expect(commands.map((command) => command.id)).toEqual([
+				'openDelegationGraph',
+				delegationGraphGroupCommandId(PLATFORM.id),
+				delegationGraphGroupCommandId(RESEARCH.id),
+			]);
+			expect(commands.map((command) => command.label)).toEqual([
+				'Delegation Graph',
+				'Delegation Graph: Platform',
+				'Delegation Graph: 🔬 Research',
+			]);
+		});
+
+		it('opens the graph on that group and closes the palette', () => {
+			const setQuickActionOpen = vi.fn();
+			const commands = buildDelegationGraphCommands({
+				setQuickActionOpen,
+				groups: [PLATFORM, RESEARCH],
+			});
+			const research = commands.find(
+				(command) => command.id === delegationGraphGroupCommandId(RESEARCH.id)
+			)!;
+
+			try {
+				research.action();
+				expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+				expect(useModalStore.getState().isOpen('delegationGraph')).toBe(true);
+				expect(useModalStore.getState().getData('delegationGraph')).toEqual({
+					scope: { kind: 'group', groupId: RESEARCH.id },
+				});
+			} finally {
+				useModalStore.getState().closeModal('delegationGraph');
+			}
+		});
+
+		it('still opens on every agent from the first command', () => {
+			const [all] = buildDelegationGraphCommands({
+				setQuickActionOpen: vi.fn(),
+				groups: [PLATFORM],
+			});
+
+			try {
+				all.action();
+				expect(useModalStore.getState().getData('delegationGraph')).toBeUndefined();
+			} finally {
+				useModalStore.getState().closeModal('delegationGraph');
+			}
+		});
+
+		it('keeps the chord on the all-agents command only', () => {
+			const commands = buildDelegationGraphCommands({
+				setQuickActionOpen: vi.fn(),
+				openDelegationGraphShortcut: bound,
+				groups: [PLATFORM],
+			});
+
+			expect(commands[0].shortcut).toBe(bound);
+			expect(commands[1].shortcut).toBeUndefined();
+		});
+
+		it('gives every group its own id, so two groups with one name are two commands', () => {
+			const commands = buildDelegationGraphCommands({
+				setQuickActionOpen: vi.fn(),
+				groups: [PLATFORM, { ...PLATFORM, id: 'g-platform-2' }],
+			});
+
+			expect(new Set(commands.map((command) => command.id)).size).toBe(3);
+		});
+	});
+});
+
+describe('Context: Preview Continuity palette entry', () => {
+	const logEntry = (id: string) => ({
+		id,
+		timestamp: 1_000,
+		source: 'user' as const,
+		text: `Entry ${id}`,
+	});
+
+	function sessionWith(tabs = [createMockAITab({ id: 'tab-1', logs: [logEntry('1')] })]) {
+		return createMockSession({ id: 'agent-1', aiTabs: tabs, activeTabId: tabs[0].id });
+	}
+
+	function buildArgs(overrides: Record<string, unknown> = {}) {
+		return {
+			activeSession: sessionWith(),
+			activeTabType: 'ai' as const,
+			setQuickActionOpen: vi.fn(),
+			setSuccessFlashNotification: vi.fn(),
+			setAgentSessionsOpen: vi.fn(),
+			setActiveAgentSessionId: vi.fn(),
+			bionifyReadingMode: false,
+			setBionifyReadingMode: vi.fn(),
+			audioFeedbackEnabled: false,
+			setAudioFeedbackEnabled: vi.fn(),
+			idleNotificationEnabled: false,
+			setIdleNotificationEnabled: vi.fn(),
+			showStarredSessionsSection: true,
+			setShowStarredSessionsSection: vi.fn(),
+			shortcuts: {},
+			...overrides,
+		};
+	}
+
+	const find = (overrides: Record<string, unknown> = {}) =>
+		buildFeatureCommands(buildArgs(overrides)).find((a) => a.id === 'continuityPreview');
+
+	beforeEach(() => {
+		useModalStore.getState().closeModal('continuityPreview');
+	});
+
+	it('is offered for an AI tab that has an entry to read, with no hotkey', () => {
+		const command = find();
+		expect(command).toMatchObject({
+			id: 'continuityPreview',
+			label: 'Context: Preview Continuity',
+		});
+		// A tab-scoped Context action: Compact, Merge Into and Send to Agent have no chord either.
+		expect(command?.shortcut).toBeUndefined();
+	});
+
+	it('sits right after Context: Compact, before Merge Into and Send to Agent', () => {
+		const ids = buildFeatureCommands(
+			buildArgs({
+				canSummarizeActiveTab: true,
+				hasActiveSessionCapability: () => true,
+				onSummarizeAndContinue: vi.fn(),
+				onOpenMergeSession: vi.fn(),
+				onOpenSendToAgent: vi.fn(),
+			})
+		).map((a) => a.id);
+		const at = (id: string) => ids.indexOf(id);
+
+		expect(at('summarizeAndContinue')).toBeGreaterThanOrEqual(0);
+		expect(at('continuityPreview')).toBe(at('summarizeAndContinue') + 1);
+		expect(at('mergeSession')).toBe(at('continuityPreview') + 1);
+		expect(at('sendToAgent')).toBe(at('mergeSession') + 1);
+	});
+
+	it('does not borrow the compaction or merge gates: it asks no provider anything', () => {
+		expect(
+			find({
+				canSummarizeActiveTab: false,
+				hasActiveSessionCapability: () => false,
+				onSummarizeAndContinue: undefined,
+				onOpenMergeSession: undefined,
+				onOpenSendToAgent: undefined,
+			})
+		).toBeDefined();
+	});
+
+	it.each(['file', 'terminal', 'browser'] as const)('is not offered on a %s tab', (type) => {
+		expect(find({ activeTabType: type })).toBeUndefined();
+	});
+
+	it('is not offered for a tab with no entries, or with no active agent', () => {
+		expect(
+			find({ activeSession: sessionWith([createMockAITab({ id: 'tab-1', logs: [] })]) })
+		).toBeUndefined();
+		expect(find({ activeSession: undefined })).toBeUndefined();
+	});
+
+	it('closes the palette first, then opens the modal for the active tab and no other', () => {
+		const tabs = [
+			createMockAITab({ id: 'tab-1', logs: [logEntry('1')] }),
+			createMockAITab({ id: 'tab-2', logs: [logEntry('2')] }),
+		];
+		const activeSession = createMockSession({
+			id: 'agent-1',
+			aiTabs: tabs,
+			activeTabId: 'tab-2',
+		});
+		let openWhenPaletteClosed: boolean | undefined;
+		const setQuickActionOpen = vi.fn((open: boolean) => {
+			if (!open) {
+				openWhenPaletteClosed = useModalStore.getState().modals.get('continuityPreview')?.open;
+			}
+		});
+
+		find({ activeSession, setQuickActionOpen })!.action();
+
+		expect(setQuickActionOpen).toHaveBeenCalledTimes(1);
+		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+		// The palette was already closed when the modal opened, so closing it cannot take the modal's layer down.
+		expect(openWhenPaletteClosed).toBeFalsy();
+		expect(useModalStore.getState().modals.get('continuityPreview')).toMatchObject({
+			open: true,
+			data: { sessionId: 'agent-1', tabId: 'tab-2' },
+		});
+	});
+
+	it('stores the tab it was opened for and nothing else', () => {
+		find()!.action();
+		expect(useModalStore.getState().getData('continuityPreview')).toEqual({
+			sessionId: 'agent-1',
+			tabId: 'tab-1',
+		});
 	});
 });

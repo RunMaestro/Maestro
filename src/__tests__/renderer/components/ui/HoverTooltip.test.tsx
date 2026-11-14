@@ -19,6 +19,20 @@ function open(ui: React.ReactElement) {
 }
 
 describe('HoverTooltip', () => {
+	it('reveals the explanation when its trigger receives keyboard focus', () => {
+		render(
+			<HoverTooltip theme={mockTheme} label="Fits on this computer. Needs 630 MB.">
+				<span tabIndex={0}>Fits</span>
+			</HoverTooltip>
+		);
+		const trigger = screen.getByText('Fits');
+		expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+		fireEvent.focus(trigger);
+		expect(screen.getByRole('tooltip')).toHaveTextContent('Fits on this computer. Needs 630 MB.');
+		fireEvent.blur(trigger);
+		expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+	});
+
 	it('keeps every tooltip within the viewport by default', () => {
 		const original = window.innerWidth;
 		Object.defineProperty(window, 'innerWidth', { value: 200, configurable: true });

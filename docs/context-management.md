@@ -19,6 +19,7 @@ Hover over any tab with an established session to access the tab menu overlay:
 | **Export as HTML**                  | No (1+ logs)     | Export conversation as self-contained HTML file                          |
 | **Context: Copy to Clipboard**      | No (1+ logs)     | Copy the full conversation to clipboard                                  |
 | **Context: Compact**                | No (5+ logs)     | Compress context while preserving key information                        |
+| **Context: Preview Continuity**     | No (1+ logs)     | Read what a continuation of this tab would have to keep (read only)      |
 | **Context: Merge Into**             | Yes              | Merge this context into another session                                  |
 | **Context: Send to Agent**          | Yes              | Transfer context to a new tab of any agent, including this one           |
 | **Context: Publish as GitHub Gist** | No (1+ logs)     | Share conversation as a public or secret GitHub Gist (requires `gh` CLI) |
@@ -213,6 +214,37 @@ During compaction, you'll see status updates:
 - "Summarizing chunk 1/4..." - Processing large conversations in parts
 - "Consolidation pass 1/3..." - Additional reduction passes if needed
 - "Finalizing compacted context..." - Creating the new tab
+
+## Preview Continuity
+
+Before you compact or move a conversation, you can read what a continuation of it would have to keep. The preview is read only. It does not compact the tab, send anything, change the tab, or save anything.
+
+1. **Hover over** a tab → **"Context: Preview Continuity"**, or use **Command Palette** (`Cmd+K` / `Ctrl+K`) → "Context: Preview Continuity". In a tiled layout, use the same item in the pane menu.
+2. A window opens with the preview of that tab. It is plain text. Use **Copy** to copy it. Press `Esc` or click **Close** to close it.
+
+The preview lists, with the transcript entry each item came from:
+
+- The objective and the latest request
+- Your own constraints: your sentences that carry constraint wording
+- Pending requirements and the next action, when the transcript states them
+- Checks that passed, and failures that no later run corrected
+- Earlier synopses from History, only when they belong to this tab (written by a model, not verified)
+
+Below the digest, a **Signals** section reports what the transcript shows about repetition and about how ready the conversation is to continue. Every line is an observation with the entries it rests on and what it cannot establish. It is not a score and not a prediction, and nothing acts on it: Maestro does not block a call, change a prompt, switch a model or send anything.
+
+- **Repetition.** The same call, with the same arguments, that failed three or more times in a row, or the same file read that returned the same text three or more times. Test, edit, retest does not count, and neither does a retry after a file edit, a new message from you, a compaction or a wait. Checks of live state, such as `git status`, `curl`, `kubectl get` or `gh run view`, are never counted, because repeating them is how you wait. Other polling can look like a repeat, and the section says so.
+- **Readiness.** Whether a turn is running, whether file edits come after the last passing check, how many failures are open, where the last compaction is, and how full the provider says the context is. A reading with no evidence says **unknown**, never clear: a tab with no usage record is not a tab with low use.
+- **Configured routing.** The model, model source, tier targets and background-request setting as they stand now. They are your settings, not a launch: Maestro does not check that a source is enabled or reachable or that the token proxy is on for this agent, and they are not a record of where earlier turns ran. The section lists what was not checked.
+
+Anything Maestro cannot establish is listed under **Unknown**. The notices say which History entries were left out and why. The preview reads Maestro's transcript, not the provider's. If the provider compacted the conversation by itself, the preview cannot see that.
+
+An agent or a script can read the same preview with `maestro-cli tab continuity`.
+
+## Context Footprint
+
+To see where an agent's prompt could be getting weight, run `maestro-cli agent footprint <agent-id>`. It is read only and has no window yet.
+
+It lists the instruction files, skills, memory and MCP servers it found for the agent, with sizes estimated from file size, and the text Maestro's own settings add (the system prompt, the New Session Message and the Nudge Message), sized as they are configured now. Treat both as estimates. Maestro does not record what a provider loaded, so whether a component is loaded and whether Maestro's text reached the provider stay **unknown**, and nothing is counted as compression savings. See [Auditing What Could Add to an Agent's Prompt](./cli#auditing-what-could-add-to-an-agents-prompt-agent-footprint) for the full report.
 
 ## Merging Sessions
 

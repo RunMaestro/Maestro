@@ -6,8 +6,20 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { BrowserWindow } from 'electron';
+import { BrowserWindow } from 'electron';
 import { WindowRegistry, type WindowRegistryChange } from '../window-registry';
+
+// The registry resolves "which window is this" through two Electron statics.
+// Mocked as plain spies so the tests can say what the OS would have answered.
+vi.mock('electron', () => ({
+	BrowserWindow: {
+		fromWebContents: vi.fn(() => null),
+		getFocusedWindow: vi.fn(() => null),
+	},
+}));
+
+const fromWebContents = vi.mocked(BrowserWindow.fromWebContents);
+const getFocusedWindow = vi.mocked(BrowserWindow.getFocusedWindow);
 
 /** A fake BrowserWindow exposing only what the registry touches. */
 function makeWindow(
@@ -30,6 +42,8 @@ describe('WindowRegistry', () => {
 
 	beforeEach(() => {
 		registry = new WindowRegistry();
+		fromWebContents.mockReset().mockReturnValue(null);
+		getFocusedWindow.mockReset().mockReturnValue(null);
 	});
 
 	describe('create / get / remove', () => {
@@ -533,6 +547,69 @@ describe('WindowRegistry', () => {
 			unsubscribe();
 			registry.create({ windowId: 'w1', browserWindow: makeWindow() });
 			expect(listener).not.toHaveBeenCalled();
+		});
+	});
+
+	/**
+	 * Which window a surface belongs to. A Cappella scopes a voice session to the
+	 * window it was opened in, and voice events are broadcast to every window, so
+	 * a wrong answer here draws the same HUD in all of them.
+	 */
+	describe('findBySender', () => {
+		it('resolves the window an IPC message came from', () => {
+			const bw = makeWindow();
+			registry.create({ windowId: 'w1', browserWindow: bw });
+			registry.create({ windowId: 'w2', browserWindow: makeWindow() });
+			fromWebContents.mockReturnValue(bw);
+
+			expect(registry.findBySender({} as never)?.id).toBe('w1');
+		});
+
+		it('answers "no window" for a sender that is not one', () => {
+			// The web-desktop bridge invokes handlers with a synthetic event that has
+			// no sender at all. A web client is not a window, and passing that to
+			// BrowserWindow.fromWebContents throws.
+			registry.create({ windowId: 'w1', browserWindow: makeWindow() });
+
+			expect(registry.findBySender(undefined)).toBeUndefined();
+			expect(registry.findBySender(null)).toBeUndefined();
+			expect(fromWebContents).not.toHaveBeenCalled();
+		});
+
+		it('answers "no window" when the sender belongs to an unregistered window', () => {
+			registry.create({ windowId: 'w1', browserWindow: makeWindow() });
+			fromWebContents.mockReturnValue(makeWindow());
+
+			expect(registry.findBySender({} as never)).toBeUndefined();
+		});
+	});
+
+	describe('getFocusedAppWindow', () => {
+		it('prefers the focused window', () => {
+			registry.create({ windowId: 'w1', browserWindow: makeWindow(), isMain: true });
+			const second = makeWindow();
+			registry.create({ windowId: 'w2', browserWindow: second });
+			getFocusedWindow.mockReturnValue(second);
+
+			expect(registry.getFocusedAppWindow()?.id).toBe('w2');
+		});
+
+		it('falls back to the primary when nothing is focused', () => {
+			// A global hotkey pressed while another app is in front: the trigger still
+			// has to land on a window rather than nowhere.
+			registry.create({ windowId: 'w1', browserWindow: makeWindow(), isMain: true });
+			getFocusedWindow.mockReturnValue(null);
+
+			expect(registry.getFocusedAppWindow()?.id).toBe('w1');
+		});
+
+		it('ignores a focused feature window, which owns no agents', () => {
+			registry.create({ windowId: 'w1', browserWindow: makeWindow(), isMain: true });
+			const hud = makeWindow();
+			registry.create({ windowId: 'hud', browserWindow: hud, kind: 'cadenza-hud' });
+			getFocusedWindow.mockReturnValue(hud);
+
+			expect(registry.getFocusedAppWindow()?.id).toBe('w1');
 		});
 	});
 });

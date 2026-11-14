@@ -9,6 +9,7 @@
 
 import { ipcRenderer } from 'electron';
 import type { MainLogLevel, SystemLogEntry } from '../../shared/logger-types';
+import type { LogSourceId, LogSourceRead, LogSourceReadOptions } from '../../shared/logSources';
 
 /**
  * Creates the logger API object for preload exposure
@@ -49,6 +50,10 @@ export function createLoggerApi() {
 			ipcRenderer.on('logger:newLogBatch', batchHandler);
 			return () => ipcRenderer.removeListener('logger:newLogBatch', batchHandler);
 		},
+
+		// The newest part of a file-backed log source (the model server's log).
+		readLogSource: (source: LogSourceId, options?: LogSourceReadOptions): Promise<LogSourceRead> =>
+			ipcRenderer.invoke('logger:readLogSource', source, options),
 
 		// File logging (enabled by default on Windows for debugging)
 		getLogFilePath: (): Promise<string> => ipcRenderer.invoke('logger:getLogFilePath'),

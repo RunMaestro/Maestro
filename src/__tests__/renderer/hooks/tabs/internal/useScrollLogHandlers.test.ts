@@ -3,13 +3,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useScrollLogHandlers } from '../../../../../renderer/hooks/tabs/internal/useScrollLogHandlers';
 import { createMockAITab, getSession, resetTabHandlerStores, setupSession } from './testUtils';
 import { resetStore } from '../../../../helpers/resetStores';
-import { useNotificationStore } from '../../../../../renderer/stores/notificationStore';
+import {
+	notifyToast,
+	useNotificationStore,
+} from '../../../../../renderer/stores/notificationStore';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { switchTabProvider } from '../../../../../shared/maestro-lib/translation/session';
+
+// A spy that still reaches the real store: some cases assert the call, others
+// the toast that lands in the store.
+vi.mock('../../../../../renderer/stores/notificationStore', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../../renderer/stores/notificationStore')>();
+	return {
+		...actual,
+		notifyToast: vi.fn((...args: Parameters<typeof actual.notifyToast>) =>
+			actual.notifyToast(...args)
+		),
+	};
+});
 
 describe('useScrollLogHandlers', () => {
 	beforeEach(() => {
 		resetTabHandlerStores();
+		vi.mocked(window.maestro.agentSessions.deleteMessagePair).mockResolvedValue({ success: true });
 	});
 
 	afterEach(() => {
@@ -240,6 +257,205 @@ describe('useScrollLogHandlers', () => {
 		});
 	});
 
+	it('keeps OpenCode context visible when native deletion is unsupported', async () => {
+		const tab = createMockAITab({
+			id: 'ai-1',
+			agentSessionId: 'ses-opencode',
+			logs: [{ id: 'u1', source: 'user', text: 'unrelated request', timestamp: Date.now() }],
+		});
+		setupSession({
+			toolType: 'opencode',
+			cwd: '/repo',
+			aiTabs: [tab],
+			aiCommandHistory: ['unrelated request'],
+		});
+		vi.mocked(window.maestro.agentSessions.deleteMessagePair).mockResolvedValue({
+			success: false,
+			error: 'Delete not supported',
+		});
+		const { result } = renderHook(() => useScrollLogHandlers());
+		await act(async () => {
+			expect(await result.current.handleDeleteLog('u1')).toBeNull();
+		});
+		expect(window.maestro.agentSessions.deleteMessagePair).toHaveBeenCalledWith(
+			'opencode',
+			'/repo',
+			'ses-opencode',
+			'u1',
+			'unrelated request',
+			undefined,
+			getSession().id
+		);
+		expect(window.maestro.claude.deleteMessagePair).not.toHaveBeenCalled();
+		expect(getSession().aiTabs[0].logs).toEqual(tab.logs);
+		expect(getSession().aiCommandHistory).toEqual(['unrelated request']);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ title: 'Message was not deleted' })
+		);
+	});
+
+	it('deletes from the message provider parked before a provider switch', async () => {
+		const tab = createMockAITab({
+			id: 'ai-1',
+			agentSessionId: 'codex-current',
+			providerSessions: { 'claude-code': { agentSessionId: 'claude-parked' } },
+			logs: [
+				{
+					id: 'u1',
+					source: 'user',
+					text: 'old request',
+					timestamp: Date.now(),
+					turnProvider: 'claude-code',
+				},
+			],
+		});
+		setupSession({ toolType: 'codex', cwd: '/repo', aiTabs: [tab] });
+		const { result } = renderHook(() => useScrollLogHandlers());
+		await act(async () => {
+			await result.current.handleDeleteLog('u1');
+		});
+		expect(window.maestro.agentSessions.deleteMessagePair).toHaveBeenCalledWith(
+			'claude-code',
+			'/repo',
+			'claude-parked',
+			'u1',
+			'old request',
+			undefined,
+			getSession().id
+		);
+		expect(getSession().aiTabs[0].logs).toEqual([]);
+		expect(getSession().aiTabs[0].agentSessionId).toBe('codex-current');
+	});
+
+	it("deletes a remote agent's message on its SSH remote, under the remote cwd", async () => {
+		const tab = createMockAITab({
+			id: 'ai-1',
+			agentSessionId: 'remote-session',
+			logs: [{ id: 'u1', source: 'user', text: 'remote request', timestamp: Date.now() }],
+		});
+		setupSession({
+			cwd: '/local/repo',
+			aiTabs: [tab],
+			aiCommandHistory: ['remote request'],
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+				workingDirOverride: '/remote/repo',
+			},
+		});
+		const { result } = renderHook(() => useScrollLogHandlers());
+		await act(async () => {
+			await result.current.handleDeleteLog('u1');
+		});
+		expect(window.maestro.agentSessions.deleteMessagePair).toHaveBeenCalledWith(
+			'claude-code',
+			'/remote/repo',
+			'remote-session',
+			'u1',
+			'remote request',
+			'remote-1',
+			getSession().id
+		);
+		expect(getSession().aiTabs[0].logs).toEqual([]);
+		expect(getSession().aiCommandHistory).toEqual([]);
+		expect(notifyToast).not.toHaveBeenCalled();
+	});
+
+	it('keeps a remote message when the remote refuses the delete', async () => {
+		vi.mocked(window.maestro.agentSessions.deleteMessagePair).mockResolvedValue({
+			success: false,
+			error: 'SSH remote not found or disabled: remote-1',
+		});
+		const tab = createMockAITab({
+			id: 'ai-1',
+			agentSessionId: 'remote-session',
+			logs: [{ id: 'u1', source: 'user', text: 'remote request', timestamp: Date.now() }],
+		});
+		setupSession({
+			cwd: '/repo',
+			aiTabs: [tab],
+			aiCommandHistory: ['remote request'],
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+		const { result } = renderHook(() => useScrollLogHandlers());
+		await act(async () => {
+			expect(await result.current.handleDeleteLog('u1')).toBeNull();
+		});
+		expect(getSession().aiTabs[0].logs).toEqual(tab.logs);
+		expect(getSession().aiCommandHistory).toEqual(['remote request']);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				title: 'Message was not deleted',
+				message: expect.stringContaining('SSH remote not found'),
+			})
+		);
+	});
+
+	it('keeps the message on a transport error', async () => {
+		const tab = createMockAITab({
+			id: 'ai-1',
+			agentSessionId: 'agent-1',
+			logs: [{ id: 'u1', source: 'user', text: 'keep me', timestamp: Date.now() }],
+		});
+		setupSession({ cwd: '/repo', aiTabs: [tab] });
+		vi.mocked(window.maestro.agentSessions.deleteMessagePair).mockRejectedValue(
+			new Error('Disconnected')
+		);
+		const { result } = renderHook(() => useScrollLogHandlers());
+		await act(async () => {
+			expect(await result.current.handleDeleteLog('u1')).toBeNull();
+		});
+		expect(getSession().aiTabs[0].logs).toEqual(tab.logs);
+	});
+
+	it('uses the tab provider and preserves output appended while deletion is pending', async () => {
+		const tab = createMockAITab({
+			id: 'ai-1',
+			tabProvider: 'opencode',
+			agentSessionId: 'ses-opencode',
+			logs: [{ id: 'u1', source: 'user', text: 'remove me', timestamp: Date.now() }],
+		});
+		setupSession({ toolType: 'claude-code', cwd: '/repo', aiTabs: [tab] });
+		let finish!: (value: { success: boolean }) => void;
+		vi.mocked(window.maestro.agentSessions.deleteMessagePair).mockReturnValue(
+			new Promise((resolve) => {
+				finish = resolve;
+			})
+		);
+		const { result } = renderHook(() => useScrollLogHandlers());
+		let pending!: Promise<number | null>;
+		act(() => {
+			pending = result.current.handleDeleteLog('u1');
+		});
+		expect(getSession().aiTabs[0].logs).toEqual(tab.logs);
+		const appended = { id: 'u2', source: 'user' as const, text: 'new turn', timestamp: Date.now() };
+		act(() =>
+			useSessionStore.getState().setSessions((sessions) =>
+				sessions.map((session) => ({
+					...session,
+					aiTabs: session.aiTabs.map((candidate) => ({
+						...candidate,
+						logs: [...candidate.logs, appended],
+					})),
+				}))
+			)
+		);
+		await act(async () => {
+			finish({ success: true });
+			await pending;
+		});
+		expect(window.maestro.agentSessions.deleteMessagePair).toHaveBeenCalledWith(
+			'opencode',
+			'/repo',
+			'ses-opencode',
+			'u1',
+			'remove me',
+			undefined,
+			getSession().id
+		);
+		expect(getSession().aiTabs[0].logs).toEqual([appended]);
+	});
+
 	describe('Grok native history mutation refusal', () => {
 		beforeEach(() => {
 			resetStore(useNotificationStore);
@@ -454,7 +670,7 @@ describe('useScrollLogHandlers', () => {
 			}
 		);
 
-		it('never asks the provider to delete a message pair for it', () => {
+		it('never asks the provider to delete a message pair for it', async () => {
 			// The agent was bypassed entirely, so there is no pair in its session.
 			const tab = createMockAITab({
 				id: 'ai-1',
@@ -464,14 +680,14 @@ describe('useScrollLogHandlers', () => {
 			setupSession({ aiTabs: [tab], cwd: '/repo', aiCommandHistory: ['!npm test'] });
 			const { result } = renderHook(() => useScrollLogHandlers());
 
-			act(() => {
-				result.current.handleDeleteLog('c1');
+			await act(async () => {
+				await result.current.handleDeleteLog('c1');
 			});
 
-			expect(window.maestro.claude.deleteMessagePair).not.toHaveBeenCalled();
+			expect(window.maestro.agentSessions.deleteMessagePair).not.toHaveBeenCalled();
 		});
 
-		it('keeps the recall entry while another card still shows that command', () => {
+		it('keeps the recall entry while another card still shows that command', async () => {
 			// aiCommandHistory is per agent and deduplicated, so pruning on the
 			// first delete would contradict the cards still on screen.
 			const tab = createMockAITab({
@@ -481,25 +697,25 @@ describe('useScrollLogHandlers', () => {
 			setupSession({ aiTabs: [tab], aiCommandHistory: ['!ls'] });
 			const { result } = renderHook(() => useScrollLogHandlers());
 
-			act(() => {
-				result.current.handleDeleteLog('c1');
+			await act(async () => {
+				await result.current.handleDeleteLog('c1');
 			});
 			expect(getSession().aiCommandHistory).toEqual(['!ls']);
 
-			act(() => {
-				result.current.handleDeleteLog('c2');
+			await act(async () => {
+				await result.current.handleDeleteLog('c2');
 			});
 			expect(getSession().aiCommandHistory).toEqual([]);
 		});
 
-		it('counts survivors across every tab, not just the active one', () => {
+		it('counts survivors across every tab, not just the active one', async () => {
 			const active = createMockAITab({ id: 'ai-1', logs: [cardLog('c1', 'ls')] as any });
 			const other = createMockAITab({ id: 'ai-2', logs: [cardLog('c2', 'ls')] as any });
 			setupSession({ aiTabs: [active, other], aiCommandHistory: ['!ls'] });
 			const { result } = renderHook(() => useScrollLogHandlers());
 
-			act(() => {
-				result.current.handleDeleteLog('c1');
+			await act(async () => {
+				await result.current.handleDeleteLog('c1');
 			});
 
 			// Guard against a silent no-op passing this assertion: the card really

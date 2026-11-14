@@ -63,6 +63,7 @@ import {
 	isRemoteSettingWritable,
 } from '../../../../main/web-server/handlers/bridgeDenyList';
 import { createWebApi } from '../../../../main/preload/web';
+import type { LocalModelTaskReadiness } from '../../../../shared/local-models/task-readiness';
 
 function makeClient(user?: { id: string; username: string; displayName: string }) {
 	return {
@@ -497,6 +498,53 @@ describe('broadcastBridgeEvent', () => {
 		uninstallWebContentsBridgeHook();
 	});
 
+	it.each([
+		'localModels:progress',
+		'localModels:runtimes:progress',
+		'localModels:semanticIndex:progress',
+		'localModels:server:changed',
+		'localModels:server:progress',
+		'localModels:systemOne:changed',
+		'localModels:userModels:changed',
+	])('fans out the Local Models push %s, so a browser sees downloads land', (channel) => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		broadcastBridgeEvent(channel, [{ phase: 'downloading' }]);
+		expect(broadcastToAll).toHaveBeenCalledWith(expect.objectContaining({ channel }));
+
+		uninstallWebContentsBridgeHook();
+	});
+
+	it.each(['stats:indexingUpdate'])(
+		'fans out %s, so a browser shows a long scan in progress',
+		(channel) => {
+			const broadcastToAll = vi.fn();
+			installWebContentsBridgeHook({
+				broadcastToAll,
+			} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+			broadcastBridgeEvent(channel, [{ active: [] }]);
+			expect(broadcastToAll).toHaveBeenCalledWith(expect.objectContaining({ channel }));
+
+			uninstallWebContentsBridgeHook();
+		}
+	);
+
+	it('never fans out a dictation interruption, which belongs to the one window recording', () => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		broadcastBridgeEvent('localModels:dictation:interrupted', [{ code: 'device-lost' }]);
+		expect(broadcastToAll).not.toHaveBeenCalled();
+
+		uninstallWebContentsBridgeHook();
+	});
+
 	it('fans out notification:historyChanged so a browser inbox follows the host', () => {
 		const broadcastToAll = vi.fn();
 		installWebContentsBridgeHook({
@@ -886,6 +934,128 @@ describe('handleBridgeInvoke desktop-only channels', () => {
 
 		uninstallWebContentsBridgeHook();
 	});
+});
+
+describe('local model task readiness over the bridge', () => {
+	it.each([{ args: [] }, { args: ['git-drafts'] }])(
+		'returns host readiness for $args',
+		async ({ args }) => {
+			const readiness: LocalModelTaskReadiness[] = [
+				{
+					taskId: 'git-drafts',
+					label: 'Git drafts',
+					needs: 'text-gen',
+					assignment: { type: 'off' },
+					state: 'off',
+					detail: 'This task is switched off.',
+				},
+			];
+			const handler = vi.fn(async () => readiness);
+			invokeHandlers.set('localModels:taskReadiness', handler);
+			const send = vi.fn();
+
+			await handleBridgeInvoke(
+				makeClient(),
+				{
+					type: 'bridge.invoke',
+					requestId: 'readiness',
+					channel: 'localModels:taskReadiness',
+					args,
+				},
+				send
+			);
+
+			expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'bridge' }), ...args);
+			expect(send.mock.calls[0][1]).toMatchObject({
+				requestId: 'readiness',
+				ok: true,
+				result: readiness,
+			});
+		}
+	);
+
+	it.each([
+		'download',
+		'runTask',
+		'server:start',
+		'systemOne:set',
+		'hf:add',
+		'userModels',
+		'dictation:transcribe',
+		'dictation:cancel',
+		'semanticIndex:clear',
+	])('serves localModels:%s to the web interface', async (operation) => {
+		const channel = `localModels:${operation}`;
+		const handler = vi.fn(async () => 'host answer');
+		invokeHandlers.set(channel, handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 'served', channel, args: ['arg'] },
+			send
+		);
+		expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'bridge' }), 'arg');
+		expect(send.mock.calls[0][1]).toMatchObject({ ok: true, result: 'host answer' });
+	});
+
+	// Credentials stay on the host, and the host's microphone is not where a
+	// browser user is speaking.
+	it.each([
+		'server:key',
+		'systemOne:setKey',
+		'systemOne:clearKey',
+		'dictation:start',
+		'dictation:stop',
+	])('keeps localModels:%s private', async (operation) => {
+		const channel = `localModels:${operation}`;
+		const handler = vi.fn();
+		invokeHandlers.set(channel, handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 'private', channel, args: [] },
+			send
+		);
+		expect(handler).not.toHaveBeenCalled();
+		expect(send.mock.calls[0][1]).toMatchObject({ ok: false });
+	});
+});
+
+describe('browser surfaces that were refused before', () => {
+	// Each of these is reached by the shared renderer in a browser; a refusal
+	// broke the surface and, for a non-read, raised a "Submission rejected" banner.
+	it.each([
+		['codexVisualization:load', [{ sessionId: 's', path: '/tmp/v.html' }]],
+		['stats:get-indexing-state', []],
+		['tabs:aiTabRetryState', ['agent-1', 'tab-1', true]],
+	])('serves %s', async (channel, args) => {
+		const handler = vi.fn(async () => 'host answer');
+		invokeHandlers.set(channel, handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 'served', channel, args },
+			send
+		);
+		expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'bridge' }), ...args);
+		expect(send.mock.calls[0][1]).toMatchObject({ ok: true });
+	});
+
+	it.each(['shell:openExternal', 'shell:openPath', 'shell:showItemInFolder'])(
+		"keeps %s on the host: it acts on the host's desktop, not the browser's",
+		async (channel) => {
+			const handler = vi.fn();
+			invokeHandlers.set(channel, handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: 'host', channel, args: ['/x'] },
+				send
+			);
+			expect(handler).not.toHaveBeenCalled();
+			expect(send.mock.calls[0][1]).toMatchObject({ ok: false });
+		}
+	);
 });
 
 describe('notification history over the bridge', () => {

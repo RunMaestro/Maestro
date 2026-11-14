@@ -13,6 +13,7 @@ import { AITabOverlayMenu } from './AITabOverlayMenu';
 import { TabOverlayPortal } from './TabOverlayPortal';
 import { LongPressable } from '../shared/LongPressable';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
+import { TabVoiceIndicator } from './TabVoiceIndicator';
 import { useTabHasActiveOutage } from '../../stores/retryStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { shortcutSuffix } from '../ui/ShortcutHint';
@@ -55,6 +56,8 @@ export interface AITabProps {
 	onStar?: (tabId: string, starred: boolean) => void;
 	/** Stable callback - receives tabId */
 	onMarkUnread?: (tabId: string) => void;
+	/** Stable callback - receives tabId */
+	onPreviewContinuity?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onMergeWith?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
@@ -125,6 +128,7 @@ export const AITab = memo(function AITab({
 	onRename,
 	onStar,
 	onMarkUnread,
+	onPreviewContinuity,
 	onMergeWith,
 	onSendToAgent,
 	onSummarizeAndContinue,
@@ -258,6 +262,15 @@ export const AITab = memo(function AITab({
 			setOverlayOpen(false);
 		},
 		[onMarkUnread, tabId, setOverlayOpen]
+	);
+
+	const handlePreviewContinuityClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onPreviewContinuity?.(tabId);
+			setOverlayOpen(false);
+		},
+		[onPreviewContinuity, tabId, setOverlayOpen]
 	);
 
 	const handleMergeWithClick = useCallback(
@@ -549,6 +562,11 @@ export const AITab = memo(function AITab({
 			{/* Inline wizard indicator - purple wand (sparkles while generating Auto Run docs) */}
 			<WizardIndicator active={isWizard} generatingDocs={!!tab.wizardState?.isGeneratingDocs} />
 
+			{/* A Cappella - this is the tab voice-dispatched prompts are landing in.
+			    Reads the voice store itself and renders null when the Encore Feature
+			    is off, so nothing needs threading through the tab bar. */}
+			<TabVoiceIndicator tabId={tabId} theme={theme} />
+
 			{/* Generating name indicator - spinning loader while tab name is being generated */}
 			{/* Show regardless of busy state since tab naming runs in parallel with the main request */}
 			{tab.isGeneratingName && (
@@ -664,6 +682,7 @@ export const AITab = memo(function AITab({
 					onCopyContextClick={handleCopyContextClick}
 					onCopyContextWithReasoningClick={handleCopyContextWithReasoningClick}
 					onSummarizeAndContinueClick={handleSummarizeAndContinueClick}
+					onPreviewContinuityClick={handlePreviewContinuityClick}
 					onMergeWithClick={handleMergeWithClick}
 					onSendToAgentClick={handleSendToAgentClick}
 					onPublishGistClick={handlePublishGistClick}
@@ -673,6 +692,7 @@ export const AITab = memo(function AITab({
 					onCloseOtherTabsClick={handleCloseOtherTabsClick}
 					onCloseTabsLeftClick={handleCloseTabsLeftClick}
 					onCloseTabsRightClick={handleCloseTabsRightClick}
+					onPreviewContinuity={onPreviewContinuity}
 					onMergeWith={onMergeWith}
 					onSendToAgent={onSendToAgent}
 					onSummarizeAndContinue={onSummarizeAndContinue}

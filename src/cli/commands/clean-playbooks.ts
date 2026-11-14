@@ -4,7 +4,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { readSessions, getConfigDirectory } from '../services/storage';
-import { formatError, formatSuccess } from '../output/formatter';
+import { formatSuccess } from '../output/formatter';
+import { failCommand } from '../services/session-command';
 
 interface CleanPlaybooksOptions {
 	json?: boolean;
@@ -117,11 +118,6 @@ export function cleanPlaybooks(options: CleanPlaybooksOptions): void {
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to clean playbooks: ${message}`));
-		}
-		process.exit(1);
+		failCommand(`Failed to clean playbooks: ${message}`, options.json);
 	}
 }

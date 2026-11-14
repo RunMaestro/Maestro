@@ -398,7 +398,7 @@ describe('HistoryEntryItem', () => {
 
 	it('calls onOpenSessionAsTab when session button is clicked', () => {
 		const onOpenSessionAsTab = vi.fn();
-		const entry = createMockEntry({ agentSessionId: 'session-abc-123' });
+		const entry = createMockEntry({ agentSessionId: 'session-abc-123', provider: 'codex' });
 		render(
 			<HistoryEntryItem
 				entry={entry}
@@ -414,9 +414,11 @@ describe('HistoryEntryItem', () => {
 		const sessionButton = screen.getByTitle('session-abc-123');
 		fireEvent.click(sessionButton);
 
+		// The entry's recording provider rides in the resume options.
 		expect(onOpenSessionAsTab).toHaveBeenCalledWith('session-abc-123', '/test/project', undefined, {
 			targetSessionId: undefined,
 			nativeSessionBinding: undefined,
+			provider: 'codex',
 		});
 	});
 

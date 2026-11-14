@@ -2281,7 +2281,10 @@ function preflightPeer(
 	const b = decl.binary ?? { path: null, sha256: null, version: null };
 	out.binary.version = b.version;
 	if (!b.path || !b.sha256 || !b.version) add('peer-binary-unpinned', 'binary.path/sha256/version');
-	if (b.version && !(TRANSLATION_PROVIDER_VERSIONS[peer] as readonly string[]).includes(b.version))
+	if (
+		b.version &&
+		!(TRANSLATION_PROVIDER_VERSIONS[peer].testedVersions as readonly string[]).includes(b.version)
+	)
 		add('peer-version-undeclared', b.version);
 	if (b.sha256 && !/^[0-9a-f]{64}$/.test(b.sha256))
 		add('peer-binary-sha256-invalid', 'binary.sha256');
@@ -2318,7 +2321,8 @@ export function preflightCrossProvider(
 	const peers = [...new Set(specs.map((d) => d.peer))].map((p) => preflightPeer(p, c, config, ctx));
 	const grokVersion = config.binary.version;
 	const grokReasons =
-		grokVersion && (TRANSLATION_PROVIDER_VERSIONS.grok as readonly string[]).includes(grokVersion)
+		grokVersion &&
+		(TRANSLATION_PROVIDER_VERSIONS.grok.testedVersions as readonly string[]).includes(grokVersion)
 			? []
 			: [preflightReason('grok-version-undeclared', grokVersion ?? 'binary.version')];
 	const directions = specs.map((d): DirectionPreflight => {
@@ -10658,8 +10662,9 @@ async function loadMainUtilityConsumers(
  * Bundle checkout modules that import Electron (which plain Node cannot link)
  * at run time and import the result: esbuild, packages external, as the
  * launcher bundles this harness, with one substitution. `electron` becomes a
- * stand-in whose `ipcMain.handle` records handlers and whose `app` is an
- * unpackaged app with `userData` at an owned dir. `__dirname` is pinned to the
+ * stand-in whose `ipcMain.handle` records handlers, whose `app` is an
+ * unpackaged app with `userData` at an owned dir, and whose `safeStorage` has
+ * no OS keychain (a qualification run never seals a key). `__dirname` is pinned to the
  * checkout's `dist/main`, so the prompt manager reads `src/prompts`. The bundle
  * file is written beside the harness bundle and removed once loaded; nothing
  * else is substituted. `entry` is the export lines of the synthetic entry.
@@ -10688,7 +10693,9 @@ async function bundleMainEntry<T>(
 		'export const ipcMain = { handle, removeHandler: () => {}, on: () => {} };',
 		'export const app = { isPackaged: false, getPath: () => s.userData, getVersion: () => "0.0.0", on: () => {} };',
 		'export const BrowserWindow = { getAllWindows: () => [] };',
-		'export default { ipcMain, app, BrowserWindow };',
+		'const noKeychain = () => { throw new Error("qualify: no OS keychain"); };',
+		'export const safeStorage = { isEncryptionAvailable: () => false, encryptString: noKeychain, decryptString: noKeychain };',
+		'export default { ipcMain, app, BrowserWindow, safeStorage };',
 	].join('\n');
 	try {
 		await build({
@@ -15028,6 +15035,44 @@ interface StagedTranslation {
  * stops the apply once at `fault`: after the journal reached staged, or inside
  * the commit; it checks the staged rows itself after recovery.
  */
+/**
+ * Where a qualification leg's translated project knowledge is staged: inside the
+ * leg's owned project, the same tree the rollback snapshot and the owned-root
+ * refusal already cover. Production hosts pass their own app-data root; the
+ * transaction confines the knowledge directory under whichever root it is given.
+ */
+function qualificationKnowledgeRoot(project: string): string {
+	return path.join(project, '.maestro', 'provider-knowledge');
+}
+
+/**
+ * The leg project's git metadata for a native resource install, as the desktop
+ * host resolves it, but only for a repository rooted at the leg's own project.
+ * A leg project usually sits inside some other checkout (the harness workspace
+ * lives under the developer's tree), and that repository is not owned: its
+ * `info/exclude` must never be written. Anything else reads as "not a git
+ * repository", so the install proceeds without a local exclude entry.
+ */
+async function qualificationProjectGit(
+	projectRoot: string
+): Promise<{ root: string; commonDirectory: string } | undefined> {
+	const run = (args: string[]) =>
+		spawnSync('git', args, { cwd: projectRoot, encoding: 'utf8', windowsHide: true });
+	const common = run(['rev-parse', '--git-common-dir']);
+	if (common.status !== 0) {
+		if (/not a git repository/i.test(common.stderr ?? '')) return undefined;
+		throw new Error('Cannot resolve the project git directory');
+	}
+	const top = run(['rev-parse', '--show-toplevel']);
+	if (top.status !== 0) throw new Error('Cannot resolve the repository root');
+	const root = path.resolve(top.stdout.trim());
+	if (fs.realpathSync(root) !== fs.realpathSync(projectRoot)) return undefined;
+	return {
+		root,
+		commonDirectory: path.resolve(projectRoot, common.stdout.trim()),
+	};
+}
+
 async function stageTranslationJournal(
 	w: AccountingLegContext,
 	r: CrossProviderLegReceipt,
@@ -15066,6 +15111,8 @@ async function stageTranslationJournal(
 			registry,
 			journal,
 			{
+				knowledgeRoot: qualificationKnowledgeRoot(project),
+				resolveProjectGit: qualificationProjectGit,
 				assertSourceUnchanged: async (j) => {
 					if (!sourceUnchanged()) throw new Error('synthetic source changed');
 					if (fault === 'staged' && j.state === 'staged')
@@ -15305,13 +15352,19 @@ async function runTranslateResumeLeg(
 	// The resource sentinels go through the plan's resource scope and the production projections.
 	const seededResources = await seedTranslationResources(src);
 	const resources = seededResources.resources.artifacts;
-	const projections = await planResourceProjections(resources, dest);
+	// Native skills and rules are an opt-in install into the project; the leg opts in,
+	// since it checks that each one lands in the destination's native files.
+	const projections = await planResourceProjections(resources, dest, undefined, true);
 	const registry = createTranslationRegistry();
 	const plan = planTranslation({
 		agentId: names.agentId,
 		source: src,
 		destination: dest,
-		scope: { projectKnowledge: true, selectedUserResources: seededResources.selected },
+		scope: {
+			projectKnowledge: true,
+			selectedUserResources: seededResources.selected,
+			projectResourcesIntoRepo: true,
+		},
 		conversations: [conv],
 		registry,
 		limitations: [...seededResources.resources.limitations, ...projections.limitations],
@@ -15367,8 +15420,11 @@ async function runTranslateResumeLeg(
 		? {
 				...TRANSLATION_RESUME_TURN,
 				prompt:
-					bindTranslationKnowledge(TRANSLATION_RESUME_TURN.prompt, journal.knowledgeDirectory) ??
-					TRANSLATION_RESUME_TURN.prompt,
+					bindTranslationKnowledge(
+						TRANSLATION_RESUME_TURN.prompt,
+						journal.knowledgeDirectory,
+						qualificationKnowledgeRoot(project)
+					) ?? TRANSLATION_RESUME_TURN.prompt,
 			}
 		: TRANSLATION_RESUME_TURN;
 	const { sent, toolEvents } = await resumeTranslatedSession(
@@ -15744,11 +15800,13 @@ function historySnapshot(roots: string[]): Map<string, string> {
 }
 
 /** The host a recovery runs on: the source re-hashed, the commit recorded. */
-function recoveryHost(sourceUnchanged: () => boolean) {
+function recoveryHost(sourceUnchanged: () => boolean, project: string) {
 	let committed = false;
 	return {
 		committed: () => committed,
 		host: {
+			knowledgeRoot: qualificationKnowledgeRoot(project),
+			resolveProjectGit: qualificationProjectGit,
 			assertSourceUnchanged: async () => {
 				if (!sourceUnchanged()) throw new Error('synthetic source changed');
 			},
@@ -15948,7 +16006,7 @@ async function runTranslationFaultLeg(
 	}
 
 	// Recovery reads the journal the interrupted apply left in the archive, as a restarted host does.
-	const recovery = recoveryHost(sourceUnchanged);
+	const recovery = recoveryHost(sourceUnchanged, project);
 	let recovered: Awaited<ReturnType<typeof recoverTranslation>> | null = null;
 	try {
 		recovered = await recoverTranslation(
@@ -17623,6 +17681,106 @@ async function loadCueStandaloneEngine(
 }
 
 /**
+ * True when the harness runs under its own test runner. Read once at load: a leg
+ * runs with its own process environment, which carries no runner variables.
+ */
+const UNDER_TEST_RUNNER = Boolean(process.env.VITEST);
+
+/** The desktop's Cue modules, loaded together as one module graph. */
+interface CueDesktopModules {
+	engine: typeof import('../../src/main/cue/cue-engine');
+	router: typeof import('../../src/main/cue/cue-run-router');
+	executor: typeof import('../../src/main/cue/cue-executor');
+	shellExec: typeof import('../../src/main/cue/cue-shell-executor');
+	cliExec: typeof import('../../src/main/cue/cue-cli-executor');
+	lifecycle: typeof import('../../src/main/cue/cue-process-lifecycle');
+	agentBinary: typeof import('../../src/main/cue/cue-agent-binary');
+	builder: typeof import('../../src/main/cue/cue-spawn-builder');
+	settings: typeof import('../../src/shared/cue/turn-settings');
+	parsers: typeof import('../../src/shared/maestro-lib/parsers');
+}
+
+/**
+ * Load the desktop's Cue run path as it is in the checkout. The spawn builder
+ * reaches the token proxy, the local model server and the stats database, which
+ * import Electron by name, and plain Node cannot link that. So:
+ * - Under the launcher, the group goes through `bundleMainEntry` (the Electron
+ *   stand-in), bundled together, so the executor, the process lifecycle and the
+ *   output-parser registry the harness initializes are one set of instances, and
+ *   the launcher bundle carries no top-level `electron` import.
+ * - Under the harness's own test runner, which resolves Electron and owns the
+ *   module graph its mocks bend, the modules are imported natively. The
+ *   specifiers are computed so the launcher bundle never pulls them in.
+ */
+async function loadCueDesktopModules(
+	workspace: string,
+	dataDir: string
+): Promise<CueDesktopModules> {
+	if (UNDER_TEST_RUNNER) {
+		// The same specifiers the module graph (and its mocks) knows, held in a
+		// variable so the launcher's bundler does not follow them.
+		const native = (spec: string) => import(/* @vite-ignore */ spec);
+		const [
+			engine,
+			router,
+			executor,
+			shellExec,
+			cliExec,
+			lifecycle,
+			agentBinary,
+			builder,
+			settings,
+			parsers,
+		] = await Promise.all(
+			[
+				'../../src/main/cue/cue-engine',
+				'../../src/main/cue/cue-run-router',
+				'../../src/main/cue/cue-executor',
+				'../../src/main/cue/cue-shell-executor',
+				'../../src/main/cue/cue-cli-executor',
+				'../../src/main/cue/cue-process-lifecycle',
+				'../../src/main/cue/cue-agent-binary',
+				'../../src/main/cue/cue-spawn-builder',
+				'../../src/shared/cue/turn-settings',
+				'../../src/shared/maestro-lib/parsers',
+			].map(native)
+		);
+		return {
+			engine,
+			router,
+			executor,
+			shellExec,
+			cliExec,
+			lifecycle,
+			agentBinary,
+			builder,
+			settings,
+			parsers,
+		} as CueDesktopModules;
+	}
+	const src = (rel: string) => JSON.stringify(path.join(workspace, 'src', rel));
+	const loaded = await bundleMainEntry<CueDesktopModules>(
+		workspace,
+		dataDir,
+		'qualify-cue-desktop.ts',
+		[
+			`export * as engine from ${src('main/cue/cue-engine.ts')};`,
+			`export * as router from ${src('main/cue/cue-run-router.ts')};`,
+			`export * as executor from ${src('main/cue/cue-executor.ts')};`,
+			`export * as shellExec from ${src('main/cue/cue-shell-executor.ts')};`,
+			`export * as cliExec from ${src('main/cue/cue-cli-executor.ts')};`,
+			`export * as lifecycle from ${src('main/cue/cue-process-lifecycle.ts')};`,
+			`export * as agentBinary from ${src('main/cue/cue-agent-binary.ts')};`,
+			`export * as builder from ${src('main/cue/cue-spawn-builder.ts')};`,
+			`export * as settings from ${src('shared/cue/turn-settings.ts')};`,
+			`export * as parsers from ${src('shared/maestro-lib/parsers/index.ts')};`,
+		]
+	);
+	loaded.dispose();
+	return loaded.mod;
+}
+
+/**
  * One Cue leg: the production `CueEngine` over an owned project, data dir and
  * account home, with the desktop's run router and executors
  * (`cue-prompt-desktop`) or the standalone engine's own dependencies
@@ -17728,28 +17886,21 @@ async function runCueLeg(
 	try {
 		await withLegProcess(legEnv, courier, async () => {
 			const [
-				engineModule,
-				router,
-				executor,
-				shellExec,
-				cliExec,
-				lifecycle,
-				agentBinary,
-				builder,
-				settings,
-				parsers,
+				{
+					engine: engineModule,
+					router,
+					executor,
+					shellExec,
+					cliExec,
+					lifecycle,
+					agentBinary,
+					builder,
+					settings,
+					parsers,
+				},
 				standalone,
 			] = await Promise.all([
-				import('../../src/main/cue/cue-engine'),
-				import('../../src/main/cue/cue-run-router'),
-				import('../../src/main/cue/cue-executor'),
-				import('../../src/main/cue/cue-shell-executor'),
-				import('../../src/main/cue/cue-cli-executor'),
-				import('../../src/main/cue/cue-process-lifecycle'),
-				import('../../src/main/cue/cue-agent-binary'),
-				import('../../src/main/cue/cue-spawn-builder'),
-				import('../../src/shared/cue/turn-settings'),
-				import('../../src/shared/maestro-lib/parsers'),
+				loadCueDesktopModules(w.workspace, dataDir),
 				loadCueStandaloneEngine(w.workspace, dataDir),
 			]);
 			// The desktop registers every output parser at boot; the standalone engine does it on its first run.

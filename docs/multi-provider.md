@@ -34,9 +34,9 @@ separate transcript trees, not separate logins: they all bill the same GitHub
 account, and the split is a workspace split rather than a quota split.
 
 <Note>
-This page covers **one provider, different accounts**. Claude Code and Codex
-also have preview memory/session conversion between providers; see
-[Switching Providers](#switching-providers) for the supported versions and limits.
+This page covers **one provider, different accounts** and preview conversion
+between providers. See [Switching Providers](#switching-providers) to change
+the agent default and optionally convert memory and session history.
 </Note>
 
 ## Setting the Variable in Maestro
@@ -295,7 +295,15 @@ at the top of this page.
 
 There is no account to split. A local runtime such as Ollama or LM Studio has no
 login and no quota, so a second "account" buys you nothing. What you can vary
-per agent is the **endpoint and the model**, by pointing a provider's base-URL
+per agent is the **endpoint and the model**. For Claude Code, Codex, OpenCode
+and Copilot CLI, set the agent's [model source](/local-models#model-source) and
+Maestro sets the variables for each launch:
+
+```bash
+maestro-cli update-agent <agent-id> --model-source <source-id>:<model>
+```
+
+For any other provider, or to do it by hand, point the provider's base-URL
 variable at your local server:
 
 ```bash
@@ -325,19 +333,197 @@ started on one account is intelligible to the other, and in Claude Code's case
 directly resumable.
 
 Different providers use different native formats. Maestro provides preview
-conversion between **Claude Code 2.1.296/2.1.302** and **Codex 0.162.1/0.163.0**,
-in both directions, for session history and project memory. Live checks on
-2.1.302/0.163.0 verified native conversation recall and carried project resource
-reads. Both directions remain unverified overall; execution continuity and
-repeated incremental synchronization are not certified. Other provider/version
-combinations have no supported converter.
+conversion of session history and project memory between three providers:
 
-Changing the provider in **Edit Agent** is a plain switch by default: tabs and
-transcripts stay, each tab starts a fresh conversation on the new provider, and
-switching back resumes the old one. Destinations with a **Carry Over** pill also
-offer **Convert memory and session history**, which is opt-in. Checking it reads
-a conversion plan and lists any warnings; **Save Changes** applies it. If the
-conversion is blocked or fails, a notice says so and saving switches providers
-without converting. See
+| Provider        | Versions accepted | Tested versions  |
+| --------------- | ----------------- | ---------------- |
+| **Claude Code** | 2.1.296 or newer  | 2.1.296, 2.1.302 |
+| **Codex**       | 0.162.1 or newer  | 0.162.1, 0.163.0 |
+| **Grok**        | 1.0.70 only       | 1.0.70           |
+
+Claude Code and Codex convert in both directions, and each converts to and from
+Grok. A Claude Code or Codex version at or above the minimum that is not in the
+tested list shows an `untested-version` warning naming the installed and tested
+versions. Grok accepts only the exact version listed. Any other Grok version,
+an unreadable or older version, and a provider without a converter are blocked
+by preflight.
+
+Every direction is **unverified**. Each plan carries an
+`unverified-native-resume` warning: native resume and repeated round-trip
+continuity have not been verified. Tested versions describe schema coverage, not
+native certification. Blocking history or resource limitations prevent
+conversion on any version.
+
+Each limitation in a plan has one of three severities:
+
+| Severity    | What it means                                                        |
+| ----------- | -------------------------------------------------------------------- |
+| **block**   | Conversion cannot run. A block cannot be accepted.                   |
+| **warning** | Conversion runs only after you accept it.                            |
+| **info**    | Advisory only. It never needs consent. The CLI prints it as `Notes:` |
+
+### Switching in Edit Agent
+
+Open **Edit Agent -> Provider** (`Opt+Cmd+,` / `Alt+Ctrl+,`) and pick a
+provider. Changing it is a plain switch by default: tabs, transcripts, drafts,
+queue and file previews are kept, each tab that follows the agent starts a fresh
+conversation on the new provider, and switching back resumes the old one.
+
+Destinations with a converter from the current provider show a **Carry Over**
+pill in the list. They also offer **Convert memory and session history**, which
+is off by default. Checking it reads a conversion plan:
+
+- **Sessions**, **Messages** (or **Records**) and **On next use** counts.
+- A status line, for example "Ready to switch providers." or "Ready. The switch
+  will wait for the current turn to finish." A spinner shows while Maestro is
+  reading history, waiting for the current turn, translating, or finishing the
+  switch. There is no percentage.
+- Each blocking limitation, in red.
+
+When the plan has warnings, check **Allow experimental carry-over** beside
+**Save Changes**. The button stays disabled until you do. While the switch
+runs, the button reads **Waiting for current turn** or **Translating provider**.
+If preflight is blocked or fails, the notice "The conversion cannot run, so
+saving switches providers without converting." appears, and saving does a plain
+switch. Picking another provider in the list clears the conversion, install
+and carry-over checkboxes.
+
+From the CLI:
+
+```bash
+maestro-cli update-agent <agent-id> --provider codex             # plain switch
+maestro-cli update-agent <agent-id> --provider codex --convert   # convert memory and history
+```
+
+See
 [memory and session carry](/provider-notes#switching-providers-with-memory-and-session-carry)
-for the steps, scope, CLI examples and activity indicator.
+for the review-then-apply CLI flow and the scope of a conversion. Edit Agent
+conversion works the same way in the [web interface](/remote-control).
+
+### Conversion on next use
+
+The plan separates tabs translated now (open AI tabs; the CLI prints **Translated
+now**) from tabs translated on next use (closed, snoozed and other saved
+conversations; **On next use** in Edit Agent, **Translated on next use** in the
+CLI). Only open
+tabs are converted during the switch. Reopening a closed tab, waking a snoozed
+tab or resuming from History does not convert it immediately. Its next message
+triggers conversion before the destination resumes, including when that
+provider has an older copy of the conversation. A problem in a closed
+conversation is checked then and does not block the initial switch.
+
+During conversion, the Thinking pill reads **Translating context from
+&lt;provider&gt;**. A running source turn is allowed to finish first. Info passes
+without review. A new warning holds the message and raises a yellow **Context
+translation needs review** toast. Click it to open the tab's conversion review
+in Edit Agent: the provider list is locked to the destination, and **Save
+Changes** applies the reviewed plan for that tab. Blocking limitations must be
+resolved before sending. Previously accepted warnings carry forward only when
+the direction, both provider versions and the warnings themselves match. Held
+messages stay in the draft or queue, and queued messages keep the provider,
+model and effort selected when queued.
+
+When a translation commits, the transcript shows a **Context translated from
+&lt;provider&gt;** card. Expand it for the source and destination versions, the
+verification state, the record and resource counts, the plan ID, the
+**Accepted warnings** and any info notes.
+
+The headless runtime (`maestro-cli host`) uses the same conversion checks on
+send and keeps held messages. It cannot switch an agent's provider: it refuses
+with "Provider translation requires the desktop app; the headless host cannot
+migrate native conversations."
+
+### Tabs that keep their own provider
+
+The provider belongs to the agent. No control picks a provider for one tab.
+A tab can still own a provider: when you resume a saved conversation from
+History, a starred session or **Agent Sessions**, Maestro reopens it on the
+provider that wrote it and leaves the agent's provider as it is. If that
+conversation is already open, Maestro focuses its tab instead. Such a tab keeps
+its provider when the agent switches, and a turn in flight always finishes on
+the provider that started it.
+
+While a provider switch holds the agent's turns, changing a tab's model,
+effort or model source fails with "Finish the current provider translation before
+changing providers."
+
+To read a tab's provider from the CLI:
+
+```bash
+maestro-cli tab show <tab-id>             # Provider, Agent default, Provider pin, Turn provider
+maestro-cli session show <tab-id> --json  # provider, agentProvider, tabProvider, turnProvider, pendingTranslation
+```
+
+**Provider pin** reads `inherited` for a tab that follows the agent.
+
+### SSH agents
+
+Translation works for SSH agents. Every direction is **unverified** over SSH,
+the same as locally.
+
+The source and destination providers run on the agent's configured remote host.
+Provider versions, accounts, project paths and memory are resolved there, and
+native transcript reads, destination writes and readback stay there. Maestro
+keeps original-byte archives, checkpoints, recovery journals and agent mappings
+in its local data directory. Status can inspect the local journal offline;
+recovery or rollback that touches native files needs the same remote host.
+An unresolved SSH target fails without using a local provider instead.
+
+The remote needs the supported provider binaries, POSIX `sh`, `base64` decoding
+with `-d`, `realpath` or a working `readlink -f`, Git, and GNU/BSD filesystem
+tools for listing, metadata, links and durable writes. Missing tools or a failed
+provider version probe stop translation with an error that names what is
+missing, for example "SSH translation requires base64". Codex imports also need
+the remote `codex app-server` history APIs, run over the SSH connection;
+ordinary SSH messages still use `codex exec`. The destination account is
+resolved on the remote from `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or the remote
+HOME, and is pinned during import. Knowledge written for another host or home
+is refused ("Provider knowledge belongs to a different SSH host"). A dropped
+connection requires inspection of migration status
+(`maestro-cli update-agent <agent-id> --migration status --migration-plan <plan-id> --json`)
+before another
+attempt.
+
+### Knowledge and project resources
+
+Carried knowledge stays outside your project. Local agents use Maestro's data
+directory at `<userData>/provider-knowledge/<agent-hash>/<operation-id>/`. SSH
+agents use `<remote HOME>/.maestro/provider-knowledge/<agent-hash>/<operation-id>/`
+on their configured host. Maestro connects its knowledge index to each turn,
+including resumed sessions. Claude also receives
+access to that directory and a memory setting for it. These bindings do not yet
+certify native recall or repeated round-trip continuity.
+
+Installing native project resources is **off by default for each switch**. The
+plan's Notes list instruction aliases, skills and subagents that were not
+installed. Their original files remain in managed knowledge, but that does not
+make them available as native skills or subagents.
+
+To install them, select **Also install skills and subagents into the project
+(git-excluded)** in Edit Agent, or add `--project-resources` to
+`maestro-cli update-agent <id> --provider <type>`. This can create a compatible
+`AGENTS.md` or `CLAUDE.md` alias, skills under `.agents/skills` or `.claude/skills`,
+and supported subagents under `.codex/agents` or `.claude/agents`. Grok reads
+both `CLAUDE.md` and `AGENTS.md`, so a converted instruction file keeps its own
+name, and Grok skills go under `.agents/skills`, which Grok shares with Codex.
+Unsupported definitions remain listed as limitations.
+
+Maestro adds each installed path to a marked block in Git's repository-local
+`info/exclude`, using the shared Git directory for worktrees. For SSH agents,
+this file and the installed resources are on the remote host. It does not change
+your committed `.gitignore` or untrack files already in Git. Rollback before
+commit removes its own exclude entries while preserving entries you add later;
+changed ownership or markers require inspection. Outside a Git repository,
+installation still works, but Notes report that local Git exclusions are
+unavailable. Older operations that stored knowledge under
+`.maestro/provider-knowledge` remain recoverable or reversible; new switches
+and launch bindings use the knowledge root for the provider host.
+
+## Related
+
+- [Provider Notes](./provider-notes#switching-providers-with-memory-and-session-carry) - the review-then-apply CLI flow and what a conversion covers
+- [Editing Agents](./general-usage#editing-agents) - the Edit Agent tabs, including **Provider**
+- [SSH Remote Execution](./ssh-remote-execution) - where an SSH agent's conversations and project knowledge live
+- [Remote Control](./remote-control) - the web interface, where Edit Agent conversion works the same way
+- [CLI Reference](./cli-reference) - the full flag list for `update-agent` and `tab show`
+- [Keyboard Shortcuts](./keyboard-shortcuts) - **Open Agent Settings**, the route into Edit Agent

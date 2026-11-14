@@ -22,12 +22,14 @@ function Harness({
 	minSize = { width: 320, height: 240 },
 	enabled = true,
 	anchor,
+	autoHeight,
 }: {
 	resizeKey?: string;
 	defaultSize?: { width: number; height: number };
 	minSize?: { width: number; height: number };
 	enabled?: boolean;
-	anchor?: 'center' | 'top-left';
+	anchor?: 'center' | 'top-left' | 'bottom-left';
+	autoHeight?: boolean;
 }) {
 	const modal = useResizableModal({
 		resizeKey,
@@ -35,6 +37,7 @@ function Harness({
 		minSize,
 		enabled,
 		anchor,
+		autoHeight,
 	});
 
 	return (
@@ -58,6 +61,7 @@ describe('useResizableModal', () => {
 
 	afterEach(() => {
 		cleanup();
+		vi.useRealTimers();
 		vi.restoreAllMocks();
 	});
 
@@ -67,6 +71,40 @@ describe('useResizableModal', () => {
 		for (const direction of ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']) {
 			expect(screen.getByTestId(`modal-resize-handle-${direction}`)).toBeInTheDocument();
 		}
+	});
+
+	it('keeps automatic height through viewport changes without saving a manual size', () => {
+		vi.useFakeTimers();
+		render(<Harness autoHeight />);
+		expect(screen.getByTestId('modal').style.height).toBe('auto');
+		act(() => {
+			setViewport(350, 300);
+			window.dispatchEvent(new Event('resize'));
+		});
+		act(() => vi.advanceTimersByTime(400));
+		expect(screen.getByTestId('modal').style.height).toBe('auto');
+		expect(useSettingsStore.getState().modalSizes['test-modal']).toBeUndefined();
+		expect(window.maestro.settings.set).not.toHaveBeenCalled();
+	});
+
+	it('starts an automatic-height resize from the rendered height and restores auto on reset', () => {
+		render(<Harness autoHeight anchor="bottom-left" />);
+		const modal = screen.getByTestId('modal');
+		vi.spyOn(modal, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 400, 450));
+		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-ne'), {
+			clientX: 400,
+			clientY: 100,
+		});
+		expect(modal).toHaveStyle({ height: '450px' });
+		fireEvent.mouseMove(document, { clientX: 450, clientY: 50 });
+		fireEvent.mouseUp(document);
+		expect(modal).toHaveStyle({ width: '450px', height: '500px' });
+		expect(useSettingsStore.getState().modalSizes['test-modal']).toEqual({
+			width: 450,
+			height: 500,
+		});
+		fireEvent.doubleClick(screen.getByTestId('modal-resize-handle-ne'));
+		expect(modal).toHaveStyle({ width: '400px', height: 'auto' });
 	});
 
 	it('updates DOM size live and persists only on mouseup', () => {
@@ -114,6 +152,16 @@ describe('useResizableModal', () => {
 		// cursor; an anchored one only moves the dragged edge.
 		expect(modal.style.width).toBe('450px');
 		expect(modal.style.height).toBe('320px');
+	});
+
+	it('grows a bottom-left anchored menu upward and rightward 1:1', () => {
+		render(<Harness anchor="bottom-left" />);
+		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-ne'), {
+			clientX: 0,
+			clientY: 0,
+		});
+		fireEvent.mouseMove(document, { clientX: 50, clientY: -20 });
+		expect(screen.getByTestId('modal')).toHaveStyle({ width: '450px', height: '320px' });
 	});
 
 	it('cleans document drag listeners when unmounted during a drag', () => {

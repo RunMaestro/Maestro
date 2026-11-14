@@ -26,6 +26,7 @@ import semver from 'semver';
  * 1.30.0 adds separately consented bounded original-audio staging for supported
  * local agent sends. 1.29.0 adds generic verified invocations, consented TLS, opaque secrets,
  * confirmed records, durable plugin Cue events and parentSessionId metadata.
+ * 1.27.0 adds local-only Dictation clip transcription on the authenticated media broker.
  * 1.25.0 added resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.

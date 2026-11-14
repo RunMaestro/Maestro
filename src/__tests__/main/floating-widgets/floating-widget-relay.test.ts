@@ -119,19 +119,27 @@ function makeController(id: FloatingWidgetId, windowId: number) {
 	return { controller, state };
 }
 
-function setup() {
+function setup(
+	canControlVisibility?: (id: FloatingWidgetId, senderId: number) => boolean,
+	canPublishState?: (id: FloatingWidgetId, senderId: number) => boolean
+) {
 	const appWindow = makeWindow(1);
 	const otherAppWindow = makeWindow(2);
 	const gauge = makeController('throughput-gauge', 10);
 	const media = makeController('media-player', 20);
+	const voice = makeController('acappella-voice', 30);
 	const authorities: Record<FloatingWidgetId, FakeWindow | null> = {
 		'throughput-gauge': appWindow,
 		'media-player': null,
+		'acappella-voice': appWindow,
 	};
 	const relay = createFloatingWidgetRelay({
+		canControlVisibility,
+		canPublishState,
 		controllers: {
 			'throughput-gauge': gauge.controller as unknown as FloatingWidgetController,
 			'media-player': media.controller as unknown as FloatingWidgetController,
+			'acappella-voice': voice.controller as unknown as FloatingWidgetController,
 		},
 		// Like the real wiring: the media player's authority is its own window.
 		getAuthorityWindow: (id) =>
@@ -145,7 +153,7 @@ function setup() {
 				.filter((w): w is FakeWindow => w !== null)
 				.map(asWindow),
 	});
-	return { relay, appWindow, otherAppWindow, gauge, media, authorities };
+	return { relay, appWindow, otherAppWindow, gauge, media, voice, authorities };
 }
 
 const sender = (id: number) => ({ sender: { id } });
@@ -492,5 +500,55 @@ describe('dead windows', () => {
 		expect(() => relay.markReady('media-player', 20)).not.toThrow();
 		expect(media.controller.markReady).not.toHaveBeenCalled();
 		expect(media.state.window!.webContents.send).not.toHaveBeenCalled();
+	});
+});
+
+describe('voice widget authority', () => {
+	it('delivers controls only to the app window selected by the authority resolver', () => {
+		const { relay, otherAppWindow, appWindow, authorities } = setup();
+		authorities['acappella-voice'] = otherAppWindow;
+		expect(relay.sendCommand('acappella-voice', { type: 'close' })).toBe('sent');
+		expect(received(otherAppWindow, FLOATING_WIDGET_COMMAND_CHANNEL)).toEqual([
+			['acappella-voice', { type: 'close' }],
+		]);
+		expect(received(appWindow, FLOATING_WIDGET_COMMAND_CHANNEL)).toEqual([]);
+	});
+	it('rejects stale visibility changes after ownership moves to another app window', async () => {
+		let owner = 1;
+		const { relay, voice } = setup(
+			(id, senderId) => id !== 'acappella-voice' || senderId === owner
+		);
+		let visible = false;
+		voice.controller.isVisible.mockImplementation(() => visible);
+		voice.controller.show.mockImplementation(() => {
+			visible = true;
+		});
+		voice.controller.hide.mockImplementation(() => {
+			visible = false;
+		});
+		relay.init();
+		const show = handlers.get('floatingWidgets:show')!;
+		const hide = handlers.get('floatingWidgets:hide')!;
+		expect(await show(sender(1), 'acappella-voice')).toBe(true);
+		owner = 2;
+		expect(await hide(sender(1), 'acappella-voice')).toBe(true);
+		expect(await hide(sender(2), 'acappella-voice')).toBe(false);
+	});
+});
+
+describe('voice widget state admission', () => {
+	it("drops the previous owner's trailing publish after the voice session moves", () => {
+		let owner = 1;
+		const { relay } = setup(
+			undefined,
+			(id, senderId) => id !== 'acappella-voice' || senderId === owner
+		);
+		relay.init();
+		const publish = listeners.get('floatingWidgets:publishState')!;
+		publish(sender(1), 'acappella-voice', { caption: 'Old owner' });
+		owner = 2;
+		publish(sender(2), 'acappella-voice', { caption: 'New owner' });
+		publish(sender(1), 'acappella-voice', { caption: 'Stale' });
+		expect(relay.getState('acappella-voice')).toEqual({ caption: 'New owner' });
 	});
 });

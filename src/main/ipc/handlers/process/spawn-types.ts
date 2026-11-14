@@ -54,6 +54,11 @@ export interface SpawnProcessConfig {
 	sessionCustomModel?: string; // Session-specific model selection
 	sessionCustomEffort?: string; // Session-specific effort/reasoning level
 	sessionCustomContextWindow?: number; // Session-specific context window size
+	// The model source THIS turn launches on in place of the agent's stored one:
+	// a tier's target, resolved by the renderer for an Auto Run task
+	// (`turnRunOnTarget`). Data, validated by the model source path. Absent means the
+	// agent's own target, which the handler reads from the store.
+	runOnOverride?: unknown;
 	// Session's Additional Directories. Providers that declare
 	// `supportsAdditionalDirectories` turn these into native grant flags
 	// (e.g. --add-dir); every agent also gets them via the system prompt.
@@ -91,6 +96,11 @@ export interface SpawnProcessConfig {
 	// Stats tracking options
 	querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 	tabId?: string; // Tab ID for multi-tab tracking
+	// The consult chain this spawn runs IN, already at its own depth, when the
+	// turn descends from another agent's delegation (`maestro-cli dispatch`).
+	// Data: the handler narrows it with `parseConsultChain`. Absent means the
+	// spawn is the root of a user message, and the handler mints the chain.
+	consultChain?: unknown;
 	// The Auto Run this spawn is a task of (MAESTRO_CALLER_AUTORUN_ID), so a
 	// `maestro-cli dispatch` it runs reports its result back to the run.
 	autoRunId?: string;

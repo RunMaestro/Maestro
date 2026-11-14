@@ -813,8 +813,8 @@ export const CROSS_PROVIDER_DIRECTIONS: readonly CrossProviderDirectionSpec[] = 
 			source: d.source as CrossProviderDirectionSpec['source'],
 			destination: d.destination as CrossProviderDirectionSpec['destination'],
 			peer: (d.source === 'grok' ? d.destination : d.source) as CrossProviderPeer,
-			sourceVersions: [...d.sourceVersions],
-			destinationVersions: [...d.destinationVersions],
+			sourceVersions: [...d.sourceTestedVersions],
+			destinationVersions: [...d.destinationTestedVersions],
 			legs: [
 				'translate-resume',
 				...(d.destination === 'grok' ? ['reverse'] : []),

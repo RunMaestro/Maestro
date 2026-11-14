@@ -24,6 +24,7 @@ import {
 	calculateLobesLayout,
 	calculateTimelineLayout,
 	buildAdjacencyMap,
+	calculateBounds,
 	calculateNodeHeight,
 	calculateNodeWidth,
 	NODE_PILL_MIN_WIDTH,
@@ -883,6 +884,92 @@ describe('mindMapLayouts', () => {
 	// Lobes
 	// ====================================================================
 	describe('calculateLobesLayout', () => {
+		it('frames the displayed coordinates of hand-placed nodes', () => {
+			const bounds = calculateBounds([
+				createNode('a', { x: 8000, y: -5000, width: 100, height: 40 }),
+			]);
+			expect(bounds.minX).toBeLessThanOrEqual(7950);
+			expect(bounds.maxX).toBeGreaterThanOrEqual(8050);
+			expect(bounds.minY).toBeLessThanOrEqual(-5020);
+			expect(bounds.maxY).toBeGreaterThanOrEqual(-4980);
+		});
+		it.each(['mindmap', 'hierarchical', 'radial', 'force', 'lobes'] as const)(
+			'keeps every directed relationship in the %s layout',
+			(layout) => {
+				const nodes = ['center', 'a', 'b', 'c', 'd'].map((id) => createNode(id));
+				const links = [
+					createLink('center', 'a'),
+					createLink('center', 'b'),
+					createLink('a', 'b'),
+					createLink('b', 'a'),
+					createLink('c', 'd'),
+				].map((link) => ({ ...link, directed: true }));
+				const result = calculateLayout(
+					layout,
+					nodes,
+					links,
+					buildAdjacencyMap(links),
+					'center.md',
+					nodes.length,
+					1200,
+					800,
+					false,
+					0,
+					1,
+					true,
+					true
+				);
+				expect(result.links).toEqual(links);
+			}
+		);
+		it('clusters disconnected communities when requested by the fleet view', () => {
+			const nodes = ['center', 'a', 'b', 'c', 'alone'].map((id) => createNode(id));
+			const links = [createLink('center', 'a'), createLink('b', 'c')];
+			const result = calculateLayout(
+				'lobes',
+				nodes,
+				links,
+				buildAdjacencyMap(links),
+				'center.md',
+				nodes.length,
+				1200,
+				800,
+				false,
+				0,
+				1,
+				true,
+				true
+			);
+			expect(result.nodes.map((node) => node.id).sort()).toEqual(
+				nodes.map((node) => node.id).sort()
+			);
+			const byId = new Map(result.nodes.map((node) => [node.id, node]));
+			expect(byId.get('b')?.clusterId).toBe(byId.get('c')?.clusterId);
+			expect(byId.get('b')?.clusterId).not.toBe(byId.get('center')?.clusterId);
+			expect(result.nodes.every((node) => node.clusterId !== undefined)).toBe(true);
+			expect(new Set(result.nodes.map((node) => node.id)).size).toBe(nodes.length);
+		});
+
+		it('keeps the Document Graph orphan band when clustering all nodes was not requested', () => {
+			const nodes = ['center', 'b', 'c'].map((id) => createNode(id));
+			const links = [createLink('b', 'c')];
+			const result = calculateLayout(
+				'lobes',
+				nodes,
+				links,
+				buildAdjacencyMap(links),
+				'center.md',
+				nodes.length,
+				1200,
+				800,
+				false,
+				0,
+				1,
+				true
+			);
+			expect(result.nodes.find((node) => node.id === 'b')?.clusterId).toBeUndefined();
+			expect(result.nodes.find((node) => node.id === 'b')?.isOrphan).toBe(true);
+		});
 		/**
 		 * Two densely-linked clusters joined by a single bridge, plus the center.
 		 * Label propagation should separate the clusters.

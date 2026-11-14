@@ -46,7 +46,7 @@ import {
 	groupFocusFields,
 } from '../../utils/tabHelpers';
 import { resolveSnoozeTarget } from '../../utils/snoozeHelpers';
-import { useModalStore } from '../../stores/modalStore';
+import { getModalActions, selectModalData, useModalStore } from '../../stores/modalStore';
 import { useSshRemoteName } from '../../hooks/mainPanel/useSshRemoteName';
 import { useContextWindow } from '../../hooks/mainPanel/useContextWindow';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
@@ -65,6 +65,8 @@ import { useWindowOwnsSession } from '../../contexts/WindowContext';
 import type { PaneFileActions, PaneTabActions } from './TiledLayout';
 import type { Theme, UnifiedTabRef } from '../../types';
 import type { MainPanelHandle, MainPanelProps } from './types';
+import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
+import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
 import type { AgentDiscoveryRequest } from '../../../shared/types';
 
 /**
@@ -204,6 +206,7 @@ export const MainPanel = React.memo(
 		// Phase 3C: Direct store subscriptions (migrated from props)
 		const logLevel = useSettingsStore((s) => s.logLevel);
 		const logViewerSelectedLevels = useSettingsStore((s) => s.logViewerSelectedLevels);
+		const logViewerSource = useModalStore(selectModalData('logViewer'))?.source;
 		const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 		const contextWarningsEnabled = useSettingsStore(
 			(s) => s.contextManagementSettings.contextWarningsEnabled ?? false
@@ -410,51 +413,58 @@ export const MainPanel = React.memo(
 		// Git info (branch, status, ahead/behind)
 		const { gitInfo, refreshGitStatus } = useGitInfo(activeSession);
 
+		const composerProvider = useMemo(
+			() => (activeSession ? projectTabProvider(activeSession, activeTab ?? undefined) : undefined),
+			[activeSession, activeTab]
+		);
+
 		// Get agent capabilities for conditional feature rendering
 		const { hasCapability } = useAgentCapabilities(
-			activeSession?.toolType,
-			activeSession?.providerTranslationKnowledgeDirectory
+			composerProvider?.agent.toolType,
+			activeSession?.providerTranslationKnowledgeDirectory,
+			getSessionSshRemoteId(activeSession)
 		);
 
 		// Model/Effort pills: available options, current values, and agent-level
 		// defaults. Shared with the keyboard-only Model & Effort modal and with the
 		// queued-message edit modal, so all three show the same truth.
 		const modelEffortTabId = useMemo(() => resolveModelEffortTabId(activeSession), [activeSession]);
+		// Grok discovers per tab context. The tab's own provider decides, since a
+		// tab can run a provider other than the agent's default.
 		const discoveryContext = useMemo<AgentDiscoveryRequest['context'] | undefined>(() => {
-			if (
-				activeSession?.toolType !== 'grok' ||
-				!activeSession.cwd?.trim() ||
-				!activeTab ||
-				modelEffortTabId !== activeTab.id
-			)
+			const agent = composerProvider?.agent;
+			const tab = composerProvider?.tab;
+			if (agent?.toolType !== 'grok' || !agent.cwd?.trim() || !tab || modelEffortTabId !== tab.id)
 				return;
-			const { model, effort } = resolveModelEffort(activeTab, activeSession, {
+			const { model, effort } = resolveModelEffort(tab, agent, {
 				defaultModel: '',
 				defaultEffort: '',
 			});
 			return {
 				kind: 'draft',
-				cwd: activeSession.cwd,
-				customPath: activeSession.customPath,
-				customEnvVars: activeSession.customEnvVars,
+				cwd: agent.cwd,
+				customPath: agent.customPath,
+				customEnvVars: agent.customEnvVars,
 				model,
 				effort,
-				sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
-				sshRemoteId: activeSession.sshRemoteId,
+				sessionSshRemoteConfig: agent.sessionSshRemoteConfig,
+				sshRemoteId: agent.sshRemoteId,
 			};
+			// Field-level deps: a streaming flush replaces the agent object, and a new
+			// context identity would restart Grok discovery.
 		}, [
-			activeSession?.id,
-			activeSession?.toolType,
-			activeSession?.cwd,
-			activeSession?.customPath,
-			activeSession?.customEnvVars,
-			activeSession?.customModel,
-			activeSession?.customEffort,
-			activeSession?.sessionSshRemoteConfig,
-			activeSession?.sshRemoteId,
-			activeTab?.id,
-			activeTab?.customModel,
-			activeTab?.customEffort,
+			composerProvider?.agent.id,
+			composerProvider?.agent.toolType,
+			composerProvider?.agent.cwd,
+			composerProvider?.agent.customPath,
+			composerProvider?.agent.customEnvVars,
+			composerProvider?.agent.customModel,
+			composerProvider?.agent.customEffort,
+			composerProvider?.agent.sessionSshRemoteConfig,
+			composerProvider?.agent.sshRemoteId,
+			composerProvider?.tab?.id,
+			composerProvider?.tab?.customModel,
+			composerProvider?.tab?.customEffort,
 			modelEffortTabId,
 		]);
 		const {
@@ -467,7 +477,11 @@ export const MainPanel = React.memo(
 			loaded: discoveryLoaded,
 			modelStatus,
 			effortStatus,
-		} = useAgentModelEffortOptions(activeSession?.toolType, discoveryContext);
+		} = useAgentModelEffortOptions(
+			composerProvider?.agent.toolType,
+			getSessionSshRemoteId(activeSession),
+			discoveryContext
+		);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
 		// Navigate to agent/tab when clicking an agent pill in the log viewer
@@ -543,8 +557,8 @@ export const MainPanel = React.memo(
 
 		// Resolved current model/effort: tab override > session override > agent config > empty
 		const { model: resolvedModel, effort: resolvedEffort } = resolveModelEffort(
-			activeTab,
-			activeSession,
+			composerProvider?.tab,
+			composerProvider?.agent,
 			{ defaultModel: agentDefaultModel, defaultEffort: agentDefaultEffort }
 		);
 
@@ -581,6 +595,15 @@ export const MainPanel = React.memo(
 			const target = resolveSnoozeTarget(session, tabId);
 			if (!target) return;
 			useModalStore.getState().openModal('snoozeTab', target);
+		}, []);
+
+		// "Context: Preview Continuity" on a tab chip or a tiled pane menu. The modal
+		// carries the agent and the tab it was opened for, so nothing is selected or
+		// switched here: the preview is read only and leaves the tab as it was.
+		const handleOpenContinuityPreview = useCallback((tabId: string) => {
+			const session = selectActiveSession(useSessionStore.getState());
+			if (!session) return;
+			useModalStore.getState().openModal('continuityPreview', { sessionId: session.id, tabId });
 		}, []);
 
 		// Expose methods to parent via ref
@@ -907,6 +930,7 @@ export const MainPanel = React.memo(
 				onCopyContext,
 				onExportHtml,
 				onPublishGist: props.onPublishTabGist,
+				onPreviewContinuity: handleOpenContinuityPreview,
 				onMergeWith,
 				onSendToAgent,
 				onSummarizeAndContinue,
@@ -935,6 +959,7 @@ export const MainPanel = React.memo(
 				onCopyContext,
 				onExportHtml,
 				props.onPublishTabGist,
+				handleOpenContinuityPreview,
 				onMergeWith,
 				onSendToAgent,
 				onSummarizeAndContinue,
@@ -1112,7 +1137,8 @@ export const MainPanel = React.memo(
 					>
 						<LogViewer
 							theme={theme}
-							onClose={() => setLogViewerOpen(false)}
+							onClose={getModalActions().closeLogViewer}
+							initialSource={logViewerSource}
 							logLevel={logLevel}
 							savedSelectedLevels={logViewerSelectedLevels}
 							onSelectedLevelsChange={useSettingsStore.getState().setLogViewerSelectedLevels}
@@ -1131,6 +1157,7 @@ export const MainPanel = React.memo(
 						style={{ backgroundColor: theme.colors.bgMain }}
 					>
 						<AgentSessionsBrowser
+							key={`${activeSession?.id}:${activeSession ? resolveTabNativeProvider(activeTab ?? undefined, activeSession) : ''}`}
 							theme={theme}
 							activeSession={activeSession || undefined}
 							activeAgentSessionId={activeAgentSessionId}
@@ -1227,6 +1254,7 @@ export const MainPanel = React.memo(
 									onUnifiedTabReorder={onUnifiedTabReorder}
 									onTabStar={onTabStar}
 									onTabMarkUnread={onTabMarkUnread}
+									onPreviewContinuity={handleOpenContinuityPreview}
 									onMergeWith={onMergeWith}
 									onSendToAgent={onSendToAgent}
 									onSummarizeAndContinue={onSummarizeAndContinue}
@@ -1314,6 +1342,7 @@ export const MainPanel = React.memo(
 									onUnifiedTabReorder={onUnifiedTabReorder}
 									onTabStar={onTabStar}
 									onTabMarkUnread={onTabMarkUnread}
+									onPreviewContinuity={handleOpenContinuityPreview}
 									onMergeWith={onMergeWith}
 									onSendToAgent={onSendToAgent}
 									onSummarizeAndContinue={onSummarizeAndContinue}

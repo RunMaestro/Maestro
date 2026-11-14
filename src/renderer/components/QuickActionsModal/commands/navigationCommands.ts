@@ -156,7 +156,7 @@ export function buildNavigationCommands({
 		});
 	}
 
-	if (activeSession && !activeSession.sshRemote) {
+	if (activeSession && !activeSession.sshRemote && openPath) {
 		commands.push({
 			id: 'openWorkingDirectory',
 			label: `${getOpenInLabel(platform)}: Working Directory`,

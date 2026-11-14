@@ -221,7 +221,12 @@ describe('buildMirrorThinkingItems', () => {
 		const peer = peerOf('box', [hostAgent]);
 		const items = buildMirrorThinkingItems({ box: peer }, ['box']);
 		expect(items.map((item) => item.tab?.id)).toEqual(['t1', 't2']);
-		expect(items[0].session).toEqual({ id: 'box:a1', name: 'Builder on Peer box', state: 'busy' });
+		expect(items[0].session).toEqual({
+			id: 'box:a1',
+			name: 'Builder on Peer box',
+			state: 'busy',
+			toolType: 'codex',
+		});
 		expect(items[0].mirror).toEqual({ peerId: 'box', agentId: 'a1' });
 		expect(items[0].tab?.thinkingStartTime).toBe(50);
 		expect(items[0].tab?.name).toBe('Work');

@@ -111,6 +111,20 @@ describe('tool output compaction', () => {
 		});
 	});
 
+	it('keeps the whole transcript of a document chat, live or snoozed', () => {
+		const logs = Array.from({ length: MAX_PERSISTED_SESSION_LOGS + 8 }, (_, i) => ({
+			id: `d${i}`,
+		}));
+		const tab = { id: 'doc', documentOrigin: { path: '/docs/plan.md' }, logs };
+		const session = {
+			aiTabs: [tab],
+			snoozedTabs: [{ id: 's', type: 'ai', tab: { ...tab, id: 'snoozed-doc' } }],
+		};
+
+		// Reopening a document chat reads its history from the saved copy.
+		expect(compactSessionToolOutputs(session)).toEqual({ session, compacted: 0 });
+	});
+
 	it('compacts tool results in closed AI tabs kept with their logs', () => {
 		const output = 'x'.repeat(MAX_PERSISTED_TOOL_OUTPUT_CHARS + 100);
 		const terminal = { type: 'terminal', tab: { id: 't' }, unifiedIndex: 0, closedAt: 1 };

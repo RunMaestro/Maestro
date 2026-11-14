@@ -4,6 +4,7 @@ import type { SpawnProcessConfig } from './spawn-types';
 
 type PersistedSessionRecord = {
 	id?: string;
+	toolType?: string;
 	codexTransport?: unknown;
 };
 
@@ -32,6 +33,10 @@ export function resolveCodexSpawnTransport(
 	);
 	return resolveCodexTransport({
 		toolType: config.toolType,
-		codexTransport: persisted ? persisted.codexTransport : config.codexTransport,
+		codexTransport: persisted
+			? !persisted.toolType || persisted.toolType === 'codex'
+				? persisted.codexTransport
+				: undefined
+			: config.codexTransport,
 	});
 }

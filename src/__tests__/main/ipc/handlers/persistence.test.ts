@@ -933,7 +933,7 @@ describe('persistence IPC handlers', () => {
 			let loseAck = false;
 			let skipSave = false;
 			const enqueue = vi.fn(async (...args: unknown[]) => {
-				const control = args[9] as { item: QueuedItem };
+				const control = args[10] as { item: QueuedItem };
 				rendererQueue.push(control.item);
 				if (!skipSave) await save([{ ...current[0], executionQueue: rendererQueue }]);
 				if (loseAck) throw new Error('Lost renderer ack');

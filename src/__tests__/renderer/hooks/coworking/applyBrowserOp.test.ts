@@ -9,6 +9,16 @@ import { selectActiveSession, useSessionStore } from '../../../../renderer/store
 import type { SessionStore } from '../../../../renderer/stores/sessionStore';
 import type { Session } from '../../../../renderer/types';
 import type { BrowserTab } from '../../../../shared/browserPage';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { createMockAITab } from '../../../helpers/mockTab';
+import { createMockSession } from '../../../helpers/mockSession';
+
+beforeEach(() => {
+	useSettingsStore.setState({
+		coworkingBrowserInteraction: ['claude-code'],
+		coworkingBrowserInteractionConfirm: {},
+	});
+});
 import {
 	useCoworkingBrowserKeepAliveStore,
 	activePinnedTabIds,
@@ -234,6 +244,50 @@ describe('applyBrowserOp', () => {
 });
 
 describe('resolveAndRun', () => {
+	it('uses the captured caller policy when concurrent tabs and the selection use different providers', async () => {
+		const session = createMockSession({
+			id: 'sess-A',
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [
+				createMockAITab({ tabProvider: 'claude-code', turnProvider: 'codex', state: 'busy' }),
+			],
+			browserTabs: [{ id: 'u-1' } as BrowserTab],
+		});
+		vi.mocked(selectActiveSession).mockReturnValue(session);
+		useSettingsStore.setState({ coworkingBrowserInteraction: ['codex'] });
+		const approval = vi.fn(async () => true);
+		const caller = {
+			sessionId: 'sess-A',
+			processSessionId: 'sess-A-ai-tab-1',
+			provider: 'codex' as const,
+		};
+		await resolveAndRun(
+			{ current: new Map([['u-1', makeHandle({ getTabId: () => 'u-1' })]]) },
+			'u-1',
+			'sess-A',
+			{ kind: 'reload' },
+			approval,
+			undefined,
+			true,
+			caller
+		);
+		expect(approval).toHaveBeenCalledWith(
+			{ kind: 'reload' },
+			{ agentId: 'codex', sessionId: 'sess-A', forceConfirm: true }
+		);
+		approval.mockClear();
+		const legacy = await resolveAndRun(
+			{ current: new Map() },
+			'u-1',
+			'sess-A',
+			{ kind: 'reload' },
+			approval
+		);
+		expect(legacy.ok).toBe(false);
+		expect(approval).not.toHaveBeenCalled();
+	});
+
 	const allow: BrowserApprovalRequester = async () => true;
 
 	beforeEach(() => {

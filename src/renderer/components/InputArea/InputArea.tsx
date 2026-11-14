@@ -17,15 +17,18 @@ import { ContextWarningSash } from '../ContextWarningSash';
 import { SummarizeProgressOverlay } from '../SummarizeProgressOverlay';
 import { WizardInputPanel } from '../InlineWizard';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
-import { useAgentCapabilities, useScrollIntoView, useVoiceInput } from '../../hooks';
+import { useAgentCapabilities, useScrollIntoView } from '../../hooks';
+import { useComposerVoice } from '../../hooks/voice/useComposerVoice';
 import { useThinkingItems } from '../../hooks/session/useThinkingItems';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { filterSlashCommands } from '../../utils/search';
+import { controlledTextDictationTarget } from '../../utils/dictationTargets';
 import { InputTextarea } from './components/InputTextarea';
 import { useAiTabToolbarBinding } from './hooks/useAiTabToolbarBinding';
 import { formatTerminalCwd } from './utils/terminalPath';
 import {
 	ChatComposerFrame,
+	ComposerVoiceSessionButton,
 	aiCanAttachImages,
 	deriveAiComposerCapabilities,
 	useChatComposerFold,
@@ -48,9 +51,15 @@ import { MentionRoutingBar } from './components/MentionRoutingBar';
 import { useMentionRouting } from './hooks/useMentionRouting';
 import { AiCommandProposal } from './components/AiCommandProposal';
 import { useAiCommandStore, selectAiCommandEntry, aiCommandKey } from '../../stores/aiCommandStore';
-import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
-import { codifyTurnSettings } from '../../utils/providerTabSessions';
+import {
+	acceptAiCommand,
+	dismissAiCommand,
+	resolveAiCommandProvenance,
+} from '../../services/aiCommand';
+import { codifyTurnSettings, projectTabProvider } from '../../utils/providerTabSessions';
+import { useComposerModelChoices } from './hooks/useComposerModelChoices';
 import { hasStandardApprovalChannel } from '../../../shared/agentMetadata';
+import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
 
 /** localStorage key for the phone composer fold (see PhoneComposerHandle). */
 export const PHONE_COMPOSER_COLLAPSED_KEY = 'phone.composer.collapsed';
@@ -84,7 +93,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		handleInputKeyDown,
 		handlePaste,
 		handleDrop,
-		onUploadFiles,
 		toggleInputMode,
 		processInput,
 		handleInterrupt,
@@ -178,24 +186,31 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		effortMenuRef,
 	} = useModelEffortMenus();
 
-	// Get agent capabilities for conditional feature rendering
-	const { hasCapability } = useAgentCapabilities(session.toolType);
-	const hasStandardCapability =
-		hasCapability('supportsStandardPermissionMode') &&
-		hasStandardApprovalChannel({
-			toolType: session.toolType,
-			harnessControlMode: session.harnessControlMode,
-			codexTransport: session.codexTransport,
-			opencodeServer: encoreFeatures.opencodeServer === true,
-			sshEnabled: session.sessionSshRemoteConfig?.enabled === true,
-			hasImages: stagedImages.length > 0,
-		});
-
 	// PERF: Memoize activeTab lookup to avoid O(n) search on every render
 	const activeTab = useMemo(
 		() => session.aiTabs?.find((tab) => tab.id === session.activeTabId),
 		[session.aiTabs, session.activeTabId]
 	);
+
+	const composerProvider = useMemo(
+		() => projectTabProvider(session, activeTab),
+		[session, activeTab]
+	);
+	const { hasCapability } = useAgentCapabilities(
+		composerProvider.agent.toolType,
+		session.providerTranslationKnowledgeDirectory,
+		getSessionSshRemoteId(session)
+	);
+	const hasStandardCapability =
+		hasCapability('supportsStandardPermissionMode') &&
+		hasStandardApprovalChannel({
+			toolType: composerProvider.agent.toolType,
+			harnessControlMode: composerProvider.agent.harnessControlMode,
+			codexTransport: composerProvider.agent.codexTransport,
+			opencodeServer: encoreFeatures.opencodeServer === true,
+			sshEnabled: session.sessionSshRemoteConfig?.enabled === true,
+			hasImages: stagedImages.length > 0,
+		});
 
 	// Get wizardState from active tab (not session level - wizard state is per-tab)
 	const wizardState = activeTab?.wizardState;
@@ -218,9 +233,19 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				commandMode,
 				isResumingSession,
 				hasCapability,
-				supportsThinking,
+				// The flag says the agent can think; the capability says this tab's
+				// provider can stream it.
+				supportsThinking: supportsThinking && hasCapability('supportsThinkingDisplay'),
 			}),
 		[session.inputMode, commandMode, isResumingSession, hasCapability, supportsThinking]
+	);
+
+	// The model pill's choices for the tab's provider: Auto where it can act,
+	// and the model source in place of a named model.
+	const modelChoices = useComposerModelChoices(
+		composerProvider.agent,
+		availableModels,
+		currentModel
 	);
 	const toolbarBinding = useAiTabToolbarBinding(session.id, activeTab);
 
@@ -285,8 +310,35 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		() => codifyTurnSettings(activeTab, session),
 		[activeTab, session]
 	);
-	const aiCommandModel = aiCommandEntry ? aiCommandEntry.model : turnModel;
-	const aiCommandEffort = aiCommandEntry ? aiCommandEntry.effort : turnEffort;
+	// Before a request, the bar names whatever the `ai-command` Local Models
+	// assignment would ask: the tab's own model by default, or the assigned
+	// local model or endpoint.
+	const localModelAssignments = useSettingsStore((s) => s.localModelAssignments);
+	const localModelEndpoints = useSettingsStore((s) => s.localModelEndpoints);
+	const utilitySource = useSettingsStore((s) => s.utilitySource);
+	const utilityAgentId = useSettingsStore((s) => s.utilityAgentId);
+	const utilityModelId = useSettingsStore((s) => s.utilityModelId);
+	const draftProvenance = useMemo(
+		() =>
+			resolveAiCommandProvenance(
+				{ turnModel, turnEffort },
+				localModelAssignments,
+				localModelEndpoints,
+				utilitySource,
+				{ utilityAgentId, utilityModelId }
+			),
+		[
+			turnModel,
+			turnEffort,
+			localModelAssignments,
+			localModelEndpoints,
+			utilitySource,
+			utilityAgentId,
+			utilityModelId,
+		]
+	);
+	const aiCommandModel = aiCommandEntry ? aiCommandEntry.model : draftProvenance.model;
+	const aiCommandEffort = aiCommandEntry ? aiCommandEntry.effort : draftProvenance.effort;
 
 	// thinkingItems self-sourced via useThinkingItems (narrow store equality)
 	// Non-reactive store handles for the change handler below.
@@ -405,31 +457,49 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		setAtMentionCategory,
 	});
 
-	// Voice dictation (Web Speech API). Interim results live-update the draft via
-	// setInputValue; the final transcript is appended to the value captured when
-	// listening began. Disabled in terminal mode (the button only renders in AI
-	// mode anyway). The hook is a no-op where the Web Speech API is unavailable.
-	const voice = useVoiceInput({
+	// The composer microphone. With the A Cappella Encore Feature on it opens a
+	// voice session bound to this agent; with it off it is the Web Speech
+	// dictation this button has always been, unchanged. See `useComposerVoice`.
+	// Disabled in terminal mode (the button only renders in AI mode anyway).
+	const voice = useComposerVoice({
+		session,
 		currentValue: inputValue,
 		onTranscriptionChange: setInputValue,
 		focusRef: inputRef,
 		disabled: isTerminalMode,
 	});
-	// toggleVoiceInput's identity changes on every keystroke (it closes over the
-	// live draft value), so wrap it in a stable callback. This keeps the memoized
-	// ToolbarControls from re-rendering on each keystroke - it only re-renders
-	// when isListening actually flips.
-	const voiceToggleRef = useRef(voice.toggleVoiceInput);
-	voiceToggleRef.current = voice.toggleVoiceInput;
+	// The Web Speech toggle's identity changes on every keystroke (it closes over
+	// the live draft value), so wrap it in a stable callback. This keeps the
+	// memoized ToolbarControls from re-rendering on each keystroke - it only
+	// re-renders when isListening actually flips.
+	const voiceToggleRef = useRef(voice.toggle);
+	voiceToggleRef.current = voice.toggle;
 	const handleToggleVoiceInput = useCallback(() => voiceToggleRef.current(), []);
+
+	// Dictation types into the draft through `setInputValue`, the same setter a
+	// restored draft and the Web Speech path use, and never through the
+	// textarea's onChange: that handler is where the `!` gesture, the slash
+	// popover and the mention picker live, and none of them may fire for words
+	// nobody typed. Dictated text therefore never changes the command mode.
+	const setInputValueRef = useRef(setInputValue);
+	setInputValueRef.current = setInputValue;
+	const dictationTarget = useMemo(
+		() =>
+			controlledTextDictationTarget({
+				getElement: () => inputRef.current,
+				setValue: (value) => setInputValueRef.current(value),
+			}),
+		[inputRef]
+	);
 
 	const voiceBinding = useMemo<ChatComposerVoice>(
 		() => ({
 			supported: voice.voiceSupported,
 			listening: voice.isListening,
 			onToggle: handleToggleVoiceInput,
+			handledElsewhere: voice.usesACappella,
 		}),
-		[voice.voiceSupported, voice.isListening, handleToggleVoiceInput]
+		[voice.voiceSupported, voice.isListening, handleToggleVoiceInput, voice.usesACappella]
 	);
 
 	const phoneHandleBusy = thinkingItems.length > 0 || !!autoRunState?.isRunning;
@@ -442,7 +512,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const toolbarProps: ChatComposerToolbarProps = {
 		isTerminalMode,
 		terminalCwd: isTerminalMode ? formatTerminalCwd(session) : undefined,
-		agentId: session.toolType,
+		// The active tab's provider, so the permission pill reads in its words.
+		agentId: composerProvider.agent.toolType,
 		hasStandardCapability,
 		permissionMode: toolbarBinding.permissionMode,
 		onPermissionModeChange: toolbarBinding.onPermissionModeChange,
@@ -452,8 +523,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		tabShowThinking,
 		onToggleTabShowThinking,
 		currentModel,
+		runOn: modelChoices.runOn,
+		autoModelTitle: modelChoices.autoModelTitle,
 		currentEffort,
-		availableModels,
+		availableModels: modelChoices.modelOptions,
 		availableEfforts,
 		onModelChange,
 		onEffortChange,
@@ -720,7 +793,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				<InputTextarea
 					agentId={session.id}
 					agentName={session.name}
-					toolType={session.toolType}
+					toolType={composerProvider.agent.toolType}
 					theme={theme}
 					isTerminalMode={isTerminalMode}
 					isCommandModeDraft={isShellCommandDraft}
@@ -763,7 +836,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			enterToSend={enterToSend}
 			setEnterToSend={setEnterToSend}
 			voice={voiceBinding}
-			onUploadFiles={onUploadFiles}
+			dictationTarget={isTerminalMode ? undefined : dictationTarget}
 			// The prompt composer is an AI-mode affordance; terminal mode offers none.
 			onOpenPromptComposer={session.inputMode === 'ai' ? onOpenPromptComposer : undefined}
 			shortcuts={shortcuts}
@@ -772,6 +845,21 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			onSend={processInput}
 			columnSendTitle={isTerminalMode ? 'Run command (Enter)' : 'Send message'}
 			sendMenu={sendMenu}
+			// Only when A Cappella owns the microphone. With it off, the button stays
+			// the Web Speech dictation one in the toolbar row, which is touch-only -
+			// so there is never a second microphone on screen.
+			sendColumnExtras={
+				!isTerminalMode && voice.usesACappella ? (
+					<ComposerVoiceSessionButton
+						theme={theme}
+						active={voice.isListening}
+						onToggle={handleToggleVoiceInput}
+						label="Talk to this agent"
+						activeLabel="End the voice session"
+						testId="composer-voice-button"
+					/>
+				) : undefined
+			}
 		/>
 	);
 });

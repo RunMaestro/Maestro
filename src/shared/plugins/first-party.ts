@@ -40,6 +40,7 @@ export type FirstPartyEncoreFlag =
 	| 'opencodeServer'
 	| 'concerto'
 	| 'groupsPlus'
+	| 'aCappella'
 	| 'webLogin'
 	| 'computerHistory'
 	| 'quickChat'
@@ -1043,6 +1044,97 @@ export const GROUPS_PLUS_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	backgroundServices: [],
 };
 
+/** A Cappella: the voice interface. The session lives headless in the main
+ * process (see `docs/architecture/acappella/system-overview.md`), so the
+ * disclosure below covers what the SESSION touches, not what a renderer HUD
+ * happens to render. Enabling the flag only makes the Voice Setup surface
+ * reachable: no device is opened, no model downloaded, no socket dialled until
+ * the user explicitly starts a session. */
+export const A_CAPPELLA_FIRST_PARTY_PLUGIN_ID = 'com.maestro.acappella';
+
+export const A_CAPPELLA_FIRST_PARTY_PLUGIN_PERMISSIONS: readonly PermissionRequest[] = [
+	{
+		capability: 'settings:read',
+		reason:
+			'Re-read the A Cappella Encore flag and the configured speech provider tier before starting a voice session.',
+	},
+	{
+		capability: 'sessions:read',
+		reason:
+			'Build the agent roster (names, agent types, working directories, tabs) the router matches a spoken request against.',
+	},
+	// NOTE: `agents:dispatch` is deliberately ABSENT, for the same reason it is
+	// absent from Pianola and Concerto: a spoken request resolves to an agent and
+	// tab at runtime, which a static manifest allowlist scope cannot name. Voice
+	// dispatch is HOST-OWNED - the route executor drives the existing tab bridge
+	// and IPC handlers, gated by the Encore flag and by the user having started a
+	// session out loud.
+] as const;
+
+export const A_CAPPELLA_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: A_CAPPELLA_FIRST_PARTY_PLUGIN_ID,
+	name: 'A Cappella',
+	description:
+		'Talk to Maestro. Speak a request, have it routed to the right agent and tab, and hear the reply read back.',
+	firstParty: true,
+	category: 'ui',
+	permissions: A_CAPPELLA_FIRST_PARTY_PLUGIN_PERMISSIONS,
+	settingsNamespace: 'aCappella',
+	encoreFlag: 'aCappella',
+	releaseDate: '2026-08-28',
+	// No supervised background service yet: the voice session service is inert
+	// until `startSession()` is called and returns to idle on stop, so disabling
+	// the flag leaves nothing running. Wake-word listening (a later phase) is the
+	// first thing here that would need a supervised entry.
+	backgroundServices: [],
+	usage: {
+		overview: [
+			'Say a request out loud. Maestro transcribes it, works out which agent and tab you meant, sends it there, and reads the reply back to you.',
+			'A session has a mode. Conductor routes each request to the agent and tab it is about. Agent sends everything to the agent in front. Tab sends every sentence, word for word, to the tab in front. Switch between them in the Voice HUD.',
+			'By default speech recognition, the wake word and the voice all run on models on this computer. Nothing is downloaded until you press Download in Voice Setup, and the microphone opens only when you start a session.',
+		],
+		steps: [
+			{
+				title: 'Download the models',
+				body: 'Open Voice Setup below and press Download. It lists each model, its size and its license first. Later leaves voice on and unconfigured.',
+			},
+			{
+				title: 'Start a session',
+				body: 'Press a hotkey, or click the microphone under Send in the composer. macOS asks for the microphone the first time.',
+			},
+			{
+				title: 'Talk',
+				body: 'The Voice HUD shows what was heard, where it went, and the reply as it is spoken. Minimize keeps the session; close ends it.',
+			},
+		],
+		access: [
+			{ label: 'Talk to Maestro (Conductor), from any app', shortcutId: 'voiceConductor' },
+			{ label: 'Talk to the agent in front', shortcutId: 'voiceCurrentAgent' },
+			{ label: 'Talk to the agent in front', menu: 'the microphone under Send in the composer' },
+			{ label: 'Talk to one agent', menu: 'right-click the agent in the Left Bar' },
+			{ label: 'Talk to the Conductor', commandPalette: 'Talk to the Conductor' },
+			{ label: 'Download or check the models', commandPalette: 'Set Up Voice Models' },
+			{ label: 'End the session', commandPalette: 'End Voice Session' },
+		],
+		agentCommands: [
+			{ label: 'Read the session (--json for scripting)', command: 'maestro-cli voice status' },
+			{ label: 'Start a Conductor session', command: 'maestro-cli voice start --conductor' },
+			{
+				label: 'Start a session on one agent',
+				command: 'maestro-cli voice start --agent <agent-id>',
+			},
+			{ label: 'End the session', command: 'maestro-cli voice stop' },
+		],
+		notes: [
+			'Nothing starts itself. Turning A Cappella on opens no microphone, downloads nothing, and starts no session.',
+			'A model that is missing is named, with how to get it. Maestro never swaps a local provider for a cloud one on its own.',
+			'There is one microphone and one session. Starting a second session replaces the first.',
+			'Turning A Cappella off ends the session, releases both hotkeys, and stops the wake word. Downloaded models stay until you remove them.',
+		],
+		docsSlug: 'voice-mode',
+	},
+};
+
 /** Web Login gates the web interface host-side: the login routes, the cookie
  * check on every token route and the WebSocket upgrade all live in the web
  * server, and the accounts file is reachable only through `webLogin:*` IPC
@@ -1473,6 +1565,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	CONCERTO_FIRST_PARTY_PLUGIN,
 	GROUPS_PLUS_FIRST_PARTY_PLUGIN,
+	A_CAPPELLA_FIRST_PARTY_PLUGIN,
 	WEB_LOGIN_FIRST_PARTY_PLUGIN,
 	COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
 	QUICK_CHAT_FIRST_PARTY_PLUGIN,
@@ -1499,6 +1592,7 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	opencodeServer: OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	concerto: CONCERTO_FIRST_PARTY_PLUGIN,
 	groupsPlus: GROUPS_PLUS_FIRST_PARTY_PLUGIN,
+	aCappella: A_CAPPELLA_FIRST_PARTY_PLUGIN,
 	webLogin: WEB_LOGIN_FIRST_PARTY_PLUGIN,
 	computerHistory: COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
 	quickChat: QUICK_CHAT_FIRST_PARTY_PLUGIN,

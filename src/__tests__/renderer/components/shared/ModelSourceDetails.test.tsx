@@ -1,0 +1,666 @@
+/**
+ * Tests for the model source half of an agent's model picker:
+ * `useModelSourceChoices` (the source groups the Model field lists after the
+ * provider's models, and what picking one hands up), `ModelSourceDetails` (the
+ * lines under the Model field that say what the launch will do with a source
+ * model, its context size and its Test button), `modelSourceGroups` and
+ * `describeRunOnStatus`.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+	ModelSourceDetails,
+	describeRunOnStatus,
+	modelSourceGroups,
+	useModelSourceChoices,
+	type ModelSourceDetailsProps,
+	type ModelSourceState,
+} from '../../../../renderer/components/shared/ModelSourceDetails';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import type { LocalModelEndpoint } from '../../../../shared/local-models/endpoints';
+import { GPT_OSS_20B_ID, QWEN3_1_7B_ID } from '../../../../shared/local-models/model-catalog';
+import { MODEL_SERVER_ENDPOINT_ID } from '../../../../shared/local-models/model-server';
+import {
+	agentRunOnSupport,
+	RUN_ON_MIN_CONTEXT_TOKENS,
+	RUN_ON_PROVIDER_SPEC,
+	type RunOnSourceTarget,
+	type RunOnTarget,
+	type RunOnTestResult,
+} from '../../../../shared/local-models/run-on';
+import { RUN_ON_UNTESTED_WARNING } from '../../../../shared/local-models/run-on-picker';
+import { mockTheme } from '../../../helpers/mockTheme';
+
+const OLLAMA: LocalModelEndpoint = {
+	id: 'ep-ollama',
+	name: 'Ollama',
+	kind: 'ollama',
+	baseUrl: 'http://127.0.0.1:11434',
+	enabled: true,
+};
+
+const QWEN: RunOnSourceTarget = {
+	type: 'source',
+	endpointId: OLLAMA.id,
+	model: 'qwen3:latest',
+	contextTokens: 65_536,
+};
+
+const onServer = (model: string): RunOnSourceTarget => ({
+	type: 'source',
+	endpointId: MODEL_SERVER_ENDPOINT_ID,
+	model,
+	contextTokens: RUN_ON_MIN_CONTEXT_TOKENS,
+});
+
+let savedEndpoints: LocalModelEndpoint[];
+
+/** The Maestro model server lists `serverModels`; every saved source lists `qwen3:latest`. */
+function listSources(serverModels: string[] = [GPT_OSS_20B_ID, QWEN3_1_7B_ID]) {
+	vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(async (endpoint) =>
+		typeof endpoint === 'string'
+			? { ok: true, models: serverModels.map((id) => ({ id })) }
+			: { ok: true, models: [{ id: 'qwen3:latest' }] }
+	);
+}
+
+type HarnessProps = Partial<Omit<ModelSourceDetailsProps, 'theme' | 'state'>>;
+
+/** What `useModelSourceChoices` returned on the latest render. */
+let latest: ModelSourceState;
+
+/**
+ * The hook and the details bound the way `AgentModelSection` binds them: one
+ * model source, read by both. The Model field itself is `AgentConfigOptions`,
+ * covered in AgentConfigPanel.test.tsx; here the choices are read and driven
+ * straight off the hook.
+ */
+function Harness({
+	toolType = 'claude-code',
+	value = { type: 'provider' },
+	onChange = () => {},
+	...details
+}: HarnessProps) {
+	const state = useModelSourceChoices(toolType, { value, onChange });
+	latest = state;
+	return (
+		<ModelSourceDetails
+			theme={mockTheme}
+			toolType={toolType}
+			state={state}
+			value={value}
+			onChange={onChange}
+			{...details}
+		/>
+	);
+}
+
+function renderField(props: HarnessProps = {}) {
+	const onChange = vi.fn();
+	const view = render(<Harness onChange={onChange} {...props} />);
+	return { onChange, ...view };
+}
+
+const choices = () => latest.choices!;
+const groupLabels = () => choices().groups.map((group) => group.label);
+const optionLabels = () =>
+	choices().groups.flatMap((group) => group.options.map((option) => option.label));
+const status = () => screen.queryByTestId('model-source-status');
+const sourcesListed = () =>
+	waitFor(() => expect(latest.choices?.groups.length ?? 0).toBeGreaterThan(0));
+const select = (spec: string) => act(() => choices().onSelect(spec));
+
+beforeEach(() => {
+	savedEndpoints = useSettingsStore.getState().localModelEndpoints;
+	useSettingsStore.setState({ localModelEndpoints: [OLLAMA] });
+	vi.mocked(window.maestro.localModels.endpoints.listModels).mockClear();
+	vi.mocked(window.maestro.localModels.server.start).mockClear();
+	listSources();
+});
+
+afterEach(() => {
+	useSettingsStore.setState({ localModelEndpoints: savedEndpoints });
+	vi.mocked(window.maestro.localModels.endpoints.listModels).mockResolvedValue({
+		ok: true,
+		models: [],
+	});
+});
+
+describe('useModelSourceChoices: the source groups', () => {
+	it('lists each source with what it serves, and no provider entry', async () => {
+		renderField();
+		await waitFor(() => expect(groupLabels()).toEqual(['Maestro model server', 'Ollama']));
+
+		expect(optionLabels()).toEqual([
+			'gpt-oss 20B (MXFP4) (Fits, Agent-ready)',
+			'Qwen3 1.7B Instruct (Q4_K_M) (Fits)',
+			'qwen3:latest',
+		]);
+		expect(
+			choices().groups.flatMap((group) => group.options.map((option) => option.value))
+		).not.toContain(RUN_ON_PROVIDER_SPEC);
+		expect(choices().selected).toBeNull();
+	});
+
+	it('asks the Maestro model server what it serves without starting it', async () => {
+		renderField();
+		await sourcesListed();
+
+		expect(window.maestro.localModels.endpoints.listModels).toHaveBeenCalledWith(
+			MODEL_SERVER_ENDPOINT_ID
+		);
+		expect(window.maestro.localModels.server.start).not.toHaveBeenCalled();
+	});
+
+	it('does not ask a disabled source', async () => {
+		useSettingsStore.setState({ localModelEndpoints: [{ ...OLLAMA, enabled: false }] });
+		renderField();
+		await sourcesListed();
+
+		expect(groupLabels()).toEqual(['Maestro model server']);
+		expect(optionLabels()).not.toContain('qwen3:latest');
+		// The one call is the Maestro model server's, which answers from disk.
+		expect(vi.mocked(window.maestro.localModels.endpoints.listModels).mock.calls).toEqual([
+			[MODEL_SERVER_ENDPOINT_ID],
+		]);
+	});
+
+	it('names the selected source model and the source that lists it', async () => {
+		renderField({ value: QWEN });
+		await waitFor(() => expect(groupLabels()).toContain('Ollama'));
+
+		expect(choices().selected).toEqual({
+			spec: `${OLLAMA.id}:qwen3:latest`,
+			sourceName: 'Ollama',
+			model: 'qwen3:latest',
+		});
+	});
+
+	it('keeps a current target no source lists in a group of its own, with the reason', async () => {
+		renderField({ value: { type: 'source', endpointId: 'ep-gone', model: 'm' } });
+
+		// The unlisted target's group is there from the first render; the sources follow.
+		await waitFor(() =>
+			expect(groupLabels()).toEqual(['Not listed by any source', 'Maestro model server', 'Ollama'])
+		);
+		expect(choices().groups[0].options).toEqual([
+			{ value: 'ep-gone:m', label: 'm (source removed)' },
+		]);
+		// A source that no longer exists is named by its id, the only name left.
+		expect(choices().selected).toEqual({ spec: 'ep-gone:m', sourceName: 'ep-gone', model: 'm' });
+		// And the launch refusal is shown before a turn meets it.
+		expect(status()).toHaveTextContent('is no longer configured');
+		expect(status()).toHaveAttribute('data-tone', 'error');
+	});
+
+	it('offers no choices for a provider with no recipe, and says why', async () => {
+		renderField({ toolType: 'gemini-cli' });
+
+		expect(latest.choices).toBeUndefined();
+		expect(latest.unsupportedReason).toBe(agentRunOnSupportReason('gemini-cli'));
+		const status = screen.getByTestId('model-source-status');
+		expect(status).toHaveTextContent(agentRunOnSupportReason('gemini-cli'));
+		expect(status).toHaveAttribute('data-tone', 'dim');
+		// Nothing about sources is listed for it.
+		expect(screen.queryByText('Listing source models...')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-source-problem')).not.toBeInTheDocument();
+	});
+});
+
+/** The reason the launch gives for a provider it has no recipe for. */
+function agentRunOnSupportReason(toolType: string): string {
+	const support = agentRunOnSupport(toolType);
+	if (support.supported) throw new Error(`${toolType} has a recipe`);
+	return support.reason;
+}
+
+describe('useModelSourceChoices: picking', () => {
+	it('hands up a picked model at the context the Library runs it at', async () => {
+		const { onChange } = renderField();
+		await sourcesListed();
+
+		select(`${MODEL_SERVER_ENDPOINT_ID}:${GPT_OSS_20B_ID}`);
+
+		expect(onChange).toHaveBeenCalledWith(onServer(GPT_OSS_20B_ID));
+	});
+
+	it('starts a picked model at the size its source reports', async () => {
+		vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+			async (endpoint) =>
+				typeof endpoint === 'string'
+					? { ok: true, models: [] }
+					: { ok: true, models: [{ id: 'deepseek-v4.1-flash:cloud', contextTokens: 1_048_576 }] }
+		);
+		const { onChange } = renderField();
+		await waitFor(() => expect(groupLabels()).toEqual(['Ollama']));
+
+		select(`${OLLAMA.id}:deepseek-v4.1-flash:cloud`);
+
+		expect(onChange).toHaveBeenCalledWith({
+			type: 'source',
+			endpointId: OLLAMA.id,
+			model: 'deepseek-v4.1-flash:cloud',
+			contextTokens: 1_048_576,
+		});
+	});
+
+	it('ignores a spec that does not name a source model', async () => {
+		const { onChange } = renderField();
+		await sourcesListed();
+
+		select(RUN_ON_PROVIDER_SPEC);
+		select('not a spec');
+
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
+	it('hands up Provider, with no context, when a provider model is chosen', async () => {
+		const { onChange } = renderField({ value: QWEN });
+		await sourcesListed();
+
+		act(() => choices().onProvider());
+
+		expect(onChange).toHaveBeenCalledWith({ type: 'provider' });
+	});
+
+	it('hands up nothing when the agent already runs on its provider', async () => {
+		const { onChange } = renderField();
+		await sourcesListed();
+
+		act(() => choices().onProvider());
+
+		expect(onChange).not.toHaveBeenCalled();
+	});
+});
+
+describe('ModelSourceDetails: the sources', () => {
+	it('says why a source lists nothing', async () => {
+		vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+			async (endpoint) =>
+				typeof endpoint === 'string'
+					? { ok: false, error: { kind: 'invalid', message: 'The engine is not downloaded.' } }
+					: { ok: true, models: [{ id: 'qwen3:latest' }] }
+		);
+		renderField();
+
+		expect(await screen.findByTestId('model-source-source-problem')).toHaveTextContent(
+			'Maestro model server: The engine is not downloaded.'
+		);
+	});
+
+	it('says so while the sources are still listing', async () => {
+		renderField();
+
+		expect(screen.getByText('Listing source models...')).toBeInTheDocument();
+		await waitFor(() =>
+			expect(screen.queryByText('Listing source models...')).not.toBeInTheDocument()
+		);
+	});
+
+	it('shows a save error from the host over its own status', async () => {
+		renderField({ value: QWEN, error: 'A model source names a model.' });
+
+		expect(status()).toHaveTextContent('A model source names a model.');
+		expect(status()).toHaveAttribute('data-tone', 'error');
+	});
+
+	it('uses the test id prefix the host gives', async () => {
+		renderField({ value: QWEN, testId: 'edit-agent-model-source' });
+
+		expect(screen.getByTestId('edit-agent-model-source')).toBeInTheDocument();
+		expect(screen.getByTestId('edit-agent-model-source-context-select')).toBeInTheDocument();
+		expect(screen.queryByTestId('model-source')).not.toBeInTheDocument();
+	});
+});
+
+describe('ModelSourceDetails: what it says about a chosen model', () => {
+	it('warns about a model that has not passed the agent qualification', async () => {
+		renderField({ value: QWEN });
+
+		expect(screen.getByTestId('model-source-untested')).toHaveTextContent(RUN_ON_UNTESTED_WARNING);
+	});
+
+	it('does not warn about a model that qualified with this harness', async () => {
+		renderField({ value: onServer(GPT_OSS_20B_ID) });
+
+		expect(screen.queryByTestId('model-source-untested')).not.toBeInTheDocument();
+	});
+
+	it('warns when the model qualified with another harness only', async () => {
+		// gpt-oss 20B has no qualification run with OpenCode.
+		renderField({ toolType: 'opencode', value: onServer(GPT_OSS_20B_ID) });
+
+		expect(screen.getByTestId('model-source-untested')).toBeInTheDocument();
+	});
+
+	it('says when a model does not fit this computer', async () => {
+		vi.mocked(window.maestro.localModels.hardware).mockResolvedValueOnce({
+			platform: 'darwin',
+			arch: 'arm64',
+			totalMemoryBytes: 8 * 1024 ** 3,
+			unifiedMemory: true,
+			gpus: [],
+		});
+		renderField({ value: onServer(GPT_OSS_20B_ID) });
+
+		expect(await screen.findByTestId('model-source-fit')).toHaveTextContent('Too large');
+	});
+
+	it('flags a loopback source for an agent on an SSH remote', async () => {
+		renderField({ value: QWEN, sshRemoteName: 'Build box' });
+
+		expect(status()).toHaveTextContent('SSH remote "Build box" cannot reach');
+		expect(status()).toHaveAttribute('data-tone', 'warning');
+	});
+
+	it('names a recipe variable the agent sets itself, because it wins', async () => {
+		renderField({
+			value: QWEN,
+			userEnvVars: { ANTHROPIC_BASE_URL: 'https://mine.example.com' },
+		});
+
+		expect(status()).toHaveTextContent(
+			"Not applied in full: ANTHROPIC_BASE_URL is set in this agent's environment variables"
+		);
+	});
+
+	it('says which Provider tab setting a source model takes out of force', async () => {
+		renderField({ value: QWEN });
+		expect(screen.getByText(/runs as claude --print/)).toBeInTheDocument();
+	});
+
+	it('shows nothing about a model while the agent runs on its provider', async () => {
+		renderField();
+		await sourcesListed();
+
+		expect(status()).toBeNull();
+		expect(screen.queryByTestId('model-source-untested')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-context-select')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-context')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('model-source-test')).not.toBeInTheDocument();
+	});
+});
+
+describe('ModelSourceDetails: the context size', () => {
+	const contextSelect = () =>
+		screen.getByTestId('model-source-context-select') as HTMLSelectElement;
+	const contextLabels = () =>
+		Array.from(contextSelect().options).map((option) => option.textContent);
+	const contextInput = () =>
+		screen.getByTestId('model-source-context').querySelector('input') as HTMLInputElement;
+
+	it("offers the common sizes by name, then Custom, with the target's size chosen", () => {
+		renderField({ value: QWEN });
+
+		expect(contextLabels()).toEqual([
+			'40K (40,960), minimum',
+			'64K (65,536)',
+			'128K (131,072)',
+			'200K (200,000)',
+			'256K (262,144)',
+			'512K (524,288)',
+			'1M (1,048,576)',
+			'Custom...',
+		]);
+		expect(contextSelect().value).toBe('65536');
+		expect(screen.queryByTestId('model-source-context')).not.toBeInTheDocument();
+	});
+
+	it('hands up a size picked from the list', () => {
+		const { onChange } = renderField({ value: QWEN });
+
+		fireEvent.change(contextSelect(), { target: { value: '131072' } });
+
+		expect(onChange).toHaveBeenCalledWith({ ...QWEN, contextTokens: 131_072 });
+	});
+
+	it('offers no size past what the source says the model holds, and names its maximum', async () => {
+		vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+			async (endpoint) =>
+				typeof endpoint === 'string'
+					? { ok: true, models: [] }
+					: { ok: true, models: [{ id: 'qwen3:latest', contextTokens: 160_000 }] }
+		);
+		renderField({ value: QWEN });
+
+		await waitFor(() => expect(contextLabels()).toContain('160K (160,000), model maximum'));
+		expect(contextLabels()).not.toContain('200K (200,000)');
+		expect(screen.getByText(/This model holds up to 160,000 tokens/)).toBeInTheDocument();
+	});
+
+	it('shows a size no choice names in the Custom field', () => {
+		renderField({ value: { ...QWEN, contextTokens: 1_000_000 } });
+
+		expect(contextSelect().value).toBe('custom');
+		expect(contextInput().value).toBe('1000000');
+	});
+
+	it('opens the Custom field from the list and hands up a whole number as it is typed', () => {
+		const { onChange } = renderField({ value: QWEN });
+
+		fireEvent.change(contextSelect(), { target: { value: 'custom' } });
+		expect(contextInput().value).toBe('65536');
+		expect(onChange).not.toHaveBeenCalled();
+
+		fireEvent.change(contextInput(), { target: { value: '100000' } });
+		expect(onChange).toHaveBeenCalledWith({ ...QWEN, contextTokens: 100_000 });
+	});
+
+	it('says so under the field when the size is under the agent minimum', () => {
+		renderField({ value: { ...QWEN, contextTokens: 8192 } });
+
+		expect(screen.getByTestId('model-source-context')).toHaveTextContent(
+			`at least ${RUN_ON_MIN_CONTEXT_TOKENS} tokens`
+		);
+	});
+
+	it('warns when a custom size is more than the model holds', async () => {
+		vi.mocked(window.maestro.localModels.endpoints.listModels).mockImplementation(
+			async (endpoint) =>
+				typeof endpoint === 'string'
+					? { ok: true, models: [] }
+					: { ok: true, models: [{ id: 'qwen3:latest', contextTokens: 131_072 }] }
+		);
+		renderField({ value: { ...QWEN, contextTokens: 150_000 } });
+
+		await waitFor(() =>
+			expect(screen.getByTestId('model-source-context-past-model')).toHaveTextContent(
+				'More than the 131,072 tokens this model holds'
+			)
+		);
+	});
+
+	it('does not hand up text that is not a number, and puts the stored size back on blur', () => {
+		const { onChange } = renderField({ value: { ...QWEN, contextTokens: 100_000 } });
+
+		fireEvent.change(contextInput(), { target: { value: 'lots' } });
+		expect(onChange).not.toHaveBeenCalled();
+		expect(screen.getByTestId('model-source-context')).toHaveTextContent('whole number');
+
+		fireEvent.blur(contextInput());
+		expect(contextInput().value).toBe('100000');
+	});
+});
+
+describe('ModelSourceDetails: Test', () => {
+	const PASSED: RunOnTestResult = {
+		ok: true,
+		model: 'qwen3:latest',
+		label: 'qwen3:latest on Ollama',
+		reply: 'ready',
+		durationMs: 12_340,
+		contextTokens: 65_536,
+	};
+	const button = () => screen.getByTestId('model-source-test') as HTMLButtonElement;
+
+	it('draws no button when the host cannot run a test', () => {
+		renderField({ value: QWEN });
+
+		expect(screen.queryByTestId('model-source-test')).not.toBeInTheDocument();
+	});
+
+	it('runs one turn on the target shown and shows the reply', async () => {
+		const onTest = vi.fn(async () => PASSED);
+		renderField({ value: QWEN, onTest });
+
+		fireEvent.click(button());
+		expect(button()).toBeDisabled();
+		expect(button()).toHaveTextContent('Testing...');
+
+		const result = await screen.findByTestId('model-source-test-result');
+		expect(onTest).toHaveBeenCalledWith(QWEN);
+		expect(result).toHaveAttribute('data-ok', 'true');
+		expect(result).toHaveTextContent('qwen3:latest on Ollama answered in 12.3 s: ready');
+		expect(button()).not.toBeDisabled();
+	});
+
+	it('shows the reason a test failed', async () => {
+		const onTest = vi.fn(
+			async (): Promise<RunOnTestResult> => ({
+				ok: false,
+				code: 'run-on-test-turn-failed',
+				message:
+					'Claude Code did not complete a turn on qwen3:latest on Ollama: Prompt is too long.',
+			})
+		);
+		renderField({ value: QWEN, onTest });
+
+		fireEvent.click(button());
+
+		const result = await screen.findByTestId('model-source-test-result');
+		expect(result).toHaveAttribute('data-ok', 'false');
+		expect(result).toHaveTextContent('Prompt is too long');
+	});
+
+	it('shows a call that was rejected as a failed test, not a crash', async () => {
+		const onTest = vi.fn(async () => {
+			throw new Error("Error invoking remote method 'localModels:runOn:test': Error: boom");
+		});
+		renderField({ value: QWEN, onTest });
+
+		fireEvent.click(button());
+
+		expect(await screen.findByTestId('model-source-test-result')).toHaveTextContent('boom');
+	});
+
+	it('drops the verdict when the target changes: it described another one', async () => {
+		const onTest = vi.fn(async () => PASSED);
+		const { rerender, onChange } = renderField({ value: QWEN, onTest });
+		fireEvent.click(button());
+		await screen.findByTestId('model-source-test-result');
+
+		const next: RunOnTarget = { ...QWEN, contextTokens: 131_072 };
+		await act(async () => {
+			rerender(<Harness value={next} onChange={onChange} onTest={onTest} />);
+		});
+
+		expect(screen.queryByTestId('model-source-test-result')).not.toBeInTheDocument();
+	});
+
+	it('is disabled with the reason the host gives', () => {
+		const onTest = vi.fn(async () => PASSED);
+		renderField({ value: QWEN, onTest, testBlockedReason: 'Choose a working directory first.' });
+
+		expect(button()).toBeDisabled();
+		expect(screen.getByText('Choose a working directory first.')).toBeInTheDocument();
+	});
+
+	it('is disabled while the context size cannot be stored', () => {
+		const onTest = vi.fn(async () => PASSED);
+		renderField({ value: { ...QWEN, contextTokens: 8192 }, onTest });
+
+		expect(button()).toBeDisabled();
+		expect(screen.getByText('Fix the context size first.')).toBeInTheDocument();
+	});
+});
+
+describe('modelSourceGroups', () => {
+	it('drops the provider entry from the ungrouped head and keeps every source group', () => {
+		expect(
+			modelSourceGroups([
+				{ label: null, options: [{ value: RUN_ON_PROVIDER_SPEC, label: 'Provider (default)' }] },
+				{ label: 'Ollama', options: [{ value: 'ep-ollama:qwen3:latest', label: 'qwen3:latest' }] },
+			])
+		).toEqual([
+			{ label: 'Ollama', options: [{ value: 'ep-ollama:qwen3:latest', label: 'qwen3:latest' }] },
+		]);
+	});
+
+	it('puts a current target no source lists in a group of its own, first', () => {
+		expect(
+			modelSourceGroups([
+				{
+					label: null,
+					options: [
+						{ value: RUN_ON_PROVIDER_SPEC, label: 'Provider (default)' },
+						{ value: 'ep-gone:m', label: 'm (source removed)' },
+					],
+				},
+				{ label: 'Ollama', options: [{ value: 'ep-ollama:qwen3:latest', label: 'qwen3:latest' }] },
+			])
+		).toEqual([
+			{
+				label: 'Not listed by any source',
+				options: [{ value: 'ep-gone:m', label: 'm (source removed)' }],
+				unlisted: true,
+			},
+			{ label: 'Ollama', options: [{ value: 'ep-ollama:qwen3:latest', label: 'qwen3:latest' }] },
+		]);
+	});
+
+	it('is empty when only the provider is offered', () => {
+		expect(
+			modelSourceGroups([
+				{ label: null, options: [{ value: RUN_ON_PROVIDER_SPEC, label: 'Provider (default)' }] },
+			])
+		).toEqual([]);
+	});
+});
+
+describe('describeRunOnStatus', () => {
+	it('says nothing for a launch on the provider or a clean launch on a source', () => {
+		expect(describeRunOnStatus({ kind: 'none' })).toBeNull();
+		expect(
+			describeRunOnStatus({
+				kind: 'inject',
+				envVars: {},
+				args: [],
+				subcommandArgs: [],
+				model: 'm',
+				harnessModel: 'm',
+				envVarMerges: {},
+				contextTokens: 40_960,
+				userOverrides: [],
+				clearedEnvVars: [],
+			})
+		).toBeNull();
+	});
+
+	it('words several variables the agent sets itself as one sentence', () => {
+		const line = describeRunOnStatus({
+			kind: 'inject',
+			envVars: {},
+			args: [],
+			subcommandArgs: [],
+			model: 'm',
+			harnessModel: 'm',
+			envVarMerges: {},
+			contextTokens: 40_960,
+			userOverrides: ['ANTHROPIC_BASE_URL', 'CLAUDE_CODE_MAX_CONTEXT_TOKENS'],
+			clearedEnvVars: [],
+		});
+
+		expect(line?.tone).toBe('warning');
+		expect(line?.text).toContain('ANTHROPIC_BASE_URL, CLAUDE_CODE_MAX_CONTEXT_TOKENS are set');
+	});
+
+	it('treats a refusal as an error, and the SSH loopback case as a warning', () => {
+		expect(
+			describeRunOnStatus({ kind: 'refused', code: 'run-on-source-disabled', message: 'Off.' })
+		).toEqual({ tone: 'error', text: 'Off.' });
+		expect(
+			describeRunOnStatus({ kind: 'refused', code: 'run-on-loopback-on-remote', message: 'No.' })
+		).toEqual({ tone: 'warning', text: 'No.' });
+	});
+});

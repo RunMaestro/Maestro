@@ -64,6 +64,23 @@ describe('toCueActivityEntries', () => {
 		]);
 	});
 
+	it('keeps gated and blocked runs distinct from pending activity', () => {
+		const entries = toCueActivityEntries([
+			run({
+				status: 'gated',
+				event: {
+					...run().event,
+					payload: { gate: { outcome: 'gated', reason: 'No action needed.' } },
+				},
+			}),
+			run({ status: 'blocked-injection', stderr: 'Injection detected.' }),
+		]);
+		expect(entries.map(({ status, result }) => ({ status, result }))).toEqual([
+			{ status: 'blocked', result: 'Injection detected.' },
+			{ status: 'gated', result: 'No action needed.' },
+		]);
+	});
+
 	it('folds timeout and stopped into failed, and surfaces stderr as the result', () => {
 		const entries = toCueActivityEntries([
 			run({ runId: 'r1', status: 'timeout', stderr: 'took too long' }),

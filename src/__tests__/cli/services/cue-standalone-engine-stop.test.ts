@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CueEvent } from '../../../shared/cue/contracts';
 
 vi.mock('../../../cli/services/storage', () => ({
+	readHarnessTierDefaults: () => ({}),
 	readSessions: () => [
 		{
 			id: 'agent-1',

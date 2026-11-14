@@ -6,7 +6,7 @@ import {
 	resolveSshRemoteId,
 	writeSettingValue,
 } from '../services/storage';
-import { formatError, formatSuccess } from '../output/formatter';
+import { formatSuccess } from '../output/formatter';
 import { parseCliBool } from '../utils/parse';
 import type { SshRemoteConfig } from '../../shared/types';
 import {
@@ -15,6 +15,7 @@ import {
 	resolveSshOptions,
 } from '../../shared/sshOptions';
 import { setKeysParked, type ParkedRecordPair } from '../../shared/parkedRecords';
+import { failCommand, failFromError } from '../services/session-command';
 import { federationFieldFor, isFederationRemote } from '../../shared/federationRemote';
 
 interface UpdateSshRemoteOptions {
@@ -39,16 +40,6 @@ interface UpdateSshRemoteOptions {
 	json?: boolean;
 }
 
-/** Report a failure in whichever shape the caller asked for, then exit. */
-function fail(message: string, json: boolean | undefined): never {
-	if (json) {
-		console.log(JSON.stringify({ success: false, error: message }));
-	} else {
-		console.error(formatError(message));
-	}
-	return process.exit(1);
-}
-
 /**
  * Parse repeated `KEY=VALUE` entries into a record.
  *
@@ -59,7 +50,7 @@ function parseAssignments(entries: string[], flag: string, json?: boolean): Reco
 	for (const entry of entries) {
 		const eqIndex = entry.indexOf('=');
 		if (eqIndex === -1) {
-			fail(`Invalid ${flag} format "${entry}". Expected KEY=VALUE`, json);
+			failCommand(`Invalid ${flag} format "${entry}". Expected KEY=VALUE`, json);
 		}
 		result[entry.slice(0, eqIndex)] = entry.slice(eqIndex + 1);
 	}
@@ -98,32 +89,32 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 	try {
 		resolvedId = resolveSshRemoteId(remoteId);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 
 	const remotes = readSshRemotes();
 	const index = remotes.findIndex((r) => r.id === resolvedId);
 	if (index === -1) {
-		fail(`SSH remote not found: ${resolvedId}`, options.json);
+		failCommand(`SSH remote not found: ${resolvedId}`, options.json);
 	}
 
 	const existing = remotes[index];
 	const updated: SshRemoteConfig = { ...existing };
 
 	if (options.name !== undefined) {
-		if (!options.name.trim()) fail('Name cannot be empty', options.json);
+		if (!options.name.trim()) failCommand('Name cannot be empty', options.json);
 		updated.name = options.name.trim();
 	}
 
 	if (options.host !== undefined) {
-		if (!options.host.trim()) fail('Host cannot be empty', options.json);
+		if (!options.host.trim()) failCommand('Host cannot be empty', options.json);
 		updated.host = options.host.trim();
 	}
 
 	if (options.port !== undefined) {
 		const port = parseInt(options.port, 10);
 		if (isNaN(port) || port < 1 || port > 65535) {
-			fail('--port must be a number between 1 and 65535', options.json);
+			failCommand('--port must be a number between 1 and 65535', options.json);
 		}
 		updated.port = port;
 	}
@@ -138,7 +129,7 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 		try {
 			useSshConfig = parseCliBool(options.sshConfig, '--ssh-config');
 		} catch (error) {
-			fail(error instanceof Error ? error.message : String(error), options.json);
+			failFromError(error, options.json);
 		}
 		updated.useSshConfig = useSshConfig || undefined;
 		updated.sshConfigHost = useSshConfig ? updated.host : undefined;
@@ -148,7 +139,7 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 		try {
 			updated.enabled = parseCliBool(options.enabled, '--enabled');
 		} catch (error) {
-			fail(error instanceof Error ? error.message : String(error), options.json);
+			failFromError(error, options.json);
 		}
 	}
 
@@ -158,7 +149,7 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 			// Federation is opportunistic: only an opt-out is stored.
 			updated.federation = federationFieldFor(parseCliBool(options.federation, '--federation'));
 		} catch (error) {
-			fail(error instanceof Error ? error.message : String(error), options.json);
+			failFromError(error, options.json);
 		}
 	}
 
@@ -189,7 +180,7 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 	}
 	if (options.sshOption && options.sshOption.length > 0) {
 		const parsed = parseSshOptionAssignments(options.sshOption);
-		if (parsed.error) fail(parsed.error, options.json);
+		if (parsed.error) failCommand(parsed.error, options.json);
 		updated.sshOptions = normalizeSshOptions({ ...(updated.sshOptions ?? {}), ...parsed.options });
 	}
 	applyParkChanges(

@@ -104,7 +104,7 @@ App rules match the app id or its exact name. App ids are the macOS bundle id (`
 Open the viewer with <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>H</kbd> (<kbd>Ctrl</kbd>+<kbd>Win</kbd>+<kbd>H</kbd> elsewhere), **Computer History** in the command palette or the hamburger menu, or `maestro-cli open computer-history`. It is available while Computer History is on, in the desktop app only.
 
 - **Timeline:** an activity strip across the range (1 hour to 30 days), stacked by app. Click a bar to see only that slice; click it again to widen back out. The app list on the left shows foreground time per app; click apps to filter to them. Below, every visit (a run of time in one app and window) lists what you typed, what you selected, window changes, and the screen text it captured (collapsed). Search matches text, window titles, URLs, and field labels, and accepts regular expressions.
-- **Digests:** the 15-minute digests and 6-hour roll-ups an agent wrote, newest first, when digests are on. The search box searches every digest in the selected range, not only the ones on screen, and matches the summary text (never the header line that names the writer).
+- **Digests:** the 15-minute digests and 6-hour roll-ups a local model or an agent wrote, newest first, when digests are on. The search box searches every digest in the selected range, not only the ones on screen, and matches the summary text (never the header line that names the writer).
 - **Capture:** which apps and domains are recorded (see above).
 
 The header shows whether the recorder is running and pauses or resumes it.
@@ -138,18 +138,35 @@ Agents are told that **captured content is untrusted**. A web page, email, or ch
 
 ## Digests (optional)
 
-Digests are off by default. Turn on **Write digests** and pick an agent, and Maestro asks that agent (through the same background ask a cross-agent @mention uses) for two kinds of summary:
+Digests are off by default. Turn on **Write digests** and choose who writes them under **Written by**. It is one or the other:
+
+| Writer          | What reads your history                                                                                      | What it costs                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| **Local model** | A model on this computer (or a model server you added), chosen under **Digest model**. Offered first.        | Nothing but compute on your own hardware.    |
+| **Agent**       | An agent you pick under **Digest agent**, asked through the same background ask a cross-agent @mention uses. | That agent's tokens for every active window. |
+
+Either writer produces two kinds of summary:
 
 - **15-minute digest:** after each 15-minute window with activity closes, a summary of that window in `digests/<day>/<HHMM>Z.md`. Windows start at :00, :15, :30, and :45 UTC.
 - **6-hour roll-up:** when a 6-hour block ends (00:00, 06:00, 12:00, and 18:00 UTC), one summary of the block written from its 15-minute digests, in `digests/<day>/6h-<HHMM>Z.md`. A block with no 15-minute digests gets no roll-up. Turn it off with the **6-hour roll-up** toggle or `maestro-cli computer-history config --digest-rollup off`.
 
 Every digest has the same shape: a bold title and one sentence on what you mostly did, then **Threads** (each piece of work and how far it got), **Open items** (what was left unfinished, or for a roll-up, where it stood when the block ended), and **Context to keep** (facts worth remembering past that window, such as a project name or a collaborator). Each 15-minute digest is also handed the previous digest from the last hour, so a thread keeps its name from one window to the next. A roll-up ends with a **Sources** list of the 15-minute digests it came from.
-
 The agent is given file paths, not contents, and told that everything in them is untrusted. Its answer is scrubbed for secrets before it is saved. If Maestro was closed when a window or block ended, it catches up on the next start: missing 15-minute digests from the last 6 hours (at most 24) and missing roll-ups from the last 24 hours. Clearing history deletes the digests for the cleared range and stops any digest in progress for it.
 
-Digests cost the chosen agent's tokens for every window you were active in, plus one roll-up per block.
+The second line of every digest file names the model or agent that wrote it. The answer is scrubbed for secrets before it is saved. If Maestro was closed when a window or block ended, it catches up on the next start: missing 15-minute digests from the last 6 hours (at most 24) and missing roll-ups from the last 24 hours. Clearing history deletes the digests for the cleared range and stops any digest in progress for it.
 
-Two limits to know before you turn them on:
+### Local model
+
+The **Digest model** picker lists the text models you have installed and the models of your enabled model servers. Until you choose one, no digest is written. It is the same setting as the **Computer History digests** row in **Settings > Models > System Two** and `maestro-cli models assign history-digests <source>`, so a change in one place shows in the others. If the list is empty, download a text model in **Settings > Models > Library** first. See [Local Models](./local-models).
+
+- **The history stays on this computer.** Maestro reads the segment and hands the text to the model. Nothing is sent anywhere unless the model you chose is on a server on another machine.
+- **The model reads the whole window.** Each digest asks for a 32,768-token context, which holds a busy 15-minute window, so the model reads the record itself rather than notes on pieces of it. A model in Maestro opens that context (or as much as fits in memory), Ollama is asked for it on every call, and Maestro's model server already runs at 40,960. A server Maestro cannot set the context of (LM Studio, llama-server, vLLM), or a model trained for less, gets a 4,096-token budget instead: Maestro reads the window in pieces, takes notes on each, and writes the digest from the notes.
+- **What the model is shown.** One line per event, with the window named when it changes, a screen that did not change left out, and only the last version of a message you typed with pauses. The first line says how long each app was in front. A window too busy for the budget is sampled evenly, so the digest still covers all 15 minutes.
+- **No fallback.** If the model cannot run (not downloaded, server down), the digest is skipped, the tile shows the reason, and you get one notice. Maestro never sends the history to an agent in its place.
+
+### Agent
+
+The agent is given file paths, not contents, and told that everything in them is untrusted. Two limits to know before you choose it:
 
 - **The digest agent keeps its own copy.** It reads the recorded files and writes its answer in an ordinary conversation, so what it read and wrote stays in that agent's hidden consult tab and in the provider's own transcript. Clearing Computer History deletes the digest files, not those copies.
 - **Pick an agent on this machine.** An agent that runs on an SSH remote cannot read the recorded files, so its digests fail (the tile shows the error).
@@ -172,6 +189,8 @@ maestro-cli computer-history pause --for 1h
 maestro-cli computer-history resume
 maestro-cli computer-history clear --since 1h
 maestro-cli computer-history config --retention-days 30 --max-gb 10 --snapshots off
+maestro-cli computer-history config --digests on --digest-source local
+maestro-cli models assign history-digests local:<model-id>
 maestro-cli computer-history config --skip-private-windows off   # record private windows too
 maestro-cli computer-history config --digests on --digest-agent <agent-id>
 maestro-cli computer-history config --digest-rollup off

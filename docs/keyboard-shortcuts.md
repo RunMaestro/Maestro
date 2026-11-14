@@ -12,7 +12,7 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 
 ## System-Wide Hotkey (Summon Maestro)
 
-Configure a single OS-level hotkey that summons Maestro - bringing the window to the foreground and focusing it - from any application on macOS, Windows, or Linux. It and the [Quick Chat](#quick-chat-hotkey) hotkey are the only shortcuts in Maestro that fire while the app is in the background; every other shortcut on this page is in-app.
+Configure a single OS-level hotkey that summons Maestro - bringing the window to the foreground and focusing it - from any application on macOS, Windows, or Linux. It, the [Quick Chat](#quick-chat-hotkey) hotkey, and the two [voice hotkeys](#voice-hotkeys-a-cappella) are the only shortcuts in Maestro that fire while the app is in the background; every other shortcut on this page is in-app.
 
 **To configure:**
 
@@ -34,7 +34,22 @@ Tips and gotchas:
 
 Inside the Quick Chat window: `Enter` sends, `Shift+Enter` adds a line, `Cmd+N` / `Ctrl+N` starts a new chat, `Cmd+O` / `Ctrl+O` opens the agent picker, `Cmd+T` / `Ctrl+T` opens the tab picker (where the next message goes), `Cmd+Y` / `Ctrl+Y` opens the recent chats to bring one back, `Cmd+S` / `Ctrl+S` keeps the chat as a tab (or makes it temporary again), `Cmd+P` / `Ctrl+P` pins the window on top (or unpins it), `Cmd+Shift+K` / `Ctrl+Shift+K` cycles the agent's thinking (hidden, shown while it works, kept), `Cmd+Shift+T` / `Ctrl+Shift+T` opens the chat as a tab in Maestro, `Cmd+=` / `Cmd+-` / `Cmd+0` (`Ctrl` off macOS) make the conversation text bigger, smaller, or back to normal, `Esc` closes the window (or, with the picker open, just the picker), `Cmd+W` / `Ctrl+W` closes the window even with the picker open, and ``Cmd+` `` / ``Cmd+Shift+` `` (macOS) switch between Quick Chat and the Maestro windows, leaving Quick Chat up. The [show Maestro hotkey](#system-wide-hotkey-summon-maestro) also closes Quick Chat on its way to the Maestro window.
 
-The two system-wide hotkeys cannot share a combo. If you set one to the other's combo, the second registration fails and Maestro tells you.
+No two system-wide hotkeys can share a combo. If you set one to a combo another already holds, the second registration fails and Maestro tells you.
+
+## Voice Hotkeys (A Cappella)
+
+[A Cappella](./voice-mode), the voice interface, adds two system-wide hotkeys. Both ship bound, and both register only while A Cappella is on in **Settings -> Plugins**.
+
+| Hotkey                             | Default                   | What it does                                                                                    |
+| ---------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Talk to Maestro (Global)**       | `Opt+Cmd+V` / `Win+Alt+V` | Opens a voice session with the Conductor without stealing focus, so you can talk in another app |
+| **Talk to Current Agent (Global)** | `Opt+Cmd+A` / `Win+Alt+A` | Brings Maestro forward and opens a voice session bound to the agent you are looking at          |
+
+Press a voice hotkey once to open a session and again to end it. Pressed while a reply is being spoken, it stops the reply and listens. A hold acts as a tap on every platform today.
+
+`Meta` in these defaults is **Cmd** on macOS and **Win** (Super) on Windows and Linux, as for the [show Maestro hotkey](#system-wide-hotkey-summon-maestro). The **Shortcuts** tab spells `Meta` as `Ctrl` off macOS, but the key the OS registers is **Win**.
+
+Rebind either one in **Settings -> Shortcuts**, or under **Hotkeys** in **Settings -> Plugins -> A Cappella -> Settings -> Voice Controls**. They are two views of one binding, and **Voice Controls** also shows whether the OS accepted it. From the command line, `maestro-cli voice start --conductor` and `maestro-cli voice start --agent <agent-id>` do what the two hotkeys do; see [Voice Mode](./voice-mode#the-two-hotkeys) for the rest.
 
 ## Global Shortcuts
 
@@ -74,6 +89,7 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Director's Notes              | `Cmd+Shift+O`           | `Ctrl+Shift+O`            |
 | Maestro Cue                   | `Opt+Q`                 | `Alt+Q`                   |
 | Computer History              | `Ctrl+Cmd+H`            | `Ctrl+Win+H`              |
+| Delegation Graph              | unassigned by default   | unassigned by default     |
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
 | Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
 | Show/Hide Throughput Gauge    | `Opt+Cmd+Shift+T`       | `Alt+Ctrl+Shift+T`        |
@@ -84,7 +100,8 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Cycle Focus Backwards         | `Shift+Tab`             | `Shift+Tab`               |
 
 The full-window surfaces in that table (Settings, Usage Dashboard, Director's
-Notes, Symphony, Cue, Process Monitor, System Logs, Agent Sessions, Memory)
+Notes, Symphony, Cue, Process Monitor, System Logs, Agent Sessions, Memory, and
+the Delegation Graph once you give it a chord in **Settings** → **Shortcuts**)
 replace each other rather than stacking, and their hotkeys stay live while one
 of them is up. Press `Opt+Cmd+U` from Director's Notes to land on the Usage
 Dashboard, then `Cmd+Shift+O` to go straight back. This holds for a rebound
@@ -213,39 +230,40 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 
 ## Tab Management Shortcuts
 
-| Action                    | macOS                   | Windows/Linux             |
-| ------------------------- | ----------------------- | ------------------------- |
-| New Tab                   | `Cmd+T`                 | `Ctrl+T`                  |
-| New Browser Tab           | `Cmd+B`                 | `Ctrl+B`                  |
-| New File Tab              | `Opt+N`                 | `Alt+N`                   |
-| New Terminal Tab          | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
-| Focus Browser Address Bar | `Cmd+L`                 | `Ctrl+L`                  |
-| Find in Browser Tab       | `Cmd+F`                 | `Ctrl+F`                  |
-| Focus Active Tab          | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
-| Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
-| Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
-| Show Snoozed Tabs         | unassigned by default   | unassigned by default     |
-| Move Tab to First         | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
-| Move Tab to Last          | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
-| Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
-| Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
-| Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
-| Close Tabs to Left        | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
-| Close Tabs to Right       | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
-| Reopen Closed Tab         | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
-| Previous Tab              | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
-| Next Tab                  | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
-| Tab Switcher              | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
-| Rename Tab                | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
-| Rename Tab Group          | unassigned by default   | unassigned by default     |
-| Go to Tab 1-9             | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
-| Go to Last Tab            | `Cmd+0`                 | `Ctrl+0`                  |
+| Action                       | macOS                   | Windows/Linux             |
+| ---------------------------- | ----------------------- | ------------------------- |
+| New Tab                      | `Cmd+T`                 | `Ctrl+T`                  |
+| New Browser Tab              | `Cmd+B`                 | `Ctrl+B`                  |
+| New File Tab                 | `Opt+N`                 | `Alt+N`                   |
+| New Terminal Tab             | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
+| Focus Browser Address Bar    | `Cmd+L`                 | `Ctrl+L`                  |
+| Find in Browser Tab          | `Cmd+F`                 | `Ctrl+F`                  |
+| Focus Active Tab             | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
+| Snooze Tab                   | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
+| Change Tabs Model and Effort | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
+| Show Snoozed Tabs            | unassigned by default   | unassigned by default     |
+| Tab Cleanup Suggestions      | unassigned by default   | unassigned by default     |
+| Move Tab to First            | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
+| Move Tab to Last             | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
+| Close Tab                    | `Cmd+W`                 | `Ctrl+W`                  |
+| Close All Tabs               | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
+| Close Other Tabs             | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
+| Close Tabs to Left           | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
+| Close Tabs to Right          | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
+| Reopen Closed Tab            | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
+| Previous Tab                 | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
+| Next Tab                     | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
+| Tab Switcher                 | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
+| Rename Tab                   | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
+| Rename Tab Group             | unassigned by default   | unassigned by default     |
+| Go to Tab 1-9                | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
+| Go to Last Tab               | `Cmd+0`                 | `Ctrl+0`                  |
 
 In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
 Right Bar instead, switching between the Participants and History panels. The Right
 Bar opens if it was closed.
 
-Inside the **Change Model and Effort** console, `Cmd+R` / `Ctrl+R` re-reads the model list, so a model you just installed shows up without leaving the console. See [Changing a Tab's Model and Effort](./general-usage#changing-a-tabs-model-and-effort).
+Inside the **Change Tabs Model and Effort** console, `Cmd+R` / `Ctrl+R` re-reads the model list, so a model you just installed shows up without leaving the console. See [Changing a Tab's Model and Effort](./general-usage#changing-a-tabs-model-and-effort). The console also offers **Auto**, which lets the model router pick the tier and effort of each turn (`maestro-cli tab model <tab-id> auto`). See [Model routing and Auto](./local-models#model-routing-and-auto). [Model source](./local-models#model-source) and [Tiers](./local-models#tiers) have no shortcut of their own: set them on the **Models** tab of the agent's settings (**Open Agent Settings**, `Opt+Cmd+,`), or with `maestro-cli update-agent <agent-id> --model-source <target>` and `--tier <tier=target>`.
 
 **Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
 
@@ -435,6 +453,11 @@ switches to that tab, scrolls to the message, flashes it, and seeds that tab's
 Find bar with the same query positioned on the match you picked. It is also in
 the command palette as "Search: Messages (All Agent Tabs)".
 
+When [Semantic search](./local-models#semantic-search) has a source, cross-tab
+search and the History filter box (`Cmd+F` / `Ctrl+F` in the History tab) gain
+a **Semantic** toggle that searches by meaning. It has no shortcut of its own,
+and regex is not offered while it is on.
+
 See [Searching Message History](./general-usage#searching-message-history) for
 the full walkthrough.
 
@@ -445,6 +468,7 @@ the full walkthrough.
 | Copy File Path                      | `Cmd+P`         | `Ctrl+P`        |
 | Open Search                         | `Cmd+F`         | `Ctrl+F`        |
 | Toggle Table of Contents (Markdown) | `Cmd+\`         | `Ctrl+\`        |
+| Toggle Document Chat                | `Cmd+Shift+\`   | `Ctrl+Shift+\`  |
 | Jump to Heading (Markdown)          | `#`             | `#`             |
 | Go Back                             | `Cmd+Left`      | `Ctrl+Left`     |
 | Go Forward                          | `Cmd+Right`     | `Ctrl+Right`    |
@@ -469,6 +493,14 @@ They apply only where the zoom moves type (markdown, code, and text views), and
 they never fire while you are typing, so the find bar and the markdown editor
 keep those keys. The same steps are available from the zoom pill that rests in
 the top-right corner of the preview.
+
+`Cmd+Shift+\` / `Ctrl+Shift+\` opens and closes the
+[document chat](./general-usage#chatting-with-a-document) panel, the Shift twin
+of the Table of Contents chord. It is offered on any file with text in it, and
+the command palette has it as **File: Chat with Document**. In the panel,
+`Enter` sends and `Shift+Enter` starts a new line. `Esc` closes the panel;
+clicking outside it does not, so you can scroll and select in the document with
+the chat open.
 
 ### CSV Row Detail
 
@@ -503,11 +535,16 @@ more images attached. See
 | Close               | `Esc`      | `Esc`         |
 
 The zoom keys are bare, like the ones in [File Preview](#file-preview), so the
-app-wide `Cmd+=` / `Cmd+-` in [Font Size](#font-size) keeps working while the
+app-wide `Cmd+=` / `Cmd+-` in [Font Zoom](#font-zoom) keeps working while the
 organizer is open. They stop firing while the lightbox or the annotator is open
 on top of it.
 
 ## Usage Dashboard
+
+The dashboard's own keys, including the ones that move between its tabs (the
+**Models** tab among them), are in
+[Usage Dashboard Keyboard Navigation](./usage-dashboard#keyboard-navigation).
+The Models tab adds no keys of its own.
 
 The Agents and Groups tabs draw one tile per agent or group. The tile size is
 yours to set, and it is remembered across restarts. See
@@ -607,6 +644,46 @@ highlighted result. A result with nothing to change in place, such as the theme
 picker, goes to its tab with either key. Typing any letter while a result has
 focus returns you to the search box.
 
+## Settings Tabs and the Models Library
+
+These work while Settings is open. Neither has an entry in **Settings ->
+Shortcuts**, so neither can be rebound.
+
+| Action                                        | macOS               | Windows/Linux        |
+| --------------------------------------------- | ------------------- | -------------------- |
+| Previous / next sidebar row                   | `Cmd+Shift+[` / `]` | `Ctrl+Shift+[` / `]` |
+| Previous / next Library section (Models only) | `Cmd+[` / `]`       | `Ctrl+[` / `]`       |
+
+`Cmd+Shift+[` / `]` walk every row in the Settings sidebar, panels included.
+Stepping down into **Models** lands on its Overview first, then **Library**,
+**Sources**, **System One**, **System Two**, and **Gateway**; stepping up lands
+on **Gateway**. `Cmd+[` / `]` step through the Library sections (**Engines**,
+**Agent Models**, **Housekeeping**, **Speech**, **Search & Safety**,
+**Custom**) and wrap at the ends. They work only on **Settings -> Models ->
+Library**, and not while the Settings search is open. The Models tab has no
+chord of its own: open it with **Open Models Settings** in Quick Actions
+(`Cmd+K`), or `maestro-cli open settings --tab models`. See
+[Local Models](./local-models#models). [System One](./local-models#system-one)
+has no shortcut either: step to its panel with `Cmd+Shift+[` / `]`, or open it
+with `maestro-cli open settings --tab models --sub-tab system-one`.
+
+## Agent Settings Tabs
+
+These work while a tabbed agent form is open: **Edit Agent**, **Create New
+Agent**, **Group Settings**, and the moderator's **Customize** form in a new
+group chat. None has an entry in **Settings -> Shortcuts**, so none can be
+rebound.
+
+| Action                                | macOS               | Windows/Linux        |
+| ------------------------------------- | ------------------- | -------------------- |
+| Previous / next tab                   | `Cmd+Shift+[` / `]` | `Ctrl+Shift+[` / `]` |
+| Previous / next tab (Edit Agent only) | `Cmd+[` / `]`       | `Ctrl+[` / `]`       |
+
+Both chords wrap at the ends. See
+[Editing Agents](./general-usage#editing-agents), [Group Settings](./features#groups),
+and [Group Chat](./group-chat). From the command line, `maestro-cli show agent`
+and `maestro-cli update-agent` read and write the same fields.
+
 ## Maestro Prompts (Settings)
 
 Settings -> Maestro Prompts edits the system prompts Maestro sends to agents.
@@ -695,6 +772,29 @@ toggle in the Help panel, and it is remembered between visits.
 it to disk as a PNG. The shot is the graph area exactly as it is painted, so
 frame it first.
 
+## Delegation Graph
+
+The [Delegation Graph](./agent-delegation#the-delegation-graph) has no chord to
+open it by default. Give **Delegation Graph** one in **Settings** →
+**Shortcuts**, or open it from the menu, the command palette, or
+`maestro-cli open delegation-graph`. Inside the graph:
+
+| Action                                      | Key                |
+| ------------------------------------------- | ------------------ |
+| Switch between View and Edit                | `Cmd+E` / `Ctrl+E` |
+| Cycle layout                                | `L`                |
+| Fit the whole graph on screen               | `F`                |
+| Switch scroll between zoom and pan          | `S`                |
+| Increase / decrease node spacing            | `+` / `-`          |
+| Select the next agent (View)                | `Arrow Keys`       |
+| Open the selected agent's Peers tab         | `O`                |
+| Show the selected agent's connected cluster | `Space`            |
+| Close the graph                             | `Esc`              |
+
+The keys do nothing while you type in a field, while the layout menu or a
+confirmation is open, or while the edge editor waits for you. No key deletes
+an edge or an agent, in either mode.
+
 ## Customizing Shortcuts
 
 Most shortcuts can be remapped to fit your workflow:
@@ -706,6 +806,8 @@ Most shortcuts can be remapped to fit your workflow:
 5. The new binding is saved immediately
 
 Some actions ship with **no** key assigned and read **Not set** instead of a combination - the media player controls, Open Leaderboard, and Toggle In-App Toasts are current examples. They are dimmed, but they work exactly like any other row: click and record. Maestro leaves them unbound rather than claiming chords for actions most people reach through Quick Actions.
+
+**Dictate into Text Box** is one of them, for a different reason: it has to work while you are typing in any text box, so any chord Maestro picked would take a key away from typing somewhere. Assign it one that suits your keyboard. Tap the chord to start dictating into the text box that holds the caret and tap it again to stop, or hold it down and speak, then release. It works while a modal is open, and never types into a terminal; with no text box holding the caret it flashes **Nowhere to dictate**. It does nothing until the [Dictation task](./local-models#dictation) has a speech-to-text model or an endpoint assigned. Dictation is not an Encore Feature, so the chord works with A Cappella off.
 
 ![Shortcuts Settings](./screenshots/shortcuts-settings.png)
 

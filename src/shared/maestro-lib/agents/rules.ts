@@ -578,6 +578,7 @@ export function beginTurnRecord(tab: AITabRecord, begin: TurnBegin): AITabRecord
 	return {
 		...base,
 		turnProvider: begin.provider,
+		turnSessionId: tab.agentSessionId || undefined,
 		runtimeTurnId: begin.turnId,
 		logs: [...(Array.isArray(tab.logs) ? tab.logs : []), begin.userEntry],
 	};
@@ -609,8 +610,10 @@ export function recordTabSession(
 	owningProvider: string,
 	update: TabSessionUpdate
 ): AITabRecord {
+	// The live fields belong to the tab's own provider (a tab may run on a
+	// provider other than the agent's default); every other provider is parked.
 	const slot = (
-		owningProvider === agent.toolType
+		owningProvider === (tab.tabProvider ?? agent.toolType)
 			? tab
 			: (tab.providerSessions as Record<string, unknown>)?.[owningProvider]
 	) as ProviderSwitchTab | undefined;
@@ -674,6 +677,8 @@ export function applyTabPatch(
 	tab: AITabRecord,
 	patch: Record<string, unknown>
 ): RuleResult<AITabRecord> {
+	if ('tabProvider' in patch || 'providerSessions' in patch || 'pendingTranslation' in patch)
+		return invalid('Use tab provider to select a provider through the parking operation.');
 	const next: AITabRecord = { ...tab };
 	let touched = 0;
 	for (const key of Object.keys(patch)) {

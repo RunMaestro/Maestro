@@ -43,4 +43,53 @@ describe('WizardContext reducer internals', () => {
 
 		expect(wizardReducer(restored, { type: 'RESET_WIZARD' })).toEqual(initialState);
 	});
+
+	it('starts with no peer grants', () => {
+		expect(initialState.peerAgents).toEqual([]);
+		expect(initialState.groupPeerAccess).toBeUndefined();
+		expect(initialState.worktreePeerAccess).toBeUndefined();
+	});
+
+	it('sets each of the three peer sources and leaves the other two alone', () => {
+		const peers = [{ sessionId: 'agent-a', read: true, write: false, description: 'Docs' }];
+
+		const withRows = wizardReducer(initialState, { type: 'SET_PEER_AGENTS', peers });
+		expect(withRows.peerAgents).toBe(peers);
+		expect(withRows.groupPeerAccess).toBeUndefined();
+		expect(withRows.worktreePeerAccess).toBeUndefined();
+
+		const withGroup = wizardReducer(withRows, {
+			type: 'SET_GROUP_PEER_ACCESS',
+			access: { read: true, write: true },
+		});
+		const withBoth = wizardReducer(withGroup, {
+			type: 'SET_WORKTREE_PEER_ACCESS',
+			access: { read: true, write: false },
+		});
+		expect(withBoth.peerAgents).toBe(peers);
+		expect(withBoth.groupPeerAccess).toEqual({ read: true, write: true });
+		expect(withBoth.worktreePeerAccess).toEqual({ read: true, write: false });
+	});
+
+	it('switches a grant off by storing it as absent', () => {
+		const on = wizardReducer(initialState, {
+			type: 'SET_GROUP_PEER_ACCESS',
+			access: { read: true, write: false },
+		});
+		const off = wizardReducer(on, { type: 'SET_GROUP_PEER_ACCESS', access: undefined });
+
+		expect(off.groupPeerAccess).toBeUndefined();
+	});
+
+	it('clears the peer grants on reset', () => {
+		const dirty = wizardReducer(
+			wizardReducer(initialState, {
+				type: 'SET_PEER_AGENTS',
+				peers: [{ sessionId: 'agent-a', read: true, write: true }],
+			}),
+			{ type: 'SET_WORKTREE_PEER_ACCESS', access: { read: true, write: false } }
+		);
+
+		expect(wizardReducer(dirty, { type: 'RESET_WIZARD' })).toEqual(initialState);
+	});
 });

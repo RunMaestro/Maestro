@@ -36,6 +36,7 @@ import { AgentDelegationCard } from '../../AgentDelegationCard';
 import { DispatchCallbackCard } from '../../DispatchCallbackCard';
 import { parseDispatchCallbackPrompt } from '../../../../shared/dispatchCallbackCard';
 import { ContextCompactionCard } from '../../ContextCompactionCard';
+import { ContextTranslationCard } from '../../ContextTranslationCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
 import { TurnSettingPills } from '../../ui/TurnSettingPills';
@@ -137,6 +138,7 @@ export const LogItem = memo(
 		bionifyAlgorithm,
 		userMessageAlignment,
 		responseDurationMs,
+		showTurnProvider,
 		steerRunContinues,
 		codexDirectives,
 		codexFollowupTabId,
@@ -474,9 +476,8 @@ export const LogItem = memo(
 			);
 		}
 
-		// Maestro compacted the conversation to get a refused turn through. Same
-		// clean pill row as a hand-off: it marks where it happened and asks nothing.
-		if (log.contextCompaction) {
+		// Context changes share the compact hand-off row, outside response grouping.
+		if (log.contextCompaction || log.contextTranslation) {
 			return (
 				<div
 					ref={logItemRef}
@@ -487,7 +488,11 @@ export const LogItem = memo(
 				>
 					<div className="hidden sm:block w-20 shrink-0" />
 					<div className="flex-1 min-w-0">
-						<ContextCompactionCard log={log} theme={theme} />
+						{log.contextTranslation ? (
+							<ContextTranslationCard translation={log.contextTranslation} theme={theme} />
+						) : (
+							<ContextCompactionCard log={log} theme={theme} />
+						)}
 					</div>
 				</div>
 			);
@@ -1088,7 +1093,12 @@ export const LogItem = memo(
 					    replaces it. */}
 					{!crossAgent &&
 						log.source !== 'user' &&
-						((isClaudeCode && showProviderModePill) || log.turnModel || log.turnEffort) && (
+						((isClaudeCode && showProviderModePill) ||
+							showTurnProvider ||
+							log.turnModel ||
+							log.turnEffort ||
+							log.turnRunOn ||
+							log.turnAuto) && (
 							<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
 								{isClaudeCode &&
 									showProviderModePill &&
@@ -1111,7 +1121,14 @@ export const LogItem = memo(
 											</span>
 										);
 									})()}
-								<TurnSettingPills theme={theme} model={log.turnModel} effort={log.turnEffort} />
+								<TurnSettingPills
+									theme={theme}
+									provider={showTurnProvider ? log.turnProvider : undefined}
+									model={log.turnModel}
+									effort={log.turnEffort}
+									runOn={log.turnRunOn}
+									auto={log.turnAuto}
+								/>
 							</div>
 						)}
 					{/* Jump to top of this message - bottom left corner */}
@@ -1323,6 +1340,12 @@ export const LogItem = memo(
 			prevProps.log.steerState === nextProps.log.steerState &&
 			prevProps.steerRunContinues === nextProps.steerRunContinues &&
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
+			prevProps.log.turnProvider === nextProps.log.turnProvider &&
+			prevProps.log.contextTranslation === nextProps.log.contextTranslation &&
+			prevProps.log.turnModel === nextProps.log.turnModel &&
+			prevProps.log.turnEffort === nextProps.log.turnEffort &&
+			prevProps.log.turnRunOn === nextProps.log.turnRunOn &&
+			prevProps.log.turnAuto === nextProps.log.turnAuto &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
 			// A command card's whole header is driven by these, and none of them
@@ -1371,10 +1394,10 @@ export const LogItem = memo(
 			prevProps.onTogglePin === nextProps.onTogglePin &&
 			prevProps.onShowPins === nextProps.onShowPins &&
 			prevProps.publishedGistUrl === nextProps.publishedGistUrl &&
-			// Unlike isClaudeCode/isAdaptiveMode, which are fixed for the life of an
-			// agent, this one is a toggle the user flips while looking at the
-			// transcript - leave it out and every message already on screen keeps its
-			// pill until something unrelated re-renders it.
+			// Captured attribution can arrive without changing the message text.
+			prevProps.showTurnProvider === nextProps.showTurnProvider &&
+			prevProps.isClaudeCode === nextProps.isClaudeCode &&
+			prevProps.isAdaptiveMode === nextProps.isAdaptiveMode &&
 			prevProps.responseDurationMs === nextProps.responseDurationMs &&
 			prevProps.showProviderModePill === nextProps.showProviderModePill
 		);

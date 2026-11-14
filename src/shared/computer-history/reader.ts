@@ -143,6 +143,20 @@ class DraftCollapser {
 	}
 }
 
+/**
+ * The drafts in `events` (time order) that a later commit in the same field
+ * supersedes: the same rule `queryEvents` hides them by, for a reader that
+ * holds a whole segment (a digest's input).
+ */
+export function supersededDrafts(events: readonly StoredEvent[]): Set<StoredEvent> {
+	const collapser = new DraftCollapser();
+	const drafts = new Set<StoredEvent>();
+	for (let i = events.length - 1; i >= 0; i--) {
+		if (collapser.isDraft(events[i])) drafts.add(events[i]);
+	}
+	return drafts;
+}
+
 export interface AppUsage {
 	id: string;
 	name: string;

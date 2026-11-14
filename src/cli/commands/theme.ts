@@ -22,11 +22,7 @@ import {
 } from '../../shared/theme-types';
 import { isValidCssColor } from '../../shared/cssColor';
 import { readSettingValue } from '../services/storage';
-import {
-	sendSimpleCommand,
-	failCommand,
-	exitIfMaestroNotRunning,
-} from '../services/session-command';
+import { sendSimpleCommand, failCommand, failFromError } from '../services/session-command';
 import { formatSuccess } from '../output/formatter';
 
 // Required ThemeColors keys - every non-optional field on the palette. Mirrors
@@ -253,8 +249,7 @@ export async function themeImport(file: string, options: ImportOptions): Promise
 	try {
 		await applyCustomTheme(colors, baseTheme, activate);
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 
 	if (options.json) {
@@ -322,8 +317,7 @@ export async function themeSet(assignments: string[], options: SetOptions): Prom
 	try {
 		await applyCustomTheme(colors, baseTheme, activate);
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 
 	if (options.json) {

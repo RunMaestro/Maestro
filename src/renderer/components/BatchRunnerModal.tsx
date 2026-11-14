@@ -25,6 +25,19 @@ import { ToggleSwitch } from './ui/ToggleSwitch';
 import { FormInput } from './ui/FormInput';
 import type { AgentDiscoveryRequest } from '../../shared/types';
 import { useAgentModelEffortOptions } from '../hooks/agent/useAgentModelEffortOptions';
+import { useHarnessTierOptions, useLocalModelsHardware } from '../hooks/localModels';
+import { AssignmentOptionElements } from './Settings/tabs/LocalModelsTab/AssignmentOptionElements';
+import type { AgentId } from '../../shared/agentIds';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
+import { formatTierTargetSpec, parseTierTargetSpec } from '../../shared/modelTiers';
+import {
+	buildRunModelChoiceGroups,
+	hasRunModelChoices,
+	RUN_MODEL_DEFAULT_SPEC,
+	runModelChoiceLaunch,
+	type RunModelAgent,
+	type RunModelLaunch,
+} from '../../shared/local-models/run-model-choice';
 import {
 	AUTO_RESUME_DEFAULT_MINUTES,
 	AUTO_RESUME_DEFAULT_MAX_ATTEMPTS,
@@ -180,7 +193,11 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// single run and is deliberately NOT persisted anywhere (no session field,
 	// no setting). A persisted per-run model would be indistinguishable from
 	// changing the agent's own model, which Session settings already does.
+	// `runModel` is Grok's typed model (manual entry). Every other provider picks
+	// from `runSpec`, a tier-target spelling that also reaches Local Models
+	// sources (`run-model-choice.ts`).
 	const [runModel, setRunModel] = useState('');
+	const [runSpec, setRunSpec] = useState(RUN_MODEL_DEFAULT_SPEC);
 	const [runEffort, setRunEffort] = useState('');
 	// Off on every open, like the pickers. A playbook's hints are its author's
 	// intent, so overriding them is a choice made for one run, never a default.
@@ -211,6 +228,36 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		(worktreeTarget && worktreeTarget.mode !== 'existing-open'
 			? worktreeParentSession?.toolType
 			: undefined);
+	const runAgent = discoverySession ?? worktreeParentSession ?? activeSession;
+	const manualGrokOptions = runAgent?.toolType === 'grok';
+
+	// What this run can launch on besides the provider's own list: every model a
+	// Local Models source lists, for a harness with a model source recipe.
+	const { options: harnessOptions } = useHarnessTierOptions(runAgent?.toolType);
+	const harnessRow = useMemo(
+		() => harnessOptions?.find((row) => row.harness === runAgent?.toolType),
+		[harnessOptions, runAgent?.toolType]
+	);
+	const localModelEndpoints = useSettingsStore((s) => s.localModelEndpoints);
+	const localModelsHardware = useLocalModelsHardware();
+	const runChoiceAgent = useMemo<RunModelAgent | undefined>(
+		() =>
+			runAgent
+				? { toolType: runAgent.toolType, customModel: runAgent.customModel, runOn: runAgent.runOn }
+				: undefined,
+		[runAgent?.toolType, runAgent?.customModel, runAgent?.runOn]
+	);
+	const runLaunch = useMemo<RunModelLaunch>(
+		() =>
+			runChoiceAgent && !manualGrokOptions
+				? runModelChoiceLaunch(runSpec, runChoiceAgent, harnessRow?.sources)
+				: {},
+		[runChoiceAgent, manualGrokOptions, runSpec, harnessRow?.sources]
+	);
+	// What the run hands the engine: Grok's typed model, or the picked choice.
+	const effectiveRunModel = manualGrokOptions ? runModel : (runLaunch.model ?? '');
+	const runRunOn = runLaunch.runOn;
+
 	const discoveryContext = useMemo<AgentDiscoveryRequest['context'] | undefined>(
 		() =>
 			discoverySession
@@ -219,7 +266,11 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						cwd: discoverySession.cwd,
 						customPath: discoverySession.customPath,
 						customEnvVars: discoverySession.customEnvVars,
-						model: runModel || discoverySession.customModel,
+						// A source model is not the provider's: its efforts are asked of the
+						// agent's own provider model.
+						model:
+							(runRunOn?.type === 'source' ? '' : effectiveRunModel) ||
+							discoverySession.customModel,
 						effort: runEffort || discoverySession.customEffort,
 						sessionSshRemoteConfig: discoverySession.sessionSshRemoteConfig,
 						sshRemoteId: discoverySession.sshRemoteId,
@@ -234,7 +285,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			discoverySession?.customEffort,
 			discoverySession?.sessionSshRemoteConfig,
 			discoverySession?.sshRemoteId,
-			runModel,
+			effectiveRunModel,
+			runRunOn?.type,
 			runEffort,
 		]
 	);
@@ -245,22 +297,73 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		modelStatus,
 		effortStatus,
 	} = useAgentModelEffortOptions(discoveryProvider, discoveryContext);
-	const manualGrokOptions =
-		(discoverySession?.toolType ?? worktreeParentSession?.toolType ?? activeSession?.toolType) ===
-		'grok';
 
 	// Legacy provider lists validate selections only after settling. Grok's
 	// discovery contract never treats an omitted configured value as invalid.
+	// Only a provider model is checked against the provider's list: a source
+	// model is the source's, and the agent's own model is the agent's.
+	const pickedProviderModel = useMemo(() => {
+		const parsed = parseTierTargetSpec(runSpec);
+		return parsed.ok && parsed.target?.type === 'provider-model' ? parsed.target.model : undefined;
+	}, [runSpec]);
+	// The typed Grok field and the picker hold one choice. When the run's owner
+	// moves between Grok and another provider, the model chosen for the old
+	// owner moves to the other field and is checked against the new list below,
+	// the same as a pick that stays in one field. Adjusted during render, so no
+	// frame shows the old field's value dropped.
+	const [grokOwner, setGrokOwner] = useState(manualGrokOptions);
+	if (grokOwner !== manualGrokOptions) {
+		setGrokOwner(manualGrokOptions);
+		if (manualGrokOptions) {
+			setRunModel(pickedProviderModel ?? '');
+		} else {
+			const typed = runModel.trim();
+			setRunSpec(
+				typed
+					? formatTierTargetSpec({ type: 'provider-model', model: typed })
+					: RUN_MODEL_DEFAULT_SPEC
+			);
+		}
+	}
 	useEffect(() => {
 		if (
 			!manualGrokOptions &&
 			discoveryLoaded &&
 			modelStatus === 'discovered' &&
-			runModel &&
-			!availableModels.includes(runModel)
+			pickedProviderModel &&
+			!availableModels.includes(pickedProviderModel)
 		)
-			setRunModel('');
-	}, [manualGrokOptions, discoveryLoaded, modelStatus, availableModels, runModel]);
+			setRunSpec(RUN_MODEL_DEFAULT_SPEC);
+	}, [manualGrokOptions, discoveryLoaded, modelStatus, availableModels, pickedProviderModel]);
+
+	const runModelGroups = useMemo(
+		() =>
+			runChoiceAgent && !manualGrokOptions
+				? buildRunModelChoiceGroups({
+						agent: runChoiceAgent,
+						options: harnessRow ?? {
+							harness: runChoiceAgent.toolType as AgentId,
+							name: getAgentDisplayName(runChoiceAgent.toolType),
+							catalog: [],
+							runOn: { supported: false, reason: '' },
+							sources: [],
+						},
+						providerModels: availableModels,
+						spec: runSpec,
+						endpoints: localModelEndpoints,
+						hardware: localModelsHardware.profile,
+					})
+				: [],
+		[
+			runChoiceAgent,
+			manualGrokOptions,
+			harnessRow,
+			availableModels,
+			runSpec,
+			localModelEndpoints,
+			localModelsHardware.profile,
+		]
+	);
 	useEffect(() => {
 		if (
 			!manualGrokOptions &&
@@ -608,7 +711,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 					prompt,
 					loop_enabled: loopEnabled,
 					...(loopEnabled && maxLoops ? { max_loops: maxLoops } : {}),
-					...(runModel && { model: runModel }),
+					...(effectiveRunModel && { model: effectiveRunModel }),
+					...(runRunOn && { run_on: runRunOn }),
 					...(runEffort && { effort: runEffort }),
 					// Everything else the immediate path hands `onGo` for a
 					// Spec-Driven run. Left out, a scheduled run fires with the
@@ -682,7 +786,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						maxLoops: null,
 						goalConfig: { goal: goal.trim(), exitCriteria: exitCriteria.trim(), maxIterations },
 						...(worktreeTarget && { worktreeTarget }),
-						...(runModel && { model: runModel }),
+						...(effectiveRunModel && { model: effectiveRunModel }),
+						...(runRunOn && { runOn: runRunOn }),
 						...(runEffort && { effort: runEffort }),
 						...autoResumeFields,
 					}
@@ -693,7 +798,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						maxLoops: loopEnabled ? maxLoops : null,
 						taskSelectionMode,
 						...(worktreeTarget && { worktreeTarget }),
-						...(runModel && { model: runModel }),
+						...(effectiveRunModel && { model: effectiveRunModel }),
+						...(runRunOn && { runOn: runRunOn }),
 						...(runEffort && { effort: runEffort }),
 						...(ignoreModelHints && { ignoreModelHints: true }),
 						...autoResumeFields,
@@ -1312,7 +1418,9 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 					    the run - the agent's own configured model is left alone. Each
 					    Grok field permits manual entry while metadata is unqualified. Lives last in
 					    both modes so the two layouts stay consistent. */}
-					{(manualGrokOptions || availableModels.length > 0 || availableEfforts.length > 0) && (
+					{(manualGrokOptions ||
+						hasRunModelChoices(runModelGroups) ||
+						availableEfforts.length > 0) && (
 						<div className="flex flex-col gap-2">
 							<div className="text-2xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
 								Model for this run
@@ -1359,11 +1467,14 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									</>
 								)}
 
-								{!manualGrokOptions && availableModels.length > 0 && (
+								{/* The provider's models and every Local Models source's,
+								    one list (`buildRunModelChoiceGroups`). */}
+								{!manualGrokOptions && hasRunModelChoices(runModelGroups) && (
 									<select
-										value={runModel}
-										onChange={(e) => setRunModel(e.target.value)}
+										value={runSpec}
+										onChange={(e) => setRunSpec(e.target.value)}
 										aria-label="Model for this run"
+										data-testid="batch-run-model"
 										className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-none"
 										style={{
 											backgroundColor: theme.colors.bgMain,
@@ -1371,12 +1482,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 											color: theme.colors.textMain,
 										}}
 									>
-										<option value="">Use agent default</option>
-										{availableModels.map((m) => (
-											<option key={m} value={m}>
-												{m}
-											</option>
-										))}
+										<AssignmentOptionElements groups={runModelGroups} />
 									</select>
 								)}
 								{!manualGrokOptions && availableEfforts.length > 0 && (

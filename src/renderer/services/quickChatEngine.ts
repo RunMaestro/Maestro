@@ -79,6 +79,7 @@ import {
 import type { NativeSessionBinding } from '../../shared/maestro-lib/agents/providerSwap';
 import { collectNamingPrompt, requestTabAutoName } from './tabAutoNaming';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
+import { projectTabProvider } from '../utils/providerTabSessions';
 import { isAgentDormant } from '../../shared/agentVisibility';
 
 /**
@@ -555,7 +556,7 @@ export function buildQuickChatSnapshot(error: string | null = null): QuickChatSn
 			id: s.id,
 			name: s.name,
 			groupName: (s.groupId && groupNames.get(s.groupId)) || undefined,
-			provider: getAgentDisplayName(s.toolType),
+			provider: getAgentDisplayName(projectTabProvider(s, currentTab(s)).agent.toolType),
 		})),
 		error,
 	};

@@ -166,7 +166,7 @@ export async function loadResumableSession(
 		// so both paths must build entries the same way.
 		messages = transcriptMessagesToLogEntries(
 			stripSynopsisTurns(result.messages as TranscriptMessage[])
-		);
+		).map((entry) => ({ ...entry, turnProvider: toolType || 'claude-code' }));
 	}
 
 	if (messages.length === 0) return null;

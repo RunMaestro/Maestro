@@ -8,14 +8,18 @@
  * - Detected path (read-only)
  * - Custom path input
  * - Custom arguments input
- * - Environment variables (key-value pairs)
- * - Built-in environment variables (MAESTRO_SESSION_RESUMED)
- * - Agent-specific config options (contextWindow, model, etc.)
+ * - Environment variables (`AgentEnvVarsSection`, unless `hideEnvVars`)
+ * - Agent-specific config options (`AgentConfigOptions`): the harness's own,
+ *   and the model ones (model, effort, context window) unless
+ *   `hideModelOptions`, for a tabbed form that draws those on its Models tab.
+ *
+ * The Model field lists the provider's models and, when the host passes
+ * `modelSources`, every model a Local Models source serves, grouped by source:
+ * one picker for the agent's model and where it runs.
  */
 
-import { useState, useRef, useMemo, useEffect } from 'react';
-import { RefreshCw, Plus, Trash2, HelpCircle, ChevronDown, Eye, EyeOff } from 'lucide-react';
-import { GhostIconButton } from '../ui/GhostIconButton';
+import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
+import { RefreshCw, ChevronDown } from 'lucide-react';
 import { ToggleButtonGroup } from '../ToggleButtonGroup';
 import type { Theme, AgentConfig, AgentConfigOption } from '../../types';
 import {
@@ -32,28 +36,28 @@ import {
 import { useRemoteMaestroPAvailable } from '../../hooks/agent/useRemoteMaestroPAvailable';
 import { openUrl } from '../../utils/openUrl';
 import { logger } from '../../utils/logger';
-import { useKnownAuthDirs } from '../../hooks/agent/useKnownAuthDirs';
-import { AuthPathValueInput } from './AuthPathValueInput';
-import { EnvVarKeyInput } from './EnvVarKeyInput';
+import { AgentEnvVarsSection, type AgentEnvVarsSectionProps } from './AgentEnvVarsSection';
+import { useAutoModelChoice } from '../../hooks/agent/useAutoModelChoice';
+import { isAutoModel } from '../../../shared/autoModel';
 import {
-	ENV_VARS_ADVANCED_MODE_STORAGE_KEY,
-	EnvVarsDotEnvInput,
-	EnvVarsModeToggle,
-} from './EnvVarsDotEnvInput';
-import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
-import { BLANK_ENV_VAR_KEY } from '../../../shared/envVarCatalog';
-import { useKnownEnvVarKeys } from '../../hooks/agent/useKnownEnvVarKeys';
+	autoModelAxesNote,
+	modelChoiceLabel,
+	withAutoModelOption,
+	type AutoModelChoice,
+} from '../../../shared/autoTurn';
+import type { TierTargetAgent } from '../../../shared/modelTiers';
+import type { ToolType } from '../../../shared/types';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 import { getPermissionModeTooltip } from '../../../shared/agentMetadata';
+import { formatCountNoun } from '../../../shared/formatters';
+import { isModelConfigOption } from '../AgentSettings/agentSettingsTabs';
+import type { ModelSourceChoices } from './ModelSourceDetails';
 
 const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
 
 // Sentinel value for the installation chooser's "Custom" entry, used when the
 // active path was typed by hand and isn't one of the auto-detected locations.
 const CUSTOM_PATH_OPTION = '__custom__';
-
-// Counter for generating stable IDs for env vars
-let envVarIdCounter = 0;
 
 // Claude token-source selector (claude-code only). Maps the tri-state
 // ClaudeTokenMode onto the segmented control labels plus a one-line hint each.
@@ -87,15 +91,8 @@ const HARNESS_CONTROL_OPTIONS: { value: HarnessControlMode; label: string }[] = 
 	{ value: 'native', label: 'native control' },
 ];
 
-// Built-in environment variables that Maestro sets automatically
-const BUILT_IN_ENV_VARS: { key: string; description: string; value: string }[] = [
-	{
-		key: 'MAESTRO_SESSION_RESUMED',
-		description:
-			'Set to "1" when resuming an existing session. Not set for new sessions. Use this in your agent hooks to skip initialization on resumed sessions.',
-		value: '1 (when resuming)',
-	},
-];
+/** A stable empty list, so the Model field's memos hold while no sources are listed. */
+const NO_SOURCE_GROUPS: ModelSourceChoices['groups'] = [];
 
 // Separate component for text input with optional discovered options
 // This avoids the browser's native datalist styling issues
@@ -109,6 +106,16 @@ interface ModelTextInputProps {
 	availableOptions: string[];
 	loadingOptions: boolean;
 	onRefreshModels?: () => void;
+	/** The Auto choice for this agent, when the surface offers one. Model field only. */
+	autoModel?: AutoModelChoice | null;
+	/**
+	 * Source models listed after the provider's, and the agent's model source.
+	 * Model field only. A provider model picked, typed or cleared sets the model
+	 * source back to the provider; a source model leaves `value` untouched.
+	 */
+	sources?: ModelSourceChoices;
+	/** Heads the provider's own models while sources are listed under them. */
+	providerLabel?: string;
 }
 
 function ModelTextInput({
@@ -121,6 +128,9 @@ function ModelTextInput({
 	availableOptions,
 	loadingOptions,
 	onRefreshModels,
+	autoModel,
+	sources,
+	providerLabel,
 }: ModelTextInputProps): JSX.Element {
 	const [showDropdown, setShowDropdown] = useState(false);
 	const [filterText, setFilterText] = useState('');
@@ -138,12 +148,48 @@ function ModelTextInput({
 		committedValueRef.current = value;
 	}, [value]);
 
+	// Auto is listed first, ahead of the provider's own models, for an agent it
+	// can act on. It is a choice like any model: the stored value is the word.
+	// Other fields (effort) list only the options the provider advertised.
+	const modelOptions = useMemo(
+		() =>
+			option.key === 'model' ? withAutoModelOption(availableOptions, autoModel) : availableOptions,
+		[option.key, availableOptions, autoModel]
+	);
+
 	// Filter the supplied options without adding unadvertised effort levels.
 	const filteredOptions = useMemo(() => {
-		if (!filterText) return availableOptions;
+		if (!filterText) return modelOptions;
 		const lower = filterText.toLowerCase();
-		return availableOptions.filter((m) => m.toLowerCase().includes(lower));
-	}, [availableOptions, filterText]);
+		return modelOptions.filter((m) => m.toLowerCase().includes(lower));
+	}, [modelOptions, filterText]);
+
+	// The source groups, narrowed by the same filter. A group with nothing left
+	// is dropped, header and all.
+	const sourceGroups = sources?.groups ?? NO_SOURCE_GROUPS;
+	const filteredSourceGroups = useMemo(() => {
+		if (!filterText) return sourceGroups;
+		const lower = filterText.toLowerCase();
+		return sourceGroups
+			.map((group) => ({
+				...group,
+				options: group.options.filter(
+					(o) => o.label.toLowerCase().includes(lower) || group.label.toLowerCase().includes(lower)
+				),
+			}))
+			.filter((group) => group.options.length > 0);
+	}, [sourceGroups, filterText]);
+	const sourceModelCount = sourceGroups.reduce((sum, group) => sum + group.options.length, 0);
+	// What the count line says: the models the sources list (an unlisted current
+	// target is not one of them) and how many places list any, the provider
+	// included when it lists its own.
+	const listedSourceGroups = sourceGroups.filter((group) => !group.unlisted);
+	const listedSourceModelCount = listedSourceGroups.reduce(
+		(sum, group) => sum + group.options.length,
+		0
+	);
+	const listingSourceCount = listedSourceGroups.length + (availableOptions.length > 0 ? 1 : 0);
+	const selectedSource = sources?.selected ?? null;
 
 	// Close dropdown when clicking outside
 	useEffect(() => {
@@ -164,15 +210,49 @@ function ModelTextInput({
 	}, [showDropdown, isFiltering]);
 
 	const isModelField = option.key === 'model';
-	const hasOptions = !disabled && availableOptions.length > 0;
+	const hasOptions = !disabled && (modelOptions.length > 0 || sourceModelCount > 0);
 	const isEffortField = option.key === 'effort' || option.key === 'reasoningEffort';
 
-	// Display value: when filtering, show filter text; otherwise show actual value
-	const displayValue = isFiltering ? filterText : value;
+	// Display value: when filtering, show filter text; otherwise the source model
+	// the agent runs on, else its provider model.
+	const shownValue = selectedSource ? selectedSource.model : value;
+	const displayValue = isFiltering ? filterText : shownValue;
+
+	/** A provider model was picked, typed or cleared: the provider runs it. */
+	const commitProviderModel = (model: string) => {
+		onChange(model);
+		committedValueRef.current = model;
+		sources?.onProvider();
+		onBlur(model);
+	};
+	const closeDropdown = () => {
+		setShowDropdown(false);
+		setFilterText('');
+		setIsFiltering(false);
+	};
+	const groupHeader = (label: string) => (
+		<div
+			key={`header-${label}`}
+			className="px-3 pt-2 pb-1 text-2xs font-bold uppercase tracking-wide"
+			style={{ color: theme.colors.textDim }}
+		>
+			{label}
+		</div>
+	);
 
 	return (
 		<>
 			<div className="flex gap-2" ref={containerRef}>
+				{selectedSource && !isFiltering && (
+					<span
+						className="self-center px-2 py-0.5 rounded-full text-xs-plus font-semibold whitespace-nowrap"
+						style={{ backgroundColor: theme.colors.accent + '22', color: theme.colors.accent }}
+						title={`Runs on ${selectedSource.sourceName}`}
+						data-testid="model-source-chip"
+					>
+						{selectedSource.sourceName}
+					</span>
+				)}
 				<div className="relative flex-1">
 					<input
 						ref={inputRef}
@@ -193,8 +273,10 @@ function ModelTextInput({
 							}
 						}}
 						onFocus={() => {
+							// Open on the whole list: the shown value is not a filter, so a
+							// source model chosen earlier never hides the provider's models.
 							if (hasOptions) {
-								setFilterText(value);
+								setFilterText('');
 								setShowDropdown(true);
 							}
 						}}
@@ -211,15 +293,18 @@ function ModelTextInput({
 								setShowDropdown(false);
 								if (isFiltering) {
 									// If user was filtering but didn't select, keep the filter text as the value
-									// (explicit values remain valid inputs when discovery is unavailable)
-									if (filterText !== committedValueRef.current) {
-										onChange(filterText);
-										committedValueRef.current = filterText;
+									// (explicit values remain valid inputs when discovery is unavailable).
+									// Typed text names a provider model, so a source model the
+									// agent ran on gives way to it.
+									if (
+										filterText !==
+										(selectedSource ? selectedSource.model : committedValueRef.current)
+									) {
 										setIsFiltering(false);
 										setFilterText('');
 										// Pass the newly committed value so the consumer can save it
 										// without relying on stale React state
-										onBlur(filterText);
+										commitProviderModel(filterText);
 										return;
 									}
 									setIsFiltering(false);
@@ -251,50 +336,87 @@ function ModelTextInput({
 						</button>
 					)}
 					{/* Custom dropdown */}
-					{hasOptions && showDropdown && filteredOptions.length > 0 && (
-						<div
-							className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded"
-							style={{
-								...elevatedSurfaceStyle(theme),
-							}}
-						>
-							{filteredOptions.map((model) => (
-								<button
-									key={model}
-									type="button"
-									onClick={(e) => {
-										e.stopPropagation();
-										selectionMadeRef.current = true;
-										onChange(model);
-										committedValueRef.current = model;
-										setShowDropdown(false);
-										setFilterText('');
-										setIsFiltering(false);
-										onBlur(model);
-									}}
-									className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-white/10 transition-colors"
-									style={{
-										color: model === value ? theme.colors.accent : theme.colors.textMain,
-										backgroundColor: model === value ? 'rgba(255,255,255,0.05)' : undefined,
-									}}
-								>
-									{model}
-								</button>
-							))}
-						</div>
-					)}
+					{hasOptions &&
+						showDropdown &&
+						(filteredOptions.length > 0 || filteredSourceGroups.length > 0) && (
+							<div
+								className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded"
+								style={{
+									...elevatedSurfaceStyle(theme),
+								}}
+							>
+								{filteredSourceGroups.length > 0 &&
+									filteredOptions.length > 0 &&
+									providerLabel &&
+									groupHeader(providerLabel)}
+								{filteredOptions.map((model) => (
+									<button
+										key={model}
+										type="button"
+										onClick={(e) => {
+											e.stopPropagation();
+											selectionMadeRef.current = true;
+											closeDropdown();
+											commitProviderModel(model);
+										}}
+										title={isAutoModel(model) ? autoModel?.title : undefined}
+										className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-white/10 transition-colors"
+										style={{
+											color:
+												model === value && !selectedSource
+													? theme.colors.accent
+													: theme.colors.textMain,
+											backgroundColor:
+												model === value && !selectedSource ? 'rgba(255,255,255,0.05)' : undefined,
+										}}
+									>
+										{modelChoiceLabel(model)}
+										{isAutoModel(model) && autoModel && (
+											<span className="ml-2 font-sans" style={{ color: theme.colors.textDim }}>
+												{autoModelAxesNote(autoModel.support)}
+											</span>
+										)}
+									</button>
+								))}
+								{filteredSourceGroups.map((group) => (
+									<div key={group.label} data-testid="model-source-group">
+										{groupHeader(group.label)}
+										{group.options.map((choice) => {
+											const chosen = selectedSource?.spec === choice.value;
+											return (
+												<button
+													key={choice.value}
+													type="button"
+													onClick={(e) => {
+														e.stopPropagation();
+														selectionMadeRef.current = true;
+														closeDropdown();
+														sources?.onSelect(choice.value);
+													}}
+													className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-white/10 transition-colors"
+													style={{
+														color: chosen ? theme.colors.accent : theme.colors.textMain,
+														backgroundColor: chosen ? 'rgba(255,255,255,0.05)' : undefined,
+													}}
+													data-testid="model-source-option"
+													data-value={choice.value}
+												>
+													{choice.label}
+												</button>
+											);
+										})}
+									</div>
+								))}
+							</div>
+						)}
 				</div>
-				{(isModelField || isEffortField) && value && (
+				{(isModelField || isEffortField) && (value || selectedSource) && (
 					<button
 						onClick={(e) => {
 							e.stopPropagation();
 							selectionMadeRef.current = true;
-							onChange('');
-							committedValueRef.current = '';
-							setShowDropdown(false);
-							setFilterText('');
-							setIsFiltering(false);
-							onBlur('');
+							closeDropdown();
+							commitProviderModel('');
 						}}
 						className="px-2 py-1.5 rounded text-xs whitespace-nowrap"
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
@@ -325,16 +447,41 @@ function ModelTextInput({
 					{isModelField ? 'Loading available models...' : 'Loading effort options...'}
 				</p>
 			)}
-			{isModelField && !loadingOptions && hasOptions && (
-				<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-					{availableOptions.length} model{availableOptions.length !== 1 ? 's' : ''} available
+			{isModelField &&
+				!loadingOptions &&
+				availableOptions.length + listedSourceModelCount > 0 &&
+				!disabled && (
+					<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
+						{listedSourceModelCount > 0
+							? `${formatCountNoun(availableOptions.length + listedSourceModelCount, 'model')} from ${formatCountNoun(listingSourceCount, 'source')}`
+							: `${formatCountNoun(availableOptions.length, 'model')} available`}
+					</p>
+				)}
+			{isModelField && autoModel && isAutoModel(value) && (
+				<p
+					className="text-xs mt-1"
+					style={{ color: autoModel.routerOn ? theme.colors.textDim : theme.colors.warning }}
+					data-testid="auto-model-note"
+				>
+					{autoModel.title}
 				</p>
 			)}
 		</>
 	);
 }
 
-export interface AgentConfigPanelProps {
+export interface AgentConfigPanelProps extends Pick<
+	AgentEnvVarsSectionProps,
+	| 'customEnvVars'
+	| 'customEnvVarsDisabled'
+	| 'onEnvVarToggle'
+	| 'onEnvVarKeyChange'
+	| 'onEnvVarValueChange'
+	| 'onEnvVarRemove'
+	| 'onEnvVarAdd'
+	| 'onEnvVarsBlur'
+	| 'showBuiltInEnvVars'
+> {
 	theme: Theme;
 	agent: AgentConfig;
 	// Custom path
@@ -354,30 +501,21 @@ export interface AgentConfigPanelProps {
 	customArgs: string;
 	onCustomArgsChange: (value: string) => void;
 	onCustomArgsBlur: () => void;
-	// Environment variables
-	customEnvVars: Record<string, string>;
 	/**
-	 * Parked env vars: same shape as `customEnvVars`, but switched off. Pass this
-	 * together with `onEnvVarToggle` to get the per-row eye button; omit both and
-	 * the panel behaves exactly as before (every row is active, no eye).
-	 *
-	 * A parked var is kept OUT of `customEnvVars` on purpose - that is what lets
-	 * every spawn path keep reading one record with no filter.
+	 * Skip the env var section. A tabbed agent form sets this and mounts
+	 * `ProviderEnvironmentSection` in the Provider panel, so the vars are not
+	 * rendered twice. The env props are still required: the panel's callers
+	 * keep one prop shape either way.
 	 */
-	customEnvVarsDisabled?: Record<string, string>;
-	/** Move a var between the active and parked records. `nextEnabled` is the state being switched TO. */
-	onEnvVarToggle?: (key: string, nextEnabled: boolean) => void;
+	hideEnvVars?: boolean;
 	/**
-	 * The trailing `enabled` argument on these four says WHICH record the row
-	 * being edited lives in, so the parent knows where to write. It is always
-	 * `true` when the toggle props are omitted, which is why the existing
-	 * two-argument handlers in non-toggling consumers keep working untouched.
+	 * Skip the model options (`isModelConfigOption`: model, effort, reasoning
+	 * summary, context window). A tabbed agent form sets this and draws them on
+	 * its Models tab with `AgentConfigOptions scope="model"`.
 	 */
-	onEnvVarKeyChange: (oldKey: string, newKey: string, value: string, enabled?: boolean) => void;
-	onEnvVarValueChange: (key: string, value: string, enabled?: boolean) => void;
-	onEnvVarRemove: (key: string, enabled?: boolean) => void;
-	onEnvVarAdd: () => void;
-	onEnvVarsBlur: () => void;
+	hideModelOptions?: boolean;
+	/** Source models the Model field also lists. See `AgentConfigOptionsProps`. */
+	modelSources?: ModelSourceChoices;
 	/**
 	 * Replace both records whole. Pass it to get the Basic / Advanced toggle,
 	 * where Advanced edits every variable as `.env` text; omit it and the panel
@@ -407,6 +545,15 @@ export interface AgentConfigPanelProps {
 	availableModels?: string[];
 	loadingModels?: boolean;
 	onRefreshModels?: () => void;
+	/**
+	 * Offer Auto in the model field, for an agent it can act on
+	 * (`useAutoModelChoice`). Opt-in: only a surface whose agent has an Auto
+	 * send path passes it (New Agent, Edit Agent). The moderator, the wizard and
+	 * the creation dialog do not, because their turns are never routed. The
+	 * value is the part of the agent the choice is judged against besides its
+	 * provider: its tier targets and its model source, as the form holds them.
+	 */
+	autoModelFor?: Pick<TierTargetAgent, 'tierTargets' | 'runOn'>;
 	// Dynamic config options (for select fields with dynamic: true)
 	dynamicOptions?: Record<string, string[]>;
 	loadingDynamicOptions?: boolean;
@@ -415,8 +562,6 @@ export interface AgentConfigPanelProps {
 	refreshingAgent?: boolean;
 	// Optional: compact mode for wizard (less padding)
 	compact?: boolean;
-	// Show built-in environment variables section
-	showBuiltInEnvVars?: boolean;
 	// SSH remote execution enabled for this session
 	isSshEnabled?: boolean;
 	/**
@@ -476,6 +621,9 @@ export function AgentConfigPanel({
 	onEnvVarRemove,
 	onEnvVarAdd,
 	onEnvVarsBlur,
+	hideEnvVars = false,
+	hideModelOptions = false,
+	modelSources,
 	onEnvVarsReplace,
 	agentConfig,
 	configOptionNotes,
@@ -484,6 +632,7 @@ export function AgentConfigPanel({
 	availableModels = [],
 	loadingModels = false,
 	onRefreshModels,
+	autoModelFor,
 	dynamicOptions = {},
 	loadingDynamicOptions = false,
 	onRefreshAgent,
@@ -510,14 +659,6 @@ export function AgentConfigPanel({
 	harnessControlMode = 'current',
 	onHarnessControlModeChange,
 }: AgentConfigPanelProps): JSX.Element {
-	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
-		const maybePromise = onConfigBlur(key, committedValue);
-		if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
-			void (maybePromise as Promise<void>).catch((error: unknown) => {
-				logger.error(`Failed to persist config field "${key}":`, undefined, error);
-			});
-		}
-	};
 	const padding = compact ? 'p-2' : 'p-3';
 	const spacing = compact ? 'space-y-2' : 'space-y-3';
 	// Probe the SSH remote for maestro-p. When it's known-absent the remote can't
@@ -530,7 +671,6 @@ export function AgentConfigPanel({
 		refresh: refreshRemoteMaestroP,
 	} = useRemoteMaestroPAvailable(isSshEnabled ? sshRemoteId : undefined);
 	const remoteMaestroPMissing = isSshEnabled && remoteMaestroPAvailable === false;
-	const knownAuthDirs = useKnownAuthDirs(!isSshEnabled);
 	// Collapse the stored (enableMaestroP, maestroPMode) pair into the tri-state the
 	// segmented "Claude Token Source" selector renders. Source not API => show the
 	// maestro-p path input and the live Time/API-limits pill.
@@ -559,100 +699,6 @@ export function AgentConfigPanel({
 			? 'api'
 			: claudeTokenMode;
 	const showMaestroPDetails = displayClaudeTokenMode !== 'api';
-	// Track which built-in env var tooltip is showing
-	const knownEnvVarKeys = useKnownEnvVarKeys();
-	// Set when the user presses "Add Variable", cleared once the new unnamed row
-	// has taken the caret. Not derived from "is this row blank": a blank row can
-	// also arrive from disk, and that one must not steal focus on modal open.
-	const [focusNewEnvVarRow, setFocusNewEnvVarRow] = useState(false);
-	const { value: envVarsAdvancedPreferred, setValue: setEnvVarsAdvanced } = usePersistedToggle(
-		ENV_VARS_ADVANCED_MODE_STORAGE_KEY
-	);
-	// A consumer that cannot take a whole-record replace stays on rows, whatever
-	// the remembered preference says.
-	const envVarsAdvanced = envVarsAdvancedPreferred && Boolean(onEnvVarsReplace);
-	const [showingTooltip, setShowingTooltip] = useState<string | null>(null);
-
-	// Track stable IDs for env var entries to prevent focus loss when keys change
-	// Only key edits are deferred to blur - value edits update immediately
-	const envVarIdsRef = useRef<Map<string, number>>(new Map());
-	const pendingKeyEditsRef = useRef<Map<string, string>>(new Map());
-	// Force re-render when pending key edits change
-	const [, forceUpdate] = useState(0);
-
-	// Get or create stable ID for an env var key
-	const getEnvVarId = (key: string): number => {
-		if (!envVarIdsRef.current.has(key)) {
-			envVarIdsRef.current.set(key, ++envVarIdCounter);
-		}
-		return envVarIdsRef.current.get(key)!;
-	};
-
-	// Clean up stale IDs when env vars change (only if not currently being edited).
-	// Parked keys count as current: a toggle only moves a var between the two
-	// records, and dropping its ID there would remount the row mid-click.
-	useMemo(() => {
-		const currentKeys = new Set([
-			...Object.keys(customEnvVars),
-			...Object.keys(customEnvVarsDisabled ?? {}),
-		]);
-		for (const key of envVarIdsRef.current.keys()) {
-			if (!currentKeys.has(key) && !pendingKeyEditsRef.current.has(key)) {
-				envVarIdsRef.current.delete(key);
-				pendingKeyEditsRef.current.delete(key);
-			}
-		}
-	}, [customEnvVars, customEnvVarsDisabled]);
-
-	// Get current display value for env var key (pending edit or actual)
-	const getKeyDisplayValue = (originalKey: string): string => {
-		return pendingKeyEditsRef.current.get(originalKey) ?? originalKey;
-	};
-
-	// Handle key input change (local only, deferred to blur)
-	const handleKeyInputChange = (originalKey: string, newKey: string) => {
-		pendingKeyEditsRef.current.set(originalKey, newKey);
-		forceUpdate((n) => n + 1);
-	};
-
-	// Commit pending key edit on blur
-	const handleKeyBlur = (originalKey: string, currentValue: string, enabled: boolean) => {
-		const pendingKey = pendingKeyEditsRef.current.get(originalKey);
-		pendingKeyEditsRef.current.delete(originalKey);
-
-		// Update the ID map if key changed
-		if (pendingKey !== undefined && pendingKey !== originalKey) {
-			const id = envVarIdsRef.current.get(originalKey);
-			if (id !== undefined) {
-				envVarIdsRef.current.delete(originalKey);
-				envVarIdsRef.current.set(pendingKey, id);
-			}
-			onEnvVarKeyChange(originalKey, pendingKey, currentValue, enabled);
-		}
-		onEnvVarsBlur();
-	};
-
-	// The toggle needs both halves to round-trip a parked var; with only one,
-	// switching a row off would drop its value on the floor.
-	const canToggleEnvVars = Boolean(customEnvVarsDisabled && onEnvVarToggle);
-
-	// One list over both records. Sorting by the stable ID (assigned in first-seen
-	// order and preserved across a toggle) is what keeps a row where it is when
-	// the user switches it off, instead of letting it jump to the parked group.
-	const envVarRows = [
-		...Object.entries(customEnvVars).map(([key, value]) => ({ key, value, enabled: true })),
-		...Object.entries(customEnvVarsDisabled ?? {}).map(([key, value]) => ({
-			key,
-			value,
-			enabled: false,
-		})),
-	]
-		// Resolve every ID up front: `sort` visits pairs in an engine-defined order,
-		// so minting IDs inside the comparator would number the rows by comparison
-		// order rather than by list order.
-		.map((row) => ({ ...row, id: getEnvVarId(row.key) }))
-		.sort((a, b) => a.id - b.id);
-	const envVarKeys = envVarRows.map((row) => row.key);
 
 	// Multi-install chooser state. `activePath` is whatever the Path field
 	// currently resolves to; it may be a hand-typed wrapper (or a tilde path
@@ -994,329 +1040,44 @@ export function AgentConfigPanel({
 				</p>
 			</div>
 
-			{/* Custom environment variables input */}
-			<div
-				className={`${padding} rounded border`}
-				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
-			>
-				<div className="flex items-center justify-between gap-2 mb-2">
-					<label className="block text-xs font-medium" style={{ color: theme.colors.textDim }}>
-						Environment Variables (optional)
-					</label>
-					{onEnvVarsReplace && (
-						<div onClick={(e) => e.stopPropagation()}>
-							<EnvVarsModeToggle
-								advanced={envVarsAdvanced}
-								onChange={setEnvVarsAdvanced}
-								theme={theme}
-							/>
-						</div>
-					)}
-				</div>
-				<div className="space-y-2">
-					{/* Built-in env vars (read-only, shown when showBuiltInEnvVars is true) */}
-					{showBuiltInEnvVars &&
-						BUILT_IN_ENV_VARS.map((envVar) => (
-							<div
-								key={envVar.key}
-								className="flex gap-2 items-center rounded px-2 py-1.5"
-								style={{ backgroundColor: theme.colors.bgActivity }}
-							>
-								<div
-									className="p-2 rounded text-xs font-mono flex items-center gap-1 whitespace-nowrap"
-									style={{ color: theme.colors.textDim }}
-								>
-									<span>{envVar.key}</span>
-									<div className="relative inline-block">
-										<button
-											onClick={(e) => {
-												e.stopPropagation();
-												setShowingTooltip(showingTooltip === envVar.key ? null : envVar.key);
-											}}
-											onBlur={() => setTimeout(() => setShowingTooltip(null), 150)}
-											className="p-0.5 rounded hover:bg-white/10 transition-colors"
-											title="What is this?"
-											style={{ color: theme.colors.accent }}
-										>
-											<HelpCircle className="w-3 h-3" />
-										</button>
-										{/* Tooltip */}
-										{showingTooltip === envVar.key && (
-											<div
-												className="absolute left-1/2 bottom-full mb-1 z-50 p-3 rounded text-xs whitespace-normal leading-relaxed"
-												style={{
-													...elevatedSurfaceStyle(theme),
-													color: theme.colors.textMain,
-													width: '320px',
-													transform: 'translateX(-50%)',
-												}}
-											>
-												{envVar.description}
-											</div>
-										)}
-									</div>
-								</div>
-								<span className="text-xs" style={{ color: theme.colors.textDim }}>
-									=
-								</span>
-								<div
-									className="p-2 rounded text-xs font-mono italic whitespace-nowrap"
-									style={{ color: theme.colors.textDim }}
-								>
-									{envVar.value}
-								</div>
-							</div>
-						))}
-					{/* User-defined env vars, as `.env` text */}
-					{envVarsAdvanced && onEnvVarsReplace && (
-						<div onClick={(e) => e.stopPropagation()}>
-							<EnvVarsDotEnvInput
-								theme={theme}
-								envVars={customEnvVars}
-								disabledEnvVars={canToggleEnvVars ? customEnvVarsDisabled : undefined}
-								onChange={onEnvVarsReplace}
-								onBlur={onEnvVarsBlur}
-							/>
-						</div>
-					)}
-					{/* User-defined env vars, a row each */}
-					{!envVarsAdvanced &&
-						envVarRows.map(({ key, value, enabled, id }) => {
-							const off = !enabled;
-							return (
-								<div key={`env-var-${id}`} className="flex gap-2 items-center">
-									{canToggleEnvVars && (
-										<GhostIconButton
-											onClick={(e) => {
-												e.stopPropagation();
-												onEnvVarToggle?.(key, off);
-											}}
-											padding="p-2"
-											title={
-												off
-													? `Enable ${key || 'variable'} (currently not passed to this agent)`
-													: `Disable ${key || 'variable'} (keeps the value, stops passing it to this agent)`
-											}
-											color={off ? theme.colors.textDim : theme.colors.accent}
-										>
-											{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-										</GhostIconButton>
-									)}
-									<EnvVarKeyInput
-										theme={theme}
-										value={getKeyDisplayValue(key)}
-										onChange={(nextKey) => handleKeyInputChange(key, nextKey)}
-										onBlur={() => handleKeyBlur(key, value, enabled)}
-										toolType={agent.id}
-										knownEnvVarKeys={knownEnvVarKeys}
-										usedKeys={envVarKeys}
-										autoFocus={focusNewEnvVarRow && key === BLANK_ENV_VAR_KEY}
-										onAutoFocused={() => setFocusNewEnvVarRow(false)}
-										className="p-2 rounded border bg-transparent outline-none text-xs font-mono"
-										style={{
-											borderColor: theme.colors.border,
-											color: theme.colors.textMain,
-											opacity: off ? 0.45 : 1,
-											textDecoration: off ? 'line-through' : undefined,
-										}}
-									/>
-									<span
-										className="flex items-center text-xs"
-										style={{ color: theme.colors.textDim }}
-									>
-										=
-									</span>
-									<AuthPathValueInput
-										envVarKey={key}
-										value={value}
-										knownAuthDirs={knownAuthDirs}
-										onChange={(updatedValue) => onEnvVarValueChange(key, updatedValue, enabled)}
-										onBlur={() => onEnvVarsBlur()}
-										className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
-										containerClassName="flex-[2] min-w-0"
-										style={{
-											borderColor: theme.colors.border,
-											color: theme.colors.textMain,
-											opacity: off ? 0.45 : 1,
-											textDecoration: off ? 'line-through' : undefined,
-										}}
-									/>
-									<GhostIconButton
-										onClick={(e) => {
-											e.stopPropagation();
-											onEnvVarRemove(key, enabled);
-										}}
-										padding="p-2"
-										title="Remove variable"
-										color={theme.colors.textDim}
-									>
-										<Trash2 className="w-3 h-3" />
-									</GhostIconButton>
-								</div>
-							);
-						})}
-					{/* Add new env var button */}
-					{!envVarsAdvanced && (
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								setFocusNewEnvVarRow(true);
-								onEnvVarAdd();
-							}}
-							className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-							style={{ color: theme.colors.textDim }}
-						>
-							<Plus className="w-3 h-3" />
-							Add Variable
-						</button>
-					)}
-				</div>
-				<p className="text-xs opacity-50 mt-2">
-					Agent-specific environment variables (overrides global environment variables from
-					Settings). These are passed to all calls to this agent.
-				</p>
-			</div>
+			{/* Custom environment variables input. Hidden when a form supplies its own Provider environment section. */}
+			{!hideEnvVars && (
+				<AgentEnvVarsSection
+					theme={theme}
+					toolType={agent.id}
+					customEnvVars={customEnvVars}
+					customEnvVarsDisabled={customEnvVarsDisabled}
+					onEnvVarToggle={onEnvVarToggle}
+					onEnvVarKeyChange={onEnvVarKeyChange}
+					onEnvVarValueChange={onEnvVarValueChange}
+					onEnvVarRemove={onEnvVarRemove}
+					onEnvVarAdd={onEnvVarAdd}
+					onEnvVarsBlur={onEnvVarsBlur}
+					onEnvVarsReplace={onEnvVarsReplace}
+					showBuiltInEnvVars={showBuiltInEnvVars}
+					compact={compact}
+					isSshEnabled={isSshEnabled}
+				/>
+			)}
 
 			{/* Agent-specific configuration options (contextWindow, model, etc.) */}
-			{agent.configOptions &&
-				agent.configOptions.length > 0 &&
-				agent.configOptions.map((option: AgentConfigOption) => {
-					return (
-						<fieldset
-							key={option.key}
-							disabled={option.key === 'model' && !agent.capabilities?.supportsModelSelection}
-							className={`${padding} min-w-0 rounded border`}
-							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
-						>
-							<label
-								className="block text-xs font-medium mb-2"
-								style={{ color: theme.colors.textDim }}
-							>
-								{option.label}
-							</label>
-							{option.type === 'number' && (
-								<input
-									type="number"
-									aria-label={option.label}
-									value={agentConfig[option.key] ?? option.default}
-									onChange={(e) => {
-										const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
-										onConfigChange(option.key, isNaN(value) ? 0 : value);
-									}}
-									onBlur={(e) => {
-										const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
-										callOnConfigBlurSafely(option.key, isNaN(value) ? 0 : value);
-									}}
-									onClick={(e) => e.stopPropagation()}
-									placeholder={option.default?.toString() || '0'}
-									min={0}
-									className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
-									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								/>
-							)}
-							{option.type === 'text' && (
-								<ModelTextInput
-									theme={theme}
-									option={option}
-									value={agentConfig[option.key] ?? option.default}
-									onChange={(value) => onConfigChange(option.key, value)}
-									onBlur={(committedValue) => callOnConfigBlurSafely(option.key, committedValue)}
-									availableOptions={
-										option.key === 'model' ? availableModels : (dynamicOptions[option.key] ?? [])
-									}
-									loadingOptions={option.key === 'model' ? loadingModels : loadingDynamicOptions}
-									disabled={option.key === 'model' && !agent.capabilities?.supportsModelSelection}
-									onRefreshModels={
-										option.key === 'model' && agent.capabilities?.supportsModelSelection
-											? onRefreshModels
-											: undefined
-									}
-								/>
-							)}
-							{option.type === 'checkbox' && (
-								<label
-									className="flex items-center gap-2 cursor-pointer"
-									onClick={(e) => e.stopPropagation()}
-								>
-									<input
-										type="checkbox"
-										checked={agentConfig[option.key] ?? option.default}
-										onChange={(e) => {
-											onConfigChange(option.key, e.target.checked);
-											// Immediately persist checkbox changes
-											callOnConfigBlurSafely(option.key, e.target.checked);
-										}}
-										className="w-4 h-4"
-										style={{ accentColor: theme.colors.accent }}
-									/>
-									<span className="text-xs" style={{ color: theme.colors.textMain }}>
-										Enabled
-									</span>
-								</label>
-							)}
-							{option.type === 'select' &&
-								(() => {
-									// Dynamic selects get their options from IPC discovery
-									const opts =
-										option.dynamic && dynamicOptions[option.key]?.length
-											? dynamicOptions[option.key]
-											: option.options;
-									if (!opts || opts.length === 0) {
-										if (option.dynamic && loadingDynamicOptions) {
-											return (
-												<p className="text-xs" style={{ color: theme.colors.textDim }}>
-													Loading options...
-												</p>
-											);
-										}
-										return null;
-									}
-									return (
-										<select
-											aria-label={option.label}
-											value={agentConfig[option.key] ?? option.default ?? ''}
-											onChange={(e) => {
-												onConfigChange(option.key, e.target.value);
-												callOnConfigBlurSafely(option.key, e.target.value);
-											}}
-											onClick={(e) => e.stopPropagation()}
-											className="w-full p-2 rounded border bg-transparent outline-none text-xs cursor-pointer"
-											style={{
-												borderColor: theme.colors.border,
-												color: theme.colors.textMain,
-												backgroundColor: theme.colors.bgMain,
-											}}
-										>
-											{opts.map((opt) => (
-												<option
-													key={opt}
-													value={opt}
-													style={{ backgroundColor: theme.colors.bgMain }}
-												>
-													{opt || '(default)'}
-												</option>
-											))}
-										</select>
-									);
-								})()}
-							{option.key === 'model' && !agent.capabilities?.supportsModelSelection && (
-								<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-									Model selection is unavailable for this provider.
-								</p>
-							)}
-							{configOptionNotes?.[option.key] && (
-								<p
-									className="text-xs mt-2"
-									style={{ color: theme.colors.warning }}
-									data-testid={`config-option-note-${option.key}`}
-								>
-									{configOptionNotes[option.key]}
-								</p>
-							)}
-							<p className="text-xs opacity-50 mt-2">{option.description}</p>
-						</fieldset>
-					);
-				})}
+			<AgentConfigOptions
+				theme={theme}
+				agent={agent}
+				scope={hideModelOptions ? 'harness' : 'all'}
+				agentConfig={agentConfig}
+				configOptionNotes={configOptionNotes}
+				onConfigChange={onConfigChange}
+				onConfigBlur={onConfigBlur}
+				availableModels={availableModels}
+				loadingModels={loadingModels}
+				onRefreshModels={onRefreshModels}
+				autoModelFor={autoModelFor}
+				modelSources={modelSources}
+				dynamicOptions={dynamicOptions}
+				loadingDynamicOptions={loadingDynamicOptions}
+				compact={compact}
+			/>
 
 			{/* Automatic usage resets - Codex only, and last, so it sits directly
 			    under Reasoning Effort where the Codex settings end.
@@ -1357,5 +1118,226 @@ export function AgentConfigPanel({
 				</div>
 			)}
 		</div>
+	);
+}
+
+export type AgentConfigOptionScope = 'all' | 'harness' | 'model';
+
+export interface AgentConfigOptionsProps extends Pick<
+	AgentConfigPanelProps,
+	| 'theme'
+	| 'agent'
+	| 'agentConfig'
+	| 'configOptionNotes'
+	| 'onConfigChange'
+	| 'onConfigBlur'
+	| 'availableModels'
+	| 'loadingModels'
+	| 'onRefreshModels'
+	| 'autoModelFor'
+	| 'dynamicOptions'
+	| 'loadingDynamicOptions'
+	| 'compact'
+> {
+	/**
+	 * Which of the provider's config options to draw: `model` the model ones
+	 * (`isModelConfigOption`), `harness` the rest, `all` both.
+	 */
+	scope?: AgentConfigOptionScope;
+	/**
+	 * Local Models source models the Model field lists after the provider's, and
+	 * the agent's model source. Omit for a surface whose agent runs on its
+	 * provider only (the group chat moderator).
+	 */
+	modelSources?: ModelSourceChoices;
+	/** Drawn at the foot of the Model field: the model source details. */
+	modelSourceDetails?: ReactNode;
+}
+
+/**
+ * The provider's config options, one fieldset each. `AgentConfigPanel` draws
+ * them under the harness settings; a tabbed agent form draws the model ones on
+ * its Models tab instead (`scope="model"`), with the same props.
+ */
+export function AgentConfigOptions({
+	theme,
+	agent,
+	scope = 'all',
+	agentConfig,
+	configOptionNotes,
+	onConfigChange,
+	onConfigBlur,
+	availableModels = [],
+	loadingModels = false,
+	onRefreshModels,
+	autoModelFor,
+	modelSources,
+	modelSourceDetails,
+	dynamicOptions = {},
+	loadingDynamicOptions = false,
+	compact = false,
+}: AgentConfigOptionsProps): JSX.Element | null {
+	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
+		const maybePromise = onConfigBlur(key, committedValue);
+		if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
+			void (maybePromise as Promise<void>).catch((error: unknown) => {
+				logger.error(`Failed to persist config field "${key}":`, undefined, error);
+			});
+		}
+	};
+	const autoModel = useAutoModelChoice(
+		autoModelFor ? { toolType: agent.id as ToolType, ...autoModelFor } : null
+	);
+	const padding = compact ? 'p-2' : 'p-3';
+	const options = (agent.configOptions ?? []).filter(
+		(option) => scope === 'all' || isModelConfigOption(option.key) === (scope === 'model')
+	);
+	if (options.length === 0) return null;
+
+	return (
+		<>
+			{options.map((option: AgentConfigOption) => {
+				const sourcesHere = option.key === 'model' ? modelSources : undefined;
+				return (
+					<fieldset
+						key={option.key}
+						disabled={option.key === 'model' && !agent.capabilities?.supportsModelSelection}
+						className={`${padding} min-w-0 rounded border`}
+						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+					>
+						<label
+							className="block text-xs font-medium mb-2"
+							style={{ color: theme.colors.textDim }}
+						>
+							{option.label}
+						</label>
+						{option.type === 'number' && (
+							<input
+								type="number"
+								aria-label={option.label}
+								value={agentConfig[option.key] ?? option.default}
+								onChange={(e) => {
+									const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+									onConfigChange(option.key, isNaN(value) ? 0 : value);
+								}}
+								onBlur={(e) => {
+									const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+									callOnConfigBlurSafely(option.key, isNaN(value) ? 0 : value);
+								}}
+								onClick={(e) => e.stopPropagation()}
+								placeholder={option.default?.toString() || '0'}
+								min={0}
+								className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							/>
+						)}
+						{option.type === 'text' && (
+							<ModelTextInput
+								theme={theme}
+								option={option}
+								value={agentConfig[option.key] ?? option.default}
+								onChange={(value) => onConfigChange(option.key, value)}
+								onBlur={(committedValue) => callOnConfigBlurSafely(option.key, committedValue)}
+								availableOptions={
+									option.key === 'model' ? availableModels : (dynamicOptions[option.key] ?? [])
+								}
+								loadingOptions={option.key === 'model' ? loadingModels : loadingDynamicOptions}
+								disabled={option.key === 'model' && !agent.capabilities?.supportsModelSelection}
+								autoModel={option.key === 'model' ? autoModel : null}
+								sources={sourcesHere}
+								providerLabel={agent.name}
+								onRefreshModels={
+									option.key === 'model' && agent.capabilities?.supportsModelSelection
+										? onRefreshModels
+										: undefined
+								}
+							/>
+						)}
+						{option.type === 'checkbox' && (
+							<label
+								className="flex items-center gap-2 cursor-pointer"
+								onClick={(e) => e.stopPropagation()}
+							>
+								<input
+									type="checkbox"
+									checked={agentConfig[option.key] ?? option.default}
+									onChange={(e) => {
+										onConfigChange(option.key, e.target.checked);
+										// Immediately persist checkbox changes
+										callOnConfigBlurSafely(option.key, e.target.checked);
+									}}
+									className="w-4 h-4"
+									style={{ accentColor: theme.colors.accent }}
+								/>
+								<span className="text-xs" style={{ color: theme.colors.textMain }}>
+									Enabled
+								</span>
+							</label>
+						)}
+						{option.type === 'select' &&
+							(() => {
+								// Dynamic selects get their options from IPC discovery
+								const opts =
+									option.dynamic && dynamicOptions[option.key]?.length
+										? dynamicOptions[option.key]
+										: option.options;
+								if (!opts || opts.length === 0) {
+									if (option.dynamic && loadingDynamicOptions) {
+										return (
+											<p className="text-xs" style={{ color: theme.colors.textDim }}>
+												Loading options...
+											</p>
+										);
+									}
+									return null;
+								}
+								return (
+									<select
+										aria-label={option.label}
+										value={agentConfig[option.key] ?? option.default ?? ''}
+										onChange={(e) => {
+											onConfigChange(option.key, e.target.value);
+											callOnConfigBlurSafely(option.key, e.target.value);
+										}}
+										onClick={(e) => e.stopPropagation()}
+										className="w-full p-2 rounded border bg-transparent outline-none text-xs cursor-pointer"
+										style={{
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+											backgroundColor: theme.colors.bgMain,
+										}}
+									>
+										{opts.map((opt) => (
+											<option
+												key={opt}
+												value={opt}
+												style={{ backgroundColor: theme.colors.bgMain }}
+											>
+												{opt || '(default)'}
+											</option>
+										))}
+									</select>
+								);
+							})()}
+						{option.key === 'model' && !agent.capabilities?.supportsModelSelection && (
+							<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
+								Model selection is unavailable for this provider.
+							</p>
+						)}
+						{configOptionNotes?.[option.key] && (
+							<p
+								className="text-xs mt-2"
+								style={{ color: theme.colors.warning }}
+								data-testid={`config-option-note-${option.key}`}
+							>
+								{configOptionNotes[option.key]}
+							</p>
+						)}
+						<p className="text-xs opacity-50 mt-2">{option.description}</p>
+						{option.key === 'model' && modelSourceDetails}
+					</fieldset>
+				);
+			})}
+		</>
 	);
 }

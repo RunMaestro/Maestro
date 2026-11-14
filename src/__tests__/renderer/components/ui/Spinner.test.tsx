@@ -15,10 +15,11 @@ describe('Spinner', () => {
 		expect(icon).toHaveStyle({ width: '16px', height: '16px' });
 	});
 
-	it('applies custom size', () => {
-		render(<Spinner size={32} />);
+	it.each([11, 32])('sizes the wrapper and glyph to %ipx', (size) => {
+		render(<Spinner size={size} />);
 		const icon = screen.getByRole('status');
-		expect(icon).toHaveStyle({ width: '32px', height: '32px' });
+		expect(icon).toHaveStyle({ width: `${size}px`, height: `${size}px` });
+		expect(screen.getByTestId('loader2-icon')).toHaveAttribute('size', String(size));
 	});
 
 	it('applies custom color', () => {

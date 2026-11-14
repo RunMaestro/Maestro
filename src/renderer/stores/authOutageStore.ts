@@ -27,7 +27,12 @@ import { logger } from '../utils/logger';
 import { useSessionStore, selectSessionById } from './sessionStore';
 import { useAgentStore } from './agentStore';
 import { replayAfterAuth } from './retryStore';
-import type { Session } from '../types';
+import type { Session, ToolType } from '../types';
+import type { ReauthHost } from './modalStore';
+import { projectTabProvider, resolveTurnProvider } from '../utils/providerTabSessions';
+import { isValidAgentId } from '../../shared/agentIds';
+import { getProviderProfileConfig, resolveAgentAccountKey } from '../../shared/providerProfiles';
+import { getHomeDir } from '../utils/homeDir';
 
 // ============================================================================
 // Types
@@ -52,6 +57,8 @@ export interface AuthOutage {
 	providerKey: ProviderAuthKey;
 	/** Agent id (e.g. `claude-code`) whose credentials expired. */
 	toolType: string;
+	/** Login configuration captured from the failed tab, independent of later switches. */
+	host?: ReauthHost;
 	/** SSH remote whose credential store expired, when the agents run remotely. */
 	sshRemoteId?: string;
 	/** The provider's own error text from the first failure. */
@@ -116,12 +123,17 @@ export const selectAuthOutage =
  * failed locally must not be grouped with one that failed on a remote host.
  */
 export function providerKeyForSession(
-	session: Pick<Session, 'toolType' | 'sshRemoteId' | 'sessionSshRemoteConfig'>
+	session: Pick<Session, 'toolType' | 'sshRemoteId' | 'sessionSshRemoteConfig' | 'customEnvVars'>
 ): ProviderAuthKey {
 	const sshRemoteId = session.sessionSshRemoteConfig?.enabled
 		? session.sessionSshRemoteConfig.remoteId
 		: session.sshRemoteId;
-	return providerAuthKey(session.toolType, sshRemoteId);
+	const config = getProviderProfileConfig(session.toolType);
+	const explicitAccount = config && session.customEnvVars?.[config.envVar]?.trim();
+	const accountKey = explicitAccount
+		? resolveAgentAccountKey(session.toolType, session.customEnvVars ?? {}, getHomeDir())
+		: undefined;
+	return providerAuthKey(session.toolType, sshRemoteId, accountKey);
 }
 
 // ============================================================================
@@ -138,6 +150,8 @@ export interface ReportAuthFailureParams {
 	 * cleared as soon as the user acts on the prompt.
 	 */
 	tabId?: string;
+	/** Captured launch owner, including failures whose tab has already closed. */
+	provider?: ToolType;
 	/** True when a Cue pipeline run hit this rather than an interactive turn. */
 	fromPipeline?: boolean;
 }
@@ -172,6 +186,7 @@ export function reportAuthFailure({
 	sessionId,
 	message,
 	tabId,
+	provider,
 	fromPipeline,
 }: ReportAuthFailureParams): { opened: boolean; providerKey: ProviderAuthKey | null } {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
@@ -180,7 +195,22 @@ export function reportAuthFailure({
 		return { opened: false, providerKey: null };
 	}
 
-	const key = providerKeyForSession(session);
+	const tab =
+		session.aiTabs.find((candidate) => candidate.id === tabId) ??
+		session.closedTabHistory?.find((entry) => entry.tab.id === tabId)?.tab ??
+		session.orphanedThinkingTabs?.find((candidate) => candidate.id === tabId);
+	const errorProvider =
+		tab?.agentError?.agentId ??
+		(session.agentErrorTabId === tabId ? session.agentError?.agentId : undefined);
+	const failedProvider =
+		provider ??
+		(fromPipeline
+			? session.toolType
+			: errorProvider && isValidAgentId(errorProvider)
+				? errorProvider
+				: resolveTurnProvider(tab, session));
+	const host = projectTabProvider(session, tab, failedProvider).agent;
+	const key = providerKeyForSession(host);
 	const existing = useAuthOutageStore.getState().outages[key];
 
 	if (existing) {
@@ -213,7 +243,8 @@ export function reportAuthFailure({
 
 	useAuthOutageStore.getState().setOutage(key, {
 		providerKey: key,
-		toolType: session.toolType,
+		toolType: failedProvider,
+		host,
 		sshRemoteId: sshRemoteId ?? undefined,
 		message,
 		startedAt: Date.now(),
@@ -273,6 +304,7 @@ export function startManualReauth(sessionId: string): { providerKey: ProviderAut
 	useAuthOutageStore.getState().setOutage(key, {
 		providerKey: key,
 		toolType: session.toolType,
+		host: { ...session },
 		sshRemoteId: sshRemoteId ?? undefined,
 		message: '',
 		startedAt: Date.now(),
@@ -299,12 +331,16 @@ export function startManualReauth(sessionId: string): { providerKey: ProviderAut
  * Local accounts only: the quota panels skip SSH-remote agents, so this never
  * keys on a remote.
  */
-export function startAccountReauth(toolType: string): { providerKey: ProviderAuthKey } {
-	const key = providerAuthKey(toolType);
+export function startAccountReauth(
+	toolType: string,
+	host?: ReauthHost
+): { providerKey: ProviderAuthKey } {
+	const key = host ? providerKeyForSession(host) : providerAuthKey(toolType);
 	if (!useAuthOutageStore.getState().outages[key]) {
 		useAuthOutageStore.getState().setOutage(key, {
 			providerKey: key,
 			toolType,
+			host,
 			message: '',
 			startedAt: Date.now(),
 			blocked: [],
@@ -356,6 +392,10 @@ export function resolveAuthOutage(key: ProviderAuthKey, resume: boolean = true):
 			// with it by hand while the prompt was open.
 			const session = selectSessionById(sessionId)(useSessionStore.getState());
 			if (!session) return;
+			const replayTabIds = tabIds.filter((tabId) => {
+				const error = session.aiTabs.find((tab) => tab.id === tabId)?.agentError;
+				return !error || error.agentId === outage.toolType;
+			});
 
 			// Releases the held execution queue and drops the error banner. Whatever
 			// the user had queued behind the failed turn drains on its own once the
@@ -371,13 +411,19 @@ export function resolveAuthOutage(key: ProviderAuthKey, resume: boolean = true):
 				!session.agentError &&
 				!session.aiTabs.some((tab) => tab.agentError);
 			if (!healthyManualLogin) {
-				useAgentStore.getState().clearAgentError(sessionId);
+				if (tabIds.length > 0) {
+					for (const tabId of replayTabIds) {
+						useAgentStore.getState().clearAgentError(sessionId, tabId);
+					}
+				} else if (!session.agentError || session.agentError.agentId === outage.toolType) {
+					useAgentStore.getState().clearAgentError(sessionId);
+				}
 			}
 
 			// Only the tabs that actually died are replayed. Every tab has a dispatch
 			// snapshot, so replaying indiscriminately would resend turns that already
 			// succeeded.
-			replayAfterAuth(sessionId, tabIds);
+			replayAfterAuth(sessionId, replayTabIds);
 		};
 
 		if (index === 0) start();

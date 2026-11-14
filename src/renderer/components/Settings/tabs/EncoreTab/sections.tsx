@@ -9,6 +9,8 @@ import { useSettingsValues } from '../../../../hooks';
 import type { EncoreFeatureFlags } from '../../../../types';
 import type { SettingsSectionDef, SettingsSectionProps } from '../../settingsSections';
 import { CoworkingSetup } from '../../CoworkingSetup';
+import { ACappellaSettingsBody } from '../../ACappella';
+import { ENCORE_SETTINGS } from '../../searchableSettingsEncore';
 import {
 	ComputerHistorySection,
 	CueSettingsSection,
@@ -160,6 +162,23 @@ function encoreSection(
 }
 
 /**
+ * A Cappella's whole configuration is one body. It renders while the feature is
+ * off too: the Models page's reclaim-disk offer exists for the moment after A
+ * Cappella is switched off. The search still shows it inline only while on.
+ */
+function ACappella({ theme }: SettingsSectionProps) {
+	const settings = useSettingsValues();
+	return (
+		<ACappellaSettingsBody theme={theme} enabled={settings.encoreFeatures.aCappella === true} />
+	);
+}
+
+/** Every A Cappella search entry: the one body above renders them all. */
+const A_CAPPELLA_SETTING_IDS = ENCORE_SETTINGS.map((setting) => setting.id).filter(
+	(id) => id === 'encore-a-cappella' || id.startsWith('encore-a-cappella-')
+);
+
+/**
  * Features absent from this list have no inline config - the detail pane falls
  * back to their own affordance.
  */
@@ -203,4 +222,5 @@ export const ENCORE_SECTIONS: readonly EncoreSettingsSectionDef[] = [
 		['encore-dataview', 'encore-dataview-js', 'encore-dataview-trusted-roots'],
 		Dataview
 	),
+	encoreSection('aCappella', A_CAPPELLA_SETTING_IDS, ACappella),
 ];

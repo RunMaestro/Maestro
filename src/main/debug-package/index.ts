@@ -9,6 +9,11 @@
  * - NO conversation content (user messages, AI responses)
  * - NO personal file contents
  * - All file paths sanitized (usernames replaced with ~)
+ *
+ * The collectors redact as they go. The secret screen then reads the finished
+ * contents as a second check before anything is written: a credential a
+ * collector missed stops the package (no zip) unless the caller passed
+ * `allowSecrets`.
  */
 
 import { collectSystemInfo, SystemInfo } from './collectors/system';
@@ -28,7 +33,10 @@ import {
 	collectWindowsDiagnostics,
 	WindowsDiagnosticsInfo,
 } from './collectors/windows-diagnostics';
-import { createZipPackage, PackageContents } from './packager';
+import { collectVoiceRuntime } from './collectors/voice-runtime';
+import { createZipPackage, PackageContents, serializePackageEntry } from './packager';
+import { screenForSecrets } from '../local-models/secret-screen';
+import { secretScreenRefusal, type SecretScreenFields } from '../../shared/secretScan';
 import type { AutoRunSnapshotResult } from './autorun-snapshots';
 import { logger } from '../utils/logger';
 import { AgentDetector } from '../agents';
@@ -39,13 +47,22 @@ import type { DebugPackageOptions } from '../../shared/debugPackage';
 
 export type { DebugPackageOptions };
 
-export interface DebugPackageResult {
+export interface DebugPackageResult extends SecretScreenFields {
 	success: boolean;
 	path?: string; // Path to the generated zip file
 	error?: string;
 	filesIncluded: string[]; // List of files in the package
 	totalSizeBytes: number;
+	/** The caller's destination picker returned nothing (a cancelled save dialog). */
+	cancelled?: boolean;
 }
+
+/**
+ * Where the zip goes: a directory, or a function that picks one. The function
+ * form is called only AFTER the secret screen passes, so a save dialog is never
+ * raised for a package that is about to be refused. It returns null to cancel.
+ */
+export type DebugPackageDestination = string | (() => Promise<string | null>);
 
 export interface DebugPackageDependencies {
 	getAgentDetector: () => AgentDetector | null;
@@ -69,7 +86,7 @@ export interface DebugPackageDependencies {
  * The package is saved as a zip file to the specified output directory.
  */
 export async function generateDebugPackage(
-	outputDir: string,
+	destination: DebugPackageDestination,
 	deps: DebugPackageDependencies,
 	options?: DebugPackageOptions
 ): Promise<DebugPackageResult> {
@@ -142,6 +159,20 @@ export async function generateDebugPackage(
 		const errMsg = error instanceof Error ? error.message : String(error);
 		errors.push(`windows-diagnostics: ${errMsg}`);
 		logger.error('Failed to collect Windows diagnostics', 'DebugPackage', error);
+	}
+
+	// Collect A Cappella voice runtime state (always included). The self-test runs
+	// only when the Encore Feature is on, so a package built with voice switched
+	// off loads no native runtime; the static runtime table is reported either
+	// way. No model and no audio device is touched in either case.
+	try {
+		const voiceRuntime = await collectVoiceRuntime(deps.settingsStore);
+		contents['voice-runtime.json'] = voiceRuntime;
+		filesIncluded.push('voice-runtime.json');
+	} catch (error) {
+		const errMsg = error instanceof Error ? error.message : String(error);
+		errors.push(`voice-runtime: ${errMsg}`);
+		logger.error('Failed to collect voice runtime info', 'DebugPackage', error);
 	}
 
 	// Collect groups (always included)
@@ -266,6 +297,32 @@ export async function generateDebugPackage(
 		filesIncluded.push('collection-errors.json');
 	}
 
+	// Secret screen. Always the pattern scan; the model pass only when the
+	// `secret-screen` task has a model. A finding writes nothing.
+	if (opts.allowSecrets !== true) {
+		const screen = await screenForSecrets(
+			Object.entries(contents)
+				.filter(([, data]) => data !== undefined)
+				.map(([filename, data]) => ({ source: filename, text: serializePackageEntry(data) }))
+		);
+		if (screen.findings.length > 0) {
+			logger.warn(
+				`Debug package not written: ${screen.findings.length} possible secret(s) found`,
+				'DebugPackage'
+			);
+			return {
+				...secretScreenRefusal(screen.findings, 'the support package', screen.note),
+				filesIncluded: [],
+				totalSizeBytes: 0,
+			};
+		}
+	}
+
+	const outputDir = typeof destination === 'string' ? destination : await destination();
+	if (!outputDir) {
+		return { success: false, cancelled: true, filesIncluded: [], totalSizeBytes: 0 };
+	}
+
 	// Create the zip package
 	try {
 		const result = await createZipPackage(outputDir, contents);
@@ -324,6 +381,12 @@ export function previewDebugPackage(): {
 			{ id: 'storage', name: 'Storage Info', included: true, sizeEstimate: '< 2 KB' },
 			{ id: 'groupChats', name: 'Group Chat Metadata', included: true, sizeEstimate: '< 5 KB' },
 			{ id: 'batchState', name: 'Auto Run State', included: true, sizeEstimate: '< 5 KB' },
+			{
+				id: 'voiceRuntime',
+				name: 'Voice Runtime and Self-Test',
+				included: true,
+				sizeEstimate: '< 2 KB',
+			},
 		],
 	};
 }

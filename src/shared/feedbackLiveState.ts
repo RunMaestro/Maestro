@@ -23,6 +23,8 @@ import { formatDurationCompact } from './duration';
 export const FEEDBACK_LIVE_STATE_GLOBAL = '__maestroFeedbackLiveState';
 
 export interface FeedbackLiveAgentError {
+	/** Captured failure owner, independent of the agent's default. */
+	provider?: string;
 	type: string;
 	recoverable: boolean;
 	/** True while new messages are blocked until the error is resolved. */
@@ -44,6 +46,8 @@ export interface FeedbackLiveAgent {
 	/** Display name. Prompt only (the agent is local); omitted from the issue. */
 	name: string;
 	provider: string;
+	/** Conversation selection and running ownership; agent.provider stays its default. */
+	tabs?: Array<{ id: string; provider: string; turnProvider?: string; state: string }>;
 	state: string;
 	sshRemote: boolean;
 	error?: FeedbackLiveAgentError;
@@ -121,9 +125,15 @@ function describeAgent(agent: FeedbackLiveAgent, label: string, includePrivate: 
 	head.push(`state=${agent.state}`);
 	if (agent.queuedMessages > 0) head.push(`${agent.queuedMessages} queued message(s)`);
 	const lines = [`- ${head.join(', ')}`];
+	for (const [index, tab] of (agent.tabs ?? []).entries()) {
+		lines.push(
+			`  - Tab ${includePrivate ? tab.id : index + 1}: provider=${tab.provider}, state=${tab.state}${tab.turnProvider ? `, turnProvider=${tab.turnProvider}` : ''}`
+		);
+	}
 	if (agent.error) {
 		const e = agent.error;
 		const bits = [
+			e.provider ? `provider=${e.provider}` : '',
 			`error=${e.type}`,
 			e.limit ? 'usage/rate limit' : '',
 			e.recoverable ? 'recoverable' : 'not recoverable',

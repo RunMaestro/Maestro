@@ -12,6 +12,7 @@ import {
 	type AutoRunTask,
 	type SessionLifecycleEvent,
 } from '../../shared/stats-types';
+import { asTierLevel } from '../../shared/tierLevels';
 import type { MigrationRecord } from './types';
 
 // ============================================================================
@@ -35,6 +36,11 @@ export interface QueryEventRow {
 	cache_read_tokens: number | null;
 	cache_creation_tokens: number | null;
 	cost_usd: number | null;
+	/** Added in v20; NULL for a turn on the provider's own model. */
+	run_on_endpoint: string | null;
+	run_on_model: string | null;
+	/** Added in v20; NULL for a turn Auto's router did not decide. */
+	routed_tier: string | null;
 }
 
 export interface AutoRunSessionRow {
@@ -107,6 +113,9 @@ export function mapQueryEventRow(row: QueryEventRow): QueryEvent {
 		cacheReadTokens: row.cache_read_tokens ?? undefined,
 		cacheCreationTokens: row.cache_creation_tokens ?? undefined,
 		costUsd: row.cost_usd ?? undefined,
+		runOnEndpoint: row.run_on_endpoint ?? undefined,
+		runOnModel: row.run_on_model ?? undefined,
+		routedTier: asTierLevel(row.routed_tier),
 	};
 }
 

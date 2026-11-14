@@ -4,6 +4,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import type { CreateGistResult } from '../../../shared/gitUtils';
 
 export function registerGistCallbacks(
 	server: WebServer,
@@ -15,20 +16,26 @@ export function registerGistCallbacks(
 	// the AI-tab transcripts in memory, so we forward to it and let it
 	// build the payload + call the existing `git:createGist` handler.
 	server.setCreateGistCallback(
-		async (sessionId: string, description: string, isPublic: boolean, agentSessionId?: string) => {
+		async (
+			sessionId: string,
+			description: string,
+			isPublic: boolean,
+			agentSessionId?: string,
+			allowSecrets?: boolean
+		) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for createGist', 'WebServer');
 				return { success: false, error: 'Desktop app window is not available' };
 			}
 
-			return new Promise<{ success: boolean; gistUrl?: string; error?: string }>((resolve) => {
+			return new Promise<CreateGistResult>((resolve) => {
 				const responseChannel = `remote:createGist:response:${randomUUID()}`;
 				let resolved = false;
 
 				const handleResponse = (
 					_event: Electron.IpcMainEvent,
-					result: { success: boolean; gistUrl?: string; error?: string } | undefined
+					result: CreateGistResult | undefined
 				) => {
 					if (resolved) return;
 					resolved = true;
@@ -49,6 +56,7 @@ export function registerGistCallbacks(
 					description,
 					isPublic,
 					agentSessionId,
+					allowSecrets === true,
 					responseChannel
 				);
 

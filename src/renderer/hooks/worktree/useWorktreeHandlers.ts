@@ -40,6 +40,7 @@ import {
 	sessionOwnedByParent,
 } from '../../utils/worktreeDedup';
 import { runWorktreeSetupScript } from '../../utils/worktreeSetupScript';
+import { offboardBeforeRemoval, startGroupOnboarding } from '../../services/groupLifecycle';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { generateId } from '../../utils/ids';
@@ -94,7 +95,7 @@ export interface WorktreeHandlersReturn {
 	handleCloseCreateWorktreeModal: () => void;
 	handleCreateWorktree: (branchName: string, baseBranch?: string) => Promise<void>;
 	handleCloseDeleteWorktreeModal: () => void;
-	handleConfirmDeleteWorktree: () => void;
+	handleConfirmDeleteWorktree: () => Promise<void>;
 	handleConfirmAndDeleteWorktreeOnDisk: () => Promise<void>;
 	handlePRCreated: (prDetails: PRDetails) => Promise<void>;
 	refreshWorktreeState: () => Promise<void>;
@@ -949,6 +950,8 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 
 				// Auto-focus the new worktree session
 				useSessionStore.getState().setActiveSessionId(worktreeSession.id);
+				// The group's Onboarding prompt, when it has one.
+				startGroupOnboarding(worktreeSession.id);
 
 				notifyToast({
 					type: reusedExisting ? 'info' : 'success',
@@ -1084,6 +1087,8 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 
 			// Auto-focus the new worktree session
 			useSessionStore.getState().setActiveSessionId(worktreeSession.id);
+			// The group's Onboarding prompt, when it has one.
+			startGroupOnboarding(worktreeSession.id);
 
 			notifyToast({
 				type: reusedExisting ? 'info' : 'success',
@@ -1101,9 +1106,11 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 		getModalActions().setDeleteWorktreeSession(null);
 	}, []);
 
-	const handleConfirmDeleteWorktree = useCallback(() => {
+	const handleConfirmDeleteWorktree = useCallback(async () => {
 		const deleteWtSession = useModalStore.getState().getData('deleteWorktree')?.session ?? null;
 		if (!deleteWtSession) return;
+		// The group's Offboarding prompt runs first, and removal waits for it.
+		await offboardBeforeRemoval(deleteWtSession.id);
 		// Remove the session but keep the worktree on disk
 		useSessionStore
 			.getState()
@@ -1113,6 +1120,9 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 	const handleConfirmAndDeleteWorktreeOnDisk = useCallback(async () => {
 		const deleteWtSession = useModalStore.getState().getData('deleteWorktree')?.session ?? null;
 		if (!deleteWtSession) return;
+		// Offboarding runs while the worktree is still on disk, so it can tear down
+		// what lives there.
+		await offboardBeforeRemoval(deleteWtSession.id);
 		// Remove the session AND delete the worktree from disk
 		const result = await window.maestro.git.removeWorktree(deleteWtSession.cwd, true);
 		if (!result.success) {

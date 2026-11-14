@@ -12,6 +12,7 @@ import {
 	Download,
 	Clipboard,
 	Minimize2,
+	Eye,
 	GitMerge,
 	ArrowRightCircle,
 	Share2,
@@ -80,6 +81,7 @@ export interface PaneTabActions {
 	onCopyContext?: (tabId: string) => void;
 	onExportHtml?: (tabId: string) => void;
 	onPublishGist?: (tabId: string) => void;
+	onPreviewContinuity?: (tabId: string) => void;
 	onMergeWith?: (tabId: string) => void;
 	onSendToAgent?: (tabId: string) => void;
 	onSummarizeAndContinue?: (tabId: string) => void;
@@ -853,6 +855,7 @@ function PaneActionsMenu({
 								{kind === 'ai' &&
 									(actions?.onCopyContext ||
 										actions?.onSummarizeAndContinue ||
+										actions?.onPreviewContinuity ||
 										actions?.onMergeWith ||
 										actions?.onSendToAgent ||
 										actions?.onPublishGist) && <PaneMenuDivider theme={theme} />}
@@ -869,6 +872,14 @@ function PaneActionsMenu({
 										icon={Minimize2}
 										label="Context: Compact"
 										onClick={wrap(actions.onSummarizeAndContinue)!}
+										theme={theme}
+									/>
+								)}
+								{kind === 'ai' && actions?.onPreviewContinuity && (
+									<PaneMenuItem
+										icon={Eye}
+										label="Context: Preview Continuity"
+										onClick={wrap(actions.onPreviewContinuity)!}
 										theme={theme}
 									/>
 								)}

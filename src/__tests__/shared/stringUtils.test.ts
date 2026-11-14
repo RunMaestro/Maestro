@@ -5,7 +5,31 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { safeDecodeURIComponent, stripAnsiCodes } from '../../shared/stringUtils';
+import {
+	normalizedEditSimilarity,
+	safeDecodeURIComponent,
+	stripAnsiCodes,
+	stripControlCharacters,
+} from '../../shared/stringUtils';
+
+describe('normalizedEditSimilarity', () => {
+	it('handles identical and empty inputs without division by zero', () => {
+		expect(normalizedEditSimilarity('', '')).toBe(1);
+		expect(normalizedEditSimilarity('Maestro', 'Maestro')).toBe(1);
+		expect(normalizedEditSimilarity('', 'Maestro')).toBe(0);
+		expect(normalizedEditSimilarity('Maestro', '')).toBe(0);
+	});
+
+	it.each([
+		['cat', 'cut', 2 / 3],
+		['cat', 'cart', 3 / 4],
+		['kitten', 'sitting', 4 / 7],
+		['abc', 'xyz', 0],
+	])('scores edits symmetrically for %s and %s', (a, b, expected) => {
+		expect(normalizedEditSimilarity(a, b)).toBeCloseTo(expected);
+		expect(normalizedEditSimilarity(b, a)).toBeCloseTo(expected);
+	});
+});
 
 describe('stripAnsiCodes', () => {
 	it('should return empty string for empty input', () => {
@@ -262,5 +286,57 @@ describe('safeDecodeURIComponent', () => {
 		} finally {
 			spy.mockRestore();
 		}
+	});
+});
+
+describe('stripControlCharacters', () => {
+	it('leaves ordinary text, tabs and line feeds exactly as they are', () => {
+		const text = 'Plain text\twith a tab\nand a second line, with 100% of the glyphs: é ü 漢字 🙂';
+		expect(stripControlCharacters(text)).toBe(text);
+	});
+
+	it('removes an escape so a sequence cannot act, and leaves its printable remainder', () => {
+		expect(stripControlCharacters('a\u001b[2Jb')).toBe('a[2Jb');
+		expect(stripControlCharacters('a\u001b]0;title\u0007b')).toBe('a]0;titleb');
+	});
+
+	it('reads a carriage return as a line break, so \\r\\n stays one break and \\r cannot redraw a line', () => {
+		expect(stripControlCharacters('one\r\ntwo')).toBe('one\ntwo');
+		expect(stripControlCharacters('safe\rhidden')).toBe('safe\nhidden');
+	});
+
+	it.each([
+		['NUL', '\u0000'],
+		['BEL', '\u0007'],
+		['backspace', '\u0008'],
+		['vertical tab', '\u000b'],
+		['form feed', '\u000c'],
+		['SUB', '\u001a'],
+		['DEL', '\u007f'],
+		['a C1 control', '\u009b'],
+	])('removes %s', (_name, character) => {
+		expect(stripControlCharacters(`x${character}y`)).toBe('xy');
+	});
+
+	it.each([
+		['left-to-right embedding', '\u202a'],
+		['right-to-left override', '\u202e'],
+		['pop directional formatting', '\u202c'],
+		['right-to-left isolate', '\u2067'],
+		['pop directional isolate', '\u2069'],
+	])('removes the bidirectional control %s', (_name, character) => {
+		expect(stripControlCharacters(`pay${character}evil`)).toBe('payevil');
+	});
+
+	it('keeps the directional marks right-to-left writing uses, and the joiner emoji need', () => {
+		const marks = 'a\u200eb\u200fc\u061cd';
+		expect(stripControlCharacters(marks)).toBe(marks);
+		const family = '\u{1F468}\u200d\u{1F469}\u200d\u{1F467}';
+		expect(stripControlCharacters(family)).toBe(family);
+	});
+
+	it('does not need a second pass', () => {
+		const once = stripControlCharacters('a\u001b\u202e\rb');
+		expect(stripControlCharacters(once)).toBe(once);
 	});
 });

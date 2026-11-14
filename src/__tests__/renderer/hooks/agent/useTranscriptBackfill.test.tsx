@@ -86,6 +86,67 @@ beforeEach(() => {
 });
 
 describe('useTranscriptBackfill', () => {
+	it('reads the pending native owner and tags imported entries', async () => {
+		const tab = makeTab({
+			tabProvider: 'codex',
+			agentSessionId: 'older-codex',
+			pendingTranslation: 'opencode',
+			providerSessions: { opencode: { agentSessionId: 'latest-opencode' } },
+		});
+		const session = seedStore(tab);
+		read.mockResolvedValue(page(2, 2));
+		const { result } = renderHook(() => useTranscriptBackfill(session, tab));
+		await act(async () => {
+			result.current.loadEarlier();
+		});
+		await waitFor(() => expect(result.current.reachedStart).toBe(true));
+		expect(read).toHaveBeenCalledWith(
+			'opencode',
+			'/repo',
+			'latest-opencode',
+			expect.any(Object),
+			undefined
+		);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual(
+			expect.arrayContaining([expect.objectContaining({ turnProvider: 'opencode' })])
+		);
+	});
+
+	it('drops a read after the provider changes with the same native ID before rerender', async () => {
+		const tab = makeTab({ tabProvider: 'codex' });
+		const session = seedStore(tab);
+		let finish!: (value: ReturnType<typeof page>) => void;
+		read.mockReturnValue(
+			new Promise((resolve) => {
+				finish = resolve;
+			})
+		);
+		const { result, rerender } = renderHook(
+			({ session, tab }) => useTranscriptBackfill(session, tab),
+			{ initialProps: { session, tab } }
+		);
+		act(() => result.current.loadEarlier());
+		const switched = { ...tab, tabProvider: 'opencode' as const };
+		useSessionStore.setState({ sessions: [{ ...session, aiTabs: [switched] }] });
+		await act(async () => {
+			finish(page(2, 2));
+		});
+		expect(storedLogs()).toEqual([]);
+		rerender({ session: { ...session, aiTabs: [switched] }, tab: switched });
+		expect(result.current.isLoading).toBe(false);
+		read.mockResolvedValue(page(2, 2));
+		await act(async () => {
+			result.current.loadEarlier();
+		});
+		expect(read).toHaveBeenLastCalledWith(
+			'opencode',
+			'/repo',
+			tab.agentSessionId,
+			expect.objectContaining({ limit: 750 }),
+			undefined
+		);
+	});
+
 	it('prepends older history above what the tab already shows', async () => {
 		// Tab holds the newest 2 of a 10-message transcript.
 		const visible = [message(8), message(9)].map((m) => ({

@@ -17,6 +17,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { logger } from '../../utils/logger';
+import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
 import { getModalActions } from '../../stores/modalStore';
 
 // ============================================================================
@@ -145,13 +146,18 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 		if (!themeRef.current) return;
 
 		try {
+			const native = projectTabProvider(
+				resolved.session,
+				resolved.tab,
+				resolveTabNativeProvider(resolved.tab, resolved.session)
+			);
 			const { downloadTabExport } = await import('../../utils/tabExport');
 			await downloadTabExport(
-				resolved.tab,
+				native.tab!,
 				{
 					name: resolved.session.name,
 					cwd: resolved.session.cwd,
-					toolType: resolved.session.toolType,
+					toolType: native.agent.toolType,
 				},
 				themeRef.current
 			);

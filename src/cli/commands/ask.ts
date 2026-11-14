@@ -23,6 +23,8 @@ import { getSessionById, resolveAgentId } from '../services/storage';
 import { AGENT_LIFTED_CODE, liftedSendRefusal } from '../../shared/maestro-lib/agents/lift-pointer';
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
 import { readCallerIdentity } from '../../shared/agentDelegation';
+import { admitCliConsult } from '../services/consult-budget-guard';
+import { ExitCode, exitWith } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import {
 	PeerResolveError,
@@ -30,7 +32,6 @@ import {
 	routeAgentTarget,
 	withPeerAgent,
 } from '../services/peer-resolver';
-import { ExitCode } from '../exit-codes';
 
 export interface AskOptions {
 	/**
@@ -76,13 +77,17 @@ export async function ask(agentId: string, question: string, options: AskOptions
 	 * would still consult the agent, and the tests that prove a bad invocation
 	 * consults nobody can only do that if the guard actually stops.
 	 */
-	const fail = (message: string, extra: Record<string, unknown> = {}, exitCode = 1) => {
+	const fail = (
+		message: string,
+		extra: Record<string, unknown> = {},
+		exitCode: ExitCode = ExitCode.GeneralError
+	) => {
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: message, ...extra }));
 		} else {
 			console.error(`Error: ${message}`);
 		}
-		process.exit(exitCode);
+		exitWith(exitCode);
 	};
 
 	if (!question.trim()) {
@@ -105,6 +110,13 @@ export async function ask(agentId: string, question: string, options: AskOptions
 		const peerTimeoutMs = parseTimeoutMs(options.timeout);
 		if (peerTimeoutMs === null) {
 			fail(timeoutError);
+			return;
+		}
+		// A peer consult spends from this machine's chain like a local one. The
+		// chain id is not forwarded: the host keeps its own budget ledger.
+		const peerAdmission = admitCliConsult();
+		if (!peerAdmission.allowed) {
+			fail(peerAdmission.message, { code: peerAdmission.code });
 			return;
 		}
 		try {
@@ -162,11 +174,26 @@ export async function ask(agentId: string, question: string, options: AskOptions
 		return;
 	}
 
+	// The consult budget, checked last so an ask that was never going to start
+	// spends nothing. An ask from an agent's shell is a consult made while
+	// working on some user message: it spends one from that message's chain, and
+	// when the chain is out it is refused here, loudly, because an empty answer
+	// would read to the calling agent as a peer with nothing to say. An ask the
+	// user runs is their own question and always passes. Either way the
+	// consulted agent's place in the chain travels in the message and the
+	// desktop puts it in the consult's environment, so what THAT agent asks and
+	// delegates is counted against the same budget (see admitConsult).
+	const admission = admitCliConsult();
+	if (!admission.allowed) {
+		fail(admission.message, { code: admission.code });
+		return;
+	}
+
 	await consult(
 		withMaestroClient,
 		targetSessionId,
 		question,
-		{ fromSessionId, ...(fromTabId ? { fromTabId } : {}) },
+		{ fromSessionId, ...(fromTabId ? { fromTabId } : {}), consultChain: admission.chain },
 		timeoutMs,
 		options,
 		fail
@@ -230,7 +257,7 @@ async function consult(
 					...extra,
 				})
 			);
-			if (!result.success) process.exit(1);
+			if (!result.success) exitWith(ExitCode.GeneralError);
 			return;
 		}
 
@@ -244,7 +271,7 @@ async function consult(
 					? `Consult with ${result.targetAgentName ?? 'the agent'} was stopped`
 					: `Error: ${result.error || 'the agent did not answer'}`
 			);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		if (!result.answer) {
 			console.error(`Note: ${result.targetAgentName ?? 'The agent'} answered with nothing`);

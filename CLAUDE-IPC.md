@@ -10,7 +10,7 @@ The `window.maestro` API exposes the following namespaces:
 
 - `settings` - Get/set app settings
 - `sessions` / `groups` - Agent and group persistence
-- `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands); getHeadlessActivity/onHeadlessActivity (transient host process counts by target agent, versioned snapshots)
+- `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands); getHeadlessActivity/onHeadlessActivity (transient host process counts by target agent, versioned snapshots); getPendingPermissions/onPendingPermissionsChanged (native-only permission relay status)
 - `fs` - ~20 methods: readDir, readDirTree, listTreeRemote, readFile / cancelReadFile, downloadRemoteFile, writeFile, writeImageFile, mkdir, stat, rename, delete / deleteMany, copyPath, compressFolder, directorySize, countItems, startDragOut
 - `parquet` - Windowed reads over an open Parquet file (see Parquet API below)
 - `dialog` - selectFolder, saveFile
@@ -25,6 +25,21 @@ The `window.maestro` API exposes the following namespaces:
 - `shell` - OS shell integration: openExternal, openPath, trashItem, showItemInFolder, clipboard image read/write, and `capturePage(rect?)`. `capturePage` screenshots the CALLING window as a PNG data URL (`window:capturePage` shoots `event.sender`, so a surface opened in a second window captures itself); pass a viewport-relative CSS-pixel rect to narrow the shot to one region, omit it for the whole page. Resolves null when there is nothing to capture.
 - `logger` - System logging
 
+`process.getPendingPermissions()` and `process.onPendingPermissionsChanged()` return
+`PendingPermissionSnapshot` (`src/shared/pendingPermissions.ts`): a monotonic
+`version` and deduplicated compound `processIds`. Requests, decisions, timeouts,
+and spawn cleanup update the snapshot. These channels stay native-only and carry
+no prompt bodies, tool inputs, or authentication tokens. The owning renderer
+projects this status into agent runtime; browser clients receive that runtime
+through the existing transcript synchronization and private bootstrap snapshots.
+
+`process.onCodexTransport(callback)` reports `(processKey, 'app-server' | 'exec')`
+at spawn and after an app-server fallback. `process.getActiveProcesses()` includes
+the actual `codexTransport` for running Codex processes. Steering uses this runtime
+evidence, never the agent's transport preference. The renderer clears saved
+`AITab.turnCodexTransport` before restoring active processes and on exit; live
+transport and exit events take precedence over an older snapshot.
+
 ## Agent & Provider Sessions
 
 - `agents` - Detect, get, config, refresh, custom paths, getCapabilities
@@ -32,7 +47,7 @@ The `window.maestro` API exposes the following namespaces:
 - `agentError` - Agent error handling (clearError, retryAfterError)
 - `memory` - Agent memory (Claude per project, Codex per account); every method takes a `MemoryTarget` (`src/shared/agentMemory.ts`): list, read, write, create, delete, search, getPath, plus orphan handling. `search` matches a query against both filenames and file bodies and returns the first matching line per hit, so the Memory Viewer's filter box does not have to pull every file into the renderer.
 - `claude` - (Deprecated) Claude Code provider sessions - use `agentSessions` instead
-- `context` - Context grooming for cross-provider handoff: getStoredSession, groomContext, cancelGrooming
+- `context` - Context grooming for cross-provider handoff: getStoredSession, groomContext, cancelGrooming; getFootprint(agentId) reads a stored agent's context inventory on demand, with no writes or provider calls. SSH inventories remain unavailable; configured text does not prove delivery or current-window membership. The same read method is available to web desktop.
 - `crossAgent` - `@mention` consults: send, cancel (by source agent), onChunk
 - `groupChat` - Group chat CRUD, moderator start/stop, submitMessage, the main-owned queue (getQueue, queueAdd/Remove/Reorder/Resume, onQueueState)
 - `tabNaming` - generateTabName (auto-naming a tab from its first message)
@@ -44,6 +59,12 @@ The `window.maestro` API exposes the following namespaces:
 - `coworking` - Computer-use coworking: install status, terminal / browser session sync, buffer and browser-op request relays
 - `browserSession` - clearSessionData for an in-app browser partition
 - `contextTimeline` - Context Timeline capture log: getCaptures, clearCaptures
+
+Message deletion uses `agentSessions.deleteMessagePair()` with the message's
+provider and its native session, including parked provider sessions. Await a
+successful result before removing the visible message pair or command history.
+Unsupported providers, remote sessions, and failed requests keep the message
+visible and show an error. Preserve logs appended while deletion is pending.
 
 ## Git Integration
 
@@ -89,6 +110,27 @@ The `window.maestro` API exposes the following namespaces:
 - `debug` - Debug package create / preview, getAppStats, Chromium profiling start / stop, simulateAuthExpiry
 - `documentGraph` - File watching: watchFolder, unwatchFolder
 - `documentGraph` - Real-time updates via `documentGraph:filesChanged` event
+
+`window.maestro.localModels.proxy.block(hash, range?)` returns the cached original
+and frozen replacement. An optional `{ startLine, endLine }` selects inclusive,
+1-based original lines only, capped at 1,000 lines and 256 KiB. Range replies add
+`originalRange` with requested/returned bounds, completeness and `hasMore`; a
+missing original gives null text and range metadata. Token totals and replacement
+text always describe the full block. IPC and the CLI WebSocket route validate
+ranges before archive access; invalid bounds and failed reads reject explicitly.
+
+## Semantic Index API
+
+`window.maestro.localModels.semanticIndex` exposes the shared index behind Semantic search:
+
+| Method                                              | Result                                                                                                                                               |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status()` / `onProgress(handler)`                  | The indexer's source counts and state; progress is broadcast to every window.                                                                        |
+| `storage()`                                         | Per-model chunk counts and disk bytes across the database, write-ahead log, and shared-memory file.                                                  |
+| `browse({ modelId, sourceType?, offset?, limit? })` | A page of indexed sources with readable previews when originals are available. Defaults to 20 sources, capped at 50. Loads no model.                 |
+| `clear()`                                           | Aborts and drains active indexing, clears all models' cached vectors, invalidates search memory, compacts SQLite, and returns updated storage usage. |
+
+Clearing preserves History, notes, and transcripts. The next full pass is deferred for 15 minutes; new records can still be indexed incrementally while Semantic search is assigned a model. Route clearing through `clearSemanticIndex()` so an in-flight batch cannot repopulate a cache just cleared.
 
 ## History API
 

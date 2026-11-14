@@ -411,7 +411,10 @@ describe('useAgentSessionIdListener', () => {
 			});
 			expect(useSessionStore.getState().sessions[0]).toEqual({
 				...captured,
-				aiTabs: [{ ...captured.aiTabs[0], awaitingSessionId: false }],
+				// The turn's codified session id follows the observed one.
+				aiTabs: [
+					{ ...captured.aiTabs[0], awaitingSessionId: false, turnSessionId: 'native-observed' },
+				],
 			});
 			expect(window.maestro.agentSessions.registerSessionOrigin).not.toHaveBeenCalled();
 			expect(batched.updateContextUsage).not.toHaveBeenCalled();
@@ -457,6 +460,10 @@ describe('useAgentSessionIdListener', () => {
 					aiTabs: [
 						{
 							...captured.aiTabs[0],
+							// A parked slot that gains a conversation marks the tab for
+							// translation, and the turn's codified session id follows it.
+							pendingTranslation: 'grok',
+							turnSessionId: 'native-observed',
 							providerSessions: {
 								grok: {
 									agentSessionId: 'native-observed',
@@ -772,6 +779,8 @@ describe('useAgentSessionIdListener', () => {
 				...parked,
 				aiTabs: parked.aiTabs.map((tab, i) => ({
 					...tab,
+					pendingTranslation: 'grok',
+					turnSessionId: 'native-observed',
 					providerSessions: {
 						grok: {
 							...tab.providerSessions!.grok,
@@ -785,4 +794,29 @@ describe('useAgentSessionIdListener', () => {
 			expect(useNotificationStore.getState().toasts).toEqual([]);
 		});
 	});
+});
+
+it('writes a pinned Codex identity to its live tab without changing the Claude agent identity', async () => {
+	const tab = createMockAITab({
+		id: 'tab-1',
+		tabProvider: 'codex',
+		turnProvider: 'codex',
+		awaitingSessionId: true,
+	});
+	useSessionStore.setState({
+		sessions: [
+			createMockSession({
+				id: 'sess-1',
+				toolType: 'claude-code',
+				agentSessionId: 'claude-default',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			}),
+		],
+	});
+	renderHook(() => useAgentSessionIdListener({ batchedUpdater: makeBatched() }));
+	await handler!('sess-1-ai-tab-1', 'codex-native');
+	const session = useSessionStore.getState().sessions[0];
+	expect(session.aiTabs[0].agentSessionId).toBe('codex-native');
+	expect(session.agentSessionId).toBe('claude-default');
 });

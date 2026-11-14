@@ -1,4 +1,4 @@
-import type { TranslationReport } from '../../../../shared/maestro-lib/translation/types';
+import type { TabConfigResult } from '../../../../shared/desktopTabs';
 import type {
 	NotificationInboxRequest,
 	NotificationInboxResult,
@@ -66,9 +66,22 @@ import type {
 	CueBundleImportRequest,
 } from '../../../cue-bundle-service';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
+import type { GroupSeededCreateReport } from '../../../../shared/groupAgentDefaults';
+import type { OpenUiSurfaceRequest } from '../../../../shared/uiSurfaces';
+import type { CreateGistResult } from '../../../../shared/gitUtils';
+import type { CueGateSetting, CueGateWriteResult } from '../../../../shared/cue/gate';
+import type {
+	CueInjectionScreenSetting,
+	CueInjectionScreenWriteResult,
+} from '../../../../shared/cue/injection-screen';
 import type { AgentDelegationNotice } from '../../../../shared/agentDelegation';
+import type { ConsultChain } from '../../../../shared/consultBudget';
 import type { MentionRouting } from '../../../../shared/crossAgentContext';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../../shared/groupAppearance';
+import type {
+	GroupSettingsUpdateRequest,
+	GroupSettingsUpdateResult,
+} from '../../../../shared/groupSettingsUpdate';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
 import type {
@@ -141,6 +154,7 @@ export interface MessageHandlerCallbacks {
 		force?: boolean,
 		images?: string[],
 		background?: boolean,
+		consultChain?: ConsultChain,
 		mentionRouting?: MentionRouting,
 		requireDeliveryReceipt?: boolean,
 		pianolaDispatchId?: string
@@ -186,9 +200,9 @@ export interface MessageHandlerCallbacks {
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
-	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
 	notificationInbox?: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>;
-	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
+	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab and sub-tab id. */
+	openModal: (params: OpenUiSurfaceRequest) => Promise<boolean>;
 	/** Render the Document Graph over an explicit file set or directory. */
 	openDocumentGraph: (params: {
 		sessionId: string;
@@ -221,6 +235,7 @@ export interface MessageHandlerCallbacks {
 		prompt: string,
 		background?: boolean,
 		hidden?: boolean,
+		consultChain?: ConsultChain,
 		mentionRouting?: MentionRouting,
 		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 	) => Promise<import('../../types').NewAITabWithPromptResult>;
@@ -238,6 +253,7 @@ export interface MessageHandlerCallbacks {
 		images?: string[],
 		background?: boolean,
 		held?: boolean,
+		consultChain?: ConsultChain,
 		mentionRouting?: MentionRouting,
 		dispatchCallback?: boolean,
 		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaQueueControl
@@ -283,6 +299,8 @@ export interface MessageHandlerCallbacks {
 			 */
 			model?: string;
 			effort?: string;
+			/** Per-run model source (CLI `--model-source`), in place of the agent's own. */
+			runOn?: import('../../../../shared/local-models/run-on').RunOnTarget;
 			/** Skip the documents' MAESTRO:MODEL markers for this run (CLI `--ignore-model-hints`). */
 			ignoreModelHints?: boolean;
 			worktree?: {
@@ -309,6 +327,7 @@ export interface MessageHandlerCallbacks {
 			maxIterations?: number | null;
 			model?: string;
 			effort?: string;
+			runOn?: import('../../../../shared/local-models/run-on').RunOnTarget;
 		}
 	) => Promise<{ success: boolean; tabId?: string; code?: string; error?: string }>;
 	setSessionAutoRunFolder: (
@@ -368,6 +387,10 @@ export interface MessageHandlerCallbacks {
 	) => Promise<{ id: string } | null>;
 	renameGroup: (groupId: string, name: string) => Promise<boolean>;
 	updateGroup: (groupId: string, update: GroupUpdateRequest) => Promise<boolean>;
+	updateGroupSettings: (
+		groupId: string,
+		request: GroupSettingsUpdateRequest
+	) => Promise<GroupSettingsUpdateResult>;
 	deleteGroup: (groupId: string) => Promise<boolean>;
 	moveSessionToGroup: (sessionId: string, groupId: string | null) => Promise<boolean>;
 	createSession: (
@@ -377,7 +400,7 @@ export interface MessageHandlerCallbacks {
 		groupId?: string,
 		config?: CreateSessionConfig,
 		background?: boolean
-	) => Promise<{ sessionId: string } | null>;
+	) => Promise<({ sessionId: string } & Partial<GroupSeededCreateReport>) | null>;
 	createWorktreeSession: (
 		parentSessionId: string,
 		config: {
@@ -399,7 +422,7 @@ export interface MessageHandlerCallbacks {
 	updateSessionConfig: (
 		sessionId: string,
 		configPatch: Record<string, unknown>
-	) => Promise<TranslationReport>;
+	) => Promise<TabConfigResult>;
 	getGitStatus: (sessionId: string) => Promise<GitStatusResult>;
 	getGitDiff: (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
 	getGitBranchesForSession: (sessionId: string) => Promise<GitBranchesResult>;
@@ -427,10 +450,19 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		description: string,
 		isPublic: boolean,
-		agentSessionId?: string
-	) => Promise<{ success: boolean; gistUrl?: string; error?: string }>;
+		agentSessionId?: string,
+		allowSecrets?: boolean
+	) => Promise<CreateGistResult>;
 	getCueSubscriptions: (sessionId?: string) => Promise<CueSubscriptionInfo[]>;
 	toggleCueSubscription: (subscriptionId: string, enabled: boolean) => Promise<boolean>;
+	setCueSubscriptionGate: (
+		subscriptionId: string,
+		gate: CueGateSetting | null
+	) => Promise<CueGateWriteResult>;
+	setCueSubscriptionInjectionScreen: (
+		subscriptionId: string,
+		setting: CueInjectionScreenSetting
+	) => Promise<CueInjectionScreenWriteResult>;
 	getCueActivity: (sessionId?: string, limit?: number) => Promise<CueActivityEntry[]>;
 	triggerCueSubscription: (
 		subscriptionName: string,

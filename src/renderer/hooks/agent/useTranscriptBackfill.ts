@@ -31,6 +31,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AITab, Session } from '../../types';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
+import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
 import { logger } from '../../utils/logger';
 import {
 	TRANSCRIPT_RESUME_READ_LIMIT,
@@ -87,9 +88,14 @@ export function useTranscriptBackfill(
 	const sessionId = session.id;
 	// Same host and path the tab was resumed from (see handleResumeSession).
 	const { projectPathForSessions: projectRoot, sshRemoteId } = resolveSessionProjectPath(session);
-	const toolType = session.toolType;
+	const native = projectTabProvider(
+		session,
+		activeTab,
+		resolveTabNativeProvider(activeTab, session)
+	);
+	const toolType = native.agent.toolType;
 	const tabId = activeTab?.id ?? null;
-	const agentSessionId = activeTab?.agentSessionId ?? null;
+	const agentSessionId = native.tab?.agentSessionId ?? null;
 
 	const [isLoading, setIsLoading] = useState(false);
 	const [reachedStart, setReachedStart] = useState(false);
@@ -120,7 +126,7 @@ export function useTranscriptBackfill(
 		setIsLoading(false);
 		setReachedStart(false);
 		setError(null);
-	}, [tabId, agentSessionId]);
+	}, [sessionId, tabId, agentSessionId, toolType, projectRoot, sshRemoteId]);
 
 	const loadEarlier = useCallback(() => {
 		if (inFlightRef.current || reachedStart) return;
@@ -131,10 +137,28 @@ export function useTranscriptBackfill(
 		setError(null);
 
 		const generation = generationRef.current;
-		const isStale = () => generationRef.current !== generation;
+		const isStale = () => {
+			if (generationRef.current !== generation) return true;
+			const currentSession = selectSessionById(sessionId)(useSessionStore.getState());
+			const currentTab = currentSession?.aiTabs.find((t) => t.id === tabId);
+			if (!currentSession || !currentTab) return true;
+			const current = projectTabProvider(
+				currentSession,
+				currentTab,
+				resolveTabNativeProvider(currentTab, currentSession)
+			);
+			const path = resolveSessionProjectPath(currentSession);
+			return (
+				current.agent.toolType !== toolType ||
+				current.tab?.agentSessionId !== agentSessionId ||
+				path.projectPathForSessions !== projectRoot ||
+				path.sshRemoteId !== sshRemoteId
+			);
+		};
 
 		void (async () => {
 			try {
+				if (isStale()) return;
 				const tab = selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs?.find(
 					(t) => t.id === tabId
 				);
@@ -149,7 +173,7 @@ export function useTranscriptBackfill(
 						TRANSCRIPT_BACKFILL_PAGE;
 
 					const result = await window.maestro.agentSessions.read(
-						toolType || 'claude-code',
+						toolType,
 						projectRoot,
 						agentSessionId,
 						{ offset: 0, limit: nextWindow },
@@ -162,7 +186,7 @@ export function useTranscriptBackfill(
 
 					const loaded = transcriptMessagesToLogEntries(
 						stripSynopsisTurns((result.messages ?? []) as TranscriptMessage[])
-					);
+					).map((entry) => ({ ...entry, turnProvider: toolType }));
 					const older = selectOlderEntries(loaded, visible);
 
 					if (older.length > 0) {

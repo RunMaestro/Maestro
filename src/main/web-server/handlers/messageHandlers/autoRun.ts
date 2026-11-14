@@ -15,6 +15,24 @@ import type { AutoRunState } from '../../types';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 import { readBackgroundField } from '../../../../shared/focusPlacement';
+import { parseRunOnTarget, type RunOnTarget } from '../../../../shared/local-models/run-on';
+
+/**
+ * A run's own model source (CLI `--model-source`), read as data. `undefined` when the
+ * message names none; `null` after an error was sent, because a malformed
+ * target is refused, never launched on the provider in its place.
+ */
+function readRunOnField(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): RunOnTarget | undefined | null {
+	if (message.runOn === undefined) return undefined;
+	const parsed = parseRunOnTarget(message.runOn);
+	if (parsed.ok) return parsed.target;
+	ctx.sendError(client, `runOn: ${parsed.error}`);
+	return null;
+}
 
 /**
  * Validate that a filename is safe for Auto Run read/save operations.
@@ -165,6 +183,8 @@ export function handleConfigureAutoRun(
 		ctx.sendError(client, 'ignoreModelHints must be a boolean');
 		return;
 	}
+	const runOn = readRunOnField(ctx, client, message);
+	if (runOn === null) return;
 
 	// Validate optional worktree config - desktop app uses this to create a
 	// git worktree, checkout the branch, and optionally open a PR on completion.
@@ -227,6 +247,7 @@ export function handleConfigureAutoRun(
 		launch: message.launch as boolean | undefined,
 		model: message.model as string | undefined,
 		effort: message.effort as string | undefined,
+		runOn,
 		ignoreModelHints: message.ignoreModelHints === true || undefined,
 		worktree,
 	};
@@ -313,6 +334,9 @@ export function handleLaunchGoalRun(
 		return;
 	}
 
+	const runOn = readRunOnField(ctx, client, message);
+	if (runOn === null) return;
+
 	if (!ctx.callbacks.launchGoalRun) {
 		ctx.sendError(client, 'Goal run launch not configured');
 		return;
@@ -325,6 +349,7 @@ export function handleLaunchGoalRun(
 			maxIterations,
 			model: message.model as string | undefined,
 			effort: message.effort as string | undefined,
+			runOn,
 		})
 		.then((result) => {
 			ctx.send(client, {

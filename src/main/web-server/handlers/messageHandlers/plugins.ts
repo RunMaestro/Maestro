@@ -20,6 +20,15 @@ import {
 import { evaluatePluginDispatch } from '../../../../shared/plugins/plugin-dispatch-gate';
 import { relayMailReadOperation } from '../../../plugins/relay-mail/contract';
 import { pluginToolRunIdentity } from '../../../plugins/plugin-tool-run-identity';
+import { isTurnModelName } from '../../../../shared/autoModel';
+import {
+	callTokenProxyRetrieveTool,
+	coreBridgeToolsFor,
+	isCoreBridgeToolId,
+	type CoreBridgeOffer,
+} from '../../../local-models/proxy/retrieve-tool';
+import { captureException } from '../../../utils/sentry';
+import { parseConsultChain } from '../../../../shared/consultBudget';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -27,14 +36,30 @@ import type { WebClient, WebClientMessage, MessageHandlerContext } from './types
  * Handle plugins_list_tools - project the registered plugin `tools`
  * contributions into MCP tool defs for the `maestro-cli mcp serve` bridge.
  * Returns an MCP-safe `name` (namespaced id, `/`->`__`) plus the real
- * `toolId` so the bridge can reverse-map on call. Empty when the plugins flag
- * is off or no manager is wired.
+ * `toolId` so the bridge can reverse-map on call. Plugin tools are empty when
+ * the plugins flag is off or no manager is wired.
+ *
+ * Core tools come first, and only for the agent the bridge's run proof names
+ * (today the token proxy's retrieve tool, for an agent with retrieval in
+ * effect). They do not depend on the plugins flag. When one is offered the
+ * reply also carries the MCP server's `instructions`.
  */
-export function handlePluginsListTools(
+export async function handlePluginsListTools(
 	ctx: MessageHandlerContext,
 	client: WebClient,
 	message: WebClientMessage
-): void {
+): Promise<void> {
+	const callerAgentId = Object.prototype.hasOwnProperty.call(message, 'runToken')
+		? pluginToolRunIdentity.resolve(message.runToken).callerAgentId
+		: null;
+	let core: CoreBridgeOffer = { tools: [] };
+	try {
+		core = await coreBridgeToolsFor(callerAgentId);
+	} catch (error) {
+		// Plugin tools still list; the failure reaches Sentry, not the model.
+		logger.warn('[Web] plugins_list_tools could not resolve core tools', LOG_CONTEXT);
+		void captureException(error, { context: 'plugins_list_tools core tools' });
+	}
 	const manager = getActivePluginManager();
 	let tools: Array<{
 		name: string;
@@ -70,7 +95,8 @@ export function handlePluginsListTools(
 	ctx.send(client, {
 		type: 'plugins_list_tools_result',
 		success: true,
-		tools,
+		tools: [...core.tools, ...tools],
+		...(core.instructions ? { instructions: core.instructions } : {}),
 		requestId: message.requestId,
 	});
 }
@@ -117,6 +143,20 @@ export async function handlePluginsSendAgent(
 	const prompt = message.prompt;
 	const sessionId = message.providerSessionId;
 	const requiredToolId = message.requiredToolId;
+	// `maestro-cli send --model`: this one turn's model, in place of the agent's own.
+	const model = message.model;
+	// The place in a consult chain the CLI admitted this send at. The CLI has
+	// already spent for it; here it only has to reach the agent's environment,
+	// which this process spawns and the CLI's own shell therefore cannot supply.
+	// Anything that is not a chain reads as none.
+	const consultChain = parseConsultChain(message.consultChain);
+	const turn =
+		typeof model === 'string' || consultChain
+			? {
+					...(typeof model === 'string' ? { model } : {}),
+					...(consultChain ? { consultChain } : {}),
+				}
+			: undefined;
 	const requirePluginTools = message.requirePluginTools;
 	if (
 		(requirePluginTools !== undefined && typeof requirePluginTools !== 'boolean') ||
@@ -126,7 +166,8 @@ export async function handlePluginsSendAgent(
 		!prompt.trim() ||
 		prompt.length > 64 * 1024 ||
 		(sessionId !== undefined &&
-			(typeof sessionId !== 'string' || !/^[^\x00-\x1f\x7f]{1,256}$/.test(sessionId)))
+			(typeof sessionId !== 'string' || !/^[^\x00-\x1f\x7f]{1,256}$/.test(sessionId))) ||
+		(model !== undefined && (typeof model !== 'string' || !isTurnModelName(model)))
 	) {
 		respond({ available: true, success: false, error: 'Invalid headless agent request' });
 		return;
@@ -146,7 +187,7 @@ export async function handlePluginsSendAgent(
 		const onClose = (): void => controller.abort();
 		client.socket.once('close', onClose);
 		try {
-			const reply = await run(
+			const args = [
 				agentId,
 				prompt,
 				sessionId as string | undefined,
@@ -155,8 +196,14 @@ export async function handlePluginsSendAgent(
 				'auto',
 				undefined,
 				requiredToolId as string | undefined,
-				...(requirePluginTools === true ? ([true] as const) : [])
-			);
+			] as const;
+			// CLI sends acquire their own writer lease. Turn settings follow that
+			// host-only flag, so a model override must not bypass writer ownership.
+			const reply = turn
+				? await run(...args, requirePluginTools === true, undefined, turn)
+				: requirePluginTools === true
+					? await run(...args, true)
+					: await run(...args);
 			const toolStillActive =
 				requiredToolId === undefined ||
 				(isPluginsFeatureEnabled() &&
@@ -236,6 +283,22 @@ export async function handlePluginsCallTool(
 		const toolId = typeof message.toolId === 'string' ? message.toolId : '';
 		if (!toolId) {
 			respond({ ok: false, error: verified ? 'PLUGIN_INVALID' : 'Missing toolId' });
+			return;
+		}
+		if (isCoreBridgeToolId(toolId)) {
+			// A core tool runs fixed host code and needs no plugin. It answers only
+			// the agent the run proof names, and only while that agent is offered it.
+			const callerAgentId = verified ? pluginToolRunIdentity.resolve(runProof).callerAgentId : null;
+			const offer = await coreBridgeToolsFor(callerAgentId);
+			if (!offer.tools.some((tool) => tool.toolId === toolId)) {
+				respond({ ok: false, error: verified ? 'PLUGIN_DENIED' : `Unknown tool: ${toolId}` });
+				return;
+			}
+			const result = await callTokenProxyRetrieveTool('args' in message ? message.args : undefined);
+			// `toolError` is a message the model may read, even on a verified call.
+			respond(
+				result.ok ? { ok: true, result: result.text } : { ok: false, toolError: result.error }
+			);
 			return;
 		}
 		const manager = getActivePluginManager();

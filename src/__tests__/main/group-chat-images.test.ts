@@ -59,7 +59,9 @@ vi.mock('../../main/group-chat/group-chat-storage', () => ({
 }));
 
 // Mock group-chat-log
-vi.mock('../../main/group-chat/group-chat-log', () => ({
+vi.mock('../../main/group-chat/group-chat-log', async (importOriginal) => ({
+	// The prompt formatter is pure, so the real one runs.
+	...(await importOriginal<typeof import('../../main/group-chat/group-chat-log')>()),
 	readLog: vi.fn(),
 	appendToLog: vi.fn(),
 }));

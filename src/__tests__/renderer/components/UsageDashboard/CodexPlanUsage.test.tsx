@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { providerAuthKey } from '../../../../shared/providerAuthIdentity';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { CodexPlanUsage } from '../../../../renderer/components/UsageDashboard/CodexPlanUsage';
 import { useCodexUsageStore } from '../../../../renderer/stores/codexUsageStore';
@@ -457,11 +458,11 @@ describe('CodexPlanUsage - non-authenticated row', () => {
 
 		await waitFor(() => expect(selectModalData('reauth')(useModalStore.getState())).toBeDefined());
 		const data = selectModalData('reauth')(useModalStore.getState())!;
-		expect(data.providerKey).toBe('codex');
+		expect(data.providerKey).toBe(providerAuthKey('codex', undefined, '/Users/me/.codex-banaco'));
 		// The login is pinned to THIS account, not to whichever agent failed first.
 		expect(data.host?.toolType).toBe('codex');
 		expect(data.host?.customEnvVars).toEqual({ CODEX_HOME: '/Users/me/.codex-banaco' });
-		expect(useAuthOutageStore.getState().outages.codex?.initiatedBy).toBe('user');
+		expect(useAuthOutageStore.getState().outages[data.providerKey]?.initiatedBy).toBe('user');
 		expect(refreshCodexUsageSnapshotsMock).not.toHaveBeenCalled();
 
 		useModalStore.getState().closeModal('reauth');

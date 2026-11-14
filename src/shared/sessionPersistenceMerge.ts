@@ -55,17 +55,33 @@ const rows: Record<string, true> = {
  */
 const tabRows = new Set(['aiTabs', 'filePreviewTabs', 'browserTabs', 'terminalTabs']);
 
-/**
- * Merge collection edits against their common baseline while preserving concurrent stored
- * changes. Queue IDs survive type edits, newer recovery rows survive stale removals, and
- * reordering cannot cross a held item on the same tab.
- */
+// These fields describe one native slot. A provider switch must never merge a
+// pin from one client with another client's native ID or parked selections.
+const tabProviderFields = [
+	'tabProvider',
+	'agentSessionId',
+	'providerSessions',
+	'pendingTranslation',
+	'usageStats',
+	'customModel',
+	'customEffort',
+	'runOn',
+	'awaitingSessionId',
+] as const;
+const tabIdentityFields = [
+	'tabProvider',
+	'agentSessionId',
+	'providerSessions',
+	'pendingTranslation',
+] as const;
+
 function mergeRows(
 	incoming: RecordData[],
 	stored: RecordData[],
 	baseline: RecordData[],
 	preserveClient: boolean,
 	preserveLive: boolean,
+	aiTabs = false,
 	queueRows = false,
 	removalWins = false
 ): RecordData[] {
@@ -88,7 +104,14 @@ function mergeRows(
 		const change = next.get(id);
 		const base = before.get(id);
 		if (change) {
-			const merged = mergeRecord(change, current, base ?? current, preserveClient, preserveLive);
+			const merged = mergeRecord(
+				change,
+				current,
+				base ?? current,
+				preserveClient,
+				preserveLive,
+				aiTabs
+			);
 			if (queueRows && current.pendingAdmissionId) {
 				// Reordering checks below must see the saved target and hold, even
 				// when a stale client tried changing or removing them in this save.
@@ -179,12 +202,25 @@ function mergeRecord(
 	stored: RecordData,
 	baseline: RecordData,
 	preserveClient: boolean,
-	preserveLive: boolean
+	preserveLive: boolean,
+	aiTab = false
 ): RecordData {
 	const result = { ...stored };
+	const slotChanged =
+		aiTab &&
+		tabIdentityFields.some(
+			(field) => !same(incoming[field], baseline[field]) || !same(stored[field], baseline[field])
+		);
+	if (slotChanged && tabProviderFields.every((field) => same(stored[field], baseline[field]))) {
+		for (const field of tabProviderFields) {
+			if (incoming[field] === undefined) delete result[field];
+			else result[field] = incoming[field];
+		}
+	}
 	for (const field of new Set([...Object.keys(incoming), ...Object.keys(baseline)])) {
 		if (
 			field === 'deferredContent' ||
+			(slotChanged && (tabProviderFields as readonly string[]).includes(field)) ||
 			field === 'admissionRelease' ||
 			(preserveClient && clientFields[field]) ||
 			(preserveLive && liveFields[field])
@@ -201,11 +237,19 @@ function mergeRecord(
 				Array.isArray(before) ? before : [],
 				preserveClient,
 				preserveLive,
+				field === 'aiTabs',
 				field === 'executionQueue',
 				tabRows.has(field)
 			);
 		} else if (field === 'tab' && change && current && before) {
-			result[field] = mergeRecord(change, current, before, preserveClient, preserveLive);
+			result[field] = mergeRecord(
+				change,
+				current,
+				before,
+				preserveClient,
+				preserveLive,
+				incoming.type === 'ai'
+			);
 		} else if (same(current, before)) {
 			if (change === undefined) delete result[field];
 			else result[field] = change;

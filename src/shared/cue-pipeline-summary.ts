@@ -12,7 +12,12 @@
  *   - `derivePipelineHealth(...)`   → whether it is working (status + detail)
  */
 
-import { normalizeWebhookPath, type CueRunResult } from './cue/contracts';
+import {
+	isCueRunBlocked,
+	isCueRunSkipped,
+	normalizeWebhookPath,
+	type CueRunResult,
+} from './cue/contracts';
 import { parseSubscriptionName, CUE_EVENT_LABELS } from './cue/cue-summary';
 import type {
 	AgentNodeData,
@@ -424,7 +429,12 @@ function runBelongsToPipeline(run: CueRunResult, pipelineName: string): boolean 
 
 /** A run that reached a terminal state - `stopped` counts as "did not finish". */
 function isFailure(run: CueRunResult): boolean {
-	return run.status === 'failed' || run.status === 'timeout' || run.status === 'stopped';
+	return (
+		run.status === 'failed' ||
+		run.status === 'timeout' ||
+		run.status === 'stopped' ||
+		isCueRunBlocked(run.status)
+	);
 }
 
 export function derivePipelineHealth(
@@ -446,8 +456,17 @@ export function derivePipelineHealth(
 
 	// The activity log arrives newest-first from the engine, but sort defensively
 	// so a re-ordered or merged feed can't make "last run" mean "oldest run".
+	// A `gated` entry is an event the gate skipped, not a run, so it can be
+	// neither "the last run" nor one of the runs that succeeded. A run the
+	// injection screen blocked was not spawned either, but it stays: a
+	// pipeline whose events are being refused is not healthy.
 	const finished = ctx.activityLog
-		.filter((r) => r.status !== 'running' && runBelongsToPipeline(r, pipeline.name))
+		.filter(
+			(r) =>
+				r.status !== 'running' &&
+				(!isCueRunSkipped(r.status) || isCueRunBlocked(r.status)) &&
+				runBelongsToPipeline(r, pipeline.name)
+		)
 		.sort((a, b) => new Date(b.endedAt).getTime() - new Date(a.endedAt).getTime());
 	const lastRun = finished[0];
 	const recentFailureCount = finished.filter(isFailure).length;
@@ -492,7 +511,9 @@ export function derivePipelineHealth(
 				? 'timed out'
 				: lastRun.status === 'stopped'
 					? 'was stopped'
-					: 'failed';
+					: isCueRunBlocked(lastRun.status)
+						? 'was blocked by the injection screen'
+						: 'failed';
 		return {
 			...base,
 			status: 'failing',

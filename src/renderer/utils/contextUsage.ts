@@ -428,6 +428,42 @@ export function calculateContextDisplay(
 	return { tokens, percentage, contextWindow, trustworthy };
 }
 
+/** A tab's context fill as the provider reported it, read the way the gauge reads it. */
+export interface TabContextReading {
+	tokens: number;
+	window: number;
+	/** Whole percent. */
+	percent: number;
+}
+
+/**
+ * The context fill a tab's stored usage record shows, or `null` when it shows
+ * none that can be trusted: no usage yet, no window, or accumulated tokens that
+ * overflow the window with no preserved fallback (see {@link calculateContextDisplay}).
+ * Null means "no reading", never 0%.
+ *
+ * Shared by the Tab Switcher's gauge and the continuity preview, so the two
+ * cannot read one tab differently.
+ */
+export function readTabContextUsage(
+	usageStats:
+		| (GaugeTokenStats & { absoluteUsage?: GaugeTokenStats; contextWindow?: number })
+		| null
+		| undefined,
+	agentId?: ToolType | string
+): TabContextReading | null {
+	const window = usageStats?.contextWindow;
+	if (!usageStats || !window) return null;
+	const result = calculateContextDisplay(
+		resolveGaugeTokenStats(usageStats, agentId),
+		window,
+		agentId
+	);
+	return result.trustworthy
+		? { tokens: result.tokens, window: result.contextWindow, percent: result.percentage }
+		: null;
+}
+
 /**
  * Result of an over-limit display calculation.
  *

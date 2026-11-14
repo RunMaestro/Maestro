@@ -1,5 +1,6 @@
 import { lazy, Suspense, memo, useCallback, useMemo } from 'react';
 import type React from 'react';
+import type { ToolType } from '../../types';
 import type {
 	Theme,
 	Session,
@@ -21,6 +22,7 @@ import type { FlatFileItem } from '../FileSearchModal';
 // Modal store (for reading per-modal data passed by callers)
 import { useModalStore, selectModalData, selectModalOpen } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { VoiceSetupModal } from '../Settings/ACappella/VoiceSetupModal';
 import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { GitLogModalData } from '../../stores/modalStore';
 
@@ -32,7 +34,9 @@ import { CrossTabSearchModal } from '../CrossTabSearchModal';
 import type { CrossTabSearchJumpTarget } from '../CrossTabSearchModal';
 import { SnoozeTabModal } from '../SnoozeTabModal';
 import { ModelEffortModal } from '../ModelEffortModal';
+import { ContinuityPreviewModal } from '../ContinuityPreviewModal';
 import { SnoozedTabsModal } from '../SnoozedTabsModal';
+import { TabCleanupModal } from '../TabCleanupModal';
 import { snoozeTabWithMirror } from '../../services/snoozeActions';
 import { PromptComposerModal } from '../PromptComposerModal';
 import { ExecutionQueueBrowser } from '../ExecutionQueueBrowser';
@@ -248,7 +252,8 @@ export interface AppUtilityModalsProps {
 		agentSessionId: string,
 		projectPath: string,
 		sessionName: string,
-		starred?: boolean
+		starred?: boolean,
+		provider?: ToolType
 	) => void;
 	/** Whether colorblind-friendly colors should be used for extension badges */
 	colorBlindMode?: boolean;
@@ -557,12 +562,35 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	const snoozeTabOpen = useModalStore(selectModalOpen('snoozeTab'));
 	const snoozeTabData = useModalStore(selectModalData('snoozeTab'));
 	const snoozedTabsOpen = useModalStore(selectModalOpen('snoozedTabs'));
+	// Tab Cleanup Suggestions asks main for its list itself; it needs the theme.
+	const tabCleanupOpen = useModalStore(selectModalOpen('tabCleanup'));
+	const closeTabCleanup = useCallback(() => useModalStore.getState().closeModal('tabCleanup'), []);
 	// Model & effort picker (Opt+Cmd+.) - same deal: it resolves the tab, agent,
 	// and option lists itself, so all it needs from here is the theme.
+	// Voice Setup walkthrough. Same deal: it reads the model catalog itself, so
+	// all it needs from here is the theme and the Encore flag.
+	const voiceSetupOpen = useModalStore(selectModalOpen('voiceSetup'));
+	const closeVoiceSetup = useCallback(() => useModalStore.getState().closeModal('voiceSetup'), []);
+	// "More options" hands the user to the full Voice Setup panel. Closing this
+	// first, rather than stacking, because Settings renders above every modal.
+	const openACappellaSettings = useCallback(() => {
+		const store = useModalStore.getState();
+		store.closeModal('voiceSetup');
+		store.openModal('settings', { tab: 'encore' });
+	}, []);
+	const aCappellaEnabled = useSettingsStore((state) => state.encoreFeatures.aCappella === true);
 	const modelEffortOpen = useModalStore(selectModalOpen('modelEffort'));
 	const modelEffortData = useModalStore(selectModalData('modelEffort'));
 	const closeModelEffort = useCallback(
 		() => useModalStore.getState().closeModal('modelEffort'),
+		[]
+	);
+	// Continuity preview: it reads the tab it was opened for and draws it, so it
+	// needs only the theme and the target the opener put in the store.
+	const continuityPreviewOpen = useModalStore(selectModalOpen('continuityPreview'));
+	const continuityPreviewData = useModalStore(selectModalData('continuityPreview'));
+	const closeContinuityPreview = useCallback(
+		() => useModalStore.getState().closeModal('continuityPreview'),
 		[]
 	);
 	const closeSnoozeTab = useCallback(() => useModalStore.getState().closeModal('snoozeTab'), []);
@@ -828,6 +856,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					theme={theme}
 					tabs={activeSession.aiTabs}
 					activeTabId={activeSession.activeTabId}
+					agentId={activeSession.id}
 					shortcut={shortcuts.searchAllTabs}
 					onJump={onCrossTabSearchJump}
 					onClose={onCloseCrossTabSearch}
@@ -912,12 +941,33 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<ModelEffortModal theme={theme} tabId={modelEffortData.tabId} onClose={closeModelEffort} />
 			)}
 
+			{/* --- CONTINUITY PREVIEW (read-only evidence digest of one tab) --- */}
+			{continuityPreviewOpen && continuityPreviewData && (
+				<ContinuityPreviewModal
+					key={`${continuityPreviewData.sessionId}:${continuityPreviewData.tabId}`}
+					theme={theme}
+					sessionId={continuityPreviewData.sessionId}
+					tabId={continuityPreviewData.tabId}
+					onClose={closeContinuityPreview}
+				/>
+			)}
+
 			{/* --- SNOOZED TABS (list across all agents) --- */}
 			{snoozedTabsOpen && (
 				<SnoozedTabsModal
 					theme={theme}
 					onClose={closeSnoozedTabs}
 					onJumpToTab={onSwitchQueueSession}
+				/>
+			)}
+			{/* --- TAB CLEANUP SUGGESTIONS (Local Models, across all agents) --- */}
+			{tabCleanupOpen && <TabCleanupModal theme={theme} onClose={closeTabCleanup} />}
+			{voiceSetupOpen && (
+				<VoiceSetupModal
+					theme={theme}
+					enabled={aCappellaEnabled}
+					onClose={closeVoiceSetup}
+					onOpenSettings={openACappellaSettings}
 				/>
 			)}
 		</>

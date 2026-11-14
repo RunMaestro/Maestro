@@ -1,3 +1,4 @@
+import { getAgentCommands } from '../utils/agentCommands';
 import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
 /**
  * queuedPrompt - put a prompt into an agent's execution queue from outside the
@@ -21,7 +22,7 @@ import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
  * an IPC listener) run outside React.
  */
 
-import type { AITab, QueuedItem, QueuedItemEditPatch, Session } from '../types';
+import type { AITab, QueuedItem, QueuedItemEditPatch, QueuedTurnSettings, Session } from '../types';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useAgentStore } from '../stores/agentStore';
 import { getDispatchDeps } from '../stores/retryStore';
@@ -35,7 +36,9 @@ import {
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { planCrossAgentMentions, queuedMentionFields } from './crossAgentMentions';
 import type { MentionRouting } from '../../shared/crossAgentContext';
+import { routeQueuedAutoItem } from './autoTurn';
 import { generateId } from '../utils/ids';
+import type { ConsultChain } from '../../shared/consultBudget';
 import { logger } from '../utils/logger';
 import { canonicalJson } from '../../shared/canonicalJson';
 import { resolveTabPermissionMode } from '../../shared/agentMetadata';
@@ -188,8 +191,15 @@ export interface QueuedPromptOptions {
 	text: string;
 	/** Base64 data URLs, forwarded to the spawn. */
 	images?: string[];
+	/**
+	 * The place in a consult chain the queued turn takes, when another agent's
+	 * `maestro-cli dispatch` is what queued it. See `QueuedItem.consultChain`.
+	 */
+	consultChain?: ConsultChain;
 	/** Resolve a slash command through the command queue when this item drains. */
 	slashCommand?: boolean;
+	/** Existing send snapshot, when queueing follows an asynchronous preflight. */
+	turnSettings?: QueuedTurnSettings;
 	/**
 	 * A routing picked for the message's `@mentions` (`dispatch --routing`), the
 	 * way the composer's routing strip picks one. Stamped on the item, because the
@@ -217,7 +227,9 @@ export function buildQueuedMessageItem({
 	tab,
 	text,
 	images,
+	consultChain,
 	slashCommand,
+	turnSettings,
 	mentionRouting,
 }: QueuedPromptOptions): QueuedItem {
 	const commandText = slashCommand ? text.trim() : undefined;
@@ -239,9 +251,10 @@ export function buildQueuedMessageItem({
 		...(images && images.length > 0 ? { images: [...images] } : {}),
 		tabName: getTabDisplayName(tab, session.agentSessionId),
 		readOnlyMode: tab.readOnlyMode === true || tab.permissionMode === 'readonly',
-		turnSettings: captureQueuedTurnSettings(tab, session),
+		turnSettings: turnSettings ?? captureQueuedTurnSettings(tab, session),
 		...queuedMentionFields(mentionPlan),
 		...(mentionPlan && { crossAgentOnly: mentionPlan.suppressLocal }),
+		...(consultChain ? { consultChain } : {}),
 	};
 	if (item.type === 'command' && session.toolType === 'grok') {
 		item.commandScope = { provider: 'grok' };
@@ -262,7 +275,8 @@ export function buildQueuedMessageItem({
  */
 function matchSlashCommand(
 	session: Session,
-	text: string
+	text: string,
+	tab: AITab
 ): { command: string; description?: string } | null {
 	const commandText = text.trim();
 	if (!commandText.startsWith('/')) return null;
@@ -273,7 +287,7 @@ function matchSlashCommand(
 		deps?.openspecCommands.find((cmd) => cmd.command === commandText) ??
 		deps?.bmadCommands?.find((cmd) => cmd.command === commandText) ??
 		(session.toolType !== 'grok'
-			? session.agentCommands?.find((cmd) => cmd.command === commandText && cmd.prompt)
+			? getAgentCommands(session, tab)?.find((cmd) => cmd.command === commandText && cmd.prompt)
 			: undefined) ??
 		null
 	);
@@ -300,11 +314,23 @@ export function enqueuePromptForTab(options: {
 	tabId: string;
 	text: string;
 	images?: string[];
+	consultChain?: ConsultChain;
 	slashCommand?: boolean;
+	/** Existing send snapshot, when queueing follows an asynchronous preflight. */
+	turnSettings?: QueuedTurnSettings;
 	expandCommands?: boolean;
 	mentionRouting?: MentionRouting;
 }): QueuedItem | null {
-	const { sessionId, tabId, text, images, slashCommand, expandCommands, mentionRouting } = options;
+	const {
+		sessionId,
+		tabId,
+		text,
+		images,
+		consultChain,
+		slashCommand,
+		expandCommands,
+		mentionRouting,
+	} = options;
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	if (!session) return null;
 
@@ -313,14 +339,16 @@ export function enqueuePromptForTab(options: {
 		(session.toolType === 'grok' ? undefined : getActiveTab(session));
 	if (!tab) return null;
 
-	const command = expandCommands && !slashCommand ? matchSlashCommand(session, text) : null;
+	const command = expandCommands && !slashCommand ? matchSlashCommand(session, text, tab) : null;
 	const message = buildQueuedMessageItem({
 		session,
 		tab,
 		text,
 		images,
+		consultChain,
 		slashCommand: slashCommand || !!command,
 		mentionRouting,
+		turnSettings: options.turnSettings,
 	});
 	const item: QueuedItem = command
 		? { ...message, commandDescription: command.description }
@@ -329,6 +357,9 @@ export function enqueuePromptForTab(options: {
 		...s,
 		executionQueue: [...(s.executionQueue || []), item],
 	}));
+	// On an agent set to the Auto model the prompt is routed as it is queued,
+	// like one the composer queues. A no-op on a named model.
+	routeQueuedAutoItem(sessionId, item);
 	return item;
 }
 

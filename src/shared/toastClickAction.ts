@@ -1,3 +1,5 @@
+import { isValidAgentId } from './agentIds';
+import type { ToolType } from './types';
 /**
  * toastClickAction - the canonical "what happens when a toast is clicked" type.
  *
@@ -25,8 +27,12 @@
  *   open-terminal - switch to the agent and focus one of its terminal tabs
  *   open-browser  - focus an existing in-app browser tab, or open `url` in a new one
  *   open-url      - open a URL in the system browser (no agent involved)
+ *   undo-group-publish - put back the settings a Group Settings publish wrote
+ *                        over. `publishId` names the snapshot the publish kept
+ *                        (`renderer/services/groupDefaultsPublish.ts`).
  */
 export type ToastClickAction =
+	| { kind: 'review-translation'; sessionId: string; tabId: string; provider: ToolType }
 	| { kind: 'jump-session'; sessionId: string; tabId?: string }
 	| { kind: 'open-file'; sessionId: string; path: string }
 	| {
@@ -50,15 +56,18 @@ export type ToastClickAction =
 			 */
 			url?: string;
 	  }
-	| { kind: 'open-url'; url: string };
+	| { kind: 'open-url'; url: string }
+	| { kind: 'undo-group-publish'; publishId: string };
 
 /** Every valid `kind`, for validation messages and CLI help. */
 export const TOAST_CLICK_ACTION_KINDS = [
+	'review-translation',
 	'jump-session',
 	'open-file',
 	'open-terminal',
 	'open-browser',
 	'open-url',
+	'undo-group-publish',
 ] as const;
 
 export type ToastClickActionKind = (typeof TOAST_CLICK_ACTION_KINDS)[number];
@@ -87,6 +96,17 @@ export function parseToastClickAction(raw: unknown): {
 	const kind = obj.kind;
 
 	switch (kind) {
+		case 'review-translation': {
+			const sessionId = str(obj, 'sessionId');
+			const tabId = str(obj, 'tabId');
+			const provider = str(obj, 'provider');
+			if (!sessionId || !tabId || !provider || !isValidAgentId(provider))
+				return {
+					error:
+						"clickAction kind 'review-translation' requires sessionId, tabId and a valid provider",
+				};
+			return { action: { kind, sessionId, tabId, provider } };
+		}
 		case 'jump-session': {
 			const sessionId = str(obj, 'sessionId');
 			if (!sessionId) return { error: "clickAction kind 'jump-session' requires sessionId" };
@@ -118,6 +138,13 @@ export function parseToastClickAction(raw: unknown): {
 			const url = str(obj, 'url');
 			if (!url) return { error: "clickAction kind 'open-url' requires url" };
 			return { action: { kind, url } };
+		}
+		case 'undo-group-publish': {
+			const publishId = str(obj, 'publishId');
+			if (!publishId) {
+				return { error: "clickAction kind 'undo-group-publish' requires publishId" };
+			}
+			return { action: { kind, publishId } };
 		}
 		default:
 			return {

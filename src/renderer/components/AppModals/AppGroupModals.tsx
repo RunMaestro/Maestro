@@ -1,9 +1,16 @@
-import React, { memo } from 'react';
+import React, { memo, useEffect } from 'react';
 import type { Theme, Group } from '../../types';
+import {
+	getModalActions,
+	selectModalData,
+	selectModalOpen,
+	useModalStore,
+} from '../../stores/modalStore';
 
 // Group Modal Components
 import { CreateGroupModal } from '../CreateGroupModal';
 import { RenameGroupModal } from '../RenameGroupModal';
+import { GroupSettingsModal } from '../GroupSettingsModal';
 
 /**
  * Props for the AppGroupModals component
@@ -39,6 +46,7 @@ export interface AppGroupModalsProps {
  * Contains:
  * - CreateGroupModal: Create a new session group
  * - RenameGroupModal: Rename an existing group
+ * - GroupSettingsModal: Edit the defaults a new agent in a group starts with
  */
 export const AppGroupModals = memo(function AppGroupModals({
 	theme,
@@ -62,6 +70,22 @@ export const AppGroupModals = memo(function AppGroupModals({
 	setRenameGroupColor,
 	onCloseRenameGroupModal,
 }: AppGroupModalsProps) {
+	// Group Settings reads its own open state: one group id is all it carries,
+	// so nothing is threaded through App.tsx for it.
+	const groupSettingsOpen = useModalStore(selectModalOpen('groupSettings'));
+	const groupSettingsData = useModalStore(selectModalData('groupSettings'));
+	const groupSettingsGroup = groupSettingsOpen
+		? groups.find((g) => g.id === groupSettingsData?.groupId)
+		: undefined;
+	const closeGroupSettings = () => getModalActions().closeGroupSettings();
+
+	// A group deleted while its settings are open leaves nothing to draw. Close
+	// the entry too, so the store does not report a modal that is not on screen.
+	const groupSettingsOrphaned = groupSettingsOpen && !groupSettingsGroup;
+	useEffect(() => {
+		if (groupSettingsOrphaned) getModalActions().closeGroupSettings();
+	}, [groupSettingsOrphaned]);
+
 	return (
 		<>
 			{/* --- CREATE GROUP MODAL --- */}
@@ -92,6 +116,16 @@ export const AppGroupModals = memo(function AppGroupModals({
 					onClose={onCloseRenameGroupModal}
 					groups={groups}
 					setGroups={setGroups}
+				/>
+			)}
+
+			{/* --- GROUP SETTINGS MODAL --- */}
+			{groupSettingsGroup && (
+				<GroupSettingsModal
+					theme={theme}
+					group={groupSettingsGroup}
+					setGroups={setGroups}
+					onClose={closeGroupSettings}
 				/>
 			)}
 		</>

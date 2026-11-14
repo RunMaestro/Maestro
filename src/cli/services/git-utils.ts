@@ -17,6 +17,23 @@ export function getGitBranch(cwd: string): string | undefined {
 	}
 }
 
+/**
+ * What `git rev-parse --git-common-dir` prints in `cwd`, or undefined outside a
+ * repository. A worktree and its main checkout share one common directory.
+ */
+export function getGitCommonDir(cwd: string): string | undefined {
+	try {
+		const common = execFileSync('git', ['rev-parse', '--git-common-dir'], {
+			cwd,
+			encoding: 'utf-8',
+			stdio: ['pipe', 'pipe', 'pipe'],
+		}).trim();
+		return common || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export function isGitRepo(cwd: string): boolean {
 	try {
 		execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {

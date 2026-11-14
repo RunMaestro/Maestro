@@ -74,6 +74,7 @@ import {
 	type CueRunSessionRecord,
 } from '../../main/cue/cue-run-router';
 import type { CueRunResult } from '../../shared/cue/contracts';
+import { resolveCliAutoTurn } from './auto-turn';
 import type { CueExternalNotification } from '../../main/cue/cue-notify-webhook';
 import { formatJsonLogLine } from '../../shared/jsonLogLine';
 import {
@@ -82,6 +83,7 @@ import {
 	readSshRemotes,
 	getAgentCustomPath,
 	readAgentConfig,
+	readHarnessTierDefaults,
 	readSettings,
 } from './storage';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
@@ -103,7 +105,10 @@ function loadExecutorsUncached() {
 		import('../../main/cue/cue-auth-detector'),
 		// Every executor registers its children here; the drain counts and
 		// kills through it (see CueEngineDeps.countLiveCueProcesses).
-		import('../../main/cue/cue-process-lifecycle'),
+		Promise.all([
+			import('../../main/cue/cue-process-lifecycle'),
+			import('./run-on').then((runOn) => runOn.configureCliRunOn()),
+		]).then(([lifecycle]) => lifecycle),
 		import('../../main/cue/cue-autorun-executor'),
 		import('../../main/cue/cue-agent-binary'),
 	]).then(([, executor, shell, cli, notify, authDetector, lifecycle, autoRun, agentBinary]) => ({
@@ -344,6 +349,9 @@ function buildOnCueRun(
 			sshStore: sshStoreAdapter(),
 			getAgentConfigValues: (toolType) => readAgentConfig(toolType),
 			onLog,
+			getHarnessTierDefaults: readHarnessTierDefaults,
+			resolveAutoTurn: (options) =>
+				resolveCliAutoTurn({ ...options, agentEffort: options.agent.customEffort }),
 			getConductorProfile: () =>
 				(readSettings() as { conductorProfile?: string }).conductorProfile || undefined,
 			// No window in a headless runner - executeCueNotify already

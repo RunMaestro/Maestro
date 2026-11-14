@@ -8,7 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { HistoryEntryType } from '../../shared/types';
+import type { HistoryEntryType, ToolType } from '../../shared/types';
 import type { GraphBucket } from '../../shared/history';
 
 /**
@@ -39,6 +39,7 @@ export interface HistoryEntry {
 	summary: string;
 	fullResponse?: string;
 	agentSessionId?: string;
+	provider?: ToolType;
 	projectPath: string;
 	sessionId?: string;
 	sessionName?: string;
@@ -122,8 +123,19 @@ export function createHistoryApi() {
 		update: (entryId: string, updates: Partial<HistoryEntry>, sessionId?: string) =>
 			ipcRenderer.invoke('history:update', entryId, updates, sessionId),
 
-		updateSessionName: (agentSessionId: string, sessionName: string) =>
-			ipcRenderer.invoke('history:updateSessionName', agentSessionId, sessionName),
+		updateSessionName: (
+			agentSessionId: string,
+			sessionName: string,
+			provider?: ToolType,
+			ownerSessionId?: string
+		) =>
+			ipcRenderer.invoke(
+				'history:updateSessionName',
+				agentSessionId,
+				sessionName,
+				provider,
+				ownerSessionId
+			),
 
 		getFilePath: (sessionId: string) => ipcRenderer.invoke('history:getFilePath', sessionId),
 

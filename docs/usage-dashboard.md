@@ -32,7 +32,7 @@ The Usage Dashboard only tracks activity from within Maestro. It does not includ
 
 The dashboard is organized into tabs, each providing different insights into your usage.
 
-**Overview**, **Agent Overview**, **Agents**, **Groups**, **Tokens**, **Activity**, **Auto Run**, and **Shortcuts** are always present. Three more appear only when there is something for them to show:
+**Overview**, **Agent Overview**, **Agents**, **Groups**, **Tokens**, **Models**, **Activity**, **Auto Run**, and **Shortcuts** are always present. Three more appear only when there is something for them to show:
 
 | Tab                 | Appears when                                                    |
 | ------------------- | --------------------------------------------------------------- |
@@ -214,6 +214,83 @@ How the numbers are worked out:
 
 Speed is measured from Claude Code and Codex transcripts. Other providers do not record when each call started, and their calls are left out rather than counted as zero.
 
+### Models
+
+What every model other than a provider's own did in the selected range: the Maestro model server, local servers such as Ollama and LM Studio, cloud endpoints, and System One engines such as Jev. The providers' own cloud sits beside them in the table, so you can compare.
+
+Where Tokens reads transcripts, Models reads what Maestro itself recorded: one row per housekeeping task run, per [System One](./local-models#system-one) decision, per background request the [token proxy](./local-models#the-maestro-proxy) routed, and per agent turn that ran on a [model source](./local-models#model-source). It loads that record on its own, so it fills in even when no agent turn is recorded in the range, and it refreshes when new stats arrive.
+
+To open it from a terminal, run `maestro-cli open usage-dashboard --tab models`. The tab has no shortcut or command palette entry of its own: open the dashboard and move to it with `Cmd+Shift+[` / `Cmd+Shift+]`.
+
+**Summary Cards:**
+
+- **Requests** - Runs, agent turns and routed requests on other models, with the number of sources and how many failed
+- **Tokens** - Tokens read and written by other models, as `in · out`. Prompt-cache tokens are not counted here; hover **Tokens in** in the Sources table to see them
+- **On This Machine** - The share of all requests, provider clouds included, that ran on this computer, with `N of M requests` under it. It reads `-` when nothing ran. The in-process engine and the model server count. An endpoint counts only when its address is loopback, so a server on your LAN does not
+- **System One Decisions** - How many decisions System One made, with how many it answered and the spend, or `None in this range`
+
+**Sections:**
+
+| Section                 | What it shows                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Sources**             | One row per source: its kind (**In-process**, **Model server**, **Endpoint**, **System One**, or **Provider cloud**), the models it ran, where it ran (**This machine**, **Remote**, or **Unknown**), requests with the runs / turns / routed split, **Tokens in**, **Tokens out**, **Errors**, **p50** and **p95**. Click a column header to sort; the busiest source is first |
+| **Latency by Source**   | Two charts, **One request** and **One agent turn**. Each bar is solid to the median and faint to p95, fastest first, on a log scale because one chart holds a 4 ms lookup and a 4 s judge                                                                                                                                                                                       |
+| **Tasks**               | One sortable row per task: housekeeping tasks, System One tasks, and `agent:<verb>` for requests agents sent with `maestro-cli s1`. Columns are **Runs**, **Errors**, **Tokens**, **p50**, **p95** and **Where it ran**                                                                                                                                                         |
+| **Model Source Agents** | One tile per agent whose turns ran on a model source: the model and source, the harness, **Turns**, **Tokens in**, **Tokens out** and **p50 turn**                                                                                                                                                                                                                              |
+| **System One**          | **How decisions ended** (**Answered**, **Failed open**, **Failed closed**, **No answer**, **Cancelled**), with how many were answered from the cache, timed out, and the spend. **Auto routing, by tier** (**Low**, **Medium**, **High**). A per-task table with a **Timed out** column, and a line per engine                                                                  |
+| **Token Proxy Savings** | Three headline figures, a daily chart, splits by mode, provider route and algorithm, the provider's own usage, then a row for **All agents** and one per agent. Marked **Estimate**. See **Token Proxy Savings, top to bottom** below                                                                                                                                           |
+
+A few things to know when reading it:
+
+- **Latency counts answered work only.** A failed run's duration is its timeout, so it would drag the figure for no reason. A latency shown with `turn` after it is a whole agent turn, shown only for a source that answered no model calls. A cancelled run is counted as cancelled, not as an error.
+- **A provider's own cloud has no error count.** Maestro records no outcome for those turns, so the column reads 0 there. Provider cloud rows are for comparison only and are not in the **Requests** and **Tokens** cards.
+- **Unknown is not remote.** A source that was removed from Settings, or an OpenJev engine with no address, cannot be placed, so it says Unknown and is left out of the On This Machine share.
+- **A timeout is not its own outcome.** It is why a decision failed, so it is counted in the failed slices and also shown on its own.
+- **System One reads a 30-day ledger.** On a quarter, year or all-time range the tab says the decision outcomes reach back only that far. The Auto routing split and the request counts in Sources go back the whole range.
+- **Token savings are estimates.** The proxy counts at 4 characters per token. A smaller outgoing payload does not establish billed token or cost savings. **Tokens saved** reads `-` for an agent whose requests only passed through.
+- **Cue runs and headless `maestro-cli send` are not in Model Source Agents.** They write no turn record, so a model source used there does not appear.
+
+**Token Proxy Savings, top to bottom:**
+
+- **Loaded** is when the last read of the range finished. It is not when the range starts. **Refresh** reads the range again. The tab also refreshes a moment after new usage is recorded, and it does not poll while it is open. **Settings > Models > Gateway** opens the proxy settings: each agent's mode, the exclusions and the original and replacement view stay there.
+- **Payload reduction (est.)** is the estimated tokens the proxy removed, as a share of the estimated tokens that arrived in the requests it read (the line under it says how many). **Request coverage** is how many of the requests carried were read. A request that passed through unread is counted, and nothing about its size is estimated. **Processing time (mean)** is the mean time the proxy held a request, with the distribution and the number of timed requests under it. `unknown` means no read request carried a time, and a range with too few timed requests shows no percentiles.
+- **Provider-bound text estimates, by day** draws the estimated tokens as they arrived (solid) and as they were sent (dashed), one slot for each local calendar day from the start of the range. A gap is a day on which the proxy read nothing: its figures are unknown, not zero. The first day of a rolling range holds only the requests after the range started.
+- **Request mode** and **Provider route** split the requests carried, each request in one slice. A request recorded before the mode was tracked is **not recorded**. **Algorithm contributions** count the blocks each algorithm helped shorten. A block can be counted under more than one algorithm, so the bars do not add up, and the note under them says how many requests recorded their algorithms.
+- **Provider usage** is what the provider counted, class by class, with the number of requests each class covers. It is separate from the estimates above and from Maestro's own cache: the verdicts reused under **How the proxy handled these requests** come from Maestro's compression cache, not the provider's prompt cache.
+- Net dollar savings and answer quality are not evaluated, and no grade is given.
+
+**Inspect opportunities, context inventory and continuity** opens a read-only detail view.
+Its proxy observations cover the app's lifetime across agents, independently of the dashboard
+date range. **Refresh observations** reads another snapshot. **Audit _agent_** reads that
+selected agent's file inventory and configured-text estimates on demand; it does not establish
+what a provider loaded or what is in its current context window. Switching agents clears the
+previous inventory. **Preview continuity for the selected AI tab** opens the existing evidence
+preview for that exact tab, including failure/pressure signals and unknowns. None of these
+controls applies a compression preview, changes routing or adds an estimate to savings. The
+inspection also remains available when range statistics are empty or cannot be read.
+
+Each section that has nothing in the range stays, says so, and links to where it is set up:
+
+| Section                 | Empty link                                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Tasks**               | **Settings > Models > System One** and **Settings > Models > System Two**                                     |
+| **Model Source Agents** | **Open _agent_'s Models settings**, for the active agent, which opens the Models tab of that agent's settings |
+| **System One**          | **Settings > Models > System One**                                                                            |
+| **Token Proxy Savings** | **Settings > Models > Gateway**                                                                               |
+
+A range with nothing on another model at all shows one empty state, **No model usage in this range**, with a button, **Open Settings > Models**. If the record cannot be read, the tab shows **Failed to load model usage** with a retry control.
+
+On this tab the footer reads `N requests · N% on this machine · N decisions · N failed`, and stays blank when nothing ran. The tab has no chart sections to step through, so `Arrow Up/Down`, `Home` and `End` do nothing here. It works the same in the [web interface](./remote-control).
+
+The same record is available from the command line. It needs the desktop app running and Usage & Stats turned on:
+
+```bash
+maestro-cli stats models --range week
+maestro-cli stats models --range all --json
+```
+
+See [CLI Reference](./cli-reference#maestro-cli-stats-models) and [Local Models](./local-models) for setting up the sources that fill this tab.
+
 ### OpenAI Usage
 
 One row per Codex account (`CODEX_HOME`), each with its plan badge, its email, and a bar per usage window: **Session (5h)**, **Weekly**, and any per-model limits the account reports, every one labelled with when it reopens.
@@ -309,13 +386,14 @@ When an update changes how Maestro counts tokens or cost, the first time you ope
 
 Use the time range dropdown in the top-right corner to filter all dashboard data:
 
-| Range          | Description                                |
-| -------------- | ------------------------------------------ |
-| **Today**      | Current day only                           |
-| **This Week**  | Current week (default)                     |
-| **This Month** | Current calendar month                     |
-| **This Year**  | Current calendar year                      |
-| **All Time**   | Everything since you started using Maestro |
+| Range            | Description                                |
+| ---------------- | ------------------------------------------ |
+| **Today**        | The current calendar day                   |
+| **This Week**    | The last 7 days (default)                  |
+| **This Month**   | The last 30 days                           |
+| **This Quarter** | The last 90 days                           |
+| **This Year**    | The last 365 days                          |
+| **All Time**     | Everything since you started using Maestro |
 
 The selected time range applies to all tabs and charts. Your preferred time range is saved and restored between sessions.
 
@@ -362,16 +440,17 @@ The Usage Dashboard collects:
 
 ### Enabling/Disabling Collection
 
-Stats collection is enabled by default. To disable:
+Stats collection is enabled by default. The **Usage & Stats** Encore Feature is also the recording switch. To disable:
 
 1. Open **Settings** (`Cmd+,` / `Ctrl+,`)
-2. Go to the **General** tab
-3. Find **Usage Dashboard** section (marked with Beta badge)
-4. Toggle off **Enable stats collection**
+2. Go to **Plugins**
+3. Toggle off **Usage & Stats**
 
-You can also set your **Default dashboard time range** here (Today, This Week, This Month, This Year, or All Time).
+From a terminal, run `maestro-cli encore disable usage-stats` (and `maestro-cli encore enable usage-stats` to turn it back on).
 
-Disabling collection stops new data from being recorded but preserves existing data in the dashboard.
+The settings below the **Usage & Stats** tile also hold the **Default lookback window** (Today, This Week, This Month, This Quarter, This Year, or All Time). From a terminal, run `maestro-cli settings set defaultStatsTimeRange day|week|month|quarter|year|all`.
+
+Disabling collection stops new data from being recorded. Data already recorded is kept.
 
 ## Accessibility
 

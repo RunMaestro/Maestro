@@ -18,3 +18,6 @@ export type { ShortcutsTabProps } from './ShortcutsTab';
 
 export { ThemeTab } from './ThemeTab';
 export type { ThemeTabProps } from './ThemeTab';
+
+export { ModelsSettingsTab } from './LocalModelsTab';
+export type { ModelsSettingsTabProps } from './LocalModelsTab';

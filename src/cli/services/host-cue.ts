@@ -237,6 +237,7 @@ export function runAutoRunInRuntime(runtime: HostCueRuntime): StandaloneCueAutoR
 				...(params.effort ? { effort: params.effort } : {}),
 				...(params.prompt ? { prompt: params.prompt } : {}),
 				...(params.ignoreModelHints ? { ignoreModelHints: true } : {}),
+				...(params.runOn ? { runOn: params.runOn } : {}),
 			})
 			.catch((error: unknown) => ({ ok: false as const, error: { message: errorText(error) } }));
 		if (!launched.ok) {

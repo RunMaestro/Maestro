@@ -186,6 +186,7 @@ export function buildMirrorThinkingItems(
 				id: mirrorKey(peerId, agent.id),
 				name: `${agent.name} on ${peer.name}`,
 				state: 'busy',
+				toolType: agent.toolType as ToolType,
 			};
 			for (const record of busyTabs) {
 				const tab = mirrorTab(record);

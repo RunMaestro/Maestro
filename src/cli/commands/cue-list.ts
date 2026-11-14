@@ -14,6 +14,7 @@ import { diskFallbackPeer, exitIfMaestroNotRunning } from '../services/session-c
 import { applyDataDirOption, requireDataDirOrExit } from '../services/data-dir-option';
 import { readLiveSessions } from '../services/storage';
 import { formatCueTurnSettings, type CueTurnSettings } from '../../shared/cue/turn-settings';
+import { exitWith, exitCodeForError } from '../exit-codes';
 import { createCueQueryService } from '../../main/cue/cue-query-service';
 import { loadCueConfigDetailed } from '../../main/cue/cue-yaml-loader';
 import { toCueSubscriptionInfos } from '../../main/cue/cue-subscription-entries';
@@ -62,6 +63,10 @@ interface CueSubscription {
 	sessionId: string;
 	sessionName: string;
 	enabled: boolean;
+	gate?: string;
+	gateOnUnavailable?: 'run' | 'skip';
+	screenInjection?: boolean;
+	injectionThreshold?: number;
 	lastTriggered?: number;
 	triggerCount: number;
 	tier?: CueTurnSettings['tier'];
@@ -119,6 +124,13 @@ export async function cueList(options: CueListOptions): Promise<void> {
 				if (sub.schedule) {
 					lines.push(`     schedule: ${sub.schedule}`);
 				}
+				if (sub.gate) {
+					lines.push(`     gate: ${sub.gate}`);
+				}
+				// Only a screen someone set is listed; the default is silent.
+				if (sub.screenInjection !== undefined) {
+					lines.push(`     injection screen: ${sub.screenInjection ? 'on' : 'off'}`);
+				}
 				const modelNote = formatCueTurnSettings(sub);
 				if (modelNote) {
 					lines.push(`     model: ${modelNote}`);
@@ -140,7 +152,7 @@ export async function cueList(options: CueListOptions): Promise<void> {
 		} else {
 			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
 		}
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 

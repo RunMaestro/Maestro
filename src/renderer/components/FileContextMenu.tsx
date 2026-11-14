@@ -15,6 +15,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { getRevealLabel } from '../utils/platformUtils';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
+import { canRevealOnHost, openFileForUser, openFileForUserLabel } from '../services/hostShell';
 
 export interface FileContextMenuState {
 	x: number;
@@ -90,7 +91,7 @@ export function FileContextMenu({
 	}, [menu.filePath, projectRoot, onDismiss]);
 
 	const handleOpenInDefaultApp = useCallback(() => {
-		window.maestro?.shell?.openPath(menu.filePath);
+		void openFileForUser(menu.filePath);
 		onDismiss();
 	}, [menu.filePath, onDismiss]);
 
@@ -162,7 +163,7 @@ export function FileContextMenu({
 						style={{ color: theme.colors.textMain }}
 					>
 						<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-						<span>Open in Default App</span>
+						<span>{openFileForUserLabel()}</span>
 					</button>
 				)}
 
@@ -191,8 +192,8 @@ export function FileContextMenu({
 					<span>Copy File Name</span>
 				</button>
 
-				{/* Reveal in Finder / Explorer */}
-				{!sshRemote && (
+				{/* Reveal in Finder / Explorer: the host's, so desktop and local only */}
+				{canRevealOnHost(sshRemote) && (
 					<button
 						onClick={handleRevealInFinder}
 						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"

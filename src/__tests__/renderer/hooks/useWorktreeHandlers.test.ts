@@ -1284,7 +1284,7 @@ describe('Grok worktree creation ownership', () => {
 // ============================================================================
 
 describe('handleConfirmDeleteWorktree', () => {
-	it('removes session from state', () => {
+	it('removes session from state', async () => {
 		const childSession = createChildSession({ id: 'child-to-delete' });
 		useSessionStore.setState({
 			sessions: [mockParentSession, childSession],
@@ -1295,8 +1295,8 @@ describe('handleConfirmDeleteWorktree', () => {
 
 		const { result } = renderHook(() => useWorktreeHandlers());
 
-		act(() => {
-			result.current.handleConfirmDeleteWorktree();
+		await act(async () => {
+			await result.current.handleConfirmDeleteWorktree();
 		});
 
 		const sessions = useSessionStore.getState().sessions;
@@ -1304,7 +1304,7 @@ describe('handleConfirmDeleteWorktree', () => {
 		expect(sessions[0].id).toBe('parent-1');
 	});
 
-	it('does nothing when no deleteWorktreeSession', () => {
+	it('does nothing when no deleteWorktreeSession', async () => {
 		useSessionStore.setState({
 			sessions: [mockParentSession],
 			activeSessionId: 'parent-1',
@@ -1312,8 +1312,8 @@ describe('handleConfirmDeleteWorktree', () => {
 
 		const { result } = renderHook(() => useWorktreeHandlers());
 
-		act(() => {
-			result.current.handleConfirmDeleteWorktree();
+		await act(async () => {
+			await result.current.handleConfirmDeleteWorktree();
 		});
 
 		expect(useSessionStore.getState().sessions.length).toBe(1);
