@@ -345,7 +345,9 @@ describe('recall qualification configuration', () => {
 		let call = 0;
 		const gate = new LocalMemoryRelevance(async () => {
 			call++;
-			return new Response('slow down', { status: 429 });
+			// A short Retry-After keeps this about the retry bound. The default
+			// backoff (20s, 40s, 60s) ran past the test timeout under load.
+			return new Response('slow down', { status: 429, headers: { 'retry-after': '0.05' } });
 		});
 		gate.configure({ provider: 'hosted', model: 'qwen3.6', endpoint: 'https://api.nan.builders' });
 		try {
@@ -367,7 +369,7 @@ describe('recall qualification configuration', () => {
 			if (previous === undefined) delete process.env.NAN_API_KEY;
 			else process.env.NAN_API_KEY = previous;
 		}
-	}, 180_000);
+	}, 60_000);
 
 	it('asks a hosted provider for low reasoning effort and bounds only the judgement', async () => {
 		const previous = process.env.NAN_API_KEY;
