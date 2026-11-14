@@ -19,6 +19,14 @@
 
 import { getErrorPatterns, matchErrorPattern } from '../../../../shared/agentErrorPatterns';
 import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../../shared/agentMetadata';
+import {
+	agentNotInstalledMessage,
+	classifyMissingBinary,
+	getAgentInstallCommand,
+	missingRuntimeLabel,
+	type MissingBinaryRuntime,
+} from '../../../../shared/agentInstall';
+import { getPlatform } from '../../../utils/platformUtils';
 import type { AgentErrorType, ToolType } from '../../../types';
 
 /**
@@ -43,6 +51,7 @@ const ERROR_TITLES: Record<AgentErrorType, string> = {
 	rate_limited: 'Rate Limited',
 	network_error: 'Network Error',
 	agent_crashed: 'Agent Error',
+	agent_not_installed: 'Provider CLI Not Installed',
 	permission_denied: 'Permission Denied',
 	session_not_found: 'Session Not Found',
 	hitl_gate: 'Review Required',
@@ -56,6 +65,7 @@ const RECOVERY_HINTS: Record<AgentErrorType, string> = {
 	rate_limited: 'Wait a moment, then try again.',
 	network_error: 'Check your internet connection, then try again.',
 	agent_crashed: 'Try again. If it keeps happening, check the agent installation.',
+	agent_not_installed: 'Install the provider CLI, then start the wizard over.',
 	permission_denied: 'The agent was refused access. Check the folder permissions, then try again.',
 	session_not_found: 'Start the wizard again with a fresh conversation.',
 	hitl_gate: 'The agent is waiting on a human review step. Try again once it is cleared.',
@@ -79,14 +89,34 @@ const RETRYABLE_TYPES: ReadonlySet<AgentErrorType> = new Set<AgentErrorType>([
 /**
  * The recovery hint for one error, named for the agent that produced it.
  *
- * Only `auth_expired` varies: the command differs per provider, and some
+ * Two types vary. `auth_expired`: the command differs per provider, and some
  * providers have no login subcommand at all (they expose the flow as a slash
  * command inside their TUI), which is exactly what `getAgentLoginCommand`
- * records. When the agent has no login flow, the generic hint stands rather
- * than inventing a command to type into a shell.
+ * records. `agent_not_installed`: the install command differs per provider AND
+ * per platform. When there is no command to name, the generic hint stands
+ * rather than inventing one to type into a shell.
  */
+function missingBinaryHint(
+	agentType: ToolType,
+	reason: 'not-found' | 'runtime-missing',
+	runtime: MissingBinaryRuntime = 'node'
+): string {
+	if (reason === 'runtime-missing') {
+		const label = missingRuntimeLabel(runtime);
+		if (runtime === 'node') {
+			return `Restore ${label} to PATH first (for example with \`nvm use\`), then start the wizard over. Reinstall the CLI only if it still does not start.`;
+		}
+		return `${label} is not on PATH. Install ${label} or put it on PATH, then start the wizard over.`;
+	}
+	const install = getAgentInstallCommand(agentType, getPlatform());
+	return install
+		? `Run "${install}" to install it, then start the wizard over.`
+		: (RECOVERY_HINTS.agent_not_installed ?? RECOVERY_HINTS.unknown);
+}
+
 function recoveryHintFor(type: AgentErrorType, agentType: ToolType): string {
 	const generic = RECOVERY_HINTS[type] ?? RECOVERY_HINTS.unknown;
+	if (type === 'agent_not_installed') return missingBinaryHint(agentType, 'not-found');
 	if (type !== 'auth_expired') return generic;
 
 	// The wizard supplies no selected credential environment or host/binary
@@ -103,15 +133,67 @@ function recoveryHintFor(type: AgentErrorType, agentType: ToolType): string {
 	return `Run "${command}"${followUp} to sign in again, then start the wizard over.`;
 }
 
+/** What the exit told us, when the caller has it. */
+export interface WizardErrorDetectionOptions {
+	/** Exit code of the process that produced the output. */
+	exitCode?: number | null;
+	/**
+	 * Text the process wrote to stderr, when the caller can separate it from the
+	 * combined buffer. Only stderr is read for a missing binary: stdout is the
+	 * agent's own transcript, which can quote "command not found" from a tool.
+	 */
+	stderr?: string;
+	/**
+	 * The executable the wizard launched, so a child command that failed inside
+	 * a working CLI is not mistaken for the provider itself being missing.
+	 */
+	command?: string;
+	/**
+	 * Whether the agent ran on this machine. A missing binary over SSH is the
+	 * remote host's problem, and the SSH error bank already owns it.
+	 */
+	local?: boolean;
+}
+
 /**
  * Detect provider errors in agent output.
  *
  * @param output - The raw output from the agent (stdout/stderr combined)
  * @param agentType - The agent that produced it, which selects the pattern bank
+ * @param options - The exit code, separated stderr, launched command, and locality
  * @returns Detected error or null if no provider error found
  */
-export function detectWizardError(output: string, agentType: ToolType): WizardError | null {
+export function detectWizardError(
+	output: string,
+	agentType: ToolType,
+	options: WizardErrorDetectionOptions = {}
+): WizardError | null {
 	if (!output) return null;
+
+	// A CLI that never started is not a crash, and the generic bank would call
+	// it one. Classified first, on the local host only (see ExitHandler).
+	const missingBinary =
+		(options.local ?? true)
+			? classifyMissingBinary({
+					exitCode: options.exitCode,
+					stderr: options.stderr ?? '',
+					command: options.command,
+				})
+			: null;
+	if (missingBinary) {
+		return {
+			type: 'agent_not_installed',
+			title: ERROR_TITLES.agent_not_installed,
+			message: agentNotInstalledMessage(
+				agentType,
+				missingBinary.reason,
+				getPlatform(),
+				missingBinary.runtime
+			),
+			recoveryHint: missingBinaryHint(agentType, missingBinary.reason, missingBinary.runtime),
+			canRetry: false,
+		};
+	}
 
 	// minLength 0: the streaming guard exists for single-token chunks, and this
 	// is a whole finished output buffer.

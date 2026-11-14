@@ -455,11 +455,11 @@
 		"date-fns": "^4.1.0",
 		"diff": "^8.0.2",
 		"dns-packet": "5.6.1",
-		"dompurify": "^3.4.16",
+		"dompurify": "^3.4.17",
 		"electron-store": "^8.2.0",
 		"electron-updater": "^6.8.3",
 		"emoji-regex": "^10.6.0",
-		"fastify": "^5.12.5",
+		"fastify": "^5.12.6",
 		"fflate": "^0.8.2",
 		"highlight.js": "^11.11.1",
 		"hyparquet": "^1.29.2",
@@ -558,7 +558,7 @@
 		"tailwindcss": "^3.4.1",
 		"typescript": "^6.0.3",
 		"typescript-eslint": "^8.59.2",
-		"vite": "^8.3.4",
+		"vite": "^8.3.5",
 		"vitest": "^4.1.11"
 	},
 	"overrides": {
