@@ -72,7 +72,7 @@ The Settings tab is called **Plugins** in v0.18.x and later. On **v0.17.4** and 
 
 ## Groups
 
-A group collects agents in the Left Bar. It also holds a **profile**: the settings a new agent in that group starts with. You edit the profile in **Group Settings**, which is the [Edit Agent](./general-usage#editing-agents) form with one extra field (the pill label) and a different job. Edit Agent changes one agent. Group Settings changes what the next agent in the group looks like.
+A group collects agents in the Left Bar. It also holds a **profile**: the settings a new agent in that group starts with. You edit the profile in **Group Settings**, which is the [Edit Agent](./general-usage#editing-agents) form with one extra field (the pill label) and a different job. Edit Agent changes one agent. Group Settings changes what the next agent in the group looks like. Its **Lifecycle** tab also holds prompts the group runs itself when an agent joins or leaves (see [Onboarding and Offboarding](#onboarding-and-offboarding)).
 
 The modal has the same tabs as Edit Agent: **General**, **Provider**, **Models**, **Peers**, and **SSH**, plus a **Lifecycle** tab of its own (see [Onboarding and Offboarding](#onboarding-and-offboarding)). It is resizable and remembers its size. Every field is optional. A blank field means "use the Maestro default", so a profile can set one value and leave the rest alone.
 

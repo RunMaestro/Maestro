@@ -1041,7 +1041,7 @@ Organize agents into groups for better project management:
 
 **Defaults for new agents:**
 
-- Right-click the group header → **Group Settings...** (or `Cmd+K` / `Ctrl+K` → "Group Settings" while an agent in the group is active) to set what a new agent in the group starts with, and the text of the group's pill label. See [Groups](./features#groups).
+- Right-click the group header → **Group Settings...** (or `Cmd+K` / `Ctrl+K` → "Group Settings" while an agent in the group is active) to set what a new agent in the group starts with, the text of the group's pill label, and the [Onboarding and Offboarding](./features#onboarding-and-offboarding) prompts the group runs when an agent joins or leaves it. See [Groups](./features#groups).
 
 **Hiding a group:**
 

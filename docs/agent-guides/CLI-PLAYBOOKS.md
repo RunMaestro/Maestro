@@ -55,6 +55,7 @@ src/cli/
 │   ├── agent-test-run-on.ts   # Run on Test button (agent test-run-on)
 │   ├── delegation-graph.ts    # Read the Delegation Graph (no app needed)
 │   ├── group-settings.ts      # Read a group's defaults; update-group-settings.ts writes them
+│   ├── run-group-lifecycle.ts # Run a group's Onboarding or Offboarding prompt now
 │   ├── models-*.ts            # manage, assign, run, status, index, proxy, server, tiers, config, runtimes, endpoints
 │   ├── search.ts              # Search past work: text, or --semantic
 │   ├── stats.ts               # stats, and stats models (the Models tab as data)
@@ -626,6 +627,8 @@ maestro-cli open group-settings --group <group-id>
 - The read needs no app. The write is one `update_group_settings` message: the renderer owns the group list and the validator the dialog saves with, so the flags are the `update-agent` ones (`buildConfigPatch()`, `readPeerFlags()`) and the app builds the profile. The CLI then reads the group back, because an older app would drop a field it does not know.
 - Profile only is the default. `--publish` also writes THIS call's diff into the group's existing agents by the dialog's "Update N agents" rules (`summarizeGroupDefaultsDiff()`), and has no undo on the CLI, so it asks on a terminal or needs `--yes`.
 - `create-agent --group` seeds a new agent from the profile (`seedRemoteCreate()`); `--no-group-defaults` skips it.
+- The `--onboarding*` and `--offboarding*` flags ride the same message as a `lifecyclePatch` (`readLifecycleFlags()`, checked by `groupLifecycleProblem()` in `src/shared/groupLifecycle.ts`). They are not defaults: never copied into an agent, never published, untouched by `--clear`. `group-settings --json` reads them back as `lifecycle`.
+- `run-group-lifecycle <group> <onboarding|offboarding> --agent <agent>` (`src/cli/commands/run-group-lifecycle.ts`) sends a `runLifecycle` request on the same message; it writes nothing, cannot ride with a write, and calls `runGroupLifecycleNow()`, the runner behind the dialog's "Run now". An Offboarding run removes nothing.
 - `open group-settings --group` has `groupRequired` on its `UI_SURFACES` entry and no hotkey: a global chord has no group to act on.
 - `open agent-settings --agent <id> [--tab <tab>]` opens Edit Agent the same way. Its entry has `agentClick`, which makes `--agent` valid and required, and its tabs come from `AGENT_SETTINGS_TAB_IDS` (`src/shared/agentSettingsTabs.ts`), the list the form's own strip is built from. The bridge handler refuses an agent that is gone (`getSessions`), because the renderer would open nothing and say nothing.
 
