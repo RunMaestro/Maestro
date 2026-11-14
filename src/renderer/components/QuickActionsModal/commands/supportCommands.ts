@@ -1,4 +1,4 @@
-import { buildMaestroUrl } from '../../../utils/buildMaestroUrl';
+import { buildMaestroUrl, MAESTRO_PRIVACY_URL } from '../../../utils/buildMaestroUrl';
 import type { NotifyToastInput } from '../../../stores/notificationStore';
 import { captureException } from '../../../utils/sentry';
 import type { SettingsTab } from '../../../types';
@@ -181,6 +181,15 @@ export function buildSupportCommands({
 			subtext: 'Join the Maestro community',
 			action: () => {
 				openUrl(buildMaestroUrl('https://runmaestro.ai/discord'));
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'privacy',
+			label: 'Privacy Policy',
+			subtext: 'What Maestro sends off your machine, and how to turn it off',
+			action: () => {
+				openUrl(buildMaestroUrl(MAESTRO_PRIVACY_URL));
 				setQuickActionOpen(false);
 			},
 		},

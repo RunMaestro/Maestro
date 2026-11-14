@@ -1,15 +1,20 @@
 /**
  * AboutTab - Large-format "About" panel for the Settings modal.
  *
- * Purely informational (no toggles): a large Maestro glyph + wordmark,
- * the tagline, the version, and the origin flags. The interactive
- * stats-and-achievements surface lives in the separate About modal.
+ * Informational (no toggles): a large Maestro glyph + wordmark, the
+ * tagline, the version, a Privacy link, and the origin flags. The
+ * interactive stats-and-achievements surface lives in the separate About
+ * modal.
  */
 
-import { Wand2 } from 'lucide-react';
+import { ShieldCheck, Wand2 } from 'lucide-react';
 import { Wordmark } from '../../ui/Wordmark';
 import type { Theme } from '../../../types';
 import { MaestroFlags } from '../../ui/MaestroFlags';
+import { buildMaestroUrl, MAESTRO_PRIVACY_URL } from '../../../utils/buildMaestroUrl';
+import { openUrl } from '../../../utils/openUrl';
+import { launchFromSettings } from '../../../utils/launchFromSettings';
+import { transparentize } from '../../../../shared/colorContrast';
 
 export interface AboutTabProps {
 	theme: Theme;
@@ -39,6 +44,21 @@ export function AboutTab({ theme }: AboutTabProps) {
 					{__COMMIT_HASH__}
 				</div>
 			)}
+
+			{/* Privacy: closes Settings first, or a Maestro browser tab would open behind it */}
+			<button
+				type="button"
+				onClick={() => launchFromSettings(() => openUrl(buildMaestroUrl(MAESTRO_PRIVACY_URL)))}
+				className="mt-6 inline-flex items-center gap-2 px-4 py-1.5 rounded-full border text-sm transition-opacity hover:opacity-80"
+				style={{
+					borderColor: theme.colors.accent,
+					color: theme.colors.textMain,
+					backgroundColor: transparentize(theme.colors.accent, theme.colors.bgMain, 0.1),
+				}}
+			>
+				<ShieldCheck className="w-4 h-4" style={{ color: theme.colors.accent }} />
+				Privacy
+			</button>
 
 			{/* Origin */}
 			<div className="flex flex-col items-center gap-3 mt-12">

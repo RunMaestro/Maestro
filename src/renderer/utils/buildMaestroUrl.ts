@@ -6,6 +6,13 @@
 import { useSettingsStore } from '../stores/settingsStore';
 import { THEMES } from '../../shared/themes';
 
+/**
+ * The live privacy page. Every Privacy entry point (About modal, Settings ->
+ * About, command palette) opens this URL rather than a bundled copy, so the
+ * app always shows the current text.
+ */
+export const MAESTRO_PRIVACY_URL = 'https://runmaestro.ai/privacy/';
+
 export function buildMaestroUrl(base: string): string {
 	const themeId = useSettingsStore.getState().activeThemeId;
 	const url = new URL(base);

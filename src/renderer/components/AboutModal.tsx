@@ -10,6 +10,7 @@ import {
 	Globe,
 	Check,
 	BookOpen,
+	ShieldCheck,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import { GhostIconButton } from './ui/GhostIconButton';
@@ -19,7 +20,7 @@ import { AchievementCard } from './AchievementCard';
 import { formatTokensCompact } from '../utils/formatters';
 import { formatDurationHuman } from '../../shared/formatters';
 import { Modal } from './ui/Modal';
-import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { buildMaestroUrl, MAESTRO_PRIVACY_URL } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
 import { useGlobalAgentStats } from '../hooks/stats/useGlobalAgentStats';
 import { MaestroFlags } from './ui/MaestroFlags';
@@ -104,6 +105,14 @@ export function AboutModal({
 					color={theme.colors.accent}
 				>
 					<BookOpen className="w-4 h-4" />
+				</GhostIconButton>
+				<GhostIconButton
+					onClick={() => openUrl(buildMaestroUrl(MAESTRO_PRIVACY_URL))}
+					title="Privacy"
+					ariaLabel="Privacy"
+					color={theme.colors.accent}
+				>
+					<ShieldCheck className="w-4 h-4" />
 				</GhostIconButton>
 			</div>
 			<GhostIconButton onClick={onClose} color={theme.colors.textDim} ariaLabel="Close modal">
