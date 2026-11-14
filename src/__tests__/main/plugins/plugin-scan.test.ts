@@ -96,9 +96,7 @@ describe('fresh off-main plugin verification', () => {
 		} finally {
 			clearInterval(timer);
 		}
-		// Includes a synchronous baseline and two real 5,000-file scans.
-		// Responsiveness is asserted above; allow disk work beyond the default 10s.
-	}, 30000);
+	});
 	it('fails closed when worker construction/loading fails, with no inline fallback', async () => {
 		const scanner = new PluginFileScanner(path.join(dir, 'missing-worker.cjs'));
 		await expect(scanner.scan(pluginDir, [key])).rejects.toThrow(/unavailable/);

@@ -95,6 +95,7 @@ for (const server of [local, socks]) {
 	});
 }
 
+/** Bind a synthetic server to IPv4 loopback, rejecting startup failures. */
 function listen(server, port) {
 	return new Promise((resolve, reject) => {
 		server.once('error', reject);
@@ -105,6 +106,10 @@ function listen(server, port) {
 	});
 }
 
+/**
+ * Fetch one loopback URL with a five-second deadline and log its SOCKS evidence.
+ * Return LOCAL/REMOTE or a diagnostic string so later cases still run on failure.
+ */
 async function probe(partition, host) {
 	await partition.closeAllConnections();
 	const before = connects.length;
@@ -117,7 +122,8 @@ async function probe(partition, host) {
 			cache: 'no-store',
 		});
 		outcome = await response.text();
-		if (outcome !== 'LOCAL' && outcome !== 'REMOTE') outcome = `UNEXPECTED: ${outcome}`;
+		if (!response.ok) outcome = `HTTP ${response.status}: ${outcome}`;
+		else if (outcome !== 'LOCAL' && outcome !== 'REMOTE') outcome = `UNEXPECTED: ${outcome}`;
 	} catch (error) {
 		outcome = controller.signal.aborted ? 'TIMEOUT (5s)' : `ERROR: ${error.message}`;
 	} finally {
@@ -138,6 +144,11 @@ const automatic = {
 	pacScript: `data:application/x-ns-proxy-autoconfig;base64,${Buffer.from(pac).toString('base64')}`,
 };
 
+/**
+ * Collect all seven routing cases, then check fetches against the recorded report.
+ * Print every result before exiting nonzero for failed or changed fetch outcomes;
+ * resolution-only records remain informational. Always close the synthetic servers.
+ */
 async function main() {
 	let partition;
 	let exitCode = 0;
@@ -152,14 +163,35 @@ async function main() {
 		console.log(`PAC:\n${pac}`);
 		const results = [];
 		const routes = [];
-		for (const [name, config] of [
-			['A: fixed', fixed],
-			['B: fixed + <-loopback>', { ...fixed, proxyBypassRules: '<-loopback>' }],
-			['C: PAC', automatic],
-			['D: PAC + <-loopback>', { ...automatic, proxyBypassRules: '<-loopback>' }],
-			['E: numeric bypass first', { ...fixed, proxyBypassRules: '127.0.0.1;[::1];<-loopback>' }],
-			['F: numeric bypass last', { ...fixed, proxyBypassRules: '<-loopback>;127.0.0.0/8;[::1]' }],
-			['G: selective loopback', { ...fixed, proxyBypassRules: '*;<-loopback>;127.0.0.0/8;[::1]' }],
+		const failures = [];
+		for (const [name, config, expected] of [
+			['A: fixed', fixed, ['LOCAL', 'LOCAL']],
+			[
+				'B: fixed + <-loopback>',
+				{ ...fixed, proxyBypassRules: '<-loopback>' },
+				['REMOTE', 'REMOTE'],
+			],
+			['C: PAC', automatic, ['LOCAL', 'LOCAL']],
+			[
+				'D: PAC + <-loopback>',
+				{ ...automatic, proxyBypassRules: '<-loopback>' },
+				['LOCAL', 'LOCAL'],
+			],
+			[
+				'E: numeric bypass first',
+				{ ...fixed, proxyBypassRules: '127.0.0.1;[::1];<-loopback>' },
+				['REMOTE', 'REMOTE'],
+			],
+			[
+				'F: numeric bypass last',
+				{ ...fixed, proxyBypassRules: '<-loopback>;127.0.0.0/8;[::1]' },
+				['REMOTE', 'LOCAL'],
+			],
+			[
+				'G: selective loopback',
+				{ ...fixed, proxyBypassRules: '*;<-loopback>;127.0.0.0/8;[::1]' },
+				['REMOTE', 'LOCAL'],
+			],
 		]) {
 			activeCase = name;
 			await partition.closeAllConnections();
@@ -181,15 +213,27 @@ async function main() {
 				routes.push({ case: name, host, route });
 				console.log(`[${name}] resolveProxy ${host}: ${route}`);
 			}
-			results.push({
+			const result = {
 				case: name,
 				localhost: await probe(partition, 'localhost'),
 				// Also measure A/B's numeric escape route to make the comparison complete.
 				'127.0.0.1': await probe(partition, '127.0.0.1'),
-			});
+			};
+			results.push(result);
+			for (const [index, host] of ['localhost', '127.0.0.1'].entries()) {
+				if (result[host] !== expected[index]) {
+					failures.push(`[${name}] ${host}: expected ${expected[index]}, got ${result[host]}`);
+				}
+			}
 		}
 		console.table(routes);
 		console.table(results);
+		if (failures.length > 0) {
+			console.error(
+				`Spike validation failed (${failures.length} fetch outcomes):\n${failures.join('\n')}`
+			);
+			exitCode = 1;
+		}
 	} catch (error) {
 		console.error('Spike setup failed:', error);
 		exitCode = 1;

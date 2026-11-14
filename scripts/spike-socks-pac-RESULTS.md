@@ -143,6 +143,22 @@ on macOS. All 63 proxy-resolution records and all 14 fetch outcomes reproduced
 the October 11 run exactly, including the destination CONNECT logs. No timeout
 or network error occurred; the verdict and full-contract limitations are unchanged.
 
+## Review follow-up (2026-11-14)
+
+The reproduction command now checks all 14 fetch outcomes against the tables
+above. It prints the complete resolution and fetch tables before exiting 1 if
+any fetch times out, fails, returns a non-success HTTP status or unexpected body,
+or takes a different route. Exit 0 means the fetch outcomes reproduce the report;
+resolution-only records remain informational and must still be inspected.
+
+The normal run reproduced all 63 resolution records and 14 fetch outcomes on
+macOS with Electron 41.10.7 / Chromium 146.0.7680.216 and exited 0. Separate
+fault-injection runs changed case G to bypass localhost, returned an unexpected
+body, returned HTTP 500, disconnected requests, and withheld responses until the
+five-second deadline. Each run exited 1 and retained all 63 resolution records
+and 14 fetch results. These injected variants were temporary validation copies,
+not extra runtime options in the experiment.
+
 ## Interpretation and limits
 
 The experiment now supports hostname/numeric-loopback separation. It does not
