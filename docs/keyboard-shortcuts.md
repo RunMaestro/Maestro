@@ -586,26 +586,28 @@ branch, so all of this reaches commits the List view does not hold.
 
 ## Settings Search
 
-Type in the search box at the top of Settings to find a setting on any tab. You
-can change most results without leaving the search: a single on/off setting
-shows its switch on the result row, and a larger setting opens its full section
-under the row.
+Type in the search box at the top of Settings to find a setting on any tab. The
+results are a filtered view of Settings: each matching section appears once,
+already open, and shows only the controls that match, so you change a setting
+right where you found it. **Show all** at the bottom of a section shows the rest
+of it. A match with nothing to change in place, such as the theme picker, is a
+row that opens its tab.
 
-| Action                                   | macOS              | Windows/Linux      |
-| ---------------------------------------- | ------------------ | ------------------ |
-| Focus the search box                     | `Cmd+F`            | `Ctrl+F`           |
-| Move from the search box into results    | `Down Arrow`       | `Down Arrow`       |
-| Move between results                     | `Up/Down Arrow`    | `Up/Down Arrow`    |
-| Flip a switch, or open/close its section | `Space`            | `Space`            |
-| Open or close a section                  | `Right/Left Arrow` | `Right/Left Arrow` |
-| Go to the setting on its tab             | `Enter`            | `Enter`            |
-| Back to the search box                   | `Esc`              | `Esc`              |
+Search matches inside words from three characters on. A shorter query, such as
+`gh` or `ai`, matches only a whole word in a setting's name or keywords.
 
-`Space` only acts on a result when the result has focus, so you can still type a
-space in a search of two or more words. `Enter` in the search box goes to the
-highlighted result. A result with nothing to change in place, such as the theme
-picker, goes to its tab with either key. Typing any letter while a result has
-focus returns you to the search box.
+| Action                                | macOS        | Windows/Linux |
+| ------------------------------------- | ------------ | ------------- |
+| Focus the search box                  | `Cmd+F`      | `Ctrl+F`      |
+| Move from the search box into results | `Down Arrow` | `Down Arrow`  |
+| Move between controls                 | `Tab`        | `Tab`         |
+| Go to the top result on its tab       | `Enter`      | `Enter`       |
+| Back to the search box (from a row)   | `Esc`        | `Esc`         |
+| Clear the search                      | `Esc`        | `Esc`         |
+
+`Enter` in the search box goes to the top result's tab. Each section's header
+has a button that opens that section on its tab. Inside a section, `Esc` is
+left to the section's own controls.
 
 ## Maestro Prompts (Settings)
 

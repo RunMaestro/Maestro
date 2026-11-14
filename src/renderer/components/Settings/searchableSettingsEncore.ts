@@ -86,7 +86,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		id: 'cue-history-retention',
 		requiresEncore: 'maestroCue',
 		tab: 'encore',
-		tabLabel: 'Encore Features',
+		tabLabel: 'Plugins',
 		jumpToId: 'encore-cue',
 		label: 'Cue history retention',
 		description:
@@ -151,7 +151,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		id: 'encore-coworking',
 		encoreTile: 'coworking',
 		tab: 'encore',
-		tabLabel: 'Encore Features',
+		tabLabel: 'Plugins',
 		label: 'Coworking',
 		description:
 			'Beta - let agents read terminal scrollback on demand. Installs a per-agent MCP server (Claude Code, Codex, OpenCode, Factory Droid, Grok) and adds a `term:N` pill to terminal tabs.',
@@ -176,7 +176,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		id: 'coworking-background-browsers',
 		requiresEncore: 'coworking',
 		tab: 'encore',
-		tabLabel: 'Encore Features',
+		tabLabel: 'Plugins',
 		label: 'Coworking background browsing',
 		description:
 			'Let agents read and drive their own browser tabs while you are focused on a different agent. Keeps hidden webviews alive off-screen, LRU-capped (1-10).',
@@ -217,7 +217,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		id: 'encore-director-notes-provider',
 		requiresEncore: 'directorNotes',
 		tab: 'encore',
-		tabLabel: 'Encore Features',
+		tabLabel: 'Plugins',
 		label: "Synopsis Provider (Director's Notes)",
 		description:
 			'Use the first available provider, or pin the synopsis to one agent and customize it',
@@ -261,7 +261,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		id: 'encore-director-notes-ideal-end-state',
 		requiresEncore: 'directorNotes',
 		tab: 'encore',
-		tabLabel: 'Encore Features',
+		tabLabel: 'Plugins',
 		label: "Ideal End State (Director's Notes)",
 		description:
 			'Describe the projects in flight and what done looks like; notes prioritize them and add a progress section',

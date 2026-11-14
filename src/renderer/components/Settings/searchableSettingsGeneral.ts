@@ -94,7 +94,6 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tab: 'general',
 		tabLabel: 'General',
 		label: 'Web Interface',
-		toggle: 'webInterfaceAutoStart',
 		description: 'Turn on the full browser interface automatically when Maestro opens',
 		keywords: [
 			'web ui',
@@ -263,7 +262,6 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tab: 'general',
 		tabLabel: 'General',
 		label: 'Group Cue History Entries',
-		toggle: 'groupCueEntries',
 		description:
 			'Collapse repeated Cue runs into one History row with a run count, the most recent run time, and a failure count',
 		keywords: [
@@ -343,7 +341,6 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tab: 'general',
 		tabLabel: 'General',
 		label: 'Tool Calls',
-		toggle: 'showToolCalls',
 		description:
 			'Show or hide tool-call activity (tool badges and their input/output) in AI responses.',
 		keywords: [
@@ -391,7 +388,6 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tab: 'general',
 		tabLabel: 'General',
 		label: 'Shorten long tab names',
-		toggle: 'shortenLongTabNames',
 		description:
 			'Cut an automatic tab name longer than 40 characters at a word boundary, or keep the full name',
 		keywords: [
@@ -433,7 +429,6 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tab: 'general',
 		tabLabel: 'General',
 		label: 'Enable spell checking',
-		toggle: 'spellCheck',
 		description:
 			'Show spell check suggestions in input areas (prompt input, group chat, file editor). Disabled by default.',
 		keywords: [
@@ -498,7 +493,6 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tab: 'general',
 		tabLabel: 'General',
 		label: 'Resume Paused Sessions on Limit',
-		toggle: 'autoResumeOnLimit',
 		description:
 			'Automatically resume agents that paused on a token, API, or credit limit once the provider window reopens',
 		keywords: [
@@ -539,7 +533,6 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tab: 'general',
 		tabLabel: 'General',
 		label: 'Check for Updates on Startup',
-		toggle: 'checkForUpdatesOnStartup',
 		description: 'Automatically check for new Maestro versions when the app starts',
 		keywords: ['update', 'check', 'startup', 'version', 'auto update'],
 	},
@@ -548,7 +541,6 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tab: 'general',
 		tabLabel: 'General',
 		label: 'Pre-release Channel',
-		toggle: 'enableBetaUpdates',
 		description: 'Include beta and release candidate updates',
 		keywords: ['beta', 'pre-release', 'rc', 'release candidate', 'canary'],
 	},
@@ -557,7 +549,6 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tab: 'general',
 		tabLabel: 'General',
 		label: 'Send Anonymous Crash Reports',
-		toggle: 'crashReportingEnabled',
 		description: 'Help improve Maestro by automatically sending crash reports',
 		keywords: ['crash', 'reporting', 'privacy', 'telemetry', 'sentry', 'anonymous'],
 	},
@@ -613,7 +604,6 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tab: 'general',
 		tabLabel: 'General',
 		label: 'Open HTML files in Maestro Browser on double-click',
-		toggle: 'htmlDoubleClickOpensInBrowser',
 		description:
 			'When enabled, double-clicking an HTML file in the file explorer opens it in the Maestro browser tab instead of the file preview.',
 		keywords: [
