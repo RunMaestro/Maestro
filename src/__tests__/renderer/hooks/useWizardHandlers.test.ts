@@ -2906,6 +2906,7 @@ describe('useWizardHandlers', () => {
 					completeWizard: vi.fn().mockResolvedValue(undefined),
 					clearResumeState: vi.fn().mockResolvedValue(undefined),
 					openWizard: vi.fn(),
+					resetWizard: vi.fn(),
 					restoreState: vi.fn(),
 				},
 				...overrides,
@@ -3037,6 +3038,20 @@ describe('useWizardHandlers', () => {
 				});
 
 				expect(deps.wizardContext.clearResumeState).toHaveBeenCalled();
+			});
+
+			it('resets the in-memory wizard state before opening (#2038)', async () => {
+				const deps = createResumeDeps();
+				const { result } = renderHook(() => useWizardHandlers(deps));
+
+				await act(async () => {
+					await result.current.handleWizardStartFresh();
+				});
+
+				const reset = vi.mocked(deps.wizardContext.resetWizard);
+				const open = vi.mocked(deps.wizardContext.openWizard);
+				expect(reset).toHaveBeenCalledTimes(1);
+				expect(reset.mock.invocationCallOrder[0]).toBeLessThan(open.mock.invocationCallOrder[0]);
 			});
 		});
 
