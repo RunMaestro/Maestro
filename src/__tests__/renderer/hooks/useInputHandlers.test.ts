@@ -1032,36 +1032,43 @@ describe('useInputHandlers', () => {
 	// ========================================================================
 
 	describe('handleReplayMessage', () => {
-		it('calls processInput via ref with text', () => {
+		afterEach(() => {
+			mockProcessInput.mockReset();
+		});
+
+		it('sends the replayed text pinned to the active agent and tab', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			act(() => {
 				result.current.handleReplayMessage('replay this');
 			});
 
-			// processInputRef is called via setTimeout
-			act(() => {
-				vi.runAllTimers();
+			expect(mockProcessInput).toHaveBeenCalledWith('replay this', {
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				images: [],
 			});
-
-			expect(result.current.processInputRef.current).toBeDefined();
 		});
 
-		it('stages images before processing when provided', () => {
+		it('hands the replayed images to processInput instead of staging them', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			act(() => {
 				result.current.handleReplayMessage('describe these', ['img1.png', 'img2.png']);
 			});
 
-			// Check that images were staged
+			expect(mockProcessInput).toHaveBeenCalledWith('describe these', {
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				images: ['img1.png', 'img2.png'],
+			});
+			// The composer's staged images are the draft's, not the replay's.
 			const sessions = useSessionStore.getState().sessions;
 			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
-			expect(tab?.stagedImages).toEqual(['img1.png', 'img2.png']);
+			expect(tab?.stagedImages ?? []).toEqual([]);
 		});
 
-		it('does not stage images when array is empty', () => {
-			const origStagedImages = ['keep-me.png'];
+		it('leaves the draft staged images alone', () => {
 			useSessionStore.setState({
 				sessions: [
 					createMockSession({
@@ -1071,7 +1078,7 @@ describe('useInputHandlers', () => {
 								name: 'Tab 1',
 								inputValue: '',
 								data: [],
-								stagedImages: origStagedImages,
+								stagedImages: ['keep-me.png'],
 							} as any,
 						],
 					}),
@@ -1082,10 +1089,9 @@ describe('useInputHandlers', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			act(() => {
-				result.current.handleReplayMessage('no images', []);
+				result.current.handleReplayMessage('with images', ['replayed.png']);
 			});
 
-			// Images should be unchanged (empty array doesn't trigger setStagedImages)
 			const sessions = useSessionStore.getState().sessions;
 			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
 			expect(tab?.stagedImages).toEqual(['keep-me.png']);
@@ -2579,38 +2585,27 @@ describe('useInputHandlers', () => {
 			expect(tab?.stagedImages).toEqual(['existing.png']);
 		});
 
-		it('preserves draft input value after replay sends', () => {
+		it('does not touch the draft text', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
-			// Type a draft message
 			act(() => {
 				result.current.setInputValue('my draft message');
 			});
 
-			expect(inputVal()).toBe('my draft message');
-
-			// Simulate processInput clearing the input (as it does in real usage)
-			mockProcessInput.mockImplementation(() => {
-				result.current.setInputValue('');
-			});
-
-			// Replay a previous message
 			act(() => {
 				result.current.handleReplayMessage('replayed message');
 			});
 
-			act(() => {
-				vi.runAllTimers();
-			});
-
-			// Draft should be restored after replay
+			// processInput owns the "leave the composer alone" rule for override
+			// sends (covered in useInputProcessing.test.ts); the handler itself must
+			// neither clear nor rewrite the draft.
 			expect(inputVal()).toBe('my draft message');
 			expect(mockProcessInput).toHaveBeenCalledWith('replayed message', {
 				sessionId: 'session-1',
 				tabId: 'tab-1',
+				images: [],
 			});
 
-			// Clean up mock
 			mockProcessInput.mockReset();
 		});
 	});

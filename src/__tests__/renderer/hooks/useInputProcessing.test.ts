@@ -1160,9 +1160,68 @@ describe('useInputProcessing', () => {
 				await result.current.processInput('/commit'); // Override
 			});
 
-			// Should match the override value, not the inputValue
-			expect(mockSetInputValue).toHaveBeenCalledWith('');
+			// Should match the override value, not the inputValue - and the draft
+			// it never read stays in the composer.
+			expect(mockSetInputValue).not.toHaveBeenCalledWith('');
 			vi.useRealTimers();
+		});
+
+		it('leaves the draft text and staged images alone (replay)', async () => {
+			const deps = createDeps({
+				inputValue: 'my unsent draft',
+				stagedImages: ['data:image/png;base64,DRAFT'],
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput('replayed message', {
+					sessionId: 'session-1',
+					tabId: 'tab-1',
+					images: [],
+				});
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			const spawnArg = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+			expect(spawnArg.prompt).toContain('replayed message');
+			expect(spawnArg.prompt).not.toContain('my unsent draft');
+			expect(spawnArg.images ?? []).toEqual([]);
+			// The clear that follows the async process probe must not reach the draft.
+			expect(mockSetInputValue).not.toHaveBeenCalled();
+			expect(mockSetStagedImages).not.toHaveBeenCalled();
+			expect(mockSyncAiInputToSession).not.toHaveBeenCalledWith('', expect.anything());
+		});
+
+		it('does not borrow the draft staged images when none are passed', async () => {
+			const deps = createDeps({
+				inputValue: '',
+				stagedImages: ['data:image/png;base64,DRAFT'],
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput('macro prompt');
+			});
+
+			const spawnArg = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+			expect(spawnArg.images ?? []).toEqual([]);
+			expect(mockSetStagedImages).not.toHaveBeenCalled();
+		});
+
+		it('sends to the agent even while the composer is in command mode', async () => {
+			const deps = createDeps({
+				inputValue: 'git status',
+				isCommandMode: () => 'shell',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput('replayed message');
+			});
+
+			expect(dispatchShellCommand).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			expect(mockSetInputValue).not.toHaveBeenCalled();
 		});
 	});
 

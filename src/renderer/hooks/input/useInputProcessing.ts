@@ -329,13 +329,29 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// `let` because command mode's escape (`\!foo`) is unwrapped in place
 			// below once we know we're in AI mode.
+			// A submit straight from the composer (Enter, the send button), as
+			// opposed to a replay, recovery, macro, or followup that hands its own
+			// text in. Only a composer submit consumes the composer: the others never
+			// read the draft, so its text, staged images, and command mode stay put.
+			const isComposerSubmit = overrideInputValue === undefined;
 			let effectiveInputValue = overrideInputValue ?? getInputValue();
-			// When the caller passes explicit images (e.g. Force Send button replaying a
-			// queued item), use those instead of the active tab's stagedImages. This avoids
-			// the stale-closure race when the caller does setStagedImages() right before
-			// invoking processInput(), and prevents wiping the user's in-progress draft.
-			const effectiveImages = options?.images ?? stagedImages;
+			// When the caller passes explicit images (e.g. a replayed message's
+			// attachments), use those instead of the active tab's stagedImages. This
+			// avoids the stale-closure race when the caller does setStagedImages() right
+			// before invoking processInput(), and prevents wiping the user's draft. A
+			// send that is not from the composer never borrows the draft's images.
+			const effectiveImages = options?.images ?? (isComposerSubmit ? stagedImages : []);
 			const usingOverrideImages = options?.images !== undefined;
+			// Clears the draft text after a slash command or command-mode run. A no-op
+			// for a send that did not come from the composer, because that text was
+			// never in it.
+			const clearComposerText = () => {
+				if (!isComposerSubmit) return;
+				setInputValue('');
+				setSlashCommandOpen(false);
+				syncAiInputToSession('', syncTarget);
+				if (inputRef.current) inputRef.current.style.height = 'auto';
+			};
 			if (options?.forceParallel) {
 				logger.info('[ForcedParallel] processInput called:', undefined, {
 					hasActiveSession: !!activeSession,
@@ -361,8 +377,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// Gated on the composer's mode flag, NOT on a leading `!` in the text:
 			// the bang is consumed on entry, so by here the draft is the bare
 			// command (and may legitimately contain bangs of its own).
+			// The mode belongs to the draft, so it only applies to a composer submit:
+			// replaying a message while the composer sits in `!` mode must send that
+			// message to the agent, not run it as a shell command.
 			const composerMode: ComposerCommandMode =
-				activeSession.inputMode === 'ai' ? isCommandMode() : 'off';
+				activeSession.inputMode === 'ai' && isComposerSubmit ? isCommandMode() : 'off';
 			if (composerMode !== 'off' && !isWizardActive) {
 				const commandText = effectiveInputValue.trim();
 				if (!commandText) {
@@ -378,10 +397,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					return;
 				}
 
-				setInputValue('');
-				setSlashCommandOpen(false);
-				syncAiInputToSession('');
-				if (inputRef.current) inputRef.current.style.height = 'auto';
+				clearComposerText();
 
 				if (composerMode === 'ai') {
 					// AI command mode: nothing runs yet. Ask for a command line and let
@@ -427,10 +443,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// This is intercepted here because it requires Maestro to handle the synopsis generation
 				// rather than passing through to the agent (which may not support it or require special permissions)
 				if (!isTerminalMode && commandText === '/history' && onHistoryCommand) {
-					setInputValue('');
-					setSlashCommandOpen(false);
-					syncAiInputToSession('', syncTarget);
-					if (inputRef.current) inputRef.current.style.height = 'auto';
+					clearComposerText();
 
 					// Execute the history command handler asynchronously
 					onHistoryCommand().catch((error) => {
@@ -448,10 +461,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// Extract arguments after '/wizard ' (everything after the command)
 					const args = commandText.slice('/wizard'.length).trim();
 
-					setInputValue('');
-					setSlashCommandOpen(false);
-					syncAiInputToSession('', syncTarget);
-					if (inputRef.current) inputRef.current.style.height = 'auto';
+					clearComposerText();
 
 					// Execute the wizard command handler with the argument text
 					onWizardCommand(args);
@@ -466,10 +476,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					onSkillsCommand &&
 					activeSession.toolType === 'claude-code'
 				) {
-					setInputValue('');
-					setSlashCommandOpen(false);
-					syncAiInputToSession('', syncTarget);
-					if (inputRef.current) inputRef.current.style.height = 'auto';
+					clearComposerText();
 
 					// Execute the skills command handler asynchronously
 					onSkillsCommand().catch((error) => {
@@ -502,10 +509,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							: undefined);
 					if (matchingCustomCommand) {
 						// Execute the custom AI command by sending its prompt
-						setInputValue('');
-						setSlashCommandOpen(false);
-						syncAiInputToSession('', syncTarget); // We're in AI mode here (isTerminalMode === false)
-						if (inputRef.current) inputRef.current.style.height = 'auto';
+						clearComposerText(); // We're in AI mode here (isTerminalMode === false)
 
 						// Substitute template variables and send to the AI agent
 						(async () => {
@@ -639,10 +643,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			const currentMode = activeSession.inputMode;
 
-			// A submit straight from the composer (Enter, the send button), as
-			// opposed to a replay, Force Send, or recovery that hands its own text
-			// in. Only these read the draft, so only these can read it twice.
-			const isComposerSubmit = overrideInputValue === undefined;
+			// Only a composer submit reads the draft, so only it can read it twice.
 			const inFlightKey = `${activeSession.id}:${targetTabId ?? ''}`;
 			const submitted = { text: effectiveInputValue, images: effectiveImages };
 			const isRepeatOfInFlight = (composerSubmitsInFlight.get(inFlightKey) ?? []).some(
@@ -668,6 +669,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// draft never needs putting back.
 			let composerTaken = false;
 			const clearComposer = () => {
+				if (!isComposerSubmit) return;
 				setInputValue('');
 				if (!usingOverrideImages) setStagedImages([]);
 				syncAiInputToSession('', syncTarget);
@@ -732,11 +734,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					);
 				}
 
-				// Clear input
-				setInputValue('');
-				if (!usingOverrideImages) setStagedImages([]);
-				syncAiInputToSession('', syncTarget);
-				if (inputRef.current) inputRef.current.style.height = 'auto';
+				clearComposer();
 
 				// Send to wizard (with images if any were staged)
 				onWizardSendMessage(effectiveInputValue, imagesToSend).catch((error) => {
@@ -1395,8 +1393,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			window.maestro.web.broadcastUserInput(activeSession.id, effectiveInputValue, currentMode);
 
 			// An AI send already took the draft before its probe; clearing here again
-			// would wipe whatever the user typed while that probe was out.
-			if (!composerTaken) {
+			// would wipe whatever the user typed while that probe was out. A send that
+			// did not come from the composer leaves it alone.
+			if (!composerTaken && isComposerSubmit) {
 				setInputValue('');
 				if (!usingOverrideImages) setStagedImages([]);
 

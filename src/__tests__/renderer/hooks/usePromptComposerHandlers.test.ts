@@ -337,11 +337,13 @@ describe('usePromptComposerHandlers', () => {
 					vi.advanceTimersByTime(0);
 				});
 
-				expect(deps.processInput).toHaveBeenCalledWith('send this message');
+				// A composer submit (no override): processInput reads the text it just
+				// placed in the composer and consumes the composer.
+				expect(deps.processInput).toHaveBeenCalledWith();
 				vi.useRealTimers();
 			});
 
-			it('passes the message value to processInput', async () => {
+			it('sends the message through the composer, not as an override', async () => {
 				vi.useFakeTimers();
 
 				const deps = createDeps();
@@ -355,7 +357,8 @@ describe('usePromptComposerHandlers', () => {
 					vi.advanceTimersByTime(0);
 				});
 
-				expect(deps.processInput).toHaveBeenCalledWith('specific value');
+				expect(deps.setInputValue).toHaveBeenCalledWith('specific value');
+				expect(deps.processInput).toHaveBeenCalledWith();
 				vi.useRealTimers();
 			});
 
