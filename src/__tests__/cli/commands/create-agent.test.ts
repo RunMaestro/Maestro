@@ -3,6 +3,7 @@
  * @description Tests for the create-agent CLI command
  */
 
+import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
 
 // Mock maestro-client
@@ -741,7 +742,7 @@ describe('create-agent command', () => {
 		it("uses the group's working directory when --cwd is not given", async () => {
 			await createAgent('Agent', { type: 'codex', group: 'group-1' });
 
-			expect(sentPayload.cwd).toBe('/work/api');
+			expect(sentPayload.cwd).toBe(path.resolve('/work/api'));
 		});
 
 		it('prefers --cwd to the group working directory', async () => {

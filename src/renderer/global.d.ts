@@ -1465,6 +1465,7 @@ interface MaestroAPI {
 			includeDebugPackage?: boolean;
 			performanceTracePath?: string;
 			allowSecrets?: boolean;
+			reviewedFingerprint?: string;
 		}) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		searchIssues: (query: string) => Promise<{
 			issues: Array<{

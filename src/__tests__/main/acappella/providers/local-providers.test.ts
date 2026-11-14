@@ -24,7 +24,13 @@ vi.mock('../../../../main/local-models/dictation', () => ({
 	resolveLocalClipTranscriber: dictation.resolve,
 }));
 
-vi.mock('electron', () => ({ app: { getPath: () => '/tmp/maestro-test' } }));
+vi.mock('electron', async () => {
+	const osMod = await import('node:os');
+	const pathMod = await import('node:path');
+	return {
+		app: { getPath: () => pathMod.join(osMod.tmpdir(), 'maestro-test') },
+	};
+});
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));

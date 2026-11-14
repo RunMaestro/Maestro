@@ -76,7 +76,10 @@ export async function runVoiceControlRequest(raw: unknown): Promise<VoiceControl
 	if (!request) return { ok: false, reason: 'Unknown voice request.' };
 	if (!registered) return { ok: false, reason: 'Voice is not available in this build.' };
 	const { handlers, isVoiceEnabled } = registered;
-	if (voiceControlActionNeedsVoice(request.action) && !isVoiceEnabled()) {
+	const needsVoice =
+		voiceControlActionNeedsVoice(request.action) ||
+		(request.action === 'discovery' && request.enabled);
+	if (needsVoice && !isVoiceEnabled()) {
 		return { ok: false, reason: VOICE_DISABLED_REASON };
 	}
 

@@ -50,10 +50,22 @@ export async function writeProbeScratchFile(workspace, target, content) {
 			throw new Error('Probe output directories must not be symlinks.');
 		}
 	}
+	// Windows has no O_NOFOLLOW; pre-check lstat so file symlinks (including
+	// dangling ones) cannot redirect open() outside scratch.
+	const existingTarget = await lstat(resolved).catch((error) => {
+		if (error.code === 'ENOENT') return null;
+		throw error;
+	});
+	if (existingTarget?.isSymbolicLink()) {
+		throw new Error('Probe output must not be a symlink.');
+	}
 	// Do not truncate until the opened file is known to be private and regular.
 	const file = await open(
 		resolved,
-		constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+		constants.O_WRONLY |
+			constants.O_CREAT |
+			(constants.O_NOFOLLOW ?? 0) |
+			(constants.O_NONBLOCK ?? 0),
 		0o600
 	);
 	try {

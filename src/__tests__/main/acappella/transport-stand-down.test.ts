@@ -25,6 +25,7 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 
+import { PairingService } from '../../../main/acappella/pairing/pairing-service';
 import { ACappellaTransport } from '../../../main/acappella/transport';
 import type { WebRtcHostCommand } from '../../../shared/acappella/webrtc-host';
 
@@ -150,5 +151,87 @@ describe('ACappellaTransport.standDown', () => {
 			transport.standDown();
 			transport.standDown();
 		}).not.toThrow();
+	});
+});
+
+describe('ACappellaTransport lazy device-name loading', () => {
+	async function seedDevice(name: string): Promise<void> {
+		const seeder = createTransport();
+		const offer = seeder.startPairing();
+		const claim = seeder.pairing.claim({ code: offer!.code, name, platform: 'ios' });
+		if (claim.status !== 'pending') throw new Error('claim failed');
+		await seeder.pairing.approve(claim.requestId);
+		await seeder.pairing.whenPersisted();
+		seeder.dispose();
+	}
+
+	it('does not read devices.json at construction when aCappella is off, and loads names when switched on at runtime', async () => {
+		await seedDevice('Kitchen iPad');
+		settings = { encoreFeatures: { aCappella: false } };
+
+		const loadSpy = vi.spyOn(PairingService.prototype, 'load');
+		const cold = createTransport();
+		expect(loadSpy).not.toHaveBeenCalled();
+		expect(cold.pairing.listLoaded()).toEqual([]);
+
+		settings.encoreFeatures = { aCappella: true };
+		cold.syncFeatureEnabled();
+		await vi.waitFor(() => {
+			expect(cold.pairing.listLoaded().map((d) => d.name)).toEqual(['Kitchen iPad']);
+		});
+		expect(loadSpy).toHaveBeenCalled();
+		loadSpy.mockRestore();
+		cold.dispose();
+	});
+
+	it('loads device names on first transport use after starting with aCappella off', async () => {
+		await seedDevice('Pocket iPhone');
+		settings = { encoreFeatures: { aCappella: false } };
+
+		const loadSpy = vi.spyOn(PairingService.prototype, 'load');
+		const cold = createTransport();
+		expect(loadSpy).not.toHaveBeenCalled();
+
+		settings.encoreFeatures = { aCappella: true };
+		cold.startPairing();
+		await vi.waitFor(() => {
+			expect(cold.pairing.listLoaded().map((d) => d.name)).toEqual(['Pocket iPhone']);
+		});
+		expect(loadSpy).toHaveBeenCalled();
+		loadSpy.mockRestore();
+		cold.dispose();
+	});
+
+	it('forwards back-to-back signaling messages in arrival order and reads devices.json once', async () => {
+		await seedDevice('Studio iPad');
+		settings = { encoreFeatures: { aCappella: false } };
+
+		const cold = createTransport();
+		const loadSpy = vi.spyOn(cold.pairing, 'load');
+		const arrivals: unknown[] = [];
+		const handleSpy = vi
+			.spyOn(cold.signaling, 'handleMessage')
+			.mockImplementation(async (_clientId, payload) => {
+				arrivals.push(payload);
+			});
+
+		settings.encoreFeatures = { aCappella: true };
+		const first = { op: 'auth', seq: 1 };
+		const second = { op: 'offer', seq: 2 };
+		const p1 = cold.handleSignalMessage('c1', first);
+		const p2 = cold.handleSignalMessage('c1', second);
+
+		// Synchronous dispatch to signaling.handleMessage preserves arrival order
+		// without waiting on the background devices.json name load.
+		expect(arrivals).toEqual([first, second]);
+		await Promise.all([p1, p2]);
+		await vi.waitFor(() => {
+			expect(cold.pairing.listLoaded().map((d) => d.name)).toEqual(['Studio iPad']);
+		});
+		expect(loadSpy).toHaveBeenCalledTimes(1);
+
+		handleSpy.mockRestore();
+		loadSpy.mockRestore();
+		cold.dispose();
 	});
 });

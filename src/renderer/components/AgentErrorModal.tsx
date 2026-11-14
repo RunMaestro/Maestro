@@ -30,6 +30,7 @@ import {
 	ChevronRight,
 	Code2,
 	ArrowRight,
+	PackageX,
 } from 'lucide-react';
 import type { Theme, AgentError, AgentErrorType } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -83,6 +84,8 @@ function getErrorIcon(type: AgentErrorType): React.ReactNode {
 			return <Wifi className="w-6 h-6" />;
 		case 'agent_crashed':
 			return <XCircle className="w-6 h-6" />;
+		case 'agent_not_installed':
+			return <PackageX className="w-6 h-6" />;
 		case 'permission_denied':
 			return <ShieldAlert className="w-6 h-6" />;
 		default:
@@ -105,6 +108,8 @@ function getErrorTitle(type: AgentErrorType): string {
 			return 'Connection Error';
 		case 'agent_crashed':
 			return 'Agent Error';
+		case 'agent_not_installed':
+			return 'Provider CLI Not Installed';
 		case 'permission_denied':
 			return 'Permission Denied';
 		default:

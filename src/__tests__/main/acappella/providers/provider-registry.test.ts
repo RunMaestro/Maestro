@@ -820,6 +820,14 @@ describe('provider registry', () => {
 		});
 		expect(store.read('localModelAssignments')).toBeUndefined();
 	});
+
+	it('does not write acappella settings on a fresh profile where the key is absent', () => {
+		const store = keyedStore({});
+
+		expect(migrateLegacyVoiceProviders(store)).toBe(false);
+		expect(store.set).not.toHaveBeenCalled();
+		expect(store.read('acappella')).toBeUndefined();
+	});
 });
 
 /** A settings store that keeps each key apart, as the real one does. */

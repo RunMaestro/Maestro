@@ -613,6 +613,10 @@ export async function createConformanceWorld(): Promise<ConformanceWorld> {
 		getMachineName: () => 'Conformance Desktop',
 	});
 
+	// Wait for the constructor's devices.json read to settle before tests send
+	// messages under fake timers (where only microtasks are flushed).
+	await transport.pairing.load();
+
 	let socketSeq = 0;
 	function openSocket(url: string, handlers: SignalingSocketHandlers): LoopbackSocket {
 		socketSeq += 1;
