@@ -304,6 +304,16 @@ export const UI_SURFACES: UiSurface[] = [
 		click: 'the Feedback button at the bottom of the Left Bar',
 	},
 	{
+		id: 'did-you-know',
+		label: 'Did You Know?',
+		aliases: ['discovery'],
+		modal: 'didYouKnow',
+		description: 'Discover a Maestro feature with a random tip.',
+		shortcutId: 'didYouKnow',
+		commandPalette: 'Did You Know?',
+		click: 'Did You Know? in the Left Bar hamburger menu',
+	},
+	{
 		id: 'about',
 		label: 'About Maestro',
 		modal: 'about',

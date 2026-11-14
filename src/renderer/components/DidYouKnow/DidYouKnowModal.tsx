@@ -7,6 +7,8 @@ import { ArrowLeft, ArrowRight, Lightbulb } from 'lucide-react';
 import { resolveEncoreFeatures } from '../../../shared/encoreFeatureDefaults';
 import { resolveUiSurface } from '../../../shared/uiSurfaces';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { ResizeHandles } from '../ui/ResizeHandles';
 import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { isEditingTextTarget } from '../../utils/editableTarget';
@@ -45,7 +47,7 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 		openDocs,
 		exitReading,
 	} = useDidYouKnowRotation({ startTipId });
-	const cardRef = useRef<HTMLElement>(null);
+	const cardRef = useRef<HTMLDivElement>(null);
 	const [spotlightRect, setSpotlightRect] = useState<DOMRect | null>(null);
 	const [showSpotlight, setShowSpotlight] = useState(false);
 	const [spotlightPosition, setSpotlightPosition] = useState<CSSProperties>();
@@ -100,16 +102,18 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 		if (!showSpotlight) return;
 		const dismiss = () => setShowSpotlight(false);
 		const timer = window.setTimeout(dismiss, 2500);
-		// Capture sees even stopped events, but the opening click has already
-		// passed this phase before React installs these listeners.
-		window.addEventListener('click', dismiss, true);
-		window.addEventListener('keydown', dismiss, true);
-		return () => {
-			window.clearTimeout(timer);
-			window.removeEventListener('click', dismiss, true);
-			window.removeEventListener('keydown', dismiss, true);
-		};
+		return () => window.clearTimeout(timer);
 	}, [showSpotlight]);
+	// Capture runs before the opening click reaches React and installs these listeners.
+	useEventListener('click', () => setShowSpotlight(false), {
+		enabled: showSpotlight,
+		capture: true,
+	});
+	useEventListener('keydown', () => setShowSpotlight(false), {
+		enabled: showSpotlight,
+		capture: true,
+	});
+
 	useEffect(() => {
 		if (!showSpotlight || !spotlightRect) return;
 		const card = cardRef.current?.getBoundingClientRect();
@@ -154,6 +158,13 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 	}, [showSpotlight, spotlightRect]);
 	const spotlightActive = showSpotlight && !!spotlightRect;
 	const passive = isReading || spotlightActive;
+	const resize = useResizableModal({
+		resizeKey: 'didYouKnow',
+		defaultSize: { width: 760, height: 900 },
+		minSize: { width: 320, height: 300 },
+		externalRef: cardRef,
+		enabled: !passive,
+	});
 	const [transition, setTransition] = useState<{
 		previous: DidYouKnowTip | null;
 		direction: 'next' | 'back';
@@ -262,150 +273,166 @@ function DidYouKnowModalContent({ theme, startTipId, onClose }: DidYouKnowModalP
 					/>
 				</div>
 			)}
-			<section
+			<div
 				ref={cardRef}
 				role="dialog"
 				aria-modal={!passive}
 				aria-label="Did You Know"
-				className="dyk-dialog rounded-xl p-5 shadow-2xl"
+				className="dyk-dialog rounded-xl shadow-2xl"
+				data-resizing={resize.isResizing}
 				style={{
+					...resize.style,
+					...(isReading ? { width: 'min(380px, 90vw)', height: 'auto' } : {}),
 					backgroundColor: theme.colors.bgMain,
 					color: theme.colors.textMain,
 					...(spotlightActive ? spotlightPosition : {}),
 				}}
 			>
-				<header className="flex items-center gap-2 text-sm">
-					<Lightbulb className="h-4 w-4" style={{ color: theme.colors.accent }} aria-hidden />
-					<h1 className="font-semibold">Did You Know?</h1>
-					<span className="ml-auto mr-2 text-xs" style={{ color: theme.colors.textDim }}>
-						{index} of {total}
-					</span>
-					<EscCloseButton theme={theme} onClose={onClose} />
-				</header>
-				{!isReading && (
-					<OrnateFrame className="my-4">
-						{outgoingTip && (
-							<div
-								key={`out-${outgoingTip.id}`}
-								className="dyk-art dyk-exit"
-								data-direction={transition.direction}
-								aria-hidden
-							>
-								<TipArtwork tip={outgoingTip} theme={theme} />
-							</div>
-						)}
-						<div
-							key={tip.id}
-							className={`dyk-art ${outgoingTip ? 'dyk-enter' : ''}`}
-							data-direction={transition.direction}
-						>
-							<TipArtwork tip={tip} theme={theme} />
-						</div>
-					</OrnateFrame>
-				)}
-				{/* One grid cell sizes itself to the tallest placard at the actual width/font.
-				    Hidden cards remain in layout, but are inert and absent from the accessibility tree. */}
-				{isReading ? (
-					<div className="my-4 space-y-2 select-text">
-						<h2 className="text-lg font-semibold">{tip.title}</h2>
-						<p className="text-sm leading-relaxed">{tip.headline}</p>
-					</div>
-				) : (
-					<div className="dyk-copy-stack">
-						{DID_YOU_KNOW_TIPS.map((entry) => {
-							const active = entry.id === tip.id;
-							const outgoing = outgoingTip && entry.id === outgoingTip.id;
-							return (
-								<div
-									key={entry.id}
-									data-tip-id={entry.id}
-									data-direction={transition.direction}
-									className={`dyk-copy ${active && outgoingTip ? 'dyk-enter' : outgoing ? 'dyk-exit' : ''}`}
-									style={{ visibility: active || outgoing ? undefined : 'hidden' }}
-									aria-hidden={!active || undefined}
-									{...(!active && { inert: '' as unknown as boolean })}
-								>
-									<TipCard
-										tip={entry}
-										theme={theme}
-										shortcuts={shortcuts}
-										tabShortcuts={tabShortcuts}
-										encoreFeatures={encoreFeatures}
-										fontFamily={fontFamily}
-									/>
-								</div>
-							);
-						})}
-					</div>
-				)}
-				<footer className="dyk-footer mt-6 grid items-center gap-2 text-sm">
-					{spotlightRect && (
-						<button
-							type="button"
-							className="dyk-show-me rounded px-2 py-2 hover:bg-white/10"
-							onClick={() => {
-								const rect = readSpotlightRect();
-								setSpotlightRect(rect);
-								setSpotlightPosition(undefined);
-								setShowSpotlight(!!rect);
-							}}
-						>
-							Show me
-						</button>
-					)}
+				<div className="dyk-dialog-content h-full overflow-y-auto p-5">
+					<header className="flex items-center gap-2 text-sm">
+						<Lightbulb className="h-4 w-4" style={{ color: theme.colors.accent }} aria-hidden />
+						<h1 className="font-semibold">Did You Know?</h1>
+						<span className="ml-auto mr-2 text-xs" style={{ color: theme.colors.textDim }}>
+							{index} of {total}
+						</span>
+						<EscCloseButton theme={theme} onClose={onClose} />
+					</header>
 					{!isReading && (
+						<OrnateFrame className="my-4">
+							{outgoingTip && (
+								<div
+									key={`out-${outgoingTip.id}`}
+									className="dyk-art dyk-exit"
+									data-direction={transition.direction}
+									aria-hidden
+								>
+									<TipArtwork tip={outgoingTip} theme={theme} />
+								</div>
+							)}
+							<div
+								key={tip.id}
+								className={`dyk-art ${outgoingTip ? 'dyk-enter' : ''}`}
+								data-direction={transition.direction}
+							>
+								<TipArtwork tip={tip} theme={theme} />
+							</div>
+						</OrnateFrame>
+					)}
+					{/* One grid cell sizes itself to the tallest placard at the actual width/font.
+				    Hidden cards remain in layout, but are inert and absent from the accessibility tree. */}
+					{isReading ? (
+						<div className="my-4 space-y-2 select-text">
+							<h2 className="text-lg font-semibold">{tip.title}</h2>
+							<p className="text-sm leading-relaxed">{tip.headline}</p>
+						</div>
+					) : (
+						<div className="dyk-copy-stack">
+							{DID_YOU_KNOW_TIPS.map((entry) => {
+								const active = entry.id === tip.id;
+								const outgoing = outgoingTip && entry.id === outgoingTip.id;
+								return (
+									<div
+										key={entry.id}
+										data-tip-id={entry.id}
+										data-direction={transition.direction}
+										className={`dyk-copy ${active && outgoingTip ? 'dyk-enter' : outgoing ? 'dyk-exit' : ''}`}
+										style={{ visibility: active || outgoing ? undefined : 'hidden' }}
+										aria-hidden={!active || undefined}
+										{...(!active && { inert: '' as unknown as boolean })}
+									>
+										<TipCard
+											tip={entry}
+											theme={theme}
+											shortcuts={shortcuts}
+											tabShortcuts={tabShortcuts}
+											encoreFeatures={encoreFeatures}
+											fontFamily={fontFamily}
+										/>
+									</div>
+								);
+							})}
+						</div>
+					)}
+					<footer className="dyk-footer mt-6 grid items-center gap-2 text-sm">
+						{spotlightRect && (
+							<button
+								type="button"
+								className="dyk-show-me rounded px-2 py-2 hover:bg-white/10"
+								onClick={() => {
+									const rect = readSpotlightRect();
+									setSpotlightRect(rect);
+									setSpotlightPosition(undefined);
+									setShowSpotlight(!!rect);
+								}}
+							>
+								Show me
+							</button>
+						)}
+						{!isReading && (
+							<button
+								type="button"
+								className="rounded py-2 text-xs hover:underline"
+								style={{ color: theme.colors.textDim }}
+								onClick={() => {
+									dismissForever();
+									onClose();
+								}}
+							>
+								Don't show this again
+							</button>
+						)}
+						{(isReading || tip.docsSlug) && (
+							<button
+								type="button"
+								onClick={isReading ? exitReading : openDocs}
+								className="dyk-docs rounded px-2 py-2 hover:bg-white/10"
+							>
+								{isReading ? 'Back to tips' : 'Read more'}
+							</button>
+						)}
 						<button
 							type="button"
-							className="rounded py-2 text-xs hover:underline"
-							style={{ color: theme.colors.textDim }}
-							onClick={() => {
-								dismissForever();
-								onClose();
-							}}
+							aria-label="Previous tip"
+							title="Previous tip"
+							disabled={!canGoBack}
+							onClick={() => navigate('back')}
+							className="dyk-back rounded p-2 hover:bg-white/10 disabled:opacity-30"
 						>
-							Don't show this again
+							<ArrowLeft className="h-4 w-4" aria-hidden />
 						</button>
-					)}
-					{(isReading || tip.docsSlug) && (
 						<button
 							type="button"
-							onClick={isReading ? exitReading : openDocs}
-							className="dyk-docs rounded px-2 py-2 hover:bg-white/10"
+							aria-label="Next tip"
+							title="Next tip"
+							onClick={() => navigate('next')}
+							className="dyk-next rounded p-2 hover:bg-white/10"
 						>
-							{isReading ? 'Back to tips' : 'Read more'}
+							<ArrowRight className="h-4 w-4" aria-hidden />
 						</button>
-					)}
-					<button
-						type="button"
-						aria-label="Previous tip"
-						title="Previous tip"
-						disabled={!canGoBack}
-						onClick={() => navigate('back')}
-						className="dyk-back rounded p-2 hover:bg-white/10 disabled:opacity-30"
-					>
-						<ArrowLeft className="h-4 w-4" aria-hidden />
-					</button>
-					<button
-						type="button"
-						aria-label="Next tip"
-						title="Next tip"
-						onClick={() => navigate('next')}
-						className="dyk-next rounded p-2 hover:bg-white/10"
-					>
-						<ArrowRight className="h-4 w-4" aria-hidden />
-					</button>
-					{!isReading && canOpenSurface && (
-						<button
-							type="button"
-							onClick={openSurface}
-							className="dyk-action rounded px-3 py-2 font-medium hover:opacity-90"
-							style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-						>
-							{needsEncore ? 'Turn on' : 'Open'} {surface.label}
-						</button>
-					)}
-				</footer>
-			</section>
+						{!isReading && canOpenSurface && (
+							<button
+								type="button"
+								onClick={openSurface}
+								className="dyk-action rounded px-3 py-2 font-medium hover:opacity-90"
+								style={{
+									backgroundColor: theme.colors.accent,
+									color: theme.colors.accentForeground,
+								}}
+							>
+								{needsEncore ? 'Turn on' : 'Open'} {surface.label}
+							</button>
+						)}
+					</footer>
+				</div>
+				<ResizeHandles
+					onResizeStart={resize.onResizeStart}
+					onResetSize={resize.onResetSize}
+					canReset={resize.canReset}
+					disabled={passive}
+					contained
+					accentColor={theme.colors.accent}
+				/>
+			</div>
 		</div>,
 		document.body
 	);

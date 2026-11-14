@@ -14,6 +14,7 @@ import type { BrowserTab } from '../../../shared/browserPage';
 import { openBrowserTabAt } from '../../services/browserTabs';
 import { selectActiveSession, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
+import { browserTabFocusFields } from '../../utils/tabHelpers/focusFields';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 import { useSettingsStore } from '../../stores/settingsStore';
 
@@ -28,7 +29,8 @@ export function useDidYouKnowRotation({ startTipId }: { startTipId?: string }) {
 	const seed = storedSeed || initialSeed;
 	const order = useMemo(() => buildTipOrder(seed), [seed]);
 	const [history, setHistory] = useState<string[]>(() => {
-		const first = (startTipId && getTipById(startTipId, order)) || pickNextTip(order, seenIds);
+		const first =
+			(startTipId && getTipById(startTipId, order)) || pickNextTip(order, seenIds, seenIds.at(-1));
 		return first ? [first.id] : [];
 	});
 	const [cursor, setCursor] = useState(0);
@@ -53,9 +55,18 @@ export function useDidYouKnowRotation({ startTipId }: { startTipId?: string }) {
 			// Read the latest value so consecutive calls cannot overwrite each other,
 			// and Strict Mode's effect replay does not write the same tip twice.
 			const latestSeenIds = useSettingsStore.getState().didYouKnowSeenTipIds;
-			if (!latestSeenIds.includes(id)) setSeenIds([...latestSeenIds, id]);
+			// Keep the most recently displayed id last so a completed rotation
+			// continues across launches without adding another persisted setting.
+			if (!latestSeenIds.includes(id)) {
+				setSeenIds([...latestSeenIds, id]);
+			} else if (
+				latestSeenIds.at(-1) !== id &&
+				order.every((entry) => latestSeenIds.includes(entry.id))
+			) {
+				setSeenIds([...latestSeenIds.filter((seenId) => seenId !== id), id]);
+			}
 		},
-		[setSeenIds]
+		[setSeenIds, order]
 	);
 
 	useEffect(() => {
@@ -87,11 +98,8 @@ export function useDidYouKnowRotation({ startTipId }: { startTipId?: string }) {
 				browserTabs: s.browserTabs!.map((tab) =>
 					tab.id === target.tabId ? { ...tab, url, title: nextTip.title, requestedUrl: url } : tab
 				),
-				activeBrowserTabId: target.tabId,
-				activeFileTabId: null,
-				activeTerminalTabId: null,
+				...browserTabFocusFields(target.tabId),
 				activeGroupId: null,
-				inputMode: 'ai',
 			}));
 		} else if (session) {
 			const pending = pendingTab.current;

@@ -20,7 +20,9 @@ Maestro features a three-panel layout:
 ## Did You Know?
 
 **Did You Know?** shows one feature tip when you launch Maestro. It is on by
-default, helping you discover tools and shortcuts as you work.
+default in the main desktop window, helping you discover tools and shortcuts
+as you work. Once you have seen every tip, launch tips continue from the last
+one shown.
 
 - **Next** browses to another tip. **Back** returns to earlier cards, stopping at
   the first card shown this time.
@@ -29,13 +31,16 @@ default, helping you discover tools and shortcuts as you work.
   and keep browsing tips. **Back to tips** restores the normal card view.
 - **Show me**, when available, spotlights the real control in the interface so
   you can see where to find it.
+- Drag the card's edges or corners to resize it. Its size is remembered when
+  you return from reading or reopen it; double-click a resize handle to reset it.
 - **Don't show this again** closes the card and turns off tips on launch.
 
 Manage tips in **Settings → General → Discovery**. Turn launch tips back on
 there, or choose **Show all tips again** to reset which tips you have seen.
 
 To open a tip whenever you want, press `Cmd+K` / `Ctrl+K` and select
-**Did You Know?**. You can also bind its shortcut in **Settings → Shortcuts**;
+**Did You Know?**, choose it from the Left Bar hamburger menu, or run
+`maestro-cli open did-you-know`. You can also bind its shortcut in **Settings → Shortcuts**;
 it is unassigned by default. See [Keyboard Shortcuts](./keyboard-shortcuts).
 
 ## Agent Status Indicators

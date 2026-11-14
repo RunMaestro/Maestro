@@ -10,6 +10,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { HamburgerMenuContent } from '../../../../renderer/components/SessionList/HamburgerMenuContent';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useThroughputGaugeStore } from '../../../../renderer/stores/throughputGaugeStore';
+import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 function renderMenu(setMenuOpen = vi.fn()) {
@@ -58,5 +59,19 @@ describe('HamburgerMenuContent - Throughput Gauge', () => {
 
 		fireEvent.click(screen.getByRole('button', { name: /Throughput Gauge/ }));
 		expect(useThroughputGaugeStore.getState().visible).toBe(false);
+	});
+});
+
+describe('HamburgerMenuContent - discovery', () => {
+	it('opens a tip and closes the menu', () => {
+		const closeMenu = vi.fn();
+		renderMenu(closeMenu);
+		fireEvent.click(screen.getByRole('button', { name: /Did You Know/ }));
+		expect(useModalStore.getState().isOpen('didYouKnow')).toBe(true);
+		expect(useModalStore.getState().getData('didYouKnow')).toMatchObject({
+			startTipId: expect.any(String),
+		});
+		expect(closeMenu).toHaveBeenCalledWith(false);
+		useModalStore.getState().closeModal('didYouKnow');
 	});
 });

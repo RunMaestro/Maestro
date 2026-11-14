@@ -38,6 +38,20 @@ describe('useDidYouKnowRotation', () => {
 		vi.restoreAllMocks();
 	});
 
+	it('continues a completed rotation across repeated launches without losing seen tips', () => {
+		const order = buildTipOrder(42);
+		useSettingsStore.setState({ didYouKnowSeenTipIds: order.map((tip) => tip.id) });
+		for (const tip of order.slice(0, 3)) {
+			const { result, unmount } = renderHook(() => useDidYouKnowRotation({}), {
+				wrapper: StrictMode,
+			});
+			expect(result.current.tip?.id).toBe(tip.id);
+			expect(useSettingsStore.getState().didYouKnowSeenTipIds.at(-1)).toBe(tip.id);
+			expect(new Set(useSettingsStore.getState().didYouKnowSeenTipIds).size).toBe(order.length);
+			unmount();
+		}
+	});
+
 	it('opens themed docs once and reuses the tab for Next, Back, and forward history', () => {
 		const { result, rerender } = renderHook(() => useDidYouKnowRotation({}), {
 			wrapper: StrictMode,

@@ -136,6 +136,9 @@ describe('Did You Know tip model', () => {
 				symphony: true,
 				maestroCue: true,
 				concerto: true,
+				computerHistory: true,
+				quickChat: true,
+				throughputGauge: true,
 			} satisfies Record<UiSurfaceEncoreFlag, true>;
 			expect(Object.keys(validFlags)).toContain(tip.encore);
 		}

@@ -195,11 +195,11 @@ export function useAppInitialization(): AppInitializationReturn {
 			s.isOpen('reauth') ||
 			s.isOpen('updateCheck')
 	);
-	// This ref is per window instance, hence per launch: the intended frequency.
+	// Only the desktop lifecycle owner shows the automatic tip once per launch.
 	const didYouKnowShownRef = useRef(false);
 	useEffect(() => {
 		if (!settingsLoaded || !sessionsLoaded || !initialFileTreeReady) return;
-		if (!didYouKnowEnabled || didYouKnowShownRef.current) return;
+		if (!isLifecycleOwner || !didYouKnowEnabled || didYouKnowShownRef.current) return;
 		if (wizardState.isOpen || onboardingSeriesActive || didYouKnowBlocked) return;
 
 		didYouKnowShownRef.current = true;
@@ -218,6 +218,7 @@ export function useAppInitialization(): AppInitializationReturn {
 		settingsLoaded,
 		sessionsLoaded,
 		initialFileTreeReady,
+		isLifecycleOwner,
 		didYouKnowEnabled,
 		wizardState.isOpen,
 		onboardingSeriesActive,

@@ -150,9 +150,10 @@
 	right: 50%;
 	bottom: 50%;
 	transform: translate(50%, 50%);
-	width: min(760px, calc(100vw - 32px));
-	max-height: calc(100vh - 32px);
-	overflow-y: auto;
+	width: min(760px, 90vw);
+	max-width: 90vw;
+	max-height: 90vh;
+	overflow: hidden;
 	pointer-events: auto;
 	transition:
 		right 220ms ease,
@@ -170,7 +171,7 @@
 	right: 16px;
 	bottom: 16px;
 	transform: translate(0, 0);
-	width: min(380px, calc(100vw - 32px));
+	width: min(380px, 90vw);
 }
 
 .dyk-overlay[data-reading='true'] .dyk-footer {
@@ -247,4 +248,12 @@
 	.dyk-spotlight[data-active='true'] .dyk-spotlight-ring {
 		animation: none;
 	}
+}
+
+.dyk-dialog[data-resizing='true'] {
+	transition: none;
+}
+
+.dyk-dialog-content {
+	max-height: inherit;
 }
