@@ -1343,6 +1343,114 @@ describe('ExitHandler', () => {
 			vi.mocked(matchSshErrorPattern).mockReset();
 		});
 
+		it("routes the parser's generic exit-code crash to the SSH outage error", async () => {
+			// Every provider parser falls back to agent_crashed "Agent exited with
+			// code 255" for a bare non-zero exit. On an SSH run that fallback used to
+			// win, so the outage dialog and the availability retry never fired.
+			vi.mocked(matchSshErrorPattern).mockReturnValue(null);
+			vi.mocked(getSshRemoteById).mockReturnValue({
+				id: 'remote-1',
+				name: 'pedtome',
+				host: 'pedtome-tailcat',
+			} as ReturnType<typeof getSshRemoteById>);
+			const mockParser = createMockOutputParser({
+				detectErrorFromExit: vi.fn(() => ({
+					type: 'agent_crashed' as const,
+					message: 'Agent exited with code 255',
+					recoverable: true,
+					agentId: 'claude-code',
+					timestamp: Date.now(),
+				})),
+			});
+			processes.set(
+				'test-session',
+				createMockProcess({
+					sshRemoteId: 'remote-1',
+					outputParser: mockParser,
+					stdoutBuffer: '',
+					stderrBuffer: 'kex_exchange_identification: Connection closed by remote host\n',
+				})
+			);
+			const errors: Array<[string, Record<string, unknown>]> = [];
+			emitter.on('agent-error', (sid: string, err: Record<string, unknown>) =>
+				errors.push([sid, err])
+			);
+
+			await exitHandler.handleExit('test-session', 255);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0][1]).toMatchObject({
+				type: 'network_error',
+				recoverable: true,
+				sshRemoteId: 'remote-1',
+				message:
+					'Unable to connect to "pedtome" over SSH. kex_exchange_identification: Connection closed by remote host',
+			});
+
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined as never);
+			vi.mocked(matchSshErrorPattern).mockReset();
+		});
+
+		it("keeps the parser's crash for a local run that exits 255", async () => {
+			const mockParser = createMockOutputParser({
+				detectErrorFromExit: vi.fn(() => ({
+					type: 'agent_crashed' as const,
+					message: 'Agent exited with code 255',
+					recoverable: true,
+					agentId: 'claude-code',
+					timestamp: Date.now(),
+				})),
+			});
+			processes.set(
+				'test-session',
+				createMockProcess({ outputParser: mockParser, stdoutBuffer: '', stderrBuffer: '' })
+			);
+			const errors: Array<[string, Record<string, unknown>]> = [];
+			emitter.on('agent-error', (sid: string, err: Record<string, unknown>) =>
+				errors.push([sid, err])
+			);
+
+			await exitHandler.handleExit('test-session', 255);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0][1]).toMatchObject({ type: 'agent_crashed' });
+		});
+
+		it("keeps the parser's crash for an SSH run that exits non-255", async () => {
+			// ssh passes the remote command's own exit status through, so only 255
+			// says the connection failed. Anything else is the agent's own crash.
+			vi.mocked(matchSshErrorPattern).mockReturnValue(null);
+			const mockParser = createMockOutputParser({
+				detectErrorFromExit: vi.fn(() => ({
+					type: 'agent_crashed' as const,
+					message: 'Agent exited with code 1',
+					recoverable: true,
+					agentId: 'claude-code',
+					timestamp: Date.now(),
+				})),
+			});
+			processes.set(
+				'test-session',
+				createMockProcess({
+					sshRemoteId: 'remote-1',
+					outputParser: mockParser,
+					stdoutBuffer: '',
+					stderrBuffer: '',
+				})
+			);
+			const errors: Array<[string, Record<string, unknown>]> = [];
+			emitter.on('agent-error', (sid: string, err: Record<string, unknown>) =>
+				errors.push([sid, err])
+			);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0][1]).toMatchObject({ type: 'agent_crashed', sshRemoteId: 'remote-1' });
+
+			vi.mocked(matchSshErrorPattern).mockReset();
+		});
+
 		it('stays quiet, and tells the tracker nothing, when the user stopped the turn', async () => {
 			vi.mocked(matchSshErrorPattern).mockReturnValue(null);
 			mockNoteSshExit.mockClear();

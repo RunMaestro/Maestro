@@ -17,6 +17,7 @@ import { getSshRemoteById } from '../../stores/getters';
 import { noteSshExit } from '../../ssh-reachability';
 import {
 	describeSshUnreachable,
+	isSshConnectionFailure,
 	SSH_CONNECTION_FAILED_EXIT_CODE,
 } from '../../../shared/sshConnection';
 import {
@@ -314,13 +315,23 @@ export class ExitHandler {
 			// stays `null` (nothing found) rather than gating this whole block
 			// on `outputParser`.
 			let sshExplicitError: AgentError | undefined;
-			const providerError = outputParser
+			const parserError = outputParser
 				? outputParser.detectErrorFromExit(
 						code,
 						managedProcess.stderrBuffer || '',
 						managedProcess.stdoutBuffer || managedProcess.streamedText || ''
 					)
 				: null;
+			// ssh that lost its host exits 255, and every parser's last resort calls
+			// a bare non-zero exit a crash ("Agent exited with code 255"). Letting
+			// that win would skip the SSH checks below, so the outage dialog and the
+			// availability retry, which both key on a network_error carrying
+			// sshRemoteId, never fire and every queued message burns as a crash.
+			const isSshTransportCrash =
+				parserError?.type === 'agent_crashed' &&
+				Boolean(managedProcess.sshRemoteId) &&
+				isSshConnectionFailure(code);
+			const providerError = isSshTransportCrash ? null : parserError;
 
 			if (providerError === null && managedProcess.sshRemoteId) {
 				const stderrToCheck = managedProcess.stderrBuffer || '';

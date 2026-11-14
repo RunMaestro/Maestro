@@ -18,10 +18,14 @@ import { logger } from '../../../shared/maestro-lib/host';
 import { stopProcess } from '../../../shared/maestro-lib/control/termination';
 
 import {
+	__resetPendingRemoteReapsForTest,
+	buildPreLaunchReapScript,
 	buildRemoteSignalScript,
 	newRemotePidFilePath,
+	reapRemoteAgent,
 	signalRemoteAgent,
 	sshConnectionArgs,
+	takePendingRemoteReaps,
 	withRemotePidRecord,
 } from '../../../main/utils/ssh-remote-signal';
 
@@ -145,6 +149,135 @@ describe('signalRemoteAgent', () => {
 				'interrupt'
 			)
 		).toBe(false);
+	});
+
+	it('reports the exit code once, and null when ssh errors', () => {
+		const target = {
+			sshCommand: 'ssh',
+			sshArgs: ['u@h', ...STDIN_SHELL],
+			pidFile: '/tmp/x',
+			sessionId: 's',
+		};
+		const exited = fakeChild();
+		mockSpawn.mockReturnValueOnce(exited);
+		const onExit = vi.fn();
+		signalRemoteAgent(target, 'terminate', onExit);
+		exited.emit('exit', 255);
+		exited.emit('exit', 0);
+		expect(onExit).toHaveBeenCalledOnce();
+		expect(onExit).toHaveBeenCalledWith(255);
+
+		const errored = fakeChild();
+		mockSpawn.mockReturnValueOnce(errored);
+		const onError = vi.fn();
+		signalRemoteAgent(target, 'terminate', onError);
+		errored.emit('error', new Error('EAGAIN'));
+		errored.emit('exit', null);
+		expect(onError).toHaveBeenCalledOnce();
+		expect(onError).toHaveBeenCalledWith(null);
+	});
+});
+
+describe('reapRemoteAgent', () => {
+	const target = {
+		sshCommand: 'ssh',
+		sshArgs: ['u@h', ...STDIN_SHELL],
+		pidFile: '/tmp/maestro-agent-reap.pid',
+		sessionId: 'agent-ai-tab',
+	};
+	const children: Array<EventEmitter & { stdin: EventEmitter }> = [];
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		mockSpawn.mockReset();
+		vi.clearAllMocks();
+		children.length = 0;
+		mockSpawn.mockImplementation(() => {
+			const child = Object.assign(new EventEmitter(), {
+				stdin: Object.assign(new EventEmitter(), { end: vi.fn() }),
+				kill: vi.fn(),
+				unref: vi.fn(),
+			});
+			children.push(child);
+			return child;
+		});
+	});
+	afterEach(() => {
+		__resetPendingRemoteReapsForTest();
+		vi.useRealTimers();
+	});
+
+	it('retries while ssh cannot reach the host, then stops once it answers', () => {
+		reapRemoteAgent(target, [1_000, 2_000]);
+		expect(children).toHaveLength(1);
+
+		children[0].emit('exit', 255);
+		vi.advanceTimersByTime(999);
+		expect(children).toHaveLength(1);
+		vi.advanceTimersByTime(1);
+		expect(children).toHaveLength(2);
+
+		children[1].emit('exit', 0);
+		vi.advanceTimersByTime(60_000);
+		expect(children).toHaveLength(2);
+		expect(takePendingRemoteReaps(target.sessionId)).toEqual([]);
+	});
+
+	it('treats a timed-out signal ssh as unreached', () => {
+		reapRemoteAgent(target, [1_000]);
+		children[0].emit('exit', null);
+		vi.advanceTimersByTime(1_000);
+		expect(children).toHaveLength(2);
+	});
+
+	it('stops at once when the host ran the script, whatever it answered', () => {
+		reapRemoteAgent(target, [1_000]);
+		children[0].emit('exit', 1);
+		vi.advanceTimersByTime(60_000);
+		expect(children).toHaveLength(1);
+	});
+
+	it('gives up when every delay is spent', () => {
+		reapRemoteAgent(target, [1_000]);
+		children[0].emit('exit', 255);
+		vi.advanceTimersByTime(1_000);
+		children[1].emit('exit', 255);
+		vi.advanceTimersByTime(60_000);
+		expect(children).toHaveLength(2);
+		expect(takePendingRemoteReaps(target.sessionId)).toEqual([]);
+		expect(logger.warn).toHaveBeenCalledWith(
+			'Gave up stopping a remote agent: its host never answered',
+			expect.any(String),
+			expect.objectContaining({ sessionId: target.sessionId })
+		);
+	});
+
+	it('hands a pending reap to the next launch and stops retrying it', () => {
+		const promptOwner = {
+			...target,
+			pidFile: newRemotePidFilePath(true),
+			promptArtifactPath: '/tmp/private-prompt-fixture.json',
+		};
+		const otherTab = {
+			...target,
+			pidFile: '/tmp/maestro-agent-other.pid',
+			sessionId: 'agent-ai-x',
+		};
+		reapRemoteAgent(target, [1_000]);
+		reapRemoteAgent(promptOwner, [1_000]);
+		reapRemoteAgent(otherTab, [1_000]);
+		for (const child of children) child.emit('exit', 255);
+
+		expect(takePendingRemoteReaps(target.sessionId)).toEqual([target]);
+		expect(takePendingRemoteReaps(target.sessionId)).toEqual([]);
+
+		vi.advanceTimersByTime(1_000);
+		// The taken reap is gone; the prompt owner and the other tab still retry.
+		expect(children).toHaveLength(5);
+	});
+
+	it('builds nothing when no reap is pending', () => {
+		expect(buildPreLaunchReapScript([])).toBe('');
 	});
 });
 
@@ -293,6 +426,43 @@ describe.skipIf(!hasBash)('remote scripts under a real bash', () => {
 	it('exits quietly when there is no pid file', () => {
 		const result = runScript(buildRemoteSignalScript(path.join(dir, 'missing.pid'), 'interrupt'));
 		expect(result.status).toBe(0);
+	});
+
+	it('stops an orphaned agent before the next launch starts its own', async () => {
+		const orphanPid = path.join(dir, 'orphan.pid');
+		const orphan = launch(orphanPid);
+		const orphanExit = new Promise<NodeJS.Signals | null>((r) =>
+			orphan.on('exit', (_c, s) => r(s))
+		);
+		await waitFor(
+			() => fs.existsSync(orphanPid) && fs.readFileSync(orphanPid, 'utf8').includes(' ')
+		);
+
+		const nextPid = path.join(dir, 'next.pid');
+		const marker = path.join(dir, 'launched');
+		const prefix = buildPreLaunchReapScript([
+			{ sshCommand: 'ssh', sshArgs: [], pidFile: orphanPid, sessionId: 's' },
+			{ sshCommand: 'ssh', sshArgs: [], pidFile: path.join(dir, 'gone.pid'), sessionId: 's' },
+		]);
+		const next = realSpawn('/bin/bash', ['--norc', '--noprofile', '-s'], {
+			detached: true,
+			env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' },
+			stdio: ['pipe', 'ignore', 'ignore'],
+		});
+		// The reap's `exit` stays in its subshell, and it reads none of the
+		// script bash is still reading, so the launch runs to its own agent.
+		next.stdin!.end(
+			prefix + withRemotePidRecord(`printf ok > '${marker}'\nexec sleep 30\n`, nextPid)
+		);
+		try {
+			expect(await orphanExit).toBe('SIGTERM');
+			await waitFor(() => fs.existsSync(marker));
+			expect(fs.existsSync(orphanPid)).toBe(false);
+			expect(Number(fs.readFileSync(nextPid, 'utf8').split(' ')[0])).toBe(next.pid);
+			expect(next.exitCode).toBeNull();
+		} finally {
+			process.kill(-next.pid!, 'SIGKILL');
+		}
 	});
 });
 
