@@ -1,7 +1,8 @@
 import { Lightbulb } from 'lucide-react';
 import { notifyToast } from '../../../../../stores/notificationStore';
 import type { Theme } from '../../../../../types';
-import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
+import { SectionCard } from '../../DisplayTab/components/SectionCard';
+import { ToggleSettingRow } from '../../DisplayTab/components/ToggleSettingRow';
 import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface DiscoverySectionProps {
@@ -22,37 +23,16 @@ export function DiscoverySection({
 	return (
 		<div>
 			<SettingsSectionHeading icon={Lightbulb}>Discovery</SettingsSectionHeading>
-			<div
-				className="p-3 rounded border space-y-3"
-				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
-			>
-				<div
-					data-setting-id="general-did-you-know"
-					className="flex items-center justify-between cursor-pointer"
-					onClick={() => setDidYouKnowEnabled(!didYouKnowEnabled)}
-					role="button"
-					tabIndex={0}
-					onKeyDown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							setDidYouKnowEnabled(!didYouKnowEnabled);
-						}
-					}}
-				>
-					<div className="flex-1 pr-3">
-						<div className="font-medium" style={{ color: theme.colors.textMain }}>
-							Show 'Did You Know?' on launch
-						</div>
-						<div className="text-xs opacity-70 mt-0.5">
-							Learn one Maestro feature each time you start the app. Open one any time from the
-							command palette.
-						</div>
-					</div>
-					<ToggleSwitch
+			<SectionCard theme={theme}>
+				<div data-setting-id="general-did-you-know">
+					<ToggleSettingRow
+						theme={theme}
+						title="Show 'Did You Know?' on launch"
+						description="Learn one Maestro feature each time you start the app. Open one any time from the command palette."
 						checked={didYouKnowEnabled}
 						onChange={setDidYouKnowEnabled}
-						theme={theme}
 						ariaLabel="Show 'Did You Know?' on launch"
+						clickableRow
 					/>
 				</div>
 				<div
@@ -86,7 +66,7 @@ export function DiscoverySection({
 						Show all tips again
 					</button>
 				</div>
-			</div>
+			</SectionCard>
 		</div>
 	);
 }

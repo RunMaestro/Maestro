@@ -81,7 +81,7 @@ describe('GeneralTab section components', () => {
 				/>
 			);
 			const toggle = screen.getByRole('switch', { name: "Show 'Did You Know?' on launch" });
-			const row = toggle.closest('[data-setting-id="general-did-you-know"]')!;
+			const row = toggle.closest('[role="button"]')!;
 			expect(toggle).toHaveAttribute('aria-checked', String(enabled));
 			fireEvent.click(row);
 			fireEvent.keyDown(row, { key: 'Enter' });

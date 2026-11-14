@@ -40,6 +40,27 @@ describe('DidYouKnowModal', () => {
 		vi.restoreAllMocks();
 	});
 
+	it('remembers a resized gallery and restores it after reading and reopening', async () => {
+		const props = { theme: mockTheme, isOpen: true, onClose: vi.fn() };
+		const { rerender } = render(<DidYouKnowModal {...props} />, { wrapper: LayerStackProvider });
+		const dialog = screen.getByRole('dialog');
+		const initialWidth = parseFloat(dialog.style.width);
+		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-e'), { clientX: 500 });
+		fireEvent.mouseMove(document, { clientX: 520 });
+		fireEvent.mouseUp(document);
+		expect(useSettingsStore.getState().modalSizes.didYouKnow.width).toBe(initialWidth + 40);
+		const savedWidth = dialog.style.width;
+		await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+		fireEvent.click(screen.getByRole('button', { name: 'Read more' }));
+		expect(screen.queryByTestId('modal-resize-handle-e')).toBeNull();
+		fireEvent.click(screen.getByRole('button', { name: 'Back to tips' }));
+		expect(dialog.style.width).toBe(savedWidth);
+		rerender(<DidYouKnowModal {...props} isOpen={false} />);
+		rerender(<DidYouKnowModal {...props} />);
+		expect(screen.getByRole('dialog').style.width).toBe(savedWidth);
+		expect(screen.getByRole('dialog')).toHaveStyle({ maxWidth: '90vw', maxHeight: '90vh' });
+	});
+
 	describe('Show me spotlight', () => {
 		beforeEach(() => vi.useFakeTimers());
 		afterEach(() => vi.useRealTimers());
@@ -476,7 +497,9 @@ describe('DidYouKnowModal', () => {
 				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, maestroCue: true },
 			})
 		);
-		expect(screen.getByText(formatShortcutKeys(binding.keys))).toBeInTheDocument();
+		expect(
+			document.querySelector('[data-tip-id="maestro-cue"] [data-shortcut-keys]')
+		).toHaveTextContent(formatShortcutKeys(binding.keys));
 		expect(screen.queryByText('Encore')).toBeNull();
 		expect(screen.getByRole('button', { name: 'Open Maestro Cue' })).toBeEnabled();
 		fireEvent.click(screen.getByRole('button', { name: 'Next tip' }));

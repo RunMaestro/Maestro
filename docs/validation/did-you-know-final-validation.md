@@ -237,3 +237,45 @@ under the contribution playbook's validation scope.
 The authenticated account has read access but no push, maintain, or admin access
 to RunMaestro/Maestro. It can update this fork PR, but a maintainer must approve CI
 and perform the merge into `rc`.
+
+## November 14 review fixes and rebase
+
+Rebased onto `rc` at `ddab2bc5e543217714ff705fd7fea1ac415b48cc` and resolved
+General settings' upstream section-registry refactor by registering Discovery
+in `GeneralTab/sections.tsx`.
+
+Verified and addressed the five Greptile findings and two CodeRabbit findings:
+
+- Completed rotations now remember the last displayed tip across launches.
+  Unseen tips still take priority, and repeated effects do not duplicate ids.
+- Automatic launch tips run only in the desktop lifecycle owner, excluding
+  secondary windows and web-desktop clients.
+- Discovery reuses `ShortcutKeys`, `SectionCard`, `ToggleSettingRow`,
+  `useEventListener`, and `browserTabFocusFields`.
+- The hamburger menu and `maestro-cli open did-you-know` (alias `discovery`)
+  join the palette and configurable shortcut, using the same random-tip opener.
+- The card uses `useResizableModal` and `ResizeHandles`, remembers gallery
+  sizing, caps dimensions at 90vw/90vh, and retains docked reading and spotlights.
+- The exhaustive test flag record includes all current surface Encore flags.
+- The regression report preserves its historical paths and supplies a current,
+  runnable 56-file manifest, including BrowserTabView's MainPanel path.
+
+Validation on macOS with Node.js 22.19.0 and the committed lockfile:
+
+- 2,890 tests across 56 files passed after correcting two settings tests to
+  target the shared toggle row. The combined run passed 2,888 tests; the
+  corrected settings file then passed all 20 tests. No tests were skipped.
+- TypeScript, ESLint, repository formatting, documentation-path checks, and
+  main/preload, renderer, and web-desktop production builds passed.
+- Chromium checks covered all 21 tips in dark/light themes, 390/600/1000px
+  windows, and 60%/100%/240% text sizing. Actual resize dragging, restoration
+  after reading, narrow-window scrolling, reduced motion, and keyboard
+  activation passed.
+- A hidden, isolated Electron instance rendered live documentation, followed
+  a docs link with native mouse input, scrolled with PageDown, reused the same
+  tab for Next, and restored the gallery with Back to tips. No agent turn was
+  sent. The test window remained invisible throughout.
+
+Local logs and screenshots are in `tmp/readiness-nov14/`. Full-suite and
+live-provider testing remain outside the contribution playbook's scope. Fork
+CI approval and the merge into `rc` still require the maintainer.

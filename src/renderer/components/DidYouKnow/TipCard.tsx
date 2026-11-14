@@ -6,7 +6,7 @@ import {
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
 import type { Shortcut, Theme } from '../../types';
 import { resolveFixedPitchFontFamily } from '../../utils/fixedPitchFont';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { ShortcutKeys } from '../ui/ShortcutHint';
 import { CopyIconButton } from '../ui/CopyIconButton';
 
 interface TipCardProps {
@@ -57,15 +57,7 @@ export function TipCard({
 			</div>
 			{(!!keys?.length || tip.cli) && (
 				<div className="flex flex-wrap items-center gap-3">
-					{!!keys?.length && (
-						<kbd
-							data-shortcut-hint
-							className="rounded border px-2 py-1 text-xs"
-							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
-						>
-							{formatShortcutKeys(keys)}
-						</kbd>
-					)}
+					{!!keys?.length && <ShortcutKeys theme={theme} keys={keys} size="md" />}
 					{tip.cli && (
 						<div
 							className="flex min-w-0 max-w-full items-center gap-2 rounded border px-2 py-1"

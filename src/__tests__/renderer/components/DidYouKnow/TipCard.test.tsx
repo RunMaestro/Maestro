@@ -58,11 +58,15 @@ describe('TipCard', () => {
 			const { container, rerender } = render(
 				<TipCard tip={tip} theme={mockTheme} {...{ [map]: { [binding.id]: binding } }} />
 			);
-			expect(container.querySelector('kbd')).toHaveTextContent(formatShortcutKeys(binding.keys));
-			expect(container.querySelector('kbd')).toHaveAttribute('data-shortcut-hint');
+			expect(container.querySelector('[data-shortcut-keys]')).toHaveTextContent(
+				formatShortcutKeys(binding.keys)
+			);
+			expect(container.querySelector('[data-shortcut-keys]')).toHaveAttribute('data-shortcut-hint');
 			binding.keys = ['Alt', 'k'];
 			rerender(<TipCard tip={tip} theme={mockTheme} {...{ [map]: { [binding.id]: binding } }} />);
-			expect(container.querySelector('kbd')).toHaveTextContent(formatShortcutKeys(binding.keys));
+			expect(container.querySelector('[data-shortcut-keys]')).toHaveTextContent(
+				formatShortcutKeys(binding.keys)
+			);
 			binding.keys = [];
 			rerender(<TipCard tip={tip} theme={mockTheme} {...{ [map]: { [binding.id]: binding } }} />);
 			expect(container.querySelector('kbd')).toBeNull();
@@ -73,7 +77,9 @@ describe('TipCard', () => {
 		const fixed = Object.values(FIXED_SHORTCUTS).find((shortcut) => shortcut.keys.length)!;
 		const fixedTip = { ...tip, shortcutId: fixed.id };
 		const { container, rerender } = render(<TipCard tip={fixedTip} theme={mockTheme} />);
-		expect(container.querySelector('kbd')).toHaveTextContent(formatShortcutKeys(fixed.keys));
+		expect(container.querySelector('[data-shortcut-keys]')).toHaveTextContent(
+			formatShortcutKeys(fixed.keys)
+		);
 		rerender(
 			<TipCard
 				tip={fixedTip}

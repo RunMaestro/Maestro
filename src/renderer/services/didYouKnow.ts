@@ -2,7 +2,7 @@ import { buildTipOrder, pickRandomTip } from '../../shared/didYouKnow';
 import { useModalStore } from '../stores/modalStore';
 import { useSettingsStore } from '../stores/settingsStore';
 
-/** Open a random tip using current settings for both manual entry points. */
+/** Open a random tip using current settings for all manual entry points. */
 export function openRandomDidYouKnowTip(): void {
 	const { didYouKnowSeed, didYouKnowSeenTipIds } = useSettingsStore.getState();
 	const tip = pickRandomTip(buildTipOrder(didYouKnowSeed), didYouKnowSeenTipIds);

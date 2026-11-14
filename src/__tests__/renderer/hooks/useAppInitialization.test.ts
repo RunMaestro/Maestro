@@ -422,6 +422,13 @@ describe('useAppInitialization', () => {
 			mockSessionState.initialFileTreeReady = true;
 		});
 
+		it('does not auto-open in secondary windows or web desktop clients', async () => {
+			mockIsLifecycleOwner = false;
+			renderHook(() => useAppInitialization());
+			await act(() => vi.advanceTimersByTimeAsync(2000));
+			expect(useModalStore.getState().isOpen('didYouKnow')).toBe(false);
+		});
+
 		it('opens after 1200ms and only once, including StrictMode effect replay', async () => {
 			renderHook(() => useAppInitialization(), {
 				wrapper: ({ children }) => createElement(StrictMode, null, children),

@@ -49,9 +49,10 @@ the test-name filter excluded the real-agent suite. `SKIP_INTEGRATION_TESTS=fals
 ensured the mocked tests executed their bodies. Temporary files stayed under
 ignored `tmp/dyk-validation`.
 
-## Unit test manifest
+## Historical unit test manifest (September 19)
 
-Run these paths together with `node node_modules/vitest/vitest.mjs run`.
+These are the paths used for the dated run above. For the current tree, use
+the current manifest below (BrowserTabView moved under MainPanel).
 The full repository test suite was not run, as required by the playbook.
 
 - `src/__tests__/main/web-server/routes/authRoutes.test.ts`
@@ -103,3 +104,67 @@ The full repository test suite was not run, as required by the playbook.
 - `src/__tests__/shared/didYouKnow.test.ts`
 - `src/__tests__/shared/settingsMetadata.test.ts`
 - `src/__tests__/shared/shuffle.test.ts`
+
+## Current unit test manifest (November 14)
+
+Run from the repository root with Node.js 22:
+
+```bash
+node node_modules/vitest/vitest.mjs run \
+  src/__tests__/main/web-server/routes/authRoutes.test.ts \
+  src/__tests__/renderer/components/AppModals-selfSourced.test.tsx \
+  src/__tests__/renderer/components/AppStandaloneModals.test.tsx \
+  src/__tests__/renderer/components/MainPanel/BrowserTabView.test.tsx \
+  src/__tests__/renderer/components/DidYouKnow/DidYouKnowModal.test.tsx \
+  src/__tests__/renderer/components/DidYouKnow/OrnateFrame.test.tsx \
+  src/__tests__/renderer/components/DidYouKnow/TipArtwork.test.tsx \
+  src/__tests__/renderer/components/DidYouKnow/TipCard.test.tsx \
+  src/__tests__/renderer/components/DidYouKnow/useDidYouKnowRotation.test.tsx \
+  src/__tests__/renderer/components/DidYouKnowFrame.test.ts \
+  src/__tests__/renderer/components/DidYouKnowModal.test.tsx \
+  src/__tests__/renderer/components/DidYouKnowReadingMode.test.tsx \
+  src/__tests__/renderer/components/MainPanel/MainPanelContent.test.tsx \
+  src/__tests__/renderer/components/MainPanel/MainPanelHeader.test.tsx \
+  src/__tests__/renderer/components/QuickActionsModal.test.tsx \
+  src/__tests__/renderer/components/QuickActionsModal/commands/commandBuilders.test.ts \
+  src/__tests__/renderer/components/RightPanel.test.tsx \
+  src/__tests__/renderer/components/SessionList.test.tsx \
+  src/__tests__/renderer/components/SessionList/HamburgerMenuContentPhone.test.tsx \
+  src/__tests__/renderer/components/SessionList/SessionListMemoization.test.tsx \
+  src/__tests__/renderer/components/Settings/searchableSettings.test.ts \
+  src/__tests__/renderer/components/Settings/tabs/GeneralTab.test.tsx \
+  src/__tests__/renderer/components/Settings/tabs/GeneralTab/sections.test.tsx \
+  src/__tests__/renderer/components/TabBar/TabBar.reorder.test.tsx \
+  src/__tests__/renderer/components/Wizard/TourStepWidth.test.tsx \
+  src/__tests__/renderer/components/Wizard/WizardContext.test.tsx \
+  src/__tests__/renderer/components/Wizard/WizardIntegration.test.tsx \
+  src/__tests__/renderer/components/Wizard/WizardKeyboardNavigation.test.tsx \
+  src/__tests__/renderer/components/Wizard/WizardThemeStyles.test.tsx \
+  src/__tests__/renderer/components/Wizard/screens/PhaseReviewScreen/components.test.tsx \
+  src/__tests__/renderer/components/Wizard/screens/PhaseReviewScreen/hooks.test.tsx \
+  src/__tests__/renderer/constants/modalPriorities.test.ts \
+  src/__tests__/renderer/constants/shortcuts.test.ts \
+  src/__tests__/renderer/fonts-and-sizing.test.ts \
+  src/__tests__/renderer/hooks/props/useSessionListProps.test.ts \
+  src/__tests__/renderer/hooks/tabs/internal/useBrowserTabHandlers.test.ts \
+  src/__tests__/renderer/hooks/useAppInitialization.test.ts \
+  src/__tests__/renderer/hooks/useMainKeyboardHandler.test.ts \
+  src/__tests__/renderer/hooks/useModalHandlers.test.ts \
+  src/__tests__/renderer/hooks/useSettings.test.ts \
+  src/__tests__/renderer/hooks/useTourActions.test.ts \
+  src/__tests__/renderer/hooks/useWizardHandlers.test.ts \
+  src/__tests__/renderer/stores/modalStore.test.ts \
+  src/__tests__/renderer/stores/settingsStore.test.ts \
+  src/__tests__/renderer/utils/browserTabPersistence.test.ts \
+  src/__tests__/renderer/utils/spotlight.test.ts \
+  src/__tests__/shared/didYouKnow.test.ts \
+  src/__tests__/shared/settingsMetadata.test.ts \
+  src/__tests__/shared/shuffle.test.ts \
+  src/__tests__/renderer/components/MainPanel/RemoteBrowserTabView.test.tsx \
+  src/__tests__/renderer/services/userJourney.test.ts \
+  src/__tests__/shared/userJourney.test.ts \
+  src/__tests__/renderer/utils/openUiSurface.test.ts \
+  src/__tests__/shared/uiSurfaces.test.ts \
+  src/__tests__/renderer/components/SessionList/HamburgerMenuContent.test.tsx \
+  src/__tests__/renderer/hooks/useResizableModal.test.tsx
+```
