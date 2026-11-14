@@ -288,6 +288,7 @@ export function useWizardConversationSend({
 					projectName: projectNameFromPath(state.directoryPath),
 					model: state.plannerModel,
 					sshRemoteConfig: state.sessionSshRemoteConfig,
+					additionalDirectories: state.additionalDirectories,
 					claudeTokenSource: getClaudeTokenSourceFields(state),
 				});
 			}
@@ -383,6 +384,7 @@ export function useWizardConversationSend({
 						model: state.plannerModel,
 						existingDocs: existingDocs.length > 0 ? existingDocs : undefined,
 						sshRemoteConfig: state.sessionSshRemoteConfig,
+						additionalDirectories: state.additionalDirectories,
 						claudeTokenSource: getClaudeTokenSourceFields(state),
 					});
 				}
