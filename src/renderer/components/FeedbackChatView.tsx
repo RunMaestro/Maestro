@@ -61,6 +61,7 @@ import {
 } from '../../shared/feedbackAccounts';
 import {
 	type FeedbackAuthResponse,
+	feedbackReportFingerprint,
 	MAX_FEEDBACK_ATTACHMENTS as MAX_ATTACHMENTS,
 	MAX_FEEDBACK_ATTACHMENT_BYTES as MAX_ATTACHMENT_BYTES,
 	type FeedbackIssueMatch,
@@ -205,6 +206,14 @@ export function FeedbackChatView({
 	const [traceError, setTraceError] = useState('');
 	const setProfilingActive = useUIStore((s) => s.setProfilingActive);
 	const [submitError, setSubmitError] = useState('');
+	// Parts of the report the main process had to drop so the issue could still
+	// be filed (a screenshot it could not upload, a support package it could not
+	// build). The issue exists; these say what is missing from it.
+	const [submitWarnings, setSubmitWarnings] = useState<string[]>([]);
+	// Identity of the report the user is looking at when they click Submit. Sent
+	// with the payload so the main process can refuse a report that changed in
+	// between, rather than filing something the user did not review.
+	const reviewedFingerprintRef = useRef<string | null>(null);
 	const [matchingIssues, setMatchingIssues] = useState<ExistingIssue[]>([]);
 	const [searchingIssues, setSearchingIssues] = useState(false);
 	const [subscribingTo, setSubscribingTo] = useState<number | null>(null);
@@ -421,6 +430,28 @@ export function FeedbackChatView({
 		[lastResponse, messages, isReady, confidence]
 	);
 
+	// The exact payload a submit sends, built once so the fingerprint the user
+	// reviewed and the payload that is filed can never describe different reports.
+	const buildSubmitPayload = useCallback(() => {
+		if (!submission) return null;
+		return {
+			category: submission.category,
+			summary: submission.summary,
+			expectedBehavior: submission.structured.expectedBehavior,
+			actualBehavior: submission.structured.actualBehavior,
+			reproductionSteps: submission.structured.reproductionSteps || undefined,
+			additionalContext: submission.structured.additionalContext || undefined,
+			attachments: attachments.map((a) => ({ name: a.name, dataUrl: a.dataUrl })),
+			includeDebugPackage,
+			performanceTracePath: tracePath ?? undefined,
+		};
+	}, [submission, attachments, includeDebugPackage, tracePath]);
+
+	const currentFingerprint = useMemo(() => {
+		const payload = buildSubmitPayload();
+		return payload ? feedbackReportFingerprint(payload) : null;
+	}, [buildSubmitPayload]);
+
 	const usableAccounts = useMemo(() => accounts.filter(isFeedbackAccountUsable), [accounts]);
 	const activeAccount = useMemo(
 		() => accounts.find((account) => account.key === activeAccountKey),
@@ -593,10 +624,16 @@ export function FeedbackChatView({
 
 	// --- Create new issue (skipping or after matching) ---
 	const createNewIssue = useCallback(async () => {
-		if (!submission) return;
+		const payload = buildSubmitPayload();
+		if (!payload) return;
 		setStep('submitting');
 		setSubmitError('');
+		setSubmitWarnings([]);
 		setGhLoginRetry(null);
+
+		// The report the user reviewed when they clicked Submit. Kept across a
+		// gh-login retry so the retried report is the one they agreed to.
+		const reviewedFingerprint = reviewedFingerprintRef.current ?? currentFingerprint;
 
 		try {
 			// The main process screens the issue text and the support package for
@@ -605,15 +642,8 @@ export function FeedbackChatView({
 			const { result, declined } = await withSecretScreenConfirm(
 				(allowSecrets) =>
 					window.maestro.feedback.submitConversation({
-						category: submission.category,
-						summary: submission.summary,
-						expectedBehavior: submission.structured.expectedBehavior,
-						actualBehavior: submission.structured.actualBehavior,
-						reproductionSteps: submission.structured.reproductionSteps || undefined,
-						additionalContext: submission.structured.additionalContext || undefined,
-						attachments: attachments.map((a) => ({ name: a.name, dataUrl: a.dataUrl })),
-						includeDebugPackage,
-						performanceTracePath: tracePath ?? undefined,
+						...payload,
+						reviewedFingerprint: reviewedFingerprint ?? undefined,
 						allowSecrets,
 					}),
 				{ subject: 'this feedback' }
@@ -626,10 +656,16 @@ export function FeedbackChatView({
 				// The main process consumed and deleted the temp trace on success;
 				// mark it so the unmount cleanup doesn't try to discard it again.
 				if (tracePath) submittedRef.current = true;
+				setSubmitWarnings(result.warnings ?? []);
 				setCreatedIssueUrl(result.issueUrl ?? null);
 				setStep('done');
 			} else {
 				setSubmitError(result.error || 'Failed to submit feedback.');
+				setSubmitWarnings(result.warnings ?? []);
+				// The report changed since the review, or was already filed: let the
+				// next click review the report as it stands now. The main process
+				// still refuses a repeat of one it already filed.
+				reviewedFingerprintRef.current = currentFingerprint;
 				// gh refused in a way a fresh login fixes: offer it, then file again.
 				if (result.needsGhLogin) setGhLoginRetry(() => () => void createNewIssueRef.current?.());
 				setStep('chat');
@@ -638,7 +674,7 @@ export function FeedbackChatView({
 			setSubmitError(error instanceof Error ? error.message : 'Submission failed.');
 			setStep('chat');
 		}
-	}, [submission, attachments, includeDebugPackage, tracePath]);
+	}, [buildSubmitPayload, currentFingerprint, tracePath]);
 	const createNewIssueRef = useRef<typeof createNewIssue | null>(null);
 	createNewIssueRef.current = createNewIssue;
 
@@ -646,6 +682,10 @@ export function FeedbackChatView({
 	//     on the agent's understanding - "Submit now" files whatever is gathered.
 	const searchAndSubmit = useCallback(async () => {
 		if (!submission) return;
+		// Freeze what the user is looking at; if the report changes while the
+		// duplicate search runs, the main process refuses it instead of filing a
+		// report they never reviewed.
+		reviewedFingerprintRef.current = currentFingerprint;
 		setSubmitError('');
 		setStep('matching');
 
@@ -670,7 +710,14 @@ export function FeedbackChatView({
 			// No query available - create directly
 			await createNewIssue();
 		}
-	}, [submission, matchingIssues, searchingIssues, runIssueSearch, createNewIssue]);
+	}, [
+		submission,
+		matchingIssues,
+		searchingIssues,
+		runIssueSearch,
+		createNewIssue,
+		currentFingerprint,
+	]);
 
 	// --- Auto-proceed from matching step when search completes with no results ---
 	useEffect(() => {
@@ -1211,6 +1258,25 @@ export function FeedbackChatView({
 								<ExternalLink className="w-3.5 h-3.5" />
 							</button>
 						</div>
+					)}
+
+					{submitWarnings.length > 0 && (
+						<ul
+							className="text-xs text-left space-y-1 px-3 py-2 rounded-lg border w-full"
+							style={{
+								borderColor: `${theme.colors.warning}40`,
+								backgroundColor: `${theme.colors.warning}10`,
+								color: theme.colors.warning,
+							}}
+							data-testid="feedback-submit-warnings"
+						>
+							{submitWarnings.map((warning) => (
+								<li key={warning} className="flex items-start gap-1.5">
+									<AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+									<span>{warning}</span>
+								</li>
+							))}
+						</ul>
 					)}
 
 					<button
@@ -1800,6 +1866,20 @@ export function FeedbackChatView({
 							>
 								{traceError || submitError}
 							</p>
+						)}
+						{submitWarnings.length > 0 && (
+							<ul
+								className="text-2xs space-y-0.5"
+								style={{ color: theme.colors.warning }}
+								data-testid="feedback-submit-warnings"
+							>
+								{submitWarnings.map((warning) => (
+									<li key={warning} className="flex items-start gap-1">
+										<AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+										<span>{warning}</span>
+									</li>
+								))}
+							</ul>
 						)}
 						{submitError && ghLoginRetry && (
 							<button

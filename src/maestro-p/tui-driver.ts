@@ -1060,6 +1060,16 @@ export class TuiDriver extends EventEmitter {
 		return this.rollingBuffer.slice(-maxBytes);
 	}
 
+	// The screen as it reads now, for the idle watchdog's token-counter sample
+	// (see stream-progress.ts). The replayed grid when the raw stream is captured,
+	// because claude repaints its spinner differentially and the stripped bytes of
+	// a later frame can hold only the digits that changed. Without a capture the
+	// rolling buffer is the best available reading: a stale count there only means
+	// no progress is seen, which is the watchdog's old behavior.
+	getLiveScreen(): string {
+		return this.dialogScreen();
+	}
+
 	// Full raw PTY stream captured since start(). Empty unless options.captureScreen
 	// was set. statusMode parses the /usage panel from this so cursor-addressed
 	// (newline-free) panels are not lost to the `\n`-delimited 'line' stream.

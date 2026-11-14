@@ -61,7 +61,7 @@ A remote with Federation on and a running host is called a **peer**. Its peer na
 There is nothing to set up. With **Move SSH agents to their host automatically** on (the default, in **Settings > SSH Hosts > Federation automation**), Maestro does the whole job on its own, one remote and one agent at a time:
 
 1. It checks each SSH remote for a Maestro host.
-2. Where a remote has an SSH agent but no host, it installs its own `maestro-cli` there. See [What Maestro installs on the remote](#what-maestro-installs-on-the-remote).
+2. Where a remote has an SSH agent but no host, it installs its own `maestro-cli` there. A `maestro-cli` too old to run a host is upgraded the same way. See [What Maestro installs on the remote](#what-maestro-installs-on-the-remote).
 3. It registers the host with the remote's service manager and starts it. See [Durability](#durability).
 4. It moves each SSH agent onto the host once every [sanity check](#automatic-moves-and-their-sanity-checks) passes.
 

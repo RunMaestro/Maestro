@@ -65,12 +65,13 @@ const baseSubmit = {
 describe('feedback commands', () => {
 	let exitSpy: MockInstance;
 	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
 	let tmpDir: string;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-		vi.spyOn(console, 'error').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
 			throw new Error('__exit__');
 		});
@@ -400,6 +401,36 @@ describe('feedback commands', () => {
 			});
 		});
 
+		it('says what was left out of a filed issue', async () => {
+			mockBridge({
+				feedback_submit: {
+					success: true,
+					issueUrl: 'https://github.com/x/1',
+					warnings: ['Screenshot "shot.png" could not be uploaded.'],
+				},
+			});
+			await feedbackSubmit({ ...baseSubmit, force: true });
+			const out = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+			expect(out).toContain('Feedback filed: https://github.com/x/1');
+			expect(out).toContain('Warning: Screenshot "shot.png" could not be uploaded.');
+		});
+
+		it('keeps warnings in the --json result', async () => {
+			mockBridge({
+				feedback_submit: {
+					success: true,
+					issueUrl: 'https://github.com/x/1',
+					warnings: ['The support package could not be built.'],
+				},
+			});
+			await feedbackSubmit({ ...baseSubmit, force: true, json: true });
+			expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+				success: true,
+				issueUrl: 'https://github.com/x/1',
+				warnings: ['The support package could not be built.'],
+			});
+		});
+
 		it('rejects an unknown category before connecting', async () => {
 			const sent = mockBridge({});
 			await expect(feedbackSubmit({ ...baseSubmit, category: 'rant' })).rejects.toThrow('__exit__');
@@ -411,6 +442,42 @@ describe('feedback commands', () => {
 			mockBridge({ feedback_submit: { success: false, error: 'gh exploded' } });
 			await expect(feedbackSubmit({ ...baseSubmit, force: true })).rejects.toThrow('__exit__');
 			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
+		});
+
+		it('prints every warning when filing fails in text mode', async () => {
+			mockBridge({
+				feedback_submit: {
+					success: false,
+					error: 'gh exploded',
+					warnings: [
+						'Screenshot "shot.png" could not be uploaded.',
+						'The support package could not be built.',
+					],
+				},
+			});
+			await expect(feedbackSubmit({ ...baseSubmit, force: true })).rejects.toThrow('__exit__');
+			const err = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+			expect(err).toContain('Error: gh exploded');
+			expect(err).toContain('Warning: Screenshot "shot.png" could not be uploaded.');
+			expect(err).toContain('Warning: The support package could not be built.');
+		});
+
+		it('keeps warnings in the --json failure result', async () => {
+			mockBridge({
+				feedback_submit: {
+					success: false,
+					error: 'gh exploded',
+					warnings: ['Screenshot "shot.png" could not be uploaded.'],
+				},
+			});
+			await expect(feedbackSubmit({ ...baseSubmit, force: true, json: true })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+				success: false,
+				error: 'gh exploded',
+				warnings: ['Screenshot "shot.png" could not be uploaded.'],
+			});
 		});
 	});
 

@@ -125,7 +125,7 @@ if (isSessionRemote(session)) {
 }
 ```
 
-**Stopping a remote agent** (`src/main/utils/ssh-remote-signal.ts`): with `RequestTTY=no` a signal to the local `ssh` client never reaches the remote process, so the launch script records the agent's pid (plus start time) in a pid file before it `exec`s, and Stop runs a one-shot `ssh` with the same connection args to signal that process group.
+**Stopping a remote agent** (`src/main/utils/ssh-remote-signal.ts`): with `RequestTTY=no` a signal to the local `ssh` client never reaches the remote process, so the launch script records the agent's pid (plus start time) in a pid file before it `exec`s, and Stop runs a one-shot `ssh` with the same connection args to signal that process group. When a turn settles because its connection dropped (exit 255), `reapRemoteAgent()` keeps retrying the terminate until the host answers, and the tab's next launch carries any still-pending reap in its own script (`takePendingRemoteReaps()` + `buildPreLaunchReapScript()`), so an orphan never stays a second writer on the resumed session. `ExitHandler` also ignores a parser's generic `agent_crashed` for an SSH exit 255, so the outage dialog and availability retry fire instead.
 
 **File watching not available for SSH:**
 

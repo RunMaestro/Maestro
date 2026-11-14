@@ -168,7 +168,9 @@ describe('ProcessManager.spawn against a real process', () => {
 		expect(types(heard).filter((type) => type === 'exit')).toHaveLength(1);
 		expect(types(heard).filter((type) => type === 'agent-error')).toHaveLength(1);
 		const error = heard.find((entry) => entry.type === 'agent-error')!;
-		expect(error.args[0]).toMatchObject({ type: 'agent_crashed' });
+		// A spawn ENOENT means the binary is not there at all: the user fixes it by
+		// installing the CLI, so it is reported as not installed, never as a crash.
+		expect(error.args[0]).toMatchObject({ type: 'agent_not_installed' });
 		expect(manager.get(SESSION_ID)).toBeUndefined();
 	});
 

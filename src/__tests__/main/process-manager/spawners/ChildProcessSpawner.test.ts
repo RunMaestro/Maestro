@@ -152,6 +152,7 @@ import * as turnRunner from '../../../../shared/maestro-lib/run/start-turn';
 import * as agentDefinitions from '../../../../main/agents/definitions';
 import * as sentry from '../../../../main/utils/sentry';
 import { POSIX_PROMPT_ARGV_MAX_BYTES } from '../../../../shared/maestro-lib/launch/prompt-delivery';
+import { __resetPendingRemoteReapsForTest } from '../../../../main/utils/ssh-remote-signal';
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -833,6 +834,10 @@ describe('ChildProcessSpawner', () => {
 				childHandlers(mockChildProcess).get('close')?.(code, signal);
 			}
 
+			afterEach(() => {
+				__resetPendingRemoteReapsForTest();
+			});
+
 			it('terminates the remote agent when ssh exits non-zero on its own', async () => {
 				const { processes, spawner } = createTestContext();
 				spawner.spawn(sshConfig());
@@ -849,6 +854,38 @@ describe('ChildProcessSpawner', () => {
 				expect(script).toContain(pidFile);
 				expect(script).toContain('TERM');
 				expect(mockChildProcess).not.toBe(sshChild);
+			});
+
+			// 2026-11-13: pedtome's sshd refused every connection for minutes after a
+			// tunnel drop, so the one terminate failed and the orphaned Claude turn
+			// committed and deployed while the tab's next send was already going out.
+			it("hands an orphan the host refused to stop to the tab's next launch", async () => {
+				const { processes, spawner, emitter } = createTestContext();
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				spawner.spawn(sshConfig());
+				const orphanPidFile = processes.get('test-session')!.sshRemotePidFile!;
+
+				closeWith(255);
+				await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledTimes(2));
+				// The signal ssh was refused too.
+				childHandlers(mockChildProcess).get('exit')?.(255, null);
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+
+				spawner.spawn(sshConfig());
+				const nextPidFile = processes.get('test-session')!.sshRemotePidFile!;
+				const launch = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+				expect(nextPidFile).not.toBe(orphanPidFile);
+				expect(launch).toContain('kill -TERM');
+				expect(launch.indexOf(orphanPidFile)).toBeGreaterThanOrEqual(0);
+				expect(launch.indexOf(orphanPidFile)).toBeLessThan(launch.indexOf(nextPidFile));
+				expect(launch.endsWith('exec codex exec --json\n')).toBe(true);
+
+				// Taken once: a third launch carries no reap.
+				closeWith(0);
+				spawner.spawn(sshConfig());
+				const third = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+				expect(third).not.toContain(orphanPidFile);
 			});
 
 			it('leaves the remote alone after a clean exit', async () => {

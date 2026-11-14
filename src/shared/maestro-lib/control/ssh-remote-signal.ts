@@ -31,6 +31,7 @@ import { randomUUID } from 'crypto';
 import { logger } from '../host';
 import { shellEscape } from '../launch/shell-escape';
 import { redactedErrorFields } from '../../processErrors';
+import { isSshConnectionFailure } from '../../sshConnection';
 
 const LOG_CONTEXT = '[ssh-remote-signal]';
 
@@ -248,24 +249,38 @@ export function sshConnectionArgs(args: readonly string[]): string[] | null {
 	return args.slice(0, -tail);
 }
 
+/** The SSH-hosted agent a signal is for, and how to reach its host. */
+export interface RemoteSignalTarget {
+	sshCommand: string;
+	sshArgs: readonly string[];
+	pidFile: string;
+	sessionId: string;
+	/** Remote-owned file; enables descriptor-preserving cancellation. */
+	promptArtifactPath?: string;
+}
+
 /**
  * Signal an SSH-hosted agent on its remote host. Fire-and-forget: it never
  * throws, the one-shot ssh is detached so it finishes even if the app is
  * quitting, and it is killed if it outlives {@link SIGNAL_SSH_TIMEOUT_MS}.
+ *
+ * `onExit` receives the signal ssh's exit code once: `null` when it could not
+ * start or was killed for running too long.
  */
 export function signalRemoteAgent(
-	target: {
-		sshCommand: string;
-		sshArgs: readonly string[];
-		pidFile: string;
-		sessionId: string;
-		/** Remote-owned file; enables descriptor-preserving cancellation. */
-		promptArtifactPath?: string;
-	},
-	mode: RemoteSignalMode
+	target: RemoteSignalTarget,
+	mode: RemoteSignalMode,
+	onExit?: (exitCode: number | null) => void
 ): boolean {
 	const connection = sshConnectionArgs(target.sshArgs);
 	if (!connection) return false;
+
+	let settled = false;
+	const settle = (exitCode: number | null) => {
+		if (settled) return;
+		settled = true;
+		onExit?.(exitCode);
+	};
 
 	try {
 		const script = buildRemoteSignalScript(target.pidFile, mode, target.promptArtifactPath);
@@ -289,9 +304,11 @@ export function signalRemoteAgent(
 				mode,
 				...redactedErrorFields(error),
 			});
+			settle(null);
 		});
 		child.on('exit', (code) => {
 			clearTimeout(timer);
+			settle(code);
 			const log = code === 0 ? logger.info : logger.warn;
 			log.call(
 				logger,
@@ -318,4 +335,116 @@ export function signalRemoteAgent(
 		});
 		return false;
 	}
+}
+
+/**
+ * Waits between attempts to stop an agent whose ssh connection dropped under
+ * it: about 25 minutes in all, which outlasts the 10 minute ceiling of an
+ * OpenSSH PerSourcePenalties refusal.
+ */
+export const REMOTE_REAP_RETRY_DELAYS_MS: readonly number[] = [
+	10_000, 20_000, 40_000, 80_000, 160_000, 300_000, 300_000, 300_000, 300_000,
+];
+
+interface PendingReap {
+	target: RemoteSignalTarget;
+	timer: ReturnType<typeof setTimeout> | null;
+}
+
+/** Reaps still trying to reach their host, by pid file. */
+const pendingReaps = new Map<string, PendingReap>();
+
+/**
+ * Stop an SSH-hosted agent whose turn Maestro has already settled, and keep
+ * trying until its host answers.
+ *
+ * A dropped connection is the usual reason a turn settles under a live remote
+ * agent, and the same outage then refuses a single signal ssh too: on
+ * 2026-11-13 a Claude turn on pedtome kept working for three minutes after its
+ * tab reported exit 255, then committed and deployed, while the one-shot
+ * terminate was refused by the host's sshd. Attempts repeat on
+ * {@link REMOTE_REAP_RETRY_DELAYS_MS} only while ssh itself fails (exit 255,
+ * a timeout, or no start). Any other exit means the host ran the script, which
+ * ends quietly when the agent is already gone.
+ */
+export function reapRemoteAgent(
+	target: RemoteSignalTarget,
+	delaysMs: readonly number[] = REMOTE_REAP_RETRY_DELAYS_MS
+): void {
+	const previous = pendingReaps.get(target.pidFile);
+	if (previous?.timer) clearTimeout(previous.timer);
+	const entry: PendingReap = { target, timer: null };
+	pendingReaps.set(target.pidFile, entry);
+	let attempt = 0;
+
+	const isCurrent = () => pendingReaps.get(target.pidFile) === entry;
+	const run = () => {
+		entry.timer = null;
+		if (!isCurrent()) return;
+		const started = signalRemoteAgent(target, 'terminate', (exitCode) => {
+			if (!isCurrent()) return;
+			if (exitCode !== null && !isSshConnectionFailure(exitCode)) {
+				pendingReaps.delete(target.pidFile);
+				return;
+			}
+			if (attempt >= delaysMs.length) {
+				pendingReaps.delete(target.pidFile);
+				logger.warn('Gave up stopping a remote agent: its host never answered', LOG_CONTEXT, {
+					sessionId: target.sessionId,
+					attempts: attempt + 1,
+				});
+				return;
+			}
+			entry.timer = setTimeout(run, delaysMs[attempt++]);
+			entry.timer.unref?.();
+		});
+		// Not a stdin-script SSH spawn, or ssh could not even be spawned: no
+		// later attempt would do better.
+		if (!started) pendingReaps.delete(target.pidFile);
+	};
+	run();
+}
+
+/**
+ * Take the reaps still pending for `sessionId` that its next launch can carry.
+ *
+ * The next turn on a tab resumes the same provider session, so an orphan still
+ * running there is a second writer. The launch script runs the terminate
+ * itself, over the connection that just proved the host answers, before it
+ * starts the new agent. Prompt-owner records stay with their retry loop: their
+ * script reads its own descriptors through `/proc/$$`, which a subshell of the
+ * launch script would point at the wrong process.
+ */
+export function takePendingRemoteReaps(sessionId: string): RemoteSignalTarget[] {
+	const taken: RemoteSignalTarget[] = [];
+	for (const [pidFile, entry] of pendingReaps) {
+		if (entry.target.sessionId !== sessionId) continue;
+		if (entry.target.promptArtifactPath !== undefined) continue;
+		if (entry.timer) clearTimeout(entry.timer);
+		pendingReaps.delete(pidFile);
+		taken.push(entry.target);
+	}
+	return taken;
+}
+
+/**
+ * Launch-script lines that terminate earlier agents before this one starts.
+ * Each runs in a subshell, so its `exit` and variables stay out of the launch
+ * script, with stdin closed so it cannot read the script bash is still reading.
+ */
+export function buildPreLaunchReapScript(targets: readonly RemoteSignalTarget[]): string {
+	return targets
+		.map(
+			(target) =>
+				`(\n${buildRemoteSignalScript(target.pidFile, 'terminate')}) </dev/null >/dev/null 2>&1\n`
+		)
+		.join('');
+}
+
+/** Test-only: drop every pending reap and its timer. */
+export function __resetPendingRemoteReapsForTest(): void {
+	for (const entry of pendingReaps.values()) {
+		if (entry.timer) clearTimeout(entry.timer);
+	}
+	pendingReaps.clear();
 }

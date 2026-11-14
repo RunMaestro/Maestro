@@ -83,14 +83,15 @@ Two of the errors below rarely reach you at all. **Rate Limit Exceeded** and a s
 
 When an AI agent encounters an error, Maestro displays a modal with clear recovery options. Common error types include:
 
-| Error Type                  | Description                        | Recovery Options                               |
-| --------------------------- | ---------------------------------- | ---------------------------------------------- |
-| **Authentication Required** | API key expired or invalid         | Re-authenticate, check API key settings        |
-| **Context Limit Reached**   | Conversation exceeded token limit  | Start new session, compact context             |
-| **Rate Limit Exceeded**     | Too many API requests              | Wait and retry, reduce request frequency       |
-| **Connection Error**        | Network connectivity issue         | Check internet, retry connection               |
-| **Agent Error**             | Agent process crashed unexpectedly | Restart agent, start new session               |
-| **Permission Denied**       | File or operation access denied    | Check permissions, run with appropriate access |
+| Error Type                     | Description                             | Recovery Options                               |
+| ------------------------------ | --------------------------------------- | ---------------------------------------------- |
+| **Authentication Required**    | API key expired or invalid              | Re-authenticate, check API key settings        |
+| **Context Limit Reached**      | Conversation exceeded token limit       | Start new session, compact context             |
+| **Rate Limit Exceeded**        | Too many API requests                   | Wait and retry, reduce request frequency       |
+| **Connection Error**           | Network connectivity issue              | Check internet, retry connection               |
+| **Agent Error**                | Agent process crashed unexpectedly      | Restart agent, start new session               |
+| **Provider CLI Not Installed** | The provider's CLI could not be started | Copy the install command, run it, then retry   |
+| **Permission Denied**          | File or operation access denied         | Check permissions, run with appropriate access |
 
 Each error modal shows:
 
@@ -109,6 +110,16 @@ Two details worth knowing:
 - **Agents on an SSH remote log in on that remote.** The embedded terminal is spawned exactly like a terminal tab, so the login runs on the host the agent actually runs on. Codex switches to `codex login --device-auth` there: its default browser login waits for a callback on the remote's localhost, which your browser cannot reach.
 - **Cue pipelines raise the same dialog.** Cue spawns its agents outside the normal streaming path, so a pipeline that fails on expired credentials used to fail silently in the background. Maestro now classifies the failed run and prompts once per provider. It stays quiet after that until a run for that provider succeeds again, so a busy board cannot bury you in dialogs.
 - **You can sign in before anything breaks.** Command K -> **Re-authenticate Agent Default:** followed by the provider name (for example **Re-authenticate Agent Default: Claude Code**) opens the same dialog for the current agent's default provider, with nothing failed. Useful when you are switching accounts, or when you know a token is about to lapse and would rather not have it expire mid-run. The entry is hidden for an agent with no login of its own, such as the Terminal agent. There is no `maestro-cli` verb: the login is interactive, so from a shell run the provider's own login command (for example `claude` then `/login`, or `codex login`).
+
+### Provider CLI Not Installed
+
+For an agent running on this machine, if its provider CLI is missing from your `PATH` (never installed, uninstalled, or installed under a Node.js version that is not active), every message to that agent fails before the provider sees it. Maestro reports this as **Provider CLI Not Installed** instead of a bare "exited with code N", and the error message prints the install command for your platform (for example `npm install -g @openai/codex` for Codex). Copy it into a terminal, run it, and send your message again. The dialog offers no restart or retry button, because neither can succeed until the CLI is there.
+
+Agents running on an SSH remote are excluded from this classification. The binary lives on the remote host, the SSH error bank reports that case, and Maestro does not print a local install command for it.
+
+Providers with no verified one-line install (for example Antigravity or Grok CLI) still report the missing CLI; their message points at the provider's install guide instead of inventing a command.
+
+If the message says the runtime (Node.js) is missing, the CLI is on disk but the Node.js version it was installed under is not on your `PATH`. Restore Node.js to your `PATH` first (for example with `nvm use`), then send the message again. Reinstall the CLI under that Node.js only if it still does not start.
 
 ## Debug Package
 

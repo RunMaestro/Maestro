@@ -58,6 +58,8 @@ export type PeerErrorCode =
 	| 'federation-off'
 	/** The remote has no usable `maestro-cli`. */
 	| 'not-installed'
+	/** The remote's `maestro-cli` predates the host verbs. */
+	| 'outdated'
 	/** The CLI is there, but no host is running. */
 	| 'host-down'
 	/** The SSH forward could not be opened. */

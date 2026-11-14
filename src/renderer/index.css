@@ -1812,6 +1812,14 @@ svg.wand-profiling-active {
 }
 
 /*
+ * Settings search: a matched section shows only its matched controls.
+ * `applySettingFilter()` in settingsSearchView.ts marks the rest.
+ */
+[data-search-hidden] {
+	display: none !important;
+}
+
+/*
  * Left sidebar on narrow viewports: only the OPEN state floats as a drawer.
  * Closed state stays inline at its natural 64px width so the collapsed-mode
  * status-dot strip is always visible.

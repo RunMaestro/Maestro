@@ -12,6 +12,7 @@ import {
 	settingSubTab,
 	ALL_SEARCHABLE_SETTINGS,
 	encoreTileForSetting,
+	MIN_SUBSTRING_QUERY_LENGTH,
 } from '../../../../renderer/components/Settings/searchableSettings';
 import {
 	modelsSettingsPlaceLabel,
@@ -135,6 +136,30 @@ describe('searchableSettings', () => {
 		it('should return empty array for empty query', () => {
 			expect(searchSettings('')).toEqual([]);
 			expect(searchSettings('   ')).toEqual([]);
+		});
+
+		describe('queries under MIN_SUBSTRING_QUERY_LENGTH', () => {
+			it('does not match a fragment of a word', () => {
+				expect(MIN_SUBSTRING_QUERY_LENGTH).toBe(3);
+				expect(searchSettings('qu')).toEqual([]);
+				// Not 'a': that is a whole word in "A Cappella", so it matches by design.
+				expect(searchSettings('q')).toEqual([]);
+			});
+
+			it('matches a whole word in a label or keyword', () => {
+				expect(searchSettings('gh').some((s) => s.id === 'general-gh-path')).toBe(true);
+			});
+
+			it('ignores descriptions, where short words are everywhere', () => {
+				const named = (s: (typeof ALL_SEARCHABLE_SETTINGS)[number]) =>
+					/\bto\b/i.test([s.label, s.tabLabel, ...(s.keywords ?? [])].join(' '));
+				expect(ALL_SEARCHABLE_SETTINGS.some((s) => / to /.test(s.description ?? ''))).toBe(true);
+				expect(searchSettings('to').every(named)).toBe(true);
+			});
+
+			it('switches to substring matching at three characters', () => {
+				expect(searchSettings('qui').some((s) => s.id === 'encore-quick-chat')).toBe(true);
+			});
 		});
 
 		it('should match by label', () => {

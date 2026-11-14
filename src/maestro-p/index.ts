@@ -56,6 +56,7 @@ import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json
 import { formatScreenTailReport, idleTimeoutMessage, readyTimeoutMessage } from './timeout-report';
 import { PROMPT_TAB_SPACES, TuiDriver } from './tui-driver';
 import { OpenToolCalls, skipsPermissionPrompts, withPermissionBypass } from './open-tool-calls';
+import { parseStreamTokenCount, StreamProgress } from './stream-progress';
 import {
 	addToCostState,
 	parseCostStateRow,
@@ -75,6 +76,13 @@ const WATCHDOG_INTERVAL_MS = 1000;
 // unattended. Claude bounds its own Bash calls well under this; the ceiling
 // is for a call nothing else bounds, such as a hung MCP tool.
 const OPEN_TOOL_SILENCE_CEILING_MS = 60 * 60 * 1000;
+
+// Transcript silence after which the watchdog starts reading claude's live
+// token counter, and how often it reads it (see stream-progress.ts). Well under
+// the smallest real --max-wait, so a baseline and at least one comparison exist
+// before any budget runs out.
+const STREAM_SAMPLE_AFTER_MS = 20 * 1000;
+const STREAM_SAMPLE_INTERVAL_MS = 10 * 1000;
 
 // Interval between Enter re-submits while waiting for the first transcript
 // byte. send()'s initial burst all lands within ~3s; on agents that load
@@ -1323,11 +1331,26 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	// Watchdog: trips when no JSONL bytes have arrived for maxWaitSeconds.
 	// JsonlTailer seeds lastByteAt at start() time, so a fresh tailer with
 	// no data still gets the full window before timeout.
+	const streamProgress = new StreamProgress();
+	let lastStreamSampleAt = 0;
 	watchdogTimer = setInterval(() => {
 		if (finalized || !tailer) return;
+		const now = Date.now();
 		// A subagent writing its own transcript is the turn making progress too.
-		const lastByteAt = Math.max(tailer.getLastByteAt(), subagents?.getLastByteAt() ?? 0);
-		const idleMs = Date.now() - lastByteAt;
+		const transcriptAt = Math.max(tailer.getLastByteAt(), subagents?.getLastByteAt() ?? 0);
+		// So is a response still streaming into one long content block, which
+		// writes nothing to the transcript until it ends. Sampled from the screen
+		// only once the transcript has been quiet a while, and sparingly, since
+		// reading the screen replays the captured stream (see stream-progress.ts).
+		if (
+			now - transcriptAt >= STREAM_SAMPLE_AFTER_MS &&
+			now - lastStreamSampleAt >= STREAM_SAMPLE_INTERVAL_MS
+		) {
+			lastStreamSampleAt = now;
+			streamProgress.observe(parseStreamTokenCount(driver.getLiveScreen()), now);
+		}
+		const lastByteAt = Math.max(transcriptAt, streamProgress.getLastProgressAt());
+		const idleMs = now - lastByteAt;
 		if (idleMs > args.maxWaitSeconds * 1000) {
 			// A tool still running unattended (a long `npm test`, a subagent) is
 			// expected silence, not a stall, up to the ceiling (see open-tool-calls.ts).

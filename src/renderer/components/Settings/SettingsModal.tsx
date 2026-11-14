@@ -739,7 +739,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 							setQuery={search.setQuery}
 							inputRef={search.inputRef}
 							isActive={search.isActive}
-							results={search.results}
+							resultCount={search.groups.length}
 							onClear={search.clear}
 						/>
 					</div>
@@ -753,13 +753,11 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					<SettingsSearchResults
 						theme={theme}
 						query={search.query}
-						results={search.results}
+						groups={search.groups}
 						isOpen={isOpen}
-						selectedIndex={search.selectedIndex}
-						setSelectedIndex={search.setSelectedIndex}
-						expandedId={search.expandedId}
-						rowRefs={search.rowRefs}
-						onActivate={search.activate}
+						resultsRef={search.resultsRef}
+						unfiltered={search.unfiltered}
+						onToggleUnfiltered={search.toggleUnfiltered}
 						onNavigate={search.navigate}
 					/>
 				)}
