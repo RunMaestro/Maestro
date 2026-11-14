@@ -184,13 +184,13 @@ export const desktopGroupChatEngine = createGroupChatEngine({
 	},
 	projectHistory: (groupChatId, history) => {
 		const run = getWorkflowRun(groupChatId);
+		if (run?.status !== 'running') return undefined;
 		const workflowParticipants = new Set(
-			run?.status === 'running'
-				? run.handoffs.flatMap((handoff) =>
-						(handoff.participantHandoffs ?? []).map((response) => response.participantName)
-					)
-				: []
+			run.handoffs.flatMap((handoff) =>
+				(handoff.participantHandoffs ?? []).map((response) => response.participantName)
+			)
 		);
+		if (workflowParticipants.size === 0) return undefined;
 		return history
 			.filter((message) => !workflowParticipants.has(message.from))
 			.slice(-30)
@@ -207,7 +207,6 @@ export const desktopGroupChatEngine = createGroupChatEngine({
 		);
 		if (failed) await cleanupWorkflowRunArtifacts(groupChatId, failed);
 		desktopGroupChatEngine.clearPendingParticipants(groupChatId);
-		desktopGroupChatEngine.settleGroupChatToIdle(groupChatId);
 		return true;
 	},
 });

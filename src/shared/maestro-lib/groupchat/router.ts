@@ -655,7 +655,7 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 	): void {
 		clearModeratorResponseTimeout(groupChatId);
 
-		const giveUp = (reason: string, budgetMs: number): void => {
+		const giveUp = async (reason: string, budgetMs: number): Promise<void> => {
 			moderatorTimeouts.delete(groupChatId);
 			console.warn(
 				`[GroupChat:Debug] Moderator ${reason} after ${budgetMs / 1000}s for ${groupChatId} - killing and resetting to idle`
@@ -684,14 +684,20 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 				from: 'system',
 				content: `⚠️ Moderator ${reason} after ${budgetMs / 60000} minutes and was stopped. Resetting to idle. You can send another message to retry.`,
 			});
-			void Promise.resolve(
-				onTurnTimeout?.({ groupChatId, reason, timeoutMs: budgetMs }) ?? false
-			).catch((error) =>
-				logger.error('Group chat timeout cleanup failed', LOG_CONTEXT, { groupChatId, error })
-			);
+			try {
+				await (onTurnTimeout?.({ groupChatId, reason, timeoutMs: budgetMs }) ?? false);
+			} catch (error) {
+				logger.error('Group chat timeout cleanup failed', LOG_CONTEXT, { groupChatId, error });
+			}
 
 			events.stateChange(groupChatId, 'idle');
 			power.unblock(`groupchat:${groupChatId}`);
+		};
+
+		const fire = (reason: string, budgetMs: number): void => {
+			void giveUp(reason, budgetMs).catch((error) =>
+				logger.error('Moderator timeout handler failed', LOG_CONTEXT, { groupChatId, error })
+			);
 		};
 
 		moderatorTimeouts.set(
@@ -699,8 +705,8 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 			createIdleWatchdog({
 				idleMs: MODERATOR_RESPONSE_TIMEOUT_MS,
 				maxMs: MODERATOR_MAX_DURATION_MS,
-				onIdle: () => giveUp('went silent', MODERATOR_RESPONSE_TIMEOUT_MS),
-				onMax: () => giveUp('exceeded the single-turn limit', MODERATOR_MAX_DURATION_MS),
+				onIdle: () => fire('went silent', MODERATOR_RESPONSE_TIMEOUT_MS),
+				onMax: () => fire('exceeded the single-turn limit', MODERATOR_MAX_DURATION_MS),
 			})
 		);
 	}
@@ -826,7 +832,10 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 				reason,
 				timeoutMs: budgetMs,
 			}) ?? false);
-			if (timeoutHandled) return;
+			if (timeoutHandled) {
+				settleGroupChatToIdle(groupChatId);
+				return;
+			}
 
 			// Same close-out as a normal reply, via the shared helper: a timed-out
 			// participant still has to leave the pending set, or the room waits forever
