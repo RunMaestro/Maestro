@@ -1,5 +1,6 @@
 import {
 	Bell,
+	Lightbulb,
 	Wand2,
 	Plus,
 	Settings,
@@ -166,6 +167,24 @@ export function HamburgerMenuContent({
 					<ShortcutHint keys={shortcuts.openNotificationCenter?.keys ?? []} theme={theme} />
 				</button>
 			)}
+			<button
+				onClick={() => {
+					openUiSurface('did-you-know');
+					setMenuOpen(false);
+				}}
+				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+			>
+				<Lightbulb className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<div className="flex-1">
+					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						Did You Know?
+					</div>
+					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						Discover a Maestro feature
+					</div>
+				</div>
+				<ShortcutHint theme={theme} keys={shortcuts.didYouKnow?.keys ?? []} />
+			</button>
 			{startTour && !phone && (
 				<button
 					onClick={() => {

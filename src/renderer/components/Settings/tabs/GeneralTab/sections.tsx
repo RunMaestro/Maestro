@@ -22,6 +22,7 @@ import {
 	PowerSection,
 	PrivacySection,
 	RenderingSection,
+	DiscoverySection,
 	ShellSettingsSection,
 	SpellCheckSection,
 	StorageLocationSection,
@@ -286,6 +287,19 @@ function Rendering({ theme }: SettingsSectionProps) {
 	);
 }
 
+function Discovery({ theme }: SettingsSectionProps) {
+	const settings = useSettingsValues();
+	return (
+		<DiscoverySection
+			theme={theme}
+			didYouKnowEnabled={settings.didYouKnowEnabled}
+			setDidYouKnowEnabled={settings.setDidYouKnowEnabled}
+			didYouKnowSeenTipIds={settings.didYouKnowSeenTipIds}
+			setDidYouKnowSeenTipIds={settings.setDidYouKnowSeenTipIds}
+		/>
+	);
+}
+
 function Updates({ theme }: SettingsSectionProps) {
 	const settings = useSettingsValues();
 	return (
@@ -398,6 +412,11 @@ export const GENERAL_SECTIONS: readonly SettingsSectionDef[] = [
 	{ key: 'spellCheck', settingIds: ['general-spell-check'], Component: SpellCheck },
 	{ key: 'power', settingIds: ['general-power', 'general-display-sleep'], Component: Power },
 	{ key: 'rendering', settingIds: ['general-rendering'], Component: Rendering },
+	{
+		key: 'discovery',
+		settingIds: ['general-did-you-know', 'general-did-you-know-reset'],
+		Component: Discovery,
+	},
 	{ key: 'updates', settingIds: ['general-updates', 'general-beta-updates'], Component: Updates },
 	{
 		key: 'privacy',

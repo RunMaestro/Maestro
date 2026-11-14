@@ -101,3 +101,26 @@ describe('openUiSurface - Encore-gated tabs', () => {
 		expect(selectModalOpen('usageDashboard')(useModalStore.getState())).toBe(false);
 	});
 });
+
+describe('openUiSurface - discovery', () => {
+	it.each(['did-you-know', 'discovery'])(
+		'opens a random unseen tip through %s even with launch tips disabled',
+		(surface) => {
+			const previous = useSettingsStore.getState();
+			useSettingsStore.setState({
+				didYouKnowEnabled: false,
+				didYouKnowSeenTipIds: ['maestro-cue'],
+			});
+			try {
+				expect(openUiSurface(surface)).toEqual({ ok: true });
+				expect(selectModalOpen('didYouKnow')(useModalStore.getState())).toBe(true);
+				const data = useModalStore.getState().getData('didYouKnow') as { startTipId: string };
+				expect(data.startTipId).toBeTruthy();
+				expect(data.startTipId).not.toBe('maestro-cue');
+			} finally {
+				useModalStore.getState().closeModal('didYouKnow');
+				useSettingsStore.setState(previous);
+			}
+		}
+	);
+});

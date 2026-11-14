@@ -448,6 +448,7 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Open Notification Center',
 		keys: [],
 	},
+	didYouKnow: { id: 'didYouKnow', label: 'Did You Know?', keys: [] },
 	clearAllNotifications: {
 		id: 'clearAllNotifications',
 		label: 'Clear All Notifications',

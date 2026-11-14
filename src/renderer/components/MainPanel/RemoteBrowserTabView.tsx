@@ -114,6 +114,12 @@ export const RemoteBrowserTabView = forwardRef<BrowserTabViewHandle, RemoteBrows
 			[action]
 		);
 
+		useEffect(() => {
+			if (!tab.requestedUrl || !frame || !lease.current || !alive.current) return;
+			navigate(tab.requestedUrl);
+			updateRef.current(tab.id, { requestedUrl: undefined });
+		}, [tab.id, tab.requestedUrl, frame, navigate]);
+
 		useImperativeHandle(
 			ref,
 			() => ({
