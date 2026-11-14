@@ -13,24 +13,21 @@ import { startOfLocalDay } from './localDay';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** How many days each bounded range covers. The one table every range reads. */
+export const STATS_RANGE_DAYS: Readonly<Record<Exclude<StatsTimeRange, 'all'>, number>> = {
+	day: 1,
+	week: 7,
+	month: 30,
+	quarter: 90,
+	year: 365,
+};
+
 /** Timestamp (ms) where `range` starts; `0` for all time. */
 export function getTimeRangeStart(range: StatsTimeRange, now: number = Date.now()): number {
-	switch (range) {
-		case 'day':
-			// "Today" is the local calendar day, not a rolling 24 hours.
-			return startOfLocalDay(now);
-		case 'week':
-			return now - 7 * DAY_MS;
-		case 'month':
-			return now - 30 * DAY_MS;
-		case 'quarter':
-			return now - 90 * DAY_MS;
-		case 'year':
-			return now - 365 * DAY_MS;
-		case 'all':
-			return 0;
-		default:
-			// Exhaustive check - should never reach here
-			return 0;
-	}
+	if (range === 'all') return 0;
+	// "Today" is the local calendar day, not a rolling 24 hours.
+	if (range === 'day') return startOfLocalDay(now);
+	const days = STATS_RANGE_DAYS[range];
+	// Unknown range from an untyped caller (an old IPC payload): all time.
+	return days === undefined ? 0 : now - days * DAY_MS;
 }

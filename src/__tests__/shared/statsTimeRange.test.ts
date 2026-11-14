@@ -5,7 +5,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getTimeRangeStart } from '../../shared/statsTimeRange';
+import { getTimeRangeStart, STATS_RANGE_DAYS } from '../../shared/statsTimeRange';
+import { PROMPT_WINDOW_DAYS } from '../../shared/promptCadence';
+import { tokenUsageQueryForRange } from '../../shared/tokenUsage';
 import { startOfLocalDay } from '../../shared/localDay';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -27,5 +29,17 @@ describe('getTimeRangeStart', () => {
 
 	it('starts all time at 0', () => {
 		expect(getTimeRangeStart('all', now)).toBe(0);
+	});
+});
+
+describe('STATS_RANGE_DAYS', () => {
+	it('is the one day table the prompt cadence window reads', () => {
+		expect(PROMPT_WINDOW_DAYS).toBe(STATS_RANGE_DAYS);
+	});
+
+	it('gives the token-usage query the same start as the stats database', () => {
+		for (const range of ['day', 'week', 'month', 'quarter', 'year'] as const) {
+			expect(tokenUsageQueryForRange(range, now).sinceMs).toBe(getTimeRangeStart(range, now));
+		}
 	});
 });

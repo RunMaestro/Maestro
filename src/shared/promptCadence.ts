@@ -23,6 +23,7 @@
 import { percentilesFromSorted, emptyPercentiles, type DurationPercentiles } from './percentiles';
 import { addLocalDays, parseLocalYmd, toLocalYmd } from './localDay';
 import type { StatsTimeRange } from './stats-types';
+import { STATS_RANGE_DAYS } from './statsTimeRange';
 
 /**
  * Two prompts further apart than this belong to different working stretches.
@@ -31,14 +32,12 @@ import type { StatsTimeRange } from './stats-types';
  */
 export const PROMPT_STRETCH_BREAK_MS = 30 * 60 * 1000;
 
-/** Calendar days (today included) each bounded range covers. */
-export const PROMPT_WINDOW_DAYS: Record<Exclude<StatsTimeRange, 'all'>, number> = {
-	day: 1,
-	week: 7,
-	month: 30,
-	quarter: 90,
-	year: 365,
-};
+/**
+ * Calendar days (today included) each bounded range covers. The same day
+ * counts as every other range, read as whole calendar days rather than a
+ * rolling window back from now.
+ */
+export const PROMPT_WINDOW_DAYS = STATS_RANGE_DAYS;
 
 /** One local calendar day and how many prompts were sent on it. */
 export interface PromptDay {

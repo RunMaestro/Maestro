@@ -99,14 +99,16 @@ A line chart showing how your query durations vary over time. Useful for spottin
 
 ### Agent Overview
 
-A compact card per active agent, sized for scanning the whole fleet in one screen rather than studying any one of them. Each card carries the agent name, a live status dot, its query count, and a 7-day activity sparkline. Worktree agents render with a dashed accent border, a **WT** badge, and their checked-out branch, so a parent and its worktrees are distinguishable at a glance. Internal terminal sessions are left out.
+The Agent Overview tab describes your fleet as a whole. Internal terminal sessions are left out of every section.
 
-A fuzzy filter above the grid narrows the cards live as you type, matching on the agent name (with or without its leading emoji) and on a worktree's branch name.
-
-**Agents Over Time** charts how many agents existed at the end of each day in the selected range, with the current count and how many agents were created and deleted in that range. It counts every agent still in the Left Bar from the day it was created, plus deleted agents from the day they were created to the day they were deleted. Terminals are not counted. Deleted agents appear only while their records are inside the stats retention window.
+- **Agent Statistics** - Total agents (with how many were active in the selected range, and how many are bookmarked), Git repositories versus plain folders, and local versus remote agents. Below the cards: the regular versus worktree split, and a bar per provider showing how many agents use it.
+- **Agents Over Time** - How many agents existed at the end of each day in the selected range, with the current count and how many agents were created and deleted in that range. It counts every agent still in the Left Bar from the day it was created, plus deleted agents from the day they were created to the day they were deleted. Deleted agents appear only while their records are inside the stats retention window.
+- **Worktree Analytics** - Shown only when at least one worktree agent exists. Parent versus worktree agent counts, the split of queries between them, and one row per worktree branch with its query count and a 7-day sparkline.
+- **Agent Efficiency** - Average time per query for each provider, fastest first.
+- **Agent Usage** - One line per agent over the selected range, for the 10 busiest agents. Toggle between query count and time.
 
 <Tip>
-Agent Overview and **Agents** answer different questions. Agent Overview is the wide, shallow view - who is busy right now. Agents is the deep one, with per-agent stats, sorting, and a drill-down into individual tabs.
+Agent Overview and **Agents** answer different questions. Agent Overview is the fleet in aggregate - its size, its shape, and how it changes. Agents is one card per agent, with per-agent stats, sorting, and a drill-down into individual tabs.
 </Tip>
 
 ### Groups

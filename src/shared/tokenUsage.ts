@@ -16,7 +16,7 @@
 import type { TokenCounts } from './modelPricing';
 import type { TokenSpeedBucket, TokenSpeedSummary } from './tokenSpeed';
 import type { StatsTimeRange } from './stats-types';
-import { startOfLocalDay } from './localDay';
+import { STATS_RANGE_DAYS, getTimeRangeStart } from './statsTimeRange';
 
 /**
  * Per-agent token coverage, mirroring the Cue accessor's classification so both
@@ -200,15 +200,6 @@ export interface TokenUsageQuery {
 	granularity?: TokenTimelineGranularity;
 }
 
-/** Lookback per dashboard range, matching `getTimeRangeStart` in main. */
-const RANGE_DAYS: Record<Exclude<StatsTimeRange, 'all'>, number> = {
-	day: 1,
-	week: 7,
-	month: 30,
-	quarter: 90,
-	year: 365,
-};
-
 /**
  * The token-usage query for a dashboard time range. One definition so the
  * Tokens tab, the Overview speed cards, the chart Tokens modes, and
@@ -219,9 +210,7 @@ export function tokenUsageQueryForRange(
 	nowMs: number = Date.now()
 ): TokenUsageQuery {
 	if (range === 'all') return { granularity: 'month' };
-	const days = RANGE_DAYS[range];
+	const days = STATS_RANGE_DAYS[range];
 	const granularity = days <= 30 ? 'day' : days <= 90 ? 'week' : 'month';
-	// "Today" starts at local midnight, the same window `getTimeRangeStart` uses.
-	const sinceMs = range === 'day' ? startOfLocalDay(nowMs) : nowMs - days * 24 * 60 * 60 * 1000;
-	return { sinceMs, granularity };
+	return { sinceMs: getTimeRangeStart(range, nowMs), granularity };
 }
