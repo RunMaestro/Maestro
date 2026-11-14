@@ -98,6 +98,13 @@ export interface FeedbackSubmitResponse {
 	error?: string;
 	issueUrl?: string;
 	/**
+	 * Parts of the report that were dropped so the rest could be filed: a
+	 * screenshot that could not be uploaded, or a support package or performance
+	 * trace that could not be built. The issue exists; these say what is missing
+	 * from it.
+	 */
+	warnings?: string[];
+	/**
 	 * gh refused the request in a way signing in again can fix (expired or
 	 * revoked token, org OAuth restriction, missing scope).
 	 */
@@ -143,6 +150,55 @@ export interface FeedbackConversationSubmitPayload {
 	 * issue body, then deleted.
 	 */
 	performanceTracePath?: string;
+	/**
+	 * Identity of this report as the user last reviewed it, from
+	 * `feedbackReportFingerprint()`. The service refuses to file when the
+	 * payload no longer matches, so a report cannot change between review and
+	 * submit. Omit it when there is no separate review step (the CLI).
+	 */
+	reviewedFingerprint?: string;
+}
+
+/** The part of an attachment that identifies it in a report fingerprint. */
+export interface FeedbackAttachmentIdentity {
+	name: string;
+}
+
+/** What identifies one structured report, as the renderer and main agree on it. */
+export interface FeedbackReportFingerprintInput {
+	category: FeedbackCategory;
+	summary: string;
+	expectedBehavior: string;
+	actualBehavior: string;
+	reproductionSteps?: string;
+	additionalContext?: string;
+	includeDebugPackage?: boolean;
+	attachments?: ReadonlyArray<FeedbackAttachmentIdentity>;
+}
+
+/**
+ * Canonical identity of a structured report.
+ *
+ * Used to refuse a report that changed after the user reviewed it, and to
+ * refuse filing the same report twice. Normalizes line endings and surrounding
+ * whitespace per field so the renderer and the main process agree on the same
+ * report, and scopes the identity to what the user wrote: text, attachment
+ * names, and the support-package choice. Temp paths (the performance trace) are
+ * deliberately excluded because they change on every capture.
+ */
+export function feedbackReportFingerprint(input: FeedbackReportFingerprintInput): string {
+	const field = (value: string | undefined) =>
+		(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+	return [
+		input.category,
+		field(input.summary),
+		field(input.expectedBehavior),
+		field(input.actualBehavior),
+		field(input.reproductionSteps),
+		field(input.additionalContext),
+		input.includeDebugPackage ? 'debug-package' : '',
+		(input.attachments ?? []).map((attachment) => field(attachment.name)).join('\u0000'),
+	].join('\u0001');
 }
 
 /** One possible duplicate returned by the issue search. */

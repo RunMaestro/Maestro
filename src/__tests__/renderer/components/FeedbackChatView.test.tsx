@@ -8,6 +8,7 @@ import {
 import type { Theme, Session } from '../../../renderer/types';
 import { FeedbackConversationManager } from '../../../renderer/services/feedbackConversation';
 import type { FeedbackAccount } from '../../../shared/feedbackAccounts';
+import { feedbackReportFingerprint } from '../../../shared/feedback';
 
 // The real login dialog spawns a PTY; here it is a stub that signs in on click.
 vi.mock('../../../renderer/components/GitHubLoginModal', () => ({
@@ -611,6 +612,77 @@ describe('FeedbackChatView', () => {
 		expect(payload.actualBehavior).toBe('Auto Run did not resume after the limit reset');
 		expect(payload.expectedBehavior).toMatch(/submitted before the interview finished/i);
 		expect(payload.additionalContext).toContain('understanding 30%');
+	});
+
+	it('shows what was left out of a filed issue, and sends the reviewed fingerprint', async () => {
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK],
+			lastWorkingKey: null,
+		});
+		window.maestro.feedback.searchIssues.mockResolvedValue({ issues: [] });
+		window.maestro.feedback.submitConversation.mockResolvedValue({
+			success: true,
+			issueUrl: 'https://github.com/x/y/issues/11',
+			warnings: ['Screenshot "shot.png" could not be uploaded, so the issue was filed without it.'],
+		});
+		window.maestro.agents.get.mockResolvedValue({
+			id: 'claude-code',
+			available: true,
+			command: 'claude',
+			args: [],
+		});
+		let onExit: ((sid: string, code: number) => void) | undefined;
+		let onData: ((sid: string, data: string) => void) | undefined;
+		window.maestro.process.onExit.mockImplementation((cb: typeof onExit) => {
+			onExit = cb;
+			return () => {};
+		});
+		(window.maestro.process as unknown as { onData: unknown }).onData = vi.fn(
+			(cb: typeof onData) => {
+				onData = cb;
+				return () => {};
+			}
+		);
+		window.maestro.process.spawn.mockImplementation((config: { sessionId: string }) => {
+			queueMicrotask(() => {
+				onData?.(
+					config.sessionId,
+					JSON.stringify({
+						confidence: 90,
+						ready: true,
+						message: 'One moment',
+						category: 'bug_report',
+						summary: 'Player stuck',
+						structured: { expectedBehavior: 'It moves', actualBehavior: 'It stays' },
+					})
+				);
+				onExit?.(config.sessionId, 0);
+			});
+			return Promise.resolve({ pid: 1, success: true });
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+		const input = await screen.findByPlaceholderText('Describe your issue or idea...');
+		fireEvent.change(input, { target: { value: 'The player gets stuck' } });
+		await act(async () => {
+			fireEvent.keyDown(input, { key: 'Enter' });
+		});
+		fireEvent.click(await screen.findByTestId('feedback-submit'));
+
+		expect(await screen.findByText('Feedback Submitted')).toBeTruthy();
+		expect(screen.getByTestId('feedback-submit-warnings').textContent).toContain('shot.png');
+
+		const payload = window.maestro.feedback.submitConversation.mock.calls[0][0];
+		expect(typeof payload.reviewedFingerprint).toBe('string');
+		expect(payload.reviewedFingerprint).toBe(feedbackReportFingerprint(payload));
 	});
 
 	it('calls onCancel when Close button is clicked on GH error', async () => {
