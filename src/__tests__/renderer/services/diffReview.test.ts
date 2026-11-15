@@ -16,6 +16,7 @@ vi.mock('../../../renderer/stores/centerFlashStore', async (importOriginal) => (
 }));
 vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 	planCrossAgentMentions: () => null,
+	queuedMentionFields: () => ({}),
 }));
 const mockGetDiff = vi.fn(async (..._args: unknown[]) => ({ diff: '' }));
 vi.mock('../../../renderer/services/git', () => ({

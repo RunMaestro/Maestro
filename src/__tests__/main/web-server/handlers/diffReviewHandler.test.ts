@@ -14,12 +14,14 @@ vi.mock('../../../../main/plugins/plugin-manager-singleton', () => ({
 	isPluginsFeatureEnabled: () => false,
 }));
 
+import { WebSocket } from 'ws';
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
 
 function createMockClient(): WebClient {
 	return {
-		socket: { send: vi.fn() } as unknown as WebClient['socket'],
+		// sendBounded only writes to an OPEN socket.
+		socket: { readyState: WebSocket.OPEN, send: vi.fn() } as unknown as WebClient['socket'],
 		id: 'client-1',
 		connectedAt: 0,
 	};

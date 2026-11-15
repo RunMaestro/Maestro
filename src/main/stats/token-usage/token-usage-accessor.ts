@@ -615,8 +615,10 @@ function aggregate(
 
 	// Dense over the window: an idle slice is an explicit zero bar, so a quiet
 	// week keeps its width on the axis instead of vanishing between its neighbours.
-	// An open window with no activity has no start to fill from; leave it empty.
-	const fillTimeline = query.sinceMs !== undefined || totals.sessionCount > 0;
+	// An open window with no dated activity has no start to fill from; leave it
+	// empty. A session with no usable timestamp counts in the totals but never
+	// lands on the timeline, so it does not start one either.
+	const fillTimeline = query.sinceMs !== undefined || timeline.size > 0;
 	for (const start of fillTimeline
 		? tokenSliceStarts(window.startMs, window.endMs, granularity)
 		: []) {

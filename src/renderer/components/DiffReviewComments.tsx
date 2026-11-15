@@ -17,6 +17,7 @@ import { MiniBadge } from './ui/MiniBadge';
 import { ShortcutHint, shortcutSuffix } from './ui/ShortcutHint';
 import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { trackShortcutUsage } from '../utils/shortcutTracking';
+import { isImeComposing } from '../utils/ime';
 
 const SAVE_KEYS = FIXED_SHORTCUTS.gitDiffSaveComment.keys;
 const SEND_KEYS = FIXED_SHORTCUTS.gitDiffSendReview.keys;
@@ -71,7 +72,7 @@ export const DiffCommentEditor = memo(function DiffCommentEditor({
 					onDraftChange?.(e.target.value);
 				}}
 				onKeyDown={(e) => {
-					if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+					if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !isImeComposing(e)) {
 						e.preventDefault();
 						// Stop here: the viewer's own Enter (view toggle) and
 						// Shift+Cmd+Enter (send) listen on the window.

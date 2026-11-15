@@ -622,7 +622,8 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 			expect(result.bySubscription.find((g) => g.key === 'owner-b')?.totals.totalInputTokens).toBe(
 				7
 			);
-			expect(result.timeSeries).toEqual([
+			// The series is zero-filled over the window; only the run's bucket carries data.
+			expect(result.timeSeries.filter((b) => b.occurrences > 0)).toEqual([
 				expect.objectContaining({ inputTokens: 112, outputTokens: 53 }),
 			]);
 			expect(result.chains[0].nodes.map((n) => n.inputTokens)).toEqual([70, 35, 7]);
@@ -964,7 +965,10 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 					completedAt: now,
 				}),
 			];
-			mockSummaries.set('session-1', makeSummary({ inputTokens: 7, outputTokens: 3 }));
+			mockSummaries.set(
+				sessionTokenLookupKey('session-1', 'session-1'),
+				makeSummary({ inputTokens: 7, outputTokens: 3 })
+			);
 
 			const result = await getCueStatsAggregation('day');
 
@@ -1027,8 +1031,14 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 					completedAt: now,
 				}),
 			];
-			mockSummaries.set('s1', makeSummary({ sessionId: 's1', inputTokens: 10, outputTokens: 5 }));
-			mockSummaries.set('s2', makeSummary({ sessionId: 's2', inputTokens: 1, outputTokens: 1 }));
+			mockSummaries.set(
+				sessionTokenLookupKey('s1', 's1'),
+				makeSummary({ sessionId: 's1', inputTokens: 10, outputTokens: 5 })
+			);
+			mockSummaries.set(
+				sessionTokenLookupKey('s2', 's2'),
+				makeSummary({ sessionId: 's2', inputTokens: 1, outputTokens: 1 })
+			);
 
 			expect(await getCueStatsSourceTotals('day')).toEqual({
 				occurrences: 2,

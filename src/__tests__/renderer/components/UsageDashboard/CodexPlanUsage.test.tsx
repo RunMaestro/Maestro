@@ -285,41 +285,29 @@ describe('CodexPlanUsage - available credits', () => {
 		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
 	});
 
-	it.each([false, true])(
-		'keeps balances attached to their accounts with showAllAccounts=%s',
-		(showAllAccounts) => {
-			seedSnapshots({
-				'/Users/me/.codex': {
-					sampledAt: '2026-05-15T00:00:00.000Z',
-					codexHomeKey: '/Users/me/.codex',
-					authState: 'authenticated',
-					credits: { kind: 'balance', balance: 21 },
-				},
-				'/Users/me/.codex-work': {
-					sampledAt: '2026-05-15T00:00:00.000Z',
-					codexHomeKey: '/Users/me/.codex-work',
-					authState: 'authenticated',
-					credits: { kind: 'balance', balance: 84 },
-				},
-			});
+	it('keeps each balance attached to its own account row', () => {
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				credits: { kind: 'balance', balance: 21 },
+			},
+			'/Users/me/.codex-work': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex-work',
+				authState: 'authenticated',
+				credits: { kind: 'balance', balance: 84 },
+			},
+		});
 
-			render(
-				<CodexPlanUsage theme={theme} showAllAccounts={showAllAccounts} autoRefresh={false} />
-			);
+		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
 
-			expect(screen.getByTestId('codex-plan-credits-default')).toHaveTextContent(
-				'Available credits21'
-			);
-			if (!showAllAccounts) {
-				expect(screen.queryByTestId('codex-plan-credits-work')).toBeNull();
-				fireEvent.click(screen.getByTestId('codex-plan-tab-work'));
-				expect(screen.queryByTestId('codex-plan-credits-default')).toBeNull();
-			}
-			expect(screen.getByTestId('codex-plan-credits-work')).toHaveTextContent(
-				'Available credits84'
-			);
-		}
-	);
+		expect(screen.getByTestId('codex-plan-credits-default')).toHaveTextContent(
+			'Available credits21'
+		);
+		expect(screen.getByTestId('codex-plan-credits-work')).toHaveTextContent('Available credits84');
+	});
 
 	it.each(['unauthenticated', 'missing_auth', 'error'])(
 		'does not display a cached balance when the account is %s',

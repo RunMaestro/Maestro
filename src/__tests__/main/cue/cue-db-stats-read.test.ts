@@ -78,6 +78,7 @@ describe.skipIf(!canLoadNodeSqlite())('getCueEventsForStats (real SQLite)', () =
 			chainRootId: null,
 			parentEventId: null,
 			providerSessionId: 'provider-1',
+			streamUsageJson: null,
 			orphaned: false,
 		});
 		expect(rows[1]).not.toHaveProperty('fullOutput');

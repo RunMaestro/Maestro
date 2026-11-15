@@ -40,7 +40,6 @@ import {
 	TokenStats,
 	tokenCoverageNotes,
 } from '../../../../renderer/components/UsageDashboard/TokenStats';
-import { clearCachedResources } from '../../../../renderer/hooks/utils/useCachedResource';
 
 const theme = THEMES['dracula'];
 
@@ -416,7 +415,7 @@ describe('Grok token presentation', () => {
 		expect(screen.getByRole('group', { name: 'Input Tokens: 60' })).toBeInTheDocument();
 		expect(screen.getByText('30% of input served from cache')).toBeInTheDocument();
 		expect(screen.getByTestId('token-stats')).toHaveTextContent(
-			'2 sessions read from agent transcripts.'
+			'2 conversations read from local agent transcripts.'
 		);
 		for (const a of ['alpha', 'beta']) {
 			const row = within(screen.getByTestId('token-by-account')).getByText(`Grok ${a}`);

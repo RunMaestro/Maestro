@@ -27,6 +27,7 @@ import { EscCloseButton } from '../ui/EscCloseButton';
 import { Spinner } from '../ui/Spinner';
 import { captureException } from '../../utils/sentry';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { isImeComposing } from '../../utils/ime';
 import {
 	captureDesignPick,
 	designOverlayScale,
@@ -257,7 +258,7 @@ export function BrowserDesignModeLayer({
 			event.preventDefault();
 			event.stopPropagation();
 			onExit();
-		} else if (event.key === 'Enter' && plain && onLayer) {
+		} else if (event.key === 'Enter' && plain && onLayer && !isImeComposing(event)) {
 			event.preventDefault();
 			event.stopPropagation();
 			void pick();
@@ -283,7 +284,7 @@ export function BrowserDesignModeLayer({
 			event.key === 'Enter' &&
 			event.target === noteRef.current &&
 			!event.shiftKey &&
-			!event.nativeEvent.isComposing
+			!isImeComposing(event)
 		) {
 			// Only from the note: Enter on a focused card button must run that
 			// button (Back to picking, Add and Pick Another), not Add to Message.

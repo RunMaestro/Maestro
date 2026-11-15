@@ -1002,7 +1002,9 @@ describe('Grok usage aggregation', () => {
 				day: '2026-01-16T12:00:00Z',
 			}),
 		];
-		const result = aggregate(all, {});
+		// Day slices, so the two days stay apart (an open window picks its own,
+		// coarser granularity from the span up to now).
+		const result = aggregate(all, { granularity: 'day' });
 		// Cache buckets stay disjoint from input; nothing is folded or double-added.
 		expect(result.totals).toMatchObject({
 			sessionCount: 3,
@@ -1029,7 +1031,8 @@ describe('Grok usage aggregation', () => {
 			for (const key of [...tokenKeys, 'sessionCount'] as const)
 				expect(groups.reduce((sum, g) => sum + g[key], 0)).toBe(result.totals[key]);
 		}
-		expect(result.timeline).toHaveLength(2);
+		// The timeline is dense over the window; two of its slices hold the sessions.
+		expect(result.timeline.filter((bucket) => bucket.sessionCount > 0)).toHaveLength(2);
 		// The payload the dashboard exports survives a JSON round trip unchanged.
 		expect(JSON.parse(JSON.stringify(result))).toEqual(result);
 	});
@@ -1096,11 +1099,15 @@ describe('Grok usage aggregation', () => {
 				'byModel',
 				'byProject',
 				'coverageByAgent',
+				'excluded',
 				'generatedAtMs',
+				'granularity',
 				'series',
 				'speed',
 				'timeline',
 				'totals',
+				'windowEndMs',
+				'windowStartMs',
 			].sort()
 		);
 		expect(JSON.stringify(result)).not.toMatch(/quota|balance|unlimited|reset/i);
