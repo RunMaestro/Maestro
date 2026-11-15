@@ -427,6 +427,19 @@ describe('GitDiffViewer review comments', () => {
 			expect(within(editor).getByRole('textbox')).toHaveValue('Half a thought');
 		});
 
+		it('reopens on the file tab the unfinished comment box is on', () => {
+			const first = renderViewer();
+			fireEvent.click(screen.getByRole('button', { name: /^util\.ts/ }));
+			pickLines('export const b = 3;');
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'On the second file' } });
+			first.unmount();
+
+			renderViewer();
+			const editor = screen.getByTestId('diff-comment-editor');
+			expect(editor).toHaveTextContent('Comment on src/util.ts:2');
+			expect(within(editor).getByRole('textbox')).toHaveValue('On the second file');
+		});
+
 		it('keeps the text as an outdated comment when its lines changed while closed', () => {
 			const first = renderViewer();
 			pickLines('const fresh = 3;');

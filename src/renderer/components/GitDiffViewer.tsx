@@ -274,6 +274,11 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 			if (stillFits) {
 				draftBodyRef.current = draft.body;
 				setEditing({ anchor: draft.anchor, id: draft.id, initialBody: draft.initialBody });
+				// The viewer opens on its first file; show the one the box is on.
+				const fileIndex = parsedFilesRef.current.findIndex(
+					(f) => diffFileKey(f) === draft.anchor.file
+				);
+				if (fileIndex >= 0) setActiveTab(fileIndex);
 			} else {
 				dropEditor();
 				const body = draft.body.trim();
