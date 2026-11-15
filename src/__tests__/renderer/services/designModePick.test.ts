@@ -178,6 +178,23 @@ describe('deliverDesignPick', () => {
 		expect(session().aiTabs[0].inputValue.startsWith('saved\n\nDesign Mode element')).toBe(true);
 	});
 
+	it('a foreground pick into another agent brings that agent on screen', async () => {
+		seed({ inputValue: '' });
+		useSessionStore.setState({ activeSessionId: 'someone-else' } as never);
+		const result = await deliverDesignPick({
+			sessionId: SESSION_ID,
+			browserTabId: BROWSER_TAB_ID,
+			pick,
+			screenshot: SHOT,
+		});
+		expect(result?.aiTabId).toBe(TAB_ID);
+		expect(useSessionStore.getState().activeSessionId).toBe(SESSION_ID);
+		expect(session().activeTabId).toBe(TAB_ID);
+		expect(session().activeBrowserTabId).toBeNull();
+		expect(session().aiTabs[0].inputValue).toContain('Design Mode element');
+		expect(useUIStore.getState().focusRequest).toEqual({ tab: { type: 'ai', id: TAB_ID } });
+	});
+
 	it('refuses, with a toast, when the agent has no AI tab', async () => {
 		seed({}, { aiTabs: [], activeTabId: '' });
 		const result = await deliverDesignPick({

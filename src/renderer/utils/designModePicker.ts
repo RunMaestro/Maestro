@@ -29,12 +29,10 @@ export const DESIGN_MODE_MAX_HTML_CHARS = 6000;
 /**
  * Joins the selector segments of an element inside open shadow roots: each
  * segment is unique within its own root, and the next one is queried in the
- * previous match's `shadowRoot` (the convention Puppeteer and Playwright use).
+ * previous match's `shadowRoot`. It is Puppeteer's deep combinator; Playwright
+ * needs no marker because its CSS locators pierce open shadow roots.
  */
 export const DESIGN_MODE_SHADOW_PIERCE = ' >>> ';
-
-/** How many ancestors a selector path may climb looking for a unique anchor. */
-export const DESIGN_MODE_MAX_SELECTOR_DEPTH = 32;
 
 /**
  * Computed style properties a developer usually cares about when restyling an
@@ -151,7 +149,6 @@ export type DesignModeGuestRequest =
  */
 const GUEST_HELPER = `function(req){
 	var MAX_HTML=${DESIGN_MODE_MAX_HTML_CHARS};
-	var MAX_DEPTH=${DESIGN_MODE_MAX_SELECTOR_DEPTH};
 	var PROPS=${JSON.stringify(DESIGN_MODE_STYLE_PROPERTIES)};
 	function up(el){
 		if(el.parentElement)return el.parentElement;
@@ -191,30 +188,32 @@ const GUEST_HELPER = `function(req){
 	function unique(parts,root,el){
 		try{var list=root.querySelectorAll(parts.join(' > '));return list.length===1&&list[0]===el;}catch(e){return false;}
 	}
+	function nthOfType(node){
+		var parent=node.parentElement||node.parentNode;
+		if(!parent||!parent.children)return '';
+		var same=0,index=0;
+		for(var j=0;j<parent.children.length;j++){
+			var sib=parent.children[j];
+			if(sib.tagName===node.tagName){same++;if(sib===node)index=same;}
+		}
+		return same>1?':nth-of-type('+index+')':'';
+	}
+	// Climbs until the path matches only this element in its root (checked by
+	// identity). No depth cap: the walk ends at the root anyway, and stopping
+	// early on a deep page would hand back a selector that matches another
+	// element. A duplicate id is no anchor, so it gets nth-of-type like any tag.
 	function within(el,root){
 		var parts=[];var node=el;
-		for(var i=0;node&&node.nodeType===1&&i<MAX_DEPTH;i++){
+		while(node&&node.nodeType===1){
 			var tag=node.tagName.toLowerCase();
 			if(tag==='html'||tag==='body'){parts.unshift(tag);break;}
-			if(node.id){
-				parts.unshift(tag+'#'+esc(node.id));
-				if(unique(parts,root,el))break;
-			}else{
-				var part=tag;
-				var c=classes(node);
-				if(c.length)part+='.'+c.map(esc).join('.');
-				var parent=node.parentElement||node.parentNode;
-				if(parent&&parent.children){
-					var same=0,index=0;
-					for(var j=0;j<parent.children.length;j++){
-						var sib=parent.children[j];
-						if(sib.tagName===node.tagName){same++;if(sib===node)index=same;}
-					}
-					if(same>1)part+=':nth-of-type('+index+')';
-				}
-				parts.unshift(part);
-				if(unique(parts,root,el))break;
-			}
+			var part=tag;
+			if(node.id){part+='#'+esc(node.id);}
+			else{var c=classes(node);if(c.length)part+='.'+c.map(esc).join('.');}
+			parts.unshift(part);
+			if(unique(parts,root,el))break;
+			var nth=nthOfType(node);
+			if(nth){parts[0]=part+nth;if(unique(parts,root,el))break;}
 			node=node.parentElement;
 		}
 		return parts.join(' > ');
@@ -232,7 +231,10 @@ const GUEST_HELPER = `function(req){
 	function query(selector){
 		var segments=selector.split(PIERCE);var scope=document;var found=null;
 		for(var k=0;k<segments.length;k++){
-			found=scope.querySelector(segments[k]);
+			// querySelectorAll()[0], not querySelector(): some engines short-cut an
+			// id selector to getElementById, which only ever sees the FIRST of
+			// duplicate ids, and a picked selector may disambiguate one by position.
+			found=scope.querySelectorAll(segments[k])[0]||null;
 			if(!found)return null;
 			if(k<segments.length-1){scope=found.shadowRoot;if(!scope)return null;}
 		}
@@ -250,11 +252,22 @@ const GUEST_HELPER = `function(req){
 			html:cut?html.slice(0,MAX_HTML):html,htmlTruncated:cut,styles:styles,rect:box(el),
 			viewport:{width:window.innerWidth,height:window.innerHeight}};
 	}
-	function scrollerFor(el){
+	// The nearest element under the point that can still move in the wheel's
+	// direction, so a list already at its end hands the scroll to the page. An
+	// element with overscroll-behavior contain/none keeps it, as the page asked.
+	function canMove(el,dx,dy){
+		var max=el.scrollHeight-el.clientHeight,maxX=el.scrollWidth-el.clientWidth;
+		return (dy>0&&el.scrollTop<max-1)||(dy<0&&el.scrollTop>0)||
+			(dx>0&&el.scrollLeft<maxX-1)||(dx<0&&el.scrollLeft>0);
+	}
+	function scrollerFor(el,dx,dy){
 		while(el&&el!==document.body&&el!==document.documentElement){
 			var cs=window.getComputedStyle(el);
 			if(/(auto|scroll|overlay)/.test(cs.overflowY+' '+cs.overflowX)&&
-				(el.scrollHeight>el.clientHeight||el.scrollWidth>el.clientWidth))return el;
+				(el.scrollHeight>el.clientHeight||el.scrollWidth>el.clientWidth)){
+				if(canMove(el,dx,dy))return el;
+				if(/(contain|none)/.test((cs.overscrollBehaviorY||'')+' '+(cs.overscrollBehaviorX||'')))return el;
+			}
 			el=up(el);
 		}
 		return document.scrollingElement||document.documentElement;
@@ -272,7 +285,7 @@ const GUEST_HELPER = `function(req){
 	}
 	var hit=at(req.x,req.y);
 	if(req.type==='scroll'){
-		scrollerFor(hit).scrollBy(req.dx,req.dy);
+		scrollerFor(hit,req.dx,req.dy).scrollBy(req.dx,req.dy);
 		return true;
 	}
 	if(!hit)return null;
@@ -301,6 +314,18 @@ function oneLine(value: string, max: number): string {
 		.replace(/\s+/g, ' ')
 		.trim()
 		.slice(0, max);
+}
+
+/**
+ * A selector with only its line-breaking characters replaced. Unlike
+ * {@link oneLine} it keeps every other character, including U+00A0 and runs
+ * of spaces: `CSS.escape` leaves those in identifiers, so normalizing them
+ * would turn the selector into one that matches a different element. A real
+ * selector never holds a raw control character (`CSS.escape` writes them as
+ * hex escapes), so replacing those only changes what a lying page sent.
+ */
+function withoutLineBreaks(value: string, max: number): string {
+	return value.slice(0, max).replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ');
 }
 
 /** `text` as Markdown inline code that a backtick inside it cannot close. */
@@ -372,7 +397,7 @@ export function parseDesignModePick(value: unknown): DesignModePick | DesignMode
 	return {
 		url: typeof p.url === 'string' ? oneLine(p.url, MAX_SHORT_FIELD) : '',
 		tagName: oneLine(p.tagName, 64),
-		selector: oneLine(p.selector, MAX_SHORT_FIELD),
+		selector: withoutLineBreaks(p.selector, MAX_SHORT_FIELD),
 		html: p.html.slice(0, DESIGN_MODE_MAX_HTML_CHARS),
 		htmlTruncated: p.htmlTruncated === true || p.html.length > DESIGN_MODE_MAX_HTML_CHARS,
 		styles: readStyles(p.styles),

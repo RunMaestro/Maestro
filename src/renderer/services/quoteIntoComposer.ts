@@ -15,6 +15,7 @@ import { useUIStore } from '../stores/uiStore';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { notifyToast } from '../stores/notificationStore';
 import { collectLeafTabRefs } from '../utils/panelLayout';
+import { jumpToAgent } from './agentNavigation';
 import type { Session } from '../types';
 
 /**
@@ -120,9 +121,17 @@ export function insertIntoAgentComposer(
 	}
 
 	if (reveal) {
-		updateSessionWith(sessionId, (s) =>
-			inGroup ? { ...s, activeTabId: tabId } : { ...s, ...aiTabFocusFields(tabId) }
-		);
+		if (!isActiveAgent) {
+			// A caller outside the agent on screen (`maestro-cli browser-pick
+			// --focus` into a background browser) must also bring that agent up,
+			// or the focus request below lands in the visible agent's composer.
+			// The switch loads the tab's saved draft, written above.
+			jumpToAgent(sessionId, { tabId });
+		} else {
+			updateSessionWith(sessionId, (s) =>
+				inGroup ? { ...s, activeTabId: tabId } : { ...s, ...aiTabFocusFields(tabId) }
+			);
+		}
 		useUIStore.getState().requestTabFocus({ type: 'ai', id: tabId });
 	}
 	return tabId;
