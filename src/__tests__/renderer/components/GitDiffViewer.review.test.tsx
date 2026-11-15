@@ -110,7 +110,7 @@ describe('GitDiffViewer review comments', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		escapeHandler = null;
-		useDiffReviewStore.setState({ commentsByRepo: {} });
+		useDiffReviewStore.setState({ commentsByRepo: {}, draftsByRepo: {} });
 		useSessionStore.setState({
 			sessions: [createMockSession({ id: 'agent-1', name: 'Builder' })],
 			activeSessionId: 'agent-1',
@@ -415,6 +415,40 @@ describe('GitDiffViewer review comments', () => {
 			]);
 		});
 
+		it('keeps a half-written comment box across closing and reopening the viewer', () => {
+			const first = renderViewer();
+			pickLines('const fresh = 3;', 'const extra = 4;');
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Half a thought' } });
+			first.unmount();
+
+			renderViewer();
+			const editor = screen.getByTestId('diff-comment-editor');
+			expect(editor).toHaveTextContent('Comment on src/app.ts:2-3');
+			expect(within(editor).getByRole('textbox')).toHaveValue('Half a thought');
+		});
+
+		it('keeps the text as an outdated comment when its lines changed while closed', () => {
+			const first = renderViewer();
+			pickLines('const fresh = 3;');
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Half a thought' } });
+			first.unmount();
+
+			renderViewer({ diffText: MOVED_DIFF });
+			expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
+			expect(screen.getByTestId('diff-review-outdated')).toHaveTextContent('Half a thought');
+		});
+
+		it('does not park a box that Send already saved and delivered', () => {
+			const first = renderViewer();
+			pickLines('const fresh = 3;');
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Ship it' } });
+			key('Enter', { metaKey: true, shiftKey: true });
+			first.unmount();
+			renderViewer();
+			expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
+			expect(useDiffReviewStore.getState().draftsByRepo).toEqual({});
+		});
+
 		it('drops an open comment box when the viewer is pointed at another repo', () => {
 			const { rerender, onClose } = renderViewer();
 			pickLines('const fresh = 3;');
@@ -431,6 +465,8 @@ describe('GitDiffViewer review comments', () => {
 			);
 			expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
 			expect(useDiffReviewStore.getState().commentsByRepo).toEqual({});
+			// Parked under the repo it was written in, not lost and not carried over.
+			expect(useDiffReviewStore.getState().draftsByRepo[CWD]?.body).toBe('Half done');
 		});
 	});
 });

@@ -14,10 +14,25 @@
  */
 
 import { create } from 'zustand';
-import type { DiffComment } from '../utils/diffReviewComments';
+import type { DiffComment, DiffCommentAnchor } from '../utils/diffReviewComments';
+
+/**
+ * A comment box that was open, with text in it, when the viewer closed. Put
+ * back on its lines when the diff for the same repository is opened again.
+ */
+export interface DiffCommentDraft {
+	anchor: DiffCommentAnchor;
+	/** Set when the box was editing a saved comment. */
+	id?: string;
+	/** What the box opened with (the saved text, for an edit). */
+	initialBody: string;
+	/** What was typed. */
+	body: string;
+}
 
 interface DiffReviewState {
 	commentsByRepo: Record<string, DiffComment[]>;
+	draftsByRepo: Record<string, DiffCommentDraft>;
 }
 
 interface DiffReviewActions {
@@ -28,6 +43,10 @@ interface DiffReviewActions {
 	removeComments: (repo: string, ids: readonly string[]) => void;
 	/** Forget every comment for this repo (discarded). */
 	clearComments: (repo: string) => void;
+	/** Keep the open comment box for this repo while the viewer is closed. */
+	parkDraft: (repo: string, draft: DiffCommentDraft) => void;
+	/** Hand back (and forget) the parked comment box for this repo, if any. */
+	takeDraft: (repo: string) => DiffCommentDraft | undefined;
 }
 
 export type DiffReviewStore = DiffReviewState & DiffReviewActions;
@@ -54,8 +73,9 @@ function withRepo(
 	return { commentsByRepo };
 }
 
-export const useDiffReviewStore = create<DiffReviewStore>()((set) => ({
+export const useDiffReviewStore = create<DiffReviewStore>()((set, get) => ({
 	commentsByRepo: {},
+	draftsByRepo: {},
 
 	addComment: (repo, comment) =>
 		set((state) => withRepo(state, repo, [...(state.commentsByRepo[repo] ?? []), comment])),
@@ -87,7 +107,25 @@ export const useDiffReviewStore = create<DiffReviewStore>()((set) => ({
 			)
 		),
 
-	clearComments: (repo) => set((state) => withRepo(state, repo, [])),
+	clearComments: (repo) =>
+		set((state) => {
+			const { [repo]: _dropped, ...draftsByRepo } = state.draftsByRepo;
+			return { ...withRepo(state, repo, []), draftsByRepo };
+		}),
+
+	parkDraft: (repo, draft) =>
+		set((state) => ({ draftsByRepo: { ...state.draftsByRepo, [repo]: draft } })),
+
+	takeDraft: (repo) => {
+		const draft = get().draftsByRepo[repo];
+		if (draft) {
+			set((state) => {
+				const { [repo]: _taken, ...draftsByRepo } = state.draftsByRepo;
+				return { draftsByRepo };
+			});
+		}
+		return draft;
+	},
 }));
 
 /** The pending comments for one repo. Stable empty array when there are none. */

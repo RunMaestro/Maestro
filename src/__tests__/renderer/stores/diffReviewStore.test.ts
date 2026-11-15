@@ -20,7 +20,7 @@ function comment(id: string, body = 'note'): DiffComment {
 }
 
 describe('diffReviewStore', () => {
-	beforeEach(() => useDiffReviewStore.setState({ commentsByRepo: {} }));
+	beforeEach(() => useDiffReviewStore.setState({ commentsByRepo: {}, draftsByRepo: {} }));
 
 	it('keeps comments per repo through add, update, and remove', () => {
 		const store = useDiffReviewStore.getState();
@@ -60,5 +60,20 @@ describe('diffReviewStore', () => {
 		expect(diffReviewKey('/home/u/p')).toBe('/home/u/p');
 		expect(diffReviewKey('/home/u/p', 'host-a')).not.toBe(diffReviewKey('/home/u/p', 'host-b'));
 		expect(diffReviewKey('/home/u/p', 'host-a')).not.toBe(diffReviewKey('/home/u/p'));
+	});
+
+	it('parks one comment box per repo and hands it back once', () => {
+		const store = useDiffReviewStore.getState();
+		const draft = { anchor: comment('x'), initialBody: '', body: 'half' };
+		store.parkDraft('/repo', draft);
+		expect(useDiffReviewStore.getState().takeDraft('/repo')).toEqual(draft);
+		expect(useDiffReviewStore.getState().takeDraft('/repo')).toBeUndefined();
+	});
+
+	it('discarding a review also forgets its parked box', () => {
+		const store = useDiffReviewStore.getState();
+		store.parkDraft('/repo', { anchor: comment('x'), initialBody: '', body: 'half' });
+		store.clearComments('/repo');
+		expect(useDiffReviewStore.getState().draftsByRepo).toEqual({});
 	});
 });

@@ -16,6 +16,8 @@ import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
 import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { Keycap } from './ui/Keycap';
+import { useEventListener } from '../hooks/utils/useEventListener';
 import { ModalSubtitle } from './ui/Modal';
 import { useSessionStore } from '../stores/sessionStore';
 import { DiffCommentCard, DiffCommentEditor, DiffReviewTray } from './DiffReviewComments';
@@ -185,6 +187,8 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 
 	// Parse the diff into separate files
 	const parsedFiles = useMemo(() => parseGitDiff(diffText), [diffText]);
+	const parsedFilesRef = useRef(parsedFiles);
+	parsedFilesRef.current = parsedFiles;
 
 	// Review comments (issue #1475). Pending comments live in diffReviewStore,
 	// keyed by repo, so they survive switching file tabs here and even closing
@@ -241,14 +245,70 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 		setSelection(null);
 	}, [activeTab]);
 
-	// A selection and an open comment box belong to the repository and diff they
-	// were made in. When the viewer is pointed at another repo (or a fresh diff)
-	// without unmounting, neither may follow it there.
+	/**
+	 * Close the comment box. The ref is cleared at once, not on the next render,
+	 * so an unmount in the same tick (Send closes the viewer) does not park a
+	 * box that is already gone.
+	 */
+	const dropEditor = useCallback(() => {
+		editingRef.current = null;
+		draftBodyRef.current = '';
+		setEditing(null);
+	}, []);
+
+	// An open comment box belongs to its repository. Closing the viewer (Close,
+	// backdrop, Escape with no box open) or pointing it at another repo parks a
+	// box with text in it under its repo key; opening that repo's diff again
+	// puts it back on its lines. A box whose lines have since changed cannot go
+	// back on them, so its text is kept as a comment instead (shown Outdated in
+	// the tray) rather than lost.
 	useEffect(() => {
 		setSelection(null);
-		setEditing(null);
-		draftBodyRef.current = '';
-	}, [reviewKey, diffText]);
+		const store = useDiffReviewStore.getState();
+		const draft = canReview ? store.takeDraft(reviewKey) : undefined;
+		if (!draft) {
+			dropEditor();
+		} else {
+			const probe = { ...draft.anchor, id: '__draft__', body: draft.body };
+			const stillFits = !findOutdatedComments([probe], parsedFilesRef.current).size;
+			if (stillFits) {
+				draftBodyRef.current = draft.body;
+				setEditing({ anchor: draft.anchor, id: draft.id, initialBody: draft.initialBody });
+			} else {
+				dropEditor();
+				const body = draft.body.trim();
+				const exists = (store.commentsByRepo[reviewKey] ?? []).some((c) => c.id === draft.id);
+				if (body && draft.id && exists) store.updateComment(reviewKey, draft.id, body);
+				else if (body) store.addComment(reviewKey, { ...draft.anchor, id: generateId(), body });
+				if (body) {
+					notifyCenterFlash({
+						message: 'The lines your unfinished comment was on have changed',
+						detail: 'Its text is kept in the Review tray, marked outdated',
+						color: 'yellow',
+					});
+				}
+			}
+		}
+		return () => {
+			const open = editingRef.current;
+			const body = draftBodyRef.current;
+			const worthKeeping =
+				open && (open.id ? body.trim() !== open.initialBody.trim() : body.trim());
+			if (open && worthKeeping) {
+				useDiffReviewStore.getState().parkDraft(reviewKey, {
+					anchor: open.anchor,
+					id: open.id,
+					initialBody: open.initialBody,
+					body,
+				});
+			}
+		};
+	}, [canReview, reviewKey, dropEditor]);
+
+	// A line selection is made against one diff; a fresh diff starts without one.
+	useEffect(() => {
+		setSelection(null);
+	}, [diffText]);
 
 	const openEditor = useCallback((next: CommentEditState, draft: string = next.initialBody) => {
 		draftBodyRef.current = draft;
@@ -294,10 +354,10 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	}, [activeFilePath, activeOldPath, activeHunks, openEditor, blockedByUnsavedEdit]);
 
 	const closeEditor = useCallback(() => {
-		setEditing(null);
+		dropEditor();
 		// Hand the keyboard back to the viewer so the line cursor keeps working.
 		dialogRef.current?.focus();
-	}, []);
+	}, [dropEditor]);
 
 	const saveComment = useCallback(
 		(body: string) => {
@@ -349,10 +409,10 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 
 	const discardReview = useCallback(() => {
 		useDiffReviewStore.getState().clearComments(reviewKey);
-		setEditing(null);
+		dropEditor();
 		setSelection(null);
 		dialogRef.current?.focus();
-	}, [reviewKey]);
+	}, [reviewKey, dropEditor]);
 
 	// Both ways out go through `deliverDiffReview`, which the CLI's `send` also
 	// calls: it leaves outdated comments behind, and forgets only what it
@@ -363,12 +423,18 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 		(mode: DiffReviewDeliveryMode) => {
 			if (!canReview || !sessionId) return;
 			if (editingRef.current && draftBodyRef.current.trim()) saveComment(draftBodyRef.current);
-			const result = deliverDiffReview({ sessionId, key: reviewKey, files: parsedFiles, mode });
+			const result = deliverDiffReview({
+				sessionId,
+				key: reviewKey,
+				cwd,
+				files: parsedFiles,
+				mode,
+			});
 			if (!result.ok) return;
-			setEditing(null);
+			dropEditor();
 			onCloseRef.current();
 		},
-		[canReview, sessionId, reviewKey, parsedFiles, saveComment]
+		[canReview, sessionId, reviewKey, cwd, parsedFiles, saveComment, dropEditor]
 	);
 	const sendReview = useCallback(() => deliverReview('send'), [deliverReview]);
 	const editReviewInComposer = useCallback(() => deliverReview('compose'), [deliverReview]);
@@ -414,16 +480,16 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 		};
 	}, [canReview, rowIndexByKey]);
 
-	useEffect(() => {
-		if (!canReview) return;
-		const handleMouseUp = () => {
+	// The drag can end anywhere, so the release is heard on the window.
+	useEventListener(
+		'mouseup',
+		() => {
 			if (!draggingRef.current) return;
 			draggingRef.current = false;
 			commentOnSelection();
-		};
-		window.addEventListener('mouseup', handleMouseUp);
-		return () => window.removeEventListener('mouseup', handleMouseUp);
-	}, [canReview, commentOnSelection]);
+		},
+		{ enabled: canReview }
+	);
 
 	// Keep the keyboard cursor on screen as it moves.
 	const cursorKey = selection ? rows[selection.focus]?.key : undefined;
@@ -615,39 +681,35 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 		[sendableCount, sendReview, commentOnSelection]
 	);
 
-	// Handle keyboard shortcuts (tab navigation + view toggle)
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (canReview && handleReviewKey(e)) return;
-			// Cmd+[ or Cmd+Shift+[ - Previous tab
-			if ((e.metaKey || e.ctrlKey) && e.key === '[') {
-				e.preventDefault();
-				setActiveTab((prev) => (prev === 0 ? parsedFiles.length - 1 : prev - 1));
-			}
-			// Cmd+] or Cmd+Shift+] - Next tab
-			else if ((e.metaKey || e.ctrlKey) && e.key === ']') {
-				e.preventDefault();
-				setActiveTab((prev) => (prev + 1) % parsedFiles.length);
-			}
-			// Enter - Toggle unified / side-by-side. Skip when a focused control
-			// (button, link, input, etc.) would otherwise consume Enter, so the
-			// toggle button and tab buttons keep their native activation behavior.
-			else if (
-				e.key === 'Enter' &&
-				!e.metaKey &&
-				!e.ctrlKey &&
-				!e.altKey &&
-				!e.shiftKey &&
-				!isFormControl(e.target)
-			) {
-				e.preventDefault();
-				setViewType((v) => (v === 'unified' ? 'split' : 'unified'));
-			}
-		};
-
-		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [parsedFiles.length, canReview, handleReviewKey]);
+	// Handle keyboard shortcuts (tab navigation + view toggle + review keys)
+	useEventListener('keydown', (event) => {
+		const e = event as KeyboardEvent;
+		if (canReview && handleReviewKey(e)) return;
+		// Cmd+[ or Cmd+Shift+[ - Previous tab
+		if ((e.metaKey || e.ctrlKey) && e.key === '[') {
+			e.preventDefault();
+			setActiveTab((prev) => (prev === 0 ? parsedFiles.length - 1 : prev - 1));
+		}
+		// Cmd+] or Cmd+Shift+] - Next tab
+		else if ((e.metaKey || e.ctrlKey) && e.key === ']') {
+			e.preventDefault();
+			setActiveTab((prev) => (prev + 1) % parsedFiles.length);
+		}
+		// Enter - Toggle unified / side-by-side. Skip when a focused control
+		// (button, link, input, etc.) would otherwise consume Enter, so the
+		// toggle button and tab buttons keep their native activation behavior.
+		else if (
+			e.key === 'Enter' &&
+			!e.metaKey &&
+			!e.ctrlKey &&
+			!e.altKey &&
+			!e.shiftKey &&
+			!isFormControl(e.target)
+		) {
+			e.preventDefault();
+			setViewType((v) => (v === 'unified' ? 'split' : 'unified'));
+		}
+	});
 	const resizableModal = useResizableModal({
 		resizeKey: 'git-diff',
 		defaultSize: { width: 1200, height: 760 },
@@ -995,30 +1057,16 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 					</div>
 					<span className="text-right" style={{ color: theme.colors.textDim }}>
 						Press{' '}
-						<kbd
-							className="px-1.5 py-0.5 rounded font-mono text-2xs mx-0.5"
-							style={{
-								backgroundColor: theme.colors.bgActivity,
-								color: theme.colors.textMain,
-								border: `1px solid ${theme.colors.border}`,
-							}}
-						>
+						<Keycap theme={theme} className="mx-0.5">
 							Enter
-						</kbd>{' '}
+						</Keycap>{' '}
 						to toggle {viewType === 'unified' ? 'side-by-side' : 'unified'} view
 						{canReview && (
 							<>
 								{' · '}
-								<kbd
-									className="px-1.5 py-0.5 rounded font-mono text-2xs mx-0.5"
-									style={{
-										backgroundColor: theme.colors.bgActivity,
-										color: theme.colors.textMain,
-										border: `1px solid ${theme.colors.border}`,
-									}}
-								>
+								<Keycap theme={theme} className="mx-0.5">
 									↑↓ C
-								</kbd>{' '}
+								</Keycap>{' '}
 								or drag line numbers to comment
 							</>
 						)}

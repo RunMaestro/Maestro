@@ -36,6 +36,7 @@ import { gitService } from './git';
 import { resolveGitCwd, resolveGitSshRemoteId } from '../hooks/git/useGitAgentActions';
 import { parseGitDiff, type ParsedFileDiff } from '../utils/gitDiffParser';
 import { generateId } from '../utils/ids';
+import { isSameDirectory } from '../utils/agentWorkingDirectory';
 import {
 	anchorForLines,
 	findOutdatedComments,
@@ -152,12 +153,15 @@ export type DiffReviewDeliveryResult =
 export function deliverDiffReview({
 	sessionId,
 	key,
+	cwd,
 	files,
 	mode,
 	background,
 }: {
 	sessionId: string;
 	key: string;
+	/** The directory the diff was taken in. */
+	cwd: string;
 	files: readonly ParsedFileDiff[];
 	mode: DiffReviewDeliveryMode;
 	background?: boolean;
@@ -166,7 +170,12 @@ export function deliverDiffReview({
 	const outdatedIds = findOutdatedComments(comments, files);
 	const outdated = comments.filter((c) => outdatedIds.has(c.id));
 	const current = comments.filter((c) => !outdatedIds.has(c.id) && c.body.trim());
-	const prompt = formatDiffReviewPrompt(current);
+	// The diff is taken where the agent's git view points (its terminal's cwd in
+	// terminal mode); the agent itself runs in its own cwd. Name the repo when
+	// those differ, so relative paths cannot land in the wrong one.
+	const agentCwd = useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.cwd;
+	const repoDir = agentCwd !== undefined && !isSameDirectory(cwd, agentCwd) ? cwd : undefined;
+	const prompt = formatDiffReviewPrompt(current, { repoDir });
 	if (!prompt) {
 		return {
 			ok: false,
@@ -280,6 +289,7 @@ export async function runRemoteDiffReviewCommand(
 			const result = deliverDiffReview({
 				sessionId: session.id,
 				key: repo.key,
+				cwd: repo.cwd,
 				files,
 				mode: request.compose ? 'compose' : 'send',
 				background: request.background,

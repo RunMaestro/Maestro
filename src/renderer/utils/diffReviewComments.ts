@@ -303,8 +303,16 @@ function compareComments(a: DiffComment, b: DiffComment): number {
  * the agent can find the code without guessing even after the file has moved
  * on. Comments with an empty body are skipped. Returns `''` when nothing is
  * left to send.
+ *
+ * `repoDir` names the directory the diff was taken in, for when it is not the
+ * agent's working directory (an agent whose terminal moved to another repo):
+ * the paths are relative, and without it the agent would edit matching files
+ * in the wrong repository.
  */
-export function formatDiffReviewPrompt(comments: readonly DiffComment[]): string {
+export function formatDiffReviewPrompt(
+	comments: readonly DiffComment[],
+	options: { repoDir?: string } = {}
+): string {
 	const usable = comments.filter((c) => c.body.trim().length > 0).sort(compareComments);
 	if (usable.length === 0) return '';
 
@@ -314,6 +322,12 @@ export function formatDiffReviewPrompt(comments: readonly DiffComment[]): string
 		'',
 		'Each comment names the file and lines it is about, then quotes the diff hunk it was left on. Line numbers refer to the current version of the file, except where a comment says they refer to the previous version (the lines were removed).',
 	];
+	if (options.repoDir) {
+		out.push(
+			'',
+			`These changes are in \`${options.repoDir}\`, which is not your working directory. The file paths are as \`git diff\` printed them there; make the changes in that repository.`
+		);
+	}
 
 	usable.forEach((comment, index) => {
 		out.push('', `## Comment ${index + 1} of ${usable.length}`, '');

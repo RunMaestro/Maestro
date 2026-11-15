@@ -48,7 +48,7 @@ Saved comments appear under the last line they cover. Every pending comment, acr
 Comments stay until you send or discard them:
 
 - Switching between file tabs in the viewer keeps them, including a comment you are still typing.
-- Closing the viewer keeps them. Open the diff for the same repository again and they are back.
+- Closing the viewer keeps them, and a comment you were still typing. Open the diff for the same repository again and they are back, with the unfinished comment open on its lines. If those lines changed in the meantime, its text is kept in the tray as an outdated comment.
 - Quitting Maestro clears them.
 
 Each repository has its own review. For an agent on an SSH remote, the repository is the remote host plus the path, so the same path on two hosts never shares one.
@@ -108,6 +108,8 @@ Keep this at 2. Other modules depend on it.
 ````
 
 A long hunk is trimmed to the commented lines plus five lines on each side, with `...` where lines were left out.
+
+If the diff was taken somewhere other than the agent's working directory (for example, the agent's terminal is in another repository), the review says which directory the changes are in, so the agent does not edit matching files in the wrong repository.
 
 ## Shortcuts
 

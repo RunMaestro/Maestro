@@ -208,7 +208,7 @@ describe('deliverDiffReview', () => {
 	};
 
 	beforeEach(() => {
-		useDiffReviewStore.setState({ commentsByRepo: {} });
+		useDiffReviewStore.setState({ commentsByRepo: {}, draftsByRepo: {} });
 		seed();
 	});
 
@@ -229,7 +229,13 @@ describe('deliverDiffReview', () => {
 			body: 'Old thought.',
 		});
 
-		const result = deliverDiffReview({ sessionId: 'agent-1', key: '/repo', files, mode: 'send' });
+		const result = deliverDiffReview({
+			sessionId: 'agent-1',
+			key: '/repo',
+			cwd: target().cwd,
+			files,
+			mode: 'send',
+		});
 
 		expect(result.ok).toBe(true);
 		expect(target().executionQueue[0].text).toContain('Rename.');
@@ -237,6 +243,44 @@ describe('deliverDiffReview', () => {
 		expect(useDiffReviewStore.getState().commentsByRepo['/repo'].map((c) => c.id)).toEqual([
 			'stale',
 		]);
+	});
+
+	it("names the reviewed repo when it is not the agent's working directory", () => {
+		useDiffReviewStore.getState().addComment('/repo', {
+			...base,
+			id: 'c',
+			changeKeys: ['I2'],
+			lineContents: ['const fresh = 3;'],
+			body: 'Rename.',
+		});
+		const result = deliverDiffReview({
+			sessionId: 'agent-1',
+			key: '/repo',
+			cwd: '/somewhere/else',
+			files,
+			mode: 'send',
+		});
+		expect(result.ok && result.prompt).toContain(
+			'These changes are in `/somewhere/else`, which is not your working directory.'
+		);
+	});
+
+	it('says nothing about the repo when it is the working directory', () => {
+		useDiffReviewStore.getState().addComment('/repo', {
+			...base,
+			id: 'c',
+			changeKeys: ['I2'],
+			lineContents: ['const fresh = 3;'],
+			body: 'Rename.',
+		});
+		const result = deliverDiffReview({
+			sessionId: 'agent-1',
+			key: '/repo',
+			cwd: `${target().cwd}/`,
+			files,
+			mode: 'send',
+		});
+		expect(result.ok && result.prompt).not.toContain('not your working directory');
 	});
 
 	it('refuses, and keeps everything, when every comment is outdated', () => {
@@ -247,7 +291,13 @@ describe('deliverDiffReview', () => {
 			lineContents: ['x'],
 			body: 'Old.',
 		});
-		const result = deliverDiffReview({ sessionId: 'agent-1', key: '/repo', files, mode: 'send' });
+		const result = deliverDiffReview({
+			sessionId: 'agent-1',
+			key: '/repo',
+			cwd: target().cwd,
+			files,
+			mode: 'send',
+		});
 		expect(result).toMatchObject({ ok: false, error: expect.stringContaining('outdated') });
 		expect(target().executionQueue).toHaveLength(0);
 		expect(useDiffReviewStore.getState().commentsByRepo['/repo']).toHaveLength(1);
@@ -258,7 +308,7 @@ describe('runRemoteDiffReviewCommand (maestro-cli diff-review)', () => {
 	const key = () => diffReviewKey(target().cwd);
 
 	beforeEach(() => {
-		useDiffReviewStore.setState({ commentsByRepo: {} });
+		useDiffReviewStore.setState({ commentsByRepo: {}, draftsByRepo: {} });
 		seed();
 		mockGetDiff.mockResolvedValue({ diff: DIFF });
 	});
