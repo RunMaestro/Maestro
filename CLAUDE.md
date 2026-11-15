@@ -124,6 +124,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Reading or writing `maestro-agent-configs.json` without Electron:** `readAgentConfigsStoreFile(dataDir)`, `writeAgentConfigsStoreFile()` in `src/main/stores/agent-configs-store-file.ts`
 - **Reading or writing `maestro-sessions.json` without Electron:** `readSessionsStoreFile(dataDir)`, `writeSessionsStoreFile()` in `src/main/stores/sessions-store-file.ts`
 - **Maestro's data directory, without Electron:** `resolveUserDataDir(options?)`, `assertUserDataDirExists(dir)` in `src/shared/userDataDir.ts`
+- **Electron's userData directory from main code a worker thread also loads:** `getAppUserDataDir()` in `src/main/utils/app-user-data.ts`
 - **Where the synced stores live (custom Storage Location):** `resolveSyncDir(userDataDir)`, `isValidSyncPath()`, `BOOTSTRAP_STORE_FILE` in `src/shared/syncPath.ts`; the CLI's `getSyncDir()` in `src/cli/services/storage.ts`
 - **Deferred main-process store persistence:** `deferStoreWrites()` in `src/main/stores/deferred-writes.ts`, `flushPendingSessionWrites()` in `src/main/stores/instances.ts`
 - **Rewriting a large `{ key: [...] }` JSON store file:** `serializeWithMemoizedArray(data, memoKey)`, `encodeWithMemoizedArray(data, memoKey)` in `src/shared/memoizedJsonSerialize.ts`

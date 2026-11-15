@@ -21,7 +21,6 @@ import { parseNativeLines } from '../../shared/maestro-lib/translation/native-re
  * ```
  */
 
-import { app } from 'electron';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
@@ -29,6 +28,7 @@ import type Store from 'electron-store';
 import type { ClaudeSessionOriginsData } from '../stores/types';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { getAppUserDataDir } from '../utils/app-user-data';
 import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
 import type {
 	AgentSessionInfo,
@@ -234,7 +234,7 @@ interface CodexSessionCache {
 }
 
 function getCodexSessionCachePath(): string {
-	return path.join(app.getPath('userData'), 'stats-cache', CODEX_SESSION_CACHE_FILENAME);
+	return path.join(getAppUserDataDir(), 'stats-cache', CODEX_SESSION_CACHE_FILENAME);
 }
 
 async function loadCodexSessionCache(): Promise<CodexSessionCache | null> {

@@ -40,7 +40,15 @@ export interface InitializeSessionStoragesOptions {
  * @param options - Optional configuration including shared stores
  */
 export function initializeSessionStorages(options?: InitializeSessionStoragesOptions): void {
-	registerSessionStorage(new ClaudeSessionStorage(options?.claudeSessionOriginsStore));
+	registerSessionStorage(
+		new ClaudeSessionStorage(
+			options?.claudeSessionOriginsStore ??
+				new Store<ClaudeSessionOriginsData>({
+					name: 'claude-session-origins',
+					defaults: { origins: {} },
+				})
+		)
+	);
 	registerSessionStorage(new OpenCodeSessionStorage());
 	registerSessionStorage(new CodexSessionStorage(options?.claudeSessionOriginsStore));
 	registerSessionStorage(new FactoryDroidSessionStorage());

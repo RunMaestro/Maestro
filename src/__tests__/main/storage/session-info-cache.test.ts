@@ -9,8 +9,8 @@ import * as fsp from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 
-vi.mock('electron', () => ({
-	app: { getPath: vi.fn().mockReturnValue('/should-be-overridden') },
+vi.mock('../../../main/utils/app-user-data', () => ({
+	getAppUserDataDir: vi.fn().mockReturnValue('/should-be-overridden'),
 }));
 
 vi.mock('../../../main/utils/logger', () => ({

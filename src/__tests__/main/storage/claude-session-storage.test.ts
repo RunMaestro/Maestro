@@ -106,9 +106,9 @@ vi.mock('../../../main/utils/sentry', () => ({
 }));
 
 // Listing routes through the shared session-info parse cache, which resolves
-// its directory off `app.getPath` at construction time.
-vi.mock('electron', () => ({
-	app: { getPath: vi.fn().mockReturnValue('/tmp/maestro-test-userdata') },
+// its directory off the app's userData directory at construction time.
+vi.mock('../../../main/utils/app-user-data', () => ({
+	getAppUserDataDir: vi.fn().mockReturnValue('/tmp/maestro-test-userdata'),
 }));
 
 describe('ClaudeSessionStorage', () => {
