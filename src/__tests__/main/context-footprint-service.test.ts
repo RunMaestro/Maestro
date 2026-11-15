@@ -57,6 +57,15 @@ afterEach(() => {
 	fs.rmSync(root, { recursive: true, force: true });
 });
 
+/**
+ * A path as it appears inside `JSON.stringify` output. Searching the
+ * serialized audit for a raw path fails on Windows, where every `\` in the
+ * path is written `\\` in the JSON text.
+ */
+function inJson(value: string): string {
+	return JSON.stringify(value).slice(1, -1);
+}
+
 describe('stored agent context audit', () => {
 	it('uses the selected project, account and canonical memory store with no writes', async () => {
 		const before = fs.readdirSync(root, { recursive: true });
@@ -65,9 +74,9 @@ describe('stored agent context audit', () => {
 		const audit = await auditStoredAgentContextFootprint('selected');
 		expect(audit.subject.agentId).toBe('selected');
 		const text = JSON.stringify(audit);
-		expect(text).toContain(path.join(project, 'AGENTS.md'));
-		expect(text).toContain(instruction);
-		expect(text).toContain(path.join(account, 'memories'));
+		expect(text).toContain(inJson(path.join(project, 'AGENTS.md')));
+		expect(text).toContain(inJson(instruction));
+		expect(text).toContain(inJson(path.join(account, 'memories')));
 		expect(text).toContain('Runtime-dependent System One text is omitted');
 		expect(text).toContain('delivery');
 		expect(fs.readdirSync(root, { recursive: true })).toEqual(before);
@@ -92,9 +101,9 @@ describe('stored agent context audit', () => {
 		});
 		const selected = JSON.stringify(await auditStoredAgentContextFootprint('selected'));
 		const other = JSON.stringify(await auditStoredAgentContextFootprint('other'));
-		expect(selected).not.toContain(otherAccount);
-		expect(other).toContain(path.join(otherAccount, 'AGENTS.md'));
-		expect(other).not.toContain(path.join(account, 'AGENTS.md'));
+		expect(selected).not.toContain(inJson(otherAccount));
+		expect(other).toContain(inJson(path.join(otherAccount, 'AGENTS.md')));
+		expect(other).not.toContain(inJson(path.join(account, 'AGENTS.md')));
 	});
 
 	it.each([

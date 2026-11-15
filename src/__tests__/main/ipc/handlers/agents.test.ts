@@ -2314,7 +2314,8 @@ describe('agents IPC handlers', () => {
 				env: expect.objectContaining({ CLAUDE_CONFIG_DIR: '/accounts/work' }),
 			});
 			expect(fs.promises.readdir).toHaveBeenCalledWith(
-				expect.stringContaining('/accounts/work/skills'),
+				// The handler joins with the platform separator, so the expectation does too.
+				expect.stringContaining(path.join('/accounts/work', 'skills')),
 				expect.anything()
 			);
 		});

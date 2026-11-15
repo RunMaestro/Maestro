@@ -112,7 +112,35 @@ describe('translation filesystem boundary', () => {
 			await expect(localTranslationFs.createExclusive(link, 'dangling link')).rejects.toMatchObject(
 				{ code: 'EEXIST' }
 			);
+			// The refusal must not have written through the dangling link either.
+			expect(await localTranslationFs.exists(file)).toBe(false);
 		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it('refuses a link at the exclusive target under the Windows rules, which follow it', async () => {
+		// Windows `wx` (CREATE_NEW) follows a dangling link and creates its target.
+		// The guard runs only there, so it is exercised here on every platform.
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-fs-windows-'));
+		const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+		Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+		try {
+			const outside = path.join(root, 'outside.json');
+			const link = path.join(root, 'link.json');
+			await fs.symlink(outside, link, 'file');
+			const onCreated = vi.fn(async () => undefined);
+			await expect(
+				localTranslationFs.createExclusive(link, 'escaped', { onCreated })
+			).rejects.toMatchObject({ code: 'EEXIST' });
+			expect(onCreated).not.toHaveBeenCalled();
+			await expect(fs.lstat(outside)).rejects.toMatchObject({ code: 'ENOENT' });
+			const file = path.join(root, 'plain.json');
+			await localTranslationFs.createExclusive(file, 'kept', { onCreated });
+			expect(onCreated).toHaveBeenCalledOnce();
+			expect(await fs.readFile(file, 'utf8')).toBe('kept');
+		} finally {
+			Object.defineProperty(process, 'platform', platform);
 			await fs.rm(root, { recursive: true, force: true });
 		}
 	});

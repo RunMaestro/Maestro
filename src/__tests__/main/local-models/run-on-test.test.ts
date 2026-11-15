@@ -38,6 +38,14 @@ vi.mock('../../../main/process-manager/utils/windowsSpawnShell', async (importOr
 	};
 });
 
+/** When set, whether this host counts as Windows, in place of the real answer. */
+const host = vi.hoisted(() => ({ windows: null as null | boolean }));
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return { ...actual, isWindows: () => host.windows ?? actual.isWindows() };
+});
+
+import { isWindows } from '../../../shared/platformDetection';
 import {
 	configureAgentRunOn,
 	resetAgentRunOnForTests,
@@ -159,6 +167,7 @@ function startedSpec(): TurnProcessSpec {
 beforeEach(() => {
 	vi.clearAllMocks();
 	shellPlan.forced = null;
+	host.windows = null;
 	configure();
 });
 
@@ -187,7 +196,29 @@ describe('testAgentRunOn: a turn on the target', () => {
 		expect(spec.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('65536');
 		const modelFlag = spec.args.indexOf('--model');
 		expect(spec.args[modelFlag + 1]).toBe('qwen3:latest');
-		expect(spec.args).toContain(RUN_ON_TEST_PROMPT);
+		// The prompt goes where a desktop tab turn puts it on this host: over
+		// stdin on Windows (the CreateProcess command-line cap), argv elsewhere.
+		if (isWindows()) {
+			expect(spec.args).not.toContain(RUN_ON_TEST_PROMPT);
+			expect(spec.stdin).toContain(RUN_ON_TEST_PROMPT);
+		} else {
+			expect(spec.args).toContain(RUN_ON_TEST_PROMPT);
+			expect(spec.stdin).toBeUndefined();
+		}
+	});
+
+	it('hands the prompt over stdin on a Windows host, as a desktop tab turn does', async () => {
+		host.windows = true;
+
+		const result = await testAgentRunOn({ agentId: 'agent-1' });
+
+		expect(result).toMatchObject({ ok: true, model: 'qwen3:latest' });
+		const spec = startedSpec();
+		expect(spec.args).not.toContain(RUN_ON_TEST_PROMPT);
+		expect(spec.stdin).toContain(RUN_ON_TEST_PROMPT);
+		// `emptyStdin` applies only when there is nothing to write, so it does not
+		// shut this prompt out.
+		expect(runTurn.mock.calls[0][1].emptyStdin).toBe('ignore');
 	});
 
 	it('starts a harness directly when this system can, with no shell', async () => {

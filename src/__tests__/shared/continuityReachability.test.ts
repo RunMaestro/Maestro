@@ -17,6 +17,7 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readTextLf } from '../helpers/sourceText';
 
 const SRC = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -37,7 +38,7 @@ function code(text: string): string {
 
 const FILES = listSources(SRC).map((file) => ({
 	relative: path.relative(SRC, file).split(path.sep).join('/'),
-	text: code(fs.readFileSync(file, 'utf8')),
+	text: code(readTextLf(file)),
 }));
 
 const filesWhere = (test: (text: string) => boolean): string[] =>

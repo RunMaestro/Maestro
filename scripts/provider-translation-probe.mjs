@@ -50,6 +50,16 @@ export async function writeProbeScratchFile(workspace, target, content) {
 			throw new Error('Probe output directories must not be symlinks.');
 		}
 	}
+	// Windows has no O_NOFOLLOW (`constants.O_NOFOLLOW` is undefined there), so
+	// the open below follows a symlink or junction at the last component and
+	// would write its target outside scratch, or create it when it dangles.
+	// Refuse a link before the open, and after it prove the opened file is the
+	// entry named `resolved`, in case a link was swapped in between.
+	const existing = await lstat(resolved).catch((error) => {
+		if (error.code === 'ENOENT') return null;
+		throw error;
+	});
+	if (existing?.isSymbolicLink()) throw new Error('Probe output must not be a symlink.');
 	// Do not truncate until the opened file is known to be private and regular.
 	const file = await open(
 		resolved,
@@ -57,8 +67,12 @@ export async function writeProbeScratchFile(workspace, target, content) {
 		0o600
 	);
 	try {
-		const entry = await file.stat();
-		if (!entry.isFile() || entry.nlink !== 1) {
+		const entry = await file.stat({ bigint: true });
+		const named = await lstat(resolved, { bigint: true });
+		if (named.isSymbolicLink() || named.dev !== entry.dev || named.ino !== entry.ino) {
+			throw new Error('Probe output must not be a symlink.');
+		}
+		if (!entry.isFile() || entry.nlink !== 1n) {
 			throw new Error('Probe output must be a regular file with no hard links.');
 		}
 		await file.truncate(0);

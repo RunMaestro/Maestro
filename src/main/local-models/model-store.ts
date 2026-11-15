@@ -34,6 +34,7 @@ import * as path from 'path';
 
 import { allLocalModels, getLocalModel } from '../../shared/local-models/model-catalog';
 import type { LocalModelEntry, LocalModelFile } from '../../shared/local-models/types';
+import { normalizeRootRelativePath } from '../../shared/pathContainment';
 import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { LOCAL_MODELS_DIRNAME, localModelsDataDir } from './paths';
 
@@ -114,14 +115,15 @@ export function modelDir(id: string): string {
 /** Absolute path of one file within a model's install directory. */
 export function modelFilePath(id: string, filePath: string): string {
 	const dir = modelDir(id);
-	const resolved = path.resolve(dir, filePath);
 	// Belt and braces: catalog paths are authored in this repo, but a relative
 	// path that escapes its root is the one mistake that turns a delete into a
-	// disaster, so it is checked rather than assumed.
-	if (resolved !== dir && !resolved.startsWith(dir + path.sep)) {
-		throw new Error(`UnsafeModelFilePath: ${filePath}`);
-	}
-	return resolved;
+	// disaster, so it is checked rather than assumed. The check is lexical, on
+	// the relative path alone: comparing `path.resolve(dir, filePath)` against
+	// the unresolved `dir` refused every file on Windows whenever `dir` lacked
+	// the drive letter `resolve` adds.
+	const relative = normalizeRootRelativePath(filePath);
+	if (relative === null) throw new Error(`UnsafeModelFilePath: ${filePath}`);
+	return path.resolve(dir, ...relative.split('/').filter(Boolean));
 }
 
 function manifestPath(id: string): string {

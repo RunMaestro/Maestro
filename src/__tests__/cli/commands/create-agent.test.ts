@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import path from 'path';
 
 // Mock maestro-client
 vi.mock('../../../cli/services/maestro-client', () => ({
@@ -741,7 +742,9 @@ describe('create-agent command', () => {
 		it("uses the group's working directory when --cwd is not given", async () => {
 			await createAgent('Agent', { type: 'codex', group: 'group-1' });
 
-			expect(sentPayload.cwd).toBe('/work/api');
+			// A local group directory is made absolute with this machine's rules,
+			// so on Windows `/work/api` gains the current drive.
+			expect(sentPayload.cwd).toBe(path.resolve('/work/api'));
 		});
 
 		it('prefers --cwd to the group working directory', async () => {
