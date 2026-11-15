@@ -26,7 +26,7 @@ function seed(overrides: Partial<Session> = {}): void {
 		],
 		...overrides,
 	} as unknown as Session;
-	useSessionStore.setState({ sessions: [session] } as never);
+	useSessionStore.setState({ sessions: [session], activeSessionId: 'agent-1' } as never);
 }
 
 describe('quoteIntoAgentComposer', () => {
@@ -158,7 +158,9 @@ describe('insertIntoAgentComposer', () => {
 	it('appends a block unquoted and lands in the composer', () => {
 		seed();
 		useComposerInputStore.setState({ aiValue: 'note', aiValueTabId: 'tab-a' });
-		expect(insertIntoAgentComposer('agent-1', '## Review\n\nFix it.')).toBe(true);
+		expect(insertIntoAgentComposer('agent-1', '## Review\n\nFix it.', { format: 'block' })).toBe(
+			'tab-a'
+		);
 		expect(useComposerInputStore.getState().aiValue).toBe('note\n\n## Review\n\nFix it.\n\n');
 		expect(useUIStore.getState().focusRequest).toEqual({ tab: { type: 'ai', id: 'tab-a' } });
 	});
@@ -168,7 +170,9 @@ describe('insertIntoAgentComposer', () => {
 		// The live slot belongs to whatever the user is looking at.
 		useComposerInputStore.setState({ aiValue: 'typing elsewhere', aiValueTabId: 'other-tab' });
 
-		expect(insertIntoAgentComposer('agent-1', '## Review', { background: true })).toBe(true);
+		expect(
+			insertIntoAgentComposer('agent-1', '## Review', { format: 'block', reveal: false })
+		).toBe('tab-a');
 
 		const session = useSessionStore.getState().sessions[0];
 		expect(session.aiTabs.find((t) => t.id === 'tab-a')?.inputValue).toBe(

@@ -126,14 +126,15 @@ export function editDiffReviewInComposer(
 		});
 		return false;
 	}
-	// The composer only renders for the active agent: switch first, then fill.
-	// Land on the tab the review will go to, inside its tiled group if it is a
-	// pane of one, so the switch does not undo the user's split.
-	if (!options.background && useSessionStore.getState().activeSessionId !== sessionId) {
-		const target = resolveComposerTarget(session);
-		jumpToAgent(sessionId, target ? { tabId: target.tabId, stayInTiledGroup: true } : {});
-	}
-	return insertIntoAgentComposer(sessionId, prompt, options);
+	// The helper switches to the agent (keeping its tiled group) unless this is
+	// a background delivery, which only writes the tab's draft.
+	return (
+		insertIntoAgentComposer(sessionId, prompt, {
+			format: 'block',
+			reveal: !options.background,
+			missingTabMessage: 'This agent has no AI tab. Open one, then send the review again.',
+		}) !== null
+	);
 }
 
 /** Which of the two ways out a delivery takes. */

@@ -214,33 +214,34 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 
 ## Tab Management Shortcuts
 
-| Action                    | macOS                   | Windows/Linux             |
-| ------------------------- | ----------------------- | ------------------------- |
-| New Tab                   | `Cmd+T`                 | `Ctrl+T`                  |
-| New Browser Tab           | `Cmd+B`                 | `Ctrl+B`                  |
-| New File Tab              | `Opt+N`                 | `Alt+N`                   |
-| New Terminal Tab          | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
-| Focus Browser Address Bar | `Cmd+L`                 | `Ctrl+L`                  |
-| Find in Browser Tab       | `Cmd+F`                 | `Ctrl+F`                  |
-| Focus Active Tab          | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
-| Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
-| Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
-| Show Snoozed Tabs         | unassigned by default   | unassigned by default     |
-| Move Tab to First         | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
-| Move Tab to Last          | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
-| Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
-| Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
-| Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
-| Close Tabs to Left        | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
-| Close Tabs to Right       | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
-| Reopen Closed Tab         | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
-| Previous Tab              | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
-| Next Tab                  | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
-| Tab Switcher              | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
-| Rename Tab                | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
-| Rename Tab Group          | unassigned by default   | unassigned by default     |
-| Go to Tab 1-9             | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
-| Go to Last Tab            | `Cmd+0`                 | `Ctrl+0`                  |
+| Action                     | macOS                   | Windows/Linux             |
+| -------------------------- | ----------------------- | ------------------------- |
+| New Tab                    | `Cmd+T`                 | `Ctrl+T`                  |
+| New Browser Tab            | `Cmd+B`                 | `Ctrl+B`                  |
+| New File Tab               | `Opt+N`                 | `Alt+N`                   |
+| New Terminal Tab           | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
+| Focus Browser Address Bar  | `Cmd+L`                 | `Ctrl+L`                  |
+| Find in Browser Tab        | `Cmd+F`                 | `Ctrl+F`                  |
+| Toggle Browser Design Mode | `Cmd+Shift+C`           | `Ctrl+Shift+C`            |
+| Focus Active Tab           | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
+| Snooze Tab                 | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
+| Change Model and Effort    | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
+| Show Snoozed Tabs          | unassigned by default   | unassigned by default     |
+| Move Tab to First          | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
+| Move Tab to Last           | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
+| Close Tab                  | `Cmd+W`                 | `Ctrl+W`                  |
+| Close All Tabs             | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
+| Close Other Tabs           | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
+| Close Tabs to Left         | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
+| Close Tabs to Right        | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
+| Reopen Closed Tab          | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
+| Previous Tab               | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
+| Next Tab                   | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
+| Tab Switcher               | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
+| Rename Tab                 | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
+| Rename Tab Group           | unassigned by default   | unassigned by default     |
+| Go to Tab 1-9              | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
+| Go to Last Tab             | `Cmd+0`                 | `Ctrl+0`                  |
 
 In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
 Right Bar instead, switching between the Participants and History panels. The Right

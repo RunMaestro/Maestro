@@ -129,9 +129,13 @@ describe('editDiffReviewInComposer', () => {
 		expect(editDiffReviewInComposer('agent-1', '## Comment 1 of 1\n\nFix it.')).toBe(true);
 
 		expect(useSessionStore.getState().activeSessionId).toBe('agent-1');
-		const composer = useComposerInputStore.getState();
-		expect(composer.aiValueTabId).toBe('tab-a');
-		expect(composer.aiValue).toBe('my note\n\n## Comment 1 of 1\n\nFix it.\n\n');
+		// Written to the tab's saved draft, which the composer loads on the
+		// switch; the other tab's live text is left alone.
+		expect(target().aiTabs.find((t) => t.id === 'tab-a')?.inputValue).toBe(
+			'my note\n\n## Comment 1 of 1\n\nFix it.\n\n'
+		);
+		expect(target().activeTabId).toBe('tab-a');
+		expect(useComposerInputStore.getState().aiValue).toBe('other tab text');
 		// Nothing was queued: the user sends it after editing.
 		expect(target().executionQueue).toHaveLength(0);
 	});
@@ -160,7 +164,8 @@ describe('editDiffReviewInComposer', () => {
 
 		expect(target().activeGroupId).toBe('g1');
 		expect(target().activeTabId).toBe('tab-b');
-		expect(useComposerInputStore.getState().aiValueTabId).toBe('tab-b');
+		expect(target().tabGroups?.[0].focusedPaneId).toBe('l2');
+		expect(target().aiTabs.find((t) => t.id === 'tab-b')?.inputValue).toBe('Fix it.\n\n');
 	});
 
 	it('refuses a terminal-only agent', () => {

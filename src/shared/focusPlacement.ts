@@ -70,6 +70,12 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	'open-terminal': false,
 	/** maestro-cli open-browser - focuses today; `--background` already existed. */
 	'open-browser': false,
+	/**
+	 * maestro-cli browser-pick - focuses like a click in Design Mode: the element
+	 * lands in the agent's composer and the view switches to that AI tab.
+	 * `--background` stages it without moving the user.
+	 */
+	'browser-pick': false,
 	/** maestro-cli tab new [--prompt] - focuses today. */
 	'tab-new': false,
 	/**

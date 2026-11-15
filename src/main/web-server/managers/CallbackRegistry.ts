@@ -43,6 +43,9 @@ import type {
 	OpenBrowserTabOptions,
 	OpenBrowserTabResult,
 	CloseBrowserTabCallback,
+	PickBrowserElementCallback,
+	PickBrowserElementRequest,
+	PickBrowserElementResult,
 	OpenTerminalTabCallback,
 	OpenTerminalTabConfig,
 	OpenTerminalTabResult,
@@ -212,6 +215,7 @@ export interface WebServerCallbacks {
 	refreshFileTree: RefreshFileTreeCallback | null;
 	openBrowserTab: OpenBrowserTabCallback | null;
 	closeBrowserTab: CloseBrowserTabCallback | null;
+	pickBrowserElement: PickBrowserElementCallback | null;
 	openTerminalTab: OpenTerminalTabCallback | null;
 	writeTerminalTab: WriteTerminalTabCallback | null;
 	listTerminalTabs: ListTerminalTabsCallback | null;
@@ -322,6 +326,7 @@ export class CallbackRegistry {
 		refreshFileTree: null,
 		openBrowserTab: null,
 		closeBrowserTab: null,
+		pickBrowserElement: null,
 		openTerminalTab: null,
 		writeTerminalTab: null,
 		listTerminalTabs: null,
@@ -591,6 +596,13 @@ export class CallbackRegistry {
 	async closeBrowserTab(tabId: string): Promise<boolean> {
 		if (!this.callbacks.closeBrowserTab) return false;
 		return this.callbacks.closeBrowserTab(tabId);
+	}
+
+	async pickBrowserElement(request: PickBrowserElementRequest): Promise<PickBrowserElementResult> {
+		if (!this.callbacks.pickBrowserElement) {
+			return { success: false, error: 'Browser Design Mode not configured', screenshot: false };
+		}
+		return this.callbacks.pickBrowserElement(request);
 	}
 
 	async openTerminalTab(
@@ -1266,6 +1278,10 @@ export class CallbackRegistry {
 
 	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
 		this.callbacks.closeBrowserTab = callback;
+	}
+
+	setPickBrowserElementCallback(callback: PickBrowserElementCallback): void {
+		this.callbacks.pickBrowserElement = callback;
 	}
 
 	setWriteTerminalTabCallback(callback: WriteTerminalTabCallback): void {

@@ -4,7 +4,85 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
-import type { TerminalTabInfo, ReadTerminalTabResult, NewAITabWithPromptResult } from '../types';
+import type {
+	TerminalTabInfo,
+	ReadTerminalTabResult,
+	NewAITabWithPromptResult,
+	PickBrowserElementRequest,
+	PickBrowserElementResult,
+} from '../types';
+import { coworkingRegistry, type CoworkingRegistry } from '../../coworking/coworking-registry';
+import { runHostBrowserOp } from '../../coworking/coworking-tools';
+import type { BrowserOp, BrowserOpResult } from '../../../shared/coworkingBrowser';
+
+/** A Coworking public id (`browser:3`), as opposed to a renderer tab id. */
+const COWORKING_BROWSER_ID = /^browser:\d+$/;
+
+/**
+ * Design Mode by selector (`maestro-cli browser-pick`). Resolves the tab the
+ * caller named, then runs the host-only `pick` op through the Coworking
+ * browser resolver, so the CLI reaches the same renderer code (handle
+ * resolution, mounting a kept-alive tab, the composer delivery) as a click.
+ *
+ * `tab` is either the tab id `open-browser` returned, which the renderer checks
+ * against `sessionId`, or a Coworking id, which only resolves while Coworking
+ * is on and the tab is visible to agents (the same rule the agent tools obey).
+ */
+export async function pickBrowserElement(
+	request: PickBrowserElementRequest,
+	deps: {
+		registry?: CoworkingRegistry;
+		run?: (sessionId: string, tabUuid: string, op: BrowserOp) => Promise<BrowserOpResult>;
+	} = {}
+): Promise<PickBrowserElementResult> {
+	const registry = deps.registry ?? coworkingRegistry;
+	const run = deps.run ?? runHostBrowserOp;
+	const selector = request.selector.trim();
+	if (!selector) return { success: false, error: 'Missing selector', screenshot: false };
+
+	let tabId = request.tab.trim();
+	if (COWORKING_BROWSER_ID.test(tabId)) {
+		const uuid = registry.resolveBrowserTabUuidForSession(request.sessionId, tabId);
+		if (!uuid) {
+			return {
+				success: false,
+				error: `No browser tab ${tabId} in this agent. Coworking ids need Coworking on and the tab visible to agents; pass the tab id from open-browser instead.`,
+				screenshot: false,
+			};
+		}
+		tabId = uuid;
+	}
+
+	const op: BrowserOp = {
+		kind: 'pick',
+		selector,
+		...(request.note ? { note: request.note } : {}),
+		background: request.background === true,
+	};
+	// The resolver rejects with the renderer's message when the op fails
+	// (tab not live, no element matches the selector, no AI tab to take it).
+	let result: BrowserOpResult;
+	try {
+		result = await run(request.sessionId, tabId, op);
+	} catch (error) {
+		return {
+			success: false,
+			error: error instanceof Error ? error.message : String(error),
+			tabId,
+			screenshot: false,
+		};
+	}
+	const browserId = registry.getBrowserIdForTab(request.sessionId, tabId) ?? undefined;
+	return {
+		success: result.ok,
+		...(result.ok ? {} : { error: result.content || 'Browser pick failed' }),
+		tabId,
+		...(browserId ? { browserId } : {}),
+		...(result.ok && result.content ? { text: result.content } : {}),
+		screenshot: !!result.dataUrl,
+		...(result.aiTabId ? { aiTabId: result.aiTabId } : {}),
+	};
+}
 
 export function registerBrowserTabCallbacks(
 	server: WebServer,
@@ -101,6 +179,8 @@ export function registerBrowserTabCallbacks(
 			}, 5000);
 		});
 	});
+
+	server.setPickBrowserElementCallback((request) => pickBrowserElement(request));
 
 	server.setOpenTerminalTabCallback(
 		async (

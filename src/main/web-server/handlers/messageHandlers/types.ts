@@ -27,6 +27,8 @@ import type {
 	CueSubscriptionInfo,
 	CueActivityEntry,
 	AchievementData,
+	PickBrowserElementRequest,
+	PickBrowserElementResult,
 	CreateSessionConfig,
 	DirectorNotesSynopsisResult,
 	WebPlaybook,
@@ -181,6 +183,8 @@ export interface MessageHandlerCallbacks {
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
+	/** Design Mode by selector (`browser-pick`). See `PickBrowserElementCallback`. */
+	pickBrowserElement?: (request: PickBrowserElementRequest) => Promise<PickBrowserElementResult>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
 	notificationInbox?: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>;
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;

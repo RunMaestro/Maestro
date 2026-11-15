@@ -29,7 +29,7 @@ import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { imageList, imageSave } from './commands/image';
 import { openGraph } from './commands/open-graph';
-import { openBrowser, closeBrowser } from './commands/open-browser';
+import { openBrowser, closeBrowser, browserPick } from './commands/open-browser';
 import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
@@ -899,6 +899,22 @@ program
 	.description('Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(closeBrowser);
+
+// Browser pick command - Design Mode by selector: add an element of a browser
+// tab (selector, trimmed HTML, computed styles, cropped screenshot) to the
+// owning agent's composer, through the same code a click in Design Mode runs.
+program
+	.command('browser-pick <tab>')
+	.description(
+		"Add an element of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)"
+	)
+	.requiredOption('-s, --selector <css>', 'CSS selector of the element (the first match is used)')
+	.option('--note <text>', 'Note added under the element, as typed in the pick card')
+	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
+	.option('--background', 'Add it without switching the view to the AI tab')
+	.option('--focus', 'Switch to the AI tab the element lands in (default)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserPick);
 
 // Open terminal command - open a new terminal tab in the Maestro desktop app
 program

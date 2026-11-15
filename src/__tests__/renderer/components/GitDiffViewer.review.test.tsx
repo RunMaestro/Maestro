@@ -17,7 +17,7 @@ vi.mock('../../../renderer/services/queuedPrompt', () => ({
 vi.mock('../../../renderer/services/quoteIntoComposer', () => ({
 	resolveComposerTarget: () => ({ tabId: 'tab-a', inGroup: false }),
 	insertIntoAgentComposer: (sessionId: string, prompt: string) =>
-		mockEditInComposer(sessionId, prompt),
+		mockEditInComposer(sessionId, prompt) ? 'tab-a' : null,
 }));
 vi.mock('../../../renderer/services/agentNavigation', () => ({ jumpToAgent: vi.fn() }));
 

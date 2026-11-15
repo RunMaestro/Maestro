@@ -643,6 +643,37 @@ export type OpenBrowserTabCallback = (
  * callers only need the tab id returned by `OpenBrowserTabCallback`.
  */
 export type CloseBrowserTabCallback = (tabId: string) => Promise<boolean>;
+
+/**
+ * Design Mode by selector (`maestro-cli browser-pick`). `tab` is either the
+ * tab id `open-browser` returned or the tab's Coworking id (`browser:N`),
+ * resolved against `sessionId`. The pick runs through the Coworking browser
+ * resolver, so it reaches the same renderer code a click in Design Mode does.
+ */
+export interface PickBrowserElementRequest {
+	sessionId: string;
+	tab: string;
+	selector: string;
+	note?: string;
+	background?: boolean;
+}
+export interface PickBrowserElementResult {
+	success: boolean;
+	error?: string;
+	/** Renderer browser tab id the element was picked from. */
+	tabId?: string;
+	/** Coworking id of that tab, when Coworking knows it and the tab is visible to agents. */
+	browserId?: string;
+	/** The text added to the composer draft. */
+	text?: string;
+	/** Whether a cropped screenshot was staged with it. */
+	screenshot: boolean;
+	/** The AI tab the element was added to. */
+	aiTabId?: string;
+}
+export type PickBrowserElementCallback = (
+	request: PickBrowserElementRequest
+) => Promise<PickBrowserElementResult>;
 export interface OpenTerminalTabConfig {
 	cwd?: string;
 	shell?: string;
