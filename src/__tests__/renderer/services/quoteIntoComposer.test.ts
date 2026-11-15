@@ -23,7 +23,7 @@ function seed(overrides: Partial<Session> = {}): void {
 		],
 		...overrides,
 	} as unknown as Session;
-	useSessionStore.setState({ sessions: [session] } as never);
+	useSessionStore.setState({ sessions: [session], activeSessionId: 'agent-1' } as never);
 }
 
 describe('quoteIntoAgentComposer', () => {

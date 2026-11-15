@@ -593,6 +593,19 @@ Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli browser-pick <tab>`
+
+Add an element of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)
+
+| Option                 | Description                                             | Default |
+| ---------------------- | ------------------------------------------------------- | ------- |
+| `-s, --selector <css>` | CSS selector of the element (the first match is used)   | -       |
+| `--note <text>`        | Note added under the element, as typed in the pick card | -       |
+| `-a, --agent <id>`     | Agent that owns the tab (defaults to active)            | -       |
+| `--background`         | Add it without switching the view to the AI tab         | -       |
+| `--focus`              | Switch to the AI tab the element lands in (default)     | -       |
+| `--json`               | Output as JSON (for scripting)                          | -       |
+
 ## `maestro-cli open-terminal`
 
 Open a new terminal tab in the Maestro desktop app

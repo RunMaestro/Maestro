@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
+	appendBlockToDraft,
 	appendQuoteToDraft,
 	formatFileLineReference,
 	formatFileSelection,
 	formatMarkdownQuote,
+	markdownFenceFor,
 } from '../../../renderer/utils/quoteSelection';
 
 describe('formatMarkdownQuote', () => {
@@ -87,5 +89,23 @@ describe('formatFileSelection', () => {
 		expect(appendQuoteToDraft('', passage)).toBe(
 			'> `a.py:1-3`\n> ```python\n> def f():\n>\n>     return 1\n> ```\n\n'
 		);
+	});
+});
+
+describe('appendBlockToDraft', () => {
+	it('appends the block as-is, spaced like a quote', () => {
+		expect(appendBlockToDraft('', 'A\nB')).toBe('A\nB\n\n');
+		expect(appendBlockToDraft('Hi  \n', '\nA\r\nB\n\n')).toBe('Hi\n\nA\nB\n\n');
+	});
+
+	it('leaves the draft alone for a blank block', () => {
+		expect(appendBlockToDraft('keep', '  \n ')).toBe('keep');
+	});
+});
+
+describe('markdownFenceFor', () => {
+	it('is three backticks unless the body has a longer run', () => {
+		expect(markdownFenceFor('plain')).toBe('```');
+		expect(markdownFenceFor('a ```` b')).toBe('`````');
 	});
 });
