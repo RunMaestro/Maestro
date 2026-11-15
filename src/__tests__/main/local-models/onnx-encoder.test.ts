@@ -11,6 +11,7 @@
  *   - **Refusals for a model of the wrong kind** come from the catalog lookup.
  */
 
+import * as path from 'node:path';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 const hardware = vi.hoisted(() => ({ parallelism: 16 }));
@@ -156,7 +157,8 @@ describe('OnnxEncoderPool', () => {
 describe('resolveInstalledEncoder', () => {
 	it('locates an installed embedding model from its run spec', async () => {
 		const resolved = await resolveInstalledEncoder(BGE_SMALL_EN_ID, 'embedding', 'test');
-		expect(resolved.modelPath.endsWith('onnx/model_quantized.onnx')).toBe(true);
+		// A native path: `\\` separators on Windows.
+		expect(resolved.modelPath.endsWith(path.join('onnx', 'model_quantized.onnx'))).toBe(true);
 		expect(resolved.spec.outputName).toBe('last_hidden_state');
 	});
 
