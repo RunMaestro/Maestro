@@ -55,7 +55,12 @@ function resolveRelative(fromFile: string, specifier: string): string | null {
 	return null;
 }
 
-/** Each import chain from `entry` that ends in an Electron-bound package. */
+/**
+ * Each import chain from `entry` that ends in an Electron-bound package.
+ * `entry` is relative to `src/`, or absolute. `path.resolve` keeps an absolute
+ * entry as given: `path.join` would glue a temp dir on another drive (C: vs
+ * the D: checkout on Windows CI) under `src/`.
+ */
 function electronChains(entry: string): string[] {
 	const chains: string[] = [];
 	const seen = new Set<string>();
@@ -72,7 +77,7 @@ function electronChains(entry: string): string[] {
 			}
 		}
 	};
-	visit(path.join(SRC, entry), []);
+	visit(path.resolve(SRC, entry), []);
 	return chains;
 }
 
@@ -101,7 +106,7 @@ describe('worker thread entries never load electron', () => {
 				path.join(dir, 'entry.ts'),
 				"import { f } from './lazy';\nimport { s } from './typeonly';\nimport { p } from './eager';\nexport default [f, s, p];\n"
 			);
-			const chains = electronChains(path.relative(SRC, path.join(dir, 'entry.ts')));
+			const chains = electronChains(path.join(dir, 'entry.ts'));
 			expect(chains).toHaveLength(1);
 			expect(chains[0]).toMatch(/eager\.ts -> electron$/);
 		} finally {
