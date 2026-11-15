@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	DESIGN_MODE_MAX_HTML_CHARS,
+	DESIGN_MODE_MAX_SELECTOR_CHARS,
 	DESIGN_MODE_SHADOW_PIERCE,
 	buildDesignModePrompt,
 	captureDesignPick,
@@ -206,11 +207,41 @@ describe('guest helper', () => {
 		// Scrolling back up still moves the list.
 		runGuest({ type: 'scroll', x: 1, y: 1, dx: 0, dy: -120 });
 		expect(listScroll).toHaveBeenCalledWith(0, -120);
-		// A list that contains its overscroll keeps the wheel even at its end.
+		// Containment on the OTHER axis does not keep a vertical wheel.
+		list.style.setProperty('overscroll-behavior-x', 'contain');
+		pageScroll.mockClear();
+		runGuest({ type: 'scroll', x: 1, y: 1, dx: 0, dy: 120 });
+		expect(pageScroll).toHaveBeenCalledWith(0, 120);
+		// A list that contains its vertical overscroll keeps the wheel at its end.
 		list.style.setProperty('overscroll-behavior-y', 'contain');
 		pageScroll.mockClear();
 		runGuest({ type: 'scroll', x: 1, y: 1, dx: 0, dy: 120 });
 		expect(pageScroll).not.toHaveBeenCalled();
+	});
+
+	it('keeps a selector longer than 2048 chars whole, so it still finds the element', () => {
+		// Two identical 400-deep chains: the distinguishing step is at the top.
+		const chain = '<div>'.repeat(400) + '<i class="leaf">x</i>' + '</div>'.repeat(400);
+		document.body.innerHTML = `<section>${chain}</section><section>${chain}</section>`;
+		hit = document.querySelectorAll('i.leaf')[1];
+		const pick = parseDesignModePick(runGuest({ type: 'describe', x: 1, y: 1, depth: 0 }));
+		if (!pick || typeof pick === 'string') throw new Error('expected a pick');
+		expect(pick.selector.length).toBeGreaterThan(2048);
+		const matches = document.querySelectorAll(pick.selector);
+		expect(matches).toHaveLength(1);
+		expect(matches[0]).toBe(hit);
+	});
+
+	it('drops a selector past the safety cap rather than cutting it', () => {
+		const pick = parseDesignModePick({
+			...makePick(),
+			selector: 'div > '.repeat(DESIGN_MODE_MAX_SELECTOR_CHARS) + 'b',
+		});
+		if (!pick || typeof pick === 'string') throw new Error('expected a pick');
+		expect(pick.selector).toBe('');
+		expect(buildDesignModePrompt(pick, { hasScreenshot: false })).toContain(
+			'no selector, its path was too long to include'
+		);
 	});
 
 	it('re-resolves the element on every call, so a re-render cannot leave it stale', () => {

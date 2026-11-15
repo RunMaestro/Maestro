@@ -35,6 +35,13 @@ export const DESIGN_MODE_MAX_HTML_CHARS = 6000;
 export const DESIGN_MODE_SHADOW_PIERCE = ' >>> ';
 
 /**
+ * Longest selector kept. Selectors are never truncated (a cut selector is
+ * invalid or matches an ancestor); one past this is dropped, which only a
+ * hostile or pathologically deep page produces.
+ */
+export const DESIGN_MODE_MAX_SELECTOR_CHARS = 16_384;
+
+/**
  * Computed style properties a developer usually cares about when restyling an
  * element. The guest reads exactly these; `filterDesignStyles` then drops the
  * ones still at an uninformative default.
@@ -266,7 +273,11 @@ const GUEST_HELPER = `function(req){
 			if(/(auto|scroll|overlay)/.test(cs.overflowY+' '+cs.overflowX)&&
 				(el.scrollHeight>el.clientHeight||el.scrollWidth>el.clientWidth)){
 				if(canMove(el,dx,dy))return el;
-				if(/(contain|none)/.test((cs.overscrollBehaviorY||'')+' '+(cs.overscrollBehaviorX||'')))return el;
+				// Containment is per axis: a list that contains only sideways
+				// overscroll still hands a vertical wheel to the page.
+				var contained=(dy!==0&&/(contain|none)/.test(cs.overscrollBehaviorY||''))||
+					(dx!==0&&/(contain|none)/.test(cs.overscrollBehaviorX||''));
+				if(contained)return el;
 			}
 			el=up(el);
 		}
@@ -324,8 +335,8 @@ function oneLine(value: string, max: number): string {
  * selector never holds a raw control character (`CSS.escape` writes them as
  * hex escapes), so replacing those only changes what a lying page sent.
  */
-function withoutLineBreaks(value: string, max: number): string {
-	return value.slice(0, max).replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ');
+function withoutLineBreaks(value: string): string {
+	return value.replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ');
 }
 
 /** `text` as Markdown inline code that a backtick inside it cannot close. */
@@ -397,7 +408,10 @@ export function parseDesignModePick(value: unknown): DesignModePick | DesignMode
 	return {
 		url: typeof p.url === 'string' ? oneLine(p.url, MAX_SHORT_FIELD) : '',
 		tagName: oneLine(p.tagName, 64),
-		selector: withoutLineBreaks(p.selector, MAX_SHORT_FIELD),
+		// Never cut: a truncated selector is invalid or names an ancestor. One
+		// past the safety cap is dropped instead, and the prompt says so.
+		selector:
+			p.selector.length > DESIGN_MODE_MAX_SELECTOR_CHARS ? '' : withoutLineBreaks(p.selector),
 		html: p.html.slice(0, DESIGN_MODE_MAX_HTML_CHARS),
 		htmlTruncated: p.htmlTruncated === true || p.html.length > DESIGN_MODE_MAX_HTML_CHARS,
 		styles: readStyles(p.styles),
@@ -486,12 +500,15 @@ export function buildDesignModePrompt(
 	const lines: string[] = [];
 	const r = pick.rect;
 	lines.push(`Design Mode element${pick.url ? ` from ${pick.url}` : ''}`);
+	const geometry = `${pick.tagName}, ${Math.round(r.width)} x ${Math.round(r.height)} px at ${Math.round(
+		r.x
+	)}, ${Math.round(r.y)} in a ${Math.round(pick.viewport.width)} x ${Math.round(
+		pick.viewport.height
+	)} viewport`;
 	lines.push(
-		`${inlineCode(pick.selector || pick.tagName)} (${pick.tagName}, ${Math.round(r.width)} x ${Math.round(
-			r.height
-		)} px at ${Math.round(r.x)}, ${Math.round(r.y)} in a ${Math.round(
-			pick.viewport.width
-		)} x ${Math.round(pick.viewport.height)} viewport)`
+		pick.selector
+			? `${inlineCode(pick.selector)} (${geometry})`
+			: `${inlineCode(pick.tagName)} (${geometry}; no selector, its path was too long to include)`
 	);
 	if (pick.selector.includes(DESIGN_MODE_SHADOW_PIERCE)) {
 		lines.push(

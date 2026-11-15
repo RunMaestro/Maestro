@@ -195,6 +195,38 @@ describe('deliverDesignPick', () => {
 		expect(useUIStore.getState().focusRequest).toEqual({ tab: { type: 'ai', id: TAB_ID } });
 	});
 
+	it("keeps the target agent's tiled group when a foreground pick brings it on screen", async () => {
+		seed(
+			{},
+			{
+				activeGroupId: 'group-1',
+				tabGroups: [
+					{
+						id: 'group-1',
+						layout: {
+							kind: 'split',
+							direction: 'row',
+							children: [
+								{ kind: 'leaf', tab: { type: 'ai', id: TAB_ID } },
+								{ kind: 'leaf', tab: { type: 'browser', id: BROWSER_TAB_ID } },
+							],
+						},
+					},
+				],
+			}
+		);
+		useSessionStore.setState({ activeSessionId: 'someone-else' } as never);
+		await deliverDesignPick({
+			sessionId: SESSION_ID,
+			browserTabId: BROWSER_TAB_ID,
+			pick,
+			screenshot: null,
+		});
+		expect(useSessionStore.getState().activeSessionId).toBe(SESSION_ID);
+		expect(session().activeGroupId).toBe('group-1');
+		expect(session().activeTabId).toBe(TAB_ID);
+	});
+
 	it('refuses, with a toast, when the agent has no AI tab', async () => {
 		seed({}, { aiTabs: [], activeTabId: '' });
 		const result = await deliverDesignPick({

@@ -126,7 +126,14 @@ export function insertIntoAgentComposer(
 			// --focus` into a background browser) must also bring that agent up,
 			// or the focus request below lands in the visible agent's composer.
 			// The switch loads the tab's saved draft, written above.
+			const groupId = session.activeGroupId;
 			jumpToAgent(sessionId, { tabId });
+			// jumpToAgent lands on a standalone AI tab, which leaves any tiled
+			// group; when the target is a group pane, put the group back so the
+			// layout the user built in that agent survives the jump.
+			if (inGroup && groupId) {
+				updateSessionWith(sessionId, (s) => ({ ...s, activeGroupId: groupId, activeTabId: tabId }));
+			}
 		} else {
 			updateSessionWith(sessionId, (s) =>
 				inGroup ? { ...s, activeTabId: tabId } : { ...s, ...aiTabFocusFields(tabId) }
