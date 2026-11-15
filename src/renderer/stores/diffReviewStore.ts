@@ -33,6 +33,12 @@ export interface DiffCommentDraft {
 interface DiffReviewState {
 	commentsByRepo: Record<string, DiffComment[]>;
 	draftsByRepo: Record<string, DiffCommentDraft>;
+	/**
+	 * How many times each repo's review was discarded. An open viewer watches
+	 * it so a discard from elsewhere (`maestro-cli diff-review clear`) also
+	 * closes its comment box, instead of the box being parked again on close.
+	 */
+	discardsByRepo: Record<string, number>;
 }
 
 interface DiffReviewActions {
@@ -76,6 +82,7 @@ function withRepo(
 export const useDiffReviewStore = create<DiffReviewStore>()((set, get) => ({
 	commentsByRepo: {},
 	draftsByRepo: {},
+	discardsByRepo: {},
 
 	addComment: (repo, comment) =>
 		set((state) => withRepo(state, repo, [...(state.commentsByRepo[repo] ?? []), comment])),
@@ -110,7 +117,11 @@ export const useDiffReviewStore = create<DiffReviewStore>()((set, get) => ({
 	clearComments: (repo) =>
 		set((state) => {
 			const { [repo]: _dropped, ...draftsByRepo } = state.draftsByRepo;
-			return { ...withRepo(state, repo, []), draftsByRepo };
+			const discardsByRepo = {
+				...state.discardsByRepo,
+				[repo]: (state.discardsByRepo[repo] ?? 0) + 1,
+			};
+			return { ...withRepo(state, repo, []), draftsByRepo, discardsByRepo };
 		}),
 
 	parkDraft: (repo, draft) =>

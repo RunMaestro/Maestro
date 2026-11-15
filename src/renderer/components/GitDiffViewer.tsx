@@ -310,6 +310,20 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 		};
 	}, [canReview, reviewKey, dropEditor]);
 
+	// A discard of this repo's review from anywhere (the tray's Discard, or
+	// `maestro-cli diff-review clear`) closes the open box too, so closing the
+	// viewer cannot park the discarded text again. Keyed on the repo as well,
+	// so switching repos (handled above) is not mistaken for a discard.
+	const discardCount = useDiffReviewStore((s) => s.discardsByRepo[reviewKey] ?? 0);
+	const seenDiscardRef = useRef({ key: reviewKey, count: discardCount });
+	useEffect(() => {
+		const seen = seenDiscardRef.current;
+		seenDiscardRef.current = { key: reviewKey, count: discardCount };
+		if (seen.key !== reviewKey || seen.count === discardCount) return;
+		dropEditor();
+		setSelection(null);
+	}, [reviewKey, discardCount, dropEditor]);
+
 	// A line selection is made against one diff; a fresh diff starts without one.
 	useEffect(() => {
 		setSelection(null);

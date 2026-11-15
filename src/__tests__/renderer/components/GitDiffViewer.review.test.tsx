@@ -110,7 +110,7 @@ describe('GitDiffViewer review comments', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		escapeHandler = null;
-		useDiffReviewStore.setState({ commentsByRepo: {}, draftsByRepo: {} });
+		useDiffReviewStore.setState({ commentsByRepo: {}, draftsByRepo: {}, discardsByRepo: {} });
 		useSessionStore.setState({
 			sessions: [createMockSession({ id: 'agent-1', name: 'Builder' })],
 			activeSessionId: 'agent-1',
@@ -407,7 +407,10 @@ describe('GitDiffViewer review comments', () => {
 			pickLines('const fresh = 3;');
 			writeComment('Rename.');
 			fireEvent.click(screen.getByRole('button', { name: 'Edit comment on src/app.ts:2' }));
-			act(() => useDiffReviewStore.getState().clearComments(CWD));
+			act(() => {
+				const { commentsByRepo, removeComment } = useDiffReviewStore.getState();
+				removeComment(CWD, commentsByRepo[CWD][0].id);
+			});
 			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Rename to fresher.' } });
 			fireEvent.click(screen.getByTestId('diff-comment-save'));
 			expect(useDiffReviewStore.getState().commentsByRepo[CWD]).toEqual([
@@ -425,6 +428,22 @@ describe('GitDiffViewer review comments', () => {
 			const editor = screen.getByTestId('diff-comment-editor');
 			expect(editor).toHaveTextContent('Comment on src/app.ts:2-3');
 			expect(within(editor).getByRole('textbox')).toHaveValue('Half a thought');
+		});
+
+		it('a discard from the CLI closes the open box, which is then not parked', () => {
+			const first = renderViewer();
+			pickLines('const fresh = 3;');
+			writeComment('Saved.');
+			pickLines('const tail = 5;');
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Unsaved' } });
+
+			act(() => useDiffReviewStore.getState().clearComments(CWD));
+			expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
+
+			first.unmount();
+			renderViewer();
+			expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
+			expect(useDiffReviewStore.getState().draftsByRepo).toEqual({});
 		});
 
 		it('reopens on the file tab the unfinished comment box is on', () => {
