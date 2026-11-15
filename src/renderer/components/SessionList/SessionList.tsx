@@ -1715,19 +1715,9 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					</>
 				) : (
-					// The collapsed rail gets the pill too, in its compact form.
-					//
-					// It used to be left out on the grounds that a 64px icon strip is
-					// for agents and a media control there competes with them. That
-					// reasoning ignored what minimizing MEANS: the pill is the only
-					// place the widget parks, so on the rail "minimize" hid the player
-					// with nothing left on screen and no way back - the user reads that
-					// as the player having closed itself, which is precisely what the
-					// minimize/close split exists to prevent. A control the user can
-					// always get back to is worth more than 24px of rail.
-					//
-					// The compact form is the transport and the restore button and
-					// nothing else, which fits the rail's width without a label to clip.
+					// The collapsed rail carries no media pill. The rail is an icon strip
+					// for agents, and a minimized player is restored by expanding the Left
+					// Bar, where the full pill lives.
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
 						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
 							<BusyWand
@@ -1737,9 +1727,6 @@ function SessionListInner(props: SessionListProps) {
 								color={theme.colors.accent}
 							/>
 						</GhostIconButton>
-						{/* Renders nothing unless the player is actually minimized, so
-						    the rail is unchanged for anyone not playing anything. */}
-						<NowPlayingIndicator theme={theme} compact />
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<HamburgerDropdown theme={theme} isPhone={isXs} onClose={() => setMenuOpen(false)}>
