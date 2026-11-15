@@ -45,6 +45,11 @@ describe('browserOpNeedsConfirm', () => {
 		expect(browserOpNeedsConfirm('off', 'read')).toBe(false);
 	});
 
+	it('never confirms the host-only pick (it changes no page state)', () => {
+		expect(browserOpNeedsConfirm('all', 'pick')).toBe(false);
+		expect(browserOpNeedsConfirm('dangerous', 'pick')).toBe(false);
+	});
+
 	it('off confirms only eval (force-confirmed); every other op runs immediately', () => {
 		expect(browserOpNeedsConfirm('off', 'eval')).toBe(true);
 		expect(browserOpNeedsConfirm('off', 'navigate')).toBe(false);

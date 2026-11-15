@@ -153,7 +153,9 @@ describe('buildAgentCountTimeline', () => {
 			'week',
 			now
 		);
-		expect(timeline.points[0].date).toBe('2026-11-07');
+		// Calendar-aligned: Last 7 Days is the seven local days ending today.
+		expect(timeline.points[0].date).toBe('2026-11-08');
+		expect(timeline.points).toHaveLength(7);
 		expect(timeline.points[timeline.points.length - 1]).toEqual({ date: '2026-11-14', count: 2 });
 		expect(timeline.created).toBe(1);
 		expect(timeline.removed).toBe(1);

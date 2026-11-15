@@ -19,13 +19,17 @@ import { ArrowDownToLine, ArrowUpFromLine, Gauge, Zap } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../../shared/stats-types';
 import {
+	TOKEN_SPEED_AGENTS,
 	TOKEN_SPEED_PEAK_MIN_BUCKET_MS,
 	type TokenSpeedStats,
 	type TokenSpeedSummary,
 } from '../../../shared/tokenSpeed';
 import { formatNumber, formatTokensPerSecond } from '../../../shared/formatters';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { MetricCard } from './SummaryCards';
 import { SummaryCardsSkeleton } from './ChartSkeletons';
+import { DashboardPanelState } from './DashboardPanelState';
 import { useTokenUsage } from './useTokenUsage';
 
 interface TokenSpeedCardsProps {
@@ -50,6 +54,14 @@ function peakContext(stats: TokenSpeedStats): string | null {
 /** Sub-line for a peak card: what a peak is, in the user's terms. */
 const PEAK_NOTE = `fastest model-hour (${TOKEN_SPEED_PEAK_MIN_BUCKET_MS / 60_000}+ min of calls)`;
 
+/** "Claude Code and Codex": the providers whose transcripts time their calls. */
+function measurableAgentsText(): string {
+	const names = TOKEN_SPEED_AGENTS.map(getAgentDisplayName);
+	return names.length <= 1
+		? (names[0] ?? '')
+		: `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
 export const TokenSpeedCards = memo(function TokenSpeedCards({
 	speed,
 	theme,
@@ -69,7 +81,8 @@ export const TokenSpeedCards = memo(function TokenSpeedCards({
 				style={{ color: theme.colors.textDim }}
 				data-testid="token-speed-empty"
 			>
-				No timed API calls in this range. Speed is measured from Claude Code and Codex transcripts.
+				No timed API calls in this range. Speed is measured from {measurableAgentsText()}{' '}
+				transcripts.
 			</p>
 		);
 	}
@@ -89,7 +102,13 @@ export const TokenSpeedCards = memo(function TokenSpeedCards({
 				value={rate(overall.avgOutputTps)}
 				theme={theme}
 				animationIndex={0}
-				extra={dim(`${formatNumber(overall.calls)} calls measured`)}
+				extra={dim(
+					`${formatNumber(overall.calls)} calls measured${
+						speed.measuredAgents.length > 0
+							? ` (${speed.measuredAgents.map(getAgentDisplayName).join(', ')})`
+							: ''
+					}`
+				)}
 			/>
 			<MetricCard
 				icon={<ArrowDownToLine size={16} />}
@@ -129,9 +148,12 @@ export const TokenSpeedCards = memo(function TokenSpeedCards({
 				value={rate(overall.peakTotalTps)}
 				theme={theme}
 				animationIndex={5}
+				// The fleet figure is a different measure (tokens finished in one clock
+				// hour / 3,600 s, all agents together), so it is labeled as such
+				// rather than sitting under a per-model peak as if it were one.
 				extra={dim(
 					speed.busiestHour
-						? `busiest hour: ${rate(speed.busiestHour.totalTps)} across all agents`
+						? `${PEAK_NOTE}; all agents' busiest clock hour averaged ${rate(speed.busiestHour.totalTps)}`
 						: PEAK_NOTE
 				)}
 			/>
@@ -144,31 +166,71 @@ interface OverviewTokenSpeedProps {
 	theme: Theme;
 }
 
+/** Remembers that the user asked for token speed on the Overview. */
+export const OVERVIEW_TOKEN_SPEED_KEY = 'usageDashboard.overview.tokenSpeed.enabled';
+
 /**
  * The Overview's speed row. Reads the same cached token payload as the Tokens
  * tab, so whichever surface loads a range first serves the other instantly.
+ *
+ * Lazy, like every other token surface (see `TokenSeriesContext`): the payload
+ * is a parse of every agent transcript, slow the first time on a large history,
+ * so opening the Overview must not start it. Until the user asks once (the
+ * choice is remembered), the row shows a cached result if the Tokens tab
+ * already loaded one, or a button that loads it.
  */
 export const OverviewTokenSpeed = memo(function OverviewTokenSpeed({
 	timeRange,
 	theme,
 }: OverviewTokenSpeedProps) {
-	const { data, loading, error } = useTokenUsage(timeRange);
+	const optIn = usePersistedToggle(OVERVIEW_TOKEN_SPEED_KEY, false);
+	const { data, loading, error, refresh } = useTokenUsage(timeRange, optIn.value);
+
+	const heading = (
+		<h3 className="text-sm font-semibold mb-3" style={{ color: theme.colors.textMain }}>
+			Tokens per Second
+		</h3>
+	);
+
+	if (!data && !optIn.value) {
+		return (
+			<div data-testid="overview-token-speed">
+				{heading}
+				<div
+					className="flex flex-wrap items-center gap-3 text-xs"
+					style={{ color: theme.colors.textDim }}
+				>
+					<span>
+						Token speed is read from agent transcripts, which can take a while the first time.
+					</span>
+					<button
+						type="button"
+						onClick={() => optIn.setValue(true)}
+						className="px-3 py-1 rounded text-xs"
+						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+						data-testid="overview-token-speed-load"
+					>
+						Load token speed
+					</button>
+				</div>
+			</div>
+		);
+	}
 
 	if (loading) return <SummaryCardsSkeleton theme={theme} />;
-	if (!data?.speed) {
-		return error ? (
-			<p className="text-xs" style={{ color: theme.colors.textDim }}>
-				Couldn't read token speed: {error}
-			</p>
-		) : null;
-	}
 
 	return (
 		<div data-testid="overview-token-speed">
-			<h3 className="text-sm font-semibold mb-3" style={{ color: theme.colors.textMain }}>
-				Tokens per Second
-			</h3>
-			<TokenSpeedCards speed={data.speed} theme={theme} />
+			{heading}
+			<DashboardPanelState
+				theme={theme}
+				error={error}
+				empty={!data}
+				onRetry={() => void refresh()}
+				testId="overview-token-speed"
+			>
+				{data && <TokenSpeedCards speed={data.speed} theme={theme} />}
+			</DashboardPanelState>
 		</div>
 	);
 });

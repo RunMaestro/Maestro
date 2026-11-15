@@ -18,6 +18,7 @@ import { buildAgentCountTimeline, buildAgentLifespans } from '../../../shared/ag
 import { formatCalendarDay, formatNumber } from '../../../shared/formatters';
 import { MultiLineChart, type LineSeries } from '../widgets';
 import { useDashboardResource } from './useDashboardResource';
+import { DashboardPanelState } from './DashboardPanelState';
 
 interface AgentCountTrendChartProps {
 	sessions: Session[];
@@ -32,10 +33,13 @@ export const AgentCountTrendChart = memo(function AgentCountTrendChart({
 	timeRange,
 	theme,
 }: AgentCountTrendChartProps) {
-	const { data } = useDashboardResource(
+	// Only a lifecycle write (an agent created or deleted) can change this
+	// series, so query and Auto Run writes do not refetch it.
+	const { data, loading, error, refresh } = useDashboardResource(
 		'session-lifecycle:all',
 		() => window.maestro.stats.getSessionLifecycle('all'),
-		'fetchSessionLifecycle'
+		'fetchSessionLifecycle',
+		{ tables: ['session_lifecycle'] }
 	);
 	const lifecycle = data ?? NO_LIFECYCLE;
 
@@ -79,15 +83,28 @@ export const AgentCountTrendChart = memo(function AgentCountTrendChart({
 			<p className="text-xs mt-0.5 mb-4" style={{ color: theme.colors.textDim }}>
 				Agents that existed at the end of each day. {caption}.
 			</p>
-			<MultiLineChart
+			{/* Deleted agents come only from the lifecycle rows, so the series is
+			    not drawn until they load: the live list alone would draw a fleet
+			    that never shrank. A failed fetch is an error, never "no data". */}
+			<DashboardPanelState
 				theme={theme}
-				ariaLabel="Agent count over time"
-				xLabels={xLabels}
-				series={series}
-				formatValue={(v) => formatNumber(Math.round(v))}
-				showLegend={false}
-				testId="agent-count-trend-chart"
-			/>
+				loading={loading}
+				error={error}
+				empty={data === undefined}
+				onRetry={() => void refresh()}
+				minHeight={160}
+				testId="agent-count-trend-state"
+			>
+				<MultiLineChart
+					theme={theme}
+					ariaLabel="Agent count over time"
+					xLabels={xLabels}
+					series={series}
+					formatValue={(v) => formatNumber(Math.round(v))}
+					showLegend={false}
+					testId="agent-count-trend-chart"
+				/>
+			</DashboardPanelState>
 		</div>
 	);
 });

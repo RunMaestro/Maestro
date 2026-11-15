@@ -1,57 +1,41 @@
 /**
- * SourceDistributionChart
+ * SourceDistributionChart ("Query Source")
  *
- * Donut/pie chart showing where activity came from: Interactive vs Auto Run,
- * plus an optional Cue slice when Cue stats are available. Toggles between
- * count and duration views.
+ * Donut showing where the range's AI work came from: Interactive (a prompt you
+ * typed), Auto Run, and Cue (when the Cue Encore Feature is on).
  *
- * Interactive and Auto Run live in the `query_events` table (source
- * `user`/`auto`); Cue runs are tracked in a separate stats system and passed
- * in via `cueTotals`. The two data sources are merged here for a single
- * unified breakdown.
- *
- * Features:
- * - Donut/pie chart visualization
- * - Toggle between count-based and duration-based views
- * - Center label showing total
- * - Legend with percentages
- * - Theme-aware colors (accent for interactive, muted slate for auto, warning for Cue)
- * - Tooltip on hover with exact values
+ * Queries and Time read the per-source split the main process merges from the
+ * stats DB and the Cue DB (`DelegationTotals`), the same numbers the summary
+ * ratio card and the Delegation Score use, so the three cannot disagree. Time is
+ * each source's real recorded duration, not the total split by query count.
+ * Tokens mode reads the transcript-derived token series for Interactive and
+ * Auto Run, and Cue's own token totals for the Cue slice.
  */
 
-import { memo, useState, useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
+import type { DelegationTotals } from '../../../shared/delegation';
+import type { CueStatsSourceTotals } from '../../../shared/cue-stats-types';
 import {
-	COLORBLIND_BINARY_PALETTE,
-	COLORBLIND_AGENT_PALETTE,
-} from '../../constants/colorblindPalettes';
-import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
-import { MetricModeToggle, formatMetricValue, type ChartMetricMode } from './MetricModeToggle';
+	MetricModeToggle,
+	OVERVIEW_METRIC_LABELS,
+	formatMetricValue,
+	metricModeNoun,
+	type ChartMetricMode,
+} from './MetricModeToggle';
 import { useTokenSeries } from './TokenSeriesContext';
 import { ChartLoadingOverlay } from './ChartLoadingOverlay';
-import { DONUT_CHART, describeDonutArc } from './chartUtils';
+import { DistributionDonut, type DonutSliceDatum } from './DistributionDonut';
+import { delegationColors } from './delegationColors';
+import { usePersistedChoice } from '../../hooks/ui/usePersistedChoice';
 
-// Metric display mode
-type MetricMode = ChartMetricMode;
+/** Cue run totals for the selected range, as the dashboard data hook reads them. */
+/** Cue's share of the source split: the totals-only Cue read. */
+export type CueSourceTotals = CueStatsSourceTotals;
 
-type SourceKey = 'interactive' | 'auto' | 'cue';
-
-interface SourceData {
-	source: SourceKey;
-	label: string;
-	value: number;
-	percentage: number;
-	color: string;
-}
-
-/** Subset of Cue aggregation totals needed to render the Cue slice. */
-export interface CueSourceTotals {
-	occurrences: number;
-	totalDurationMs: number;
-	/** Input + output tokens across Cue runs, for the chart's Tokens mode. */
-	tokens: number;
-}
+const METRIC_MODES: readonly ChartMetricMode[] = ['count', 'duration', 'tokens'];
+const METRIC_STORAGE_KEY = 'usageDashboard.querySource.metric';
 
 interface SourceDistributionChartProps {
 	/** Aggregated stats data from the API */
@@ -61,309 +45,153 @@ interface SourceDistributionChartProps {
 	/** Enable colorblind-friendly colors */
 	colorBlindMode?: boolean;
 	/**
-	 * Cue run totals, when the Cue Encore feature is enabled. When provided, a
-	 * third "Cue" slice is shown (even at zero usage, so the category stays
-	 * visible). Omit/null to render the plain Interactive vs Auto Run split.
+	 * Interactive / Auto Run / Cue split for the selected range. Null when it
+	 * failed to load: Queries then falls back to the aggregation's own source
+	 * counts (no Cue slice) and Time is not offered, since nothing else records
+	 * a real per-source duration.
 	 */
-	cueTotals?: CueSourceTotals | null;
-}
-
-/**
- * Get a secondary color for auto source that contrasts with accent
- * Uses a desaturated/muted version of a complementary color
- */
-function getAutoColor(theme: Theme): string {
-	// Parse accent color to get a complementary color
-	const accent = theme.colors.accent;
-	let accentRgb: { r: number; g: number; b: number } | null = null;
-
-	if (accent.startsWith('#')) {
-		const hex = accent.slice(1);
-		accentRgb = {
-			r: parseInt(hex.slice(0, 2), 16),
-			g: parseInt(hex.slice(2, 4), 16),
-			b: parseInt(hex.slice(4, 6), 16),
-		};
-	} else if (accent.startsWith('rgb')) {
-		const match = accent.match(/\d+/g);
-		if (match && match.length >= 3) {
-			accentRgb = {
-				r: parseInt(match[0]),
-				g: parseInt(match[1]),
-				b: parseInt(match[2]),
-			};
-		}
-	}
-
-	if (!accentRgb) {
-		// Fallback to a muted gray-blue
-		return '#6b7280';
-	}
-
-	// Create a muted complementary/contrasting color
-	// Shift hue and reduce saturation for better visual distinction
-	const avg = (accentRgb.r + accentRgb.g + accentRgb.b) / 3;
-	const isBright = avg > 128;
-
-	// For the auto color, use a muted version that contrasts with the accent
-	// If accent is bright, use a darker muted color; if dark, use a lighter muted color
-	if (isBright) {
-		return '#64748b'; // slate-500
-	} else {
-		return '#94a3b8'; // slate-400
-	}
+	delegation?: DelegationTotals | null;
+	/** Draw the Cue slice. False when the Cue Encore Feature is off. */
+	includeCue?: boolean;
+	/** Input + output tokens across Cue runs in range, for Tokens mode. */
+	cueTokens?: number | null;
+	/**
+	 * Set when the range reaches further back than Cue keeps its run history: the
+	 * Cue slice then only covers the last N days, and the chart says so.
+	 */
+	cueRetentionDays?: number | null;
 }
 
 export const SourceDistributionChart = memo(function SourceDistributionChart({
 	data,
 	theme,
 	colorBlindMode = false,
-	cueTotals = null,
+	delegation = null,
+	includeCue = false,
+	cueTokens = null,
+	cueRetentionDays = null,
 }: SourceDistributionChartProps) {
-	const [metricMode, setMetricMode] = useState<MetricMode>('count');
-	const { series: tokenSeries, loading: tokensLoading } = useTokenSeries(metricMode === 'tokens');
-	const [hoveredSource, setHoveredSource] = useState<SourceKey | null>(null);
+	const stored = usePersistedChoice(METRIC_STORAGE_KEY, METRIC_MODES, 'count');
+	const modes = useMemo<ChartMetricMode[]>(
+		() => (delegation ? ['count', 'duration', 'tokens'] : ['count', 'tokens']),
+		[delegation]
+	);
+	const metricMode: ChartMetricMode = modes.includes(stored.value) ? stored.value : 'count';
+	const {
+		series: tokenSeries,
+		loading: tokensLoading,
+		error: tokensError,
+	} = useTokenSeries(metricMode === 'tokens');
 
-	// Calculate source data based on mode
-	const sourceData = useMemo((): SourceData[] => {
-		const userCount = data.bySource.user;
-		const autoCount = data.bySource.auto;
-		const queryCount = userCount + autoCount;
-		const cueCount = cueTotals?.occurrences ?? 0;
-
-		// Interactive/Auto durations are not stored per-source: `query_events`
-		// only carries a single global `totalDuration`, so we split it by query
-		// count. Cue tracks its own real wall-clock duration separately.
-		const interactiveDuration = queryCount > 0 ? (userCount / queryCount) * data.totalDuration : 0;
-		const autoDuration = queryCount > 0 ? (autoCount / queryCount) * data.totalDuration : 0;
-		const cueDuration = cueTotals?.totalDurationMs ?? 0;
-
-		// Token totals come from the transcript-derived series (user/auto by how the
-		// session was started) and, for Cue, from Cue's own stats - mirroring how
-		// the count and duration slices above are already sourced independently.
-		const interactiveTokens = tokenSeries?.bySource?.user ?? 0;
-		const autoTokens = tokenSeries?.bySource?.auto ?? 0;
-		const cueTokens = cueTotals?.tokens ?? 0;
-
-		const pick = (count: number, duration: number, tokens: number) =>
-			metricMode === 'count' ? count : metricMode === 'tokens' ? tokens : duration;
-
-		const interactiveValue = pick(userCount, interactiveDuration, interactiveTokens);
-		const autoValue = pick(autoCount, autoDuration, autoTokens);
-		const cueValue = pick(cueCount, cueDuration, cueTokens);
-
-		const total = interactiveValue + autoValue + cueValue;
-		const pct = (v: number) => (total > 0 ? (v / total) * 100 : 0);
-
-		// Use colorblind-safe colors when colorblind mode is enabled
-		const interactiveColor = colorBlindMode
-			? COLORBLIND_BINARY_PALETTE.primary
-			: theme.colors.accent;
-		const autoColor = colorBlindMode ? COLORBLIND_BINARY_PALETTE.secondary : getAutoColor(theme);
-		// Teal (Wong palette index 2) contrasts with the blue/orange binary pair.
-		const cueColor = colorBlindMode ? COLORBLIND_AGENT_PALETTE[2] : theme.colors.warning;
-
-		const candidates: SourceData[] = [
-			{
-				source: 'interactive',
-				label: 'Interactive',
-				value: interactiveValue,
-				percentage: pct(interactiveValue),
-				color: interactiveColor,
-			},
-			{
-				source: 'auto',
-				label: 'Auto Run',
-				value: autoValue,
-				percentage: pct(autoValue),
-				color: autoColor,
-			},
-		];
-
-		// Only consider a Cue slice when Cue stats were supplied (feature enabled).
-		if (cueTotals != null) {
-			candidates.push({
-				source: 'cue',
-				label: 'Cue',
-				value: cueValue,
-				percentage: pct(cueValue),
-				color: cueColor,
-			});
-		}
-
-		// Hide zero-value contributors so the donut and legend only show real
-		// usage (matches the original two-way behavior). The all-zero empty
-		// state is handled separately via `hasData`.
-		return candidates.filter((s) => s.value > 0);
-	}, [data, metricMode, theme, colorBlindMode, cueTotals, tokenSeries]);
-
-	// Cue participates in the breakdown only when it has activity in range.
-	const hasCueSlice = useMemo(() => sourceData.some((s) => s.source === 'cue'), [sourceData]);
-
-	// Calculate total for center label
-	const total = useMemo(() => {
-		return sourceData.reduce((sum, s) => sum + s.value, 0);
-	}, [sourceData]);
-
-	// Donut chart configuration (shared with LocationDistributionChart)
-	const { size, outerRadius, innerRadius, hoverExpansion, centerLabelWidth } = DONUT_CHART;
-	const centerX = size / 2;
-	const centerY = size / 2;
-
-	// Calculate arc angles for each segment
-	const arcs = useMemo(() => {
-		let currentAngle = 0;
-		return sourceData.map((source) => {
-			const sweepAngle = (source.percentage / 100) * 360;
-			const startAngle = currentAngle;
-			const endAngle = currentAngle + sweepAngle;
-			currentAngle = endAngle;
+	const slices = useMemo((): DonutSliceDatum[] => {
+		const colors = delegationColors(theme, colorBlindMode);
+		const values = (): { interactive: number; auto: number; cue: number } => {
+			if (metricMode === 'tokens') {
+				return {
+					interactive: tokenSeries?.bySource?.user ?? 0,
+					auto: tokenSeries?.bySource?.auto ?? 0,
+					cue: cueTokens ?? 0,
+				};
+			}
+			if (!delegation) {
+				return { interactive: data.bySource.user, auto: data.bySource.auto, cue: 0 };
+			}
+			if (metricMode === 'duration') {
+				return {
+					interactive: delegation.interactive.durationMs,
+					auto: delegation.autoRun.durationMs,
+					cue: delegation.cue.durationMs,
+				};
+			}
 			return {
-				...source,
-				startAngle,
-				endAngle,
+				interactive: delegation.interactive.count,
+				auto: delegation.autoRun.count,
+				cue: delegation.cue.count,
 			};
-		});
-	}, [sourceData]);
+		};
+		const v = values();
+		const result: DonutSliceDatum[] = [
+			{ key: 'interactive', label: 'Interactive', value: v.interactive, color: colors.interactive },
+			{ key: 'auto', label: 'Auto Run', value: v.auto, color: colors.autoRun },
+		];
+		if (includeCue) result.push({ key: 'cue', label: 'Cue', value: v.cue, color: colors.cue });
+		return result;
+	}, [
+		data.bySource,
+		delegation,
+		metricMode,
+		tokenSeries,
+		cueTokens,
+		includeCue,
+		theme,
+		colorBlindMode,
+	]);
 
-	// Check if there's any data
-	const hasData =
-		data.bySource.user > 0 || data.bySource.auto > 0 || (cueTotals?.occurrences ?? 0) > 0;
-
-	// Title reflects scope: with a Cue slice it's an activity-source breakdown,
-	// otherwise the original interactive-vs-auto session split.
-	const title = hasCueSlice ? 'Activity Source' : 'Session Type';
-	const breakdownLabel = hasCueSlice
-		? 'Interactive, Auto Run, and Cue activity'
-		: 'Interactive and Auto Run sessions';
+	const total = slices.reduce((sum, slice) => sum + slice.value, 0);
+	const showTokenError = metricMode === 'tokens' && !tokensLoading && !!tokensError;
 
 	return (
 		<div
 			className="p-4 rounded-lg"
 			style={{ backgroundColor: theme.colors.bgMain }}
 			role="figure"
-			aria-label={`${title} chart showing ${metricMode === 'count' ? 'query counts' : 'duration'} breakdown across ${breakdownLabel}.`}
+			aria-label={`Query source chart showing ${metricModeNoun(metricMode)} by source: ${
+				includeCue ? 'Interactive, Auto Run, and Cue' : 'Interactive and Auto Run'
+			}.`}
 		>
-			{/* Header with title and metric toggle */}
-			<div className="flex items-center justify-between mb-4">
-				<h3
-					className="text-sm font-medium"
-					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
-				>
-					{title}
+			<div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+				<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					Query Source
 				</h3>
 				<MetricModeToggle
 					mode={metricMode}
-					onChange={setMetricMode}
+					onChange={stored.setValue}
 					theme={theme}
-					variant="subtle"
+					modes={modes}
+					labels={OVERVIEW_METRIC_LABELS}
 					tokensLoading={tokensLoading}
 				/>
 			</div>
 
-			{/* Chart container */}
-			<div className="flex items-center justify-center gap-8">
-				{!hasData ? (
+			<div className="relative">
+				<ChartLoadingOverlay visible={tokensLoading} theme={theme} />
+				{showTokenError ? (
 					<div
-						className="flex items-center justify-center h-40"
+						className="flex items-center justify-center h-40 text-sm text-center"
+						style={{ color: theme.colors.error }}
+						data-testid="source-token-error"
+					>
+						Could not load token usage: {tokensError}
+					</div>
+				) : total === 0 ? (
+					<div
+						className="flex items-center justify-center h-40 text-sm"
 						style={{ color: theme.colors.textDim }}
 					>
-						<span className="text-sm">No source data available</span>
+						No queries in this range
 					</div>
 				) : (
-					<>
-						{/* Donut chart */}
-						<div className="relative">
-							<ChartLoadingOverlay visible={tokensLoading} theme={theme} />
-							<svg
-								width={size}
-								height={size}
-								viewBox={`0 0 ${size} ${size}`}
-								role="img"
-								aria-label={`Donut chart: ${sourceData.map((s) => `${s.label} ${s.percentage.toFixed(1)}%`).join(', ')}`}
-							>
-								{arcs.map((arc) => (
-									<path
-										key={arc.source}
-										d={describeDonutArc(
-											centerX,
-											centerY,
-											hoveredSource === arc.source ? outerRadius + hoverExpansion : outerRadius,
-											innerRadius,
-											arc.startAngle,
-											arc.endAngle
-										)}
-										fill={arc.color}
-										opacity={hoveredSource === null || hoveredSource === arc.source ? 1 : 0.5}
-										className="cursor-default"
-										style={{
-											transition: 'd 0.5s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease',
-										}}
-										onMouseEnter={() => setHoveredSource(arc.source)}
-										onMouseLeave={() => setHoveredSource(null)}
-									/>
-								))}
-							</svg>
-
-							{/* Center label */}
-							<div
-								className="absolute inset-0 flex flex-col items-center justify-center"
-								style={{ pointerEvents: 'none' }}
-							>
-								<span
-									className="text-lg font-semibold leading-tight text-center truncate"
-									style={{ color: theme.colors.textMain, maxWidth: centerLabelWidth }}
-								>
-									{formatMetricValue(metricMode, total)}
-								</span>
-								<span className="text-xs" style={{ color: theme.colors.textDim }}>
-									{metricMode === 'count' ? 'total' : 'time'}
-								</span>
-							</div>
-						</div>
-
-						{/* Legend */}
-						<div className="flex flex-col gap-3" role="list" aria-label="Chart legend">
-							{sourceData.map((source) => (
-								<div
-									key={source.source}
-									className="flex items-center gap-3 cursor-default"
-									onMouseEnter={() => setHoveredSource(source.source)}
-									onMouseLeave={() => setHoveredSource(null)}
-									role="listitem"
-									aria-label={`${source.label}: ${source.percentage.toFixed(1)}%`}
-								>
-									<div
-										className="w-3 h-3 rounded-sm flex-shrink-0"
-										style={{ backgroundColor: source.color }}
-									/>
-									<div className="flex flex-col">
-										<span
-											className="text-sm font-medium"
-											style={{
-												color:
-													hoveredSource === source.source
-														? theme.colors.textMain
-														: theme.colors.textDim,
-											}}
-										>
-											{source.label}
-										</span>
-										<span className="text-xs" style={{ color: theme.colors.textDim }}>
-											{source.percentage.toFixed(1)}% •{' '}
-											{metricMode === 'count'
-												? formatNumber(source.value)
-												: metricMode === 'tokens'
-													? formatMetricValue('tokens', source.value)
-													: formatDuration(source.value)}
-										</span>
-									</div>
-								</div>
-							))}
-						</div>
-					</>
+					<DistributionDonut
+						slices={slices}
+						theme={theme}
+						formatValue={(value) => formatMetricValue(metricMode, value)}
+						centerCaption={metricModeNoun(metricMode)}
+						ariaLabel="Query source"
+						testId="source-donut"
+					/>
 				)}
 			</div>
+
+			{includeCue && cueRetentionDays != null && (
+				<p
+					className="mt-3 text-2xs"
+					style={{ color: theme.colors.textDim }}
+					data-testid="source-cue-retention"
+				>
+					Cue keeps {cueRetentionDays} days of run history, so the Cue slice covers only the last{' '}
+					{cueRetentionDays} days of this range.
+				</p>
+			)}
 		</div>
 	);
 });

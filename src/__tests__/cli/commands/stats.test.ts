@@ -106,7 +106,7 @@ describe('stats-tokens accounting', () => {
 				'token_usage'
 			);
 			const text = logSpy.mock.calls[0][0] as string;
-			expect(text).toContain(`  Cost:            ${label}\n`);
+			expect(text).toContain(`  API-equivalent cost: ${label}\n`);
 			for (const identity of [
 				'Grok CLI [grok]',
 				`${rawModel} [${JSON.stringify(['grok', rawModel])}]`,
@@ -175,7 +175,7 @@ describe('stats-tokens accounting', () => {
 		const before = JSON.stringify(data);
 		await statsTokens({});
 		const text = logSpy.mock.calls[0][0] as string;
-		expect(text).toContain('Cost:            $3.25 (partial)\n');
+		expect(text).toContain('API-equivalent cost: $3.25 (partial)\n');
 		expect(text).toContain('Tokens:          80 in / 5 out / 3 cache read / 2 cache creation');
 		expect(text).toContain('Sessions:        3\n');
 		expect(text).toContain('Claude Code [claude-code]: $2.00\n');
@@ -209,7 +209,7 @@ describe('stats-tokens accounting', () => {
 			data.totals.costEstimated = costEstimated;
 			await statsTokens({});
 			expect(logSpy.mock.calls[0][0]).toContain(
-				`Cost:            ${costEstimated ? '~' : ''}$2.00\n`
+				`API-equivalent cost: ${costEstimated ? '~' : ''}$2.00\n`
 			);
 		}
 	);
@@ -227,7 +227,7 @@ describe('stats-tokens accounting', () => {
 		};
 		await statsTokens({});
 		const text = logSpy.mock.calls[0][0] as string;
-		expect(text).toContain('Cost:            Unknown\n');
+		expect(text).toContain('API-equivalent cost: Unknown\n');
 		expect(text).toContain('Sessions:        0\n');
 		expect(text).toContain('Unknown (no timed calls)');
 		expect(text).not.toMatch(/\$0\.00|By account:|By model:/);

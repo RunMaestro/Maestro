@@ -70,6 +70,12 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	'open-terminal': false,
 	/** maestro-cli open-browser - focuses today; `--background` already existed. */
 	'open-browser': false,
+	/**
+	 * maestro-cli browser-pick - focuses like a click in Design Mode: the element
+	 * lands in the agent's composer and the view switches to that AI tab.
+	 * `--background` stages it without moving the user.
+	 */
+	'browser-pick': false,
 	/** maestro-cli tab new [--prompt] - focuses today. */
 	'tab-new': false,
 	/**
@@ -166,6 +172,15 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	 * for the next task either way.
 	 */
 	'steer-auto-run': false,
+	/**
+	 * maestro-cli diff-review send - NEW verb, so it has no "today" to keep.
+	 *
+	 * The Send Review button jumps to the agent and flashes "Review sent", because
+	 * the human clicking it wants to watch the agent act. A CLI caller is usually
+	 * another agent, so the review is queued (or placed in the composer) without
+	 * moving the view; `--focus` asks for the button's behaviour.
+	 */
+	'diff-review-send': true,
 } as const;
 
 /** A CLI verb whose placement can be negotiated. */
@@ -255,6 +270,13 @@ export const ALREADY_QUIET_VERBS = [
 	// which is the only indicator the pill's own click gives.
 	'live-on',
 	'live-off',
+	// Pending review comments live in renderer memory; an open Git Diff viewer
+	// redraws its tray, but nothing is selected or announced.
+	'diff-review-list',
+	'diff-review-add',
+	'diff-review-edit',
+	'diff-review-remove',
+	'diff-review-clear',
 ] as const;
 
 /** A verb that accepts `--background` purely so the flag is always safe to pass. */

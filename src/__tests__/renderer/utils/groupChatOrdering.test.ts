@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	orderGroupChatsForDisplay,
 	pickNextGroupChatIdAfterDelete,
+	selectVisibleGroupChats,
 } from '../../../renderer/utils/groupChatOrdering';
 
 const chats = [
@@ -23,6 +24,37 @@ describe('orderGroupChatsForDisplay', () => {
 	it('sorts alphabetically when the toggle is on', () => {
 		const ordered = orderGroupChatsForDisplay(chats, true);
 		expect(ordered.map((c) => c.name)).toEqual(['Alpha', 'Charlie', 'Delta']);
+	});
+});
+
+describe('selectVisibleGroupChats', () => {
+	const base = {
+		sortAlphabetical: false,
+		showArchived: false,
+		showUnreadAgentsOnly: false,
+		activeGroupChatId: null,
+		isChatBusy: () => false,
+		isChatUnread: () => false,
+	};
+
+	it('matches the default display order', () => {
+		expect(selectVisibleGroupChats(chats, base).map((c) => c.id)).toEqual(['b', 'd', 'a']);
+	});
+
+	it('draws archived chats after the active ones when shown', () => {
+		const ids = selectVisibleGroupChats(chats, { ...base, showArchived: true }).map((c) => c.id);
+		expect(ids).toEqual(['b', 'd', 'a', 'c']);
+	});
+
+	it('keeps only busy, unread, or active chats under the unread filter', () => {
+		const ids = selectVisibleGroupChats(chats, {
+			...base,
+			showUnreadAgentsOnly: true,
+			activeGroupChatId: 'a',
+			isChatBusy: (id) => id === 'd',
+			isChatUnread: () => false,
+		}).map((c) => c.id);
+		expect(ids).toEqual(['d', 'a']);
 	});
 });
 

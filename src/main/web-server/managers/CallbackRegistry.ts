@@ -35,6 +35,7 @@ import type {
 	ClosedTabCommandCallback,
 	MessagePinCommandCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	ReorderTabCallback,
@@ -50,6 +51,9 @@ import type {
 	OpenBrowserTabOptions,
 	OpenBrowserTabResult,
 	CloseBrowserTabCallback,
+	PickBrowserElementCallback,
+	PickBrowserElementRequest,
+	PickBrowserElementResult,
 	OpenTerminalTabCallback,
 	OpenTerminalTabConfig,
 	OpenTerminalTabResult,
@@ -148,9 +152,7 @@ import type {
 	TriggerCueSubscriptionCallback,
 	CueSubscriptionInfo,
 	CueActivityEntry,
-	GetUsageDashboardCallback,
 	GetAchievementsCallback,
-	UsageDashboardData,
 	AchievementData,
 	GenerateDirectorNotesSynopsisCallback,
 	DirectorNotesSynopsisResult,
@@ -189,6 +191,10 @@ import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../../../shared/autoRunSteeringCommands';
+import type {
+	DiffReviewCommandRequest,
+	DiffReviewCommandResult,
+} from '../../../shared/diffReviewCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
 import type {
 	ThroughputGaugeCommandRequest,
@@ -231,6 +237,7 @@ export interface WebServerCallbacks {
 	closedTabCommand: ClosedTabCommandCallback | null;
 	messagePinCommand: MessagePinCommandCallback | null;
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
+	diffReviewCommand: DiffReviewCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
 	throughputGaugeCommand: ThroughputGaugeCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
@@ -244,6 +251,7 @@ export interface WebServerCallbacks {
 	refreshFileTree: RefreshFileTreeCallback | null;
 	openBrowserTab: OpenBrowserTabCallback | null;
 	closeBrowserTab: CloseBrowserTabCallback | null;
+	pickBrowserElement: PickBrowserElementCallback | null;
 	openTerminalTab: OpenTerminalTabCallback | null;
 	writeTerminalTab: WriteTerminalTabCallback | null;
 	listTerminalTabs: ListTerminalTabsCallback | null;
@@ -309,7 +317,6 @@ export interface WebServerCallbacks {
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
 	triggerCueSubscription: TriggerCueSubscriptionCallback | null;
-	getUsageDashboard: GetUsageDashboardCallback | null;
 	getAchievements: GetAchievementsCallback | null;
 	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
 	notifyToast: NotifyToastCallback | null;
@@ -350,6 +357,7 @@ export class CallbackRegistry {
 		closedTabCommand: null,
 		messagePinCommand: null,
 		autoRunSteeringCommand: null,
+		diffReviewCommand: null,
 		windowCommand: null,
 		throughputGaugeCommand: null,
 		reorderTab: null,
@@ -361,6 +369,7 @@ export class CallbackRegistry {
 		refreshFileTree: null,
 		openBrowserTab: null,
 		closeBrowserTab: null,
+		pickBrowserElement: null,
 		openTerminalTab: null,
 		writeTerminalTab: null,
 		listTerminalTabs: null,
@@ -426,7 +435,6 @@ export class CallbackRegistry {
 		toggleCueSubscription: null,
 		getCueActivity: null,
 		triggerCueSubscription: null,
-		getUsageDashboard: null,
 		getAchievements: null,
 		generateDirectorNotesSynopsis: null,
 		notifyToast: null,
@@ -589,6 +597,13 @@ export class CallbackRegistry {
 		return this.callbacks.autoRunSteeringCommand(request);
 	}
 
+	async diffReviewCommand(request: DiffReviewCommandRequest): Promise<DiffReviewCommandResult> {
+		if (!this.callbacks.diffReviewCommand) {
+			return { success: false, error: 'Diff review is not configured' };
+		}
+		return this.callbacks.diffReviewCommand(request);
+	}
+
 	async windowCommand(request: WindowCommandRequest): Promise<WindowCommandResult> {
 		if (!this.callbacks.windowCommand) {
 			return { success: false, error: 'Window commands are not configured' };
@@ -666,6 +681,13 @@ export class CallbackRegistry {
 	async closeBrowserTab(tabId: string): Promise<boolean> {
 		if (!this.callbacks.closeBrowserTab) return false;
 		return this.callbacks.closeBrowserTab(tabId);
+	}
+
+	async pickBrowserElement(request: PickBrowserElementRequest): Promise<PickBrowserElementResult> {
+		if (!this.callbacks.pickBrowserElement) {
+			return { success: false, error: 'Browser Design Mode not configured', screenshot: false };
+		}
+		return this.callbacks.pickBrowserElement(request);
 	}
 
 	async openTerminalTab(
@@ -1185,21 +1207,6 @@ export class CallbackRegistry {
 		return this.callbacks.triggerCueSubscription(subscriptionName, prompt, sourceAgentId);
 	}
 
-	async getUsageDashboard(
-		timeRange: 'day' | 'week' | 'month' | 'all'
-	): Promise<UsageDashboardData> {
-		if (!this.callbacks.getUsageDashboard) {
-			return {
-				totalTokensIn: 0,
-				totalTokensOut: 0,
-				totalCost: 0,
-				sessionBreakdown: [],
-				dailyUsage: [],
-			};
-		}
-		return this.callbacks.getUsageDashboard(timeRange);
-	}
-
 	async getAchievements(): Promise<AchievementData[]> {
 		if (!this.callbacks.getAchievements) return [];
 		return this.callbacks.getAchievements();
@@ -1395,6 +1402,10 @@ export class CallbackRegistry {
 		this.callbacks.autoRunSteeringCommand = callback;
 	}
 
+	setDiffReviewCommandCallback(callback: DiffReviewCommandCallback): void {
+		this.callbacks.diffReviewCommand = callback;
+	}
+
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbacks.windowCommand = callback;
 	}
@@ -1433,6 +1444,10 @@ export class CallbackRegistry {
 
 	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
 		this.callbacks.closeBrowserTab = callback;
+	}
+
+	setPickBrowserElementCallback(callback: PickBrowserElementCallback): void {
+		this.callbacks.pickBrowserElement = callback;
 	}
 
 	setWriteTerminalTabCallback(callback: WriteTerminalTabCallback): void {
@@ -1693,10 +1708,6 @@ export class CallbackRegistry {
 
 	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
 		this.callbacks.triggerCueSubscription = callback;
-	}
-
-	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
-		this.callbacks.getUsageDashboard = callback;
 	}
 
 	setGetAchievementsCallback(callback: GetAchievementsCallback): void {

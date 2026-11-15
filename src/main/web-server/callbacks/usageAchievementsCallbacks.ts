@@ -11,69 +11,10 @@ export function registerUsageAchievementsCallbacks(
 ): void {
 	const { getMainWindow } = deps;
 
-	// Get usage dashboard data - aggregates from session usage stats via IPC
-	server.setGetUsageDashboardCallback(async (timeRange: 'day' | 'week' | 'month' | 'all') => {
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for getUsageDashboard', 'WebServer');
-			return {
-				totalTokensIn: 0,
-				totalTokensOut: 0,
-				totalCost: 0,
-				sessionBreakdown: [],
-				dailyUsage: [],
-			};
-		}
-
-		return new Promise((resolve) => {
-			const responseChannel = `remote:getUsageDashboard:response:${randomUUID()}`;
-			let resolved = false;
-
-			const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-				if (resolved) return;
-				resolved = true;
-				clearTimeout(timeoutId);
-				resolve(
-					result ?? {
-						totalTokensIn: 0,
-						totalTokensOut: 0,
-						totalCost: 0,
-						sessionBreakdown: [],
-						dailyUsage: [],
-					}
-				);
-			};
-
-			ipcMain.once(responseChannel, handleResponse);
-			if (!isWebContentsAvailable(mainWindow)) {
-				logger.warn('webContents is not available for getUsageDashboard', 'WebServer');
-				ipcMain.removeListener(responseChannel, handleResponse);
-				resolve({
-					totalTokensIn: 0,
-					totalTokensOut: 0,
-					totalCost: 0,
-					sessionBreakdown: [],
-					dailyUsage: [],
-				});
-				return;
-			}
-			mainWindow.webContents.send('remote:getUsageDashboard', timeRange, responseChannel);
-
-			const timeoutId = setTimeout(() => {
-				if (resolved) return;
-				resolved = true;
-				ipcMain.removeListener(responseChannel, handleResponse);
-				logger.warn('getUsageDashboard callback timed out', 'WebServer');
-				resolve({
-					totalTokensIn: 0,
-					totalTokensOut: 0,
-					totalCost: 0,
-					sessionBreakdown: [],
-					dailyUsage: [],
-				});
-			}, 15000);
-		});
-	});
+	// No usage dashboard callback: the old `get_usage_dashboard` message asked
+	// the renderer over `remote:getUsageDashboard`, which no renderer ever
+	// answered (it timed out after 15s). Clients read the dashboard through
+	// `maestro-cli stats` and the web-desktop bridge instead.
 
 	// Get achievements data - aggregates from settings store via IPC
 	server.setGetAchievementsCallback(async () => {

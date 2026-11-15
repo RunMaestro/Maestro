@@ -39,6 +39,8 @@ import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
 import { runRemoteMessagePinCommand } from '../../services/messagePins';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
+import { runRemoteDiffReviewCommand } from '../../services/diffReview';
+import type { DiffReviewCommandResult } from '../../../shared/diffReviewCommands';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
 import type { ClosedTabCommandResult } from '../../../shared/closedTabCommands';
 import type { MessagePinCommandResult } from '../../../shared/messagePinCommands';
@@ -2297,6 +2299,31 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				})
 			);
 		});
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle a remote Git Diff review verb (`maestro-cli diff-review`). The
+	// pending comments are this renderer's state (the viewer draws them), so
+	// every verb is answered here, through the same service the viewer's Send
+	// Review and Edit in Composer buttons call.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteDiffReviewCommand(
+			(request, responseChannel) => {
+				const reply = (result: DiffReviewCommandResult) =>
+					window.maestro.process.sendRemoteDiffReviewCommandResponse(responseChannel, result);
+				runRemoteDiffReviewCommand(request)
+					.then(reply)
+					.catch((error) => {
+						logger.error('[useRemoteIntegration] Diff review command failed', undefined, error);
+						reply({
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
+			}
+		);
 		return () => {
 			unsubscribe();
 		};

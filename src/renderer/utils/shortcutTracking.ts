@@ -4,8 +4,9 @@
  * Every shortcut firing should bump two stats:
  *   1. The settings-store `keyboardMasteryStats.usedShortcuts` set, which
  *      drives the "Unused Shortcuts" list and mastery ring.
- *   2. The main-process daily counter (`shortcut_usage_daily`), which
- *      drives the Usage Dashboard bar chart.
+ *   2. The main-process daily counters (`shortcut_usage_daily` and the
+ *      per-shortcut `shortcut_usage_by_id`), which drive the Usage Dashboard
+ *      bar chart and its "Most used shortcuts" list.
  *
  * Call sites that handle a shortcut outside the central
  * `useMainKeyboardHandler` (e.g. inline Cmd+F in a tab, modal-local key
@@ -24,5 +25,5 @@ export function trackShortcutUsage(shortcutId: string): void {
 	if (result.newLevel !== null) {
 		getModalActions().setPendingKeyboardMasteryLevel(result.newLevel);
 	}
-	void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
+	void window.maestro?.stats?.recordShortcutUsage?.(Date.now(), shortcutId);
 }

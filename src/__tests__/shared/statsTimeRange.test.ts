@@ -5,12 +5,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getTimeRangeStart, STATS_RANGE_DAYS } from '../../shared/statsTimeRange';
-import { PROMPT_WINDOW_DAYS } from '../../shared/promptCadence';
+import { getTimeRangeStart } from '../../shared/statsTimeRange';
+import { promptWindowStart } from '../../shared/promptCadence';
+import { toLocalYmd } from '../../shared/localDay';
 import { tokenUsageQueryForRange } from '../../shared/tokenUsage';
 import { startOfLocalDay } from '../../shared/localDay';
 
-const DAY = 24 * 60 * 60 * 1000;
 const now = new Date(2026, 10, 14, 15, 30).getTime();
 
 describe('getTimeRangeStart', () => {
@@ -23,8 +23,15 @@ describe('getTimeRangeStart', () => {
 		['month', 30],
 		['quarter', 90],
 		['year', 365],
-	] as const)('starts "%s" %i days back', (range, days) => {
-		expect(getTimeRangeStart(range, now)).toBe(now - days * DAY);
+	] as const)('starts "%s" at local midnight, %i calendar days including today', (range, days) => {
+		const expected = new Date(2026, 10, 14 - (days - 1)).getTime();
+		expect(getTimeRangeStart(range, now)).toBe(expected);
+	});
+
+	it('crosses a DST change by calendar day, not by 24-hour steps', () => {
+		// US DST ended 2026-11-01; a week starting 2026-10-30 still starts at midnight.
+		const start = new Date(getTimeRangeStart('week', new Date(2026, 10, 5, 12).getTime()));
+		expect([start.getHours(), start.getMinutes(), start.getDate()]).toEqual([0, 0, 30]);
 	});
 
 	it('starts all time at 0', () => {
@@ -32,9 +39,14 @@ describe('getTimeRangeStart', () => {
 	});
 });
 
-describe('STATS_RANGE_DAYS', () => {
-	it('is the one day table the prompt cadence window reads', () => {
-		expect(PROMPT_WINDOW_DAYS).toBe(STATS_RANGE_DAYS);
+describe('one range start for every consumer', () => {
+	it('gives the prompt cadence window the same first day as the stats database', () => {
+		const firstPromptEver = new Date(2020, 0, 1).getTime();
+		for (const range of ['day', 'week', 'month', 'quarter', 'year'] as const) {
+			expect(promptWindowStart(range, firstPromptEver, now)).toBe(
+				toLocalYmd(getTimeRangeStart(range, now))
+			);
+		}
 	});
 
 	it('gives the token-usage query the same start as the stats database', () => {

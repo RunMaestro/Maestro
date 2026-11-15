@@ -103,7 +103,7 @@ export const CREATE_AUTO_RUN_SESSIONS_INDEXES_SQL = `
 `;
 
 /**
- * Auto Run kind column (Migration v14).
+ * Auto Run kind column (Migration v15).
  *
  * Unlike the token columns this one DOES default: every row written before it
  * existed came from the document runner or predates goal runs, so reading those
@@ -182,6 +182,33 @@ export const CREATE_SHORTCUT_USAGE_DAILY_SQL = `
     date TEXT PRIMARY KEY,
     count INTEGER NOT NULL
   )
+`;
+
+// ============================================================================
+// Shortcut Usage by Shortcut (Migration v14)
+// ============================================================================
+
+/**
+ * Per-shortcut firing counts, bucketed by local day so the dashboard's range
+ * filter applies to them the same way it applies to `shortcut_usage_daily`.
+ * One row per (day, shortcut id): bounded by days x bound shortcuts.
+ */
+export const CREATE_SHORTCUT_USAGE_BY_ID_SQL = `
+  CREATE TABLE IF NOT EXISTS shortcut_usage_by_id (
+    date TEXT NOT NULL,
+    shortcut_id TEXT NOT NULL,
+    count INTEGER NOT NULL,
+    PRIMARY KEY (date, shortcut_id)
+  )
+`;
+
+// ============================================================================
+// Query events by time and agent (Migration v14)
+// ============================================================================
+
+/** Serves "distinct agents with a query in range" without a table scan. */
+export const CREATE_QUERY_START_SESSION_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_query_start_session ON query_events(start_time, session_id)
 `;
 
 // ============================================================================

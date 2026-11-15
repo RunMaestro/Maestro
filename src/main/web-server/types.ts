@@ -24,6 +24,10 @@ import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../../shared/autoRunSteeringCommands';
+import type {
+	DiffReviewCommandRequest,
+	DiffReviewCommandResult,
+} from '../../shared/diffReviewCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 import type {
 	ThroughputGaugeCommandRequest,
@@ -469,6 +473,15 @@ export type MessagePinCommandCallback = (
 export type AutoRunSteeringCommandCallback = (
 	request: SteeringCommandRequest
 ) => Promise<SteeringCommandResult>;
+
+/**
+ * One Git Diff review verb, forwarded to the renderer - which holds the pending
+ * comments the viewer draws - and answered with whatever it did. Resolves
+ * rather than rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type DiffReviewCommandCallback = (
+	request: DiffReviewCommandRequest
+) => Promise<DiffReviewCommandResult>;
 /**
  * `maestro-cli window` - list windows, or move an agent or a whole group
  * between them. Answered by the primary window through the same WindowContext
@@ -724,6 +737,37 @@ export type OpenBrowserTabCallback = (
  * callers only need the tab id returned by `OpenBrowserTabCallback`.
  */
 export type CloseBrowserTabCallback = (tabId: string) => Promise<boolean>;
+
+/**
+ * Design Mode by selector (`maestro-cli browser-pick`). `tab` is either the
+ * tab id `open-browser` returned or the tab's Coworking id (`browser:N`),
+ * resolved against `sessionId`. The pick runs through the Coworking browser
+ * resolver, so it reaches the same renderer code a click in Design Mode does.
+ */
+export interface PickBrowserElementRequest {
+	sessionId: string;
+	tab: string;
+	selector: string;
+	note?: string;
+	background?: boolean;
+}
+export interface PickBrowserElementResult {
+	success: boolean;
+	error?: string;
+	/** Renderer browser tab id the element was picked from. */
+	tabId?: string;
+	/** Coworking id of that tab, when Coworking knows it and the tab is visible to agents. */
+	browserId?: string;
+	/** The text added to the composer draft. */
+	text?: string;
+	/** Whether a cropped screenshot was staged with it. */
+	screenshot: boolean;
+	/** The AI tab the element was added to. */
+	aiTabId?: string;
+}
+export type PickBrowserElementCallback = (
+	request: PickBrowserElementRequest
+) => Promise<PickBrowserElementResult>;
 export interface OpenTerminalTabConfig {
 	/** Explicit signal that the agent is waiting for a person at this terminal. */
 	inputRequired?: boolean;
@@ -1606,26 +1650,6 @@ export type TriggerCueSubscriptionCallback = (
 // Usage Dashboard Types
 // =============================================================================
 
-/** Usage dashboard aggregate data for web interface */
-export interface UsageDashboardData {
-	totalTokensIn: number;
-	totalTokensOut: number;
-	totalCost: number;
-	sessionBreakdown: Array<{
-		sessionId: string;
-		sessionName: string;
-		tokensIn: number;
-		tokensOut: number;
-		cost: number;
-	}>;
-	dailyUsage: Array<{
-		date: string;
-		tokensIn: number;
-		tokensOut: number;
-		cost: number;
-	}>;
-}
-
 /** Achievement data for web interface */
 export interface AchievementData {
 	id: string;
@@ -1641,9 +1665,6 @@ export interface AchievementData {
 // Usage Dashboard Callback Types
 // =============================================================================
 
-export type GetUsageDashboardCallback = (
-	timeRange: 'day' | 'week' | 'month' | 'all'
-) => Promise<UsageDashboardData>;
 export type GetAchievementsCallback = () => Promise<AchievementData[]>;
 
 // =============================================================================

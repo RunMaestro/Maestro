@@ -21,7 +21,7 @@ interface SkeletonProps {
 }
 
 /**
- * Summary Cards skeleton - 5 cards in a row
+ * Summary Cards skeleton - one row of `columns` cards
  */
 export const SummaryCardsSkeleton = memo(function SummaryCardsSkeleton({
 	theme,
@@ -338,8 +338,10 @@ export const AutoRunStatsSkeleton = memo(function AutoRunStatsSkeleton({
 });
 
 /**
- * Full dashboard skeleton - combines all chart skeletons for initial load
- * Matches the overview layout of the actual dashboard
+ * Full dashboard skeleton - combines chart skeletons for initial load.
+ * The `overview` layout follows the Overview tab: summary cards, Provider
+ * Comparison, Provider Trends (a bar chart, like Duration Trends), then the
+ * Query Source donut.
  */
 export const DashboardSkeleton = memo(function DashboardSkeleton({
 	theme,
@@ -358,17 +360,16 @@ export const DashboardSkeleton = memo(function DashboardSkeleton({
 			{viewMode === 'overview' && (
 				<>
 					<SummaryCardsSkeleton theme={theme} columns={summaryCardsCols} />
+					<AgentComparisonChartSkeleton theme={theme} />
+					<DurationTrendsChartSkeleton theme={theme} />
 					<div
 						className="grid gap-6"
 						style={{
 							gridTemplateColumns: `repeat(${chartGridCols}, minmax(0, 1fr))`,
 						}}
 					>
-						<AgentComparisonChartSkeleton theme={theme} />
 						<SourceDistributionChartSkeleton theme={theme} />
 					</div>
-					<ActivityHeatmapSkeleton theme={theme} />
-					<DurationTrendsChartSkeleton theme={theme} />
 				</>
 			)}
 

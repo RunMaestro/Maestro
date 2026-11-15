@@ -26,6 +26,8 @@ interface BuildActiveTabContextCommandsArgs {
 	mainPanelRef?: React.RefObject<MainPanelHandle | null>;
 	toggleTabStarShortcut?: QuickAction['shortcut'];
 	toggleTabUnreadShortcut?: QuickAction['shortcut'];
+	/** Chord shown on the browser tab's Design Mode entry. */
+	toggleDesignModeShortcut?: QuickAction['shortcut'];
 }
 
 export function buildActiveTabContextCommands({
@@ -44,6 +46,7 @@ export function buildActiveTabContextCommands({
 	mainPanelRef,
 	toggleTabStarShortcut,
 	toggleTabUnreadShortcut,
+	toggleDesignModeShortcut,
 }: BuildActiveTabContextCommandsArgs): QuickAction[] {
 	if (!activeSession) return [];
 	const commands: QuickAction[] = [];
@@ -97,6 +100,16 @@ export function buildActiveTabContextCommands({
 			action: () => {
 				mainPanelRef.current?.sendActiveBrowserContentToAgent();
 				setQuickActionOpen(false);
+			},
+		});
+		commands.push({
+			id: 'toggleBrowserDesignMode',
+			label: 'Design Mode: Pick an Element',
+			subtext: 'Click an element in the page to send it to the agent',
+			shortcut: toggleDesignModeShortcut,
+			action: () => {
+				setQuickActionOpen(false);
+				mainPanelRef.current?.toggleBrowserDesignMode();
 			},
 		});
 		return commands;

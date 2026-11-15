@@ -20,6 +20,7 @@ import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import type { StatsAggregation } from '../../../../shared/stats-types';
 import { createMockSession, createMockAITab } from '../../../helpers';
 import { mockTheme } from '../../../helpers/mockTheme';
+import { clearCachedResources } from '../../../../renderer/hooks/utils/useCachedResource';
 
 vi.mock('lucide-react', () => ({
 	X: () => <span data-testid="x-icon" />,
@@ -53,7 +54,9 @@ const buildData = (): StatsAggregation =>
 	({
 		bySessionByDay: { 'session-1': [{ date: '2026-08-19', count: 4, duration: 4000 }] },
 		bySessionSource: {},
+		bySessionLastQuery: {},
 		byAgent: {},
+		window: { startYmd: '2026-08-01', endYmd: '2026-08-30' },
 	}) as unknown as StatsAggregation;
 
 const session = createMockSession({
@@ -81,12 +84,16 @@ const renderModal = (overrides: { session?: typeof session; data?: StatsAggregat
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// The fetches go through the module-level dashboard cache; start each test
+	// from an empty one so a previous test's result cannot answer this one.
+	clearCachedResources();
 	jumpToAgent.mockReturnValue(true);
 	useSettingsStore.setState({ modalSizes: {} });
 	(window as unknown as Record<string, unknown>).maestro = {
 		stats: {
 			getStats: vi.fn().mockResolvedValue([]),
 			getAutoRunSessions: vi.fn().mockResolvedValue([]),
+			onStatsUpdate: vi.fn().mockReturnValue(() => {}),
 		},
 	};
 });
@@ -288,5 +295,67 @@ describe('AgentDetailModal tokens and cost', () => {
 		expect(screen.queryByTestId('agent-detail-range-cost')).not.toBeInTheDocument();
 		expect(screen.getByRole('note')).toHaveTextContent(/No token usage recorded yet/);
 		expect(screen.getByTestId('agent-detail-lifetime-usage')).toBeInTheDocument();
+	});
+});
+
+describe('AgentDetailModal range scoping', () => {
+	it('fetches Auto Runs for the selected range and counts only this agent', async () => {
+		(window.maestro.stats.getAutoRunSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+			{ id: 'r1', sessionId: 'session-1', startTime: 1, duration: 60_000, tasksCompleted: 2 },
+			{ id: 'r2', sessionId: 'session-1', startTime: 2, duration: 30_000, tasksCompleted: 1 },
+			{ id: 'r3', sessionId: 'someone-else', startTime: 3, duration: 10_000 },
+		]);
+		renderModal();
+
+		await waitFor(() =>
+			expect(screen.getByTestId('agent-detail-autorun-runs')).toHaveTextContent('2')
+		);
+		expect(window.maestro.stats.getAutoRunSessions).toHaveBeenCalledWith('month');
+		expect(screen.getByText('Runs')).toBeInTheDocument();
+		expect(screen.queryByText('Sessions')).not.toBeInTheDocument();
+	});
+
+	it('says so when the agent ran no Auto Run in the range', async () => {
+		renderModal();
+		await waitFor(() =>
+			expect(screen.getByTestId('agent-detail-autorun-empty')).toHaveTextContent(
+				'No Auto Runs for this agent in this range.'
+			)
+		);
+	});
+
+	it('reads Last active from the exact last-query time, not a day bucket', async () => {
+		const lastQueryAt = Date.now() - 3 * 60 * 60 * 1000;
+		renderModal({
+			data: {
+				...buildData(),
+				bySessionLastQuery: { 'session-1': lastQueryAt },
+			} as unknown as StatsAggregation,
+		});
+
+		expect(screen.getByTestId('agent-detail-last-active')).toHaveTextContent('Last active 3h ago');
+	});
+
+	it('omits Last active when the agent ran nothing in the range', async () => {
+		renderModal();
+		expect(screen.queryByTestId('agent-detail-last-active')).not.toBeInTheDocument();
+	});
+
+	it('shows a failed events fetch as an error, not as no data', async () => {
+		(window.maestro.stats.getStats as ReturnType<typeof vi.fn>).mockRejectedValue(
+			new Error('db locked')
+		);
+		renderModal();
+
+		await waitFor(() =>
+			expect(screen.getByTestId('agent-detail-distribution-error')).toHaveTextContent('db locked')
+		);
+	});
+
+	it('labels time figures with one word', async () => {
+		renderModal();
+		expect(screen.getByText('Total time')).toBeInTheDocument();
+		expect(screen.getByText('Avg time per query')).toBeInTheDocument();
+		expect(screen.queryByText('Total duration')).not.toBeInTheDocument();
 	});
 });

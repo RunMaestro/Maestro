@@ -651,6 +651,72 @@ export function handleCloseBrowserTab(
 }
 
 /**
+ * Handle pick_browser_element message - Design Mode by selector
+ * (`maestro-cli browser-pick`). Describes the first element matching
+ * `selector` in a browser tab and adds it to the owning agent's composer, the
+ * same way a click in Design Mode does. `tab` is the tab id `open-browser`
+ * returned or the tab's Coworking id (`browser:N`).
+ */
+export function handlePickBrowserElement(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const tab = typeof message.tab === 'string' ? message.tab.trim() : '';
+	const selector = typeof message.selector === 'string' ? message.selector.trim() : '';
+	const note = typeof message.note === 'string' && message.note.trim() ? message.note : undefined;
+	const background = readBackgroundField(message);
+	// Selectors and notes can carry page or user text - log lengths only.
+	logger.info(
+		`[Web] Received pick_browser_element message: session=${sessionId}, tab=${tab}, selectorLength=${selector.length}`,
+		LOG_CONTEXT
+	);
+
+	const reply = (result: {
+		success: boolean;
+		error?: string;
+		tabId?: string;
+		browserId?: string;
+		text?: string;
+		screenshot?: boolean;
+		aiTabId?: string;
+	}) => {
+		ctx.send(client, {
+			type: 'pick_browser_element_result',
+			...result,
+			screenshot: result.screenshot === true,
+			sessionId,
+			background,
+			requestId: message.requestId,
+		});
+	};
+
+	if (!sessionId || !tab) {
+		reply({ success: false, error: 'Missing sessionId or tab' });
+		return;
+	}
+	if (!selector) {
+		reply({ success: false, error: 'Missing selector' });
+		return;
+	}
+	if (!ctx.callbacks.pickBrowserElement) {
+		reply({ success: false, error: 'Browser Design Mode not configured' });
+		return;
+	}
+
+	ctx.callbacks
+		.pickBrowserElement({ sessionId, tab, selector, note, background })
+		.then((result) => reply(result))
+		.catch((error) => {
+			reply({
+				success: false,
+				error: `Failed to pick element: ${error instanceof Error ? error.message : String(error)}`,
+			});
+		});
+}
+
+/**
  * Handle open_terminal_tab message - open a new terminal tab
  */
 export async function handleOpenTerminalTab(

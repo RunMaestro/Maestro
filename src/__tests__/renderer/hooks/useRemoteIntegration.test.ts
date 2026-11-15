@@ -155,6 +155,9 @@ describe('useRemoteIntegration', () => {
 	let onRemoteAutoRunSteeringCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
+	let onRemoteDiffReviewCommandHandler:
+		| ((request: Record<string, unknown>, responseChannel: string) => void)
+		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 	let onRequestMovementDesignerInspectionHandler:
 		| ((id: string, expectedRevision: number, responseChannel: string) => void)
@@ -311,6 +314,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteAutoRunSteeringCommandResponse: vi.fn(),
+		onRemoteDiffReviewCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteDiffReviewCommandHandler = handler;
+			return () => {};
+		}),
+		sendRemoteDiffReviewCommandResponse: vi.fn(),
 		onRemoteToggleBookmark: vi.fn().mockImplementation((handler) => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
@@ -3561,6 +3569,33 @@ describe('useRemoteIntegration', () => {
 			} finally {
 				useSettingsStore.setState({ encoreFeatures, setThroughputGaugeSettings });
 			}
+		});
+	});
+
+	describe('remote diff review command', () => {
+		// The CLI blocks on this reply, so every outcome is answered on the channel.
+		it('answers a diff review verb on its response channel, refusal included', async () => {
+			const deps = createDeps({
+				sessions: [createMockSession({ id: 'session-1', toolType: 'terminal' })],
+			});
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteDiffReviewCommandHandler?.(
+					{ action: 'list', sessionId: 'session-1' },
+					'dr-response'
+				);
+			});
+
+			const sent = window.maestro.process.sendRemoteDiffReviewCommandResponse as ReturnType<
+				typeof vi.fn
+			>;
+			await waitFor(() =>
+				expect(sent).toHaveBeenCalledWith(
+					'dr-response',
+					expect.objectContaining({ success: false, error: expect.stringContaining('terminal') })
+				)
+			);
 		});
 	});
 

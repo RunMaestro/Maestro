@@ -124,6 +124,7 @@ import type {
 	ClosedTabCommandCallback,
 	MessagePinCommandCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	ReorderTabCallback,
@@ -135,6 +136,7 @@ import type {
 	RefreshFileTreeCallback,
 	OpenBrowserTabCallback,
 	CloseBrowserTabCallback,
+	PickBrowserElementCallback,
 	OpenTerminalTabCallback,
 	WriteTerminalTabCallback,
 	WriteTerminalTabPayload,
@@ -213,7 +215,6 @@ import type {
 	GetCueActivityCallback,
 	CueActivityEntry,
 	CueSubscriptionInfo,
-	GetUsageDashboardCallback,
 	GetAchievementsCallback,
 	GenerateDirectorNotesSynopsisCallback,
 	NotifyToastCallback,
@@ -236,6 +237,7 @@ import type { ClosedTabCommandRequest } from '../../shared/closedTabCommands';
 import type { MessagePinCommandRequest } from '../../shared/messagePinCommands';
 import type { TabContextOpRequest } from '../../shared/tabContextOps';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
+import type { DiffReviewCommandRequest } from '../../shared/diffReviewCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
 import type { ThroughputGaugeCommandRequest } from '../../shared/throughputGaugeCommands';
 
@@ -655,6 +657,10 @@ export class WebServer {
 		this.callbackRegistry.setAutoRunSteeringCommandCallback(callback);
 	}
 
+	setDiffReviewCommandCallback(callback: DiffReviewCommandCallback): void {
+		this.callbackRegistry.setDiffReviewCommandCallback(callback);
+	}
+
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbackRegistry.setWindowCommandCallback(callback);
 	}
@@ -700,6 +706,10 @@ export class WebServer {
 
 	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
 		this.callbackRegistry.setCloseBrowserTabCallback(callback);
+	}
+
+	setPickBrowserElementCallback(callback: PickBrowserElementCallback): void {
+		this.callbackRegistry.setPickBrowserElementCallback(callback);
 	}
 
 	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {
@@ -1073,10 +1083,6 @@ export class WebServer {
 
 	setGetCueActivityCallback(callback: GetCueActivityCallback): void {
 		this.callbackRegistry.setGetCueActivityCallback(callback);
-	}
-
-	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
-		this.callbackRegistry.setGetUsageDashboardCallback(callback);
 	}
 
 	setGetAchievementsCallback(callback: GetAchievementsCallback): void {
@@ -1468,6 +1474,8 @@ export class WebServer {
 				this.callbackRegistry.messagePinCommand(request),
 			autoRunSteeringCommand: async (request: SteeringCommandRequest) =>
 				this.callbackRegistry.autoRunSteeringCommand(request),
+			diffReviewCommand: async (request: DiffReviewCommandRequest) =>
+				this.callbackRegistry.diffReviewCommand(request),
 			windowCommand: async (request: WindowCommandRequest) =>
 				this.callbackRegistry.windowCommand(request),
 			throughputGaugeCommand: async (request: ThroughputGaugeCommandRequest) =>
@@ -1485,6 +1493,7 @@ export class WebServer {
 			openBrowserTab: async (sessionId: string, url: string, options?: { background?: boolean }) =>
 				this.callbackRegistry.openBrowserTab(sessionId, url, options),
 			closeBrowserTab: async (tabId: string) => this.callbackRegistry.closeBrowserTab(tabId),
+			pickBrowserElement: async (request) => this.callbackRegistry.pickBrowserElement(request),
 			openTerminalTab: async (
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
@@ -1714,8 +1723,6 @@ export class WebServer {
 				if (!ctx) throw new Error('Cue bundles are not ready yet');
 				return importBundleIntoApp(ctx, request);
 			},
-			getUsageDashboard: async (timeRange: 'day' | 'week' | 'month' | 'all') =>
-				this.callbackRegistry.getUsageDashboard(timeRange),
 			getAchievements: async () => this.callbackRegistry.getAchievements(),
 			generateDirectorNotesSynopsis: async (lookbackDays: number, provider: string) =>
 				this.callbackRegistry.generateDirectorNotesSynopsis(lookbackDays, provider),

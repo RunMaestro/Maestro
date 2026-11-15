@@ -75,4 +75,47 @@ describe('AgentCountTrendChart', () => {
 		);
 		expect(screen.getByRole('img', { name: 'Agent count over time' })).toBeInTheDocument();
 	});
+
+	it('shows a failed lifecycle fetch as an error with a retry, not as a chart', async () => {
+		vi.mocked(window.maestro.stats.getSessionLifecycle).mockRejectedValue(
+			new Error('stats db unavailable')
+		);
+
+		render(<AgentCountTrendChart sessions={[makeSession('a')]} timeRange="week" theme={theme} />);
+
+		await waitFor(() =>
+			expect(screen.getByTestId('agent-count-trend-state-error')).toHaveTextContent(
+				'stats db unavailable'
+			)
+		);
+		expect(screen.queryByRole('img', { name: 'Agent count over time' })).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+	});
+
+	it('refetches only when the lifecycle table changes', async () => {
+		let notify: ((table?: string) => void) | undefined;
+		vi.mocked(window.maestro.stats.onStatsUpdate).mockImplementation((cb) => {
+			notify = cb as (table?: string) => void;
+			return () => {};
+		});
+		vi.mocked(window.maestro.stats.getSessionLifecycle).mockClear();
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		try {
+			render(<AgentCountTrendChart sessions={[]} timeRange="week" theme={theme} />);
+			await waitFor(() =>
+				expect(window.maestro.stats.getSessionLifecycle).toHaveBeenCalledTimes(1)
+			);
+
+			notify?.('query_events');
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(window.maestro.stats.getSessionLifecycle).toHaveBeenCalledTimes(1);
+
+			notify?.('session_lifecycle');
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(window.maestro.stats.getSessionLifecycle).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+			vi.mocked(window.maestro.stats.onStatsUpdate).mockReturnValue(() => {});
+		}
+	});
 });

@@ -216,7 +216,11 @@ type GroupChatData = {
 
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
-import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
+import type {
+	CueStatsAggregation,
+	CueStatsSourceTotals,
+	CueStatsTimeRange,
+} from '../shared/cue-stats-types';
 import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { LiveModeSetResult, LiveModeStateEvent, LiveModeStatus } from '../shared/liveMode';
@@ -1184,6 +1188,16 @@ interface MaestroAPI {
 		sendRemoteAutoRunSteeringCommandResponse: (
 			responseChannel: string,
 			result: SteeringCommandResult
+		) => void;
+		onRemoteDiffReviewCommand: (
+			callback: (
+				request: import('../shared/diffReviewCommands').DiffReviewCommandRequest,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteDiffReviewCommandResponse: (
+			responseChannel: string,
+			result: import('../shared/diffReviewCommands').DiffReviewCommandResult
 		) => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
@@ -4127,7 +4141,12 @@ interface MaestroAPI {
 			kind?: AutoRunKind;
 		}) => Promise<string>;
 		// End an Auto Run session (update duration and completed count)
-		endAutoRun: (id: string, duration: number, tasksCompleted: number) => Promise<boolean>;
+		endAutoRun: (
+			id: string,
+			duration: number,
+			tasksCompleted: number,
+			tasksTotal?: number
+		) => Promise<boolean>;
 		// Record an Auto Run task completion
 		recordAutoTask: (task: {
 			autoRunSessionId: string;
@@ -4174,20 +4193,10 @@ interface MaestroAPI {
 				projectPath?: string;
 			}>
 		>;
-		// Get tasks for a specific Auto Run session
-		getAutoRunTasks: (autoRunSessionId: string) => Promise<
-			Array<{
-				id: string;
-				autoRunSessionId: string;
-				sessionId: string;
-				agentType: string;
-				taskIndex: number;
-				taskContent?: string;
-				startTime: number;
-				duration: number;
-				success: boolean;
-			}>
-		>;
+		// Auto Run agent turns per local hour of day (24 entries, zero-filled)
+		getAutoRunTurnsByHour: (
+			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<Array<{ hour: number; count: number; successCount: number }>>;
 		// Token & cost usage aggregate for the Tokens tab. Reads agent session
 		// transcripts; `force` bypasses the accessor's in-memory memo.
 		getTokenUsage: (
@@ -4219,24 +4228,16 @@ interface MaestroAPI {
 			filePath: string
 		) => Promise<import('../shared/stats-types').UsageExportResult>;
 		// Subscribe to stats updates (for real-time dashboard refresh)
-		onStatsUpdate: (callback: () => void) => () => void;
-		// Clear old stats data (older than specified number of days)
-		clearOldData: (olderThanDays: number) => Promise<{
-			success: boolean;
-			deletedQueryEvents: number;
-			deletedAutoRunSessions: number;
-			deletedAutoRunTasks: number;
-			deletedSessionLifecycle: number;
-			error?: string;
-		}>;
+		onStatsUpdate: (
+			callback: (table?: import('../shared/stats-types').StatsTable) => void
+		) => () => void;
 		// Get database size in bytes
 		getDatabaseSize: () => Promise<number>;
-		// Get earliest stat timestamp (null if no entries exist)
-		getEarliestTimestamp: () => Promise<number | null>;
 		// Record an image annotation save event
 		recordImageAnnotation: (createdAt: number) => Promise<string | null>;
 		// Record a keyboard shortcut firing (buckets into local-time day)
-		recordShortcutUsage: (firedAt: number) => Promise<string | null>;
+		// `shortcutId` also bumps that shortcut's own counter
+		recordShortcutUsage: (firedAt: number, shortcutId?: string) => Promise<string | null>;
 		// Get per-day shortcut usage counts within a time range
 		getShortcutUsageByDay: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
@@ -4245,7 +4246,11 @@ interface MaestroAPI {
 		getShortcutUsageTotal: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<number>;
-		// Record session creation (launched)
+		// Firings per shortcut id within a time range, most used first
+		getShortcutUsageByShortcut: (
+			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<Array<{ shortcutId: string; count: number }>>;
+		// Record a resolved Agent Resilience outage
 		recordResilience: (event: {
 			id: string;
 			sessionId: string;
@@ -4347,6 +4352,9 @@ interface MaestroAPI {
 			range: CueStatsTimeRange,
 			excludeTriggerTypes?: string[]
 		) => Promise<CueStatsAggregation>;
+		// Runs, completed-run time and tokens only (the Overview's source chart).
+		// Throws 'CueStatsDisabled' under the same gate as getAggregation.
+		getSourceTotals: (range: CueStatsTimeRange) => Promise<CueStatsSourceTotals>;
 		// Conductor time (ms) the retained Cue run history would have credited.
 		// Ungated, unlike getAggregation; resolves 0 when there is no history.
 		getHistoricalConductorCredit: () => Promise<number>;
@@ -5229,6 +5237,8 @@ interface MaestroAPI {
 			agentType?: string,
 			confirmPolicy?: 'off' | 'dangerous' | 'all'
 		) => Promise<void>;
+		/** Coworking `browser:N` id of a browser tab, or null (unknown or hidden from agents). */
+		getBrowserId: (sessionId: string, tabUuid: string) => Promise<string | null>;
 		onRequestBrowserOp: (
 			callback: (
 				tabUuid: string,

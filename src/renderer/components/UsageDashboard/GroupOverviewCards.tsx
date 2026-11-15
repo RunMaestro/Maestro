@@ -7,16 +7,19 @@
  * that client cost.
  *
  * Agents filed under no group land in a synthetic "Ungrouped" tile rather than
- * being dropped, so the tiles still add up to the totals the rest of the
- * dashboard shows. An empty group is omitted - the user can already see it in
- * the Left Bar, and a row of zeroes is noise here.
+ * being dropped, and queries from agents that have since been deleted land in a
+ * synthetic "Deleted agents" tile (they can no longer be attributed to a
+ * group), so the tiles add up to the range's totals on the Overview. An empty
+ * group is omitted - the user can already see it in the Left Bar, and a row of
+ * zeroes is noise here.
  *
  * Cost and tokens only exist for turns recorded after the stats DB grew its
  * token columns, so a tile whose priced-query count is short of its query count
  * says so in the tooltip instead of presenting a partial total as complete.
  *
  * Clicking a tile reports the group up so the dashboard can drill into its
- * members; the arithmetic itself lives in `shared/statsGroupRollup` so it can
+ * members (the Deleted agents tile has no live members, so it is not
+ * clickable); the arithmetic itself lives in `shared/statsGroupRollup` so it can
  * be unit-tested without a store and reused outside the renderer.
  */
 
@@ -26,8 +29,12 @@ import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../../shared/stats-types';
 import type { GroupLike, GroupStatRollup } from '../../../shared/statsGroupRollup';
 import { rollUpGroupStats, totalTokens } from '../../../shared/statsGroupRollup';
-import { formatCost, formatNumber, formatTokensCompact } from '../../../shared/formatters';
-import { formatDurationHuman } from '../../../shared/duration';
+import {
+	formatCost,
+	formatDurationHuman,
+	formatNumber,
+	formatTokensCompact,
+} from '../../../shared/formatters';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { FilterInput } from '../ui/FilterInput';
 import { SegmentedControl, type SegmentedOption } from '../ui/SegmentedControl';
@@ -46,9 +53,12 @@ import {
 	tileGridColumns,
 } from './tileScale';
 import { usageCoverageNote } from './usageCoverage';
+import { buildCalendarSparkline } from './agentOverviewUtils';
 
-const SPARKLINE_DAYS = 14;
-const EM_DASH = '—';
+/** Days behind a group tile's sparkline. */
+const GROUP_SPARKLINE_DAYS = 14;
+/** Placeholder for a value that is absent rather than zero. */
+const NO_VALUE = '-';
 
 type SortMode = 'name' | 'queries' | 'duration' | 'cost' | 'agents';
 
@@ -60,19 +70,10 @@ const SORT_OPTIONS: SegmentedOption<SortMode>[] = [
 	{ value: 'agents', label: 'Agents' },
 ];
 
-/**
- * Last `SPARKLINE_DAYS` daily counts, oldest to newest, left-padded with zeros
- * so every tile's sparkline has the same geometry regardless of how long the
- * group has existed.
- */
-function buildGroupSparkline(byDay: GroupStatRollup['byDay']): number[] {
-	const counts = byDay.slice(-SPARKLINE_DAYS).map((d) => d.count);
-	if (counts.length >= SPARKLINE_DAYS) return counts;
-	return [...new Array(SPARKLINE_DAYS - counts.length).fill(0), ...counts];
-}
-
 interface GroupCardProps {
 	rollup: GroupStatRollup;
+	/** The aggregation's calendar window, so the sparkline ends today. */
+	dayWindow: StatsAggregation['window'];
 	theme: Theme;
 	animationIndex: number;
 	isSelected: boolean;
@@ -82,6 +83,7 @@ interface GroupCardProps {
 
 const GroupCard = memo(function GroupCard({
 	rollup,
+	dayWindow,
 	theme,
 	animationIndex,
 	isSelected,
@@ -91,12 +93,17 @@ const GroupCard = memo(function GroupCard({
 	const tokens = totalTokens(rollup.tokens);
 	const hasUsage = rollup.tokens.pricedQueries > 0;
 	const coverageNote = usageCoverageNote(rollup.tokens.pricedQueries, rollup.queries);
-	const sparkline = useMemo(() => buildGroupSparkline(rollup.byDay), [rollup.byDay]);
+	const sparkline = useMemo(
+		() => buildCalendarSparkline(rollup.byDay, dayWindow, GROUP_SPARKLINE_DAYS),
+		[rollup.byDay, dayWindow]
+	);
 
 	// Providers are the group's real composition - "which agents are in here"
 	// matters more than any single one's name, and the member list is already a
 	// click away.
-	const providerLabel = rollup.providers.map((p) => getAgentDisplayName(p)).join(', ');
+	const providerLabel = rollup.isDeleted
+		? 'Agents deleted since they ran'
+		: rollup.providers.map((p) => getAgentDisplayName(p)).join(', ');
 
 	const stats: EntityTileStat[] = [
 		{
@@ -107,15 +114,15 @@ const GroupCard = memo(function GroupCard({
 		},
 		{
 			label: 'Time',
-			value: rollup.duration > 0 ? formatDurationHuman(rollup.duration) : EM_DASH,
+			value: rollup.duration > 0 ? formatDurationHuman(rollup.duration) : NO_VALUE,
 			muted: rollup.duration === 0,
 			highlighted: highlightedStat === 'duration',
-			title: 'Total agent run time across the group',
+			title: 'Total agent time across the group',
 			testId: 'group-card-duration',
 		},
 		{
 			label: 'Tokens',
-			value: hasUsage ? formatTokensCompact(tokens) : EM_DASH,
+			value: hasUsage ? formatTokensCompact(tokens) : NO_VALUE,
 			muted: !hasUsage,
 			title: hasUsage
 				? `${formatNumber(rollup.tokens.inputTokens)} in / ${formatNumber(
@@ -128,7 +135,7 @@ const GroupCard = memo(function GroupCard({
 		},
 		{
 			label: 'Cost',
-			value: hasUsage ? formatCost(rollup.tokens.costUsd) : EM_DASH,
+			value: hasUsage ? formatCost(rollup.tokens.costUsd) : NO_VALUE,
 			muted: !hasUsage,
 			highlighted: highlightedStat === 'cost',
 			title: coverageNote,
@@ -136,7 +143,9 @@ const GroupCard = memo(function GroupCard({
 		},
 	];
 
-	const agentsLabel = `${rollup.memberCount} ${rollup.memberCount === 1 ? 'agent' : 'agents'}`;
+	const agentsLabel = `${formatNumber(rollup.memberCount)} ${
+		rollup.memberCount === 1 ? 'agent' : 'agents'
+	}`;
 	const autoLabel =
 		rollup.autoPercent === null ? 'no recorded queries' : `${rollup.autoPercent}% auto`;
 
@@ -148,14 +157,16 @@ const GroupCard = memo(function GroupCard({
 			// A group has no live state of its own, so the dot would be a
 			// meaningless decoration - omit it rather than invent a color.
 			age={agentsLabel}
-			ageTitle={`${agentsLabel} in this group`}
+			ageTitle={
+				rollup.isDeleted ? `${agentsLabel} deleted since they ran` : `${agentsLabel} in this group`
+			}
 			ageHighlighted={highlightedStat === 'agents'}
 			badges={
 				rollup.autoPercent !== null
 					? [
 							{
 								label: `${rollup.autoPercent}% auto`,
-								title: `${autoLabel} (Auto Run / Cue)`,
+								title: `${autoLabel} (Auto Run)`,
 								testId: 'group-card-auto-badge',
 							},
 						]
@@ -168,10 +179,11 @@ const GroupCard = memo(function GroupCard({
 			animationIndex={animationIndex}
 			size="lg"
 			isSelected={isSelected}
-			// The Ungrouped bucket is not a real group the user created, so it
-			// carries the same dashed treatment worktree agents get.
-			isDashed={rollup.isUngrouped}
-			onClick={onSelect ? () => onSelect(rollup) : undefined}
+			// The Ungrouped and Deleted agents buckets are not real groups the user
+			// created, so they carry the same dashed treatment worktree agents get.
+			isDashed={rollup.isUngrouped || rollup.isDeleted}
+			// The deleted bucket has no live agents to break down.
+			onClick={onSelect && !rollup.isDeleted ? () => onSelect(rollup) : undefined}
 			ariaLabel={`${rollup.name}, ${agentsLabel}, ${formatNumber(rollup.queries)} ${
 				rollup.queries === 1 ? 'query' : 'queries'
 			}, ${autoLabel}${hasUsage ? `, ${formatCost(rollup.tokens.costUsd)}` : ''}`}
@@ -214,8 +226,10 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 	const rollups = useMemo(() => {
 		// Terminal sessions aren't agents; excluding them here keeps the group
 		// member counts consistent with the Agents tab.
+		// Deleted agents' rows get their own tile so the tiles reconcile with the
+		// range's totals.
 		const agents = sessions.filter((s) => s.toolType !== 'terminal');
-		return rollUpGroupStats(groups, agents, data);
+		return rollUpGroupStats(groups, agents, data, { includeDeletedAgents: true });
 	}, [groups, sessions, data]);
 
 	const sorted = useMemo(() => {
@@ -235,9 +249,15 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 							? alphabetical.slice().sort((a, b) => b.memberCount - a.memberCount)
 							: alphabetical.slice().sort((a, b) => b.tokens.costUsd - a.tokens.costUsd);
 
-		// Ungrouped is a leftovers bucket, not a peer - it sinks to the end
-		// whatever the sort, so a big pile of unfiled agents can't top the board.
-		return [...ordered.filter((r) => !r.isUngrouped), ...ordered.filter((r) => r.isUngrouped)];
+		// Ungrouped and Deleted agents are leftovers buckets, not peers - they
+		// sink to the end whatever the sort, so a big pile of unfiled or deleted
+		// agents can't top the board.
+		const isLeftover = (r: GroupStatRollup) => r.isUngrouped || r.isDeleted;
+		return [
+			...ordered.filter((r) => !isLeftover(r)),
+			...ordered.filter((r) => r.isUngrouped),
+			...ordered.filter((r) => r.isDeleted),
+		];
 	}, [rollups, sortMode]);
 
 	const filtered = useMemo(() => {
@@ -254,8 +274,8 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 	// counts and reported separately - "23 agents unfiled" is the actionable
 	// half of this tab, and folding it into the group total would hide it.
 	const footerCounts = useMemo(() => {
-		const real = rollups.filter((r) => !r.isUngrouped).length;
-		const visible = filtered.filter((r) => !r.isUngrouped).length;
+		const real = rollups.filter((r) => !r.isUngrouped && !r.isDeleted).length;
+		const visible = filtered.filter((r) => !r.isUngrouped && !r.isDeleted).length;
 		const unfiled = rollups.find((r) => r.isUngrouped)?.memberCount ?? 0;
 		return { real, visible, unfiled };
 	}, [rollups, filtered]);
@@ -339,6 +359,7 @@ export const GroupOverviewCards = memo(function GroupOverviewCards({
 						<GroupCard
 							key={rollup.groupId}
 							rollup={rollup}
+							dayWindow={data.window}
 							theme={theme}
 							animationIndex={index}
 							isSelected={rollup.groupId === activeGroupId}

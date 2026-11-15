@@ -351,7 +351,7 @@ export function useModalHandlers(
 			}
 			// Also bump the daily-firings counter so the Usage Dashboard bar
 			// chart includes shortcuts handled inside the System Log Viewer.
-			void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
+			void window.maestro?.stats?.recordShortcutUsage?.(Date.now(), shortcutId);
 		},
 		[onKeyboardMasteryLevelUp]
 	);

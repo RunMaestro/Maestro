@@ -159,6 +159,19 @@ comment. `Cmd+[` and `Cmd+]` keep switching agents, so indent with `Tab` and
 `Shift+Tab` instead. With **Vim keybindings** on, `Esc` returns to Vim's normal
 mode, and `Cmd+E` leaves the editor.
 
+## Git Diff Review
+
+These work while the Git Diff viewer is open over an agent that can take a
+review. See [Reviewing Diffs](./diff-review).
+
+| Action                        | macOS                     | Windows/Linux             |
+| ----------------------------- | ------------------------- | ------------------------- |
+| Move the line cursor          | `Down` / `Up`             | `Down` / `Up`             |
+| Extend the line selection     | `Shift+Down` / `Shift+Up` | `Shift+Down` / `Shift+Up` |
+| Comment on the selected lines | `C`                       | `C`                       |
+| Save the comment              | `Cmd+Enter`               | `Ctrl+Enter`              |
+| Send the review               | `Cmd+Shift+Enter`         | `Ctrl+Shift+Enter`        |
+
 ## Group Chat
 
 A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.
@@ -213,33 +226,34 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 
 ## Tab Management Shortcuts
 
-| Action                    | macOS                   | Windows/Linux             |
-| ------------------------- | ----------------------- | ------------------------- |
-| New Tab                   | `Cmd+T`                 | `Ctrl+T`                  |
-| New Browser Tab           | `Cmd+B`                 | `Ctrl+B`                  |
-| New File Tab              | `Opt+N`                 | `Alt+N`                   |
-| New Terminal Tab          | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
-| Focus Browser Address Bar | `Cmd+L`                 | `Ctrl+L`                  |
-| Find in Browser Tab       | `Cmd+F`                 | `Ctrl+F`                  |
-| Focus Active Tab          | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
-| Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
-| Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
-| Show Snoozed Tabs         | unassigned by default   | unassigned by default     |
-| Move Tab to First         | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
-| Move Tab to Last          | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
-| Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
-| Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
-| Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
-| Close Tabs to Left        | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
-| Close Tabs to Right       | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
-| Reopen Closed Tab         | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
-| Previous Tab              | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
-| Next Tab                  | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
-| Tab Switcher              | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
-| Rename Tab                | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
-| Rename Tab Group          | unassigned by default   | unassigned by default     |
-| Go to Tab 1-9             | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
-| Go to Last Tab            | `Cmd+0`                 | `Ctrl+0`                  |
+| Action                     | macOS                   | Windows/Linux             |
+| -------------------------- | ----------------------- | ------------------------- |
+| New Tab                    | `Cmd+T`                 | `Ctrl+T`                  |
+| New Browser Tab            | `Cmd+B`                 | `Ctrl+B`                  |
+| New File Tab               | `Opt+N`                 | `Alt+N`                   |
+| New Terminal Tab           | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
+| Focus Browser Address Bar  | `Cmd+L`                 | `Ctrl+L`                  |
+| Find in Browser Tab        | `Cmd+F`                 | `Ctrl+F`                  |
+| Toggle Browser Design Mode | `Cmd+Shift+C`           | `Ctrl+Shift+C`            |
+| Focus Active Tab           | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
+| Snooze Tab                 | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
+| Change Model and Effort    | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
+| Show Snoozed Tabs          | unassigned by default   | unassigned by default     |
+| Move Tab to First          | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
+| Move Tab to Last           | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
+| Close Tab                  | `Cmd+W`                 | `Ctrl+W`                  |
+| Close All Tabs             | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
+| Close Other Tabs           | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
+| Close Tabs to Left         | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
+| Close Tabs to Right        | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
+| Reopen Closed Tab          | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
+| Previous Tab               | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
+| Next Tab                   | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
+| Tab Switcher               | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
+| Rename Tab                 | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
+| Rename Tab Group           | unassigned by default   | unassigned by default     |
+| Go to Tab 1-9              | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
+| Go to Last Tab             | `Cmd+0`                 | `Ctrl+0`                  |
 
 In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
 Right Bar instead, switching between the Participants and History panels. The Right
@@ -508,6 +522,15 @@ organizer is open. They stop firing while the lightbox or the annotator is open
 on top of it.
 
 ## Usage Dashboard
+
+These keys move between the dashboard's tabs while it is open. See
+[Keyboard Navigation](./usage-dashboard#keyboard-navigation) for the keys that
+move between sections inside a tab.
+
+| Action       | macOS         | Windows/Linux  |
+| ------------ | ------------- | -------------- |
+| Previous tab | `Cmd+Shift+[` | `Ctrl+Shift+[` |
+| Next tab     | `Cmd+Shift+]` | `Ctrl+Shift+]` |
 
 The Agents and Groups tabs draw one tile per agent or group. The tile size is
 yours to set, and it is remembered across restarts. See

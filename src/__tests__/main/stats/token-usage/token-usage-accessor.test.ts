@@ -44,7 +44,7 @@ import {
 import type { TokenSpeedBucket } from '../../../../shared/tokenSpeed';
 import type { UsageCost } from '../../../../shared/types';
 
-const { toBreakdown, aggregate, bucketStart } = _internal;
+const { toBreakdown, aggregate, bucketStart, resolveWindow } = _internal;
 
 function makeInfo(overrides: Partial<AgentSessionInfo> = {}): AgentSessionInfo {
 	return {
@@ -143,6 +143,42 @@ describe('toBreakdown', () => {
 		const bd = toBreakdown('made-up-agent', makeInfo({ inputTokens: 1 }));
 		expect(bd.coverage).toBe('unsupported');
 	});
+
+	it('stores Codex input as fresh tokens only, so cached reads are not counted twice', () => {
+		// Codex counts cached tokens INSIDE input_tokens: 1,000 input of which 800 cached.
+		const info = makeInfo({
+			byModel: [
+				model({
+					model: 'gpt-5',
+					inputTokens: 1_000,
+					cacheReadTokens: 800,
+					outputTokens: 50,
+					costUsd: 0.42,
+					costEstimated: true,
+				}),
+			],
+		});
+		const bd = toBreakdown('codex', info);
+		expect(bd.byModel[0].inputTokens).toBe(200);
+		expect(bd.byModel[0].cacheReadTokens).toBe(800);
+		expect(bd.inputTokens).toBe(200);
+		expect(bd.inputTokens + bd.cacheReadTokens + bd.outputTokens).toBe(1_050);
+		// The cost was priced from the raw Codex counts and is carried over as-is.
+		expect(bd.costUsd).toBeCloseTo(0.42, 10);
+	});
+
+	it('normalizes the Codex fallback bucket too', () => {
+		const bd = toBreakdown('codex', makeInfo({ inputTokens: 500, cacheReadTokens: 300 }));
+		expect(bd.byModel[0].inputTokens).toBe(200);
+		expect(bd.inputTokens).toBe(200);
+	});
+
+	it('leaves Claude input alone (its cache reads are already separate)', () => {
+		const info = makeInfo({
+			byModel: [model({ inputTokens: 100, cacheReadTokens: 5_000 })],
+		});
+		expect(toBreakdown('claude-code', info).inputTokens).toBe(100);
+	});
 });
 
 describe('aggregate', () => {
@@ -224,7 +260,17 @@ describe('aggregate', () => {
 	it('skips sessions with an empty model split', () => {
 		const agg = aggregate([breakdown({ byModel: [] })], {});
 		expect(agg.totals.sessionCount).toBe(0);
+		// An open window with no activity has nothing to span.
 		expect(agg.timeline).toEqual([]);
+	});
+
+	it('reports what the totals leave out', () => {
+		const excluded = { unsupportedAgents: ['grok'], remoteProjects: 2 };
+		expect(aggregate([breakdown()], {}, excluded).excluded).toEqual(excluded);
+		expect(aggregate([breakdown()], {}).excluded).toEqual({
+			unsupportedAgents: [],
+			remoteProjects: 0,
+		});
 	});
 
 	it('records per-agent coverage in the aggregate', () => {
@@ -239,14 +285,73 @@ describe('aggregate', () => {
 		expect(agg.coverageByAgent['codex']).toBe('partial');
 	});
 
-	it('buckets the timeline and returns it in ascending order', () => {
+	it('buckets the timeline densely over the window, idle slices included, in order', () => {
 		const all: SessionTokenBreakdown[] = [
-			breakdown({ sessionId: 'a', timestampMs: Date.parse('2026-03-10T09:00:00Z') }),
-			breakdown({ sessionId: 'b', timestampMs: Date.parse('2026-03-12T09:00:00Z') }),
+			breakdown({ sessionId: 'a', timestampMs: new Date(2026, 2, 10, 9).getTime() }),
+			breakdown({ sessionId: 'b', timestampMs: new Date(2026, 2, 12, 9).getTime() }),
 		];
-		const agg = aggregate(all, { granularity: 'day' });
-		expect(agg.timeline).toHaveLength(2);
-		expect(agg.timeline[0].startMs).toBeLessThan(agg.timeline[1].startMs);
+		const agg = aggregate(all, {
+			granularity: 'day',
+			sinceMs: new Date(2026, 2, 9).getTime(),
+			untilMs: new Date(2026, 2, 13, 12).getTime(),
+		});
+		expect(agg.timeline.map((b) => new Date(b.startMs).getDate())).toEqual([9, 10, 11, 12, 13]);
+		expect(agg.timeline.map((b) => b.sessionCount)).toEqual([0, 1, 0, 1, 0]);
+		expect(agg.granularity).toBe('day');
+		expect(agg.windowStartMs).toBe(new Date(2026, 2, 9).getTime());
+	});
+
+	it('picks the granularity from the window span when the query omits it', () => {
+		const now = new Date(2026, 9, 31, 12).getTime();
+		const day = 24 * 3_600_000;
+		const bd = [breakdown({ timestampMs: now - day })];
+		expect(
+			aggregate(bd, { sinceMs: new Date(2026, 9, 31).getTime() }, undefined, now).granularity
+		).toBe('hour');
+		expect(aggregate(bd, { sinceMs: now - 7 * day }, undefined, now).granularity).toBe('day');
+		expect(aggregate(bd, { sinceMs: now - 365 * day }, undefined, now).granularity).toBe('week');
+	});
+
+	it('uses the same slices for the speed timeline as for the consumption timeline', () => {
+		const now = new Date(2026, 9, 31, 12).getTime();
+		const agg = aggregate(
+			[breakdown({ timestampMs: now - 3_600_000 })],
+			{ sinceMs: now - 30 * 24 * 3_600_000 },
+			undefined,
+			now
+		);
+		expect(agg.speed.granularity).toBe(agg.granularity);
+		expect(agg.speed.timeline.map((p) => p.startMs)).toEqual(agg.timeline.map((b) => b.startMs));
+	});
+});
+
+describe('resolveWindow', () => {
+	it('starts an open (All Time) window at the earliest activity, speed included', () => {
+		const now = new Date(2026, 9, 31).getTime();
+		const sessionAt = new Date(2026, 5, 1).getTime();
+		const callAt = new Date(2026, 4, 1).getTime();
+		const win = resolveWindow(
+			[
+				breakdown({
+					timestampMs: sessionAt,
+					speed: [
+						{
+							startMs: callAt,
+							model: 'm',
+							calls: 1,
+							inputTokens: 1,
+							outputTokens: 1,
+							durationMs: 1000,
+						},
+					],
+				}),
+			],
+			{},
+			now
+		);
+		expect(win.startMs).toBe(callAt);
+		expect(win.endMs).toBe(now);
+		expect(win.granularity).toBe('week');
 	});
 });
 
@@ -499,6 +604,11 @@ describe('Grok native lifetime accounting', () => {
 });
 
 describe('bucketStart', () => {
+	it('rounds down to the hour for hour granularity', () => {
+		const ms = new Date(2026, 2, 15, 13, 45, 30).getTime();
+		expect(bucketStart(ms, 'hour')).toBe(new Date(2026, 2, 15, 13).getTime());
+	});
+
 	it('rounds down to local midnight for day granularity', () => {
 		const ms = new Date(2026, 2, 15, 13, 45, 30).getTime();
 		const start = new Date(bucketStart(ms, 'day'));

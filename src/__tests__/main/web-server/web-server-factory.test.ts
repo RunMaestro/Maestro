@@ -59,6 +59,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setClosedTabCommandCallback = vi.fn();
 			setMessagePinCommandCallback = vi.fn();
 			setAutoRunSteeringCommandCallback = vi.fn();
+			setDiffReviewCommandCallback = vi.fn();
 			setWindowCommandCallback = vi.fn();
 			setThroughputGaugeCommandCallback = vi.fn();
 			setReorderTabCallback = vi.fn();
@@ -66,6 +67,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setOpenFileTabCallback = vi.fn();
 			setOpenBrowserTabCallback = vi.fn();
 			setCloseBrowserTabCallback = vi.fn();
+			setPickBrowserElementCallback = vi.fn();
 			setOpenTerminalTabCallback = vi.fn();
 			setWriteTerminalTabCallback = vi.fn();
 			setListTerminalTabsCallback = vi.fn();
@@ -2470,18 +2472,11 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('usageAchievementsCallbacks smoke', () => {
-		it('setGetUsageDashboardCallback forwards to the renderer', () => {
+		it('registers no usage dashboard callback (no renderer answers it)', () => {
 			const createWebServer = createWebServerFactory(deps);
 			const server = createWebServer() as any;
-			const callback = server.setGetUsageDashboardCallback.mock.calls[0][0];
 
-			void callback('week');
-
-			expect(mockWebContents.send).toHaveBeenCalledWith(
-				'remote:getUsageDashboard',
-				'week',
-				expect.any(String)
-			);
+			expect(server.setGetUsageDashboardCallback).not.toHaveBeenCalled();
 		});
 
 		it('setGetAchievementsCallback forwards to the renderer', () => {
@@ -2907,6 +2902,34 @@ describe('web-server/web-server-factory', () => {
 			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
 			const server = createWebServer() as any;
 			const callback = server.setAutoRunSteeringCommandCallback.mock.calls[0][0];
+
+			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
+				success: false,
+				error: 'Maestro window is not available',
+			});
+		});
+	});
+
+	describe('diffReview callback', () => {
+		it('forwards the request to the renderer and waits on a response channel', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setDiffReviewCommandCallback.mock.calls[0][0];
+			const request = { action: 'list', sessionId: 'session-1' };
+
+			void callback(request);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:diffReviewCommand',
+				request,
+				expect.stringContaining('remote:diffReviewCommand:response:')
+			);
+		});
+
+		it('answers with a failure when no window is available', async () => {
+			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
+			const server = createWebServer() as any;
+			const callback = server.setDiffReviewCommandCallback.mock.calls[0][0];
 
 			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
 				success: false,

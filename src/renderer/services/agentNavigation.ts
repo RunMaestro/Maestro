@@ -16,7 +16,7 @@
  * component without threading callbacks down through modal trees.
  */
 
-import type { Session } from '../types';
+import type { PanelLayoutNode, Session } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
 import { useUIStore } from '../stores/uiStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
@@ -24,6 +24,7 @@ import { useGroupChatStore } from '../stores/groupChatStore';
 import { useModalStore } from '../stores/modalStore';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { requestSidebarReveal } from '../utils/sidebarReveal';
+import { findLeafByTabRef, focusPaneInSession } from '../utils/panelLayout';
 
 /**
  * Make sure a jumped-to agent is actually visible in the Left Bar, without
@@ -61,6 +62,20 @@ export function revealAgentInSidebar(session: Session): void {
 export interface JumpToAgentOptions {
 	/** AI tab to land on. Ignored when the agent no longer has that tab. */
 	tabId?: string;
+	/**
+	 * When `tabId` is an AI pane of the agent's active tiled group, make it the
+	 * active pane and leave the group up, instead of leaving the group to show
+	 * the tab alone. Undoing a split the user built is not part of "show me".
+	 */
+	stayInTiledGroup?: boolean;
+}
+
+/** The leaf of the agent's active tiled group that shows AI tab `tabId`, if any. */
+function activeGroupPaneFor(session: Session, tabId: string): PanelLayoutNode | null {
+	const group = session.activeGroupId
+		? session.tabGroups?.find((g) => g.id === session.activeGroupId)
+		: undefined;
+	return group ? findLeafByTabRef(group.layout, { type: 'ai', id: tabId }) : null;
 }
 
 /**
@@ -90,13 +105,27 @@ export function jumpToAgent(sessionId: string, options: JumpToAgentOptions = {})
 	// permanent column.
 	useUIStore.getState().closeLeftSidebarForNavigation();
 
+	const targetTabId =
+		options.tabId && session.aiTabs?.some((t) => t.id === options.tabId)
+			? options.tabId
+			: undefined;
+	const keptPane =
+		options.stayInTiledGroup && targetTabId ? activeGroupPaneFor(session, targetTabId) : null;
+	if (keptPane) {
+		// A zoomed pane renders alone; if it is not the one being shown, the
+		// target pane would stay hidden behind it.
+		const { zoomedPaneId, setZoomedPaneId } = useUIStore.getState();
+		if (zoomedPaneId && zoomedPaneId !== keptPane.id) setZoomedPaneId(null);
+	}
+
 	// Clear file / terminal / browser active-tab state so the jump shows the AI
 	// terminal even when the agent was last viewed on another tab type.
 	setSessions((prev) =>
 		prev.map((s) => {
 			if (s.id !== sessionId) return s;
-			const targetTabId =
-				options.tabId && s.aiTabs?.some((t) => t.id === options.tabId) ? options.tabId : undefined;
+			// Focus the pane, not just the tab: the composer is drawn for the
+			// group's focused pane, so a file pane left focused would hide it.
+			if (keptPane && s.activeGroupId) return focusPaneInSession(s, s.activeGroupId, keptPane.id);
 			return { ...s, ...aiTabFocusFields(targetTabId) };
 		})
 	);

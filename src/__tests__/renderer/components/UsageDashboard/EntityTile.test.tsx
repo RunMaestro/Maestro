@@ -145,7 +145,7 @@ describe('EntityTile', () => {
 				stats={[
 					{ label: 'Queries', value: '7', testId: 'tile-queries', highlighted: true },
 					{ label: 'Tabs', value: '2', testId: 'tile-tabs' },
-					{ label: 'Auto %', value: '—', testId: 'tile-auto', muted: true },
+					{ label: 'Auto %', value: '-', testId: 'tile-auto', muted: true },
 				]}
 			/>
 		);
@@ -165,7 +165,7 @@ describe('EntityTile', () => {
 			<EntityTile
 				{...baseProps}
 				stats={[
-					{ label: 'Auto %', value: '—', testId: 'tile-auto', highlighted: true, muted: true },
+					{ label: 'Auto %', value: '-', testId: 'tile-auto', highlighted: true, muted: true },
 				]}
 			/>
 		);

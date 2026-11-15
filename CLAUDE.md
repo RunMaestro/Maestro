@@ -314,7 +314,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Running a shell code fence from an agent's reply:** `requestCodeFenceCommand()` / `CODE_FENCE_COMMAND_EVENT` in `src/renderer/services/codeFenceCommand.ts`, `isRunnableShellLanguage()` / `commandFromShellFence()` in `src/renderer/utils/shellCommandInput.ts`, drawn by `<CodeRunButton>`
 - **Ask the model for a shell command (AI command mode):** `requestAiCommand()`, `acceptAiCommand()`, `dismissAiCommand()` in `src/renderer/services/aiCommand.ts`; prompt in `src/prompts/ai-command.md`
 - **A composer's send column (notification bell + Send):** `<ComposerSendColumn>` in `src/renderer/components/ChatComposer/ComposerSendColumn.tsx`
-- **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer(sessionId, text)` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()` / `formatFileSelection()` in `src/renderer/utils/quoteSelection.ts`
+- **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer()`, `insertIntoAgentComposer()`, `resolveComposerTarget()` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()`, `appendBlockToDraft()` in `src/renderer/utils/quoteSelection.ts`
+- **Picking an element in a browser tab (Design Mode):** `captureDesignPick()`, `designModeGuestCall()` in `src/renderer/utils/designModePicker.ts`; `deliverDesignPick()` in `src/renderer/services/designModePick.ts`
 - **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx`
 - **Trimming a text paste in a composer:** `applyTrimmedTextPaste(e, currentValue, setValue)` / `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
 - **Composer keys both chat composers share (Cmd+F, `@` picker, Tab, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerAgentTabKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`
@@ -449,8 +450,12 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Switching a `key = value` entry off without deleting it:** `splitParkedEntries()` / `setKeysParked()` / `parkedPairKeys()` in `src/shared/parkedRecords.ts`
 - **Record view for one table row:** `<RecordDetailModal>` in `src/renderer/components/ui/RecordDetailModal.tsx`
 - **Usage Dashboard card tile:** `<EntityTile>` in `src/renderer/components/UsageDashboard/EntityTile.tsx`
-- **Usage Dashboard metric tile:** `<MetricCard>` in `src/renderer/components/UsageDashboard/MetricCard.tsx`
+- **Usage Dashboard metric tile:** `<MetricCard>` in `src/renderer/components/UsageDashboard/SummaryCards.tsx`
 - **Color for the Nth chart series:** `getSeriesColor(index, theme, colorBlindMode?)` in `src/renderer/components/UsageDashboard/chartUtils.ts`
+- **Loading / error / empty states for a dashboard panel:** `useDashboardResource()`, `<DashboardPanelState>` in `src/renderer/components/UsageDashboard/`
+- **Per-day chart series with idle days kept:** `fillDaySeries()`, `localDaysBetween()` in `src/shared/daySeries.ts`; `usageReadWindow()` in `src/shared/statsTimeRange.ts`
+- **Auto Run run and task totals:** `computeAutoRunMetrics()` in `src/shared/autoRunMetrics.ts`
+- **Usage Dashboard reads for the CLI and export:** `src/main/stats/usage-dashboard-reads.ts` over `src/shared/usageDashboardReads.ts`
 - **A label that must not truncate:** `useOptionalLabelFits(rowRef)` in `src/renderer/hooks/ui/useOptionalLabelFits.ts`
 - **A Settings section the search can show inline:** `GENERAL_SECTIONS`, `DISPLAY_SECTIONS`, `ENCORE_SECTIONS` in each tab's `sections.tsx`, `findSettingsSection(settingId)` in `src/renderer/components/Settings/settingsSections.ts`
 - **Adding a control to the Left Bar header:** three zones (identity, indicators, menu); a status control goes in the CENTER band and the wordmark never truncates (`showWordmark` in `SessionList.tsx`)

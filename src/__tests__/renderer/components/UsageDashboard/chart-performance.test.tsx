@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import React from 'react';
 import { DurationTrendsChart } from '../../../../renderer/components/UsageDashboard/DurationTrendsChart';
 import { ActivityHeatmap } from '../../../../renderer/components/UsageDashboard/ActivityHeatmap';
@@ -131,28 +131,17 @@ describe('Chart Performance: Recharts NOT Used (Custom SVG Charts)', () => {
 			expect(true).toBe(true); // Documentation test
 		});
 
-		it('DurationTrendsChart uses custom SVG, not Recharts', () => {
+		it('DurationTrendsChart uses the shared SVG line chart, not Recharts', () => {
 			const data = generateLargeDataset(7);
-			const { container } = render(
-				<DurationTrendsChart data={data} timeRange="week" theme={theme} />
-			);
+			const { container } = render(<DurationTrendsChart data={data} theme={theme} />);
 
-			// Custom implementation uses raw SVG elements
-			const svg = container.querySelector('svg');
-			expect(svg).toBeInTheDocument();
-
-			// Custom paths for line and area
-			const paths = container.querySelectorAll('path');
-			expect(paths.length).toBeGreaterThanOrEqual(2);
-
-			// No Recharts-specific class names or data attributes
-			const rechartsElements = container.querySelectorAll('[class*="recharts"]');
-			expect(rechartsElements.length).toBe(0);
+			expect(container.querySelector('svg')).toBeInTheDocument();
+			expect(container.querySelectorAll('polyline, circle').length).toBeGreaterThan(0);
+			expect(container.querySelectorAll('[class*="recharts"]').length).toBe(0);
 		});
-
 		it('ActivityHeatmap uses custom divs, not Recharts', () => {
 			const data = generateLargeDataset(30);
-			const { container } = render(<ActivityHeatmap data={data} timeRange="month" theme={theme} />);
+			const { container } = render(<ActivityHeatmap data={data} theme={theme} />);
 
 			// Custom implementation uses divs for cells
 			const wrapper = container.firstChild as HTMLElement;
@@ -191,90 +180,27 @@ describe('Chart Performance: Recharts NOT Used (Custom SVG Charts)', () => {
 	});
 
 	describe('Large dataset handling (365 days)', () => {
-		it('DurationTrendsChart renders 365 data points without excessive DOM elements', () => {
+		it('DurationTrendsChart draws a 365-day window as weekly slots, not 365 points', () => {
 			const data = generateLargeDataset(365);
-			const { container } = render(
-				<DurationTrendsChart data={data} timeRange="year" theme={theme} />
-			);
+			const { container } = render(<DurationTrendsChart data={data} theme={theme} />);
 
-			// Should render data points
-			const circles = container.querySelectorAll('circle');
-			expect(circles.length).toBe(365);
-
-			// Total DOM elements should be reasonable
-			// 365 circles + ~10 axis labels + lines + paths + wrapper elements
-			// Should be under 500 total elements
-			const allElements = container.querySelectorAll('*');
-			expect(allElements.length).toBeLessThan(600);
+			// No per-point elements beyond isolated dots; the line is one polyline per run.
+			expect(container.querySelectorAll('circle').length).toBeLessThan(60);
+			expect(container.querySelectorAll('*').length).toBeLessThan(600);
 		});
-
 		it('ActivityHeatmap handles 365 days with GitHub-style grid', () => {
 			const data = generateLargeDataset(365);
-			const { container } = render(<ActivityHeatmap data={data} timeRange="year" theme={theme} />);
+			render(<ActivityHeatmap data={data} theme={theme} />);
 
-			// GitHub-style layout for year view: weeks as columns, 7 days per week as rows
-			// ~52-53 weeks * 7 days = ~364-371 cells + placeholder cells for incomplete weeks
-			// Plus legend cells (5 for intensity scale)
-			const cells = container.querySelectorAll('.rounded-sm');
-			expect(cells.length).toBeGreaterThan(350); // At least most cells rendered
-			expect(cells.length).toBeLessThanOrEqual(400); // ~371 cells + placeholders + legend
-		});
-
-		it('DurationTrendsChart X-axis labels are intelligently reduced for year view', () => {
-			const data = generateLargeDataset(365);
-			const { container } = render(
-				<DurationTrendsChart data={data} timeRange="year" theme={theme} />
-			);
-
-			// X-axis labels should be reduced (not all 365 shown)
-			// For year view, labels show month names
-			const textElements = container.querySelectorAll('text');
-			const xAxisLabels = Array.from(textElements).filter(
-				(el) =>
-					!el.textContent?.match(/^\d+(s|m|h)$/) && // Not Y-axis labels
-					!el.textContent?.includes('Duration') // Not axis title
-			);
-
-			// Should have ~12 month labels + a few day labels, not 365
-			expect(xAxisLabels.length).toBeLessThan(30);
+			// One cell per real day; placeholder padding is not a cell.
+			const cells = screen.getAllByTestId('activity-heatmap-cell');
+			expect(cells.length).toBeGreaterThan(350);
+			expect(cells.length).toBeLessThanOrEqual(371);
 		});
 	});
 
 	describe('useMemo optimization verification', () => {
 		// These tests document that the charts use useMemo for expensive calculations
-
-		it('DurationTrendsChart uses useMemo for chartData calculation', () => {
-			// The component uses useMemo at line ~152:
-			// const chartData = useMemo((): DataPoint[] => { ... }, [data.byDay, timeRange, showSmoothed]);
-			//
-			// This prevents recalculation on every render
-			expect(true).toBe(true); // Documentation test
-		});
-
-		it('DurationTrendsChart uses useMemo for scale calculations', () => {
-			// The component uses useMemo at line ~175:
-			// const { xScale, yScale, yTicks } = useMemo(() => { ... }, [chartData, chartHeight, innerWidth, innerHeight, padding]);
-			//
-			// This prevents expensive scale recalculation on every render
-			expect(true).toBe(true); // Documentation test
-		});
-
-		it('DurationTrendsChart uses useMemo for path generation', () => {
-			// The component uses useMemo at line ~210:
-			// const linePath = useMemo(() => { ... }, [chartData, xScale, yScale]);
-			// const areaPath = useMemo(() => { ... }, [chartData, xScale, yScale, chartHeight, padding.bottom]);
-			//
-			// This prevents expensive SVG path string generation on every render
-			expect(true).toBe(true); // Documentation test
-		});
-
-		it('ActivityHeatmap uses useMemo for weeksData calculation', () => {
-			// The component uses useMemo at line ~172:
-			// const weeksData = useMemo((): WeekData[] => { ... }, [dayDataMap, metricMode, timeRange]);
-			//
-			// This prevents recalculating 52 weeks * 7 days on every render
-			expect(true).toBe(true); // Documentation test
-		});
 
 		it('AgentComparisonChart uses useMemo for sorted agent data', () => {
 			// The component uses useMemo at line ~100:
@@ -294,36 +220,6 @@ describe('Chart Performance: Recharts NOT Used (Custom SVG Charts)', () => {
 	});
 
 	describe('CSS transition optimization (no JavaScript animations)', () => {
-		it('DurationTrendsChart uses CSS transitions for smooth data updates', () => {
-			const data = generateLargeDataset(30);
-			const { container } = render(
-				<DurationTrendsChart data={data} timeRange="month" theme={theme} />
-			);
-
-			// Line path has CSS transition
-			const paths = container.querySelectorAll('path');
-			const linePath = Array.from(paths).find(
-				(p) => p.getAttribute('stroke') && p.getAttribute('fill') === 'none'
-			);
-
-			const style = (linePath as HTMLElement).style;
-			expect(style.transition).toContain('d 0.5s');
-			expect(style.transition).toContain('cubic-bezier');
-		});
-
-		it('DurationTrendsChart data points use CSS transitions for position changes', () => {
-			const data = generateLargeDataset(30);
-			const { container } = render(
-				<DurationTrendsChart data={data} timeRange="month" theme={theme} />
-			);
-
-			const circles = container.querySelectorAll('circle');
-			const style = (circles[0] as unknown as HTMLElement).style;
-
-			expect(style.transition).toContain('cx');
-			expect(style.transition).toContain('cy');
-		});
-
 		it('AgentComparisonChart bars use CSS transitions for width changes', () => {
 			const data = generateManyAgentsData(5);
 			const { container } = render(<AgentComparisonChart data={data} theme={theme} />);
@@ -335,7 +231,7 @@ describe('Chart Performance: Recharts NOT Used (Custom SVG Charts)', () => {
 
 		it('ActivityHeatmap cells use CSS transitions for color changes', () => {
 			const data = generateLargeDataset(30);
-			const { container } = render(<ActivityHeatmap data={data} timeRange="month" theme={theme} />);
+			const { container } = render(<ActivityHeatmap data={data} theme={theme} />);
 
 			// Cells should have transition for background-color
 			const cells = container.querySelectorAll('.rounded-sm[style*="transition"]');
@@ -359,9 +255,7 @@ describe('Chart Performance: Recharts NOT Used (Custom SVG Charts)', () => {
 	describe('DOM element count optimization', () => {
 		it('DurationTrendsChart maintains reasonable element count with 100 data points', () => {
 			const data = generateLargeDataset(100);
-			const { container } = render(
-				<DurationTrendsChart data={data} timeRange="month" theme={theme} />
-			);
+			const { container } = render(<DurationTrendsChart data={data} theme={theme} />);
 
 			// Count total DOM elements
 			const allElements = container.querySelectorAll('*');
@@ -373,7 +267,7 @@ describe('Chart Performance: Recharts NOT Used (Custom SVG Charts)', () => {
 
 		it('ActivityHeatmap uses efficient cell structure', () => {
 			const data = generateLargeDataset(365);
-			const { container } = render(<ActivityHeatmap data={data} timeRange="year" theme={theme} />);
+			const { container } = render(<ActivityHeatmap data={data} theme={theme} />);
 
 			const allElements = container.querySelectorAll('*');
 
@@ -413,9 +307,7 @@ describe('Chart Performance: Recharts NOT Used (Custom SVG Charts)', () => {
 			// Not the full StatsAggregation object
 
 			const data = generateLargeDataset(365);
-			const { container } = render(
-				<DurationTrendsChart data={data} timeRange="year" theme={theme} />
-			);
+			const { container } = render(<DurationTrendsChart data={data} theme={theme} />);
 
 			// Component renders successfully with large data
 			expect(container).toBeInTheDocument();
@@ -451,13 +343,9 @@ describe('Chart Performance: Recharts NOT Used (Custom SVG Charts)', () => {
 				byDay: [],
 			};
 
-			expect(() =>
-				render(<DurationTrendsChart data={emptyData} timeRange="year" theme={theme} />)
-			).not.toThrow();
+			expect(() => render(<DurationTrendsChart data={emptyData} theme={theme} />)).not.toThrow();
 
-			expect(() =>
-				render(<ActivityHeatmap data={emptyData} timeRange="year" theme={theme} />)
-			).not.toThrow();
+			expect(() => render(<ActivityHeatmap data={emptyData} theme={theme} />)).not.toThrow();
 
 			expect(() => render(<AgentComparisonChart data={emptyData} theme={theme} />)).not.toThrow();
 
@@ -476,13 +364,15 @@ describe('Chart Performance: Recharts NOT Used (Custom SVG Charts)', () => {
 				byDay: [{ date: new Date().toISOString().split('T')[0], count: 1, duration: 60000 }],
 			};
 
-			const { container } = render(
-				<DurationTrendsChart data={singlePoint} timeRange="day" theme={theme} />
-			);
+			const { container } = render(<DurationTrendsChart data={singlePoint} theme={theme} />);
 
-			// Should render 1 data point
-			const circles = container.querySelectorAll('circle');
-			expect(circles.length).toBe(1);
+			// A point with no neighbours is drawn as a dot: a zero-length round-capped line.
+			const dots = Array.from(container.querySelectorAll('line')).filter(
+				(l) =>
+					l.getAttribute('x1') === l.getAttribute('x2') &&
+					l.getAttribute('y1') === l.getAttribute('y2')
+			);
+			expect(dots.length).toBe(1);
 		});
 
 		it('handles very large duration values without overflow', () => {
@@ -501,9 +391,7 @@ describe('Chart Performance: Recharts NOT Used (Custom SVG Charts)', () => {
 				],
 			};
 
-			expect(() =>
-				render(<DurationTrendsChart data={largeValues} timeRange="day" theme={theme} />)
-			).not.toThrow();
+			expect(() => render(<DurationTrendsChart data={largeValues} theme={theme} />)).not.toThrow();
 		});
 
 		it('handles many agents (15+) without performance degradation', () => {
