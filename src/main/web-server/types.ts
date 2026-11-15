@@ -11,6 +11,10 @@ import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../../shared/autoRunSteeringCommands';
+import type {
+	DiffReviewCommandRequest,
+	DiffReviewCommandResult,
+} from '../../shared/diffReviewCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
@@ -417,6 +421,15 @@ export type ReopenClosedTabCallback = (
 export type AutoRunSteeringCommandCallback = (
 	request: SteeringCommandRequest
 ) => Promise<SteeringCommandResult>;
+
+/**
+ * One Git Diff review verb, forwarded to the renderer - which holds the pending
+ * comments the viewer draws - and answered with whatever it did. Resolves
+ * rather than rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type DiffReviewCommandCallback = (
+	request: DiffReviewCommandRequest
+) => Promise<DiffReviewCommandResult>;
 /**
  * `maestro-cli window` - list windows, or move an agent or a whole group
  * between them. Answered by the primary window through the same WindowContext

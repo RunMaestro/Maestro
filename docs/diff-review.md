@@ -39,7 +39,7 @@ Unified and side-by-side views both work. In side-by-side view, picking an uncha
 
 ## Line numbers
 
-Line numbers refer to the current version of the file. A comment on removed lines only can't use those numbers, because the lines no longer exist, so it numbers them as in the previous version and says so: `src/app.ts:7 (previous version)`.
+Line numbers refer to the current version of the file. A comment on removed lines only can't use those numbers, because the lines no longer exist, so it numbers them as in the previous version and says so: `src/app.ts:7 (previous version)`. For a renamed file, those previous-version numbers are given with the file's previous name.
 
 ## Collect the review
 
@@ -51,17 +51,23 @@ Comments stay until you send or discard them:
 - Closing the viewer keeps them. Open the diff for the same repository again and they are back.
 - Quitting Maestro clears them.
 
+Each repository has its own review. For an agent on an SSH remote, the repository is the remote host plus the path, so the same path on two hosts never shares one.
+
+### Outdated comments
+
+The agent may change the code while your review is pending. When you reopen the diff, Maestro checks each comment against it. If the lines a comment covers moved, changed, or left the diff, the comment is marked **Outdated** in the tray and is no longer drawn on a line. An outdated comment is never sent, because its `path:lines` would point the agent at the wrong code. It stays in the tray so you can read it, remove it, or write it again on the new lines. The tray header counts them, and when every comment is outdated the send actions are turned off.
+
 ## Send the review
 
 The tray has three actions:
 
-| Action                     | What it does                                                                                                                                                                                     |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Send Review to (agent)** | Sends every comment as one message (`Cmd+Shift+Enter` / `Ctrl+Shift+Enter`). The review is queued, so a busy agent picks it up when its current turn ends. Maestro takes you to the agent's tab. |
-| **Edit in Composer**       | Puts the review in the agent's message box instead, so you can reword it or add a note before you press Enter.                                                                                   |
-| **Discard**                | Throws the review away. Click twice to confirm.                                                                                                                                                  |
+| Action                     | What it does                                                                                                                                                                                             |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Send Review to (agent)** | Sends every current comment as one message (`Cmd+Shift+Enter` / `Ctrl+Shift+Enter`). The review is queued, so a busy agent picks it up when its current turn ends. Maestro takes you to the agent's tab. |
+| **Edit in Composer**       | Puts the review in the agent's message box instead, so you can reword it or add a note before you press Enter.                                                                                           |
+| **Discard**                | Throws the review away. Click twice to confirm.                                                                                                                                                          |
 
-If the review can't be delivered (the agent was removed, or has no AI tab), Maestro says so and keeps your comments.
+If the review can't be delivered (the agent was removed, or has no AI tab), Maestro says so and keeps your comments. After a send, only outdated comments stay behind.
 
 ## What the agent receives
 
@@ -120,4 +126,15 @@ The viewer's other keys still apply: `Enter` switches between unified and side-b
 
 ## For agents and scripts
 
-The review comments live in the viewer, which `maestro-cli` does not drive. An agent that wants to review another agent's work gets the same result without it: run `git diff` in that agent's directory, write the comments with `path:lines` and the hunk, and queue them into that agent's tab with `maestro-cli dispatch <agent> "<review>" --queue`.
+Everything in the tray has a `maestro-cli` verb, working on the same pending comments the viewer shows. A comment added from the CLI appears in an open viewer's tray, and `send` runs the same code as **Send Review**.
+
+```bash
+maestro-cli diff-review add src/app.ts 12-14 "Parse RETRIES as a number" -a <agent-id>
+maestro-cli diff-review add src/app.ts 7 "Why remove this?" --side old -a <agent-id>
+maestro-cli diff-review list -a <agent-id>
+maestro-cli diff-review remove <comment-id> -a <agent-id>
+maestro-cli diff-review clear -a <agent-id>
+maestro-cli diff-review send -a <agent-id> [--compose] [--focus]
+```
+
+`send` delivers without moving your view unless you pass `--focus`. See [CLI: Reviewing an Agent's Diff](cli.md#reviewing-an-agents-diff).

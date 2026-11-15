@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { parseDiff } from 'react-diff-view';
+import { parseGitDiff } from '../../../renderer/utils/gitDiffParser';
 import {
+	anchorForLines,
 	anchorForSelection,
+	findOutdatedComments,
 	buildReviewRows,
 	clampToAnchorHunk,
 	formatCommentLocation,
@@ -38,10 +41,12 @@ function comment(overrides: Partial<DiffComment>): DiffComment {
 	return {
 		id: 'c1',
 		file: 'src/app.ts',
+		path: 'src/app.ts',
 		side: 'new',
 		startLine: 2,
 		endLine: 2,
 		changeKeys: ['I2'],
+		lineContents: ['const fresh = 3;'],
 		context: '@@ -1 +1 @@\n+x',
 		body: 'Fix this.',
 		...overrides,
@@ -80,13 +85,13 @@ describe('clampToAnchorHunk', () => {
 
 describe('anchorForSelection', () => {
 	it('numbers a range in the new file when it holds any added or unchanged line', () => {
-		const anchor = anchorForSelection(
-			'src/app.ts',
+		const anchor = anchorForSelection({
+			file: 'src/app.ts',
 			hunks,
 			rows,
-			indexOf('const old = 2;'),
-			indexOf('const extra = 4;')
-		);
+			anchor: indexOf('const old = 2;'),
+			focus: indexOf('const extra = 4;'),
+		});
 		expect(anchor).toMatchObject({
 			file: 'src/app.ts',
 			side: 'new',
@@ -98,7 +103,9 @@ describe('anchorForSelection', () => {
 
 	it('numbers a selection of removed lines only in the old file', () => {
 		const at = indexOf('const old = 2;');
-		expect(anchorForSelection('src/app.ts', hunks, rows, at, at)).toMatchObject({
+		expect(
+			anchorForSelection({ file: 'src/app.ts', hunks, rows, anchor: at, focus: at })
+		).toMatchObject({
 			side: 'old',
 			startLine: 2,
 			endLine: 2,
@@ -107,28 +114,46 @@ describe('anchorForSelection', () => {
 
 	it('uses the old numbering for an unchanged line picked in the split view left column', () => {
 		const at = indexOf('const a = 20;');
-		expect(anchorForSelection('src/app.ts', hunks, rows, at, at, 'old')).toMatchObject({
+		expect(
+			anchorForSelection({
+				file: 'src/app.ts',
+				hunks,
+				rows,
+				anchor: at,
+				focus: at,
+				clickedSide: 'old',
+			})
+		).toMatchObject({
 			side: 'old',
 			startLine: 20,
 		});
-		expect(anchorForSelection('src/app.ts', hunks, rows, at, at, 'new')).toMatchObject({
+		expect(
+			anchorForSelection({
+				file: 'src/app.ts',
+				hunks,
+				rows,
+				anchor: at,
+				focus: at,
+				clickedSide: 'new',
+			})
+		).toMatchObject({
 			side: 'new',
 			startLine: 21,
 		});
 	});
 
 	it('accepts the anchor and focus in either order', () => {
-		const a = anchorForSelection('f', hunks, rows, 4, 2);
-		const b = anchorForSelection('f', hunks, rows, 2, 4);
+		const a = anchorForSelection({ file: 'f', hunks, rows, anchor: 4, focus: 2 });
+		const b = anchorForSelection({ file: 'f', hunks, rows, anchor: 2, focus: 4 });
 		expect(a).toEqual(b);
 	});
 
 	it('refuses a range across two hunks', () => {
-		expect(anchorForSelection('f', hunks, rows, 4, 7)).toBeNull();
+		expect(anchorForSelection({ file: 'f', hunks, rows, anchor: 4, focus: 7 })).toBeNull();
 	});
 
 	it('captures the whole hunk, with markers, as context', () => {
-		const anchor = anchorForSelection('f', hunks, rows, 2, 2);
+		const anchor = anchorForSelection({ file: 'f', hunks, rows, anchor: 2, focus: 2 });
 		expect(anchor?.context).toBe(
 			[
 				'@@ -1,4 +1,5 @@',
@@ -174,7 +199,14 @@ describe('formatDiffReviewPrompt', () => {
 
 	it('pins each comment to path:lines with its hunk in a diff fence, sorted by file then line', () => {
 		const prompt = formatDiffReviewPrompt([
-			comment({ id: 'b', file: 'src/z.ts', startLine: 9, endLine: 9, body: 'Second file.' }),
+			comment({
+				id: 'b',
+				file: 'src/z.ts',
+				path: 'src/z.ts',
+				startLine: 9,
+				endLine: 9,
+				body: 'Second file.',
+			}),
 			comment({ id: 'a', startLine: 4, endLine: 6, body: 'Later line.' }),
 			comment({ id: 'c', side: 'old', startLine: 2, endLine: 2, body: '  Why remove this?  ' }),
 		]);
@@ -223,5 +255,81 @@ describe('formatDiffReviewPrompt', () => {
 		const prompt = formatDiffReviewPrompt([comment({ context: '@@ -1 +1 @@\n+```js' })]);
 		expect(prompt).toContain('````diff\n@@ -1 +1 @@\n+```js\n````');
 		expect(prompt).toContain('left 1 comment pinned');
+	});
+});
+
+describe('rename and staleness (review feedback)', () => {
+	const RENAME = [
+		'diff --git a/src/old-name.ts b/src/new-name.ts',
+		'rename from src/old-name.ts',
+		'rename to src/new-name.ts',
+		'--- a/src/old-name.ts',
+		'+++ b/src/new-name.ts',
+		'@@ -7,2 +7,2 @@',
+		' const keep = 7;',
+		'-const gone = 8;',
+		'+const kept = 8;',
+		'',
+	].join('\n');
+	const files = parseGitDiff(`${DIFF}\n${RENAME}`);
+
+	it('numbers old-side lines of a renamed file against its previous path', () => {
+		const file = files[1];
+		const hunksR = file.parsedDiff[0].hunks;
+		const rowsR = buildReviewRows(hunksR);
+		const removed = rowsR.findIndex((r) => r.change.content === 'const gone = 8;');
+		const anchor = anchorForSelection({
+			file: 'src/new-name.ts',
+			oldFile: 'src/old-name.ts',
+			hunks: hunksR,
+			rows: rowsR,
+			anchor: removed,
+			focus: removed,
+		});
+		expect(anchor).toMatchObject({ file: 'src/new-name.ts', path: 'src/old-name.ts', side: 'old' });
+		expect(formatCommentLocation(anchor!)).toBe('src/old-name.ts:8 (previous version)');
+	});
+
+	it('records the text of every covered line', () => {
+		const anchor = anchorForSelection({ file: 'f', hunks, rows, anchor: 1, focus: 3 });
+		expect(anchor?.lineContents).toEqual([
+			'const old = 2;',
+			'const fresh = 3;',
+			'const extra = 4;',
+		]);
+	});
+
+	it('anchorForLines resolves a typed path:lines the way a selection does', () => {
+		const result = anchorForLines(files, 'src/app.ts', 'new', 2, 3);
+		expect(result.ok && result.anchor).toMatchObject({
+			path: 'src/app.ts',
+			side: 'new',
+			startLine: 2,
+			endLine: 3,
+			changeKeys: ['I2', 'I3'],
+		});
+		const old = anchorForLines(files, 'src/old-name.ts', 'old', 8, 8);
+		expect(old.ok && old.anchor).toMatchObject({
+			file: 'src/new-name.ts',
+			path: 'src/old-name.ts',
+		});
+	});
+
+	it('anchorForLines explains what it cannot resolve', () => {
+		const err = (r: ReturnType<typeof anchorForLines>) => (r.ok ? '' : r.error);
+		expect(err(anchorForLines(files, 'nope.ts', 'new', 1, 1))).toBe('nope.ts is not in the diff');
+		expect(err(anchorForLines(files, 'src/old-name.ts', 'new', 8, 8))).toContain('--side old');
+		expect(err(anchorForLines(files, 'src/app.ts', 'new', 99, 99))).toContain('not shown');
+		expect(err(anchorForLines(files, 'src/app.ts', 'new', 5, 21))).toContain('two hunks');
+	});
+
+	it('findOutdatedComments flags comments whose lines moved, changed, or left the diff', () => {
+		const make = (id: string, over: Partial<DiffComment>) => comment({ id, ...over });
+		const current = make('ok', {});
+		const changed = make('changed', { lineContents: ['const fresh = 99;'] });
+		const moved = make('moved', { changeKeys: ['I40'] });
+		const gone = make('gone', { file: 'src/deleted.ts' });
+		const outdated = findOutdatedComments([current, changed, moved, gone], files);
+		expect([...outdated].sort()).toEqual(['changed', 'gone', 'moved']);
 	});
 });

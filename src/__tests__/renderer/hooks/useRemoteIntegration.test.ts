@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 // Pull in Window.maestro. Test files sit outside tsconfig.json include, so the
 // IDE infers a bare DOM Window unless this module's global augmentation loads.
 import type {} from '../../../renderer/global';
@@ -110,6 +110,9 @@ describe('useRemoteIntegration', () => {
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
 	let onRemoteAutoRunSteeringCommandHandler:
+		| ((request: Record<string, unknown>, responseChannel: string) => void)
+		| undefined;
+	let onRemoteDiffReviewCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
@@ -226,6 +229,11 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteAutoRunSteeringCommandResponse: vi.fn(),
+		onRemoteDiffReviewCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteDiffReviewCommandHandler = handler;
+			return () => {};
+		}),
+		sendRemoteDiffReviewCommandResponse: vi.fn(),
 		onRemoteToggleBookmark: vi.fn().mockImplementation((handler) => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
@@ -1932,6 +1940,33 @@ describe('useRemoteIntegration', () => {
 			expect(send).toHaveBeenCalledWith(
 				'snooze-response',
 				expect.objectContaining({ success: false })
+			);
+		});
+	});
+
+	describe('remote diff review command', () => {
+		// The CLI blocks on this reply, so every outcome is answered on the channel.
+		it('answers a diff review verb on its response channel, refusal included', async () => {
+			const deps = createDeps({
+				sessions: [createMockSession({ id: 'session-1', toolType: 'terminal' })],
+			});
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteDiffReviewCommandHandler?.(
+					{ action: 'list', sessionId: 'session-1' },
+					'dr-response'
+				);
+			});
+
+			const sent = window.maestro.process.sendRemoteDiffReviewCommandResponse as ReturnType<
+				typeof vi.fn
+			>;
+			await waitFor(() =>
+				expect(sent).toHaveBeenCalledWith(
+					'dr-response',
+					expect.objectContaining({ success: false, error: expect.stringContaining('terminal') })
+				)
 			);
 		});
 	});

@@ -23,13 +23,16 @@ import {
 	anchorForSelection,
 	buildReviewRows,
 	clampToAnchorHunk,
-	formatDiffReviewPrompt,
+	diffFileHunks,
+	diffFileKey,
+	findOutdatedComments,
 	type DiffComment,
 	type DiffCommentAnchor,
 	type DiffSide,
 } from '../utils/diffReviewComments';
-import { useDiffReviewStore, selectRepoComments } from '../stores/diffReviewStore';
-import { editDiffReviewInComposer, sendDiffReview } from '../services/diffReview';
+import { diffReviewKey, useDiffReviewStore, selectRepoComments } from '../stores/diffReviewStore';
+import { deliverDiffReview, type DiffReviewDeliveryMode } from '../services/diffReview';
+import { resolveGitSshRemoteId } from '../hooks/git/useGitAgentActions';
 import { generateId } from '../utils/ids';
 import { isEditingTextTarget } from '../utils/editableTarget';
 import { trackShortcutUsage } from '../utils/shortcutTracking';
@@ -39,6 +42,8 @@ import 'react-diff-view/style/index.css';
 export type GitDiffViewType = 'unified' | 'split';
 
 const VIEW_TYPE_STORAGE_KEY = 'maestro.gitDiffViewer.viewType';
+
+const NO_OUTDATED: ReadonlySet<string> = new Set();
 
 function readStoredViewType(): GitDiffViewType | null {
 	const raw = safeStorageGet(VIEW_TYPE_STORAGE_KEY);
@@ -185,7 +190,21 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	// keyed by repo, so they survive switching file tabs here and even closing
 	// the viewer, until the review is sent or discarded.
 	const canReview = enableReview && !!sessionId;
-	const comments = useDiffReviewStore(selectRepoComments(cwd));
+	// The same path on two SSH hosts is two repositories, so the remote is part
+	// of the key. Subscribe to the id string alone, not the Session.
+	const sshRemoteId = useSessionStore((s) => {
+		const session = s.sessions.find((x) => x.id === sessionId);
+		return session ? resolveGitSshRemoteId(session) : undefined;
+	});
+	const reviewKey = diffReviewKey(cwd, sshRemoteId);
+	const comments = useDiffReviewStore(selectRepoComments(reviewKey));
+	// Comments whose lines changed since they were written: kept in the tray,
+	// never drawn on a line or sent.
+	const outdatedIds = useMemo(
+		() => (canReview ? findOutdatedComments(comments, parsedFiles) : NO_OUTDATED),
+		[canReview, comments, parsedFiles]
+	);
+	const sendableCount = comments.length - outdatedIds.size;
 	const [selection, setSelection] = useState<LineSelection | null>(null);
 	const [editing, setEditing] = useState<CommentEditState | null>(null);
 	const editingRef = useRef(editing);
@@ -199,13 +218,10 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	const draggingRef = useRef(false);
 	const contentRef = useRef<HTMLDivElement>(null);
 
-	const activeFilePath = (() => {
-		const file = parsedFiles[activeTab];
-		if (!file) return '';
-		return file.isDeletedFile ? file.oldPath : file.newPath;
-	})();
+	const activeFilePath = parsedFiles[activeTab] ? diffFileKey(parsedFiles[activeTab]) : '';
+	const activeOldPath = parsedFiles[activeTab]?.oldPath ?? activeFilePath;
 	const activeHunks = useMemo(
-		() => parsedFiles[activeTab]?.parsedDiff.flatMap((f) => f.hunks) ?? [],
+		() => (parsedFiles[activeTab] ? diffFileHunks(parsedFiles[activeTab]) : []),
 		[parsedFiles, activeTab]
 	);
 	// Rows exist only for a reviewable diff: a read-only viewer (Cue backups)
@@ -224,6 +240,15 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	useEffect(() => {
 		setSelection(null);
 	}, [activeTab]);
+
+	// A selection and an open comment box belong to the repository and diff they
+	// were made in. When the viewer is pointed at another repo (or a fresh diff)
+	// without unmounting, neither may follow it there.
+	useEffect(() => {
+		setSelection(null);
+		setEditing(null);
+		draftBodyRef.current = '';
+	}, [reviewKey, diffText]);
 
 	const openEditor = useCallback((next: CommentEditState, draft: string = next.initialBody) => {
 		draftBodyRef.current = draft;
@@ -253,19 +278,20 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	const commentOnSelection = useCallback(() => {
 		const sel = selectionRef.current;
 		if (!sel || !activeFilePath) return;
-		const anchor = anchorForSelection(
-			activeFilePath,
-			activeHunks,
-			rowsRef.current,
-			sel.anchor,
-			sel.focus,
-			sel.side
-		);
+		const anchor = anchorForSelection({
+			file: activeFilePath,
+			oldFile: activeOldPath,
+			hunks: activeHunks,
+			rows: rowsRef.current,
+			anchor: sel.anchor,
+			focus: sel.focus,
+			clickedSide: sel.side,
+		});
 		if (!anchor || blockedByUnsavedEdit()) return;
 		const carried = editingRef.current && !editingRef.current.id ? draftBodyRef.current : '';
 		setSelection(null);
 		openEditor({ anchor, initialBody: '' }, carried);
-	}, [activeFilePath, activeHunks, openEditor, blockedByUnsavedEdit]);
+	}, [activeFilePath, activeOldPath, activeHunks, openEditor, blockedByUnsavedEdit]);
 
 	const closeEditor = useCallback(() => {
 		setEditing(null);
@@ -279,27 +305,33 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 			const trimmed = body.trim();
 			if (!current || !trimmed) return;
 			const store = useDiffReviewStore.getState();
-			if (current.id) {
-				store.updateComment(cwd, current.id, trimmed);
+			// An edited comment can vanish under the open box (`maestro-cli
+			// diff-review remove`); saving it then puts it back rather than
+			// dropping what the user typed.
+			const stillThere = (store.commentsByRepo[reviewKey] ?? []).some((c) => c.id === current.id);
+			if (current.id && stillThere) {
+				store.updateComment(reviewKey, current.id, trimmed);
 			} else {
-				store.addComment(cwd, { ...current.anchor, id: generateId(), body: trimmed });
+				store.addComment(reviewKey, { ...current.anchor, id: generateId(), body: trimmed });
 			}
 			closeEditor();
 		},
-		[cwd, closeEditor]
+		[reviewKey, closeEditor]
 	);
 
 	const removeComment = useCallback(
 		(id: string) => {
-			useDiffReviewStore.getState().removeComment(cwd, id);
+			useDiffReviewStore.getState().removeComment(reviewKey, id);
 			setEditing((prev) => (prev?.id === id ? null : prev));
 		},
-		[cwd]
+		[reviewKey]
 	);
 
 	const editComment = useCallback(
 		(comment: DiffComment) => {
 			if (editingRef.current?.id === comment.id) return;
+			// Its lines are gone from the diff, so there is no line to edit it under.
+			if (outdatedIds.has(comment.id)) return;
 			if (blockedByUnsavedEdit()) return;
 			if (editingRef.current && !editingRef.current.id && draftBodyRef.current.trim()) {
 				notifyCenterFlash({
@@ -308,45 +340,38 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 				});
 				return;
 			}
-			const fileIndex = parsedFiles.findIndex(
-				(f) => (f.isDeletedFile ? f.oldPath : f.newPath) === comment.file
-			);
+			const fileIndex = parsedFiles.findIndex((f) => diffFileKey(f) === comment.file);
 			if (fileIndex >= 0) setActiveTab(fileIndex);
 			openEditor({ anchor: comment, id: comment.id, initialBody: comment.body });
 		},
-		[parsedFiles, openEditor, blockedByUnsavedEdit]
+		[parsedFiles, openEditor, blockedByUnsavedEdit, outdatedIds]
 	);
 
 	const discardReview = useCallback(() => {
-		useDiffReviewStore.getState().clearComments(cwd);
+		useDiffReviewStore.getState().clearComments(reviewKey);
 		setEditing(null);
 		setSelection(null);
 		dialogRef.current?.focus();
-	}, [cwd]);
+	}, [reviewKey]);
 
-	// Both ways out clear the review only once it has landed somewhere: a
-	// failed delivery (agent gone, no AI tab) keeps every comment. A comment
-	// still open in its box is saved first, so sending never drops what the
-	// user just typed.
+	// Both ways out go through `deliverDiffReview`, which the CLI's `send` also
+	// calls: it leaves outdated comments behind, and forgets only what it
+	// delivered, so a failed delivery (agent gone, no AI tab) keeps every
+	// comment. A comment still open in its box is saved first, so sending never
+	// drops what the user just typed.
 	const deliverReview = useCallback(
-		(deliver: (sessionId: string, prompt: string) => boolean) => {
+		(mode: DiffReviewDeliveryMode) => {
 			if (!canReview || !sessionId) return;
 			if (editingRef.current && draftBodyRef.current.trim()) saveComment(draftBodyRef.current);
-			const prompt = formatDiffReviewPrompt(
-				useDiffReviewStore.getState().commentsByRepo[cwd] ?? []
-			);
-			if (!prompt || !deliver(sessionId, prompt)) return;
-			useDiffReviewStore.getState().clearComments(cwd);
+			const result = deliverDiffReview({ sessionId, key: reviewKey, files: parsedFiles, mode });
+			if (!result.ok) return;
 			setEditing(null);
 			onCloseRef.current();
 		},
-		[canReview, sessionId, cwd, saveComment]
+		[canReview, sessionId, reviewKey, parsedFiles, saveComment]
 	);
-	const sendReview = useCallback(() => deliverReview(sendDiffReview), [deliverReview]);
-	const editReviewInComposer = useCallback(
-		() => deliverReview(editDiffReviewInComposer),
-		[deliverReview]
-	);
+	const sendReview = useCallback(() => deliverReview('send'), [deliverReview]);
+	const editReviewInComposer = useCallback(() => deliverReview('compose'), [deliverReview]);
 
 	// Mouse: press on a line number to start a selection, drag over more line
 	// numbers (or Shift+click one) to extend it within the hunk, release to
@@ -439,12 +464,16 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 		const lastKey = (anchor: DiffCommentAnchor) => anchor.changeKeys[anchor.changeKeys.length - 1];
 		const byKey = new Map<string, DiffComment[]>();
 		for (const comment of comments) {
-			if (comment.file !== activeFilePath) continue;
+			if (comment.file !== activeFilePath || outdatedIds.has(comment.id)) continue;
 			const key = lastKey(comment);
 			byKey.set(key, [...(byKey.get(key) ?? []), comment]);
 		}
+		// A box with no saved comment to draw it in: a new comment, or an edit
+		// whose comment was removed under it (`maestro-cli diff-review remove`).
+		// Either way it stays on its lines, so the text typed in it survives.
+		const editingOrphan = !!editing?.id && !comments.some((c) => c.id === editing.id);
 		const newDraftKey =
-			editing && !editing.id && editing.anchor.file === activeFilePath
+			editing && (!editing.id || editingOrphan) && editing.anchor.file === activeFilePath
 				? lastKey(editing.anchor)
 				: null;
 		if (newDraftKey && !byKey.has(newDraftKey)) byKey.set(newDraftKey, []);
@@ -483,7 +512,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 							theme={theme}
 							anchor={editing.anchor}
 							initialBody={draftBodyRef.current}
-							isNew
+							isNew={!editing.id}
 							onDraftChange={onDraftChange}
 							onSave={saveComment}
 							onCancel={closeEditor}
@@ -497,6 +526,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 		canReview,
 		activeFilePath,
 		comments,
+		outdatedIds,
 		editing,
 		theme,
 		saveComment,
@@ -545,8 +575,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 			const mod = e.metaKey || e.ctrlKey;
 			if (e.key === 'Enter' && mod && e.shiftKey && !e.altKey) {
 				const hasDraft = !!editingRef.current && draftBodyRef.current.trim() !== '';
-				const saved = useDiffReviewStore.getState().commentsByRepo[cwd] ?? [];
-				if (!hasDraft && saved.length === 0) return false;
+				if (!hasDraft && sendableCount === 0) return false;
 				e.preventDefault();
 				sendReview();
 				trackShortcutUsage('gitDiffSendReview');
@@ -583,7 +612,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 			}
 			return false;
 		},
-		[cwd, sendReview, commentOnSelection]
+		[sendableCount, sendReview, commentOnSelection]
 	);
 
 	// Handle keyboard shortcuts (tab navigation + view toggle)
@@ -919,6 +948,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 					<DiffReviewTray
 						theme={theme}
 						comments={comments}
+						outdatedIds={outdatedIds}
 						targetName={agentName}
 						onEdit={editComment}
 						onRemove={removeComment}

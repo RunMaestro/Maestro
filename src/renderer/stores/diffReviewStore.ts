@@ -3,7 +3,8 @@
  * sent (issue #1475).
  *
  * The viewer is a VIEW over this store, not the owner of the review. Comments
- * are keyed by repo path, so switching file tabs inside the viewer, or closing
+ * are keyed by repo (`diffReviewKey`: the path, plus the SSH remote it lives
+ * on, so two hosts with the same path never share a review), so switching file tabs inside the viewer, or closing
  * it with an Escape pressed out of habit, does not throw away a half-written
  * review: reopening the diff for the same repo shows them again. They leave the
  * store only when the review is sent or the user discards it.
@@ -23,13 +24,24 @@ interface DiffReviewActions {
 	addComment: (repo: string, comment: DiffComment) => void;
 	updateComment: (repo: string, id: string, body: string) => void;
 	removeComment: (repo: string, id: string) => void;
-	/** Forget every comment for this repo (sent, or discarded). */
+	/** Forget these comments (the ones a review just delivered). */
+	removeComments: (repo: string, ids: readonly string[]) => void;
+	/** Forget every comment for this repo (discarded). */
 	clearComments: (repo: string) => void;
 }
 
 export type DiffReviewStore = DiffReviewState & DiffReviewActions;
 
 const NO_COMMENTS: DiffComment[] = [];
+
+/**
+ * The key one repository's review is stored under. A local repo is its path;
+ * a remote one is prefixed with its SSH remote id, because the same path on two
+ * hosts is two different repositories.
+ */
+export function diffReviewKey(cwd: string, sshRemoteId?: string | null): string {
+	return sshRemoteId ? `ssh:${sshRemoteId}|${cwd}` : cwd;
+}
 
 function withRepo(
 	state: DiffReviewState,
@@ -63,6 +75,15 @@ export const useDiffReviewStore = create<DiffReviewStore>()((set) => ({
 				state,
 				repo,
 				(state.commentsByRepo[repo] ?? []).filter((c) => c.id !== id)
+			)
+		),
+
+	removeComments: (repo, ids) =>
+		set((state) =>
+			withRepo(
+				state,
+				repo,
+				(state.commentsByRepo[repo] ?? []).filter((c) => !ids.includes(c.id))
 			)
 		),
 

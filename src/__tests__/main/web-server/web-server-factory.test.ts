@@ -51,6 +51,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setStarTabCallback = vi.fn();
 			setSnoozeCommandCallback = vi.fn();
 			setAutoRunSteeringCommandCallback = vi.fn();
+			setDiffReviewCommandCallback = vi.fn();
 			setWindowCommandCallback = vi.fn();
 			setReorderTabCallback = vi.fn();
 			setToggleBookmarkCallback = vi.fn();
@@ -2464,6 +2465,34 @@ describe('web-server/web-server-factory', () => {
 			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
 			const server = createWebServer() as any;
 			const callback = server.setAutoRunSteeringCommandCallback.mock.calls[0][0];
+
+			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
+				success: false,
+				error: 'Maestro window is not available',
+			});
+		});
+	});
+
+	describe('diffReview callback', () => {
+		it('forwards the request to the renderer and waits on a response channel', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setDiffReviewCommandCallback.mock.calls[0][0];
+			const request = { action: 'list', sessionId: 'session-1' };
+
+			void callback(request);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:diffReviewCommand',
+				request,
+				expect.stringContaining('remote:diffReviewCommand:response:')
+			);
+		});
+
+		it('answers with a failure when no window is available', async () => {
+			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
+			const server = createWebServer() as any;
+			const callback = server.setDiffReviewCommandCallback.mock.calls[0][0];
 
 			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
 				success: false,

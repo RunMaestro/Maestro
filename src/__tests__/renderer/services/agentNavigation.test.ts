@@ -113,6 +113,48 @@ describe('jumpToAgent', () => {
 		expect(useSessionStore.getState().sessions[0].activeTabId).toBe('tab-b');
 	});
 
+	describe('stayInTiledGroup', () => {
+		const tiled = {
+			activeGroupId: 'g1',
+			tabGroups: [
+				{
+					id: 'g1',
+					layout: {
+						kind: 'split',
+						id: 'root',
+						children: [
+							{ kind: 'leaf', id: 'l1', tab: { type: 'file', id: 'file-1' } },
+							{ kind: 'leaf', id: 'l2', tab: { type: 'ai', id: 'tab-b' } },
+						],
+					},
+				},
+			],
+			aiTabs: [createMockAITab({ id: 'tab-a' }), createMockAITab({ id: 'tab-b' })],
+		} as unknown as Partial<Session>;
+
+		it('makes a pane of the active group active and keeps the split up', () => {
+			seed(tiled);
+			useFileExplorerStore.setState({ isGraphViewOpen: true } as never);
+
+			jumpToAgent(SESSION_ID, { tabId: 'tab-b', stayInTiledGroup: true });
+
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.activeGroupId).toBe('g1');
+			expect(session.activeTabId).toBe('tab-b');
+			// Still dismisses what would cover the agent.
+			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+			expect(useFileExplorerStore.getState().isGraphViewOpen).toBe(false);
+		});
+
+		it('leaves the group for a tab that is not one of its panes', () => {
+			seed(tiled);
+			jumpToAgent(SESSION_ID, { tabId: 'tab-a', stayInTiledGroup: true });
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.activeGroupId).toBeNull();
+			expect(session.activeTabId).toBe('tab-a');
+		});
+	});
+
 	it('ignores a tab id the agent no longer has', () => {
 		const session = seed({ aiTabs: [createMockAITab({ id: 'tab-a' })], activeTabId: 'tab-a' });
 		const original = session.activeTabId;

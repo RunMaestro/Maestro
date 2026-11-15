@@ -59,19 +59,34 @@ export function quoteIntoAgentComposer(sessionId: string, text: string): boolean
  * `sessionId`'s active AI tab as-is, then land the user in that composer so
  * they can edit it before sending. Same target and draft rules as
  * `quoteIntoAgentComposer`.
+ *
+ * `background` (a CLI caller passing `--background`) writes the draft and
+ * moves nothing: no tab switch, no focus request. The block is waiting in the
+ * tab's composer the next time the user opens it.
  */
-export function insertIntoAgentComposer(sessionId: string, block: string): boolean {
-	return appendToAgentComposer(sessionId, block, appendBlockToDraft, {
-		title: 'No Composer to Fill',
-		message: 'This agent has no AI tab. Open one, then try again.',
-	});
+export function insertIntoAgentComposer(
+	sessionId: string,
+	block: string,
+	options: { background?: boolean } = {}
+): boolean {
+	return appendToAgentComposer(
+		sessionId,
+		block,
+		appendBlockToDraft,
+		{
+			title: 'No Composer to Fill',
+			message: 'This agent has no AI tab. Open one, then try again.',
+		},
+		options.background === true
+	);
 }
 
 function appendToAgentComposer(
 	sessionId: string,
 	text: string,
 	append: (draft: string, text: string) => string,
-	missing: { title: string; message: string }
+	missing: { title: string; message: string },
+	background = false
 ): boolean {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	const target = session ? resolveComposerTarget(session) : null;
@@ -83,7 +98,11 @@ function appendToAgentComposer(
 	const { tabId, inGroup } = target;
 
 	const composer = useComposerInputStore.getState();
-	if (composer.aiValueTabId === tabId || composer.aiValueTabId === null) {
+	// Unowned live text is adopted by whichever tab is shown next; in the
+	// background that is not this tab, so only a slot it already owns counts.
+	const ownsLiveSlot =
+		composer.aiValueTabId === tabId || (!background && composer.aiValueTabId === null);
+	if (ownsLiveSlot) {
 		// The live slot holds this tab's draft (or unowned text it will adopt):
 		// append to what is on screen, which may be newer than tab.inputValue.
 		// A quote or a review is prose for the agent, never a shell command line.
@@ -101,9 +120,11 @@ function appendToAgentComposer(
 				t.id === tabId ? { ...t, inputValue: next, commandMode: 'off' } : t
 			),
 		}));
-		composer.loadAiDraft(tabId, next, 'off');
+		// In the background the saved draft is enough: the tab loads it when shown.
+		if (!background) composer.loadAiDraft(tabId, next, 'off');
 	}
 
+	if (background) return true;
 	updateSessionWith(sessionId, (s) =>
 		inGroup ? { ...s, activeTabId: tabId } : { ...s, ...aiTabFocusFields(tabId) }
 	);

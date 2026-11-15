@@ -24,6 +24,7 @@ import { useGroupChatStore } from '../stores/groupChatStore';
 import { useModalStore } from '../stores/modalStore';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { requestSidebarReveal } from '../utils/sidebarReveal';
+import { collectLeafTabRefs } from '../utils/panelLayout';
 
 /**
  * Make sure a jumped-to agent is actually visible in the Left Bar, without
@@ -61,6 +62,21 @@ export function revealAgentInSidebar(session: Session): void {
 export interface JumpToAgentOptions {
 	/** AI tab to land on. Ignored when the agent no longer has that tab. */
 	tabId?: string;
+	/**
+	 * When `tabId` is an AI pane of the agent's active tiled group, make it the
+	 * active pane and leave the group up, instead of leaving the group to show
+	 * the tab alone. Undoing a split the user built is not part of "show me".
+	 */
+	stayInTiledGroup?: boolean;
+}
+
+function isPaneOfActiveGroup(session: Session, tabId: string): boolean {
+	const group = session.activeGroupId
+		? session.tabGroups?.find((g) => g.id === session.activeGroupId)
+		: undefined;
+	return (
+		!!group && collectLeafTabRefs(group.layout).some((ref) => ref.type === 'ai' && ref.id === tabId)
+	);
 }
 
 /**
@@ -97,6 +113,9 @@ export function jumpToAgent(sessionId: string, options: JumpToAgentOptions = {})
 			if (s.id !== sessionId) return s;
 			const targetTabId =
 				options.tabId && s.aiTabs?.some((t) => t.id === options.tabId) ? options.tabId : undefined;
+			if (options.stayInTiledGroup && targetTabId && isPaneOfActiveGroup(s, targetTabId)) {
+				return { ...s, activeTabId: targetTabId };
+			}
 			return { ...s, ...aiTabFocusFields(targetTabId) };
 		})
 	);

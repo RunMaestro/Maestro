@@ -287,6 +287,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Auto Run: save as a playbook (documents must sit in the Auto Run folder)                                                  | `auto-run --save-as <name> <docs...>` (read back with `playbook <id> --dry-run`)                 |
 | Auto Run panel: Change folder                                                                                             | `auto-run-folder <path> -a <agent>`                                                              |
 | Thought Stream: Steer Auto Run (send a note, cancel one, read replies)                                                    | `steer-auto-run send <note> -a <agent>`, `steer-auto-run list`, `steer-auto-run cancel <id>`     |
+| Git Diff review comments (add, remove, discard, send, edit in composer)                                                   | `diff-review add <path> <lines> <text> -a <agent>`, `list`, `remove`, `clear`, `send --compose`  |
 | Playbook Exchange: browse, README, install                                                                                | `marketplace list`, `marketplace show <id>`, `marketplace import`                                |
 | Usage Dashboard: Tokens tab and Overview token speed (avg / peak tok/s)                                                   | `stats-tokens [-r <range>] [--refresh] [--json]`                                                 |
 | Usage Dashboard: Activity tab Prompts section (prompt cadence)                                                            | `stats [-r <range>] [--json]` (JSON under `prompts`)                                             |
@@ -375,15 +376,6 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
     reachable without it: an agent reads the file, quotes `path:lines` itself,
     and hands the text over with `dispatch` / `send`; replacing text is an edit
     to the file on disk, which an agent makes directly and `open-file` shows.
-14. **Git Diff review comments** (pin a comment to diff lines, Edit in
-    Composer, Send Review, Discard). They live in the Git Diff viewer, whose
-    opening is itself not mirrored (gap 4), and the pending comments are
-    renderer memory (`diffReviewStore`). The capability is reachable without
-    them: an agent runs `git diff` in the target's directory, writes each
-    comment with its `path:lines` and hunk, and queues the result into the
-    agent's tab with `dispatch <agent> "<review>" --queue`, which is the same
-    `enqueuePromptForTab` path Send Review uses. Closing it means a WS round
-    trip to read and send the renderer's pending comments.
 
 ### Audit backlog (2026-09-27)
 

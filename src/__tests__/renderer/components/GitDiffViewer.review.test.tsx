@@ -6,13 +6,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within, act } from '@testing-library/react';
 
+// The REAL delivery service runs (outdated filtering, formatting, clearing);
+// only its leaves are stubbed: the queue write, the composer, and navigation.
 const mockSendDiffReview = vi.fn((_sessionId: string, _prompt: string) => true);
 const mockEditInComposer = vi.fn((_sessionId: string, _prompt: string) => true);
-vi.mock('../../../renderer/services/diffReview', () => ({
-	sendDiffReview: (sessionId: string, prompt: string) => mockSendDiffReview(sessionId, prompt),
-	editDiffReviewInComposer: (sessionId: string, prompt: string) =>
+vi.mock('../../../renderer/services/queuedPrompt', () => ({
+	enqueuePromptForTab: ({ sessionId, text }: { sessionId: string; text: string }) =>
+		mockSendDiffReview(sessionId, text) ? { tabId: 'tab-a' } : null,
+}));
+vi.mock('../../../renderer/services/quoteIntoComposer', () => ({
+	resolveComposerTarget: () => ({ tabId: 'tab-a', inGroup: false }),
+	insertIntoAgentComposer: (sessionId: string, prompt: string) =>
 		mockEditInComposer(sessionId, prompt),
 }));
+vi.mock('../../../renderer/services/agentNavigation', () => ({ jumpToAgent: vi.fn() }));
 
 let escapeHandler: (() => void) | null = null;
 vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
@@ -295,5 +302,135 @@ describe('GitDiffViewer review comments', () => {
 		key('ArrowDown');
 		key('c');
 		expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
+	});
+
+	describe('after review feedback (Greptile, CodeRabbit)', () => {
+		const MOVED_DIFF = DIFF.replace('+const fresh = 3;', '+const fresher = 3;');
+		const RENAME_DIFF = [
+			'diff --git a/src/old-name.ts b/src/new-name.ts',
+			'similarity index 80%',
+			'rename from src/old-name.ts',
+			'rename to src/new-name.ts',
+			'--- a/src/old-name.ts',
+			'+++ b/src/new-name.ts',
+			'@@ -7,2 +7,2 @@',
+			' const keep = 7;',
+			'-const gone = 8;',
+			'+const kept = 8;',
+			'',
+		].join('\n');
+
+		it('flags a comment whose lines changed as outdated, and never sends it', () => {
+			const { rerender, onClose } = renderViewer();
+			pickLines('const fresh = 3;');
+			writeComment('Rename.');
+			pickLines('const tail = 5;');
+			writeComment('Still here.');
+
+			rerender(
+				<GitDiffViewer
+					diffText={MOVED_DIFF}
+					cwd={CWD}
+					theme={mockTheme}
+					onClose={onClose}
+					sessionId="agent-1"
+					enableReview
+				/>
+			);
+
+			const tray = screen.getByTestId('diff-review-tray');
+			expect(tray).toHaveTextContent('Review: 2 comments · 1 outdated, not sent');
+			expect(screen.getByTestId('diff-review-outdated')).toHaveTextContent('src/app.ts:2');
+			// Only the still-current comment is drawn on a line.
+			expect(screen.getAllByTestId('diff-comment-card')).toHaveLength(1);
+
+			fireEvent.click(screen.getByTestId('diff-review-send'));
+			const prompt = mockSendDiffReview.mock.calls[0][1];
+			expect(prompt).toContain('Still here.');
+			expect(prompt).not.toContain('Rename.');
+			// The outdated comment is left for the user to remove or redo.
+			expect(Object.values(useDiffReviewStore.getState().commentsByRepo).flat()).toEqual([
+				expect.objectContaining({ body: 'Rename.' }),
+			]);
+		});
+
+		it('disables sending when every comment is outdated', () => {
+			const { rerender, onClose } = renderViewer();
+			pickLines('const fresh = 3;');
+			writeComment('Rename.');
+			rerender(
+				<GitDiffViewer
+					diffText={MOVED_DIFF}
+					cwd={CWD}
+					theme={mockTheme}
+					onClose={onClose}
+					sessionId="agent-1"
+					enableReview
+				/>
+			);
+			expect(screen.getByTestId('diff-review-send')).toBeDisabled();
+			expect(screen.getByTestId('diff-review-edit-in-composer')).toBeDisabled();
+			key('Enter', { metaKey: true, shiftKey: true });
+			expect(mockSendDiffReview).not.toHaveBeenCalled();
+		});
+
+		it("names a renamed file's previous path for a removed line", () => {
+			renderViewer({ diffText: RENAME_DIFF });
+			pickLines('const gone = 8;');
+			writeComment('Why drop this?');
+			expect(screen.getByTestId('diff-comment-card')).toHaveTextContent(
+				'src/old-name.ts:8 (previous version)'
+			);
+			fireEvent.click(screen.getByTestId('diff-review-send'));
+			expect(mockSendDiffReview.mock.calls[0][1]).toContain('`src/old-name.ts:8`');
+		});
+
+		it('keeps the same path on two SSH hosts as two reviews', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'agent-1', name: 'Builder', sshRemoteId: 'host-a' }),
+					createMockSession({ id: 'agent-2', name: 'Other', sshRemoteId: 'host-b' }),
+				],
+				activeSessionId: 'agent-1',
+			});
+			const first = renderViewer();
+			pickLines('const fresh = 3;');
+			writeComment('On host A.');
+			first.unmount();
+
+			renderViewer({ sessionId: 'agent-2' });
+			expect(screen.queryByTestId('diff-review-tray')).not.toBeInTheDocument();
+		});
+
+		it('keeps an edit whose comment was removed underneath it (CLI remove)', () => {
+			renderViewer();
+			pickLines('const fresh = 3;');
+			writeComment('Rename.');
+			fireEvent.click(screen.getByRole('button', { name: 'Edit comment on src/app.ts:2' }));
+			act(() => useDiffReviewStore.getState().clearComments(CWD));
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Rename to fresher.' } });
+			fireEvent.click(screen.getByTestId('diff-comment-save'));
+			expect(useDiffReviewStore.getState().commentsByRepo[CWD]).toEqual([
+				expect.objectContaining({ body: 'Rename to fresher.', path: 'src/app.ts' }),
+			]);
+		});
+
+		it('drops an open comment box when the viewer is pointed at another repo', () => {
+			const { rerender, onClose } = renderViewer();
+			pickLines('const fresh = 3;');
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Half done' } });
+			rerender(
+				<GitDiffViewer
+					diffText={DIFF}
+					cwd="/other-repo"
+					theme={mockTheme}
+					onClose={onClose}
+					sessionId="agent-1"
+					enableReview
+				/>
+			);
+			expect(screen.queryByTestId('diff-comment-editor')).not.toBeInTheDocument();
+			expect(useDiffReviewStore.getState().commentsByRepo).toEqual({});
+		});
 	});
 });

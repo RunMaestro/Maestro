@@ -116,6 +116,7 @@ import {
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
+import { handleDiffReviewCommand } from './diffReview';
 import { handleWindowCommand } from './windows';
 import {
 	handleSelectTab,
@@ -339,6 +340,10 @@ export class WebSocketMessageHandler {
 
 			case 'auto_run_steering_command':
 				handleAutoRunSteeringCommand(this.ctx, client, message);
+				break;
+
+			case 'diff_review_command':
+				handleDiffReviewCommand(this.ctx, client, message);
 				break;
 
 			case 'window_command':

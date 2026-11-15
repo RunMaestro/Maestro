@@ -13,6 +13,7 @@ import type { DiffComment, DiffCommentAnchor } from '../utils/diffReviewComments
 import { formatCommentLocation } from '../utils/diffReviewComments';
 import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
 import { HeaderActionButton } from './ui/HeaderActionButton';
+import { MiniBadge } from './ui/MiniBadge';
 import { ShortcutHint, shortcutSuffix } from './ui/ShortcutHint';
 import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { trackShortcutUsage } from '../utils/shortcutTracking';
@@ -173,6 +174,11 @@ export const DiffCommentCard = memo(function DiffCommentCard({
 interface DiffReviewTrayProps {
 	theme: Theme;
 	comments: DiffComment[];
+	/**
+	 * Comments whose lines changed since they were written. They stay listed
+	 * (the user wrote them) but cannot be edited or sent.
+	 */
+	outdatedIds: ReadonlySet<string>;
 	/** Agent the review goes to, for the button labels. */
 	targetName?: string;
 	onEdit: (comment: DiffComment) => void;
@@ -186,6 +192,7 @@ interface DiffReviewTrayProps {
 export const DiffReviewTray = memo(function DiffReviewTray({
 	theme,
 	comments,
+	outdatedIds,
 	targetName,
 	onEdit,
 	onRemove,
@@ -203,6 +210,9 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 
 	const count = comments.length === 1 ? '1 comment' : `${comments.length} comments`;
 	const agent = targetName ?? 'the agent';
+	const outdatedCount = comments.filter((c) => outdatedIds.has(c.id)).length;
+	const nothingToSend = outdatedCount === comments.length;
+	const blockedTitle = 'Every comment is outdated: its lines changed since it was written';
 	return (
 		<div
 			className="border-t flex flex-col"
@@ -214,6 +224,12 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 			<div className="flex items-center justify-between gap-2 px-6 py-2">
 				<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
 					Review: {count}
+					{outdatedCount > 0 && (
+						<span className="font-normal" style={{ color: theme.colors.textDim }}>
+							{' · '}
+							{outdatedCount} outdated, not sent
+						</span>
+					)}
 				</span>
 				<div className="flex items-center gap-2">
 					<HeaderActionButton
@@ -242,7 +258,12 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 						icon={<PencilLine />}
 						testId="diff-review-edit-in-composer"
 						onClick={onEditInComposer}
-						title={`Put the review in ${agent}'s message box to edit before sending`}
+						disabled={nothingToSend}
+						title={
+							nothingToSend
+								? blockedTitle
+								: `Put the review in ${agent}'s message box to edit before sending`
+						}
 					>
 						Edit in Composer
 					</HeaderActionButton>
@@ -251,7 +272,12 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 						icon={<Send />}
 						testId="diff-review-send"
 						onClick={onSend}
-						title={`Send every comment to ${agent} as one prompt${shortcutSuffix(SEND_KEYS)}`}
+						disabled={nothingToSend}
+						title={
+							nothingToSend
+								? blockedTitle
+								: `Send every current comment to ${agent} as one prompt${shortcutSuffix(SEND_KEYS)}`
+						}
 					>
 						{targetName ? `Send Review to ${targetName}` : 'Send Review'}
 					</HeaderActionButton>
@@ -260,17 +286,32 @@ export const DiffReviewTray = memo(function DiffReviewTray({
 			<ul className="max-h-36 overflow-y-auto px-6 pb-2 flex flex-col gap-1">
 				{comments.map((comment) => {
 					const location = formatCommentLocation(comment);
+					const outdated = outdatedIds.has(comment.id);
 					return (
 						<li key={comment.id} className="flex items-center gap-2 text-xs">
 							<button
 								type="button"
 								onClick={() => onEdit(comment)}
-								className="flex-1 min-w-0 flex items-center gap-2 text-left rounded px-1 py-0.5 row-hover"
-								title={`Edit comment on ${location}`}
+								disabled={outdated}
+								className={`flex-1 min-w-0 flex items-center gap-2 text-left rounded px-1 py-0.5 ${
+									outdated ? 'cursor-default select-text' : 'row-hover'
+								}`}
+								title={
+									outdated
+										? 'Outdated: these lines changed since you commented. It will not be sent; remove it or comment on the new lines.'
+										: `Edit comment on ${location}`
+								}
+								data-testid={outdated ? 'diff-review-outdated' : undefined}
 							>
-								<span className="font-mono shrink-0" style={{ color: theme.colors.accent }}>
+								<span
+									className={`font-mono shrink-0 ${outdated ? 'line-through' : ''}`}
+									style={{ color: outdated ? theme.colors.textDim : theme.colors.accent }}
+								>
 									{location}
 								</span>
+								{outdated && (
+									<MiniBadge label="Outdated" theme={theme} color={theme.colors.warning} />
+								)}
 								<span className="truncate" style={{ color: theme.colors.textDim }}>
 									{comment.body}
 								</span>

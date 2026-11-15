@@ -11,6 +11,7 @@
 import { getChangeKey } from 'react-diff-view';
 import type { ChangeData, HunkData } from 'react-diff-view';
 import { formatFileLineReference, formatFileSelection } from './quoteSelection';
+import type { ParsedFileDiff } from './gitDiffParser';
 
 /**
  * Which version of the file a line number refers to. A removed line only has a
@@ -31,14 +32,25 @@ export interface DiffReviewRow {
 
 /** Where a comment sits, independent of what it says. */
 export interface DiffCommentAnchor {
-	/** Repo-relative path of the file. */
+	/** The diff file the comment is drawn in: its file tab (`diffFileKey`). */
 	file: string;
+	/**
+	 * The path the line numbers refer to, which is what the agent is told. The
+	 * same as `file` except for an old-side comment on a renamed file, whose
+	 * numbers belong to the file's previous name.
+	 */
+	path: string;
 	side: DiffSide;
 	/** 1-based, inclusive, in the file version named by `side`. */
 	startLine: number;
 	endLine: number;
 	/** Change keys the comment covers, in diff order. The last one anchors the comment row. */
 	changeKeys: string[];
+	/**
+	 * The text of each covered line, parallel to `changeKeys`. A later diff
+	 * whose lines no longer match makes the comment outdated (`findOutdatedComments`).
+	 */
+	lineContents: string[];
 	/** The hunk the lines belong to, as unified diff text, captured when the comment was made. */
 	context: string;
 }
@@ -53,6 +65,18 @@ export interface DiffComment extends DiffCommentAnchor {
 export const HUNK_CONTEXT_FULL_LIMIT = 40;
 /** Lines kept on each side of the selection when a hunk is trimmed. */
 export const HUNK_CONTEXT_PADDING = 5;
+
+/** The file tab a diff file is shown under: its old path once deleted, else its new path. */
+export function diffFileKey(
+	file: Pick<ParsedFileDiff, 'oldPath' | 'newPath' | 'isDeletedFile'>
+): string {
+	return file.isDeletedFile ? file.oldPath : file.newPath;
+}
+
+/** Every hunk of one diff file, in display order. */
+export function diffFileHunks(file: Pick<ParsedFileDiff, 'parsedDiff'>): HunkData[] {
+	return file.parsedDiff.flatMap((entry) => entry.hunks);
+}
 
 /** Every change of every hunk, flattened in display order. */
 export function buildReviewRows(hunks: readonly HunkData[]): DiffReviewRow[] {
@@ -131,14 +155,25 @@ export function formatHunkContext(hunk: HunkData, startIndex: number, endIndex: 
  * file. `clickedSide` is the split-view column the user selected in: picking an
  * unchanged line in the left column means the old numbering.
  */
-export function anchorForSelection(
-	file: string,
-	hunks: readonly HunkData[],
-	rows: readonly DiffReviewRow[],
-	anchor: number,
-	focus: number,
-	clickedSide?: DiffSide
-): DiffCommentAnchor | null {
+export function anchorForSelection({
+	file,
+	oldFile = file,
+	hunks,
+	rows,
+	anchor,
+	focus,
+	clickedSide,
+}: {
+	/** The diff file's tab key (`diffFileKey`). */
+	file: string;
+	/** Its previous path, when it was renamed. Old-side numbers refer to it. */
+	oldFile?: string;
+	hunks: readonly HunkData[];
+	rows: readonly DiffReviewRow[];
+	anchor: number;
+	focus: number;
+	clickedSide?: DiffSide;
+}): DiffCommentAnchor | null {
 	const first = Math.min(anchor, focus);
 	const last = Math.max(anchor, focus);
 	const startRow = rows[first];
@@ -156,22 +191,105 @@ export function anchorForSelection(
 
 	return {
 		file,
+		path: side === 'old' ? oldFile : file,
 		side,
 		startLine: Math.min(...lines),
 		endLine: Math.max(...lines),
 		changeKeys: selected.map((r) => r.key),
+		lineContents: selected.map((r) => r.change.content),
 		context: formatHunkContext(hunk, startRow.indexInHunk, endRow.indexInHunk),
 	};
 }
 
+/**
+ * Resolve a `path:start-end` a caller typed (`maestro-cli diff-review add`) to
+ * the same anchor a selection in the viewer makes, against the diff as it is
+ * now. `side` says which version the numbers are in: `old` for removed lines.
+ *
+ * Both ends must be lines the diff shows, in one hunk, because that is what the
+ * viewer lets a user select.
+ */
+export function anchorForLines(
+	files: readonly ParsedFileDiff[],
+	path: string,
+	side: DiffSide,
+	startLine: number,
+	endLine: number
+): { ok: true; anchor: DiffCommentAnchor } | { ok: false; error: string } {
+	const file = files.find((f) => (side === 'old' ? f.oldPath : f.newPath) === path && !f.isBinary);
+	if (!file) {
+		const other = side === 'old' ? 'new' : 'old';
+		const onOtherSide = files.some((f) => (side === 'old' ? f.newPath : f.oldPath) === path);
+		return {
+			ok: false,
+			error: onOtherSide
+				? `${path} is only in the ${other} version of the diff; pass --side ${other}`
+				: `${path} is not in the diff`,
+		};
+	}
+	const hunks = diffFileHunks(file);
+	const rows = buildReviewRows(hunks);
+	const lineOf = side === 'old' ? oldLineOf : newLineOf;
+	const indexOfLine = (line: number) => rows.findIndex((r) => lineOf(r.change) === line);
+	const lo = Math.min(startLine, endLine);
+	const hi = Math.max(startLine, endLine);
+	const first = indexOfLine(lo);
+	const last = indexOfLine(hi);
+	const ref = formatFileLineReference(path, lo, hi);
+	if (first < 0 || last < 0) {
+		return { ok: false, error: `${ref} (${side} version) is not shown in the diff` };
+	}
+	if (rows[first].hunkIndex !== rows[last].hunkIndex) {
+		return { ok: false, error: `${ref} spans two hunks; comment on each separately` };
+	}
+	const anchor = anchorForSelection({
+		file: diffFileKey(file),
+		oldFile: file.oldPath,
+		hunks,
+		rows,
+		anchor: first,
+		focus: last,
+		clickedSide: side,
+	});
+	return anchor ? { ok: true, anchor } : { ok: false, error: `${ref} could not be resolved` };
+}
+
+/**
+ * Comments whose lines are no longer in the diff as they were when the comment
+ * was written: the file left the diff, or a covered line moved or changed.
+ *
+ * An outdated comment is kept (the user wrote it) but never sent: its
+ * `path:lines` would point the agent at the wrong code.
+ */
+export function findOutdatedComments(
+	comments: readonly DiffComment[],
+	files: readonly ParsedFileDiff[]
+): Set<string> {
+	const outdated = new Set<string>();
+	if (comments.length === 0) return outdated;
+	const contentByFile = new Map<string, Map<string, string>>();
+	for (const file of files) {
+		const byKey = new Map<string, string>();
+		for (const row of buildReviewRows(diffFileHunks(file))) byKey.set(row.key, row.change.content);
+		contentByFile.set(diffFileKey(file), byKey);
+	}
+	for (const comment of comments) {
+		const byKey = contentByFile.get(comment.file);
+		const current =
+			!!byKey && comment.changeKeys.every((key, i) => byKey.get(key) === comment.lineContents[i]);
+		if (!current) outdated.add(comment.id);
+	}
+	return outdated;
+}
+
 /** `src/app.ts:12-14`, plus a note when the numbers refer to the old file. */
 export function formatCommentLocation(anchor: DiffCommentAnchor): string {
-	const ref = formatFileLineReference(anchor.file, anchor.startLine, anchor.endLine);
+	const ref = formatFileLineReference(anchor.path, anchor.startLine, anchor.endLine);
 	return anchor.side === 'old' ? `${ref} (previous version)` : ref;
 }
 
 function compareComments(a: DiffComment, b: DiffComment): number {
-	if (a.file !== b.file) return a.file < b.file ? -1 : 1;
+	if (a.path !== b.path) return a.path < b.path ? -1 : 1;
 	if (a.startLine !== b.startLine) return a.startLine - b.startLine;
 	// Old-side lines first at the same number, matching how a diff reads.
 	if (a.side !== b.side) return a.side === 'old' ? -1 : 1;
@@ -201,7 +319,7 @@ export function formatDiffReviewPrompt(comments: readonly DiffComment[]): string
 		out.push('', `## Comment ${index + 1} of ${usable.length}`, '');
 		out.push(
 			formatFileSelection({
-				path: comment.file,
+				path: comment.path,
 				startLine: comment.startLine,
 				endLine: comment.endLine,
 				text: comment.context,

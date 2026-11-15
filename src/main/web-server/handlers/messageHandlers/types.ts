@@ -46,6 +46,7 @@ import type {
 	SnoozeCommandCallback,
 	ReopenClosedTabCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
 	WindowCommandCallback,
 	OpenFileTabOptions,
 } from '../../types';
@@ -162,6 +163,8 @@ export interface MessageHandlerCallbacks {
 	snoozeCommand: SnoozeCommandCallback;
 	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
+	/** `maestro-cli diff-review` - list, add, remove, clear, send Git Diff review comments. */
+	diffReviewCommand: DiffReviewCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */
 	windowCommand: WindowCommandCallback;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
