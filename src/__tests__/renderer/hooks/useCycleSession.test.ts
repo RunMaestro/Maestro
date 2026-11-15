@@ -20,6 +20,8 @@
  *   - Position tracking via cyclePosition store field
  *   - Unread filter restricts cycling to unread/busy agents only
  *   - Pianola is skipped while its Encore flag is off, and cycled when on
+ *   - Published Left Bar rows (sidebarNavStore.visibleRows) are the visual order
+ *     verbatim while the sidebar is open: no filter is re-applied on top
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -49,6 +51,8 @@ import { resetStores, createMockSession, createMockAITab } from '../../helpers';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useRetryStore } from '../../../renderer/stores/retryStore';
 import { DEFAULT_BATCH_STATE } from '../../../renderer/hooks/batch/batchReducer';
+import { useSidebarNavStore } from '../../../renderer/stores/sidebarNavStore';
+import type { SidebarRow } from '../../../renderer/utils/sidebarRowOrder';
 
 // ============================================================================
 // Helpers
@@ -2259,6 +2263,118 @@ describe('cycleSession', () => {
 			cycleSession('next', deps);
 			expect(useSessionStore.getState().activeSessionId).toBe('a');
 			expect(deps.activateStarredItem).not.toHaveBeenCalled();
+		});
+	});
+
+	// =========================================================================
+	// Published Left Bar rows
+	// =========================================================================
+	describe('published Left Bar rows', () => {
+		const sessionRow = (id: string, navKey = `ungrouped:${id}`): SidebarRow => ({
+			type: 'session',
+			id,
+			navKey,
+		});
+
+		beforeEach(() => {
+			useSidebarNavStore.setState({ visibleRows: null });
+		});
+
+		it('walks the published rows in order instead of rebuilding the list', () => {
+			// The stores describe a bookmark section and a collapsed group the Left
+			// Bar is NOT drawing (unread filter on); the published rows are what it
+			// draws. The cycle must step through those, nothing else.
+			const sessions = [
+				makeSession({ id: 'bm', name: 'Bookmarked', bookmarked: true, groupId: 'g1' }),
+				makeSession({ id: 'parent', name: 'Parent', groupId: 'g1' }),
+				makeSession({ id: 'wt-a', name: 'wt-a', parentSessionId: 'parent' }),
+				makeSession({ id: 'wt-b', name: 'wt-b', parentSessionId: 'parent' }),
+			];
+			useSessionStore.setState({
+				sessions,
+				groups: [makeGroup('g1', 'Group', true)],
+				activeSessionId: 'wt-b',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: false,
+				showUnreadAgentsOnly: true,
+			} as any);
+			useSettingsStore.setState({ groupChatsExpanded: false } as any);
+			useSidebarNavStore.setState({
+				visibleRows: [
+					sessionRow('parent', 'group:g1:parent'),
+					sessionRow('wt-a', 'group:g1:wt:wt-a'),
+					sessionRow('wt-b', 'group:g1:wt:wt-b'),
+				],
+				navIndexMap: new Map([
+					['group:g1:parent', 1],
+					['group:g1:wt:wt-a', 2],
+					['group:g1:wt:wt-b', 3],
+				]),
+			});
+
+			cycleSession('prev', makeDeps({ navIndexMap: undefined }));
+			expect(useSessionStore.getState().activeSessionId).toBe('wt-a');
+			expect(useUIStore.getState().selectedSidebarIndex).toBe(2);
+
+			cycleSession('prev', makeDeps({ navIndexMap: undefined }));
+			expect(useSessionStore.getState().activeSessionId).toBe('parent');
+
+			// Wraps to the last DRAWN row, never onto the hidden bookmark row.
+			cycleSession('prev', makeDeps({ navIndexMap: undefined }));
+			expect(useSessionStore.getState().activeSessionId).toBe('wt-b');
+		});
+
+		it('does not re-apply the search filter to rows the Left Bar already filtered', () => {
+			// A worktree child drawn under a parent that matched the filter does not
+			// match the query itself; it is still on screen, so it is still a stop.
+			const sessions = [
+				makeSession({ id: 'p', name: 'Match' }),
+				makeSession({ id: 'c', name: 'other', parentSessionId: 'p' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 'p', cyclePosition: -1 } as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				sessionFilter: 'match',
+			} as any);
+			useSidebarNavStore.setState({
+				visibleRows: [sessionRow('p'), sessionRow('c', 'ungrouped:wt:c')],
+			});
+
+			cycleSession('next', makeDeps());
+			expect(useSessionStore.getState().activeSessionId).toBe('c');
+		});
+
+		it('opens a published group chat row', () => {
+			const sessions = [makeSession({ id: 'a', name: 'Alpha' })];
+			useSessionStore.setState({ sessions, activeSessionId: 'a', cyclePosition: -1 } as any);
+			useUIStore.setState({ leftSidebarOpen: true } as any);
+			useSidebarNavStore.setState({
+				visibleRows: [sessionRow('a'), { type: 'groupChat', id: 'gc-1' }],
+			});
+
+			const deps = makeDeps();
+			cycleSession('next', deps);
+			expect(deps.handleOpenGroupChat).toHaveBeenCalledWith('gc-1');
+		});
+
+		it('ignores published rows while the sidebar is collapsed', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+			useSessionStore.setState({
+				sessions: [sessA, sessB],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({ leftSidebarOpen: false } as any);
+			// A stale list from before the collapse names only 'a'.
+			useSidebarNavStore.setState({ visibleRows: [sessionRow('a')] });
+
+			cycleSession('next', makeDeps({ sortedSessions: [sessA, sessB] }));
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
 		});
 	});
 });

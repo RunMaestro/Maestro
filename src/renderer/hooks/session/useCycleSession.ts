@@ -6,10 +6,12 @@
  * groups, or UI layout change. A thin `useCycleSession` wrapper keeps a
  * stable callback identity for the keyboard handler.
  *
- * Cycles through sessions and group chats in visual Left Bar order:
- *   - Bookmarks (sessions can appear in both bookmark + regular location)
- *   - Worktree children, collapsed groups, collapsed sidebar
- *   - Group chats and starred rows
+ * Cycles through exactly the rows the Left Bar draws. While the Left Bar is
+ * expanded it publishes those rows (`sidebarNavStore.visibleRows`, built by
+ * `utils/sidebarRowOrder`), so every filter, collapsed folder, nested group, and
+ * plugin grouping is already applied. The local builder below is only the
+ * fallback for when no row list has been published (collapsed sidebar, or a
+ * harness that does not mount SessionList).
  *
  * Reads from: sessionStore, groupChatStore, uiStore, settingsStore
  */
@@ -34,6 +36,7 @@ import {
 	type AttentionContext,
 } from '../../utils/sessionAttention';
 import { isSessionVisibleInSidebar } from '../../utils/sessionVisibility';
+import type { SidebarRow } from '../../utils/sidebarRowOrder';
 
 // ============================================================================
 // Dependencies
@@ -88,10 +91,7 @@ export interface UseCycleSessionReturn {
 	cycleSession: (dir: 'next' | 'prev') => void;
 }
 
-type VisualOrderItem =
-	| { type: 'session'; id: string; name: string; navKey: string }
-	| { type: 'groupChat'; id: string; name: string }
-	| { type: 'starred'; id: string; name: string; starredKey: string };
+type VisualOrderItem = SidebarRow;
 
 // ============================================================================
 // Event-time implementation (no React)
@@ -169,6 +169,11 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 
 	const visualOrder: VisualOrderItem[] = [];
 
+	// The rows the expanded Left Bar is drawing right now. When present they ARE
+	// the visual order: the filters below were already applied by the render path,
+	// and re-deriving them here is how the cycle used to drift from the list.
+	const publishedRows = leftSidebarOpen ? nav.visibleRows : null;
+
 	// Helper to get worktree children for a session.
 	// Sort by `name` to match the agent name shown in the Left Bar (SessionItem
 	// renders `session.name` as the primary label; `worktreeBranch` is only a subtitle).
@@ -190,7 +195,6 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 		visualOrder.push({
 			type: 'session' as const,
 			id: session.id,
-			name: session.name,
 			navKey: `${keyPrefix}:${session.id}`,
 		});
 
@@ -201,14 +205,15 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 				...children.map((s) => ({
 					type: 'session' as const,
 					id: s.id,
-					name: s.name,
 					navKey: `${keyPrefix}:wt:${s.id}`,
 				}))
 			);
 		}
 	};
 
-	if (leftSidebarOpen) {
+	if (publishedRows) {
+		visualOrder.push(...publishedRows);
+	} else if (leftSidebarOpen) {
 		// Starred Sessions section (if shown, expanded, and non-empty). Hidden
 		// while the unread-agents filter is active, mirroring SessionList which
 		// drops the section under that filter. starredItems is already sorted by
@@ -218,7 +223,6 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 				...starredItems.map((item) => ({
 					type: 'starred' as const,
 					id: item.parentSessionId,
-					name: item.displayName,
 					starredKey: item.key,
 				}))
 			);
@@ -269,7 +273,6 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 				...sortedGroupChats.map((gc) => ({
 					type: 'groupChat' as const,
 					id: gc.id,
-					name: gc.name,
 				}))
 			);
 		}
@@ -281,7 +284,6 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 			...sortedSessions.map((s) => ({
 				type: 'session' as const,
 				id: s.id,
-				name: s.name,
 				navKey: '',
 			}))
 		);
@@ -290,7 +292,7 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 	// When the unread filter is active, restrict cycling to agents that need
 	// attention (unread / busy / error / auto-running / stuck), plus the currently
 	// active agent so you don't get lost.
-	if (showUnreadAgentsOnly) {
+	if (!publishedRows && showUnreadAgentsOnly) {
 		const attentionCtx: AttentionContext = {
 			batchSessionIds:
 				deps.batchSessionIds ?? new Set(selectActiveBatchSessionIds(useBatchStore.getState())),
@@ -317,7 +319,7 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 	// SAME predicate the render path uses (utils/sidebarMembership) so the two
 	// cannot disagree about membership. Group chats are not filtered by it.
 	const cycleQuery = sessionFilter.trim();
-	if (cycleQuery) {
+	if (!publishedRows && cycleQuery) {
 		const matching = visualOrder.filter((item) => {
 			if (item.type === 'groupChat') return true;
 			const session = sessions.find((s) => s.id === item.id);
