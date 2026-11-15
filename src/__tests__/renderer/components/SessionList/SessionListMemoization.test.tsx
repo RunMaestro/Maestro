@@ -250,26 +250,13 @@ describe('SessionList memoization (#1186)', () => {
 			});
 		});
 
-		it('reaches the collapsed rail, compact', () => {
-			// This used to assert the opposite: the rail is a 64px icon strip, and a
-			// media control there competes with the agent pills for the only thing
-			// it is for. That traded 24px of rail for a player the user could not
-			// get back to - the pill is where minimize PARKS the widget, so without
-			// it "minimize" hid the player with nothing left on screen, which reads
-			// as it having closed itself.
-			useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
-			const { getByTestId } = render(<SessionList {...createProps([])} />);
-			// Compact: no filename to clip at 64px, but both controls survive.
-			expect(getByTestId('now-playing-indicator').textContent).toBe('');
-			expect(getByTestId('now-playing-restore')).toBeTruthy();
-		});
-
-		it('leaves the collapsed rail alone when the player is not minimized', () => {
-			// Self-gating, so the rail is unchanged for anyone playing nothing.
-			useMediaPlaybackStore.setState({ dismissed: false, dormant: true, activeItemId: null });
+		it('stays off the collapsed rail, even while minimized', () => {
+			// The rail is an icon strip for agents; the minimized player is
+			// restored from the expanded Left Bar instead.
 			useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
 			const { queryByTestId } = render(<SessionList {...createProps([])} />);
 			expect(queryByTestId('now-playing-indicator')).toBeNull();
+			expect(queryByTestId('now-playing-restore')).toBeNull();
 		});
 
 		it('shows on the expanded sidebar, with its filename when there is room', () => {
