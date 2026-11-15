@@ -303,6 +303,15 @@ describe('UsageDashboardModal hooks', () => {
 		expect(useUIStore.getState().usageDashboardViewMode).toBe('activity');
 		expect(content.scrollTop).toBe(0);
 		expect(onViewModeChanged).toHaveBeenCalled();
+
+		// A deep link to the open dashboard (`open usage-dashboard --tab`) writes
+		// the store; the open dashboard must follow it.
+		onViewModeChanged.mockClear();
+		content.scrollTop = 120;
+		act(() => useUIStore.getState().setUsageDashboardViewMode('tokens'));
+		await waitFor(() => expect(result.current.viewMode).toBe('tokens'));
+		expect(onViewModeChanged).toHaveBeenCalled();
+		expect(content.scrollTop).toBe(0);
 	});
 
 	it('derives responsive layout columns from ResizeObserver width', async () => {
