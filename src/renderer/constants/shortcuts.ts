@@ -601,6 +601,33 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'File Editor: Replace All (in the replace field)',
 		keys: ['Meta', 'Enter'],
 	},
+	// Git Diff viewer review comments (GitDiffViewer.tsx). Live only while the
+	// viewer is open over an agent that can take a review.
+	gitDiffMoveLineCursor: {
+		id: 'gitDiffMoveLineCursor',
+		label: 'Git Diff: Move Line Cursor (Down / Up)',
+		keys: ['ArrowDown'],
+	},
+	gitDiffExtendLineSelection: {
+		id: 'gitDiffExtendLineSelection',
+		label: 'Git Diff: Extend Line Selection (Down / Up)',
+		keys: ['Shift', 'ArrowDown'],
+	},
+	gitDiffCommentOnLines: {
+		id: 'gitDiffCommentOnLines',
+		label: 'Git Diff: Comment on Selected Lines',
+		keys: ['c'],
+	},
+	gitDiffSaveComment: {
+		id: 'gitDiffSaveComment',
+		label: 'Git Diff: Save Comment (in the comment box)',
+		keys: ['Meta', 'Enter'],
+	},
+	gitDiffSendReview: {
+		id: 'gitDiffSendReview',
+		label: 'Git Diff: Send Review to Agent',
+		keys: ['Meta', 'Shift', 'Enter'],
+	},
 };
 
 // Tab navigation shortcuts (AI mode only)
@@ -613,6 +640,12 @@ export const TAB_SHORTCUTS = {
 		id: 'focusBrowserAddress',
 		label: 'Focus Browser Address Bar',
 		keys: ['Meta', 'l'],
+	},
+	// Chrome's own "inspect element" chord, so the hand already knows it.
+	toggleBrowserDesignMode: {
+		id: 'toggleBrowserDesignMode',
+		label: 'Toggle Browser Design Mode',
+		keys: ['Meta', 'Shift', 'c'],
 	},
 	closeTab: { id: 'closeTab', label: 'Close Tab', keys: ['Meta', 'w'] },
 	closeAllTabs: { id: 'closeAllTabs', label: 'Close All Tabs', keys: ['Meta', 'Shift', 'w'] },

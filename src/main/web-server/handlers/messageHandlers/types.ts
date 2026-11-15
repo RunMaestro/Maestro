@@ -30,8 +30,9 @@ import type {
 	AddGroupChatParticipantResult,
 	CueSubscriptionInfo,
 	CueActivityEntry,
-	UsageDashboardData,
 	AchievementData,
+	PickBrowserElementRequest,
+	PickBrowserElementResult,
 	CreateSessionConfig,
 	DirectorNotesSynopsisResult,
 	WebPlaybook,
@@ -53,6 +54,7 @@ import type {
 	MessagePinCommandCallback,
 	TabContextOpCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	OpenFileTabOptions,
@@ -182,6 +184,8 @@ export interface MessageHandlerCallbacks {
 	messagePinCommand: MessagePinCommandCallback;
 	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
+	/** `maestro-cli diff-review` - list, add, remove, clear, send Git Diff review comments. */
+	diffReviewCommand: DiffReviewCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */
 	windowCommand: WindowCommandCallback;
 	/** `maestro-cli throughput-gauge` - show, hide, toggle, set, reset-peak, status. */
@@ -200,6 +204,8 @@ export interface MessageHandlerCallbacks {
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
+	/** Design Mode by selector (`browser-pick`). See `PickBrowserElementCallback`. */
+	pickBrowserElement?: (request: PickBrowserElementRequest) => Promise<PickBrowserElementResult>;
 	notificationInbox?: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab and sub-tab id. */
 	openModal: (params: OpenUiSurfaceRequest) => Promise<boolean>;
@@ -483,7 +489,6 @@ export interface MessageHandlerCallbacks {
 	exportCueBundle: (request: CueBundleExportRequest) => Promise<CueBundleExportOutcome>;
 	/** Same function as the Export Agent and Import Agent modals; agents land in the running app. */
 	importCueBundle: (request: CueBundleImportRequest) => Promise<CueBundleImportOutcome>;
-	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;
 	generateDirectorNotesSynopsis: (
 		lookbackDays: number,

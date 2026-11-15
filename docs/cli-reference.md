@@ -1286,6 +1286,19 @@ Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)
 maestro-cli close-browser <tab-id>
 ```
 
+## `maestro-cli browser-pick <tab>`
+
+Add an element of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)
+
+| Option                 | Description                                             | Default |
+| ---------------------- | ------------------------------------------------------- | ------- |
+| `-s, --selector <css>` | CSS selector of the element (the first match is used)   | -       |
+| `--note <text>`        | Note added under the element, as typed in the pick card | -       |
+| `-a, --agent <id>`     | Agent that owns the tab (defaults to active)            | -       |
+| `--background`         | Add it without switching the view to the AI tab         | -       |
+| `--focus`              | Switch to the AI tab the element lands in (default)     | -       |
+| `--json`               | Output as JSON (for scripting)                          | -       |
+
 ## `maestro-cli open-terminal`
 
 Open a new terminal tab in the Maestro desktop app
@@ -1537,6 +1550,78 @@ Take back a note no task has read yet (accepts a unique id prefix)
 ```bash
 maestro-cli steer-auto-run cancel <note-id> --agent <agent-id>
 ```
+
+## `maestro-cli diff-review`
+
+Pin review comments to lines of an agent's git diff and send them as one review
+
+## `maestro-cli diff-review list`
+
+Show the pending comments, flagging any whose lines changed since
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                               | -       |
+| `--background`     | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--json`           | Output as JSON                                                   | -       |
+
+## `maestro-cli diff-review add <path> <lines> <comment>`
+
+Pin a comment to path:lines of the current diff (lines: 12 or 12-14)
+
+| Option             | Description                                                 | Default |
+| ------------------ | ----------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                          | -       |
+| `--side <side>`    | Which version the line numbers are in: new (default) or old | `"new"` |
+| `--background`     | Accepted and ignored: adding a comment raises no notice     | -       |
+| `--focus`          | Accepted and ignored: adding a comment raises no notice     | -       |
+| `--json`           | Output the new comment as JSON                              | -       |
+
+## `maestro-cli diff-review edit <comment-id> <comment>`
+
+Reword a pending comment, keeping its id and lines (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                       | -       |
+| `--background`     | Accepted and ignored: editing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: editing a comment raises no notice | -       |
+| `--json`           | Output the updated comment as JSON                       | -       |
+
+## `maestro-cli diff-review remove <comment-id>`
+
+Drop one pending comment (accepts a unique id prefix)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                        | -       |
+| `--background`     | Accepted and ignored: removing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: removing a comment raises no notice | -       |
+| `--json`           | Output the removed comment as JSON                        | -       |
+
+## `maestro-cli diff-review clear`
+
+Discard every pending comment
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                | -       |
+| `--background`     | Accepted and ignored: discarding raises no notice | -       |
+| `--focus`          | Accepted and ignored: discarding raises no notice | -       |
+| `--json`           | Output as JSON                                    | -       |
+
+## `maestro-cli diff-review send`
+
+Send every current comment to the agent as one queued prompt
+
+| Option             | Description                                                        | Default |
+| ------------------ | ------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent to send the review to                                        | -       |
+| `--compose`        | Put the review in the agent's message box instead of sending it    | -       |
+| `--background`     | Deliver without switching the view (the default)                   | -       |
+| `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
+| `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
 
 ## `maestro-cli marketplace`
 
@@ -6910,6 +6995,63 @@ Run a read-only SQL query against the stats database (SELECT / read PRAGMA only)
 ```bash
 maestro-cli stats-query "SELECT agent_id, COUNT(*) FROM query_events WHERE start_time > ? GROUP BY agent_id" --param 1760000000000
 ```
+
+## `maestro-cli stats-delegation`
+
+Show the delegation split (interactive turns vs Auto Run tasks vs Cue runs) for a range and per day
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output totals, delegated share, and the per-day split as JSON    | -       |
+
+## `maestro-cli stats-cue`
+
+Show the Usage Dashboard Cue tab: run totals, durations, and per-pipeline breakdowns
+
+| Option                     | Description                                                          | Default |
+| -------------------------- | -------------------------------------------------------------------- | ------- |
+| `-r, --range <range>`      | Time range: day, week, month, quarter, year, all (default: week)     | -       |
+| `--exclude-trigger <type>` | Leave out a trigger type, like the Cue tab filter chips (repeatable) | `[]`    |
+| `--json`                   | Output the full Cue statistics object as JSON                        | -       |
+
+## `maestro-cli stats-plan-usage`
+
+Show the last sampled plan usage per Anthropic (Claude) and OpenAI (Codex) account
+
+| Option                  | Description                        | Default |
+| ----------------------- | ---------------------------------- | ------- |
+| `--provider <provider>` | Only one provider: claude or codex | -       |
+| `--json`                | Output the accounts as JSON        | -       |
+
+## `maestro-cli stats-agents`
+
+Show Agents Over Time: agents that existed each day, plus created and deleted
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output the daily series as JSON                                  | -       |
+
+## `maestro-cli stats-activity`
+
+Show Auto Run runs, wizard runs, resilience outages, and shortcut presses for a range and per day
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output totals and the daily counts as JSON                       | -       |
+
+## `maestro-cli stats-export`
+
+Export everything the Usage Dashboard reads for a range (the Export button)
+
+| Option                  | Description                                                      | Default |
+| ----------------------- | ---------------------------------------------------------------- | ------- |
+| `-o, --output <path>`   | File to write (a .zip of CSVs, or a .json file)                  | -       |
+| `-f, --format <format>` | csv (a zip of CSV files) or json (default: csv)                  | -       |
+| `-r, --range <range>`   | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`                | Output the result (path, row counts, notes) as JSON              | -       |
 
 ## `maestro-cli plugin`
 

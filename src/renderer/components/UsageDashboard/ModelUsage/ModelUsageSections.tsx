@@ -92,7 +92,7 @@ import {
 	type StatCardDatum,
 } from '../../widgets';
 import { EntityTile, type EntityTileStat } from '../EntityTile';
-import { MetricCard } from '../MetricCard';
+import { MetricCard } from '../SummaryCards';
 import { AGENT_TILE_MIN_WIDTH, tileGridColumns } from '../tileScale';
 import { LatencyBars } from './LatencyBars';
 import {

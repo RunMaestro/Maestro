@@ -10,6 +10,7 @@
 import { create } from 'zustand';
 import type { Session } from '../types';
 import type { StarredItem } from '../hooks/session/useStarredItems';
+import type { SidebarRow } from '../utils/sidebarRowOrder';
 import { useGroupChatStore } from './groupChatStore';
 import { useSessionStore, updateSessionWith } from './sessionStore';
 import { useUIStore } from './uiStore';
@@ -32,6 +33,12 @@ export interface SidebarNavStoreState {
 	bookmarkNavSize: number;
 	navIndexMap: Map<string, number>;
 	starredItems: StarredItem[];
+	/**
+	 * The rows the expanded Left Bar is drawing, in draw order, published by
+	 * SessionList. Cmd+[ / Cmd+] walks this list so it can never step onto a row
+	 * the user cannot see. Null while no expanded Left Bar has published one.
+	 */
+	visibleRows: SidebarRow[] | null;
 	/** Injected by App once jump/confirm handlers exist. */
 	onJumpToStarredSession: JumpToStarredSessionFn | null;
 	showConfirmation: ShowConfirmationFn | null;
@@ -46,6 +53,7 @@ export interface SidebarNavStoreActions {
 		navIndexMap: Map<string, number>;
 	}) => void;
 	setStarredItems: (items: StarredItem[]) => void;
+	setVisibleRows: (rows: SidebarRow[] | null) => void;
 	registerStarredHandlers: (handlers: {
 		onJumpToStarredSession?: JumpToStarredSessionFn;
 		showConfirmation?: ShowConfirmationFn;
@@ -64,12 +72,15 @@ export const useSidebarNavStore = create<SidebarNavStore>()((set, get) => ({
 	bookmarkNavSize: 0,
 	navIndexMap: EMPTY_MAP,
 	starredItems: [],
+	visibleRows: null,
 	onJumpToStarredSession: null,
 	showConfirmation: null,
 
 	setSortedProjection: (projection) => set(projection),
 
 	setStarredItems: (items) => set({ starredItems: items }),
+
+	setVisibleRows: (rows) => set({ visibleRows: rows }),
 
 	registerStarredHandlers: (handlers) =>
 		set({

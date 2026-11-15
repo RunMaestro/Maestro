@@ -146,6 +146,11 @@ export const RemoteBrowserTabView = forwardRef<BrowserTabViewHandle, RemoteBrows
 				},
 				openFind: () => setFindOpen(true),
 				focusWebview: () => keyboardInput.current?.focus(),
+				// Design Mode scripts and crops a live guest; a streamed page has neither.
+				toggleDesignMode: () => {},
+				inspectElement: async () => {
+					throw new Error('Design Mode needs a browser tab running in this window');
+				},
 			}),
 			[action, enqueue, navigate, tab.id, tab.title, tab.url]
 		);

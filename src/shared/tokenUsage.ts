@@ -15,9 +15,9 @@
 
 import type { TokenCounts } from './modelPricing';
 import type { UsageAccounting, UsageBreakdown } from './types';
-import type { TokenSpeedBucket, TokenSpeedSummary } from './tokenSpeed';
+import type { TokenSpeedBucket, TokenSpeedGranularity, TokenSpeedSummary } from './tokenSpeed';
 import type { StatsTimeRange } from './stats-types';
-import { startOfLocalDay } from './localDay';
+import { getTimeRangeStart } from './statsTimeRange';
 
 /**
  * Per-agent token coverage, mirroring the Cue accessor's classification so both
@@ -68,6 +68,14 @@ export interface ModelTokenUsage extends Required<
 }
 
 /**
+ * Token fields are ADDITIVE across providers: `inputTokens` is fresh
+ * (uncached) input only, and `cacheReadTokens` / `cacheCreationTokens` are
+ * separate, so `input + output + cacheRead + cacheCreation` is every token a
+ * session moved, once. Claude reports usage that way already. Codex counts its
+ * cached tokens INSIDE `input_tokens`; the token-usage accessor subtracts them
+ * before a Codex session reaches any of these shapes (its cost is computed
+ * from the raw Codex counts first, so pricing is unaffected).
+ *
  * One session's token consumption, split by model. Produced by the token-usage
  * accessor from a single on-disk transcript and cached per source-file
  * fingerprint. Native lifetime totals are authoritative; `byModel` may be partial.
@@ -165,8 +173,31 @@ export interface TokenUsageAggregate {
 	 */
 	speed: TokenSpeedSummary;
 	coverageByAgent: Record<string, TokenCoverage>;
+	/**
+	 * What the totals leave out: agent types Maestro has run that have no
+	 * readable transcript storage, and how many agent/project pairs ran over
+	 * SSH (their transcripts live on the remote host). The Tokens tab states
+	 * both, so a total is never read as covering every agent.
+	 */
+	excluded: TokenUsageExclusions;
+	/** Slice size of `timeline` (and of `speed.timeline`, which uses the same). */
+	granularity: TokenTimelineGranularity;
+	/**
+	 * The window `timeline` spans (ms since epoch): the query's `sinceMs`, or for
+	 * All Time the earliest activity seen, through now. `timeline` has one entry
+	 * per slice of it, idle slices included.
+	 */
+	windowStartMs: number;
+	windowEndMs: number;
 	/** When the aggregate was computed (ms since epoch). */
 	generatedAtMs: number;
+}
+
+export interface TokenUsageExclusions {
+	/** Agent types with recorded activity but no transcript storage to read. */
+	unsupportedAgents: string[];
+	/** Distinct remote (SSH) agent type + project pairs, skipped entirely. */
+	remoteProjects: number;
 }
 
 /**
@@ -199,8 +230,12 @@ export interface TokenSeries {
 	bySource: { user: number; auto: number };
 }
 
-/** Bucket granularity for the timeline series. */
-export type TokenTimelineGranularity = 'day' | 'week' | 'month';
+/**
+ * Bucket granularity for the timeline series. The same type (and the same
+ * span rule, `tokenGranularityFor`) as the speed timeline, so the two charts
+ * on the Tokens tab always slice time alike.
+ */
+export type TokenTimelineGranularity = TokenSpeedGranularity;
 
 /** Request options for a token-usage aggregate. */
 export interface TokenUsageQuery {
@@ -208,32 +243,24 @@ export interface TokenUsageQuery {
 	sinceMs?: number;
 	/** Inclusive upper bound on session activity (ms since epoch). Omit for now. */
 	untilMs?: number;
-	/** Timeline bucket granularity. Defaults to `day`. */
+	/**
+	 * Timeline bucket granularity. Omitted, it is picked from the window's span
+	 * (`tokenGranularityFor`), which is what the dashboard does.
+	 */
 	granularity?: TokenTimelineGranularity;
 }
-
-/** Lookback per dashboard range, matching `getTimeRangeStart` in main. */
-const RANGE_DAYS: Record<Exclude<StatsTimeRange, 'all'>, number> = {
-	day: 1,
-	week: 7,
-	month: 30,
-	quarter: 90,
-	year: 365,
-};
 
 /**
  * The token-usage query for a dashboard time range. One definition so the
  * Tokens tab, the Overview speed cards, the chart Tokens modes, and
- * `maestro-cli stats-tokens` all read the same window.
+ * `maestro-cli stats-tokens` all read the same window. The window is
+ * calendar-aligned (`getTimeRangeStart`), and the granularity is left to the
+ * accessor so All Time is sliced by the history it actually has.
  */
 export function tokenUsageQueryForRange(
 	range: StatsTimeRange,
 	nowMs: number = Date.now()
 ): TokenUsageQuery {
-	if (range === 'all') return { granularity: 'month' };
-	const days = RANGE_DAYS[range];
-	const granularity = days <= 30 ? 'day' : days <= 90 ? 'week' : 'month';
-	// "Today" starts at local midnight, the same window `getTimeRangeStart` uses.
-	const sinceMs = range === 'day' ? startOfLocalDay(nowMs) : nowMs - days * 24 * 60 * 60 * 1000;
-	return { sinceMs, granularity };
+	if (range === 'all') return {};
+	return { sinceMs: getTimeRangeStart(range, nowMs) };
 }

@@ -176,6 +176,19 @@ comment. `Cmd+[` and `Cmd+]` keep switching agents, so indent with `Tab` and
 `Shift+Tab` instead. With **Vim keybindings** on, `Esc` returns to Vim's normal
 mode, and `Cmd+E` leaves the editor.
 
+## Git Diff Review
+
+These work while the Git Diff viewer is open over an agent that can take a
+review. See [Reviewing Diffs](./diff-review).
+
+| Action                        | macOS                     | Windows/Linux             |
+| ----------------------------- | ------------------------- | ------------------------- |
+| Move the line cursor          | `Down` / `Up`             | `Down` / `Up`             |
+| Extend the line selection     | `Shift+Down` / `Shift+Up` | `Shift+Down` / `Shift+Up` |
+| Comment on the selected lines | `C`                       | `C`                       |
+| Save the comment              | `Cmd+Enter`               | `Ctrl+Enter`              |
+| Send the review               | `Cmd+Shift+Enter`         | `Ctrl+Shift+Enter`        |
+
 ## Group Chat
 
 A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.
@@ -238,6 +251,7 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 | New Terminal Tab             | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
 | Focus Browser Address Bar    | `Cmd+L`                 | `Ctrl+L`                  |
 | Find in Browser Tab          | `Cmd+F`                 | `Ctrl+F`                  |
+| Toggle Browser Design Mode   | `Cmd+Shift+C`           | `Ctrl+Shift+C`            |
 | Focus Active Tab             | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
 | Snooze Tab                   | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
 | Change Tabs Model and Effort | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
@@ -541,10 +555,14 @@ on top of it.
 
 ## Usage Dashboard
 
-The dashboard's own keys, including the ones that move between its tabs (the
-**Models** tab among them), are in
-[Usage Dashboard Keyboard Navigation](./usage-dashboard#keyboard-navigation).
-The Models tab adds no keys of its own.
+These keys move between the dashboard's tabs while it is open. See
+[Keyboard Navigation](./usage-dashboard#keyboard-navigation) for the keys that
+move between sections inside a tab. The **Models** tab adds no keys of its own.
+
+| Action       | macOS         | Windows/Linux  |
+| ------------ | ------------- | -------------- |
+| Previous tab | `Cmd+Shift+[` | `Ctrl+Shift+[` |
+| Next tab     | `Cmd+Shift+]` | `Ctrl+Shift+]` |
 
 The Agents and Groups tabs draw one tile per agent or group. The tile size is
 yours to set, and it is remembered across restarts. See

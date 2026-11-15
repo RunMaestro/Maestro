@@ -1,29 +1,31 @@
 /**
  * WorktreeAnalytics
  *
- * Worktree-focused analytics section in the Agents tab. Surfaces the
+ * Worktree-focused analytics section in the Agent Overview tab. Surfaces the
  * relationship between parent agents and their worktree children:
  *
- *   1. Summary row - Parent vs Worktree agent counts plus a ratio badge.
- *   2. Activity split bar - horizontal stacked bar of parent vs worktree
- *      query proportion (worktree segment uses the dashed/striped pattern
- *      established in Doc 1's visual language for worktree differentiation).
- *   3. Per-branch breakdown - one row per worktree session showing the
- *      branch name, query count, and a 7-day Sparkline, sorted by activity.
+ *   1. Summary cards - parent agents (agents a live worktree was spawned from)
+ *      and worktree agents, plus a worktrees-per-parent badge.
+ *   2. Query split bar - queries from worktree agents versus every other agent
+ *      in the selected range, from the worktree flag recorded on each query
+ *      (`worktreeQueries` / `parentQueries`), so it stays exact after a
+ *      worktree agent is deleted.
+ *   3. By Branch - one row per live worktree agent with its query count and a
+ *      7-day calendar sparkline, plus a "Deleted worktree agents" remainder row
+ *      so the rows add up to the bar's worktree total.
  *
  * The component is gated upstream so it only renders when at least one
- * worktree session exists; it still degrades gracefully for empty data.
+ * worktree agent exists; it still degrades gracefully for empty data.
  */
 
-import React, { memo, useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { Layers, GitBranch } from 'lucide-react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
-import { getCardStyles } from './SummaryCards';
-import { Sparkline } from './Sparkline';
-import { isWorktreeAgent } from './chartUtils';
-
-const SPARKLINE_DAYS = 7;
+import { formatNumber } from '../../../shared/formatters';
+import { Sparkline, StatCardGrid, type StatCardDatum } from '../widgets';
+import { isParentAgent, isWorktreeAgent } from './chartUtils';
+import { AGENT_SPARKLINE_DAYS, buildCalendarSparkline } from './agentOverviewUtils';
 
 interface WorktreeAnalyticsProps {
 	/** All known sessions (terminal-only sessions are filtered out). */
@@ -34,86 +36,11 @@ interface WorktreeAnalyticsProps {
 	theme: Theme;
 }
 
-interface StatCardProps {
-	icon: React.ReactNode;
-	label: string;
-	value: number | string;
-	theme: Theme;
-	/** 0-based index for the staggered card-enter animation. */
-	animationIndex: number;
-	/** Accent override for the icon background and elevated border-top. */
-	accentColor?: string;
-}
-
-const StatCard = memo(function StatCard({
-	icon,
-	label,
-	value,
-	theme,
-	animationIndex,
-	accentColor,
-}: StatCardProps) {
-	const accent = accentColor ?? theme.colors.accent;
-	return (
-		<div
-			className="card-enter relative p-4 flex items-start gap-3"
-			style={{
-				...getCardStyles('elevated', theme, accent),
-				animationDelay: `${animationIndex * 80}ms`,
-			}}
-			data-testid="worktree-stat-card"
-			role="group"
-			aria-label={`${label}: ${value}`}
-		>
-			<div
-				className="flex-shrink-0 p-2 rounded-md"
-				style={{
-					backgroundColor: `${accent}15`,
-					color: accent,
-				}}
-			>
-				{icon}
-			</div>
-			<div className="min-w-0 flex-1">
-				<div
-					className="text-xs uppercase tracking-wide mb-1"
-					style={{ color: theme.colors.textDim }}
-				>
-					{label}
-				</div>
-				<div
-					className="font-bold"
-					style={{
-						color: theme.colors.textMain,
-						fontSize: 'clamp(18px, 3vw, 28px)',
-					}}
-				>
-					{value}
-				</div>
-			</div>
-		</div>
-	);
-});
-
 /**
- * Pull the last `SPARKLINE_DAYS` entries' counts (oldest → newest), left-padding
- * with zeros so sparkline geometry stays stable for sessions with fewer than
- * seven recorded days. Mirrors the helper used by AgentOverviewCards.
- */
-function buildSessionSparkline(sessionByDay: Array<{ count: number }> | undefined): number[] {
-	if (!sessionByDay || sessionByDay.length === 0) {
-		return new Array(SPARKLINE_DAYS).fill(0);
-	}
-	const counts = sessionByDay.slice(-SPARKLINE_DAYS).map((d) => d.count);
-	if (counts.length >= SPARKLINE_DAYS) return counts;
-	return [...new Array(SPARKLINE_DAYS - counts.length).fill(0), ...counts];
-}
-
-/**
- * Format the worktree-to-parent ratio for the badge.
+ * Format the worktrees-per-parent ratio for the badge.
  *
- * Both zero → em dash; parents only → "0×"; worktrees with no parents → "∞×";
- * otherwise `(worktrees / parents).toFixed(2)×`.
+ * Both zero: a hyphen; worktrees whose parents were all deleted: infinity;
+ * otherwise `(worktrees / parents).toFixed(2)x`.
  */
 function formatRatio(parents: number, worktrees: number): string {
 	if (parents === 0 && worktrees === 0) return '-';
@@ -138,7 +65,7 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 		let worktrees = 0;
 		for (const s of agentSessions) {
 			if (isWorktreeAgent(s)) worktrees++;
-			else parents++;
+			else if (isParentAgent(s, agentSessions)) parents++;
 		}
 		return {
 			parentCount: parents,
@@ -147,34 +74,54 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 		};
 	}, [agentSessions]);
 
-	const { parentQueries, worktreeQueries, totalQueries, parentPct, worktreePct } = useMemo(() => {
+	const cards = useMemo(
+		(): StatCardDatum[] => [
+			{ label: 'Parent Agents', value: parentCount, icon: Layers },
+			{
+				label: 'Worktree Agents',
+				value: worktreeCount,
+				icon: GitBranch,
+				color: theme.colors.success,
+			},
+		],
+		[parentCount, worktreeCount, theme.colors.success]
+	);
+
+	const { otherQueries, worktreeQueries, totalQueries, otherPct, worktreePct } = useMemo(() => {
 		const wq = data.worktreeQueries ?? 0;
-		const pq = data.parentQueries ?? 0;
-		const total = wq + pq;
+		const oq = data.parentQueries ?? 0;
+		const total = wq + oq;
 		return {
-			parentQueries: pq,
+			otherQueries: oq,
 			worktreeQueries: wq,
 			totalQueries: total,
-			parentPct: total > 0 ? (pq / total) * 100 : 0,
+			otherPct: total > 0 ? (oq / total) * 100 : 0,
 			worktreePct: total > 0 ? (wq / total) * 100 : 0,
 		};
 	}, [data.worktreeQueries, data.parentQueries]);
 
-	const perBranch = useMemo(() => {
+	const { perBranch, deletedWorktreeQueries } = useMemo(() => {
 		const items: Array<{ session: Session; count: number; sparkline: number[] }> = [];
+		let liveTotal = 0;
 		for (const s of agentSessions) {
 			if (!isWorktreeAgent(s)) continue;
 			const sessionByDay = data.bySessionByDay?.[s.id];
 			const count = sessionByDay ? sessionByDay.reduce((sum, d) => sum + d.count, 0) : 0;
+			liveTotal += count;
 			items.push({
 				session: s,
 				count,
-				sparkline: buildSessionSparkline(sessionByDay),
+				sparkline: buildCalendarSparkline(sessionByDay, data.window, AGENT_SPARKLINE_DAYS),
 			});
 		}
 		items.sort((a, b) => b.count - a.count);
-		return items;
-	}, [agentSessions, data.bySessionByDay]);
+		// Worktree queries no live worktree agent accounts for: their agent was
+		// deleted. Shown as one row so the list adds up to the bar above it.
+		return {
+			perBranch: items,
+			deletedWorktreeQueries: Math.max(0, (data.worktreeQueries ?? 0) - liveTotal),
+		};
+	}, [agentSessions, data.bySessionByDay, data.window, data.worktreeQueries]);
 
 	return (
 		<div
@@ -198,29 +145,14 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 						color: theme.colors.accent,
 					}}
 					data-testid="worktree-ratio-badge"
-					title="Worktree-to-parent ratio"
+					title="Worktree agents per parent agent"
 				>
 					{ratioLabel}
 				</span>
 			</div>
 
-			<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-				<StatCard
-					icon={<Layers className="w-4 h-4" />}
-					label="Parent Agents"
-					value={parentCount}
-					theme={theme}
-					animationIndex={0}
-					accentColor={theme.colors.accent}
-				/>
-				<StatCard
-					icon={<GitBranch className="w-4 h-4" />}
-					label="Worktree Agents"
-					value={worktreeCount}
-					theme={theme}
-					animationIndex={1}
-					accentColor={theme.colors.success}
-				/>
+			<div className="mb-6" data-testid="worktree-stat-cards">
+				<StatCardGrid theme={theme} cards={cards} minColumnWidth={180} />
 			</div>
 
 			<div className="mb-6" data-testid="worktree-activity-split">
@@ -228,8 +160,8 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 					className="flex items-center justify-between text-2xs uppercase tracking-wider mb-2"
 					style={{ color: theme.colors.textDim }}
 				>
-					<span>Query Activity</span>
-					<span>{totalQueries} total</span>
+					<span>Queries in range</span>
+					<span>{formatNumber(totalQueries)} total</span>
 				</div>
 				{totalQueries === 0 ? (
 					<div
@@ -240,7 +172,7 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 						}}
 						data-testid="worktree-split-bar-empty"
 					>
-						No query activity yet
+						No queries in this range
 					</div>
 				) : (
 					<div
@@ -248,24 +180,25 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 						style={{ backgroundColor: `${theme.colors.border}30` }}
 						data-testid="worktree-split-bar"
 						role="img"
-						aria-label={`Parent ${Math.round(parentPct)}%, Worktree ${Math.round(worktreePct)}%`}
+						aria-label={`Other agents ${Math.round(otherPct)}%, Worktree agents ${Math.round(worktreePct)}%`}
 					>
 						<div
 							className="flex items-center justify-center px-2"
 							style={{
-								width: `${parentPct}%`,
+								width: `${otherPct}%`,
 								backgroundColor: theme.colors.accent,
 								opacity: 0.85,
 								transition: 'width 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
 							}}
-							data-testid="worktree-split-parent"
+							data-testid="worktree-split-other"
+							title={`Other agents: ${formatNumber(otherQueries)} queries`}
 						>
-							{parentPct >= 12 && (
+							{otherPct >= 12 && (
 								<span
 									className="text-2xs font-medium text-white whitespace-nowrap"
 									style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
 								>
-									Parent · {parentQueries}
+									Other agents · {formatNumber(otherQueries)}
 								</span>
 							)}
 						</div>
@@ -280,13 +213,14 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 								transition: 'width 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
 							}}
 							data-testid="worktree-split-worktree"
+							title={`Worktree agents: ${formatNumber(worktreeQueries)} queries`}
 						>
 							{worktreePct >= 12 && (
 								<span
 									className="text-2xs font-medium text-white whitespace-nowrap"
 									style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
 								>
-									Worktree · {worktreeQueries}
+									Worktrees · {formatNumber(worktreeQueries)}
 								</span>
 							)}
 						</div>
@@ -363,11 +297,45 @@ export const WorktreeAnalytics = memo(function WorktreeAnalytics({
 										style={{ color: theme.colors.textDim }}
 										data-testid="worktree-branch-count"
 									>
-										{entry.count}
+										{formatNumber(entry.count)}
 									</div>
 								</div>
 							);
 						})}
+						{deletedWorktreeQueries > 0 && (
+							<div
+								className="flex items-center gap-3 p-2 rounded"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									border: `1px dashed ${theme.colors.border}`,
+								}}
+								data-testid="worktree-branch-deleted"
+								role="group"
+								aria-label={`Deleted worktree agents: ${deletedWorktreeQueries} ${
+									deletedWorktreeQueries === 1 ? 'query' : 'queries'
+								}`}
+								title="Queries from worktree agents that have since been deleted"
+							>
+								<GitBranch
+									className="w-3.5 h-3.5 flex-shrink-0"
+									style={{ color: theme.colors.textDim }}
+									aria-hidden="true"
+								/>
+								<div
+									className="flex-1 min-w-0 text-sm truncate"
+									style={{ color: theme.colors.textDim }}
+								>
+									Deleted worktree agents
+								</div>
+								<div
+									className="w-10 text-right text-xs flex-shrink-0"
+									style={{ color: theme.colors.textDim }}
+									data-testid="worktree-branch-deleted-count"
+								>
+									{formatNumber(deletedWorktreeQueries)}
+								</div>
+							</div>
+						)}
 					</div>
 				)}
 			</div>

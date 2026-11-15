@@ -64,7 +64,8 @@ vi.mock('../../shared/claudeSessionUsage', async () => {
 	};
 });
 
-vi.mock('../../main/utils/statsCache', () => ({
+vi.mock('../../shared/pathUtils', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../shared/pathUtils')>()),
 	encodeClaudeProjectPath: vi.fn((p: string) => p.replace(/[^a-zA-Z0-9]/g, '-')),
 }));
 
@@ -101,9 +102,9 @@ vi.mock('../../main/utils/jsonl-stream', async () =>
 );
 
 // listSessions now serves unchanged transcripts from the on-disk parse cache,
-// which resolves its location through electron's userData path.
-vi.mock('electron', () => ({
-	app: { getPath: vi.fn().mockReturnValue('/mock/userData') },
+// which resolves its location through the app's userData directory.
+vi.mock('../../main/utils/app-user-data', () => ({
+	getAppUserDataDir: vi.fn().mockReturnValue('/mock/userData'),
 }));
 
 // ============================================================================
@@ -164,6 +165,14 @@ const DEFAULT_STATS = { size: 1024, mtimeMs: new Date('2025-06-01T12:00:00Z').ge
 // Tests
 // ============================================================================
 
+/** The origins store main builds and hands in (`initializeSessionStorages`). */
+function newOriginsStore() {
+	return new Store({
+		name: 'claude-session-origins',
+		defaults: { origins: {} },
+	}) as unknown as ConstructorParameters<typeof ClaudeSessionStorage>[0];
+}
+
 describe('ClaudeSessionStorage', () => {
 	let storage: ClaudeSessionStorage;
 
@@ -173,7 +182,7 @@ describe('ClaudeSessionStorage', () => {
 		// set of file stats while varying the transcript CONTENT, which the real
 		// (mtime + size) fingerprint is entitled to treat as unchanged.
 		setSessionInfoCacheForTest('claude-code', new SessionInfoCache('claude-code', '/mock/cache'));
-		storage = new ClaudeSessionStorage();
+		storage = new ClaudeSessionStorage(newOriginsStore());
 	});
 
 	// ==========================================================================
@@ -942,7 +951,7 @@ describe('ClaudeSessionStorage', () => {
 		});
 
 		it('should use encodeClaudeProjectPath for the directory', async () => {
-			const { encodeClaudeProjectPath } = await import('../../main/utils/statsCache');
+			const { encodeClaudeProjectPath } = await import('../../shared/pathUtils');
 			storage.getSessionPath('/my/project', 'sess-1');
 			expect(encodeClaudeProjectPath).toHaveBeenCalledWith('/my/project');
 		});
@@ -957,11 +966,6 @@ describe('ClaudeSessionStorage', () => {
 			const customStore = new Store({ name: 'custom', defaults: { origins: {} } });
 			const customStorage = new ClaudeSessionStorage(customStore as any);
 			expect(customStorage).toBeDefined();
-		});
-
-		it('should create a default store when none is provided', () => {
-			const defaultStorage = new ClaudeSessionStorage();
-			expect(defaultStorage).toBeDefined();
 		});
 
 		it('should have agentId set to claude-code', () => {
@@ -1247,7 +1251,7 @@ describe('ClaudeSessionStorage', () => {
 
 		beforeEach(() => {
 			vi.clearAllMocks();
-			storage = new ClaudeSessionStorage();
+			storage = new ClaudeSessionStorage(newOriginsStore());
 		});
 
 		it('should include messages with only tool_use blocks and no text content', async () => {
@@ -1389,7 +1393,7 @@ describe('ClaudeSessionStorage', () => {
 				enabled: true,
 			} as const;
 
-			const storageForRemote = new ClaudeSessionStorage();
+			const storageForRemote = new ClaudeSessionStorage(newOriginsStore());
 			const sessions = await storageForRemote.listSessions('/remote/project', sshConfig);
 
 			expect(sessions).toHaveLength(239);
@@ -1424,7 +1428,7 @@ describe('ClaudeSessionStorage', () => {
 				enabled: true,
 			} as const;
 
-			const storageForRemote = new ClaudeSessionStorage();
+			const storageForRemote = new ClaudeSessionStorage(newOriginsStore());
 			const result = await storageForRemote.listSessionsPaginated(
 				'/remote/project',
 				{ limit: 100 },
@@ -1473,7 +1477,7 @@ describe('ClaudeSessionStorage', () => {
 				enabled: true,
 			} as const;
 
-			const storageForRemote = new ClaudeSessionStorage();
+			const storageForRemote = new ClaudeSessionStorage(newOriginsStore());
 			await storageForRemote.listSessions('/remote/project', sshConfig);
 
 			expect(peakInFlight).toBeLessThanOrEqual(6);

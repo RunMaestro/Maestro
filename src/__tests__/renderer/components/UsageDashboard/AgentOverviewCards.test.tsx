@@ -5,8 +5,10 @@
  * - Renders one card per non-terminal session
  * - Status dot color reflects session state (idle/busy/error/other)
  * - Worktree children show the WT badge, dashed border, and branch row
- * - Query count comes from bySessionByDay when present, falls back to byAgent
- * - Sparklines render with per-session counts (accent color for worktrees)
+ * - Query count comes from the agent's own bySessionByDay rows only (no
+ *   provider-total fallback)
+ * - Sparklines cover the last 7 calendar days, zero-filled
+ * - The default sort is Queries
  * - Empty / terminal-only session arrays render nothing
  * - Staggered card-enter animation delays are applied
  * - The fuzzy agent filter narrows cards live and clears from the ESC pill
@@ -66,25 +68,24 @@ const buildSession = (overrides: Partial<Session>): Session =>
 		...overrides,
 	}) as Session;
 
-const buildData = (overrides: Partial<StatsAggregation> = {}): StatsAggregation => ({
-	totalQueries: 0,
-	totalDuration: 0,
-	avgDuration: 0,
-	byAgent: {},
-	bySource: { user: 0, auto: 0 },
-	byLocation: { local: 0, remote: 0 },
-	byDay: [],
-	byHour: [],
-	totalSessions: 0,
-	sessionsByAgent: {},
-	sessionsByDay: [],
-	avgSessionDuration: 0,
-	byAgentByDay: {},
-	bySessionByDay: {},
-	bySessionSource: {},
-	bySessionLastQuery: {},
-	...overrides,
-});
+const buildData = (overrides: Partial<StatsAggregation> = {}): StatsAggregation =>
+	({
+		totalQueries: 0,
+		totalDuration: 0,
+		avgDuration: 0,
+		byAgent: {},
+		bySource: { user: 0, auto: 0 },
+		byLocation: { local: 0, remote: 0 },
+		byDay: [],
+		byHour: [],
+		totalSessions: 0,
+		byAgentByDay: {},
+		bySessionByDay: {},
+		bySessionSource: {},
+		bySessionLastQuery: {},
+		window: { startYmd: '2024-12-15', endYmd: '2024-12-21' },
+		...overrides,
+	}) as StatsAggregation;
 
 describe('AgentOverviewCards', () => {
 	beforeEach(() => {
@@ -218,7 +219,8 @@ describe('AgentOverviewCards', () => {
 		expect(screen.getByTestId('agent-card-query-count').textContent).toBe('20');
 	});
 
-	it('falls back to byAgent[toolType] when bySessionByDay has no entry', () => {
+	it('shows 0, not the provider total, for the only agent of a provider with no rows', () => {
+		// The provider's 42 queries belong to other (possibly deleted) agents.
 		const sessions: Session[] = [buildSession({ id: 's1', name: 'Alpha' })];
 		const data = buildData({
 			byAgent: { 'claude-code': { count: 42, duration: 0 } },
@@ -226,7 +228,34 @@ describe('AgentOverviewCards', () => {
 
 		render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
 
-		expect(screen.getByTestId('agent-card-query-count').textContent).toBe('42');
+		expect(screen.getByTestId('agent-card-query-count').textContent).toBe('0');
+	});
+
+	it('keeps the count when a group filter leaves one agent of a provider', () => {
+		const sessions: Session[] = [
+			buildSession({ id: 's1', name: 'Alpha', groupId: 'g1' }),
+			buildSession({ id: 's2', name: 'Beta', groupId: 'g2' }),
+		];
+		const data = buildData({
+			byAgent: { 'claude-code': { count: 42, duration: 0 } },
+			bySessionByDay: { s2: [{ date: '2024-12-21', count: 42, duration: 0 }] },
+		});
+
+		render(
+			<AgentOverviewCards
+				sessions={sessions}
+				data={data}
+				theme={theme}
+				groups={[
+					{ id: 'g1', name: 'One' },
+					{ id: 'g2', name: 'Two' },
+				]}
+			/>
+		);
+		fireEvent.click(screen.getByLabelText('Filter agents by group'));
+		fireEvent.click(screen.getByRole('option', { name: 'One' }));
+
+		expect(screen.getByTestId('agent-card-query-count').textContent).toBe('0');
 	});
 
 	it('shows 0 instead of duplicating the provider total when multiple sessions share a provider', () => {
@@ -275,132 +304,20 @@ describe('AgentOverviewCards', () => {
 		expect(card.querySelector('[data-testid="sparkline-empty"]')).not.toBeNull();
 	});
 
-	describe('Drill-down filter highlight', () => {
-		it('does not highlight any card when activeFilterKey is null', () => {
-			const sessions: Session[] = [
-				buildSession({ id: 's1', name: 'Alpha', toolType: 'claude-code' }),
-				buildSession({ id: 's2', name: 'Beta', toolType: 'codex' }),
-			];
-
-			render(
-				<AgentOverviewCards
-					sessions={sessions}
-					data={buildData()}
-					theme={theme}
-					activeFilterKey={null}
-				/>
-			);
-
-			const cards = screen.getAllByTestId('agent-card');
-			cards.forEach((card) => {
-				expect(card.dataset.selected).toBeUndefined();
-				expect(card.style.border).not.toContain('2px');
-			});
+	it('zero-fills the sparkline over the last 7 calendar days', () => {
+		// One active day 30 days before the window end: outside the 7-day window,
+		// so the sparkline is flat even though the count covers it.
+		const sessions: Session[] = [buildSession({ id: 's1', name: 'Alpha' })];
+		const data = buildData({
+			bySessionByDay: { s1: [{ date: '2024-11-21', count: 5, duration: 0 }] },
+			window: { startYmd: '2024-11-01', endYmd: '2024-12-21' },
 		});
 
-		it('highlights only the parent card whose toolType matches a provider key', () => {
-			const sessions: Session[] = [
-				buildSession({ id: 's1', name: 'Claude', toolType: 'claude-code' }),
-				buildSession({ id: 's2', name: 'Codex', toolType: 'codex' }),
-				buildSession({
-					id: 's3',
-					name: 'Claude WT',
-					toolType: 'claude-code',
-					parentSessionId: 's1',
-					worktreeBranch: 'feature/x',
-				}),
-			];
+		render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
 
-			render(
-				<AgentOverviewCards
-					sessions={sessions}
-					data={buildData()}
-					theme={theme}
-					activeFilterKey="claude-code"
-				/>
-			);
-
-			const cardByName = (name: string) =>
-				screen.getByText(name).closest('[data-testid="agent-card"]') as HTMLElement;
-
-			// Parent claude-code card should be selected
-			const parent = cardByName('Claude');
-			expect(parent.dataset.selected).toBe('true');
-			expect(parent.style.border).toBe(`2px solid ${hexToRgb(theme.colors.accent)}`);
-			// codex card should not be selected
-			expect(cardByName('Codex').dataset.selected).toBeUndefined();
-			// Worktree of claude-code should NOT match the bare provider key
-			const worktree = cardByName('Claude WT');
-			expect(worktree.dataset.selected).toBeUndefined();
-			expect(worktree.style.border).toContain('dashed');
-		});
-
-		it('highlights only worktree cards when filter key has __worktree suffix', () => {
-			const sessions: Session[] = [
-				buildSession({ id: 'p1', name: 'Claude Parent', toolType: 'claude-code' }),
-				buildSession({
-					id: 'wt1',
-					name: 'Claude WT',
-					toolType: 'claude-code',
-					parentSessionId: 'p1',
-					worktreeBranch: 'feature/x',
-				}),
-			];
-
-			render(
-				<AgentOverviewCards
-					sessions={sessions}
-					data={buildData()}
-					theme={theme}
-					activeFilterKey="claude-code__worktree"
-				/>
-			);
-
-			const cards = screen.getAllByTestId('agent-card');
-			// Parent should NOT be highlighted by the worktree key
-			expect(cards[0].dataset.selected).toBeUndefined();
-			// Worktree card should be highlighted
-			expect(cards[1].dataset.selected).toBe('true');
-			expect(cards[1].style.border).toBe(`2px solid ${hexToRgb(theme.colors.accent)}`);
-		});
-
-		it('highlights a single card when filter key matches the session id', () => {
-			const sessions: Session[] = [
-				buildSession({ id: 's1', name: 'Alpha', toolType: 'claude-code' }),
-				buildSession({ id: 's2', name: 'Beta', toolType: 'claude-code' }),
-			];
-
-			render(
-				<AgentOverviewCards
-					sessions={sessions}
-					data={buildData()}
-					theme={theme}
-					activeFilterKey="s2"
-				/>
-			);
-
-			const cards = screen.getAllByTestId('agent-card');
-			expect(cards[0].dataset.selected).toBeUndefined();
-			expect(cards[1].dataset.selected).toBe('true');
-		});
-
-		it('highlights nothing when the filter key does not match any session', () => {
-			const sessions: Session[] = [
-				buildSession({ id: 's1', name: 'Alpha', toolType: 'claude-code' }),
-			];
-
-			render(
-				<AgentOverviewCards
-					sessions={sessions}
-					data={buildData()}
-					theme={theme}
-					activeFilterKey="opencode"
-				/>
-			);
-
-			const cards = screen.getAllByTestId('agent-card');
-			expect(cards[0].dataset.selected).toBeUndefined();
-		});
+		const card = screen.getByTestId('agent-card');
+		expect(card.querySelector('[data-testid="sparkline-empty"]')).not.toBeNull();
+		expect(screen.getByTestId('agent-card-query-count').textContent).toBe('5');
 	});
 
 	describe('Created / age', () => {
@@ -523,12 +440,12 @@ describe('AgentOverviewCards', () => {
 			expect(pctIn('Beta').textContent).toBe('20%');
 		});
 
-		it('shows an em-dash when the session has no recorded queries', () => {
+		it('shows a hyphen placeholder when the session has no recorded queries', () => {
 			const sessions: Session[] = [buildSession({ id: 's1', name: 'Alpha' })];
 
 			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
 
-			expect(screen.getByTestId('agent-card-auto-pct').textContent).toBe('\u2014');
+			expect(screen.getByTestId('agent-card-auto-pct').textContent).toBe('-');
 		});
 
 		it('sorts cards by auto % descending and sinks no-data sessions to the bottom', () => {
@@ -556,12 +473,31 @@ describe('AgentOverviewCards', () => {
 	});
 
 	describe('Sort highlight', () => {
-		it('does not highlight any stat under the default Name sort', () => {
+		it('defaults to the Queries sort and highlights the query count', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Alpha' }),
+				buildSession({ id: 's2', name: 'Beta' }),
+			];
+			const data = buildData({
+				bySessionByDay: { s2: [{ date: '2024-12-21', count: 3, duration: 0 }] },
+			});
+
+			render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
+
+			const names = screen.getAllByTestId('agent-card').map((c) => c.textContent);
+			expect(names[0]).toContain('Beta');
+			expect(
+				(screen.getAllByTestId('agent-card-query-count')[0] as HTMLElement).dataset.highlighted
+			).toBe('true');
+		});
+
+		it('does not highlight any stat under the Name sort', () => {
 			const sessions: Session[] = [
 				buildSession({ id: 's1', name: 'Alpha', createdAt: Date.now() - 60_000 }),
 			];
 
 			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+			fireEvent.click(screen.getByTestId('agent-overview-sort-name'));
 
 			expect(
 				(screen.getByTestId('agent-card-query-count') as HTMLElement).dataset.highlighted
@@ -701,12 +637,13 @@ describe('AgentOverviewCards', () => {
 			expect(names[0]).toContain('acappella');
 		});
 
-		it('ranks the best match first under the default Name sort', () => {
+		it('ranks the best match first under the Name sort', () => {
 			const sessions: Session[] = [
 				buildSession({ id: 's1', name: 'Backups' }),
 				buildSession({ id: 's2', name: 'Bug Bounty' }),
 			];
 			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+			fireEvent.click(screen.getByTestId('agent-overview-sort-name'));
 
 			// Alphabetically Backups leads; "bug" is a prefix match on Bug Bounty.
 			typeFilter('bug');
@@ -757,8 +694,8 @@ describe('AgentOverviewCards', () => {
 		});
 
 		it('leaves query counts untouched by the filter', () => {
-			// Two claude-code sessions with no per-session breakdown: the provider
-			// fallback must stay suppressed even when the filter shows just one.
+			// Two claude-code sessions with no per-session breakdown: neither borrows
+			// the provider total, even when the filter shows just one.
 			const sessions: Session[] = [
 				buildSession({ id: 's1', name: 'Alpha' }),
 				buildSession({ id: 's2', name: 'Beta' }),
@@ -926,9 +863,8 @@ describe('AgentOverviewCards', () => {
 			expect(screen.queryByText('Beta')).not.toBeInTheDocument();
 		});
 
-		it('does not count the provider-total fallback as activity', () => {
-			// Beta is the only codex agent, so its CARD borrows the provider total.
-			// That must not promote it to "active" - it ran nothing itself.
+		it('does not count another agent of the same provider as activity', () => {
+			// Beta is the only codex agent; the codex total is not its own work.
 			render(<AgentOverviewCards sessions={SESSIONS} data={DATA} theme={theme} />);
 			fireEvent.click(toggle());
 

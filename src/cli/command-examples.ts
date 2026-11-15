@@ -710,6 +710,25 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'stats-query': [
 		'maestro-cli stats-query "SELECT agent_id, COUNT(*) FROM query_events WHERE start_time > ? GROUP BY agent_id" --param 1760000000000',
 	],
+	'stats-delegation': ['maestro-cli stats-delegation --range month --json'],
+	'stats-cue': ['maestro-cli stats-cue --range week --json'],
+	'stats-plan-usage': ['maestro-cli stats-plan-usage --provider claude --json'],
+	'stats-agents': ['maestro-cli stats-agents --range month --json'],
+	'stats-activity': ['maestro-cli stats-activity --range week --json'],
+	'stats-export': ['maestro-cli stats-export --format csv --output ./usage.zip --range all'],
+	'browser-pick': [
+		'maestro-cli browser-pick browser:1 --selector "main h1" --note "Make this larger"',
+	],
+	'diff-review list': ['maestro-cli diff-review list --agent <agent-id> --json'],
+	'diff-review add': [
+		'maestro-cli diff-review add src/app.ts 12-18 "Handle the empty case" --agent <agent-id>',
+	],
+	'diff-review edit': [
+		'maestro-cli diff-review edit <comment-id> "Handle the empty list too" --agent <agent-id>',
+	],
+	'diff-review remove': ['maestro-cli diff-review remove <comment-id> --agent <agent-id>'],
+	'diff-review clear': ['maestro-cli diff-review clear --agent <agent-id>'],
+	'diff-review send': ['maestro-cli diff-review send --agent <agent-id>'],
 	'plugin list': ['maestro-cli plugin list --json'],
 	'plugin update': ['maestro-cli plugin update ./my-plugin'],
 	'plugin init': ['maestro-cli plugin init ./my-plugin --tier 1 --id my-plugin'],

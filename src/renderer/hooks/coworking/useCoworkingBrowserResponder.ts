@@ -38,6 +38,7 @@ import { useCoworkingBrowserKeepAliveStore } from '../../stores/coworkingBrowser
 import { createBrowserTab } from '../tabs/internal/browserTabHelpers';
 import { closeBrowserTab } from '../../utils/tabHelpers';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
+import { deliverDesignPick } from '../../services/designModePick';
 import {
 	DEFAULT_BROWSER_TAB_URL,
 	resolveBrowserTabNavigationTarget,
@@ -110,6 +111,8 @@ function describeBrowserOp(op: BrowserOp): string {
 			return `open a new${op.ephemeral ? ' incognito' : ''} browser tab${op.url ? ` at ${op.url}` : ''}`;
 		case 'closeTab':
 			return 'close this browser tab';
+		case 'pick':
+			return `add the element ${op.selector} to the message`;
 		default:
 			return 'perform a browser action';
 	}
@@ -121,7 +124,7 @@ async function defaultRequestApproval(
 	op: BrowserOp,
 	ctx: { agentId: string; sessionId: string; forceConfirm?: boolean }
 ): Promise<boolean> {
-	if (op.kind === 'read') return true;
+	if (op.kind === 'read' || op.kind === 'pick') return true;
 	const policyMap = useSettingsStore.getState().coworkingBrowserInteractionConfirm;
 	const policy = policyMap[ctx.agentId] ?? DEFAULT_BROWSER_CONFIRM_POLICY;
 	if (!ctx.forceConfirm && !browserOpNeedsConfirm(policy, op.kind)) return true;
@@ -230,11 +233,52 @@ function closeTabForSession(sessionId: string, tabUuid: string): BrowserOpResult
 		: { ok: false, content: 'Browser tab could not be closed (it may already be closed).' };
 }
 
+/**
+ * The host-only `pick` op (`maestro-cli browser-pick`): the same describe,
+ * crop, and composer delivery as a click in Design Mode, by selector.
+ */
+async function pickElement(
+	handle: BrowserTabViewHandle,
+	op: Extract<BrowserOp, { kind: 'pick' }>,
+	sessionId: string
+): Promise<BrowserOpResult> {
+	const capture = await handle.inspectElement(op.selector);
+	if (capture === 'invalid-selector') {
+		return { ok: false, content: `Not a valid CSS selector: ${op.selector}` };
+	}
+	if (capture === 'not-found' || capture === null) {
+		return { ok: false, content: `No element matches selector: ${op.selector}` };
+	}
+	const delivered = await deliverDesignPick({
+		...capture,
+		sessionId,
+		browserTabId: handle.getTabId(),
+		note: op.note,
+		reveal: op.background !== true,
+	});
+	if (!delivered) {
+		return { ok: false, content: 'This agent has no AI tab to add the element to.' };
+	}
+	const meta = handle.getMeta();
+	return {
+		ok: true,
+		content: delivered.text,
+		aiTabId: delivered.aiTabId,
+		...(capture.screenshot ? { dataUrl: capture.screenshot } : {}),
+		url: meta.url,
+		title: meta.title,
+	};
+}
+
 export async function applyBrowserOp(
 	handle: BrowserTabViewHandle,
-	op: BrowserOp
+	op: BrowserOp,
+	sessionId?: string
 ): Promise<BrowserOpResult> {
 	switch (op.kind) {
+		case 'pick':
+			if (!sessionId) return { ok: false, content: 'Design Mode pick needs the owning agent.' };
+			return pickElement(handle, op, sessionId);
 		case 'read': {
 			if (op.selector) {
 				const res = await handle.executeJavaScript(
@@ -393,7 +437,7 @@ export async function resolveAndRun(
 	// or side effect. read ops are never gated. Uses the REQUESTING agent's
 	// policy, ORed with main's own computation from its mirrored policy - either
 	// side requiring approval forces the dialog.
-	if (op.kind !== 'read') {
+	if (op.kind !== 'read' && op.kind !== 'pick') {
 		const settings = useSettingsStore.getState();
 		const policy = coworkingBrowserPolicy(
 			requesting,
@@ -442,7 +486,7 @@ export async function resolveAndRun(
 			handle = await pollForHandle(browserViewRefs, tabUuid);
 		}
 		if (handle) {
-			return applyBrowserOp(handle, op);
+			return applyBrowserOp(handle, op, sessionId);
 		}
 		return {
 			ok: false,
@@ -462,7 +506,7 @@ export async function resolveAndRun(
 			const key = backgroundBrowserKey(sessionId, tabUuid);
 			store.markOpStart(key);
 			try {
-				return await applyBrowserOp(bgHandle, op);
+				return await applyBrowserOp(bgHandle, op, sessionId);
 			} finally {
 				store.markOpEnd(key);
 			}

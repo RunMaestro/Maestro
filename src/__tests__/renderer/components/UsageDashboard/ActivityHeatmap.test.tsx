@@ -1,354 +1,202 @@
 /**
- * Tests for ActivityHeatmap component
+ * Tests for ActivityHeatmap.
  *
- * Verifies:
- * - Renders GitHub-style contribution grid
- * - Displays correct day labels (Sun-Sat)
- * - Shows color intensity based on count/duration
- * - Toggle between count and duration modes
- * - Tooltip shows date and values on hover
- * - Handles empty data gracefully
- * - Applies theme colors correctly
+ * What matters:
+ * - Hour layouts draw REAL per-hour data from `byDayHour` (the old version
+ *   spread each day's total evenly across the hours and invented the shape).
+ * - The layout follows the window (`data.window`), so All Time is not cut to a
+ *   year.
+ * - Tokens are offered only in the day layout, where per-day tokens exist.
+ * - The metric choice is remembered.
+ * - The grid is ONE tab stop; arrow keys move the active cell and its tooltip.
  */
 
-import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
-import React from 'react';
-import { ActivityHeatmap } from '../../../../renderer/components/UsageDashboard/ActivityHeatmap';
-import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import type { StatsAggregation } from '../../../../shared/stats-types';
 import { THEMES } from '../../../../shared/themes';
 
-// Test theme
+const storage = new Map<string, string>();
+vi.mock('../../../../renderer/utils/safeLocalStorage', () => ({
+	safeStorageGet: (key: string) => (storage.has(key) ? storage.get(key)! : null),
+	safeStorageSet: (key: string, value: string) => {
+		storage.set(key, value);
+	},
+}));
+
+const tokenSeriesState = vi.hoisted(() => ({
+	series: null as null | { byDay: Record<string, number> },
+	requested: [] as boolean[],
+}));
+vi.mock('../../../../renderer/components/UsageDashboard/TokenSeriesContext', () => ({
+	useTokenSeries: (enabled: boolean) => {
+		tokenSeriesState.requested.push(enabled);
+		return { series: tokenSeriesState.series, loading: false, error: null };
+	},
+}));
+
+import {
+	ActivityHeatmap,
+	HEATMAP_METRIC_KEY,
+} from '../../../../renderer/components/UsageDashboard/ActivityHeatmap';
+
 const theme = THEMES['dracula'];
 
-// Sample data for testing
-const mockData: StatsAggregation = {
-	totalQueries: 50,
-	totalDuration: 3600000, // 1 hour
-	avgDuration: 72000, // 72 seconds
-	byAgent: {
-		'claude-code': { count: 30, duration: 2000000 },
-		codex: { count: 20, duration: 1600000 },
-	},
-	bySource: { user: 35, auto: 15 },
-	byDay: [
-		{ date: '2024-12-20', count: 5, duration: 300000 },
-		{ date: '2024-12-21', count: 10, duration: 600000 },
-		{ date: '2024-12-22', count: 3, duration: 180000 },
-		{ date: '2024-12-23', count: 8, duration: 480000 },
-		{ date: '2024-12-24', count: 12, duration: 720000 },
-		{ date: '2024-12-25', count: 0, duration: 0 },
-		{ date: '2024-12-26', count: 7, duration: 420000 },
-		{ date: '2024-12-27', count: 5, duration: 300000 },
+function aggregation(over: Partial<StatsAggregation>): StatsAggregation {
+	return {
+		totalQueries: 0,
+		totalDuration: 0,
+		avgDuration: 0,
+		byAgent: {},
+		bySource: { user: 0, auto: 0 },
+		byDay: [],
+		byDayHour: [],
+		window: { startYmd: '2026-11-08', endYmd: '2026-11-14' },
+		...over,
+	} as StatsAggregation;
+}
+
+const weekData = aggregation({
+	window: { startYmd: '2026-11-08', endYmd: '2026-11-14' },
+	byDay: [{ date: '2026-11-12', count: 4, duration: 4_000 }],
+	byDayHour: [
+		{ date: '2026-11-12', hour: 9, count: 3, duration: 3_000 },
+		{ date: '2026-11-12', hour: 15, count: 1, duration: 1_000 },
 	],
-};
-
-// Empty data for edge case testing
-const emptyData: StatsAggregation = {
-	totalQueries: 0,
-	totalDuration: 0,
-	avgDuration: 0,
-	byAgent: {},
-	bySource: { user: 0, auto: 0 },
-	byDay: [],
-};
-
-describe('ActivityHeatmap', () => {
-	describe('Rendering', () => {
-		it('renders the component with title', () => {
-			render(<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />);
-
-			expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
-		});
-
-		it('renders metric toggle buttons', () => {
-			render(<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />);
-
-			expect(screen.getByText('Count')).toBeInTheDocument();
-			expect(screen.getByText('Duration')).toBeInTheDocument();
-		});
-
-		it('renders day labels (Mon, Wed, Fri visible)', () => {
-			render(<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />);
-
-			// Mon, Wed, Fri should be visible (idx % 2 === 1)
-			expect(screen.getByText('Mon')).toBeInTheDocument();
-			expect(screen.getByText('Wed')).toBeInTheDocument();
-			expect(screen.getByText('Fri')).toBeInTheDocument();
-		});
-
-		it('renders intensity legend', () => {
-			render(<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />);
-
-			expect(screen.getByText('Less')).toBeInTheDocument();
-			expect(screen.getByText('More')).toBeInTheDocument();
-		});
-
-		it('renders with empty data without crashing', () => {
-			render(<ActivityHeatmap data={emptyData} timeRange="week" theme={theme} />);
-
-			expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
-		});
-	});
-
-	describe('Metric Mode Toggle', () => {
-		it('defaults to count mode', () => {
-			render(<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />);
-
-			const countButton = screen.getByText('Count');
-			// Count button should have accent background when active
-			expect(countButton).toHaveStyle({
-				backgroundColor: expect.stringContaining('20'),
-			});
-		});
-
-		it('switches to duration mode when clicked', () => {
-			render(<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />);
-
-			const durationButton = screen.getByText('Duration');
-			fireEvent.click(durationButton);
-
-			// Duration button should now be active
-			expect(durationButton).toHaveStyle({
-				color: theme.colors.accent,
-			});
-		});
-	});
-
-	describe('Time Range Handling', () => {
-		it('renders for day time range', () => {
-			render(<ActivityHeatmap data={mockData} timeRange="day" theme={theme} />);
-
-			expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
-		});
-
-		it('renders for week time range', () => {
-			render(<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />);
-
-			expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
-		});
-
-		it('renders for month time range', () => {
-			render(<ActivityHeatmap data={mockData} timeRange="month" theme={theme} />);
-
-			expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
-		});
-
-		it('renders for year time range', () => {
-			render(<ActivityHeatmap data={mockData} timeRange="year" theme={theme} />);
-
-			expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
-		});
-
-		it('renders for all time range', () => {
-			render(<ActivityHeatmap data={mockData} timeRange="all" theme={theme} />);
-
-			expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
-		});
-	});
-
-	describe('Theme Support', () => {
-		it('applies theme background color', () => {
-			const { container } = render(
-				<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />
-			);
-
-			const wrapper = container.firstChild as HTMLElement;
-			expect(wrapper).toHaveStyle({
-				backgroundColor: theme.colors.bgMain,
-			});
-		});
-
-		it('applies theme text colors', () => {
-			render(<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />);
-
-			const title = screen.getByText('Activity Heatmap');
-			expect(title).toHaveStyle({
-				color: theme.colors.textMain,
-			});
-		});
-
-		it('works with light theme', () => {
-			const lightTheme = THEMES['github-light'];
-
-			render(<ActivityHeatmap data={mockData} timeRange="week" theme={lightTheme} />);
-
-			expect(screen.getByText('Activity Heatmap')).toBeInTheDocument();
-		});
-	});
-
-	describe('Tooltip Functionality', () => {
-		it('shows tooltip on cell hover', () => {
-			const { container } = render(
-				<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />
-			);
-
-			// Find a heatmap cell (the colored divs in the grid)
-			const cells = container.querySelectorAll('.rounded-sm.cursor-default');
-
-			if (cells.length > 0) {
-				fireEvent.mouseEnter(cells[0]);
-
-				// Tooltip should appear with date and query count
-				// Note: Tooltip content depends on the specific day data
-				// We just verify a tooltip-like element appears (uses z-[99999] for high stacking)
-				const tooltip = container.querySelector('.fixed.z-\\[99999\\]');
-				expect(tooltip).toBeInTheDocument();
-			}
-		});
-
-		it('hides tooltip on mouse leave', () => {
-			const { container } = render(
-				<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />
-			);
-
-			const cells = container.querySelectorAll('.rounded-sm.cursor-default');
-
-			if (cells.length > 0) {
-				fireEvent.mouseEnter(cells[0]);
-				fireEvent.mouseLeave(cells[0]);
-
-				const tooltip = container.querySelector('.fixed.z-\\[99999\\]');
-				expect(tooltip).not.toBeInTheDocument();
-			}
-		});
-	});
-
-	describe('Data Visualization', () => {
-		it('creates heatmap cells based on data', () => {
-			const { container } = render(
-				<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />
-			);
-
-			// Should have some cells rendered
-			const cells = container.querySelectorAll('.rounded-sm.cursor-default');
-			expect(cells.length).toBeGreaterThan(0);
-		});
-
-		it('applies different intensities based on values', () => {
-			const { container } = render(
-				<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />
-			);
-
-			// Get all cells and check they have background colors
-			const cells = container.querySelectorAll('.rounded-sm.cursor-default');
-
-			if (cells.length > 0) {
-				// At least one cell should have a background style
-				const hasBackgroundStyles = Array.from(cells).some(
-					(cell) => (cell as HTMLElement).style.backgroundColor !== ''
-				);
-				expect(hasBackgroundStyles).toBe(true);
-			}
-		});
-	});
-
-	describe('Smooth Animations', () => {
-		it('applies CSS transitions to cells for smooth color changes', () => {
-			const { container } = render(
-				<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />
-			);
-
-			const cells = container.querySelectorAll('.rounded-sm.cursor-default');
-			expect(cells.length).toBeGreaterThan(0);
-
-			const firstCell = cells[0] as HTMLElement;
-			expect(firstCell.style.transition).toContain('background-color');
-			expect(firstCell.style.transition).toContain('0.3s');
-		});
-
-		it('uses ease timing function for smooth animation curves', () => {
-			const { container } = render(
-				<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />
-			);
-
-			const cells = container.querySelectorAll('.rounded-sm.cursor-default');
-			expect(cells.length).toBeGreaterThan(0);
-
-			const firstCell = cells[0] as HTMLElement;
-			expect(firstCell.style.transition).toContain('ease');
-		});
-
-		it('applies outline transition for hover effects', () => {
-			const { container } = render(
-				<ActivityHeatmap data={mockData} timeRange="week" theme={theme} />
-			);
-
-			const cells = container.querySelectorAll('.rounded-sm.cursor-default');
-			expect(cells.length).toBeGreaterThan(0);
-
-			const firstCell = cells[0] as HTMLElement;
-			expect(firstCell.style.transition).toContain('outline');
-		});
-	});
 });
 
-// The 4-hour-block month grid prints a day number per column. On a phone that
-// grid is ~270px wide across ~30 columns, so each column is about 6px where a
-// two-digit label needs 16 - every column printed one anyway and the row
-// rendered as a solid line of overlapping digits.
-vi.mock('../../../../renderer/hooks/ui/useElementWidth', async (importOriginal) => ({
-	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useElementWidth')>()),
-	useElementWidth: vi.fn(() => 0),
-}));
-import { useElementWidth } from '../../../../renderer/hooks/ui/useElementWidth';
+const yearData = aggregation({
+	window: { startYmd: '2025-11-15', endYmd: '2026-11-14' },
+	byDay: [
+		{ date: '2026-11-12', count: 4, duration: 4_000 },
+		{ date: '2026-11-13', count: 1, duration: 100 },
+	],
+});
 
-function monthData(): StatsAggregation {
-	const byDay = Array.from({ length: 30 }, (_, i) => ({
-		date: `2024-12-${String(i + 1).padStart(2, '0')}`,
-		count: i,
-		duration: i * 1000,
-	}));
-	return { ...mockData, byDay };
+function cellLabels(): string[] {
+	return screen
+		.getAllByTestId('activity-heatmap-cell')
+		.map((el) => el.getAttribute('aria-label') ?? '');
 }
 
-/** Day numbers actually printed above the 4-hour-block grid. */
-function printedDayLabels(container: HTMLElement): string[] {
-	return Array.from(container.querySelectorAll('div[title]'))
-		.filter((el) => /^[A-Z][a-z]+day, /.test(el.getAttribute('title') ?? ''))
-		.map((el) => el.textContent ?? '')
-		.filter((text) => text.length > 0);
-}
-
-describe('ActivityHeatmap day labels', () => {
-	// The grid is built from today, not from the data. Pin the clock mid-month
-	// so the 30-day window always crosses a month boundary: on the last day of
-	// a 31-day month it starts on the 2nd and holds no boundary at all.
+describe('ActivityHeatmap', () => {
 	beforeEach(() => {
-		vi.useFakeTimers({ toFake: ['Date'] });
-		vi.setSystemTime(new Date(2024, 11, 15, 12, 0, 0));
+		storage.clear();
+		tokenSeriesState.series = null;
+		tokenSeriesState.requested = [];
 	});
 
-	afterEach(() => {
-		vi.mocked(useElementWidth).mockReturnValue(0);
-		vi.useRealTimers();
+	it('draws a week hour by hour from real per-hour rows', () => {
+		render(<ActivityHeatmap data={weekData} theme={theme} />);
+		expect(screen.getByTestId('activity-heatmap').getAttribute('data-layout')).toBe('hours');
+		expect(screen.getAllByTestId('activity-heatmap-cell')).toHaveLength(7 * 24);
+
+		const labels = cellLabels();
+		expect(labels.filter((l) => l.includes(': 3 queries'))).toHaveLength(1);
+		expect(labels.filter((l) => l.includes(': 1 query'))).toHaveLength(1);
+		// Every other hour is empty: nothing was spread across the day.
+		expect(labels.filter((l) => l.includes(': 0 queries'))).toHaveLength(7 * 24 - 2);
 	});
 
-	it('labels every column when each one has room', () => {
-		vi.mocked(useElementWidth).mockReturnValue(900);
-		const { container } = render(
-			<ActivityHeatmap data={monthData()} timeRange="month" theme={theme} />
+	it('draws a month in 4-hour blocks', () => {
+		render(
+			<ActivityHeatmap
+				data={aggregation({
+					...weekData,
+					window: { startYmd: '2026-10-16', endYmd: '2026-11-14' },
+				})}
+				theme={theme}
+			/>
 		);
-
-		expect(printedDayLabels(container).length).toBe(30);
+		expect(screen.getByTestId('activity-heatmap').getAttribute('data-layout')).toBe('blocks');
+		expect(screen.getAllByTestId('activity-heatmap-cell')).toHaveLength(30 * 6);
+		// 9 AM and 3 PM land in different blocks: 8 AM - 12 PM and 12 PM - 4 PM.
+		const labels = cellLabels();
+		expect(labels.some((l) => l.includes('8 AM - 12 PM: 3 queries'))).toBe(true);
+		expect(labels.some((l) => l.includes('12 PM - 4 PM: 1 query'))).toBe(true);
 	});
 
-	it.each([
-		{ scenario: 'across a month boundary', today: new Date(2026, 9, 15, 12), month: 'Oct' },
-		{ scenario: 'at month end', today: new Date(2026, 9, 31, 12), month: null },
-	])('thins narrow-column labels $scenario', ({ today, month }) => {
-		vi.useFakeTimers({ toFake: ['Date'] });
-		vi.setSystemTime(today);
-		vi.mocked(useElementWidth).mockReturnValue(270);
-		const { container } = render(
-			<ActivityHeatmap data={monthData()} timeRange="month" theme={theme} />
-		);
+	it('draws a year (or longer) as GitHub-style weeks', () => {
+		render(<ActivityHeatmap data={yearData} theme={theme} />);
+		expect(screen.getByTestId('activity-heatmap').getAttribute('data-layout')).toBe('days');
+		expect(screen.getAllByTestId('activity-heatmap-cell')).toHaveLength(365);
+	});
 
-		const labels = printedDayLabels(container);
-		expect(labels.length).toBeGreaterThan(1);
-		expect(labels.length).toBeLessThan(30);
-		// A 30-day window ending on the 31st contains no first-of-month column.
-		if (month) expect(labels).toContain(month);
-		else expect(labels.every((text) => /^\d+$/.test(text))).toBe(true);
+	it('offers Tokens only in the day layout', () => {
+		const { unmount } = render(<ActivityHeatmap data={weekData} theme={theme} />);
+		expect(screen.queryByRole('button', { name: /token usage/i })).toBeNull();
+		expect(screen.getByText(/Tokens have no hourly breakdown/)).toBeInTheDocument();
+		unmount();
+
+		render(<ActivityHeatmap data={yearData} theme={theme} />);
+		expect(screen.getByRole('button', { name: /token usage/i })).toBeInTheDocument();
+	});
+
+	it('falls back to queries in an hour layout when Tokens is remembered', () => {
+		storage.set(HEATMAP_METRIC_KEY, 'tokens');
+		render(<ActivityHeatmap data={weekData} theme={theme} />);
+		expect(screen.getByRole('button', { name: /query count/i }).getAttribute('aria-pressed')).toBe(
+			'true'
+		);
+		// The token series is not requested for a layout that cannot show it.
+		expect(tokenSeriesState.requested.every((r) => r === false)).toBe(true);
+	});
+
+	it('shows real per-day tokens in the day layout', () => {
+		storage.set(HEATMAP_METRIC_KEY, 'tokens');
+		tokenSeriesState.series = { byDay: { '2026-11-12': 2_500_000 } };
+		render(<ActivityHeatmap data={yearData} theme={theme} />);
+		expect(cellLabels().some((l) => l.includes('2.5M tokens'))).toBe(true);
+	});
+
+	it('remembers the metric choice', () => {
+		render(<ActivityHeatmap data={weekData} theme={theme} />);
+		fireEvent.click(screen.getByRole('button', { name: /total duration/i }));
+		expect(storage.get(HEATMAP_METRIC_KEY)).toBe('duration');
+	});
+
+	it('is one tab stop whose arrow keys move the active cell', () => {
+		render(<ActivityHeatmap data={weekData} theme={theme} />);
+		const grid = screen.getByTestId('activity-heatmap-grid');
+		expect(grid.getAttribute('tabindex')).toBe('0');
+		for (const cell of screen.getAllByTestId('activity-heatmap-cell')) {
+			expect(cell.getAttribute('tabindex')).toBeNull();
+		}
+
+		fireEvent.focus(grid);
+		const first = grid.getAttribute('aria-activedescendant');
+		expect(first).toBeTruthy();
+
+		fireEvent.keyDown(grid, { key: 'ArrowDown' });
+		const second = grid.getAttribute('aria-activedescendant');
+		expect(second).not.toBe(first);
+
+		fireEvent.keyDown(grid, { key: 'Home' });
+		expect(document.getElementById(grid.getAttribute('aria-activedescendant')!)).not.toBeNull();
+		expect(screen.getByTestId('activity-heatmap-tooltip')).toBeInTheDocument();
+	});
+
+	it('does not let the arrow keys reach the dashboard section handler', () => {
+		const onKeyDown = vi.fn();
+		render(
+			<div onKeyDown={onKeyDown}>
+				<ActivityHeatmap data={weekData} theme={theme} />
+			</div>
+		);
+		fireEvent.keyDown(screen.getByTestId('activity-heatmap-grid'), { key: 'ArrowLeft' });
+		expect(onKeyDown).not.toHaveBeenCalled();
+		fireEvent.keyDown(screen.getByTestId('activity-heatmap-grid'), { key: 'Tab' });
+		expect(onKeyDown).toHaveBeenCalled();
+	});
+
+	it('shows the active metric first in the hover tooltip', () => {
+		render(<ActivityHeatmap data={weekData} theme={theme} />);
+		const busy = screen
+			.getAllByTestId('activity-heatmap-cell')
+			.find((el) => el.getAttribute('aria-label')?.includes(': 3 queries'))!;
+		fireEvent.mouseEnter(busy, { clientX: 50, clientY: 50 });
+		const tooltip = screen.getByTestId('activity-heatmap-tooltip');
+		expect(tooltip.textContent).toContain('9 AM - 10 AM');
+		expect(tooltip.textContent).toContain('3 queries');
 	});
 });

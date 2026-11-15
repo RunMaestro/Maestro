@@ -46,6 +46,8 @@ interface PercentilesCardProps {
 	format?: (ms: number) => string;
 	/** Plural noun for the sample-count caption, e.g. "queries", "runs", "tasks". */
 	unitLabel?: string;
+	/** Heading over the breakdown rows. Name what the rows are ("By Provider", "By Agent"). */
+	breakdownLabel?: string;
 }
 
 export const PercentilesCard = memo(function PercentilesCard({
@@ -55,6 +57,7 @@ export const PercentilesCard = memo(function PercentilesCard({
 	breakdown,
 	format = formatDurationHuman,
 	unitLabel = 'runs',
+	breakdownLabel = 'By Agent',
 }: PercentilesCardProps) {
 	// Only show groups that actually have samples, biggest first.
 	const visibleBreakdown = useMemo(
@@ -104,7 +107,7 @@ export const PercentilesCard = memo(function PercentilesCard({
 								className="text-2xs uppercase tracking-wide mb-1.5"
 								style={{ color: theme.colors.textDim }}
 							>
-								By Agent
+								{breakdownLabel}
 							</div>
 							<div
 								className="rounded-md border overflow-hidden"
@@ -156,7 +159,7 @@ export const PercentilesCard = memo(function PercentilesCard({
 				</>
 			) : (
 				<div className="text-xs" style={{ color: theme.colors.textDim }}>
-					No completed runs to summarize yet.
+					Nothing to summarize in this range.
 				</div>
 			)}
 		</div>

@@ -951,6 +951,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			toggleTabStarShortcut: shortcuts.toggleTabStar,
 			toggleTabUnreadShortcut: tabShortcuts?.toggleTabUnread,
 			documentChatShortcut: shortcuts.toggleDocumentChat,
+			toggleDesignModeShortcut: tabShortcuts?.toggleBrowserDesignMode,
 		}),
 		...buildSupportCommands({
 			setQuickActionOpen,

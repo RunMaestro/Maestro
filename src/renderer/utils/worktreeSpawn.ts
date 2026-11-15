@@ -13,7 +13,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { gitService } from '../services/git';
 import { notifyToast } from '../stores/notificationStore';
-import { buildWorktreeSession } from './worktreeSession';
+import { buildWorktreeSession, recordWorktreeAgentsCreated } from './worktreeSession';
 import {
 	markWorktreePathAsRecentlyCreated,
 	clearRecentlyCreatedWorktreePath,
@@ -257,6 +257,7 @@ export async function spawnWorktreeAgentAndDispatch(
 				...prev.map((s) => (s.id === parentSession.id ? { ...s, worktreesExpanded: true } : s)),
 				newSession,
 			]);
+		recordWorktreeAgentsCreated([newSession]);
 		dispatchSessionId = newSession.id;
 		// The group's Onboarding prompt, when it has one. It queues in its own tab,
 		// beside whatever this spawn dispatches.

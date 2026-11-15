@@ -11,10 +11,11 @@
  * The join is deliberately LIVE rather than snapshotted into the DB at write
  * time: moving an agent into a different group re-buckets its whole history,
  * which is what "bundle these agents under a client" implies. The cost of that
- * choice is that a deleted agent's rows can no longer be attributed, so they
- * land in the synthetic "Ungrouped" bucket along with agents the user never
- * filed. That keeps the group totals reconcilable with the dashboard's overall
- * totals - every recorded query belongs to exactly one bucket.
+ * choice is that a deleted agent's rows can no longer be attributed to any
+ * group. With `includeDeletedAgents`, they land in a synthetic "Deleted agents"
+ * bucket (rows whose session id matches no supplied agent), so the buckets
+ * reconcile with the dashboard's overall totals - every recorded query belongs
+ * to exactly one bucket. Without it, those rows are simply not counted.
  *
  * Pure and dependency-free (structural inputs, no renderer types) so both the
  * dashboard and any future CLI/web surface can call it, and so the arithmetic
@@ -28,6 +29,12 @@ export const UNGROUPED_ID = '__ungrouped__';
 
 /** Display name for the synthetic bucket. */
 export const UNGROUPED_NAME = 'Ungrouped';
+
+/** Synthetic group id for queries recorded by agents that no longer exist. */
+export const DELETED_AGENTS_ID = '__deleted__';
+
+/** Display name for the deleted-agents bucket. */
+export const DELETED_AGENTS_NAME = 'Deleted agents';
 
 /** The slice of a `Group` this module needs. */
 export interface GroupLike {
@@ -68,6 +75,12 @@ export interface GroupStatRollup {
 	emoji?: string;
 	/** True for the synthetic Ungrouped bucket. */
 	isUngrouped: boolean;
+	/**
+	 * True for the synthetic Deleted agents bucket. Its `sessions` is empty (there
+	 * is no live agent to list) and `memberCount` is the number of deleted agents
+	 * with rows in the range.
+	 */
+	isDeleted: boolean;
 	/** Member sessions, in the order the caller supplied them. */
 	sessions: GroupMemberSession[];
 	memberCount: number;
@@ -152,7 +165,7 @@ export function rollUpGroup(
 		Partial<Pick<StatsAggregation, 'bySessionTokens'>>
 ): Omit<
 	GroupStatRollup,
-	'groupId' | 'name' | 'emoji' | 'isUngrouped' | 'sessions' | 'memberCount'
+	'groupId' | 'name' | 'emoji' | 'isUngrouped' | 'isDeleted' | 'sessions' | 'memberCount'
 > {
 	const dayTotals = new Map<string, { count: number; duration: number }>();
 	let queries = 0;
@@ -220,10 +233,34 @@ export interface RollUpGroupStatsOptions {
 	includeEmptyGroups?: boolean;
 	/** Keep the Ungrouped bucket even when it has no members. Off by default. */
 	includeEmptyUngrouped?: boolean;
+	/**
+	 * Append a "Deleted agents" bucket holding every row whose session id matches
+	 * none of `sessions`, so the buckets sum to the range's totals. Omitted when
+	 * there are no such rows. Off by default.
+	 */
+	includeDeletedAgents?: boolean;
 }
 
 /**
- * Build one rollup per group, plus the Ungrouped bucket last.
+ * Session ids with rows in the aggregation that match no supplied agent: the
+ * agents deleted since they recorded work. Sorted for a stable order.
+ */
+export function orphanedStatSessionIds(
+	sessions: GroupMemberSession[],
+	data: Pick<StatsAggregation, 'bySessionByDay'> &
+		Partial<Pick<StatsAggregation, 'bySessionSource' | 'bySessionTokens'>>
+): string[] {
+	const live = new Set(sessions.map((s) => s.id));
+	const ids = new Set<string>();
+	for (const map of [data.bySessionByDay, data.bySessionSource, data.bySessionTokens]) {
+		for (const id of Object.keys(map ?? {})) if (!live.has(id)) ids.add(id);
+	}
+	return [...ids].sort();
+}
+
+/**
+ * Build one rollup per group, then the Ungrouped bucket, then (when asked for)
+ * the Deleted agents bucket.
  *
  * The caller owns filtering (terminal sessions) and sorting - this returns the
  * groups in their stored order so the dashboard can match the Left Bar, and any
@@ -251,10 +288,29 @@ export function rollUpGroupStats(
 			name: group?.name ?? UNGROUPED_NAME,
 			emoji: group?.emoji,
 			isUngrouped,
+			isDeleted: false,
 			sessions: members,
 			memberCount: members.length,
 			...rollUpGroup(members, data),
 		});
+	}
+
+	if (options.includeDeletedAgents) {
+		const orphanIds = orphanedStatSessionIds(sessions, data);
+		if (orphanIds.length > 0) {
+			// The rows are keyed by id alone, so the reducer runs over id-only
+			// stand-ins. No provider is known for a deleted agent here.
+			const standIns = orphanIds.map((id) => ({ id, name: id }));
+			rollups.push({
+				groupId: DELETED_AGENTS_ID,
+				name: DELETED_AGENTS_NAME,
+				isUngrouped: false,
+				isDeleted: true,
+				sessions: [],
+				memberCount: orphanIds.length,
+				...rollUpGroup(standIns, data),
+			});
+		}
 	}
 
 	return rollups;

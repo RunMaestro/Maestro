@@ -3,14 +3,12 @@ import { ChartErrorBoundary } from '../../ChartErrorBoundary';
 import { DelegationTrendChart } from '../../DelegationTrendChart';
 import { DurationTrendsChart } from '../../DurationTrendsChart';
 import { PromptCadenceStats } from '../../PromptCadenceStats';
-import { WeekdayComparisonChart } from '../../WeekdayComparisonChart';
 import { DashboardSection } from '../components';
 import { DashboardTabPanel } from './DashboardTabPanel';
 import type { ActivityViewProps } from './types';
 
 export function ActivityView({
 	data,
-	timeRange,
 	theme,
 	colorBlindMode,
 	delegationByDay,
@@ -44,7 +42,7 @@ export function ActivityView({
 				<ChartErrorBoundary theme={theme} chartName="Interactive vs Delegated">
 					<DelegationTrendChart
 						days={delegationByDay}
-						timeRange={timeRange}
+						dayWindow={data.window}
 						theme={theme}
 						colorBlindMode={colorBlindMode}
 					/>
@@ -60,25 +58,7 @@ export function ActivityView({
 				style={{ minHeight: '300px', animationDelay: '0ms' }}
 			>
 				<ChartErrorBoundary theme={theme} chartName="Activity Heatmap">
-					<ActivityHeatmap
-						data={data}
-						timeRange={timeRange}
-						theme={theme}
-						colorBlindMode={colorBlindMode}
-					/>
-				</ChartErrorBoundary>
-			</DashboardSection>
-
-			<DashboardSection
-				sectionId="weekday-comparison"
-				focusedSection={focusedSection}
-				setSectionRef={setSectionRef}
-				handleSectionKeyDown={handleSectionKeyDown}
-				theme={theme}
-				style={{ animationDelay: '50ms' }}
-			>
-				<ChartErrorBoundary theme={theme} chartName="Weekday Comparison">
-					<WeekdayComparisonChart data={data} theme={theme} colorBlindMode={colorBlindMode} />
+					<ActivityHeatmap data={data} theme={theme} colorBlindMode={colorBlindMode} />
 				</ChartErrorBoundary>
 			</DashboardSection>
 
@@ -88,15 +68,10 @@ export function ActivityView({
 				setSectionRef={setSectionRef}
 				handleSectionKeyDown={handleSectionKeyDown}
 				theme={theme}
-				style={{ minHeight: '280px', animationDelay: '100ms' }}
+				style={{ minHeight: '280px', animationDelay: '50ms' }}
 			>
 				<ChartErrorBoundary theme={theme} chartName="Duration Trends">
-					<DurationTrendsChart
-						data={data}
-						timeRange={timeRange}
-						theme={theme}
-						colorBlindMode={colorBlindMode}
-					/>
+					<DurationTrendsChart data={data} theme={theme} colorBlindMode={colorBlindMode} />
 				</ChartErrorBoundary>
 			</DashboardSection>
 		</DashboardTabPanel>

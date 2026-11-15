@@ -73,7 +73,7 @@ export const ADD_QUERY_EVENT_TOKEN_COLUMNS = [
 ] as const;
 
 // ============================================================================
-// Query Event Model Columns (Migration v20)
+// Query Event Model Columns (Migration v21)
 // ============================================================================
 
 /**
@@ -114,7 +114,7 @@ export const CREATE_AUTO_RUN_SESSIONS_INDEXES_SQL = `
 `;
 
 /**
- * Auto Run kind column (Migration v14).
+ * Auto Run kind column (Migration v15).
  *
  * Unlike the token columns this one DOES default: every row written before it
  * existed came from the document runner or predates goal runs, so reading those
@@ -196,6 +196,33 @@ export const CREATE_SHORTCUT_USAGE_DAILY_SQL = `
 `;
 
 // ============================================================================
+// Shortcut Usage by Shortcut (Migration v14)
+// ============================================================================
+
+/**
+ * Per-shortcut firing counts, bucketed by local day so the dashboard's range
+ * filter applies to them the same way it applies to `shortcut_usage_daily`.
+ * One row per (day, shortcut id): bounded by days x bound shortcuts.
+ */
+export const CREATE_SHORTCUT_USAGE_BY_ID_SQL = `
+  CREATE TABLE IF NOT EXISTS shortcut_usage_by_id (
+    date TEXT NOT NULL,
+    shortcut_id TEXT NOT NULL,
+    count INTEGER NOT NULL,
+    PRIMARY KEY (date, shortcut_id)
+  )
+`;
+
+// ============================================================================
+// Query events by time and agent (Migration v14)
+// ============================================================================
+
+/** Serves "distinct agents with a query in range" without a table scan. */
+export const CREATE_QUERY_START_SESSION_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_query_start_session ON query_events(start_time, session_id)
+`;
+
+// ============================================================================
 // Multi-Window Usage Daily (Migration v8)
 // ============================================================================
 export const CREATE_MULTI_WINDOW_USAGE_DAILY_SQL = `
@@ -273,12 +300,12 @@ export const CREATE_WIZARD_RUNS_INDEXES_SQL = `
 `;
 
 // ============================================================================
-// Local Model Runs (Migration v15, rebuilt in v20)
+// Local Model Runs (Migration v16, rebuilt in v21)
 // ============================================================================
 
 /**
  * The `local_model_runs` table under a given name. The name is a parameter
- * because SQLite cannot alter a CHECK constraint: migration v20 widens
+ * because SQLite cannot alter a CHECK constraint: migration v21 widens
  * `source_type` by building the table again beside the old one, copying every
  * row, and renaming it into place.
  */
@@ -322,12 +349,12 @@ function localModelRunsTableSql(table: string): string {
  * `timeout`, ...) and NULL on success. `agent_id` is the agent the run was for,
  * and NULL when the caller knew none.
  *
- * Until v20 the CHECK allowed `local` and `endpoint` only, and there was no
+ * Until v21 the CHECK allowed `local` and `endpoint` only, and there was no
  * `agent_id`. A table created at this version already has the current shape.
  */
 export const CREATE_LOCAL_MODEL_RUNS_SQL = localModelRunsTableSql('local_model_runs');
 
-/** The name the v20 rebuild gives the new table until it is renamed into place. */
+/** The name the v21 rebuild gives the new table until it is renamed into place. */
 export const LOCAL_MODEL_RUNS_REBUILD_TABLE = 'local_model_runs_rebuild';
 
 export const CREATE_LOCAL_MODEL_RUNS_REBUILD_SQL = localModelRunsTableSql(
@@ -335,7 +362,7 @@ export const CREATE_LOCAL_MODEL_RUNS_REBUILD_SQL = localModelRunsTableSql(
 );
 
 /**
- * The columns of the table as v15 created it: what the v20 rebuild copies. They
+ * The columns of the table as v16 created it: what the v21 rebuild copies. They
  * are named one by one so the copy does not depend on column order.
  */
 export const LOCAL_MODEL_RUNS_V15_COLUMNS = [
@@ -358,7 +385,7 @@ export const CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL = `
 `;
 
 /**
- * Migration v20. Kept apart from the indexes above, which v15 creates: that
+ * Migration v21. Kept apart from the indexes above, which v16 creates: that
  * migration must stay valid against a table that has no `agent_id` yet.
  */
 export const CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL = `
@@ -366,7 +393,7 @@ export const CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL = `
 `;
 
 // ============================================================================
-// Proxy Requests (Migration v16)
+// Proxy Requests (Migration v17)
 // ============================================================================
 
 /**
@@ -380,10 +407,10 @@ export const CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL = `
  * only in `compress` mode. `compressor_counts` and `new_blocks` are JSON;
  * `new_blocks` lists only the blocks shortened for the first time in this
  * request, so a block appears in one row however many later requests resend it.
- * `routed_to` (migration v17) is the Local Models target a background request
+ * `routed_to` (migration v18) is the Local Models target a background request
  * was sent to in place of the provider, and NULL for every other request. The
- * `provider_*_tokens` columns (migration v21) are what the provider counted.
- * The last fourteen columns (migration v22) are the telemetry facts of the
+ * `provider_*_tokens` columns (migration v22) are what the provider counted.
+ * The last fourteen columns (migration v23) are the telemetry facts of the
  * `ProxyRequest` contract: see `ADD_PROXY_REQUEST_TELEMETRY_COLUMNS`.
  */
 export const CREATE_PROXY_REQUESTS_SQL = `
@@ -430,17 +457,17 @@ export const CREATE_PROXY_REQUESTS_SQL = `
   )
 `;
 
-/** Migration v17, for a `proxy_requests` table created before the column existed. */
+/** Migration v18, for a `proxy_requests` table created before the column existed. */
 export const ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL = `
   ALTER TABLE proxy_requests ADD COLUMN routed_to TEXT
 `;
 
 /**
- * Migration v21: what the provider counted for each request, from the `usage`
+ * Migration v22: what the provider counted for each request, from the `usage`
  * in its answer. NULL when the answer named none, could not be read, or came
- * from a background target. Like `routed_to`, the v16 table definition above
+ * from a background target. Like `routed_to`, the v17 table definition above
  * already holds them, so a new table (or one a repair creates) has nothing for
- * v21 to add; v21 adds them to a table an older build created.
+ * v22 to add; v22 adds them to a table an older build created.
  */
 export const ADD_PROXY_REQUEST_PROVIDER_USAGE_COLUMNS = [
 	'provider_input_tokens',
@@ -450,18 +477,18 @@ export const ADD_PROXY_REQUEST_PROVIDER_USAGE_COLUMNS = [
 ] as const;
 
 /**
- * Migration v22: the telemetry facts a request's row can state (see
+ * Migration v23: the telemetry facts a request's row can state (see
  * `ProxyEffectiveMode`, `ProxyBlockCounts` and `ProxyProviderReportedness` in
- * shared/stats-types.ts), in the order the table lists them. The v16 table
- * definition above already holds them, so a new table has nothing for v22 to
- * add; v22 adds them to a table an older build created.
+ * shared/stats-types.ts), in the order the table lists them. The v17 table
+ * definition above already holds them, so a new table has nothing for v23 to
+ * add; v23 adds them to a table an older build created.
  *
  * Every column is NULL for a row written before it, and NULL means UNKNOWN, never
  * zero or a default:
  *
  *   - `effective_mode` is `passthrough`, `compress` or `compress-early`. `mode`
- *     keeps its CHECK and cannot hold the last, so a row written before v22 does
- *     not say which compress mode carried it. v22 does not guess: it is not
+ *     keeps its CHECK and cannot hold the last, so a row written before v23 does
+ *     not say which compress mode carried it. v23 does not guess: it is not
  *     filled from `mode`, and not from the agent's current setting, which may
  *     have changed since.
  *   - The nine `blocks_*` columns are the `ProxyBlockCounts` of a request the
@@ -474,7 +501,7 @@ export const ADD_PROXY_REQUEST_PROVIDER_USAGE_COLUMNS = [
  *     before it was tracked, and its tokens are legacy: a class the answer never
  *     named reads as 0 in them.
  *
- * No CHECK and no index. A CHECK cannot be widened without the table rebuild v20
+ * No CHECK and no index. A CHECK cannot be widened without the table rebuild v21
  * needed, so the text columns are open like `skip_reason`: the writer stores
  * only values of the contract, and a reader treats a value it does not
  * recognize as unknown. A read filters on `started_at` and `agent_id`, which are
@@ -503,7 +530,7 @@ export const CREATE_PROXY_REQUESTS_INDEXES_SQL = `
 `;
 
 // ============================================================================
-// System One Decisions (Migration v18, columns added in v19)
+// System One Decisions (Migration v19, columns added in v20)
 // ============================================================================
 
 /**
@@ -515,7 +542,7 @@ export const CREATE_PROXY_REQUESTS_INDEXES_SQL = `
  * `task_id` is the task that ran, or `agent:<verb>` for a request an agent sent
  * through `maestro-cli s1`; the prefix is what a day's agent spend is summed
  * by. `tab_id` is that agent's AI tab, and `cached` is 1 for a request answered
- * from the answer cache (nothing sent, no tokens, no cost). Both came in v19.
+ * from the answer cache (nothing sent, no tokens, no cost). Both came in v20.
  *
  * `engine` is the engine that was asked, or `off` for a task assigned to System
  * One while no engine was chosen. `outcome` is what the task's fail policy did
@@ -548,7 +575,7 @@ export const CREATE_S1_DECISIONS_SQL = `
   )
 `;
 
-/** Migration v19, for an `s1_decisions` table created before the columns existed. */
+/** Migration v20, for an `s1_decisions` table created before the columns existed. */
 export const ADD_S1_DECISION_TAB_ID_COLUMN_SQL = `
   ALTER TABLE s1_decisions ADD COLUMN tab_id TEXT
 `;

@@ -940,7 +940,14 @@ export function useGoalRunner({
 
 				if (statsAutoRunId) {
 					try {
-						await window.maestro.stats.endAutoRun(statsAutoRunId, totalElapsedMs, finalProgress);
+						// Progress is on a 0-100 scale and the run row was started with
+						// tasksTotal 100, so the total stays 100.
+						await window.maestro.stats.endAutoRun(
+							statsAutoRunId,
+							totalElapsedMs,
+							finalProgress,
+							100
+						);
 					} catch (statsError) {
 						logger.warn('[GoalRunner] Failed to end stats tracking:', undefined, statsError);
 					}

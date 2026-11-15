@@ -41,6 +41,26 @@ export interface CorruptionRecoveryResult {
 	restoredFromBackup?: boolean;
 	/** Error during recovery (if any) */
 	error?: string;
+	/** Where the damaged database file was moved, when the move succeeded */
+	corruptedPath?: string;
+}
+
+/**
+ * What opening the stats database had to do, reported once to the renderer so
+ * a reset is never silent: the dashboard would otherwise just show less
+ * history with no explanation.
+ */
+export interface StatsInitializationResult {
+	/** A usable database is open. */
+	success: boolean;
+	/** The damaged database was replaced (by a backup or a fresh file). */
+	wasReset: boolean;
+	/** Where the damaged database file was kept, when it could be moved aside. */
+	backupPath?: string;
+	/** Recovery error, when recovery itself failed. */
+	error?: string;
+	/** Plain-language notice for the toast. */
+	userMessage?: string;
 }
 
 /**

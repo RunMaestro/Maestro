@@ -541,17 +541,28 @@ describe('QuickActions command builders', () => {
 
 		// Browser tab -> "Content" actions, no Gist option.
 		const copyActiveBrowserContent = vi.fn();
+		const toggleBrowserDesignMode = vi.fn();
 		const browserRef = {
-			current: { copyActiveBrowserContent, sendActiveBrowserContentToAgent: vi.fn() },
+			current: {
+				copyActiveBrowserContent,
+				sendActiveBrowserContentToAgent: vi.fn(),
+				toggleBrowserDesignMode,
+			},
 		} as any;
 		const browser = buildActiveTabContextCommands({
 			...baseArgs,
 			activeTabType: 'browser',
 			mainPanelRef: browserRef,
 		});
-		expect(browser.map((a) => a.id)).toEqual(['copyBrowserContent', 'sendBrowserContentToAgent']);
+		expect(browser.map((a) => a.id)).toEqual([
+			'copyBrowserContent',
+			'sendBrowserContentToAgent',
+			'toggleBrowserDesignMode',
+		]);
 		browser.find((a) => a.id === 'copyBrowserContent')!.action();
 		expect(copyActiveBrowserContent).toHaveBeenCalled();
+		browser.find((a) => a.id === 'toggleBrowserDesignMode')!.action();
+		expect(toggleBrowserDesignMode).toHaveBeenCalled();
 
 		// File previews expose no context/buffer/content actions, and no delete
 		// entry either while there is no open preview tab to act on.
@@ -810,6 +821,7 @@ describe('QuickActions command builders', () => {
 		}).map((a) => a.id);
 		expect(supportIds).toContain('createDebugPackage');
 		expect(supportIds).toContain('leaderboard');
+		expect(supportIds).toContain('privacy');
 
 		const debugCommandIds = buildDebugCommands({
 			activeSession: createMockSession({

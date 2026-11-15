@@ -222,6 +222,16 @@ class CoworkingRegistry {
 		return null;
 	}
 
+	/** The public `browser:N` id of a renderer BrowserTab UUID in a session, or null
+	 *  when the registry has not seen the tab (Coworking off, or not synced yet) or
+	 *  the user hid it from agents. The reverse of resolveBrowserTabUuidForSession,
+	 *  with the same privacy rule: a hidden tab has no id to hand out. */
+	getBrowserIdForTab(sessionId: string, tabUuid: string): string | null {
+		const rec = this.browserRecords.get(tabUuid);
+		if (!rec || rec.sessionId !== sessionId || rec.hiddenFromAgent) return null;
+		return rec.id;
+	}
+
 	/** Subscribe to any registry change. Returns an unsubscribe fn. */
 	onChange(listener: ChangeListener): () => void {
 		this.listeners.add(listener);

@@ -1,19 +1,19 @@
 /**
  * @vitest-environment node
  *
- * Migration v22 against a real SQLite engine: the telemetry columns of
+ * Migration v23 against a real SQLite engine: the telemetry columns of
  * `proxy_requests` (the mode a request was carried as, what compress mode did
  * with each block, how each provider count got its number).
  *
  * What is pinned here is the one thing the migration is for: a row written
- * before v22 stays UNKNOWN in every new column. Nothing is backfilled, nothing
+ * before v23 stays UNKNOWN in every new column. Nothing is backfilled, nothing
  * defaults, and `effective_mode` is not read off `mode` (a stored `compress` is
  * `compress` or `compress-early`) or off the agent's setting today. Around that:
  * every old value survives, a second run changes nothing, a version number that
- * already covers v22 still gets the columns, and a failure part way leaves the
+ * already covers v23 still gets the columns, and a failure part way leaves the
  * table as it was.
  *
- * The old table is built from the definition v21 shipped, written out below. It
+ * The old table is built from the definition v22 shipped, written out below. It
  * must not be imported from schema.ts: that constant is the CURRENT shape.
  */
 
@@ -50,7 +50,7 @@ import {
 	type ProxyRow,
 } from '../../helpers/proxyTelemetryFixtures';
 
-/** `proxy_requests` exactly as migration v21 left it, before v22. */
+/** `proxy_requests` exactly as migration v22 left it, before v23. */
 const V21_PROXY_REQUESTS_SQL = `
   CREATE TABLE proxy_requests (
     id TEXT PRIMARY KEY,
@@ -114,7 +114,7 @@ interface OldRow {
 	provider_output_tokens: number | null;
 }
 
-/** The v21 columns, in table order. */
+/** The v22 columns, in table order. */
 const V21_COLUMNS = [
 	'id',
 	'agent_id',
@@ -176,7 +176,7 @@ function oldRow(overrides: Partial<OldRow> & Pick<OldRow, 'id'>): OldRow {
 }
 
 /**
- * Rows a v21 install can hold. Both stored modes (a `compress` row may have been
+ * Rows a v22 install can hold. Both stored modes (a `compress` row may have been
  * `compress` or `compress-early`: the row cannot say), an answer that named no
  * usage, a body forwarded unread, a routed request, every nullable column both set
  * and NULL, zeros that must not read as NULL, and an id, an agent and a timestamp
@@ -300,8 +300,8 @@ function insertOldRow(db: Database.Database, row: OldRow): void {
 }
 
 /**
- * A database as a v21 build left it, holding {@link OLD_ROWS}: migrate fully,
- * then put `proxy_requests` back the way v21 left it and stamp 21.
+ * A database as a v22 build left it, holding {@link OLD_ROWS}: migrate fully,
+ * then put `proxy_requests` back the way v22 left it and stamp 22.
  */
 function seededV21Db(): Database.Database {
 	const db = openDb();
@@ -310,8 +310,8 @@ function seededV21Db(): Database.Database {
 	db.prepare('DROP TABLE proxy_requests').run();
 	db.prepare(V21_PROXY_REQUESTS_SQL).run();
 	for (const sql of V21_PROXY_REQUESTS_INDEXES_SQL) db.prepare(sql).run();
-	db.prepare('DELETE FROM _migrations WHERE version = 22').run();
-	db.pragma('user_version = 21');
+	db.prepare('DELETE FROM _migrations WHERE version = 23').run();
+	db.pragma('user_version = 22');
 	for (const row of OLD_ROWS) insertOldRow(db, row);
 
 	vi.mocked(logger.warn).mockClear();
@@ -385,7 +385,7 @@ function insertFullRow(db: Database.Database, id: string, row: ProxyRow): void {
 	).run(...Object.values(values));
 }
 
-describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
+describe.skipIf(!canLoadNodeSqlite())('stats migration v23', () => {
 	beforeEach(() => {
 		clearProxyRequestsCache();
 		vi.mocked(logger.warn).mockClear();
@@ -393,15 +393,15 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 	});
 
 	it('is the target version', () => {
-		expect(getTargetVersion()).toBe(22);
-		expect(STATS_DB_VERSION).toBe(22);
+		expect(getTargetVersion()).toBe(23);
+		expect(STATS_DB_VERSION).toBe(23);
 	});
 
 	describe('the seeded fixture', () => {
-		it('really is the v21 shape: no telemetry column, the mode CHECK, and rows to carry', () => {
+		it('really is the v22 shape: no telemetry column, the mode CHECK, and rows to carry', () => {
 			const db = seededV21Db();
 
-			expect(getCurrentVersion(db)).toBe(21);
+			expect(getCurrentVersion(db)).toBe(22);
 			expect(columnNames(db, 'proxy_requests')).toEqual([...V21_COLUMNS]);
 			expect(oldRows(db)).toHaveLength(OLD_ROWS.length);
 			expect(() => insertOldRow(db, oldRow({ id: 'x', mode: 'compress-early' as never }))).toThrow(
@@ -410,14 +410,14 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 		});
 	});
 
-	describe('upgrading a version 21 database', () => {
-		it('brings the database to version 22 as an ordinary upgrade', () => {
+	describe('upgrading a version 22 database', () => {
+		it('brings the database to version 23 as an ordinary upgrade', () => {
 			const db = seededV21Db();
 
 			runMigrations(db);
 
-			expect(getCurrentVersion(db)).toBe(22);
-			expect(getMigrationHistory(db).find((m) => m.version === 22)).toMatchObject({
+			expect(getCurrentVersion(db)).toBe(23);
+			expect(getMigrationHistory(db).find((m) => m.version === 23)).toMatchObject({
 				status: 'success',
 			});
 			// A repair would warn; this is the normal path.
@@ -541,12 +541,12 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 	});
 
 	describe('a fresh database', () => {
-		it('is created in the v22 shape and needs no repair', () => {
+		it('is created in the v23 shape and needs no repair', () => {
 			const db = openDb();
 
 			runMigrations(db);
 
-			expect(getCurrentVersion(db)).toBe(22);
+			expect(getCurrentVersion(db)).toBe(23);
 			expect(columnNames(db, 'proxy_requests')).toEqual([...V21_COLUMNS, ...TELEMETRY_NAMES]);
 			expect(logger.warn).not.toHaveBeenCalled();
 		});
@@ -597,7 +597,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 			expect(telemetryRows(db)).toEqual(rows);
 			expect(oldRows(db)).toEqual(oldOnce);
 			expect(tableSql(db, 'proxy_requests')).toBe(sqlOnce);
-			expect(getCurrentVersion(db)).toBe(22);
+			expect(getCurrentVersion(db)).toBe(23);
 			expect(getMigrationHistory(db)).toEqual(history);
 			expect(logger.warn).not.toHaveBeenCalled();
 		});
@@ -609,15 +609,15 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 			const rows = telemetryRows(db);
 			const sqlOnce = tableSql(db, 'proxy_requests');
 
-			// Stamp the version back so the runner applies v22 again, not just checks it.
-			db.prepare('DELETE FROM _migrations WHERE version = 22').run();
-			db.pragma('user_version = 21');
+			// Stamp the version back so the runner applies v23 again, not just checks it.
+			db.prepare('DELETE FROM _migrations WHERE version = 23').run();
+			db.pragma('user_version = 22');
 			runMigrations(db);
 
 			expect(telemetryRows(db)).toEqual(rows);
 			expect(tableSql(db, 'proxy_requests')).toBe(sqlOnce);
-			expect(getCurrentVersion(db)).toBe(22);
-			expect(getMigrationHistory(db).find((m) => m.version === 22)).toMatchObject({
+			expect(getCurrentVersion(db)).toBe(23);
+			expect(getMigrationHistory(db).find((m) => m.version === 23)).toMatchObject({
 				status: 'success',
 			});
 		});
@@ -643,13 +643,13 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 		});
 	});
 
-	describe('a version number that already covers v22', () => {
-		it('adds the columns to a database stamped 22 without them, keeping its rows', () => {
-			// v22 declares isApplied for the same reason v15 does: rc may number a
-			// different migration 22, and user_version is only a number.
+	describe('a version number that already covers v23', () => {
+		it('adds the columns to a database stamped 23 without them, keeping its rows', () => {
+			// v23 declares isApplied for the same reason v16 does: rc may number a
+			// different migration 23, and user_version is only a number.
 			const db = seededV21Db();
 			const before = oldRows(db);
-			db.pragma('user_version = 22');
+			db.pragma('user_version = 23');
 
 			runMigrations(db);
 
@@ -658,12 +658,12 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 			expect(
 				telemetryRows(db).every((row) => TELEMETRY_NAMES.every((name) => row[name] === null))
 			).toBe(true);
-			expect(getCurrentVersion(db)).toBe(22);
+			expect(getCurrentVersion(db)).toBe(23);
 			expect(logger.warn).toHaveBeenCalledTimes(1);
-			expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v22');
+			expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v23');
 		});
 
-		it('adds only what is missing to a database stamped 22 that lacks some of the columns', () => {
+		it('adds only what is missing to a database stamped 23 that lacks some of the columns', () => {
 			const db = openDb();
 			runMigrations(db);
 			insertFullRow(db, 'new-current', currentProxyRow());
@@ -685,10 +685,10 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 				provider_output_reportedness: null,
 			});
 			expect(logger.warn).toHaveBeenCalledTimes(1);
-			expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v22');
+			expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v23');
 		});
 
-		it('leaves a complete database stamped 22 alone', () => {
+		it('leaves a complete database stamped 23 alone', () => {
 			const db = openDb();
 			runMigrations(db);
 			insertFullRow(db, 'new-current', currentProxyRow());
@@ -697,11 +697,11 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 			runMigrations(db);
 
 			expect(telemetryRows(db)).toEqual(rows);
-			expect(getCurrentVersion(db)).toBe(22);
+			expect(getCurrentVersion(db)).toBe(23);
 			expect(logger.warn).not.toHaveBeenCalled();
 		});
 
-		it('repairs v21 and v22 together, v21 first, for a database stamped 22 without either', () => {
+		it('repairs v22 and v23 together, v22 first, for a database stamped 23 without either', () => {
 			const db = openDb();
 			runMigrations(db);
 			for (const column of [
@@ -719,12 +719,12 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 
 			expect(columnNames(db, 'proxy_requests')).toEqual([...V21_COLUMNS, ...TELEMETRY_NAMES]);
 			expect(vi.mocked(logger.warn).mock.calls.map(([message]) => String(message))).toEqual([
-				expect.stringContaining('v21'),
 				expect.stringContaining('v22'),
+				expect.stringContaining('v23'),
 			]);
 		});
 
-		it('recreates the table whole, through v16, for a database stamped 22 without it', () => {
+		it('recreates the table whole, through v17, for a database stamped 23 without it', () => {
 			const db = openDb();
 			runMigrations(db);
 			db.prepare('DROP TABLE proxy_requests').run();
@@ -732,12 +732,12 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 
 			runMigrations(db);
 
-			// v16 creates the table with every column it has today, so v17, v21 and v22
+			// v17 creates the table with every column it has today, so v18, v22 and v23
 			// find nothing to add.
 			expect(hasTable(db, 'proxy_requests')).toBe(true);
 			expect(columnNames(db, 'proxy_requests')).toEqual([...V21_COLUMNS, ...TELEMETRY_NAMES]);
 			expect(logger.warn).toHaveBeenCalledTimes(1);
-			expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v16');
+			expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v17');
 		});
 	});
 
@@ -758,8 +758,8 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 				'idx_proxy_requests_agent',
 				'idx_proxy_requests_started',
 			]);
-			expect(getCurrentVersion(db)).toBe(21);
-			expect(getMigrationHistory(db).find((m) => m.version === 22)).toMatchObject({
+			expect(getCurrentVersion(db)).toBe(22);
+			expect(getMigrationHistory(db).find((m) => m.version === 23)).toMatchObject({
 				status: 'failed',
 				errorMessage: 'disk I/O error',
 			});
@@ -776,8 +776,8 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 
 			expect(oldRows(db)).toEqual(before);
 			expect(columnNames(db, 'proxy_requests')).toEqual([...V21_COLUMNS, ...TELEMETRY_NAMES]);
-			expect(getCurrentVersion(db)).toBe(22);
-			expect(getMigrationHistory(db).find((m) => m.version === 22)).toMatchObject({
+			expect(getCurrentVersion(db)).toBe(23);
+			expect(getMigrationHistory(db).find((m) => m.version === 23)).toMatchObject({
 				status: 'success',
 			});
 		});
@@ -888,7 +888,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 			});
 		});
 
-		it('still takes a row from the writer that predates v22, and stores it as unknown', () => {
+		it('still takes a row from the writer that predates v23, and stores it as unknown', () => {
 			const db = seededV21Db();
 			runMigrations(db);
 

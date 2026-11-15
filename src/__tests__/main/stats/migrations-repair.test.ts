@@ -45,7 +45,7 @@ import { INSERT_QUERY_EVENT_SQL } from '../../../main/stats/query-event-insert';
 import { logger } from '../../../main/utils/logger';
 
 /** rc's highest stats migration. Bump alongside a new entry in getMigrations(). */
-const RC_TARGET_VERSION = 22;
+const RC_TARGET_VERSION = 23;
 
 function openDb(): Database.Database {
 	const raw = new DatabaseSync(':memory:');
@@ -201,9 +201,83 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
 	});
 
-	it('creates local_model_runs for a database stamped v15 without it', () => {
-		// v15 declares isApplied, so if rc ships a different v15 first, an install
-		// stamped 15 by that build still gets this table.
+	it('v14 creates shortcut_usage_by_id and the (start_time, session_id) query index', () => {
+		const db = openDb();
+		runMigrations(db);
+
+		expect(hasTable(db, 'shortcut_usage_by_id')).toBe(true);
+		expect(columnNames(db, 'shortcut_usage_by_id')).toEqual(['date', 'shortcut_id', 'count']);
+		const index = db
+			.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name = ?")
+			.get('idx_query_start_session');
+		expect(index).toBeTruthy();
+	});
+
+	it('recreates shortcut_usage_by_id for a database stamped v14 without it', () => {
+		const db = openDb();
+		runMigrations(db);
+		db.exec('DROP TABLE shortcut_usage_by_id');
+
+		runMigrations(db);
+
+		expect(hasTable(db, 'shortcut_usage_by_id')).toBe(true);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v14');
+	});
+
+	it("gives an rc database stamped v14 (kind column, no shortcut_usage_by_id) main's v14", () => {
+		// rc first shipped auto_run_sessions.kind as v14, the number main gave
+		// shortcut_usage_by_id. Such a database must get the table by repair, and
+		// v15 must not try to add kind a second time.
+		const db = openDb();
+		runMigrations(db);
+		db.exec('DROP TABLE shortcut_usage_by_id');
+		db.pragma('user_version = 14');
+
+		runMigrations(db);
+
+		expect(hasTable(db, 'shortcut_usage_by_id')).toBe(true);
+		expect(columnNames(db, 'auto_run_sessions')).toContain('kind');
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v14');
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+	});
+
+	it('adds auto_run_sessions.kind to a main database at v14', () => {
+		const db = openDb();
+		runMigrations(db);
+		db.exec('ALTER TABLE auto_run_sessions DROP COLUMN kind');
+		db.pragma('user_version = 14');
+
+		runMigrations(db);
+
+		expect(columnNames(db, 'auto_run_sessions')).toContain('kind');
+		expect(logger.warn).not.toHaveBeenCalled();
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+	});
+
+	it("gives an acappella database stamped v22 (kind column, no shortcut_usage_by_id) main's v14", () => {
+		// acappella numbered its Local Models migrations 15-22 on top of kind at
+		// v14, before rc moved kind to v15; they are 16-23 now. Such a database
+		// has every table but shortcut_usage_by_id, which v14 repairs, and the
+		// rest upgrades as usual.
+		const db = openDb();
+		runMigrations(db);
+		db.exec('DROP TABLE shortcut_usage_by_id');
+		db.pragma('user_version = 22');
+
+		runMigrations(db);
+
+		expect(hasTable(db, 'shortcut_usage_by_id')).toBe(true);
+		expect(columnNames(db, 'auto_run_sessions')).toContain('kind');
+		expect(hasTable(db, 'local_model_runs')).toBe(true);
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v14');
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+	});
+
+	it('creates local_model_runs for a database stamped v16 without it', () => {
+		// v16 declares isApplied, so if rc ships a different v16 first, an install
+		// stamped 16 by that build still gets this table.
 		const db = crossBranchDb(RC_TARGET_VERSION, { localModelRuns: true });
 		expect(hasTable(db, 'local_model_runs')).toBe(false);
 
@@ -211,22 +285,22 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 
 		expect(hasTable(db, 'local_model_runs')).toBe(true);
 		expect(logger.warn).toHaveBeenCalledTimes(1);
-		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v15');
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v16');
 	});
 
-	it('creates proxy_requests for a database stamped v16 without it', () => {
-		// v16 declares isApplied for the same reason v15 does.
+	it('creates proxy_requests for a database stamped v17 without it', () => {
+		// v17 declares isApplied for the same reason v16 does.
 		const db = crossBranchDb(RC_TARGET_VERSION, { proxyRequests: true });
 		expect(hasTable(db, 'proxy_requests')).toBe(false);
 
 		runMigrations(db);
 
 		expect(hasTable(db, 'proxy_requests')).toBe(true);
-		// The table is created with every column it has today, so v17 has
+		// The table is created with every column it has today, so v18 has
 		// nothing left to repair.
 		expect(columnNames(db, 'proxy_requests')).toContain('routed_to');
 		expect(logger.warn).toHaveBeenCalledTimes(1);
-		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v16');
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v17');
 	});
 
 	it('gives a fresh proxy_requests table the routed_to column', () => {
@@ -237,8 +311,8 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 	});
 
 	it('adds routed_to to a proxy_requests table created before the column existed', () => {
-		// A v16 install: the table exists, without the column v17 adds.
-		const db = crossBranchDb(16, { proxyRoutedTo: true });
+		// A v17 install: the table exists, without the column v18 adds.
+		const db = crossBranchDb(17, { proxyRoutedTo: true });
 		expect(columnNames(db, 'proxy_requests')).not.toContain('routed_to');
 
 		runMigrations(db);
@@ -249,8 +323,8 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		expect(logger.warn).not.toHaveBeenCalled();
 	});
 
-	it('adds routed_to back to a database stamped v17 without it', () => {
-		// v17 declares isApplied, so a database another branch stamped 17 for a
+	it('adds routed_to back to a database stamped v18 without it', () => {
+		// v18 declares isApplied, so a database another branch stamped 18 for a
 		// different migration still gets the column the insert names.
 		const db = crossBranchDb(RC_TARGET_VERSION, { proxyRoutedTo: true });
 
@@ -258,26 +332,26 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 
 		expect(columnNames(db, 'proxy_requests')).toContain('routed_to');
 		expect(logger.warn).toHaveBeenCalledTimes(1);
-		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v17');
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v18');
 	});
 
-	it('creates s1_decisions for a database stamped v18 without it', () => {
-		// v18 declares isApplied, so if rc ships a different v18 first, an install
-		// stamped 18 by that build still gets the System One ledger's table.
+	it('creates s1_decisions for a database stamped v19 without it', () => {
+		// v19 declares isApplied, so if rc ships a different v19 first, an install
+		// stamped 19 by that build still gets the System One ledger's table.
 		const db = crossBranchDb(RC_TARGET_VERSION, { s1Decisions: true });
 		expect(hasTable(db, 's1_decisions')).toBe(false);
 
 		runMigrations(db);
 
 		expect(hasTable(db, 's1_decisions')).toBe(true);
-		// The table v18 creates already has v19's columns, so v19 has nothing to repair.
+		// The table v19 creates already has v20's columns, so v20 has nothing to repair.
 		expect(columnNames(db, 's1_decisions')).toEqual(expect.arrayContaining(['tab_id', 'cached']));
 		expect(logger.warn).toHaveBeenCalledTimes(1);
-		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v18');
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v19');
 	});
 
 	it('adds tab_id and cached to an s1_decisions table created before the columns existed', () => {
-		const db = crossBranchDb(18, { s1AgentColumns: true });
+		const db = crossBranchDb(19, { s1AgentColumns: true });
 		expect(columnNames(db, 's1_decisions')).not.toContain('tab_id');
 		db.exec(
 			`INSERT INTO s1_decisions (id, started_at, task_id, engine, question_ids, outcome, latency_ms)
@@ -297,13 +371,13 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		expect(logger.warn).not.toHaveBeenCalled();
 	});
 
-	it('adds the s1_decisions agent columns back to a database stamped v19 without them', () => {
+	it('adds the s1_decisions agent columns back to a database stamped v20 without them', () => {
 		const db = crossBranchDb(RC_TARGET_VERSION, { s1AgentColumns: true });
 
 		runMigrations(db);
 
 		expect(columnNames(db, 's1_decisions')).toEqual(expect.arrayContaining(['tab_id', 'cached']));
 		expect(logger.warn).toHaveBeenCalledTimes(1);
-		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v19');
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v20');
 	});
 });

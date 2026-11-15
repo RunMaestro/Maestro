@@ -1,378 +1,234 @@
 /**
  * AutoRunStats
  *
- * Displays Auto Run specific metrics for the Usage Dashboard.
- * Shows batch processing statistics including sessions, tasks, and success rates.
+ * Auto Run figures for the Usage Dashboard: run counts, checkboxes ticked of
+ * checkboxes attempted, and run times, then a per-day bar chart of tasks
+ * completed over the whole range.
  *
- * Features:
- * - Summary metrics in card format
- * - Mini bar chart showing tasks completed over time
- * - Theme-aware styling with inline styles
- * - Formatted values for readability
- * - Tooltip on hover for the bar chart
+ * What counts where is spelled out in `src/shared/autoRunMetrics.ts`: goal runs are
+ * counted on their own (they have no checkboxes), and runs that never recorded
+ * an end stay out of averages and the success rate.
  */
 
-import React, { memo, useState, useMemo, useCallback } from 'react';
+import { memo, useMemo } from 'react';
 import { Play, CheckSquare, ListChecks, Target, Clock, Timer, Hourglass } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, AutoRunSession } from '../../../shared/stats-types';
-import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
-import { ChartTooltip } from './ChartTooltip';
+import { formatCalendarDay, formatDurationHuman, formatNumber } from '../../../shared/formatters';
+import { ChartTooltip, StatCardGrid } from '../widgets';
+import type { StatCardDatum } from '../widgets';
 import {
 	computeAutoRunMetrics,
-	formatDateLabel,
-	formatFullDate,
 	getAutoRunChartMax,
 	groupSessionsByDate,
 	type AutoRunDayData,
-} from './autoRunStatsUtils';
-import { MetricCard } from './MetricCard';
+} from '../../../shared/autoRunMetrics';
+import { DashboardPanelState } from './DashboardPanelState';
 import { buildAutoRunSummary } from './footerSummary';
 import { usePublishFooterSummary } from './useFooterSummary';
-import { useDashboardResource } from './useDashboardResource';
+import { useBarChartFocus } from './useBarChartFocus';
+import { useAutoRunSessions } from './useAutoRunSessions';
 
 interface AutoRunStatsProps {
 	/** Current time range for filtering */
 	timeRange: StatsTimeRange;
 	/** Current theme for styling */
 	theme: Theme;
-	/** Number of columns for responsive layout (default: 6) */
-	columns?: number;
 }
 
 const NO_SESSIONS: AutoRunSession[] = [];
 
-export const AutoRunStats = memo(function AutoRunStats({
-	timeRange,
-	theme,
-	columns = 6,
-}: AutoRunStatsProps) {
-	const {
-		data,
-		loading,
-		error: fetchError,
-		refresh: fetchData,
-	} = useDashboardResource(
-		`autorun-sessions:${timeRange}`,
-		() => window.maestro.stats.getAutoRunSessions(timeRange),
-		'fetchAutoRunStats'
-	);
-	const sessions = data ?? NO_SESSIONS;
-	// A failed refresh keeps the last good data on screen.
-	const error = data ? null : fetchError;
-	const [hoveredBar, setHoveredBar] = useState<AutoRunDayData | null>(null);
-	const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+function successPercent(day: AutoRunDayData): number {
+	return day.count > 0 ? Math.min(100, Math.round((day.successCount / day.count) * 100)) : 0;
+}
 
-	// Calculate metrics from session-level data (tasksCompleted = checkboxes, not agent invocations)
-	const metrics = useMemo(() => {
-		return computeAutoRunMetrics(sessions);
-	}, [sessions]);
+function describeDay(day: AutoRunDayData): string {
+	return `${formatCalendarDay(day.date)}: ${formatNumber(day.successCount)} of ${formatNumber(day.count)} tasks done`;
+}
+
+export const AutoRunStats = memo(function AutoRunStats({ timeRange, theme }: AutoRunStatsProps) {
+	const { data, loading, error, refresh } = useAutoRunSessions(timeRange);
+	const sessions = data ?? NO_SESSIONS;
+
+	const metrics = useMemo(() => computeAutoRunMetrics(sessions), [sessions]);
+	const tasksByDate = useMemo(
+		() => groupSessionsByDate(sessions, timeRange),
+		[sessions, timeRange]
+	);
+	const maxCount = useMemo(() => getAutoRunChartMax(tasksByDate), [tasksByDate]);
+	const { activeIndex, anchor, containerProps, barProps } = useBarChartFocus(tasksByDate.length);
+	const active = activeIndex !== null ? tasksByDate[activeIndex] : null;
 
 	usePublishFooterSummary(
 		'autorun',
 		loading
 			? null
 			: buildAutoRunSummary({
-					runs: metrics.totalSessions,
+					runs: metrics.totalRuns,
 					tasksCompleted: metrics.totalTasksCompleted,
 					tasksAttempted: metrics.totalTasksAttempted,
 				})
 	);
 
-	// Group sessions by date for chart (uses session-level tasksCompleted)
-	const tasksByDate = useMemo(() => {
-		return groupSessionsByDate(sessions);
-	}, [sessions]);
+	const runCaption = [
+		metrics.goalRuns > 0 ? `${formatNumber(metrics.goalRuns)} goal` : null,
+		metrics.unfinishedRuns > 0 ? `${formatNumber(metrics.unfinishedRuns)} unfinished` : null,
+	]
+		.filter(Boolean)
+		.join(' · ');
 
-	// Max for bar height calculation, driven by tasks completed (the chart's
-	// titular metric), not tasks attempted, so days where `tasksTotal` is 0
-	// but real completions exist still scale correctly.
-	const maxCount = useMemo(() => {
-		return getAutoRunChartMax(tasksByDate);
-	}, [tasksByDate]);
-
-	// Handle mouse events for tooltip. Anchor to the cursor (not the bar's
-	// bounding rect) so the tooltip stays close to the user's pointer. Short
-	// bars used to leave the tooltip stranded near the chart's bottom edge.
-	const handleMouseEnter = useCallback(
-		(data: AutoRunDayData, event: React.MouseEvent<HTMLDivElement>) => {
-			setHoveredBar(data);
-			setTooltipPos({ x: event.clientX, y: event.clientY });
+	const cards: StatCardDatum[] = [
+		{
+			label: 'Runs',
+			icon: Play,
+			value: metrics.totalRuns,
+			caption: runCaption || undefined,
 		},
-		[]
-	);
-	const handleMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-		setTooltipPos({ x: event.clientX, y: event.clientY });
-	}, []);
-
-	const handleMouseLeave = useCallback(() => {
-		setHoveredBar(null);
-		setTooltipPos(null);
-	}, []);
-
-	if (loading) {
-		return (
-			<div
-				className="p-4 rounded-lg"
-				style={{ backgroundColor: theme.colors.bgMain }}
-				data-testid="autorun-stats-loading"
-			>
-				<div
-					className="h-48 flex items-center justify-center"
-					style={{ color: theme.colors.textDim }}
-				>
-					Loading Auto Run stats...
-				</div>
-			</div>
-		);
-	}
-
-	if (error) {
-		return (
-			<div
-				className="p-4 rounded-lg"
-				style={{ backgroundColor: theme.colors.bgMain }}
-				data-testid="autorun-stats-error"
-			>
-				<div
-					className="h-48 flex flex-col items-center justify-center gap-2"
-					style={{ color: theme.colors.textDim }}
-				>
-					<span>Failed to load Auto Run stats</span>
-					<button
-						onClick={fetchData}
-						className="px-3 py-1 rounded text-sm"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.bgMain,
-						}}
-					>
-						Retry
-					</button>
-				</div>
-			</div>
-		);
-	}
-
-	// Check if there's any data
-	const hasData = metrics.totalSessions > 0 || metrics.totalTasksAttempted > 0;
-
-	if (!hasData) {
-		return (
-			<div
-				className="p-4 rounded-lg"
-				style={{ backgroundColor: theme.colors.bgMain }}
-				data-testid="autorun-stats-empty"
-			>
-				<div
-					className="h-48 flex flex-col items-center justify-center gap-3"
-					style={{ color: theme.colors.textDim }}
-				>
-					<Play className="w-12 h-12 opacity-30" />
-					<div className="text-center">
-						<p className="text-sm mb-1" style={{ color: theme.colors.textMain }}>
-							No Auto Run data yet
-						</p>
-						<p className="text-xs">Run some batch tasks to see your stats!</p>
-					</div>
-				</div>
-			</div>
-		);
-	}
+		{
+			label: 'Tasks Done',
+			icon: CheckSquare,
+			value: metrics.totalTasksCompleted,
+			caption: `of ${formatNumber(metrics.totalTasksAttempted)} attempted`,
+		},
+		{
+			label: 'Avg Tasks/Run',
+			icon: ListChecks,
+			value: Number(metrics.avgTasksPerRun),
+			displayValue: metrics.avgTasksPerRun,
+			caption: 'finished document runs',
+		},
+		{
+			label: 'Success Rate',
+			icon: Target,
+			value: metrics.successRate,
+			displayValue: `${metrics.successRate}%`,
+			caption: 'tasks done of attempted',
+		},
+		{
+			label: 'Avg Run',
+			icon: Clock,
+			value: metrics.avgRunDuration,
+			displayValue: formatDurationHuman(metrics.avgRunDuration),
+			caption: `${formatNumber(metrics.finishedRuns)} finished runs`,
+		},
+		{
+			label: 'Avg Time per Task',
+			icon: Timer,
+			value: metrics.avgTimePerTask,
+			displayValue: formatDurationHuman(metrics.avgTimePerTask),
+			caption: 'run time per ticked checkbox',
+		},
+		{
+			label: 'Total Auto Run Time',
+			icon: Hourglass,
+			value: metrics.totalDuration,
+			displayValue: formatDurationHuman(metrics.totalDuration),
+			caption: `${formatDurationHuman(metrics.goalDrivenDuration)} goal / ${formatDurationHuman(metrics.specDrivenDuration)} spec`,
+		},
+	];
 
 	return (
-		<div
-			className="space-y-4"
-			data-testid="autorun-stats"
-			role="region"
-			aria-label="Auto Run statistics"
-		>
-			{/* Metrics Cards */}
-			<div
-				className="grid gap-4"
-				style={{
-					gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-				}}
-				data-testid="autorun-metrics"
-				role="region"
-				aria-label="Auto Run summary metrics"
+		<div data-testid="autorun-stats" role="region" aria-label="Auto Run statistics">
+			<DashboardPanelState
+				theme={theme}
+				loading={loading}
+				error={error}
+				empty={sessions.length === 0}
+				emptyMessage="No Auto Runs in this time range. Run a playbook to see your stats."
+				onRetry={() => void refresh()}
+				minHeight={192}
+				testId="autorun-stats"
 			>
-				<MetricCard
-					testId="autorun-metric-card"
-					icon={<Play className="w-4 h-4" />}
-					label="Total Sessions"
-					value={formatNumber(metrics.totalSessions)}
-					theme={theme}
-				/>
-				<MetricCard
-					testId="autorun-metric-card"
-					icon={<CheckSquare className="w-4 h-4" />}
-					label="Tasks Done"
-					value={formatNumber(metrics.totalTasksCompleted)}
-					subValue={`of ${formatNumber(metrics.totalTasksAttempted)} attempted`}
-					theme={theme}
-				/>
-				<MetricCard
-					testId="autorun-metric-card"
-					icon={<ListChecks className="w-4 h-4" />}
-					label="Avg Tasks/Session"
-					value={metrics.avgTasksPerSession}
-					theme={theme}
-				/>
-				<MetricCard
-					testId="autorun-metric-card"
-					icon={<Target className="w-4 h-4" />}
-					label="Success Rate"
-					value={`${metrics.successRate}%`}
-					theme={theme}
-				/>
-				<MetricCard
-					testId="autorun-metric-card"
-					icon={<Clock className="w-4 h-4" />}
-					label="Avg Session"
-					value={formatDuration(metrics.avgSessionDuration)}
-					theme={theme}
-				/>
-				<MetricCard
-					testId="autorun-metric-card"
-					icon={<Timer className="w-4 h-4" />}
-					label="Avg Task"
-					value={formatDuration(metrics.avgTaskDuration)}
-					theme={theme}
-				/>
-				<MetricCard
-					testId="autorun-metric-card"
-					icon={<Hourglass className="w-4 h-4" />}
-					label="Total Auto Run Time"
-					value={formatDuration(metrics.totalDuration)}
-					subValue={`${formatDuration(metrics.goalDrivenDuration)} goal / ${formatDuration(metrics.specDrivenDuration)} spec`}
-					theme={theme}
-				/>
-			</div>
+				<div className="space-y-4">
+					<div data-testid="autorun-metrics" role="region" aria-label="Auto Run summary metrics">
+						<StatCardGrid theme={theme} cards={cards} />
+					</div>
 
-			{/* Mini Bar Chart: Tasks over time */}
-			<div
-				className="p-4 rounded-lg"
-				style={{ backgroundColor: theme.colors.bgMain }}
-				data-testid="autorun-tasks-chart"
-				role="figure"
-				aria-label={`Tasks completed over time chart. ${tasksByDate.length} days of data.`}
-			>
-				<h3
-					className="text-sm font-medium mb-4"
-					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
-				>
-					Tasks Completed Over Time
-				</h3>
+					<div
+						className="p-4 rounded-lg"
+						style={{ backgroundColor: theme.colors.bgMain }}
+						data-testid="autorun-tasks-chart"
+					>
+						<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
+							Tasks Completed Over Time
+						</h3>
 
-				{tasksByDate.length > 0 ? (
-					<div className="relative">
-						<div
-							className="flex items-end gap-1 h-32"
-							role="list"
-							aria-label="Tasks completed by date"
-						>
-							{tasksByDate.map((day) => {
-								// Bar height tracks the tasks-completed value the chart claims to
-								// show. Fall back to attempted when no completion data exists so
-								// runs that errored out still surface a bar.
-								const barValue = day.successCount > 0 ? day.successCount : day.count;
-								const height = maxCount > 0 ? (barValue / maxCount) * 100 : 0;
-								const successRatio = day.count > 0 ? day.successCount / day.count : 0;
-								const isHovered = hoveredBar?.date === day.date;
+						{maxCount > 0 ? (
+							<>
+								<div
+									{...containerProps}
+									className="flex items-end gap-px h-32 outline-none rounded focus-visible:ring-2"
+									role="group"
+									aria-label={`Tasks completed per day, ${tasksByDate.length} days`}
+									data-testid="autorun-tasks-bars"
+								>
+									{tasksByDate.map((day, i) => {
+										// Bar height tracks tasks completed, the chart's titular
+										// metric; the faint backing bar is tasks attempted.
+										const height = (day.successCount / maxCount) * 100;
+										const isActive = activeIndex === i;
+										return (
+											<div
+												key={day.date}
+												{...barProps(i)}
+												className="relative flex-1 h-full flex flex-col justify-end cursor-default"
+												style={{ minWidth: 1 }}
+												data-testid={`task-bar-${day.date}`}
+											>
+												<div
+													className="w-full rounded-t transition-all duration-200"
+													style={{
+														height: `${day.successCount > 0 ? Math.max(height, 2) : 0}%`,
+														backgroundColor: theme.colors.accent,
+														opacity: isActive ? 1 : 0.75,
+													}}
+												/>
+											</div>
+										);
+									})}
+								</div>
+								<div
+									className="flex justify-between mt-2 text-xs"
+									style={{ color: theme.colors.textDim }}
+									aria-hidden="true"
+								>
+									<span>{formatCalendarDay(tasksByDate[0].date)}</span>
+									{tasksByDate.length > 2 && (
+										<span>
+											{formatCalendarDay(tasksByDate[Math.floor(tasksByDate.length / 2)].date)}
+										</span>
+									)}
+									{tasksByDate.length > 1 && (
+										<span>{formatCalendarDay(tasksByDate[tasksByDate.length - 1].date)}</span>
+									)}
+								</div>
+							</>
+						) : (
+							<div
+								className="h-32 flex items-center justify-center text-sm"
+								style={{ color: theme.colors.textDim }}
+							>
+								No finished document runs in this time range
+							</div>
+						)}
 
-								return (
-									<div
-										key={day.date}
-										className="flex-1 min-w-[16px] rounded-t cursor-pointer transition-all duration-200"
-										style={{
-											height: `${Math.max(height, 4)}%`,
-											backgroundColor: theme.colors.accent,
-											opacity: isHovered ? 1 : 0.7 + successRatio * 0.3,
-										}}
-										onMouseEnter={(e) => handleMouseEnter(day, e)}
-										onMouseMove={handleMouseMove}
-										onMouseLeave={handleMouseLeave}
-										onKeyDown={(e) => {
-											if (e.key === 'Enter' || e.key === ' ') {
-												e.preventDefault();
-												setHoveredBar((prev) => (prev?.date === day.date ? null : day));
-											}
-											if (e.key === 'Escape') {
-												handleMouseLeave();
-											}
-										}}
-										onBlur={handleMouseLeave}
-										data-testid={`task-bar-${day.date}`}
-										role="listitem"
-										aria-label={`${formatFullDate(day.date)}: ${day.count} tasks attempted, ${day.successCount} successful (${day.count > 0 ? Math.round((day.successCount / day.count) * 100) : 0}%)`}
-										tabIndex={0}
-									/>
-								);
-							})}
-						</div>
-
-						{/* X-axis labels must mirror the bar grid (flex-1 +
-						    gap-1) so each label slot lines up with its bar. We previously
-						    used `flex justify-between` across the full container width,
-						    which floated the middle/last labels into the empty space on
-						    the right. */}
-						<div
-							className="flex gap-1 mt-2 text-xs"
-							style={{ color: theme.colors.textDim }}
-							aria-hidden="true"
-						>
-							{tasksByDate.map((day, i) => {
-								const isFirst = i === 0;
-								const isLast = i === tasksByDate.length - 1;
-								const isMiddle = tasksByDate.length > 2 && i === Math.floor(tasksByDate.length / 2);
-								const showLabel = isFirst || isLast || isMiddle;
-								// Anchor first/last labels to their bar's outer edge so the
-								// label text doesn't drift past the bar; middle stays centered.
-								const textAlign = isFirst ? 'left' : isLast ? 'right' : 'center';
-								return (
-									<div
-										key={day.date}
-										className="flex-1 min-w-[16px]"
-										style={{
-											textAlign,
-											overflow: 'visible',
-											whiteSpace: 'nowrap',
-										}}
-									>
-										{showLabel ? formatDateLabel(day.date) : ''}
-									</div>
-								);
-							})}
-						</div>
-
-						{hoveredBar && (
-							<ChartTooltip anchor={tooltipPos} theme={theme} testId="task-bar-tooltip">
-								<div className="font-medium mb-1">{formatFullDate(hoveredBar.date)}</div>
+						<span className="sr-only" aria-live="polite">
+							{active ? describeDay(active) : ''}
+						</span>
+						{active && (
+							<ChartTooltip anchor={anchor} theme={theme} testId="task-bar-tooltip">
+								<div className="font-medium mb-1">{formatCalendarDay(active.date)}</div>
 								<div style={{ color: theme.colors.textDim }}>
-									<div>{hoveredBar.count} tasks attempted</div>
+									<div>{formatNumber(active.successCount)} tasks done</div>
 									<div>
-										{hoveredBar.successCount} successful (
-										{hoveredBar.count > 0
-											? Math.round((hoveredBar.successCount / hoveredBar.count) * 100)
-											: 0}
-										%)
+										of {formatNumber(active.count)} attempted ({successPercent(active)}%)
 									</div>
 								</div>
 							</ChartTooltip>
 						)}
 					</div>
-				) : (
-					<div
-						className="h-32 flex items-center justify-center"
-						style={{ color: theme.colors.textDim }}
-					>
-						<span className="text-sm">No task data available</span>
-					</div>
-				)}
-			</div>
+				</div>
+			</DashboardPanelState>
 		</div>
 	);
 });
-
-export default AutoRunStats;

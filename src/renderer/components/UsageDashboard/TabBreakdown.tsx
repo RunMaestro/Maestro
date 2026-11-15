@@ -40,7 +40,7 @@ import { Pager } from '../ui/Pager';
 import { SortableTh } from '../ui/SortableTh';
 import { usePagination } from '../../hooks/ui/usePagination';
 import { useTableSort, type SortDirection } from '../../hooks/ui/useTableSort';
-import { Sparkline } from './Sparkline';
+import { Sparkline } from '../widgets';
 
 /** Days of daily-count history behind each row's sparkline. */
 const SPARKLINE_DAYS = 14;
@@ -429,7 +429,7 @@ function getTabStatusColor(stat: TabStat, theme: Theme): string {
 interface TabRowProps {
 	stat: TabStat;
 	theme: Theme;
-	/** Zebra striping flag; the row owns its own hover color. */
+	/** Zebra striping flag. */
 	isOdd: boolean;
 	/** Active sort column, accented in the row so the ordering is legible. */
 	sortKey: TabSortMode;
@@ -438,12 +438,12 @@ interface TabRowProps {
 const TabRow = memo(function TabRow({ stat, theme, isOdd, sortKey }: TabRowProps) {
 	const restingBackground = isOdd ? `${theme.colors.border}10` : 'transparent';
 
-	const ageLabel = stat.lastActive ? formatAgeShort(stat.lastActive) : '—';
+	const ageLabel = stat.lastActive ? formatAgeShort(stat.lastActive) : '-';
 	const ageTitle = stat.lastActive
 		? `Last active ${new Date(stat.lastActive).toLocaleString()}`
 		: undefined;
-	const durationLabel = stat.totalDuration > 0 ? formatDurationHuman(stat.totalDuration) : '—';
-	const autoLabel = stat.autoPercent === null ? '—' : `${stat.autoPercent}%`;
+	const durationLabel = stat.totalDuration > 0 ? formatDurationHuman(stat.totalDuration) : '-';
+	const autoLabel = stat.autoPercent === null ? '-' : `${stat.autoPercent}%`;
 
 	// Only states worth calling out get a chip. An ordinary open tab is already
 	// described by its green dot, so tagging it "Open" would put a chip on
@@ -478,17 +478,9 @@ const TabRow = memo(function TabRow({ stat, theme, isOdd, sortKey }: TabRowProps
 				: theme.colors.textMain;
 
 	return (
-		<tr
-			className="transition-colors"
-			style={{ backgroundColor: restingBackground }}
-			data-testid="tab-row"
-			onMouseEnter={(e) => {
-				e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`;
-			}}
-			onMouseLeave={(e) => {
-				e.currentTarget.style.backgroundColor = restingBackground;
-			}}
-		>
+		// No hover highlight: a row does nothing when clicked, so it must not
+		// look like it would.
+		<tr style={{ backgroundColor: restingBackground }} data-testid="tab-row">
 			<td className="px-3 py-2 max-w-[260px]">
 				<div className="flex items-center gap-2 min-w-0">
 					<span

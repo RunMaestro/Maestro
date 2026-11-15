@@ -1497,4 +1497,360 @@ describe('BrowserTabView', () => {
 			expect(recordJourney).not.toHaveBeenCalled();
 		});
 	});
+
+	describe('Design Mode', () => {
+		const SHOT = `data:image/png;base64,${'A'.repeat(100)}`;
+		const pickPayload = {
+			url: 'https://example.com',
+			tagName: 'button',
+			selector: 'button.primary',
+			html: '<button class="primary">Save</button>',
+			htmlTruncated: false,
+			styles: { display: 'inline-flex' },
+			rect: { x: 10, y: 20, width: 100, height: 40 },
+			viewport: { width: 800, height: 600 },
+		};
+
+		/** The request a guest-helper call carries, or null for other scripts. */
+		function guestRequest(code: string): Record<string, unknown> | null {
+			const match = /\)\((\{[^]*\})\)$/.exec(code);
+			if (!match || !code.includes('MAX_HTML')) return null;
+			return JSON.parse(match[1]);
+		}
+
+		function guestCalls(webview: MockWebview, type: string) {
+			return webview.executeJavaScript.mock.calls
+				.map(([code]) => guestRequest(String(code)))
+				.filter((req) => req?.type === type);
+		}
+
+		async function setupReady(
+			onDesignPick?: ReturnType<typeof vi.fn>,
+			props: { isActive?: boolean; tab?: BrowserTab } = {}
+		) {
+			const ref = React.createRef<BrowserTabViewHandle>();
+			const view = render(
+				<BrowserTabView
+					ref={ref}
+					tab={props.tab ?? mockTab}
+					theme={mockTheme}
+					onUpdateTab={vi.fn()}
+					onDesignPick={onDesignPick}
+					isActive={props.isActive}
+				/>
+			);
+			const webview = getWebview() as MockWebview & {
+				getZoomFactor: ReturnType<typeof vi.fn>;
+				capturePage: ReturnType<typeof vi.fn>;
+			};
+			webview.canGoBack = vi.fn(() => false);
+			webview.canGoForward = vi.fn(() => false);
+			webview.getURL = vi.fn(() => 'https://example.com');
+			webview.getTitle = vi.fn(() => 'Example');
+			webview.isLoading = vi.fn(() => false);
+			webview.getWebContentsId = vi.fn(() => 99);
+			webview.getZoomFactor = vi.fn(() => 1.5);
+			webview.capturePage = vi.fn().mockResolvedValue({ toDataURL: () => SHOT });
+			webview.executeJavaScript = vi.fn(async (code: string) => {
+				const req = guestRequest(code);
+				if (!req) return undefined;
+				if (req.type === 'probe') {
+					return {
+						rect: pickPayload.rect,
+						label: 'button.primary',
+						depth: req.depth,
+						viewport: pickPayload.viewport,
+					};
+				}
+				if (req.type === 'describe' || req.type === 'describeSelector') return pickPayload;
+				return true;
+			});
+			await act(async () => {
+				webview.dispatchEvent(new Event('dom-ready'));
+			});
+			return { webview, ref, view };
+		}
+
+		async function arm() {
+			await act(async () => {
+				fireEvent.click(screen.getByTestId('browser-tab-design-mode-toggle'));
+			});
+			return screen.getByTestId('browser-tab-design-mode-layer');
+		}
+
+		it('offers no toggle when nobody receives picks', async () => {
+			await setupReady();
+			expect(screen.queryByTestId('browser-tab-design-mode-toggle')).toBeNull();
+		});
+
+		it('offers no toggle on a streamed remote page, which has no guest to pick from', () => {
+			render(
+				<BrowserTabView
+					tab={{ ...mockTab, remotePage: true }}
+					theme={mockTheme}
+					onUpdateTab={vi.fn()}
+					onDesignPick={vi.fn()}
+				/>
+			);
+			expect(screen.queryByTestId('browser-tab-design-mode-toggle')).toBeNull();
+		});
+
+		it('is unavailable on the blank tab', async () => {
+			await setupReady(vi.fn(), { tab: { ...mockTab, url: DEFAULT_BROWSER_TAB_URL } });
+			expect(
+				(screen.getByTestId('browser-tab-design-mode-toggle') as HTMLButtonElement).disabled
+			).toBe(true);
+		});
+
+		it('covers the page with a focused layer and outlines what the guest reports', async () => {
+			// The overlay is 1600 x 1000 here and the guest viewport 800 x 600: the
+			// overlay draws 2 px per guest CSS px, whatever the zoom factor says.
+			const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1600);
+			const height = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(1000);
+			try {
+				const { webview } = await setupReady(vi.fn());
+				const layer = await arm();
+				expect(document.activeElement).toBe(layer);
+				expect(screen.getByTestId('browser-tab-design-mode-banner')).toBeTruthy();
+
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 30, clientY: 60 });
+				});
+				// Points go out in overlay pixels with the overlay's size; the guest
+				// scales them by its own viewport (never by the zoom factor).
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe')).toContainEqual({
+						type: 'probe',
+						x: 30,
+						y: 60,
+						depth: 0,
+						frame: { width: 1600, height: 1000 },
+					})
+				);
+				const outline = await screen.findByTestId('browser-tab-design-mode-outline');
+				// The guest box (x 10, width 100 CSS px) at 2 overlay px per CSS px,
+				// drawn 2 px outside it. The zoom factor (1.5) plays no part.
+				expect(outline.style.left).toBe('18px');
+				expect(outline.style.width).toBe('204px');
+				expect(screen.getByText('button.primary')).toBeTruthy();
+				expect(screen.getByText(/100 x 40/)).toBeTruthy();
+			} finally {
+				width.mockRestore();
+				height.mockRestore();
+			}
+		});
+
+		it('ArrowUp asks the guest for the parent', async () => {
+			const { webview } = await setupReady(vi.fn());
+			const layer = await arm();
+			await act(async () => {
+				fireEvent.keyDown(layer, { key: 'ArrowUp' });
+			});
+			await waitFor(() =>
+				expect(guestCalls(webview, 'probe').some((req) => req?.depth === 1)).toBe(true)
+			);
+		});
+
+		it('a slow reply for an older probe cannot undo an ArrowUp pressed meanwhile', async () => {
+			const { webview } = await setupReady(vi.fn());
+			// Hold the first probe's reply until we release it.
+			let release: (value: unknown) => void = () => {};
+			const answered: Array<Record<string, unknown>> = [];
+			webview.executeJavaScript = vi.fn((code: string) => {
+				const req = guestRequest(code);
+				if (!req) return Promise.resolve(undefined);
+				answered.push(req);
+				const reply = {
+					rect: pickPayload.rect,
+					label: req.depth === 0 ? 'button.primary' : 'section.parent',
+					depth: req.depth,
+				};
+				if (answered.length === 1) {
+					return new Promise((resolve) => {
+						release = () => resolve(reply);
+					});
+				}
+				return Promise.resolve(reply);
+			});
+			const layer = await arm();
+			// arm() fired the center probe (depth 0), still pending.
+			await act(async () => {
+				fireEvent.keyDown(layer, { key: 'ArrowUp' });
+			});
+			await act(async () => {
+				release(undefined);
+			});
+			await waitFor(() => expect(answered.some((req) => req.depth === 1)).toBe(true));
+			expect(await screen.findByText('section.parent')).toBeTruthy();
+			expect(screen.queryByText('button.primary')).toBeNull();
+		});
+
+		it('Enter on a focused control runs that control, not a pick or a delivery', async () => {
+			const onDesignPick = vi.fn().mockResolvedValue(true);
+			const { webview } = await setupReady(onDesignPick);
+			await arm();
+			// The banner's ESC pill: Enter must not pick.
+			fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-cancel'), { key: 'Enter' });
+			expect(guestCalls(webview, 'describe')).toHaveLength(0);
+
+			await act(async () => {
+				fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-layer'), { key: 'Enter' });
+			});
+			await screen.findByTestId('browser-tab-design-mode-card');
+			// Card buttons: Enter belongs to the button, never Add to Message.
+			for (const id of [
+				'browser-tab-design-mode-card-close',
+				'browser-tab-design-mode-add-another',
+			]) {
+				await act(async () => {
+					fireEvent.keyDown(screen.getByTestId(id), { key: 'Enter' });
+				});
+			}
+			expect(onDesignPick).not.toHaveBeenCalled();
+			expect(screen.getByTestId('browser-tab-design-mode-card')).toBeTruthy();
+		});
+
+		it('a click picks at the click point, crops the guest frame, and opens the card', async () => {
+			const onDesignPick = vi.fn().mockResolvedValue(true);
+			const { webview } = await setupReady(onDesignPick);
+			const layer = await arm();
+
+			await act(async () => {
+				fireEvent.click(layer, { clientX: 300, clientY: 150, button: 0 });
+			});
+			await screen.findByTestId('browser-tab-design-mode-card');
+			expect(guestCalls(webview, 'describe')).toContainEqual({
+				type: 'describe',
+				x: 300,
+				y: 150,
+				depth: 0,
+				// jsdom does no layout, so the overlay measures 0 x 0 and the guest
+				// falls back to a 1:1 scale.
+				frame: { width: 0, height: 0 },
+			});
+			// Guest DIPs: the CSS box times the 1.5 zoom, not window coordinates.
+			expect(webview.capturePage).toHaveBeenCalledWith({ x: 15, y: 30, width: 150, height: 60 });
+			expect(onDesignPick).not.toHaveBeenCalled();
+
+			const note = screen.getByTestId('browser-tab-design-mode-note');
+			expect(document.activeElement).toBe(note);
+			fireEvent.change(note, { target: { value: 'Make it blue' } });
+			await act(async () => {
+				fireEvent.keyDown(note, { key: 'Enter' });
+			});
+
+			expect(onDesignPick).toHaveBeenCalledWith(
+				expect.objectContaining({
+					pick: expect.objectContaining({ selector: 'button.primary' }),
+					screenshot: SHOT,
+					note: 'Make it blue',
+					reveal: true,
+				})
+			);
+			await waitFor(() => expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull());
+		});
+
+		it('Cmd+Enter adds the pick and keeps picking', async () => {
+			const onDesignPick = vi.fn().mockResolvedValue(true);
+			await setupReady(onDesignPick);
+			const layer = await arm();
+			await act(async () => {
+				fireEvent.keyDown(layer, { key: 'Enter' });
+			});
+			const note = await screen.findByTestId('browser-tab-design-mode-note');
+			await act(async () => {
+				fireEvent.keyDown(note, { key: 'Enter', metaKey: true });
+			});
+			expect(onDesignPick).toHaveBeenCalledWith(expect.objectContaining({ reveal: false }));
+			await waitFor(() => expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull());
+			expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+		});
+
+		it('Escape closes the card first, then leaves Design Mode', async () => {
+			await setupReady(vi.fn());
+			const layer = await arm();
+			await act(async () => {
+				fireEvent.keyDown(layer, { key: 'Enter' });
+			});
+			const card = await screen.findByTestId('browser-tab-design-mode-card');
+			fireEvent.keyDown(card, { key: 'Escape' });
+			expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+			fireEvent.keyDown(screen.getByTestId('browser-tab-design-mode-layer'), { key: 'Escape' });
+			expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+		});
+
+		it('Escape closes the card even when focus fell back to the layer', async () => {
+			await setupReady(vi.fn());
+			const layer = await arm();
+			await act(async () => {
+				fireEvent.keyDown(layer, { key: 'Enter' });
+			});
+			await screen.findByTestId('browser-tab-design-mode-card');
+			// A click on the card background leaves focus on the layer.
+			fireEvent.keyDown(layer, { key: 'Escape' });
+			expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+			expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+		});
+
+		it('the banner ESC pill leaves Design Mode', async () => {
+			await setupReady(vi.fn());
+			await arm();
+			fireEvent.click(screen.getByTestId('browser-tab-design-mode-cancel'));
+			expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+		});
+
+		it('the page cannot start a pick: a console message is not a channel', async () => {
+			const onDesignPick = vi.fn().mockResolvedValue(true);
+			const { webview } = await setupReady(onDesignPick);
+			await arm();
+			await act(async () => {
+				webview.dispatchEvent(
+					Object.assign(new Event('console-message'), {
+						message: '__MAESTRO_DESIGN__' + JSON.stringify({ type: 'pick', pick: pickPayload }),
+					})
+				);
+			});
+			expect(screen.queryByTestId('browser-tab-design-mode-card')).toBeNull();
+			expect(guestCalls(webview, 'describe')).toHaveLength(0);
+			expect(onDesignPick).not.toHaveBeenCalled();
+		});
+
+		it('leaves Design Mode when the tab stops being the active surface', async () => {
+			const onDesignPick = vi.fn();
+			const { view } = await setupReady(onDesignPick);
+			await arm();
+			view.rerender(
+				<BrowserTabView
+					tab={mockTab}
+					theme={mockTheme}
+					onUpdateTab={vi.fn()}
+					onDesignPick={onDesignPick}
+					isActive={false}
+				/>
+			);
+			expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+		});
+
+		it('the imperative toggle and inspectElement reach the same path', async () => {
+			const { ref, webview } = await setupReady(vi.fn());
+			await act(async () => {
+				ref.current!.toggleDesignMode();
+			});
+			expect(screen.getByTestId('browser-tab-design-mode-layer')).toBeTruthy();
+			await act(async () => {
+				ref.current!.toggleDesignMode();
+			});
+			expect(screen.queryByTestId('browser-tab-design-mode-layer')).toBeNull();
+
+			let result: Awaited<ReturnType<BrowserTabViewHandle['inspectElement']>> = null;
+			await act(async () => {
+				result = await ref.current!.inspectElement('button.primary');
+			});
+			expect(guestCalls(webview, 'describeSelector')).toContainEqual({
+				type: 'describeSelector',
+				selector: 'button.primary',
+			});
+			expect(result).toMatchObject({ screenshot: SHOT, pick: { tagName: 'button' } });
+		});
+	});
 });

@@ -1,673 +1,207 @@
 /**
  * AgentUsageChart
  *
- * Line chart showing Maestro agent (session) usage over time with one line per agent.
- * Displays query counts and duration for each agent that was used during the time period.
+ * "Agent Usage Over Time" on the Agent Overview tab: one line per agent across
+ * every calendar day of the selected range, for the 10 agents with the most
+ * queries in that range, plus one "Other agents" line holding everyone else so
+ * the lines still add up to the range's total.
  *
- * Features:
- * - One line per Maestro agent (named session from left panel)
- * - Toggle between query count and time metrics
- * - Session ID to name mapping when names are available
- * - Hover tooltips with exact values
- * - Responsive SVG rendering
- * - Theme-aware styling
- * - Limits display to top 10 agents by query count
+ * - The x axis is the aggregation's calendar `window`, gap-filled: a day with no
+ *   queries plots as zero instead of being skipped.
+ * - An agent deleted since it recorded work is labeled "Deleted agent", never a
+ *   prettified id.
+ * - Worktree agents draw dashed.
+ * - Queries or Time, remembered across opens. There is no Tokens mode: per-day
+ *   token totals can only be joined to an agent through provider conversations
+ *   an open tab still references, which silently undercounts.
+ *
+ * Drawn by the shared `MultiLineChart` widget, whose legend doubles as the
+ * show/hide control.
  */
 
-import React, { memo, useState, useMemo, useCallback } from 'react';
-import { format, parseISO } from 'date-fns';
+import { memo, useMemo } from 'react';
 import type { Theme, Session } from '../../types';
-import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
-import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
-import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
-import { humanizeDuration, DURATION_LADDER_HOURS } from '../../../shared/duration';
-import { buildNameMap, computeAxisLabelIndices, PHONE_AXIS_LABELS } from './chartUtils';
-import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
-import { ChartTooltip } from './ChartTooltip';
-import { ChartLoadingOverlay } from './ChartLoadingOverlay';
-import {
-	MetricModeToggle,
-	formatMetricValue,
-	metricModeNoun,
-	type ChartMetricMode,
-} from './MetricModeToggle';
-import { useTokenSeries } from './TokenSeriesContext';
+import type { StatsTimeRange, StatsAggregation } from '../../../shared/stats-types';
+import { formatCalendarDay, formatDurationHuman, formatNumber } from '../../../shared/formatters';
+import { localDaysBetween } from '../../../shared/daySeries';
+import { toLocalYmd } from '../../../shared/localDay';
+import { MultiLineChart, type LineSeries } from '../widgets';
+import { usePersistedChoice } from '../../hooks/ui/usePersistedChoice';
+import { getSeriesColor, isWorktreeAgent } from './chartUtils';
+import { MetricModeToggle, OVERVIEW_METRIC_LABELS } from './MetricModeToggle';
 
-// 10 distinct colors for agents
-const AGENT_COLORS = [
-	'#a78bfa', // violet
-	'#34d399', // emerald
-	'#60a5fa', // blue
-	'#f472b6', // pink
-	'#fbbf24', // amber
-	'#fb923c', // orange
-	'#4ade80', // green
-	'#38bdf8', // sky
-	'#c084fc', // purple
-	'#f87171', // red
-];
+/** Lines drawn individually before the rest fold into "Other agents". */
+export const AGENT_USAGE_TOP_N = 10;
 
-// Data point for a single agent on a single day
-interface AgentDayData {
-	date: string;
-	formattedDate: string;
-	count: number;
-	duration: number;
-	tokens: number;
-}
+/** Label for an agent that recorded work and has since been deleted. */
+export const DELETED_AGENT_LABEL = 'Deleted agent';
 
-// All agents' data for a single day
-interface DayData {
-	date: string;
-	formattedDate: string;
-	agents: Record<string, { count: number; duration: number; tokens: number }>;
-}
+/** Label for the line that sums every agent outside the top N. */
+export const OTHER_AGENTS_LABEL = 'Other agents';
+
+export const OTHER_AGENTS_KEY = '__other__';
+
+const METRIC_STORAGE_KEY = 'usageDashboard.agentUsageMetric';
+const METRIC_MODES = ['count', 'duration'] as const;
+type AgentUsageMetric = (typeof METRIC_MODES)[number];
 
 interface AgentUsageChartProps {
 	/** Aggregated stats data from the API */
 	data: StatsAggregation;
-	/** Current time range selection */
-	timeRange: StatsTimeRange;
+	/** Current time range selection. Kept for the view's prop contract. */
+	timeRange?: StatsTimeRange;
 	/** Current theme for styling */
 	theme: Theme;
 	/** Enable colorblind-friendly colors */
 	colorBlindMode?: boolean;
-	/** Current sessions for mapping IDs to names */
+	/** Live agents, for names and worktree status. */
 	sessions?: Session[];
-	/** Drill-down click handler - fires with the legend item's session key + display name. */
-	onAgentClick?: (key: string, displayName: string) => void;
-	/**
-	 * Active drill-down filter key. When set, the matching line is rendered with
-	 * a thicker stroke and the legend item is highlighted; non-matching lines
-	 * dim to 15% stroke opacity. `null`/undefined means no filter is active.
-	 */
-	activeFilterKey?: string | null;
+}
+
+interface AgentLine {
+	key: string;
+	label: string;
+	isWorktree: boolean;
+	totalQueries: number;
+	byDate: Map<string, { count: number; duration: number }>;
 }
 
 /**
- * Format duration for Y-axis labels: one unit only, so tick labels stay narrow.
- * A zero tick is bare "0" - the axis origin needs no unit.
+ * Rank every agent with rows in the range, name it, and split it into the top
+ * N plus the remainder. Pure, so the ranking and naming rules are testable.
  */
-function formatYAxisDuration(ms: number): string {
-	if (ms === 0) return '0';
-	return humanizeDuration(ms, { units: DURATION_LADDER_HOURS, maxUnits: 1 });
-}
+export function buildAgentUsageLines(
+	bySessionByDay: StatsAggregation['bySessionByDay'],
+	sessions: readonly Session[] | undefined,
+	topN: number = AGENT_USAGE_TOP_N
+): { top: AgentLine[]; rest: AgentLine[] } {
+	const byId = new Map((sessions ?? []).map((s) => [s.id, s]));
+	const lines: AgentLine[] = Object.entries(bySessionByDay ?? {}).map(([key, days]) => {
+		const byDate = new Map<string, { count: number; duration: number }>();
+		let totalQueries = 0;
+		for (const day of days) {
+			byDate.set(day.date, { count: day.count, duration: day.duration });
+			totalQueries += day.count;
+		}
+		const session = byId.get(key);
+		return {
+			key,
+			label: session?.name || DELETED_AGENT_LABEL,
+			isWorktree: session ? isWorktreeAgent(session) : false,
+			totalQueries,
+			byDate,
+		};
+	});
 
-/**
- * Format date for X-axis based on time range
- */
-function formatXAxisDate(dateStr: string, timeRange: StatsTimeRange): string {
-	const date = parseISO(dateStr);
+	lines.sort((a, b) => b.totalQueries - a.totalQueries || a.key.localeCompare(b.key));
+	const top = lines.slice(0, topN);
+	const rest = lines.slice(topN);
 
-	switch (timeRange) {
-		case 'day':
-			return format(date, 'HH:mm');
-		case 'week':
-			return format(date, 'EEE');
-		case 'month':
-			return format(date, 'MMM d');
-		case 'quarter':
-			return format(date, 'MMM d'); // Show month and day for quarter
-		case 'year':
-			return format(date, 'MMM');
-		case 'all':
-			return format(date, 'MMM yyyy');
-		default:
-			return format(date, 'MMM d');
+	// Two lines can share a name (two deleted agents, two agents the user named
+	// alike); number the repeats so the legend and tooltip stay unambiguous.
+	const seen = new Map<string, number>();
+	for (const line of top) {
+		const n = (seen.get(line.label) ?? 0) + 1;
+		seen.set(line.label, n);
+		if (n > 1) line.label = `${line.label} ${n}`;
 	}
-}
-
-/**
- * Get agent color based on index, with colorblind mode support
- */
-function getAgentColor(index: number, colorBlindMode: boolean): string {
-	if (colorBlindMode) {
-		return COLORBLIND_AGENT_PALETTE[index % COLORBLIND_AGENT_PALETTE.length];
-	}
-	return AGENT_COLORS[index % AGENT_COLORS.length];
+	return { top, rest };
 }
 
 export const AgentUsageChart = memo(function AgentUsageChart({
 	data,
-	timeRange,
 	theme,
 	colorBlindMode = false,
 	sessions,
-	onAgentClick,
-	activeFilterKey = null,
 }: AgentUsageChartProps) {
-	const [hoveredDay, setHoveredDay] = useState<{ dayIndex: number; agent?: string } | null>(null);
-	const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
-	const [metricMode, setMetricMode] = useState<ChartMetricMode>('count');
-	const { series: tokenSeries, loading: tokensLoading } = useTokenSeries(metricMode === 'tokens');
+	const { value: metric, setValue: setMetric } = usePersistedChoice<AgentUsageMetric>(
+		METRIC_STORAGE_KEY,
+		METRIC_MODES,
+		'count'
+	);
 
-	// Chart dimensions
-	const chartWidth = 600;
-	const chartHeight = 220;
-	const padding = { top: 20, right: 50, bottom: 40, left: 50 };
-	const innerWidth = chartWidth - padding.left - padding.right;
-	const innerHeight = chartHeight - padding.top - padding.bottom;
+	const days = useMemo(() => {
+		const endYmd = data.window?.endYmd ?? toLocalYmd(Date.now());
+		return localDaysBetween(data.window?.startYmd ?? endYmd, endYmd);
+	}, [data.window]);
 
-	// Get list of agents and their data (limited to top 10 by total queries)
-	const { agents, chartData, allDates, agentDisplayNames, worktreeAgents, agentRanges } =
-		useMemo(() => {
-			const bySessionByDay = data.bySessionByDay || {};
+	const { top, rest } = useMemo(
+		() => buildAgentUsageLines(data.bySessionByDay, sessions),
+		[data.bySessionByDay, sessions]
+	);
 
-			// Calculate total queries per session to rank them
-			const sessionTotals: Array<{ sessionId: string; totalQueries: number }> = [];
-			for (const sessionId of Object.keys(bySessionByDay)) {
-				const totalQueries = bySessionByDay[sessionId].reduce((sum, day) => sum + day.count, 0);
-				sessionTotals.push({ sessionId, totalQueries });
-			}
-
-			// Sort by total queries descending and take top 10
-			sessionTotals.sort((a, b) => b.totalQueries - a.totalQueries);
-			const topSessions = sessionTotals.slice(0, 10);
-			const agentList = topSessions.map((s) => s.sessionId);
-
-			// Resolve session IDs to user-facing display names via the shared
-			// `buildNameMap` utility - keeps name resolution consistent with the
-			// other dashboard charts. Worktree sessions still get a " (WT)" text
-			// suffix on top of the visual dashed-line indicator so they're
-			// distinguishable in tooltips where the line marker isn't visible.
-			const nameMap = buildNameMap(agentList, sessions);
-			const displayNames: Record<string, string> = {};
-			const worktreeSet = new Set<string>();
-			for (const sessionId of agentList) {
-				const resolved = nameMap.get(sessionId);
-				if (!resolved) continue;
-				displayNames[sessionId] = resolved.isWorktree ? `${resolved.name} (WT)` : resolved.name;
-				if (resolved.isWorktree) {
-					worktreeSet.add(sessionId);
-				}
-			}
-
-			// Collect all unique dates from selected agents
-			const dateSet = new Set<string>();
-			for (const sessionId of agentList) {
-				for (const day of bySessionByDay[sessionId]) {
-					dateSet.add(day.date);
-				}
-			}
-			const sortedDates = Array.from(dateSet).sort();
-
-			// Build per-agent arrays aligned to all dates, and track each agent's
-			// first/last index with real data so we don't draw the line across
-			// dates where the agent didn't exist yet (or no longer existed).
-			// Token totals arrive keyed by PROVIDER session id, but this chart is keyed
-			// by Maestro agent. Only the renderer knows that mapping, via each agent's
-			// tab `agentSessionId`s, so join here. Provider sessions no open tab still
-			// references can't be attributed and are simply not counted.
-			const tokensBySessionByDay = tokenSeries?.bySessionByDay ?? {};
-			const tokensForAgentDate = (maestroSessionId: string, date: string): number => {
-				const session = sessions?.find((s) => s.id === maestroSessionId);
-				if (!session?.aiTabs) return 0;
-				let total = 0;
-				for (const tab of session.aiTabs) {
-					const providerId = tab.agentSessionId;
-					if (providerId) total += tokensBySessionByDay[providerId]?.[date] ?? 0;
-				}
-				return total;
-			};
-
-			const agentData: Record<string, AgentDayData[]> = {};
-			const ranges: Record<string, { firstIdx: number; lastIdx: number }> = {};
-			for (const sessionId of agentList) {
-				const dayMap = new Map<string, { count: number; duration: number }>();
-				for (const day of bySessionByDay[sessionId]) {
-					dayMap.set(day.date, { count: day.count, duration: day.duration });
-				}
-
-				agentData[sessionId] = sortedDates.map((date) => ({
-					date,
-					formattedDate: format(parseISO(date), 'EEEE, MMM d, yyyy'),
-					count: dayMap.get(date)?.count || 0,
-					duration: dayMap.get(date)?.duration || 0,
-					tokens: tokensForAgentDate(sessionId, date),
-				}));
-
-				let firstIdx = -1;
-				let lastIdx = -1;
-				for (let i = 0; i < sortedDates.length; i++) {
-					if (dayMap.has(sortedDates[i])) {
-						if (firstIdx === -1) firstIdx = i;
-						lastIdx = i;
-					}
-				}
-				ranges[sessionId] = { firstIdx, lastIdx };
-			}
-
-			// Build combined day data for tooltips
-			const combinedData: DayData[] = sortedDates.map((date) => {
-				const agents: Record<string, { count: number; duration: number; tokens: number }> = {};
-				for (const sessionId of agentList) {
-					const dayData = agentData[sessionId].find((d) => d.date === date);
-					if (dayData) {
-						agents[sessionId] = {
-							count: dayData.count,
-							duration: dayData.duration,
-							tokens: dayData.tokens,
-						};
-					}
-				}
-				return {
-					date,
-					formattedDate: format(parseISO(date), 'EEEE, MMM d, yyyy'),
-					agents,
-				};
+	const series = useMemo((): LineSeries[] => {
+		const pick = (cell: { count: number; duration: number } | undefined) =>
+			cell ? (metric === 'count' ? cell.count : cell.duration) : 0;
+		const lines: LineSeries[] = top.map((line, index) => ({
+			key: line.key,
+			label: line.label,
+			color: getSeriesColor(index, theme, colorBlindMode),
+			dashed: line.isWorktree,
+			values: days.map((date) => pick(line.byDate.get(date))),
+		}));
+		if (rest.length > 0) {
+			lines.push({
+				key: OTHER_AGENTS_KEY,
+				label: `${OTHER_AGENTS_LABEL} (${formatNumber(rest.length)})`,
+				color: theme.colors.textDim,
+				values: days.map((date) =>
+					rest.reduce((sum, line) => sum + pick(line.byDate.get(date)), 0)
+				),
 			});
-
-			return {
-				agents: agentList,
-				chartData: agentData,
-				allDates: combinedData,
-				agentDisplayNames: displayNames,
-				worktreeAgents: worktreeSet,
-				agentRanges: ranges,
-			};
-		}, [data.bySessionByDay, sessions, tokenSeries]);
-
-	const phone = usePhoneLayout();
-	const xLabelIndices = useMemo(
-		() => computeAxisLabelIndices(allDates.length, phone ? PHONE_AXIS_LABELS : undefined),
-		[allDates.length, phone]
-	);
-
-	// Calculate scales
-	const { xScale, yScale, yTicks } = useMemo(() => {
-		if (allDates.length === 0) {
-			return {
-				xScale: (_: number) => padding.left,
-				yScale: (_: number) => chartHeight - padding.bottom,
-				yTicks: [0],
-			};
 		}
+		return lines;
+	}, [top, rest, days, metric, theme, colorBlindMode]);
 
-		// Find max value across all agents (only within each agent's active range)
-		let maxValue = 1;
-		for (const agent of agents) {
-			const range = agentRanges[agent];
-			if (!range || range.firstIdx === -1) continue;
-			const slice = chartData[agent].slice(range.firstIdx, range.lastIdx + 1);
-			const agentMax = Math.max(...slice.map((d) => d[metricMode]));
-			maxValue = Math.max(maxValue, agentMax);
-		}
-
-		// Add 10% padding
-		const yMax = metricMode === 'duration' ? maxValue * 1.1 : Math.ceil(maxValue * 1.1);
-
-		// X scale
-		const xScaleFn = (index: number) =>
-			padding.left + (index / Math.max(allDates.length - 1, 1)) * innerWidth;
-
-		// Y scale
-		const yScaleFn = (value: number) => chartHeight - padding.bottom - (value / yMax) * innerHeight;
-
-		// Y ticks
-		const tickCount = 5;
-		const yTicksArr =
-			metricMode === 'count'
-				? Array.from({ length: tickCount }, (_, i) => Math.round((yMax / (tickCount - 1)) * i))
-				: Array.from({ length: tickCount }, (_, i) => (yMax / (tickCount - 1)) * i);
-
-		return { xScale: xScaleFn, yScale: yScaleFn, yTicks: yTicksArr };
-	}, [
-		allDates,
-		agents,
-		chartData,
-		agentRanges,
-		metricMode,
-		chartHeight,
-		innerWidth,
-		innerHeight,
-		padding,
-	]);
-
-	// Generate line paths for each agent - only draw across the agent's active
-	// range so newly-introduced agents don't get a flat line backfilled from
-	// the chart's start (and removed agents don't extend to the end).
-	const linePaths = useMemo(() => {
-		const paths: Record<string, string> = {};
-		for (const agent of agents) {
-			const agentDays = chartData[agent];
-			const range = agentRanges[agent];
-			if (!agentDays.length || !range || range.firstIdx === -1) continue;
-
-			const segments: string[] = [];
-			for (let idx = range.firstIdx; idx <= range.lastIdx; idx++) {
-				const day = agentDays[idx];
-				const x = xScale(idx);
-				const y = yScale(day[metricMode]);
-				segments.push(`${idx === range.firstIdx ? 'M' : 'L'} ${x} ${y}`);
-			}
-			paths[agent] = segments.join(' ');
-		}
-		return paths;
-	}, [agents, chartData, agentRanges, xScale, yScale, metricMode]);
-
-	// Anchor the tooltip to the cursor (not the dot's bounding rect) so it stays
-	// next to the user's pointer regardless of where on the chart they hover.
-	const handleMouseEnter = useCallback(
-		(dayIndex: number, agent: string, event: React.MouseEvent<SVGCircleElement>) => {
-			setHoveredDay({ dayIndex, agent });
-			setTooltipPos({ x: event.clientX, y: event.clientY });
-		},
-		[]
-	);
-	const handleMouseMove = useCallback((event: React.MouseEvent<SVGCircleElement>) => {
-		setTooltipPos({ x: event.clientX, y: event.clientY });
-	}, []);
-
-	const handleMouseLeave = useCallback(() => {
-		setHoveredDay(null);
-		setTooltipPos(null);
-	}, []);
-
-	// Forward legend clicks to the dashboard's drill-down handler. Toggle
-	// behavior (clicking the active legend item clears the filter) is owned by
-	// the dashboard; this component just reports which agent was clicked.
-	const handleAgentClick = useCallback(
-		(agentKey: string, displayName: string) => {
-			if (!onAgentClick) return;
-			onAgentClick(agentKey, displayName);
-		},
-		[onAgentClick]
-	);
+	const xLabels = useMemo(() => days.map((date) => formatCalendarDay(date)), [days]);
+	const formatValue = (value: number) =>
+		metric === 'count' ? formatNumber(Math.round(value)) : formatDurationHuman(value);
+	const noun = metric === 'count' ? 'queries' : 'time';
 
 	return (
 		<div
 			className="p-4 rounded-lg"
 			style={{ backgroundColor: theme.colors.bgMain }}
-			role="figure"
-			aria-label={`Agent usage chart showing ${metricModeNoun(metricMode)} over time. ${agents.length} agents displayed.`}
+			data-testid="agent-usage-chart"
 		>
-			{/* Header with title and metric toggle */}
-			<div className="flex items-center justify-between mb-4">
-				<h3
-					className="text-sm font-medium"
-					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
-				>
-					Agent Usage Over Time
-				</h3>
+			<div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
+				<div>
+					<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						Agent Usage Over Time
+					</h3>
+					<p className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+						Top {AGENT_USAGE_TOP_N} agents by queries in this range
+						{rest.length > 0 ? `; the other ${formatNumber(rest.length)} share one line` : ''}.
+					</p>
+				</div>
 				<MetricModeToggle
-					mode={metricMode}
-					onChange={setMetricMode}
+					mode={metric}
+					onChange={setMetric}
 					theme={theme}
-					labels={{ count: 'Queries', duration: 'Time' }}
-					tokensLoading={tokensLoading}
+					modes={[...METRIC_MODES]}
+					labels={OVERVIEW_METRIC_LABELS}
 				/>
 			</div>
 
-			{/* Chart container */}
-			<div className="relative">
-				<ChartLoadingOverlay visible={tokensLoading} theme={theme} />
-				{allDates.length === 0 || agents.length === 0 ? (
-					<div
-						className="flex items-center justify-center"
-						style={{ height: chartHeight, color: theme.colors.textDim }}
-					>
-						<span className="text-sm">No usage data available</span>
-					</div>
-				) : (
-					<svg
-						width="100%"
-						viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-						preserveAspectRatio="xMidYMid meet"
-						role="img"
-						aria-label={`Line chart showing ${metricModeNoun(metricMode)} per agent over time`}
-					>
-						{/* Grid lines */}
-						{yTicks.map((tick, idx) => (
-							<line
-								key={`grid-${idx}`}
-								x1={padding.left}
-								y1={yScale(tick)}
-								x2={chartWidth - padding.right}
-								y2={yScale(tick)}
-								stroke={theme.colors.border}
-								strokeOpacity={0.3}
-								strokeDasharray="4,4"
-							/>
-						))}
-
-						{/* Y-axis labels */}
-						{yTicks.map((tick, idx) => (
-							<text
-								key={`y-${idx}`}
-								x={padding.left - 8}
-								y={yScale(tick)}
-								textAnchor="end"
-								dominantBaseline="middle"
-								fontSize={10}
-								fill={theme.colors.textDim}
-							>
-								{metricMode === 'count'
-									? tick
-									: metricMode === 'tokens'
-										? formatMetricValue('tokens', tick)
-										: formatYAxisDuration(tick)}
-							</text>
-						))}
-
-						{/* X-axis labels */}
-						{allDates.map((day, idx) => {
-							if (!xLabelIndices.has(idx)) {
-								return null;
-							}
-
-							return (
-								<text
-									key={`x-label-${idx}`}
-									x={xScale(idx)}
-									y={chartHeight - padding.bottom + 20}
-									textAnchor="middle"
-									fontSize={10}
-									fill={theme.colors.textDim}
-								>
-									{formatXAxisDate(day.date, timeRange)}
-								</text>
-							);
-						})}
-
-						{/* Lines for each agent */}
-						{agents.map((agent, agentIdx) => {
-							const color = getAgentColor(agentIdx, colorBlindMode);
-							const isWorktree = worktreeAgents.has(agent);
-							const isFiltered = activeFilterKey != null;
-							const isSelected = isFiltered && activeFilterKey === agent;
-							const isDimmed = isFiltered && !isSelected;
-							return (
-								<path
-									key={`line-${agent}`}
-									d={linePaths[agent]}
-									fill="none"
-									stroke={color}
-									strokeWidth={isSelected ? 2.5 : 2}
-									strokeOpacity={isDimmed ? 0.15 : 1}
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									strokeDasharray={isWorktree ? '5 3' : undefined}
-									style={{
-										transition:
-											'd 0.5s cubic-bezier(0.4, 0, 0.2, 1), stroke-opacity 0.2s ease, stroke-width 0.2s ease',
-									}}
-								/>
-							);
-						})}
-
-						{/* Data points for each agent */}
-						{agents.map((agent, agentIdx) => {
-							const color = getAgentColor(agentIdx, colorBlindMode);
-							const isFiltered = activeFilterKey != null;
-							const isSelected = isFiltered && activeFilterKey === agent;
-							const isDimmed = isFiltered && !isSelected;
-							const range = agentRanges[agent];
-							return chartData[agent].map((day, dayIdx) => {
-								if (!range || dayIdx < range.firstIdx || dayIdx > range.lastIdx) {
-									return null;
-								}
-								const x = xScale(dayIdx);
-								const y = yScale(day[metricMode]);
-								const isHovered = hoveredDay?.dayIndex === dayIdx && hoveredDay?.agent === agent;
-
-								return (
-									<circle
-										key={`point-${agent}-${dayIdx}`}
-										cx={x}
-										cy={y}
-										r={isHovered ? 6 : 4}
-										fill={isHovered ? color : theme.colors.bgMain}
-										stroke={color}
-										strokeWidth={2}
-										opacity={isDimmed ? 0.15 : 1}
-										style={{
-											cursor: 'pointer',
-											transition: 'r 0.15s ease, opacity 0.2s ease',
-										}}
-										onMouseEnter={(e) => handleMouseEnter(dayIdx, agent, e)}
-										onMouseMove={handleMouseMove}
-										onMouseLeave={handleMouseLeave}
-									/>
-								);
-							});
-						})}
-
-						{/* Y-axis title */}
-						<text
-							x={12}
-							y={chartHeight / 2}
-							textAnchor="middle"
-							dominantBaseline="middle"
-							fontSize={11}
-							fill={theme.colors.textDim}
-							transform={`rotate(-90, 12, ${chartHeight / 2})`}
-						>
-							{metricMode === 'count' ? 'Queries' : metricMode === 'tokens' ? 'Tokens' : 'Time'}
-						</text>
-					</svg>
-				)}
-
-				{hoveredDay &&
-					allDates[hoveredDay.dayIndex] &&
-					(() => {
-						const visibleAgents = agents.filter((agent) => {
-							const range = agentRanges[agent];
-							if (
-								!range ||
-								hoveredDay.dayIndex < range.firstIdx ||
-								hoveredDay.dayIndex > range.lastIdx
-							) {
-								return false;
-							}
-							const dayData = allDates[hoveredDay.dayIndex].agents[agent];
-							return dayData && (dayData.count > 0 || dayData.duration > 0);
-						});
-						return (
-							<ChartTooltip
-								anchor={tooltipPos}
-								theme={theme}
-								width={280}
-								height={32 + visibleAgents.length * 18}
-							>
-								<div className="font-medium mb-1">
-									{allDates[hoveredDay.dayIndex].formattedDate}
-								</div>
-								<div style={{ color: theme.colors.textDim }}>
-									{agents.map((agent, idx) => {
-										const range = agentRanges[agent];
-										if (
-											!range ||
-											hoveredDay.dayIndex < range.firstIdx ||
-											hoveredDay.dayIndex > range.lastIdx
-										) {
-											return null;
-										}
-										const dayData = allDates[hoveredDay.dayIndex].agents[agent];
-										if (!dayData || (dayData.count === 0 && dayData.duration === 0)) return null;
-										const color = getAgentColor(idx, colorBlindMode);
-										return (
-											<div key={agent} className="flex items-center gap-2">
-												<span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-												<span>{agentDisplayNames[agent]}:</span>
-												<span style={{ color: theme.colors.textMain }}>
-													{metricMode === 'count'
-														? `${dayData.count} ${dayData.count === 1 ? 'query' : 'queries'}`
-														: metricMode === 'tokens'
-															? `${formatMetricValue('tokens', dayData.tokens)} tokens`
-															: formatDuration(dayData.duration)}
-												</span>
-											</div>
-										);
-									})}
-								</div>
-							</ChartTooltip>
-						);
-					})()}
-			</div>
-
-			{/* Legend - clickable when `onAgentClick` is wired (drill-down filter). */}
-			<div
-				className="flex items-center justify-center gap-4 mt-3 pt-3 border-t flex-wrap"
-				style={{ borderColor: theme.colors.border }}
-			>
-				{agents.map((agent, idx) => {
-					const color = getAgentColor(idx, colorBlindMode);
-					const isWorktree = worktreeAgents.has(agent);
-					const displayName = agentDisplayNames[agent];
-					const isClickable = !!onAgentClick;
-					const isFiltered = activeFilterKey != null;
-					const isSelected = isFiltered && activeFilterKey === agent;
-					const isDimmed = isFiltered && !isSelected;
-					return (
-						<div
-							key={agent}
-							className="flex items-center gap-1.5 rounded"
-							style={{
-								padding: isClickable ? '2px 6px' : undefined,
-								margin: isClickable ? '-2px -6px' : undefined,
-								cursor: isClickable ? 'pointer' : undefined,
-								backgroundColor: isSelected ? `${theme.colors.accent}26` : undefined,
-								opacity: isDimmed ? 0.5 : 1,
-								transition: 'background-color 0.2s ease, opacity 0.2s ease',
-							}}
-							onClick={isClickable ? () => handleAgentClick(agent, displayName) : undefined}
-							onKeyDown={
-								isClickable
-									? (e) => {
-											if (e.key === 'Enter' || e.key === ' ') {
-												e.preventDefault();
-												handleAgentClick(agent, displayName);
-											}
-										}
-									: undefined
-							}
-							role={isClickable ? 'button' : undefined}
-							tabIndex={isClickable ? 0 : undefined}
-							aria-pressed={isClickable ? isSelected : undefined}
-							aria-label={isClickable ? `${displayName}. Click to filter dashboard.` : undefined}
-						>
-							{isWorktree ? (
-								<svg width={12} height={2} aria-hidden="true">
-									<line
-										x1={0}
-										y1={1}
-										x2={12}
-										y2={1}
-										stroke={color}
-										strokeWidth={2}
-										strokeDasharray="3 2"
-									/>
-								</svg>
-							) : (
-								<div className="w-3 h-0.5 rounded" style={{ backgroundColor: color }} />
-							)}
-							<span className="text-xs" style={{ color: theme.colors.textDim }}>
-								{displayName}
-							</span>
-						</div>
-					);
-				})}
-			</div>
+			{series.length === 0 ? (
+				<div
+					className="flex items-center justify-center h-40 text-sm"
+					style={{ color: theme.colors.textDim }}
+					data-testid="agent-usage-empty"
+				>
+					No queries in this range
+				</div>
+			) : (
+				<MultiLineChart
+					theme={theme}
+					ariaLabel={`Agent ${noun} per day, top ${AGENT_USAGE_TOP_N} agents`}
+					xLabels={xLabels}
+					series={series}
+					formatValue={formatValue}
+					height={200}
+					testId="agent-usage-lines"
+				/>
+			)}
 		</div>
 	);
 });

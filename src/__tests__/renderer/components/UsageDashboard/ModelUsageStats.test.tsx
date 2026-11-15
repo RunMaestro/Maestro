@@ -118,23 +118,24 @@ describe('ModelUsageStats', () => {
 	describe('with a seeded record', () => {
 		it('states the four headline numbers', async () => {
 			await renderLoaded(BUSY_MODEL_USAGE);
+			// The headline figure counts up (AnimatedNumber); the card's label states it at once.
 
 			// Work on other models only: the provider's 40 turns are not in it.
 			const requests = screen.getByTestId('model-usage-card-requests');
-			expect(requests).toHaveTextContent('124');
+			expect(requests).toHaveAttribute('aria-label', expect.stringContaining(': 124,'));
 			expect(requests).toHaveTextContent('2 sources · 3 failed');
 
 			const tokens = screen.getByTestId('model-usage-card-tokens');
-			expect(tokens).toHaveTextContent('54.1K');
+			expect(tokens).toHaveAttribute('aria-label', expect.stringContaining(': 54.1K,'));
 			expect(tokens).toHaveTextContent('50.0K in · 4.1K out');
 
 			// The share is of ALL the work, the providers' own cloud included.
 			const onDevice = screen.getByTestId('model-usage-card-on-device');
-			expect(onDevice).toHaveTextContent('25%');
+			expect(onDevice).toHaveAttribute('aria-label', expect.stringContaining(': 25%,'));
 			expect(onDevice).toHaveTextContent('41 of 164 requests');
 
 			const decisions = screen.getByTestId('model-usage-card-decisions');
-			expect(decisions).toHaveTextContent('90');
+			expect(decisions).toHaveAttribute('aria-label', expect.stringContaining(': 90,'));
 			expect(decisions).toHaveTextContent('86 answered · $0.001900');
 		});
 

@@ -364,7 +364,10 @@ describe('ClaudeSessionStorage', () => {
 		const { ClaudeSessionStorage } = await import('../../../main/storage/claude-session-storage');
 
 		// Create an instance using the in-memory electron-store double.
-		const storage = new ClaudeSessionStorage();
+		const { default: Store } = await import('electron-store');
+		const storage = new ClaudeSessionStorage(
+			new Store({ name: 'claude-session-origins', defaults: { origins: {} } }) as never
+		);
 		expect(storage.agentId).toBe('claude-code');
 	});
 });

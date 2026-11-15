@@ -7,14 +7,21 @@
  * - Populated state renders summary cards, time-series, pipeline table, and
  *   agent chart (the per-subscription table and per-chain list were dropped
  *   because their content was redundant with the pipeline / agent breakdowns).
- * - Coverage warnings banner renders when warnings are present
+ * - Coverage warnings stay hidden even when present
  * - 'CueStatsDisabled' IPC error renders the friendly disabled note
+ * - A real failure renders an error, never "no Cue activity"
+ * - The retention caption, and its warning when the range outruns it
+ * - Slowest Runs comes from main's ranked list, sorts, and shows status
+ * - Cue engine activity refreshes the tab
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import React from 'react';
 import { CueStats } from '../../../../renderer/components/UsageDashboard/CueStats';
+import { rangeExceedsRetention } from '../../../../renderer/components/UsageDashboard/CueStats/RetentionNote';
+import { averageRunMs } from '../../../../renderer/components/UsageDashboard/CueStats/cueStatsUtils';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { THEMES } from '../../../../shared/themes';
 import type { CueStatsAggregation, CueStatsTotals } from '../../../../shared/cue-stats-types';
 
@@ -25,6 +32,7 @@ const zeroTotals: CueStatsTotals = {
 	successCount: 0,
 	failureCount: 0,
 	totalDurationMs: 0,
+	timedRunCount: 0,
 	totalInputTokens: 0,
 	totalOutputTokens: 0,
 	totalCacheReadTokens: 0,
@@ -49,6 +57,7 @@ const emptyAggregation: CueStatsAggregation = {
 	windowEndMs: 0,
 	totals: zeroTotals,
 	durationPercentiles: { count: 0, min: 0, p50: 0, p75: 0, p90: 0, p95: 0, p99: 0, max: 0 },
+	slowestRuns: [],
 	byPipeline: [],
 	byAgent: [],
 	bySubscription: [],
@@ -70,7 +79,8 @@ const populatedAggregation: CueStatsAggregation = {
 		occurrences: 12,
 		successCount: 9,
 		failureCount: 3,
-		totalDurationMs: 600_000, // 10m
+		totalDurationMs: 600_000, // 10m over 8 completed runs
+		timedRunCount: 8,
 		totalInputTokens: 5_000,
 		totalOutputTokens: 3_000,
 		totalCostUsd: 0.42,
@@ -85,6 +95,38 @@ const populatedAggregation: CueStatsAggregation = {
 		p99: 180_000,
 		max: 240_000,
 	},
+	slowestRuns: [
+		{
+			eventId: 'evt-1',
+			subscriptionName: 'sub-watch-files',
+			pipelineId: 'pipeline-alpha',
+			agentType: 'claude-code',
+			status: 'completed',
+			startedAtMs: 1_700_000_000_000,
+			durationMs: 60_000,
+			tokens: 150,
+		},
+		{
+			eventId: 'evt-9',
+			subscriptionName: 'sub-timeout',
+			pipelineId: null,
+			agentType: 'codex',
+			status: 'timeout',
+			startedAtMs: 1_700_000_100_000,
+			durationMs: 45_000,
+			tokens: 0,
+		},
+		{
+			eventId: 'evt-3',
+			subscriptionName: 'sub-leaf',
+			pipelineId: 'pipeline-alpha',
+			agentType: 'codex',
+			status: 'completed',
+			startedAtMs: 1_700_000_090_000,
+			durationMs: 15_000,
+			tokens: 60,
+		},
+	],
 	byPipeline: [
 		{
 			key: 'pipeline-alpha',
@@ -94,6 +136,7 @@ const populatedAggregation: CueStatsAggregation = {
 				successCount: 7,
 				failureCount: 1,
 				totalDurationMs: 400_000,
+				timedRunCount: 5,
 				totalInputTokens: 3_000,
 				totalOutputTokens: 2_000,
 				totalCostUsd: 0.3,
@@ -289,6 +332,7 @@ beforeEach(() => {
 			getAggregation: mockGetAggregation,
 		},
 	};
+	useSettingsStore.setState({ cueHistoryRetentionDays: 14 });
 });
 
 afterEach(() => {
@@ -358,17 +402,15 @@ describe('CueStats', () => {
 
 			const summary = screen.getByTestId('cue-stats-summary-cards');
 
-			// Summary cards expose each metric as a role="group" with aria-label
-			// "<label>: <value>" - match against those so we don't collide with
-			// the same labels used as table column headers below.
-			expect(within(summary).getByRole('group', { name: /Occurrences: 12/ })).toBeInTheDocument();
-			expect(within(summary).getByRole('group', { name: /Success Rate: 75%/ })).toBeInTheDocument();
-			expect(
-				within(summary).getByRole('group', { name: /Total Duration: 10m 0s/ })
-			).toBeInTheDocument();
-			expect(
-				within(summary).getByRole('group', { name: /Total Tokens: 8\.0K/ })
-			).toBeInTheDocument();
+			// One StatCard per figure: label, value, caption.
+			const card = (label: string) =>
+				within(summary).getByText(label).parentElement!.parentElement as HTMLElement;
+			expect(card('Runs')).toHaveTextContent(/^Runs12/);
+			expect(card('Success Rate')).toHaveTextContent(/75%/);
+			// Run time counts completed runs, and its average divides by them.
+			expect(card('Run Time')).toHaveTextContent(/10m 0s/);
+			expect(card('Run Time')).toHaveTextContent(/1m 15s avg over 8 completed/);
+			expect(card('Total Tokens')).toHaveTextContent(/8\.0K/);
 		});
 
 		it('renders trend sparklines on the occurrences, success rate, and tokens cards', async () => {
@@ -379,15 +421,8 @@ describe('CueStats', () => {
 			});
 
 			const summary = screen.getByTestId('cue-stats-summary-cards');
-			// `auto-fit` over a floor, not a fixed column count: the fixed count
-			// had no responsive rung, so in a 340px column each card got ~110px
-			// and values broke one character per line ("61" / ".9" / "K").
-			expect(summary.style.gridTemplateColumns).toBe(
-				'repeat(auto-fit, minmax(min(200px, 100%), 1fr))'
-			);
-			// Three of the four cards (Occurrences, Success Rate, Total Tokens) feed
-			// the shared MetricCard a sparkline; Total Duration intentionally has
-			// none because the per-bucket totals don't track duration.
+			// Three of the four cards (Runs, Success Rate, Total Tokens) carry a
+			// sparkline; Run Time has none because buckets don't track duration.
 			expect(within(summary).getAllByTestId('sparkline')).toHaveLength(3);
 		});
 
@@ -398,7 +433,7 @@ describe('CueStats', () => {
 				expect(screen.getByTestId('cue-stats-timeseries')).toBeInTheDocument();
 			});
 
-			expect(screen.getByText('Occurrences & Tokens Over Time')).toBeInTheDocument();
+			expect(screen.getByText('Runs & Tokens Over Time')).toBeInTheDocument();
 		});
 
 		it('renders the By Pipeline table with the pipelines', async () => {
@@ -413,14 +448,14 @@ describe('CueStats', () => {
 			expect(screen.getByText('pipeline-beta')).toBeInTheDocument();
 		});
 
-		it('renders the By Agent chart with the agent rows', async () => {
+		it('labels the token rollup by provider, since it is keyed by provider', async () => {
 			render(<CueStats timeRange="week" theme={theme} />);
 
 			await waitFor(() => {
 				expect(screen.getByTestId('cue-stats-agent-chart')).toBeInTheDocument();
 			});
 
-			expect(screen.getByText('Tokens by Agent')).toBeInTheDocument();
+			expect(screen.getByText('Tokens by Provider')).toBeInTheDocument();
 		});
 
 		it('does not render the failure spotlight section', async () => {
@@ -443,12 +478,40 @@ describe('CueStats', () => {
 
 			const slow = screen.getByTestId('cue-stats-slowest-runs');
 			const runs = within(slow).getAllByTestId('cue-stats-slow-run');
-			// Three nodes in the fixture chain; the 60s root should rank first.
+			// Main's ranked list, any terminal status, with a Status column.
 			expect(runs).toHaveLength(3);
 			expect(within(runs[0]).getByText('sub-watch-files')).toBeInTheDocument();
 			expect(within(runs[0]).getByText('1m 0s')).toBeInTheDocument();
-			expect(within(runs[1]).getByText('sub-followup')).toBeInTheDocument();
+			expect(within(runs[1]).getByText('sub-timeout')).toBeInTheDocument();
+			expect(within(runs[1]).getByText('timeout')).toBeInTheDocument();
+			expect(within(runs[1]).getByText('Codex')).toBeInTheDocument();
 			expect(within(runs[2]).getByText('sub-leaf')).toBeInTheDocument();
+		});
+
+		it('re-sorts the slowest runs from a column header', async () => {
+			render(<CueStats timeRange="week" theme={theme} />);
+			await screen.findByTestId('cue-stats-slowest-runs');
+
+			// SortableTh puts the test id on the <th>; the click target is its button.
+			fireEvent.click(
+				within(screen.getByTestId('cue-stats-slow-sort-subscription')).getByRole('button')
+			);
+			const runs = screen.getAllByTestId('cue-stats-slow-run');
+			expect(within(runs[0]).getByText('sub-leaf')).toBeInTheDocument();
+			expect(within(runs[2]).getByText('sub-watch-files')).toBeInTheDocument();
+		});
+
+		it('makes the hour-of-day chart one keyboard stop with a tooltip per hour', async () => {
+			render(<CueStats timeRange="week" theme={theme} />);
+			const hourChart = await screen.findByTestId('cue-stats-hour-of-day');
+			const svg = hourChart.querySelector('svg')!;
+			expect(svg).toHaveAttribute('tabindex', '0');
+
+			fireEvent.keyDown(svg, { key: 'Home' });
+			for (let i = 0; i < 9; i++) fireEvent.keyDown(svg, { key: 'ArrowRight' });
+			expect(await screen.findByTestId('cue-stats-hour-tooltip')).toHaveTextContent(
+				'9 AM: 7 runs, 2 failed'
+			);
 		});
 
 		it('renders the trigger-type breakdown with one row per trigger', async () => {
@@ -597,6 +660,79 @@ describe('CueStats', () => {
 				expect(screen.getByTestId('cue-stats-trigger-filter')).toBeInTheDocument();
 			});
 			expect(screen.getByText('No Cue activity')).toBeInTheDocument();
+		});
+	});
+
+	describe('Error state', () => {
+		it('renders an error with Retry, not "no Cue activity", when the read fails', async () => {
+			mockGetAggregation.mockRejectedValueOnce(new Error('cue.db is locked'));
+			render(<CueStats timeRange="week" theme={theme} />);
+
+			expect(await screen.findByTestId('cue-stats-error')).toHaveTextContent(/cue\.db is locked/);
+			expect(screen.queryByText('No Cue activity')).not.toBeInTheDocument();
+
+			mockGetAggregation.mockResolvedValue(populatedAggregation);
+			fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+			expect(await screen.findByTestId('cue-stats-summary-cards')).toBeInTheDocument();
+		});
+	});
+
+	describe('Retention caption', () => {
+		beforeEach(() => {
+			mockGetAggregation.mockResolvedValue(populatedAggregation);
+		});
+
+		it('states the retention and warns when the range reaches past it', async () => {
+			render(<CueStats timeRange="quarter" theme={theme} />);
+			const note = await screen.findByTestId('cue-stats-retention');
+			expect(note).toHaveAttribute('data-exceeds', 'true');
+			expect(note).toHaveTextContent('only shows the last 14 days');
+		});
+
+		it('only states the retention when the range fits inside it', async () => {
+			render(<CueStats timeRange="week" theme={theme} />);
+			const note = await screen.findByTestId('cue-stats-retention');
+			expect(note).toHaveAttribute('data-exceeds', 'false');
+			expect(note).toHaveTextContent('Cue keeps 14 days of run history');
+		});
+
+		it('compares the range to the retention setting', () => {
+			expect(rangeExceedsRetention('week', 14)).toBe(false);
+			expect(rangeExceedsRetention('month', 14)).toBe(true);
+			expect(rangeExceedsRetention('month', 30)).toBe(false);
+			expect(rangeExceedsRetention('all', 365)).toBe(true);
+		});
+	});
+
+	describe('Averages', () => {
+		it('average run time divides by completed runs, not by every run', () => {
+			expect(
+				averageRunMs({ ...zeroTotals, occurrences: 10, totalDurationMs: 60_000, timedRunCount: 2 })
+			).toBe(30_000);
+			expect(averageRunMs({ ...zeroTotals, occurrences: 3 })).toBe(0);
+		});
+	});
+
+	describe('Refresh', () => {
+		it('refetches when the Cue engine reports activity', async () => {
+			vi.useFakeTimers({ shouldAdvanceTime: true });
+			let emit: (() => void) | undefined;
+			vi.mocked(window.maestro.cue.onActivityUpdate).mockImplementation(((cb: () => void) => {
+				emit = cb;
+				return () => {};
+			}) as never);
+			mockGetAggregation.mockResolvedValue(populatedAggregation);
+
+			render(<CueStats timeRange="week" theme={theme} />);
+			await screen.findByTestId('cue-stats-summary-cards');
+			const before = mockGetAggregation.mock.calls.length;
+
+			act(() => emit?.());
+			await act(async () => {
+				vi.advanceTimersByTime(1_000);
+			});
+			await waitFor(() => expect(mockGetAggregation.mock.calls.length).toBe(before + 1));
+			vi.useRealTimers();
 		});
 	});
 

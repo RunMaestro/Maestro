@@ -24,10 +24,15 @@
 
 import type { Session, UsageDashboardViewMode } from '../../types';
 import type { StatsAggregation } from '../../../shared/stats-types';
-import { formatCost, formatNumber, formatRelativeTime } from '../../../shared/formatters';
+import {
+	formatCalendarDay,
+	formatCost,
+	formatHourOfDay,
+	formatNumber,
+	formatRelativeTime,
+} from '../../../shared/formatters';
 import { countActiveAgents } from '../../../shared/statsActiveAgents';
 import { aggregateRangeUsage } from '../../../shared/usageStats';
-import { formatHour, formatShortDate } from './SummaryCards';
 
 /**
  * Tabs the footer can describe.
@@ -61,17 +66,18 @@ function agentsOf(sessions: readonly Session[]): Session[] {
 /**
  * Overview: the three numbers that frame everything else on the tab - how much
  * was asked, by how many agents, over how many days that actually saw work.
+ *
+ * "Active agents" is `totalSessions`: the distinct agents with a query in the
+ * range, the same count the Overview cards divide queries by. The live agent
+ * list would disagree with the cards whenever an agent sat idle all range or
+ * was deleted after working in it.
  */
-export function buildOverviewSummary(
-	data: StatsAggregation,
-	sessions?: readonly Session[]
-): string | null {
+export function buildOverviewSummary(data: StatsAggregation): string | null {
 	if (data.totalQueries === 0) return null;
 	const activeDays = data.byDay.filter((d) => d.count > 0).length;
-	const agentCount = sessions ? agentsOf(sessions).length : null;
 	return join([
 		count(data.totalQueries, 'query', 'queries'),
-		agentCount !== null ? count(agentCount, 'agent') : null,
+		data.totalSessions > 0 ? count(data.totalSessions, 'active agent') : null,
 		activeDays > 0 ? count(activeDays, 'active day') : null,
 	]);
 }
@@ -167,8 +173,10 @@ export function buildActivitySummary(data: StatsAggregation): string | null {
 
 	const activeDays = data.byDay.filter((d) => d.count > 0).length;
 	return join([
-		peakHour ? `Peak hour ${formatHour(peakHour.hour)}` : null,
-		bestDay ? `busiest ${formatShortDate(bestDay.date)} with ${formatNumber(bestDay.count)}` : null,
+		peakHour ? `Peak hour ${formatHourOfDay(peakHour.hour)}` : null,
+		bestDay
+			? `busiest ${formatCalendarDay(bestDay.date)} with ${count(bestDay.count, 'query', 'queries')}`
+			: null,
 		activeDays > 0 ? count(activeDays, 'active day') : null,
 	]);
 }
@@ -295,7 +303,7 @@ export function buildModalOwnedFooterSummary(
 	if (!ctx.data) return null;
 	switch (tab) {
 		case 'overview':
-			return buildOverviewSummary(ctx.data, ctx.sessions);
+			return buildOverviewSummary(ctx.data);
 		case 'agent-overview':
 			return buildAgentOverviewSummary(ctx.sessions, ctx.data);
 		case 'activity':

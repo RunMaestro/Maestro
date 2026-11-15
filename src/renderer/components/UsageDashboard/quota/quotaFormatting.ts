@@ -1,6 +1,7 @@
 /**
- * Shared quota formatting primitives for the provider usage panels
- * (`ClaudePlanUsage`, `CodexPlanUsage`). Pure helpers only - no React, no
+ * Shared quota formatting primitives for the provider usage panel
+ * (`PlanUsagePanel`, configured as `ClaudePlanUsage` / `CodexPlanUsage`).
+ * Pure helpers only - no React, no
  * provider coupling - so both panels render bars with identical thresholds
  * and colors.
  *
@@ -112,4 +113,28 @@ export function isSampleExpired(sampledAt: string | undefined, nowMs = Date.now(
 	const sampledAtMs = Date.parse(sampledAt);
 	if (!Number.isFinite(sampledAtMs)) return false;
 	return nowMs - sampledAtMs > EXPIRED_SAMPLE_AGE_MS;
+}
+
+/**
+ * True when a window's reset time has already passed. The window has rolled
+ * over since the sample was taken, so its stored percentage describes a window
+ * that no longer exists; a new one starts at 0% with the next request.
+ */
+export function isQuotaWindowReset(resetsAt: string | undefined, nowMs = Date.now()): boolean {
+	if (!resetsAt) return false;
+	const resetMs = Date.parse(resetsAt);
+	return Number.isFinite(resetMs) && resetMs <= nowMs;
+}
+
+/**
+ * The percentage a window should be shown and counted at right now: its
+ * sampled value, or 0 once its reset time has passed (see
+ * {@link isQuotaWindowReset}). Without this a 6-hour-old sample keeps a red 96%
+ * on a 5-hour window that reset an hour ago.
+ */
+export function effectiveQuotaPercent(
+	window: { percent: number; resetsAt?: string },
+	nowMs = Date.now()
+): number {
+	return isQuotaWindowReset(window.resetsAt, nowMs) ? 0 : window.percent;
 }

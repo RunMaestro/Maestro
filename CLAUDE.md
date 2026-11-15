@@ -74,6 +74,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Format relative time:** `formatRelativeTime()` in `src/shared/formatters.ts`
 - **Format a calendar day:** `formatCalendarDay()` in `src/shared/formatters.ts`
 - **Local calendar day keys:** `toLocalYmd()`, `parseLocalYmd()`, `addLocalDays()`, `startOfLocalDay()` in `src/shared/localDay.ts`
+- **Where a dashboard time range starts:** `getTimeRangeStart()` in `src/shared/statsTimeRange.ts` (re-exported from `src/main/stats/utils.ts`)
 - **Format an hour of day:** `formatHourOfDay()` in `src/shared/formatters.ts`
 - **Format cost:** `formatCost()` in `src/shared/formatters.ts`
 - **The text of a group's pill:** `groupBadgeLabel(group)`, `GROUP_SHORT_LABEL_MAX_LENGTH` in `src/shared/formatters.ts`; `<GroupPill>` in `src/renderer/components/ui/GroupPill.tsx`; `withGroupShortLabel()` in `src/shared/groupAgentDefaults.ts` (never `abbreviateGroupName(group.name)` directly)
@@ -138,6 +139,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Reading or writing `maestro-agent-configs.json` without Electron:** `readAgentConfigsStoreFile(dataDir)`, `writeAgentConfigsStoreFile()` in `src/main/stores/agent-configs-store-file.ts`
 - **Reading or writing `maestro-sessions.json` without Electron:** `readSessionsStoreFile(dataDir)`, `writeSessionsStoreFile()` in `src/main/stores/sessions-store-file.ts`
 - **Maestro's data directory, without Electron:** `resolveUserDataDir(options?)`, `assertUserDataDirExists(dir)` in `src/shared/userDataDir.ts`
+- **Electron's userData directory from main code a worker thread also loads:** `getAppUserDataDir()` in `src/main/utils/app-user-data.ts`
 - **Where the synced stores live (custom Storage Location):** `resolveSyncDir(userDataDir)`, `isValidSyncPath()`, `BOOTSTRAP_STORE_FILE` in `src/shared/syncPath.ts`; the CLI's `getSyncDir()` in `src/cli/services/storage.ts`
 - **Deferred main-process store persistence:** `deferStoreWrites()` in `src/main/stores/deferred-writes.ts`, `flushPendingSessionWrites()` in `src/main/stores/instances.ts`
 - **Rewriting a large `{ key: [...] }` JSON store file:** `serializeWithMemoizedArray(data, memoKey)`, `encodeWithMemoizedArray(data, memoKey)` in `src/shared/memoizedJsonSerialize.ts`
@@ -369,7 +371,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Ask the model for a shell command (AI command mode):** `requestAiCommand()`, `acceptAiCommand()`, `dismissAiCommand()` in `src/renderer/services/aiCommand.ts`; prompt in `src/prompts/ai-command.md`
 - **A composer's send column (notification bell + Send):** `<ComposerSendColumn>` in `src/renderer/components/ChatComposer/ComposerSendColumn.tsx`
 - **The A Cappella microphone under a composer's Send:** `<ComposerVoiceSessionButton>` in `src/renderer/components/ChatComposer/ComposerVoiceSessionButton.tsx`, passed as `sendColumnExtras` (`belowSend` on `<ComposerSendColumn>`)
-- **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer(sessionId, text)` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()` / `formatFileSelection()` in `src/renderer/utils/quoteSelection.ts`
+- **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer()`, `insertIntoAgentComposer()`, `resolveComposerTarget()` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()`, `appendBlockToDraft()` in `src/renderer/utils/quoteSelection.ts`
+- **Picking an element in a browser tab (Design Mode):** `captureDesignPick()`, `designModeGuestCall()` in `src/renderer/utils/designModePicker.ts`; `deliverDesignPick()` in `src/renderer/services/designModePick.ts`
 - **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx`
 - **Trimming a text paste in a composer:** `applyTrimmedTextPaste(e, currentValue, setValue)` / `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
 - **Composer keys both chat composers share (Cmd+F, `@` picker, Tab, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerAgentTabKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`
@@ -552,8 +555,12 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A Usage Dashboard panel that fails on its own:** `<PanelErrorNote>` in `src/renderer/components/UsageDashboard/PanelErrorNote.tsx`
 - **What the Models tab derives from a `ModelUsage` record:** `summarizeModelUsage()`, `sortModelSources()`, `sortModelTasks()`, `latencyBarRows()`, `routedTierSlices()` in `src/renderer/components/UsageDashboard/ModelUsage/modelUsageView.ts`; `<LatencyBars>`
 - **Usage Dashboard card tile:** `<EntityTile>` in `src/renderer/components/UsageDashboard/EntityTile.tsx`
-- **Usage Dashboard metric tile:** `<MetricCard>` in `src/renderer/components/UsageDashboard/MetricCard.tsx`
+- **Usage Dashboard metric tile:** `<MetricCard>` in `src/renderer/components/UsageDashboard/SummaryCards.tsx`
 - **Color for the Nth chart series:** `getSeriesColor(index, theme, colorBlindMode?)` in `src/renderer/components/UsageDashboard/chartUtils.ts`
+- **Loading / error / empty states for a dashboard panel:** `useDashboardResource()`, `<DashboardPanelState>` in `src/renderer/components/UsageDashboard/`
+- **Per-day chart series with idle days kept:** `fillDaySeries()`, `localDaysBetween()` in `src/shared/daySeries.ts`; `usageReadWindow()` in `src/shared/statsTimeRange.ts`
+- **Auto Run run and task totals:** `computeAutoRunMetrics()` in `src/shared/autoRunMetrics.ts`
+- **Usage Dashboard reads for the CLI and export:** `src/main/stats/usage-dashboard-reads.ts` over `src/shared/usageDashboardReads.ts`
 - **A label that must not truncate:** `useOptionalLabelFits(rowRef)`, `useOptionalContentFits(ref, { axis })` in `src/renderer/hooks/ui/useOptionalLabelFits.ts`
 - **A Settings section the search can show inline:** `GENERAL_SECTIONS`, `DISPLAY_SECTIONS`, `ENCORE_SECTIONS` in each tab's `sections.tsx`, `findSettingsSection(settingId)` in `src/renderer/components/Settings/settingsSections.ts`
 - **Adding a control to the Left Bar header:** three zones (identity, indicators, menu); a status control goes in the CENTER band and the wordmark never truncates (`showWordmark` in `SessionList.tsx`)

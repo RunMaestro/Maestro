@@ -9,6 +9,7 @@ import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { AboutModal } from '../../../renderer/components/AboutModal';
 import { formatTokensCompact } from '../../../renderer/utils/formatters';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Theme, AutoRunStats } from '../../../renderer/types';
 import type { GlobalAgentStats, ProviderStats } from '../../../shared/types';
 
@@ -73,6 +74,11 @@ vi.mock('lucide-react', () => ({
 	BookOpen: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="book-open-icon" className={className} style={style}>
 			📖
+		</span>
+	),
+	ShieldCheck: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="shield-check-icon" className={className} style={style}>
+			🛡
 		</span>
 	),
 }));
@@ -197,6 +203,7 @@ describe('AboutModal', () => {
 	});
 
 	afterEach(() => {
+		useSettingsStore.setState({ useSystemBrowser: false });
 		vi.useRealTimers();
 		vi.clearAllMocks();
 		statsCallback = null;
@@ -315,6 +322,24 @@ describe('AboutModal', () => {
 
 			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
 				'https://github.com/RunMaestro/Maestro'
+			);
+		});
+
+		it('should open the live privacy page on the Privacy header button click', () => {
+			useSettingsStore.setState({ useSystemBrowser: true });
+			render(
+				<AboutModal
+					theme={theme}
+					handsOnTimeMs={0}
+					autoRunStats={createAutoRunStats()}
+					onClose={onClose}
+				/>
+			);
+
+			fireEvent.click(screen.getByLabelText('Privacy'));
+
+			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
+				expect.stringContaining('https://runmaestro.ai/privacy/')
 			);
 		});
 

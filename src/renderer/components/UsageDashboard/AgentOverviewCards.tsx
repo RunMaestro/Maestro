@@ -1,9 +1,10 @@
 /**
  * AgentOverviewCards
  *
- * Top-of-dashboard grid showing one compact card per active agent
- * (excluding internal terminal sessions). Each card surfaces the agent
- * name, live status dot, query count, and a 7-day activity sparkline.
+ * The Agents tab's grid: one compact card per agent (excluding internal
+ * terminal sessions). Each card surfaces the agent name, live status dot, its
+ * query count in the selected range, and a sparkline of its last 7 calendar
+ * days.
  *
  * Worktree children render with a dashed accent border, a "WT" badge,
  * and their checked-out branch - so a parent and its worktrees are
@@ -20,8 +21,8 @@
  * matching on the agent name (with or without its leading emoji) and on a
  * worktree's branch name. An "Active only" toggle beside it drops every agent
  * that recorded no work inside the dashboard's selected time range, so a
- * hundred-agent install can be cut down to what was actually used this month
- * (or this year, following the range picker).
+ * hundred-agent install can be cut down to what was actually used in the last
+ * 30 days (or the last 365, following the range picker).
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -49,12 +50,13 @@ import { usePublishFooterSummary } from './useFooterSummary';
 import { EntityTile, type EntityTileBadge } from './EntityTile';
 import {
 	AGENT_OVERVIEW_SORT_OPTIONS,
-	buildSessionSparkline,
+	AGENT_SPARKLINE_DAYS,
+	DEFAULT_AGENT_SORT,
+	buildCalendarSparkline,
 	getSessionAutoPercent,
 	getSessionLastQueryAt,
 	getSessionQueryCount,
 	getStatusColor,
-	isSessionHighlighted,
 	sortAgentOverviewSessions,
 	type SortMode,
 } from './agentOverviewUtils';
@@ -85,10 +87,6 @@ interface AgentCardProps {
 	theme: Theme;
 	/** 0-based index for the staggered card-enter animation */
 	animationIndex: number;
-	/** When true, render the card with a thicker accent border to flag the active filter */
-	isSelected: boolean;
-	/** All visible sessions; needed to disambiguate the provider-fallback count */
-	visibleSessions: Session[];
 	/** Which stat to color-emphasize so it's obvious what the cards are sorted by.
 	 *  `null` (Name sort, the default) leaves all stats in their neutral color. */
 	highlightedStat: HighlightedStat;
@@ -106,8 +104,6 @@ const AgentCard = memo(function AgentCard({
 	data,
 	theme,
 	animationIndex,
-	isSelected,
-	visibleSessions,
 	highlightedStat,
 	profileLabel,
 	onShowDetails,
@@ -117,14 +113,13 @@ const AgentCard = memo(function AgentCard({
 
 	const { queryCount, sparklineData, autoPercent, lastQueryAt } = useMemo(() => {
 		const sessionByDay = data.bySessionByDay?.[session.id];
-		const sparkline = buildSessionSparkline(sessionByDay);
 		return {
-			queryCount: getSessionQueryCount(session, data, visibleSessions),
-			sparklineData: sparkline,
+			queryCount: getSessionQueryCount(session, data),
+			sparklineData: buildCalendarSparkline(sessionByDay, data.window, AGENT_SPARKLINE_DAYS),
 			autoPercent: getSessionAutoPercent(session, data),
 			lastQueryAt: getSessionLastQueryAt(session, data),
 		};
-	}, [data, session, visibleSessions]);
+	}, [data, session]);
 
 	// Hidden consult tabs have no chip, so counting them would show a tab total the
 	// agent's own strip contradicts.
@@ -196,20 +191,19 @@ const AgentCard = memo(function AgentCard({
 				},
 				{
 					label: 'Auto %',
-					value: autoPercent === null ? '\u2014' : `${autoPercent}%`,
+					value: autoPercent === null ? '-' : `${autoPercent}%`,
 					highlighted: highlightedStat === 'auto',
 					muted: autoPercent === null,
 					testId: 'agent-card-auto-pct',
 					title:
 						autoPercent === null
 							? 'No recorded queries'
-							: `${autoPercent}% of queries from Auto Run / Cue`,
+							: `${autoPercent}% of queries from Auto Run`,
 				},
 			]}
 			sparkline={sparklineData}
 			sparklineColor={isWorktree ? theme.colors.accent : statusColor}
 			animationIndex={animationIndex}
-			isSelected={isSelected}
 			isDashed={isWorktree}
 			onClick={onShowDetails ? () => onShowDetails(session) : undefined}
 			ariaLabel={isClickable ? `${baseAriaLabel}. View detailed stats.` : baseAriaLabel}
@@ -224,14 +218,8 @@ interface AgentOverviewCardsProps {
 	data: StatsAggregation;
 	/** Current theme for color-aware styling */
 	theme: Theme;
-	/**
-	 * Active dashboard drill-down filter key. When set, the matching session
-	 * card(s) render with a 2px accent border so the selection is visible at
-	 * the top of the dashboard. `null` means no filter is active.
-	 */
-	activeFilterKey?: string | null;
-	/** Click handler for the per-card "view stats" icon - opens the per-agent
-	 *  stats sub-modal. When omitted, the icon is not rendered. */
+	/** Click handler for a card - opens the per-agent stats sub-modal. When
+	 *  omitted, the cards are not clickable. */
 	onShowAgentDetails?: (session: Session) => void;
 	/**
 	 * Left Bar groups, used to populate the group filter dropdown. Omit (or pass
@@ -281,13 +269,12 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 	sessions,
 	data,
 	theme,
-	activeFilterKey = null,
 	onShowAgentDetails,
 	groups = EMPTY_GROUPS,
 	profileFilter: profileFilterProp,
 	onProfileFilterChange,
 }: AgentOverviewCardsProps) {
-	const [sortMode, setSortMode] = useState<SortMode>('name');
+	const [sortMode, setSortMode] = useState<SortMode>(DEFAULT_AGENT_SORT);
 	const [filterQuery, setFilterQuery] = useState('');
 	// How wide a tile is, remembered across restarts. `+` / `-` / `0` drive it
 	// from the keyboard; the control beside the sort pills is the same state.
@@ -649,7 +636,7 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 					}}
 					data-testid="agent-overview-cards"
 					role="region"
-					aria-label="Active agents overview"
+					aria-label="Agent cards"
 				>
 					{filteredSessions.map((session, index) => (
 						<AgentCard
@@ -658,8 +645,6 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 							data={data}
 							theme={theme}
 							animationIndex={index}
-							isSelected={isSessionHighlighted(session, activeFilterKey)}
-							visibleSessions={activeSessions}
 							highlightedStat={sortMode === 'name' || sortMode === 'provider' ? null : sortMode}
 							profileLabel={profileBadgeBySessionId[session.id]}
 							onShowDetails={onShowAgentDetails}

@@ -3,12 +3,13 @@ import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats
 import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
 import {
-	buildSessionSparkline,
+	DEFAULT_AGENT_SORT,
+	buildCalendarSparkline,
+	buildRangeActivity,
 	getSessionAutoPercent,
 	getSessionLastQueryAt,
 	getSessionQueryCount,
 	getStatusColor,
-	isSessionHighlighted,
 	sortAgentOverviewSessions,
 } from '../../../../renderer/components/UsageDashboard/agentOverviewUtils';
 
@@ -55,9 +56,7 @@ const data: StatsAggregation = {
 	byDay: [],
 	byHour: [],
 	totalSessions: 2,
-	sessionsByAgent: { codex: 1, 'claude-code': 1 },
-	sessionsByDay: [],
-	avgSessionDuration: 600,
+	window: { startYmd: '2025-12-01', endYmd: '2026-01-02' },
 	byAgentByDay: {},
 	bySessionByDay: {
 		codexSession: [
@@ -75,53 +74,94 @@ const data: StatsAggregation = {
 	},
 	worktreeQueries: 0,
 	parentQueries: 12,
-	byWorktreeStatus: {
-		worktree: { count: 0, duration: 0 },
-		parent: { count: 12, duration: 1200 },
-	},
 	imageAnnotations: 0,
-};
+} as unknown as StatsAggregation;
 
 describe('agentOverviewUtils', () => {
-	it('maps status colors and pads session sparklines', () => {
+	it('maps status colors', () => {
 		expect(getStatusColor('idle', theme)).toBe(theme.colors.success);
 		expect(getStatusColor('busy', theme)).toBe(theme.colors.warning);
 		expect(getStatusColor('error', theme)).toBe(theme.colors.error);
 		expect(getStatusColor('connecting', theme)).toBe(theme.colors.textDim);
-		expect(buildSessionSparkline(undefined)).toEqual([0, 0, 0, 0, 0, 0, 0]);
-		expect(
-			buildSessionSparkline([
-				{ date: '2026-01-01', count: 2, duration: 100 },
-				{ date: '2026-01-02', count: 3, duration: 100 },
-			])
-		).toEqual([0, 0, 0, 0, 0, 2, 3]);
 	});
 
-	it('resolves per-session counts and provider fallback safely', () => {
+	describe('buildCalendarSparkline', () => {
+		const window = { startYmd: '2025-12-01', endYmd: '2026-01-02' };
+
+		it('is all zeros over 7 calendar days when the entity has no rows', () => {
+			expect(buildCalendarSparkline(undefined, window, 7)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+		});
+
+		it('places counts on their calendar day and zero-fills the gaps', () => {
+			expect(
+				buildCalendarSparkline(
+					[
+						{ date: '2025-12-29', count: 4 },
+						{ date: '2026-01-02', count: 3 },
+					],
+					window,
+					7
+				)
+			).toEqual([0, 0, 4, 0, 0, 0, 3]);
+		});
+
+		it('drops active days older than the window instead of pulling them forward', () => {
+			// The old "last 7 rows" sparkline drew these two days side by side.
+			expect(
+				buildCalendarSparkline(
+					[
+						{ date: '2025-12-02', count: 9 },
+						{ date: '2026-01-02', count: 3 },
+					],
+					window,
+					7
+				)
+			).toEqual([0, 0, 0, 0, 0, 0, 3]);
+		});
+
+		it('clips to a range shorter than the sparkline', () => {
+			const today = { startYmd: '2026-01-02', endYmd: '2026-01-02' };
+			expect(buildCalendarSparkline([{ date: '2026-01-02', count: 5 }], today, 7)).toEqual([5]);
+		});
+
+		it('crosses a month boundary by calendar day', () => {
+			expect(buildCalendarSparkline([], window, 14)).toHaveLength(14);
+		});
+	});
+
+	it('fills the whole range for a detail chart', () => {
+		const series = buildRangeActivity([{ date: '2026-01-01', count: 2 }], {
+			startYmd: '2025-12-30',
+			endYmd: '2026-01-02',
+		});
+		expect(series).toEqual([
+			{ date: '2025-12-30', count: 0 },
+			{ date: '2025-12-31', count: 0 },
+			{ date: '2026-01-01', count: 2 },
+			{ date: '2026-01-02', count: 0 },
+		]);
+	});
+
+	it("counts only the agent's own rows, never its provider's total", () => {
 		const codex = makeSession({ id: 'codexSession', toolType: 'codex' });
-		const codexPeer = makeSession({ id: 'peer', toolType: 'codex' });
 		const claude = makeSession({ id: 'claude', toolType: 'claude-code' });
 
-		expect(getSessionQueryCount(codex, data, [codex, codexPeer])).toBe(5);
-		expect(getSessionQueryCount(codexPeer, data, [codex, codexPeer])).toBe(0);
-		expect(getSessionQueryCount(claude, data, [claude])).toBe(2);
+		expect(getSessionQueryCount(codex, data)).toBe(5);
+		// The only claude-code agent, with no rows of its own: 0, not the
+		// provider's 2.
+		expect(getSessionQueryCount(claude, data)).toBe(0);
 	});
 
-	it('computes auto percent and filter highlighting', () => {
+	it('computes auto percent', () => {
 		const parent = makeSession({ id: 'codexSession', toolType: 'codex' });
-		const worktree = makeSession({
-			id: 'worktree',
-			toolType: 'codex',
-			parentSessionId: 'codexSession',
-		});
 		const empty = makeSession({ id: 'emptySession', toolType: 'codex' });
 
 		expect(getSessionAutoPercent(parent, data)).toBe(75);
 		expect(getSessionAutoPercent(empty, data)).toBeNull();
-		expect(isSessionHighlighted(parent, 'codex')).toBe(true);
-		expect(isSessionHighlighted(parent, 'codex__worktree')).toBe(false);
-		expect(isSessionHighlighted(worktree, 'codex__worktree')).toBe(true);
-		expect(isSessionHighlighted(worktree, 'worktree')).toBe(true);
+	});
+
+	it('defaults the grid to the Queries sort', () => {
+		expect(DEFAULT_AGENT_SORT).toBe('queries');
 	});
 
 	it('reads the last-query timestamp, and reports null when the agent has none', () => {

@@ -15,6 +15,7 @@ vi.mock('../../../main/utils/logger', () => ({
 
 import { runMigrations } from '../../../main/stats/migrations';
 import { getModelUsage } from '../../../main/stats/model-usage';
+import { getTimeRangeStart } from '../../../shared/statsTimeRange';
 import {
 	clearLocalModelRunsCache,
 	recordLocalModelRun,
@@ -162,7 +163,7 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 		const usage = getModelUsage(db, 'week');
 
 		expect(usage.range).toBe('week');
-		expect(usage.since).toBe(NOW - 7 * DAY_MS);
+		expect(usage.since).toBe(getTimeRangeStart('week', NOW));
 		expect(usage.totals).toEqual({
 			requests: 0,
 			otherModelRequests: 0,

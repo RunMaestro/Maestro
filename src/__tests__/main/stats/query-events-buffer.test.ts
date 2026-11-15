@@ -8,6 +8,7 @@ import {
 	flushQueryEventsSync,
 	getQueryEventBufferSize,
 	resetQueryEventBufferForTests,
+	setQueryEventsFlushListener,
 	QUERY_EVENT_BATCH_SIZE,
 	QUERY_EVENT_FLUSH_INTERVAL_MS,
 } from '../../../main/stats/query-events-buffer';
@@ -411,6 +412,57 @@ describe('query-events-buffer', () => {
 			expect(() => flushQueryEventsSync()).not.toThrow();
 			expect(getQueryEventBufferSize()).toBe(0);
 			expect(captureException).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('flush listener (stats:updated after commit)', () => {
+		it('is told how many events a committed batch held', () => {
+			const { db } = makeMockDb();
+			const listener = vi.fn();
+			setQueryEventsFlushListener(listener);
+
+			enqueueQueryEvent(db as never, sampleEvent);
+			enqueueQueryEvent(db as never, sampleEvent);
+			expect(listener).not.toHaveBeenCalled();
+
+			vi.advanceTimersByTime(QUERY_EVENT_FLUSH_INTERVAL_MS);
+			expect(listener).toHaveBeenCalledTimes(1);
+			expect(listener).toHaveBeenCalledWith(2);
+		});
+
+		it('is not told about a batch that failed to commit', () => {
+			const { db } = makeMockDb();
+			db.transaction = (() => () => {
+				throw new Error('disk full');
+			}) as MockTransactionFactory;
+			const listener = vi.fn();
+			setQueryEventsFlushListener(listener);
+
+			enqueueQueryEvent(db as never, sampleEvent);
+			flushQueryEventsSync();
+
+			expect(listener).not.toHaveBeenCalled();
+		});
+
+		it('is not told when there was nothing to flush', () => {
+			const listener = vi.fn();
+			setQueryEventsFlushListener(listener);
+
+			flushQueryEventsSync();
+
+			expect(listener).not.toHaveBeenCalled();
+		});
+
+		it('is dropped by the test reset', () => {
+			const { db } = makeMockDb();
+			const listener = vi.fn();
+			setQueryEventsFlushListener(listener);
+			resetQueryEventBufferForTests();
+
+			enqueueQueryEvent(db as never, sampleEvent);
+			flushQueryEventsSync();
+
+			expect(listener).not.toHaveBeenCalled();
 		});
 	});
 });

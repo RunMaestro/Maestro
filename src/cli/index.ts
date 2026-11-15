@@ -47,7 +47,7 @@ import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { imageList, imageSave } from './commands/image';
 import { openGraph } from './commands/open-graph';
-import { openBrowser, closeBrowser } from './commands/open-browser';
+import { openBrowser, closeBrowser, browserPick } from './commands/open-browser';
 import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
@@ -293,7 +293,19 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsIndexing, statsModels, statsQuery, statsTokens } from './commands/stats';
+import {
+	stats,
+	statsActivity,
+	statsAgents,
+	statsCue,
+	statsDelegation,
+	statsExport,
+	statsIndexing,
+	statsModels,
+	statsPlanUsage,
+	statsQuery,
+	statsTokens,
+} from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
@@ -311,6 +323,14 @@ import {
 	autoRunFolder,
 } from './commands/auto-run-control';
 import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
+import {
+	diffReviewAdd,
+	diffReviewClear,
+	diffReviewEdit,
+	diffReviewList,
+	diffReviewRemove,
+	diffReviewSend,
+} from './commands/diff-review';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import { agentTestRunOn } from './commands/agent-test-run-on';
@@ -1320,6 +1340,22 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(closeBrowser);
 
+// Browser pick command - Design Mode by selector: add an element of a browser
+// tab (selector, trimmed HTML, computed styles, cropped screenshot) to the
+// owning agent's composer, through the same code a click in Design Mode runs.
+program
+	.command('browser-pick <tab>')
+	.description(
+		"Add an element of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)"
+	)
+	.requiredOption('-s, --selector <css>', 'CSS selector of the element (the first match is used)')
+	.option('--note <text>', 'Note added under the element, as typed in the pick card')
+	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
+	.option('--background', 'Add it without switching the view to the AI tab')
+	.option('--focus', 'Switch to the AI tab the element lands in (default)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserPick);
+
 // Open terminal command - open a new terminal tab in the Maestro desktop app
 program
 	.command('open-terminal')
@@ -1526,6 +1562,69 @@ steerAutoRun
 	.option('--focus', 'Accepted and ignored: cancelling a note raises no notice')
 	.option('--json', 'Output the cancelled note as JSON')
 	.action(steerAutoRunCancel);
+
+// Git Diff review comments - the CLI half of the Git Diff viewer's Review tray.
+// Comments are pinned to lines of the agent's current diff and sent to it as
+// one prompt, each with its path:lines and hunk.
+const diffReview = program
+	.command('diff-review')
+	.description("Pin review comments to lines of an agent's git diff and send them as one review");
+
+diffReview
+	.command('list')
+	.description('Show the pending comments, flagging any whose lines changed since')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(diffReviewList);
+
+diffReview
+	.command('add <path> <lines> <comment>')
+	.description('Pin a comment to path:lines of the current diff (lines: 12 or 12-14)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--side <side>', 'Which version the line numbers are in: new (default) or old', 'new')
+	.option('--background', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--json', 'Output the new comment as JSON')
+	.action(diffReviewAdd);
+
+diffReview
+	.command('edit <comment-id> <comment>')
+	.description('Reword a pending comment, keeping its id and lines (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--json', 'Output the updated comment as JSON')
+	.action(diffReviewEdit);
+
+diffReview
+	.command('remove <comment-id>')
+	.description('Drop one pending comment (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--json', 'Output the removed comment as JSON')
+	.action(diffReviewRemove);
+
+diffReview
+	.command('clear')
+	.description('Discard every pending comment')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: discarding raises no notice')
+	.option('--focus', 'Accepted and ignored: discarding raises no notice')
+	.option('--json', 'Output as JSON')
+	.action(diffReviewClear);
+
+diffReview
+	.command('send')
+	.description('Send every current comment to the agent as one queued prompt')
+	.requiredOption('-a, --agent <id>', 'Agent to send the review to')
+	.option('--compose', "Put the review in the agent's message box instead of sending it")
+	.option('--background', 'Deliver without switching the view (the default)')
+	.option('--focus', 'Take the user to the agent, as the Send Review button does')
+	.option('--json', 'Output what was sent, what was left behind, and the prompt as JSON')
+	.action(diffReviewSend);
 
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program
@@ -5702,6 +5801,62 @@ encoreCommand(program, 'stats-query <sql>', 'usageStats', encoreFlags)
 	)
 	.option('--json', 'Output rows as JSON instead of a tab-separated table')
 	.action(statsQuery);
+
+program
+	.command('stats-delegation')
+	.description(
+		'Show the delegation split (interactive turns vs Auto Run tasks vs Cue runs) for a range and per day'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output totals, delegated share, and the per-day split as JSON')
+	.action(statsDelegation);
+
+program
+	.command('stats-cue')
+	.description(
+		'Show the Usage Dashboard Cue tab: run totals, durations, and per-pipeline breakdowns'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option(
+		'--exclude-trigger <type>',
+		'Leave out a trigger type, like the Cue tab filter chips (repeatable)',
+		(value: string, prev: string[]) => [...prev, value],
+		[] as string[]
+	)
+	.option('--json', 'Output the full Cue statistics object as JSON')
+	.action(statsCue);
+
+program
+	.command('stats-plan-usage')
+	.description('Show the last sampled plan usage per Anthropic (Claude) and OpenAI (Codex) account')
+	.option('--provider <provider>', 'Only one provider: claude or codex')
+	.option('--json', 'Output the accounts as JSON')
+	.action(statsPlanUsage);
+
+program
+	.command('stats-agents')
+	.description('Show Agents Over Time: agents that existed each day, plus created and deleted')
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output the daily series as JSON')
+	.action(statsAgents);
+
+program
+	.command('stats-activity')
+	.description(
+		'Show Auto Run runs, wizard runs, resilience outages, and shortcut presses for a range and per day'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output totals and the daily counts as JSON')
+	.action(statsActivity);
+
+program
+	.command('stats-export')
+	.description('Export everything the Usage Dashboard reads for a range (the Export button)')
+	.requiredOption('-o, --output <path>', 'File to write (a .zip of CSVs, or a .json file)')
+	.option('-f, --format <format>', 'csv (a zip of CSV files) or json (default: csv)')
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output the result (path, row counts, notes) as JSON')
+	.action(statsExport);
 
 // Plugin authoring commands - scaffold, validate, sign, and package a Maestro
 // plugin from the command line. The manifest/signature contracts are the shared

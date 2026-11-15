@@ -12,10 +12,13 @@ import type {
 	QueryEvent,
 	AutoRunSession,
 	AutoRunTask,
+	AutoRunTurnsByHour,
 	SessionLifecycleEvent,
 	ShortcutUsageDay,
+	ShortcutUsageByShortcut,
 	StatsAggregation,
 	StatsTimeRange,
+	StatsTable,
 	ResilienceEvent,
 	WizardRun,
 	UsageExportFormat,
@@ -58,9 +61,16 @@ export function createStatsApi() {
 		startAutoRun: (session: AutoRunSession): Promise<string> =>
 			ipcRenderer.invoke('stats:start-autorun', session),
 
-		// End an Auto Run session (update duration and completed count)
-		endAutoRun: (id: string, duration: number, tasksCompleted: number): Promise<boolean> =>
-			ipcRenderer.invoke('stats:end-autorun', id, duration, tasksCompleted),
+		// End an Auto Run session (update duration and completed count). The
+		// optional `tasksTotal` is the run's best checkbox total (a looping run
+		// re-checks tasks); main never stores a total below the completed count.
+		endAutoRun: (
+			id: string,
+			duration: number,
+			tasksCompleted: number,
+			tasksTotal?: number
+		): Promise<boolean> =>
+			ipcRenderer.invoke('stats:end-autorun', id, duration, tasksCompleted, tasksTotal),
 
 		// Record an Auto Run task completion
 		recordAutoTask: (task: AutoRunTask): Promise<string> =>
@@ -105,22 +115,9 @@ export function createStatsApi() {
 			}>
 		> => ipcRenderer.invoke('stats:get-autorun-sessions', range),
 
-		// Get tasks for a specific Auto Run session
-		getAutoRunTasks: (
-			autoRunSessionId: string
-		): Promise<
-			Array<{
-				id: string;
-				autoRunSessionId: string;
-				sessionId: string;
-				agentType: string;
-				taskIndex: number;
-				taskContent?: string;
-				startTime: number;
-				duration: number;
-				success: boolean;
-			}>
-		> => ipcRenderer.invoke('stats:get-autorun-tasks', autoRunSessionId),
+		// Auto Run agent turns per local hour of day (24 entries, zero-filled)
+		getAutoRunTurnsByHour: (range: StatsTimeRange): Promise<AutoRunTurnsByHour[]> =>
+			ipcRenderer.invoke('stats:get-autorun-turns-by-hour', range),
 
 		// Get aggregated stats for dashboard display
 		getAggregation: (
@@ -169,35 +166,23 @@ export function createStatsApi() {
 		},
 
 		// Subscribe to stats updates (for real-time dashboard refresh)
-		onStatsUpdate: (callback: () => void) => {
-			const handler = () => callback();
+		// The event names the table that changed (undefined when unknown), so a
+		// panel can skip refetches for tables it does not read.
+		onStatsUpdate: (callback: (table?: StatsTable) => void) => {
+			const handler = (_event: Electron.IpcRendererEvent, table?: StatsTable) => callback(table);
 			ipcRenderer.on('stats:updated', handler);
 			return () => ipcRenderer.removeListener('stats:updated', handler);
 		},
 
-		// Clear old stats data (older than specified number of days)
-		clearOldData: (
-			olderThanDays: number
-		): Promise<{
-			success: boolean;
-			deletedQueryEvents: number;
-			deletedAutoRunSessions: number;
-			deletedAutoRunTasks: number;
-			error?: string;
-		}> => ipcRenderer.invoke('stats:clear-old-data', olderThanDays),
-
 		// Get database size in bytes
 		getDatabaseSize: (): Promise<number> => ipcRenderer.invoke('stats:get-database-size'),
-
-		// Get earliest stat timestamp (null if no entries)
-		getEarliestTimestamp: (): Promise<number | null> =>
-			ipcRenderer.invoke('stats:get-earliest-timestamp'),
 
 		// Record a keyboard shortcut firing. The main process buckets `firedAt`
 		// into a local-time day and increments that day's counter. Resolves to
 		// the YYYY-MM-DD bucket, or null when stats collection is disabled.
-		recordShortcutUsage: (firedAt: number): Promise<string | null> =>
-			ipcRenderer.invoke('stats:record-shortcut-usage', firedAt),
+		// `shortcutId` also bumps that shortcut's own counter (Most used shortcuts).
+		recordShortcutUsage: (firedAt: number, shortcutId?: string): Promise<string | null> =>
+			ipcRenderer.invoke('stats:record-shortcut-usage', firedAt, shortcutId),
 
 		// Get per-day shortcut usage counts within a time range. Days with no
 		// activity are omitted; the renderer is responsible for zero-filling.
@@ -208,11 +193,15 @@ export function createStatsApi() {
 		getShortcutUsageTotal: (range: StatsTimeRange): Promise<number> =>
 			ipcRenderer.invoke('stats:get-shortcut-usage-total', range),
 
+		// Firings per shortcut id within a time range, most used first
+		getShortcutUsageByShortcut: (range: StatsTimeRange): Promise<ShortcutUsageByShortcut[]> =>
+			ipcRenderer.invoke('stats:get-shortcut-usage-by-shortcut', range),
+
 		// Record an image annotation save event
 		recordImageAnnotation: (createdAt: number): Promise<string | null> =>
 			ipcRenderer.invoke('stats:record-image-annotation', createdAt),
 
-		// Record session creation (for lifecycle tracking)
+		// Record a resolved Agent Resilience outage
 		recordResilience: (event: ResilienceEvent): Promise<string | null> =>
 			ipcRenderer.invoke('stats:record-resilience', event),
 
@@ -250,8 +239,8 @@ export function createStatsApi() {
 			}>
 		> => ipcRenderer.invoke('stats:get-session-lifecycle', range),
 
-		// Get initialization result (for showing database reset notification)
-		// Returns info about whether the database was reset due to corruption
+		// Get initialization result (for showing database reset notification).
+		// Non-null only when opening the database had to replace a damaged file.
 		getInitializationResult: (): Promise<{
 			success: boolean;
 			wasReset: boolean;

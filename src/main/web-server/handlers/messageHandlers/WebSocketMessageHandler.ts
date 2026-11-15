@@ -180,6 +180,7 @@ import { handleFederationCommand } from './federation';
 import { handleMaestroRunCommand } from './maestroRun';
 import { handleDataviewCommand } from './dataview';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
+import { handleDiffReviewCommand } from './diffReview';
 import { handleWindowCommand } from './windows';
 import { handleThroughputGaugeCommand } from './throughputGauge';
 import {
@@ -199,6 +200,7 @@ import {
 	handleReadTerminalTab,
 	handleListTerminalTabs,
 	handleCloseBrowserTab,
+	handlePickBrowserElement,
 	handleOpenTerminalTab,
 	handleNewAITabWithPrompt,
 } from './tabs';
@@ -265,7 +267,6 @@ import {
 	handleDeletePlaybook,
 } from './playbooks';
 import {
-	handleGetUsageDashboard,
 	handleGetStatsAggregation,
 	handleGetModelUsage,
 	handleGetTokenUsage,
@@ -274,6 +275,14 @@ import {
 	handleGetAchievements,
 	handleGenerateDirectorNotesSynopsis,
 } from './stats';
+import {
+	handleGetDelegationStats,
+	handleGetCueStats,
+	handleGetPlanUsage,
+	handleGetAgentCountStats,
+	handleGetActivityStats,
+	handleStatsExport,
+} from './usageDashboard';
 
 /**
  * WebSocket Message Handler Class
@@ -490,6 +499,10 @@ export class WebSocketMessageHandler {
 				handleAutoRunSteeringCommand(this.ctx, client, message);
 				break;
 
+			case 'diff_review_command':
+				handleDiffReviewCommand(this.ctx, client, message);
+				break;
+
 			case 'window_command':
 				handleWindowCommand(this.ctx, client, message);
 				break;
@@ -536,6 +549,10 @@ export class WebSocketMessageHandler {
 
 			case 'close_browser_tab':
 				handleCloseBrowserTab(this.ctx, client, message);
+				break;
+
+			case 'pick_browser_element':
+				handlePickBrowserElement(this.ctx, client, message);
 				break;
 
 			case 'open_terminal_tab':
@@ -834,10 +851,6 @@ export class WebSocketMessageHandler {
 				handleCueBundleImport(this.ctx, client, message);
 				break;
 
-			case 'get_usage_dashboard':
-				handleGetUsageDashboard(this.ctx, client, message);
-				break;
-
 			case 'get_achievements':
 				handleGetAchievements(this.ctx, client, message);
 				break;
@@ -860,6 +873,30 @@ export class WebSocketMessageHandler {
 
 			case 'stats_query':
 				handleStatsQuery(this.ctx, client, message);
+				break;
+
+			case 'get_delegation_stats':
+				handleGetDelegationStats(this.ctx, client, message);
+				break;
+
+			case 'get_cue_stats':
+				handleGetCueStats(this.ctx, client, message);
+				break;
+
+			case 'get_plan_usage':
+				handleGetPlanUsage(this.ctx, client, message);
+				break;
+
+			case 'get_agent_count_stats':
+				handleGetAgentCountStats(this.ctx, client, message);
+				break;
+
+			case 'get_activity_stats':
+				handleGetActivityStats(this.ctx, client, message);
+				break;
+
+			case 'stats_export':
+				handleStatsExport(this.ctx, client, message);
 				break;
 
 			case 'generate_director_notes_synopsis':

@@ -24,7 +24,7 @@ interface UsageDashboardFooterProps {
 	theme: Theme;
 	/** Tab currently on screen - selects which published summary to show. */
 	viewMode: FooterSummaryTab;
-	/** Left-hand range label, e.g. "Showing this month data". */
+	/** Left-hand range label, e.g. "Showing Last 30 Days". */
 	rangeLabel: string;
 	/**
 	 * Summary for tabs the modal itself describes. A panel-published summary
@@ -46,7 +46,7 @@ export const UsageDashboardFooter = memo(function UsageDashboardFooter({
 	const published = usePublishedFooterSummary(viewMode);
 	const summary = published ?? fallbackSummary;
 	// Three equal columns need ~110px each on a phone, which truncates every one
-	// of them to nothing - "Showing this month data" became "S..". The Esc hint
+	// of them to nothing - "Showing Last 30 Days" became "S..". The Esc hint
 	// is already gone there (`data-shortcut-hint`), so the row becomes the two
 	// readouts that survive: the per-tab summary, which is the useful one and
 	// takes the space, and the database chip.

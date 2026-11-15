@@ -72,6 +72,10 @@ export interface CoworkingApi {
 		providerPolicies?: CoworkingBrowserPolicies
 	): Promise<void>;
 
+	/** The Coworking `browser:N` id of a browser tab, or null when Coworking does
+	 *  not know the tab or the user hid it from agents. */
+	getBrowserId(sessionId: string, tabUuid: string): Promise<string | null>;
+
 	// ---- Browser op (main → renderer) ----
 	/**
 	 * Subscribe to browser-op requests from main (read / navigate / click / ... /
@@ -131,6 +135,8 @@ export function createCoworkingApi(): CoworkingApi {
 				confirmPolicy,
 				providerPolicies
 			),
+		getBrowserId: (sessionId, tabUuid) =>
+			ipcRenderer.invoke('coworking:getBrowserId', sessionId, tabUuid),
 
 		onRequestBrowserOp: (callback) => {
 			const handler = (
