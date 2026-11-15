@@ -146,6 +146,20 @@ describe('jumpToAgent', () => {
 			expect(useFileExplorerStore.getState().isGraphViewOpen).toBe(false);
 		});
 
+		it('clears a zoom on another pane, which would hide the target pane', () => {
+			seed(tiled);
+			useUIStore.setState({ zoomedPaneId: 'l1' } as never);
+			jumpToAgent(SESSION_ID, { tabId: 'tab-b', stayInTiledGroup: true });
+			expect(useUIStore.getState().zoomedPaneId).toBeNull();
+		});
+
+		it('keeps a zoom that is already on the target pane', () => {
+			seed(tiled);
+			useUIStore.setState({ zoomedPaneId: 'l2' } as never);
+			jumpToAgent(SESSION_ID, { tabId: 'tab-b', stayInTiledGroup: true });
+			expect(useUIStore.getState().zoomedPaneId).toBe('l2');
+		});
+
 		it('leaves the group for a tab that is not one of its panes', () => {
 			seed(tiled);
 			jumpToAgent(SESSION_ID, { tabId: 'tab-a', stayInTiledGroup: true });

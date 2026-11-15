@@ -801,6 +801,17 @@ Pin a comment to path:lines of the current diff (lines: 12 or 12-14)
 | `--focus`          | Accepted and ignored: adding a comment raises no notice     | -       |
 | `--json`           | Output the new comment as JSON                              | -       |
 
+## `maestro-cli diff-review edit <comment-id> <comment>`
+
+Reword a pending comment, keeping its id and lines (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                       | -       |
+| `--background`     | Accepted and ignored: editing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: editing a comment raises no notice | -       |
+| `--json`           | Output the updated comment as JSON                       | -       |
+
 ## `maestro-cli diff-review remove <comment-id>`
 
 Drop one pending comment (accepts a unique id prefix)

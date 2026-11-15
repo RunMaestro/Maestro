@@ -130,6 +130,51 @@ export async function diffReviewAdd(
 	if (result.comment) console.log(`  Comment: ${result.comment.id}`);
 }
 
+/** Resolve a comment id or unique prefix against the pending list. */
+async function resolveCommentId(
+	sessionId: string,
+	wanted: string,
+	json?: boolean
+): Promise<string> {
+	const listed = await sendDiffReview({ action: 'list', sessionId }, json);
+	const comments = listed.comments ?? [];
+	const exact = comments.find((c) => c.id === wanted);
+	const matches = exact ? [exact] : comments.filter((c) => c.id.startsWith(wanted));
+	if (matches.length > 1) {
+		failCommand(`Ambiguous comment id '${wanted}' (${matches.length} matches)`, json);
+	}
+	// An id that matches nothing is still sent: the desktop says it is gone.
+	return matches[0]?.id ?? wanted;
+}
+
+/**
+ * `maestro-cli diff-review edit <comment-id> <comment> -a <agent>` - reword a
+ * pending comment in place, keeping its id and the lines it is pinned to.
+ * Accepts a unique id prefix.
+ */
+export async function diffReviewEdit(
+	commentId: string,
+	comment: string,
+	options: DiffReviewOptions
+): Promise<void> {
+	const wanted = (commentId ?? '').trim();
+	if (!wanted) failCommand('A comment id is required', options.json);
+	const body = (comment ?? '').trim();
+	if (!body) failCommand('A review comment needs some text', options.json);
+	const sessionId = resolveAgentOrFail(options.agent, options.json);
+	const id = await resolveCommentId(sessionId, wanted, options.json);
+	const result = await sendDiffReview(
+		{ action: 'edit', sessionId, commentId: id, body },
+		options.json
+	);
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, sessionId, comment: result.comment }, null, 2));
+		return;
+	}
+	if (isQuiet()) return;
+	console.log(formatSuccess(`Updated comment on ${result.comment?.location ?? id}`));
+}
+
 /** `maestro-cli diff-review remove <comment-id> -a <agent>`. Accepts a unique id prefix. */
 export async function diffReviewRemove(
 	commentId: string,
@@ -138,18 +183,8 @@ export async function diffReviewRemove(
 	const wanted = (commentId ?? '').trim();
 	if (!wanted) failCommand('A comment id is required', options.json);
 	const sessionId = resolveAgentOrFail(options.agent, options.json);
-
-	const listed = await sendDiffReview({ action: 'list', sessionId }, options.json);
-	const comments = listed.comments ?? [];
-	const exact = comments.find((c) => c.id === wanted);
-	const matches = exact ? [exact] : comments.filter((c) => c.id.startsWith(wanted));
-	if (matches.length > 1) {
-		failCommand(`Ambiguous comment id '${wanted}' (${matches.length} matches)`, options.json);
-	}
-	const result = await sendDiffReview(
-		{ action: 'remove', sessionId, commentId: matches[0]?.id ?? wanted },
-		options.json
-	);
+	const id = await resolveCommentId(sessionId, wanted, options.json);
+	const result = await sendDiffReview({ action: 'remove', sessionId, commentId: id }, options.json);
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, sessionId, comment: result.comment }, null, 2));
 		return;

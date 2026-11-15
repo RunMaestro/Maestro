@@ -32,6 +32,7 @@ vi.mock('../../../cli/services/storage', () => ({
 import {
 	diffReviewAdd,
 	diffReviewClear,
+	diffReviewEdit,
 	diffReviewList,
 	diffReviewRemove,
 	diffReviewSend,
@@ -150,6 +151,24 @@ describe('maestro-cli diff-review', () => {
 		stubDesktop(() => ({ success: true, comment: COMMENTS[0] }));
 		await diffReviewRemove('c-aaa', { agent: 'alpha' });
 		expect(sent[1]).toMatchObject({ action: 'remove', commentId: 'c-aaa111' });
+	});
+
+	it('edit resolves a prefix and sends the trimmed new text', async () => {
+		stubDesktop(() => ({ success: true, comment: { ...COMMENTS[0], body: 'Merge all three.' } }));
+		await diffReviewEdit('c-bbb', '  Merge all three. ', { agent: 'alpha' });
+		expect(sent[1]).toEqual({
+			type: 'diff_review_command',
+			action: 'edit',
+			sessionId: 'agent-1',
+			commentId: 'c-bbb222',
+			body: 'Merge all three.',
+		});
+		expect(printed(logSpy)).toContain('Updated comment on src/app.ts:12-14');
+	});
+
+	it('edit refuses empty text without a round trip', async () => {
+		await expectExit(diffReviewEdit('c-aaa111', '  ', { agent: 'alpha' }));
+		expect(sent).toEqual([]);
 	});
 
 	it('remove refuses an ambiguous prefix', async () => {

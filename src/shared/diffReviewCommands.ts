@@ -3,8 +3,8 @@
  * Diff viewer's review comments (`maestro-cli diff-review`).
  *
  * In the viewer a user pins comments to diff lines, lists them in the Review
- * tray, removes one, discards them all, and sends them (or puts them in the
- * composer). This module makes the same five reachable from the CLI. It lives
+ * tray, edits or removes one, discards them all, and sends them (or puts them
+ * in the composer). This module makes the same six reachable from the CLI. It lives
  * in `shared/` because all three processes need it: the CLI builds the request,
  * the main process validates it on the way through, and the renderer - which
  * holds the pending comments - answers it.
@@ -13,7 +13,14 @@
  */
 
 /** The verbs a diff review command can carry. */
-export const DIFF_REVIEW_COMMAND_ACTIONS = ['list', 'add', 'remove', 'clear', 'send'] as const;
+export const DIFF_REVIEW_COMMAND_ACTIONS = [
+	'list',
+	'add',
+	'edit',
+	'remove',
+	'clear',
+	'send',
+] as const;
 
 export type DiffReviewCommandAction = (typeof DIFF_REVIEW_COMMAND_ACTIONS)[number];
 
@@ -33,9 +40,9 @@ export interface DiffReviewCommandRequest {
 	endLine?: number;
 	/** `add`: which version the numbers are in. Defaults to `new`. */
 	side?: DiffReviewSide;
-	/** `add`: the comment. */
+	/** `add`: the comment. `edit`: its new text. */
 	body?: string;
-	/** `remove`: the comment to drop, from `list`. */
+	/** `edit` / `remove`: the comment, from `list`. */
 	commentId?: string;
 	/** `send`: put the review in the agent's composer instead of sending it. */
 	compose?: boolean;
@@ -66,7 +73,7 @@ export interface DiffReviewCommandResult {
 	cwd?: string;
 	/** `list`: every pending comment, in the order it was written. */
 	comments?: DiffReviewCommentSummary[];
-	/** `add`: the comment created. `remove`: the comment dropped. */
+	/** `add`: the comment created. `edit`: as updated. `remove`: the comment dropped. */
 	comment?: DiffReviewCommentSummary;
 	/** `clear`: how many comments were dropped. */
 	cleared?: number;
@@ -149,10 +156,13 @@ export function parseDiffReviewCommandRequest(
 		};
 	}
 
-	if (action === 'remove') {
+	if (action === 'remove' || action === 'edit') {
 		const commentId = typeof message.commentId === 'string' ? message.commentId.trim() : '';
-		if (!commentId) return { ok: false, error: 'diff-review remove requires a comment id' };
-		return { ok: true, request: { action, sessionId, commentId } };
+		if (!commentId) return { ok: false, error: `diff-review ${action} requires a comment id` };
+		if (action === 'remove') return { ok: true, request: { action, sessionId, commentId } };
+		const body = typeof message.body === 'string' ? message.body.trim() : '';
+		if (!body) return { ok: false, error: 'A review comment needs some text' };
+		return { ok: true, request: { action, sessionId, commentId, body } };
 	}
 
 	if (action === 'send') {

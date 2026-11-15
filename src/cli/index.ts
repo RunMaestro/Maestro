@@ -156,6 +156,7 @@ import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './comman
 import {
 	diffReviewAdd,
 	diffReviewClear,
+	diffReviewEdit,
 	diffReviewList,
 	diffReviewRemove,
 	diffReviewSend,
@@ -1121,6 +1122,15 @@ diffReview
 	.option('--focus', 'Accepted and ignored: adding a comment raises no notice')
 	.option('--json', 'Output the new comment as JSON')
 	.action(diffReviewAdd);
+
+diffReview
+	.command('edit <comment-id> <comment>')
+	.description('Reword a pending comment, keeping its id and lines (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--json', 'Output the updated comment as JSON')
+	.action(diffReviewEdit);
 
 diffReview
 	.command('remove <comment-id>')

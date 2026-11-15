@@ -1956,6 +1956,9 @@ maestro-cli diff-review add src/app.ts 7 "Why remove this?" --side old -a <agent
 # Read the pending comments; outdated ones are flagged
 maestro-cli diff-review list -a <agent-id>
 
+# Reword one in place, keeping its id and lines (accepts a unique id prefix)
+maestro-cli diff-review edit <comment-id> "Parse RETRIES with parseInt" -a <agent-id>
+
 # Drop one (accepts a unique id prefix), or all of them
 maestro-cli diff-review remove <comment-id> -a <agent-id>
 maestro-cli diff-review clear -a <agent-id>

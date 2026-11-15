@@ -242,6 +242,7 @@ export const ALREADY_QUIET_VERBS = [
 	// redraws its tray, but nothing is selected or announced.
 	'diff-review-list',
 	'diff-review-add',
+	'diff-review-edit',
 	'diff-review-remove',
 	'diff-review-clear',
 ] as const;

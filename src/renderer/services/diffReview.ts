@@ -269,6 +269,27 @@ export async function runRemoteDiffReviewCommand(
 			return { success: true, cwd: repo.cwd, comment: summarize(comment, false) };
 		}
 
+		case 'edit': {
+			const existing = (store.commentsByRepo[repo.key] ?? []).find(
+				(c) => c.id === request.commentId
+			);
+			if (!existing) return { success: false, error: `No pending comment ${request.commentId}` };
+			// The tray does not edit an outdated comment either: its lines are gone,
+			// so there is nothing to re-word it against.
+			if (findOutdatedComments([existing], await loadFiles()).size > 0) {
+				return {
+					success: false,
+					error: `${formatCommentLocation(existing)} is outdated (its lines changed); remove it and add a new comment`,
+				};
+			}
+			store.updateComment(repo.key, existing.id, request.body!);
+			return {
+				success: true,
+				cwd: repo.cwd,
+				comment: summarize({ ...existing, body: request.body! }, false),
+			};
+		}
+
 		case 'remove': {
 			const existing = (store.commentsByRepo[repo.key] ?? []).find(
 				(c) => c.id === request.commentId

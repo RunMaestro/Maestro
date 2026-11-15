@@ -128,12 +128,13 @@ The viewer's other keys still apply: `Enter` switches between unified and side-b
 
 ## For agents and scripts
 
-Everything in the tray has a `maestro-cli` verb, working on the same pending comments the viewer shows. A comment added from the CLI appears in an open viewer's tray, and `send` runs the same code as **Send Review**.
+Every action in the tray has a `maestro-cli` verb, working on the same pending comments the viewer shows: add, edit, remove, discard (`clear`), send, and edit in composer (`send --compose`). A comment added or edited from the CLI appears in an open viewer's tray, and `send` runs the same code as **Send Review**. As in the tray, an outdated comment cannot be edited; remove it and add a new one.
 
 ```bash
 maestro-cli diff-review add src/app.ts 12-14 "Parse RETRIES as a number" -a <agent-id>
 maestro-cli diff-review add src/app.ts 7 "Why remove this?" --side old -a <agent-id>
 maestro-cli diff-review list -a <agent-id>
+maestro-cli diff-review edit <comment-id> "Parse RETRIES with parseInt" -a <agent-id>
 maestro-cli diff-review remove <comment-id> -a <agent-id>
 maestro-cli diff-review clear -a <agent-id>
 maestro-cli diff-review send -a <agent-id> [--compose] [--focus]

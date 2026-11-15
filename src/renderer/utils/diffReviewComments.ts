@@ -256,7 +256,13 @@ export function anchorForLines(
 
 /**
  * Comments whose lines are no longer in the diff as they were when the comment
- * was written: the file left the diff, or a covered line moved or changed.
+ * was written: the file left the diff, a covered line changed, or the line
+ * numbers the comment states no longer hold.
+ *
+ * The change key alone is not enough. An unchanged line's key is built from its
+ * OLD line number, so an insertion above it moves its new-side number while the
+ * key and text stay the same; the stored `path:lines` would then be off. The
+ * stated path and span are therefore re-derived from the current rows.
  *
  * An outdated comment is kept (the user wrote it) but never sent: its
  * `path:lines` would point the agent at the wrong code.
@@ -267,19 +273,39 @@ export function findOutdatedComments(
 ): Set<string> {
 	const outdated = new Set<string>();
 	if (comments.length === 0) return outdated;
-	const contentByFile = new Map<string, Map<string, string>>();
+	const byFile = new Map<string, { file: ParsedFileDiff; rows: Map<string, DiffReviewRow> }>();
 	for (const file of files) {
-		const byKey = new Map<string, string>();
-		for (const row of buildReviewRows(diffFileHunks(file))) byKey.set(row.key, row.change.content);
-		contentByFile.set(diffFileKey(file), byKey);
+		const rows = new Map<string, DiffReviewRow>();
+		for (const row of buildReviewRows(diffFileHunks(file))) rows.set(row.key, row);
+		byFile.set(diffFileKey(file), { file, rows });
 	}
 	for (const comment of comments) {
-		const byKey = contentByFile.get(comment.file);
-		const current =
-			!!byKey && comment.changeKeys.every((key, i) => byKey.get(key) === comment.lineContents[i]);
-		if (!current) outdated.add(comment.id);
+		if (!stillMatches(comment, byFile.get(comment.file))) outdated.add(comment.id);
 	}
 	return outdated;
+}
+
+function stillMatches(
+	comment: DiffComment,
+	entry: { file: ParsedFileDiff; rows: Map<string, DiffReviewRow> } | undefined
+): boolean {
+	if (!entry) return false;
+	const covered = comment.changeKeys.map((key) => entry.rows.get(key));
+	if (covered.some((row, i) => !row || row.change.content !== comment.lineContents[i])) {
+		return false;
+	}
+	const rows = covered as DiffReviewRow[];
+	// One hunk, as when the comment was made.
+	if (rows.some((row) => row.hunkIndex !== rows[0].hunkIndex)) return false;
+	const lineOf = comment.side === 'old' ? oldLineOf : newLineOf;
+	const lines = rows.map((row) => lineOf(row.change)).filter((n): n is number => n !== null);
+	if (lines.length === 0) return false;
+	const path = comment.side === 'old' ? entry.file.oldPath : diffFileKey(entry.file);
+	return (
+		path === comment.path &&
+		Math.min(...lines) === comment.startLine &&
+		Math.max(...lines) === comment.endLine
+	);
 }
 
 /** `src/app.ts:12-14`, plus a note when the numbers refer to the old file. */

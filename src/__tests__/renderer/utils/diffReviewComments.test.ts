@@ -323,6 +323,23 @@ describe('rename and staleness (review feedback)', () => {
 		expect(err(anchorForLines(files, 'src/app.ts', 'new', 5, 21))).toContain('two hunks');
 	});
 
+	it('flags an unchanged line whose new-side number moved even though its key did not', () => {
+		// `const a = 20;` is old line 20 / new line 21, key N20.
+		const at = rows.findIndex((r) => r.change.content === 'const a = 20;');
+		const anchor = anchorForSelection({ file: 'src/app.ts', hunks, rows, anchor: at, focus: at });
+		expect(anchor).toMatchObject({ side: 'new', startLine: 21, changeKeys: ['N20'] });
+		const pinned = { ...anchor!, id: 'n', body: 'Check this.' };
+		expect(findOutdatedComments([pinned], files).size).toBe(0);
+
+		// One more line inserted above it: same key and text, new line is now 22.
+		const shifted = parseGitDiff(
+			DIFF.replace('+const extra = 4;', '+const extra = 4;\n+const more = 5;')
+				.replace('@@ -1,4 +1,5 @@', '@@ -1,4 +1,6 @@')
+				.replace('@@ -20,2 +21,2 @@', '@@ -20,2 +22,2 @@')
+		);
+		expect(findOutdatedComments([pinned], shifted)).toEqual(new Set(['n']));
+	});
+
 	it('findOutdatedComments flags comments whose lines moved, changed, or left the diff', () => {
 		const make = (id: string, over: Partial<DiffComment>) => comment({ id, ...over });
 		const current = make('ok', {});

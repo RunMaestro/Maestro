@@ -371,6 +371,35 @@ describe('runRemoteDiffReviewCommand (maestro-cli diff-review)', () => {
 		expect(useDiffReviewStore.getState().commentsByRepo).toEqual({});
 	});
 
+	it('edits in place, keeping the id and lines, and refuses an outdated comment', async () => {
+		await runRemoteDiffReviewCommand({
+			action: 'add',
+			sessionId: 'agent-1',
+			path: 'src/app.ts',
+			startLine: 2,
+			side: 'new',
+			body: 'A',
+		});
+		const before = useDiffReviewStore.getState().commentsByRepo[key()][0];
+		const edited = await runRemoteDiffReviewCommand({
+			action: 'edit',
+			sessionId: 'agent-1',
+			commentId: before.id,
+			body: 'B',
+		});
+		expect(edited).toMatchObject({ success: true, comment: { id: before.id, body: 'B' } });
+		expect(useDiffReviewStore.getState().commentsByRepo[key()]).toEqual([{ ...before, body: 'B' }]);
+
+		mockGetDiff.mockResolvedValue({ diff: DIFF.replace('+const fresh = 3;', '+const x = 3;') });
+		const refused = await runRemoteDiffReviewCommand({
+			action: 'edit',
+			sessionId: 'agent-1',
+			commentId: before.id,
+			body: 'C',
+		});
+		expect(refused).toMatchObject({ success: false, error: expect.stringContaining('outdated') });
+	});
+
 	it('removes and clears', async () => {
 		await runRemoteDiffReviewCommand({
 			action: 'add',

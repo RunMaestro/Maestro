@@ -16,7 +16,7 @@
  * component without threading callbacks down through modal trees.
  */
 
-import type { Session } from '../types';
+import type { PanelLayoutNode, Session } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
 import { useUIStore } from '../stores/uiStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
@@ -24,7 +24,7 @@ import { useGroupChatStore } from '../stores/groupChatStore';
 import { useModalStore } from '../stores/modalStore';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { requestSidebarReveal } from '../utils/sidebarReveal';
-import { collectLeafTabRefs } from '../utils/panelLayout';
+import { findLeafByTabRef } from '../utils/panelLayout';
 
 /**
  * Make sure a jumped-to agent is actually visible in the Left Bar, without
@@ -70,13 +70,12 @@ export interface JumpToAgentOptions {
 	stayInTiledGroup?: boolean;
 }
 
-function isPaneOfActiveGroup(session: Session, tabId: string): boolean {
+/** The leaf of the agent's active tiled group that shows AI tab `tabId`, if any. */
+function activeGroupPaneFor(session: Session, tabId: string): PanelLayoutNode | null {
 	const group = session.activeGroupId
 		? session.tabGroups?.find((g) => g.id === session.activeGroupId)
 		: undefined;
-	return (
-		!!group && collectLeafTabRefs(group.layout).some((ref) => ref.type === 'ai' && ref.id === tabId)
-	);
+	return group ? findLeafByTabRef(group.layout, { type: 'ai', id: tabId }) : null;
 }
 
 /**
@@ -106,16 +105,25 @@ export function jumpToAgent(sessionId: string, options: JumpToAgentOptions = {})
 	// permanent column.
 	useUIStore.getState().closeLeftSidebarForNavigation();
 
+	const targetTabId =
+		options.tabId && session.aiTabs?.some((t) => t.id === options.tabId)
+			? options.tabId
+			: undefined;
+	const keptPane =
+		options.stayInTiledGroup && targetTabId ? activeGroupPaneFor(session, targetTabId) : null;
+	if (keptPane) {
+		// A zoomed pane renders alone; if it is not the one being shown, the
+		// target pane would stay hidden behind it.
+		const { zoomedPaneId, setZoomedPaneId } = useUIStore.getState();
+		if (zoomedPaneId && zoomedPaneId !== keptPane.id) setZoomedPaneId(null);
+	}
+
 	// Clear file / terminal / browser active-tab state so the jump shows the AI
 	// terminal even when the agent was last viewed on another tab type.
 	setSessions((prev) =>
 		prev.map((s) => {
 			if (s.id !== sessionId) return s;
-			const targetTabId =
-				options.tabId && s.aiTabs?.some((t) => t.id === options.tabId) ? options.tabId : undefined;
-			if (options.stayInTiledGroup && targetTabId && isPaneOfActiveGroup(s, targetTabId)) {
-				return { ...s, activeTabId: targetTabId };
-			}
+			if (keptPane) return { ...s, activeTabId: targetTabId! };
 			return { ...s, ...aiTabFocusFields(targetTabId) };
 		})
 	);

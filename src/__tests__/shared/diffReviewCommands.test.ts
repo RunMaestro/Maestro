@@ -50,8 +50,26 @@ describe('parseDiffReviewCommandRequest', () => {
 		}
 	});
 
-	it('requires a comment id for remove', () => {
+	it('requires a comment id for remove, and an id and text for edit', () => {
 		expect(parseDiffReviewCommandRequest({ action: 'remove', sessionId: 'a' }).ok).toBe(false);
+		expect(parseDiffReviewCommandRequest({ action: 'edit', sessionId: 'a', body: 'x' }).ok).toBe(
+			false
+		);
+		expect(
+			parseDiffReviewCommandRequest({ action: 'edit', sessionId: 'a', commentId: 'c', body: ' ' })
+				.ok
+		).toBe(false);
+		expect(
+			parseDiffReviewCommandRequest({
+				action: 'edit',
+				sessionId: 'a',
+				commentId: ' c1 ',
+				body: ' New. ',
+			})
+		).toEqual({
+			ok: true,
+			request: { action: 'edit', sessionId: 'a', commentId: 'c1', body: 'New.' },
+		});
 	});
 
 	it('takes compose and background on send only as a literal true', () => {
