@@ -24,6 +24,18 @@ describe('formatMarkdownQuote', () => {
 	});
 });
 
+describe('appendBlockToDraft', () => {
+	it('appends a formatted block as-is with one blank line before and after', () => {
+		expect(appendBlockToDraft('', '## Review\n\n- fix')).toBe('## Review\n\n- fix\n\n');
+		expect(appendBlockToDraft('my note  \n', '## Review')).toBe('my note\n\n## Review\n\n');
+	});
+
+	it('normalizes CRLF, trims blank edges, and leaves the draft alone for a blank block', () => {
+		expect(appendBlockToDraft('', '\r\n\r\nline\r\nnext\r\n')).toBe('line\nnext\n\n');
+		expect(appendBlockToDraft('keep', '  \n ')).toBe('keep');
+	});
+});
+
 describe('appendQuoteToDraft', () => {
 	it('quotes into an empty draft with a blank line after for the comment', () => {
 		expect(appendQuoteToDraft('', 'passage')).toBe('> passage\n\n');

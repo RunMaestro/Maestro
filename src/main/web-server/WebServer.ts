@@ -95,6 +95,7 @@ import type {
 	ReopenClosedTabCallback,
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
 	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
@@ -200,6 +201,7 @@ import type {
 } from './types';
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
+import type { DiffReviewCommandRequest } from '../../shared/diffReviewCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
 
 // Logger context for all web server logs
@@ -569,6 +571,10 @@ export class WebServer {
 
 	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
 		this.callbackRegistry.setAutoRunSteeringCommandCallback(callback);
+	}
+
+	setDiffReviewCommandCallback(callback: DiffReviewCommandCallback): void {
+		this.callbackRegistry.setDiffReviewCommandCallback(callback);
 	}
 
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
@@ -1212,6 +1218,8 @@ export class WebServer {
 				this.callbackRegistry.snoozeCommand(request),
 			autoRunSteeringCommand: async (request: SteeringCommandRequest) =>
 				this.callbackRegistry.autoRunSteeringCommand(request),
+			diffReviewCommand: async (request: DiffReviewCommandRequest) =>
+				this.callbackRegistry.diffReviewCommand(request),
 			windowCommand: async (request: WindowCommandRequest) =>
 				this.callbackRegistry.windowCommand(request),
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>

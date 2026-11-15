@@ -153,6 +153,14 @@ import {
 	autoRunFolder,
 } from './commands/auto-run-control';
 import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
+import {
+	diffReviewAdd,
+	diffReviewClear,
+	diffReviewEdit,
+	diffReviewList,
+	diffReviewRemove,
+	diffReviewSend,
+} from './commands/diff-review';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import {
@@ -1104,6 +1112,69 @@ steerAutoRun
 	.option('--focus', 'Accepted and ignored: cancelling a note raises no notice')
 	.option('--json', 'Output the cancelled note as JSON')
 	.action(steerAutoRunCancel);
+
+// Git Diff review comments - the CLI half of the Git Diff viewer's Review tray.
+// Comments are pinned to lines of the agent's current diff and sent to it as
+// one prompt, each with its path:lines and hunk.
+const diffReview = program
+	.command('diff-review')
+	.description("Pin review comments to lines of an agent's git diff and send them as one review");
+
+diffReview
+	.command('list')
+	.description('Show the pending comments, flagging any whose lines changed since')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(diffReviewList);
+
+diffReview
+	.command('add <path> <lines> <comment>')
+	.description('Pin a comment to path:lines of the current diff (lines: 12 or 12-14)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--side <side>', 'Which version the line numbers are in: new (default) or old', 'new')
+	.option('--background', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--json', 'Output the new comment as JSON')
+	.action(diffReviewAdd);
+
+diffReview
+	.command('edit <comment-id> <comment>')
+	.description('Reword a pending comment, keeping its id and lines (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--json', 'Output the updated comment as JSON')
+	.action(diffReviewEdit);
+
+diffReview
+	.command('remove <comment-id>')
+	.description('Drop one pending comment (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--json', 'Output the removed comment as JSON')
+	.action(diffReviewRemove);
+
+diffReview
+	.command('clear')
+	.description('Discard every pending comment')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: discarding raises no notice')
+	.option('--focus', 'Accepted and ignored: discarding raises no notice')
+	.option('--json', 'Output as JSON')
+	.action(diffReviewClear);
+
+diffReview
+	.command('send')
+	.description('Send every current comment to the agent as one queued prompt')
+	.requiredOption('-a, --agent <id>', 'Agent to send the review to')
+	.option('--compose', "Put the review in the agent's message box instead of sending it")
+	.option('--background', 'Deliver without switching the view (the default)')
+	.option('--focus', 'Take the user to the agent, as the Send Review button does')
+	.option('--json', 'Output what was sent, what was left behind, and the prompt as JSON')
+	.action(diffReviewSend);
 
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program

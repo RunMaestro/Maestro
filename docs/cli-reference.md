@@ -787,6 +787,78 @@ Take back a note no task has read yet (accepts a unique id prefix)
 | `--focus`          | Accepted and ignored: cancelling a note raises no notice | -       |
 | `--json`           | Output the cancelled note as JSON                        | -       |
 
+## `maestro-cli diff-review`
+
+Pin review comments to lines of an agent's git diff and send them as one review
+
+## `maestro-cli diff-review list`
+
+Show the pending comments, flagging any whose lines changed since
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                               | -       |
+| `--background`     | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--json`           | Output as JSON                                                   | -       |
+
+## `maestro-cli diff-review add <path> <lines> <comment>`
+
+Pin a comment to path:lines of the current diff (lines: 12 or 12-14)
+
+| Option             | Description                                                 | Default |
+| ------------------ | ----------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                          | -       |
+| `--side <side>`    | Which version the line numbers are in: new (default) or old | `"new"` |
+| `--background`     | Accepted and ignored: adding a comment raises no notice     | -       |
+| `--focus`          | Accepted and ignored: adding a comment raises no notice     | -       |
+| `--json`           | Output the new comment as JSON                              | -       |
+
+## `maestro-cli diff-review edit <comment-id> <comment>`
+
+Reword a pending comment, keeping its id and lines (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                       | -       |
+| `--background`     | Accepted and ignored: editing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: editing a comment raises no notice | -       |
+| `--json`           | Output the updated comment as JSON                       | -       |
+
+## `maestro-cli diff-review remove <comment-id>`
+
+Drop one pending comment (accepts a unique id prefix)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                        | -       |
+| `--background`     | Accepted and ignored: removing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: removing a comment raises no notice | -       |
+| `--json`           | Output the removed comment as JSON                        | -       |
+
+## `maestro-cli diff-review clear`
+
+Discard every pending comment
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                | -       |
+| `--background`     | Accepted and ignored: discarding raises no notice | -       |
+| `--focus`          | Accepted and ignored: discarding raises no notice | -       |
+| `--json`           | Output as JSON                                    | -       |
+
+## `maestro-cli diff-review send`
+
+Send every current comment to the agent as one queued prompt
+
+| Option             | Description                                                        | Default |
+| ------------------ | ------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent to send the review to                                        | -       |
+| `--compose`        | Put the review in the agent's message box instead of sending it    | -       |
+| `--background`     | Deliver without switching the view (the default)                   | -       |
+| `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
+| `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
+
 ## `maestro-cli marketplace`
 
 Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)

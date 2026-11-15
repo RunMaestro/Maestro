@@ -4,7 +4,10 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 	...(await importOriginal<typeof import('../../../renderer/stores/notificationStore')>()),
 	notifyToast: vi.fn(() => 'toast-id'),
 }));
-import { quoteIntoAgentComposer } from '../../../renderer/services/quoteIntoComposer';
+import {
+	insertIntoAgentComposer,
+	quoteIntoAgentComposer,
+} from '../../../renderer/services/quoteIntoComposer';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -114,5 +117,72 @@ describe('quoteIntoAgentComposer - tiled groups', () => {
 		expect(session.activeTabId).toBe('tab-b');
 		expect(useComposerInputStore.getState().aiValueTabId).toBe('tab-b');
 		expect(useUIStore.getState().focusRequest).toEqual({ tab: { type: 'ai', id: 'tab-b' } });
+	});
+
+	it('focuses the AI pane when a file pane in the split had focus', () => {
+		seed({
+			activeGroupId: 'g1',
+			tabGroups: [
+				{
+					id: 'g1',
+					focusedPaneId: 'l1',
+					layout: {
+						kind: 'split',
+						id: 'root',
+						children: [
+							{ kind: 'leaf', id: 'l1', tab: { type: 'file', id: 'file-1' } },
+							{ kind: 'leaf', id: 'l2', tab: { type: 'ai', id: 'tab-b' } },
+						],
+					},
+				},
+			],
+		} as unknown as Partial<Session>);
+
+		expect(quoteIntoAgentComposer('agent-1', 'q')).toBe(true);
+
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.activeGroupId).toBe('g1');
+		expect(session.tabGroups?.[0].focusedPaneId).toBe('l2');
+		expect(session.activeTabId).toBe('tab-b');
+		expect(useComposerInputStore.getState().aiValueTabId).toBe('tab-b');
+		expect(useUIStore.getState().focusRequest).toEqual({ tab: { type: 'ai', id: 'tab-b' } });
+	});
+});
+
+describe('insertIntoAgentComposer', () => {
+	beforeEach(() => {
+		useComposerInputStore.setState({ aiValue: '', aiValueTabId: null, aiCommandMode: 'off' });
+		useUIStore.setState({ focusRequest: null } as never);
+	});
+
+	it('appends a block unquoted and lands in the composer', () => {
+		seed();
+		useComposerInputStore.setState({ aiValue: 'note', aiValueTabId: 'tab-a' });
+		expect(insertIntoAgentComposer('agent-1', '## Review\n\nFix it.', { format: 'block' })).toBe(
+			'tab-a'
+		);
+		expect(useComposerInputStore.getState().aiValue).toBe('note\n\n## Review\n\nFix it.\n\n');
+		expect(useUIStore.getState().focusRequest).toEqual({ tab: { type: 'ai', id: 'tab-a' } });
+	});
+
+	it('in the background, writes the saved draft and moves nothing', () => {
+		seed();
+		// The live slot belongs to whatever the user is looking at.
+		useComposerInputStore.setState({ aiValue: 'typing elsewhere', aiValueTabId: 'other-tab' });
+
+		expect(
+			insertIntoAgentComposer('agent-1', '## Review', { format: 'block', reveal: false })
+		).toBe('tab-a');
+
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.aiTabs.find((t) => t.id === 'tab-a')?.inputValue).toBe(
+			'saved draft\n\n## Review\n\n'
+		);
+		expect(session.activeFileTabId).toBe('file-1');
+		expect(useComposerInputStore.getState()).toMatchObject({
+			aiValue: 'typing elsewhere',
+			aiValueTabId: 'other-tab',
+		});
+		expect(useUIStore.getState().focusRequest).toBeNull();
 	});
 });

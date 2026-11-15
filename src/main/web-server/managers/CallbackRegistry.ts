@@ -28,6 +28,7 @@ import type {
 	ReopenClosedTabCallback,
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
 	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
@@ -168,6 +169,10 @@ import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../../../shared/autoRunSteeringCommands';
+import type {
+	DiffReviewCommandRequest,
+	DiffReviewCommandResult,
+} from '../../../shared/diffReviewCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
@@ -197,6 +202,7 @@ export interface WebServerCallbacks {
 	reopenClosedTab: ReopenClosedTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
+	diffReviewCommand: DiffReviewCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
@@ -309,6 +315,7 @@ export class CallbackRegistry {
 		reopenClosedTab: null,
 		snoozeCommand: null,
 		autoRunSteeringCommand: null,
+		diffReviewCommand: null,
 		windowCommand: null,
 		reorderTab: null,
 		toggleBookmark: null,
@@ -512,6 +519,13 @@ export class CallbackRegistry {
 			return { success: false, error: 'Auto Run steering is not configured' };
 		}
 		return this.callbacks.autoRunSteeringCommand(request);
+	}
+
+	async diffReviewCommand(request: DiffReviewCommandRequest): Promise<DiffReviewCommandResult> {
+		if (!this.callbacks.diffReviewCommand) {
+			return { success: false, error: 'Diff review is not configured' };
+		}
+		return this.callbacks.diffReviewCommand(request);
 	}
 
 	async windowCommand(request: WindowCommandRequest): Promise<WindowCommandResult> {
@@ -1224,6 +1238,10 @@ export class CallbackRegistry {
 
 	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
 		this.callbacks.autoRunSteeringCommand = callback;
+	}
+
+	setDiffReviewCommandCallback(callback: DiffReviewCommandCallback): void {
+		this.callbacks.diffReviewCommand = callback;
 	}
 
 	setWindowCommandCallback(callback: WindowCommandCallback): void {

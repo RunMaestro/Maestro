@@ -14,7 +14,7 @@ import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useUIStore } from '../stores/uiStore';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { notifyToast } from '../stores/notificationStore';
-import { collectLeafTabRefs } from '../utils/panelLayout';
+import { collectLeafTabRefs, findLeafByTabRef, focusPaneInSession } from '../utils/panelLayout';
 import { jumpToAgent } from './agentNavigation';
 import type { Session } from '../types';
 
@@ -25,7 +25,9 @@ import type { Session } from '../types';
  * the group to show a standalone tab would undo the split the user built to
  * read the file beside the chat.
  */
-function resolveQuoteTarget(session: Session): { tabId: string; inGroup: boolean } | null {
+export function resolveComposerTarget(
+	session: Session
+): { tabId: string; inGroup: boolean } | null {
 	const group = session.activeGroupId
 		? session.tabGroups?.find((g) => g.id === session.activeGroupId)
 		: undefined;
@@ -65,7 +67,7 @@ export function insertIntoAgentComposer(
 	options: ComposerInsertOptions
 ): string | null {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-	const target = session ? resolveQuoteTarget(session) : null;
+	const target = session ? resolveComposerTarget(session) : null;
 	const tab = target ? session?.aiTabs.find((t) => t.id === target.tabId) : undefined;
 	if (!session || !target || !tab) {
 		notifyToast({
@@ -123,21 +125,23 @@ export function insertIntoAgentComposer(
 	if (reveal) {
 		if (!isActiveAgent) {
 			// A caller outside the agent on screen (`maestro-cli browser-pick
-			// --focus` into a background browser) must also bring that agent up,
-			// or the focus request below lands in the visible agent's composer.
-			// The switch loads the tab's saved draft, written above.
-			const groupId = session.activeGroupId;
-			jumpToAgent(sessionId, { tabId });
-			// jumpToAgent lands on a standalone AI tab, which leaves any tiled
-			// group; when the target is a group pane, put the group back so the
-			// layout the user built in that agent survives the jump.
-			if (inGroup && groupId) {
-				updateSessionWith(sessionId, (s) => ({ ...s, activeGroupId: groupId, activeTabId: tabId }));
-			}
+			// --focus` into a background browser, a diff review for another
+			// agent) must also bring that agent up, or the focus request below
+			// lands in the visible agent's composer. The switch loads the tab's
+			// saved draft, written above. `stayInTiledGroup` keeps the layout
+			// the user built in that agent when the target is one of its panes.
+			jumpToAgent(sessionId, { tabId, stayInTiledGroup: inGroup });
 		} else {
-			updateSessionWith(sessionId, (s) =>
-				inGroup ? { ...s, activeTabId: tabId } : { ...s, ...aiTabFocusFields(tabId) }
-			);
+			updateSessionWith(sessionId, (s) => {
+				if (!inGroup) return { ...s, ...aiTabFocusFields(tabId) };
+				// Focus the AI pane, not just the tab: the composer is drawn for
+				// the group's focused pane, so a file pane left focused hides it.
+				const group = s.tabGroups?.find((g) => g.id === s.activeGroupId);
+				const leaf = group ? findLeafByTabRef(group.layout, { type: 'ai', id: tabId }) : null;
+				return group && leaf
+					? focusPaneInSession(s, group.id, leaf.id)
+					: { ...s, activeTabId: tabId };
+			});
 		}
 		useUIStore.getState().requestTabFocus({ type: 'ai', id: tabId });
 	}

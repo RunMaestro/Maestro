@@ -923,6 +923,16 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: SteeringCommandResult
 		) => void;
+		onRemoteDiffReviewCommand: (
+			callback: (
+				request: import('../shared/diffReviewCommands').DiffReviewCommandRequest,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteDiffReviewCommandResponse: (
+			responseChannel: string,
+			result: import('../shared/diffReviewCommands').DiffReviewCommandResult
+		) => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
 		) => () => void;

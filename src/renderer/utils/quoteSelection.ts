@@ -31,15 +31,12 @@ export function formatMarkdownQuote(text: string): string {
  * selection.
  */
 export function appendQuoteToDraft(draft: string, selection: string): string {
-	const quote = formatMarkdownQuote(selection);
-	if (!quote) return draft;
-	const trimmed = draft.replace(/\s+$/, '');
-	const prefix = trimmed ? `${trimmed}\n\n` : '';
-	return `${prefix}${quote}\n\n`;
+	return appendBlockToDraft(draft, formatMarkdownQuote(selection));
 }
 
 /**
- * Append a Markdown block (a fenced passage, a Design Mode element) to a draft
+ * Append a Markdown block (a fenced passage, a Design Mode element, a diff
+ * review) to a draft
  * as-is, with the same spacing rules as {@link appendQuoteToDraft}: one blank
  * line before it, one after it so the caret lands on a fresh line. Returns the
  * draft unchanged for a blank block.

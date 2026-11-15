@@ -1942,6 +1942,34 @@ maestro-cli steer-auto-run cancel <note-id> -a <agent-id>
 
 `send` is refused when no Auto Run is active on the agent, or when the run belongs to another Maestro client: there is no next task to hand the note to. A note longer than 4000 characters is refused rather than cut to fit. `list` keeps working after the run ends, since the reply to a run's last note arrives as it finishes; the notes are cleared when the next run starts. `send --background` queues the note without the on-screen "Steering note queued" flash.
 
+### Reviewing an Agent's Diff
+
+Pin review comments to lines of an agent's current `git diff`, then send them to the agent as one review. These are the CLI half of the [Git Diff viewer's review comments](diff-review.md): the comments are the same ones the viewer's **Review** tray shows, and `send` runs the same code as its **Send Review** button.
+
+```bash
+# Comment on lines 12-14 of the new version of a file
+maestro-cli diff-review add src/app.ts 12-14 "Parse RETRIES as a number" -a <agent-id>
+
+# Comment on a removed line (numbered in the previous version)
+maestro-cli diff-review add src/app.ts 7 "Why remove this?" --side old -a <agent-id>
+
+# Read the pending comments; outdated ones are flagged
+maestro-cli diff-review list -a <agent-id>
+
+# Reword one in place, keeping its id and lines (accepts a unique id prefix)
+maestro-cli diff-review edit <comment-id> "Parse RETRIES with parseInt" -a <agent-id>
+
+# Drop one (accepts a unique id prefix), or all of them
+maestro-cli diff-review remove <comment-id> -a <agent-id>
+maestro-cli diff-review clear -a <agent-id>
+
+# Send every current comment as one queued prompt
+maestro-cli diff-review send -a <agent-id>
+maestro-cli diff-review send -a <agent-id> --compose   # put it in the agent's message box instead
+```
+
+The lines must be ones the diff shows, inside one hunk, as in the viewer. A comment whose lines changed since it was written is outdated: `list` flags it, and `send` leaves it pending and reports it rather than point the agent at the wrong code. `send` is quiet by default (no agent or tab switch, no flash), since an agent calling it is not the person looking at the screen; `--focus` takes the user to the agent the way the button does.
+
 ### Checking Status
 
 Check if the Maestro desktop app is running and reachable:
