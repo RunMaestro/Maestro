@@ -270,13 +270,20 @@ export async function runRemoteDiffReviewCommand(
 		}
 
 		case 'edit': {
-			const existing = (store.commentsByRepo[repo.key] ?? []).find(
-				(c) => c.id === request.commentId
-			);
-			if (!existing) return { success: false, error: `No pending comment ${request.commentId}` };
+			const pending = () =>
+				(useDiffReviewStore.getState().commentsByRepo[repo.key] ?? []).find(
+					(c) => c.id === request.commentId
+				);
+			const missing = { success: false, error: `No pending comment ${request.commentId}` };
+			if (!pending()) return missing;
+			const files = await loadFiles();
+			// Read it again: the viewer may have sent or removed it while git diff
+			// ran, and an edit to a comment that is gone must not report success.
+			const existing = pending();
+			if (!existing) return missing;
 			// The tray does not edit an outdated comment either: its lines are gone,
 			// so there is nothing to re-word it against.
-			if (findOutdatedComments([existing], await loadFiles()).size > 0) {
+			if (findOutdatedComments([existing], files).size > 0) {
 				return {
 					success: false,
 					error: `${formatCommentLocation(existing)} is outdated (its lines changed); remove it and add a new comment`,

@@ -24,7 +24,7 @@ import { useGroupChatStore } from '../stores/groupChatStore';
 import { useModalStore } from '../stores/modalStore';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { requestSidebarReveal } from '../utils/sidebarReveal';
-import { findLeafByTabRef } from '../utils/panelLayout';
+import { findLeafByTabRef, focusPaneInSession } from '../utils/panelLayout';
 
 /**
  * Make sure a jumped-to agent is actually visible in the Left Bar, without
@@ -123,7 +123,9 @@ export function jumpToAgent(sessionId: string, options: JumpToAgentOptions = {})
 	setSessions((prev) =>
 		prev.map((s) => {
 			if (s.id !== sessionId) return s;
-			if (keptPane) return { ...s, activeTabId: targetTabId! };
+			// Focus the pane, not just the tab: the composer is drawn for the
+			// group's focused pane, so a file pane left focused would hide it.
+			if (keptPane && s.activeGroupId) return focusPaneInSession(s, s.activeGroupId, keptPane.id);
 			return { ...s, ...aiTabFocusFields(targetTabId) };
 		})
 	);

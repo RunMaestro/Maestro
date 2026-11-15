@@ -146,6 +146,19 @@ describe('jumpToAgent', () => {
 			expect(useFileExplorerStore.getState().isGraphViewOpen).toBe(false);
 		});
 
+		it('moves focus off a focused file pane, which would hide the composer', () => {
+			seed({
+				...tiled,
+				tabGroups: [{ ...(tiled.tabGroups as never[])[0], focusedPaneId: 'l1' }],
+			} as unknown as Partial<Session>);
+			jumpToAgent(SESSION_ID, { tabId: 'tab-b', stayInTiledGroup: true });
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.tabGroups?.[0].focusedPaneId).toBe('l2');
+			expect(session.activeTabId).toBe('tab-b');
+			expect(session.inputMode).toBe('ai');
+			expect(session.activeGroupId).toBe('g1');
+		});
+
 		it('clears a zoom on another pane, which would hide the target pane', () => {
 			seed(tiled);
 			useUIStore.setState({ zoomedPaneId: 'l1' } as never);

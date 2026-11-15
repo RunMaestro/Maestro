@@ -400,6 +400,31 @@ describe('runRemoteDiffReviewCommand (maestro-cli diff-review)', () => {
 		expect(refused).toMatchObject({ success: false, error: expect.stringContaining('outdated') });
 	});
 
+	it('fails an edit whose comment is removed while the diff loads', async () => {
+		await runRemoteDiffReviewCommand({
+			action: 'add',
+			sessionId: 'agent-1',
+			path: 'src/app.ts',
+			startLine: 2,
+			side: 'new',
+			body: 'A',
+		});
+		const id = useDiffReviewStore.getState().commentsByRepo[key()][0].id;
+		mockGetDiff.mockImplementationOnce(async () => {
+			// The viewer sends or removes it while git diff runs.
+			useDiffReviewStore.getState().removeComment(key(), id);
+			return { diff: DIFF };
+		});
+		const result = await runRemoteDiffReviewCommand({
+			action: 'edit',
+			sessionId: 'agent-1',
+			commentId: id,
+			body: 'B',
+		});
+		expect(result).toMatchObject({ success: false, error: `No pending comment ${id}` });
+		expect(useDiffReviewStore.getState().commentsByRepo).toEqual({});
+	});
+
 	it('removes and clears', async () => {
 		await runRemoteDiffReviewCommand({
 			action: 'add',

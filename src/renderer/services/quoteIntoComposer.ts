@@ -14,7 +14,7 @@ import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useUIStore } from '../stores/uiStore';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { notifyToast } from '../stores/notificationStore';
-import { collectLeafTabRefs } from '../utils/panelLayout';
+import { collectLeafTabRefs, findLeafByTabRef, focusPaneInSession } from '../utils/panelLayout';
 import type { Session } from '../types';
 
 /**
@@ -125,9 +125,14 @@ function appendToAgentComposer(
 	}
 
 	if (background) return true;
-	updateSessionWith(sessionId, (s) =>
-		inGroup ? { ...s, activeTabId: tabId } : { ...s, ...aiTabFocusFields(tabId) }
-	);
+	updateSessionWith(sessionId, (s) => {
+		if (!inGroup) return { ...s, ...aiTabFocusFields(tabId) };
+		// Focus the AI pane, not just the tab: the composer is drawn for the
+		// group's focused pane, so a file pane left focused would hide it.
+		const group = s.tabGroups?.find((g) => g.id === s.activeGroupId);
+		const leaf = group ? findLeafByTabRef(group.layout, { type: 'ai', id: tabId }) : null;
+		return group && leaf ? focusPaneInSession(s, group.id, leaf.id) : { ...s, activeTabId: tabId };
+	});
 	useUIStore.getState().requestTabFocus({ type: 'ai', id: tabId });
 	return true;
 }

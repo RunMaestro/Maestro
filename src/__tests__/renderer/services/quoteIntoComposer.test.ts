@@ -118,6 +118,35 @@ describe('quoteIntoAgentComposer - tiled groups', () => {
 		expect(useComposerInputStore.getState().aiValueTabId).toBe('tab-b');
 		expect(useUIStore.getState().focusRequest).toEqual({ tab: { type: 'ai', id: 'tab-b' } });
 	});
+
+	it('focuses the AI pane when a file pane in the split had focus', () => {
+		seed({
+			activeGroupId: 'g1',
+			tabGroups: [
+				{
+					id: 'g1',
+					focusedPaneId: 'l1',
+					layout: {
+						kind: 'split',
+						id: 'root',
+						children: [
+							{ kind: 'leaf', id: 'l1', tab: { type: 'file', id: 'file-1' } },
+							{ kind: 'leaf', id: 'l2', tab: { type: 'ai', id: 'tab-b' } },
+						],
+					},
+				},
+			],
+		} as unknown as Partial<Session>);
+
+		expect(quoteIntoAgentComposer('agent-1', 'q')).toBe(true);
+
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.activeGroupId).toBe('g1');
+		expect(session.tabGroups?.[0].focusedPaneId).toBe('l2');
+		expect(session.activeTabId).toBe('tab-b');
+		expect(useComposerInputStore.getState().aiValueTabId).toBe('tab-b');
+		expect(useUIStore.getState().focusRequest).toEqual({ tab: { type: 'ai', id: 'tab-b' } });
+	});
 });
 
 describe('insertIntoAgentComposer', () => {
