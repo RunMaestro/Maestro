@@ -176,7 +176,8 @@ describe('guest helper', () => {
 			hit = btn;
 			const pick = parseDesignModePick(runGuest({ type: 'describe', x: 1, y: 1, depth: 0 }));
 			if (!pick || typeof pick === 'string') throw new Error('expected a pick');
-			expect(pick.selector).toContain(' ');
+			// Written as a hex escape, which every selector engine matches.
+			expect(pick.selector).toContain('\\a0 ');
 			expect(document.querySelector(pick.selector)).toBe(btn);
 		} finally {
 			if (hadCss) win.CSS = originalCss;
@@ -242,6 +243,30 @@ describe('guest helper', () => {
 		expect(buildDesignModePrompt(pick, { hasScreenshot: false })).toContain(
 			'no selector, its path was too long to include'
 		);
+	});
+
+	it('keeps a class holding U+00A0 as one class, the way HTML splits classes', () => {
+		const btn = document.createElement('button');
+		btn.className = 'save\u00a0button';
+		document.body.appendChild(btn);
+		hit = btn;
+		const pick = parseDesignModePick(runGuest({ type: 'describe', x: 1, y: 1, depth: 0 }));
+		if (!pick || typeof pick === 'string') throw new Error('expected a pick');
+		expect(pick.selector).not.toContain('.save.button');
+		const matches = document.querySelectorAll(pick.selector);
+		expect(matches).toHaveLength(1);
+		expect(matches[0]).toBe(btn);
+	});
+
+	it('escapes an emoji class as one code point, so the selector still finds it', () => {
+		const btn = document.createElement('button');
+		btn.className = 'go-\u{1F680}';
+		document.body.appendChild(btn);
+		hit = btn;
+		const pick = parseDesignModePick(runGuest({ type: 'describe', x: 1, y: 1, depth: 0 }));
+		if (!pick || typeof pick === 'string') throw new Error('expected a pick');
+		expect(pick.selector).toContain('\\1f680 ');
+		expect(document.querySelectorAll(pick.selector)[0]).toBe(btn);
 	});
 
 	it('re-resolves the element on every call, so a re-render cannot leave it stale', () => {

@@ -302,7 +302,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Usage Dashboard: Export button (JSON, or a zip of CSVs)                                                                   | `stats-export -o <path> [-f csv\|json] [-r <range>] [--json]`                                    |
 | Left Bar: Archive / Unarchive a group chat                                                                                | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)               |
 | Group chat: add an agent by @mention in a message                                                                         | `group-chat add <chat> <agent>` (ID, ID prefix or name; read back with `group-chat status`)      |
-| Browser Design Mode: add a picked element to the message (Cmd+Shift+C)                                                    | `browser-pick <tab> -s <css> [--note]`; read: its `--json` text, `image list`                    |
+| Browser Design Mode: add a picked element to the message (pick card)                                                      | `browser-pick <tab> -s <css> [--note]`; read: its `--json` text, `image list`                    |
 
 ## Open gaps
 
@@ -377,6 +377,12 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
     reachable without it: an agent reads the file, quotes `path:lines` itself,
     and hands the text over with `dispatch` / `send`; replacing text is an edit
     to the file on disk, which an agent makes directly and `open-file` shows.
+14. **Turn browser Design Mode on or off** (address-bar pointer button,
+    Cmd+Shift+C, palette "Design Mode: Pick an Element"). The mode only arms
+    a hover overlay for a person's pointer; there is nothing for a script to
+    point with once it is on. The outcome it leads to, an element added to the
+    message, is covered by `browser-pick <tab> --selector <css>`, which runs
+    the same describe, crop, and delivery code without the overlay.
 
 ### Audit backlog (2026-09-27)
 

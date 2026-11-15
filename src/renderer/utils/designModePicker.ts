@@ -180,9 +180,21 @@ const GUEST_HELPER = `function(req){
 		}
 		return {el:el,depth:n};
 	}
-	function esc(v){return window.CSS&&CSS.escape?CSS.escape(v):String(v).replace(/[^a-zA-Z0-9_-]/g,'\\\\$&');}
+	// CSS.escape leaves code points from U+0080 up raw: valid CSS, but not
+	// every selector engine matches them (a raw U+00A0 in a class, an emoji).
+	// A hex escape ("\\a0 ", "\\1f680 ") means the same code point and every
+	// engine matches it; the trailing space only ends the escape. The u flag
+	// keeps an emoji's surrogate pair one code point.
+	function hexEscape(ch){return '\\\\'+ch.codePointAt(0).toString(16)+' ';}
+	function esc(v){
+		var base=window.CSS&&CSS.escape?CSS.escape(v):String(v).replace(/[\\u0000-\\u007f]/g,function(ch){return /[a-zA-Z0-9_-]/.test(ch)?ch:'\\\\'+ch;});
+		return base.replace(/[\u{80}-\u{10FFFF}]/gu,hexEscape);
+	}
+	// classList splits the way HTML does (ASCII whitespace only), so a class
+	// holding U+00A0 stays one class; splitting className on \\s would cut it
+	// in two and the selector would match nothing. Works for SVG elements too.
 	function classes(el){
-		return typeof el.className==='string'?el.className.trim().split(/\\s+/).filter(Boolean).slice(0,2):[];
+		return el.classList?Array.prototype.slice.call(el.classList,0,2):[];
 	}
 	function label(el){
 		var s=el.tagName.toLowerCase();
