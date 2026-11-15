@@ -1468,7 +1468,12 @@ describe('BrowserTabView', () => {
 				const req = guestRequest(code);
 				if (!req) return undefined;
 				if (req.type === 'probe') {
-					return { rect: pickPayload.rect, label: 'button.primary', depth: req.depth };
+					return {
+						rect: pickPayload.rect,
+						label: 'button.primary',
+						depth: req.depth,
+						viewport: pickPayload.viewport,
+					};
 				}
 				if (req.type === 'describe' || req.type === 'describeSelector') return pickPayload;
 				return true;
@@ -1499,28 +1504,41 @@ describe('BrowserTabView', () => {
 		});
 
 		it('covers the page with a focused layer and outlines what the guest reports', async () => {
-			const { webview } = await setupReady(vi.fn());
-			const layer = await arm();
-			expect(document.activeElement).toBe(layer);
-			expect(screen.getByTestId('browser-tab-design-mode-banner')).toBeTruthy();
+			// The overlay is 1600 x 1000 here and the guest viewport 800 x 600: the
+			// overlay draws 2 px per guest CSS px, whatever the zoom factor says.
+			const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1600);
+			const height = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(1000);
+			try {
+				const { webview } = await setupReady(vi.fn());
+				const layer = await arm();
+				expect(document.activeElement).toBe(layer);
+				expect(screen.getByTestId('browser-tab-design-mode-banner')).toBeTruthy();
 
-			await act(async () => {
-				fireEvent.mouseMove(layer, { clientX: 30, clientY: 60 });
-			});
-			// Overlay pixels are converted to guest CSS pixels by the page zoom.
-			await waitFor(() =>
-				expect(guestCalls(webview, 'probe')).toContainEqual({
-					type: 'probe',
-					x: 20,
-					y: 40,
-					depth: 0,
-				})
-			);
-			const outline = await screen.findByTestId('browser-tab-design-mode-outline');
-			// The guest box (10 x 100 CSS px) at zoom 1.5, drawn 2px outside it.
-			expect(outline.style.left).toBe('13px');
-			expect(outline.style.width).toBe('154px');
-			expect(screen.getByText('button.primary')).toBeTruthy();
+				await act(async () => {
+					fireEvent.mouseMove(layer, { clientX: 30, clientY: 60 });
+				});
+				// Points go out in overlay pixels with the overlay's size; the guest
+				// scales them by its own viewport (never by the zoom factor).
+				await waitFor(() =>
+					expect(guestCalls(webview, 'probe')).toContainEqual({
+						type: 'probe',
+						x: 30,
+						y: 60,
+						depth: 0,
+						frame: { width: 1600, height: 1000 },
+					})
+				);
+				const outline = await screen.findByTestId('browser-tab-design-mode-outline');
+				// The guest box (x 10, width 100 CSS px) at 2 overlay px per CSS px,
+				// drawn 2 px outside it. The zoom factor (1.5) plays no part.
+				expect(outline.style.left).toBe('18px');
+				expect(outline.style.width).toBe('204px');
+				expect(screen.getByText('button.primary')).toBeTruthy();
+				expect(screen.getByText(/100 x 40/)).toBeTruthy();
+			} finally {
+				width.mockRestore();
+				height.mockRestore();
+			}
 		});
 
 		it('ArrowUp asks the guest for the parent', async () => {
@@ -1604,9 +1622,12 @@ describe('BrowserTabView', () => {
 			await screen.findByTestId('browser-tab-design-mode-card');
 			expect(guestCalls(webview, 'describe')).toContainEqual({
 				type: 'describe',
-				x: 200,
-				y: 100,
+				x: 300,
+				y: 150,
 				depth: 0,
+				// jsdom does no layout, so the overlay measures 0 x 0 and the guest
+				// falls back to a 1:1 scale.
+				frame: { width: 0, height: 0 },
 			});
 			// Guest DIPs: the CSS box times the 1.5 zoom, not window coordinates.
 			expect(webview.capturePage).toHaveBeenCalledWith({ x: 15, y: 30, width: 150, height: 60 });

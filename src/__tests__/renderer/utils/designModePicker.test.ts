@@ -11,6 +11,7 @@ import {
 	buildDesignModePrompt,
 	captureDesignPick,
 	designModeGuestCall,
+	designOverlayScale,
 	designPickCropRect,
 	filterDesignStyles,
 	parseDesignModePick,
@@ -67,6 +68,22 @@ describe('guest helper', () => {
 		const probe = parseDesignModeProbe(runGuest({ type: 'probe', x: 5, y: 5, depth: 0 }));
 		expect(probe).toMatchObject({ label: 'h1.title', depth: 0 });
 		expect(document.elementFromPoint).toHaveBeenCalledWith(5, 5);
+	});
+
+	it('scales an overlay point by viewport / frame, so host and page zoom cannot skew it', () => {
+		hit = document.querySelector('h1');
+		// An overlay twice the guest viewport: overlay (100, 50) is guest (50, 25).
+		const reply = parseDesignModeProbe(
+			runGuest({
+				type: 'probe',
+				x: 100,
+				y: 50,
+				depth: 0,
+				frame: { width: window.innerWidth * 2, height: window.innerHeight * 2 },
+			})
+		);
+		expect(document.elementFromPoint).toHaveBeenCalledWith(50, 25);
+		expect(reply?.viewport).toEqual({ width: window.innerWidth, height: window.innerHeight });
 	});
 
 	it('walks up by depth and clamps below <html>', () => {
@@ -418,6 +435,18 @@ describe('filterDesignStyles', () => {
 			'border-style': 'solid',
 			'border-color': 'rgb(1, 2, 3)',
 		});
+	});
+});
+
+describe('designOverlayScale', () => {
+	it('is overlay width over guest viewport width', () => {
+		expect(designOverlayScale({ width: 1836, height: 1093 }, { width: 1836 })).toBe(1);
+		expect(designOverlayScale({ width: 1600, height: 1000 }, { width: 800 })).toBe(2);
+	});
+
+	it('falls back to 1 when either side is unknown', () => {
+		expect(designOverlayScale({ width: 0, height: 0 }, { width: 800 })).toBe(1);
+		expect(designOverlayScale({ width: 1600, height: 1000 }, null)).toBe(1);
 	});
 });
 

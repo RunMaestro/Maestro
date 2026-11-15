@@ -29,7 +29,9 @@ import { captureException } from '../../utils/sentry';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import {
 	captureDesignPick,
+	designOverlayScale,
 	parseDesignModeProbe,
+	type DesignModeFrame,
 	type DesignModeCapture,
 	type DesignModeGuestAccess,
 	type DesignModeProbe,
@@ -55,12 +57,12 @@ interface Point {
 }
 
 /** A guest CSS box scaled to overlay (webview DIP) pixels. */
-function toLayerRect(rect: DesignModeRect, zoom: number): DesignModeRect {
+function toLayerRect(rect: DesignModeRect, scale: number): DesignModeRect {
 	return {
-		x: rect.x * zoom,
-		y: rect.y * zoom,
-		width: rect.width * zoom,
-		height: rect.height * zoom,
+		x: rect.x * scale,
+		y: rect.y * scale,
+		width: rect.width * scale,
+		height: rect.height * scale,
 	};
 }
 
@@ -84,11 +86,12 @@ export function BrowserDesignModeLayer({
 	const probeSeqRef = useRef(0);
 	const mountedRef = useRef(true);
 
-	const [hover, setHover] = useState<{ probe: DesignModeProbe; zoom: number } | null>(null);
+	// `scale` is overlay pixels per guest CSS pixel (designOverlayScale).
+	const [hover, setHover] = useState<{ probe: DesignModeProbe; scale: number } | null>(null);
 	const [picking, setPicking] = useState(false);
-	// The pick plus the page zoom it was taken at, so the frozen outline is
+	// The pick plus the overlay scale at pick time, so the frozen outline is
 	// scaled right even when no hover outline preceded it.
-	const [card, setCard] = useState<(DesignModeCapture & { zoom: number }) | null>(null);
+	const [card, setCard] = useState<(DesignModeCapture & { scale: number }) | null>(null);
 	// A ref, not the `picking` state: a click and an Enter in the same tick must
 	// not both start a pick.
 	const pickingRef = useRef(false);
@@ -103,6 +106,15 @@ export function BrowserDesignModeLayer({
 		};
 	}, []);
 
+	// The overlay's own size: the guest scales points by its viewport over this.
+	const layerFrame = useCallback(
+		(): DesignModeFrame => ({
+			width: layerRef.current?.clientWidth ?? 0,
+			height: layerRef.current?.clientHeight ?? 0,
+		}),
+		[]
+	);
+
 	// One probe in flight at a time; a move during a probe re-runs it once with
 	// the newest point and depth instead of queueing one per mousemove.
 	const probe = useCallback(async () => {
@@ -116,13 +128,14 @@ export function BrowserDesignModeLayer({
 				const point = pointRef.current;
 				if (!point) break;
 				const seq = probeSeqRef.current;
-				const zoom = accessRef.current.zoom();
+				const frame = layerFrame();
 				let reply: unknown = null;
 				try {
 					reply = await accessRef.current.run({
 						type: 'probe',
-						x: point.x / zoom,
-						y: point.y / zoom,
+						x: point.x,
+						y: point.y,
+						frame,
 						depth: depthRef.current,
 					});
 				} catch {
@@ -137,7 +150,9 @@ export function BrowserDesignModeLayer({
 				const parsed = parseDesignModeProbe(reply);
 				// Clamp to what the guest could walk (no parent above <body>).
 				if (parsed) depthRef.current = parsed.depth;
-				setHover(parsed ? { probe: parsed, zoom } : null);
+				setHover(
+					parsed ? { probe: parsed, scale: designOverlayScale(frame, parsed.viewport) } : null
+				);
 			}
 		} finally {
 			probeInFlightRef.current = false;
@@ -175,10 +190,10 @@ export function BrowserDesignModeLayer({
 		setPicking(true);
 		setMissed(false);
 		try {
-			const zoom = accessRef.current.zoom();
+			const frame = layerFrame();
 			const result = await captureDesignPick(
 				accessRef.current,
-				{ type: 'describe', x: point.x / zoom, y: point.y / zoom, depth: depthRef.current },
+				{ type: 'describe', x: point.x, y: point.y, depth: depthRef.current, frame },
 				// A failed capture still delivers the HTML and styles, but it is not
 				// an expected outcome, so report it.
 				(error) => captureException(error, { tags: { surface: 'browser-design-mode' } })
@@ -189,7 +204,7 @@ export function BrowserDesignModeLayer({
 				return;
 			}
 			setNote('');
-			setCard({ ...result, zoom });
+			setCard({ ...result, scale: designOverlayScale(frame, result.pick.viewport) });
 		} catch (error) {
 			// The guest went away mid-pick (navigation, crash): nothing to show.
 			captureException(error, { tags: { surface: 'browser-design-mode' } });
@@ -279,11 +294,11 @@ export function BrowserDesignModeLayer({
 	};
 
 	// While the card is open the outline stays on the picked element.
-	const zoomNow = card ? card.zoom : (hover?.zoom ?? 1);
+	const scaleNow = card ? card.scale : (hover?.scale ?? 1);
 	const outline = card
-		? toLayerRect(card.pick.rect, card.zoom)
+		? toLayerRect(card.pick.rect, card.scale)
 		: hover
-			? toLayerRect(hover.probe.rect, hover.zoom)
+			? toLayerRect(hover.probe.rect, hover.scale)
 			: null;
 	const outlineLabel = card ? card.pick.tagName : hover?.probe.label;
 	const keepPickingKeys = formatShortcutKeys(['Meta', 'Enter']);
@@ -328,15 +343,16 @@ export function BrowserDesignModeLayer({
 				if (card) return;
 				const point = pointFromEvent(event);
 				if (!point) return;
-				const zoom = accessRef.current.zoom();
+				const frame = layerFrame();
 				pointRef.current = point;
 				void accessRef.current
 					.run({
 						type: 'scroll',
-						x: point.x / zoom,
-						y: point.y / zoom,
-						dx: event.deltaX / zoom,
-						dy: event.deltaY / zoom,
+						x: point.x,
+						y: point.y,
+						dx: event.deltaX,
+						dy: event.deltaY,
+						frame,
 					})
 					.catch(() => null)
 					.then(() => probe());
@@ -374,7 +390,7 @@ export function BrowserDesignModeLayer({
 							{outlineLabel}
 							<span style={{ color: theme.colors.textDim }}>
 								{'  '}
-								{Math.round(outline.width / zoomNow)} x {Math.round(outline.height / zoomNow)}
+								{Math.round(outline.width / scaleNow)} x {Math.round(outline.height / scaleNow)}
 							</span>
 						</div>
 					) : null}

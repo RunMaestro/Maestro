@@ -116,6 +116,8 @@ export interface DesignModeProbe {
 	label: string;
 	/** How many ancestors above the hit element this is (ArrowUp count, clamped). */
 	depth: number;
+	/** The guest viewport, CSS pixels, for scaling `rect` onto the overlay. */
+	viewport: { width: number; height: number } | null;
 }
 
 /** One element the user picked, as reported by the guest. */
@@ -143,11 +145,25 @@ export interface DesignModePick {
 }
 
 /** A request the host sends to the guest helper. Points are guest CSS pixels. */
+/**
+ * The overlay's size in its own pixels. Points and wheel deltas are sent in
+ * overlay pixels with this frame, and the guest scales them by its viewport /
+ * frame ratio. That ratio is measured, not derived from a zoom factor: the
+ * host window and the page can both be zoomed (Maestro's own UI zoom is
+ * inherited by the webview), and only the measured ratio is right in every
+ * combination.
+ */
+export interface DesignModeFrame {
+	width: number;
+	height: number;
+}
+
+/** A request the host sends to the guest helper. Points are overlay pixels. */
 export type DesignModeGuestRequest =
-	| { type: 'probe'; x: number; y: number; depth: number }
-	| { type: 'describe'; x: number; y: number; depth: number }
+	| { type: 'probe'; x: number; y: number; depth: number; frame: DesignModeFrame }
+	| { type: 'describe'; x: number; y: number; depth: number; frame: DesignModeFrame }
 	| { type: 'describeSelector'; selector: string }
-	| { type: 'scroll'; x: number; y: number; dx: number; dy: number };
+	| { type: 'scroll'; x: number; y: number; dx: number; dy: number; frame: DesignModeFrame };
 
 /**
  * The guest helper, as a function expression. It keeps no state between calls
@@ -306,14 +322,18 @@ const GUEST_HELPER = `function(req){
 		}
 		return describe(found);
 	}
-	var hit=at(req.x,req.y);
+	var f=req.frame||{};
+	var sx=f.width>0?window.innerWidth/f.width:1,sy=f.height>0?window.innerHeight/f.height:1;
+	var hit=at(req.x*sx,req.y*sy);
 	if(req.type==='scroll'){
-		scrollerFor(hit,req.dx,req.dy).scrollBy(req.dx,req.dy);
+		var dx=req.dx*sx,dy=req.dy*sy;
+		scrollerFor(hit,dx,dy).scrollBy(dx,dy);
 		return true;
 	}
 	if(!hit)return null;
 	var lifted=lift(hit,req.depth);
-	if(req.type==='probe')return {rect:box(lifted.el),label:label(lifted.el),depth:lifted.depth};
+	if(req.type==='probe')return {rect:box(lifted.el),label:label(lifted.el),depth:lifted.depth,
+		viewport:{width:window.innerWidth,height:window.innerHeight}};
 	return describe(lifted.el);
 }`;
 
@@ -398,7 +418,19 @@ export function parseDesignModeProbe(value: unknown): DesignModeProbe | null {
 	const rect = readRect(p.rect);
 	if (!rect || typeof p.label !== 'string') return null;
 	const depth = isFiniteNumber(p.depth) && p.depth >= 0 ? Math.floor(p.depth) : 0;
-	return { rect, label: oneLine(p.label, 200), depth };
+	return { rect, label: oneLine(p.label, 200), depth, viewport: readViewport(p.viewport) };
+}
+
+/**
+ * Overlay pixels per guest CSS pixel: the overlay's width over the guest
+ * viewport's. 1 when either is unknown (no layout, as in a test).
+ */
+export function designOverlayScale(
+	frame: DesignModeFrame,
+	viewport: { width: number } | null | undefined
+): number {
+	if (!viewport || !(viewport.width > 0) || !(frame.width > 0)) return 1;
+	return frame.width / viewport.width;
 }
 
 /** Why a `describeSelector` request found nothing to pick. */
