@@ -1760,24 +1760,14 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					</>
 				) : (
-					// The collapsed rail gets the pill too, in its compact form.
+					// The collapsed rail carries no media pill. The rail is an icon strip
+					// for agents, and a minimized player is restored by expanding the Left
+					// Bar, where the full pill lives.
 					//
-					// It used to be left out on the grounds that a 64px icon strip is
-					// for agents and a media control there competes with them. That
-					// reasoning ignored what minimizing MEANS: the pill is the only
-					// place the widget parks, so on the rail "minimize" hid the player
-					// with nothing left on screen and no way back - the user reads that
-					// as the player having closed itself, which is precisely what the
-					// minimize/close split exists to prevent. A control the user can
-					// always get back to is worth more than 24px of rail.
-					//
-					// The compact form is the transport and the restore button and
-					// nothing else, which fits the rail's width without a label to clip.
-					//
-					// The voice indicator is here for the same reason, only more so:
-					// audio evidences itself, so a hidden media control still announces
-					// what it is doing, while a live microphone's only tell is this
-					// glyph. Dropping it would make the collapsed rail the one place an
+					// The voice indicator stays, because a live microphone has no other
+					// tell: audio evidences itself, so a hidden media control still
+					// announces what it is doing, while an open microphone's only sign is
+					// this glyph. Dropping it would make the collapsed rail the one place an
 					// open microphone is invisible - see the minimize/close note in
 					// `VoiceHud.tsx`.
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
@@ -1791,9 +1781,6 @@ function SessionListInner(props: SessionListProps) {
 							/>
 						</GhostIconButton>
 						<ConductorVoiceIndicator theme={theme} />
-						{/* Renders nothing unless the player is actually minimized, so
-						    the rail is unchanged for anyone not playing anything. */}
-						<NowPlayingIndicator theme={theme} compact />
 						{notificationCenterEnabled && <NotificationCenter theme={theme} />}
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
