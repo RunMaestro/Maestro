@@ -12,10 +12,12 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn((id: string) => `resolved-${id}`),
+	readActiveAgentId: vi.fn((): string | null => 'active-session'),
 }));
 
 import { browserPick } from '../../../cli/commands/open-browser';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
+import { readActiveAgentId } from '../../../cli/services/storage';
 
 type SentMessage = Record<string, unknown>;
 
@@ -142,6 +144,19 @@ describe('browser-pick command', () => {
 			success: false,
 			error: 'No element matches selector: .nope',
 		});
+		expect(exitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('defaults to the active agent, and refuses when none is recorded', async () => {
+		const sent = stubDesktop({ success: true, aiTabId: 'ai-1', screenshot: false });
+		await browserPick('browser:2', { selector: 'h1' });
+		expect(sent[0].message.sessionId).toBe('active-session');
+
+		vi.mocked(readActiveAgentId).mockReturnValueOnce(null);
+		const before = sent.length;
+		await browserPick('browser:2', { selector: 'h1' });
+		expect(sent.length).toBe(before);
+		expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('No active agent recorded'));
 		expect(exitSpy).toHaveBeenCalledWith(1);
 	});
 });

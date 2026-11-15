@@ -26,6 +26,13 @@ import { markdownFenceFor } from './quoteSelection';
 /** Longest `outerHTML` the guest reports; anything past it is cut with a marker. */
 export const DESIGN_MODE_MAX_HTML_CHARS = 6000;
 
+/**
+ * Joins the selector segments of an element inside open shadow roots: each
+ * segment is unique within its own root, and the next one is queried in the
+ * previous match's `shadowRoot` (the convention Puppeteer and Playwright use).
+ */
+export const DESIGN_MODE_SHADOW_PIERCE = ' >>> ';
+
 /** How many ancestors a selector path may climb looking for a unique anchor. */
 export const DESIGN_MODE_MAX_SELECTOR_DEPTH = 32;
 
@@ -112,7 +119,11 @@ export interface DesignModePick {
 	url: string;
 	/** Lowercase tag name, e.g. `button`. */
 	tagName: string;
-	/** A CSS selector that matches only this element when it was picked. */
+	/**
+	 * A CSS selector that matched only this element when it was picked, checked
+	 * by identity. Inside open shadow roots it is one segment per root, joined
+	 * by {@link DESIGN_MODE_SHADOW_PIERCE}.
+	 */
 	selector: string;
 	/** `outerHTML`, already capped at {@link DESIGN_MODE_MAX_HTML_CHARS}. */
 	html: string;
@@ -176,23 +187,24 @@ const GUEST_HELPER = `function(req){
 		if(c.length)s+='.'+c.join('.');
 		return s;
 	}
-	function unique(parts){
-		try{return document.querySelectorAll(parts.join(' > ')).length===1;}catch(e){return false;}
+	var PIERCE=${JSON.stringify(DESIGN_MODE_SHADOW_PIERCE)};
+	function unique(parts,root,el){
+		try{var list=root.querySelectorAll(parts.join(' > '));return list.length===1&&list[0]===el;}catch(e){return false;}
 	}
-	function selectorFor(el){
+	function within(el,root){
 		var parts=[];var node=el;
 		for(var i=0;node&&node.nodeType===1&&i<MAX_DEPTH;i++){
 			var tag=node.tagName.toLowerCase();
 			if(tag==='html'||tag==='body'){parts.unshift(tag);break;}
 			if(node.id){
 				parts.unshift(tag+'#'+esc(node.id));
-				if(unique(parts))break;
+				if(unique(parts,root,el))break;
 			}else{
 				var part=tag;
 				var c=classes(node);
 				if(c.length)part+='.'+c.map(esc).join('.');
-				var parent=node.parentElement;
-				if(parent){
+				var parent=node.parentElement||node.parentNode;
+				if(parent&&parent.children){
 					var same=0,index=0;
 					for(var j=0;j<parent.children.length;j++){
 						var sib=parent.children[j];
@@ -201,11 +213,30 @@ const GUEST_HELPER = `function(req){
 					if(same>1)part+=':nth-of-type('+index+')';
 				}
 				parts.unshift(part);
-				if(unique(parts))break;
+				if(unique(parts,root,el))break;
 			}
 			node=node.parentElement;
 		}
 		return parts.join(' > ');
+	}
+	function selectorFor(el){
+		var segments=[];var node=el;
+		for(var k=0;node&&k<16;k++){
+			var root=node.getRootNode?node.getRootNode():document;
+			var scope=root&&root.querySelectorAll?root:document;
+			segments.unshift(within(node,scope));
+			node=root&&root.host?root.host:null;
+		}
+		return segments.join(PIERCE);
+	}
+	function query(selector){
+		var segments=selector.split(PIERCE);var scope=document;var found=null;
+		for(var k=0;k<segments.length;k++){
+			found=scope.querySelector(segments[k]);
+			if(!found)return null;
+			if(k<segments.length-1){scope=found.shadowRoot;if(!scope)return null;}
+		}
+		return found;
 	}
 	function box(el){
 		var r=el.getBoundingClientRect();
@@ -230,7 +261,7 @@ const GUEST_HELPER = `function(req){
 	}
 	if(req.type==='describeSelector'){
 		var found;
-		try{found=document.querySelector(req.selector);}catch(e){return {error:'invalid-selector'};}
+		try{found=query(req.selector);}catch(e){return {error:'invalid-selector'};}
 		if(!found)return {error:'not-found'};
 		var r=found.getBoundingClientRect();
 		if(r.bottom<0||r.right<0||r.top>window.innerHeight||r.left>window.innerWidth||
@@ -256,6 +287,29 @@ export function designModeGuestCall(request: DesignModeGuestRequest): string {
 }
 
 const MAX_SHORT_FIELD = 2048;
+
+/**
+ * A page-supplied value that lands OUTSIDE the fenced HTML (url, tag, selector,
+ * style values) on one line. The page can lie about its DOM, so without this a
+ * value carrying newlines could start a fresh line in the draft that reads
+ * like Maestro's own text rather than page content.
+ */
+function oneLine(value: string, max: number): string {
+	return value
+		.slice(0, max * 2)
+		.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.slice(0, max);
+}
+
+/** `text` as Markdown inline code that a backtick inside it cannot close. */
+function inlineCode(text: string): string {
+	const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+	const ticks = '`'.repeat(longest + 1);
+	const pad = text.startsWith('`') || text.endsWith('`') ? ' ' : '';
+	return `${ticks}${pad}${text}${pad}${ticks}`;
+}
 
 function isFiniteNumber(value: unknown): value is number {
 	return typeof value === 'number' && Number.isFinite(value);
@@ -284,7 +338,7 @@ function readStyles(value: unknown): Record<string, string> {
 	const raw = value as Record<string, unknown>;
 	for (const prop of DESIGN_MODE_STYLE_PROPERTIES) {
 		const v = raw[prop];
-		if (typeof v === 'string') styles[prop] = v.slice(0, MAX_SHORT_FIELD);
+		if (typeof v === 'string') styles[prop] = oneLine(v, MAX_SHORT_FIELD);
 	}
 	return styles;
 }
@@ -296,7 +350,7 @@ export function parseDesignModeProbe(value: unknown): DesignModeProbe | null {
 	const rect = readRect(p.rect);
 	if (!rect || typeof p.label !== 'string') return null;
 	const depth = isFiniteNumber(p.depth) && p.depth >= 0 ? Math.floor(p.depth) : 0;
-	return { rect, label: p.label.slice(0, 200), depth };
+	return { rect, label: oneLine(p.label, 200), depth };
 }
 
 /** Why a `describeSelector` request found nothing to pick. */
@@ -316,9 +370,9 @@ export function parseDesignModePick(value: unknown): DesignModePick | DesignMode
 	if (typeof p.tagName !== 'string' || typeof p.selector !== 'string') return null;
 	if (typeof p.html !== 'string') return null;
 	return {
-		url: typeof p.url === 'string' ? p.url.slice(0, MAX_SHORT_FIELD) : '',
-		tagName: p.tagName.slice(0, 64),
-		selector: p.selector.slice(0, MAX_SHORT_FIELD),
+		url: typeof p.url === 'string' ? oneLine(p.url, MAX_SHORT_FIELD) : '',
+		tagName: oneLine(p.tagName, 64),
+		selector: oneLine(p.selector, MAX_SHORT_FIELD),
 		html: p.html.slice(0, DESIGN_MODE_MAX_HTML_CHARS),
 		htmlTruncated: p.htmlTruncated === true || p.html.length > DESIGN_MODE_MAX_HTML_CHARS,
 		styles: readStyles(p.styles),
@@ -408,12 +462,17 @@ export function buildDesignModePrompt(
 	const r = pick.rect;
 	lines.push(`Design Mode element${pick.url ? ` from ${pick.url}` : ''}`);
 	lines.push(
-		`\`${pick.selector || pick.tagName}\` (${pick.tagName}, ${Math.round(r.width)} x ${Math.round(
+		`${inlineCode(pick.selector || pick.tagName)} (${pick.tagName}, ${Math.round(r.width)} x ${Math.round(
 			r.height
 		)} px at ${Math.round(r.x)}, ${Math.round(r.y)} in a ${Math.round(
 			pick.viewport.width
 		)} x ${Math.round(pick.viewport.height)} viewport)`
 	);
+	if (pick.selector.includes(DESIGN_MODE_SHADOW_PIERCE)) {
+		lines.push(
+			`The element is inside a shadow root: \`${DESIGN_MODE_SHADOW_PIERCE.trim()}\` crosses each shadow boundary, so document.querySelector alone cannot follow this selector.`
+		);
+	}
 	if (context.browserId) {
 		lines.push(
 			`Browser tab: \`${context.browserId}\` (the Coworking id that read_browser and browser_screenshot take)`

@@ -78,11 +78,20 @@ export function BrowserDesignModeLayer({
 	const depthRef = useRef(0);
 	const pendingProbeRef = useRef(false);
 	const probeInFlightRef = useRef(false);
+	// Bumped on every request (pointer move, arrow key, scroll). A reply is only
+	// applied while it is still the newest one, so a slow reply for an older
+	// point or depth cannot undo an ArrowUp the user pressed meanwhile.
+	const probeSeqRef = useRef(0);
 	const mountedRef = useRef(true);
 
 	const [hover, setHover] = useState<{ probe: DesignModeProbe; zoom: number } | null>(null);
 	const [picking, setPicking] = useState(false);
-	const [card, setCard] = useState<DesignModeCapture | null>(null);
+	// The pick plus the page zoom it was taken at, so the frozen outline is
+	// scaled right even when no hover outline preceded it.
+	const [card, setCard] = useState<(DesignModeCapture & { zoom: number }) | null>(null);
+	// A ref, not the `picking` state: a click and an Enter in the same tick must
+	// not both start a pick.
+	const pickingRef = useRef(false);
 	const [note, setNote] = useState('');
 	const [delivering, setDelivering] = useState(false);
 	const [missed, setMissed] = useState(false);
@@ -95,8 +104,9 @@ export function BrowserDesignModeLayer({
 	}, []);
 
 	// One probe in flight at a time; a move during a probe re-runs it once with
-	// the newest point instead of queueing one per mousemove.
+	// the newest point and depth instead of queueing one per mousemove.
 	const probe = useCallback(async () => {
+		probeSeqRef.current += 1;
 		pendingProbeRef.current = true;
 		if (probeInFlightRef.current) return;
 		probeInFlightRef.current = true;
@@ -105,6 +115,7 @@ export function BrowserDesignModeLayer({
 				pendingProbeRef.current = false;
 				const point = pointRef.current;
 				if (!point) break;
+				const seq = probeSeqRef.current;
 				const zoom = accessRef.current.zoom();
 				let reply: unknown = null;
 				try {
@@ -120,7 +131,11 @@ export function BrowserDesignModeLayer({
 					reply = null;
 				}
 				if (!mountedRef.current) return;
+				// Superseded while in flight: drop it; the loop runs again with the
+				// newest request because probe() set the pending flag.
+				if (seq !== probeSeqRef.current) continue;
 				const parsed = parseDesignModeProbe(reply);
+				// Clamp to what the guest could walk (no parent above <body>).
 				if (parsed) depthRef.current = parsed.depth;
 				setHover(parsed ? { probe: parsed, zoom } : null);
 			}
@@ -155,7 +170,8 @@ export function BrowserDesignModeLayer({
 
 	const pick = useCallback(async () => {
 		const point = pointRef.current;
-		if (!point || picking) return;
+		if (!point || pickingRef.current) return;
+		pickingRef.current = true;
 		setPicking(true);
 		setMissed(false);
 		try {
@@ -173,15 +189,16 @@ export function BrowserDesignModeLayer({
 				return;
 			}
 			setNote('');
-			setCard(result);
+			setCard({ ...result, zoom });
 		} catch (error) {
 			// The guest went away mid-pick (navigation, crash): nothing to show.
 			captureException(error, { tags: { surface: 'browser-design-mode' } });
 			if (mountedRef.current) setMissed(true);
 		} finally {
+			pickingRef.current = false;
 			if (mountedRef.current) setPicking(false);
 		}
-	}, [picking]);
+	}, []);
 
 	const closeCard = useCallback(() => {
 		setCard(null);
@@ -195,7 +212,8 @@ export function BrowserDesignModeLayer({
 			if (!card || delivering) return;
 			setDelivering(true);
 			try {
-				const ok = await onDeliver(card, note, keepPicking);
+				const { pick: picked, screenshot } = card;
+				const ok = await onDeliver({ pick: picked, screenshot }, note, keepPicking);
 				if (ok && keepPicking && mountedRef.current) closeCard();
 			} finally {
 				if (mountedRef.current) setDelivering(false);
@@ -205,17 +223,35 @@ export function BrowserDesignModeLayer({
 	);
 
 	const handleLayerKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-		if (card) return; // The card's own handlers own the keyboard while open.
+		if (card) {
+			// Focus can fall back to the layer when the user clicks the card's
+			// background; Escape must still close the card from there.
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				event.stopPropagation();
+				closeCard();
+			}
+			return; // Otherwise the card's own handlers own the keyboard.
+		}
 		const plain = !event.metaKey && !event.ctrlKey && !event.altKey;
+		// Enter and the arrows act on the page only when the layer itself has
+		// focus; on a focused control (the banner's ESC pill) they keep their
+		// native meaning, so Enter on that pill exits rather than picks.
+		const onLayer = event.target === event.currentTarget;
 		if (event.key === 'Escape') {
 			event.preventDefault();
 			event.stopPropagation();
 			onExit();
-		} else if (event.key === 'Enter' && plain) {
+		} else if (event.key === 'Enter' && plain && onLayer) {
 			event.preventDefault();
 			event.stopPropagation();
 			void pick();
-		} else if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && plain && !event.shiftKey) {
+		} else if (
+			(event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+			plain &&
+			!event.shiftKey &&
+			onLayer
+		) {
 			event.preventDefault();
 			event.stopPropagation();
 			depthRef.current = Math.max(0, depthRef.current + (event.key === 'ArrowUp' ? 1 : -1));
@@ -228,7 +264,14 @@ export function BrowserDesignModeLayer({
 			event.preventDefault();
 			event.stopPropagation();
 			closeCard();
-		} else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+		} else if (
+			event.key === 'Enter' &&
+			event.target === noteRef.current &&
+			!event.shiftKey &&
+			!event.nativeEvent.isComposing
+		) {
+			// Only from the note: Enter on a focused card button must run that
+			// button (Back to picking, Add and Pick Another), not Add to Message.
 			event.preventDefault();
 			event.stopPropagation();
 			void deliver(event.metaKey || event.ctrlKey);
@@ -236,9 +279,9 @@ export function BrowserDesignModeLayer({
 	};
 
 	// While the card is open the outline stays on the picked element.
-	const zoomNow = hover?.zoom ?? 1;
+	const zoomNow = card ? card.zoom : (hover?.zoom ?? 1);
 	const outline = card
-		? toLayerRect(card.pick.rect, zoomNow)
+		? toLayerRect(card.pick.rect, card.zoom)
 		: hover
 			? toLayerRect(hover.probe.rect, hover.zoom)
 			: null;

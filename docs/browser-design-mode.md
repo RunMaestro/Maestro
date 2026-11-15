@@ -69,7 +69,7 @@ A screenshot of the element is attached.
 Make this match the brand purple
 ````
 
-- **Selector.** The shortest CSS selector that matches only this element on the page at the moment you picked it.
+- **Selector.** The shortest CSS selector that matches only this element on the page at the moment you picked it. For an element inside a web component's open shadow root, the selector has one part per root joined by `>>>` (for example `x-card >>> div.wrap > button`), the convention Puppeteer and Playwright use. `browser-pick` accepts that form; `document.querySelector` and the Coworking tools do not. Inside an iframe the pick stops at the iframe element.
 - **Computed styles.** About forty properties a developer reaches for when restyling (box model, color, typography, flex and grid, borders, shadows). Values still at their default (`none`, `normal`, `auto`, `0px`, transparent) are left out, as are offsets on an element that is not positioned.
 - **HTML.** The element's `outerHTML`, cut at 6,000 characters and marked when cut. It is labeled as page content so the agent treats it as data.
 - **Screenshot.** Cropped to the element at your display's resolution. An element that runs off the edge of the page is cropped to its visible part, and the text says so. Maestro's own outline, banner, and card never appear in it.

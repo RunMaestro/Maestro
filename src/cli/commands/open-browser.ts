@@ -6,8 +6,9 @@
 // research should always pass it, then `close-browser <tab-id>` when done.
 
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
-import { resolveAgentId } from '../services/storage';
+import { readActiveAgentId, resolveAgentId } from '../services/storage';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { BROWSER_PICK_TIMEOUT_MS } from '../../shared/coworkingBrowser';
 
 interface OpenBrowserOptions {
 	agent?: string;
@@ -171,8 +172,10 @@ interface BrowserPickResult {
 	background?: boolean;
 }
 
-/** Mounting a kept-alive tab and cropping its screenshot can outlast the 10s default. */
-const BROWSER_PICK_TIMEOUT_MS = 30_000;
+/** The desktop gives a pick BROWSER_PICK_TIMEOUT_MS; wait a little longer so
+ *  its own error (tab not live, no match) reaches the caller instead of a bare
+ *  CLI timeout. */
+const BROWSER_PICK_CLI_TIMEOUT_MS = BROWSER_PICK_TIMEOUT_MS + 5_000;
 
 /**
  * Design Mode by selector: describe the first element matching `--selector`
@@ -195,7 +198,13 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 
 	let sessionId = '';
 	try {
-		sessionId = options.agent ? resolveAgentId(options.agent) : resolveSessionId({});
+		// The agent the user has selected, not the first stored one: a pick lands
+		// in a composer and can switch the view, so the wrong agent is visible harm.
+		const active = options.agent ? resolveAgentId(options.agent) : readActiveAgentId();
+		if (!active) {
+			return fail('No active agent recorded. Pass --agent <id> to say whose tab you mean.');
+		}
+		sessionId = active;
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));
 	}
@@ -215,7 +224,7 @@ export async function browserPick(tab: string, options: BrowserPickOptions): Pro
 					background,
 				},
 				'pick_browser_element_result',
-				BROWSER_PICK_TIMEOUT_MS
+				BROWSER_PICK_CLI_TIMEOUT_MS
 			)
 		);
 	} catch (error) {

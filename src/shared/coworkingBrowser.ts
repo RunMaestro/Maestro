@@ -62,10 +62,12 @@ export type BrowserOp =
  * (selector path, trimmed outerHTML, computed styles, cropped screenshot) and
  * add it to the owning agent's composer, exactly as a click in Design Mode does.
  *
- * HOST-ONLY. `maestro-cli browser-pick` sends it through the same resolver the
- * MCP tools use, so the CLI and the agent tools address a tab the same way. The
- * MCP bridge never accepts it: `validateInteractionOp` is an allowlist and has
- * no `pick` case, so an agent cannot write into the user's composer this way.
+ * Not an MCP op. Only `maestro-cli browser-pick` sends it, through the same
+ * resolver the MCP tools use, so the CLI and the agent tools address a tab the
+ * same way. The MCP bridge never accepts it (`validateInteractionOp` is an
+ * allowlist with no `pick` case). An agent can still reach it from its shell
+ * through the CLI, like every other CLI verb: that is the CLI-parity contract,
+ * and the bundled system prompt tells agents to pass `--background`.
  */
 export interface BrowserPickOp {
 	kind: 'pick';
@@ -140,6 +142,12 @@ export function browserOpNeedsConfirm(
 	// 'dangerous': only the sharp-edge ops.
 	return ALWAYS_CONFIRM_KINDS.includes(kind);
 }
+
+/** Main-process cap for a `pick` (mount a kept-alive tab, wait for the page to
+ *  settle, crop). Below the CLI's own wait so the caller hears the real error
+ *  rather than a bare CLI timeout; a pick never waits on an approval dialog, so
+ *  it does not need the interaction cap below. */
+export const BROWSER_PICK_TIMEOUT_MS = 25_000;
 
 /** Main-process cap for a single interaction browser op (navigate/click/eval/...).
  *  Long because these ops can block on a human approval dialog. Shared so the

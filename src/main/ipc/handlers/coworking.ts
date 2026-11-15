@@ -30,6 +30,7 @@ import type {
 import {
 	browserOpNeedsConfirm,
 	BROWSER_INTERACT_TIMEOUT_MS,
+	BROWSER_PICK_TIMEOUT_MS,
 } from '../../../shared/coworkingBrowser';
 
 const LOG_CTX = '[Coworking][IPC]';
@@ -228,7 +229,11 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 					ipcMain.removeListener(responseChannel, handler);
 					reject(new Error('Coworking: timed out waiting for browser op from renderer'));
 				},
-				op.kind === 'read' ? BROWSER_OP_TIMEOUT_MS : BROWSER_INTERACT_TIMEOUT_MS
+				op.kind === 'read'
+					? BROWSER_OP_TIMEOUT_MS
+					: op.kind === 'pick'
+						? BROWSER_PICK_TIMEOUT_MS
+						: BROWSER_INTERACT_TIMEOUT_MS
 			);
 			ipcMain.on(responseChannel, handler);
 			// Main computes the per-call approval requirement from its own mirrored
