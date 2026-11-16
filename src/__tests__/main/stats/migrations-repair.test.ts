@@ -45,7 +45,7 @@ import { INSERT_QUERY_EVENT_SQL } from '../../../main/stats/query-event-insert';
 import { logger } from '../../../main/utils/logger';
 
 /** rc's highest stats migration. Bump alongside a new entry in getMigrations(). */
-const RC_TARGET_VERSION = 15;
+const RC_TARGET_VERSION = 16;
 
 function openDb(): Database.Database {
 	const raw = new DatabaseSync(':memory:');
@@ -239,6 +239,29 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 
 		expect(columnNames(db, 'auto_run_sessions')).toContain('kind');
 		expect(logger.warn).not.toHaveBeenCalled();
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+	});
+
+	it("gives a main database stamped v15 (token_speed_hourly, no kind column) rc's v15", () => {
+		// main ships token_speed_hourly as v15, the number rc gave the `kind`
+		// column. Such a database must get `kind` by repair, and v16 must leave the
+		// existing token_speed_hourly table in place.
+		const db = openDb();
+		runMigrations(db);
+		db.exec('ALTER TABLE auto_run_sessions DROP COLUMN kind');
+		db.exec(
+			"INSERT INTO token_speed_hourly (hour_start, agent_type, model, calls, input_tokens, output_tokens, duration_ms) VALUES (0, 'opencode', 'm', 1, 10, 20, 1000)"
+		);
+		db.pragma('user_version = 15');
+
+		runMigrations(db);
+
+		expect(columnNames(db, 'auto_run_sessions')).toContain('kind');
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v15');
+		expect(
+			(db.prepare('SELECT COUNT(*) AS n FROM token_speed_hourly').get() as { n: number }).n
+		).toBe(1);
 		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
 	});
 });

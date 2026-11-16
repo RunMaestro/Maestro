@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	CodexTokenSpeedTracker,
+	StreamCallTimer,
 	TOKEN_SPEED_MAX_CALL_MS,
 	TOKEN_SPEED_PEAK_MIN_BUCKET_MS,
 	TokenSpeedBucketer,
@@ -490,5 +491,67 @@ describe('granularity helpers', () => {
 		expect(new Date(tokenSliceStart(wed, 'day')).getHours()).toBe(0);
 		expect(new Date(tokenSliceStart(wed, 'week')).getDay()).toBe(1);
 		expect(new Date(tokenSliceStart(wed, 'month')).getDate()).toBe(1);
+	});
+});
+
+describe('StreamCallTimer', () => {
+	const T0 = new Date(2026, 10, 15, 10, 0, 0).getTime();
+	const end = (inputTokens: number, outputTokens: number, extra: Record<string, unknown> = {}) =>
+		({ kind: 'end', inputTokens, outputTokens, ...extra }) as const;
+
+	it('times a call from the latest start to its end, wait for the first token included', () => {
+		const t = new StreamCallTimer();
+		expect(t.signal({ kind: 'start' }, T0)).toEqual([]);
+		expect(t.signal(end(1000, 200, { model: 'm' }), T0 + 4_000)).toEqual([
+			{ endMs: T0 + 4_000, durationMs: 4_000, model: 'm', inputTokens: 1000, outputTokens: 200 },
+		]);
+	});
+
+	it('times back-to-back calls from the previous end when no new start arrives', () => {
+		const t = new StreamCallTimer();
+		t.signal({ kind: 'start' }, T0);
+		t.signal(end(10, 10), T0 + 2_000);
+		const [second] = t.signal(end(20, 20), T0 + 5_000);
+		expect(second.durationMs).toBe(3_000);
+	});
+
+	it('folds a keyed end repeated per content block into one call, keeping the largest output', () => {
+		const t = new StreamCallTimer();
+		t.signal({ kind: 'start' }, T0);
+		expect(t.signal(end(500, 40, { key: 'msg_1' }), T0 + 2_000)).toEqual([]);
+		expect(t.signal(end(500, 90, { key: 'msg_1' }), T0 + 3_000)).toEqual([]);
+		// The next start closes the open call at its LAST end.
+		const [call] = t.signal({ kind: 'start' }, T0 + 8_000);
+		expect(call).toMatchObject({ durationMs: 3_000, inputTokens: 500, outputTokens: 90 });
+	});
+
+	it('closes an open keyed call when the process exits', () => {
+		const t = new StreamCallTimer();
+		t.signal({ kind: 'start' }, T0);
+		t.signal(end(100, 50, { key: 'k' }), T0 + 2_500);
+		expect(t.finish()).toHaveLength(1);
+		expect(t.finish()).toEqual([]);
+	});
+
+	it('drops a call it was told to discard, and times nothing until the next start', () => {
+		const t = new StreamCallTimer();
+		t.signal({ kind: 'start' }, T0);
+		t.signal({ kind: 'discard' }, T0 + 1_000);
+		expect(t.signal(end(100, 100), T0 + 30_000)).toEqual([]);
+		t.signal({ kind: 'start' }, T0 + 31_000);
+		expect(t.signal(end(100, 100), T0 + 33_000)).toHaveLength(1);
+	});
+
+	it('times nothing before the first start, and drops calls too short to time', () => {
+		const t = new StreamCallTimer();
+		expect(t.signal(end(100, 100), T0)).toEqual([]);
+		t.signal({ kind: 'start' }, T0 + 1_000);
+		expect(t.signal(end(100, 100), T0 + 1_200)).toEqual([]);
+	});
+
+	it('labels a call with no model with the fallback model', () => {
+		const t = new StreamCallTimer('fallback-model');
+		t.signal({ kind: 'start' }, T0);
+		expect(t.signal(end(1, 1), T0 + 2_000)[0].model).toBe('fallback-model');
 	});
 });

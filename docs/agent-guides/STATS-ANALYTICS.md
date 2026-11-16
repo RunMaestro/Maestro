@@ -225,6 +225,8 @@ Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorde
 | v12     | Add `user_name` column to `query_events` for Web Login attribution    |
 | v13     | Add `active_ms` column to `wizard_runs`                               |
 | v14     | Add `shortcut_usage_by_id` and the `(start_time, session_id)` index   |
+| v15     | Add `kind` column to `auto_run_sessions` (goal-driven vs spec-driven) |
+| v16     | Add `token_speed_hourly` (token speed timed off the live stream)      |
 
 To add a new migration:
 

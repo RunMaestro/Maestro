@@ -84,7 +84,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Summing a Codex session's tokens:** `CodexTokenCounts` in `src/shared/codexTokenUsage.ts`
 - **Claude's cost and per-model usage for one turn:** `claudeTurnCost()`, `readClaudeTurnBaseline()`, `parseCostStateRow()` in `src/shared/claudeCostTracker.ts`
 - **Live tokens-per-second rate:** `createThroughputTracker()`, `THROUGHPUT_WINDOWS_MS` in `src/shared/throughputRate.ts`
-- **Tokens per second:** `extractClaudeSpeedSamples()`, `computeClaudeTokenSpeed()`, `CodexTokenSpeedTracker`, `summarizeTokenSpeed()` in `src/shared/tokenSpeed.ts`; `formatTokensPerSecond()` in `src/shared/formatters.ts`
+- **Tokens per second:** `extractClaudeSpeedSamples()`, `computeClaudeTokenSpeed()`, `CodexTokenSpeedTracker`, `StreamCallTimer`, `summarizeTokenSpeed()` in `src/shared/tokenSpeed.ts`; `formatTokensPerSecond()` in `src/shared/formatters.ts`
 - **Usage, cost and message count of a Claude transcript:** `computeClaudeSessionUsage()`, `computeClaudeUsageWithSubagents()`, `readClaudeSubagentTranscripts()` in `src/shared/claudeSessionUsage.ts`; `countClaudeTranscriptMessages()` in `src/shared/claudeTranscriptMessages.ts`
 
 #### Paths, files, and strings

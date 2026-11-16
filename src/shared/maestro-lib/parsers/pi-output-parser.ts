@@ -6,6 +6,7 @@
 
 import type { AgentError, ToolType } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
+import type { CallTimingSignal } from '../../tokenSpeed';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
 import { stripAllAnsiCodes } from './terminal-filter';
 
@@ -52,6 +53,41 @@ interface PiRawEvent {
 	error?: unknown;
 	messageText?: string;
 	willRetry?: boolean;
+}
+
+/**
+ * Per-call timing for token speed, shared by Pi and Oh My Pi (same JSON event
+ * protocol). A call starts when a turn starts or a tool result is handed back
+ * (`turn_start`, `tool_execution_end`, a user `message_end`) and ends at the
+ * assistant `message_end`, whose `usage` is that one call's. Tools run AFTER
+ * the assistant message ends, so tool time never lands inside a call window.
+ */
+export function piFamilyCallTiming(raw: unknown): CallTimingSignal | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const event = raw as {
+		type?: string;
+		message?: { role?: string; usage?: PiUsage; model?: unknown };
+	};
+	switch (event.type) {
+		case 'agent_start':
+		case 'turn_start':
+		case 'tool_execution_end':
+			return { kind: 'start' };
+		case 'message_end': {
+			const message = event.message;
+			if (message?.role === 'user') return { kind: 'start' };
+			if (message?.role !== 'assistant' || !message.usage) return null;
+			const usage = message.usage;
+			return {
+				kind: 'end',
+				model: typeof message.model === 'string' ? message.model : undefined,
+				inputTokens: (usage.input || 0) + (usage.cacheRead || 0) + (usage.cacheWrite || 0),
+				outputTokens: usage.output || 0,
+			};
+		}
+		default:
+			return null;
+	}
 }
 
 export class PiOutputParser implements AgentOutputParser {
@@ -196,6 +232,10 @@ export class PiOutputParser implements AgentOutputParser {
 
 	extractSessionId(event: ParsedEvent): string | null {
 		return event.sessionId || null;
+	}
+
+	extractCallTiming(raw: unknown): CallTimingSignal | null {
+		return piFamilyCallTiming(raw);
 	}
 
 	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null {

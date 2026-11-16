@@ -25,6 +25,8 @@ import {
 } from '../../../shared/maestro-lib/turns/turn-events';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import type { UsageAccounting, UsageCost } from '../../../shared/types';
+import { getAgentCapabilities } from '../../agents/capabilities';
+import { StreamCallTimer } from '../../../shared/tokenSpeed';
 import type { ManagedProcess, UsageStats, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 import type { ParsedEvent } from '../../parsers/agent-output-parser';
@@ -874,6 +876,33 @@ export class StdoutHandler {
 		this.emitter.emit('usage', sessionId, delta);
 	}
 
+	/**
+	 * Feed one raw stream event to the process's call timer and emit every model
+	 * call it finishes as `token-speed`. Runs before parsing so no event type the
+	 * parser drops is missed. Only for agents measured from the stream, and for
+	 * transcript-measured agents on an SSH host (their transcript is out of reach;
+	 * locally the transcript path already times them, so timing here too would
+	 * count every call twice).
+	 */
+	private recordCallTiming(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		parsed: unknown,
+		outputParser: NonNullable<ManagedProcess['outputParser']>
+	): void {
+		if (!outputParser.extractCallTiming) return;
+		const measurement = getAgentCapabilities(managedProcess.toolType).tokenSpeedMeasurement;
+		const fromStream =
+			measurement === 'stream' || (measurement === 'transcript' && !!managedProcess.sshRemoteId);
+		if (!fromStream) return;
+		const signal = outputParser.extractCallTiming(parsed);
+		if (!signal) return;
+		managedProcess.callTimer ??= new StreamCallTimer();
+		for (const sample of managedProcess.callTimer.signal(signal, Date.now())) {
+			this.emitter.emit('token-speed', sessionId, managedProcess.toolType, sample);
+		}
+	}
+
 	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */
 	private handleParsedEvent(
 		sessionId: string,
@@ -881,6 +910,8 @@ export class StdoutHandler {
 		parsed: unknown,
 		outputParser: NonNullable<ManagedProcess['outputParser']>
 	): void {
+		this.recordCallTiming(sessionId, managedProcess, parsed, outputParser);
+
 		const event = outputParser.parseJsonObject(parsed);
 
 		if (!event) return;

@@ -1,3 +1,4 @@
+import type { StreamCallTimer, TokenSpeedSample } from '../../shared/tokenSpeed';
 import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
 import type { OpencodeClient } from '@opencode-ai/sdk';
@@ -257,6 +258,9 @@ export interface ManagedProcess {
 	provisionalError?: AgentError;
 	startTime: number;
 	outputParser?: AgentOutputParser;
+	/** Times this process's model calls off its stream for token speed. Created
+	 *  on the first timing mark; absent for agents not measured from the stream. */
+	callTimer?: StreamCallTimer;
 	stderrBuffer?: string;
 	stdoutBuffer?: string;
 	streamedText?: string;
@@ -377,6 +381,8 @@ export interface ProcessManagerEvents {
 	usage: (sessionId: string, stats: UsageStats) => void;
 	/** One API call's new spend, mid-turn (see `CallUsage`). claude-code only. */
 	'call-usage': (sessionId: string, usage: CallUsage) => void;
+	/** One model API call timed off the live stream (see `StreamCallTimer`). */
+	'token-speed': (sessionId: string, agentType: string, sample: TokenSpeedSample) => void;
 	'session-id': (sessionId: string, agentSessionId: string) => void;
 	'agent-error': (sessionId: string, error: AgentError) => void;
 	'thinking-chunk': (sessionId: string, text: string) => void;

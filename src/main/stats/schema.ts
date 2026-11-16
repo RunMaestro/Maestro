@@ -212,6 +212,30 @@ export const CREATE_QUERY_START_SESSION_INDEX_SQL = `
 `;
 
 // ============================================================================
+// Token speed from the live stream, hourly (Migration v15)
+// ============================================================================
+
+/**
+ * Model API calls timed off a provider's live stream, summed per local clock
+ * hour, provider and model: the same `TokenSpeedBucket` shape the transcript
+ * path builds in memory, so both feed one summary. Agents measured from their
+ * transcript write here only when they ran on an SSH host. Bounded by hours x
+ * providers x models; peaks are read from these hourly sums.
+ */
+export const CREATE_TOKEN_SPEED_HOURLY_SQL = `
+  CREATE TABLE IF NOT EXISTS token_speed_hourly (
+    hour_start INTEGER NOT NULL,
+    agent_type TEXT NOT NULL,
+    model TEXT NOT NULL,
+    calls INTEGER NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    PRIMARY KEY (hour_start, agent_type, model)
+  )
+`;
+
+// ============================================================================
 // Multi-Window Usage Daily (Migration v8)
 // ============================================================================
 export const CREATE_MULTI_WINDOW_USAGE_DAILY_SQL = `
