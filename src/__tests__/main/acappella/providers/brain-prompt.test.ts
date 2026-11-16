@@ -193,6 +193,25 @@ describe('buildRouteUserPrompt', () => {
 		);
 	});
 
+	it('names the default agent outside a bound scope', () => {
+		const prompt = buildRouteUserPrompt('do it', {
+			...CONTEXT,
+			defaultAgentSessionId: 'agent-backend',
+		});
+
+		expect(prompt).toContain('Agent agent-backend is the default');
+	});
+
+	it('leaves the default agent out of a bound session', () => {
+		const prompt = buildRouteUserPrompt('do it', {
+			roster: ROSTER,
+			scope: { kind: 'agent', sessionId: 'agent-backend' },
+			defaultAgentSessionId: 'agent-backend',
+		});
+
+		expect(prompt).not.toContain('is the default');
+	});
+
 	it('says so plainly when nothing is running', () => {
 		expect(buildRouteUserPrompt('hello', { roster: [], scope: { kind: 'conductor' } })).toContain(
 			'(none)'

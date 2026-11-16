@@ -16,6 +16,8 @@ import {
 	isSensitiveVoiceSetting,
 	isVoiceSettingPath,
 	readAgentWakePhrases,
+	liveDefaultVoiceAgentId,
+	readDefaultVoiceAgentId,
 	redactVoiceSettings,
 	storableVoiceProviderIds,
 	voiceSettingDefault,
@@ -274,5 +276,25 @@ describe('withAgentWakePhrase', () => {
 			])
 		).toEqual([{ agentSessionId: 'a1', phrase: 'hey scout' }]);
 		expect(readAgentWakePhrases(undefined)).toEqual([]);
+	});
+});
+
+describe('default voice agent', () => {
+	it('reads a stored id, trimmed, and anything blank or malformed as unset', () => {
+		expect(readDefaultVoiceAgentId(' agent-1 ')).toBe('agent-1');
+		expect(readDefaultVoiceAgentId('   ')).toBeNull();
+		expect(readDefaultVoiceAgentId(42)).toBeNull();
+		expect(readDefaultVoiceAgentId(undefined)).toBeNull();
+	});
+
+	it('is the default only while that agent is running', () => {
+		const roster = [{ sessionId: 'agent-1' }, { sessionId: 'agent-2' }];
+		expect(liveDefaultVoiceAgentId('agent-2', roster)).toBe('agent-2');
+		expect(liveDefaultVoiceAgentId('agent-gone', roster)).toBeNull();
+		expect(liveDefaultVoiceAgentId(null, roster)).toBeNull();
+	});
+
+	it('is a stored string field with no default', () => {
+		expect(voiceSettingProblem('controls.defaultAgentSessionId', 'agent-1')).toBeNull();
 	});
 });

@@ -56,6 +56,7 @@ import {
 	isConversationalReply,
 	routeTargetSessionId,
 } from '../../shared/acappella/route-decision';
+import { liveDefaultVoiceAgentId } from '../../shared/acappella/voice-settings-schema';
 import { isCorrectionUtterance, planCorrection } from './router/conductor-router';
 import type {
 	SttCallbacks,
@@ -245,6 +246,14 @@ export interface VoiceSessionServiceOptions {
 	 * is routed, which is what A Cappella did before conversation existed.
 	 */
 	getConversationalMode?: () => boolean;
+	/**
+	 * The agent a request lands on when no agent is clearly meant.
+	 *
+	 * A getter, read per turn, so choosing one in Voice Controls applies to the
+	 * next thing said. Handed to the Brain in the route context; the executor
+	 * reads the same setting when it resolves a `conductor` target.
+	 */
+	getDefaultAgentSessionId?: () => string | null;
 	getHoldWhileBusy?: () => boolean;
 	isScopeBusy?: (scope: VoiceScope) => boolean;
 	/**
@@ -411,6 +420,7 @@ export class VoiceSessionService {
 	private readonly conversation = new ConversationBuffer();
 	/** Whether the Conductor may talk back rather than dispatch. Read per turn. */
 	private readonly conversationalMode: () => boolean;
+	private readonly getDefaultAgentSessionId: () => string | null;
 	private readonly announcer: BackgroundAnnouncer;
 	private readonly bargeIn: BargeInController;
 
@@ -540,6 +550,7 @@ export class VoiceSessionService {
 			getForegroundAgentSessionId: () => this.streamTarget?.agentSessionId ?? null,
 		});
 		this.conversationalMode = () => options.getConversationalMode?.() ?? false;
+		this.getDefaultAgentSessionId = () => options.getDefaultAgentSessionId?.() ?? null;
 		this.composer = new UtteranceComposer({
 			// Read through the getter so a settings change takes effect on the next
 			// thought rather than on the next session: a person who finds it too
@@ -2195,6 +2206,7 @@ export class VoiceSessionService {
 			roster,
 			scope,
 			activeAgentSessionId: voiceScopeAgentId(scope),
+			defaultAgentSessionId: liveDefaultVoiceAgentId(this.getDefaultAgentSessionId(), roster),
 			document: isDocumentScope(scope)
 				? { path: scope.path, name: documentScopeName(scope) }
 				: undefined,

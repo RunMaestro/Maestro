@@ -327,6 +327,53 @@ describe('VoiceControlsPanel per-agent phrases', () => {
 	});
 });
 
+describe('VoiceControlsPanel default agent', () => {
+	let stored: VoiceSettingsBlob;
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockShortcuts = {};
+		stored = {};
+		vi.mocked(window.maestro.settings.get).mockImplementation(async () => stored);
+		vi.mocked(window.maestro.settings.set).mockImplementation(async (_key, value) => {
+			stored = value as VoiceSettingsBlob;
+		});
+		vi.mocked(voice().getRoster).mockResolvedValue([
+			{ sessionId: 'a', name: 'Alpha', agentType: 'codex', cwd: '/alpha', tabs: [] },
+			{ sessionId: 'b', name: 'Beta', agentType: 'codex', cwd: '/beta', tabs: [] },
+		]);
+		vi.mocked(voice().hotkeyStatus).mockResolvedValue({ statuses: [], note: '' });
+	});
+
+	afterEach(() => {
+		vi.mocked(window.maestro.settings.set).mockReset();
+		vi.mocked(window.maestro.settings.set).mockResolvedValue(undefined);
+	});
+
+	const picker = () => screen.getByRole('button', { name: 'Default voice agent' });
+
+	it('starts on none, saves a picked agent, and clears back to none', async () => {
+		render(<VoiceControlsPanel theme={mockTheme} enabled />);
+		await waitFor(() => expect(picker()).toBeEnabled());
+		expect(picker()).toHaveTextContent('None (the agent on screen)');
+
+		fireEvent.click(picker());
+		fireEvent.click(await screen.findByRole('option', { name: 'Beta' }));
+		await waitFor(() => expect(stored.controls?.defaultAgentSessionId).toBe('b'));
+		expect(picker()).toHaveTextContent('Beta');
+
+		fireEvent.click(picker());
+		fireEvent.click(screen.getByRole('option', { name: 'None (the agent on screen)' }));
+		await waitFor(() => expect(stored.controls?.defaultAgentSessionId).toBe(''));
+	});
+
+	it('names a default whose agent was removed instead of showing a bare id', async () => {
+		stored = { controls: { defaultAgentSessionId: 'gone' } };
+		render(<VoiceControlsPanel theme={mockTheme} enabled />);
+
+		await waitFor(() => expect(picker()).toHaveTextContent('Removed agent (not in use)'));
+	});
+});
+
 describe('VoiceControlsPanel send phrases', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();

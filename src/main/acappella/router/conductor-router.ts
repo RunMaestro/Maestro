@@ -34,6 +34,7 @@ import type {
 } from '../../../shared/acappella/providers';
 import type { RouteDecision } from '../../../shared/acappella/route-decision';
 import { isClarification, routeTargetSessionId } from '../../../shared/acappella/route-decision';
+import { liveDefaultVoiceAgentId } from '../../../shared/acappella/voice-settings-schema';
 import { generateUUID } from '../../../shared/uuid';
 import { logger } from '../../utils/logger';
 import { validateRouteDecision } from './grammar';
@@ -93,6 +94,10 @@ export function createConductorRouter(options: ConductorRouterOptions): Conducto
 			const startedAt = now();
 			const enriched = await enrichContext(input, context, loadContext);
 			const roster = enriched.context.roster;
+			// With a default agent, "no agent is clearly meant" has an answer, so the
+			// router stops asking the vague "which agent?" and lets the executor land
+			// the request there. A question naming two real alternatives still asks.
+			const defaultAgentId = liveDefaultVoiceAgentId(context.defaultAgentSessionId, roster);
 
 			let retries = 0;
 			let decision = await brain.route(input, enriched.context);
@@ -115,10 +120,16 @@ export function createConductorRouter(options: ConductorRouterOptions): Conducto
 				// Twice rejected. The conductor takes it and asks, which is the only
 				// outcome that is neither a guess nor silence.
 				logger.warn(`Route decision rejected twice: ${validation.errors.join('; ')}`, LOG_CONTEXT);
-				decision = fallbackClarification(input, roster, enriched.candidates);
+				decision = fallbackClarification(input, roster, enriched.candidates, defaultAgentId);
 			} else {
 				decision = applyRecallPolicy(decision, roster, context);
-				decision = applyConfidencePolicy(decision, roster, enriched.candidates, threshold);
+				decision = applyConfidencePolicy(
+					decision,
+					roster,
+					enriched.candidates,
+					threshold,
+					defaultAgentId
+				);
 			}
 
 			lastTurnId = record({
@@ -260,11 +271,12 @@ function applyConfidencePolicy(
 	decision: RouteDecision,
 	roster: readonly RosterAgent[],
 	candidates: readonly RecallCandidate[],
-	threshold: number
+	threshold: number,
+	defaultAgentId: string | null = null
 ): RouteDecision {
 	if (isClarification(decision) || decision.confidence >= threshold) return decision;
 
-	const question = buildDisambiguation(decision, roster, candidates);
+	const question = buildDisambiguation(decision, roster, candidates, defaultAgentId);
 	if (!question) return decision;
 	return { ...decision, clarify: question };
 }
@@ -275,11 +287,15 @@ function applyConfidencePolicy(
  * Returns null when there is nothing to disambiguate between - a single agent,
  * or a conductor-targeted utterance - because asking "the backend agent?" of
  * someone who only has one agent is worse than a low-confidence dispatch.
+ *
+ * Also null for an utterance with no agent evidence when the user named a
+ * default agent: "which agent or tab?" is the question the default answers.
  */
 function buildDisambiguation(
 	decision: RouteDecision,
 	roster: readonly RosterAgent[],
-	candidates: readonly RecallCandidate[]
+	candidates: readonly RecallCandidate[],
+	defaultAgentId: string | null = null
 ): string | null {
 	if (roster.length < 2) return null;
 
@@ -291,7 +307,7 @@ function buildDisambiguation(
 
 	// No evidence for an agent means no meaningful pair of alternatives.
 	const chosen = roster.find((agent) => agent.sessionId === targetId);
-	if (!chosen) return 'Which agent or tab should take that?';
+	if (!chosen) return defaultAgentId ? null : 'Which agent or tab should take that?';
 	const other = roster.find((agent) => agent.sessionId !== chosen.sessionId);
 	if (!other) return null;
 
@@ -377,19 +393,22 @@ function tabLabel(candidate: RecallCandidate): string {
 function fallbackClarification(
 	input: string,
 	roster: readonly RosterAgent[],
-	candidates: readonly RecallCandidate[]
+	candidates: readonly RecallCandidate[],
+	defaultAgentId: string | null = null
 ): RouteDecision {
-	const named = buildDisambiguation(
-		{ target: 'conductor', tabAction: 'current', prompt: input, confidence: 0 },
-		roster,
-		candidates
-	);
-
-	return {
+	const unrouted: RouteDecision = {
 		target: 'conductor',
 		tabAction: 'current',
 		prompt: input.trim(),
 		confidence: 0,
+	};
+	const named = buildDisambiguation(unrouted, roster, candidates, defaultAgentId);
+	// Nothing specific to ask and a default to send it to: the user's own words
+	// go there intact, which is what naming a default asked for.
+	if (!named && defaultAgentId) return unrouted;
+
+	return {
+		...unrouted,
 		clarify: named
 			? `I did not catch which one you meant. ${named}`
 			: 'Which agent should take that?',

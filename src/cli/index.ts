@@ -244,6 +244,9 @@ import {
 	voiceVoicesList,
 	voiceVoicesPreview,
 	voiceVoicesSet,
+	voiceDefaultAgentClear,
+	voiceDefaultAgentSet,
+	voiceDefaultAgentShow,
 	voiceWakePhraseClear,
 	voiceWakePhraseList,
 	voiceWakePhraseSet,
@@ -4579,6 +4582,30 @@ voiceWakePhrase
 	.description("Remove one agent's wake phrase")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(voiceWakePhraseClear);
+
+const voiceDefaultAgent = voice
+	.command('default-agent')
+	.description(
+		'The agent a Conductor request goes to when no agent is clearly meant (instead of the agent on screen)'
+	);
+
+voiceDefaultAgent
+	.command('show')
+	.description('Show the default agent, and whether it is still in use')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDefaultAgentShow);
+
+voiceDefaultAgent
+	.command('set <agent>')
+	.description('Send voice requests no agent is clearly meant for to this agent')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDefaultAgentSet);
+
+voiceDefaultAgent
+	.command('clear')
+	.description('Remove the default agent, so the agent on screen takes unclear requests again')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDefaultAgentClear);
 
 const voiceWake = voice
 	.command('wake')

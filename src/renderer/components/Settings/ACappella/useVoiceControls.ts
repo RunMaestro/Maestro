@@ -38,6 +38,7 @@ import {
 } from '../../../../shared/acappella/voice-controls';
 import {
 	readAgentWakePhrases,
+	readDefaultVoiceAgentId,
 	withAgentWakePhrase,
 	type AgentWakePhrase,
 } from '../../../../shared/acappella/voice-settings-schema';
@@ -66,6 +67,11 @@ export interface VoiceControlSettings {
 	wakeEngine: WakeEngine;
 	/** Per-agent phrases, keyed by agent session id. */
 	agentPhrases: AgentWakePhrase[];
+	/**
+	 * The agent a Conductor request goes to when no agent is clearly meant.
+	 * Empty means none: the agent on screen takes it, as before.
+	 */
+	defaultAgentSessionId: string;
 	/** The configurable stop phrase. "nevermind" is always armed alongside it. */
 	stopPhrase: string;
 	stopWordEnabled: boolean;
@@ -92,6 +98,7 @@ export const DEFAULT_VOICE_CONTROLS: VoiceControlSettings = {
 	wakeDebounceMs: DEFAULT_WAKE_DEBOUNCE_MS,
 	wakeEngine: DEFAULT_WAKE_ENGINE,
 	agentPhrases: [],
+	defaultAgentSessionId: '',
 	stopPhrase: DEFAULT_STOP_PHRASE,
 	stopWordEnabled: true,
 	holdThresholdMs: DEFAULT_HOLD_THRESHOLD_MS,
@@ -132,6 +139,7 @@ export function readVoiceControls(
 		wakeDebounceMs: asNumber(raw.wakeDebounceMs, DEFAULT_VOICE_CONTROLS.wakeDebounceMs),
 		wakeEngine: asWakeEngine(raw.wakeEngine),
 		agentPhrases: readAgentWakePhrases(raw.agentPhrases),
+		defaultAgentSessionId: readDefaultVoiceAgentId(raw.defaultAgentSessionId) ?? '',
 		stopPhrase: asString(raw.stopPhrase, DEFAULT_VOICE_CONTROLS.stopPhrase),
 		stopWordEnabled: raw.stopWordEnabled !== false,
 		holdThresholdMs: asNumber(raw.holdThresholdMs, DEFAULT_VOICE_CONTROLS.holdThresholdMs),

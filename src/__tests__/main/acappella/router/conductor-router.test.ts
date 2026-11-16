@@ -278,6 +278,41 @@ describe('createConductorRouter - disambiguation', () => {
 		expect(result.clarify).toBe('Which agent or tab should take that?');
 	});
 
+	it('sends an unclear request to the default agent instead of asking which agent', async () => {
+		const { router } = makeRouter(fakeBrain(decision({ target: 'conductor', confidence: 0.5 })));
+
+		const result = await router.route(
+			'do that',
+			context({ defaultAgentSessionId: 'agent-backend' })
+		);
+
+		// Left on the conductor: the executor lands it on the default agent.
+		expect(result.clarify).toBeUndefined();
+		expect(result.target).toBe('conductor');
+	});
+
+	it('still asks between two named candidates when a default agent is set', async () => {
+		const { router } = makeRouter(fakeBrain(decision({ confidence: 0.3 })));
+
+		const result = await router.route(
+			'run it',
+			context({ defaultAgentSessionId: 'agent-backend' })
+		);
+
+		expect(result.clarify).toBe('Backend or API?');
+	});
+
+	it('asks as before when the default agent is no longer running', async () => {
+		const { router } = makeRouter(fakeBrain(decision({ target: 'conductor', confidence: 0.5 })));
+
+		const result = await router.route(
+			'do that',
+			context({ defaultAgentSessionId: 'agent-deleted' })
+		);
+
+		expect(result.clarify).toBe('Which agent or tab should take that?');
+	});
+
 	it('asks rather than dispatching below the threshold', async () => {
 		const { router } = makeRouter(fakeBrain(decision({ confidence: 0.3 })));
 
@@ -353,6 +388,19 @@ describe('createConductorRouter - validation failures', () => {
 		// The user's own words survive, so answering the question routes the
 		// request they actually made.
 		expect(result.prompt).toBe('deploy the thing');
+	});
+
+	it("hands a twice-rejected request to the default agent, in the user's own words", async () => {
+		const bad = decision({ target: { sessionId: 'agent-ghost' } });
+		const { router } = makeRouter(fakeBrain(bad, bad));
+
+		const result = await router.route(
+			'deploy the thing',
+			context({ defaultAgentSessionId: 'agent-backend' })
+		);
+
+		expect(result).toMatchObject({ target: 'conductor', prompt: 'deploy the thing' });
+		expect(result.clarify).toBeUndefined();
 	});
 
 	it('never dispatches a decision that failed validation twice', async () => {

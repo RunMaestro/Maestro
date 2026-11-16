@@ -44,6 +44,7 @@ import type { BackgroundAnnouncementSetting } from '../../../shared/acappella/an
 import type { ProviderSlotState } from '../../../shared/acappella/protocol';
 import { normalizeSpeechVocabulary } from '../../../shared/acappella/speech-vocabulary';
 import { normalizeWakePhrase } from '../../../shared/acappella/voice-models';
+import { readDefaultVoiceAgentId } from '../../../shared/acappella/voice-settings-schema';
 import {
 	VOICE_ROUTING_TASK_ID,
 	effectiveBrainProviderId,
@@ -195,6 +196,14 @@ export interface VoiceProviderSettings {
 	sendHoldMs?: number;
 	/** Phrases that mean "send it". Undefined takes the built-in set. */
 	sendPhrases?: string[];
+	/**
+	 * The agent a Conductor request lands on when no agent is clearly meant.
+	 *
+	 * Ahead of the agent on screen: what the user happens to be looking at is a
+	 * weaker signal than an agent they named for exactly this. Undefined keeps the
+	 * on-screen fallback.
+	 */
+	defaultAgentSessionId?: string;
 	/**
 	 * Which microphone to open. Undefined follows the system default.
 	 *
@@ -887,6 +896,7 @@ export function readVoiceProviderSettings(store: {
 		holdUntilSend: controls.holdUntilSend === true,
 		sendHoldMs: clampSendHoldMs(controls.sendHoldMs),
 		sendPhrases: parseSendPhrases(controls.sendPhrases),
+		defaultAgentSessionId: readDefaultVoiceAgentId(controls.defaultAgentSessionId) ?? undefined,
 		inputDeviceId: asProviderId(audio.inputDeviceId),
 		wakePhrase: asProviderId(controls.wakePhrase),
 		// Always-on listening is consent, so only a literal `true` turns it on.

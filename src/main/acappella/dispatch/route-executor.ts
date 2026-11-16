@@ -302,6 +302,12 @@ export interface VoiceRouteExecutorOptions {
 	getSessions?: () => StoredSession[];
 	/** The agent the desktop is on, used when the Brain targets the conductor. */
 	getActiveSessionId?: () => string | null;
+	/**
+	 * The agent the user named for requests no agent is clearly meant for.
+	 * Preferred over the agent on screen. Absent, or returning null, keeps the
+	 * on-screen fallback.
+	 */
+	getDefaultAgentSessionId?: () => string | null;
 	/** How long an identical decision replays instead of executing again. */
 	replayWindowMs?: number;
 	/**
@@ -317,6 +323,7 @@ interface ResolvedExecutorDeps {
 	bridge: VoiceRendererBridge;
 	getSessions: () => StoredSession[];
 	getActiveSessionId: () => string | null;
+	getDefaultAgentSessionId: () => string | null;
 	recentDispatches?: DispatchReplayCache;
 	getQuickChat?: () => QuickChatVoiceHost | null;
 	getProcessManager?: () => ProcessLivenessProbe | null;
@@ -379,6 +386,7 @@ export function createVoiceRouteExecutor(options: VoiceRouteExecutorOptions): Vo
 		bridge: options.bridge,
 		getSessions: options.getSessions ?? readStoredSessions,
 		getActiveSessionId: options.getActiveSessionId ?? readActiveSessionId,
+		getDefaultAgentSessionId: options.getDefaultAgentSessionId ?? (() => null),
 		recentDispatches: createDispatchReplayCache(options.replayWindowMs),
 		getQuickChat: options.getQuickChat,
 		getProcessManager: options.getProcessManager,
@@ -436,7 +444,10 @@ export async function executeRouteDecision(
 	// the user can close a tab while a decision is in flight.
 	const sessions = deps.getSessions();
 	const roster = buildAgentRoster(sessions);
-	const agent = resolveAgent(decision, context, roster, deps.getActiveSessionId());
+	const agent = resolveAgent(decision, context, roster, {
+		defaultSessionId: deps.getDefaultAgentSessionId(),
+		activeSessionId: deps.getActiveSessionId(),
+	});
 	const prompt = decision.prompt.trim();
 
 	// Idempotency is checked AFTER the roster read so a retry that is no longer
@@ -609,15 +620,20 @@ function dispatchKey(decision: RouteDecision, agentSessionId: string): string {
 
 /**
  * A conductor-targeted decision still has to land somewhere. Preference order:
- * the session's bound agent, then the agent the desktop is showing, then the
- * only agent there is. With several agents and no signal, guessing would put a
- * spoken instruction in the wrong repository, so it fails instead.
+ * the session's bound agent, then the default agent the user named in Voice
+ * Controls, then the agent the desktop is showing, then the only agent there
+ * is. With several agents and no signal, guessing would put a spoken
+ * instruction in the wrong repository, so it fails instead.
+ *
+ * The default outranks the screen on purpose: the agent someone happens to be
+ * looking at when they speak to Maestro as a whole is an accident of where
+ * they last clicked, and the default is a choice they made for exactly this.
  */
 function resolveAgent(
 	decision: RouteDecision,
 	context: { roster: RosterAgent[]; scope: VoiceScope },
 	roster: RosterAgent[],
-	activeSessionId: string | null
+	fallbacks: { defaultSessionId: string | null; activeSessionId: string | null }
 ): RosterAgent {
 	const byId = (sessionId: string | null): RosterAgent | undefined =>
 		sessionId ? roster.find((agent) => agent.sessionId === sessionId) : undefined;
@@ -632,7 +648,11 @@ function resolveAgent(
 	}
 
 	const scoped = byId(voiceScopeAgentId(context.scope));
-	const fallback = scoped ?? byId(activeSessionId) ?? (roster.length === 1 ? roster[0] : undefined);
+	const fallback =
+		scoped ??
+		byId(fallbacks.defaultSessionId) ??
+		byId(fallbacks.activeSessionId) ??
+		(roster.length === 1 ? roster[0] : undefined);
 	if (!fallback) {
 		throw new VoiceDispatchError(
 			roster.length === 0

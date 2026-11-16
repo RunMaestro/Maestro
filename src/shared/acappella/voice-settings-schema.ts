@@ -231,6 +231,12 @@ export const VOICE_SETTING_FIELDS: Readonly<Record<string, VoiceSettingField>> =
 		description:
 			'Per-agent wake phrases. Set one with "maestro-cli voice wake-phrase set", which rewrites one entry.',
 	},
+	'controls.defaultAgentSessionId': {
+		kind: 'string',
+		default: undefined,
+		description:
+			'The agent a Conductor request goes to when no agent is clearly meant. Unset falls back to the agent on screen. Set it with "maestro-cli voice default-agent set".',
+	},
 	'controls.stopPhrase': {
 		kind: 'string',
 		default: DEFAULT_STOP_PHRASE,
@@ -588,4 +594,32 @@ export function readAgentWakePhrases(value: unknown): AgentWakePhrase[] {
 				typeof entry.phrase === 'string'
 		)
 		.map((entry) => ({ agentSessionId: entry.agentSessionId, phrase: entry.phrase }));
+}
+
+/**
+ * A stored `controls.defaultAgentSessionId`, or null when unset.
+ *
+ * Blank reads as unset, so the Settings panel can clear the choice by writing
+ * an empty string and every reader agrees that means "no default".
+ */
+export function readDefaultVoiceAgentId(value: unknown): string | null {
+	return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+/**
+ * The default agent, when one is set AND still running.
+ *
+ * The one rule for every layer that falls back to it (the router deciding not
+ * to ask, the executor picking a target, the prompt naming it): an agent the
+ * user deleted is not a default, and a request must never be addressed to an
+ * id nothing answers to.
+ */
+export function liveDefaultVoiceAgentId(
+	defaultAgentSessionId: string | null | undefined,
+	roster: readonly { sessionId: string }[]
+): string | null {
+	if (!defaultAgentSessionId) return null;
+	return roster.some((agent) => agent.sessionId === defaultAgentSessionId)
+		? defaultAgentSessionId
+		: null;
 }

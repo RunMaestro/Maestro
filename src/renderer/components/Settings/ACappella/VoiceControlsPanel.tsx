@@ -94,6 +94,20 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 			controls.agentPhrases.some((entry) => entry.agentSessionId === agent.sessionId)
 	);
 	const availableAgents = agents.filter((agent) => !phraseAgents.includes(agent));
+	// A default whose agent was deleted is shown as such rather than as a bare id:
+	// main ignores it (the on-screen agent takes the request), and the user
+	// should be able to see why their choice is not being honored.
+	const defaultAgentMissing =
+		controls.defaultAgentSessionId !== '' &&
+		agents.length > 0 &&
+		!agents.some((agent) => agent.sessionId === controls.defaultAgentSessionId);
+	const defaultAgentOptions = [
+		{ value: '', label: 'None (the agent on screen)' },
+		...agents.map((agent) => ({ value: agent.sessionId, label: agent.name })),
+		...(defaultAgentMissing
+			? [{ value: controls.defaultAgentSessionId, label: 'Removed agent (not in use)' }]
+			: []),
+	];
 	const [testing, setTesting] = useState(false);
 	const [testHit, setTestHit] = useState<string | null>(null);
 	const [wakeHits, setWakeHits] = useState(0);
@@ -341,6 +355,32 @@ export function VoiceControlsPanel({ theme, enabled }: VoiceControlsPanelProps) 
 							{wakeHits > 0 && ` · ${wakeHits} detection${wakeHits === 1 ? '' : 's'}`}
 						</span>
 					</div>
+				</SectionCard>
+			</div>
+
+			{/* -- Default agent --------------------------------------------- */}
+			<div data-setting-id="encore-a-cappella-default-agent">
+				<SectionCard theme={theme}>
+					<div>
+						<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
+							Default agent
+						</div>
+						<p className="text-xs opacity-70 mt-0.5 mb-2">
+							Where a request goes when you talk to Maestro as a whole and no agent is clearly
+							meant. The Conductor sends it here instead of asking which agent. With none set, the
+							agent on screen takes it.
+						</p>
+					</div>
+					<ThemedSelect
+						theme={theme}
+						value={controls.defaultAgentSessionId}
+						aria-label="Default voice agent"
+						options={defaultAgentOptions}
+						onChange={(id) => void controls.update({ defaultAgentSessionId: id })}
+						disabled={!enabled || !controls.loaded}
+						filterable
+						filterPlaceholder="Filter agents..."
+					/>
 				</SectionCard>
 			</div>
 

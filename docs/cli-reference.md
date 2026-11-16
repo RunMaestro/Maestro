@@ -5122,6 +5122,46 @@ Remove one agent's wake phrase
 maestro-cli voice wake-phrase clear <agent-id>
 ```
 
+## `maestro-cli voice default-agent`
+
+The agent a Conductor request goes to when no agent is clearly meant (instead of the agent on screen)
+
+## `maestro-cli voice default-agent show`
+
+Show the default agent, and whether it is still in use
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli voice default-agent show --json
+```
+
+## `maestro-cli voice default-agent set <agent>`
+
+Send voice requests no agent is clearly meant for to this agent
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli voice default-agent set <agent-id>
+```
+
+## `maestro-cli voice default-agent clear`
+
+Remove the default agent, so the agent on screen takes unclear requests again
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli voice default-agent clear
+```
+
 ## `maestro-cli voice wake`
 
 Teach the wake word a phrase from your own recordings: record or add WAV files, then train (requires the desktop app)
