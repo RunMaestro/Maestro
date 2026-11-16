@@ -18,6 +18,7 @@ import { Stethoscope } from 'lucide-react';
 import type { VoiceSelfTestReport } from '../../../../main/acappella/voice-self-test';
 import { selfTestVerdict } from '../../../../shared/local-models/native-runtimes';
 import { modelsSettingsLocation } from '../../../../shared/local-models/settings-location';
+import { ipcErrorMessage } from '../../../../shared/serializeError';
 import type { Theme } from '../../../types';
 import { flashCopiedToClipboard } from '../../../utils/flashCopiedToClipboard';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
@@ -56,7 +57,7 @@ export function VoiceSelfTestCard({ theme }: VoiceSelfTestCardProps) {
 			}
 			setReport(response.report);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
+			setError(ipcErrorMessage(err));
 		} finally {
 			setRunning(false);
 		}
