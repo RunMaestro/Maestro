@@ -14,7 +14,8 @@ import type { CoworkingMcpServerSpec } from '../coworking-types';
 import type { AgentMcpInstaller } from './types';
 
 const SENTINEL_BEGIN = '# >>> maestro-coworking BEGIN - managed by Maestro, do not edit';
-const LEGACY_SENTINEL_BEGIN = '# >>> maestro-coworking BEGIN — managed by Maestro, do not edit';
+const LEGACY_SENTINEL_BEGIN =
+	'# >>> maestro-coworking BEGIN \u2014 managed by Maestro, do not edit';
 const SENTINEL_END = '# <<< maestro-coworking END';
 
 function configPath(): string {

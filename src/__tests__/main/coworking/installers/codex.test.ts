@@ -46,7 +46,7 @@ describe('codexInstaller', () => {
 
 	it('updates a legacy em-dash block without duplicating the MCP table', async () => {
 		const legacy =
-			'# >>> maestro-coworking BEGIN — managed by Maestro, do not edit\n' +
+			'# >>> maestro-coworking BEGIN \u2014 managed by Maestro, do not edit\n' +
 			'[mcp_servers.maestro-coworking]\ncommand = "old"\n' +
 			'# <<< maestro-coworking END\n';
 		fs.mkdirSync(path.dirname(cfgPath()), { recursive: true });
@@ -110,7 +110,7 @@ auto_save = true
 		expect(content).toMatch(/MAESTRO_COWORKING_SOCKET/);
 	});
 
-	it.each(['—', '-'])(
+	it.each(['\u2014', '-'])(
 		'detects, updates and removes the %s managed block, preserving foreign bytes',
 		async (dash) => {
 			const prefix = '# my settings\nmodel = "synthetic"\n\n';
@@ -144,7 +144,7 @@ auto_save = true
 		}
 	);
 
-	it.each(['—', '-'])(
+	it.each(['\u2014', '-'])(
 		'uninstalls the original %s block with CRLF and no final newline',
 		async (dash) => {
 			const prefix = '# preserve\r\nmodel = "synthetic"\r\n';
@@ -199,7 +199,7 @@ auto_save = true
 		['foreign root key', 'model = "keep"\n'],
 	])('rejects unsafe managed block with %s on install and uninstall', async (_label, extra) => {
 		const input =
-			'# >>> maestro-coworking BEGIN — managed by Maestro, do not edit\n' +
+			'# >>> maestro-coworking BEGIN \u2014 managed by Maestro, do not edit\n' +
 			extra +
 			'[mcp_servers.maestro-coworking]\ncommand="old"\n# <<< maestro-coworking END\n';
 		fs.mkdirSync(path.dirname(cfgPath()), { recursive: true });
@@ -214,7 +214,7 @@ auto_save = true
 	it('rejects duplicate legacy/current blocks without modifying either', async () => {
 		await codexInstaller.install(SPEC);
 		const current = fs.readFileSync(cfgPath(), 'utf8');
-		const input = current.replace('BEGIN -', 'BEGIN —') + current;
+		const input = current.replace('BEGIN -', 'BEGIN \u2014') + current;
 		fs.writeFileSync(cfgPath(), input);
 		const write = vi.spyOn(atomicStore, 'atomicWriteFile');
 		await expect(codexInstaller.install(SPEC)).rejects.toThrow(/markers/);
@@ -241,7 +241,7 @@ auto_save = true
 		const prefix = '# keep\r\nmodel="synthetic"\r\n';
 		const suffix = '\r\n[mcp_servers.other]\r\ncommand="keep"\r\n';
 		const block =
-			'# >>> maestro-coworking BEGIN — managed by Maestro, do not edit\r\n[mcp_servers.maestro-coworking]\r\ncommand="old"\r\n# <<< maestro-coworking END';
+			'# >>> maestro-coworking BEGIN \u2014 managed by Maestro, do not edit\r\n[mcp_servers.maestro-coworking]\r\ncommand="old"\r\n# <<< maestro-coworking END';
 		fs.mkdirSync(path.dirname(cfgPath()), { recursive: true });
 		fs.writeFileSync(cfgPath(), prefix + block + suffix);
 		await codexInstaller.install(SPEC);
