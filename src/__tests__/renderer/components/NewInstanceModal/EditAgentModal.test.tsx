@@ -14,6 +14,11 @@ import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal
 import { __resetRememberedModalTabsForTests } from '../../../../renderer/components/ui/ModalTabStrip';
 import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../../shared/maestro-lib/client/peer-mirror';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import type { LocalModelEndpoint } from '../../../../shared/local-models/endpoints';
 import { RUN_ON_MIN_CONTEXT_TOKENS } from '../../../../shared/local-models/run-on';
@@ -4126,6 +4131,73 @@ describe('EditAgentModal', () => {
 			const result = await screen.findByTestId('edit-agent-model-source-test-result');
 			expect(result).toHaveAttribute('data-ok', 'false');
 			expect(result).toHaveTextContent('does not serve "qwen3:latest"');
+		});
+	});
+
+	describe('a Federation hosted agent', () => {
+		/** The host `box` holds the agent and one other; `laptop-1` stays on this machine. */
+		function showHost() {
+			const peer = replacePeerAgents(
+				createMirroredPeer({ peerId: 'box', remoteId: 'r-box', name: 'Build Box' }),
+				[
+					{ id: 'host-1', name: 'My Agent', toolType: 'claude-code' },
+					{ id: 'host-2', name: 'Builder', toolType: 'claude-code' },
+				],
+				[],
+				1
+			).peer;
+			usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+		}
+
+		afterEach(() => {
+			usePeerMirrorStore.setState({ peers: {} });
+		});
+
+		const renderEditor = (session: Session) =>
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+
+		it('marks each field of a lifted agent with where its value lives', async () => {
+			showHost();
+			renderEditor(createSession({ liftedTo: { peer: 'box', agentId: 'host-1', at: 1 } }));
+			expect(await screen.findByTestId('federation-scope-name')).toHaveTextContent('From host');
+			expect(screen.getByTestId('federation-scope-additionalDirectories')).toHaveTextContent(
+				'Not synced yet'
+			);
+			openTab('SSH');
+			expect(screen.getByTestId('federation-scope-ssh')).toHaveTextContent('This machine');
+		});
+
+		it('names a peer row the host cannot honor', async () => {
+			showHost();
+			const laptop = createSession({ id: 'laptop-1', name: 'Laptop Agent' });
+			useSessionStore.setState({ sessions: [laptop] });
+			renderEditor(
+				createSession({
+					liftedTo: { peer: 'box', agentId: 'host-1', at: 1 },
+					peerAgents: [{ sessionId: 'laptop-1', read: true, write: false }],
+				})
+			);
+			openTab('Peers');
+			expect(await screen.findByTestId('peer-row-notice')).toHaveTextContent(
+				'Not honored by Build Box'
+			);
+			useSessionStore.setState({ sessions: [] });
+		});
+
+		it('draws no badge for an ordinary local agent', async () => {
+			showHost();
+			renderEditor(createSession());
+			await screen.findByDisplayValue('My Agent');
+			expect(screen.queryByTestId('federation-scope-name')).not.toBeInTheDocument();
 		});
 	});
 });

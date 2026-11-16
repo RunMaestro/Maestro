@@ -91,6 +91,7 @@ import {
 } from '../../shared/local-models/token-proxy-report';
 import type { DurationPercentiles } from '../../shared/percentiles';
 import { peerAccessLabel, type PeerConfigurationReport } from '../../shared/peerAgents';
+import type { AgentFederationReport } from '../services/federation-fields';
 import {
 	describeDelegationGraphStats,
 	type DelegationAdjacencyEntry,
@@ -727,6 +728,8 @@ export interface AgentDetailDisplay {
 	peer?: string;
 	/** Federation: the host's tabs, so a turn started from here can be found again. */
 	tabs?: { id: string; name: string | null; state: 'idle' | 'busy' }[];
+	/** Federation: where each setting of a hosted agent lives, and what waits on it. */
+	federation?: AgentFederationReport;
 	/** Null for a peer's agent: its History lives on the host, and the bridge does not carry it. */
 	stats: {
 		historyEntries: number;
@@ -931,6 +934,35 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 					);
 				}
 			}
+		}
+	}
+
+	// Federation: the settings live on the host. List only what waits; every scope is in --json.
+	if (agent.federation) {
+		const { host, stateKnown, stateError, fields } = agent.federation;
+		const entries = Object.entries(fields);
+		const waiting = entries.filter(([, field]) => field?.pending || field?.conflict);
+		lines.push('');
+		lines.push(bold(c('cyan', 'FEDERATION')));
+		lines.push('');
+		lines.push(`  ${c('white', 'Settings on:')}  ${c('magenta', host)}`);
+		if (!stateKnown) {
+			lines.push(
+				`  ${c('white', 'Waiting:')}      ${dim(`unknown${stateError ? ` (${stateError})` : ''}`)}`
+			);
+		} else if (waiting.length === 0) {
+			lines.push(`  ${c('white', 'Waiting:')}      ${dim('nothing; this machine matches the host')}`);
+		} else {
+			for (const [id, field] of waiting) {
+				const state = field?.conflict ? c('red', 'Conflict') : c('yellow', 'Pending');
+				lines.push(`    ${state}  ${id}`);
+			}
+		}
+		const notSynced = entries.filter(([, field]) => field?.scope === 'not-synced');
+		if (notSynced.length > 0) {
+			lines.push(
+				`  ${c('white', 'Not synced:')}   ${dim(notSynced.map(([id]) => id).join(', '))}`
+			);
 		}
 	}
 

@@ -196,6 +196,71 @@ export interface EditAgentModalProps {
 	existingSessions: Session[];
 }
 
+/** The arguments `EditAgentModalProps.onSave` is called with, in order. */
+export type EditAgentSaveArgs = Parameters<EditAgentModalProps['onSave']>;
+
+/**
+ * The name of every `onSave` argument, in its position. Its length must equal the signature's, so
+ * a new argument does not compile until it is named here, and every reader of the arguments by
+ * name (`readEditAgentSaveArgs()`) sees it.
+ */
+export const EDIT_AGENT_SAVE_ARG_NAMES = [
+	'sessionId',
+	'name',
+	'toolType',
+	'nudgeMessage',
+	'newSessionMessage',
+	'customPath',
+	'customArgs',
+	'customEnvVars',
+	'customModel',
+	'customEffort',
+	'customContextWindow',
+	'sessionSshRemoteConfig',
+	'enableMaestroP',
+	'maestroPPath',
+	'maestroPMode',
+	'retryOnAvailabilityErrors',
+	'retryOnTokenExhaustion',
+	'additionalDirectories',
+	'contextWindowSource',
+	'customEnvVarsDisabled',
+	'workingDirectory',
+	'codexAutoResetOnExhaustion',
+	'codexTransport',
+	'gatewayUrl',
+	'runOn',
+	'tierTargets',
+	'peerGrants',
+	'acceptTranslationLimitations',
+	'selectedUserResources',
+	'migrationPlanId',
+	'projectResourcesIntoRepo',
+	'convertProviderHistory',
+	'harnessControlMode',
+] as const satisfies { readonly length: Required<EditAgentSaveArgs>['length'] };
+
+type SaveArgNames = typeof EDIT_AGENT_SAVE_ARG_NAMES;
+
+/** One `onSave` argument's name. */
+export type EditAgentSaveArgName = SaveArgNames[number];
+
+/** The `onSave` arguments by name, each with the type of its position. */
+export type EditAgentSaveFields = {
+	[Index in keyof SaveArgNames & `${number}` as SaveArgNames[Index]]:
+		| Required<EditAgentSaveArgs>[Index & keyof Required<EditAgentSaveArgs>]
+		| undefined;
+};
+
+/** The `onSave` arguments by name, so a reader never counts positions. */
+export function readEditAgentSaveArgs(args: EditAgentSaveArgs): EditAgentSaveFields {
+	const fields: Record<string, unknown> = {};
+	EDIT_AGENT_SAVE_ARG_NAMES.forEach((name, index) => {
+		fields[name] = args[index];
+	});
+	return fields as EditAgentSaveFields;
+}
+
 export interface RemotePathValidationState {
 	checking: boolean;
 	valid: boolean;

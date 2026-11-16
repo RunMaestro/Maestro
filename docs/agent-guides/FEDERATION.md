@@ -37,7 +37,9 @@ Every setting has one of three scopes, recorded in code:
 | `personal` | Each conductor's own; sent with that conductor's messages as `TurnOverrides`, never stored on the host | a tab's model, effort, read-only, save to History; thinking display, Enter to send, star |
 | `machine`  | Means something on one machine only; never sent                                                        | Left Bar group, SSH settings, the maestro-p binary path                                  |
 
-The tables are `AGENT_PATCH_FEDERATION`, `TAB_PATCH_FEDERATION`, and `TURN_OVERRIDE_FIELDS` in `src/shared/maestro-lib/agents/lift-settings-sync.ts`. They are `Record`s over `AgentPatchField`, `keyof TabPatch`, and `keyof TurnOverrides`, so a new field does not compile until someone decides its scope, and a test checks that every `shared` agent field is actually synced.
+The tables are `AGENT_PATCH_FEDERATION`, `TAB_PATCH_FEDERATION`, and `TURN_OVERRIDE_FIELDS` in `src/shared/maestro-lib/agents/lift-settings-sync.ts`. They are `Record`s over `AgentPatchField`, `keyof TabPatch`, and `keyof TurnOverrides`, so a new field does not compile until someone decides its scope, and a test checks that every `shared` agent field is actually synced. Two more tables cover agent settings with no `AgentPatch` field: `HOSTED_SETTINGS_NOT_YET_SYNCED` (should be shared, the host cannot take it yet) and `CONDUCTOR_ONLY_SETTINGS` (`personal` or `machine` by design, never sent).
+
+**The badges and the CLI read the same tables.** On a hosted agent (a lifted pointer, or a mirror through `HostedAgentSettingsModal`), Edit Agent draws a `FederationFieldBadge` on every field: From host, Yours only, This machine, or Not synced yet, plus Pending (an edit the host has not taken) or Conflict (opens the conflicts modal). `describeFederationField()` turns a field id into that status; the renderer feeds it `hostedFieldState()` and `maestro-cli show agent --json` reads the same answer through `federation_command` `settings-fields` (`readAgentFederation()`). A badge reads a context Edit Agent provides only for a hosted agent, so an ordinary local agent shows nothing.
 
 ## Checklist: adding or changing an agent setting
 
@@ -53,9 +55,11 @@ Do this for every new field on `Session` that a person sets (Edit Agent, a toggl
 3. **`personal`**: it rides on each message.
    - Add it to `TurnOverrides` and `normalizeTurnOverrides()` (`client/types.ts`), `TURN_OVERRIDE_FIELDS` and `TAB_PATCH_FEDERATION`, the `send` action parser, and the host's turn assembly (`turns/assemble.ts`, `turns/record-turn.ts`, the queued turn in `runtime/turns.ts`), and the desktop host's queue path (`src/shared/queuedTurnSettings.ts`, `useRemoteIntegration.ts`).
    - Add the chip to the mirror composer (`PeerAgentComposer.tsx`, stored in `hostedAgentSettingsStore.tabChoices`) and the flag to `maestro-cli send <peer:agent>` (`peerTurnOverrides()` in `src/cli/commands/send.ts`).
-4. **`machine`**: record the row with its reason, and keep the field out of `AGENT_FIELDS`. Nothing else.
+4. **`machine`**: record the row with its reason, and keep the field out of `AGENT_FIELDS`. Nothing else. A machine or personal setting with no `AgentPatch` field at all goes in `CONDUCTOR_ONLY_SETTINGS`.
 5. **Cannot reach the host yet** (no `AgentPatch` field): list it in `HOSTED_SETTINGS_NOT_YET_SYNCED` with the reason, and in the "Known limits" of [docs/federation.md](../federation.md). A silent gap is a bug.
-6. **Document it**: the "Settings live on the host" list in [docs/federation.md](../federation.md), the parity rows in [CLI-UI-PARITY.md](CLI-UI-PARITY.md), and tests in `src/shared/maestro-lib/agents/__tests__/lift-settings-sync.test.ts`.
+6. **Its badge comes free from the table.** Put `<FederationFieldBadge field="<id>" />` next to the field's label, or wrap a slot in `<FederatedSetting field="<id>">`; the scope, reason, Pending and Conflict are read from the row you added. Never hand-write a scope in a component. `show agent --json` reports the new field with no change to the CLI.
+7. **A new Edit Agent save argument**: name it in `EDIT_AGENT_SAVE_ARG_NAMES` (`NewInstanceModal/types.ts`; its length must match the `onSave` signature) and decide it in `HOSTED_SAVE_ARGS` (`HostedAgentSettingsModal.tsx`, a `Record` over the names). A `host` argument must also be written by `editedHostRecord()`.
+8. **Document it**: the "Settings live on the host" list in [docs/federation.md](../federation.md), the parity rows in [CLI-UI-PARITY.md](CLI-UI-PARITY.md), and tests in `src/shared/maestro-lib/agents/__tests__/lift-settings-sync.test.ts`.
 
 ## Checklist: a feature that acts on an agent
 
@@ -66,21 +70,32 @@ A hosted agent is not in `sessionStore`; it is in the peer mirror, and its turns
 - **Does it start a turn?** A turn of a hosted agent runs on the host, never here: every local send path refuses a lifted agent (`liftedSendRefusal()`).
 - **Does it name another agent by id?** Ids differ across machines: a lifted agent's id on the host is not its local id (`liftedTo.agentId`). See the peers section below.
 
-## For acappella: consult, delegation, peers, and the other branch-only settings
+## acappella: consult, delegation, peers, and the other branch-only settings
 
-acappella carries settings rc does not have yet: agent peers and their grants (`peerAgents`, `groupPeerAccess`, `worktreePeerAccess`), Agent Delegation, consults beyond `ask`, Local Models, Models, System One, and Ensemble. When acappella merges this Federation work, **every one of its agent and tab settings goes through the checklist above**, and these need more than a row:
+acappella carries settings rc does not have yet. Each is decided, and the badge on its Edit Agent field shows the decision:
 
-- **Peer grants name agent ids.** A grant on a lifted agent names local agent ids the host does not know. Decide per grant: a grant between two agents on the same host is `shared` but must be rewritten to host ids at lift time (both ends lifted) and kept in host ids after; a grant that names an agent on another machine cannot be honored by the host's turns and must be shown as such, not dropped silently. The host evaluates grants (its turns call `maestro-cli` there), so the host needs the grant fields in `AgentPatch` and `applyAgentConfigPatch()`.
-- **Delegation and consults from a hosted agent's turn** run on the host, with the host's `maestro-cli`, so their targets are the host's agents. A target on the laptop is a `peer:agent` route the host does not have; refuse it with a clear message until hosts can reach back.
-- **Model and provider pickers** list what this machine finds. For a hosted agent, prefer the host's list (`providers.models` on the client) wherever the pick is `shared`.
-- **System One, Local Models, Ensemble**: decide per setting whether it configures the agent (`shared`, the host needs it) or this conductor's tools (`personal` or `machine`). A local model path is `machine`.
-- **Edit Agent tabs and panels acappella adds**: each field in them is a row in `AGENT_PATCH_FEDERATION` (or `HOSTED_SETTINGS_NOT_YET_SYNCED`), and the mirror's Edit Agent (`HostedAgentSettingsModal`, which maps the editor's save arguments in `editedHostRecord()`) must carry the new arguments.
+| Setting                                                                  | Decision                                                                 | Where                            |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------ | -------------------------------- |
+| `peerAgents`, `groupPeerAccess`, `worktreePeerAccess`, `peerDescription` | `shared`, synced (`AgentPatch`, `applyAgentConfigPatch()`, desktop host) | `AGENT_PATCH_FEDERATION`         |
+| `tierTargets`                                                            | Not synced yet: a tier can name this machine's Local Models sources      | `HOSTED_SETTINGS_NOT_YET_SYNCED` |
+| `gatewayUrl`, `runOn`                                                    | `machine`: a Local Models server or source as this machine reaches it    | `CONDUCTOR_ONLY_SETTINGS`        |
+| `tokenProxyMode`, `backgroundRequests`, `tokenProxyRetrieval`            | `machine`: the token proxy runs in this machine's Maestro                | `CONDUCTOR_ONLY_SETTINGS`        |
+| `systemOneOptOut`                                                        | `machine`: a hosted agent's turns ask System One on the host             | `CONDUCTOR_ONLY_SETTINGS`        |
+| Voice wake phrase                                                        | `machine`: heard by this machine's microphone                            | `CONDUCTOR_ONLY_SETTINGS`        |
+| Provider config options (other than model, effort, context window)       | `machine`: kept per provider on this machine                             | `CONDUCTOR_ONLY_SETTINGS`        |
 
-## Known gaps on rc
+How the branch-only semantics are met:
 
-- The settings in `HOSTED_SETTINGS_NOT_YET_SYNCED` (extra directories, the Agent Resilience retry switches, Codex auto reset, parked env vars) have no host field yet.
+- **Peer grants name agent ids.** The sync compares a pointer's rows in the host's ids (`splitPeerRowsForHost()`, `buildLiftPeerIdMap()`): a row for an agent lifted to the same host is rewritten to its host id, a row for an agent the host holds is kept, and a row for any other agent is never sent and stays on the pointer. A pull writes the host's rows back in local ids and keeps those rows (`peerRowsFromHost()`). A lift rewrites the rows in its follow-up patch (`liftFollowUpPatch(agent, peerIds)`); when the other end is lifted later, the next sync sends the row. Edit Agent marks a row the host cannot honor (`PeerAgentsSection` `rowNotice`), and the mirror's Peers picker lists the host's agents.
+- **Delegation and consults from a hosted agent's turn.** `assembleTurn()` stamps `MAESTRO_HOSTED_TURN=1` on every turn a runtime without a desktop runs. `maestro-cli ask` and `dispatch` inside such a turn refuse a target the host does not hold, or a `peer:agent` route, with `hostedTurnTargetRefusal()` (`TARGET_OFF_HOST`).
+- **Model pickers.** The mirror's Edit Agent and composer both discover models on the peer's SSH remote, the host's machine. A lifted pointer still carries its SSH remote, so its Edit Agent lists the same models.
+- **Edit Agent save arguments.** `editedHostRecord()` reads them by name (`readEditAgentSaveArgs()`), and `HOSTED_SAVE_ARGS` decides every one.
+
+## Known gaps
+
+- The settings in `HOSTED_SETTINGS_NOT_YET_SYNCED` (extra directories, the Agent Resilience retry switches, Codex auto reset, parked env vars, tier targets) have no host field yet.
 - A full Maestro desktop acting as host ignores `saveToHistory` and `readOnly: false` overrides (its queued items carry neither); `maestro-cli host` honors all four.
-- The mirror composer's model picker lists this machine's models; the mirror's Edit Agent uses the host's (it presents the agent as running over SSH on its remote).
+- A full Maestro desktop acting as host does not stamp `MAESTRO_HOSTED_TURN`, so `ask` or `dispatch` from its turns to an agent it does not hold reports the plain "Agent not found".
 - The Federation Settings Conflicts modal has no hotkey.
 
 ## Verifying a change

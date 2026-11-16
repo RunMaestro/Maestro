@@ -34,6 +34,10 @@
  *
  * The precedence itself lives in `resolvePeerRoster` (`src/shared/peerAgents.ts`).
  * This component only edits the three stored sources.
+ *
+ * On a Federation hosted agent each source carries its badge (`FederationFieldBadge`,
+ * which renders nothing elsewhere), and `rowNotice` says which rows the host
+ * cannot honor because they name an agent that is not on it.
  */
 
 import React, { useCallback, useMemo } from 'react';
@@ -51,6 +55,8 @@ import { FormInput } from '../ui/FormInput';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { PermissionSquare } from './AdditionalDirectoriesSection';
 import { ThemedSelect, type ThemedSelectOption } from './ThemedSelect';
+import { FederationFieldBadge } from '../HostedAgentSettings/FederationFieldBadge';
+import type { FederationFieldId } from '../../../shared/maestro-lib/agents/lift-settings-sync';
 import type { PeerAccess, PeerAgent, Theme } from '../../types';
 
 /** What the section needs to know about one agent of the fleet. */
@@ -77,6 +83,11 @@ export interface PeerAgentsSectionProps {
 	/** Drives whether the group checkbox is enabled and what its hint says. */
 	groupId?: string;
 	groupName?: string;
+	/**
+	 * A warning for one explicit row, shown under it, or undefined for none. A
+	 * hosted agent's editor names the rows its host cannot honor here.
+	 */
+	rowNotice?: (peer: PeerAgent) => string | undefined;
 }
 
 const NO_ACCESS: PeerAccess = { read: false, write: false };
@@ -93,6 +104,8 @@ interface PeerGrantRowProps {
 	consultTitle: string;
 	delegateTitle: string;
 	disabled?: boolean;
+	/** The Federation field this grant is saved to. */
+	federationField: FederationFieldId;
 }
 
 /**
@@ -110,6 +123,7 @@ function PeerGrantRow({
 	consultTitle,
 	delegateTitle,
 	disabled = false,
+	federationField,
 }: PeerGrantRowProps): React.ReactElement {
 	const checked = access !== undefined;
 	const current = access ?? NO_ACCESS;
@@ -138,6 +152,7 @@ function PeerGrantRow({
 					<span className="flex min-w-0 flex-col">
 						<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
 							{label}
+							<FederationFieldBadge field={federationField} className="ml-2" />
 						</span>
 						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							{hint}
@@ -190,6 +205,7 @@ export function PeerAgentsSection({
 	selfSessionId,
 	groupId,
 	groupName,
+	rowNotice,
 }: PeerAgentsSectionProps): React.ReactElement {
 	const updateAt = useCallback(
 		(index: number, patch: Partial<PeerAgent>) => {
@@ -257,7 +273,10 @@ export function PeerAgentsSection({
 
 	return (
 		<div>
-			<FormFieldLabel theme={theme}>Peer Agents</FormFieldLabel>
+			<FormFieldLabel theme={theme}>
+				Peer Agents
+				<FederationFieldBadge field="peerAgents" className="ml-2" />
+			</FormFieldLabel>
 			<p className="text-xs mb-2" style={{ color: theme.colors.textDim }}>
 				Agents this one may reach on its own, without an @mention.{' '}
 				<span className="font-bold">R</span> lets it consult a peer: it asks a question and gets the
@@ -277,6 +296,7 @@ export function PeerAgentsSection({
 					consultTitle="Consult peers in my group"
 					delegateTitle="Delegate to peers in my group"
 					disabled={groupDisabled}
+					federationField="groupPeerAccess"
 				/>
 				<PeerGrantRow
 					theme={theme}
@@ -287,11 +307,13 @@ export function PeerAgentsSection({
 					onChange={onWorktreeAccessChange}
 					consultTitle="Consult the worktree family"
 					delegateTitle="Delegate to the worktree family"
+					federationField="worktreePeerAccess"
 				/>
 
 				{peers.map((peer, index) => {
 					const missing = !!peer.sessionId && !pickableIds.has(peer.sessionId);
 					const excluded = !!peer.sessionId && !missing && !hasAnyPeerAccess(peer);
+					const notice = missing ? undefined : rowNotice?.(peer);
 					return (
 						<div key={index}>
 							<div className="flex gap-2">
@@ -349,6 +371,15 @@ export function PeerAgentsSection({
 								<p className="mt-1 text-xs" style={{ color: theme.colors.warning }}>
 									No access selected - this row excludes the agent, even when a group or worktree
 									grant covers it.
+								</p>
+							)}
+							{notice && (
+								<p
+									className="mt-1 text-xs"
+									style={{ color: theme.colors.warning }}
+									data-testid="peer-row-notice"
+								>
+									{notice}
 								</p>
 							)}
 						</div>

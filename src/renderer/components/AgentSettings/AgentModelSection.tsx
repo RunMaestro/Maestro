@@ -17,6 +17,7 @@ import {
 	useModelSourceChoices,
 	type ModelSourceBinding,
 } from '../shared/ModelSourceDetails';
+import { FederatedSetting } from '../HostedAgentSettings/FederationFieldBadge';
 
 export interface AgentModelSectionProps extends Omit<
 	AgentConfigOptionsProps,
@@ -42,12 +43,14 @@ function AgentModelSectionWithSource({
 			scope="model"
 			modelSources={state.choices}
 			modelSourceDetails={
-				<ModelSourceDetails
-					theme={options.theme}
-					toolType={options.agent.id}
-					state={state}
-					{...modelSource}
-				/>
+				<FederatedSetting field="runOn">
+					<ModelSourceDetails
+						theme={options.theme}
+						toolType={options.agent.id}
+						state={state}
+						{...modelSource}
+					/>
+				</FederatedSetting>
 			}
 		/>
 	);

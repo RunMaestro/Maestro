@@ -20,7 +20,12 @@
 // refused there rather than dropped.
 
 import { getSessionById, resolveAgentId } from '../services/storage';
-import { AGENT_LIFTED_CODE, liftedSendRefusal } from '../../shared/maestro-lib/agents/lift-pointer';
+import {
+	AGENT_LIFTED_CODE,
+	hostedTurnTargetRefusal,
+	liftedSendRefusal,
+	TARGET_OFF_HOST_CODE,
+} from '../../shared/maestro-lib/agents/lift-pointer';
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
 import { readCallerIdentity } from '../../shared/agentDelegation';
 import { admitCliConsult } from '../services/consult-budget-guard';
@@ -99,6 +104,12 @@ export async function ask(agentId: string, question: string, options: AskOptions
 
 	const route = routeAgentTarget(agentId);
 	if (route.kind === 'peer') {
+		// A hosted agent's turn cannot reach back to a conductor's machine.
+		const offHost = hostedTurnTargetRefusal(agentId, process.env);
+		if (offHost) {
+			fail(offHost, { code: TARGET_OFF_HOST_CODE });
+			return;
+		}
 		if (options.from !== undefined || options.withContext) {
 			fail(
 				`${options.from !== undefined ? '--from' : '--with-context'} names a local agent, which the host on peer "${route.target.peer}" cannot see. Ask without it.`,
@@ -138,7 +149,9 @@ export async function ask(agentId: string, question: string, options: AskOptions
 	try {
 		targetSessionId = resolveAgentId(agentId);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error));
+		const offHost = hostedTurnTargetRefusal(agentId, process.env);
+		if (offHost) fail(offHost, { code: TARGET_OFF_HOST_CODE });
+		else fail(error instanceof Error ? error.message : String(error));
 		return;
 	}
 	// A lifted agent answers on its host now, so the question goes there.

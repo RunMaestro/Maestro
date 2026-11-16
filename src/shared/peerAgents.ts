@@ -354,6 +354,43 @@ export function parsePeerAgentEdits(
 }
 
 /**
+ * Read a whole list of explicit rows that arrived over a wire (a Federation
+ * host taking a hosted agent's rows): `null` (no rows) or a list of
+ * `{ sessionId, read, write, description? }`, normalized the way a form save
+ * is. An empty list reads as `null`, so the field stays absent.
+ */
+export function parsePeerAgentRows(
+	raw: unknown
+): { ok: true; peerAgents: PeerAgent[] | null } | { ok: false; error: string } {
+	if (raw === null) return { ok: true, peerAgents: null };
+	if (!Array.isArray(raw)) return { ok: false, error: 'peerAgents must be a list or null.' };
+	const rows: PeerAgent[] = [];
+	for (const row of raw) {
+		if (
+			!isRecord(row) ||
+			typeof row.sessionId !== 'string' ||
+			!row.sessionId.trim() ||
+			typeof row.read !== 'boolean' ||
+			typeof row.write !== 'boolean' ||
+			(row.description !== undefined && typeof row.description !== 'string')
+		) {
+			return {
+				ok: false,
+				error:
+					'Each peerAgents entry needs a sessionId, read and write (and an optional description).',
+			};
+		}
+		rows.push({
+			sessionId: row.sessionId,
+			read: row.read,
+			write: row.write,
+			...(typeof row.description === 'string' ? { description: row.description } : {}),
+		});
+	}
+	return { ok: true, peerAgents: normalizePeerAgents(rows) ?? null };
+}
+
+/**
  * Read a derived grant that arrived over a wire: `null` (off) or a pair with at
  * least one bit set. A pair with neither bit grants nothing, so storing one
  * would only look like a grant in the settings form.

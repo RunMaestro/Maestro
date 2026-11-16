@@ -450,3 +450,24 @@ describe('PeerAgentsSection', () => {
 		});
 	});
 });
+
+describe('PeerAgentsSection on a Federation hosted agent', () => {
+	it('shows the notice a hosted editor gives for a row its host cannot honor', () => {
+		renderSection({
+			peers: [DOCS_ROW, INFRA_ROW],
+			rowNotice: (peer) =>
+				peer.sessionId === 'peer-docs'
+					? 'Not honored by box: this agent is not on the host.'
+					: undefined,
+		});
+		const notices = screen.getAllByTestId('peer-row-notice');
+		expect(notices).toHaveLength(1);
+		expect(notices[0]).toHaveTextContent('Not honored by box');
+	});
+
+	it('draws no badge and no notice for an ordinary local agent', () => {
+		renderSection({ peers: [DOCS_ROW] });
+		expect(screen.queryByTestId('peer-row-notice')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('federation-badge-peerAgents')).not.toBeInTheDocument();
+	});
+});

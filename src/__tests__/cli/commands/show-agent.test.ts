@@ -38,6 +38,17 @@ vi.mock('../../../cli/services/storage', () => ({
 	]),
 }));
 
+// Where each setting of a hosted agent lives: asked of the desktop, so stubbed here.
+vi.mock('../../../cli/services/federation-fields', () => ({
+	readAgentFederation: vi.fn(async (peerId: string, agentId: string) => ({
+		host: `${peerId}:${agentId}`,
+		stateKnown: true,
+		fields: {
+			model: { scope: 'shared', label: 'From host', why: 'w', pending: true, conflict: false },
+		},
+	})),
+}));
+
 // Mock the formatter
 vi.mock('../../../cli/output/formatter', () => ({
 	formatAgentDetail: vi.fn((detail) => `Agent: ${detail.name}\nPath: ${detail.cwd}`),
@@ -55,6 +66,7 @@ import {
 	readSettingValue,
 } from '../../../cli/services/storage';
 import { formatAgentDetail, formatError } from '../../../cli/output/formatter';
+import { readAgentFederation } from '../../../cli/services/federation-fields';
 
 describe('show-agent command', () => {
 	let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -109,6 +121,37 @@ describe('show-agent command', () => {
 	});
 
 	describe('basic display', () => {
+		it("adds a lifted agent's federation block, read for its host agent", async () => {
+			vi.mocked(getSessionById).mockReturnValue(
+				mockSession({ liftedTo: { peer: 'box', agentId: 'host-1', at: 1 } } as Partial<SessionInfo>)
+			);
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			await showAgent('agent-123', { json: true });
+
+			expect(readAgentFederation).toHaveBeenCalledWith('box', 'host-1');
+			const printed = JSON.parse(String(consoleSpy.mock.calls.at(-1)?.[0]));
+			expect(printed.federation).toMatchObject({
+				host: 'box:host-1',
+				fields: { model: { scope: 'shared', pending: true } },
+			});
+		});
+
+		it('adds no federation block for an agent that was never lifted', () => {
+			vi.mocked(readAgentFederation).mockClear();
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			expect(readAgentFederation).not.toHaveBeenCalled();
+			expect(JSON.parse(String(consoleSpy.mock.calls.at(-1)?.[0]))).not.toHaveProperty(
+				'federation'
+			);
+		});
+
 		it('should display agent details in human-readable format', () => {
 			vi.mocked(getSessionById).mockReturnValue(mockSession());
 			vi.mocked(readGroups).mockReturnValue([]);

@@ -22,6 +22,7 @@ import { parseTierTargetsEdit } from '../../../shared/modelTiers';
 import {
 	applyPeerAgentEdits,
 	parsePeerAgentEdits,
+	parsePeerAgentRows,
 	parsePeerGrantValue,
 	peerAgentEditsProblem,
 } from '../../../shared/peerAgents';
@@ -2183,6 +2184,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// here: `peerAgentEdits` is a patch, applied below.
 			'groupPeerAccess',
 			'worktreePeerAccess',
+			// A Federation host taking a hosted agent's Peers tab: the rows replaced whole
+			// (validated below) and the advertised specialty. `peerAgentEdits` stays the
+			// CLI's row-by-row patch.
+			'peerAgents',
+			'peerDescription',
 			'customModel',
 			'customEffort',
 			'customContextWindow',
@@ -2467,6 +2473,32 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			updated[key] = grant.access ?? undefined;
 		}
 
+		// The whole list of explicit rows, as a Federation conductor sends it: read the way
+		// the Peers tab saves it, or the patch fails. Sent with `peerAgentEdits` too, the
+		// edits apply to the list this patch leaves.
+		if ('peerAgents' in patch) {
+			const rows = parsePeerAgentRows(patch.peerAgents);
+			if (!rows.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: rows.error,
+				});
+				return;
+			}
+			updated.peerAgents = rows.peerAgents ?? undefined;
+		}
+		if ('peerDescription' in patch) {
+			const text = patch.peerDescription;
+			if (text !== null && typeof text !== 'string') {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: "Invalid value for field 'peerDescription'",
+				});
+				return;
+			}
+			updated.peerDescription = typeof text === 'string' ? text.trim() || undefined : undefined;
+		}
+
 		// Explicit peer rows (`update-agent --peer`, `--peer-note`, `--remove-peer`)
 		// arrive as a patch and are applied to the rows this agent holds, with the
 		// function the CLI used to check it, so a note on a peer with no row is
@@ -2494,7 +2526,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				});
 				return;
 			}
-			const applied = applyPeerAgentEdits(session.peerAgents, parsed.edits);
+			const applied = applyPeerAgentEdits(
+				'peerAgents' in updated ? updated.peerAgents : session.peerAgents,
+				parsed.edits
+			);
 			if (!applied.ok) {
 				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 					success: false,

@@ -313,6 +313,9 @@ describe('parsePeerAgentAction', () => {
 					codexTransport: 'app-server',
 					bookmarked: true,
 					effort: undefined,
+					peerAgents: [{ sessionId: 'h2', read: true, write: false }],
+					worktreePeerAccess: null,
+					peerDescription: 'Owns the docs',
 				},
 			})
 		).toEqual({
@@ -324,6 +327,9 @@ describe('parsePeerAgentAction', () => {
 				contextWindow: 200000,
 				codexTransport: 'app-server',
 				bookmarked: true,
+				peerAgents: [{ sessionId: 'h2', read: true, write: false }],
+				worktreePeerAccess: null,
+				peerDescription: 'Owns the docs',
 			},
 		});
 		expect(
@@ -359,6 +365,15 @@ describe('parsePeerAgentAction', () => {
 		expect(() =>
 			parsePeerAgentAction({ kind: 'update-agent', patch: { contextWindow: -1 } })
 		).toThrow("Invalid value for agent settings field 'contextWindow'");
+		expect(() =>
+			parsePeerAgentAction({ kind: 'update-agent', patch: { peerAgents: [{ sessionId: 'x' }] } })
+		).toThrow("Invalid value for agent settings field 'peerAgents'");
+		expect(() =>
+			parsePeerAgentAction({
+				kind: 'update-agent',
+				patch: { groupPeerAccess: { read: false, write: false } },
+			})
+		).toThrow("Invalid value for agent settings field 'groupPeerAccess'");
 		expect(() => parsePeerAgentAction({ kind: 'update-tab', patch: { readOnly: true } })).toThrow(
 			'Missing tab id'
 		);

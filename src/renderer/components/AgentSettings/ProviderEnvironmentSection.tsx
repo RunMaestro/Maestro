@@ -4,6 +4,7 @@
  */
 
 import { AgentEnvVarsSection, type AgentEnvVarsSectionProps } from '../shared/AgentEnvVarsSection';
+import { FederationFieldBadge } from '../HostedAgentSettings/FederationFieldBadge';
 
 export interface ProviderEnvironmentSectionProps extends Omit<
 	AgentEnvVarsSectionProps,
@@ -25,6 +26,9 @@ export function ProviderEnvironmentSection({
 		<div className="rounded border p-3" style={{ borderColor: theme.colors.border }}>
 			<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
 				Environment variables
+				{/* A hosted agent's live variables follow the host; parked ones stay here. */}
+				<FederationFieldBadge field="env" className="ml-2" />
+				<FederationFieldBadge field="customEnvVarsDisabled" className="ml-1" />
 			</h3>
 			<div className="mt-3 space-y-3">
 				<p className="text-xs" style={{ color: theme.colors.textDim }}>

@@ -639,6 +639,38 @@ describe('agent config and location', () => {
 		}
 	});
 
+	it('writes the Peers tab fields a Federation conductor sends, read the way the tab saves them', () => {
+		const result = applyAgentConfigPatch(agent(), {
+			peerAgents: [{ sessionId: 'p1', read: true, write: false, description: ' api ' }],
+			groupPeerAccess: { read: true, write: true },
+			peerDescription: '  Owns the docs  ',
+		});
+		expect(result.ok && result.value).toMatchObject({
+			peerAgents: [{ sessionId: 'p1', read: true, write: false, description: 'api' }],
+			groupPeerAccess: { read: true, write: true },
+			peerDescription: 'Owns the docs',
+		});
+		const cleared = result.ok
+			? applyAgentConfigPatch(result.value, {
+					peerAgents: null,
+					groupPeerAccess: null,
+					peerDescription: '   ',
+				})
+			: result;
+		expect(cleared.ok && cleared.value).not.toHaveProperty('peerAgents');
+		expect(cleared.ok && cleared.value).not.toHaveProperty('groupPeerAccess');
+		expect(cleared.ok && cleared.value).not.toHaveProperty('peerDescription');
+	});
+
+	it('refuses a malformed peer row or grant before applying anything', () => {
+		expect(
+			applyAgentConfigPatch(agent(), { peerAgents: [{ sessionId: 'p1' }], customModel: 'm' })
+		).toMatchObject({ ok: false });
+		expect(
+			applyAgentConfigPatch(agent(), { worktreePeerAccess: { read: false, write: false } })
+		).toMatchObject({ ok: false });
+	});
+
 	it('keeps keys it was not asked about (DD-5)', () => {
 		const source = agent({ rcOnlyField: { deep: [1, 2] } });
 		const result = applyAgentConfigPatch(source, { bookmarked: true });

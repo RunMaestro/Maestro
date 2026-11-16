@@ -67,6 +67,14 @@ import {
 	SshTab,
 } from '../AgentSettings';
 import { AgentSystemOneControl } from './AgentSystemOneControl';
+import {
+	FederatedSetting,
+	FederationFieldsProvider,
+	federationTargetOfSession,
+	unhonoredPeerRowNotice,
+	useFederationFields,
+	useFederationFieldsValue,
+} from '../HostedAgentSettings/FederationFieldBadge';
 import { AgentTokenProxyModeControl } from './AgentTokenProxyModeControl';
 import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
 import {
@@ -747,7 +755,52 @@ export function EditAgentModal({
 	// group this agent is in right now. This form does not edit the group, so the
 	// live entry is the truth and the opening snapshot is the fallback.
 	const peerGroupId = (liveSession ?? session)?.groupId;
-	const peerFleet = usePeerFleet(peerGroupId);
+	const localPeerFleet = usePeerFleet(peerGroupId);
+
+	// Federation: a hosted agent's fields carry where their value lives. The mirror's editor
+	// (`HostedAgentSettingsModal`) provides its own target; a lifted pointer is found here. An
+	// ordinary local agent has neither, and every badge below renders nothing.
+	const outerFederation = useFederationFields();
+	const ownFederation = useFederationFieldsValue(
+		outerFederation ? null : federationTargetOfSession(liveSession ?? session),
+		theme
+	);
+	const federation = outerFederation ?? ownFederation;
+	// The Peers picker of a hosted agent offers what the host can reach: the host's agents on a
+	// mirror; on a pointer, this machine's agents plus the host's own, named as on the host.
+	const peerFleet = useMemo(() => {
+		if (!federation) return localPeerFleet;
+		const hostOnly = federation.hostAgents
+			.filter((hostAgent) => hostAgent.id !== federation.agentId)
+			.map((hostAgent) => ({
+				id: hostAgent.id,
+				name:
+					federation.mode === 'mirror'
+						? hostAgent.name
+						: `${hostAgent.name} (on ${federation.hostName})`,
+				groupId: hostAgent.groupId,
+			}));
+		if (federation.mode === 'mirror') {
+			return {
+				availableAgents: hostOnly,
+				groupName: peerGroupId
+					? federation.hostGroups.find((group) => group.id === peerGroupId)?.name
+					: undefined,
+			};
+		}
+		const lifted = new Set(Object.values(federation.peerIds.toHost));
+		return {
+			...localPeerFleet,
+			availableAgents: [
+				...localPeerFleet.availableAgents,
+				...hostOnly.filter((hostAgent) => !lifted.has(hostAgent.id)),
+			],
+		};
+	}, [federation, localPeerFleet, peerGroupId]);
+	const peerRowNotice = useCallback(
+		(peer: PeerAgent) => unhonoredPeerRowNotice(federation, peer.sessionId),
+		[federation]
+	);
 	/**
 	 * Advisory note for the context-window control when the stored value is NOT
 	 * the one in use (#1370, following finding AD1).
@@ -1339,517 +1392,553 @@ export function EditAgentModal({
 		: null;
 
 	return (
-		<Modal
-			theme={theme}
-			title={`Edit Agent: ${session.name}`}
-			priority={MODAL_PRIORITIES.NEW_INSTANCE}
-			onClose={onClose}
-			resizable
-			resizeKey="edit-agent"
-			// Wider than New Agent's 720: the strip here can hold a seventh tab.
-			defaultSize={{ width: 820, height: 640 }}
-			minSize={{ width: 560, height: 420 }}
-			contentClassName="flex flex-col flex-1 min-h-0"
-			initialFocusRef={nameInputRef}
-			customHeader={
-				<div
-					className="p-4 border-b flex items-center justify-between shrink-0"
-					style={{ borderColor: theme.colors.border }}
-				>
-					<h2 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-						Edit Agent: {session.name}
-					</h2>
-					<div className="flex items-center gap-2">
-						<button
-							type="button"
-							onClick={handleCopySessionId}
-							className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-mono font-bold uppercase transition-colors hover:opacity-80"
-							style={{
-								backgroundColor: copiedId
-									? theme.colors.success + '20'
-									: theme.colors.accent + '20',
-								color: copiedId ? theme.colors.success : theme.colors.accent,
-								border: `1px solid ${copiedId ? theme.colors.success : theme.colors.accent}40`,
-							}}
-							title={copiedId ? 'Copied!' : `Click to copy: ${session.id}`}
-						>
-							{copiedId ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-							<span>{session.id.slice(0, 8)}</span>
-						</button>
-						<GhostIconButton onClick={onClose} ariaLabel="Close modal" color={theme.colors.textDim}>
-							<X className="w-4 h-4" />
-						</GhostIconButton>
-					</div>
-				</div>
-			}
-			footer={
-				<>
-					{translationRequested && !migrationSaving && (
-						<div className="mr-auto text-xs" style={{ color: theme.colors.textDim }}>
-							{needsTranslationAcceptance ? (
-								<label className="flex items-center gap-2">
-									<input
-										type="checkbox"
-										checked={acceptTranslationLimitations}
-										onChange={(e) => setAcceptTranslationLimitations(e.target.checked)}
-									/>
-									Allow experimental carry-over
-								</label>
-							) : migrationLoading ? (
-								'Checking carry-over…'
-							) : conversionFailed ? (
-								'Saving switches without converting.'
-							) : migrationError || migrationPlan?.status === 'blocked' ? (
-								'Provider switch blocked. Review the Provider tab.'
-							) : null}
-						</div>
-					)}
-					<ModalFooter
-						theme={theme}
-						onCancel={onClose}
-						onConfirm={handleSave}
-						confirmLabel={
-							migrationSaving
-								? migrationState === 'deferred'
-									? 'Waiting for current turn'
-									: 'Translating provider'
-								: 'Save Changes'
-						}
-						confirmDisabled={!isFormValid}
-					/>
-				</>
-			}
-		>
-			<ModalTabStrip
+		<FederationFieldsProvider value={federation}>
+			<Modal
 				theme={theme}
-				tabs={tabs}
-				activeTab={activeTab}
-				onChange={setActiveTab}
-				label="Agent settings"
-				idPrefix="edit-agent"
-				className="px-6 pt-4"
-			/>
-			<div className="flex-1 min-h-0 overflow-y-auto p-6" data-testid="edit-agent-tab-body">
-				{activeTab === 'general' && (
-					<GeneralTab
-						theme={theme}
-						idPrefix="edit-agent"
-						name={instanceName}
-						onNameChange={setInstanceName}
-						nameError={nameError}
-						nameInputRef={nameInputRef}
-						nameInputId="edit-agent-name-input"
-						workingDirectory={
-							<FormInput
-								id="edit-agent-working-dir-input"
-								theme={theme}
-								label="Working Directory"
-								value={workingDir}
-								onChange={setWorkingDir}
-								placeholder={
-									isSshEnabled
-										? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
-										: 'Select directory...'
-								}
-								error={workingDirError}
-								helperText={
-									workingDirBlocker ??
-									(workingDirChanged
-										? 'On save, the Files panel, Auto Run folder, and git follow the new directory. Conversations the provider stored under the old path may not resume.'
-										: undefined)
-								}
-								disabled={!!workingDirBlocker}
-								monospace
-								heightClass="p-2"
-								addon={
-									<BrowseFolderButton
-										theme={theme}
-										onBrowse={handleSelectFolder}
-										disabled={isSshEnabled || !!workingDirBlocker}
-										title={
-											isSshEnabled ? sshFolderPickerUnavailableTitle(sshRemoteHost) : undefined
-										}
-									/>
-								}
-							/>
-						}
-						remotePathStatus={
-							// Remote path validation status (only shown when SSH is enabled)
-							isSshEnabled ? (
-								<RemotePathStatus
-									theme={theme}
-									validation={remotePathValidation}
-									remoteHost={sshRemoteHost || 'remote'}
-								/>
-							) : undefined
-						}
-						additionalDirectories={{
-							directories: additionalDirectories,
-							onChange: setAdditionalDirectories,
-							disableBrowse: !!isSshEnabled,
-							nativelyEnforced: !!agent?.capabilities?.supportsAdditionalDirectories,
-						}}
-						newSessionMessage={newSessionMessage}
-						onNewSessionMessageChange={setNewSessionMessage}
-						nudgeMessage={nudgeMessage}
-						onNudgeMessageChange={setNudgeMessage}
-						sshRemoteHost={sshRemoteName}
-						extra={
-							// Voice wake phrase. Renders nothing unless A Cappella is switched on.
-							<AgentWakePhraseSection
-								theme={theme}
-								agentSessionId={session.id}
-								enabled={aCappellaEnabled}
-							/>
-						}
-					/>
-				)}
-
-				{activeTab === 'provider' && (
-					<ProviderTab
-						theme={theme}
-						idPrefix="edit-agent"
-						picker={
-							<>
-								<AgentProviderSelect
-									theme={theme}
-									value={translationReview ? translationDestination : selectedToolType}
-									disabled={migrationSaving || !!translationReview}
-									options={providerOptions}
-									onChange={(providerId) => {
-										setProjectResourcesIntoRepo(false);
-										setConvertProviderHistory(false);
-										setAcceptTranslationLimitations(false);
-										setSelectedToolType(providerId as ToolType);
-									}}
-								>
-									<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
-										Some providers support the ability to transfer sessions, memories, subagents,
-										etc between them. They are denoted as {carryOverBadge} in the list.
-									</div>
-									{(providerChanged || translationReview) && (
-										<div
-											className="mt-2 p-2 rounded border text-xs space-y-2"
-											style={{
-												borderColor: theme.colors.accent + '60',
-												backgroundColor: theme.colors.accent + '10',
-												color: theme.colors.textMain,
-											}}
-										>
-											<div className="flex items-start gap-2">
-												<Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-												<span>
-													{translationRequested
-														? 'Tabs, transcripts, drafts, queue and file previews are preserved. Native conversion remains unverified until resume and round-trip acceptance are proved.'
-														: `Tabs, transcripts, drafts, queue and file previews are kept. Each tab that follows the agent starts a new ${agentName} conversation; switching back to ${getAgentDisplayName(session.toolType)} resumes where it left off. Explicitly pinned tabs keep their provider.`}
-												</span>
-											</div>
-											{canConvertProvider && !translationReview && (
-												<label className="flex items-center gap-2">
-													<input
-														type="checkbox"
-														checked={convertProviderHistory}
-														disabled={migrationSaving}
-														onChange={(event) => setConvertProviderHistory(event.target.checked)}
-													/>
-													Convert memory and session history
-												</label>
-											)}
-											{translationRequested && (
-												<>
-													<label className="flex items-center gap-2">
-														<input
-															type="checkbox"
-															checked={projectResourcesIntoRepo}
-															disabled={migrationSaving}
-															onChange={(e) => setProjectResourcesIntoRepo(e.target.checked)}
-														/>
-														Also install skills and subagents into the project (git-excluded)
-													</label>
-													{migrationPlan && !migrationLoading && (
-														<StatCardGrid
-															theme={theme}
-															minColumnWidth={120}
-															cards={[
-																{ label: 'Sessions', value: migrationPlan.tabs.length },
-																{
-																	label:
-																		migrationPlan.counts.messages === undefined
-																			? 'Records'
-																			: 'Messages',
-																	value:
-																		migrationPlan.counts.messages ?? migrationPlan.counts.records,
-																	displayValue: formatCount(
-																		migrationPlan.counts.messages ?? migrationPlan.counts.records
-																	),
-																},
-																{
-																	label: 'On next use',
-																	value: migrationPlan.deferredTabs?.length ?? 0,
-																},
-															]}
-														/>
-													)}
-													<div role="status" aria-live="polite" className="flex items-center gap-2">
-														{migrationActivity && (
-															<Spinner size={14} color={theme.colors.accent} decorative />
-														)}
-														<span>
-															{migrationActivity ??
-																(conversionFailed
-																	? 'Saving switches without converting.'
-																	: migrationError || migrationPlan?.status === 'blocked'
-																		? 'Resolve the issue below to switch providers.'
-																		: migrationPlan?.status === 'deferred'
-																			? 'Ready. The switch will wait for the current turn to finish.'
-																			: 'Ready to switch providers.')}
-														</span>
-													</div>
-													{migrationBlockers.map((limit) => (
-														<div
-															key={`${limit.severity}-${limit.code}-${limit.message}`}
-															style={{ color: theme.colors.error }}
-														>
-															{limit.message}
-														</div>
-													))}
-												</>
-											)}
-										</div>
-									)}
-									{migrationError && (
-										<div
-											role="alert"
-											className="mt-2 text-xs"
-											style={{ color: theme.colors.error }}
-										>
-											{migrationError}
-										</div>
-									)}
-									{conversionFailed && (
-										<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
-											The conversion cannot run, so saving switches providers without converting.
-										</div>
-									)}
-								</AgentProviderSelect>
-
-								{/* Provider settings (path, args, agent-specific options). Its env
-								    vars live in the Provider environment section. Per-session values are saved
-								    on modal save, not on blur. */}
-								{configOptionProps && (
-									<div>
-										<div
-											className="block text-xs font-bold opacity-70 uppercase mb-2"
-											style={{ color: theme.colors.textMain }}
-										>
-											{agentName} Settings
-										</div>
-										<AgentConfigPanel
-											{...configOptionProps}
-											hideModelOptions
-											hideEnvVars
-											customPath={customPath}
-											onCustomPathChange={setCustomPath}
-											onCustomPathBlur={() => {
-												/* Saved on modal save */
-											}}
-											customArgs={customArgs}
-											onCustomArgsChange={setCustomArgs}
-											onCustomArgsBlur={() => {
-												/* Saved on modal save */
-											}}
-											{...envVarProps}
-											onRefreshAgent={handleRefreshAgent}
-											refreshingAgent={refreshingAgent}
-											isSshEnabled={isSshEnabled}
-											sshRemoteId={sshRemoteConfig?.remoteId ?? undefined}
-											enableMaestroP={enableMaestroP}
-											onEnableMaestroPChange={setEnableMaestroP}
-											maestroPMode={maestroPMode}
-											onMaestroPModeChange={setMaestroPMode}
-											maestroPPath={maestroPPath}
-											onMaestroPPathChange={setMaestroPPath}
-											onMaestroPPathBlur={() => {
-												/* Saved on modal save */
-											}}
-											detectedMaestroPPath={detectedMaestroPPath}
-											codexAutoResetOnExhaustion={codexAutoReset}
-											onCodexAutoResetChange={setCodexAutoReset}
-											codexTransport={codexTransport}
-											harnessControlMode={harnessControlMode}
-											onHarnessControlModeChange={setHarnessControlMode}
-											onCodexTransportChange={setCodexTransport}
+				title={`Edit Agent: ${session.name}`}
+				priority={MODAL_PRIORITIES.NEW_INSTANCE}
+				onClose={onClose}
+				resizable
+				resizeKey="edit-agent"
+				// Wider than New Agent's 720: the strip here can hold a seventh tab.
+				defaultSize={{ width: 820, height: 640 }}
+				minSize={{ width: 560, height: 420 }}
+				contentClassName="flex flex-col flex-1 min-h-0"
+				initialFocusRef={nameInputRef}
+				customHeader={
+					<div
+						className="p-4 border-b flex items-center justify-between shrink-0"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<h2 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+							Edit Agent: {session.name}
+						</h2>
+						<div className="flex items-center gap-2">
+							<button
+								type="button"
+								onClick={handleCopySessionId}
+								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-mono font-bold uppercase transition-colors hover:opacity-80"
+								style={{
+									backgroundColor: copiedId
+										? theme.colors.success + '20'
+										: theme.colors.accent + '20',
+									color: copiedId ? theme.colors.success : theme.colors.accent,
+									border: `1px solid ${copiedId ? theme.colors.success : theme.colors.accent}40`,
+								}}
+								title={copiedId ? 'Copied!' : `Click to copy: ${session.id}`}
+							>
+								{copiedId ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+								<span>{session.id.slice(0, 8)}</span>
+							</button>
+							<GhostIconButton
+								onClick={onClose}
+								ariaLabel="Close modal"
+								color={theme.colors.textDim}
+							>
+								<X className="w-4 h-4" />
+							</GhostIconButton>
+						</div>
+					</div>
+				}
+				footer={
+					<>
+						{translationRequested && !migrationSaving && (
+							<div className="mr-auto text-xs" style={{ color: theme.colors.textDim }}>
+								{needsTranslationAcceptance ? (
+									<label className="flex items-center gap-2">
+										<input
+											type="checkbox"
+											checked={acceptTranslationLimitations}
+											onChange={(e) => setAcceptTranslationLimitations(e.target.checked)}
 										/>
-									</div>
-								)}
-							</>
-						}
-						environment={
-							<ProviderEnvironmentSection
-								theme={theme}
-								toolType={selectedToolType}
-								isSshEnabled={!!isSshEnabled}
-								{...envVarProps}
-							/>
-						}
-						// Agent Resilience: auto-retry toggles (default ON), editable post-creation.
-						resilience={{
-							retryOnAvailabilityErrors,
-							retryOnTokenExhaustion,
-							onChangeAvailability: setRetryOnAvailabilityErrors,
-							onChangeTokenExhaustion: setRetryOnTokenExhaustion,
-						}}
-					/>
-				)}
-
-				{activeTab === 'models' && (
-					<ModelsTab
-						theme={theme}
-						idPrefix="edit-agent"
-						model={
-							configOptionProps && (
-								<div data-testid="edit-agent-model">
-									<AgentModelSection
-										{...configOptionProps}
-										modelSource={{
-											value: runOn,
-											onChange: (target) => {
-												setRunOn(target);
-												setRunOnError(undefined);
-											},
-											userEnvVars: effectiveEnvVars,
-											sshRemoteName,
-											error: runOnError,
-											onTest: handleTestRunOn,
-											testId: 'edit-agent-model-source',
-										}}
-									/>
-								</div>
-							)
-						}
-						tiers={
-							<div data-testid="edit-agent-tiers">
-								<TierTargetsField
-									theme={theme}
-									toolType={selectedToolType}
-									value={tierTargets}
-									onChange={(next) => {
-										setTierTargets(next);
-										setTierTargetsError(undefined);
-									}}
-									runOn={runOn}
-									model={agentConfig.model?.trim()}
-									error={tierTargetsError}
-									testId="edit-agent-tier-targets"
-								/>
+										Allow experimental carry-over
+									</label>
+								) : migrationLoading ? (
+									'Checking carry-over…'
+								) : conversionFailed ? (
+									'Saving switches without converting.'
+								) : migrationError || migrationPlan?.status === 'blocked' ? (
+									'Provider switch blocked. Review the Provider tab.'
+								) : null}
 							</div>
-						}
-						gateway={
-							<>
-								{/* Maestro token proxy mode, and under it where the proxy sends
-								    background requests. Both apply at once; the gateway draft
-								    below follows the mode. */}
-								<AgentTokenProxyModeControl
+						)}
+						<ModalFooter
+							theme={theme}
+							onCancel={onClose}
+							onConfirm={handleSave}
+							confirmLabel={
+								migrationSaving
+									? migrationState === 'deferred'
+										? 'Waiting for current turn'
+										: 'Translating provider'
+									: 'Save Changes'
+							}
+							confirmDisabled={!isFormValid}
+						/>
+					</>
+				}
+			>
+				<ModalTabStrip
+					theme={theme}
+					tabs={tabs}
+					activeTab={activeTab}
+					onChange={setActiveTab}
+					label="Agent settings"
+					idPrefix="edit-agent"
+					className="px-6 pt-4"
+				/>
+				<div className="flex-1 min-h-0 overflow-y-auto p-6" data-testid="edit-agent-tab-body">
+					{activeTab === 'general' && (
+						<GeneralTab
+							theme={theme}
+							idPrefix="edit-agent"
+							name={instanceName}
+							onNameChange={setInstanceName}
+							nameError={nameError}
+							nameInputRef={nameInputRef}
+							nameInputId="edit-agent-name-input"
+							workingDirectory={
+								<FormInput
+									id="edit-agent-working-dir-input"
 									theme={theme}
-									agentId={session.id}
-									agentName={session.name}
-									toolType={selectedToolType}
-									gatewayUrl={gatewayUrl}
-									storedMode={(liveSession ?? session).tokenProxyMode}
-									storedBackgroundRequests={(liveSession ?? session).backgroundRequests}
-									storedRetrieval={(liveSession ?? session).tokenProxyRetrieval}
-									sshRemoteName={sshRemoteName}
-									pendingReason={
-										gatewaySkippedReason ??
-										(providerChanged
-											? 'Save the provider change first: the proxy route depends on the provider.'
+									label="Working Directory"
+									value={workingDir}
+									onChange={setWorkingDir}
+									placeholder={
+										isSshEnabled
+											? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
+											: 'Select directory...'
+									}
+									error={workingDirError}
+									helperText={
+										workingDirBlocker ??
+										(workingDirChanged
+											? 'On save, the Files panel, Auto Run folder, and git follow the new directory. Conversations the provider stored under the old path may not resume.'
 											: undefined)
 									}
-									onGatewayUrlChange={handleProxyGatewayUrl}
+									disabled={!!workingDirBlocker}
+									monospace
+									heightClass="p-2"
+									addon={
+										<BrowseFolderButton
+											theme={theme}
+											onBrowse={handleSelectFolder}
+											disabled={isSshEnabled || !!workingDirBlocker}
+											title={
+												isSshEnabled ? sshFolderPickerUnavailableTitle(sshRemoteHost) : undefined
+											}
+										/>
+									}
 								/>
-
-								{/* Local Models gateway. Rendered for every provider: one that cannot
-								    use a gateway shows the field disabled with the reason. */}
-								<div data-testid="edit-agent-gateway">
-									<GatewayUrlField
+							}
+							remotePathStatus={
+								// Remote path validation status (only shown when SSH is enabled)
+								isSshEnabled ? (
+									<RemotePathStatus
 										theme={theme}
-										label="Local Models Gateway"
-										toolType={selectedToolType}
-										value={gatewayUrl}
-										onChange={(value) => {
-											setGatewayUrl(value);
-											setGatewayUrlError(undefined);
-										}}
-										userEnvVars={effectiveEnvVars}
-										sshRemoteName={sshRemoteName}
-										error={gatewayUrlError}
-										disabledReason={gatewaySkippedReason}
-										testId="edit-agent-gateway-url"
+										validation={remotePathValidation}
+										remoteHost={sshRemoteHost || 'remote'}
 									/>
-								</div>
-							</>
-						}
-						systemOne={
-							// Whether this agent may ask System One. Applies at once, like the
-							// proxy mode above: main answers the request and builds the prompt.
-							<AgentSystemOneControl
+								) : undefined
+							}
+							additionalDirectories={{
+								directories: additionalDirectories,
+								onChange: setAdditionalDirectories,
+								disableBrowse: !!isSshEnabled,
+								nativelyEnforced: !!agent?.capabilities?.supportsAdditionalDirectories,
+							}}
+							newSessionMessage={newSessionMessage}
+							onNewSessionMessageChange={setNewSessionMessage}
+							nudgeMessage={nudgeMessage}
+							onNudgeMessageChange={setNudgeMessage}
+							sshRemoteHost={sshRemoteName}
+							extra={
+								// Voice wake phrase. Renders nothing unless A Cappella is switched on,
+								// and then neither does its badge.
+								aCappellaEnabled ? (
+									<FederatedSetting field="voiceWakePhrase">
+										<AgentWakePhraseSection
+											theme={theme}
+											agentSessionId={session.id}
+											enabled={aCappellaEnabled}
+										/>
+									</FederatedSetting>
+								) : undefined
+							}
+						/>
+					)}
+
+					{activeTab === 'provider' && (
+						<ProviderTab
+							theme={theme}
+							idPrefix="edit-agent"
+							picker={
+								<>
+									<FederatedSetting field="provider">
+										<AgentProviderSelect
+											theme={theme}
+											value={translationReview ? translationDestination : selectedToolType}
+											disabled={migrationSaving || !!translationReview}
+											options={providerOptions}
+											onChange={(providerId) => {
+												setProjectResourcesIntoRepo(false);
+												setConvertProviderHistory(false);
+												setAcceptTranslationLimitations(false);
+												setSelectedToolType(providerId as ToolType);
+											}}
+										>
+											<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
+												Some providers support the ability to transfer sessions, memories,
+												subagents, etc between them. They are denoted as {carryOverBadge} in the
+												list.
+											</div>
+											{(providerChanged || translationReview) && (
+												<div
+													className="mt-2 p-2 rounded border text-xs space-y-2"
+													style={{
+														borderColor: theme.colors.accent + '60',
+														backgroundColor: theme.colors.accent + '10',
+														color: theme.colors.textMain,
+													}}
+												>
+													<div className="flex items-start gap-2">
+														<Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+														<span>
+															{translationRequested
+																? 'Tabs, transcripts, drafts, queue and file previews are preserved. Native conversion remains unverified until resume and round-trip acceptance are proved.'
+																: `Tabs, transcripts, drafts, queue and file previews are kept. Each tab that follows the agent starts a new ${agentName} conversation; switching back to ${getAgentDisplayName(session.toolType)} resumes where it left off. Explicitly pinned tabs keep their provider.`}
+														</span>
+													</div>
+													{canConvertProvider && !translationReview && (
+														<label className="flex items-center gap-2">
+															<input
+																type="checkbox"
+																checked={convertProviderHistory}
+																disabled={migrationSaving}
+																onChange={(event) =>
+																	setConvertProviderHistory(event.target.checked)
+																}
+															/>
+															Convert memory and session history
+														</label>
+													)}
+													{translationRequested && (
+														<>
+															<label className="flex items-center gap-2">
+																<input
+																	type="checkbox"
+																	checked={projectResourcesIntoRepo}
+																	disabled={migrationSaving}
+																	onChange={(e) => setProjectResourcesIntoRepo(e.target.checked)}
+																/>
+																Also install skills and subagents into the project (git-excluded)
+															</label>
+															{migrationPlan && !migrationLoading && (
+																<StatCardGrid
+																	theme={theme}
+																	minColumnWidth={120}
+																	cards={[
+																		{ label: 'Sessions', value: migrationPlan.tabs.length },
+																		{
+																			label:
+																				migrationPlan.counts.messages === undefined
+																					? 'Records'
+																					: 'Messages',
+																			value:
+																				migrationPlan.counts.messages ??
+																				migrationPlan.counts.records,
+																			displayValue: formatCount(
+																				migrationPlan.counts.messages ??
+																					migrationPlan.counts.records
+																			),
+																		},
+																		{
+																			label: 'On next use',
+																			value: migrationPlan.deferredTabs?.length ?? 0,
+																		},
+																	]}
+																/>
+															)}
+															<div
+																role="status"
+																aria-live="polite"
+																className="flex items-center gap-2"
+															>
+																{migrationActivity && (
+																	<Spinner size={14} color={theme.colors.accent} decorative />
+																)}
+																<span>
+																	{migrationActivity ??
+																		(conversionFailed
+																			? 'Saving switches without converting.'
+																			: migrationError || migrationPlan?.status === 'blocked'
+																				? 'Resolve the issue below to switch providers.'
+																				: migrationPlan?.status === 'deferred'
+																					? 'Ready. The switch will wait for the current turn to finish.'
+																					: 'Ready to switch providers.')}
+																</span>
+															</div>
+															{migrationBlockers.map((limit) => (
+																<div
+																	key={`${limit.severity}-${limit.code}-${limit.message}`}
+																	style={{ color: theme.colors.error }}
+																>
+																	{limit.message}
+																</div>
+															))}
+														</>
+													)}
+												</div>
+											)}
+											{migrationError && (
+												<div
+													role="alert"
+													className="mt-2 text-xs"
+													style={{ color: theme.colors.error }}
+												>
+													{migrationError}
+												</div>
+											)}
+											{conversionFailed && (
+												<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
+													The conversion cannot run, so saving switches providers without
+													converting.
+												</div>
+											)}
+										</AgentProviderSelect>
+									</FederatedSetting>
+
+									{/* Provider settings (path, args, agent-specific options). Its env
+								    vars live in the Provider environment section. Per-session values are saved
+								    on modal save, not on blur. */}
+									{configOptionProps && (
+										<div>
+											<div
+												className="block text-xs font-bold opacity-70 uppercase mb-2"
+												style={{ color: theme.colors.textMain }}
+											>
+												{agentName} Settings
+											</div>
+											<AgentConfigPanel
+												{...configOptionProps}
+												hideModelOptions
+												hideEnvVars
+												customPath={customPath}
+												onCustomPathChange={setCustomPath}
+												onCustomPathBlur={() => {
+													/* Saved on modal save */
+												}}
+												customArgs={customArgs}
+												onCustomArgsChange={setCustomArgs}
+												onCustomArgsBlur={() => {
+													/* Saved on modal save */
+												}}
+												{...envVarProps}
+												onRefreshAgent={handleRefreshAgent}
+												refreshingAgent={refreshingAgent}
+												isSshEnabled={isSshEnabled}
+												sshRemoteId={sshRemoteConfig?.remoteId ?? undefined}
+												enableMaestroP={enableMaestroP}
+												onEnableMaestroPChange={setEnableMaestroP}
+												maestroPMode={maestroPMode}
+												onMaestroPModeChange={setMaestroPMode}
+												maestroPPath={maestroPPath}
+												onMaestroPPathChange={setMaestroPPath}
+												onMaestroPPathBlur={() => {
+													/* Saved on modal save */
+												}}
+												detectedMaestroPPath={detectedMaestroPPath}
+												codexAutoResetOnExhaustion={codexAutoReset}
+												onCodexAutoResetChange={setCodexAutoReset}
+												codexTransport={codexTransport}
+												harnessControlMode={harnessControlMode}
+												onHarnessControlModeChange={setHarnessControlMode}
+												onCodexTransportChange={setCodexTransport}
+											/>
+										</div>
+									)}
+								</>
+							}
+							environment={
+								<ProviderEnvironmentSection
+									theme={theme}
+									toolType={selectedToolType}
+									isSshEnabled={!!isSshEnabled}
+									{...envVarProps}
+								/>
+							}
+							// Agent Resilience: auto-retry toggles (default ON), editable post-creation.
+							resilience={{
+								retryOnAvailabilityErrors,
+								retryOnTokenExhaustion,
+								onChangeAvailability: setRetryOnAvailabilityErrors,
+								onChangeTokenExhaustion: setRetryOnTokenExhaustion,
+							}}
+						/>
+					)}
+
+					{activeTab === 'models' && (
+						<ModelsTab
+							theme={theme}
+							idPrefix="edit-agent"
+							model={
+								configOptionProps && (
+									<div data-testid="edit-agent-model">
+										<AgentModelSection
+											{...configOptionProps}
+											modelSource={{
+												value: runOn,
+												onChange: (target) => {
+													setRunOn(target);
+													setRunOnError(undefined);
+												},
+												userEnvVars: effectiveEnvVars,
+												sshRemoteName,
+												error: runOnError,
+												onTest: handleTestRunOn,
+												testId: 'edit-agent-model-source',
+											}}
+										/>
+									</div>
+								)
+							}
+							tiers={
+								<FederatedSetting field="tierTargets">
+									<div data-testid="edit-agent-tiers">
+										<TierTargetsField
+											theme={theme}
+											toolType={selectedToolType}
+											value={tierTargets}
+											onChange={(next) => {
+												setTierTargets(next);
+												setTierTargetsError(undefined);
+											}}
+											runOn={runOn}
+											model={agentConfig.model?.trim()}
+											error={tierTargetsError}
+											testId="edit-agent-tier-targets"
+										/>
+									</div>
+								</FederatedSetting>
+							}
+							gateway={
+								<>
+									{/* Maestro token proxy mode, and under it where the proxy sends
+								    background requests. Both apply at once; the gateway draft
+								    below follows the mode. */}
+									<FederatedSetting
+										field={['tokenProxyMode', 'backgroundRequests', 'tokenProxyRetrieval']}
+									>
+										<AgentTokenProxyModeControl
+											theme={theme}
+											agentId={session.id}
+											agentName={session.name}
+											toolType={selectedToolType}
+											gatewayUrl={gatewayUrl}
+											storedMode={(liveSession ?? session).tokenProxyMode}
+											storedBackgroundRequests={(liveSession ?? session).backgroundRequests}
+											storedRetrieval={(liveSession ?? session).tokenProxyRetrieval}
+											sshRemoteName={sshRemoteName}
+											pendingReason={
+												gatewaySkippedReason ??
+												(providerChanged
+													? 'Save the provider change first: the proxy route depends on the provider.'
+													: undefined)
+											}
+											onGatewayUrlChange={handleProxyGatewayUrl}
+										/>
+									</FederatedSetting>
+
+									{/* Local Models gateway. Rendered for every provider: one that cannot
+								    use a gateway shows the field disabled with the reason. */}
+									<FederatedSetting field="gatewayUrl">
+										<div data-testid="edit-agent-gateway">
+											<GatewayUrlField
+												theme={theme}
+												label="Local Models Gateway"
+												toolType={selectedToolType}
+												value={gatewayUrl}
+												onChange={(value) => {
+													setGatewayUrl(value);
+													setGatewayUrlError(undefined);
+												}}
+												userEnvVars={effectiveEnvVars}
+												sshRemoteName={sshRemoteName}
+												error={gatewayUrlError}
+												disabledReason={gatewaySkippedReason}
+												testId="edit-agent-gateway-url"
+											/>
+										</div>
+									</FederatedSetting>
+								</>
+							}
+							systemOne={
+								// Whether this agent may ask System One. Applies at once, like the
+								// proxy mode above: main answers the request and builds the prompt.
+								<FederatedSetting field="systemOneOptOut">
+									<AgentSystemOneControl
+										theme={theme}
+										agentId={session.id}
+										agentName={session.name}
+										optedOut={(liveSession ?? session).systemOneOptOut === true}
+										sshRemoteName={sshRemoteName}
+									/>
+								</FederatedSetting>
+							}
+						/>
+					)}
+
+					{activeTab === 'peers' && (
+						<PeersTab
+							theme={theme}
+							idPrefix="edit-agent"
+							peers={peerAgents}
+							peerDescription={peerDescription}
+							onPeerDescriptionChange={setPeerDescription}
+							onChange={setPeerAgents}
+							groupAccess={groupPeerAccess}
+							onGroupAccessChange={setGroupPeerAccess}
+							worktreeAccess={worktreePeerAccess}
+							onWorktreeAccessChange={setWorktreePeerAccess}
+							{...peerFleet}
+							selfSessionId={session.id}
+							groupId={peerGroupId}
+							rowNotice={federation ? peerRowNotice : undefined}
+						/>
+					)}
+
+					{activeTab === 'ssh' && (
+						// Always rendered (not gated on sshRemotes.length) because the
+						// "remote-controlled" toggle inside is meaningful even when no
+						// local remotes exist - it lets a Maestro SSH'd into this
+						// machine see mirrored history for this agent.
+						<FederatedSetting field="ssh">
+							<SshTab
 								theme={theme}
-								agentId={session.id}
-								agentName={session.name}
-								optedOut={(liveSession ?? session).systemOneOptOut === true}
-								sshRemoteName={sshRemoteName}
+								idPrefix="edit-agent"
+								sshRemotes={sshRemotes}
+								sshRemoteConfig={sshRemoteConfig}
+								onSshRemoteConfigChange={setSshRemoteConfig}
 							/>
-						}
-					/>
-				)}
+						</FederatedSetting>
+					)}
 
-				{activeTab === 'peers' && (
-					<PeersTab
-						theme={theme}
-						idPrefix="edit-agent"
-						peers={peerAgents}
-						peerDescription={peerDescription}
-						onPeerDescriptionChange={setPeerDescription}
-						onChange={setPeerAgents}
-						groupAccess={groupPeerAccess}
-						onGroupAccessChange={setGroupPeerAccess}
-						worktreeAccess={worktreePeerAccess}
-						onWorktreeAccessChange={setWorktreePeerAccess}
-						{...peerFleet}
-						selfSessionId={session.id}
-						groupId={peerGroupId}
-					/>
-				)}
-
-				{activeTab === 'ssh' && (
-					// Always rendered (not gated on sshRemotes.length) because the
-					// "remote-controlled" toggle inside is meaningful even when no
-					// local remotes exist - it lets a Maestro SSH'd into this
-					// machine see mirrored history for this agent.
-					<SshTab
-						theme={theme}
-						idPrefix="edit-agent"
-						sshRemotes={sshRemotes}
-						sshRemoteConfig={sshRemoteConfig}
-						onSshRemoteConfigChange={setSshRemoteConfig}
-					/>
-				)}
-
-				{activeTab === AUDIT_LOG_TAB_ID && (
-					// The tab saves its own changes the moment they are made, into the
-					// feature's own store. It hands this dialog no state on purpose:
-					// nothing of it may reach `onSave`, and through that the Session
-					// object.
-					<AuditLogTab
-						theme={theme}
-						idPrefix="edit-agent"
-						agentId={session.id}
-						agentName={session.name}
-						supportsReasoning={agent?.capabilities?.supportsThinkingDisplay !== false}
-						usesInteractiveTokenSource={usesInteractiveTokenSource}
-					/>
-				)}
-			</div>
-		</Modal>
+					{activeTab === AUDIT_LOG_TAB_ID && (
+						// The tab saves its own changes the moment they are made, into the
+						// feature's own store. It hands this dialog no state on purpose:
+						// nothing of it may reach `onSave`, and through that the Session
+						// object.
+						<AuditLogTab
+							theme={theme}
+							idPrefix="edit-agent"
+							agentId={session.id}
+							agentName={session.name}
+							supportsReasoning={agent?.capabilities?.supportsThinkingDisplay !== false}
+							usesInteractiveTokenSource={usesInteractiveTokenSource}
+						/>
+					)}
+				</div>
+			</Modal>
+		</FederationFieldsProvider>
 	);
 }

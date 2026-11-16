@@ -134,7 +134,10 @@ export function PeerAgentComposer({
 	const tabId = tab.id;
 	const draftKey = mirrorDraftKey(peerId, agentId, tabId);
 	const choice = useHostedAgentSettingsStore((s) => s.tabChoices[draftKey]);
-	const modelOptions = useAgentModelEffortOptions(agent.toolType);
+	// The host runs the turn, so the picker lists the models found on the host's machine (the
+	// peer's SSH remote), the same list the mirror's Edit Agent shows.
+	const hostRemoteId = usePeerMirrorStore((s) => s.peers[peerId]?.remoteId);
+	const modelOptions = useAgentModelEffortOptions(agent.toolType, hostRemoteId);
 	const menus = useModelEffortMenus();
 	const resolved = resolveModelEffort(
 		{

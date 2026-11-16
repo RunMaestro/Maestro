@@ -14,6 +14,7 @@ import {
 	type AgentResilienceSectionProps,
 } from '../NewInstanceModal/AgentResilienceSection';
 import { AgentSettingsPanel, type AgentSettingsPanelBaseProps } from './AgentSettingsPanel';
+import { FederatedSetting } from '../HostedAgentSettings/FederationFieldBadge';
 
 export interface ProviderTabProps extends AgentSettingsPanelBaseProps {
 	picker: ReactNode;
@@ -32,7 +33,11 @@ export function ProviderTab({
 		<AgentSettingsPanel theme={theme} idPrefix={idPrefix} tab="provider">
 			{picker}
 			{environment}
-			{resilience && <AgentResilienceSection theme={theme} {...resilience} />}
+			{resilience && (
+				<FederatedSetting field={['retryOnAvailabilityErrors', 'retryOnTokenExhaustion']}>
+					<AgentResilienceSection theme={theme} {...resilience} />
+				</FederatedSetting>
+			)}
 		</AgentSettingsPanel>
 	);
 }

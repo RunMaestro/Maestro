@@ -50,6 +50,7 @@ import { admitCliConsult } from '../../../cli/services/consult-budget-guard';
 import { CONSULT_BUDGET_EXHAUSTED_CODE } from '../../../shared/consultBudget';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../shared/agentDelegation';
+import { HOSTED_TURN_ENV_VAR } from '../../../shared/maestro-lib/agents/lift-pointer';
 
 /** The place in the chain the guard hands the dispatch target by default. */
 const TARGET_CHAIN = { chainId: 'chain-under-test', depth: 1 };
@@ -57,7 +58,7 @@ const TARGET_CHAIN = { chainId: 'chain-under-test', depth: 1 };
 describe('dispatch command', () => {
 	// The caller identity is read from the environment, and the suite runs in
 	// whatever shell launched it - inside a Maestro agent that is a real id.
-	isolateAgentEnv([CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR]);
+	isolateAgentEnv([CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR, HOSTED_TURN_ENV_VAR]);
 
 	let consoleSpy: MockInstance;
 	let processExitSpy: MockInstance;
@@ -67,6 +68,19 @@ describe('dispatch command', () => {
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 		vi.mocked(admitCliConsult).mockReturnValue({ allowed: true, chain: TARGET_CHAIN });
+	});
+
+	it("refuses a target off the host from a hosted agent's turn, by name", async () => {
+		process.env[HOSTED_TURN_ENV_VAR] = '1';
+		vi.mocked(resolveAgentId).mockImplementation(() => {
+			throw new Error('Agent not found: laptop');
+		});
+		const local = await runDispatch('laptop', 'Hello', {});
+		expect(local).toMatchObject({ success: false, code: 'TARGET_OFF_HOST' });
+		expect(local.error).toContain('"laptop" is not an agent on this host');
+		const peer = await runDispatch('laptop-box:agent-1', 'Hello', {});
+		expect(peer).toMatchObject({ success: false, code: 'TARGET_OFF_HOST' });
+		expect(withMaestroClient).not.toHaveBeenCalled();
 	});
 
 	it('preserves an unknown new-tab receipt even without a tab ID', async () => {

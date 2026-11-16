@@ -38,6 +38,7 @@ import { admitCliConsult } from '../../../cli/services/consult-budget-guard';
 import { CONSULT_BUDGET_EXHAUSTED_CODE } from '../../../shared/consultBudget';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../shared/agentDelegation';
+import { HOSTED_TURN_ENV_VAR } from '../../../shared/maestro-lib/agents/lift-pointer';
 
 /** Wire `withMaestroClient` to a stub client and hand back its sendCommand spy. */
 function mockClient(response: Record<string, unknown>) {
@@ -54,7 +55,7 @@ const TARGET_CHAIN = { chainId: 'chain-under-test', depth: 1 };
 describe('ask command', () => {
 	// `--from` defaults to the caller identity in the environment, and the suite
 	// runs in whatever shell launched it - inside a Maestro agent that is a real id.
-	isolateAgentEnv([CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR]);
+	isolateAgentEnv([CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR, HOSTED_TURN_ENV_VAR]);
 
 	let logSpy: MockInstance;
 	let errorSpy: MockInstance;
@@ -124,6 +125,32 @@ describe('ask command', () => {
 		expect(output.error).toContain('build-box:host-1');
 		expect(exitSpy).toHaveBeenCalledWith(1);
 		expect(sendCommand).not.toHaveBeenCalled();
+	});
+
+	it("refuses a target off the host from a hosted agent's turn, by name", async () => {
+		const sendCommand = mockClient({ success: true, answer: 'ok' });
+		process.env[HOSTED_TURN_ENV_VAR] = '1';
+		vi.mocked(resolveAgentId).mockImplementationOnce(() => {
+			throw new Error('Agent not found: laptop');
+		});
+
+		await ask('laptop', 'q', { json: true });
+
+		const output = JSON.parse(logSpy.mock.calls[0][0]);
+		expect(output).toMatchObject({ success: false, code: 'TARGET_OFF_HOST' });
+		expect(output.error).toContain('"laptop" is not an agent on this host');
+		expect(sendCommand).not.toHaveBeenCalled();
+	});
+
+	it("refuses a peer:agent route from a hosted agent's turn before dialing anything", async () => {
+		process.env[HOSTED_TURN_ENV_VAR] = '1';
+		// No local agent by that name, so the target routes to a peer.
+		vi.mocked(resolveAgentId).mockImplementation(() => {
+			throw new Error('Agent not found');
+		});
+		await ask('laptop-box:agent-1', 'q', { json: true });
+		const output = JSON.parse(logSpy.mock.calls[0][0]);
+		expect(output.code).toBe('TARGET_OFF_HOST');
 	});
 
 	it('rejects an empty question', async () => {

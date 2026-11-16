@@ -19,6 +19,7 @@ import {
 	SELF_PEER_ERROR,
 	parsePeerAccessWord,
 	parsePeerAgentEdits,
+	parsePeerAgentRows,
 	parsePeerGrantValue,
 	parsePeerGrantWord,
 	peerAccessLabel,
@@ -150,6 +151,38 @@ describe('normalizePeerAgents', () => {
 		expect(rows).toEqual([
 			{ sessionId: '  agent-2  ', read: true, write: false, description: '  hint  ' },
 		]);
+	});
+});
+
+describe('parsePeerAgentRows', () => {
+	it('reads a whole list the way a form save writes it', () => {
+		expect(
+			parsePeerAgentRows([
+				{ sessionId: ' a ', read: true, write: false, description: ' api ' },
+				{ sessionId: 'b', read: false, write: false },
+			])
+		).toEqual({
+			ok: true,
+			peerAgents: [
+				{ sessionId: 'a', read: true, write: false, description: 'api' },
+				// An exclusion row is kept.
+				{ sessionId: 'b', read: false, write: false },
+			],
+		});
+	});
+
+	it('reads null and an empty list as no rows', () => {
+		expect(parsePeerAgentRows(null)).toEqual({ ok: true, peerAgents: null });
+		expect(parsePeerAgentRows([])).toEqual({ ok: true, peerAgents: null });
+	});
+
+	it('refuses anything else', () => {
+		expect(parsePeerAgentRows({}).ok).toBe(false);
+		expect(parsePeerAgentRows([{ sessionId: 'a', read: 'yes', write: false }]).ok).toBe(false);
+		expect(parsePeerAgentRows([{ sessionId: '', read: true, write: false }]).ok).toBe(false);
+		expect(
+			parsePeerAgentRows([{ sessionId: 'a', read: true, write: false, description: 3 }]).ok
+		).toBe(false);
 	});
 });
 

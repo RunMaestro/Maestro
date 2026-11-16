@@ -17,6 +17,7 @@
 
 import * as path from 'path';
 import { buildCallerIdentityEnv } from '../../agentDelegation';
+import { HOSTED_TURN_ENV_VAR } from '../agents/lift-pointer';
 import { resolveTabPermissionMode } from '../../agentMetadata';
 import { prependNewSessionMessageOnFirstTurn } from '../../newSessionMessage';
 import { substituteTemplateVariables } from '../../templateVariables';
@@ -352,6 +353,8 @@ export function assembleTurn(
 	// What Maestro states about this spawn.
 	const maestroEnvVars: Record<string, string> = {
 		...buildCallerIdentityEnv(agent.id, tab.id),
+		// Only a runtime without a desktop assembles turns here: its agents are hosted agents.
+		[HOSTED_TURN_ENV_VAR]: '1',
 		...(agent.isPianola && context.pianolaEnabled === true && context.maestroCliPath
 			? { MAESTRO_CLI_JS: context.maestroCliPath, MAESTRO_AGENT_ID: agent.id }
 			: {}),

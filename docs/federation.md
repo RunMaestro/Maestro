@@ -229,15 +229,32 @@ A hosted agent's settings belong to its host, and every conductor that drives it
 
 Change the shared settings with **Edit Agent**: the gear beside the agent's name in its view, **Edit Agent...** in the right-click menu of a mirrored agent, or **Edit Agent on Host** in the command palette. A lifted agent's own Left Bar row opens the hosted agent, and its **Edit Agent** and `maestro-cli update-agent` changes go to the host too. From the CLI, `maestro-cli update-agent <peer:agent> --model ...` changes the host directly.
 
-- **Shared (on the host):** name, provider, working directory, model, effort, context window, custom path and arguments, nudge message, new session message, bookmark, token source (maestro-p mode), Codex transport, harness control mode, the Auto Run folder (only inside the working directory, as in a lift), custom env vars, and each tab's name.
+- **Shared (on the host):** name, provider, working directory, model, effort, context window, custom path and arguments, nudge message, new session message, bookmark, token source (maestro-p mode), Codex transport, harness control mode, the Auto Run folder (only inside the working directory, as in a lift), custom env vars, the Peers tab (peer rows, group and worktree grants, and how peers see this agent), and each tab's name.
 - **Yours only:** a tab's model, effort, read-only, and save to History, set with the chips in the hosted agent's composer. They go with each message you send from that tab and are never saved on the host, so another conductor on the same tab keeps theirs. `maestro-cli send <peer:agent>` takes the same choices with `--model`, `--effort`, `--read-only`, and `--no-history`. Thinking display, Enter to send, and a tab's star also stay with you.
-- **Never sent:** the Left Bar group, the SSH settings, and the maestro-p binary path. A secret env var syncs only when the host already holds it (you sent it with `--with-env`). A host env var you never set on this agent is never changed or copied back.
+- **Never sent:** the Left Bar group, the SSH settings, the maestro-p binary path, and what belongs to this machine's Maestro: the Local Models gateway and model source, the Maestro token proxy and its background requests, the System One switch, provider options shared by every agent of a provider, and the voice wake phrase. A secret env var syncs only when the host already holds it (you sent it with `--with-env`). A host env var you never set on this agent is never changed or copied back.
+- **Peer rows name agents by id, and ids differ per machine.** A row for another agent you lifted to the same host is sent with that agent's id on the host, and a row for an agent the host already holds is sent as is. A row for an agent anywhere else (this laptop, another host) is not sent: the host's turns cannot reach it. It stays on this machine, and the Peers tab marks it **Not honored by** _host name_. Lift that agent to the same host and the row is sent on the next sync. In Edit Agent of a mirrored agent, the Peers picker lists the host's agents.
+- **A hosted agent consults and delegates on its host.** Its turns run there, with the host's `maestro-cli`, so `ask` and `dispatch` from such a turn reach only agents on the same host. A target on a conductor's machine is refused by name (`TARGET_OFF_HOST`).
 - **When the peer is down:** your change waits, marked pending, and goes out when the peer reconnects.
 - **When the host changed the same setting since:** nothing moves until you choose. A toast names the settings; click it, or open **Federation Settings Conflicts** from the command palette or the hamburger menu. For each setting, take the host's value, keep yours, or, for the nudge message, new session message, and custom arguments, ask the agent to **Merge** the two. A merge is a proposal you can edit, and it is used only when you click **Use this**. From the CLI: `maestro-cli federation conflicts`, then `maestro-cli federation resolve <peer:agent> <field> --take host|local` or `--value <merged text>`.
 - **The first sync of an agent:** any setting that differs between this machine and the host shows as a conflict, with the host's value as the suggested choice. A lift sends every setting, so a newly moved agent starts with none.
 - **When the host refuses a change:** for example, a new working directory while a turn runs. A toast says why, and the host's value stays.
 
-Read the host's copy back with `maestro-cli show agent <peer:agent> --json`.
+### Where each setting lives
+
+When **Edit Agent** shows a hosted agent (a lifted agent's own row, or a mirrored agent), every field carries a small badge:
+
+| Badge                      | Meaning                                                                                                        |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| **From host**              | The value is the host's. A change goes to every conductor.                                                     |
+| **Yours only**             | Your own choice. It is never sent to the host.                                                                 |
+| **This machine**           | It means something only on this machine, so it is never sent.                                                  |
+| **Not synced yet**         | The host should hold it but cannot yet, so a hosted agent runs without it. Hover for the reason.               |
+| **Pending on** _host name_ | You changed it here and the host has not taken it yet (the peer is down, or the change is on its way).         |
+| **Conflict**               | You and the host both changed it. Click it to open **Federation Settings Conflicts** and choose which to keep. |
+
+An ordinary local agent shows no badges.
+
+Read the same facts with `maestro-cli show agent <peer:agent> --json` (or the id of a lifted agent): the `federation` block names the host agent and gives each field its `scope`, its badge `label`, the reason (`why`), and whether it is `pending` or in `conflict`. Without the desktop app running, every scope is still there and `stateKnown` is `false`. The host's copy of the settings is in the same output.
 
 ### More than one conductor
 
@@ -317,7 +334,6 @@ Run the host as the same user your SSH agents run as. The host then reads the sa
 - **History of Auto Run and Cue runs refreshes on the next turn.** The History column reads again when a chat turn ends, the peer reconnects, or the laptop wakes. A host-started run's entry shows up at the next of those.
 - **Some queue actions are local only.** On a mirrored agent's queued cards you can remove, hold, and resume a message. Edit, merge, reorder, Force Send, and steer stay off, because the host does not serve them.
 - **The queue lives in the host's memory.** If the host process stops or the machine reboots, the messages still waiting are lost, and a turn that was running is recorded as interrupted. Run the host as a service (see [Durability](#durability)).
-- **Some agent settings stay on this machine for now.** Extra directories, the Agent Resilience retry switches, Codex automatic reset, and env vars you parked with the eye button are not sent to the host yet, so a hosted agent runs without them. Set them on the host's own Maestro if you need them there.
+- **Some agent settings stay on this machine for now.** Extra directories, the Agent Resilience retry switches, Codex automatic reset, env vars you parked with the eye button, and the tier targets are not sent to the host yet, so a hosted agent runs without them. Edit Agent marks each **Not synced yet**. Set them on the host's own Maestro if you need them there.
 - **A Maestro desktop as host** applies your own model, effort, and read-only on, but not your save to History or read-only off: those follow that desktop's own tab. `maestro-cli host` applies all four.
-- **The model list in a hosted agent's message box** is the one this machine finds. **Edit Agent** shows the host's list.
 - **The installer needs a POSIX shell.** A Windows remote must answer SSH with Git Bash or WSL, as an SSH agent there already must. The host's sleep prevention and lingering check cover macOS and Linux only.

@@ -21,6 +21,7 @@ import {
 import { NudgeMessageField } from '../NewInstanceModal/NudgeMessageField';
 import { NEW_SESSION_MESSAGE_MAX_LENGTH } from '../NewInstanceModal/types';
 import { AgentSettingsPanel, type AgentSettingsPanelBaseProps } from './AgentSettingsPanel';
+import { FederatedSetting } from '../HostedAgentSettings/FederationFieldBadge';
 
 /** The name field of a form that names an agent. */
 interface GeneralTabNameProps {
@@ -96,40 +97,50 @@ export function GeneralTab({
 			{lead}
 
 			{onNameChange && (
-				<FormInput
-					ref={nameInputRef}
-					id={nameInputId}
-					theme={theme}
-					label="Agent Name"
-					value={name ?? ''}
-					onChange={onNameChange}
-					placeholder=""
-					error={nameError}
-					heightClass="p-2"
-				/>
+				<FederatedSetting field="name">
+					<FormInput
+						ref={nameInputRef}
+						id={nameInputId}
+						theme={theme}
+						label="Agent Name"
+						value={name ?? ''}
+						onChange={onNameChange}
+						placeholder=""
+						error={nameError}
+						heightClass="p-2"
+					/>
+				</FederatedSetting>
 			)}
 
 			{groupPicker}
 
-			<div>
-				{workingDirectory}
-				{remotePathStatus}
-			</div>
+			<FederatedSetting field="cwd">
+				<div>
+					{workingDirectory}
+					{remotePathStatus}
+				</div>
+			</FederatedSetting>
 
-			<AdditionalDirectoriesSection theme={theme} {...additionalDirectories} />
+			<FederatedSetting field="additionalDirectories">
+				<AdditionalDirectoriesSection theme={theme} {...additionalDirectories} />
+			</FederatedSetting>
 
-			<NudgeMessageField
-				theme={theme}
-				value={newSessionMessage}
-				onChange={onNewSessionMessageChange}
-				maxLength={NEW_SESSION_MESSAGE_MAX_LENGTH}
-				label="New Session Message"
-				description="This text is prefixed to your first message whenever a new session is created (not visible in chat)."
-				placeholder="Instructions sent with the first message of every new session..."
-				sizeKey="new-session-message"
-			/>
+			<FederatedSetting field="newSessionMessage">
+				<NudgeMessageField
+					theme={theme}
+					value={newSessionMessage}
+					onChange={onNewSessionMessageChange}
+					maxLength={NEW_SESSION_MESSAGE_MAX_LENGTH}
+					label="New Session Message"
+					description="This text is prefixed to your first message whenever a new session is created (not visible in chat)."
+					placeholder="Instructions sent with the first message of every new session..."
+					sizeKey="new-session-message"
+				/>
+			</FederatedSetting>
 
-			<NudgeMessageField theme={theme} value={nudgeMessage} onChange={onNudgeMessageChange} />
+			<FederatedSetting field="nudgeMessage">
+				<NudgeMessageField theme={theme} value={nudgeMessage} onChange={onNudgeMessageChange} />
+			</FederatedSetting>
 
 			{extra}
 		</AgentSettingsPanel>

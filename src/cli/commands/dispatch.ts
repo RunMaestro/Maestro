@@ -13,7 +13,12 @@ import {
 	readLiveSessions,
 	readGroups,
 } from '../services/storage';
-import { AGENT_LIFTED_CODE, liftedSendRefusal } from '../../shared/maestro-lib/agents/lift-pointer';
+import {
+	AGENT_LIFTED_CODE,
+	hostedTurnTargetRefusal,
+	liftedSendRefusal,
+	TARGET_OFF_HOST_CODE,
+} from '../../shared/maestro-lib/agents/lift-pointer';
 import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-client';
 import { MaestroNotRunningError, MAESTRO_NOT_RUNNING_CODE } from '../services/maestro-not-running';
 import { getSettingDefault } from '../../shared/settingsMetadata';
@@ -506,6 +511,9 @@ export async function runDispatch(
 
 	const route = routeAgentTarget(agentIdArg);
 	if (route.kind === 'peer') {
+		// A hosted agent's turn cannot reach back to a conductor's machine.
+		const offHost = hostedTurnTargetRefusal(agentIdArg, process.env);
+		if (offHost) return { success: false, error: offHost, code: TARGET_OFF_HOST_CODE };
 		return runPeerDispatch(route.target, message, options, queue, routingField.routing);
 	}
 
@@ -513,6 +521,8 @@ export async function runDispatch(
 	try {
 		agentId = resolveAgentId(agentIdArg);
 	} catch (error) {
+		const offHost = hostedTurnTargetRefusal(agentIdArg, process.env);
+		if (offHost) return { success: false, error: offHost, code: TARGET_OFF_HOST_CODE };
 		const msg = error instanceof Error ? error.message : 'Unknown error';
 		return { success: false, error: msg, code: 'AGENT_NOT_FOUND' };
 	}

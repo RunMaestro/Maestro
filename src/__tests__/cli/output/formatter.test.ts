@@ -1096,6 +1096,46 @@ describe('formatter', () => {
 			recentHistory: [],
 		};
 
+		it("lists what waits on a hosted agent's settings, and what the host cannot take", () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				federation: {
+					host: 'box:host-1',
+					stateKnown: true,
+					fields: {
+						model: { scope: 'shared', label: 'From host', why: 'w', pending: true, conflict: false },
+						nudgeMessage: {
+							scope: 'shared',
+							label: 'From host',
+							why: 'w',
+							pending: false,
+							conflict: true,
+						},
+						tierTargets: {
+							scope: 'not-synced',
+							label: 'Not synced yet',
+							why: 'w',
+							pending: false,
+							conflict: false,
+						},
+					},
+				},
+			});
+			expect(result).toContain('FEDERATION');
+			expect(result).toContain('box:host-1');
+			expect(result).toMatch(/Pending.*model/);
+			expect(result).toMatch(/Conflict.*nudgeMessage/);
+			expect(result).toContain('tierTargets');
+		});
+
+		it('says when the desktop could not report what waits', () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				federation: { host: 'box:host-1', stateKnown: false, stateError: 'not running', fields: {} },
+			});
+			expect(result).toContain('unknown (not running)');
+		});
+
 		it('should format basic agent details', () => {
 			const result = formatAgentDetail(baseAgent);
 

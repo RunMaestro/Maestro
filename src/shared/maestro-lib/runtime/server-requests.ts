@@ -109,6 +109,10 @@ export function agentPatchFromConfig(config: Record<string, unknown>): AgentPatc
 	// Passed as sent: `applyAgentConfigPatch` is what refuses a transport it does not know.
 	take('codexTransport', 'codexTransport');
 	take('harnessControlMode', 'harnessControlMode');
+	take('peerAgents', 'peerAgents');
+	take('groupPeerAccess', 'groupPeerAccess');
+	take('worktreePeerAccess', 'worktreePeerAccess');
+	take('peerDescription', 'peerDescription');
 	return patch as AgentPatch;
 }
 

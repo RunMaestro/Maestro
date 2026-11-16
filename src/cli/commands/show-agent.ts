@@ -3,6 +3,10 @@
 // A `peer:agent` target (Federation) reads the agent from that peer's host instead, in the same
 // shape: its History is the host's (with the project's shared History), the same entries the
 // desktop's mirrored History column shows.
+//
+// A hosted agent (a `peer:agent` target, or a local agent lifted onto its host) also gets a
+// `federation` block: where each setting lives and what waits on it, the facts the Edit Agent
+// badges draw (`readAgentFederation()`).
 
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { HistoryEntry, SessionInfo } from '../../shared/types';
@@ -46,6 +50,8 @@ import {
 	type PeerTarget,
 } from '../services/peer-resolver';
 import { ExitCode } from '../exit-codes';
+import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
+import { readAgentFederation, type AgentFederationReport } from '../services/federation-fields';
 
 interface ShowAgentOptions {
 	json?: boolean;
@@ -304,11 +310,21 @@ export function showAgent(agentId: string, options: ShowAgentOptions): void | Pr
 			recentHistory: recentHistoryRows(history),
 		};
 
-		if (options.json) {
-			console.log(JSON.stringify(output, null, 2));
-		} else {
-			console.log(formatAgentDetail(output));
+		const print = (shown: typeof output & { federation?: AgentFederationReport }) => {
+			if (options.json) {
+				console.log(JSON.stringify(shown, null, 2));
+			} else {
+				console.log(formatAgentDetail(shown));
+			}
+		};
+		// A lifted agent's settings live on its host now: say where each one is kept.
+		const lifted = readLiftedTo(agent.liftedTo);
+		if (lifted) {
+			return readAgentFederation(lifted.peer, lifted.agentId).then((federation) =>
+				print({ ...output, federation })
+			);
 		}
+		print(output);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
 		failCommand(message, options.json);
@@ -375,10 +391,12 @@ async function showPeerAgent(target: PeerTarget, options: ShowAgentOptions): Pro
 			const history = await client.history.list(agent.id);
 			return peerAgentOutput(agent, peer, groupName, history.ok ? history.value : null);
 		});
+		const federation = await readAgentFederation(output.peer, output.id);
+		const shown = { ...output, federation };
 		if (options.json) {
-			console.log(JSON.stringify(output, null, 2));
+			console.log(JSON.stringify(shown, null, 2));
 		} else {
-			console.log(formatAgentDetail(output));
+			console.log(formatAgentDetail(shown));
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';

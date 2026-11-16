@@ -52,6 +52,19 @@ import { getPermissionModeTooltip } from '../../../shared/agentMetadata';
 import { formatCountNoun } from '../../../shared/formatters';
 import { isModelConfigOption } from '../AgentSettings/agentSettingsTabs';
 import type { ModelSourceChoices } from './ModelSourceDetails';
+import { FederationFieldBadge } from '../HostedAgentSettings/FederationFieldBadge';
+import type { FederationFieldId } from '../../../shared/maestro-lib/agents/lift-settings-sync';
+
+/**
+ * The Federation field a provider config option is saved to on a hosted agent. The model, effort
+ * and context window are the agent's own; every other option is kept per provider on this machine.
+ */
+function federationFieldOfOption(key: string): FederationFieldId {
+	if (key === 'model') return 'model';
+	if (key === 'effort' || key === 'reasoningEffort') return 'effort';
+	if (key === 'contextWindow') return 'contextWindow';
+	return 'providerConfig';
+}
 
 const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
 
@@ -728,7 +741,10 @@ export function AgentConfigPanel({
 					className="block text-xs font-medium mb-2 flex items-center justify-between"
 					style={{ color: theme.colors.textDim }}
 				>
-					<span>{isSshEnabled ? 'Remote Command' : 'Path'}</span>
+					<span>
+						{isSshEnabled ? 'Remote Command' : 'Path'}
+						<FederationFieldBadge field="customPath" className="ml-2" />
+					</span>
 					{onRefreshAgent && !isSshEnabled && (
 						<button
 							onClick={onRefreshAgent}
@@ -836,6 +852,7 @@ export function AgentConfigPanel({
 						<span className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
 							Claude Token Source
 						</span>
+						<FederationFieldBadge field={['enableMaestroP', 'maestroPMode']} />
 						{isSshEnabled && (
 							<button
 								type="button"
@@ -898,6 +915,7 @@ export function AgentConfigPanel({
 								style={{ color: theme.colors.textDim }}
 							>
 								Maestro-P Path (optional)
+								<FederationFieldBadge field="maestroPPath" className="ml-2" />
 							</label>
 							<input
 								type="text"
@@ -932,6 +950,7 @@ export function AgentConfigPanel({
 				>
 					<span className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
 						Codex Transport
+						<FederationFieldBadge field="codexTransport" className="ml-2" />
 					</span>
 					<ToggleButtonGroup
 						options={CODEX_TRANSPORT_OPTIONS}
@@ -958,6 +977,7 @@ export function AgentConfigPanel({
 				>
 					<span className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
 						Control Mode
+						<FederationFieldBadge field="harnessControlMode" className="ml-2" />
 					</span>
 					<ToggleButtonGroup
 						options={HARNESS_CONTROL_OPTIONS}
@@ -988,6 +1008,7 @@ export function AgentConfigPanel({
 						htmlFor="opencode-agent-input"
 					>
 						OpenCode Agent (optional)
+						<FederationFieldBadge field="customArgs" className="ml-2" />
 					</label>
 					<input
 						id="opencode-agent-input"
@@ -1018,6 +1039,7 @@ export function AgentConfigPanel({
 			>
 				<label className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
 					Custom Arguments (optional)
+					<FederationFieldBadge field="customArgs" className="ml-2" />
 				</label>
 				<div className="flex gap-2">
 					<input
@@ -1093,6 +1115,7 @@ export function AgentConfigPanel({
 				>
 					<label className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
 						Automatic Usage Resets
+						<FederationFieldBadge field="codexAutoResetOnExhaustion" className="ml-2" />
 					</label>
 					<label
 						className="flex items-center gap-2 cursor-pointer"
@@ -1210,6 +1233,7 @@ export function AgentConfigOptions({
 							style={{ color: theme.colors.textDim }}
 						>
 							{option.label}
+							<FederationFieldBadge field={federationFieldOfOption(option.key)} className="ml-2" />
 						</label>
 						{option.type === 'number' && (
 							<input
