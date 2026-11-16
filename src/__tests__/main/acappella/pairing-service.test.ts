@@ -109,11 +109,87 @@ describe('pairing codes', () => {
 		expect(first.status).toBe('pending');
 		if (first.status !== 'pending') return;
 
+		// A claimed offer must refuse without comparing the code.
+		const wrong = offer.code === 'ZZZZZZ' ? '222222' : 'ZZZZZZ';
+		expect(service.claim({ code: wrong, name: 'Probe', platform: 'ios' })).toMatchObject({
+			status: 'rejected',
+			reason: 'already-used',
+		});
+
 		service.deny(first.requestId);
 		// The shoulder-surfer's turn. A denied request must not leave a live code.
 		expect(service.claim({ code: offer.code, name: 'Second', platform: 'ios' })).toMatchObject({
 			status: 'rejected',
 		});
+	});
+
+	it('invalidates the offer after 5 wrong code guesses so the right code is then refused', () => {
+		const service = createService();
+		const offer = service.startPairing();
+		const wrong = offer.code === 'ZZZZZZ' ? '222222' : 'ZZZZZZ';
+
+		for (let i = 0; i < 5; i += 1) {
+			expect(service.claim({ code: wrong, name: 'Guess', platform: 'ios' })).toMatchObject({
+				status: 'rejected',
+				reason: 'unknown-code',
+			});
+		}
+
+		expect(service.currentOffer()).toBeNull();
+		expect(service.claim({ code: offer.code, name: 'Legit', platform: 'ios' })).toMatchObject({
+			status: 'rejected',
+			reason: 'expired',
+		});
+	});
+
+	it('notifies onPairingRequest listeners with null when the guess limit is reached', () => {
+		const service = createService();
+		const offer = service.startPairing();
+		const wrong = offer.code === 'ZZZZZZ' ? '222222' : 'ZZZZZZ';
+		const seen: Array<string | null> = [];
+		service.onPairingRequest((request) => seen.push(request?.requestId ?? null));
+
+		for (let i = 0; i < 4; i += 1) {
+			service.claim({ code: wrong, name: 'Guess', platform: 'ios' });
+		}
+		expect(seen).toEqual([]);
+
+		service.claim({ code: wrong, name: 'Guess', platform: 'ios' });
+		expect(service.currentOffer()).toBeNull();
+		expect(seen).toEqual([null]);
+	});
+
+	it('notifies onPairingRequest listeners with null when cancelPairing is called without a pending request', () => {
+		const service = createService();
+		service.startPairing();
+		const seen: Array<string | null> = [];
+		service.onPairingRequest((request) => seen.push(request?.requestId ?? null));
+
+		service.cancelPairing();
+		expect(service.currentOffer()).toBeNull();
+		expect(seen).toEqual([null]);
+	});
+
+	it('does not cancel a pending request or emit null when wrong guesses arrive after a valid claim', () => {
+		const service = createService();
+		const offer = service.startPairing();
+		const seen: Array<string | null> = [];
+		service.onPairingRequest((request) => seen.push(request?.requestId ?? null));
+
+		const legit = service.claim({ code: offer.code, name: 'Legit Phone', platform: 'ios' });
+		expect(legit.status).toBe('pending');
+		if (legit.status !== 'pending') return;
+
+		const wrong = offer.code === 'ZZZZZZ' ? '222222' : 'ZZZZZZ';
+		for (let i = 0; i < 5; i += 1) {
+			expect(service.claim({ code: wrong, name: 'Guess', platform: 'ios' })).toMatchObject({
+				status: 'rejected',
+				reason: 'already-used',
+			});
+		}
+
+		expect(service.pendingRequest()?.requestId).toBe(legit.requestId);
+		expect(seen).toEqual([legit.requestId]);
 	});
 
 	it('shows the same fingerprint for the same host secret and a different one otherwise', () => {
@@ -324,5 +400,21 @@ describe('device list', () => {
 		const [device] = await service.list();
 		expect(device).not.toHaveProperty('tokenHash');
 		expect(device).not.toHaveProperty('tokenSalt');
+	});
+
+	it('deduplicates concurrent load() calls so a simultaneous revoke still sees persisted devices', async () => {
+		const writer = createService();
+		const { deviceId, token } = await pairDevice(writer);
+		await writer.whenPersisted();
+
+		const reader = createService();
+		const revoked: string[] = [];
+		reader.onRevoke((id) => revoked.push(id));
+
+		const [listed, didRevoke] = await Promise.all([reader.list(), reader.revoke(deviceId)]);
+		expect(listed).toHaveLength(1);
+		expect(didRevoke).toBe(true);
+		expect(revoked).toEqual([deviceId]);
+		expect(await reader.authenticate(deviceId, token)).toBeNull();
 	});
 });

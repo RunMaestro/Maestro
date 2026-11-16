@@ -96,6 +96,26 @@ describe('runVoiceControlRequest', () => {
 		);
 	});
 
+	it('refuses discovery on while voice is switched off, while keeping discovery off and devices allowed', async () => {
+		const discovery = vi.fn().mockResolvedValue({ discovery: { state: 'disabled' } });
+		const devices = vi
+			.fn()
+			.mockResolvedValue({ devices: [], discovery: { state: 'disabled' }, manualHint: '' });
+		release = registerVoiceControlService(handlers({ discovery, devices }), () => false);
+
+		expect(await runVoiceControlRequest({ action: 'discovery', enabled: true })).toEqual({
+			ok: false,
+			reason: VOICE_DISABLED_REASON,
+		});
+		expect(discovery).not.toHaveBeenCalled();
+
+		expect(await runVoiceControlRequest({ action: 'discovery', enabled: false })).toMatchObject({
+			ok: true,
+		});
+		expect(discovery).toHaveBeenCalledWith({ action: 'discovery', enabled: false });
+		expect(await runVoiceControlRequest({ action: 'devices' })).toMatchObject({ ok: true });
+	});
+
 	it('answers a refusal a handler raised as a reason', async () => {
 		release = registerVoiceControlService(
 			handlers({
