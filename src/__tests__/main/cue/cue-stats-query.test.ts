@@ -23,7 +23,7 @@
  * `mockSummaries` by that shared id.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 import type { CueEventRecord } from '../../../main/cue/cue-db';
 import type { SessionTokenSummary } from '../../../main/cue/stats/cue-token-accessor';
 
@@ -572,6 +572,15 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 
 	describe('completed-only durations', () => {
 		it('leaves failed, timed-out, stopped and swept runs out of run time and percentiles', async () => {
+			// 'day' starts at local midnight and the swept run began 2.5 hours ago, so pin the
+			// clock to local noon or a run just after midnight drops it into yesterday.
+			const noon = new Date();
+			noon.setHours(12, 0, 0, 0);
+			vi.useFakeTimers({ toFake: ['Date'] });
+			vi.setSystemTime(noon);
+			onTestFinished(() => {
+				vi.useRealTimers();
+			});
 			const now = Date.now();
 			mockEvents = [
 				makeEvent({
