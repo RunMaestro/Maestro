@@ -21,6 +21,7 @@ None of these load automatically. Read the one that matches the task before you 
 | [[CLAUDE-SETTINGS.md]]                           | Editing `src/renderer/components/Settings/` or adding a setting (style guide plus the registration checklist)                                                       |
 | [FEDERATION.md](docs/agent-guides/FEDERATION.md) | Adding or changing any agent or tab setting, or a feature that acts on an agent: every one needs a Federation decision (shared, personal, machine)                  |
 | [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md)       | Integrating a new agent end to end                                                                                                                                  |
+| [SMOKE-TEST.md](docs/agent-guides/SMOKE-TEST.md) | Any "smoke test" request, or verifying a build or branch on a running app: the whole checklist, every time                                                          |
 
 ---
 
@@ -131,6 +132,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Deferred main-process store persistence:** `deferStoreWrites()` in `src/main/stores/deferred-writes.ts`, `flushPendingSessionWrites()` in `src/main/stores/instances.ts`
 - **Serving conf `get()` without re-reading the file:** `cacheStoreReads()`, `readDotPath()` in `src/main/stores/cached-reads.ts`
 - **Rewriting a large `{ key: [...] }` JSON store file:** `serializeWithMemoizedArray(data, memoKey)`, `encodeWithMemoizedArray(data, memoKey)` in `src/shared/memoizedJsonSerialize.ts`
+- **Keeping an agent's file-tree scan out of storage and off the wire:** `withoutFileTreeCache()`, `holdsFileTreeCache()`, `unloadedFileTreeState()` in `src/shared/fileTreeCache.ts`
 - **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()` in `src/main/stores/corrupt-store-recovery.ts` (never `clearInvalidConfig`)
 - **Whether a SQLite error means the database file is damaged:** `isSqliteCorruptionError()` in `src/shared/sqliteErrors.ts`
 - **Parsing a session transcript in the main process:** `runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`, task bodies in `transcript-parse-tasks.ts`

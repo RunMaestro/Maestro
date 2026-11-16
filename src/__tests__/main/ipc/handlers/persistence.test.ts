@@ -5458,6 +5458,27 @@ describe('persistence IPC handlers', () => {
 			expect(mockSessionsStore.set).toHaveBeenCalledWith('sessions', result);
 		});
 
+		it('drops a stored file-tree scan and rewrites the store once', async () => {
+			mockSessionsStore.get.mockReturnValue([
+				{
+					id: 'session-1',
+					toolType: 'claude-code',
+					fileTree: [{ name: 'src', type: 'folder', children: [] }],
+					fileTreeStats: { fileCount: 1, folderCount: 1, totalSize: 1 },
+					fileTreeLoadedCap: 250000,
+				},
+				{ id: 'session-2', toolType: 'claude-code' },
+			]);
+
+			const result = (await handlers.get('sessions:getAll')!({} as any)) as any[];
+
+			expect(result[0].fileTree).toEqual([]);
+			expect(result[0].fileTreeStats).toBeUndefined();
+			expect(result[0].fileTreeLoadedCap).toBeUndefined();
+			expect(result[1]).toEqual({ id: 'session-2', toolType: 'claude-code' });
+			expect(mockSessionsStore.set).toHaveBeenCalledWith('sessions', result);
+		});
+
 		it('drops slotless closed tabs on the first load only (#2008)', async () => {
 			const session = () => ({
 				id: 'session-1',
@@ -6974,6 +6995,31 @@ describe('persistence IPC handlers', () => {
 			expect(output.length).toBeLessThan(5_000);
 			expect(output).toContain('[tool output truncated');
 		});
+
+		it.each(['sessions:setAll', 'sessions:setMany'])(
+			'%s never persists a file-tree scan, whichever caller skipped the renderer prep',
+			async (channel) => {
+				mockSessionsStore.get.mockReturnValue([]);
+
+				await handlers.get(channel)!(
+					{} as any,
+					[
+						{
+							...baseSession,
+							fileTree: [{ name: 'src', type: 'folder', children: [] }],
+							fileTreeStats: { fileCount: 1, folderCount: 1, totalSize: 1 },
+							fileTreeLoadedCap: 250000,
+						},
+					],
+					[]
+				);
+
+				const persisted = mockSessionsStore.set.mock.calls.at(-1)![1];
+				expect(persisted[0].fileTree).toEqual([]);
+				expect(persisted[0].fileTreeStats).toBeUndefined();
+				expect(persisted[0].fileTreeLoadedCap).toBeUndefined();
+			}
+		);
 
 		it('returns true on success', async () => {
 			mockSessionsStore.get.mockReturnValue([]);
