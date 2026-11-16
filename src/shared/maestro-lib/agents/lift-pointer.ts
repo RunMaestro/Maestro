@@ -28,10 +28,17 @@ export interface LiftedToPointer {
 export const AGENT_LIFTED_CODE = 'AGENT_LIFTED';
 
 /**
- * Stamped on every turn a Maestro runtime without a desktop runs (`maestro-cli host`), so
- * `maestro-cli ask` and `dispatch` inside it know their caller is a hosted agent.
+ * Stamped on a hosted agent's turn, so `maestro-cli ask` and `dispatch` inside it know their
+ * caller is a hosted agent: every turn `maestro-cli host` runs, and every turn a Maestro desktop
+ * runs for a message that arrived over the client protocol. Set it only through
+ * `hostedTurnEnv()`, so both hosts set it the same way.
  */
 export const HOSTED_TURN_ENV_VAR = 'MAESTRO_HOSTED_TURN';
+
+/** The environment that marks a hosted agent's turn (`HOSTED_TURN_ENV_VAR`). */
+export function hostedTurnEnv(): Record<string, string> {
+	return { [HOSTED_TURN_ENV_VAR]: '1' };
+}
 
 /** The error code `hostedTurnTargetRefusal()` is reported with. */
 export const TARGET_OFF_HOST_CODE = 'TARGET_OFF_HOST';

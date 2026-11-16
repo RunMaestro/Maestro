@@ -93,7 +93,14 @@ export function buildSshProbeCommand(agentCommand?: string): string {
  * reach its relay says so in words this function has never heard of.
  */
 export function describeSshConnectionError(stderr: string): string | undefined {
-	const lower = stderr.toLowerCase();
+	// When ssh printed nothing, Node's execFile message stands in for stderr:
+	// "Command failed: <the whole command line>". That line is ours, not ssh's,
+	// and it carries every -o option, a ProxyCommand credential included (a
+	// tailcat auth key reached the Federation peer list this way). Drop it
+	// before anything reads the text, so it is never shown and never matched.
+	const nodeWrapped = stderr.trimStart().startsWith('Command failed:');
+	const text = nodeWrapped ? stderr.trimStart().replace(/^Command failed:[^\n]*\n?/, '') : stderr;
+	const lower = text.toLowerCase();
 
 	if (lower.includes('permission denied')) {
 		return 'Authentication failed. Check username and private key.';
@@ -120,7 +127,10 @@ export function describeSshConnectionError(stderr: string): string | undefined {
 		return 'Private key file not found.';
 	}
 
-	const trimmed = stderr.trim();
+	const trimmed = text.trim();
+	if (nodeWrapped && !trimmed) {
+		return 'ssh exited without printing an error. The host or its ProxyCommand may be down.';
+	}
 	return trimmed || undefined;
 }
 

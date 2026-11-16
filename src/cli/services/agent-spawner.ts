@@ -54,7 +54,7 @@ import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './t
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { prepareCliRunOn } from './run-on';
 import { runOnHarnessMode, type ResolvedRunOn } from '../../shared/local-models/run-on';
-import { resolveCueAgentBinary } from '../../main/cue/cue-agent-binary';
+import { resolveAgentBinary } from '../../shared/maestro-lib/launch/agent-binary';
 import { generateUUID } from '../../shared/uuid';
 import type { QuerySource } from '../../shared/querySource';
 import { buildConsultChainEnv, type ConsultChain } from '../../shared/consultBudget';
@@ -830,7 +830,7 @@ async function resolveSessionAgentCommand(
 	sessionCustomPath: string
 ): Promise<string> {
 	const fallback = () => resolveLocalAgentCommand(toolType);
-	const resolved = await resolveCueAgentBinary({
+	const resolved = await resolveAgentBinary({
 		sessionCustomPath,
 		sshEnabled: false,
 		getDetectedPath: fallback,
@@ -2018,7 +2018,7 @@ export interface SpawnAgentOptions {
 	/**
 	 * The agent's OWN custom binary (`SessionInfo.customPath`). Wins over the
 	 * provider-level path, the same order a desktop tab spawn and a Cue run use
-	 * (`resolveCueAgentBinary`). Local runs only: an invalid path warns and falls
+	 * (`resolveAgentBinary`). Local runs only: an invalid path warns and falls
 	 * back. Ignored when `agentCommand` is set.
 	 */
 	sessionCustomPath?: string;

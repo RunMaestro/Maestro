@@ -80,7 +80,8 @@ export function registerQueueCallbacks(
 			mentionRouting?: MentionRouting,
 			dispatchCallback?: boolean,
 			control?: PianolaQueueControl,
-			turnOverrides?: TurnOverrides
+			turnOverrides?: TurnOverrides,
+			hostedTurn?: boolean
 		) => {
 			const mainWindow = resolveSessionWindow(sessionId);
 			if (!mainWindow) {
@@ -133,9 +134,11 @@ export function registerQueueCallbacks(
 					consultChain,
 					mentionRouting,
 					dispatchCallback,
-					// Positional: the overrides follow `control`, which is then sent as undefined.
-					...(control || turnOverrides ? [control] : []),
-					...(turnOverrides ? [turnOverrides] : [])
+					// Positional: the overrides follow `control`, which is then sent as undefined, and
+					// the hosted-turn mark follows the overrides.
+					...(control || turnOverrides || hostedTurn ? [control] : []),
+					...(turnOverrides || hostedTurn ? [turnOverrides] : []),
+					...(hostedTurn ? [true] : [])
 				);
 
 				const timeoutId = setTimeout(() => {

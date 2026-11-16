@@ -44,7 +44,7 @@ import {
 	type TurnProcessSpec,
 } from '../../shared/maestro-lib/run/start-turn';
 import { getAgentCapabilities, getAgentDefinition } from '../agents';
-import { resolveCueAgentBinary } from '../cue/cue-agent-binary';
+import { resolveAgentBinary } from '../../shared/maestro-lib/launch/agent-binary';
 import { createOutputParser } from '../parsers';
 import { planSpawnShell } from '../process-manager/utils/windowsSpawnShell';
 import { applyAgentConfigOverrides, buildAgentArgs } from '../utils/agent-args';
@@ -208,7 +208,7 @@ export async function testAgentRunOn(rawRequest: unknown): Promise<RunOnTestResu
 	// The precedence a tab spawn uses: the agent's own path, the provider's, then
 	// what detection found. A bare command name is the last resort, and a spawn
 	// that cannot find it is reported as a turn that did not start.
-	const resolvedPath = await resolveCueAgentBinary({
+	const resolvedPath = await resolveAgentBinary({
 		sessionCustomPath,
 		providerCustomPath: stringField(agentConfigValues, 'customPath'),
 		sshEnabled,

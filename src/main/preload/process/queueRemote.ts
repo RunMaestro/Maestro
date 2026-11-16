@@ -28,7 +28,9 @@ export function createQueueRemoteApi() {
 				dispatchCallback?: boolean,
 				control?: PianolaQueueControl,
 				/** A Federation sender's own tab chips for this one message (`TurnInput.overrides`). */
-				turnOverrides?: TurnOverrides
+				turnOverrides?: TurnOverrides,
+				/** Sent over the client protocol: a hosted agent's turn (`MAESTRO_HOSTED_TURN`). */
+				hostedTurn?: boolean
 			) => void
 		): (() => void) => {
 			/**
@@ -49,7 +51,8 @@ export function createQueueRemoteApi() {
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
 				control?: PianolaQueueControl,
-				turnOverrides?: TurnOverrides
+				turnOverrides?: TurnOverrides,
+				hostedTurn?: boolean
 			) => {
 				try {
 					const args: Parameters<typeof callback> = [
@@ -66,7 +69,8 @@ export function createQueueRemoteApi() {
 						dispatchCallback,
 						control,
 					];
-					if (turnOverrides) args.push(turnOverrides);
+					if (turnOverrides || hostedTurn) args.push(turnOverrides);
+					if (hostedTurn) args.push(true);
 					callback(...args);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, { success: false });

@@ -263,7 +263,8 @@ export interface MessageHandlerCallbacks {
 		mentionRouting?: MentionRouting,
 		dispatchCallback?: boolean,
 		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaQueueControl,
-		turnOverrides?: import('../../../../shared/maestro-lib/client/types').TurnOverrides
+		turnOverrides?: import('../../../../shared/maestro-lib/client/types').TurnOverrides,
+		hostedTurn?: boolean
 	) => Promise<EnqueueCommandResult>;
 	confirmQueueItem?: import('../../../stores/queue-item-receipt').ConfirmQueueItem;
 	releaseQueueItem?: import('../../../stores/queue-item-receipt').ReleaseQueueItem;

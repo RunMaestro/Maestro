@@ -75,6 +75,37 @@ beforeEach(() => {
 });
 
 describe('shouldRunSynopsisOnExit', () => {
+	it("follows the sender's own save to History choice on the turn's user entry", () => {
+		const session = { executionQueue: [], agentSessionId: 'a' };
+		const userEntry = (saveToHistory?: boolean) => ({
+			source: 'user' as const,
+			...(saveToHistory !== undefined && { saveToHistory }),
+		});
+		// A conductor turned History off for this message on a tab that saves.
+		expect(
+			shouldRunSynopsisOnExit(session, {
+				agentSessionId: 'a',
+				saveToHistory: true,
+				logs: [userEntry(), { source: 'ai' as const }, userEntry(false), { source: 'ai' as const }],
+			})
+		).toBe(false);
+		// And on for a tab that does not.
+		expect(
+			shouldRunSynopsisOnExit(session, {
+				agentSessionId: 'a',
+				saveToHistory: false,
+				logs: [userEntry(true), { source: 'ai' as const }],
+			})
+		).toBe(true);
+		// Only the latest user entry counts: an earlier choice does not leak into a plain send.
+		expect(
+			shouldRunSynopsisOnExit(session, {
+				agentSessionId: 'a',
+				saveToHistory: true,
+				logs: [userEntry(false), { source: 'ai' as const }, userEntry()],
+			})
+		).toBe(true);
+	});
 	it('returns false when execution queue is non-empty', () => {
 		expect(
 			shouldRunSynopsisOnExit(

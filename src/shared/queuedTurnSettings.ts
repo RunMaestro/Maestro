@@ -40,16 +40,32 @@ export function captureQueuedTurnSettings<T extends string>(
 	return { model: turnModel, effort: turnEffort };
 }
 
+/** The queued-item fields a sender's own chips (`TurnOverrides`, Federation) set. */
+export interface QueuedTurnOverrideFields {
+	turnSettings?: { model?: string; effort?: string };
+	readOnlyMode?: boolean;
+	/**
+	 * The sender's read-only choice for this one message. Set only from `TurnOverrides`; when set,
+	 * it decides read-only in place of the tab's own chip ({@link queuedItemRunsReadOnly}).
+	 */
+	turnReadOnly?: boolean;
+	/**
+	 * The sender's save to History choice for this one message. Copied onto the user log entry the
+	 * dispatch writes, where the exit synopsis reads it in place of the tab's own chip.
+	 */
+	turnSaveToHistory?: boolean;
+}
+
 /**
  * Lay a sender's own tab chips (`TurnInput.overrides`, Federation) onto a queued item built from
- * the host tab, for that one message: the model and effort replace the captured ones, and a
- * read-only override marks the item read-only. A `readOnly: false` cannot lift the tab's own
- * read-only chip here, because the desktop's dispatch also reads the live tab. The tab itself is
- * never changed.
+ * the host tab, for that one message: the model and effort replace the captured ones, and the
+ * read-only and save to History choices replace the tab's own. The tab itself is never changed,
+ * so other conductors and the host keep their chips.
  */
-export function withQueuedTurnOverrides<
-	T extends { turnSettings?: { model?: string; effort?: string }; readOnlyMode?: boolean },
->(item: T, overrides: Pick<TurnOverrides, 'model' | 'effort' | 'readOnly'> | undefined): T {
+export function withQueuedTurnOverrides<T extends QueuedTurnOverrideFields>(
+	item: T,
+	overrides: TurnOverrides | undefined
+): T {
 	if (!overrides) return item;
 	const next: T = { ...item };
 	if (overrides.model !== undefined || overrides.effort !== undefined) {
@@ -58,6 +74,26 @@ export function withQueuedTurnOverrides<
 			effort: overrides.effort ?? item.turnSettings?.effort,
 		};
 	}
-	if (overrides.readOnly === true) next.readOnlyMode = true;
+	if (overrides.readOnly !== undefined) {
+		next.turnReadOnly = overrides.readOnly;
+		next.readOnlyMode = overrides.readOnly;
+	}
+	if (overrides.saveToHistory !== undefined) next.turnSaveToHistory = overrides.saveToHistory;
 	return next;
+}
+
+/**
+ * Whether a queued item runs read-only when it is dispatched. A sender's own choice
+ * (`turnReadOnly`) decides when present; otherwise the item's flag or the target tab's current
+ * read-only setting does. Every dispatch path, and the main process's check of a dispatch, asks
+ * this one rule, so they cannot disagree.
+ */
+export function queuedItemRunsReadOnly(
+	item: Pick<QueuedTurnOverrideFields, 'readOnlyMode' | 'turnReadOnly'> | undefined,
+	tab: { readOnlyMode?: boolean; permissionMode?: string } | undefined
+): boolean {
+	if (typeof item?.turnReadOnly === 'boolean') return item.turnReadOnly;
+	return (
+		item?.readOnlyMode === true || tab?.readOnlyMode === true || tab?.permissionMode === 'readonly'
+	);
 }

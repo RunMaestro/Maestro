@@ -819,3 +819,57 @@ describe('remoteUpdateSessionConfig - System One switch', () => {
 		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
 	});
 });
+
+describe('remoteUpdateSessionConfig - Peers tab from a Federation conductor', () => {
+	it('replaces the explicit rows whole, read the way the Peers tab saves them', async () => {
+		const session = makeSession({
+			peerAgents: [{ sessionId: 'old-peer', read: true, write: false }],
+		} as Partial<Session>);
+		const updated = await applyPatch(session, {
+			peerAgents: [
+				{ sessionId: ' peer-1 ', read: true, write: false, description: ' api ' },
+				{ sessionId: 'peer-2', read: false, write: false },
+			],
+		});
+		expect(updated.peerAgents).toEqual([
+			{ sessionId: 'peer-1', read: true, write: false, description: 'api' },
+			// A row with neither bit lit is an exclusion, and is kept.
+			{ sessionId: 'peer-2', read: false, write: false },
+		]);
+	});
+
+	it('clears the rows on null', async () => {
+		const session = makeSession({
+			peerAgents: [{ sessionId: 'old-peer', read: true, write: false }],
+		} as Partial<Session>);
+		const updated = await applyPatch(session, { peerAgents: null });
+		expect(updated.peerAgents).toBeUndefined();
+	});
+
+	it('refuses a malformed row, and writes nothing', async () => {
+		const reply = await refusePatch(makeSession(), {
+			peerAgents: [{ sessionId: 'peer-1', read: 'yes', write: false }],
+		});
+		expect(reply.success).toBe(false);
+		expect(reply.error).toContain('peerAgents');
+	});
+
+	it('stores how peers see this agent trimmed, and clears it when blank', async () => {
+		const stored = await applyPatch(makeSession(), { peerDescription: '  Owns the docs  ' });
+		expect(stored.peerDescription).toBe('Owns the docs');
+		cleanup();
+		const cleared = await applyPatch(
+			makeSession({ peerDescription: 'Owns the docs' } as Partial<Session>),
+			{ peerDescription: '   ' }
+		);
+		expect(cleared.peerDescription).toBeUndefined();
+	});
+
+	it('refuses a peer description that is not text', async () => {
+		const reply = await refusePatch(makeSession(), { peerDescription: 42 });
+		expect(reply).toMatchObject({
+			success: false,
+			error: "Invalid value for field 'peerDescription'",
+		});
+	});
+});

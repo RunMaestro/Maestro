@@ -2322,6 +2322,33 @@ describe('process IPC handlers', () => {
 			);
 		});
 
+		it('marks a hosted agent turn with MAESTRO_HOSTED_TURN, and only that turn', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+			mockProcessManager.spawn.mockReturnValue({ pid: 2003, success: true });
+
+			const handler = handlers.get('process:spawn');
+			const spawnFor = (hostedTurn?: boolean) =>
+				handler!({} as any, {
+					sessionId: 'hosted-agent-ai-tab-1',
+					toolType: 'opencode',
+					cwd: '/test',
+					command: 'opencode',
+					args: [],
+					...(hostedTurn ? { hostedTurn } : {}),
+				});
+
+			await spawnFor(true);
+			expect(mockProcessManager.spawn).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					customEnvVars: expect.objectContaining({ MAESTRO_HOSTED_TURN: '1' }),
+				})
+			);
+
+			await spawnFor();
+			const env = mockProcessManager.spawn.mock.calls.at(-1)?.[0]?.customEnvVars ?? {};
+			expect(env).not.toHaveProperty('MAESTRO_HOSTED_TURN');
+		});
+
 		it('derives the tab identity from the process id when the spawn sends no tabId', async () => {
 			// Desktop turns spawn as `{agentId}-ai-{tabId}` and never send `tabId`.
 			mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });

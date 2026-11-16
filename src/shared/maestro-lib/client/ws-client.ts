@@ -1839,6 +1839,9 @@ class WsMaestroClient implements MaestroClient {
 		if (originHost) message.originHost = originHost;
 		const turnOverrides = normalizeTurnOverrides(input.overrides);
 		if (turnOverrides) message.turnOverrides = turnOverrides;
+		// A message over the client protocol is a hosted agent's turn: a desktop host runs it with
+		// `MAESTRO_HOSTED_TURN`, as `maestro-cli host` runs every turn.
+		message.hostedTurn = true;
 
 		const sent = await this.send('turns.send', message, 'enqueue_command_result');
 		if (!sent.ok)

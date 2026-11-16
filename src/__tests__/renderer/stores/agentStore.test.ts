@@ -1611,6 +1611,46 @@ describe('agentStore', () => {
 			expect(mockSpawn.mock.calls[1][0]).not.toHaveProperty('consultChain');
 		});
 
+		it("spawns a conductor's message as a hosted agent turn, and only that message", async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			await useAgentStore
+				.getState()
+				.processQueuedItem(
+					'session-1',
+					createQueuedItem({ tabId: 'tab-1', text: 'From a conductor', hostedTurn: true }),
+					defaultDeps
+				);
+			await useAgentStore
+				.getState()
+				.processQueuedItem(
+					'session-1',
+					createQueuedItem({ id: 'item-2', tabId: 'tab-1', text: 'Typed here' }),
+					defaultDeps
+				);
+
+			expect(mockSpawn.mock.calls[0][0].hostedTurn).toBe(true);
+			expect(mockSpawn.mock.calls[1][0]).not.toHaveProperty('hostedTurn');
+		});
+
 		describe('New Session Message', () => {
 			function seedTab(agentSessionId: string | null) {
 				const session = createMockSession({

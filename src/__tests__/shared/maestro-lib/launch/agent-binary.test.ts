@@ -1,21 +1,21 @@
 /**
- * @file cue-agent-binary.test.ts
- * @description Which binary a Cue prompt run executes: the agent's own custom
+ * @file agent-binary.test.ts
+ * @description Which binary an agent's turn executes: the agent's own custom
  * path, then the provider's, then local detection or the remote's bare binary.
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { resolveCueAgentBinary } from '../../../main/cue/cue-agent-binary';
+import { resolveAgentBinary } from '../../../../shared/maestro-lib/launch/agent-binary';
 
 const found = (p: string) => vi.fn(async () => ({ exists: true, path: p }));
 const missing = () => vi.fn(async () => ({ exists: false }));
 const detected = (p?: string) => vi.fn(async () => p);
 
-describe('resolveCueAgentBinary', () => {
+describe('resolveAgentBinary', () => {
 	it("prefers the agent's own custom path over the provider's and the detector's", async () => {
 		const getDetectedPath = detected('/usr/local/bin/claude');
 
-		const result = await resolveCueAgentBinary({
+		const result = await resolveAgentBinary({
 			sessionCustomPath: '/opt/pinned/claude',
 			providerCustomPath: '/opt/provider/claude',
 			sshEnabled: false,
@@ -28,7 +28,7 @@ describe('resolveCueAgentBinary', () => {
 	});
 
 	it('uses the path the check resolved, not the one that was typed', async () => {
-		const result = await resolveCueAgentBinary({
+		const result = await resolveAgentBinary({
 			sessionCustomPath: '~/bin/claude',
 			sshEnabled: false,
 			getDetectedPath: detected(),
@@ -41,7 +41,7 @@ describe('resolveCueAgentBinary', () => {
 	it("falls back to the provider's path and warns when the agent's own path is invalid", async () => {
 		const onWarn = vi.fn();
 
-		const result = await resolveCueAgentBinary({
+		const result = await resolveAgentBinary({
 			sessionCustomPath: '/gone/claude',
 			providerCustomPath: '/opt/provider/claude',
 			sshEnabled: false,
@@ -58,7 +58,7 @@ describe('resolveCueAgentBinary', () => {
 	it("uses the provider's path when the agent has none of its own", async () => {
 		const checkPath = found('/unused');
 
-		const result = await resolveCueAgentBinary({
+		const result = await resolveAgentBinary({
 			providerCustomPath: '/opt/provider/claude',
 			sshEnabled: false,
 			getDetectedPath: detected('/usr/local/bin/claude'),
@@ -70,7 +70,7 @@ describe('resolveCueAgentBinary', () => {
 	});
 
 	it('uses the detected path when nothing is configured', async () => {
-		const result = await resolveCueAgentBinary({
+		const result = await resolveAgentBinary({
 			sshEnabled: false,
 			getDetectedPath: detected('/usr/local/bin/claude'),
 		});
@@ -79,7 +79,7 @@ describe('resolveCueAgentBinary', () => {
 	});
 
 	it('returns undefined when the provider is not installed', async () => {
-		const result = await resolveCueAgentBinary({
+		const result = await resolveAgentBinary({
 			sshEnabled: false,
 			getDetectedPath: detected(undefined),
 		});
@@ -94,7 +94,7 @@ describe('resolveCueAgentBinary', () => {
 			const getDetectedPath = detected(detectedPath);
 			const onWarn = vi.fn();
 
-			const result = await resolveCueAgentBinary({
+			const result = await resolveAgentBinary({
 				sessionCustomPath: '/gone/claude',
 				sshEnabled: false,
 				getDetectedPath,
@@ -153,7 +153,7 @@ describe('resolveCueAgentBinary', () => {
 		const getDetectedPath = detected('/local/detected/grok');
 		const onWarn = vi.fn();
 
-		const result = await resolveCueAgentBinary({
+		const result = await resolveAgentBinary({
 			sessionCustomPath: testCase.sessionCustomPath,
 			providerCustomPath: testCase.providerCustomPath,
 			sshEnabled: true,

@@ -50,6 +50,7 @@ import { createTab, getActiveTab, markTabRunningQueuedItem } from '../utils/tabH
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
 import { isAutoModel } from '../../shared/autoModel';
 import { settleAutoTurn, turnSpawnSettings } from '../services/autoTurn';
+import { queuedItemRunsReadOnly } from '../../shared/queuedTurnSettings';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
 import {
@@ -765,10 +766,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 			// Get the TARGET TAB's agentSessionId for session continuity
 			const tabAgentSessionId = targetTab.agentSessionId;
-			const isReadOnly =
-				item.readOnlyMode === true ||
-				targetTab.readOnlyMode === true ||
-				targetTab.permissionMode === 'readonly';
+			const isReadOnly = queuedItemRunsReadOnly(item, targetTab);
 			const effectivePermissionMode = isReadOnly ? 'readonly' : resolveTabPermissionMode(targetTab);
 
 			// Filter out YOLO/skip-permissions flags when read-only mode is active
@@ -913,6 +911,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					// A turn another agent delegated runs in the chain that agent
 					// was admitted to, so its own consults spend the same budget.
 					...(item.consultChain ? { consultChain: item.consultChain } : {}),
+					// A conductor's message to a hosted agent: its consults stay on this host.
+					...(item.hostedTurn ? { hostedTurn: true } : {}),
 				});
 				if (managedQueue) {
 					if (!spawnResult.success)

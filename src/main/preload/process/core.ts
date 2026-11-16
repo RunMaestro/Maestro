@@ -62,6 +62,8 @@ export interface ProcessConfig {
 	// The consult chain this turn runs IN, when another agent's delegation
 	// started it (`maestro-cli dispatch`). See shared/consultBudget.ts.
 	consultChain?: ConsultChain;
+	// A Federation hosted agent's turn (its message arrived over the client protocol).
+	hostedTurn?: boolean;
 	// The Auto Run this spawn is a task of (MAESTRO_CALLER_AUTORUN_ID), so a
 	// `maestro-cli dispatch` it runs reports its result back to the run.
 	autoRunId?: string;

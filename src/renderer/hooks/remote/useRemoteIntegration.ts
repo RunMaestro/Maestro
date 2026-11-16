@@ -1438,7 +1438,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// A Federation sender's own tab chips for this one message (`TurnInput.overrides`).
 				// The model, effort, and read-only ride on the queued item; save-to-History has no
 				// per-item field here, so the tab's own chip decides it.
-				turnOverrides?: TurnOverrides
+				turnOverrides?: TurnOverrides,
+				// Sent over the client protocol (a Federation conductor): the turn is a hosted
+				// agent's. It always takes the queue path, which carries the mark to the spawn.
+				hostedTurn?: boolean
 			) => {
 				const reply = (result: {
 					success: boolean;
@@ -1523,17 +1526,20 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// The plain remote-command path spawns on the live tab's settings, so a message
 					// carrying the sender's own chips goes through the queue instead and is sent at
 					// once from there (Force Send): the queued item is what carries them.
-					if (turnOverrides && targetTab.state !== 'busy' && !lineForTab && !held) {
-						const item = withQueuedTurnOverrides(
-							buildQueuedMessageItem({
-								session,
-								tab: targetTab,
-								text: command,
-								images,
-								mentionRouting,
-							}),
-							turnOverrides
-						);
+					if ((turnOverrides || hostedTurn) && targetTab.state !== 'busy' && !lineForTab && !held) {
+						const item: QueuedItem = {
+							...withQueuedTurnOverrides(
+								buildQueuedMessageItem({
+									session,
+									tab: targetTab,
+									text: command,
+									images,
+									mentionRouting,
+								}),
+								turnOverrides
+							),
+							...(hostedTurn && { hostedTurn: true }),
+						};
 						if (!background) {
 							setActiveSessionId(sessionId);
 						}
@@ -1599,6 +1605,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						),
 						...(held && { paused: true }),
 						...(dispatchCallback && { dispatchCallback: true }),
+						...(hostedTurn && { hostedTurn: true }),
 					};
 
 					// Position is deterministic from the snapshot we already read: the item

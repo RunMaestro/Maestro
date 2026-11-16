@@ -59,6 +59,9 @@ export function handleEnqueueCommand(
 	const consultChain = parseConsultChain(message.consultChain);
 	// A Federation client's own tab chips for this one message (`TurnInput.overrides`).
 	const turnOverrides = normalizeTurnOverrides(message.turnOverrides);
+	// Sent over the client protocol (`turns.send`): the turn is a hosted agent's, so it runs with
+	// `MAESTRO_HOSTED_TURN` the way a `maestro-cli host` turn does.
+	const hostedTurn = message.hostedTurn === true;
 
 	logger.info(
 		`[Web] Received enqueue_command: session=${sessionId}, tab=${requestedTabId ?? 'active'}, commandLen=${command.length}, images=${images?.length ?? 0}`,
@@ -252,8 +255,10 @@ export function handleEnqueueCommand(
 		consultChain,
 		routingField.routing,
 	];
-	// The overrides ride after the dispatch-callback and admission slots, which this path leaves empty.
-	if (turnOverrides) enqueueArgs.push(undefined, undefined, turnOverrides);
+	// The overrides ride after the dispatch-callback and admission slots, which this path leaves
+	// empty, and the hosted-turn mark after them.
+	if (turnOverrides || hostedTurn) enqueueArgs.push(undefined, undefined, turnOverrides);
+	if (hostedTurn) enqueueArgs.push(true);
 
 	ctx.callbacks
 		.enqueueCommand(...enqueueArgs)

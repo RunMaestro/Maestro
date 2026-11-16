@@ -684,7 +684,9 @@ export type EnqueueCommandCallback = (
 	 * The sender's own tab chips for this one message (`TurnInput.overrides`, Federation): the
 	 * queued item runs under them. Never written to the tab.
 	 */
-	turnOverrides?: TurnOverrides
+	turnOverrides?: TurnOverrides,
+	/** Sent over the client protocol: the turn is a hosted agent's (`MAESTRO_HOSTED_TURN`). */
+	hostedTurn?: boolean
 ) => Promise<EnqueueCommandResult>;
 /**
  * A single queued item, mirrored from the renderer's executionQueue for CLI

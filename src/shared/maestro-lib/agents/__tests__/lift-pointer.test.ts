@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	HOSTED_TURN_ENV_VAR,
+	hostedTurnEnv,
 	hostedTurnTargetRefusal,
 	liftBusyReason,
 	liftedAgentRef,
@@ -116,5 +117,12 @@ describe('hostedTurnTargetRefusal', () => {
 		const refusal = hostedTurnTargetRefusal('laptop-agent', { [HOSTED_TURN_ENV_VAR]: '1' });
 		expect(refusal).toContain('"laptop-agent" is not an agent on this host');
 		expect(refusal).toContain('only to agents on the same host');
+	});
+});
+
+describe('hostedTurnEnv', () => {
+	it('is the one marker both hosts stamp, and the refusal reads it', () => {
+		expect(hostedTurnEnv()).toEqual({ MAESTRO_HOSTED_TURN: '1' });
+		expect(hostedTurnTargetRefusal('laptop-agent', hostedTurnEnv())).toBeDefined();
 	});
 });

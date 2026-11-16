@@ -103,6 +103,7 @@ import {
 import type { CodexResetCreditConsumeResult } from '../../../shared/codexResetCredits';
 import type { KnownAuthDirs } from '../../../shared/authPaths';
 import { rememberableEnvVarKeys, type KnownEnvVarKeys } from '../../../shared/envVarCatalog';
+import { customPathsFromAgentConfigs } from '../../agents/agent-config-lookup';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -1280,13 +1281,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				agentConfigsStore.set('configs', allConfigs);
 
 				// Update agent detector with all custom paths
-				const allCustomPaths: Record<string, string> = {};
-				for (const [id, config] of Object.entries(allConfigs)) {
-					if (config && typeof config === 'object' && 'customPath' in config && config.customPath) {
-						allCustomPaths[id] = config.customPath as string;
-					}
-				}
-				agentDetector.setCustomPaths(allCustomPaths);
+				agentDetector.setCustomPaths(customPathsFromAgentConfigs(allConfigs));
 
 				return true;
 			}
@@ -1309,14 +1304,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	ipcMain.handle(
 		'agents:getAllCustomPaths',
 		withIpcErrorLogging(handlerOpts('getAllCustomPaths', CONFIG_LOG_CONTEXT), async () => {
-			const allConfigs = agentConfigsStore.get('configs', {});
-			const customPaths: Record<string, string> = {};
-			for (const [agentId, config] of Object.entries(allConfigs)) {
-				if (config && typeof config === 'object' && 'customPath' in config && config.customPath) {
-					customPaths[agentId] = config.customPath as string;
-				}
-			}
-			return customPaths;
+			return customPathsFromAgentConfigs(agentConfigsStore.get('configs', {}));
 		})
 	);
 

@@ -65,6 +65,7 @@ import {
 	withoutConsultChainEnv,
 } from '../../../../shared/consultBudget';
 import { hasPeerGrant } from '../../../../shared/peerAgents';
+import { hostedTurnEnv } from '../../../../shared/maestro-lib/agents/lift-pointer';
 import { newConsultChainId } from '../../../peer-consults/consult-budget';
 import { grokLaunchArgsProblem, requestedPermissionMode } from '../../../process-manager/types';
 import { canonicalJson } from '../../../../shared/canonicalJson';
@@ -1026,6 +1027,9 @@ async function handleProcessSpawnImpl(
 			// An Auto Run task also says which run it belongs to, so a dispatch it
 			// makes is tracked to completion and reported back to that run.
 			...(config.querySource === 'auto' ? buildAutoRunCallerEnv(config.autoRunId) : {}),
+			// A hosted agent's turn (its message came over the client protocol): its `ask` and
+			// `dispatch` refuse a target off this host, as on `maestro-cli host`.
+			...(config.hostedTurn === true ? hostedTurnEnv() : {}),
 		};
 
 		// Who asked for this turn, when the spawn came from a logged-in browser.

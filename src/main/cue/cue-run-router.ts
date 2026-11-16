@@ -44,7 +44,7 @@ import {
 	cueTurnLaunch,
 	resolveCueTurnSettings,
 } from '../../shared/cue/turn-settings';
-import { resolveCueAgentBinary } from './cue-agent-binary';
+import { resolveAgentBinary } from '../../shared/maestro-lib/launch/agent-binary';
 import { describeTurnSettings, type ResolvedTurnSettings } from '../../shared/autorunTurnSettings';
 import type { HarnessTierDefaults, TierTargets } from '../../shared/modelTiers';
 import type { RunOnTarget } from '../../shared/local-models/run-on';
@@ -384,7 +384,7 @@ export async function executeCueRunAction(
 	// host; the provider-level path is a local file and never goes remote.
 	let resolvedAgentPath: string | undefined;
 	if (storedSession.sessionSshRemoteConfig?.enabled) {
-		resolvedAgentPath = await resolveCueAgentBinary({
+		resolvedAgentPath = await resolveAgentBinary({
 			sessionCustomPath: storedSession.customPath,
 			sshEnabled: true,
 			getDetectedPath: async () => undefined,

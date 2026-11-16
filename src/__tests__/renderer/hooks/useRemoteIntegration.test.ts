@@ -3153,6 +3153,59 @@ describe('useRemoteIntegration', () => {
 			);
 		});
 
+		describe('a message over the client protocol (a hosted agent turn)', () => {
+			const sendHosted = (tabState: 'idle' | 'busy', channel: string) => {
+				const tab = createMockTab({ id: 'tab-1', state: tabState });
+				const session = createMockSession({
+					id: 'session-1',
+					state: tabState,
+					aiTabs: [tab],
+					activeTabId: 'tab-1',
+					executionQueue: [],
+				});
+				useSessionStore.setState({ sessions: [session] });
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+				act(() => {
+					onRemoteEnqueueCommandHandler?.(
+						'session-1',
+						'From a conductor',
+						channel,
+						'ai',
+						'tab-1',
+						undefined,
+						true,
+						false,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						true
+					);
+				});
+				return useSessionStore
+					.getState()
+					.sessions.find((s) => s.id === 'session-1')
+					?.executionQueue.find((item) => item.text === 'From a conductor');
+			};
+
+			it('marks the queued item on a busy tab', () => {
+				expect(sendHosted('busy', 'chan-hosted-busy')).toMatchObject({ hostedTurn: true });
+			});
+
+			it('goes through the queue on an idle tab, so the mark reaches the spawn', () => {
+				vi.mocked(sendQueuedItemNow).mockReturnValueOnce(true);
+				const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+				const queued = sendHosted('idle', 'chan-hosted-idle');
+				expect(dispatchEventSpy).not.toHaveBeenCalledWith(
+					expect.objectContaining({ type: 'maestro:remoteCommand' })
+				);
+				expect(queued).toMatchObject({ hostedTurn: true });
+				expect(sendQueuedItemNow).toHaveBeenCalledWith('session-1', queued?.id);
+				dispatchEventSpy.mockRestore();
+			});
+		});
+
 		describe("a Federation sender's turn overrides", () => {
 			const overrides = { model: 'opus', effort: 'high', readOnly: true, saveToHistory: false };
 

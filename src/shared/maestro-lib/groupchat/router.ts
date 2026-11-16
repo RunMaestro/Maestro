@@ -54,6 +54,8 @@ import { getClaudeTokenMode } from '../../claudeTokenMode';
 import type { UsageStats } from '../../types';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../launch/agent-args';
 import { isAgentOwnWorkingDirectory } from '../launch/interactive-mode';
+import { resolveAgentBinary } from '../launch/agent-binary';
+import type { AgentConfig } from '../providers/definitions';
 import { calculateContextTokens } from '../parsers/usage-aggregator';
 import { logger, captureException } from '../host';
 import { appendToLog, formatChatHistoryForPrompt, readLog, saveImage } from './log';
@@ -84,6 +86,29 @@ import type {
 export type { GroupChatSessionInfo } from './types';
 
 const LOG_CONTEXT = '[GroupChatRouter]';
+
+/**
+ * The binary a participant runs: its agent's own custom path when it has one,
+ * else the provider's (`agent.path`, which already carries the provider override
+ * or detection). The same order its tab spawn uses. Over SSH the agent's path
+ * names a file on the remote, so it goes to `remoteCommand`, never `command`.
+ */
+async function participantBinary(
+	agent: Pick<AgentConfig, 'path' | 'command'>,
+	session: Pick<GroupChatSessionInfo, 'customPath' | 'sshRemoteConfig'> | undefined
+): Promise<{ command: string; remoteCommand?: string }> {
+	const providerCommand = agent.path || agent.command;
+	const sshEnabled = !!session?.sshRemoteConfig?.enabled;
+	const resolved = await resolveAgentBinary({
+		sessionCustomPath: session?.customPath,
+		sshEnabled,
+		getDetectedPath: async () => providerCommand,
+		onWarn: (message) => logger.warn(message, LOG_CONTEXT),
+	});
+	if (sshEnabled)
+		return { command: providerCommand, ...(resolved ? { remoteCommand: resolved } : {}) };
+	return { command: resolved ?? providerCommand };
+}
 
 /**
  * Non-customizable protocol that connects moderator text to actual participant
@@ -2373,7 +2398,8 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 					logger.debug(`[GroupChat:Debug] Emitted participant state: working`);
 
 					// Log spawn details for debugging
-					const spawnCommand = agent.path || agent.command;
+					const binary = await participantBinary(agent, matchingSession);
+					const spawnCommand = binary.command;
 					const spawnArgs = configResolution.args;
 					logger.debug(`[GroupChat:Debug] Spawn command: ${spawnCommand}`);
 					logger.debug(`[GroupChat:Debug] Spawn args: ${JSON.stringify(spawnArgs)}`);
@@ -2393,6 +2419,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 						providerId: participant.agentId,
 						agent,
 						command: spawnCommand,
+						...(binary.remoteCommand ? { remoteCommand: binary.remoteCommand } : {}),
 						args: spawnArgs,
 						cwd,
 						prompt: participantPrompt,
@@ -3016,13 +3043,16 @@ Review the agent responses above. Either:
 		events.participantState(groupChatId, participantName, 'working');
 
 		// Spawn the recovery process - with SSH wrapping if configured
-		logger.debug(`[GroupChat:Debug] Recovery spawn command: ${agent.path || agent.command}`);
+		const recoveryBinary = await participantBinary(agent, matchingSession);
+		logger.debug(`[GroupChat:Debug] Recovery spawn command: ${recoveryBinary.command}`);
 		logger.debug(`[GroupChat:Debug] Recovery spawn args count: ${configResolution.args.length}`);
 
 		const spawnResult = await launcher.runner.start({
 			processId: sessionId,
 			providerId: participant.agentId,
 			agent,
+			command: recoveryBinary.command,
+			...(recoveryBinary.remoteCommand ? { remoteCommand: recoveryBinary.remoteCommand } : {}),
 			args: configResolution.args,
 			cwd,
 			prompt: fullPrompt,

@@ -6443,6 +6443,24 @@ describe('tabHelpers', () => {
 			expect(result.logs[0]).toMatchObject({ forceParallel: true, readOnly: true });
 		});
 
+		it("stamps a sender's own save to History choice on the log entry, and only then", () => {
+			const tab = createMockTab({ id: 't1', logs: [] });
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'message',
+				text: 'from a conductor',
+				timestamp: 1700000000000,
+				turnSaveToHistory: false,
+			};
+			const session = createMockSession({ aiTabs: [tab] });
+			expect(markTabRunningQueuedItem(tab, item, session).logs[0].saveToHistory).toBe(false);
+			const plain = { ...item, turnSaveToHistory: undefined };
+			expect(markTabRunningQueuedItem(tab, plain, session).logs[0]).not.toHaveProperty(
+				'saveToHistory'
+			);
+		});
+
 		it('marks the tab busy without a log for a command item', () => {
 			const tab = createMockTab({ id: 't1', logs: [] });
 			const item: QueuedItem = {

@@ -17698,7 +17698,7 @@ interface CueDesktopModules {
 	shellExec: typeof import('../../src/main/cue/cue-shell-executor');
 	cliExec: typeof import('../../src/main/cue/cue-cli-executor');
 	lifecycle: typeof import('../../src/main/cue/cue-process-lifecycle');
-	agentBinary: typeof import('../../src/main/cue/cue-agent-binary');
+	agentBinary: typeof import('../../src/shared/maestro-lib/launch/agent-binary');
 	builder: typeof import('../../src/main/cue/cue-spawn-builder');
 	settings: typeof import('../../src/shared/cue/turn-settings');
 	parsers: typeof import('../../src/shared/maestro-lib/parsers');
@@ -17743,7 +17743,7 @@ async function loadCueDesktopModules(
 				'../../src/main/cue/cue-shell-executor',
 				'../../src/main/cue/cue-cli-executor',
 				'../../src/main/cue/cue-process-lifecycle',
-				'../../src/main/cue/cue-agent-binary',
+				'../../src/shared/maestro-lib/launch/agent-binary',
 				'../../src/main/cue/cue-spawn-builder',
 				'../../src/shared/cue/turn-settings',
 				'../../src/shared/maestro-lib/parsers',
@@ -17774,7 +17774,7 @@ async function loadCueDesktopModules(
 			`export * as shellExec from ${src('main/cue/cue-shell-executor.ts')};`,
 			`export * as cliExec from ${src('main/cue/cue-cli-executor.ts')};`,
 			`export * as lifecycle from ${src('main/cue/cue-process-lifecycle.ts')};`,
-			`export * as agentBinary from ${src('main/cue/cue-agent-binary.ts')};`,
+			`export * as agentBinary from ${src('shared/maestro-lib/launch/agent-binary.ts')};`,
 			`export * as builder from ${src('main/cue/cue-spawn-builder.ts')};`,
 			`export * as settings from ${src('shared/cue/turn-settings.ts')};`,
 			`export * as parsers from ${src('shared/maestro-lib/parsers/index.ts')};`,
@@ -18129,7 +18129,7 @@ async function runCueLeg(
 					stopCueRun: executor.stopCueRun,
 					findSession: (id) => (id === record.id ? record : undefined),
 					resolveAgentBinary: ({ session }) =>
-						agentBinary.resolveCueAgentBinary({
+						agentBinary.resolveAgentBinary({
 							sessionCustomPath: session.customPath,
 							providerCustomPath: undefined,
 							sshEnabled: false,

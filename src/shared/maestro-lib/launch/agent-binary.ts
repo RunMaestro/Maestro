@@ -1,11 +1,13 @@
 /**
- * Which binary a Cue prompt run executes.
+ * Which binary an agent's turn executes.
  *
  * Same precedence a tab spawn uses (`process:spawn`): the agent's OWN custom
  * path, then the provider-level one (Settings -> Agents), then local detection
- * or the remote's bare binary name. Cue used to skip the first rung, so an
- * agent pinned to a specific binary ran the provider's binary whenever Cue
- * drove it: the same agent executed two programs depending on the turn source.
+ * or the remote's bare binary name. Cue, `maestro-cli send`, CLI Auto Run and
+ * group chat participants each used to skip the first rung, so an agent pinned
+ * to a specific binary ran the provider's binary whenever they drove it: the
+ * same agent executed two programs depending on the turn source. Every spawn
+ * path that knows the agent resolves through here.
  *
  * Locally, an agent's own path is checked before it is used, exactly as the tab
  * spawn does, and an invalid one falls through with a warning rather than
@@ -17,9 +19,9 @@
  * bare binary.
  */
 
-import { checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
+import { checkCustomPath } from './path-prober';
 
-export interface ResolveCueAgentBinaryInput {
+export interface ResolveAgentBinaryInput {
 	/** The agent's own custom path (`Session.customPath`). */
 	sessionCustomPath?: string;
 	/** The provider-level custom path from the agent configs store. */
@@ -37,8 +39,8 @@ export interface ResolveCueAgentBinaryInput {
  * Resolve the selected host's binary for a Cue run, or undefined to let the spawn
  * builder fall back to the provider's bare command name.
  */
-export async function resolveCueAgentBinary(
-	input: ResolveCueAgentBinaryInput
+export async function resolveAgentBinary(
+	input: ResolveAgentBinaryInput
 ): Promise<string | undefined> {
 	const { sessionCustomPath, providerCustomPath, sshEnabled } = input;
 

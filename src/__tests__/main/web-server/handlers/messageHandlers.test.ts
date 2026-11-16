@@ -3953,6 +3953,36 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
+		it('forwards the hosted-turn mark after the overrides slot, filling the empty slots', async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'From a conductor',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+				background: true,
+				hostedTurn: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'From a conductor',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					false,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					true
+				);
+			});
+		});
+
 		it('forwards sessionId/command/tab/background to the callback and replies with queue info', async () => {
 			handler.handleMessage(client, {
 				type: 'enqueue_command',

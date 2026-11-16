@@ -115,6 +115,9 @@ interface ProcessConfig {
 	// delegates spends that chain's budget (shared/consultBudget.ts). Absent on
 	// every other turn: the handler then decides whether the turn roots a chain.
 	consultChain?: import('../shared/consultBudget').ConsultChain;
+	// A Federation hosted agent's turn: its message arrived over the client protocol, so the
+	// spawn handler stamps `MAESTRO_HOSTED_TURN` (`hostedTurnEnv()`).
+	hostedTurn?: boolean;
 	// Session's Additional Directories. Providers that support it get native grant
 	// flags (--add-dir); all agents get the {{ADDITIONAL_DIRECTORIES}} prompt block.
 	sessionAdditionalDirectories?: import('../shared/types').AdditionalDirectory[];
@@ -1090,7 +1093,9 @@ interface MaestroAPI {
 				consultChain?: import('../shared/consultBudget').ConsultChain,
 				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
 				dispatchCallback?: boolean,
-				control?: PianolaQueueControl
+				control?: PianolaQueueControl,
+				turnOverrides?: import('../shared/maestro-lib/client/types').TurnOverrides,
+				hostedTurn?: boolean
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (

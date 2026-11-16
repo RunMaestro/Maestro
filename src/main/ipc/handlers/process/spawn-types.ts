@@ -101,6 +101,9 @@ export interface SpawnProcessConfig {
 	// Data: the handler narrows it with `parseConsultChain`. Absent means the
 	// spawn is the root of a user message, and the handler mints the chain.
 	consultChain?: unknown;
+	// The turn is a Federation hosted agent's: its message arrived over the client protocol. The
+	// handler stamps `MAESTRO_HOSTED_TURN` (`hostedTurnEnv()`), as `maestro-cli host` does.
+	hostedTurn?: boolean;
 	// The Auto Run this spawn is a task of (MAESTRO_CALLER_AUTORUN_ID), so a
 	// `maestro-cli dispatch` it runs reports its result back to the run.
 	autoRunId?: string;

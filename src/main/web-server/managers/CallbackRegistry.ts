@@ -793,7 +793,8 @@ export class CallbackRegistry {
 		mentionRouting?: MentionRouting,
 		dispatchCallback?: boolean,
 		control?: PianolaQueueControl,
-		turnOverrides?: TurnOverrides
+		turnOverrides?: TurnOverrides,
+		hostedTurn?: boolean
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
 		const args: Parameters<EnqueueCommandCallback> = [
@@ -809,7 +810,8 @@ export class CallbackRegistry {
 			dispatchCallback,
 			control,
 		];
-		if (turnOverrides) args.push(turnOverrides);
+		if (turnOverrides || hostedTurn) args.push(turnOverrides);
+		if (hostedTurn) args.push(true);
 		return this.callbacks.enqueueCommand(...args);
 	}
 
