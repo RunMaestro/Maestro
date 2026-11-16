@@ -1413,7 +1413,8 @@ describe('LogViewer', () => {
 				fireEvent.click(pill);
 			});
 
-			expect(onSessionClick).toHaveBeenCalledWith('session-1');
+			// The pill hands over the entry's tab too; these entries name none.
+			expect(onSessionClick).toHaveBeenCalledWith('session-1', undefined);
 		});
 
 		it('should navigate to agent when clicking cue agent pill', async () => {
@@ -1434,7 +1435,8 @@ describe('LogViewer', () => {
 				fireEvent.click(pill);
 			});
 
-			expect(onSessionClick).toHaveBeenCalledWith('session-2');
+			// The pill hands over the entry's tab too; these entries name none.
+			expect(onSessionClick).toHaveBeenCalledWith('session-2', undefined);
 		});
 
 		it('should render the cue level pill in the theme success color', async () => {

@@ -61,7 +61,8 @@ describe('app_stats handler', () => {
 
 		const deps = vi.mocked(collectAppStats).mock.calls[0][0];
 		expect(deps.getProcessManager()).toBe(processManager);
-		expect(lastResponse(client)).toEqual({
+		// toMatchObject: ctx.send stamps every response with its own timestamp.
+		expect(lastResponse(client)).toMatchObject({
 			type: 'app_stats_result',
 			success: true,
 			snapshot: { timestamp: 42 },
