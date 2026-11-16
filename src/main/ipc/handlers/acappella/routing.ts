@@ -22,10 +22,6 @@ import { handlerOpts } from './shared';
 /** Whether the latest `route-decision` came from a Brain (false in Tab mode). */
 let lastDecisionWasRouted = true;
 
-export function resetRoutingState(): void {
-	lastDecisionWasRouted = true;
-}
-
 /**
  * Close the routing log's loop from the event stream.
  *

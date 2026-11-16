@@ -49,7 +49,7 @@ import {
 	createProviderHandlers,
 	resetProvidersState,
 } from './acappella/providers';
-import { createRoutingHandlers, resetRoutingState, watchRosterChanges } from './acappella/routing';
+import { createRoutingHandlers, watchRosterChanges } from './acappella/routing';
 import {
 	createSessionHandlers,
 	readSendWait,
@@ -373,5 +373,4 @@ export function resetACappellaHandlerState(): void {
 	releaseNoticeSpeakerAndTts();
 	void stopWakeTest();
 	disposeActivePipelineAndBridge();
-	resetRoutingState();
 }
