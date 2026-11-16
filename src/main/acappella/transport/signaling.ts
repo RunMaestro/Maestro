@@ -108,6 +108,7 @@ export interface SignalingServiceOptions {
 	/** Read fresh per offer, so a settings change applies to the next connection. */
 	getIceSettings: () => IceTransportSettings;
 	getAudioConfig?: () => RemoteAudioConfig;
+	featureEnabled?: () => boolean;
 	now?: () => number;
 	/** A device authenticated. The remote-session coordinator binds here. */
 	onDeviceOnline?: (deviceId: string) => void;
@@ -343,14 +344,38 @@ export class SignalingService {
 			return;
 		}
 
+		if (session.deviceId) {
+			session.send({
+				op: 'error',
+				code: 'malformed',
+				message: 'This connection is already authenticated.',
+			});
+			return;
+		}
+
 		if (session.authAttempts >= AUTH_ATTEMPT_LIMIT) {
 			session.send({ op: 'error', code: 'rate-limited', message: 'Too many failed attempts.' });
 			return;
 		}
+		// Count the attempt before awaiting authenticate() so a burst of concurrent
+		// auth frames on one socket cannot bypass AUTH_ATTEMPT_LIMIT.
+		session.authAttempts += 1;
 
 		const device = await this.options.pairing.authenticate(message.deviceId, message.token);
-		if (!device) {
-			session.authAttempts += 1;
+		if (this.sessions.get(session.clientId) !== session) return;
+		if (session.deviceId) {
+			session.send({
+				op: 'error',
+				code: 'malformed',
+				message: 'This connection is already authenticated.',
+			});
+			return;
+		}
+		if (this.options.featureEnabled && !this.options.featureEnabled()) {
+			session.send({ op: 'closed', reason: 'A Cappella is disabled.' });
+			return;
+		}
+		if (!device || !this.options.pairing.isDeviceActive(device.id)) {
 			session.send({
 				op: 'auth-failed',
 				reason: 'unauthorized',

@@ -29,6 +29,7 @@ import { ACAPPELLA_WEBRTC_EVENT_CHANNEL } from '../../../shared/acappella/webrtc
 import {
 	disposeVoiceSessionService,
 	closeAcappellaAudioHostWindow,
+	getACappellaTransport,
 	getVoiceSessionService,
 	type VoiceSessionSnapshot,
 } from '../../acappella';
@@ -131,6 +132,7 @@ export async function applyACappellaProviders(
 export function syncACappellaAfterExternalSettingsChange(): void {
 	void sharedState.handsFree?.sync();
 	syncVoiceHotkeys();
+	getACappellaTransport()?.syncFeatureEnabled();
 }
 
 /**

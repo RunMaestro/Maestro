@@ -23,7 +23,10 @@
 
 import { ipcMain } from 'electron';
 
-import { requireACappellaEnabled } from '../../../shared/acappella/feature-flag';
+import {
+	ACAPPELLA_DISABLED_ERROR,
+	requireACappellaEnabled,
+} from '../../../shared/acappella/feature-flag';
 import type { IceProbeResult } from '../../../shared/acappella/webrtc-host';
 import { getACappellaTransport } from '../../acappella';
 import type { DeviceStatus, PairingPayload } from '../../acappella/transport';
@@ -97,8 +100,12 @@ export async function testVoiceConnection(): Promise<IceProbeResult> {
 export async function setVoiceDiscovery(enabled: boolean): Promise<DiscoveryStatus | null> {
 	const live = getACappellaTransport();
 	if (!live) return null;
-	if (enabled) await live.discovery.start();
-	else await live.discovery.stop();
+	if (enabled) {
+		if (!live.featureEnabled()) throw new Error(ACAPPELLA_DISABLED_ERROR);
+		await live.discovery.start();
+	} else {
+		await live.discovery.stop();
+	}
 	return live.discoveryStatus();
 }
 
