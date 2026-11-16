@@ -28,6 +28,7 @@ import path from 'path';
 import { app } from 'electron';
 
 import { SPEECH_SAMPLE_RATE, decodeWavPcm16, encodeWav } from '../../../shared/audio/pcm';
+import { parseJsonWithBom } from '../../../shared/jsonUtils';
 import {
 	wakePhraseKey,
 	type WakeEnrollmentModelInfo,
@@ -224,9 +225,9 @@ const revisions = new Map<string, number | null>();
 
 async function readStoredModel(dir: string): Promise<StoredModel | null> {
 	try {
-		const stored = JSON.parse(
+		const stored = parseJsonWithBom<StoredModel>(
 			await fs.readFile(path.join(dir, MODEL_FILE), 'utf-8')
-		) as StoredModel;
+		);
 		return stored.version === ENROLLED_WAKE_MODEL_VERSION ? stored : null;
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
@@ -335,9 +336,9 @@ export function enrolledWakeRevision(phrase: string): number | null {
 	if (known !== undefined) return known;
 	let revision: number | null = null;
 	try {
-		const stored = JSON.parse(
+		const stored = parseJsonWithBom<StoredModel>(
 			readFileSync(path.join(root(), key, MODEL_FILE), 'utf-8')
-		) as StoredModel;
+		);
 		if (stored.version === ENROLLED_WAKE_MODEL_VERSION && Number.isFinite(stored.trainedAt)) {
 			revision = stored.trainedAt;
 		}
@@ -384,9 +385,9 @@ export async function listWakeEnrollments(): Promise<string[]> {
 	const phrases: string[] = [];
 	for (const key of keys.sort()) {
 		try {
-			const stored = JSON.parse(
+			const stored = parseJsonWithBom<{ phrase?: unknown }>(
 				await fs.readFile(path.join(root(), key, ENROLLMENT_FILE), 'utf-8')
-			) as { phrase?: unknown };
+			);
 			if (typeof stored.phrase === 'string' && wakePhraseKey(stored.phrase) === key) {
 				phrases.push(stored.phrase);
 			}

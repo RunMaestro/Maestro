@@ -28,6 +28,7 @@ import { app } from 'electron';
 import type { RouteDecision } from '../../../shared/acappella/route-decision';
 import { routeTargetSessionId } from '../../../shared/acappella/route-decision';
 import { truncateCommand } from '../../../shared/formatters';
+import { parseJsonWithBom } from '../../../shared/jsonUtils';
 import { atomicWriteJson, createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { logger } from '../../utils/logger';
 
@@ -216,7 +217,7 @@ export async function loadRoutingLog(): Promise<void> {
 	try {
 		const { readFile } = await import('fs/promises');
 		const raw = await readFile(resolveLogFilePath(), 'utf-8');
-		const parsed: unknown = JSON.parse(raw);
+		const parsed: unknown = parseJsonWithBom(raw);
 		if (Array.isArray(parsed)) entries = (parsed as RoutingLogEntry[]).slice(-MAX_ENTRIES);
 	} catch {
 		/* no log yet, or it is unreadable: start fresh rather than fail a turn */
