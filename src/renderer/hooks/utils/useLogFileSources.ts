@@ -9,7 +9,7 @@
  * per poll rather than a re-read of half a megabyte.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
 	parseLogSourceEntries,
 	type FileLogSourceId,
@@ -68,11 +68,20 @@ export function useLogFileSources(sources: readonly FileLogSourceId[]): LogFileS
 		};
 	}, [key]);
 
+	// Parsed once per read: a poll that changes one source must not re-parse the
+	// others, and an unchanged source keeps the same entry objects, so per-entry
+	// caches downstream (the viewer's search text) stay warm.
+	const parsed = useRef(new WeakMap<LogSourceRead, LogSourceEntry[]>());
 	const entries = useMemo(
 		() =>
-			(Object.values(reads) as LogSourceRead[]).flatMap((read) =>
-				parseLogSourceEntries(read.text, read.source, read.mtimeMs || Date.now())
-			),
+			(Object.values(reads) as LogSourceRead[]).flatMap((read) => {
+				let lines = parsed.current.get(read);
+				if (!lines) {
+					lines = parseLogSourceEntries(read.text, read.source, read.mtimeMs || Date.now());
+					parsed.current.set(read, lines);
+				}
+				return lines;
+			}),
 		[reads]
 	);
 	return { reads, entries, errors };

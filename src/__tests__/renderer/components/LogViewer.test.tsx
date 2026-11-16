@@ -18,6 +18,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { LogViewer } from '../../../renderer/components/LogViewer';
+import { MAX_TIMELINE_SEGMENTS } from '../../../renderer/utils/systemLogView';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 
 import { createMockTheme, mockTheme } from '../../helpers/mockTheme';
@@ -124,6 +125,29 @@ vi.mock('../../../renderer/components/ConfirmModal', () => ({
 			<button onClick={onClose}>Cancel</button>
 		</div>
 	),
+}));
+
+// jsdom has no layout, so the real virtualizer would draw almost nothing. This
+// one draws every row and captures its options and scroll calls.
+const mockScrollToIndex = vi.fn();
+const capturedVirtualizerOpts: Array<{ count: number; getItemKey?: (index: number) => unknown }> =
+	[];
+vi.mock('@tanstack/react-virtual', () => ({
+	useVirtualizer: (opts: { count: number; getItemKey?: (index: number) => unknown }) => {
+		capturedVirtualizerOpts.push(opts);
+		return {
+			getVirtualItems: () =>
+				Array.from({ length: opts.count }, (_, i) => ({
+					index: i,
+					start: i * 80,
+					size: 80,
+					key: opts.getItemKey?.(i) ?? i,
+				})),
+			getTotalSize: () => opts.count * 80,
+			scrollToIndex: mockScrollToIndex,
+			measureElement: vi.fn(),
+		};
+	},
 }));
 
 // Mock sessionStore for agent name → session ID resolution
@@ -983,21 +1007,58 @@ describe('LogViewer', () => {
 				expect(screen.getByText('Log 1')).toBeInTheDocument();
 			});
 
-			const scrollToSpy = vi.fn();
-			const container = screen.getByRole('dialog').querySelector('.overflow-y-auto');
-			if (container) {
-				container.scrollTo = scrollToSpy;
-				Object.defineProperty(container, 'scrollHeight', { value: 1000, configurable: true });
-				Object.defineProperty(container, 'clientHeight', { value: 500, configurable: true });
-			}
-
 			const timeline = screen.getByRole('dialog').querySelector('.h-2.w-full');
 			const secondSegment = timeline?.children[1] as HTMLElement;
-			if (secondSegment) {
-				fireEvent.click(secondSegment);
-			}
+			fireEvent.click(secondSegment);
 
-			expect(scrollToSpy).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }));
+			// The list is virtualized, so the strip scrolls to the entry, not to a
+			// proportion of a height that only exists for the cards on screen.
+			expect(mockScrollToIndex).toHaveBeenCalledWith(1, { align: 'start' });
+		});
+
+		it('groups a long list into a bounded number of stripes', async () => {
+			getMockGetLogs().mockResolvedValue(
+				Array.from({ length: MAX_TIMELINE_SEGMENTS + 60 }, (_, i) =>
+					createMockLog({ timestamp: 1_000_000 + i, message: `Line ${i}` })
+				)
+			);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				const timeline = screen.getByRole('dialog').querySelector('.h-2.w-full');
+				expect(timeline?.children).toHaveLength(MAX_TIMELINE_SEGMENTS);
+			});
+		});
+	});
+
+	describe('Virtualized list', () => {
+		it('keys rows by entry, so a new line does not shift the rows below it', async () => {
+			let pushLog: ((log: ReturnType<typeof createMockLog>) => void) | undefined;
+			(window.maestro.logger as Record<string, unknown>).onNewLog = vi.fn((cb) => {
+				pushLog = cb;
+				return () => {};
+			});
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({ timestamp: 1000, message: 'Older' }),
+				createMockLog({ timestamp: 2000, message: 'Newer' }),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+			await screen.findByText('Older');
+			const keyOf = (message: string) => {
+				const opts = capturedVirtualizerOpts[capturedVirtualizerOpts.length - 1];
+				const index = Array.from({ length: opts.count }, (_, i) => i).find((i) =>
+					String(opts.getItemKey?.(i)).includes(message)
+				);
+				return index === undefined ? undefined : opts.getItemKey?.(index);
+			};
+			const before = keyOf('Older');
+
+			act(() => pushLog?.(createMockLog({ timestamp: 3000, message: 'Newest' })));
+			await screen.findByText('Newest');
+
+			expect(keyOf('Older')).toBe(before);
 		});
 	});
 
@@ -1916,9 +1977,10 @@ describe('LogViewer log sources', () => {
 		fireEvent.change(screen.getByPlaceholderText('Search logs...'), {
 			target: { value: 'load_model' },
 		});
+		// The filter waits for a pause in typing.
+		await waitFor(() => expect(screen.getByText('1 entry')).toBeInTheDocument());
 		expect(screen.queryByText('srv warming up')).not.toBeInTheDocument();
 		expect(screen.queryByText('maestro between')).not.toBeInTheDocument();
-		expect(screen.getByText('1 entry')).toBeInTheDocument();
 	});
 
 	it('says when older lines were left out', async () => {
