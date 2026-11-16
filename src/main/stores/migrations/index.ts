@@ -18,6 +18,7 @@ import type { MaestroSettings } from '../types';
 import { migrateAdaptiveModeDefault } from './adaptive-mode-default';
 import { migrateApiModeDefault } from './api-mode-default';
 import { migratePlaybooksFolder } from './playbooks-folder';
+import { migratePrimaryAgentSeed } from './primary-agent-seed';
 
 /**
  * Run all registered settings-store migrations once. Safe to call on every
@@ -46,5 +47,11 @@ export function runSettingsMigrations(store: Store<MaestroSettings>): void {
 		migratePlaybooksFolder(store);
 	} catch (error) {
 		logger.error('Playbooks folder migration failed', 'Migration', error);
+	}
+
+	try {
+		migratePrimaryAgentSeed(store);
+	} catch (error) {
+		logger.error('Primary Agent seed migration failed', 'Migration', error);
 	}
 }

@@ -15,6 +15,7 @@ import {
 	readLiveSessions,
 	readGroups,
 	getSessionsByGroup,
+	readPrimaryAgentId,
 	resolveGroupId,
 } from '../services/storage';
 import {
@@ -44,6 +45,8 @@ interface AgentJsonRow {
 	autoRunFolderPath?: string;
 	worktreeBasePath: string | null;
 	bookmarked: boolean;
+	/** Whether this is the Primary Agent (Settings > General). Always false for a peer's agent. */
+	primary: boolean;
 	sessionSshRemoteConfig: unknown;
 	/** Where a lifted local agent runs now (`peer`, `agentId`, `at`); null when it was not lifted. */
 	liftedTo: LiftedToPointer | null;
@@ -52,7 +55,7 @@ interface AgentJsonRow {
 }
 
 /** A local agent as a JSON row. */
-function localJsonRow(s: SessionInfo): AgentJsonRow {
+function localJsonRow(s: SessionInfo, primaryAgentId: string | null): AgentJsonRow {
 	return {
 		id: s.id,
 		name: s.name,
@@ -64,6 +67,7 @@ function localJsonRow(s: SessionInfo): AgentJsonRow {
 		// inventing a location the desktop never sees. Null when unset.
 		worktreeBasePath: s.worktreeConfig?.basePath ?? null,
 		bookmarked: !!s.bookmarked,
+		primary: s.id === primaryAgentId,
 		sessionSshRemoteConfig: s.sessionSshRemoteConfig ?? null,
 		liftedTo: readLiftedTo(s.liftedTo) ?? null,
 	};
@@ -81,6 +85,8 @@ function hostJsonRow(record: AgentRecord, peer: string): AgentJsonRow {
 		autoRunFolderPath: record.autoRunFolderPath,
 		worktreeBasePath: worktree?.basePath ?? null,
 		bookmarked: !!record.bookmarked,
+		// The Primary Agent is a setting of THIS machine; a peer's agent is never it.
+		primary: false,
 		sessionSshRemoteConfig: record.sessionSshRemoteConfig ?? null,
 		liftedTo: readLiftedTo(record.liftedTo) ?? null,
 		peer,
@@ -96,6 +102,7 @@ function displayRow(row: AgentJsonRow): AgentDisplay {
 		groupId: row.groupId,
 		autoRunFolderPath: row.autoRunFolderPath,
 		bookmarked: row.bookmarked,
+		primary: row.primary,
 		...(row.peer ? { peer: row.peer } : {}),
 		...(row.liftedTo ? { liftedTo: liftedAgentRef(row) } : {}),
 	};
@@ -119,14 +126,17 @@ export function listAgents(options: ListAgentsOptions): void | Promise<void> {
 			sessions = readLiveSessions();
 		}
 
+		const primaryAgentId = readPrimaryAgentId();
 		if (options.json) {
 			// JSON array output. Include sessionSshRemoteConfig so SSH execution
 			// state is verifiable without reading raw store files.
-			const output = sessions.map(localJsonRow);
+			const output = sessions.map((s) => localJsonRow(s, primaryAgentId));
 			console.log(JSON.stringify(output, null, 2));
 		} else {
 			// Human-readable output
-			const displayAgents: AgentDisplay[] = sessions.map((s) => displayRow(localJsonRow(s)));
+			const displayAgents: AgentDisplay[] = sessions.map((s) =>
+				displayRow(localJsonRow(s, primaryAgentId))
+			);
 			console.log(formatAgents(displayAgents, groupName));
 		}
 	} catch (error) {
@@ -238,7 +248,8 @@ async function listAgentsWithPeers(options: ListAgentsOptions): Promise<void> {
 	// not hide the others; it is reported after the list, and the exit code is its exit code.
 	let rows: AgentJsonRow[];
 	try {
-		rows = readLiveSessions().map((s) => ({ ...localJsonRow(s), peer: null }));
+		const primaryAgentId = readPrimaryAgentId();
+		rows = readLiveSessions().map((s) => ({ ...localJsonRow(s, primaryAgentId), peer: null }));
 	} catch (error) {
 		const failure = toFailure(error);
 		reportFailure(
