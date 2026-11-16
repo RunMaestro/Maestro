@@ -399,17 +399,23 @@ maestro-cli list groups --json
 
 ## `maestro-cli list agents`
 
-List all agents
+List all agents, with each one's group and what it is for
 
-| Option             | Description                                                                        | Default |
-| ------------------ | ---------------------------------------------------------------------------------- | ------- |
-| `-g, --group <id>` | Filter by group ID                                                                 | -       |
-| `--peer <name>`    | List the agents on one Federation peer (an SSH remote's name)                      | -       |
-| `--all-peers`      | List local agents, then the agents on every SSH remote that runs a Federation host | -       |
-| `--json`           | Output as JSON lines (for scripting)                                               | -       |
+| Option               | Description                                                                          | Default |
+| -------------------- | ------------------------------------------------------------------------------------ | ------- |
+| `-g, --group <id>`   | Filter by group ID                                                                   | -       |
+| `-d, --descriptions` | Print each agent's peer description under it (JSON always has it)                    | -       |
+| `--visible-only`     | Leave out agents in hidden groups                                                    | -       |
+| `--reachable`        | Only the agents the caller may reach right now, with the access (Consult / Delegate) | -       |
+| `--from <agent>`     | The caller for --reachable (default: this shell's agent, MAESTRO_CALLER_AGENT_ID)    | -       |
+| `--peer <name>`      | List the agents on one Federation peer (an SSH remote's name)                        | -       |
+| `--all-peers`        | List local agents, then the agents on every SSH remote that runs a Federation host   | -       |
+| `--json`             | Output as JSON lines (for scripting)                                                 | -       |
 
 ```bash
 maestro-cli list agents --group <group-id> --json
+maestro-cli list agents --visible-only -d
+maestro-cli list agents --reachable -d
 ```
 
 ## `maestro-cli list playbooks`

@@ -23,6 +23,7 @@ vi.mock('../../../cli/services/storage', () => {
 		readGroups: vi.fn(),
 		getSessionsByGroup: vi.fn(),
 		resolveGroupId: vi.fn((id: string) => id),
+		resolveAgentId: vi.fn((ref: string) => ref),
 	};
 });
 
@@ -69,6 +70,7 @@ import {
 	readSessions,
 	readGroups,
 	getSessionsByGroup,
+	resolveAgentId,
 	resolveGroupId,
 } from '../../../cli/services/storage';
 import { formatAgents, formatError } from '../../../cli/output/formatter';
@@ -97,6 +99,7 @@ describe('list-agents command', () => {
 			.mockImplementation((code?: string | number | null | undefined) => {
 				throw new Error(`process.exit(${code})`);
 			});
+		vi.mocked(readGroups).mockReturnValue([]);
 	});
 
 	afterEach(() => {
@@ -121,7 +124,8 @@ describe('list-agents command', () => {
 					expect.objectContaining({ id: 'a1', name: 'Agent One' }),
 					expect.objectContaining({ id: 'a2', name: 'Agent Two' }),
 				]),
-				undefined
+				undefined,
+				{}
 			);
 			expect(consoleSpy).toHaveBeenCalled();
 		});
@@ -131,7 +135,7 @@ describe('list-agents command', () => {
 
 			listAgents({});
 
-			expect(formatAgents).toHaveBeenCalledWith([], undefined);
+			expect(formatAgents).toHaveBeenCalledWith([], undefined, {});
 			expect(consoleSpy).toHaveBeenCalledWith('No agents found');
 		});
 
@@ -143,7 +147,8 @@ describe('list-agents command', () => {
 
 			expect(formatAgents).toHaveBeenCalledWith(
 				[expect.objectContaining({ id: 'solo', name: 'Solo Agent' })],
-				undefined
+				undefined,
+				{}
 			);
 		});
 
@@ -173,7 +178,8 @@ describe('list-agents command', () => {
 						autoRunFolderPath: '/home/user/playbooks',
 					}),
 				],
-				undefined
+				undefined,
+				{}
 			);
 		});
 	});
@@ -352,7 +358,8 @@ describe('list-agents command', () => {
 					expect.objectContaining({ id: 'fe1' }),
 					expect.objectContaining({ id: 'fe2' }),
 				]),
-				'Frontend'
+				'Frontend',
+				{}
 			);
 		});
 
@@ -378,7 +385,7 @@ describe('list-agents command', () => {
 
 			listAgents({ group: 'empty-group' });
 
-			expect(formatAgents).toHaveBeenCalledWith([], 'Empty Group');
+			expect(formatAgents).toHaveBeenCalledWith([], 'Empty Group', {});
 			expect(consoleSpy).toHaveBeenCalledWith('No agents in group "Empty Group"');
 		});
 
@@ -414,7 +421,7 @@ describe('list-agents command', () => {
 
 			listAgents({ group: 'unknown' });
 
-			expect(formatAgents).toHaveBeenCalledWith([], undefined);
+			expect(formatAgents).toHaveBeenCalledWith([], undefined, {});
 		});
 	});
 
@@ -565,9 +572,10 @@ describe('list-agents command', () => {
 		});
 
 		/** A connection whose `release()` is observable. */
-		const connection = (peer: string) => ({
+		const connection = (peer: string, groups: unknown[] = []) => ({
 			peer,
 			release: vi.fn(async () => {}),
+			client: { groups: { list: vi.fn(async () => ({ ok: true, value: groups })) } },
 		});
 
 		it('lists one peer with --peer, tags each JSON row, and releases the connection', async () => {
@@ -587,6 +595,9 @@ describe('list-agents command', () => {
 					name: 'Remote One',
 					toolType: 'codex',
 					cwd: '/srv/h1',
+					groupName: null,
+					groupHidden: false,
+					peerDescription: null,
 					worktreeBasePath: '/srv/wt',
 					bookmarked: false,
 					sessionSshRemoteConfig: null,
@@ -656,7 +667,7 @@ describe('list-agents command', () => {
 				maxInFlight = Math.max(maxInFlight, inFlight);
 				await new Promise((resolve) => setTimeout(resolve, 5));
 				return {
-					peer,
+					...connection(peer),
 					release: vi.fn(async () => {
 						inFlight--;
 					}),
@@ -720,6 +731,221 @@ describe('list-agents command', () => {
 
 			expect(listFederationPeers).not.toHaveBeenCalled();
 			expect(JSON.parse(consoleSpy.mock.calls[0][0])[0]).not.toHaveProperty('peer');
+		});
+	});
+
+	describe('discovery: groups, descriptions, reachability', () => {
+		const groups: Group[] = [
+			{ id: 'g-core', name: 'Core', emoji: '🧠', collapsed: false },
+			{ id: 'g-parked', name: 'Parked', emoji: '📦', collapsed: false, hidden: true },
+			// Not flagged itself, but sits under a hidden parent, so the Left Bar hides it too.
+			{ id: 'g-child', name: 'Child', emoji: '📁', collapsed: false, parentGroupId: 'g-parked' },
+		];
+
+		beforeEach(() => {
+			vi.mocked(readGroups).mockReturnValue(groups);
+			vi.stubEnv('MAESTRO_CALLER_AGENT_ID', '');
+		});
+
+		afterEach(() => {
+			vi.unstubAllEnvs();
+		});
+
+		const fleet = (): SessionInfo[] => [
+			mockSession({
+				id: 'me',
+				name: 'Caller',
+				groupId: 'g-core',
+				groupPeerAccess: { read: true, write: false },
+				peerAgents: [
+					{ sessionId: 'infra', read: true, write: true, description: 'deploys' },
+					{ sessionId: 'muted', read: false, write: false },
+				],
+			}),
+			mockSession({
+				id: 'docs',
+				name: 'Docs',
+				groupId: 'g-core',
+				peerDescription: '  Owns docs  ',
+			}),
+			mockSession({ id: 'muted', name: 'Muted', groupId: 'g-core' }),
+			mockSession({ id: 'infra', name: 'Infra', groupId: 'g-parked', peerDescription: 'Infra' }),
+			mockSession({ id: 'deep', name: 'Deep', groupId: 'g-child', peerDescription: '   ' }),
+			mockSession({ id: 'loose', name: 'Loose' }),
+		];
+
+		const jsonRows = () => JSON.parse(consoleSpy.mock.calls[0][0]) as Array<Record<string, any>>;
+
+		it('carries groupName, groupHidden (inherited from a hidden parent) and peerDescription', () => {
+			vi.mocked(readSessions).mockReturnValue(fleet());
+
+			listAgents({ json: true });
+
+			const byId = Object.fromEntries(jsonRows().map((row) => [row.id, row]));
+			expect(byId.docs).toMatchObject({
+				groupName: 'Core',
+				groupHidden: false,
+				peerDescription: 'Owns docs',
+			});
+			expect(byId.infra).toMatchObject({ groupName: 'Parked', groupHidden: true });
+			expect(byId.deep).toMatchObject({
+				groupName: 'Child',
+				groupHidden: true,
+				peerDescription: null,
+			});
+			expect(byId.loose).toMatchObject({
+				groupName: null,
+				groupHidden: false,
+				peerDescription: null,
+			});
+			// Access appears only under --reachable.
+			expect(byId.docs).not.toHaveProperty('access');
+		});
+
+		it('passes the group and description to the formatter, and forwards --descriptions', () => {
+			vi.mocked(readSessions).mockReturnValue(fleet());
+
+			listAgents({ descriptions: true });
+
+			const [agents, , scope] = vi.mocked(formatAgents).mock.calls[0];
+			expect(scope).toMatchObject({ descriptions: true });
+			expect(agents.find((a) => a.id === 'docs')).toMatchObject({
+				groupName: 'Core',
+				peerDescription: 'Owns docs',
+			});
+			expect(agents.find((a) => a.id === 'infra')).toMatchObject({ groupHidden: true });
+			expect(agents.find((a) => a.id === 'docs')).not.toHaveProperty('groupHidden');
+		});
+
+		it('--visible-only leaves out agents in hidden groups', () => {
+			vi.mocked(readSessions).mockReturnValue(fleet());
+
+			listAgents({ json: true, visibleOnly: true });
+
+			expect(jsonRows().map((row) => row.id)).toEqual(['me', 'docs', 'muted', 'loose']);
+		});
+
+		it('--reachable keeps the agents the shell agent may reach, with the access', () => {
+			vi.stubEnv('MAESTRO_CALLER_AGENT_ID', 'me');
+			vi.mocked(readSessions).mockReturnValue(fleet());
+
+			listAgents({ json: true, reachable: true });
+
+			const rows = jsonRows();
+			// Not the caller itself, not the excluded row, not agents no grant reaches.
+			expect(rows.map((row) => row.id)).toEqual(['docs', 'infra']);
+			expect(rows[0].access).toEqual({
+				read: true,
+				write: false,
+				label: 'Consult only',
+				source: 'group',
+				note: null,
+			});
+			// A hidden group does not block a grant: hiding never restricts access.
+			expect(rows[1].access).toEqual({
+				read: true,
+				write: true,
+				label: 'Consult + Delegate',
+				source: 'explicit',
+				note: 'deploys',
+			});
+		});
+
+		it('--reachable --from resolves the named caller and titles the text list with it', () => {
+			vi.mocked(readSessions).mockReturnValue(fleet());
+			vi.mocked(resolveAgentId).mockReturnValueOnce('me');
+
+			listAgents({ reachable: true, from: 'Caller' });
+
+			expect(resolveAgentId).toHaveBeenCalledWith('Caller');
+			const [agents, , scope] = vi.mocked(formatAgents).mock.calls[0];
+			expect(scope).toMatchObject({ reachableFrom: 'Caller' });
+			expect(agents.find((a) => a.id === 'infra')).toMatchObject({
+				access: 'Consult + Delegate',
+			});
+		});
+
+		it('--reachable combines with --visible-only', () => {
+			vi.stubEnv('MAESTRO_CALLER_AGENT_ID', 'me');
+			vi.mocked(readSessions).mockReturnValue(fleet());
+
+			listAgents({ json: true, reachable: true, visibleOnly: true });
+
+			expect(jsonRows().map((row) => row.id)).toEqual(['docs']);
+		});
+
+		it('--reachable with no caller is a usage error', () => {
+			vi.mocked(readSessions).mockReturnValue(fleet());
+
+			expect(() => listAgents({ reachable: true })).toThrow('process.exit(2)');
+			expect(consoleSpy).not.toHaveBeenCalled();
+		});
+
+		it('--from without --reachable is a usage error', () => {
+			expect(() => listAgents({ from: 'me' })).toThrow('process.exit(2)');
+		});
+
+		it('--reachable cannot be combined with --peer or --all-peers', async () => {
+			vi.stubEnv('MAESTRO_CALLER_AGENT_ID', 'me');
+			await expect(listAgents({ reachable: true, peer: 'build-box' })).rejects.toThrow(
+				'process.exit(2)'
+			);
+			await expect(listAgents({ reachable: true, allPeers: true })).rejects.toThrow(
+				'process.exit(2)'
+			);
+			expect(connectPeer).not.toHaveBeenCalled();
+		});
+
+		it("labels a peer's rows from the host's own groups, and --visible-only applies there", async () => {
+			vi.mocked(connectPeer).mockResolvedValue({
+				peer: 'build-box',
+				release: vi.fn(async () => {}),
+				client: {
+					groups: {
+						list: vi.fn(async () => ({
+							ok: true,
+							value: [
+								{ id: 'hg', name: 'Host Group' },
+								{ id: 'hh', name: 'Host Hidden', hidden: true },
+							],
+						})),
+					},
+				},
+			} as never);
+			vi.mocked(listHostAgents).mockResolvedValue([
+				{ id: 'h1', name: 'One', toolType: 'codex', groupId: 'hg', peerDescription: 'Builds' },
+				{ id: 'h2', name: 'Two', toolType: 'codex', groupId: 'hh' },
+			] as never);
+
+			await listAgents({ peer: 'build-box', json: true, visibleOnly: true });
+
+			expect(jsonRows()).toEqual([
+				expect.objectContaining({
+					id: 'h1',
+					groupName: 'Host Group',
+					groupHidden: false,
+					peerDescription: 'Builds',
+				}),
+			]);
+		});
+
+		it('still lists a peer whose host cannot list its groups', async () => {
+			vi.mocked(connectPeer).mockResolvedValue({
+				peer: 'build-box',
+				release: vi.fn(async () => {}),
+				client: {
+					groups: { list: vi.fn(async () => ({ ok: false, error: { message: 'old host' } })) },
+				},
+			} as never);
+			vi.mocked(listHostAgents).mockResolvedValue([
+				{ id: 'h1', name: 'One', toolType: 'codex', groupId: 'hg' },
+			] as never);
+
+			await listAgents({ peer: 'build-box', json: true });
+
+			expect(jsonRows()).toEqual([
+				expect.objectContaining({ id: 'h1', groupName: null, groupHidden: false }),
+			]);
 		});
 	});
 });

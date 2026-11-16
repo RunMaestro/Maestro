@@ -8,6 +8,7 @@ import {
 	formatSize,
 	truncateAtWordBoundary,
 } from '../../shared/formatters';
+import { stripControlCharacters } from '../../shared/stringUtils';
 import {
 	formatCpuPercent,
 	inProcessModels,
@@ -235,6 +236,24 @@ export interface AgentDisplay {
 	peer?: string;
 	/** Set on a local agent that was lifted onto its host: `peer:agentId`, where it runs now. */
 	liftedTo?: string;
+	/** The name of the agent's group, when it has one. */
+	groupName?: string;
+	/** The agent's group is parked out of the Left Bar (hidden, or under a hidden parent). */
+	groupHidden?: boolean;
+	/** The agent's own advertised specialty (Edit Agent > Peers > "How peers see this agent"). */
+	peerDescription?: string;
+	/** Set by `--reachable`: what the caller may do with this agent (`peerAccessLabel`). */
+	access?: string;
+}
+
+/** Options for {@link formatAgents}. */
+export interface FormatAgentsScope {
+	/** Titles a list read from one Federation peer. */
+	peer?: string;
+	/** Print each agent's `peerDescription` under it (`--descriptions`). */
+	descriptions?: boolean;
+	/** Titles a list filtered to the agents the caller may reach (`--reachable`). */
+	reachableFrom?: string;
 }
 
 /**
@@ -245,15 +264,17 @@ export interface AgentDisplay {
 export function formatAgents(
 	agents: AgentDisplay[],
 	groupName?: string,
-	scope: { peer?: string } = {}
+	scope: FormatAgentsScope = {}
 ): string {
 	if (agents.length === 0) {
+		if (scope.reachableFrom) return dim(`No agents reachable from ${scope.reachableFrom}.`);
 		return dim(scope.peer ? `No agents found on peer ${scope.peer}.` : 'No agents found.');
 	}
 
 	const lines: string[] = [];
 	const where = groupName ? ` in ${groupName}` : scope.peer ? ` on peer ${scope.peer}` : '';
-	const title = bold(c('cyan', 'AGENTS')) + dim(`${where} (${agents.length})`);
+	const reach = scope.reachableFrom ? ` reachable from ${scope.reachableFrom}` : '';
+	const title = bold(c('cyan', 'AGENTS')) + dim(`${reach}${where} (${agents.length})`);
 	lines.push(title);
 	lines.push('');
 
@@ -265,11 +286,20 @@ export function formatAgents(
 		const autoRun = agent.autoRunFolderPath ? c('yellow', ' [Auto Run]') : '';
 		const bookmark = agent.bookmarked ? c('yellow', ' \u2605') : '';
 		const peer = agent.peer ? c('magenta', ` @${agent.peer}`) : '';
+		// The group is named on every row, unless the whole list is one group's.
+		const group = agent.groupName && !groupName ? dim(` [${agent.groupName}]`) : '';
+		const hidden = agent.groupHidden ? c('yellow', ' [hidden group]') : '';
+		const access = agent.access ? c('cyan', ` (${agent.access})`) : '';
 
-		lines.push(`  ${name}${bookmark} ${toolType}${autoRun}${peer}`);
+		lines.push(`  ${name}${bookmark} ${toolType}${autoRun}${peer}${group}${hidden}${access}`);
 		lines.push(`      ${cwd}`);
 		lines.push(`      ${id}`);
 		if (agent.liftedTo) lines.push(`      ${c('magenta', `moved to ${agent.liftedTo}`)}`);
+		if (scope.descriptions && agent.peerDescription) {
+			// One line, with nothing in it that could drive the terminal.
+			const description = stripControlCharacters(agent.peerDescription).replace(/\s+/g, ' ');
+			lines.push(`      ${dim(description.trim())}`);
+		}
 	}
 
 	return lines.join('\n');

@@ -109,7 +109,11 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 
 	// Read agents, groups, playbooks, sessions
 	'list groups': ['maestro-cli list groups --json'],
-	'list agents': ['maestro-cli list agents --group <group-id> --json'],
+	'list agents': [
+		'maestro-cli list agents --group <group-id> --json',
+		'maestro-cli list agents --visible-only -d',
+		'maestro-cli list agents --reachable -d',
+	],
 	'list playbooks': ['maestro-cli list playbooks --agent <agent-id>'],
 	'list sessions': ['maestro-cli list sessions <agent-id> --limit 10 --search "auth"'],
 	'list ssh-remotes': ['maestro-cli list ssh-remotes --json'],

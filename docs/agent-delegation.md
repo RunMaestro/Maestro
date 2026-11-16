@@ -84,7 +84,7 @@ The Peers tab also has the field **How peers see this agent**. Here an agent des
 
 A note and a specialty answer different questions. The note is written on the roster of the agent that reaches out, about one peer. The specialty is written once on the peer itself, and every agent that can reach it reads the same text. Neither one changes who may reach whom.
 
-The field is in Edit Agent and the New Agent dialog. It is not in Group Settings, because it describes one agent, not a group. From the CLI, set it with `maestro-cli update-agent <agent> --peer-description "<text>"`, and pass an empty string to clear it. `maestro-cli show agent <agent>` prints it as **Peer description**.
+The field is in Edit Agent and the New Agent dialog. It is not in Group Settings, because it describes one agent, not a group. From the CLI, set it with `maestro-cli update-agent <agent> --peer-description "<text>"`, and pass an empty string to clear it. `maestro-cli show agent <agent>` prints it as **Peer description**. `maestro-cli list agents -d` prints every agent's specialty under its name (`peerDescription` in `--json`), and `list agents --reachable -d` lists only the agents the calling agent may reach, each with its access. The list is for finding the right agent; it grants nothing.
 
 ### Groups and worktrees are resolved live
 

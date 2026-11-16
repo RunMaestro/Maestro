@@ -1527,6 +1527,16 @@ maestro-cli list agents
 maestro-cli list agents -g <group-id>
 maestro-cli list agents --group <group-id>
 
+# What each agent is for (its peer description), printed under it
+maestro-cli list agents -d
+
+# Leave out agents in hidden groups
+maestro-cli list agents --visible-only
+
+# Only the agents this shell's agent may reach, with the access label
+maestro-cli list agents --reachable -d
+maestro-cli list agents --reachable --from <agent-id> --json
+
 # Federation: the agents on one peer, or local agents plus every peer
 maestro-cli list agents --peer build-box
 maestro-cli list agents --all-peers --json
@@ -2180,7 +2190,7 @@ maestro-cli list groups --json
 
 # Note: list agents outputs a JSON array (not JSONL)
 maestro-cli list agents --json
-[{"id":"agent-abc123","name":"My Agent","toolType":"claude-code","cwd":"/path/to/project",...}]
+[{"id":"agent-abc123","name":"My Agent","toolType":"claude-code","cwd":"/path/to/project","groupId":"group-abc123","groupName":"Frontend","groupHidden":false,"peerDescription":"Owns the design system and the docs site",...}]
 
 # Running a playbook with JSON streams events
 maestro-cli playbook <playbook-id> --json

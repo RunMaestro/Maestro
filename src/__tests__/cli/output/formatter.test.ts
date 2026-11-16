@@ -278,6 +278,65 @@ describe('formatter', () => {
 			expect(result.match(/moved to/g)).toHaveLength(1);
 		});
 
+		it('names the group on each row and marks a hidden group', () => {
+			const agents: AgentDisplay[] = [
+				{ id: 'a1', name: 'Docs', toolType: 'claude-code', cwd: '/p', groupName: 'Core' },
+				{
+					id: 'a2',
+					name: 'Infra',
+					toolType: 'claude-code',
+					cwd: '/q',
+					groupName: 'Parked',
+					groupHidden: true,
+				},
+			];
+
+			const result = formatAgents(agents);
+
+			expect(result).toContain('[Core]');
+			expect(result).toContain('[Parked]');
+			expect(result.match(/\[hidden group\]/g)).toHaveLength(1);
+		});
+
+		it('leaves the per-row group out when the whole list is one group', () => {
+			const agents: AgentDisplay[] = [
+				{ id: 'a1', name: 'Docs', toolType: 'claude-code', cwd: '/p', groupName: 'Core' },
+			];
+
+			expect(formatAgents(agents, 'Core')).not.toContain('[Core]');
+		});
+
+		it('prints the peer description only with descriptions on, on one clean line', () => {
+			const agents: AgentDisplay[] = [
+				{
+					id: 'a1',
+					name: 'Docs',
+					toolType: 'claude-code',
+					cwd: '/p',
+					peerDescription: 'Owns the docs\nsite\u001b[31m',
+				},
+			];
+
+			expect(formatAgents(agents)).not.toContain('Owns the docs');
+			const result = formatAgents(agents, undefined, { descriptions: true });
+			expect(result).toContain('Owns the docs site');
+			expect(result).not.toContain('\u001b[31m');
+		});
+
+		it('shows the access label and titles a --reachable list with the caller', () => {
+			const agents: AgentDisplay[] = [
+				{ id: 'a1', name: 'Infra', toolType: 'codex', cwd: '/p', access: 'Consult only' },
+			];
+
+			const result = formatAgents(agents, undefined, { reachableFrom: 'Caller' });
+
+			expect(result).toContain('reachable from Caller');
+			expect(result).toContain('(Consult only)');
+			expect(formatAgents([], undefined, { reachableFrom: 'Caller' })).toContain(
+				'No agents reachable from Caller.'
+			);
+		});
+
 		it('should show group name in title when provided', () => {
 			const agents: AgentDisplay[] = [
 				{

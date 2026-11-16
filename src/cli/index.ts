@@ -561,8 +561,18 @@ list
 
 list
 	.command('agents')
-	.description('List all agents')
+	.description("List all agents, with each one's group and what it is for")
 	.option('-g, --group <id>', 'Filter by group ID')
+	.option('-d, --descriptions', "Print each agent's peer description under it (JSON always has it)")
+	.option('--visible-only', 'Leave out agents in hidden groups')
+	.option(
+		'--reachable',
+		'Only the agents the caller may reach right now, with the access (Consult / Delegate)'
+	)
+	.option(
+		'--from <agent>',
+		"The caller for --reachable (default: this shell's agent, MAESTRO_CALLER_AGENT_ID)"
+	)
 	.option('--peer <name>', "List the agents on one Federation peer (an SSH remote's name)")
 	.option(
 		'--all-peers',

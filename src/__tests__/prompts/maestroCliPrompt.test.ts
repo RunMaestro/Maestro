@@ -58,6 +58,14 @@ describe('_maestro-cli.md peer agents', () => {
 		expect(peerParagraph).not.toContain('never widen your own access.');
 	});
 
+	test('names the live roster and keeps fleet discovery from reading as permission', () => {
+		expect(peerParagraph).toContain('`list agents --reachable -d`');
+		expect(peerParagraph).toContain('it is discovery, not permission');
+		expect(peerParagraph).toContain('suggest that grant to the user and let them decide');
+		expect(peerParagraph).toContain('do not contact that agent');
+		expect(peerParagraph).toContain('skip them unless the user names one');
+	});
+
 	test('teaches setup without existing peers and asks for missing access decisions', () => {
 		expect(prompt).toContain('even if no peer table exists yet');
 		expect(prompt).toContain(
