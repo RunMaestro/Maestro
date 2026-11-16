@@ -108,6 +108,7 @@ coercion will break the day the parser tightens:
   is **silently coerced to the empty string**, which produces a nameless row in the approval sheet.
   Send both, always, and send `platform` as the literal `ios`.
 - `auth` without a string `deviceId` **and** a string `token` is dropped as `malformed`.
+- `auth` is once per socket; a second `auth` after `authenticated` is refused with `malformed` (open a new socket rather than re-authenticating on the same one).
 - `auth` whose `protocolVersion` is not a number is treated as version 0, which fails negotiation
   with `client-too-old`. Absent is not "unversioned"; it is "too old".
 - `offer` is accepted only when `sdp` is an object with a string `sdp` field. The `type` is forced to
@@ -149,13 +150,14 @@ Three shapes that catch every first implementation:
 
 ### Error codes
 
-| `code`              | When                                                     | Client behaviour                                                 |
-| ------------------- | -------------------------------------------------------- | ---------------------------------------------------------------- |
-| `not-authenticated` | `offer` or `ice-candidate` before `authenticated`        | Bug. Fix the ordering; never retry blind.                        |
-| `rate-limited`      | 7th offer in 60 s, or a 6th `auth` attempt on one socket | Stop. Back off. For auth, open a **new socket** before retrying. |
-| `protocol-version`  | `auth` with an unusable `protocolVersion`                | Terminal. Show the message verbatim. See section 3.              |
-| `malformed`         | Unparseable frame                                        | Bug. Log it with the frame; do not retry the same bytes.         |
-| `peer-failed`       | The desktop's peer connection failed                     | Tear down the peer, restart ICE, re-`offer` under the backoff.   |
+| `code`              | When                                                     | Client behaviour                                                     |
+| ------------------- | -------------------------------------------------------- | -------------------------------------------------------------------- |
+| `not-authenticated` | `offer` or `ice-candidate` before `authenticated`        | Bug. Fix the ordering; never retry blind.                            |
+| `rate-limited`      | 7th offer in 60 s, or a 6th `auth` attempt on one socket | Stop. Back off. For auth, open a **new socket** before retrying.     |
+| `protocol-version`  | `auth` with an unusable `protocolVersion`                | Terminal. Show the message verbatim. See section 3.                  |
+| `malformed`         | Unparseable frame                                        | Bug. Log it with the frame; do not retry the same bytes.             |
+| `malformed`         | Second `auth` on an already-authenticated socket         | Open a new socket rather than re-authenticating on the existing one. |
+| `peer-failed`       | The desktop's peer connection failed                     | Tear down the peer, restart ICE, re-`offer` under the backoff.       |
 
 ### Ordering and limits
 
