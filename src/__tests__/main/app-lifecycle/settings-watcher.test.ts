@@ -57,12 +57,18 @@ describe('app-lifecycle/settings-watcher', () => {
 		}
 	}
 
-	async function startWatcher() {
+	async function startWatcher(
+		hooks: {
+			onSettingsChangedExternally?: () => void;
+			onAgentConfigsChangedExternally?: () => void;
+		} = {}
+	) {
 		const { createSettingsWatcher } = await import('../../../main/app-lifecycle/settings-watcher');
 		const watcher = createSettingsWatcher({
 			getBroadcastWindows,
 			getSettingsPath: () => '/test/sync',
 			getAgentConfigsPath: () => '/test/sync',
+			...hooks,
 		});
 		watcher.start();
 		return watcher;
@@ -156,6 +162,32 @@ describe('app-lifecycle/settings-watcher', () => {
 		vi.advanceTimersByTime(400);
 
 		expect(send).toHaveBeenCalledWith('settings:externalChange');
+	});
+
+	it('tells main-process consumers about an outside agent-config write, and only that file', async () => {
+		// A provider custom path set by `maestro-cli settings agent set` must reach
+		// the agent detector, which holds its own copy of the paths.
+		const onAgentConfigsChangedExternally = vi.fn();
+		const onSettingsChangedExternally = vi.fn();
+		await startWatcher({ onAgentConfigsChangedExternally, onSettingsChangedExternally });
+
+		emitChange('maestro-agent-configs.json');
+		vi.advanceTimersByTime(400);
+
+		expect(onAgentConfigsChangedExternally).toHaveBeenCalledTimes(1);
+		expect(onSettingsChangedExternally).not.toHaveBeenCalled();
+	});
+
+	it("does not reload agent configs for the app's own write", async () => {
+		const { markInternalWrite } = await import('../../../main/stores/write-tracker');
+		const onAgentConfigsChangedExternally = vi.fn();
+		await startWatcher({ onAgentConfigsChangedExternally });
+
+		markInternalWrite('maestro-agent-configs.json');
+		emitChange('maestro-agent-configs.json');
+		vi.advanceTimersByTime(400);
+
+		expect(onAgentConfigsChangedExternally).not.toHaveBeenCalled();
 	});
 
 	it('stops watching on stop()', async () => {

@@ -36,6 +36,11 @@ export interface SettingsWatcherDependencies {
 	 * so the user was told the feature was off while it was still on.
 	 */
 	onSettingsChangedExternally?: () => void;
+	/**
+	 * Called after an outside write to maestro-agent-configs.json (e.g. `maestro-cli settings agent
+	 * set`), so main-process consumers that hold a copy (the agent detector's custom paths) re-read it.
+	 */
+	onAgentConfigsChangedExternally?: () => void;
 }
 
 /** Settings watcher instance */
@@ -54,8 +59,13 @@ export interface SettingsWatcher {
  * Uses debouncing to avoid excessive reloads from rapid writes.
  */
 export function createSettingsWatcher(deps: SettingsWatcherDependencies): SettingsWatcher {
-	const { getBroadcastWindows, getSettingsPath, getAgentConfigsPath, onSettingsChangedExternally } =
-		deps;
+	const {
+		getBroadcastWindows,
+		getSettingsPath,
+		getAgentConfigsPath,
+		onSettingsChangedExternally,
+		onAgentConfigsChangedExternally,
+	} = deps;
 	const safeSend = createSafeSend(getBroadcastWindows);
 	const watchers: fsSync.FSWatcher[] = [];
 
@@ -154,7 +164,8 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 					() => agentConfigsDebounceTimer,
 					(t) => {
 						agentConfigsDebounceTimer = t;
-					}
+					},
+					onAgentConfigsChangedExternally
 				);
 			} else {
 				// Same dir - extend the existing watcher to also look for agent configs
@@ -167,7 +178,8 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 					() => agentConfigsDebounceTimer,
 					(t) => {
 						agentConfigsDebounceTimer = t;
-					}
+					},
+					onAgentConfigsChangedExternally
 				);
 			}
 

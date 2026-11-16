@@ -56,7 +56,7 @@ import { readFile } from 'fs/promises';
 import { ProcessManager } from './process-manager';
 import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
-import { createAgentConfigLookup } from './agents/agent-config-lookup';
+import { createAgentConfigLookup, customPathsFromAgentConfigs } from './agents/agent-config-lookup';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import { sentryUserForInstallation } from '../shared/sentryContext';
 import { v8OomFingerprint } from '../shared/sentryGrouping';
@@ -729,6 +729,20 @@ const settingsWatcher = createSettingsWatcher({
 		// clear is unconditional because the previous value is not available
 		// here, and the only cost of an unnecessary one is a single `which`.
 		clearGhCache();
+	},
+	onAgentConfigsChangedExternally: () => {
+		// A provider's custom binary set outside the Settings UI (maestro-cli
+		// `settings agent set <provider> customPath`) must reach the detector, or
+		// every spawn that takes `agent.path` keeps running the old binary until a
+		// restart. The Settings setter applies it the same way.
+		const customPaths = customPathsFromAgentConfigs(agentConfigsStore.get('configs', {}));
+		if (
+			agentDetector &&
+			canonicalJson(agentDetector.getCustomPaths()) !== canonicalJson(customPaths)
+		) {
+			agentDetector.setCustomPaths(customPaths);
+			logger.info('Reloaded custom agent paths after an outside change', 'SettingsWatcher');
+		}
 	},
 });
 
@@ -1499,13 +1513,7 @@ app
 		}
 
 		// Load custom agent paths from settings
-		const allAgentConfigs = agentConfigsStore.get('configs', {});
-		const customPaths: Record<string, string> = {};
-		for (const [agentId, config] of Object.entries(allAgentConfigs)) {
-			if (config && typeof config === 'object' && 'customPath' in config && config.customPath) {
-				customPaths[agentId] = config.customPath as string;
-			}
-		}
+		const customPaths = customPathsFromAgentConfigs(agentConfigsStore.get('configs', {}));
 		if (Object.keys(customPaths).length > 0) {
 			agentDetector.setCustomPaths(customPaths);
 			logger.info(`Loaded custom agent paths: ${JSON.stringify(customPaths)}`, 'Startup');
