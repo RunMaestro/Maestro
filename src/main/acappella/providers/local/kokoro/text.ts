@@ -25,6 +25,8 @@
  * testable without it. See `espeak.ts` for the real one.
  */
 
+import { escapeRegExp } from '../../../../../shared/stringUtils';
+
 /** espeak-ng for one run of words. Returns one phoneme string per clause. */
 export type EspeakPhonemize = (text: string, language: 'en-us' | 'en') => Promise<string[]>;
 
@@ -154,10 +156,6 @@ export function normalizeKokoroText(text: string): string {
 
 			.trim()
 	);
-}
-
-function escapeRegExp(text: string): string {
-	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** Punctuation the model reads as prosody. Everything here survives phonemizing as itself. */
