@@ -53,6 +53,7 @@ import { mergeUsagePeaks, type UsagePeaks } from '../../../shared/usagePeaks';
 import { mergeAutoRunStats } from '../../../shared/autoRunStatsMerge';
 import { dropOrphanedTabs } from '../../../shared/tabStripMembership';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
+import { holdsFileTreeCache, withoutFileTreeCache } from '../../../shared/fileTreeCache';
 import { normalizeStoredClosedTabs } from '../../../shared/closedTabHistory';
 import {
 	mergeDeferredSessionContent,
@@ -714,6 +715,9 @@ export function registerPersistenceHandlers(
 			// (#2008). Restore would put each one back as a chip, so finish the
 			// close here. Their transcripts stay in their provider sessions.
 			let orphanedTabCount = 0;
+			// Agents written by a path that skipped the renderer's persistence prep
+			// carry their whole file-tree scan (45 MB across one user's agents).
+			let fileTreeCount = 0;
 			const repairOrphans = !orphanRepairDone;
 			orphanRepairDone = true;
 			const compacted = relocated.map((session) => {
@@ -725,9 +729,16 @@ export function registerPersistenceHandlers(
 				if (normalized !== repaired) closedTabCount++;
 				const result = compactSessionToolOutputs(normalized);
 				toolOutputCount += result.compacted;
-				return result.session;
+				if (holdsFileTreeCache(result.session)) fileTreeCount++;
+				return withoutFileTreeCache(result.session);
 			});
-			if (imageCount > 0 || toolOutputCount > 0 || closedTabCount > 0 || orphanedTabCount > 0) {
+			if (
+				imageCount > 0 ||
+				toolOutputCount > 0 ||
+				closedTabCount > 0 ||
+				orphanedTabCount > 0 ||
+				fileTreeCount > 0
+			) {
 				sessionsStore.set('sessions', compacted);
 				if (imageCount > 0) {
 					logger.info(
@@ -750,6 +761,12 @@ export function registerPersistenceHandlers(
 				if (orphanedTabCount > 0) {
 					logger.info(
 						`Removed ${orphanedTabCount} closed tab(s) left without a tab-strip slot in maestro-sessions.json`,
+						'Sessions'
+					);
+				}
+				if (fileTreeCount > 0) {
+					logger.info(
+						`Dropped the stored file-tree scan of ${fileTreeCount} agent(s) from maestro-sessions.json`,
 						'Sessions'
 					);
 				}
@@ -1042,7 +1059,9 @@ export function registerPersistenceHandlers(
 				// side would turn that into a conflict.
 				const sessionsToPersist = merged.map((session) =>
 					touchedIds.has(session.id)
-						? compactSessionToolOutputs(normalizeStoredClosedTabs(session)).session
+						? withoutFileTreeCache(
+								compactSessionToolOutputs(normalizeStoredClosedTabs(session)).session
+							)
 						: session
 				);
 
@@ -1224,18 +1243,20 @@ export function registerPersistenceHandlers(
 			}
 			const sessionsToPersist = sessions.map((session) =>
 				incomingIds.has(session.id)
-					? compactSessionToolOutputs(
-							normalizeStoredClosedTabs(
-								mergeSessionPersistenceChanges(
-									mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
-									previousSessionMap.get(session.id),
-									baselineMap.get(session.id),
-									remote,
-									false,
-									remote
+					? withoutFileTreeCache(
+							compactSessionToolOutputs(
+								normalizeStoredClosedTabs(
+									mergeSessionPersistenceChanges(
+										mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
+										previousSessionMap.get(session.id),
+										baselineMap.get(session.id),
+										remote,
+										false,
+										remote
+									)
 								)
-							)
-						).session
+							).session
+						)
 					: session
 			);
 

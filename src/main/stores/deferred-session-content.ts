@@ -16,6 +16,7 @@
 
 import type { StoredSession } from './types';
 import type { SessionRuntimeSnapshot } from '../../shared/sessionTranscript';
+import { unloadedFileTreeState } from '../../shared/fileTreeCache';
 import {
 	MAX_PERSISTED_AI_COMMAND_HISTORY,
 	MAX_PERSISTED_SESSION_LOGS,
@@ -118,6 +119,9 @@ export function projectWebSession(session: StoredSession): StoredSession {
 	} = projected;
 	return {
 		...withoutClosedTabs,
+		// The browser scans its own tree on activation; a stored one is megabytes
+		// a phone would download, and a write that kept it is not this read's fault.
+		...unloadedFileTreeState(),
 		createdAt,
 		aiLogs: [],
 		shellLogs: [],

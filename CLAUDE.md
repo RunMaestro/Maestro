@@ -6,20 +6,21 @@ Essential guidance for working with this codebase. This file is loaded into ever
 
 None of these load automatically. Read the one that matches the task before you start; do not read them all.
 
-| Document                                   | Read it before...                                                                                                                                                   |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [[CLAUDE-PATTERNS.md]]                     | Touching process management, modals, themes, tabs, the execution queue, Auto Run, SSH spawns, error handling, or Encore gating. Also holds the debugging checklists |
-| [[CLAUDE-IPC.md]]                          | Adding or calling a `window.maestro.*` API                                                                                                                          |
-| [[CLAUDE-PERFORMANCE.md]]                  | Performance-sensitive renderer work (React optimization, debouncing, batching) or capturing a perf trace                                                            |
-| [[CLAUDE-WIZARD.md]]                       | Editing the Onboarding Wizard, Inline Wizard, or Tour System                                                                                                        |
-| [[CLAUDE-FEATURES.md]]                     | Editing the Usage Dashboard, Document Graph, or Delegation Graph                                                                                                    |
-| [[CLAUDE-AGENTS.md]]                       | Adding or changing a provider, or looking up what a provider supports                                                                                               |
-| [[CLAUDE-SESSION.md]]                      | Touching the `Session` interface (the agent data model)                                                                                                             |
-| [[CLAUDE-PLATFORM.md]]                     | Anything path-, shell-, or OS-specific (Windows, Linux, macOS, SSH remote)                                                                                          |
-| [[CLAUDE-CUE.md]]                          | Editing `src/main/cue/` (architecture, dispatch flow, lifecycle, gotchas)                                                                                           |
-| [[CLAUDE-PLUGINS.md]]                      | Editing `src/main/plugins/` or `src/shared/plugins/` (tiers, sandbox, broker, capabilities, signing, trust model)                                                   |
-| [[CLAUDE-SETTINGS.md]]                     | Editing `src/renderer/components/Settings/` or adding a setting (style guide plus the registration checklist)                                                       |
-| [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) | Integrating a new agent end to end                                                                                                                                  |
+| Document                                         | Read it before...                                                                                                                                                   |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [[CLAUDE-PATTERNS.md]]                           | Touching process management, modals, themes, tabs, the execution queue, Auto Run, SSH spawns, error handling, or Encore gating. Also holds the debugging checklists |
+| [[CLAUDE-IPC.md]]                                | Adding or calling a `window.maestro.*` API                                                                                                                          |
+| [[CLAUDE-PERFORMANCE.md]]                        | Performance-sensitive renderer work (React optimization, debouncing, batching) or capturing a perf trace                                                            |
+| [[CLAUDE-WIZARD.md]]                             | Editing the Onboarding Wizard, Inline Wizard, or Tour System                                                                                                        |
+| [[CLAUDE-FEATURES.md]]                           | Editing the Usage Dashboard, Document Graph, or Delegation Graph                                                                                                    |
+| [[CLAUDE-AGENTS.md]]                             | Adding or changing a provider, or looking up what a provider supports                                                                                               |
+| [[CLAUDE-SESSION.md]]                            | Touching the `Session` interface (the agent data model)                                                                                                             |
+| [[CLAUDE-PLATFORM.md]]                           | Anything path-, shell-, or OS-specific (Windows, Linux, macOS, SSH remote)                                                                                          |
+| [[CLAUDE-CUE.md]]                                | Editing `src/main/cue/` (architecture, dispatch flow, lifecycle, gotchas)                                                                                           |
+| [[CLAUDE-PLUGINS.md]]                            | Editing `src/main/plugins/` or `src/shared/plugins/` (tiers, sandbox, broker, capabilities, signing, trust model)                                                   |
+| [[CLAUDE-SETTINGS.md]]                           | Editing `src/renderer/components/Settings/` or adding a setting (style guide plus the registration checklist)                                                       |
+| [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md)       | Integrating a new agent end to end                                                                                                                                  |
+| [SMOKE-TEST.md](docs/agent-guides/SMOKE-TEST.md) | Any "smoke test" request, or verifying a build or branch on a running app: the whole checklist, every time                                                          |
 
 ---
 
@@ -144,6 +145,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Where the synced stores live (custom Storage Location):** `resolveSyncDir(userDataDir)`, `isValidSyncPath()`, `BOOTSTRAP_STORE_FILE` in `src/shared/syncPath.ts`; the CLI's `getSyncDir()` in `src/cli/services/storage.ts`
 - **Deferred main-process store persistence:** `deferStoreWrites()` in `src/main/stores/deferred-writes.ts`, `flushPendingSessionWrites()` in `src/main/stores/instances.ts`
 - **Rewriting a large `{ key: [...] }` JSON store file:** `serializeWithMemoizedArray(data, memoKey)`, `encodeWithMemoizedArray(data, memoKey)` in `src/shared/memoizedJsonSerialize.ts`
+- **Keeping an agent's file-tree scan out of storage and off the wire:** `withoutFileTreeCache()`, `holdsFileTreeCache()`, `unloadedFileTreeState()` in `src/shared/fileTreeCache.ts`
 - **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()` in `src/main/stores/corrupt-store-recovery.ts` (never `clearInvalidConfig`)
 - **Whether a SQLite error means the database file is damaged:** `isSqliteCorruptionError()` in `src/shared/sqliteErrors.ts`
 - **Memory and CPU of a process tree:** `readProcessTreeUsage(roots)`, `summarizeProcessTrees()` in `src/main/utils/process-usage.ts`, over `descendantsOf()` in `src/shared/maestro-lib/control/process-tree.ts`
