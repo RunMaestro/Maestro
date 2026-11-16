@@ -34,7 +34,7 @@
 import { isSecretEnvKey, isBlankEnvKey, isBlankEnvValue } from '../../agentEnvironment';
 import { isCodexTransport } from '../../codexTransport';
 import type { PeerAgentAction } from '../client/peer-actions';
-import type { AgentPatch, AgentPatchField } from '../client/types';
+import type { AgentPatch, AgentPatchField, TabPatch, TurnOverrides } from '../client/types';
 import { isHarnessControlMode } from '../providers/native-control';
 import { visibleAiTabsOf } from '../store/read-stores';
 import type { AgentRecord, AITabRecord } from '../store/records';
@@ -226,6 +226,117 @@ const AGENT_FIELDS: readonly AgentFieldSpec[] = [
 ];
 
 const AGENT_FIELD_BY_KEY = new Map(AGENT_FIELDS.map((spec) => [spec.key, spec]));
+
+// ---------------------------------------------------------------------------
+// The Federation decision for every setting a host can be asked to change
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a setting of a hosted agent lives:
+ * - `shared`: on the host. Every conductor sees it; this sync sends and takes it.
+ * - `personal`: each conductor's own, sent with that conductor's messages (`TurnOverrides`) and
+ *   never written to the host.
+ * - `machine`: means something only on one machine (a Left Bar group, an SSH setting, a binary
+ *   path here). Never sent.
+ */
+export type FederationSettingScope = 'shared' | 'personal' | 'machine';
+
+export interface FederationSettingRule {
+	scope: FederationSettingScope;
+	/** Why, for the next person who reads this table. */
+	why: string;
+}
+
+/**
+ * Every field `agents.update` takes, with its Federation decision. A `Record` over
+ * `AgentPatchField`, so a field added to `AgentPatch` does not compile until someone decides
+ * here; a `shared` one must also have a spec in `AGENT_FIELDS` (or be `env`), which a test checks.
+ * Read `docs/agent-guides/FEDERATION.md` before changing a row.
+ */
+export const AGENT_PATCH_FEDERATION: Readonly<Record<AgentPatchField, FederationSettingRule>> = {
+	name: { scope: 'shared', why: 'Every conductor names the agent the same way.' },
+	cwd: { scope: 'shared', why: 'The directory the provider runs in, on the host.' },
+	groupId: {
+		scope: 'machine',
+		why: 'Left Bar groups are per machine; the host has its own group ids.',
+	},
+	provider: { scope: 'shared', why: 'The host runs the provider.' },
+	model: { scope: 'shared', why: 'The agent default; a tab override is personal.' },
+	effort: { scope: 'shared', why: 'The agent default; a tab override is personal.' },
+	contextWindow: { scope: 'shared', why: 'Part of how the host runs every turn.' },
+	customPath: {
+		scope: 'shared',
+		why: 'The provider binary on the host (an SSH agent already used the remote path).',
+	},
+	customArgs: { scope: 'shared', why: 'Arguments for the provider the host runs.' },
+	env: {
+		scope: 'shared',
+		why: 'Per variable name, and only names this agent set; secrets only when the host holds them.',
+	},
+	ssh: {
+		scope: 'machine',
+		why: 'A hosted agent runs on the host; SSH settings would point it back out.',
+	},
+	autoRunFolderPath: {
+		scope: 'shared',
+		why: 'Only a folder inside the working directory; elsewhere is a path the host may not share.',
+	},
+	nudgeMessage: { scope: 'shared', why: 'Added to every turn the host runs.' },
+	newSessionMessage: {
+		scope: 'shared',
+		why: 'Added to the first turn of every session the host starts.',
+	},
+	bookmarked: { scope: 'shared', why: 'The host keeps the bookmark, so every conductor sees it.' },
+	contextWindowSource: { scope: 'shared', why: 'Provenance of the shared context window.' },
+	enableMaestroP: { scope: 'shared', why: 'The token source the host runs turns with.' },
+	maestroPMode: { scope: 'shared', why: 'The token source the host runs turns with.' },
+	maestroPPath: { scope: 'machine', why: 'A binary path on one machine.' },
+	codexTransport: { scope: 'shared', why: 'How the host runs Codex turns.' },
+	harnessControlMode: { scope: 'shared', why: 'How the host drives the provider.' },
+};
+
+/**
+ * Every tab field `tabs.update` takes. None is shared: a tab is one conversation several conductors
+ * may type into, so each keeps their own choice (`TurnOverrides`, or on screen only). The tab name,
+ * which `tabs.rename` sets, is the one shared tab field.
+ */
+export const TAB_PATCH_FEDERATION: Readonly<Record<keyof TabPatch, FederationSettingRule>> = {
+	model: { scope: 'personal', why: 'Sent with each message as `TurnOverrides.model`.' },
+	effort: { scope: 'personal', why: 'Sent with each message as `TurnOverrides.effort`.' },
+	readOnly: { scope: 'personal', why: 'Sent with each message as `TurnOverrides.readOnly`.' },
+	saveToHistory: {
+		scope: 'personal',
+		why: 'Sent with each message as `TurnOverrides.saveToHistory`.',
+	},
+	thinking: { scope: 'personal', why: 'How this conductor shows the transcript; never sent.' },
+	enterToSend: { scope: 'personal', why: "This conductor's keyboard habit; never sent." },
+};
+
+/** Every personal tab choice a message can carry, so a new one is a compile error here too. */
+export const TURN_OVERRIDE_FIELDS: Readonly<Record<keyof TurnOverrides, keyof TabPatch>> = {
+	model: 'model',
+	effort: 'effort',
+	readOnly: 'readOnly',
+	saveToHistory: 'saveToHistory',
+};
+
+/**
+ * Agent settings Edit Agent writes that the host cannot take yet: `AgentPatch` has no field for
+ * them, so they stay on this machine and a hosted agent runs without them. Each is a gap to close
+ * by adding the field to `AgentPatch`, the host, and `AGENT_PATCH_FEDERATION`.
+ */
+export const HOSTED_SETTINGS_NOT_YET_SYNCED: Readonly<Record<string, string>> = {
+	additionalDirectories: 'Extra directories the provider may read; no host field yet.',
+	retryOnAvailabilityErrors: 'Agent Resilience retry on 529 and outages; no host field yet.',
+	retryOnTokenExhaustion: 'Agent Resilience retry on quota; no host field yet.',
+	codexAutoResetOnExhaustion: "Spends this machine's Codex reset credits; no host field yet.",
+	customEnvVarsDisabled: 'Env vars parked with the eye button; the host keeps only live ones.',
+};
+
+/** The `agents.update` fields this sync sends and takes (the `shared` rows that have a spec). */
+export function syncedAgentPatchFields(): AgentPatchField[] {
+	return [...new Set<AgentPatchField>([...AGENT_FIELDS.map((spec) => spec.field), 'env'])];
+}
 
 /** The settings an import cannot carry; a lift sends them right after it (`liftFollowUpPatch`). */
 const IMPORT_GAP_KEYS: ReadonlySet<string> = new Set([

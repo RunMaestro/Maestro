@@ -6,20 +6,21 @@ Essential guidance for working with this codebase. This file is loaded into ever
 
 None of these load automatically. Read the one that matches the task before you start; do not read them all.
 
-| Document                                   | Read it before...                                                                                                                                                   |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [[CLAUDE-PATTERNS.md]]                     | Touching process management, modals, themes, tabs, the execution queue, Auto Run, SSH spawns, error handling, or Encore gating. Also holds the debugging checklists |
-| [[CLAUDE-IPC.md]]                          | Adding or calling a `window.maestro.*` API                                                                                                                          |
-| [[CLAUDE-PERFORMANCE.md]]                  | Performance-sensitive renderer work (React optimization, debouncing, batching) or capturing a perf trace                                                            |
-| [[CLAUDE-WIZARD.md]]                       | Editing the Onboarding Wizard, Inline Wizard, or Tour System                                                                                                        |
-| [[CLAUDE-FEATURES.md]]                     | Editing the Usage Dashboard or Document Graph                                                                                                                       |
-| [[CLAUDE-AGENTS.md]]                       | Adding or changing a provider, or looking up what a provider supports                                                                                               |
-| [[CLAUDE-SESSION.md]]                      | Touching the `Session` interface (the agent data model)                                                                                                             |
-| [[CLAUDE-PLATFORM.md]]                     | Anything path-, shell-, or OS-specific (Windows, Linux, macOS, SSH remote)                                                                                          |
-| [[CLAUDE-CUE.md]]                          | Editing `src/main/cue/` (architecture, dispatch flow, lifecycle, gotchas)                                                                                           |
-| [[CLAUDE-PLUGINS.md]]                      | Editing `src/main/plugins/` or `src/shared/plugins/` (tiers, sandbox, broker, capabilities, signing, trust model)                                                   |
-| [[CLAUDE-SETTINGS.md]]                     | Editing `src/renderer/components/Settings/` or adding a setting (style guide plus the registration checklist)                                                       |
-| [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) | Integrating a new agent end to end                                                                                                                                  |
+| Document                                         | Read it before...                                                                                                                                                   |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [[CLAUDE-PATTERNS.md]]                           | Touching process management, modals, themes, tabs, the execution queue, Auto Run, SSH spawns, error handling, or Encore gating. Also holds the debugging checklists |
+| [[CLAUDE-IPC.md]]                                | Adding or calling a `window.maestro.*` API                                                                                                                          |
+| [[CLAUDE-PERFORMANCE.md]]                        | Performance-sensitive renderer work (React optimization, debouncing, batching) or capturing a perf trace                                                            |
+| [[CLAUDE-WIZARD.md]]                             | Editing the Onboarding Wizard, Inline Wizard, or Tour System                                                                                                        |
+| [[CLAUDE-FEATURES.md]]                           | Editing the Usage Dashboard or Document Graph                                                                                                                       |
+| [[CLAUDE-AGENTS.md]]                             | Adding or changing a provider, or looking up what a provider supports                                                                                               |
+| [[CLAUDE-SESSION.md]]                            | Touching the `Session` interface (the agent data model)                                                                                                             |
+| [[CLAUDE-PLATFORM.md]]                           | Anything path-, shell-, or OS-specific (Windows, Linux, macOS, SSH remote)                                                                                          |
+| [[CLAUDE-CUE.md]]                                | Editing `src/main/cue/` (architecture, dispatch flow, lifecycle, gotchas)                                                                                           |
+| [[CLAUDE-PLUGINS.md]]                            | Editing `src/main/plugins/` or `src/shared/plugins/` (tiers, sandbox, broker, capabilities, signing, trust model)                                                   |
+| [[CLAUDE-SETTINGS.md]]                           | Editing `src/renderer/components/Settings/` or adding a setting (style guide plus the registration checklist)                                                       |
+| [FEDERATION.md](docs/agent-guides/FEDERATION.md) | Adding or changing any agent or tab setting, or a feature that acts on an agent: every one needs a Federation decision (shared, personal, machine)                  |
+| [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md)       | Integrating a new agent end to end                                                                                                                                  |
 
 ---
 
@@ -53,6 +54,7 @@ None of these load automatically. Read the one that matches the task before you 
 | Plugin media isolation or a bounded native tool    | [PLUGIN-MEDIA-TOOLS.md](docs/agent-guides/PLUGIN-MEDIA-TOOLS.md) |
 | Docs or site screenshot                            | [SCREENSHOT-CAPTURE.md](docs/agent-guides/SCREENSHOT-CAPTURE.md) |
 | Dataview query, vault index, or DataviewJS sandbox | [DATAVIEW.md](docs/agent-guides/DATAVIEW.md)                     |
+| Agent or tab setting, or an action on an agent     | [FEDERATION.md](docs/agent-guides/FEDERATION.md)                 |
 
 ### Commonly-reimplemented functions (do NOT add new copies)
 

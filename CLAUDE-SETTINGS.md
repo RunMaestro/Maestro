@@ -4,6 +4,8 @@ Style guide for anything rendered inside the Settings modal (`src/renderer/compo
 
 Read this **before** adding or editing a settings section. Every rule here is derived from an audit of the `.tsx` files under `src/renderer/components/Settings/` (82 non-test files today) and every theme in `src/shared/themes.ts` (20 ids today, 6 of them light; the contrast table below records the audit-time measurement). Where a rule exists because the codebase disagrees with itself, the audit numbers are quoted so you know which side is canonical.
 
+A setting that belongs to one agent (Edit Agent, a composer chip) rather than to the app also needs a Federation decision: see [FEDERATION.md](docs/agent-guides/FEDERATION.md).
+
 Related: [UI-PATTERNS.md](docs/agent-guides/UI-PATTERNS.md) (modals, layer stack, text selection), [WIDGET-LIBRARY.md](docs/agent-guides/WIDGET-LIBRARY.md) (stat cards, charts, inputs), [[CLAUDE-PATTERNS.md]] §3 (settings persistence plumbing).
 
 ---

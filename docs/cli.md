@@ -2558,7 +2558,7 @@ Both print each remote's state (`ready`, `setting-up`, `waiting`, `blocked`) wit
 
 ### Settings of hosted agents
 
-A hosted agent's settings live on its host ([how they sync](/federation#settings-live-on-the-host)). When this machine and the host both changed a setting, the desktop waits for you to choose. Two verbs show and settle those choices, the same ones the **Federation Settings Conflicts** modal offers:
+A hosted agent's settings live on its host ([how they sync](/federation#settings-of-a-hosted-agent)). When this machine and the host both changed a setting, the desktop waits for you to choose. Two verbs show and settle those choices, the same ones the **Federation Settings Conflicts** modal offers:
 
 ```bash
 maestro-cli federation conflicts                                        # each hosted agent's waiting settings, both values

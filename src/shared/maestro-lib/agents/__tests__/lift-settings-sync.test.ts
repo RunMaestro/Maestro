@@ -7,6 +7,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { AgentRecord } from '../../store/records';
 import {
+	AGENT_PATCH_FEDERATION,
+	TAB_PATCH_FEDERATION,
 	applyLiftSyncPull,
 	liftFollowUpPatch,
 	liftSyncAgentValues,
@@ -15,6 +17,7 @@ import {
 	planLiftedSettingsSync,
 	readLiftSyncBaseline,
 	settleLiftSyncBaseline,
+	syncedAgentPatchFields,
 	type LiftSyncBaseline,
 } from '../lift-settings-sync';
 
@@ -491,5 +494,19 @@ describe('readLiftSyncBaseline', () => {
 		).toEqual({ values: { a: 'x', b: null, c: 3, d: true }, envKeys: ['A'] });
 		expect(readLiftSyncBaseline(null)).toBeUndefined();
 		expect(readLiftSyncBaseline({ values: [] })).toBeUndefined();
+	});
+});
+
+describe('the Federation decision table', () => {
+	it('syncs exactly the agent fields it calls shared', () => {
+		const shared = Object.entries(AGENT_PATCH_FEDERATION)
+			.filter(([, rule]) => rule.scope === 'shared')
+			.map(([field]) => field)
+			.sort();
+		expect([...syncedAgentPatchFields()].sort()).toEqual(shared);
+	});
+
+	it('shares no tab field through tabs.update', () => {
+		expect(Object.values(TAB_PATCH_FEDERATION).every((rule) => rule.scope !== 'shared')).toBe(true);
 	});
 });
