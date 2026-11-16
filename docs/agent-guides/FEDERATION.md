@@ -51,7 +51,7 @@ Do this for every new field on `Session` that a person sets (Edit Agent, a toggl
    - If a lift must carry it, add it to `planAgentLift()`'s import, or to `IMPORT_GAP_KEYS` so `liftFollowUpPatch()` sends it right after the import.
    - Map the matching `maestro-cli update-agent` flag for `peer:agent` targets (`src/cli/commands/update-agent.ts`).
 3. **`personal`**: it rides on each message.
-   - Add it to `TurnOverrides` and `normalizeTurnOverrides()` (`client/types.ts`), `TURN_OVERRIDE_FIELDS` and `TAB_PATCH_FEDERATION`, the `send` action parser, and the host's turn assembly (`turns/assemble.ts`, `turns/record-turn.ts`, the queued turn in `runtime/turns.ts`), and the desktop host's queue path (`src/shared/queuedTurnSettings.ts`, `useRemoteIntegration.ts`).
+   - Add it to `TurnOverrides` and `normalizeTurnOverrides()` (`client/types.ts`), `TURN_OVERRIDE_FIELDS` and `TAB_PATCH_FEDERATION`, the `send` action parser, and the host's turn assembly (`turns/assemble.ts`, `turns/record-turn.ts`, the queued turn in `runtime/turns.ts`), and the desktop host's queue path (`withQueuedTurnOverrides()` and `queuedItemRunsReadOnly()` in `src/shared/queuedTurnSettings.ts`, `useRemoteIntegration.ts`, and the user entry `markTabRunningQueuedItem()` writes, which the exit synopsis reads).
    - Add the chip to the mirror composer (`PeerAgentComposer.tsx`, stored in `hostedAgentSettingsStore.tabChoices`) and the flag to `maestro-cli send <peer:agent>` (`peerTurnOverrides()` in `src/cli/commands/send.ts`).
 4. **`machine`**: record the row with its reason, and keep the field out of `AGENT_FIELDS`. Nothing else.
 5. **Cannot reach the host yet** (no `AgentPatch` field): list it in `HOSTED_SETTINGS_NOT_YET_SYNCED` with the reason, and in the "Known limits" of [docs/federation.md](../federation.md). A silent gap is a bug.
@@ -79,9 +79,8 @@ acappella carries settings rc does not have yet: agent peers and their grants (`
 ## Known gaps on rc
 
 - The settings in `HOSTED_SETTINGS_NOT_YET_SYNCED` (extra directories, the Agent Resilience retry switches, Codex auto reset, parked env vars) have no host field yet.
-- A full Maestro desktop acting as host ignores `saveToHistory` and `readOnly: false` overrides (its queued items carry neither); `maestro-cli host` honors all four.
 - The mirror composer's model picker lists this machine's models; the mirror's Edit Agent uses the host's (it presents the agent as running over SSH on its remote).
-- The Federation Settings Conflicts modal has no hotkey.
+- The Federation Settings Conflicts modal has no hotkey on purpose: it is reached from the conflicts toast, the command palette, and the menu, and only while conflicts exist.
 
 ## Verifying a change
 

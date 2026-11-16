@@ -28,6 +28,7 @@ import {
 	steeringTextTooLong,
 } from '../../shared/chatSteering';
 import { resolveCodexTransport } from '../../shared/codexTransport';
+import { queuedItemRunsReadOnly } from '../../shared/queuedTurnSettings';
 import { supportsNativeSteering } from '../../shared/maestro-lib/providers/native-control';
 import { isSessionRemote } from './sessionHelpers';
 import {
@@ -821,12 +822,9 @@ function findQueueTargetTab(session: Session, tabId: string): AITab | undefined 
 function queuedItemWantsReadOnly(
 	session: Session,
 	tabId: string,
-	item: Pick<QueuedItem, 'readOnlyMode'>
+	item: Pick<QueuedItem, 'readOnlyMode' | 'turnReadOnly'>
 ): boolean {
-	const tab = findQueueTargetTab(session, tabId);
-	return (
-		item.readOnlyMode === true || tab?.readOnlyMode === true || tab?.permissionMode === 'readonly'
-	);
+	return queuedItemRunsReadOnly(item, findQueueTargetTab(session, tabId));
 }
 
 /**

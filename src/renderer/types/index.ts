@@ -260,6 +260,9 @@ export interface LogEntry {
 	queuedItemId?: string;
 	// For user messages - tracks if message was sent in read-only mode
 	readOnly?: boolean;
+	// For user messages - the sender's own save to History choice for this turn (Federation
+	// `TurnOverrides`); when set, the exit synopsis follows it instead of the tab's chip
+	saveToHistory?: boolean;
 	// For user messages - tracks if message was sent via forced parallel execution
 	forceParallel?: boolean;
 	// For user messages - tracks if message was steered into a turn that was
@@ -539,6 +542,10 @@ export interface QueuedItem {
 	tabName?: string;
 	// Read-only mode tracking (for parallel execution bypass)
 	readOnlyMode?: boolean; // True if queued from a read-only tab
+	// A sender's own chips for this one message (Federation `TurnOverrides`): when set, they
+	// replace the tab's read-only and save to History settings. See `withQueuedTurnOverrides`.
+	turnReadOnly?: boolean;
+	turnSaveToHistory?: boolean;
 	// Force parallel: dispatches immediately when this tab finishes, skipping cross-tab wait
 	forceParallel?: boolean;
 	// Held/paused: kept in the queue (preserving order) but skipped by every

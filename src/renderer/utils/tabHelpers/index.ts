@@ -927,6 +927,7 @@ export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: 
 			queuedItemId: item.id,
 			...(item.forceParallel && { forceParallel: true }),
 			...(item.readOnlyMode && { readOnly: true }),
+			...(item.turnSaveToHistory !== undefined && { saveToHistory: item.turnSaveToHistory }),
 		};
 		next.logs = [...tab.logs, logEntry];
 	}

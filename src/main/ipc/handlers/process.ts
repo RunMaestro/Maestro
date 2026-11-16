@@ -6,6 +6,7 @@ import {
 	getLiveRelayConversationTurns,
 } from '../../plugins/relay-conversations';
 import { canonicalJson } from '../../../shared/canonicalJson';
+import { queuedItemRunsReadOnly } from '../../../shared/queuedTurnSettings';
 import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { getPrompt } from '../../prompt-manager';
@@ -314,10 +315,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			const item = agent.executionQueue?.find(
 				(i: { id: string }) => i.id === config.pianolaQueueItemId
 			);
-			const readOnly =
-				item?.readOnlyMode === true ||
-				tab.readOnlyMode === true ||
-				tab.permissionMode === 'readonly';
+			const readOnly = queuedItemRunsReadOnly(item, tab);
 			let expected = item?.text?.trim() ? item.text : getPrompt('image-only-default');
 			if (item?.crossAgentMention) {
 				if (!hostQueueAgent || hostQueueAgent.id !== agent.toolType)

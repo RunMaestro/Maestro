@@ -41,6 +41,7 @@ import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMess
 import { isAgentAlreadyRunningError } from '../../shared/processErrors';
 import { createTab, getActiveTab, markTabRunningQueuedItem } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
+import { queuedItemRunsReadOnly } from '../../shared/queuedTurnSettings';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
 import {
@@ -677,10 +678,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 			// Get the TARGET TAB's agentSessionId for session continuity
 			const tabAgentSessionId = targetTab.agentSessionId;
-			const isReadOnly =
-				item.readOnlyMode === true ||
-				targetTab.readOnlyMode === true ||
-				targetTab.permissionMode === 'readonly';
+			const isReadOnly = queuedItemRunsReadOnly(item, targetTab);
 			const effectivePermissionMode = isReadOnly ? 'readonly' : resolveTabPermissionMode(targetTab);
 
 			// Filter out YOLO/skip-permissions flags when read-only mode is active
