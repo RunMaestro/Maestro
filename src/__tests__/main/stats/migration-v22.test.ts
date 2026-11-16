@@ -271,7 +271,7 @@ function seededV19Db(): Database.Database {
 	for (const column of ADD_QUERY_EVENT_MODEL_COLUMNS) {
 		db.prepare(`ALTER TABLE query_events DROP COLUMN ${column}`).run();
 	}
-	db.prepare('DELETE FROM _migrations WHERE version = 21').run();
+	db.prepare('DELETE FROM _migrations WHERE version = 22').run();
 	db.pragma('user_version = 21');
 
 	for (const run of OLD_RUNS) insertOldRun(db, run);
@@ -349,13 +349,13 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 			);
 		});
 
-		it('brings the database to version 21 as an ordinary upgrade', () => {
+		it('brings the database to version 22 as an ordinary upgrade', () => {
 			const db = seededV19Db();
 
 			runMigrations(db);
 
 			expect(getCurrentVersion(db)).toBe(24);
-			expect(getMigrationHistory(db).find((m) => m.version === 21)).toMatchObject({
+			expect(getMigrationHistory(db).find((m) => m.version === 22)).toMatchObject({
 				status: 'success',
 			});
 			// A repair would warn; this is the normal path.
@@ -504,7 +504,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 			]);
 			expect(hasTable(db, LOCAL_MODEL_RUNS_REBUILD_TABLE)).toBe(false);
 			expect(getCurrentVersion(db)).toBe(21);
-			expect(getMigrationHistory(db).find((m) => m.version === 21)).toMatchObject({
+			expect(getMigrationHistory(db).find((m) => m.version === 22)).toMatchObject({
 				status: 'failed',
 				errorMessage: 'disk I/O error',
 			});
@@ -539,7 +539,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 
 			expect(allRuns(db)).toEqual(before.map((row) => ({ ...row, agent_id: null })));
 			expect(getCurrentVersion(db)).toBe(24);
-			expect(getMigrationHistory(db).find((m) => m.version === 21)).toMatchObject({
+			expect(getMigrationHistory(db).find((m) => m.version === 22)).toMatchObject({
 				status: 'success',
 			});
 		});
@@ -630,7 +630,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 	});
 
 	describe('a version number that already covers v22', () => {
-		it('rebuilds the table of a database stamped 21 without the schema, keeping its rows', () => {
+		it('rebuilds the table of a database stamped 22 without the schema, keeping its rows', () => {
 			// v22 declares isApplied for the same reason v17 does: rc may number a
 			// different migration 22, and user_version is only a number.
 			const db = seededV19Db();

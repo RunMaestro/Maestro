@@ -57,6 +57,11 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'federation reconnect': ['maestro-cli federation reconnect <peer>'],
 	'federation auto': ['maestro-cli federation auto --json'],
 	'federation auto run': ['maestro-cli federation auto run --json'],
+	'federation conflicts': ['maestro-cli federation conflicts --json'],
+	'federation resolve': [
+		'maestro-cli federation resolve <peer>:<agent> nudgeMessage --take host',
+		'maestro-cli federation resolve <peer>:<agent> nudgeMessage --value "<merged text>"',
+	],
 	// Dataview commands introduced by RC also participate in the CLI help audit.
 	'dataview query': ['maestro-cli dataview query <file> --agent <agent-id> --json'],
 	'dataview eval': ['maestro-cli dataview eval <file> "LIST FROM #meeting" --json'],

@@ -194,6 +194,8 @@ vi.mock('../../../../main/local-models/server/supervisor', () => ({
 	startModelServer: vi.fn(async () => ({ state: 'running' })),
 	stopModelServer: vi.fn(async () => ({ state: 'stopped' })),
 	getModelServerKey: vi.fn(async () => 'sk-maestro-key'),
+	// Read at import by log-sources.ts (the System Log Viewer's model server source).
+	modelServerLogPath: vi.fn(() => '/tmp/model-server.log'),
 }));
 import {
 	getModelServerKey,
@@ -3942,6 +3944,7 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					true,
 					false,
+					undefined,
 					undefined,
 					undefined,
 					undefined,

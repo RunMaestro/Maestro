@@ -310,7 +310,7 @@ function seededV21Db(): Database.Database {
 	db.prepare('DROP TABLE proxy_requests').run();
 	db.prepare(V21_PROXY_REQUESTS_SQL).run();
 	for (const sql of V21_PROXY_REQUESTS_INDEXES_SQL) db.prepare(sql).run();
-	db.prepare('DELETE FROM _migrations WHERE version = 23').run();
+	db.prepare('DELETE FROM _migrations WHERE version = 24').run();
 	db.pragma('user_version = 23');
 	for (const row of OLD_ROWS) insertOldRow(db, row);
 
@@ -410,14 +410,14 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v24', () => {
 		});
 	});
 
-	describe('upgrading a version 22 database', () => {
-		it('brings the database to version 23 as an ordinary upgrade', () => {
+	describe('upgrading a version 23 database', () => {
+		it('brings the database to version 24 as an ordinary upgrade', () => {
 			const db = seededV21Db();
 
 			runMigrations(db);
 
 			expect(getCurrentVersion(db)).toBe(24);
-			expect(getMigrationHistory(db).find((m) => m.version === 23)).toMatchObject({
+			expect(getMigrationHistory(db).find((m) => m.version === 24)).toMatchObject({
 				status: 'success',
 			});
 			// A repair would warn; this is the normal path.
@@ -610,14 +610,14 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v24', () => {
 			const sqlOnce = tableSql(db, 'proxy_requests');
 
 			// Stamp the version back so the runner applies v24 again, not just checks it.
-			db.prepare('DELETE FROM _migrations WHERE version = 23').run();
+			db.prepare('DELETE FROM _migrations WHERE version = 24').run();
 			db.pragma('user_version = 23');
 			runMigrations(db);
 
 			expect(telemetryRows(db)).toEqual(rows);
 			expect(tableSql(db, 'proxy_requests')).toBe(sqlOnce);
 			expect(getCurrentVersion(db)).toBe(24);
-			expect(getMigrationHistory(db).find((m) => m.version === 23)).toMatchObject({
+			expect(getMigrationHistory(db).find((m) => m.version === 24)).toMatchObject({
 				status: 'success',
 			});
 		});
@@ -644,7 +644,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v24', () => {
 	});
 
 	describe('a version number that already covers v24', () => {
-		it('adds the columns to a database stamped 23 without them, keeping its rows', () => {
+		it('adds the columns to a database stamped 24 without them, keeping its rows', () => {
 			// v24 declares isApplied for the same reason v17 does: rc may number a
 			// different migration 24, and user_version is only a number.
 			const db = seededV21Db();
@@ -663,7 +663,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v24', () => {
 			expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v24');
 		});
 
-		it('adds only what is missing to a database stamped 23 that lacks some of the columns', () => {
+		it('adds only what is missing to a database stamped 24 that lacks some of the columns', () => {
 			const db = openDb();
 			runMigrations(db);
 			insertFullRow(db, 'new-current', currentProxyRow());
@@ -688,7 +688,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v24', () => {
 			expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v24');
 		});
 
-		it('leaves a complete database stamped 23 alone', () => {
+		it('leaves a complete database stamped 24 alone', () => {
 			const db = openDb();
 			runMigrations(db);
 			insertFullRow(db, 'new-current', currentProxyRow());
@@ -701,7 +701,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v24', () => {
 			expect(logger.warn).not.toHaveBeenCalled();
 		});
 
-		it('repairs v23 and v24 together, v23 first, for a database stamped 23 without either', () => {
+		it('repairs v23 and v24 together, v23 first, for a database stamped 24 without either', () => {
 			const db = openDb();
 			runMigrations(db);
 			for (const column of [
@@ -724,7 +724,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v24', () => {
 			]);
 		});
 
-		it('recreates the table whole, through v18, for a database stamped 23 without it', () => {
+		it('recreates the table whole, through v18, for a database stamped 24 without it', () => {
 			const db = openDb();
 			runMigrations(db);
 			db.prepare('DROP TABLE proxy_requests').run();
@@ -759,7 +759,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v24', () => {
 				'idx_proxy_requests_started',
 			]);
 			expect(getCurrentVersion(db)).toBe(23);
-			expect(getMigrationHistory(db).find((m) => m.version === 23)).toMatchObject({
+			expect(getMigrationHistory(db).find((m) => m.version === 24)).toMatchObject({
 				status: 'failed',
 				errorMessage: 'disk I/O error',
 			});
@@ -777,7 +777,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v24', () => {
 			expect(oldRows(db)).toEqual(before);
 			expect(columnNames(db, 'proxy_requests')).toEqual([...V21_COLUMNS, ...TELEMETRY_NAMES]);
 			expect(getCurrentVersion(db)).toBe(24);
-			expect(getMigrationHistory(db).find((m) => m.version === 23)).toMatchObject({
+			expect(getMigrationHistory(db).find((m) => m.version === 24)).toMatchObject({
 				status: 'success',
 			});
 		});

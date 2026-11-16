@@ -3275,6 +3275,7 @@ describe('useRemoteIntegration', () => {
 						undefined,
 						undefined,
 						undefined,
+						undefined,
 						{ effort: 'high' }
 					);
 				});
