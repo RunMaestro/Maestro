@@ -33,6 +33,7 @@ The **System Log Viewer** shows:
 - One **source** pill per log: **Maestro** (the app's own log) and **Model server** (the output of the Maestro model server, read from `model-server.log`; hover the pill for the path). Every source is on when the viewer opens, and their entries are interleaved newest first in one list. Click a pill to turn its source off or back on; at least one stays on. `maestro-cli open logs --tab model-server` turns a given source on.
 - Timestamped log entries with severity levels (debug, info, warn, error, toast, autorun). A model server line shows `model-server` as its context and keeps the level the server gave it; a line without one is read by what it says (an error or a warning).
 - Filterable by log level via clickable level pills and searchable text (`Cmd+F` / `Ctrl+F`), across every shown source.
+- From a terminal, `maestro-cli logs` prints the same entries (`--source`, `--level`, `--search` and `--limit` match the pills and search box), `maestro-cli logs --output <file>` writes what **Export** writes, and `maestro-cli logs clear` does what **Clear** does.
 - Real-time updates as new logs are generated
 - Detail view with full message content and source module
 

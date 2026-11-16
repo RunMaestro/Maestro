@@ -1,6 +1,7 @@
 /**
- * The pure half of the System Log Viewer: entry keys, search matching, and the
- * timeline strip. Kept out of the component so a list of thousands of entries
+ * The pure half of the System Log Viewer: entry keys and the timeline strip.
+ * Search matching is `logEntryMatchesSearch()` in `shared/logSources.ts`, which
+ * `maestro-cli logs` uses too. Kept out of the component so a list of thousands of entries
  * pays for each of these once, not once per render.
  */
 
@@ -39,38 +40,6 @@ export function buildSystemLogKeys(entries: readonly SystemLogViewEntry[]): stri
 		keys[i] = n === 0 ? base : `${base}#${n}`;
 	}
 	return keys;
-}
-
-// Separates the searchable fields, so a query never matches across two of them.
-const FIELD_SEPARATOR = '\u0000';
-const haystacks = new WeakMap<object, string>();
-
-/**
- * The lowercased text a search runs over: message, context, then the data as
- * JSON. Cached per entry object, so typing a query stringifies each entry's
- * data once rather than once per keystroke. Data that cannot be serialized
- * (a cycle) is left out of the search.
- */
-function searchHaystack(entry: SystemLogViewEntry): string {
-	const cached = haystacks.get(entry);
-	if (cached !== undefined) return cached;
-	let data = '';
-	if (entry.data) {
-		try {
-			data = JSON.stringify(entry.data) ?? '';
-		} catch {
-			data = '';
-		}
-	}
-	const text = [entry.message, entry.context ?? '', data].join(FIELD_SEPARATOR).toLowerCase();
-	haystacks.set(entry, text);
-	return text;
-}
-
-/** Whether an entry matches a query that is already trimmed and lowercased. */
-export function systemLogEntryMatches(entry: SystemLogViewEntry, query: string): boolean {
-	if (!query) return true;
-	return searchHaystack(entry).includes(query);
 }
 
 /** One stripe of the timeline strip: a run of consecutive shown entries. */

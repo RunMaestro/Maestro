@@ -3,7 +3,6 @@ import {
 	buildSystemLogKeys,
 	buildSystemLogTimeline,
 	MAX_TIMELINE_SEGMENTS,
-	systemLogEntryMatches,
 	type SystemLogViewEntry,
 } from '../../../renderer/utils/systemLogView';
 
@@ -30,33 +29,6 @@ describe('buildSystemLogKeys', () => {
 	it('separates the same line from two sources', () => {
 		const [a, b] = buildSystemLogKeys([entry(), entry({ source: 'model-server' })]);
 		expect(a).not.toBe(b);
-	});
-});
-
-describe('systemLogEntryMatches', () => {
-	it('matches the message, the context, and the data', () => {
-		const e = entry({ message: 'Alpha', context: 'ModuleB', data: { note: 'searchable' } });
-		expect(systemLogEntryMatches(e, 'alpha')).toBe(true);
-		expect(systemLogEntryMatches(e, 'moduleb')).toBe(true);
-		expect(systemLogEntryMatches(e, 'searchable')).toBe(true);
-		expect(systemLogEntryMatches(e, 'missing')).toBe(false);
-	});
-
-	it('matches everything for an empty query', () => {
-		expect(systemLogEntryMatches(entry(), '')).toBe(true);
-	});
-
-	it('never matches across two fields', () => {
-		const e = entry({ message: 'abc', context: 'def' });
-		expect(systemLogEntryMatches(e, 'cd')).toBe(false);
-	});
-
-	it('leaves data that cannot be serialized out of the search', () => {
-		const data: Record<string, unknown> = {};
-		data.self = data;
-		const e = entry({ message: 'Test', data });
-		expect(systemLogEntryMatches(e, 'test')).toBe(true);
-		expect(systemLogEntryMatches(e, 'self')).toBe(false);
 	});
 });
 

@@ -9,18 +9,11 @@ import { ChevronRight, ChevronDown, Pencil, Copy, Check } from 'lucide-react';
 import type { Theme } from '../types';
 import { readableTextOn, transparentize } from '../../shared/colorContrast';
 import { formatRelativeTime } from '../../shared/formatters';
-import type { FileLogSourceId } from '../../shared/logSources';
+import type { SourcedLogEntry } from '../../shared/logSources';
 import { useSessionStore } from '../stores/sessionStore';
 
-export interface SystemLogEntry {
-	timestamp: number;
-	level: 'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue';
-	message: string;
-	context?: string;
-	data?: unknown;
-	/** The file log source a line came from; absent for Maestro's own entries. */
-	source?: FileLogSourceId;
-}
+/** One card's entry: Maestro's own, or a file log line read into the same shape. */
+export type SystemLogEntry = SourcedLogEntry;
 
 export interface LogLevelColor {
 	/** Solid fill: timeline stripe, selected filter chip, pill border. */

@@ -8,13 +8,19 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	filterLogEntries,
+	formatLogEntryText,
 	inferLogLineLevel,
 	isFileLogSource,
 	isLogSourceId,
 	LOG_SOURCE_IDS,
 	LOG_SOURCES,
+	logEntryMatchesSearch,
 	logLineStamp,
+	mergeLogSourceEntries,
 	parseLogSourceEntries,
+	parseSystemLogsQuery,
+	type SourcedLogEntry,
 } from '../../shared/logSources';
 
 describe('log sources', () => {
@@ -139,5 +145,124 @@ describe('parseLogSourceEntries', () => {
 
 	it('is empty for empty text', () => {
 		expect(parse('')).toEqual([]);
+	});
+});
+
+const entry = (overrides: Partial<SourcedLogEntry> = {}): SourcedLogEntry => ({
+	timestamp: 1000,
+	level: 'info',
+	message: 'Test',
+	...overrides,
+});
+
+describe('mergeLogSourceEntries', () => {
+	it('interleaves both sources newest first, keeping file order within one time', () => {
+		const maestro = [
+			entry({ timestamp: 30, message: 'm30' }),
+			entry({ timestamp: 10, message: 'm10' }),
+		];
+		const file = parseLogSourceEntries(
+			'[1970-01-01T00:00:00.020Z] f20a\n[1970-01-01T00:00:00.020Z] f20b\n',
+			'model-server',
+			0
+		);
+		expect(mergeLogSourceEntries(maestro, file).map((e) => e.message)).toEqual([
+			'm30',
+			'f20b',
+			'f20a',
+			'm10',
+		]);
+	});
+
+	it('returns a copy of Maestro entries when there are no file lines', () => {
+		const maestro = [entry()];
+		const merged = mergeLogSourceEntries(maestro, []);
+		expect(merged).toEqual(maestro);
+		expect(merged).not.toBe(maestro);
+	});
+});
+
+describe('formatLogEntryText', () => {
+	it('writes time, level, context, message and data', () => {
+		expect(
+			formatLogEntryText(
+				entry({ timestamp: 0, level: 'warn', context: 'model-server', data: { a: 1 } })
+			)
+		).toBe('[1970-01-01T00:00:00.000Z] [WARN] [model-server] Test\n{\n  "a": 1\n}');
+	});
+});
+
+describe('logEntryMatchesSearch', () => {
+	it('matches the message, the context, and the data', () => {
+		const e = entry({ message: 'Alpha', context: 'ModuleB', data: { note: 'searchable' } });
+		expect(logEntryMatchesSearch(e, 'alpha')).toBe(true);
+		expect(logEntryMatchesSearch(e, 'moduleb')).toBe(true);
+		expect(logEntryMatchesSearch(e, 'searchable')).toBe(true);
+		expect(logEntryMatchesSearch(e, 'missing')).toBe(false);
+	});
+
+	it('matches everything for an empty query', () => {
+		expect(logEntryMatchesSearch(entry(), '')).toBe(true);
+	});
+
+	it('never matches across two fields', () => {
+		expect(logEntryMatchesSearch(entry({ message: 'abc', context: 'def' }), 'cd')).toBe(false);
+	});
+
+	it('leaves data that cannot be serialized out of the search', () => {
+		const data: Record<string, unknown> = {};
+		data.self = data;
+		const e = entry({ message: 'Test', data });
+		expect(logEntryMatchesSearch(e, 'test')).toBe(true);
+		expect(logEntryMatchesSearch(e, 'self')).toBe(false);
+	});
+});
+
+describe('filterLogEntries', () => {
+	const list = [
+		entry({ level: 'error', message: 'load failed' }),
+		entry({ level: 'info', message: 'listening' }),
+	];
+
+	it('keeps the named levels and the search hits, in any case', () => {
+		expect(filterLogEntries(list, { levels: ['error'] }).map((e) => e.message)).toEqual([
+			'load failed',
+		]);
+		expect(filterLogEntries(list, { search: '  LISTEN ' }).map((e) => e.message)).toEqual([
+			'listening',
+		]);
+		expect(filterLogEntries(list, {})).toHaveLength(2);
+	});
+});
+
+describe('parseSystemLogsQuery', () => {
+	it('accepts known sources and levels, dropping repeats', () => {
+		expect(
+			parseSystemLogsQuery({
+				sources: ['model-server', 'model-server'],
+				levels: ['warn', 'error'],
+				search: 'x',
+				limit: 5,
+			})
+		).toEqual({
+			query: { sources: ['model-server'], levels: ['warn', 'error'], search: 'x', limit: 5 },
+		});
+	});
+
+	it('reads nothing as every source and level', () => {
+		expect(parseSystemLogsQuery(undefined)).toEqual({ query: {} });
+	});
+
+	it('names an unknown source, level, or a bad limit', () => {
+		expect(parseSystemLogsQuery({ sources: ['/etc/passwd'] })).toEqual({
+			error: 'Unknown log source: /etc/passwd. Sources: maestro, model-server.',
+		});
+		expect(parseSystemLogsQuery({ levels: ['loud'] })).toMatchObject({
+			error: expect.stringContaining('Unknown log level: loud.'),
+		});
+		expect(parseSystemLogsQuery({ sources: [] })).toEqual({ error: 'Name at least one source.' });
+		expect(parseSystemLogsQuery({ limit: 0 })).toEqual({
+			error: 'The limit must be a whole number above 0.',
+		});
 	});
 });

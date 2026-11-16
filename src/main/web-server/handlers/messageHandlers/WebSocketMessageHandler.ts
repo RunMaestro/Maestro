@@ -92,6 +92,7 @@ import {
 } from './movement';
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
 import { handleAppStats } from './appStats';
+import { handleSystemLogs, handleSystemLogsClear } from './systemLogs';
 import { handleQuickChat } from './quickChat';
 import { handleSshReachabilityCheck, handleSshReachabilityStatus } from './sshReachability';
 import {
@@ -954,6 +955,14 @@ export class WebSocketMessageHandler {
 
 			case 'app_stats':
 				void handleAppStats(this.ctx, client, message);
+				break;
+
+			case 'system_logs':
+				void handleSystemLogs(this.ctx, client, message);
+				break;
+
+			case 'system_logs_clear':
+				handleSystemLogsClear(this.ctx, client, message);
 				break;
 
 			case 'quick_chat':

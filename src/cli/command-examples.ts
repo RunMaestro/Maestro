@@ -653,6 +653,12 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'profiling stop': ['maestro-cli profiling stop --output ./trace.json'],
 	'profiling status': ['maestro-cli profiling status'],
 	'app-stats': ['maestro-cli app-stats', 'maestro-cli app-stats --json'],
+	'logs show': [
+		'maestro-cli logs show --source model-server --level warn,error',
+		'maestro-cli logs show --search load_model --limit 50',
+		'maestro-cli logs show --output ~/Desktop/maestro-logs.txt',
+	],
+	'logs clear': ['maestro-cli logs clear', 'maestro-cli logs clear --json'],
 	'maestro-run status': ['maestro-cli maestro-run status --check-latest'],
 	'maestro-run install': ['maestro-cli maestro-run install'],
 	'maestro-run grant': ['maestro-cli maestro-run grant --reveal'],

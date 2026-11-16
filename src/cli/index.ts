@@ -148,6 +148,7 @@ import { notifySpeak } from './commands/notify-speak';
 import { notificationInbox } from './commands/notification-inbox';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import { appStats } from './commands/app-stats';
+import { logs, logsClear, LOGS_LEVEL_HELP, LOGS_SOURCE_HELP } from './commands/logs';
 import {
 	modelsEndpointsAdd,
 	modelsEndpointsDetect,
@@ -5675,6 +5676,30 @@ program
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(appStats);
+
+// The System Log Viewer: read (its pills, search and Export) and Clear.
+const logsCommand = program
+	.command('logs')
+	.description(
+		"Read or clear the System Log Viewer's logs: Maestro's own log and the model server's, interleaved newest first (default: show)"
+	);
+
+logsCommand
+	.command('show', { isDefault: true })
+	.description('Print the logs the viewer shows, in its Export format')
+	.option('--source <ids>', `Sources to read, comma-separated (default: all): ${LOGS_SOURCE_HELP}`)
+	.option('--level <levels>', `Levels to keep, comma-separated (default: all): ${LOGS_LEVEL_HELP}`)
+	.option('--search <text>', 'Keep entries whose message, context or data contain this text')
+	.option('--limit <n>', 'Keep only the newest n matching entries')
+	.option('-o, --output <file>', 'Write the entries to a file instead, as Export does')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => logs(options));
+
+logsCommand
+	.command('clear')
+	.description("Clear Maestro's own log, as the viewer's Clear button does (file logs are kept)")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => logsClear(options));
 
 program
 	.command('support-package')

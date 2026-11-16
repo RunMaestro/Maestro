@@ -12,6 +12,8 @@
  * added here is deep-linkable from the CLI with no further wiring.
  */
 
+import type { MainLogLevel, SystemLogEntry } from './logger-types';
+
 export const LOG_SOURCE_IDS = ['maestro', 'model-server'] as const;
 
 export type LogSourceId = (typeof LOG_SOURCE_IDS)[number];
@@ -205,4 +207,175 @@ export function parseLogSourceEntries(
 		else next = entry.timestamp;
 	}
 	return entries as LogSourceEntry[];
+}
+
+/**
+ * One entry of the System Log Viewer, from any source: Maestro's own log entry,
+ * or a file log line read into the same shape. `source` is set only on a file
+ * line. The viewer, `maestro-cli logs` and the bridge all carry this shape.
+ */
+export interface SourcedLogEntry extends SystemLogEntry {
+	source?: FileLogSourceId;
+}
+
+/**
+ * Every shown source's entries as one list, newest first. Maestro's own entries
+ * arrive newest first; a file's lines arrive oldest first and are reversed
+ * before the stable sort, so lines with the same time keep their file order.
+ */
+export function mergeLogSourceEntries(
+	maestroNewestFirst: readonly SourcedLogEntry[],
+	fileEntriesOldestFirst: readonly LogSourceEntry[]
+): SourcedLogEntry[] {
+	if (fileEntriesOldestFirst.length === 0) return maestroNewestFirst.slice();
+	const merged: SourcedLogEntry[] = [
+		...maestroNewestFirst,
+		...fileEntriesOldestFirst.slice().reverse(),
+	];
+	return merged.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+/** One entry as text: what Export writes, Copy copies and `maestro-cli logs` prints. */
+export function formatLogEntryText(entry: SourcedLogEntry): string {
+	const timestamp = new Date(entry.timestamp).toISOString();
+	const contextStr = entry.context ? `[${entry.context}]` : '';
+	const dataStr = entry.data ? `\n${JSON.stringify(entry.data, null, 2)}` : '';
+	return `[${timestamp}] [${entry.level.toUpperCase()}] ${contextStr} ${entry.message}${dataStr}`;
+}
+
+// Separates the searchable fields, so a query never matches across two of them.
+const FIELD_SEPARATOR = '\u0000';
+const haystacks = new WeakMap<object, string>();
+
+/**
+ * The lowercased text a search runs over: message, context, then the data as
+ * JSON. Cached per entry object, so typing a query stringifies each entry's
+ * data once rather than once per keystroke. Data that cannot be serialized
+ * (a cycle) is left out of the search.
+ */
+function searchHaystack(entry: Pick<SourcedLogEntry, 'message' | 'context' | 'data'>): string {
+	const cached = haystacks.get(entry);
+	if (cached !== undefined) return cached;
+	let data = '';
+	if (entry.data) {
+		try {
+			data = JSON.stringify(entry.data) ?? '';
+		} catch {
+			data = '';
+		}
+	}
+	const text = [entry.message, entry.context ?? '', data].join(FIELD_SEPARATOR).toLowerCase();
+	haystacks.set(entry, text);
+	return text;
+}
+
+/** Whether an entry matches a search query that is already trimmed and lowercased. */
+export function logEntryMatchesSearch(
+	entry: Pick<SourcedLogEntry, 'message' | 'context' | 'data'>,
+	query: string
+): boolean {
+	if (!query) return true;
+	return searchHaystack(entry).includes(query);
+}
+
+/** What a read of the System Log Viewer's sources asks for (`maestro-cli logs`). */
+export interface SystemLogsQuery {
+	/** The sources to read; every source when absent, as the viewer opens. */
+	sources?: LogSourceId[];
+	/** The levels to keep; every level when absent. */
+	levels?: MainLogLevel[];
+	/** Text to search for in message, context and data (any case). */
+	search?: string;
+	/** The newest this many entries, after filtering. */
+	limit?: number;
+}
+
+/** How one source of a read went. */
+export interface SystemLogsSourceStatus {
+	id: LogSourceId;
+	/** The file's path, for a file source. */
+	path?: string;
+	/** False when a file source's process has never written its log. */
+	exists?: boolean;
+	/** True when older lines of a file source were left out of the read. */
+	truncated?: boolean;
+	/** Why the source could not be read, when it could not. */
+	error?: string;
+}
+
+/** What a read of the System Log Viewer's sources returns. */
+export interface SystemLogsResult {
+	/** The matching entries, newest first. */
+	entries: SourcedLogEntry[];
+	/** How many entries matched before `limit` cut the list. */
+	matched: number;
+	sources: SystemLogsSourceStatus[];
+}
+
+export const MAIN_LOG_LEVELS: readonly MainLogLevel[] = [
+	'debug',
+	'info',
+	'warn',
+	'error',
+	'toast',
+	'autorun',
+	'cue',
+];
+
+function isMainLogLevel(value: unknown): value is MainLogLevel {
+	return typeof value === 'string' && (MAIN_LOG_LEVELS as readonly string[]).includes(value);
+}
+
+/**
+ * Validate a query that crossed a process boundary. Returns the problem as a
+ * sentence when a source or level is not one the viewer knows.
+ */
+export function parseSystemLogsQuery(raw: unknown): { query: SystemLogsQuery } | { error: string } {
+	const input = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+	const query: SystemLogsQuery = {};
+	if (input.sources !== undefined) {
+		if (!Array.isArray(input.sources) || input.sources.length === 0) {
+			return { error: 'Name at least one source.' };
+		}
+		const unknown = input.sources.filter((s) => !isLogSourceId(s));
+		if (unknown.length > 0) {
+			return {
+				error: `Unknown log source: ${unknown.map(String).join(', ')}. Sources: ${LOG_SOURCE_IDS.join(', ')}.`,
+			};
+		}
+		query.sources = [...new Set(input.sources as LogSourceId[])];
+	}
+	if (input.levels !== undefined) {
+		if (!Array.isArray(input.levels) || input.levels.length === 0) {
+			return { error: 'Name at least one level.' };
+		}
+		const unknown = input.levels.filter((l) => !isMainLogLevel(l));
+		if (unknown.length > 0) {
+			return {
+				error: `Unknown log level: ${unknown.map(String).join(', ')}. Levels: ${MAIN_LOG_LEVELS.join(', ')}.`,
+			};
+		}
+		query.levels = [...new Set(input.levels as MainLogLevel[])];
+	}
+	if (typeof input.search === 'string' && input.search.trim()) query.search = input.search;
+	if (input.limit !== undefined) {
+		const limit = Number(input.limit);
+		if (!Number.isInteger(limit) || limit <= 0) {
+			return { error: 'The limit must be a whole number above 0.' };
+		}
+		query.limit = limit;
+	}
+	return { query };
+}
+
+/** The entries of a merged list that pass a query's level and search filters. */
+export function filterLogEntries(
+	entries: readonly SourcedLogEntry[],
+	query: Pick<SystemLogsQuery, 'levels' | 'search'>
+): SourcedLogEntry[] {
+	const levels = query.levels ? new Set<string>(query.levels) : null;
+	const search = query.search?.trim().toLowerCase() ?? '';
+	return entries.filter(
+		(entry) => (!levels || levels.has(entry.level)) && logEntryMatchesSearch(entry, search)
+	);
 }

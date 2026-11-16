@@ -15,33 +15,24 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { logger } from '../utils/logger';
 import { fileTimestampSlug } from '../../shared/formatters';
 import {
+	formatLogEntryText,
 	isFileLogSource,
+	logEntryMatchesSearch,
 	LOG_SOURCE_IDS,
 	LOG_SOURCES,
+	mergeLogSourceEntries,
 	type FileLogSourceId,
 	type LogSourceId,
 } from '../../shared/logSources';
 import { useLogFileSources } from '../hooks/utils/useLogFileSources';
 import { downloadBlobToClient } from '../utils/clientDownload';
-import {
-	buildSystemLogKeys,
-	buildSystemLogTimeline,
-	systemLogEntryMatches,
-} from '../utils/systemLogView';
+import { buildSystemLogKeys, buildSystemLogTimeline } from '../utils/systemLogView';
 import { LogViewerEntryRow, type LogLevelColor, type SystemLogEntry } from './LogViewerEntryRow';
 
 /** How long typing pauses before the list is filtered again. */
 const SEARCH_DEBOUNCE_MS = 120;
 /** A card's height before it is measured: one line of message, no details. */
 const ESTIMATED_ROW_HEIGHT = 86;
-
-/** One entry as text, the same for Export and Copy. */
-function formatLogEntryText(log: SystemLogEntry): string {
-	const timestamp = new Date(log.timestamp).toISOString();
-	const contextStr = log.context ? `[${log.context}]` : '';
-	const dataStr = log.data ? `\n${JSON.stringify(log.data, null, 2)}` : '';
-	return `[${timestamp}] [${log.level.toUpperCase()}] ${contextStr} ${log.message}${dataStr}`;
-}
 
 interface LogViewerProps {
 	theme: Theme;
@@ -143,14 +134,11 @@ export function LogViewer({
 	const fileLogs = useLogFileSources(fileSources);
 	const showMaestro = sources.has('maestro');
 
-	// Every shown source's entries, newest first. File lines are reversed into
-	// that order before the stable sort, so lines with the same time keep theirs.
-	const mergedLogs = useMemo<SystemLogEntry[]>(() => {
-		const fileEntries = fileLogs.entries.slice().reverse();
-		if (fileEntries.length === 0) return showMaestro ? logs : [];
-		const merged: SystemLogEntry[] = showMaestro ? [...logs, ...fileEntries] : fileEntries;
-		return merged.sort((a, b) => b.timestamp - a.timestamp);
-	}, [logs, fileLogs.entries, showMaestro]);
+	// Every shown source's entries, newest first (the same merge `maestro-cli logs` reads).
+	const mergedLogs = useMemo<SystemLogEntry[]>(
+		() => mergeLogSourceEntries(showMaestro ? logs : [], fileLogs.entries),
+		[logs, fileLogs.entries, showMaestro]
+	);
 	const truncatedSources = fileSources.filter((id) => fileLogs.reads[id]?.truncated);
 	const failedSources = fileSources.filter((id) => fileLogs.errors[id]);
 
@@ -263,7 +251,7 @@ export function LogViewer({
 	const filteredLogs = useMemo(
 		() =>
 			mergedLogs.filter(
-				(log) => selectedLevels.has(log.level) && systemLogEntryMatches(log, activeQuery)
+				(log) => selectedLevels.has(log.level) && logEntryMatchesSearch(log, activeQuery)
 			),
 		[mergedLogs, activeQuery, selectedLevels]
 	);

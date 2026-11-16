@@ -6859,6 +6859,42 @@ maestro-cli app-stats
 maestro-cli app-stats --json
 ```
 
+## `maestro-cli logs`
+
+Read or clear the System Log Viewer's logs: Maestro's own log and the model server's, interleaved newest first (default: show)
+
+## `maestro-cli logs show`
+
+Print the logs the viewer shows, in its Export format
+
+| Option                | Description                                                                                   | Default |
+| --------------------- | --------------------------------------------------------------------------------------------- | ------- |
+| `--source <ids>`      | Sources to read, comma-separated (default: all): maestro, model-server                        | -       |
+| `--level <levels>`    | Levels to keep, comma-separated (default: all): debug, info, warn, error, toast, autorun, cue | -       |
+| `--search <text>`     | Keep entries whose message, context or data contain this text                                 | -       |
+| `--limit <n>`         | Keep only the newest n matching entries                                                       | -       |
+| `-o, --output <file>` | Write the entries to a file instead, as Export does                                           | -       |
+| `--json`              | Output as JSON (for scripting)                                                                | -       |
+
+```bash
+maestro-cli logs show --source model-server --level warn,error
+maestro-cli logs show --search load_model --limit 50
+maestro-cli logs show --output ~/Desktop/maestro-logs.txt
+```
+
+## `maestro-cli logs clear`
+
+Clear Maestro's own log, as the viewer's Clear button does (file logs are kept)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli logs clear
+maestro-cli logs clear --json
+```
+
 ## `maestro-cli support-package`
 
 Write a sanitized support (debug) package zip, as Create Debug Package does, without a save dialog
