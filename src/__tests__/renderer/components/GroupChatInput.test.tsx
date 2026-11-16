@@ -1388,7 +1388,8 @@ describe('GroupChatInput', () => {
 
 	describe('paste', () => {
 		function paste(textarea: HTMLTextAreaElement, text: string, types = ['text/plain']) {
-			fireEvent.paste(textarea, {
+			// fireEvent returns false when a handler cancelled the native paste.
+			return fireEvent.paste(textarea, {
 				clipboardData: {
 					items: types.map((type) => ({ type })),
 					getData: () => text,
@@ -1396,17 +1397,17 @@ describe('GroupChatInput', () => {
 			});
 		}
 
-		it('trims a text paste and persists it as the draft', () => {
-			vi.useFakeTimers();
-			const onDraftChange = vi.fn();
-			render(<GroupChatInput {...createDefaultProps({ onDraftChange })} />);
+		it('leaves a text paste to the native paste, whitespace and all', () => {
+			const handlePaste = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ handlePaste })} />);
 			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
 
-			paste(textarea, '  hello\n');
+			// Dictation tools append a trailing space on purpose; nothing trims it.
+			const nativePasteRuns = paste(textarea, 'dictated words ');
 
-			expect(textarea.value).toBe('hello');
-			act(() => vi.advanceTimersByTime(300));
-			expect(onDraftChange).toHaveBeenLastCalledWith('hello', 'test-group-chat');
+			expect(nativePasteRuns).toBe(true);
+			expect(textarea.value).toBe('');
+			expect(handlePaste).not.toHaveBeenCalled();
 		});
 
 		it('hands an image paste to the shared handler untrimmed', () => {
@@ -1505,10 +1506,13 @@ describe('GroupChatInput', () => {
 			render(<GroupChatInput {...createDefaultProps({ moderatorAgentId: 'terminal' })} />);
 			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
 
-			paste(textarea, '  regular text\n', ['text/plain']);
+			// fireEvent returns false when a handler cancelled the native paste.
+			const nativePasteRuns = fireEvent.paste(textarea, {
+				clipboardData: { items: [{ type: 'text/plain' }], getData: () => '  regular text\n' },
+			});
 
 			expect(notifyCenterFlash).not.toHaveBeenCalled();
-			expect(textarea.value).toBe('regular text');
+			expect(nativePasteRuns).toBe(true);
 		});
 
 		it('delegates image drops to the shared handler, which does the refusal', () => {

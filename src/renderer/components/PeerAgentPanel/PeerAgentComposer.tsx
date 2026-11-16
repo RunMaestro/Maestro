@@ -18,7 +18,7 @@ import { useCallback, useRef, useState } from 'react';
 import { Image as ImageIcon, Slash, Terminal } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { AITabRecord } from '../../../shared/maestro-lib/store/records';
-import { ComposerSendColumn, applyTrimmedTextPaste, clipboardHasImage } from '../ChatComposer';
+import { ComposerSendColumn, clipboardHasImage } from '../ChatComposer';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
 import { useAutosizeTextarea } from '../../hooks/ui/useAutosizeTextarea';
 import { handleComposerSendKey } from '../../hooks/input/composerKeyDown';
@@ -134,21 +134,18 @@ export function PeerAgentComposer({
 		[enterToSend, handleSend]
 	);
 
-	const handlePaste = useCallback(
-		(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-			if (clipboardHasImage(e.clipboardData)) {
-				e.preventDefault();
-				notifyToast({
-					color: 'yellow',
-					title: 'Image not attached',
-					message: MIRROR_COMPOSER_UNAVAILABLE.images,
-				});
-				return;
-			}
-			applyTrimmedTextPaste(e, value, setValue);
-		},
-		[value, setValue]
-	);
+	const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+		if (clipboardHasImage(e.clipboardData)) {
+			e.preventDefault();
+			notifyToast({
+				color: 'yellow',
+				title: 'Image not attached',
+				message: MIRROR_COMPOSER_UNAVAILABLE.images,
+			});
+			return;
+		}
+		// A text paste lands verbatim (native paste, no trimming).
+	}, []);
 
 	const sendTitle = busy
 		? `Queue on ${peerName}: the agent is busy, so the host runs it next`
