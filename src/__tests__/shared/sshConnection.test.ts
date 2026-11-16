@@ -121,6 +121,28 @@ describe('describeSshConnectionError', () => {
 		expect(describeSshConnectionError('Could not resolve hostname foo')).toMatch(/resolve/);
 	});
 
+	// When ssh prints nothing, exec stands in Node's "Command failed: <command line>",
+	// and that line carries every -o option, a ProxyCommand credential included.
+	it('never shows the command line Node puts in a failure message', () => {
+		const leaked =
+			'Command failed: /usr/bin/ssh -T -o ProxyCommand=/Users/me/go/bin/tailcat tcoSECRETAUTHKEY 22 user@host /bin/bash -c x';
+		const described = describeSshConnectionError(leaked);
+		expect(described).not.toContain('tcoSECRETAUTHKEY');
+		expect(described).not.toContain('/usr/bin/ssh');
+		expect(described).toMatch(/exited without printing an error/);
+
+		// A word inside the command line is not a diagnosis: `-o ConnectTimeout`
+		// is not "timed out", a key path is not "No such file".
+		expect(
+			describeSshConnectionError('Command failed: /usr/bin/ssh -o ConnectTimeout=45 host timed out')
+		).toMatch(/exited without printing an error/);
+
+		// Real ssh text after the command line is kept.
+		expect(
+			describeSshConnectionError(`${leaked}\nkex_exchange_identification: read: Connection reset`)
+		).toBe('kex_exchange_identification: read: Connection reset');
+	});
+
 	// An exotic transport reports failures this function has never heard of, and
 	// that raw text is the only diagnostic there is. Replacing it with a generic
 	// message would throw away the tunnel's own explanation.
