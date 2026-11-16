@@ -93,6 +93,134 @@ vi.mock('../../../../main/local-models/spoken-notices', () => ({
 	}),
 	cancelSpokenNotices: notices.cancelSpokenNotices,
 }));
+const teardownProbe = vi.hoisted(() => ({
+	record: null as ((step: string) => void) | null,
+	wakeTestActive: false,
+}));
+
+vi.mock('../../../../main/acappella/hotkeys', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../../main/acappella/hotkeys')>();
+	return {
+		...actual,
+		installVoiceHotkeys: vi.fn((...args: Parameters<typeof actual.installVoiceHotkeys>) => {
+			const inst = actual.installVoiceHotkeys(...args);
+			const origDispose = inst.dispose.bind(inst);
+			inst.dispose = () => {
+				teardownProbe.record?.('voiceHotkeys.dispose');
+				return origDispose();
+			};
+			return inst;
+		}),
+	};
+});
+
+vi.mock('../../../../main/acappella', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../../main/acappella')>();
+	return {
+		...actual,
+		disposeACappellaTransport: vi.fn(() => {
+			teardownProbe.record?.('disposeACappellaTransport');
+			return actual.disposeACappellaTransport();
+		}),
+		createVoiceAudioBridge: vi.fn((...args: Parameters<typeof actual.createVoiceAudioBridge>) => {
+			const bridge = actual.createVoiceAudioBridge(...args);
+			const origDispose = bridge.dispose.bind(bridge);
+			bridge.dispose = () => {
+				teardownProbe.record?.('audioBridge.dispose');
+				return origDispose();
+			};
+			return bridge;
+		}),
+	};
+});
+
+vi.mock('../../../../main/acappella/wake/wake-enrollment-service', async (importOriginal) => {
+	const actual =
+		await importOriginal<
+			typeof import('../../../../main/acappella/wake/wake-enrollment-service')
+		>();
+	return {
+		...actual,
+		registerWakeEnrollmentService: vi.fn(
+			(...args: Parameters<typeof actual.registerWakeEnrollmentService>) => {
+				const release = actual.registerWakeEnrollmentService(...args);
+				return () => {
+					teardownProbe.record?.('releaseWakeEnrollment');
+					return release();
+				};
+			}
+		),
+	};
+});
+
+vi.mock('../../../../main/acappella/voice-control-service', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../main/acappella/voice-control-service')>();
+	return {
+		...actual,
+		registerVoiceControlService: vi.fn(
+			(...args: Parameters<typeof actual.registerVoiceControlService>) => {
+				const release = actual.registerVoiceControlService(...args);
+				return () => {
+					teardownProbe.record?.('releaseVoiceControl');
+					return release();
+				};
+			}
+		),
+	};
+});
+
+vi.mock('../../../../main/ipc/handlers/acappella-models', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../main/ipc/handlers/acappella-models')>();
+	return {
+		...actual,
+		readVoiceReadiness: vi.fn(async (...args: Parameters<typeof actual.readVoiceReadiness>) => {
+			if (teardownProbe.wakeTestActive) {
+				return {
+					slots: [{ slot: 'wake-word', satisfied: true }],
+					canRunHandsFree: true,
+				} as Awaited<ReturnType<typeof actual.readVoiceReadiness>>;
+			}
+			return actual.readVoiceReadiness(...args);
+		}),
+	};
+});
+
+vi.mock('../../../../main/acappella/wake/wake-detector', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../main/acappella/wake/wake-detector')>();
+	return {
+		...actual,
+		createWakeDetector: vi.fn((...args: Parameters<typeof actual.createWakeDetector>) => {
+			if (teardownProbe.wakeTestActive) {
+				let armed = false;
+				return {
+					get isArmed() {
+						return armed;
+					},
+					start: vi.fn(async () => {
+						armed = true;
+					}),
+					stop: vi.fn(async () => {
+						armed = false;
+						teardownProbe.record?.('wakeTestDetector.stop');
+					}),
+					pushAudio: vi.fn(),
+					getStats: () => ({
+						framesReceived: 0,
+						peakLevel: 0,
+						hopsScored: 0,
+						detections: 0,
+						peakScore: 0,
+					}),
+				} as unknown as ReturnType<typeof actual.createWakeDetector>;
+			}
+			return actual.createWakeDetector(...args);
+		}),
+	};
+});
+
 /**
  * The voice a notice speaks with is the operating system's, which is a child
  * process. Here it is one second of silence, so a test can follow the audio
@@ -104,6 +232,15 @@ vi.mock('../../../../main/acappella/providers/provider-registry', async (importO
 		await importOriginal<typeof import('../../../../main/acappella/providers/provider-registry')>();
 	return {
 		...actual,
+		resolveVoicePipeline: vi.fn((...args: Parameters<typeof actual.resolveVoicePipeline>) => {
+			const res = actual.resolveVoicePipeline(...args);
+			const origDispose = res.pipeline.dispose.bind(res.pipeline);
+			res.pipeline.dispose = async () => {
+				teardownProbe.record?.('activePipeline.dispose');
+				return origDispose();
+			};
+			return res;
+		}),
 		createNoticeTtsProvider: vi.fn((voiceSettings: { tts?: string }) => {
 			const id = actual.noticeTtsProviderId(voiceSettings);
 			noticeVoice.ids.push(id);
@@ -112,6 +249,9 @@ vi.mock('../../../../main/acappella/providers/provider-registry', async (importO
 				label: 'Notice voice',
 				tier: 'local',
 				cancel: vi.fn(),
+				dispose: vi.fn(async () => {
+					teardownProbe.record?.('noticeTts.dispose');
+				}),
 				async *speak(text: string, options: { utteranceId: string }) {
 					yield {
 						utteranceId: options.utteranceId,
@@ -1645,8 +1785,52 @@ describe('A Cappella IPC handlers - roster', () => {
 // ---------------------------------------------------------------------------
 
 describe('A Cappella IPC handlers - resetACappellaHandlerState order', () => {
-	it('disposes handsFree and wakeEnrollment before releasing dictation/notices and stopping wake test', () => {
+	it('disposes every active voice resource in the exact quit teardown order', async () => {
+		await disposeVoiceSessionService();
+		resetACappellaHandlerState();
+		vi.clearAllMocks();
+		register({ withAudio: true });
+
 		const order: string[] = [];
+
+		// Activate every resource touched by resetACappellaHandlerState():
+		// 1. Start and stop a session so activePipeline and audioBridge stay live.
+		const startResult = (await handlerFor('acappella:start-session')(
+			{}
+		)) as VoiceStartSessionResult;
+		expect(startResult.snapshot.state).toBe('listening');
+		await handlerFor('acappella:stop-session')({});
+
+		// 2. Speak a notice while idle so noticeTts is constructed.
+		const speaker = notices.speakers.at(-1) as {
+			speak: (text: string, signal: AbortSignal) => Promise<void>;
+		};
+		const speaking = speaker.speak('Teardown check', new AbortController().signal);
+		const onStatus = vi
+			.mocked(ipcMain.on)
+			.mock.calls.find(([ch]) => ch === 'acappella:audio-status')?.[1] as
+			| ((event: unknown, status: unknown) => void)
+			| undefined;
+		onStatus?.({ sender: {} }, { kind: 'ready' });
+		await vi.waitFor(() =>
+			expect(
+				vi
+					.mocked(audioHost.webContents.send)
+					.mock.calls.some(
+						([ch, cmd]) =>
+							ch === 'acappella:audio-command' &&
+							(cmd as { kind?: string })?.kind === 'end-utterance'
+					)
+			).toBe(true)
+		);
+		onStatus?.({ sender: {} }, { kind: 'drained', utteranceId: 'any' });
+		await speaking;
+
+		// 3. Start a wake test so wakeTestDetector is active.
+		teardownProbe.wakeTestActive = true;
+		const wakeResult = (await handlerFor('acappella:wake-test')({}, {})) as WakeTestStartResult;
+		expect(wakeResult).toEqual({ started: true });
+
 		const handsFreeSpy = vi
 			.spyOn(HandsFreeListener.prototype, 'dispose')
 			.mockImplementation(async () => {
@@ -1657,6 +1841,13 @@ describe('A Cappella IPC handlers - resetACappellaHandlerState order', () => {
 			.mockImplementation(async () => {
 				order.push('wakeEnrollment.dispose');
 			});
+		const origSetClear = Set.prototype.clear;
+		const setClearSpy = vi.spyOn(Set.prototype, 'clear').mockImplementation(function (
+			this: Set<unknown>
+		) {
+			order.push('wakeTestTaps.clear');
+			return origSetClear.call(this);
+		});
 		const origDictation = dictation.unregister.getMockImplementation();
 		const origNotices = notices.unregister.getMockImplementation();
 		dictation.unregister.mockImplementation(() => {
@@ -1665,12 +1856,16 @@ describe('A Cappella IPC handlers - resetACappellaHandlerState order', () => {
 		notices.unregister.mockImplementation(() => {
 			order.push('releaseNoticeSpeaker');
 		});
+		teardownProbe.record = (step) => order.push(step);
 
 		try {
 			resetACappellaHandlerState();
 		} finally {
+			teardownProbe.record = null;
+			teardownProbe.wakeTestActive = false;
 			handsFreeSpy.mockRestore();
 			wakeEnrollSpy.mockRestore();
+			setClearSpy.mockRestore();
 			if (origDictation) dictation.unregister.mockImplementation(origDictation);
 			else dictation.unregister.mockReset();
 			if (origNotices) notices.unregister.mockImplementation(origNotices);
@@ -1678,10 +1873,19 @@ describe('A Cappella IPC handlers - resetACappellaHandlerState order', () => {
 		}
 
 		expect(order).toEqual([
+			'voiceHotkeys.dispose',
+			'disposeACappellaTransport',
 			'handsFree.dispose',
 			'wakeEnrollment.dispose',
+			'releaseWakeEnrollment',
+			'releaseVoiceControl',
+			'wakeTestTaps.clear',
 			'releaseDictationMicrophone',
 			'releaseNoticeSpeaker',
+			'noticeTts.dispose',
+			'wakeTestDetector.stop',
+			'activePipeline.dispose',
+			'audioBridge.dispose',
 		]);
 	});
 });
