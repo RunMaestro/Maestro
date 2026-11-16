@@ -3,9 +3,9 @@
 //
 // Each action is one call on the host's client, the same bridge message either caller sends:
 // a send is `turns.send` (`enqueue_command`), Stop is `turns.interrupt` (`process:interrupt`) per
-// tab, the tab actions are `tabs.create`, `tabs.rename`, `tabs.star`, and the queue actions on a
-// waiting message are `turns.queue.remove` (`remove_queue_item`) and `turns.queue.setPaused`
-// (`set_queue_item_paused`). The CLI reaches the host
+// tab, the tab actions are `tabs.create`, `tabs.rename`, `tabs.star`, and `tabs.update`, a settings
+// change is `agents.update`, and the queue actions on a waiting message are `turns.queue.remove`
+// (`remove_queue_item`) and `turns.queue.setPaused` (`set_queue_item_paused`). The CLI reaches the host
 // over its own short-lived forward (`withPeerAgent()`), the desktop over the mirror service's held
 // one; both run the action through `runPeerAgentAction()`, so there is one copy.
 //
@@ -13,8 +13,19 @@
 // (`host-unavailable`), so a send while disconnected is an error, never a message held for later.
 // A send to a busy tab waits in the HOST's execution queue, as it would for a local agent.
 
+import { isCodexTransport } from '../../codexTransport';
+import { asThinkingMode } from '../../types';
+import { isHarnessControlMode } from '../providers/native-control';
 import type { AgentRecord } from '../store/records';
-import type { ClientError, ClientResult, MaestroClient, TurnSendReceipt } from './types';
+import type {
+	AgentPatch,
+	AgentPatchField,
+	ClientError,
+	ClientResult,
+	MaestroClient,
+	TabPatch,
+	TurnSendReceipt,
+} from './types';
 
 /** One thing to do to a peer's agent. */
 export type PeerAgentAction =
@@ -29,7 +40,11 @@ export type PeerAgentAction =
 	/** Take a message that still waits out of the host's execution queue. */
 	| { kind: 'remove-queued'; itemId: string }
 	/** Hold a waiting message (it keeps its place) or release it. */
-	| { kind: 'pause-queued'; itemId: string; paused: boolean };
+	| { kind: 'pause-queued'; itemId: string; paused: boolean }
+	/** Change the agent's settings on the host (Federation settings sync). `ssh` is never sent. */
+	| { kind: 'update-agent'; patch: AgentPatch }
+	/** Change one tab's composer settings on the host. */
+	| { kind: 'update-tab'; tabId: string; patch: TabPatch };
 
 export type PeerAgentActionKind = PeerAgentAction['kind'];
 
@@ -49,7 +64,9 @@ export type PeerAgentActionResult =
 	/** `removed: false`: the message no longer waits (it started, or another client removed it). */
 	| { kind: 'remove-queued'; itemId: string; removed: boolean }
 	/** `found: false`: the message no longer waits. */
-	| { kind: 'pause-queued'; itemId: string; found: boolean; paused: boolean };
+	| { kind: 'pause-queued'; itemId: string; found: boolean; paused: boolean }
+	| { kind: 'update-agent'; applied: AgentPatchField[]; notices?: string[] }
+	| { kind: 'update-tab'; tabId: string };
 
 /** The agent fields an action reads: interrupt picks the busy tabs from the record. */
 export type PeerActionAgent = Pick<AgentRecord, 'id' | 'aiTabs'>;
@@ -62,6 +79,8 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 	'star-tab',
 	'remove-queued',
 	'pause-queued',
+	'update-agent',
+	'update-tab',
 ];
 
 /**
@@ -137,6 +156,25 @@ export async function runPeerAgentAction(
 				? { ok: true, value: { kind: 'pause-queued', itemId: action.itemId, ...set.value } }
 				: set;
 		}
+		case 'update-agent': {
+			const updated = await client.agents.update(agent.id, action.patch);
+			return updated.ok
+				? {
+						ok: true,
+						value: {
+							kind: 'update-agent',
+							applied: updated.value.applied,
+							...(updated.value.notices ? { notices: updated.value.notices } : {}),
+						},
+					}
+				: updated;
+		}
+		case 'update-tab': {
+			const updated = await client.tabs.update(agent.id, action.tabId, action.patch);
+			return updated.ok
+				? { ok: true, value: { kind: 'update-tab', tabId: action.tabId } }
+				: updated;
+		}
 	}
 }
 
@@ -186,7 +224,91 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 			if (!nonEmptyString(value.itemId)) throw new Error('Missing queued item id');
 			if (typeof value.paused !== 'boolean') throw new Error('paused must be true or false');
 			return { kind, itemId: value.itemId, paused: value.paused };
+		case 'update-agent':
+			return { kind, patch: parseAgentPatch(value.patch) };
+		case 'update-tab':
+			return { kind, tabId: tabId(), patch: parseTabPatch(value.patch) };
 	}
+}
+
+type FieldCheck = (value: unknown) => boolean;
+
+const isString: FieldCheck = (value) => typeof value === 'string';
+const isNonEmptyString: FieldCheck = (value) => nonEmptyString(value);
+const isBoolean: FieldCheck = (value) => typeof value === 'boolean';
+const orNull =
+	(check: FieldCheck): FieldCheck =>
+	(value) =>
+		value === null || check(value);
+const isPositiveNumber: FieldCheck = (value) =>
+	typeof value === 'number' && Number.isFinite(value) && value > 0;
+const isStringMap: FieldCheck = (value) =>
+	!!value &&
+	typeof value === 'object' &&
+	!Array.isArray(value) &&
+	Object.values(value).every((entry) => typeof entry === 'string');
+
+/**
+ * The fields an `update-agent` action may carry, with the type each takes. `ssh` is absent on
+ * purpose: an agent on a host runs there, so an SSH setting would point it back out.
+ */
+const AGENT_PATCH_CHECKS: Partial<Record<AgentPatchField, FieldCheck>> = {
+	name: isNonEmptyString,
+	cwd: isNonEmptyString,
+	groupId: orNull(isNonEmptyString),
+	provider: isNonEmptyString,
+	model: orNull(isString),
+	effort: orNull(isString),
+	contextWindow: orNull(isPositiveNumber),
+	customPath: orNull(isString),
+	customArgs: orNull(isString),
+	env: orNull(isStringMap),
+	autoRunFolderPath: isString,
+	nudgeMessage: orNull(isString),
+	newSessionMessage: orNull(isString),
+	bookmarked: isBoolean,
+	contextWindowSource: orNull(isString),
+	enableMaestroP: orNull(isBoolean),
+	maestroPMode: orNull((value) => value === 'interactive' || value === 'dynamic'),
+	maestroPPath: orNull(isString),
+	codexTransport: orNull(isCodexTransport),
+	harnessControlMode: orNull(isHarnessControlMode),
+};
+
+const TAB_PATCH_CHECKS: Record<keyof TabPatch, FieldCheck> = {
+	readOnly: isBoolean,
+	thinking: (value) => asThinkingMode(value) !== undefined,
+	model: orNull(isString),
+	effort: orNull(isString),
+	saveToHistory: isBoolean,
+	enterToSend: orNull(isBoolean),
+};
+
+/** Keep the known fields of a patch, each checked for its type; an unknown or bad field throws. */
+function parsePatch<T extends object>(
+	raw: unknown,
+	checks: Partial<Record<keyof T, FieldCheck>>,
+	label: string
+): T {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`Missing ${label}`);
+	const patch: Record<string, unknown> = {};
+	for (const [field, value] of Object.entries(raw as Record<string, unknown>)) {
+		if (value === undefined) continue;
+		const check = checks[field as keyof T];
+		if (!check) throw new Error(`Unknown ${label} field: ${field}`);
+		if (!check(value)) throw new Error(`Invalid value for ${label} field '${field}'`);
+		patch[field] = value;
+	}
+	if (Object.keys(patch).length === 0) throw new Error(`The ${label} changes nothing.`);
+	return patch as T;
+}
+
+function parseAgentPatch(raw: unknown): AgentPatch {
+	return parsePatch<AgentPatch>(raw, AGENT_PATCH_CHECKS, 'agent settings');
+}
+
+function parseTabPatch(raw: unknown): TabPatch {
+	return parsePatch<TabPatch>(raw, TAB_PATCH_CHECKS, 'tab settings');
 }
 
 /** The action failed on the host, or never reached it, in words a person can act on. */

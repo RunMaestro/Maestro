@@ -33,6 +33,10 @@ function fakeClient() {
 			create: vi.fn(async () => ok({ tabId: 't-new' })),
 			rename: vi.fn(async () => ok(undefined)),
 			star: vi.fn(async () => ok(undefined)),
+			update: vi.fn(async () => ok(undefined)),
+		},
+		agents: {
+			update: vi.fn(async () => ok({ applied: ['model' as const, 'nudgeMessage' as const] })),
 		},
 	};
 	return { client, asClient: client as unknown as MaestroClient };
@@ -141,6 +145,52 @@ describe('runPeerAgentAction', () => {
 		expect(client.tabs.star).toHaveBeenCalledWith('a1', 't1', false);
 	});
 
+	it('changes the agent settings with agents.update and reports what the host applied', async () => {
+		const { client, asClient } = fakeClient();
+		const patch = { model: 'opus', nudgeMessage: null };
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'update-agent', patch })).toEqual(
+			ok({ kind: 'update-agent', applied: ['model', 'nudgeMessage'] })
+		);
+		expect(client.agents.update).toHaveBeenCalledWith('a1', patch);
+		client.agents.update.mockResolvedValueOnce(
+			ok({ applied: ['provider'], notices: ['Parked 2 tabs'] }) as never
+		);
+		expect(
+			await runPeerAgentAction(asClient, agent, {
+				kind: 'update-agent',
+				patch: { provider: 'codex' },
+			})
+		).toEqual(ok({ kind: 'update-agent', applied: ['provider'], notices: ['Parked 2 tabs'] }));
+	});
+
+	it('changes a tab with tabs.update, and passes a refusal through with its applied fields', async () => {
+		const { client, asClient } = fakeClient();
+		expect(
+			await runPeerAgentAction(asClient, agent, {
+				kind: 'update-tab',
+				tabId: 't2',
+				patch: { readOnly: true, model: null },
+			})
+		).toEqual(ok({ kind: 'update-tab', tabId: 't2' }));
+		expect(client.tabs.update).toHaveBeenCalledWith('a1', 't2', { readOnly: true, model: null });
+		const refusal = {
+			ok: false as const,
+			error: {
+				code: 'rejected' as const,
+				message: 'busy',
+				method: 'agents.update' as const,
+				appliedFields: ['model' as const],
+			},
+		};
+		client.agents.update.mockResolvedValueOnce(refusal as never);
+		expect(
+			await runPeerAgentAction(asClient, agent, {
+				kind: 'update-agent',
+				patch: { model: 'opus', cwd: '/srv' },
+			})
+		).toBe(refusal);
+	});
+
 	it('removes a waiting message with turns.queue.remove and reports whether it was there', async () => {
 		const { client, asClient } = fakeClient();
 		expect(
@@ -241,6 +291,72 @@ describe('parsePeerAgentAction', () => {
 			itemId: 'q1',
 			paused: false,
 		});
+		expect(
+			parsePeerAgentAction({
+				kind: 'update-agent',
+				patch: {
+					model: null,
+					nudgeMessage: 'keep going',
+					env: { FOO: 'bar' },
+					contextWindow: 200000,
+					codexTransport: 'app-server',
+					bookmarked: true,
+					effort: undefined,
+				},
+			})
+		).toEqual({
+			kind: 'update-agent',
+			patch: {
+				model: null,
+				nudgeMessage: 'keep going',
+				env: { FOO: 'bar' },
+				contextWindow: 200000,
+				codexTransport: 'app-server',
+				bookmarked: true,
+			},
+		});
+		expect(
+			parsePeerAgentAction({
+				kind: 'update-tab',
+				tabId: 't1',
+				patch: { thinking: 'sticky', enterToSend: null, saveToHistory: false },
+			})
+		).toEqual({
+			kind: 'update-tab',
+			tabId: 't1',
+			patch: { thinking: 'sticky', enterToSend: null, saveToHistory: false },
+		});
+	});
+
+	it('refuses a settings patch with an unknown field, a bad value, or nothing in it', () => {
+		expect(() => parsePeerAgentAction({ kind: 'update-agent' })).toThrow('Missing agent settings');
+		expect(() => parsePeerAgentAction({ kind: 'update-agent', patch: {} })).toThrow(
+			'changes nothing'
+		);
+		expect(() =>
+			parsePeerAgentAction({ kind: 'update-agent', patch: { ssh: { enabled: false } } })
+		).toThrow('Unknown agent settings field: ssh');
+		expect(() => parsePeerAgentAction({ kind: 'update-agent', patch: { name: '' } })).toThrow(
+			"Invalid value for agent settings field 'name'"
+		);
+		expect(() =>
+			parsePeerAgentAction({ kind: 'update-agent', patch: { env: { FOO: 1 } } })
+		).toThrow("Invalid value for agent settings field 'env'");
+		expect(() =>
+			parsePeerAgentAction({ kind: 'update-agent', patch: { codexTransport: 'pipe' } })
+		).toThrow("Invalid value for agent settings field 'codexTransport'");
+		expect(() =>
+			parsePeerAgentAction({ kind: 'update-agent', patch: { contextWindow: -1 } })
+		).toThrow("Invalid value for agent settings field 'contextWindow'");
+		expect(() => parsePeerAgentAction({ kind: 'update-tab', patch: { readOnly: true } })).toThrow(
+			'Missing tab id'
+		);
+		expect(() =>
+			parsePeerAgentAction({ kind: 'update-tab', tabId: 't1', patch: { thinking: 'loud' } })
+		).toThrow("Invalid value for tab settings field 'thinking'");
+		expect(() =>
+			parsePeerAgentAction({ kind: 'update-tab', tabId: 't1', patch: { name: 'x' } })
+		).toThrow('Unknown tab settings field: name');
 	});
 
 	it('refuses what no host call can take', () => {

@@ -238,6 +238,18 @@ maestro-cli lift docs --with-env   # also send secret env vars
 
 A lift refuses, and moves nothing, while a tab is running a turn, when no host runs on the remote, or when the agent is not an SSH remote agent. The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. A lift is one way: there is no automatic move back to an SSH agent. [Lift an SSH Agent Onto Its Host](./cli#lift-an-ssh-agent-onto-its-host) lists every refusal code.
 
+### Settings stay in step
+
+After a lift, the local agent and the hosted agent keep the same settings. Change a setting on the local agent (in **Edit Agent**, with the composer chips, by renaming or starring a tab, or with `maestro-cli update-agent`) and Maestro sends it to the host. A change made on the host comes back to the local agent.
+
+- **What syncs:** name, provider, working directory, model, effort, context window, custom path and arguments, nudge message, new session message, bookmark, token source (maestro-p mode), Codex transport, harness control mode, the Auto Run folder (only inside the working directory, as in a lift), custom env vars, and for each tab both sides hold: name, star, model, effort, read-only, thinking, save to History, and Enter to send.
+- **What stays local:** the Left Bar group, the SSH settings, and the maestro-p binary path. A secret env var syncs only when the host already holds it (you sent it with `--with-env`). A host env var you never set on this agent is never changed or copied back.
+- **When the peer is down:** your change waits and goes out when the peer reconnects.
+- **When both sides changed the same setting:** your local change wins.
+- **When the host refuses a change:** for example, a new working directory while a turn runs. A toast says why, and the local agent shows the host's value again.
+
+Read the host's copy back with `maestro-cli show agent <peer:agent> --json`.
+
 ## Durability
 
 A host is only useful while it keeps running.
