@@ -94,10 +94,12 @@ function disposeNoticeTts(): void {
 	void previous?.dispose?.();
 }
 
-export function resetAudioHostState(): void {
-	inputDevices = [];
+export function releaseDictationRegistration(): void {
 	releaseDictationMicrophone?.();
 	releaseDictationMicrophone = null;
+}
+
+export function releaseNoticeSpeakerAndTts(): void {
 	releaseNoticeSpeaker?.();
 	releaseNoticeSpeaker = null;
 	noticeSpeech = null;
@@ -233,7 +235,7 @@ export function disposeACappellaAudioBridge(): void {
 	sharedState.audioBridge = null;
 }
 
-export function initClipCaptureAndNoticeSpeech(deps: ACappellaHandlerDependencies): void {
+export function initClipCapture(deps: ACappellaHandlerDependencies): void {
 	const { settingsStore } = deps;
 
 	// Dictation's microphone. Not gated on the Encore flag (dictation is a core
@@ -289,6 +291,10 @@ export function initClipCaptureAndNoticeSpeech(deps: ACappellaHandlerDependencie
 			readVoiceProviderSettings(settingsStore).vocabulary
 		)
 	);
+}
+
+export function initNoticeSpeech(deps: ACappellaHandlerDependencies): void {
+	const { settingsStore } = deps;
 
 	// Spoken notices' speaker. Not gated on the Encore flag either, and like the
 	// dictation microphone it only READS the session's state, to stay silent

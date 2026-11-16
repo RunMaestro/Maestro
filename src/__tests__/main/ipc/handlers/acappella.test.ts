@@ -155,6 +155,8 @@ import {
 	type VoiceStartSessionResult,
 	type WakeTestStartResult,
 } from '../../../../main/ipc/handlers/acappella';
+import { HandsFreeListener } from '../../../../main/acappella/wake/hands-free';
+import { WakeEnrollmentService } from '../../../../main/acappella/wake/wake-enrollment-service';
 import { setWakeEnrollmentRoot } from '../../../../main/acappella/wake/wake-enrollment-store';
 import type {
 	WakeEnrollmentEvent,
@@ -1635,5 +1637,51 @@ describe('A Cappella IPC handlers - roster', () => {
 			cwd: '/repo/api',
 		});
 		expect(roster[0].tabs.map((tab) => tab.id)).toEqual(['tab-auth']);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Teardown order (runs on will-quit as well as in tests)
+// ---------------------------------------------------------------------------
+
+describe('A Cappella IPC handlers - resetACappellaHandlerState order', () => {
+	it('disposes handsFree and wakeEnrollment before releasing dictation/notices and stopping wake test', () => {
+		const order: string[] = [];
+		const handsFreeSpy = vi
+			.spyOn(HandsFreeListener.prototype, 'dispose')
+			.mockImplementation(async () => {
+				order.push('handsFree.dispose');
+			});
+		const wakeEnrollSpy = vi
+			.spyOn(WakeEnrollmentService.prototype, 'dispose')
+			.mockImplementation(async () => {
+				order.push('wakeEnrollment.dispose');
+			});
+		const origDictation = dictation.unregister.getMockImplementation();
+		const origNotices = notices.unregister.getMockImplementation();
+		dictation.unregister.mockImplementation(() => {
+			order.push('releaseDictationMicrophone');
+		});
+		notices.unregister.mockImplementation(() => {
+			order.push('releaseNoticeSpeaker');
+		});
+
+		try {
+			resetACappellaHandlerState();
+		} finally {
+			handsFreeSpy.mockRestore();
+			wakeEnrollSpy.mockRestore();
+			if (origDictation) dictation.unregister.mockImplementation(origDictation);
+			else dictation.unregister.mockReset();
+			if (origNotices) notices.unregister.mockImplementation(origNotices);
+			else notices.unregister.mockReset();
+		}
+
+		expect(order).toEqual([
+			'handsFree.dispose',
+			'wakeEnrollment.dispose',
+			'releaseDictationMicrophone',
+			'releaseNoticeSpeaker',
+		]);
 	});
 });

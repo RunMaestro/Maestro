@@ -59,12 +59,14 @@ export function syncVoiceHotkeys(): void {
 	voiceHotkeys?.sync();
 }
 
-export function resetWakeState(): void {
+export function disposeVoiceHotkeys(): void {
 	voiceHotkeys?.dispose();
 	voiceHotkeys = null;
+}
+
+export function releaseWakeEnrollmentRegistration(): void {
 	releaseWakeEnrollment?.();
 	releaseWakeEnrollment = null;
-	void stopWakeTest();
 }
 
 /**
@@ -164,10 +166,10 @@ export async function stopWakeTest(): Promise<void> {
 	void sharedState.handsFree?.resume();
 }
 
-export function initWakeAndHotkeys(
+export function initHandsFree(
 	deps: ACappellaHandlerDependencies,
 	floorSession: FloorControlSession
-): VoiceHotkeyInstallation {
+): void {
 	const { settingsStore } = deps;
 
 	sharedState.handsFree ??= new HandsFreeListener({
@@ -212,6 +214,10 @@ export function initWakeAndHotkeys(
 	settingsStore.onDidChange?.('encoreFeatures', () => void sharedState.handsFree?.sync());
 	// Armed at launch when the toggle was left on: that is what "always listening" means.
 	void sharedState.handsFree.sync();
+}
+
+export function initWakeEnrollment(deps: ACappellaHandlerDependencies): void {
+	const { settingsStore } = deps;
 
 	// Wake phrase enrollment borrows the same microphone, under the same rules:
 	// one consumer at a time, and never out from under a live session.
@@ -248,6 +254,13 @@ export function initWakeAndHotkeys(
 	releaseWakeEnrollment ??= registerWakeEnrollmentService(sharedState.wakeEnrollment, () =>
 		isACappellaEnabled(settingsStore)
 	);
+}
+
+export function initVoiceHotkeys(
+	deps: ACappellaHandlerDependencies,
+	floorSession: FloorControlSession
+): VoiceHotkeyInstallation {
+	const { settingsStore } = deps;
 
 	return (voiceHotkeys ??= installVoiceHotkeys({
 		settingsStore,

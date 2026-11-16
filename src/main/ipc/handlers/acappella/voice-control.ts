@@ -83,9 +83,12 @@ let releaseVoiceControl: (() => void) | null = null;
  */
 let transport: ACappellaTransport | null = null;
 
-export function resetVoiceControlState(): void {
+export function disposeTransport(): void {
 	disposeACappellaTransport();
 	transport = null;
+}
+
+export function releaseVoiceControlRegistration(): void {
 	releaseVoiceControl?.();
 	releaseVoiceControl = null;
 }

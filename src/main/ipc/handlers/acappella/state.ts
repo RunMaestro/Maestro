@@ -43,18 +43,29 @@ export const sharedState: SharedACappellaState = {
 	clipCapture: null,
 };
 
-/**
- * Reset all cross-module shared state. Called by `resetACappellaHandlerState()`
- * alongside each domain module's own reset function.
- */
-export function resetSharedACappellaState(): void {
+export function clearActiveProviderKey(): void {
 	sharedState.activeProviderKey = null;
+}
+
+export function disposeHandsFree(): void {
 	void sharedState.handsFree?.dispose();
 	sharedState.handsFree = null;
+}
+
+export function disposeWakeEnrollment(): void {
 	void sharedState.wakeEnrollment?.dispose();
 	sharedState.wakeEnrollment = null;
+}
+
+export function clearWakeTestTaps(): void {
 	sharedState.wakeTestTaps.clear();
+}
+
+export function clearClipCapture(): void {
 	sharedState.clipCapture = null;
+}
+
+export function disposeActivePipelineAndBridge(): void {
 	// Fire and forget: this runs from `will-quit`, which is synchronous, and from
 	// tests, which do not care how long a model file takes to close.
 	void sharedState.activePipeline?.pipeline.dispose();

@@ -39,8 +39,10 @@ import {
 	createAudioHostHandlers,
 	disposeACappellaAudioBridge,
 	ensureAudioBridge,
-	initClipCaptureAndNoticeSpeech,
-	resetAudioHostState,
+	initClipCapture,
+	initNoticeSpeech,
+	releaseDictationRegistration,
+	releaseNoticeSpeakerAndTts,
 } from './acappella/audio-host';
 import {
 	applyACappellaProvidersWithCallbacks,
@@ -66,16 +68,29 @@ import {
 	type WakeTestEvent,
 	type WakeTestStartResult,
 } from './acappella/shared';
-import { resetSharedACappellaState, sharedState } from './acappella/state';
 import {
+	clearActiveProviderKey,
+	clearClipCapture,
+	clearWakeTestTaps,
+	disposeActivePipelineAndBridge,
+	disposeHandsFree,
+	disposeWakeEnrollment,
+	sharedState,
+} from './acappella/state';
+import {
+	disposeTransport,
 	initTransportAndDevices,
 	registerVoiceControl,
-	resetVoiceControlState,
+	releaseVoiceControlRegistration,
 } from './acappella/voice-control';
 import {
 	createWakeHandlers,
-	initWakeAndHotkeys,
-	resetWakeState,
+	disposeVoiceHotkeys,
+	initHandsFree,
+	initVoiceHotkeys,
+	initWakeEnrollment,
+	releaseWakeEnrollmentRegistration,
+	stopWakeTest,
 	syncVoiceHotkeys,
 } from './acappella/wake';
 
@@ -134,8 +149,11 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	watchRosterChanges();
 
 	const session = createSessionHandlers(deps);
-	initClipCaptureAndNoticeSpeech(deps);
-	const hotkeys = initWakeAndHotkeys(deps, session.floorSession);
+	initHandsFree(deps, session.floorSession);
+	initClipCapture(deps);
+	initWakeEnrollment(deps);
+	initNoticeSpeech(deps);
+	const hotkeys = initVoiceHotkeys(deps, session.floorSession);
 	initTransportAndDevices(deps, hotkeys);
 
 	const audio = createAudioHostHandlers(deps);
@@ -332,16 +350,28 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 }
 
 /**
- * Drop all cached handler state. Test-only seam: the service singleton is
- * module state in `src/main/acappella/index.ts`, and every handler domain's
- * module state has to be cleared alongside it.
+ * Tear down all voice handler state and registrations.
+ *
+ * Runs on `app.on('will-quit')` as the voice stack's quit teardown as well as
+ * in tests, so the sequence below preserves the exact dependency order
+ * (e.g. disposing `handsFree` and `wakeEnrollment` before releasing their
+ * registrations and stopping any active wake test).
  */
 export function resetACappellaHandlerState(): void {
+	clearActiveProviderKey();
 	resetProvidersState();
-	resetRoutingState();
 	resetSessionState();
-	resetVoiceControlState();
-	resetAudioHostState();
-	resetWakeState();
-	resetSharedACappellaState();
+	disposeVoiceHotkeys();
+	disposeTransport();
+	disposeHandsFree();
+	disposeWakeEnrollment();
+	releaseWakeEnrollmentRegistration();
+	releaseVoiceControlRegistration();
+	clearWakeTestTaps();
+	releaseDictationRegistration();
+	clearClipCapture();
+	releaseNoticeSpeakerAndTts();
+	void stopWakeTest();
+	disposeActivePipelineAndBridge();
+	resetRoutingState();
 }
