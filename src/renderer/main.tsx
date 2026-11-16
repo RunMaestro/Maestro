@@ -19,6 +19,7 @@ import { LayerStackProvider } from './contexts/LayerStackContext';
 // ModalProvider removed - modal state now managed by modalStore (Zustand)
 import { WizardProvider } from './components/Wizard';
 import { logger } from './utils/logger';
+import { installMotionPause } from './utils/motionPause';
 import './index.css';
 
 // Initialize Sentry for renderer process
@@ -185,6 +186,8 @@ if (isFloatingWidget) {
 		</React.StrictMode>
 	);
 } else {
+	// App windows only: floating widgets are meant to be watched unfocused.
+	installMotionPause(window);
 	ReactDOM.createRoot(document.getElementById('root')!).render(
 		<React.StrictMode>
 			<ErrorBoundary>

@@ -16,6 +16,7 @@ import type {
 	BackgroundAutoRun,
 } from '../types';
 import { formatTokensCompact } from '../utils/formatters';
+import { activeStatusHalo } from '../utils/theme';
 import { autoRunActiveElapsedMs } from '../hooks/batch/useTimeTracking';
 import { formatElapsedTicker } from '../../shared/duration';
 import { StopTurnButton } from './ui/StopTurnButton';
@@ -150,10 +151,13 @@ const ThinkingItemRow = memo(
 				style={{ color: theme.colors.textMain }}
 			>
 				<div className="flex items-center gap-2 min-w-0">
-					{/* Pulsing yellow circle indicator */}
+					{/* Yellow live dot (static halo, see activeStatusHalo) */}
 					<div
-						className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-						style={{ backgroundColor: theme.colors.warning }}
+						className="w-2 h-2 rounded-full shrink-0"
+						style={{
+							backgroundColor: theme.colors.warning,
+							boxShadow: activeStatusHalo(theme.colors.warning),
+						}}
 					/>
 					{/* Maestro session name (from left bar) + Tab name */}
 					<span className="text-xs truncate">
@@ -217,8 +221,11 @@ const AutoRunRow = memo(
 		const label = (
 			<>
 				<div
-					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-					style={{ backgroundColor: theme.colors.accent }}
+					className="w-2 h-2 rounded-full shrink-0"
+					style={{
+						backgroundColor: theme.colors.accent,
+						boxShadow: activeStatusHalo(theme.colors.accent),
+					}}
 				/>
 				<span className="text-xs truncate">
 					{agentName && (
@@ -391,10 +398,13 @@ const AutoRunPill = memo(
 						border: `1px solid ${theme.colors.accent}50`,
 					}}
 				>
-					{/* Pulsing accent circle indicator */}
+					{/* Accent live dot (static halo, see activeStatusHalo) */}
 					<div
-						className="w-2.5 h-2.5 rounded-full shrink-0 animate-pulse"
-						style={{ backgroundColor: theme.colors.accent }}
+						className="w-2.5 h-2.5 rounded-full shrink-0"
+						style={{
+							backgroundColor: theme.colors.accent,
+							boxShadow: activeStatusHalo(theme.colors.accent),
+						}}
 					/>
 
 					{/* Owning agent - only when the run is not on the viewed agent */}
@@ -807,10 +817,13 @@ function ThinkingStatusPillInner({
 					border: `1px solid ${theme.colors.border}`,
 				}}
 			>
-				{/* Thinking Pill - Pulsing yellow circle indicator */}
+				{/* Thinking Pill - yellow live dot (static halo, see activeStatusHalo) */}
 				<div
-					className="w-2.5 h-2.5 rounded-full shrink-0 animate-pulse"
-					style={{ backgroundColor: theme.colors.warning }}
+					className="w-2.5 h-2.5 rounded-full shrink-0"
+					style={{
+						backgroundColor: theme.colors.warning,
+						boxShadow: activeStatusHalo(theme.colors.warning),
+					}}
 				/>
 
 				{/* Maestro session name - always visible, truncates on narrow widths. Clickable:

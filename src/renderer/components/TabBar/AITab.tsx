@@ -8,7 +8,7 @@ import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { setTabDragImage } from '../../utils/tabDragImage';
 import { getTabKindColor } from './tabBarUtils';
-import { getConnectingColor } from '../../utils/theme';
+import { activeStatusHalo, getConnectingColor } from '../../utils/theme';
 import { AITabOverlayMenu } from './AITabOverlayMenu';
 import { TabOverlayPortal } from './TabOverlayPortal';
 import { LongPressable } from '../shared/LongPressable';
@@ -529,20 +529,27 @@ export const AITab = memo(function AITab({
 				</div>
 			)}
 
-			{/* Agent Resilience outage - pulsing orange dot for tabs stuck auto-retrying */}
+			{/* Agent Resilience outage - orange live dot for tabs stuck auto-retrying */}
 			{hasActiveOutage && (
 				<div
-					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-					style={{ backgroundColor: getConnectingColor(theme) }}
+					className="w-2 h-2 rounded-full shrink-0"
+					style={{
+						backgroundColor: getConnectingColor(theme),
+						boxShadow: activeStatusHalo(getConnectingColor(theme)),
+					}}
 					title="Stuck - auto-retrying after an outage"
 				/>
 			)}
 
-			{/* Busy indicator - pulsing dot for tabs in write mode */}
+			{/* Busy indicator - static live dot (an infinite pulse per busy tab kept
+			    the renderer drawing every frame; see activeStatusHalo) */}
 			{!hasActiveOutage && tab.state === 'busy' && (
 				<div
-					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-					style={{ backgroundColor: theme.colors.warning }}
+					className="w-2 h-2 rounded-full shrink-0"
+					style={{
+						backgroundColor: theme.colors.warning,
+						boxShadow: activeStatusHalo(theme.colors.warning),
+					}}
 				/>
 			)}
 

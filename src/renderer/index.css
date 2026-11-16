@@ -1628,6 +1628,33 @@ svg.wand-profiling-active {
    End Sidebar Parent-Child Tree Connectors
    ========================================== */
 
+/* Looping decorative motion stops while the window is unfocused or hidden.
+   `html.motion-paused` is kept current by installMotionPause()
+   (src/renderer/utils/motionPause.ts). A running animation makes Chromium draw
+   every vsync, and a visible-but-unfocused window is where Maestro sits while
+   agents work. Only infinite animations are listed: pausing an entrance
+   animation would freeze a toast or modal at its first keyframe. A new
+   `infinite` animation class belongs in this list too. */
+html.motion-paused
+	:is(
+		.animate-ping,
+		.animate-pulse,
+		.animate-spin,
+		.animate-bounce,
+		.animate-status-pulse,
+		.claude-plan-refresh-sweep,
+		.codex-plan-refresh-sweep,
+		svg.wand-sparkle-active,
+		svg.wand-profiling-active,
+		.wand-glint,
+		.profiling-progress-indeterminate
+	),
+html.motion-paused .animate-status-glow::after,
+html.motion-paused .search-highlight::after,
+html.motion-paused .progress-bar-animated::after {
+	animation-play-state: paused !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.animate-pulse,
 	.animate-spin,

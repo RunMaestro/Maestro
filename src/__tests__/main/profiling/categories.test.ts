@@ -30,6 +30,10 @@ describe('profiling/categories', () => {
 		);
 	});
 
+	it('records blink.animations, the only source of WHICH animation failed to composite', () => {
+		expect(DEFAULT_TRACE_CATEGORIES).toContain('blink.animations');
+	});
+
 	it('records the devtools timeline and frame stream', () => {
 		expect(DEFAULT_TRACE_CATEGORIES).toContain('disabled-by-default-devtools.timeline');
 		expect(DEFAULT_TRACE_CATEGORIES).toContain('disabled-by-default-devtools.timeline.frame');

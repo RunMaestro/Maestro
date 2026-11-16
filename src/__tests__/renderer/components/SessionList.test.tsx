@@ -2161,9 +2161,9 @@ describe('SessionList', () => {
 			expect(screen.getByText('Idle Session')).toBeInTheDocument();
 		});
 
-		it('shows busy status with pulse animation', () => {
+		it('shows busy status with a static halo, not a looping animation', () => {
 			// Claude sessions without an agentSessionId render a static "no active Claude session"
-			// indicator regardless of state - provide one so the busy animation is exercised.
+			// indicator regardless of state - provide one so the busy halo is exercised.
 			const sessions = [
 				createMockSession({
 					id: 's1',
@@ -2179,9 +2179,11 @@ describe('SessionList', () => {
 			});
 			const { container } = render(<SessionList {...props} />);
 
-			// Busy state renders an animate-ping ring behind the status dot
-			const pulsingElements = container.querySelectorAll('.animate-ping');
-			expect(pulsingElements.length).toBeGreaterThan(0);
+			// Busy is a static halo on the status dot, never a looping ring: one
+			// infinite animation per busy agent kept the renderer drawing every frame.
+			expect(container.querySelector('.animate-ping')).toBeNull();
+			const dot = container.querySelector('[title="Thinking"]') as HTMLElement | null;
+			expect(dot?.style.boxShadow).toBeTruthy();
 		});
 
 		it('shows AUTO badge for batch sessions', () => {
