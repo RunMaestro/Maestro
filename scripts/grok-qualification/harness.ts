@@ -17750,7 +17750,7 @@ async function runCueLeg(
 				import('../../src/main/cue/cue-shell-executor'),
 				import('../../src/main/cue/cue-cli-executor'),
 				import('../../src/main/cue/cue-process-lifecycle'),
-				import('../../src/main/cue/cue-agent-binary'),
+				import('../../src/shared/maestro-lib/launch/agent-binary'),
 				import('../../src/main/cue/cue-spawn-builder'),
 				import('../../src/shared/cue/turn-settings'),
 				import('../../src/shared/maestro-lib/parsers'),
@@ -17978,7 +17978,7 @@ async function runCueLeg(
 					stopCueRun: executor.stopCueRun,
 					findSession: (id) => (id === record.id ? record : undefined),
 					resolveAgentBinary: ({ session }) =>
-						agentBinary.resolveCueAgentBinary({
+						agentBinary.resolveAgentBinary({
 							sessionCustomPath: session.customPath,
 							providerCustomPath: undefined,
 							sshEnabled: false,

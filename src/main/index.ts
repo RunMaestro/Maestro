@@ -1603,8 +1603,8 @@ app
 					(s) => s.id === sessionId
 				) as CueRunSessionRecord | undefined,
 			resolveAgentBinary: async ({ session, agentConfigValues }) => {
-				const { resolveCueAgentBinary } = await import('./cue/cue-agent-binary');
-				return resolveCueAgentBinary({
+				const { resolveAgentBinary } = await import('../shared/maestro-lib/launch/agent-binary');
+				return resolveAgentBinary({
 					sessionCustomPath: session.customPath,
 					providerCustomPath: agentConfigValues.customPath as string | undefined,
 					sshEnabled: !!session.sessionSshRemoteConfig?.enabled,

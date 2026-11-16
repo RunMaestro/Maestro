@@ -23,7 +23,7 @@
  *    would mean either duplicating a chunk of the desktop's Electron
  *    bootstrap or half-initializing it - both worse than the gap. Resolution
  *    instead runs the first two rungs of the desktop's own precedence
- *    (`resolveCueAgentBinary`): the agent's own custom path, then the
+ *    (`resolveAgentBinary`): the agent's own custom path, then the
  *    provider-level one (`getAgentCustomPath()`, read straight from the
  *    settings JSON file). Past those it leaves the bare command name for
  *    `spawn()`'s own PATH search, which is correct for the common case (the
@@ -105,7 +105,7 @@ function loadExecutorsUncached() {
 		// kills through it (see CueEngineDeps.countLiveCueProcesses).
 		import('../../main/cue/cue-process-lifecycle'),
 		import('../../main/cue/cue-autorun-executor'),
-		import('../../main/cue/cue-agent-binary'),
+		import('../../shared/maestro-lib/launch/agent-binary'),
 	]).then(([, executor, shell, cli, notify, authDetector, lifecycle, autoRun, agentBinary]) => ({
 		countLiveCueProcesses: () => lifecycle.getActiveProcessMap().size,
 		killAllCueProcessesNow: lifecycle.stopAllProcesses,
@@ -113,7 +113,7 @@ function loadExecutorsUncached() {
 		stopCueRun: executor.stopCueRun,
 		getActiveProcesses: executor.getActiveProcesses,
 		executeCueAutoRun: autoRun.executeCueAutoRun,
-		resolveCueAgentBinary: agentBinary.resolveCueAgentBinary,
+		resolveAgentBinary: agentBinary.resolveAgentBinary,
 		executeCueShell: shell.executeCueShell,
 		executeCueCli: cli.executeCueCli,
 		executeCueNotify: notify.executeCueNotify,
@@ -327,7 +327,7 @@ function buildOnCueRun(
 			// Point 1 (module doc): the agent's own binary first, then the
 			// provider's, else spawn()'s own PATH search.
 			resolveAgentBinary: ({ session }) =>
-				executors.resolveCueAgentBinary({
+				executors.resolveAgentBinary({
 					sessionCustomPath: session.customPath,
 					providerCustomPath: getAgentCustomPath(session.toolType),
 					sshEnabled: session.sessionSshRemoteConfig?.enabled === true,

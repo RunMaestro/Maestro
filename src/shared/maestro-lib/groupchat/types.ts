@@ -134,6 +134,8 @@ export interface GroupChatSessionInfo {
 	name: string;
 	toolType: string;
 	cwd: string;
+	/** The agent's own binary (`Session.customPath`); see `resolveAgentBinary`. */
+	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
 	customModel?: string;
@@ -197,6 +199,11 @@ export interface GroupChatSpawn {
 	providerId: string;
 	agent: AgentConfig;
 	command?: string;
+	/**
+	 * The binary on an SSH remote, when the agent names its own (`customPath`). Absent: the
+	 * provider's bare binary name, which the remote resolves on its own PATH.
+	 */
+	remoteCommand?: string;
 	args: string[];
 	cwd: string;
 	prompt?: string;

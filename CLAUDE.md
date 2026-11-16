@@ -182,6 +182,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Timing out a supervised agent process:** `createIdleWatchdog()` in `src/main/utils/idle-watchdog.ts`, events in `src/main/utils/agent-liveness.ts` (the budget is silence, not wall clock)
 - **A one-shot answer from a cheap model (no tab, no tools):** `window.maestro.context.groomContext()` with `cheapTurn` / `readOnly` / `disableTools` / `timeoutMs`, over `groomContext()` in `src/main/utils/context-groomer.ts`
 - **Whether a working directory can be spawned into:** `unusableCwdReason(cwd)`, `unusableDirectoryReason(dir, label)` in `src/main/process-manager/utils/spawnCwd.ts`
+- **Which binary an agent's turn runs (its own custom path first):** `resolveAgentBinary()` in `src/shared/maestro-lib/launch/agent-binary.ts`
 - **Whether an agent is working right now (main process):** `isAgentBusy()`, `isAiTabProcessActive()` in `src/main/utils/agent-busy.ts` (never the persisted `state`)
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
 - **Resuming a provider session a background synopsis may still hold:** `awaitSynopsisWriters()` in `src/main/process-manager/utils/synopsisWriterGate.ts` (already called by `process:spawn`; no per-send-path busy check)
