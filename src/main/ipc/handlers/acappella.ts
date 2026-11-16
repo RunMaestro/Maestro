@@ -3,132 +3,38 @@
  *
  * The Electron transport in front of the headless voice session service. Thin
  * on purpose: every rule that matters (state machine, provider substitution,
- * dispatch) lives in `src/main/acappella/`, and this file only translates
+ * dispatch) lives in `src/main/acappella/`, and this layer only translates
  * channels into calls and protocol events into a push.
  *
- * Three properties this module is responsible for:
- *   - **Nothing runs until a session is started.** Enabling the Encore Feature
- *     opens no device, downloads nothing, and constructs no provider: the
- *     service is built lazily on the first `acappella:start-session`.
- *   - **Provider resolution goes through the registry, always.** No concrete
- *     provider is imported here, so "never silently substitute a cloud provider
- *     for a missing local one" stays a property of the registry rather than of
- *     an import in the transport layer.
- *   - **Every client sees the same stream.** Protocol events are BROADCAST on
- *     `acappella:event` (all windows plus the web-desktop bridge), matching the
- *     multi-window invariant in `src/main/utils/safe-send.ts`. There is no
- *     per-window subscription list: the session is a single-floor thing, and a
- *     client that does not want the events simply does not listen.
- *
- * Gated at the handler on `encoreFeatures.aCappella`, following the Pianola
- * precedent: when the flag is off every channel throws 'ACappellaDisabled' so
- * the renderer can tell "feature off" from "no session". The one exception is
- * `acappella:stop-session`, which stays callable so toggling the feature off
- * mid-session can still release the floor.
+ * Domain modules live under `src/main/ipc/handlers/acappella/`:
+ *   - `shared.ts`: shared types, channel constants, and small stateless helpers
+ *   - `state.ts`: cross-module mutable state and its reset
+ *   - `session.ts`: session lifecycle, floor control, send-wait, teardown
+ *   - `providers.ts`: pipeline resolution, credentials, Voice Studio, voices
+ *   - `audio-host.ts`: audio host bridge, mic permissions, devices, dictation/notices
+ *   - `wake.ts`: hands-free wake word, wake test, wake enrollment, hotkeys
+ *   - `routing.ts`: conductor routing outcome log, corrections, roster
+ *   - `voice-control.ts`: paired-device transport and `maestro-cli voice` service
  */
 
 import { app, ipcMain } from 'electron';
-import { hostname } from 'os';
 
-import { withIpcErrorLogging } from '../../utils/ipcHandler';
-import { logger } from '../../utils/logger';
-import type {
-	InterruptSource,
-	RosterAgent,
-	VoiceScope,
-	VoiceWindowId,
-} from '../../../shared/acappella/protocol';
-import { flushRoutingLog } from '../../acappella/router/routing-log';
-import { requestMicPermission } from '../../acappella/permissions/mic-permission';
+import type { RosterAgent } from '../../../shared/acappella/protocol';
+import type { VoiceSendWait } from '../../../shared/acappella/listen-mode';
 import {
 	ACAPPELLA_AUDIO_FRAME_CHANNEL,
 	ACAPPELLA_AUDIO_STATUS_CHANNEL,
 } from '../../../shared/acappella/audio-host';
+import { ACAPPELLA_WEBRTC_EVENT_CHANNEL } from '../../../shared/acappella/webrtc-host';
 import {
-	closeAcappellaAudioHostWindow,
 	disposeVoiceSessionService,
-	ensureAcappellaAudioHostWindow,
-	getAcappellaAudioHostWindow,
+	closeAcappellaAudioHostWindow,
 	getVoiceSessionService,
 	type VoiceSessionSnapshot,
 } from '../../acappella';
-import { readVoiceReadiness } from './acappella-models';
-import { DEFAULT_SEND_PHRASES } from '../../../shared/acappella/voice-controls';
-import {
-	clampSendWaitOverrideMs,
-	resolveSendWait,
-	type VoiceSendWait,
-} from '../../../shared/acappella/listen-mode';
-import { isACappellaEnabled } from '../../../shared/acappella/feature-flag';
-import {
-	migrateLegacyVoiceProviders,
-	readVoiceProviderSettings,
-} from '../../acappella/providers/provider-registry';
-import {
-	clearCredential,
-	listCredentialStates,
-	setCredential,
-	validateCredential,
-} from '../../acappella/providers/credentials';
-import { type VoiceCredentialService } from '../../../shared/acappella/provider-catalog';
-import {
-	formatTurnBreakdown,
-	lastTurn,
-	type TurnBreakdown,
-} from '../../acappella/telemetry/turn-metrics';
-import {
-	QUICK_CHAT_VOICE_SCOPE,
-	isQuickChatScope,
-	scopeRebindBlocker,
-} from '../../../shared/acappella/quick-chat-scope';
-import { QUICK_CHAT_VOICE_UNAVAILABLE } from '../../acappella/dispatch/quick-chat-dispatch';
-import type { FloorControlSession } from '../../acappella/audio/floor-control';
-import {
-	disposeACappellaTransport,
-	getACappellaTransport,
-	initACappellaTransport,
-} from '../../acappella';
-import type { ACappellaTransport } from '../../acappella/transport';
-import {
-	ACAPPELLA_WEBRTC_COMMAND_CHANNEL,
-	ACAPPELLA_WEBRTC_EVENT_CHANNEL,
-} from '../../../shared/acappella/webrtc-host';
-import {
-	ACAPPELLA_DEVICES_CHANNEL,
-	ACAPPELLA_PAIRING_REQUEST_CHANNEL,
-	registerACappellaDeviceHandlers,
-	setVoiceDiscovery,
-	testVoiceConnection,
-} from './acappella-devices';
-import {
-	VoiceControlRefusal,
-	registerVoiceControlService,
-	type VoiceControlHandlers,
-} from '../../acappella/voice-control-service';
-import {
-	VOICE_PREVIEW_LINE,
-	parseVoiceControlScope,
-	type VoiceSessionView,
-	type VoiceWakeHit,
-} from '../../../shared/acappella/voice-control';
-import { formatVoiceSelfTestReport, runVoiceSelfTest } from '../../acappella/voice-self-test';
-
-import {
-	ACAPPELLA_EVENT_CHANNEL,
-	ACAPPELLA_INPUT_DEVICES_CHANNEL,
-	ACAPPELLA_WAKE_ENROLLMENT_CHANNEL,
-	ACAPPELLA_WAKE_TEST_CHANNEL,
-	handlerOpts,
-	isRecord,
-	LOG_CONTEXT,
-	requireEnabled,
-	toVoiceSessionView,
-	type ACappellaHandlerDependencies,
-	type VoiceStartSessionResult,
-	type WakeTestEvent,
-	type WakeTestStartResult,
-} from './acappella/shared';
-import { resetSharedACappellaState, sharedState } from './acappella/state';
+import { migrateLegacyVoiceProviders } from '../../acappella/providers/provider-registry';
+import { flushRoutingLog } from '../../acappella/router/routing-log';
+import type { TurnBreakdown } from '../../acappella/telemetry/turn-metrics';
 import {
 	createAudioHostHandlers,
 	disposeACappellaAudioBridge,
@@ -137,29 +43,50 @@ import {
 	resetAudioHostState,
 } from './acappella/audio-host';
 import {
-	createWakeHandlers,
-	initWakeAndHotkeys,
-	resetWakeState,
-	stopWakeTest,
-	syncVoiceHotkeys,
-} from './acappella/wake';
-import { createRoutingHandlers, resetRoutingState, watchRosterChanges } from './acappella/routing';
-import {
 	applyACappellaProvidersWithCallbacks,
-	clearActiveSubstitutions,
 	createProviderHandlers,
-	ensureService as ensureProviderService,
-	listVoiceOptions,
-	previewVoiceLine,
 	resetProvidersState,
 } from './acappella/providers';
-
-export {
-	disposeACappellaAudioBridge,
+import { createRoutingHandlers, resetRoutingState, watchRosterChanges } from './acappella/routing';
+import {
+	createSessionHandlers,
+	readSendWait,
+	resetSessionState,
+	shutdownACappellaForDisable,
+	stopVoiceSessionForWindow,
+} from './acappella/session';
+import {
 	ACAPPELLA_EVENT_CHANNEL,
 	ACAPPELLA_INPUT_DEVICES_CHANNEL,
 	ACAPPELLA_WAKE_ENROLLMENT_CHANNEL,
 	ACAPPELLA_WAKE_TEST_CHANNEL,
+	requireEnabled,
+	type ACappellaHandlerDependencies,
+	type VoiceStartSessionResult,
+	type WakeTestEvent,
+	type WakeTestStartResult,
+} from './acappella/shared';
+import { resetSharedACappellaState, sharedState } from './acappella/state';
+import {
+	initTransportAndDevices,
+	registerVoiceControl,
+	resetVoiceControlState,
+} from './acappella/voice-control';
+import {
+	createWakeHandlers,
+	initWakeAndHotkeys,
+	resetWakeState,
+	syncVoiceHotkeys,
+} from './acappella/wake';
+
+export {
+	ACAPPELLA_EVENT_CHANNEL,
+	ACAPPELLA_INPUT_DEVICES_CHANNEL,
+	ACAPPELLA_WAKE_ENROLLMENT_CHANNEL,
+	ACAPPELLA_WAKE_TEST_CHANNEL,
+	disposeACappellaAudioBridge,
+	shutdownACappellaForDisable,
+	stopVoiceSessionForWindow,
 	type ACappellaHandlerDependencies,
 	type VoiceStartSessionResult,
 	type WakeTestEvent,
@@ -167,244 +94,8 @@ export {
 };
 
 /**
- * The live pipeline.
- *
- * Held here rather than inside the session service because it outlives one
- * session and because it owns real resources - a Whisper model, an ONNX session,
- * a llama context, a realtime socket. Dropping the reference without calling
- * `dispose()` would leak every one of them.
- */
-
-/**
- * The audio bridge for the live service. Module state for the same reason the
- * service is: the frame and status listeners are registered once, for the life of
- * the app, while the thing behind them is rebuilt whenever the provider trio
- * changes.
- */
-
-/**
- * The microphones the audio host last reported.
- *
- * Cached because main cannot enumerate them itself: `enumerateDevices` is a DOM
- * API, and a settings panel that had to open a hidden window and wait for a
- * round trip just to draw a list would either block or render empty. The host
- * republishes on boot, on device change, and after each capture starts (which is
- * when Chromium stops redacting the labels).
- *
- * This is a CACHE, not the source of truth, and it is empty until the audio host
- * first opens - which nothing does before a session starts. A picker must
- * therefore enumerate in its own renderer (see `useVoiceInputDevices`) rather
- * than wait on this; serving it as the list is what left Voice Setup offering
- * the system default and nothing else.
- */
-
-/**
- * The two global voice hotkeys.
- *
- * Installed once, for the life of the app, and NOT rebuilt with the pipeline: a
- * system-wide combo that is released and re-registered every time the user
- * changes a voice would be a combo another app can steal in the gap.
- */
-
-/**
- * The wake-word tuning run behind the Test button in Settings.
- *
- * Its own detector rather than the session's, because the point is to run the
- * wake word with NO session: a user tuning sensitivity is asking "would this
- * have fired", not "please start listening to me".
- */
-
-/**
- * Wake phrase enrollment: recording a phrase the user wants to wake on, and
- * training it. Module state because a capture run holds the one microphone, and
- * every other borrower of it has to be able to ask whether one is live. See
- * `acappella/wake/wake-enrollment-service.ts`.
- */
-
-/**
- * Listeners on the tuning run's hits, beside the broadcast to the Settings dot.
- * `maestro-cli voice wake test` has no window to light up, so it counts the
- * hits of its own run here.
- */
-
-/**
- * The registration of this layer's functions as the one voice control service
- * (`acappella/voice-control-service.ts`), which `maestro-cli voice` reaches.
- */
-let releaseVoiceControl: (() => void) | null = null;
-
-/**
- * The always-on wake word behind the Voice Controls toggle. Module state for the
- * same reason as the hotkeys: it outlives any one session and re-arms between
- * them. See `acappella/wake/hands-free.ts`.
- */
-
-/**
- * The session-less microphone dictation records through, and its registration
- * with the core Local Models dictation service.
- *
- * Module state like the wake word, and built whether or not the A Cappella
- * Encore Feature is on: dictation is a core feature that only borrows this
- * capture path. Building it opens no device; a clip does, when a user asks for
- * one. See `src/shared/local-models/clip-capture.ts`.
- */
-
-/**
- * The session-less speaker spoken notices play through, its registration with
- * the core Local Models notice service, and the voice it last spoke with.
- *
- * Module state like the dictation microphone, and for the same reason built
- * whether or not the A Cappella Encore Feature is on: a notice is a core
- * feature that only borrows this playback path. Building it opens nothing; a
- * notice does, when the user has asked for them. See
- * `acappella/audio/notice-speech.ts`.
- */
-
-/** Why a notice may not be spoken over a live voice session. */
-
-/**
- * The voice provider a notice speaks with, kept between notices so the system
- * voice's installed-voice list is read once. Rebuilt when the Text-to-Speech
- * choice moves to a different local voice.
- */
-
-/**
- * The tap on dispatched agent output.
- *
- * Module state alongside the service and rebuilt with it, because it holds
- * listeners on the process manager: a tap dropped without `dispose()` would keep
- * filtering output for a session that no longer exists, and a second one built
- * over it would speak every chunk twice.
- */
-
-/**
- * The paired-device transport. Module state alongside the hotkeys and for the
- * same reason: it holds live signaling sessions and a Bonjour advert, both of
- * which outlive any one voice session.
- */
-let transport: ACappellaTransport | null = null;
-
-/**
- * Shape guard for an inbound frame.
- *
- * The sender check is the real security boundary; this is a crash guard. Frames
- * arrive fifty times a second, so a malformed one must not become fifty identical
- * unhandled exceptions a second inside an `ipcMain` listener.
- */
-
-/** An unrecognised scope is conductor scope; a malformed BOUND scope is not. */
-function parseScope(raw: unknown): VoiceScope {
-	if (!isRecord(raw)) return { kind: 'conductor' };
-	if (raw.kind === 'group-chat') {
-		const scope = parseVoiceControlScope(raw);
-		if (!scope) throw new Error('InvalidVoiceScope');
-		return scope;
-	}
-	// Quick Chat carries no ids, so there is nothing about it to be malformed.
-	if (raw.kind === 'quick-chat') return { ...QUICK_CHAT_VOICE_SCOPE };
-	if (raw.kind !== 'agent' && raw.kind !== 'document') return { kind: 'conductor' };
-	// Falling back to the conductor here would send a spoken instruction to
-	// whichever agent happens to be active, which is the one outcome worse than
-	// an error.
-	if (typeof raw.sessionId !== 'string' || !raw.sessionId) {
-		throw new Error('InvalidVoiceScope');
-	}
-	if (raw.kind === 'agent') {
-		// A tab pin is Tab mode; anything that is not a non-empty string is Agent
-		// mode rather than an error, because the agent binding itself is valid.
-		return typeof raw.tabId === 'string' && raw.tabId
-			? { kind: 'agent', sessionId: raw.sessionId, tabId: raw.tabId }
-			: { kind: 'agent', sessionId: raw.sessionId };
-	}
-	// Same rule for the path: a document scope with no document would open a
-	// session that names a file in the HUD and hands the agent nothing.
-	if (typeof raw.path !== 'string' || !raw.path) {
-		throw new Error('InvalidVoiceScope');
-	}
-	return { kind: 'document', sessionId: raw.sessionId, path: raw.path };
-}
-
-/**
- * Teach the permission tracker what the device just did.
- *
- * Windows and Linux have no usable permission query, so a failed capture is the
- * only evidence there is, and a successful one is the only proof of a grant that
- * exists on any platform: Chromium hands over a live track only after the user
- * agrees. Kept here, at the one place host statuses arrive, so the tracker
- * cannot fall out of step with the microphone the user is actually looking at.
- */
-
-/** An IPC caller is a client by definition, so a bare request is a button press. */
-function parseInterruptSource(raw: unknown): InterruptSource {
-	return raw === 'voice' ? 'voice' : 'client-button';
-}
-
-/**
- * Validate a credential message.
- *
- * The service name is checked against the known set rather than passed through:
- * it becomes a keychain account name, and an arbitrary string from the renderer
- * would let a caller write entries into the user's credential store under any
- * name it liked.
- */
-
-/**
- * Attach audio wiring to a service that has none.
- *
- * Audio is wired only when there is a host window to wire it to. Without one
- * (tests, and any path that did not pass `audioHostDeps`) the session still
- * runs: it is simply text-in, which is exactly the mock tier's contract.
- *
- * Called from BOTH paths in `ensureService`, because the two lifetimes differ:
- * switching the Encore Feature off disposes the bridge and deliberately leaves
- * the session service alone, so the next start reuses a live service that has
- * no audio at all. That failure is silent and total - the host window opens, the
- * device is captured, and every frame lands on a null bridge - which is why it
- * cannot be left to the fresh-service path.
- */
-
-/**
- * The live service, built on first use and rebuilt whenever the provider
- * selection changes.
- *
- * `initVoiceSessionService` disposes the old instance, which drops its
- * subscribers, so the fan-out is re-registered here rather than accumulating a
- * second copy.
- */
-
-/**
- * The send wait the HUD picked, or null to use the stored default.
- *
- * In memory on purpose. Settings holds the default; this is the "just for now"
- * on top of it, so a wait stretched for one long dictation does not quietly
- * become the wait every later conversation gets. The HUD clears it when it is
- * closed, and a restart clears it regardless.
- */
-let sendWaitOverrideMs: number | null = null;
-
-/** The send wait in force, and where it came from. */
-function readSendWait(deps: ACappellaHandlerDependencies): VoiceSendWait {
-	return resolveSendWait(
-		readVoiceProviderSettings(deps.settingsStore),
-		sendWaitOverrideMs,
-		DEFAULT_SEND_PHRASES
-	);
-}
-
-/** Whether the latest `route-decision` came from a Brain (false in Tab mode). */
-
-/**
  * Apply a provider change to the running app.
- *
- * Called by the settings panel after it writes a selection. A swap while a turn
- * is in flight is REFUSED rather than queued: splicing two engines into one
- * exchange would transcribe with one model, route with another, and answer in a
- * third voice, and the user would have no idea why.
  */
-function ensureService(deps: ACappellaHandlerDependencies) {
-	return ensureProviderService(deps, { ensureAudioBridge, readSendWait });
-}
-
 export async function applyACappellaProviders(
 	deps: ACappellaHandlerDependencies
 ): Promise<{ status: 'swapped' | 'unchanged' | 'refused'; reason?: string }> {
@@ -442,235 +133,15 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 	migrateLegacyVoiceProviders(settingsStore);
 	watchRosterChanges();
 
-	// The handler bodies below are named rather than written inline in their
-	// `ipcMain.handle`, because each has a second caller: the voice control
-	// service registered at the end of this function, which is how `maestro-cli
-	// voice` presses the same button.
-	/**
-	 * Put the Quick Chat window on screen and return its id, the owner of a
-	 * session bound to Quick Chat. A session whose only surface cannot be shown
-	 * is refused, never opened in some other window: the HUD's mode switch there
-	 * would offer a re-binding this session does not allow.
-	 */
-	const claimQuickChatWindow = (): string => {
-		const windowId = deps.getQuickChat?.()?.showForVoice() ?? null;
-		if (!windowId) throw new VoiceControlRefusal(QUICK_CHAT_VOICE_UNAVAILABLE);
-		return windowId;
-	};
-	/** The window that shows a session on `scope`: Quick Chat's own, or `fallback`. */
-	const ownerWindowFor = (scope: VoiceScope, fallback: VoiceWindowId): VoiceWindowId =>
-		isQuickChatScope(scope) ? claimQuickChatWindow() : fallback;
-
-	const startSession = async (
-		rawScope: unknown,
-		windowId: VoiceWindowId,
-		paused: boolean
-	): Promise<VoiceStartSessionResult> => {
-		const scope = parseScope(rawScope);
-		// A Quick Chat session is shown by the Quick Chat window and by no other,
-		// whoever asked for it (the window's own microphone, or `maestro-cli voice
-		// start --quick-chat` with no window behind it). Claimed before the
-		// microphone is asked for, so a refusal costs the user no permission prompt.
-		const owner = ownerWindowFor(scope, windowId);
-		// The microphone is asked for HERE and nowhere earlier. Not at app
-		// launch, not when the Encore Feature is switched on: a first run that
-		// prompts for the microphone for a feature nobody turned on spends trust
-		// the app has not earned. This is the first moment the user has asked for
-		// something that genuinely needs a device.
-		//
-		// The result is not branched on. A refusal belongs to the capability
-		// gate, which names the microphone as its own blocking slot with its own
-		// recovery; throwing a second, differently-worded error from here would
-		// give the same problem two voices.
-		await requestMicPermission();
-		// First start is what pays for the audio host: enabling the Encore
-		// Feature opens no device and builds no second renderer.
-		if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
-		const { service, substitutions } = await ensureService(deps);
-		const snapshot = await service.startSession({
-			scope,
-			source: 'client-button',
-			windowId: owner,
-			paused,
-		});
-		return { snapshot, substitutions };
-	};
-	const wrappedStart = withIpcErrorLogging(handlerOpts('startSession'), startSession);
-
-	const wrappedStop = withIpcErrorLogging(handlerOpts('stopSession'), async (): Promise<void> => {
-		await getVoiceSessionService()?.stopSession('user');
-	});
-
-	const wrappedSubmitUtterance = withIpcErrorLogging(
-		handlerOpts('submitUtterance'),
-		// Returns false when the session cannot take an utterance right now, so a
-		// stray Send in the dev harness is a no-op rather than a thrown error.
-		async (text: unknown): Promise<boolean> => {
-			if (typeof text !== 'string') throw new Error('InvalidUtterance');
-			return getVoiceSessionService()?.submitUtterance(text) ?? false;
-		}
-	);
-
-	const wrappedInterrupt = withIpcErrorLogging(
-		handlerOpts('interrupt'),
-		// Barge-in: cancels speech and KEEPS the floor. Distinct from the stop word
-		// on purpose - talking over the assistant must not hang up on it.
-		async (source: unknown): Promise<boolean> =>
-			getVoiceSessionService()?.interrupt(parseInterruptSource(source)) ?? false
-	);
-
-	const wrappedStopWord = withIpcErrorLogging(
-		handlerOpts('stopWord'),
-		async (payload: unknown): Promise<void> => {
-			const body = isRecord(payload) ? payload : {};
-			const phrase = typeof body.phrase === 'string' ? body.phrase : undefined;
-			await getVoiceSessionService()?.hardStop(parseInterruptSource(body.source), phrase);
-		}
-	);
-
-	const wrappedSubmitAgentReply = withIpcErrorLogging(
-		handlerOpts('submitAgentReply'),
-		// The reply seam. Phase 05 wires real agent output straight into the
-		// service in-process; until then this is how anything outside main gets a
-		// session past `dispatching`, which is what makes the dev harness able to
-		// demonstrate speech, barge-in, and the difference between the two.
-		async (payload: unknown): Promise<boolean> => {
-			if (!isRecord(payload)) throw new Error('InvalidAgentReply');
-			const { agentSessionId, tabId, text } = payload;
-			if (
-				typeof agentSessionId !== 'string' ||
-				!agentSessionId ||
-				typeof tabId !== 'string' ||
-				!tabId ||
-				typeof text !== 'string'
-			) {
-				throw new Error('InvalidAgentReply');
-			}
-			return (
-				(await getVoiceSessionService()?.submitAgentReply({ agentSessionId, tabId, text })) ?? false
-			);
-		}
-	);
-
-	const {
-		wrappedListCredentials,
-		wrappedSetCredential,
-		wrappedValidateCredential,
-		wrappedApplyProviders,
-		wrappedListVoices,
-		wrappedVoiceStudioStatus,
-		wrappedPreviewVoice,
-	} = createProviderHandlers(deps, { ensureAudioBridge, readSendWait });
-
-	/**
-	 * Apply an output volume to whatever is playing RIGHT NOW.
-	 *
-	 * Deliberately does NOT persist: the caller has already written the setting
-	 * (or is muting, which is session-scoped and must not survive a restart), and
-	 * a channel that both saved and applied would make a mute permanent the first
-	 * time somebody used it.
-	 *
-	 * Resolves false when there is no audio host to apply it to, which the HUD
-	 * treats as "nothing is playing" rather than as a failure.
-	 */
-	const {
-		applyVolume,
-		readInputDevices,
-		chooseInputDevice,
-		wrappedOpenMicSettings,
-		wrappedMicPermission,
-		wrappedSetVolume,
-		wrappedInputDevices,
-		wrappedSetInputDevice,
-		handleAudioFrame,
-		handleAudioStatus,
-		handleWebRtcEvent,
-	} = createAudioHostHandlers(deps);
-
-	const wrappedLastTurn = withIpcErrorLogging(
-		handlerOpts('lastTurn'),
-		async (): Promise<TurnBreakdown | null> => lastTurn()
-	);
-
-	// The floor's view of the session. Narrow by construction: the hotkeys can
-	// open, close, and interrupt, and nothing else.
-	const floorSession: FloorControlSession = {
-		getState: () => getVoiceSessionService()?.getState() ?? 'idle',
-		startSession: async ({ scope, source, origin }) => {
-			// A remote origin does NOT skip this: the desktop still opens its audio
-			// host, because that window is where the peer connection and the playback
-			// live. What it skips is nothing at all, which is the point - a remote
-			// session takes the same path as a local one.
-			await requestMicPermission();
-			if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
-			const { service } = await ensureService(deps);
-			return service.startSession({
-				scope,
-				source,
-				origin,
-				// No IPC sender to resolve: a global hotkey, a wake word, and a paired
-				// phone all arrive with no window behind them, so the HUD belongs to
-				// the window the user is looking at.
-				windowId: ownerWindowFor(scope, deps.resolveVoiceWindowId?.() ?? null),
-			});
-		},
-		stopSession: async (reason) => {
-			await getVoiceSessionService()?.stopSession(reason);
-		},
-		interrupt: (source) => getVoiceSessionService()?.interrupt(source) ?? false,
-	};
-
+	const session = createSessionHandlers(deps);
 	initClipCaptureAndNoticeSpeech(deps);
-	const hotkeys = initWakeAndHotkeys(deps, floorSession);
+	const hotkeys = initWakeAndHotkeys(deps, session.floorSession);
+	initTransportAndDevices(deps, hotkeys);
 
-	/**
-	 * The paired-device transport.
-	 *
-	 * Built here, next to the floor, because it presses the SAME controller a
-	 * hotkey does: a phone's talk button and a keyboard chord are two surfaces
-	 * over one state machine, not two ways to open a microphone. Constructed
-	 * eagerly and cheaply - it opens no socket and advertises nothing until a user
-	 * asks it to.
-	 */
-	transport ??= initACappellaTransport({
-		settingsStore,
-		userDataPath: app.getPath('userData'),
-		sendToAudioHost: (command) => {
-			const win = getAcappellaAudioHostWindow();
-			if (!win || win.webContents.isDestroyed()) return;
-			win.webContents.send(ACAPPELLA_WEBRTC_COMMAND_CHANNEL, command);
-		},
-		acquireFloor: (scope, origin) => hotkeys.acquireFloor(scope, origin),
-		getSession: () => getVoiceSessionService(),
-		getServerToken: () => deps.getWebServer?.()?.getSecurityToken() ?? null,
-		getServerPort: () => deps.getWebServer?.()?.getPort() ?? null,
-		getAppVersion: () => app.getVersion(),
-		getMachineName: () => hostname(),
-		onDevicesChanged: () => deps.safeSend(ACAPPELLA_DEVICES_CHANNEL, null),
-		onPairingRequest: (request) => deps.safeSend(ACAPPELLA_PAIRING_REQUEST_CHANNEL, request),
-	});
-
-	registerACappellaDeviceHandlers({ settingsStore });
-
-	const {
-		beginWakeTest,
-		wrappedHotkeyStatus,
-		wrappedWakeTest,
-		wrappedWakeTestStop,
-		wrappedWakeEnrollment,
-	} = createWakeHandlers(deps);
-
-	const { wrappedGetRoster, wrappedCorrectRoute, wrappedRoutingLog } = createRoutingHandlers();
-
-	const wrappedGetState = withIpcErrorLogging(
-		handlerOpts('getState'),
-		// Null means the service has never been built, so no provider is resolved
-		// yet. Synthesising an idle snapshot here would have to name provider ids
-		// that nothing has resolved, and reporting a requested-but-unavailable
-		// provider as running is the substitution lie in a different costume.
-		async (): Promise<VoiceSessionSnapshot | null> =>
-			getVoiceSessionService()?.getSnapshot() ?? null
-	);
+	const audio = createAudioHostHandlers(deps);
+	const routing = createRoutingHandlers();
+	const providers = createProviderHandlers(deps, { ensureAudioBridge, readSendWait });
+	const wake = createWakeHandlers(deps);
 
 	ipcMain.handle(
 		'acappella:start-session',
@@ -679,7 +150,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 			// Resolved HERE rather than inside the wrapped handler, because
 			// `withIpcErrorLogging` strips the event and the sender is the only
 			// evidence of which window the user actually clicked in.
-			return wrappedStart(
+			return session.wrappedStart(
 				event,
 				scope,
 				deps.resolveVoiceWindowId?.(event?.sender) ?? null,
@@ -692,69 +163,37 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 
 	// Deliberately ungated: turning the Encore Feature off while a session is
 	// live must still be able to release the floor.
-	ipcMain.handle('acappella:stop-session', wrappedStop);
+	ipcMain.handle('acappella:stop-session', session.wrappedStop);
 
 	ipcMain.handle('acappella:submit-utterance', async (event, text: unknown): Promise<boolean> => {
 		requireEnabled(settingsStore);
-		return wrappedSubmitUtterance(event, text);
+		return session.wrappedSubmitUtterance(event, text);
 	});
 
-	// Tab / Agent / Conductor, switched mid-session from the HUD. Returns false
-	// when there is no live session to re-bind.
-	const setScope = (rawScope: unknown): boolean =>
-		getVoiceSessionService()?.setScope(parseScope(rawScope)) ?? false;
 	ipcMain.handle('acappella:set-scope', async (_event, rawScope: unknown): Promise<boolean> => {
 		requireEnabled(settingsStore);
-		return setScope(rawScope);
+		return session.setScope(rawScope);
 	});
 
-	// "Send now": end the held utterance and dispatch it. The same two-part
-	// gesture as releasing the push-to-talk key: flush the recogniser so the tail
-	// of the sentence is decoded, and settle the composer on it.
-	const sendNow = (): void => {
-		sharedState.audioBridge?.endUtterance();
-		getVoiceSessionService()?.endUtteranceNow();
-	};
 	ipcMain.handle('acappella:end-utterance', async (): Promise<void> => {
 		requireEnabled(settingsStore);
-		sendNow();
+		session.sendNow();
 	});
 
-	// Open or shut the microphone without ending the session: the HUD's hands-free
-	// toggle, and both ends of its push-to-talk hold. Returns false when there is
-	// no live session to gate, which is how the HUD knows to start one instead.
-	const setListening = (payload: unknown): boolean => {
-		const { listening, hold, send } = (payload ?? {}) as Record<string, unknown>;
-		if (typeof listening !== 'boolean') throw new Error('InvalidListening');
-		const service = getVoiceSessionService();
-		if (!service) return false;
-		// The release half of push-to-talk is the same two-part gesture as
-		// `end-utterance`: flush the recogniser so the tail of the sentence is
-		// decoded, then settle the composer on it. Flushed BEFORE the gate shuts,
-		// while the audio it needs is still the audio the recogniser holds.
-		if (!listening && send === true) sharedState.audioBridge?.endUtterance();
-		return service.setListening(listening, { hold: hold === true, send: send === true });
-	};
 	ipcMain.handle('acappella:set-listening', async (_event, payload: unknown): Promise<boolean> => {
 		requireEnabled(settingsStore);
-		return setListening(payload);
+		return session.setListening(payload);
 	});
 
 	// Ungated read: the HUD draws the wait chip from it, and a chip that threw
 	// while the feature was being switched off would blank the control row.
 	ipcMain.handle('acappella:get-send-wait', async (): Promise<VoiceSendWait> => readSendWait(deps));
 
-	// The HUD's quick wait picker. Null (or anything malformed) returns to the
-	// stored default. Applies from the next fragment: the composer reads it live.
-	const setSendWait = (waitMs: unknown): VoiceSendWait => {
-		sendWaitOverrideMs = clampSendWaitOverrideMs(waitMs);
-		return readSendWait(deps);
-	};
 	ipcMain.handle(
 		'acappella:set-send-wait',
 		async (_event, waitMs: unknown): Promise<VoiceSendWait> => {
 			requireEnabled(settingsStore);
-			return setSendWait(waitMs);
+			return session.setSendWait(waitMs);
 		}
 	);
 
@@ -767,301 +206,116 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 
 	ipcMain.handle('acappella:interrupt', async (event, source: unknown): Promise<boolean> => {
 		requireEnabled(settingsStore);
-		return wrappedInterrupt(event, source);
+		return session.wrappedInterrupt(event, source);
 	});
 
 	ipcMain.handle('acappella:stop-word', async (event, payload: unknown): Promise<void> => {
 		requireEnabled(settingsStore);
-		return wrappedStopWord(event, payload);
+		return session.wrappedStopWord(event, payload);
 	});
 
 	ipcMain.handle(
 		'acappella:submit-agent-reply',
 		async (event, payload: unknown): Promise<boolean> => {
 			requireEnabled(settingsStore);
-			return wrappedSubmitAgentReply(event, payload);
+			return session.wrappedSubmitAgentReply(event, payload);
 		}
 	);
 
-	// Ungated, like `stop-session`: a user whose microphone was denied has to be
-	// able to reach the OS setting, and a session that could not open a device is
-	// exactly the situation in which the feature may already have been turned off.
-	ipcMain.handle('acappella:open-mic-settings', wrappedOpenMicSettings);
-
-	// Ungated for the same reason: a client showing "microphone access denied"
-	// must still be able to read the state after the feature was switched off.
-	ipcMain.handle('acappella:mic-permission', wrappedMicPermission);
+	ipcMain.handle('acappella:open-mic-settings', audio.wrappedOpenMicSettings);
+	ipcMain.handle('acappella:mic-permission', audio.wrappedMicPermission);
 
 	ipcMain.handle('acappella:get-roster', async (event): Promise<RosterAgent[]> => {
 		requireEnabled(settingsStore);
-		return wrappedGetRoster(event);
+		return routing.wrappedGetRoster(event);
 	});
 
 	ipcMain.handle('acappella:get-state', async (event): Promise<VoiceSessionSnapshot | null> => {
 		requireEnabled(settingsStore);
-		return wrappedGetState(event);
+		return session.wrappedGetState(event);
 	});
 
 	ipcMain.handle('acappella:correct-route', async (event, agentSessionId: unknown) => {
 		requireEnabled(settingsStore);
-		return wrappedCorrectRoute(event, agentSessionId);
+		return routing.wrappedCorrectRoute(event, agentSessionId);
 	});
 
-	// Ungated: the routing log is how somebody works out why yesterday's dispatch
-	// went where it did, and switching the feature off is a thing people do
-	// BECAUSE of a misroute.
-	ipcMain.handle('acappella:routing-log', wrappedRoutingLog);
+	ipcMain.handle('acappella:routing-log', routing.wrappedRoutingLog);
 
-	// The credential channels are ungated, like the microphone ones: a user has to
-	// be able to add or remove a key while the feature is off, and removing one is
-	// exactly what somebody switching the feature off may want to do.
-	ipcMain.handle('acappella:list-credentials', wrappedListCredentials);
-	// Sources can be configured before the A Cappella Encore Feature is enabled.
-	ipcMain.handle('acappella:voice-studio-status', wrappedVoiceStudioStatus);
-	ipcMain.handle('acappella:set-credential', wrappedSetCredential);
-	ipcMain.handle('acappella:validate-credential', wrappedValidateCredential);
+	ipcMain.handle('acappella:list-credentials', providers.wrappedListCredentials);
+	ipcMain.handle('acappella:voice-studio-status', providers.wrappedVoiceStudioStatus);
+	ipcMain.handle('acappella:set-credential', providers.wrappedSetCredential);
+	ipcMain.handle('acappella:validate-credential', providers.wrappedValidateCredential);
 
 	ipcMain.handle('acappella:apply-providers', async (event) => {
 		requireEnabled(settingsStore);
-		return wrappedApplyProviders(event);
+		return providers.wrappedApplyProviders(event);
 	});
 
 	ipcMain.handle('acappella:list-voices', async (event) => {
 		requireEnabled(settingsStore);
-		return wrappedListVoices(event);
+		return providers.wrappedListVoices(event);
 	});
 
 	ipcMain.handle(
 		'acappella:preview-voice',
 		async (event, text: unknown, voiceId: unknown): Promise<boolean> => {
 			requireEnabled(settingsStore);
-			return wrappedPreviewVoice(event, text, voiceId);
+			return providers.wrappedPreviewVoice(event, text, voiceId);
 		}
 	);
 
 	ipcMain.handle('acappella:set-volume', async (event, volume: unknown): Promise<boolean> => {
 		requireEnabled(settingsStore);
-		return wrappedSetVolume(event, volume);
+		return audio.wrappedSetVolume(event, volume);
 	});
 
-	// Ungated deliberately: Voice Setup draws the microphone picker while the user
-	// is deciding whether to switch the feature on, and a picker that throws until
-	// then would make the panel look broken.
-	ipcMain.handle('acappella:input-devices', wrappedInputDevices);
-	ipcMain.handle('acappella:set-input-device', wrappedSetInputDevice);
+	ipcMain.handle('acappella:input-devices', audio.wrappedInputDevices);
+	ipcMain.handle('acappella:set-input-device', audio.wrappedSetInputDevice);
 
 	ipcMain.handle('acappella:last-turn', async (event): Promise<TurnBreakdown | null> => {
 		requireEnabled(settingsStore);
-		return wrappedLastTurn(event);
+		return session.wrappedLastTurn(event);
 	});
 
-	// Ungated: the Voice Controls rows show a hotkey's registration state, and the
-	// most interesting time to read it is right after the feature was switched
-	// off and both combos were released.
-	ipcMain.handle('acappella:hotkey-status', wrappedHotkeyStatus);
+	ipcMain.handle('acappella:hotkey-status', wake.wrappedHotkeyStatus);
 
 	ipcMain.handle(
 		'acappella:wake-test',
 		async (event, payload: unknown): Promise<WakeTestStartResult> => {
 			requireEnabled(settingsStore);
-			return wrappedWakeTest(event, payload);
+			return wake.wrappedWakeTest(event, payload);
 		}
 	);
 
 	// Ungated, like `stop-session`: a tuning run has an open microphone, and
 	// switching the feature off must still be able to close it.
-	ipcMain.handle('acappella:wake-test-stop', wrappedWakeTestStop);
+	ipcMain.handle('acappella:wake-test-stop', wake.wrappedWakeTestStop);
 
 	// One channel for every enrollment verb, and no gate here: the entry point
 	// decides which verbs need voice switched on, so `maestro-cli voice wake`
 	// reaching it over the bridge is held to exactly the same rule.
-	ipcMain.handle('acappella:wake-enrollment', wrappedWakeEnrollment);
+	ipcMain.handle('acappella:wake-enrollment', wake.wrappedWakeEnrollment);
 
 	// The audio host's own control link. `on`, not `handle`: frames arrive fifty
 	// times a second and nothing about them needs a reply, so a promise round trip
 	// per 20 ms of audio would be pure overhead.
-	//
-	// Both listeners check the sender. The preload exposes `voiceAudioHost` to every
-	// window because it is one shared preload, so "only the audio host may speak
-	// here" has to be enforced at the receiving end - a browser tab that found the
-	// channel must not be able to inject PCM into a live voice session.
-	ipcMain.on(ACAPPELLA_AUDIO_FRAME_CHANNEL, handleAudioFrame);
-	ipcMain.on(ACAPPELLA_AUDIO_STATUS_CHANNEL, handleAudioStatus);
-	ipcMain.on(ACAPPELLA_WEBRTC_EVENT_CHANNEL, handleWebRtcEvent);
+	ipcMain.on(ACAPPELLA_AUDIO_FRAME_CHANNEL, audio.handleAudioFrame);
+	ipcMain.on(ACAPPELLA_AUDIO_STATUS_CHANNEL, audio.handleAudioStatus);
+	ipcMain.on(ACAPPELLA_WEBRTC_EVENT_CHANNEL, audio.handleWebRtcEvent);
 
-	// -- The voice control service -------------------------------------------
-	//
-	// `maestro-cli voice` reaches the functions above through one entry point
-	// (`runVoiceControlRequest`). Every handler is the body of a button: the same
-	// function, on the same session, under the same rules. What differs from a
-	// click is only what a caller with no window can supply: the HUD of a session
-	// it starts belongs to the window the user is looking at, as it does for a
-	// global hotkey, and a refusal comes back as a sentence.
-	const sessionView = (): VoiceSessionView | null =>
-		toVoiceSessionView(getVoiceSessionService()?.getSnapshot() ?? null);
-	const requireDevice = (changed: boolean, deviceId: string): void => {
-		if (!changed) throw new VoiceControlRefusal(`No paired device has the id "${deviceId}".`);
-	};
-	const requireKeySaved = (result: { ok: boolean; error?: string }): void => {
-		if (!result.ok) throw new VoiceControlRefusal(result.error ?? 'The key could not be saved.');
-	};
-	const isConfigured = (service: VoiceCredentialService): boolean =>
-		listCredentialStates().some((state) => state.service === service && state.configured);
-
-	const controlHandlers: VoiceControlHandlers = {
-		status: async () => {
-			const enabled = isACappellaEnabled(settingsStore);
-			return {
-				enabled,
-				session: sessionView(),
-				// The gate is not asked while voice is off, as `models:readiness` is not.
-				readiness: enabled ? await readVoiceReadiness(settingsStore) : null,
-				sendWait: readSendWait(deps),
-			};
-		},
-		start: async ({ scope, paused }) => {
-			// A start that cannot run says so on the event stream, which a caller
-			// with no HUD never sees. The message is caught here for the refusal.
-			const { service } = await ensureService(deps);
-			let failure: string | null = null;
-			const release = service.subscribe((event) => {
-				if (event.type === 'session-error') failure = event.message;
-			});
-			try {
-				const { snapshot, substitutions } = await startSession(
-					scope,
-					deps.resolveVoiceWindowId?.() ?? null,
-					paused === true
-				);
-				if (snapshot.state === 'idle' || snapshot.state === 'error') {
-					throw new VoiceControlRefusal(failure ?? 'The voice session could not start.');
-				}
-				return { session: toVoiceSessionView(snapshot) as VoiceSessionView, substitutions };
-			} finally {
-				release();
-			}
-		},
-		stop: async () => {
-			await getVoiceSessionService()?.stopSession('user');
-			return { session: sessionView() };
-		},
-		listen: async ({ listening, send }) => ({
-			applied: setListening({ listening, send }),
-			listening,
-		}),
-		send: async () => {
-			sendNow();
-			return { session: sessionView() };
-		},
-		'stop-reply': async () => ({
-			interrupted: getVoiceSessionService()?.interrupt('client-button') ?? false,
-		}),
-		scope: async ({ scope }) => {
-			// A locked binding is a refusal with its own sentence. Without this the
-			// caller is told there is no session, which is not what happened.
-			const live = getVoiceSessionService()?.getSnapshot();
-			const blocker = live && live.state !== 'idle' ? scopeRebindBlocker(live.scope, scope) : null;
-			if (blocker) throw new VoiceControlRefusal(blocker);
-			return { applied: setScope(scope), scope };
-		},
-		wait: async ({ waitMs }) => setSendWait(waitMs),
-		volume: async ({ volume }) => ({ applied: await applyVolume(volume), volume }),
-		inputs: async () => readInputDevices(),
-		'set-input': async ({ deviceId }) => {
-			await chooseInputDevice(deviceId);
-			return { selectedId: (await readInputDevices()).selectedId };
-		},
-		'apply-providers': async () => applyACappellaProviders(deps),
-		voices: async () => ({ voices: await listVoiceOptions(deps) }),
-		preview: async ({ text, voiceId }) => ({
-			spoke: await previewVoiceLine(
-				deps,
-				{ ensureAudioBridge, readSendWait },
-				text ?? VOICE_PREVIEW_LINE,
-				voiceId
-			),
-		}),
-		credentials: async () => ({ credentials: listCredentialStates() }),
-		'set-credential': async ({ service, key }) => {
-			requireKeySaved(setCredential(service, key));
-			return { service, configured: isConfigured(service) };
-		},
-		'clear-credential': async ({ service }) => {
-			requireKeySaved(clearCredential(service));
-			return { service, configured: isConfigured(service) };
-		},
-		'test-credential': async ({ service, key }) => validateCredential(service, key),
-		devices: async () => {
-			const live = getACappellaTransport();
-			return {
-				devices: (await live?.listDevices()) ?? [],
-				discovery: live?.discoveryStatus() ?? null,
-			};
-		},
-		'rename-device': async ({ deviceId, name }) => {
-			requireDevice(
-				(await getACappellaTransport()?.pairing.rename(deviceId, name)) ?? false,
-				deviceId
-			);
-			return { deviceId, name: name.trim() };
-		},
-		'revoke-device': async ({ deviceId }) => {
-			requireDevice((await getACappellaTransport()?.revokeDevice(deviceId)) ?? false, deviceId);
-			return { deviceId };
-		},
-		'forget-device': async ({ deviceId }) => {
-			requireDevice((await getACappellaTransport()?.pairing.forget(deviceId)) ?? false, deviceId);
-			return { deviceId };
-		},
-		'revoke-all-devices': async () => ({
-			revoked: (await getACappellaTransport()?.revokeAllDevices()) ?? 0,
-		}),
-		'disconnect-devices': async () => {
-			getACappellaTransport()?.disconnectAll();
-			return {};
-		},
-		discovery: async ({ enabled }) => ({ discovery: await setVoiceDiscovery(enabled) }),
-		'test-connection': async () => testVoiceConnection(),
-		latency: async () => {
-			const turn = lastTurn();
-			return {
-				turn: turn as unknown as Record<string, unknown> | null,
-				text: turn ? formatTurnBreakdown(turn) : null,
-			};
-		},
-		'self-test': async () => {
-			const report = await runVoiceSelfTest();
-			return {
-				report: report as unknown as Record<string, unknown>,
-				text: formatVoiceSelfTestReport(report),
-			};
-		},
-		'wake-test': async ({ phrase, sensitivity, seconds }) => {
-			const hits: VoiceWakeHit[] = [];
-			const tap = (event: WakeTestEvent): void => {
-				hits.push({ phrase: event.phrase, score: event.score, at: event.at });
-			};
-			const started = await beginWakeTest({ phrase, sensitivity });
-			if (!started.started) throw new VoiceControlRefusal(started.reason);
-			sharedState.wakeTestTaps.add(tap);
-			try {
-				await new Promise<void>((resolve) => setTimeout(resolve, seconds * 1000));
-			} finally {
-				sharedState.wakeTestTaps.delete(tap);
-				// The run opened a microphone; it closes whether or not anything fired.
-				await stopWakeTest();
-			}
-			return {
-				phrase: phrase ?? readVoiceProviderSettings(settingsStore).wakePhrase ?? null,
-				seconds,
-				hits,
-			};
-		},
-	};
-	releaseVoiceControl?.();
-	releaseVoiceControl = registerVoiceControlService(controlHandlers, () =>
-		isACappellaEnabled(settingsStore)
-	);
+	registerVoiceControl(deps, {
+		ensureService: session.ensureService,
+		startSession: session.startSession,
+		setScope: session.setScope,
+		sendNow: session.sendNow,
+		setListening: session.setListening,
+		setSendWait: session.setSendWait,
+		applyVolume: audio.applyVolume,
+		readInputDevices: audio.readInputDevices,
+		chooseInputDevice: audio.chooseInputDevice,
+		beginWakeTest: wake.beginWakeTest,
+	});
 
 	// Release the floor on the way out, and with it the microphone: the audio host
 	// window holds a real capture device, and a session left running would keep it
@@ -1078,121 +332,15 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 }
 
 /**
- * Drop the cached routing context whenever an agent or a tab changes.
- *
- * The cache has a short TTL as a backstop, but a TTL alone is not good enough
- * here: within those seconds the roster can lose the very tab a decision is
- * about to name, and a routing turn is exactly the moment a user has just
- * finished rearranging their workspace.
- *
- * Best-effort by design. A store with no change feed (tests, an older
- * electron-store) simply falls back to the TTL rather than failing registration.
- */
-
-/**
- * Stop capture and drop the audio wiring, leaving the session service alone.
- *
- * Called when the Encore Feature is switched off: the audio host window goes
- * away with it, so a bridge still holding a running pipeline would be counting
- * frames from a device nobody owns.
- */
-
-/**
- * Wind everything down because the Encore Feature was switched off.
- *
- * The switch has to mean what it says. Before this existed, turning A Cappella
- * off released the microphone and closed the audio host, and left three things
- * running that a user would reasonably believe were gone: a live voice session, a
- * loaded inference pipeline holding native runtimes and model files open, and the
- * transport with its Bonjour advert and its connected phones.
- *
- * The pipeline is the one with a second consequence. The reclaim-disk button
- * lives on the Models page precisely so it can be pressed after the feature is
- * off, and on Windows `fs.rm` of a directory whose files are still mapped by a
- * loaded runtime fails outright. Dropping the pipeline here is what makes
- * reclaiming disk work rather than error.
- *
- * What it deliberately does NOT do is dispose the hotkey installation or the
- * transport object. Both are constructed once per process at handler
- * registration, so tearing them down would make switching the feature back on a
- * no-op until the next restart. The hotkeys release their combos through their
- * own settings watcher; the transport stands down and stays reusable.
- */
-/**
- * End the session if it belonged to a window that just went away.
- *
- * A session is shown by exactly one window, so closing that window would
- * otherwise leave an open microphone with no surface anywhere - the same
- * "something is listening and nobody can see it" failure the HUD's close button
- * exists to prevent, arrived at by a different route. Closing the window that
- * holds the floor is a clear enough intent to end the session.
- *
- * `hidden` is the same failure for a window that is put away instead of closed:
- * Quick Chat hides on Escape and stays alive, so a session bound to it would
- * otherwise keep listening behind a window nobody can see.
- *
- * A session with no window (null) is deliberately left alone: it is not this
- * window's to end, and the primary window still shows it.
- */
-export async function stopVoiceSessionForWindow(
-	windowId: string,
-	cause: 'closed' | 'hidden' = 'closed'
-): Promise<void> {
-	const service = getVoiceSessionService();
-	if (!service || service.getSnapshot().windowId !== windowId) return;
-	logger.info(`Voice session ended: its window (${windowId}) was ${cause}`, LOG_CONTEXT);
-	await service.stopSession('shutdown');
-}
-
-export async function shutdownACappellaForDisable(): Promise<void> {
-	// The advert and the phones go first. A device that still holds the floor
-	// would otherwise be able to reopen the microphone during the teardown below.
-	getACappellaTransport()?.standDown();
-	await stopWakeTest();
-	// `shutdown` rather than `user`: nobody pressed stop, and the distinction is
-	// what the session's own telemetry and the History entry read.
-	await getVoiceSessionService()?.stopSession('shutdown');
-	// Order matters, and matches the audio host teardown in main/index.ts: the
-	// bridge stops capture through a window it is about to lose.
-	disposeACappellaAudioBridge();
-	await sharedState.activePipeline?.pipeline.dispose();
-	sharedState.activePipeline = null;
-	// Cleared together. `activeProviderKey` is the memo of what `activePipeline`
-	// was built from, so leaving it set would make the next start believe a
-	// disposed pipeline still matches settings and reuse it.
-	sharedState.activeProviderKey = null;
-	clearActiveSubstitutions();
-	// A "just for now" wait does not outlive the feature being switched off.
-	sendWaitOverrideMs = null;
-}
-
-/**
- * Run the wake word with no session behind it, so a user can tune sensitivity by
- * saying the phrase and watching it light up rather than by guessing.
- *
- * Refused while a session is live: the detector would be scoring the same frames
- * the session is already using, and a hit would light the Test dot for a phrase
- * that also just woke the assistant.
- *
- * Refused, with the reason, when the wake word cannot fire at all. The gate is
- * asked rather than the detector because a detector with no model runs INERT by
- * design, and an inert detector behind a Test button is a microphone that
- * listens forever and never lights up.
- */
-
-/**
- * Drop the cached provider selection. Test-only seam: the service singleton is
- * module state in `src/main/acappella/index.ts`, and this file's memo of what it
- * was built from has to be cleared alongside it.
+ * Drop all cached handler state. Test-only seam: the service singleton is
+ * module state in `src/main/acappella/index.ts`, and every handler domain's
+ * module state has to be cleared alongside it.
  */
 export function resetACappellaHandlerState(): void {
-	sendWaitOverrideMs = null;
 	resetProvidersState();
 	resetRoutingState();
-	disposeACappellaTransport();
-	transport = null;
-	releaseVoiceControl?.();
-	releaseVoiceControl = null;
+	resetSessionState();
+	resetVoiceControlState();
 	resetAudioHostState();
 	resetWakeState();
 	resetSharedACappellaState();
