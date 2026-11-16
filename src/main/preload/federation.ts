@@ -82,8 +82,8 @@ export function createFederationApi() {
 		reconnect: (peerId: string): Promise<PeerReconnectResult> =>
 			ipcRenderer.invoke('federation:reconnect', peerId),
 		/**
-		 * Drive a mirrored agent: send, Stop, new tab, rename or star a tab. Never queued: a peer
-		 * that is not connected answers `{ ok: false }` at once.
+		 * Drive a mirrored agent: send, Stop, new tab, rename or star a tab, change the agent's or a
+		 * tab's settings. Never queued: a peer that is not connected answers `{ ok: false }` at once.
 		 */
 		act: (peerId: string, agentId: string, action: PeerAgentAction): Promise<PeerActionAnswer> =>
 			ipcRenderer.invoke('federation:act', peerId, agentId, action),

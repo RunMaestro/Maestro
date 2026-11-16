@@ -719,7 +719,7 @@ describe('PeerMirrorService', () => {
 			await settle();
 			a.emit({ type: 'host.lost', reason: 'socket closed' });
 			const answer = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
-			expect(answer).toMatchObject({ ok: false });
+			expect(answer).toMatchObject({ ok: false, code: 'host-unavailable' });
 			expect(answer.ok ? '' : answer.error).toContain('Nothing was sent');
 			// Back up: the refused message is not delivered late.
 			a.emit({ type: 'host.connected', host: { kind: 'headless', label: 'h' }, resumed: true });
@@ -743,7 +743,7 @@ describe('PeerMirrorService', () => {
 				error: { code: 'host-lost', message: 'dropped', method: 'turns.send', unknown: true },
 			} as never);
 			const lost = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'x' });
-			expect(lost).toMatchObject({ ok: false, unknown: true });
+			expect(lost).toMatchObject({ ok: false, unknown: true, code: 'host-lost' });
 			expect(lost.ok ? '' : lost.error).toContain('The connection to peer "a" dropped');
 		});
 	});
