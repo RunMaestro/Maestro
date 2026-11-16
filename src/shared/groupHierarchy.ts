@@ -87,6 +87,62 @@ export function setGroupHidden(groups: Group[], groupId: string, hidden: boolean
 }
 
 /**
+ * Which groups are parked out of the Left Bar right now.
+ *
+ * `hidden` is authored on ONE group, but suppression is inherited: the
+ * hierarchy allows a single parent -> child edge and a child renders as its own
+ * row indented under its parent, so hiding a parent without its children leaves
+ * the children indented under nothing.
+ *
+ * Deliberately a set of group ids rather than a per-group predicate, because
+ * the Left Bar's consumers - the render path and the Cmd+[ / Cmd+] cycle - ask
+ * the question once per SESSION, and re-walking the parent chain for each agent
+ * turns a one-off O(groups) pass into O(sessions x depth) on every keystroke.
+ * `maestro-cli list agents` / `show agent` read it too, so the CLI's
+ * `groupHidden` agrees with what the Left Bar parks.
+ */
+export function collectHiddenGroupIds(
+	groups: readonly GroupVisibilityFields[]
+): ReadonlySet<string> {
+	const hidden = new Set<string>();
+	for (const group of groups) {
+		if (group.hidden) hidden.add(group.id);
+	}
+	if (hidden.size === 0) return hidden;
+	for (const group of groups) {
+		if (group.parentGroupId && hidden.has(group.parentGroupId)) hidden.add(group.id);
+	}
+	return hidden;
+}
+
+/** The group fields the hidden rule and the agent group label read. */
+export type GroupVisibilityFields = Pick<Group, 'id' | 'name' | 'hidden' | 'parentGroupId'>;
+
+/** The group an agent sits in, as `list agents` / `show agent` report it. */
+export interface AgentGroupInfo {
+	/** Null when the agent has no group or its group no longer exists. */
+	groupName: string | null;
+	/** True when the group (or its parent) is parked out of the Left Bar. */
+	groupHidden: boolean;
+}
+
+/**
+ * Build a lookup from an agent's `groupId` to its group name and hidden state.
+ * The hidden set is computed once, so a caller labelling a whole list pays
+ * O(groups + agents), not O(groups x agents).
+ */
+export function agentGroupLookup(
+	groups: readonly GroupVisibilityFields[]
+): (groupId: string | undefined) => AgentGroupInfo {
+	const hidden = collectHiddenGroupIds(groups);
+	const names = new Map(groups.map((group) => [group.id, group.name]));
+	return (groupId) => ({
+		groupName: (groupId && names.get(groupId)) || null,
+		groupHidden: !!groupId && hidden.has(groupId),
+	});
+}
+
+/**
  * Fold a group in the Left Bar, or unfold it.
  *
  * The one write behind the group header's chevron (`toggleGroup` in

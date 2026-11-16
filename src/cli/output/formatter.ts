@@ -98,6 +98,10 @@ export interface AgentDisplay {
 	toolType: string;
 	cwd: string;
 	groupId?: string;
+	/** The agent's group name; printed on the row unless the whole list is one group. */
+	groupName?: string;
+	/** The agent's group (or its parent) is hidden from the Left Bar. */
+	groupHidden?: boolean;
 	autoRunFolderPath?: string;
 	bookmarked?: boolean;
 	/** Set on an agent a Federation peer's host owns: the peer it lives on. */
@@ -109,7 +113,9 @@ export interface AgentDisplay {
 /**
  * The agent list. `scope.peer` titles a list read from one Federation peer. A row with `peer`
  * set is tagged with it, and its id line reads `peer:id`, the target the other verbs take. A
- * lifted local agent gets one more line naming the `peer:agentId` it was moved to.
+ * lifted local agent gets one more line naming the `peer:agentId` it was moved to. A row names its
+ * group (unless `groupName` titles the whole list) and is tagged `[hidden group]` when that group
+ * is hidden from the Left Bar.
  */
 export function formatAgents(
 	agents: AgentDisplay[],
@@ -134,8 +140,10 @@ export function formatAgents(
 		const autoRun = agent.autoRunFolderPath ? c('yellow', ' [Auto Run]') : '';
 		const bookmark = agent.bookmarked ? c('yellow', ' \u2605') : '';
 		const peer = agent.peer ? c('magenta', ` @${agent.peer}`) : '';
+		const group = agent.groupName && !groupName ? dim(` in ${agent.groupName}`) : '';
+		const hiddenGroup = agent.groupHidden ? c('yellow', ' [hidden group]') : '';
 
-		lines.push(`  ${name}${bookmark} ${toolType}${autoRun}${peer}`);
+		lines.push(`  ${name}${bookmark} ${toolType}${autoRun}${peer}${group}${hiddenGroup}`);
 		lines.push(`      ${cwd}`);
 		lines.push(`      ${id}`);
 		if (agent.liftedTo) lines.push(`      ${c('magenta', `moved to ${agent.liftedTo}`)}`);
@@ -523,6 +531,8 @@ export interface AgentDetailDisplay {
 	projectRoot: string;
 	groupId?: string;
 	groupName?: string;
+	/** The group (or its parent) is hidden from the Left Bar; null when a peer could not say. */
+	groupHidden?: boolean | null;
 	autoRunFolderPath?: string;
 	bookmarked?: boolean;
 	// Editable per-agent settings (the Edit Agent modal fields). `null` = unset.
@@ -596,7 +606,8 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	}
 
 	if (agent.groupName) {
-		lines.push(`  ${c('white', 'Group:')}      ${agent.groupName}`);
+		const hiddenGroup = agent.groupHidden ? c('yellow', ' [hidden group]') : '';
+		lines.push(`  ${c('white', 'Group:')}      ${agent.groupName}${hiddenGroup}`);
 	}
 
 	if (agent.autoRunFolderPath) {

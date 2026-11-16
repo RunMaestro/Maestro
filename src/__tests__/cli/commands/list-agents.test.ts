@@ -90,6 +90,7 @@ describe('list-agents command', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(readGroups).mockReturnValue([]);
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi
@@ -552,6 +553,71 @@ describe('list-agents command', () => {
 		});
 	});
 
+	describe('group name and hidden state', () => {
+		const groups: Group[] = [
+			{ id: 'g-vis', name: 'Active', emoji: '', collapsed: false },
+			{ id: 'g-hid', name: 'Retired', emoji: '', collapsed: false, hidden: true },
+			// Not hidden itself, but its parent is: the Left Bar parks it too.
+			{ id: 'g-child', name: 'Old Child', emoji: '', collapsed: false, parentGroupId: 'g-hid' },
+		];
+		const sessions = () => [
+			mockSession({ id: 'a-vis', groupId: 'g-vis' }),
+			mockSession({ id: 'a-hid', groupId: 'g-hid' }),
+			mockSession({ id: 'a-child', groupId: 'g-child' }),
+			mockSession({ id: 'a-none' }),
+			mockSession({ id: 'a-gone', groupId: 'deleted-group' }),
+		];
+
+		beforeEach(() => {
+			vi.mocked(readGroups).mockReturnValue(groups);
+			vi.mocked(readSessions).mockReturnValue(sessions());
+		});
+
+		it('adds groupName and groupHidden to every JSON row', () => {
+			listAgents({ json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			const byId = Object.fromEntries(parsed.map((row: any) => [row.id, row]));
+			expect(byId['a-vis']).toMatchObject({ groupName: 'Active', groupHidden: false });
+			expect(byId['a-hid']).toMatchObject({ groupName: 'Retired', groupHidden: true });
+			expect(byId['a-child']).toMatchObject({ groupName: 'Old Child', groupHidden: true });
+			expect(byId['a-none']).toMatchObject({ groupName: null, groupHidden: false });
+			expect(byId['a-gone']).toMatchObject({ groupName: null, groupHidden: false });
+		});
+
+		it('passes the group name and hidden flag to the text formatter', () => {
+			listAgents({});
+
+			const rows = vi.mocked(formatAgents).mock.calls[0][0];
+			expect(rows.find((r) => r.id === 'a-hid')).toMatchObject({
+				groupName: 'Retired',
+				groupHidden: true,
+			});
+			const visible = rows.find((r) => r.id === 'a-vis');
+			expect(visible).toMatchObject({ groupName: 'Active' });
+			expect(visible).not.toHaveProperty('groupHidden');
+		});
+
+		it('--visible-only keeps ungrouped agents and agents in visible groups', () => {
+			listAgents({ json: true, visibleOnly: true });
+
+			const ids = JSON.parse(consoleSpy.mock.calls[0][0]).map((row: any) => row.id);
+			expect(ids).toEqual(['a-vis', 'a-none', 'a-gone']);
+		});
+
+		it('--hidden-only keeps agents in a hidden group or under a hidden parent', () => {
+			listAgents({ json: true, hiddenOnly: true });
+
+			const ids = JSON.parse(consoleSpy.mock.calls[0][0]).map((row: any) => row.id);
+			expect(ids).toEqual(['a-hid', 'a-child']);
+		});
+
+		it('refuses --visible-only together with --hidden-only', () => {
+			expect(() => listAgents({ visibleOnly: true, hiddenOnly: true })).toThrow('process.exit(2)');
+			expect(readSessions).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('Federation peers', () => {
 		const hostAgent = (id: string, name: string) => ({
 			id,
@@ -561,10 +627,46 @@ describe('list-agents command', () => {
 			worktreeConfig: { basePath: '/srv/wt' },
 		});
 
-		/** A connection whose `release()` is observable. */
-		const connection = (peer: string) => ({
+		/** A connection whose `release()` is observable; its host lists `groups`. */
+		const connection = (peer: string, groups: unknown = { ok: true, value: [] }) => ({
 			peer,
+			client: { groups: { list: vi.fn(async () => groups) } },
 			release: vi.fn(async () => {}),
+		});
+
+		it("labels a peer's agents with the host's group name and hidden state", async () => {
+			vi.mocked(connectPeer).mockResolvedValue(
+				connection('build-box', {
+					ok: true,
+					value: [{ id: 'hg', name: 'Parked', hidden: true }],
+				}) as never
+			);
+			vi.mocked(listHostAgents).mockResolvedValue([
+				{ ...hostAgent('h1', 'Remote One'), groupId: 'hg' },
+				hostAgent('h2', 'Remote Two'),
+			] as never);
+
+			await listAgents({ peer: 'build-box', json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed[0]).toMatchObject({ groupName: 'Parked', groupHidden: true });
+			expect(parsed[1]).toMatchObject({ groupName: null, groupHidden: false });
+		});
+
+		it('reports null group fields when the host cannot list its groups, and --visible-only drops them', async () => {
+			vi.mocked(connectPeer).mockResolvedValue(
+				connection('build-box', { ok: false, error: { code: 'timeout', message: 'slow' } }) as never
+			);
+			vi.mocked(listHostAgents).mockResolvedValue([hostAgent('h1', 'Remote One')] as never);
+
+			await listAgents({ peer: 'build-box', json: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])[0]).toMatchObject({
+				groupName: null,
+				groupHidden: null,
+			});
+
+			await listAgents({ peer: 'build-box', json: true, visibleOnly: true });
+			expect(JSON.parse(consoleSpy.mock.calls[1][0])).toEqual([]);
 		});
 
 		it('lists one peer with --peer, tags each JSON row, and releases the connection', async () => {
@@ -586,6 +688,8 @@ describe('list-agents command', () => {
 					cwd: '/srv/h1',
 					worktreeBasePath: '/srv/wt',
 					bookmarked: false,
+					groupName: null,
+					groupHidden: false,
 					sessionSshRemoteConfig: null,
 					liftedTo: null,
 					peer: 'build-box',
@@ -653,7 +757,7 @@ describe('list-agents command', () => {
 				maxInFlight = Math.max(maxInFlight, inFlight);
 				await new Promise((resolve) => setTimeout(resolve, 5));
 				return {
-					peer,
+					...connection(peer),
 					release: vi.fn(async () => {
 						inFlight--;
 					}),
