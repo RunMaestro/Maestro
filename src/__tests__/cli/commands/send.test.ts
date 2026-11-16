@@ -1172,6 +1172,22 @@ describe('send command', () => {
 			errSpy.mockRestore();
 		});
 
+		it("runs the turn and its synopsis on the agent's own custom binary", async () => {
+			ready({ customPath: '/agent/bin/claude' });
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({ success: true, response: 'Done', agentSessionId: 'session-1' })
+				.mockResolvedValueOnce({ success: true, response: '**Summary:** Did it.' });
+
+			await send('agent-abc', 'Do it', {});
+
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({
+				sessionCustomPath: '/agent/bin/claude',
+			});
+			expect(vi.mocked(spawnAgent).mock.calls[1][4]).toMatchObject({
+				sessionCustomPath: '/agent/bin/claude',
+			});
+		});
+
 		it('keeps the agent model for the synopsis when the cheap tier would shrink the context window', async () => {
 			ready({ customModel: 'opus[1m]' });
 			vi.mocked(spawnAgent)

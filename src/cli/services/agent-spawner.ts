@@ -52,6 +52,7 @@ import { replaceUsageStats } from '../../shared/maestro-lib/streaming/usage-tota
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './turn-result';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
+import { resolveCueAgentBinary } from '../../main/cue/cue-agent-binary';
 import { generateUUID } from '../../shared/uuid';
 import type { QuerySource } from '../../shared/querySource';
 import { sanitizeSessionId } from '../../shared/history';
@@ -185,6 +186,7 @@ type SpawnOverrides = Pick<
 	| 'globalEnvVars'
 	| 'agentConfigValues'
 	| 'agentCommand'
+	| 'sessionCustomPath'
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
@@ -804,6 +806,25 @@ export async function resolveLocalAgentCommand(toolType: ToolType): Promise<stri
 	return detection.available && detection.path ? detection.path : getAgentCommand(toolType);
 }
 
+/**
+ * The local binary for an agent that names its OWN custom path: that path when
+ * it is executable, else the provider's path or detection (`resolveLocalAgentCommand`),
+ * with a warning. The same order a desktop tab spawn and a Cue run use.
+ */
+async function resolveSessionAgentCommand(
+	toolType: ToolType,
+	sessionCustomPath: string
+): Promise<string> {
+	const fallback = () => resolveLocalAgentCommand(toolType);
+	const resolved = await resolveCueAgentBinary({
+		sessionCustomPath,
+		sshEnabled: false,
+		getDetectedPath: fallback,
+		onWarn: (message) => console.error(`Warning: ${message}`),
+	});
+	return resolved ?? (await fallback());
+}
+
 // Backward-compatible wrappers
 export const getClaudeCommand = () => getAgentCommand('claude-code');
 export const getCodexCommand = () => getAgentCommand('codex');
@@ -970,7 +991,8 @@ async function spawnClaudeAgent(
 		return spawnFailureResult(planResult.error);
 	}
 	const plan = planResult.plan;
-	const agentCustomPath = getAgentCustomPath('claude-code');
+	// maestro-p drives the binary the turn runs: the agent's own when it has one.
+	const agentCustomPath = overrides.sessionCustomPath ?? getAgentCustomPath('claude-code');
 
 	// Resolve the per-agent Claude token source through the SAME shared decision
 	// core the desktop uses, so CLI Auto Run / batch / `send` honor API vs TUI vs
@@ -1930,6 +1952,13 @@ export interface SpawnAgentOptions {
 	agentConfigValues?: Record<string, unknown>;
 	agentCommand?: string;
 	/**
+	 * The agent's OWN custom binary (`SessionInfo.customPath`). Wins over the
+	 * provider-level path, the same order a desktop tab spawn and a Cue run use
+	 * (`resolveCueAgentBinary`). Local runs only: an invalid path warns and falls
+	 * back. Ignored when `agentCommand` is set.
+	 */
+	sessionCustomPath?: string;
+	/**
 	 * Secret names the agent declared (`SessionInfo.requiredSecrets`, from bundle
 	 * import). Resolved from systemd credentials, `/run/secrets` or the
 	 * environment and put in this agent's environment only.
@@ -2106,6 +2135,14 @@ async function spawnAgentOnce(
 ): Promise<AgentResult> {
 	if (options?.signal?.aborted) return interruptedResult();
 
+	// The agent's own binary, resolved once for every local transport below. Over
+	// SSH the remote resolves its own binary, so the local path is not used there.
+	const sessionAgentCommand =
+		!options?.agentCommand && options?.sessionCustomPath && !options.sshRemoteConfig?.enabled
+			? await resolveSessionAgentCommand(toolType, options.sessionCustomPath)
+			: undefined;
+	const agentCommand = options?.agentCommand ?? sessionAgentCommand;
+
 	if (
 		options &&
 		resolveHarnessControlMode({ toolType, harnessControlMode: options.harnessControlMode }) ===
@@ -2114,7 +2151,7 @@ async function spawnAgentOnce(
 		if (options.sshRemoteConfig?.enabled) {
 			return spawnFailureResult('Native CLI control is local-only; use the current SSH transport');
 		}
-		const command = options.agentCommand ?? (await resolveLocalAgentCommand(toolType));
+		const command = agentCommand ?? (await resolveLocalAgentCommand(toolType));
 		return spawnNativeSdkAgent(toolType, cwd, prompt, agentSessionId, options, command);
 	}
 	const readOnly = options?.readOnlyMode;
@@ -2136,7 +2173,8 @@ async function spawnAgentOnce(
 		requiredSecrets: options?.requiredSecrets,
 		globalEnvVars: options?.globalEnvVars,
 		agentConfigValues: options?.agentConfigValues,
-		agentCommand: options?.agentCommand,
+		agentCommand,
+		sessionCustomPath: sessionAgentCommand,
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,

@@ -580,6 +580,8 @@ export async function send(
 					customModel: agent.customModel,
 					customEffort: agent.customEffort,
 					customArgs: agent.customArgs,
+					// The agent's own binary, as a desktop tab spawn uses it.
+					sessionCustomPath: agent.customPath,
 					additionalDirectories: agent.additionalDirectories,
 					customEnvVars: agent.customEnvVars,
 					requiredSecrets: agent.requiredSecrets,
