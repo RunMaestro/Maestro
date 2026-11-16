@@ -404,6 +404,37 @@ export interface TurnInput {
 	 * A host that does not know the field ignores it.
 	 */
 	originHost?: string;
+	/**
+	 * The sender's own tab choices (model, effort, read-only, save to History) for this one turn.
+	 * They ride on the message rather than on the host tab, because on a shared agent each person
+	 * keeps their own; a queued message keeps them until it runs. A host that does not know the
+	 * field ignores it, and the turn runs on the host tab's settings.
+	 */
+	overrides?: TurnOverrides;
+}
+
+/** One sender's own tab choices, applied to this one turn only; never stored on the host tab. */
+export interface TurnOverrides {
+	model?: string;
+	effort?: string;
+	readOnly?: boolean;
+	saveToHistory?: boolean;
+}
+
+/**
+ * The overrides a client sent, keeping only the well-formed fields: a non-empty model or effort
+ * (trimmed) and boolean flags. Undefined when nothing is left, so an empty object is never sent
+ * or stored.
+ */
+export function normalizeTurnOverrides(value: unknown): TurnOverrides | undefined {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+	const raw = value as Record<string, unknown>;
+	const overrides: TurnOverrides = {};
+	if (typeof raw.model === 'string' && raw.model.trim()) overrides.model = raw.model.trim();
+	if (typeof raw.effort === 'string' && raw.effort.trim()) overrides.effort = raw.effort.trim();
+	if (typeof raw.readOnly === 'boolean') overrides.readOnly = raw.readOnly;
+	if (typeof raw.saveToHistory === 'boolean') overrides.saveToHistory = raw.saveToHistory;
+	return Object.keys(overrides).length > 0 ? overrides : undefined;
 }
 
 /** A hostname a client sent, as a History label: trimmed, printable, at most 253 characters. */

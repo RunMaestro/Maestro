@@ -1,19 +1,24 @@
 /**
- * Federation settings sync: keep a lifted agent's local pointer and its host agent the same.
+ * Federation settings sync: the host owns a hosted agent's settings, and every conductor follows.
  *
- * After a lift the host owns the agent, but its local pointer keeps every setting a person can
- * still change here: Edit Agent, the composer chips, the Left Bar bookmark, `maestro-cli
- * update-agent`. This module compares the two records field by field against the last state both
+ * A hosted agent's settings live on its host. A conductor holds two kinds of local copy: the
+ * pointer a lift left behind (a Session, still edited by Edit Agent, the bookmark, and `maestro-cli
+ * update-agent`), and the pending edits made on a mirrored agent while its peer was down. This
+ * module compares such a copy with the host's record field by field, against the last value both
  * sides agreed on (the baseline), a three-way merge:
  *
  * - equal on both sides: agreed, nothing to do.
- * - only the local side moved off the baseline: send it to the host (`update-agent` /
- *   `update-tab` / `rename-tab` / `star-tab`).
- * - only the host side moved: write the host's value onto the local pointer.
- * - both moved: the local value wins, since the person is changing it here.
+ * - only the host moved off the baseline: take the host's value (another conductor changed it).
+ * - only this side moved: send it to the host, which broadcasts it to every conductor.
+ * - both moved, or the field was never compared and the two differ: a conflict. Nothing moves
+ *   until the person picks the host's value, theirs, or a merge (`resolutions`).
  *
- * A field never compared before has the host's value as its baseline, so a local difference is
- * sent (a setting changed here before this sync existed reaches the host) and nothing is pulled.
+ * The host is the default: a conflict's suggested pick is the host's value, and a value this side
+ * cannot express (an unset the host would read as its own default) never overrides it.
+ *
+ * Shared is the agent's own setting. A tab's model, effort, read-only, save to History, thinking,
+ * Enter to send, and star are each conductor's own: they ride along on that conductor's messages
+ * (`TurnOverrides`) or stay on screen, so the only tab field that syncs is its name.
  *
  * What crosses follows the lift (`planAgentLift()`): the provider's working directory on the
  * remote (`liftRemoteCwd()`), a playbook folder only inside it (`liftedAutoRunFolder()`), and env
@@ -28,9 +33,8 @@
 
 import { isSecretEnvKey, isBlankEnvKey, isBlankEnvValue } from '../../agentEnvironment';
 import { isCodexTransport } from '../../codexTransport';
-import { asThinkingMode } from '../../types';
 import type { PeerAgentAction } from '../client/peer-actions';
-import type { AgentPatch, AgentPatchField, TabPatch } from '../client/types';
+import type { AgentPatch, AgentPatchField } from '../client/types';
 import { isHarnessControlMode } from '../providers/native-control';
 import { visibleAiTabsOf } from '../store/read-stores';
 import type { AgentRecord, AITabRecord } from '../store/records';
@@ -39,10 +43,13 @@ import { liftedAutoRunFolder, liftRemoteCwd } from './lift-plan';
 /** A setting's value, normalized so "unset" has one spelling on both sides. */
 export type SyncValue = string | number | boolean | undefined;
 
+/** A value as JSON stores it: unset is `null`. */
+export type StoredSyncValue = string | number | boolean | null;
+
 /** The last state both sides agreed on, per field id. Stored as JSON, so unset is `null`. */
 export interface LiftSyncBaseline {
 	/** A missing id was never compared; `null` means both sides agreed it is unset. */
-	values: Record<string, string | number | boolean | null>;
+	values: Record<string, StoredSyncValue>;
 	/** The env var names this agent holds that the sync follows; one that leaves was removed here. */
 	envKeys: string[];
 }
@@ -56,11 +63,32 @@ export interface LiftSyncEcho {
 	until: number;
 }
 
+/** How the person settled one conflict. */
+export type LiftSyncResolution =
+	| { take: 'host' }
+	| { take: 'local' }
+	/** A value of their own (a merge they approved). Written here and sent to the host. */
+	| { take: 'value'; value: SyncValue };
+
+/** One field the two sides disagree on, waiting for the person. */
+export interface LiftSyncConflict {
+	id: string;
+	/** What a person reads: "Nudge message", "Env var FOO". */
+	label: string;
+	local: SyncValue;
+	host: SyncValue;
+	/** Free text two people may both have extended, so a merge of the two makes sense. */
+	mergeable: boolean;
+	/** True when the field was never compared before (the first sync of this agent). */
+	firstSync: boolean;
+}
+
 export interface LiftSyncInput {
 	local: AgentRecord;
 	host: AgentRecord;
 	baseline?: LiftSyncBaseline;
 	awaiting?: Readonly<Record<string, LiftSyncEcho>>;
+	resolutions?: Readonly<Record<string, LiftSyncResolution>>;
 	now: number;
 }
 
@@ -72,7 +100,7 @@ export interface LiftSyncPush {
 	fieldIds?: Partial<Record<AgentPatchField, string[]>>;
 }
 
-/** The host's values to write onto the local pointer. */
+/** The values to write onto the local copy. */
 export interface LiftSyncPull {
 	agent: Record<string, SyncValue>;
 	env: Record<string, string | undefined>;
@@ -84,7 +112,8 @@ export interface LiftSyncPlan {
 	pull: LiftSyncPull;
 	/** True when `pull` changes anything. */
 	pulls: boolean;
-	/** The baseline after this plan, every pushed field still at its old agreed value. */
+	conflicts: LiftSyncConflict[];
+	/** The baseline after this plan, every pushed or conflicting field still at its old value. */
 	baseline: LiftSyncBaseline;
 	/** Each pushed field's local value (what the host should end at) and the host's value now. */
 	pushed: Record<string, { local: SyncValue; host: SyncValue }>;
@@ -111,6 +140,8 @@ interface AgentFieldSpec {
 	key: string;
 	/** The patch field that carries it. */
 	field: AgentPatchField;
+	label: string;
+	mergeable?: boolean;
 	read(record: AgentRecord): SyncValue;
 	/** The patch for a value, or undefined when that value cannot be sent. */
 	toPatch(value: SyncValue): AgentPatch | undefined;
@@ -120,11 +151,15 @@ interface AgentFieldSpec {
 function nullable(
 	key: string,
 	field: AgentPatchField,
-	read: (value: unknown) => SyncValue = str
+	label: string,
+	read: (value: unknown) => SyncValue = str,
+	mergeable = false
 ): AgentFieldSpec {
 	return {
 		key,
 		field,
+		label,
+		mergeable,
 		read: (record) => read(record[key]),
 		toPatch: (value) => ({ [field]: value ?? null }) as AgentPatch,
 	};
@@ -134,127 +169,114 @@ const AGENT_FIELDS: readonly AgentFieldSpec[] = [
 	{
 		key: 'name',
 		field: 'name',
+		label: 'Name',
 		read: (record) => str(record.name),
 		toPatch: (value) => (typeof value === 'string' ? { name: value } : undefined),
 	},
 	{
 		key: 'toolType',
 		field: 'provider',
+		label: 'Provider',
 		read: (record) => str(record.toolType),
 		toPatch: (value) => (typeof value === 'string' ? { provider: value } : undefined),
 	},
 	{
 		key: 'cwd',
 		field: 'cwd',
+		label: 'Working directory',
 		read: (record) => liftRemoteCwd(record) || undefined,
 		toPatch: (value) => (typeof value === 'string' ? { cwd: value } : undefined),
 	},
 	{
 		key: 'autoRunFolderPath',
 		field: 'autoRunFolderPath',
+		label: 'Auto Run folder',
 		read: (record) => liftedAutoRunFolder(record, liftRemoteCwd(record)),
 		// An empty folder is the host's default, `.maestro/playbooks` under the working directory.
 		toPatch: (value) => ({ autoRunFolderPath: typeof value === 'string' ? value : '' }),
 	},
-	nullable('customModel', 'model'),
-	nullable('customEffort', 'effort'),
-	nullable('customContextWindow', 'contextWindow', (value) =>
+	nullable('customModel', 'model', 'Model'),
+	nullable('customEffort', 'effort', 'Effort'),
+	nullable('customContextWindow', 'contextWindow', 'Context window', (value) =>
 		typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 	),
-	nullable('contextWindowSource', 'contextWindowSource'),
-	nullable('customPath', 'customPath'),
-	nullable('customArgs', 'customArgs'),
-	nullable('nudgeMessage', 'nudgeMessage'),
-	nullable('newSessionMessage', 'newSessionMessage'),
+	nullable('contextWindowSource', 'contextWindowSource', 'Context window source'),
+	nullable('customPath', 'customPath', 'Custom path'),
+	nullable('customArgs', 'customArgs', 'Custom arguments', str, true),
+	nullable('nudgeMessage', 'nudgeMessage', 'Nudge message', str, true),
+	nullable('newSessionMessage', 'newSessionMessage', 'New session message', str, true),
 	{
 		key: 'bookmarked',
 		field: 'bookmarked',
+		label: 'Bookmark',
 		read: (record) => flag(record.bookmarked),
 		toPatch: (value) => ({ bookmarked: value === true }),
 	},
-	nullable('enableMaestroP', 'enableMaestroP', bool),
-	nullable('maestroPMode', 'maestroPMode', (value) =>
+	nullable('enableMaestroP', 'enableMaestroP', 'Token source (maestro-p)', bool),
+	nullable('maestroPMode', 'maestroPMode', 'Token source mode', (value) =>
 		value === 'interactive' || value === 'dynamic' ? value : undefined
 	),
 	// `exec` is the default and is stored unset, so it reads as unset on both sides.
-	nullable('codexTransport', 'codexTransport', (value) =>
+	nullable('codexTransport', 'codexTransport', 'Codex transport', (value) =>
 		isCodexTransport(value) && value !== 'exec' ? value : undefined
 	),
-	nullable('harnessControlMode', 'harnessControlMode', (value) =>
+	nullable('harnessControlMode', 'harnessControlMode', 'Harness control mode', (value) =>
 		isHarnessControlMode(value) && value !== 'current' ? value : undefined
 	),
 ];
 
-/** What one tab field sends: a rename, a star, or a `tabs.update` patch. */
-type TabPushPart = { name: string } | { starred: boolean } | { patch: TabPatch };
+const AGENT_FIELD_BY_KEY = new Map(AGENT_FIELDS.map((spec) => [spec.key, spec]));
 
-interface TabFieldSpec {
-	key: string;
-	read(tab: AITabRecord): SyncValue;
-	toPush(value: SyncValue): TabPushPart | undefined;
+/** The settings an import cannot carry; a lift sends them right after it (`liftFollowUpPatch`). */
+const IMPORT_GAP_KEYS: ReadonlySet<string> = new Set([
+	'bookmarked',
+	'enableMaestroP',
+	'maestroPMode',
+	'codexTransport',
+	'harnessControlMode',
+	'contextWindowSource',
+]);
+
+/**
+ * The part of an agent's settings `agents.import` does not carry, as the update a lift sends right
+ * after the import, so the hosted copy starts complete and the first sync finds nothing to ask.
+ * Undefined when the agent sets none of them.
+ */
+export function liftFollowUpPatch(agent: AgentRecord): AgentPatch | undefined {
+	let patch: AgentPatch = {};
+	for (const spec of AGENT_FIELDS) {
+		if (!IMPORT_GAP_KEYS.has(spec.key)) continue;
+		const value = spec.read(agent);
+		if (value === undefined) continue;
+		const part = spec.toPatch(value);
+		if (part) patch = { ...patch, ...part };
+	}
+	return Object.keys(patch).length > 0 ? patch : undefined;
 }
 
-const TAB_FIELDS: readonly TabFieldSpec[] = [
-	{
-		key: 'name',
-		read: (tab) => str(tab.name),
-		// An empty name clears it, so the tab shows its session id label again.
-		toPush: (value) => ({ name: typeof value === 'string' ? value : '' }),
-	},
-	{
-		key: 'starred',
-		read: (tab) => flag(tab.starred),
-		toPush: (value) => ({ starred: value === true }),
-	},
-	{
-		key: 'customModel',
-		read: (tab) => str(tab.customModel),
-		toPush: (value) => ({ patch: { model: typeof value === 'string' ? value : null } }),
-	},
-	{
-		key: 'customEffort',
-		read: (tab) => str(tab.customEffort),
-		toPush: (value) => ({ patch: { effort: typeof value === 'string' ? value : null } }),
-	},
-	{
-		key: 'readOnlyMode',
-		read: (tab) => flag(tab.readOnlyMode),
-		toPush: (value) => ({ patch: { readOnly: value === true } }),
-	},
-	{
-		key: 'showThinking',
-		read: (tab) => {
-			const mode = asThinkingMode(tab.showThinking);
-			return mode && mode !== 'off' ? mode : undefined;
-		},
-		toPush: (value) => ({ patch: { thinking: asThinkingMode(value) ?? 'off' } }),
-	},
-	{
-		key: 'saveToHistory',
-		read: (tab) => bool(tab.saveToHistory),
-		// Unset takes the host's default, which no patch can ask for: the host's value stands.
-		toPush: (value) =>
-			typeof value === 'boolean' ? { patch: { saveToHistory: value } } : undefined,
-	},
-	{
-		key: 'enterToSend',
-		read: (tab) => bool(tab.enterToSend),
-		toPush: (value) => ({ patch: { enterToSend: typeof value === 'boolean' ? value : null } }),
-	},
-];
+/** The only tab field all conductors share; the rest are each conductor's own. */
+const TAB_NAME_KEY = 'name';
 
 // ---------------------------------------------------------------------------
-// The merge
+// Field ids
 // ---------------------------------------------------------------------------
 
 const ENV_PREFIX = 'env:';
+const TAB_PREFIX = 'tab:';
 
 function envId(key: string): string {
 	return `${ENV_PREFIX}${key}`;
 }
 
-function tabId(tab: string, key: string): string {
-	return `tab:${tab}:${key}`;
+function tabFieldId(tab: string, key: string): string {
+	return `${TAB_PREFIX}${tab}:${key}`;
+}
+
+/** What a person reads for a field id, in a conflict list or `maestro-cli federation conflicts`. */
+export function liftSyncFieldLabel(id: string): string {
+	if (id.startsWith(ENV_PREFIX)) return `Env var ${id.slice(ENV_PREFIX.length)}`;
+	if (id.startsWith(TAB_PREFIX)) return 'Tab name';
+	return AGENT_FIELD_BY_KEY.get(id)?.label ?? id;
 }
 
 /** The env vars a record sets, blank names and values dropped (blank means unset). */
@@ -269,44 +291,136 @@ function envOf(record: AgentRecord): Record<string, string> {
 	return env;
 }
 
-function fromStored(value: string | number | boolean | null | undefined): SyncValue {
+export function fromStored(value: StoredSyncValue | undefined): SyncValue {
 	return value === null ? undefined : value;
 }
 
-function toStored(value: SyncValue): string | number | boolean | null {
+export function toStored(value: SyncValue): StoredSyncValue {
 	return value === undefined ? null : value;
 }
 
-type Decision = 'same' | 'push' | 'pull' | 'wait';
+/**
+ * Every shared agent setting of a record by field id (`env:NAME` for env vars), normalized. A
+ * caller that edits a hosted agent compares the edited record with the host's through this.
+ */
+export function liftSyncAgentValues(record: AgentRecord): Record<string, SyncValue> {
+	const values: Record<string, SyncValue> = {};
+	for (const spec of AGENT_FIELDS) values[spec.key] = spec.read(record);
+	for (const [key, value] of Object.entries(envOf(record))) values[envId(key)] = value;
+	return values;
+}
 
-/** Plan the sync of one lifted agent. */
+/**
+ * The host's record with some field values replaced: the local copy a set of pending edits on a
+ * mirrored agent stands for. Unset values remove the field.
+ */
+export function overlaySyncValues(
+	host: AgentRecord,
+	values: Readonly<Record<string, StoredSyncValue>>
+): AgentRecord {
+	const agent: Record<string, SyncValue> = {};
+	const env: Record<string, string | undefined> = {};
+	for (const [id, stored] of Object.entries(values)) {
+		const value = fromStored(stored);
+		if (id.startsWith(ENV_PREFIX)) {
+			env[id.slice(ENV_PREFIX.length)] = typeof value === 'string' ? value : undefined;
+		} else if (AGENT_FIELD_BY_KEY.has(id)) {
+			agent[id] = value;
+		}
+	}
+	return applyLiftSyncPull(host, { agent, env, tabs: {} });
+}
+
+// ---------------------------------------------------------------------------
+// The merge
+// ---------------------------------------------------------------------------
+
+type Decision = 'same' | 'push' | 'pull' | 'wait' | 'conflict';
+
+/** Plan the sync of one hosted agent's local copy. */
 export function planLiftedSettingsSync(input: LiftSyncInput): LiftSyncPlan {
 	const { local, host, now } = input;
 	const prior = input.baseline;
 	const awaiting = input.awaiting ?? {};
+	const resolutions = input.resolutions ?? {};
 	const values: LiftSyncBaseline['values'] = { ...(prior?.values ?? {}) };
 	const pushed: LiftSyncPlan['pushed'] = {};
 	const pull: LiftSyncPull = { agent: {}, env: {}, tabs: {} };
+	const conflicts: LiftSyncConflict[] = [];
 	let pulls = false;
 
-	/** Decide one field and record its baseline; `canPush` false makes a local edit a pull. */
-	const decide = (id: string, l: SyncValue, r: SyncValue, canPush: boolean): Decision => {
-		if (l === r) {
+	/**
+	 * Decide one field and record its baseline. `canPush` false: this side's value cannot be sent,
+	 * so the host's stands. Answers the value to push or pull (a resolution may supply its own).
+	 */
+	const decide = (
+		id: string,
+		l: SyncValue,
+		r: SyncValue,
+		canPush: (value: SyncValue) => boolean,
+		mergeable: boolean
+	): { decision: Decision; value: SyncValue } => {
+		const resolution = resolutions[id];
+		if (l === r && !(resolution?.take === 'value' && resolution.value !== l)) {
 			values[id] = toStored(l);
-			return 'same';
+			return { decision: 'same', value: l };
+		}
+		const known = prior !== undefined && id in prior.values;
+		if (resolution) {
+			if (resolution.take === 'host') {
+				values[id] = toStored(r);
+				pulls = true;
+				return { decision: 'pull', value: r };
+			}
+			const chosen = resolution.take === 'local' ? l : resolution.value;
+			if (!canPush(chosen)) {
+				values[id] = toStored(r);
+				pulls = true;
+				return { decision: 'pull', value: r };
+			}
+			if (known) values[id] = prior.values[id];
+			else delete values[id];
+			pushed[id] = { local: chosen, host: r };
+			if (chosen !== l) {
+				// A merged value is written here as well, so this copy shows what was sent.
+				pulls = true;
+			}
+			return { decision: 'push', value: chosen };
 		}
 		const echo = awaiting[id];
-		if (echo && now < echo.until && r === echo.before) return 'wait';
-		const known = prior !== undefined && id in prior.values;
-		const b = known ? fromStored(prior.values[id]) : r;
-		values[id] = toStored(b);
-		if (l !== b && canPush) {
+		if (echo && now < echo.until && r === echo.before) return { decision: 'wait', value: l };
+		if (!known) {
+			conflicts.push({
+				id,
+				label: liftSyncFieldLabel(id),
+				local: l,
+				host: r,
+				mergeable,
+				firstSync: true,
+			});
+			return { decision: 'conflict', value: l };
+		}
+		const b = fromStored(prior.values[id]);
+		const localMoved = l !== b;
+		const hostMoved = r !== b;
+		if (localMoved && hostMoved) {
+			conflicts.push({
+				id,
+				label: liftSyncFieldLabel(id),
+				local: l,
+				host: r,
+				mergeable,
+				firstSync: false,
+			});
+			return { decision: 'conflict', value: l };
+		}
+		if (localMoved && canPush(l)) {
 			pushed[id] = { local: l, host: r };
-			return 'push';
+			return { decision: 'push', value: l };
 		}
 		values[id] = toStored(r);
 		pulls = true;
-		return 'pull';
+		return { decision: 'pull', value: r };
 	};
 
 	const pushes: LiftSyncPush[] = [];
@@ -318,14 +432,22 @@ export function planLiftedSettingsSync(input: LiftSyncInput): LiftSyncPlan {
 	for (const spec of AGENT_FIELDS) {
 		const l = spec.read(local);
 		const r = spec.read(host);
-		const patch = l === r ? undefined : spec.toPatch(l);
-		const decision = decide(spec.key, l, r, patch !== undefined);
-		if (decision === 'push' && patch) {
+		const { decision, value } = decide(
+			spec.key,
+			l,
+			r,
+			(candidate) => spec.toPatch(candidate) !== undefined,
+			spec.mergeable === true
+		);
+		if (decision === 'push') {
+			const patch = spec.toPatch(value);
+			if (!patch) continue;
 			agentPatch = { ...agentPatch, ...patch };
 			agentIds.push(spec.key);
 			fieldIds[spec.field] = [...(fieldIds[spec.field] ?? []), spec.key];
+			if (value !== l) pull.agent[spec.key] = value;
 		} else if (decision === 'pull') {
-			pull.agent[spec.key] = r;
+			pull.agent[spec.key] = value;
 		}
 	}
 
@@ -338,13 +460,19 @@ export function planLiftedSettingsSync(input: LiftSyncInput): LiftSyncPlan {
 	for (const key of [...scope].sort()) {
 		if (isSecretEnvKey(key) && !(key in hostEnv)) continue;
 		const id = envId(key);
-		const decision = decide(id, localEnv[key], hostEnv[key], true);
-		if (decision === 'push') envChanges[key] = localEnv[key];
-		else if (decision === 'pull') pull.env[key] = hostEnv[key];
+		const { decision, value } = decide(id, localEnv[key], hostEnv[key], () => true, false);
+		let after: SyncValue = localEnv[key];
+		if (decision === 'push') {
+			envChanges[key] = typeof value === 'string' ? value : undefined;
+			if (value !== localEnv[key]) pull.env[key] = envChanges[key];
+		} else if (decision === 'pull') {
+			pull.env[key] = typeof value === 'string' ? value : undefined;
+			after = value;
+		}
 		const keepsKey =
-			decision === 'push' || decision === 'wait'
+			decision === 'push' || decision === 'wait' || decision === 'conflict'
 				? true
-				: (decision === 'pull' ? hostEnv[key] : localEnv[key]) !== undefined;
+				: after !== undefined;
 		if (keepsKey) envKeys.push(key);
 	}
 	const envChangeKeys = Object.keys(envChanges);
@@ -371,55 +499,37 @@ export function planLiftedSettingsSync(input: LiftSyncInput): LiftSyncPlan {
 		pushes.push({ action: { kind: 'update-agent', patch: agentPatch }, ids: agentIds, fieldIds });
 	}
 
-	// -- tabs both sides hold --------------------------------------------------
+	// -- tab names, for tabs both sides hold -----------------------------------
 	const hostTabs = new Map(visibleAiTabsOf(host).map((tab) => [tab.id, tab]));
 	for (const localTab of visibleAiTabsOf(local)) {
 		const hostTab = hostTabs.get(localTab.id);
 		if (!hostTab) continue;
-		let name: { value: string; id: string } | undefined;
-		let starred: { value: boolean; id: string } | undefined;
-		let patch: TabPatch = {};
-		const patchIds: string[] = [];
-		for (const spec of TAB_FIELDS) {
-			const id = tabId(localTab.id, spec.key);
-			const l = spec.read(localTab);
-			const r = spec.read(hostTab);
-			const part = l === r ? undefined : spec.toPush(l);
-			const decision = decide(id, l, r, part !== undefined);
-			if (decision === 'push' && part) {
-				if ('name' in part) name = { value: part.name, id };
-				else if ('starred' in part) starred = { value: part.starred, id };
-				else {
-					patch = { ...patch, ...part.patch };
-					patchIds.push(id);
-				}
-			} else if (decision === 'pull') {
-				(pull.tabs[localTab.id] ??= {})[spec.key] = r;
-			}
-		}
-		if (name) {
+		const id = tabFieldId(localTab.id, TAB_NAME_KEY);
+		const l = str(localTab.name);
+		const r = str(hostTab.name);
+		const { decision, value } = decide(id, l, r, () => true, false);
+		if (decision === 'push') {
+			// An empty name clears it, so the tab shows its session id label again.
 			pushes.push({
-				action: { kind: 'rename-tab', tabId: localTab.id, name: name.value },
-				ids: [name.id],
+				action: {
+					kind: 'rename-tab',
+					tabId: localTab.id,
+					name: typeof value === 'string' ? value : '',
+				},
+				ids: [id],
 			});
-		}
-		if (starred) {
-			pushes.push({
-				action: { kind: 'star-tab', tabId: localTab.id, starred: starred.value },
-				ids: [starred.id],
-			});
-		}
-		if (patchIds.length > 0) {
-			pushes.push({ action: { kind: 'update-tab', tabId: localTab.id, patch }, ids: patchIds });
+			if (value !== l) (pull.tabs[localTab.id] ??= {})[TAB_NAME_KEY] = value;
+		} else if (decision === 'pull') {
+			(pull.tabs[localTab.id] ??= {})[TAB_NAME_KEY] = value;
 		}
 	}
 
-	return { pushes, pull, pulls, baseline: { values, envKeys }, pushed };
+	return { pushes, pull, pulls, conflicts, baseline: { values, envKeys }, pushed };
 }
 
 /**
- * The baseline once the host settled some pushed fields: each takes its local value, so a field
- * the host refused reads as a change made there next time and the host's value comes back here.
+ * The baseline once the host settled some pushed fields: each takes its pushed value, so a field
+ * the host refused reads as a change made here next time and the host's value comes back here.
  */
 export function settleLiftSyncBaseline(
 	plan: LiftSyncPlan,
@@ -434,7 +544,7 @@ export function settleLiftSyncBaseline(
 	return { values, envKeys: baseline.envKeys };
 }
 
-/** Write the host's values onto a local agent record (the Session in the renderer). */
+/** Write values onto a local agent record (the Session in the renderer). */
 export function applyLiftSyncPull<T extends AgentRecord>(agent: T, pull: LiftSyncPull): T {
 	const next: Record<string, unknown> = { ...agent };
 	const setOrDelete = (target: Record<string, unknown>, key: string, value: unknown) => {
@@ -483,9 +593,19 @@ export function applyLiftSyncPull<T extends AgentRecord>(agent: T, pull: LiftSyn
 export function readLiftSyncBaseline(value: unknown): LiftSyncBaseline | undefined {
 	if (!value || typeof value !== 'object') return undefined;
 	const { values, envKeys } = value as Record<string, unknown>;
-	if (!values || typeof values !== 'object' || Array.isArray(values)) return undefined;
-	const clean: LiftSyncBaseline['values'] = {};
-	for (const [id, entry] of Object.entries(values as Record<string, unknown>)) {
+	const clean = readStoredSyncValues(values);
+	if (!clean) return undefined;
+	const keys = Array.isArray(envKeys)
+		? envKeys.filter((key): key is string => typeof key === 'string')
+		: [];
+	return { values: clean, envKeys: keys };
+}
+
+/** Read a stored `{ id: value }` map, or undefined when it is not one. Bad entries are dropped. */
+export function readStoredSyncValues(value: unknown): Record<string, StoredSyncValue> | undefined {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+	const clean: Record<string, StoredSyncValue> = {};
+	for (const [id, entry] of Object.entries(value as Record<string, unknown>)) {
 		if (
 			entry === null ||
 			typeof entry === 'string' ||
@@ -495,8 +615,5 @@ export function readLiftSyncBaseline(value: unknown): LiftSyncBaseline | undefin
 			clean[id] = entry;
 		}
 	}
-	const keys = Array.isArray(envKeys)
-		? envKeys.filter((key): key is string => typeof key === 'string')
-		: [];
-	return { values: clean, envKeys: keys };
+	return clean;
 }

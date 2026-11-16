@@ -1,12 +1,17 @@
 /**
- * Federation settings sync: the three-way merge of a lifted agent's local pointer and its host
- * agent, what each side's change turns into, and what never crosses.
+ * Federation settings sync: the three-way merge of a hosted agent's local copy and its host
+ * record. The host is the default: a host change is taken, a change made here is sent, and a field
+ * both sides changed (or one that differs on the first sync) waits for the person.
  */
 import { describe, expect, it } from 'vitest';
 
 import type { AgentRecord } from '../../store/records';
 import {
 	applyLiftSyncPull,
+	liftFollowUpPatch,
+	liftSyncAgentValues,
+	liftSyncFieldLabel,
+	overlaySyncValues,
 	planLiftedSettingsSync,
 	readLiftSyncBaseline,
 	settleLiftSyncBaseline,
@@ -56,6 +61,7 @@ describe('planLiftedSettingsSync', () => {
 		const plan = planLiftedSettingsSync({ local: local(), host: host(), now: 0 });
 		expect(plan.pushes).toEqual([]);
 		expect(plan.pulls).toBe(false);
+		expect(plan.conflicts).toEqual([]);
 		expect(plan.baseline.values).toMatchObject({
 			name: 'Docs',
 			cwd: '/home/me/docs',
@@ -63,16 +69,14 @@ describe('planLiftedSettingsSync', () => {
 			nudgeMessage: 'keep going',
 			customEffort: null,
 			'tab:tab-1:name': 'Main',
-			'tab:tab-1:readOnlyMode': null,
 		});
 	});
 
 	it('sends a setting changed here as one agent update, clearing with null', () => {
-		const baseline = agreed();
 		const plan = planLiftedSettingsSync({
 			local: local({ customModel: 'sonnet', nudgeMessage: undefined, customEffort: 'high' }),
 			host: host(),
-			baseline,
+			baseline: agreed(),
 			now: 0,
 		});
 		expect(plan.pushes).toEqual([
@@ -95,28 +99,15 @@ describe('planLiftedSettingsSync', () => {
 		expect(plan.pushed.customModel).toEqual({ local: 'sonnet', host: 'opus' });
 	});
 
-	it('sends a difference made before any baseline existed, and pulls nothing', () => {
-		const plan = planLiftedSettingsSync({
-			local: local({ nudgeMessage: 'new nudge' }),
-			host: host(),
-			now: 0,
-		});
-		expect(plan.pushes[0].action).toEqual({
-			kind: 'update-agent',
-			patch: { nudgeMessage: 'new nudge' },
-		});
-		expect(plan.pulls).toBe(false);
-	});
-
-	it('pulls a setting the host changed onto the pointer', () => {
-		const baseline = agreed();
+	it('takes a setting another conductor changed on the host', () => {
 		const plan = planLiftedSettingsSync({
 			local: local(),
 			host: host({ customModel: 'haiku', newSessionMessage: 'hello' }),
-			baseline,
+			baseline: agreed(),
 			now: 0,
 		});
 		expect(plan.pushes).toEqual([]);
+		expect(plan.conflicts).toEqual([]);
 		expect(plan.pull.agent).toEqual({ customModel: 'haiku', newSessionMessage: 'hello' });
 		expect(plan.baseline.values.customModel).toBe('haiku');
 		const pulled = applyLiftSyncPull(local(), plan.pull);
@@ -124,16 +115,99 @@ describe('planLiftedSettingsSync', () => {
 		expect(pulled.newSessionMessage).toBe('hello');
 	});
 
-	it('lets the local value win when both sides changed', () => {
-		const baseline = agreed();
+	it('asks the person when both sides changed the same field', () => {
 		const plan = planLiftedSettingsSync({
-			local: local({ customModel: 'sonnet' }),
-			host: host({ customModel: 'haiku' }),
-			baseline,
+			local: local({ nudgeMessage: 'mine' }),
+			host: host({ nudgeMessage: 'theirs' }),
+			baseline: agreed(),
 			now: 0,
 		});
-		expect(plan.pushes[0].action).toEqual({ kind: 'update-agent', patch: { model: 'sonnet' } });
+		expect(plan.pushes).toEqual([]);
 		expect(plan.pulls).toBe(false);
+		expect(plan.conflicts).toEqual([
+			{
+				id: 'nudgeMessage',
+				label: 'Nudge message',
+				local: 'mine',
+				host: 'theirs',
+				mergeable: true,
+				firstSync: false,
+			},
+		]);
+		// Nothing agreed moves until the person picks.
+		expect(plan.baseline.values.nudgeMessage).toBe('keep going');
+	});
+
+	it('asks the person about every difference on the first sync, and pulls nothing', () => {
+		const plan = planLiftedSettingsSync({
+			local: local({ nudgeMessage: 'stale edit', customModel: 'sonnet' }),
+			host: host(),
+			now: 0,
+		});
+		expect(plan.pushes).toEqual([]);
+		expect(plan.pulls).toBe(false);
+		expect(plan.conflicts.map((conflict) => [conflict.id, conflict.firstSync])).toEqual([
+			['customModel', true],
+			['nudgeMessage', true],
+		]);
+		expect(plan.baseline.values).not.toHaveProperty('nudgeMessage');
+	});
+
+	describe('resolutions', () => {
+		const conflicting = () => ({
+			local: local({ nudgeMessage: 'mine' }),
+			host: host({ nudgeMessage: 'theirs' }),
+			baseline: agreed(),
+			now: 0,
+		});
+
+		it('takes the host value onto this copy', () => {
+			const plan = planLiftedSettingsSync({
+				...conflicting(),
+				resolutions: { nudgeMessage: { take: 'host' } },
+			});
+			expect(plan.conflicts).toEqual([]);
+			expect(plan.pull.agent).toEqual({ nudgeMessage: 'theirs' });
+			expect(plan.baseline.values.nudgeMessage).toBe('theirs');
+		});
+
+		it('sends this copy to the host', () => {
+			const plan = planLiftedSettingsSync({
+				...conflicting(),
+				resolutions: { nudgeMessage: { take: 'local' } },
+			});
+			expect(plan.conflicts).toEqual([]);
+			expect(plan.pushes[0].action).toEqual({
+				kind: 'update-agent',
+				patch: { nudgeMessage: 'mine' },
+			});
+		});
+
+		it('writes a merged value here and sends it to the host', () => {
+			const plan = planLiftedSettingsSync({
+				...conflicting(),
+				resolutions: { nudgeMessage: { take: 'value', value: 'mine and theirs' } },
+			});
+			expect(plan.pushes[0].action).toEqual({
+				kind: 'update-agent',
+				patch: { nudgeMessage: 'mine and theirs' },
+			});
+			expect(plan.pull.agent).toEqual({ nudgeMessage: 'mine and theirs' });
+			const settled = settleLiftSyncBaseline(plan, plan.baseline, ['nudgeMessage']);
+			expect(settled.values.nudgeMessage).toBe('mine and theirs');
+		});
+
+		it('settles a first-sync conflict once the host took the pick', () => {
+			const first = planLiftedSettingsSync({
+				local: local({ nudgeMessage: 'stale edit' }),
+				host: host(),
+				resolutions: { nudgeMessage: { take: 'local' } },
+				now: 0,
+			});
+			expect(first.baseline.values).not.toHaveProperty('nudgeMessage');
+			const settled = settleLiftSyncBaseline(first, first.baseline, ['nudgeMessage']);
+			expect(settled.values.nudgeMessage).toBe('stale edit');
+		});
 	});
 
 	it('waits for a sent value to come back before reading the host as changed', () => {
@@ -145,7 +219,6 @@ describe('planLiftedSettingsSync', () => {
 		});
 		const settled = settleLiftSyncBaseline(first, first.baseline, ['customModel']);
 		const awaiting = { customModel: { before: 'opus', until: 100 } };
-		// The host's record has not caught up yet: no pull of the old value.
 		const waiting = planLiftedSettingsSync({
 			local: local({ customModel: 'sonnet' }),
 			host: host(),
@@ -185,12 +258,11 @@ describe('planLiftedSettingsSync', () => {
 		expect(next.pull.agent).toEqual({ cwd: '/home/me/docs' });
 	});
 
-	it('compares the working directory the provider runs in and writes it back there', () => {
-		const baseline = agreed();
+	it('writes the working directory back where the provider runs', () => {
 		const plan = planLiftedSettingsSync({
 			local: local(),
 			host: host({ cwd: '/home/me/docs-v2' }),
-			baseline,
+			baseline: agreed(),
 			now: 0,
 		});
 		const pulled = applyLiftSyncPull(local(), plan.pull);
@@ -208,6 +280,7 @@ describe('planLiftedSettingsSync', () => {
 			host: host(),
 			now: 0,
 		});
+		expect(plan.conflicts).toEqual([]);
 		expect(plan.pushes).toEqual([]);
 	});
 
@@ -218,7 +291,7 @@ describe('planLiftedSettingsSync', () => {
 			now: 0,
 		});
 		expect(plan.pushes).toEqual([]);
-		expect(plan.pulls).toBe(false);
+		expect(plan.conflicts).toEqual([]);
 	});
 
 	describe('env vars', () => {
@@ -226,16 +299,16 @@ describe('planLiftedSettingsSync', () => {
 			const hostRecord = host({ customEnvVars: { CLAUDE_CONFIG_DIR: '~/.claude-work', A: '1' } });
 			const baseline = agreed(local({ customEnvVars: { A: '1' } }), hostRecord);
 			const plan = planLiftedSettingsSync({
-				local: local({ customEnvVars: { A: '2', B: '3' } }),
+				local: local({ customEnvVars: { A: '2' } }),
 				host: hostRecord,
 				baseline,
 				now: 0,
 			});
 			expect(plan.pushes[0].action).toEqual({
 				kind: 'update-agent',
-				patch: { env: { CLAUDE_CONFIG_DIR: '~/.claude-work', A: '2', B: '3' } },
+				patch: { env: { CLAUDE_CONFIG_DIR: '~/.claude-work', A: '2' } },
 			});
-			expect(plan.pushes[0].fieldIds).toEqual({ env: ['env:A', 'env:B'] });
+			expect(plan.pushes[0].fieldIds).toEqual({ env: ['env:A'] });
 		});
 
 		it('sends a removal of a var this agent held', () => {
@@ -261,6 +334,7 @@ describe('planLiftedSettingsSync', () => {
 				now: 0,
 			});
 			expect(plan.pushes).toEqual([]);
+			expect(plan.conflicts).toEqual([]);
 			expect(plan.pulls).toBe(false);
 		});
 
@@ -271,6 +345,7 @@ describe('planLiftedSettingsSync', () => {
 				now: 0,
 			});
 			expect(withheld.pushes).toEqual([]);
+			expect(withheld.conflicts).toEqual([]);
 			const held = planLiftedSettingsSync({
 				local: local({ customEnvVars: { ANTHROPIC_API_KEY: 'sk-new' } }),
 				host: host({ customEnvVars: { ANTHROPIC_API_KEY: 'sk-old' } }),
@@ -286,14 +361,13 @@ describe('planLiftedSettingsSync', () => {
 			});
 		});
 
-		it('pulls a host change to a var this agent holds', () => {
+		it('takes a host change to a var this agent holds', () => {
 			const hostBefore = host({ customEnvVars: { A: '1' } });
 			const localRecord = local({ customEnvVars: { A: '1', SECRET_TOKEN: 'kept' } });
-			const baseline = agreed(localRecord, hostBefore);
 			const plan = planLiftedSettingsSync({
 				local: localRecord,
 				host: host({ customEnvVars: { A: '9' } }),
-				baseline,
+				baseline: agreed(localRecord, hostBefore),
 				now: 0,
 			});
 			expect(plan.pull.env).toEqual({ A: '9' });
@@ -305,7 +379,7 @@ describe('planLiftedSettingsSync', () => {
 	});
 
 	describe('tabs', () => {
-		it('sends a rename, a star, and the composer chips of a tab both sides hold', () => {
+		it('syncs only the tab name; each conductor keeps their own chips and star', () => {
 			const plan = planLiftedSettingsSync({
 				local: local({
 					aiTabs: [
@@ -325,49 +399,85 @@ describe('planLiftedSettingsSync', () => {
 			});
 			expect(plan.pushes.map((push) => push.action)).toEqual([
 				{ kind: 'rename-tab', tabId: 'tab-1', name: 'Plan' },
-				{ kind: 'star-tab', tabId: 'tab-1', starred: true },
-				{
-					kind: 'update-tab',
-					tabId: 'tab-1',
-					patch: { model: 'sonnet', readOnly: true, thinking: 'sticky' },
-				},
 			]);
 		});
 
-		it('ignores tabs only one side holds and hidden consult tabs', () => {
+		it('takes a tab the host renamed, and ignores tabs only one side holds', () => {
 			const plan = planLiftedSettingsSync({
-				local: local({
-					aiTabs: [
-						{ id: 'tab-1', name: 'Main' },
-						{ id: 'tab-local-only', readOnlyMode: true },
-						{ id: 'tab-2', hidden: true, readOnlyMode: true },
-					],
-				}),
-				host: host({
-					aiTabs: [
-						{ id: 'tab-1', name: 'Main' },
-						{ id: 'tab-2', hidden: true },
-					],
-				}),
-				now: 0,
-			});
-			expect(plan.pushes).toEqual([]);
-		});
-
-		it('pulls a tab the host renamed, and keeps the host value for an unset it cannot send', () => {
-			const plan = planLiftedSettingsSync({
-				local: local({ aiTabs: [{ id: 'tab-1', name: 'Main' }] }),
-				host: host({ aiTabs: [{ id: 'tab-1', name: 'Auto-named', saveToHistory: false }] }),
+				local: local({ aiTabs: [{ id: 'tab-1', name: 'Main' }, { id: 'tab-local-only' }] }),
+				host: host({ aiTabs: [{ id: 'tab-1', name: 'Auto-named' }] }),
 				baseline: agreed(),
 				now: 0,
 			});
 			expect(plan.pushes).toEqual([]);
-			expect(plan.pull.tabs).toEqual({
-				'tab-1': { name: 'Auto-named', saveToHistory: false },
-			});
-			const pulled = applyLiftSyncPull(local(), plan.pull);
-			expect(pulled.aiTabs?.[0]).toMatchObject({ name: 'Auto-named', saveToHistory: false });
+			expect(plan.pull.tabs).toEqual({ 'tab-1': { name: 'Auto-named' } });
 		});
+	});
+});
+
+describe('pending edits on a mirrored agent', () => {
+	it('stands for the host record with the edited fields in it', () => {
+		const record = overlaySyncValues(host({ customEnvVars: { A: '1' } }), {
+			nudgeMessage: 'edited',
+			customModel: null,
+			'env:B': '2',
+		});
+		expect(record.nudgeMessage).toBe('edited');
+		expect(record).not.toHaveProperty('customModel');
+		expect(record.customEnvVars).toEqual({ A: '1', B: '2' });
+	});
+
+	it('sends an edit whose base is still the host value, and asks when the host moved since', () => {
+		const sent = planLiftedSettingsSync({
+			local: overlaySyncValues(host(), { nudgeMessage: 'edited' }),
+			host: host(),
+			baseline: { values: { nudgeMessage: 'keep going' }, envKeys: [] },
+			now: 0,
+		});
+		expect(sent.pushes[0].action).toEqual({
+			kind: 'update-agent',
+			patch: { nudgeMessage: 'edited' },
+		});
+		const moved = planLiftedSettingsSync({
+			local: overlaySyncValues(host({ nudgeMessage: 'other' }), { nudgeMessage: 'edited' }),
+			host: host({ nudgeMessage: 'other' }),
+			baseline: { values: { nudgeMessage: 'keep going' }, envKeys: [] },
+			now: 0,
+		});
+		expect(moved.pushes).toEqual([]);
+		expect(moved.conflicts.map((conflict) => conflict.id)).toEqual(['nudgeMessage']);
+	});
+
+	it('reads every shared setting by field id', () => {
+		const values = liftSyncAgentValues(host({ customEnvVars: { A: '1' }, bookmarked: true }));
+		expect(values).toMatchObject({
+			name: 'Docs',
+			customModel: 'opus',
+			bookmarked: true,
+			'env:A': '1',
+		});
+	});
+});
+
+describe('liftFollowUpPatch', () => {
+	it('carries the settings an import cannot', () => {
+		expect(
+			liftFollowUpPatch(
+				local({ bookmarked: true, codexTransport: 'app-server', enableMaestroP: false })
+			)
+		).toEqual({ bookmarked: true, codexTransport: 'app-server', enableMaestroP: false });
+	});
+
+	it('is undefined when the agent sets none of them', () => {
+		expect(liftFollowUpPatch(local({ codexTransport: 'exec' }))).toBeUndefined();
+	});
+});
+
+describe('liftSyncFieldLabel', () => {
+	it('names agent fields, env vars, and tab names', () => {
+		expect(liftSyncFieldLabel('nudgeMessage')).toBe('Nudge message');
+		expect(liftSyncFieldLabel('env:FOO')).toBe('Env var FOO');
+		expect(liftSyncFieldLabel('tab:t1:name')).toBe('Tab name');
 	});
 });
 

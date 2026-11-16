@@ -238,15 +238,19 @@ maestro-cli lift docs --with-env   # also send secret env vars
 
 A lift refuses, and moves nothing, while a tab is running a turn, when no host runs on the remote, or when the agent is not an SSH remote agent. The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. A lift is one way: there is no automatic move back to an SSH agent. [Lift an SSH Agent Onto Its Host](./cli#lift-an-ssh-agent-onto-its-host) lists every refusal code.
 
-### Settings stay in step
+### Settings live on the host
 
-After a lift, the local agent and the hosted agent keep the same settings. Change a setting on the local agent (in **Edit Agent**, with the composer chips, by renaming or starring a tab, or with `maestro-cli update-agent`) and Maestro sends it to the host. A change made on the host comes back to the local agent.
+A hosted agent's settings belong to its host, and every conductor that drives it follows them. When Maestro connects to a peer it loads the host's settings. While it stays connected, the host sends every change as it happens, so when one conductor changes the agent's default model, everyone else sees it.
 
-- **What syncs:** name, provider, working directory, model, effort, context window, custom path and arguments, nudge message, new session message, bookmark, token source (maestro-p mode), Codex transport, harness control mode, the Auto Run folder (only inside the working directory, as in a lift), custom env vars, and for each tab both sides hold: name, star, model, effort, read-only, thinking, save to History, and Enter to send.
-- **What stays local:** the Left Bar group, the SSH settings, and the maestro-p binary path. A secret env var syncs only when the host already holds it (you sent it with `--with-env`). A host env var you never set on this agent is never changed or copied back.
-- **When the peer is down:** your change waits and goes out when the peer reconnects.
-- **When both sides changed the same setting:** your local change wins.
-- **When the host refuses a change:** for example, a new working directory while a turn runs. A toast says why, and the local agent shows the host's value again.
+Change the shared settings with **Edit Agent**: the gear beside the agent's name in its view, **Edit Agent...** in the right-click menu of a mirrored agent, or **Edit Agent on Host** in the command palette. A lifted agent's own Left Bar row opens the hosted agent, and its **Edit Agent** and `maestro-cli update-agent` changes go to the host too. From the CLI, `maestro-cli update-agent <peer:agent> --model ...` changes the host directly.
+
+- **Shared (on the host):** name, provider, working directory, model, effort, context window, custom path and arguments, nudge message, new session message, bookmark, token source (maestro-p mode), Codex transport, harness control mode, the Auto Run folder (only inside the working directory, as in a lift), custom env vars, and each tab's name.
+- **Yours only:** a tab's model, effort, read-only, and save to History, set with the chips in the hosted agent's composer. They go with each message you send from that tab and are never saved on the host, so another conductor on the same tab keeps theirs. `maestro-cli send <peer:agent>` takes the same choices with `--model`, `--effort`, `--read-only`, and `--no-history`. Thinking display, Enter to send, and a tab's star also stay with you. When the host is a full Maestro desktop rather than `maestro-cli host`, your model, effort, and read-only on apply, but save to History and read-only off follow that desktop's own tab.
+- **Never sent:** the Left Bar group, the SSH settings, and the maestro-p binary path. A secret env var syncs only when the host already holds it (you sent it with `--with-env`). A host env var you never set on this agent is never changed or copied back.
+- **When the peer is down:** your change waits, marked pending, and goes out when the peer reconnects.
+- **When the host changed the same setting since:** nothing moves until you choose. A toast names the settings; click it, or open **Federation Settings Conflicts** from the command palette or the hamburger menu. For each setting, take the host's value, keep yours, or, for the nudge message, new session message, and custom arguments, ask the agent to **Merge** the two. A merge is a proposal you can edit, and it is used only when you click **Use this**. From the CLI: `maestro-cli federation conflicts`, then `maestro-cli federation resolve <peer:agent> <field> --take host|local` or `--value <merged text>`.
+- **The first sync of an agent:** any setting that differs between this machine and the host shows as a conflict, with the host's value as the suggested choice. A lift sends every setting, so a newly moved agent starts with none.
+- **When the host refuses a change:** for example, a new working directory while a turn runs. A toast says why, and the host's value stays.
 
 Read the host's copy back with `maestro-cli show agent <peer:agent> --json`.
 

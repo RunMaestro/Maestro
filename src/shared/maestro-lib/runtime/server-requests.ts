@@ -25,9 +25,10 @@ import type {
 	MaestroClient,
 	ProviderInfo,
 	TabPatch,
+	TurnOverrides,
 	TurnSendReceipt,
 } from '../client/types';
-import { normalizeOriginHost } from '../client/types';
+import { normalizeOriginHost, normalizeTurnOverrides } from '../client/types';
 import {
 	groupChatToWire,
 	queuedTurnsToWire,
@@ -436,6 +437,12 @@ function originHostOf(message: Request): { originHost?: string } {
 	return originHost ? { originHost } : {};
 }
 
+/** The sender's own tab choices for this one turn (`TurnInput.overrides`), when the message carries any. */
+function turnOverridesOf(message: Request): { overrides?: TurnOverrides } {
+	const overrides = normalizeTurnOverrides(message.turnOverrides);
+	return overrides ? { overrides } : {};
+}
+
 export type RequestHandler = (message: Request) => Promise<Frame | undefined>;
 
 export interface RequestHandlerOptions {
@@ -661,6 +668,7 @@ export function createRequestHandler(
 					text: typeof message.command === 'string' ? message.command : '',
 					...(images ? { images } : {}),
 					...originHostOf(message),
+					...turnOverridesOf(message),
 				});
 				if (!result.ok) return sendFailure(type, agentId, target.tabId, result);
 				return {
@@ -685,6 +693,7 @@ export function createRequestHandler(
 					text: typeof message.command === 'string' ? message.command : '',
 					...(images ? { images } : {}),
 					...originHostOf(message),
+					...turnOverridesOf(message),
 				});
 				if (!result.ok) return sendFailure(type, agentId, target.tabId, result);
 				return {

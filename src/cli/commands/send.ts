@@ -39,7 +39,11 @@ import type {
 	ToolType,
 	UsageStats,
 } from '../../shared/types';
-import type { TurnEvent } from '../../shared/maestro-lib/client/types';
+import {
+	normalizeTurnOverrides,
+	type TurnEvent,
+	type TurnOverrides,
+} from '../../shared/maestro-lib/client/types';
 import {
 	PeerResolveError,
 	hostCallError,
@@ -78,6 +82,10 @@ interface SendOptions {
 	// `--no-synopsis` -> `synopsis: false`. Skips the extra summarization turn;
 	// the History entry then carries the response itself.
 	synopsis?: boolean;
+	/** Peer targets only: this turn's model, a sender's own tab choice (`TurnOverrides`). */
+	model?: string;
+	/** Peer targets only: this turn's effort. */
+	effort?: string;
 }
 
 /** Longest summary line kept when the response stands in for a synopsis. */
@@ -344,6 +352,14 @@ export async function send(
 ): Promise<void> {
 	const route = routeAgentTarget(agentIdArg);
 	if (route.kind === 'peer') return sendToPeer(route.target, message, options);
+	if (options.model !== undefined || options.effort !== undefined) {
+		emitErrorJson(
+			`${options.model !== undefined ? '--model' : '--effort'} is for a peer's agent (peer:agent), where it applies to this one turn. For a local agent, set the model with update-agent.`,
+			'INVALID_OPTION'
+		);
+		process.exit(ExitCode.InvalidUsage);
+		return;
+	}
 
 	// Resolve agent ID (supports partial IDs)
 	let agentId: string;
@@ -638,14 +654,25 @@ export async function send(
  * so the flag is refused rather than silently dropped.
  */
 function peerUnsupportedSendFlag(options: SendOptions): string | undefined {
-	if (options.readOnly) return '--read-only';
 	if (options.tab) return '--tab';
 	if (options.requirePluginTools) return '--require-plugin-tools';
 	if (options.requireToolReceipt !== undefined) return '--require-tool-receipt';
 	if (options.systemPrompt === false) return '--no-system-prompt';
-	if (options.history === false) return '--no-history';
 	if (options.synopsis === false) return '--no-synopsis';
 	return undefined;
+}
+
+/**
+ * The sender's own choices for this one turn on a peer's agent, the same `TurnOverrides` the
+ * mirror composer's chips send: never written to the host tab, so other conductors keep theirs.
+ */
+export function peerTurnOverrides(options: SendOptions): TurnOverrides | undefined {
+	return normalizeTurnOverrides({
+		model: options.model,
+		effort: options.effort,
+		...(options.readOnly ? { readOnly: true } : {}),
+		...(options.history === false ? { saveToHistory: false } : {}),
+	});
 }
 
 /** A peer send that stopped short of an outcome. `extra` goes into the JSON as is. */
@@ -746,6 +773,7 @@ async function sendToPeer(
 		return;
 	}
 
+	const overrides = peerTurnOverrides(options);
 	let printed: { response: SendResponse & { peer: string; tabId: string }; ok: boolean } | null =
 		null;
 	try {
@@ -780,7 +808,12 @@ async function sendToPeer(
 				const sent = await runPeerAgentAction(
 					client,
 					agent,
-					{ kind: 'send', tabId, text: message },
+					{
+						kind: 'send',
+						tabId,
+						text: message,
+						...(overrides ? { overrides } : {}),
+					},
 					// The host stamps the turn's History entry with this machine.
 					{ originHost: os.hostname() }
 				);

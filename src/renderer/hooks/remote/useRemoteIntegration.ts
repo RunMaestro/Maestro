@@ -30,9 +30,12 @@ import { logger } from '../../utils/logger';
 import {
 	buildQueuedMessageItem,
 	enqueuePromptForTab,
+	sendQueuedItemNow,
 	setQueuedItemPaused,
 	mergeQueuedItemIntoAbove,
 } from '../../services/queuedPrompt';
+import { withQueuedTurnOverrides } from '../../../shared/queuedTurnSettings';
+import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
@@ -1369,7 +1372,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				held?: boolean,
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
-				control?: import('../../../shared/pianola/pianola-dispatch').PianolaQueueControl
+				control?: import('../../../shared/pianola/pianola-dispatch').PianolaQueueControl,
+				// A Federation sender's own tab chips for this one message (`TurnInput.overrides`).
+				// The model, effort, and read-only ride on the queued item; save-to-History has no
+				// per-item field here, so the tab's own chip decides it.
+				turnOverrides?: TurnOverrides
 			) => {
 				const reply = (result: {
 					success: boolean;
@@ -1451,6 +1458,45 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					const lineForTab = (session.executionQueue ?? []).some(
 						(item) => item.tabId === resolvedTabId
 					);
+					// The plain remote-command path spawns on the live tab's settings, so a message
+					// carrying the sender's own chips goes through the queue instead and is sent at
+					// once from there (Force Send): the queued item is what carries them.
+					if (turnOverrides && targetTab.state !== 'busy' && !lineForTab && !held) {
+						const item = withQueuedTurnOverrides(
+							buildQueuedMessageItem({
+								session,
+								tab: targetTab,
+								text: command,
+								images,
+								mentionRouting,
+							}),
+							turnOverrides
+						);
+						if (!background) {
+							setActiveSessionId(sessionId);
+						}
+						updateSessionWith(sessionId, (s) => ({
+							...s,
+							executionQueue: [...s.executionQueue, item],
+						}));
+						if (sendQueuedItemNow(sessionId, item.id)) {
+							reply({ success: true, tabId: resolvedTabId, queued: false });
+							return;
+						}
+						// Nothing could run it yet: it keeps its place and runs when the queue drains.
+						const waiting =
+							useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.executionQueue ??
+							[];
+						reply({
+							success: true,
+							tabId: resolvedTabId,
+							queued: true,
+							queuePosition: waiting.findIndex((queued) => queued.id === item.id) + 1,
+							queueLength: waiting.length,
+							itemId: item.id,
+						});
+						return;
+					}
 					if (targetTab.state !== 'busy' && !lineForTab && !held) {
 						if (!background) {
 							setActiveSessionId(sessionId);
@@ -1477,13 +1523,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// here) and the model/effort capture that keeps a queued turn running
 					// under the settings it was queued with.
 					const queuedItem: QueuedItem = {
-						...buildQueuedMessageItem({
-							session,
-							tab: targetTab,
-							text: command,
-							images,
-							mentionRouting,
-						}),
+						...withQueuedTurnOverrides(
+							buildQueuedMessageItem({
+								session,
+								tab: targetTab,
+								text: command,
+								images,
+								mentionRouting,
+							}),
+							turnOverrides
+						),
 						...(held && { paused: true }),
 						...(dispatchCallback && { dispatchCallback: true }),
 					};

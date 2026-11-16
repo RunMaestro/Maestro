@@ -11,6 +11,7 @@
  */
 
 import { mirrorKey } from '../../shared/maestro-lib/client/peer-mirror';
+import { normalizeTurnOverrides, type TurnOverrides } from '../../shared/maestro-lib/client/types';
 import type {
 	PeerAgentAction,
 	PeerAgentActionKind,
@@ -129,14 +130,26 @@ export async function actOnMirroredAgent(
 	return null;
 }
 
-/** Send what the person typed to one mirrored tab. True when the host took it (ran or queued). */
+/**
+ * Send what the person typed to one mirrored tab, with this conductor's own tab choices for that
+ * one turn. True when the host took it (ran or queued).
+ */
 export async function sendToMirroredTab(
 	peerId: string,
 	agentId: string,
 	tabId: string,
-	text: string
+	text: string,
+	overrides?: TurnOverrides
 ): Promise<boolean> {
-	return (await actOnMirroredAgent(peerId, agentId, { kind: 'send', tabId, text })) !== null;
+	const clean = normalizeTurnOverrides(overrides);
+	return (
+		(await actOnMirroredAgent(peerId, agentId, {
+			kind: 'send',
+			tabId,
+			text,
+			...(clean ? { overrides: clean } : {}),
+		})) !== null
+	);
 }
 
 /** Stop a mirrored tab's turn, or every busy tab of the agent without `tabId` (the Stop pill). */

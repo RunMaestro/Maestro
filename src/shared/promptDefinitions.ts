@@ -134,6 +134,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'AI command mode: turns a plain-English request into one shell command line for confirmation',
 		category: 'commands',
 	},
+	{
+		id: 'federation-settings-merge',
+		filename: 'federation-settings-merge.md',
+		description:
+			'Federation settings conflict: proposes one merged text from the host and local versions of a field',
+		category: 'commands',
+	},
 	// Per-agent prompt preambles
 	{
 		id: 'copilot-preamble',
@@ -452,6 +459,7 @@ export const PROMPT_IDS = {
 	IMAGE_ONLY_DEFAULT: 'image-only-default',
 	COMMIT_COMMAND: 'commit-command',
 	AI_COMMAND: 'ai-command',
+	FEDERATION_SETTINGS_MERGE: 'federation-settings-merge',
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System

@@ -13,6 +13,7 @@
 
 import { logger } from '../../../utils/logger';
 import { getAutoFederation, getPeerMirrorService } from '../../../federation';
+import { requestHostedSettings } from '../../../federation/hosted-settings';
 import { findMirrorPeer } from '../../../../shared/maestro-lib/client/peer-mirror';
 import {
 	FEDERATION_COMMAND_ACTIONS,
@@ -70,6 +71,41 @@ export async function handleFederationCommand(
 				success: true,
 				auto: action === 'auto-run' ? await auto.runNow() : auto.snapshot(),
 			});
+			return;
+		}
+		if (action === 'conflicts') {
+			reply(await requestHostedSettings({ action: 'list' }));
+			return;
+		}
+		if (action === 'resolve-conflict') {
+			const { agent, field, take, value } = message as Record<string, unknown>;
+			if (typeof agent !== 'string' || !agent.trim()) {
+				reply({ success: false, error: 'Name the hosted agent (peer:agent)' });
+				return;
+			}
+			if (typeof field !== 'string' || !field.trim()) {
+				reply({ success: false, error: 'Name the field to settle' });
+				return;
+			}
+			if (take !== 'host' && take !== 'local' && take !== 'value') {
+				reply({ success: false, error: 'Say which value to take: host, local, or value' });
+				return;
+			}
+			if (take === 'value' && typeof value !== 'string') {
+				reply({ success: false, error: 'A merged value needs the text to use' });
+				return;
+			}
+			reply(
+				await requestHostedSettings({
+					action: 'resolve',
+					agent,
+					field,
+					resolution:
+						take === 'value'
+							? { take: 'value', value: (value as string).trim() || undefined }
+							: { take },
+				})
+			);
 			return;
 		}
 		const ref = message.peer;

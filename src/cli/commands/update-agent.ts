@@ -11,6 +11,13 @@ import type { TranslationReport } from '../../shared/maestro-lib/translation/typ
 // onto the agent's existing `sessionSshRemoteConfig` and flushes it to disk.
 // Use `--ssh-remote none` to revert the agent to local execution. All of these
 // (like `--cwd`) are refused by the renderer while the agent process is alive.
+//
+// A `peer:agent` target (Federation) edits the agent on the peer's host instead,
+// through the shared `runPeerAgentAction()` (`update-agent`, one `agents.update`
+// call) the desktop's peer mirror also uses. The settings flags map onto the
+// host's `AgentPatch`; the flags that name this machine's state (`--group`, the
+// SSH flags, `--maestro-p-path`) or a local conversion are refused before the
+// peer is dialed.
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId, resolveGroupId, getSessionById } from '../services/storage';
@@ -20,6 +27,22 @@ import { AGENT_IDS } from '../../shared/agentIds';
 import { CODEX_TRANSPORTS, isCodexTransport } from '../../shared/codexTransport';
 import { parseCliBool, resolveAgentCwdArg, resolveCliPath } from '../utils/parse';
 import { errorFrameMessage, exitIfMaestroNotRunning } from '../services/session-command';
+import {
+	PeerResolveError,
+	hostCallError,
+	peerAgentRef,
+	peerErrorCode,
+	routeAgentTarget,
+	withPeerAgent,
+	type PeerTarget,
+} from '../services/peer-resolver';
+import {
+	runPeerAgentAction,
+	type PeerAgentActionResult,
+} from '../../shared/maestro-lib/client/peer-actions';
+import type { AgentPatch, AgentPatchField } from '../../shared/maestro-lib/client/types';
+import { isAbsolutePath } from '../../shared/formatters';
+import { ExitCode, exitWith } from '../exit-codes';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -161,7 +184,241 @@ function buildConfigPatch(options: UpdateAgentOptions): Record<string, unknown> 
 	return Object.keys(patch).length > 0 ? patch : undefined;
 }
 
+/**
+ * The flags a host agent cannot take, with why, in the order they are reported. Groups belong
+ * to each machine's own Left Bar, an agent on a host runs there (so it has no SSH remote of its
+ * own), the maestro-p path is a path on this machine, and converting memory and history is a
+ * local operation the host does not offer over Federation.
+ */
+function peerRefusals(options: UpdateAgentOptions): string[] {
+	const refused: string[] = [];
+	if (options.group !== undefined) refused.push('--group (groups belong to each machine)');
+	if (options.sshRemote !== undefined) refused.push('--ssh-remote (the agent runs on its host)');
+	if (options.sshCwd !== undefined) refused.push('--ssh-cwd (the agent runs on its host)');
+	if (options.syncHistoryToRemote !== undefined) {
+		refused.push('--sync-history-to-remote (the agent runs on its host)');
+	}
+	if (options.maestroPPath !== undefined) {
+		refused.push('--maestro-p-path (a path on this machine)');
+	}
+	const conversion: Array<[boolean, string]> = [
+		[options.convert === true, '--convert'],
+		[options.force === true, '--force'],
+		[options.dryRun === true, '--dry-run'],
+		[options.acceptTranslationLimitations === true, '--accept-translation-limitations'],
+		[options.migration !== undefined, '--migration'],
+		[options.migrationPlan !== undefined, '--migration-plan'],
+		[(options.translationResource?.length ?? 0) > 0, '--translation-resource'],
+	];
+	for (const [present, flag] of conversion) {
+		if (present) {
+			refused.push(
+				`${flag} (conversion is not offered for a peer agent; switch with --provider alone)`
+			);
+		}
+	}
+	return refused;
+}
+
+/** The host's `AgentPatch` field for each key `buildConfigPatch()` writes. */
+const CONFIG_TO_AGENT_PATCH: Record<string, AgentPatchField> = {
+	nudgeMessage: 'nudgeMessage',
+	newSessionMessage: 'newSessionMessage',
+	customPath: 'customPath',
+	customArgs: 'customArgs',
+	customModel: 'model',
+	customEffort: 'effort',
+	customEnvVars: 'env',
+	customContextWindow: 'contextWindow',
+	enableMaestroP: 'enableMaestroP',
+	maestroPMode: 'maestroPMode',
+	codexTransport: 'codexTransport',
+	bookmarked: 'bookmarked',
+};
+
+/**
+ * The local config patch as the host's `AgentPatch`. `contextWindowSource` is left out: the host
+ * marks a window it is given as user-edited, and clears the mark with the window.
+ */
+function toAgentPatch(
+	config: Record<string, unknown> | undefined,
+	cwd: string | undefined,
+	provider: string | undefined
+): AgentPatch {
+	const patch: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(config ?? {})) {
+		const field = CONFIG_TO_AGENT_PATCH[key];
+		if (field) patch[field] = value;
+	}
+	if (cwd !== undefined) patch.cwd = cwd;
+	if (provider !== undefined) patch.provider = provider;
+	return patch as AgentPatch;
+}
+
+/**
+ * `update-agent peer:agent`: change the agent's settings on the peer's host. Everything that can
+ * be checked here is checked before the peer is dialed; the provider-specific flags are checked
+ * against the host's record of the agent.
+ */
+async function updatePeerAgent(target: PeerTarget, options: UpdateAgentOptions): Promise<void> {
+	const ref = `${target.peer}:${target.agent}`;
+	const refused = peerRefusals(options);
+	if (refused.length > 0) {
+		emitError(`Cannot use ${refused.join(', ')} with the peer agent ${ref}.`, options);
+	}
+
+	let configPatch: Record<string, unknown> | undefined;
+	try {
+		configPatch = buildConfigPatch(options);
+	} catch (error) {
+		emitError(error instanceof Error ? error.message : String(error), options);
+	}
+
+	let cwd: string | undefined;
+	if (options.cwd !== undefined) {
+		cwd = options.cwd.trim();
+		// The path is on the host, so nothing on this machine can resolve a relative one or `~`.
+		if (!isAbsolutePath(cwd)) {
+			emitError(
+				`--cwd for the peer agent ${ref} is a directory on the host: pass an absolute path, not "${options.cwd}".`,
+				options
+			);
+		}
+	}
+
+	let provider: string | undefined;
+	if (options.provider !== undefined) {
+		const requested = options.provider.trim().toLowerCase();
+		if (!VALID_PROVIDER_TYPES.has(requested))
+			emitError(
+				`Invalid provider "${options.provider}". Must be one of: ${[...VALID_PROVIDER_TYPES].join(', ')}`,
+				options
+			);
+		provider = requested;
+	}
+
+	if (configPatch === undefined && cwd === undefined && provider === undefined) {
+		emitError(
+			'Specify at least one field to update (e.g. --cwd, --nudge, --model, --effort, --token-source, --codex-transport, --bookmark, --provider, --env). Run "maestro-cli update-agent --help" for the full list.',
+			options
+		);
+	}
+	if (provider !== undefined && (configPatch !== undefined || cwd !== undefined)) {
+		emitError(
+			'A provider switch must be a separate operation from settings or directory edits.',
+			options
+		);
+	}
+
+	const patch = toAgentPatch(configPatch, cwd, provider);
+	let done: { peer: string; agentId: string; applied: AgentPatchField[]; notices: string[] };
+	try {
+		done = await withPeerAgent(target, async ({ agent, client, peer }) => {
+			const wrongProvider = (flag: string, label: string) =>
+				new PeerResolveError(
+					'host-failed',
+					`${flag} only applies to ${label} agents; ${peerAgentRef(peer, agent.id)} is a ${agent.toolType} agent.`,
+					ExitCode.GeneralError,
+					peer
+				);
+			if (options.tokenSource !== undefined && agent.toolType !== 'claude-code') {
+				throw wrongProvider('--token-source', 'Claude Code');
+			}
+			if (options.codexTransport !== undefined && agent.toolType !== 'codex') {
+				throw wrongProvider('--codex-transport', 'Codex');
+			}
+			const ran = await runPeerAgentAction(client, agent, { kind: 'update-agent', patch });
+			if (!ran.ok) throw hostCallError(peer, ran.error);
+			const result = ran.value as Extract<PeerAgentActionResult, { kind: 'update-agent' }>;
+			return {
+				peer,
+				agentId: agent.id,
+				applied: result.applied,
+				notices: result.notices ?? [],
+			};
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const peerError = error instanceof PeerResolveError ? error : undefined;
+		if (options.json) {
+			console.log(
+				JSON.stringify({
+					success: false,
+					error: message,
+					...(peerError ? { code: peerErrorCode(peerError.code), peer: peerError.peer } : {}),
+				})
+			);
+		} else {
+			console.error(formatError(message));
+		}
+		return exitWith(peerError?.exitCode ?? ExitCode.GeneralError);
+	}
+
+	const { contextWindowSource: _derived, ...config } = configPatch ?? {};
+	const hasConfig = Object.keys(config).length > 0;
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				agentId: done.agentId,
+				peer: done.peer,
+				...(cwd !== undefined ? { cwd } : {}),
+				...(provider !== undefined ? { provider } : {}),
+				...(hasConfig ? { config } : {}),
+				applied: done.applied,
+				notices: done.notices,
+			})
+		);
+		return;
+	}
+	console.log(formatSuccess(`Updated agent ${peerAgentRef(done.peer, done.agentId)}`));
+	if (provider !== undefined) console.log(`  Provider: ${provider}`);
+	if (cwd !== undefined) console.log(`  CWD: ${cwd}`);
+	if (hasConfig) printConfigLines(config);
+	for (const notice of done.notices) console.log(`  ${notice}`);
+}
+
+/** The editable config keys, one line each, with friendly labels; `null` means "cleared". */
+function printConfigLines(config: Record<string, unknown>): void {
+	const labels: Record<string, string> = {
+		nudgeMessage: 'Nudge message',
+		newSessionMessage: 'New session message',
+		customPath: 'Binary path',
+		customArgs: 'Custom args',
+		customEnvVars: 'Env vars',
+		customModel: 'Model',
+		customEffort: 'Effort',
+		customContextWindow: 'Context window',
+		enableMaestroP: 'Claude token source',
+		maestroPMode: 'Token mode',
+		maestroPPath: 'maestro-p path',
+		codexTransport: 'Codex transport',
+	};
+	for (const [key, value] of Object.entries(config)) {
+		// Derived marker, not something the caller typed - it is implied by
+		// `--context-window` and printing it just adds noise (finding AD1).
+		if (key === 'contextWindowSource') continue;
+		const label = labels[key] ?? key;
+		// A cleared transport is not "unset", it is the default transport.
+		if (key === 'codexTransport') {
+			console.log(`  ${label}: ${value ?? 'exec'}`);
+		} else if (value === null) {
+			console.log(`  ${label}: (cleared)`);
+		} else if (key === 'customEnvVars' && value && typeof value === 'object') {
+			const pairs = Object.keys(value as Record<string, string>);
+			console.log(`  ${label}: ${pairs.length === 0 ? '(cleared)' : pairs.join(', ')}`);
+		} else {
+			console.log(`  ${label}: ${value}`);
+		}
+	}
+}
+
 export async function updateAgent(agentId: string, options: UpdateAgentOptions): Promise<void> {
+	// A `peer:agent` target is an agent on a Federation peer's host (a local agent whose name has
+	// a colon stays local).
+	const route = routeAgentTarget(agentId);
+	if (route.kind === 'peer') return updatePeerAgent(route.target, options);
+
 	const sshFlagsPresent =
 		options.sshRemote !== undefined ||
 		options.sshCwd !== undefined ||
@@ -525,38 +782,5 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			console.log(`  Sync history to remote: ${applied.ssh.syncHistory}`);
 		}
 	}
-	if (applied.config !== undefined) {
-		// Friendly labels for the editable config keys; `null` means "cleared".
-		const labels: Record<string, string> = {
-			nudgeMessage: 'Nudge message',
-			newSessionMessage: 'New session message',
-			customPath: 'Binary path',
-			customArgs: 'Custom args',
-			customEnvVars: 'Env vars',
-			customModel: 'Model',
-			customEffort: 'Effort',
-			customContextWindow: 'Context window',
-			enableMaestroP: 'Claude token source',
-			maestroPMode: 'Token mode',
-			maestroPPath: 'maestro-p path',
-			codexTransport: 'Codex transport',
-		};
-		for (const [key, value] of Object.entries(applied.config)) {
-			// Derived marker, not something the caller typed - it is implied by
-			// `--context-window` and printing it just adds noise (finding AD1).
-			if (key === 'contextWindowSource') continue;
-			const label = labels[key] ?? key;
-			// A cleared transport is not "unset", it is the default transport.
-			if (key === 'codexTransport') {
-				console.log(`  ${label}: ${value ?? 'exec'}`);
-			} else if (value === null) {
-				console.log(`  ${label}: (cleared)`);
-			} else if (key === 'customEnvVars' && value && typeof value === 'object') {
-				const pairs = Object.keys(value as Record<string, string>);
-				console.log(`  ${label}: ${pairs.length === 0 ? '(cleared)' : pairs.join(', ')}`);
-			} else {
-				console.log(`  ${label}: ${value}`);
-			}
-		}
-	}
+	if (applied.config !== undefined) printConfigLines(applied.config);
 }

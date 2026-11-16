@@ -122,6 +122,9 @@ export const MODAL_PRIORITIES = {
 	/** Move to Host modal (Federation lift: Left Bar right-click or palette on an SSH agent) */
 	MOVE_TO_HOST: 828,
 
+	/** Federation settings conflicts: fields a hosted agent's host and this machine both changed */
+	FEDERATION_SETTINGS_CONFLICTS: 827,
+
 	/** Create new group modal */
 	CREATE_GROUP: 800,
 

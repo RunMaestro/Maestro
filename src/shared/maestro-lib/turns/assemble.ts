@@ -91,6 +91,13 @@ export interface TurnMessage {
 	turnSettings?: { model?: string; effort?: string };
 	/** The queue item was read-only when it was queued. */
 	readOnly?: boolean;
+	/**
+	 * The sender's own read-only chip for this turn (`TurnOverrides.readOnly`), read in place of
+	 * the tab's `readOnlyMode`, so `false` lifts the host tab's chip for this one turn. Absent: the
+	 * tab's chip decides. An explicit `permissionMode: 'readonly'`, a read-only queue item and an
+	 * Auto Run holding the tree still make the turn read-only.
+	 */
+	tabReadOnly?: boolean;
 }
 
 export interface TurnContext {
@@ -229,13 +236,16 @@ export function assembleTurn(
 
 	const sshEnabled = agent.sessionSshRemoteConfig?.enabled === true;
 
-	// Read-only: the message, the tab, or an Auto Run holding the working tree.
+	// Read-only: the message, the tab (or the sender's own chip in its place), or an Auto Run
+	// holding the working tree.
+	const chipTab =
+		message.tabReadOnly === undefined ? tab : { ...tab, readOnlyMode: message.tabReadOnly };
 	const readOnly =
 		message.readOnly === true ||
-		tab.readOnlyMode === true ||
-		tab.permissionMode === 'readonly' ||
+		chipTab.readOnlyMode === true ||
+		chipTab.permissionMode === 'readonly' ||
 		(context.autoRunHoldsTree === true && context.forceParallel !== true);
-	const permissionMode = readOnly ? 'readonly' : resolveTabPermissionMode(tab);
+	const permissionMode = readOnly ? 'readonly' : resolveTabPermissionMode(chipTab);
 
 	// Model and effort: frozen at queue time when the message carries them, even where a field
 	// inside is undefined (the agent default was chosen then); else the live tab, then the agent.

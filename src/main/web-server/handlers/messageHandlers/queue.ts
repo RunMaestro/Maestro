@@ -17,11 +17,17 @@ import {
 import { noteDispatchDelegation } from './agentDelegation';
 import { LOG_CONTEXT } from './shared';
 import { parseMentionRoutingField } from '../../../../shared/crossAgentContext';
-import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+import type {
+	WebClient,
+	WebClientMessage,
+	MessageHandlerCallbacks,
+	MessageHandlerContext,
+} from './types';
 import { dispatchSupervision } from './dispatchSupervision';
 import { generateUUID } from '../../../../shared/uuid';
 import { newTabAdmission } from './tabs';
 import * as pianolaStore from '../../../pianola/pianola-store-main';
+import { normalizeTurnOverrides } from '../../../../shared/maestro-lib/client/types';
 
 /**
  * Handle enqueue_command message - hand a CLI prompt to the renderer's
@@ -46,6 +52,8 @@ export function handleEnqueueCommand(
 	const images = Array.isArray(message.images)
 		? (message.images as unknown[]).filter((v): v is string => typeof v === 'string')
 		: undefined;
+	// A Federation client's own tab chips for this one message (`TurnInput.overrides`).
+	const turnOverrides = normalizeTurnOverrides(message.turnOverrides);
 
 	logger.info(
 		`[Web] Received enqueue_command: session=${sessionId}, tab=${requestedTabId ?? 'active'}, commandLen=${command.length}, images=${images?.length ?? 0}`,
@@ -227,17 +235,21 @@ export function handleEnqueueCommand(
 		if (enqueueCallbackId) getDispatchCallbackRegistry()?.cancel(enqueueCallbackId);
 	};
 
+	const enqueueArgs: Parameters<MessageHandlerCallbacks['enqueueCommand']> = [
+		sessionId,
+		command ?? '',
+		clientInputMode,
+		requestedTabId,
+		images,
+		background,
+		held,
+		routingField.routing,
+	];
+	// The overrides ride after the dispatch-callback and admission slots, which this path leaves empty.
+	if (turnOverrides) enqueueArgs.push(undefined, undefined, turnOverrides);
+
 	ctx.callbacks
-		.enqueueCommand(
-			sessionId,
-			command ?? '',
-			clientInputMode,
-			requestedTabId,
-			images,
-			background,
-			held,
-			routingField.routing
-		)
+		.enqueueCommand(...enqueueArgs)
 		.then((result) => {
 			if (!result.success) cancelArmedCallback();
 			ctx.send(client, {

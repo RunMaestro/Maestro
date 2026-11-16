@@ -2185,6 +2185,44 @@ describe('web-server/web-server-factory', () => {
 			);
 		});
 
+		it("setEnqueueCommandCallback forwards a Federation sender's turn overrides after the control slot", () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+			const callback = (server.setEnqueueCommandCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			const overrides = { model: 'opus', readOnly: true };
+
+			void callback(
+				'session-1',
+				'mine',
+				'ai',
+				'tab-1',
+				undefined,
+				true,
+				false,
+				undefined,
+				undefined,
+				undefined,
+				overrides
+			);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:enqueueCommand',
+				'session-1',
+				'mine',
+				expect.any(String),
+				'ai',
+				'tab-1',
+				undefined,
+				true,
+				false,
+				undefined,
+				undefined,
+				undefined,
+				overrides
+			);
+		});
+
 		it('setEnqueueCommandCallback forwards a dispatch --routing to the renderer', () => {
 			const createWebServer = createWebServerFactory(deps);
 			const server = createWebServer();

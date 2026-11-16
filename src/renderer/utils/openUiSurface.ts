@@ -8,6 +8,7 @@
  * produce - including the modal layer stack and Escape handling.
  */
 
+import { useHostedAgentSettingsStore } from '../stores/hostedAgentSettingsStore';
 import type { CueModalData, ModalId } from '../stores/modalStore';
 import { getModalActions, useModalStore } from '../stores/modalStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -88,6 +89,10 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 			// A floating card, not a modal: show it through its own store. Showing
 			// never moves focus, so the user keeps typing where they were.
 			useThroughputGaugeStore.getState().show();
+			return { ok: true };
+		case 'federation-conflicts':
+			// Not a modalStore modal: the conflicts live with the settings sync's own store.
+			useHostedAgentSettingsStore.getState().setConflictsOpen(true);
 			return { ok: true };
 		case 'quick-actions':
 			actions.setQuickActionOpen(true, 'main');

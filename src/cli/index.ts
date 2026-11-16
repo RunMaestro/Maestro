@@ -96,8 +96,10 @@ import { lift } from './commands/lift';
 import {
 	federationAuto,
 	federationAutoRun,
+	federationConflicts,
 	federationPeers,
 	federationReconnect,
+	federationResolve,
 } from './commands/federation';
 import { createAgent, CREATE_AGENT_TYPES } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
@@ -624,6 +626,11 @@ program
 		'Do not write a History entry for this turn (written by default, desktop app running or not)'
 	)
 	.option('--no-synopsis', 'Skip the synopsis turn; the History entry carries the response instead')
+	.option(
+		'--model <id>',
+		'peer:agent only: the model for this one turn, your own choice (the host tab and other conductors keep theirs)'
+	)
+	.option('--effort <level>', 'peer:agent only: the effort for this one turn, your own choice')
 	.action(send);
 
 // Dispatch command - hand a prompt to the desktop and return tab/session ID.
@@ -2102,6 +2109,24 @@ federation
 	.description('Force the desktop to reconnect to a peer and reload its agent list')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((peer: string, options) => federationReconnect(peer, options));
+
+federation
+	.command('conflicts')
+	.description(
+		"List hosted agents' settings that this machine and the host both changed (exit 1 while any wait)"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationConflicts(options));
+
+federation
+	.command('resolve <agent> <field>')
+	.description(
+		"Settle one settings conflict of a hosted agent (peer:agent): take the host's value, keep this machine's, or send a merged text"
+	)
+	.option('--take <side>', 'host or local')
+	.option('--value <text>', 'A merged text to use instead (free-text fields only)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, field: string, options) => federationResolve(agent, field, options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program

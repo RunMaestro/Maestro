@@ -58,6 +58,8 @@ describe('runtime turns', () => {
 	let argvFiles: string[];
 	/** The options each turn was started with. */
 	let turnOptions: RunAgentTurnOptions[];
+	/** The assembled turns, in launch order: what each turn ran under. */
+	let launched: Array<Parameters<typeof runAgentTurn>[0]>;
 	let binaryExists: boolean;
 
 	const watchDirectory: WatchDirectory = () => ({ close: () => undefined });
@@ -66,6 +68,7 @@ describe('runtime turns', () => {
 		const argvOut = path.join(work, `argv-${argvFiles.length + 1}.json`);
 		argvFiles.push(argvOut);
 		turnOptions.push(options);
+		launched.push(turn);
 		return runAgentTurn(
 			{
 				...turn,
@@ -201,6 +204,7 @@ describe('runtime turns', () => {
 		hold = false;
 		argvFiles = [];
 		turnOptions = [];
+		launched = [];
 		binaryExists = true;
 		recordings = {
 			'claude-code': writeFakeTurn(
@@ -483,6 +487,111 @@ describe('runtime turns', () => {
 				removed: true,
 			});
 			expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+		});
+	});
+
+	describe("a sender's own tab choices (turn overrides)", () => {
+		const historyEntries = (runtime: MaestroRuntime) => {
+			const history = readHistory(runtime.paths, 'a1');
+			return history.status === 'ok' ? history.entries : [];
+		};
+		const chipAgent = (tab: Record<string, unknown>) =>
+			seedAgent({
+				aiTabs: [
+					{ id: 't1', agentSessionId: null, name: null, logs: [], ...tab },
+					{ id: 't2', agentSessionId: null, name: null, logs: [] },
+				],
+			});
+
+		it('runs one turn under them, and leaves the host tab and the next turn as they were', async () => {
+			const runtime = await start([
+				chipAgent({ customModel: 'sonnet', customEffort: 'low', saveToHistory: true }),
+			]);
+			const turn = watch(runtime);
+			value(
+				await runtime.turns.send('a1', 't1', {
+					text: 'mine',
+					overrides: { model: 'opus', effort: 'high', readOnly: true, saveToHistory: false },
+				})
+			);
+			await turn.outcome();
+
+			expect(launched[0].settings).toMatchObject({ model: 'opus', effort: 'high' });
+			expect(launched[0].readOnly).toBe(true);
+			expect(launched[0].permissionMode).toBe('readonly');
+			// The sender kept this turn out of History.
+			expect(historyEntries(runtime)).toHaveLength(0);
+			// Nothing of it was written onto the tab.
+			const tab = await tabOf(runtime);
+			expect(tab).toMatchObject({
+				customModel: 'sonnet',
+				customEffort: 'low',
+				saveToHistory: true,
+			});
+			expect(tab.readOnlyMode).not.toBe(true);
+			const stored = sessions().sessions[0].aiTabs[0];
+			expect(stored).toMatchObject({
+				customModel: 'sonnet',
+				customEffort: 'low',
+				saveToHistory: true,
+			});
+
+			value(await runtime.turns.send('a1', 't1', { text: 'theirs' }));
+			await turn.outcome(2);
+			expect(launched[1].settings).toMatchObject({ model: 'sonnet', effort: 'low' });
+			expect(launched[1].readOnly).toBe(false);
+			expect(historyEntries(runtime)).toHaveLength(1);
+		});
+
+		it("lets a sender's read-only off stand in for the tab's chip, but not for read-only permissions", async () => {
+			const runtime = await start([chipAgent({ readOnlyMode: true })]);
+			const turn = watch(runtime);
+			value(
+				await runtime.turns.send('a1', 't1', { text: 'write', overrides: { readOnly: false } })
+			);
+			await turn.outcome();
+			expect(launched[0].readOnly).toBe(false);
+
+			value(await runtime.turns.send('a1', 't1', { text: 'plain' }));
+			await turn.outcome(2);
+			expect(launched[1].readOnly).toBe(true);
+		});
+
+		it("saves a turn to History on the sender's word even when the tab does not", async () => {
+			const runtime = await start([chipAgent({ saveToHistory: false })]);
+			const turn = watch(runtime);
+			value(
+				await runtime.turns.send('a1', 't1', { text: 'keep', overrides: { saveToHistory: true } })
+			);
+			await turn.outcome();
+			expect(historyEntries(runtime)).toHaveLength(1);
+			expect((await tabOf(runtime)).saveToHistory).toBe(false);
+		});
+
+		it('keeps them with a queued message until it runs', async () => {
+			hold = true;
+			const runtime = await start([chipAgent({ customModel: 'sonnet' })]);
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+
+			hold = false;
+			expect(
+				value(
+					await runtime.turns.send('a1', 't1', {
+						text: 'second',
+						overrides: { model: 'opus', saveToHistory: false },
+					})
+				)
+			).toMatchObject({ status: 'queued' });
+			expect(value(await runtime.turns.interrupt('a1', 't1'))).toEqual({ stopped: true });
+			await turn.outcome(2);
+
+			expect(launched[0].settings.model).toBe('sonnet');
+			expect(launched[1].settings.model).toBe('opus');
+			// The first turn was interrupted (no entry); the queued one kept its sender's choice.
+			expect(historyEntries(runtime)).toHaveLength(0);
+			expect((await tabOf(runtime)).customModel).toBe('sonnet');
 		});
 	});
 

@@ -24,6 +24,7 @@ import {
 import { planCrossAgentMentions } from '../../../renderer/services/crossAgentMentions';
 import { runCrossAgentAsk } from '../../../renderer/services/crossAgentAsk';
 import { steerQueuedItem } from '../../../renderer/services/chatSteering';
+import { sendQueuedItemNow } from '../../../renderer/services/queuedPrompt';
 import {
 	clearDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
@@ -54,6 +55,13 @@ vi.mock('../../../renderer/services/crossAgentAsk', () => ({
 vi.mock('../../../renderer/services/chatSteering', () => ({
 	steerQueuedItem: vi.fn(),
 }));
+
+// A Federation send that carries its sender's own chips goes through the queue and is
+// sent from there at once; the real function runs unless a test says otherwise.
+vi.mock('../../../renderer/services/queuedPrompt', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/services/queuedPrompt')>();
+	return { ...actual, sendQueuedItemNow: vi.fn(actual.sendQueuedItemNow) };
+});
 
 // A remote verb that rejects is a defect the CLI's error reply alone would hide.
 vi.mock('../../../renderer/utils/sentry', () => ({
@@ -189,7 +197,8 @@ describe('useRemoteIntegration', () => {
 				held?: boolean,
 				mentionRouting?: import('../../../shared/crossAgentContext').MentionRouting,
 				dispatchCallback?: boolean,
-				control?: import('../../../shared/pianola/pianola-dispatch').PianolaQueueControl
+				control?: import('../../../shared/pianola/pianola-dispatch').PianolaQueueControl,
+				turnOverrides?: import('../../../shared/maestro-lib/client/types').TurnOverrides
 		  ) => void)
 		| undefined;
 	let onRemoteSetQueueItemPausedHandler:
@@ -2849,6 +2858,143 @@ describe('useRemoteIntegration', () => {
 				'chan-q2',
 				expect.objectContaining({ queued: true, queuePosition: 2, queueLength: 2 })
 			);
+		});
+
+		describe("a Federation sender's turn overrides", () => {
+			const overrides = { model: 'opus', effort: 'high', readOnly: true, saveToHistory: false };
+
+			it('queue the item under them on a busy tab, and leave the tab as it was', () => {
+				const tab = createMockTab({
+					id: 'tab-1',
+					state: 'busy',
+					customModel: 'sonnet',
+					customEffort: 'low',
+				});
+				const session = createMockSession({
+					id: 'session-1',
+					state: 'busy',
+					aiTabs: [tab],
+					activeTabId: 'tab-1',
+					executionQueue: [],
+				});
+				useSessionStore.setState({ sessions: [session] });
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				act(() => {
+					onRemoteEnqueueCommandHandler?.(
+						'session-1',
+						'Mine',
+						'chan-ov',
+						'ai',
+						'tab-1',
+						undefined,
+						true,
+						false,
+						undefined,
+						undefined,
+						undefined,
+						overrides
+					);
+				});
+
+				const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+				expect(updated?.executionQueue[0]).toMatchObject({
+					text: 'Mine',
+					turnSettings: { model: 'opus', effort: 'high' },
+					readOnlyMode: true,
+				});
+				expect(updated?.aiTabs[0]).toMatchObject({ customModel: 'sonnet', customEffort: 'low' });
+				expect(updated?.aiTabs[0].readOnlyMode).not.toBe(true);
+			});
+
+			it('send at once through the queue on an idle tab, never the plain remote command', () => {
+				vi.mocked(sendQueuedItemNow).mockReturnValueOnce(true);
+				const tab = createMockTab({ id: 'tab-1', customModel: 'sonnet' });
+				const session = createMockSession({
+					id: 'session-1',
+					state: 'idle',
+					aiTabs: [tab],
+					activeTabId: 'tab-1',
+					executionQueue: [],
+				});
+				useSessionStore.setState({ sessions: [session] });
+				const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				act(() => {
+					onRemoteEnqueueCommandHandler?.(
+						'session-1',
+						'Now',
+						'chan-ov-idle',
+						'ai',
+						'tab-1',
+						undefined,
+						true,
+						false,
+						undefined,
+						undefined,
+						undefined,
+						{ model: 'opus' }
+					);
+				});
+
+				expect(dispatchEventSpy).not.toHaveBeenCalledWith(
+					expect.objectContaining({ type: 'maestro:remoteCommand' })
+				);
+				const queued = useSessionStore
+					.getState()
+					.sessions.find((s) => s.id === 'session-1')
+					?.executionQueue.find((item) => item.text === 'Now');
+				expect(queued?.turnSettings).toEqual({ model: 'opus', effort: undefined });
+				expect(sendQueuedItemNow).toHaveBeenCalledWith('session-1', queued?.id);
+				expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith(
+					'chan-ov-idle',
+					expect.objectContaining({ success: true, tabId: 'tab-1', queued: false })
+				);
+				dispatchEventSpy.mockRestore();
+			});
+
+			it('report the item as waiting when nothing can run it yet', () => {
+				vi.mocked(sendQueuedItemNow).mockReturnValueOnce(false);
+				const tab = createMockTab({ id: 'tab-1' });
+				const session = createMockSession({
+					id: 'session-1',
+					state: 'idle',
+					aiTabs: [tab],
+					activeTabId: 'tab-1',
+					executionQueue: [],
+				});
+				useSessionStore.setState({ sessions: [session] });
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				act(() => {
+					onRemoteEnqueueCommandHandler?.(
+						'session-1',
+						'Later',
+						'chan-ov-wait',
+						'ai',
+						'tab-1',
+						undefined,
+						true,
+						false,
+						undefined,
+						undefined,
+						undefined,
+						{ effort: 'high' }
+					);
+				});
+
+				expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith(
+					'chan-ov-wait',
+					expect.objectContaining({
+						success: true,
+						queued: true,
+						queuePosition: 1,
+						queueLength: 1,
+						itemId: expect.any(String),
+					})
+				);
+			});
 		});
 
 		it('dispatches immediately (queued=false) into an idle tab while another tab is busy', () => {

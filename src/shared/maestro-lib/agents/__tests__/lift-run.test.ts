@@ -50,17 +50,19 @@ function sshAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 
 function connectionWith(
 	importResult: unknown = { ok: true, value: { agentId: 'host-1', queued: 1 } },
-	removeResult: unknown = { ok: true, value: undefined }
+	removeResult: unknown = { ok: true, value: undefined },
+	updateResult: unknown = { ok: true, value: { applied: [] } }
 ) {
 	const importAgent = vi.fn().mockResolvedValue(importResult);
 	const remove = vi.fn().mockResolvedValue(removeResult);
+	const update = vi.fn().mockResolvedValue(updateResult);
 	const release = vi.fn().mockResolvedValue(undefined);
 	const connection = {
 		peer: 'build-box',
-		client: { agents: { import: importAgent, remove } },
+		client: { agents: { import: importAgent, remove, update } },
 		release,
 	} as unknown as LiftHostConnection;
-	return { connection, importAgent, remove, release };
+	return { connection, importAgent, remove, update, release };
 }
 
 function depsWith(
@@ -276,5 +278,44 @@ describe('helpers', () => {
 		expect(providerEnvVarsOf({ A: 'x', B: 2, C: null })).toEqual({ A: 'x' });
 		expect(providerEnvVarsOf(undefined)).toBeUndefined();
 		expect(providerEnvVarsOf(['x'])).toBeUndefined();
+	});
+});
+
+describe('runLift follow-up settings', () => {
+	it('sends the settings an import cannot carry right after the import', async () => {
+		const agent = sshAgent({
+			bookmarked: true,
+			codexTransport: 'app-server',
+			maestroPMode: 'dynamic',
+		});
+		const { deps, update, importAgent } = depsWith(agent);
+		const result = await runLift('agent-1', {}, deps);
+		expect(importAgent).toHaveBeenCalled();
+		expect(update).toHaveBeenCalledWith('host-1', {
+			bookmarked: true,
+			maestroPMode: 'dynamic',
+			codexTransport: 'app-server',
+		});
+		expect(result).not.toHaveProperty('notices');
+	});
+
+	it('sends nothing more for an agent that sets none of them', async () => {
+		const { deps, update } = depsWith(sshAgent());
+		await runLift('agent-1', {}, deps);
+		expect(update).not.toHaveBeenCalled();
+	});
+
+	it('keeps the lift when the follow-up is refused, and says what did not move', async () => {
+		const conn = connectionWith(undefined, undefined, {
+			ok: false,
+			error: { code: 'invalid', message: 'bad transport', method: 'agents.update' },
+		});
+		const { deps } = depsWith(sshAgent({ bookmarked: true }), {}, conn);
+		const result = await runLift('agent-1', {}, deps);
+		expect(deps.setPointer).toHaveBeenCalled();
+		expect(result).toMatchObject({
+			dryRun: false,
+			notices: ['Some settings did not reach the host: bad transport'],
+		});
 	});
 });

@@ -12,6 +12,7 @@ import { SessionList } from './SessionList';
 import { RightPanel, type RightPanelHandle } from './RightPanel';
 import { MainPanel, type MainPanelHandle } from './MainPanel';
 import { PeerAgentPanel } from './PeerAgentPanel';
+import { FederationSettingsConflictsModal, HostedAgentSettingsModal } from './HostedAgentSettings';
 import { EmptyStateView } from './EmptyStateView';
 import { AgentsLoadingView } from './AgentsLoadingView';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -299,6 +300,10 @@ export function AppShell({
 					<PeerAgentPanel theme={theme} setLightboxImage={mainPanelProps.setLightboxImage} />
 				</ErrorBoundary>
 			)}
+
+			{/* Federation: settings of hosted agents (opened from the mirror, the Left Bar, the palette). */}
+			<HostedAgentSettingsModal theme={theme} />
+			<FederationSettingsConflictsModal theme={theme} />
 
 			<PluginPanelSlot
 				theme={theme}

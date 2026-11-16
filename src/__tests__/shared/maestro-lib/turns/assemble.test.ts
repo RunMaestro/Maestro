@@ -208,6 +208,22 @@ describe('read-only and permission mode', () => {
 		).toBe(true);
 	});
 
+	it("reads the sender's own read-only chip in place of the tab's, never past a readonly permission", () => {
+		expect(assemble({ message: { tabReadOnly: true } }).readOnly).toBe(true);
+		expect(assemble({ message: { tabReadOnly: true } }).permissionMode).toBe('readonly');
+		const lifted = assemble({ tab: { readOnlyMode: true }, message: { tabReadOnly: false } });
+		expect(lifted.readOnly).toBe(false);
+		expect(lifted.permissionMode).toBe('full');
+		expect(lifted.launch.readOnlyMode).toBe(false);
+		expect(
+			assemble({ tab: { permissionMode: 'readonly' }, message: { tabReadOnly: false } }).readOnly
+		).toBe(true);
+		expect(assemble({ message: { readOnly: true, tabReadOnly: false } }).readOnly).toBe(true);
+		expect(
+			assemble({ message: { tabReadOnly: false }, context: { autoRunHoldsTree: true } }).readOnly
+		).toBe(true);
+	});
+
 	it('forces the readonly permission mode when read-only, else the tab mode, else full', () => {
 		expect(
 			assemble({ tab: { readOnlyMode: true, permissionMode: 'standard' } }).permissionMode

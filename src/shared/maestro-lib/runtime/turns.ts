@@ -53,11 +53,12 @@ import type {
 	QueuedTurn,
 	TurnEvent,
 	TurnInput,
+	TurnOverrides,
 	TurnSendReceipt,
 	TurnsApi,
 	Unsubscribe,
 } from '../client/types';
-import { normalizeOriginHost } from '../client/types';
+import { normalizeOriginHost, normalizeTurnOverrides } from '../client/types';
 import { logger } from '../host';
 import { isAgentOwnWorkingDirectory } from '../launch/interactive-mode';
 import type { BinaryDetectionResult } from '../launch/path-prober';
@@ -164,6 +165,13 @@ interface TurnItem extends QueueItem {
 	settingsProvider: string;
 	/** The machine the person sent it from, for the History entry (`TurnInput.originHost`). */
 	originHost?: string;
+	/**
+	 * The sender's own tab choices for this turn (`TurnInput.overrides`). Model and effort are
+	 * already folded into `turnSettings` and read-only into `readOnly`; the item keeps the rest
+	 * (the read-only chip that stands in for the tab's, save to History) until it runs. Never
+	 * written to the tab record.
+	 */
+	overrides?: TurnOverrides;
 }
 
 type Verdict = { ok: true } | { ok: false; message: string };
@@ -344,6 +352,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			...(item.settingsProvider === agent.toolType ? { turnSettings: item.turnSettings } : {}),
 			...(command ? { command } : {}),
 			...(item.readOnly ? { readOnly: true } : {}),
+			...(item.overrides?.readOnly !== undefined ? { tabReadOnly: item.overrides.readOnly } : {}),
 		};
 		const assembled = assembleTurn(agent, tab, message, {
 			...loaded.context,
@@ -423,6 +432,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				expected,
 				writeGuard,
 				...(item.originHost ? { originHost: item.originHost } : {}),
+				...(item.overrides?.saveToHistory !== undefined
+					? { saveToHistory: item.overrides.saveToHistory }
+					: {}),
 			});
 		} catch (error) {
 			run.terminate();
@@ -448,8 +460,11 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		expected: NonNullable<TabSessionUpdate['expected']>;
 		writeGuard?: TabWriteGuard;
 		originHost?: string;
+		/** The sender's save-to-History chip for this turn (`TurnOverrides.saveToHistory`). */
+		saveToHistory?: boolean;
 	}): Promise<void> {
 		const { agentId, tabId, turn, run, startedAt, expected, writeGuard, originHost } = input;
+		const { saveToHistory } = input;
 		const provider = turn.settings.provider;
 		const mapper = createTurnEventMapper({
 			agentId: provider,
@@ -582,6 +597,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				nativeSessionBinding,
 				writeGuard: provider === 'grok' ? () => !identityFailure && writeGuard!() : undefined,
 				...(originHost ? { originHost } : {}),
+				...(saveToHistory !== undefined ? { saveToHistory } : {}),
 			});
 			if (!recorded.transcript.ok && recorded.transcript.error.code !== 'not-found') {
 				logger.warn(
@@ -740,21 +756,25 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const agent = toTurnAgent(record);
 		if (!agent) return fail(method, 'rejected', 'The agent has no working directory to run in.');
 		const tab = toTurnTab(tabRecord);
+		// The sender's own chips stand in for the tab's, for this message only (`TurnOverrides`).
+		const overrides = normalizeTurnOverrides(input.overrides);
 
 		const item: TurnItem = {
 			id: ctx.newId(),
 			tabId,
 			text: input.text,
 			queuedAt: deps.now(),
-			readOnly: tab.readOnlyMode === true || tab.permissionMode === 'readonly',
+			readOnly:
+				(overrides?.readOnly ?? tab.readOnlyMode === true) || tab.permissionMode === 'readonly',
 			turnSettings: {
-				model: tab.customModel ?? agent.customModel,
-				effort: tab.customEffort ?? agent.customEffort,
+				model: overrides?.model ?? tab.customModel ?? agent.customModel,
+				effort: overrides?.effort ?? tab.customEffort ?? agent.customEffort,
 			},
 			settingsProvider: agent.toolType,
 		};
 		const originHost = normalizeOriginHost(input.originHost);
 		if (originHost) item.originHost = originHost;
+		if (overrides) item.overrides = overrides;
 
 		const queue = queueFor(agentId);
 		const attempt = new Promise<Verdict>((resolve) => verdicts.set(item.id, resolve));
