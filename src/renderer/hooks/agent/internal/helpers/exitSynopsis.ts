@@ -250,6 +250,7 @@ export function shouldRunSynopsisOnExit(
 				id?: string;
 				agentSessionId?: NonNullable<Session['aiTabs']>[number]['agentSessionId'];
 				saveToHistory?: NonNullable<Session['aiTabs']>[number]['saveToHistory'];
+				logs?: ReadonlyArray<Pick<LogEntry, 'source' | 'saveToHistory'>>;
 		  }
 		| undefined
 ): boolean {
@@ -269,8 +270,31 @@ export function shouldRunSynopsisOnExit(
 	if (tabQueue.some((item) => item.awaitingConsult)) return false;
 	const hasAgentSessionId = !!(completedTab?.agentSessionId || session.agentSessionId);
 	if (!hasAgentSessionId) return false;
-	const optedIn = !!(completedTab?.saveToHistory || session.pendingAICommandForSynopsis);
+	const optedIn = !!(turnSavesToHistory(completedTab) || session.pendingAICommandForSynopsis);
 	return optedIn;
+}
+
+/**
+ * Whether the turn that just finished on `tab` saves to History: the sender's own choice for that
+ * message when it carried one (a Federation conductor's chip, stamped on the user entry by
+ * `markTabRunningQueuedItem`), otherwise the tab's own chip.
+ */
+export function turnSavesToHistory(
+	tab:
+		| {
+				saveToHistory?: boolean;
+				logs?: ReadonlyArray<Pick<LogEntry, 'source' | 'saveToHistory'>>;
+		  }
+		| undefined
+): boolean {
+	const logs = tab?.logs ?? [];
+	for (let i = logs.length - 1; i >= 0; i--) {
+		if (logs[i].source !== 'user') continue;
+		const choice = logs[i].saveToHistory;
+		if (typeof choice === 'boolean') return choice;
+		break;
+	}
+	return tab?.saveToHistory === true;
 }
 
 /**
