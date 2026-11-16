@@ -61,6 +61,7 @@ import {
 import { stripAnsiCodes } from '../../../shared/stringUtils';
 import { atomicWriteFile, createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { openCappedLogFile, type CappedLogFile } from '../../utils/capped-log-file';
+import { logLineStamp } from '../../../shared/logSources';
 import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
 import { logger } from '../../utils/logger';
 import type { SafeSendFn } from '../../utils/safe-send';
@@ -493,13 +494,16 @@ async function launchLocked(knownModels?: ServerModelPreset[]): Promise<void> {
 			apiKeyFile: keyFile,
 		});
 		const log = openCappedLogFile(modelServerLogPath(), {
+			// Each line carries its wall-clock time, so the System Log Viewer can
+			// place it among Maestro's own entries.
+			linePrefix: () => logLineStamp(),
 			onError: (error) =>
 				logger.warn(
 					`The ${MODEL_SERVER_NAME} log could not be written: ${errorMessage(error)}`,
 					LOG_CONTEXT
 				),
 		});
-		log.write(`\n[${new Date().toISOString()}] Starting ${binary} ${args.join(' ')}\n`);
+		log.writeLine(`Starting ${binary} ${args.join(' ')}`);
 
 		let child: ChildProcess;
 		try {
@@ -548,7 +552,7 @@ async function launchLocked(knownModels?: ServerModelPreset[]): Promise<void> {
 		child.stderr?.on('data', (chunk: Buffer) => onOutput(current, chunk));
 		child.once('exit', (code, signal) => onExit(current, code, signal));
 		child.once('close', () => {
-			current.log.write(`[${new Date().toISOString()}] Exited\n`);
+			current.log.writeLine('Exited');
 			current.log.close();
 			current.markClosed();
 		});

@@ -287,6 +287,8 @@ describe('starting and stopping', () => {
 		);
 		const log = await fs.readFile(status.logPath, 'utf-8');
 		expect(log).toContain('Starting');
+		// Every line carries its wall-clock time, for the System Log Viewer.
+		expect(log).toMatch(/^\[\d{4}-\d{2}-\d{2}T[\d:.]+Z\] .*server is listening/m);
 		expect(log).not.toContain(key);
 	});
 

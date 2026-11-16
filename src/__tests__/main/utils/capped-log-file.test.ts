@@ -92,6 +92,46 @@ describe('openCappedLogFile', () => {
 		expect(read(file)).toBe('kept\n');
 	});
 
+	it('prefixes every non-blank line as it starts, across chunk boundaries', () => {
+		const file = path.join(dir, 'server.log');
+		let n = 0;
+		const log = openCappedLogFile(file, { maxBytes: 1024, linePrefix: () => `<${++n}> ` });
+		log.write('one\ntw');
+		log.write('o\n\r\nthree');
+		log.write('\n');
+
+		expect(read(file)).toBe('<1> one\n<2> two\n\r\n<3> three\n');
+	});
+
+	it('never splits a multi-byte character cut across two chunks', () => {
+		const file = path.join(dir, 'server.log');
+		const log = openCappedLogFile(file, { maxBytes: 1024, linePrefix: () => '> ' });
+		const bytes = Buffer.from('café\n', 'utf8');
+		log.write(bytes.subarray(0, 4));
+		log.write(bytes.subarray(4));
+
+		expect(read(file)).toBe('> café\n');
+	});
+
+	it('ends a line the process left open before its own line', () => {
+		const file = path.join(dir, 'server.log');
+		const log = openCappedLogFile(file, { maxBytes: 1024, linePrefix: () => '> ' });
+		log.writeLine('Starting');
+		log.write('partial');
+		log.writeLine('Exited');
+
+		expect(read(file)).toBe('> Starting\n> partial\n> Exited\n');
+	});
+
+	it('continues an unfinished last line from an earlier run without a prefix', () => {
+		const file = path.join(dir, 'server.log');
+		fs.writeFileSync(file, 'cut off');
+		const log = openCappedLogFile(file, { maxBytes: 1024, linePrefix: () => '> ' });
+		log.writeLine('Starting');
+
+		expect(read(file)).toBe('cut off\n> Starting\n');
+	});
+
 	it('reports a file it cannot open once, and never throws', () => {
 		// A regular file where the folder should be.
 		const blocker = path.join(dir, 'not-a-folder');

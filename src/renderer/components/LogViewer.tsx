@@ -27,15 +27,13 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { logger } from '../utils/logger';
 import { formatRelativeTime, fileTimestampSlug } from '../../shared/formatters';
 import {
-	DEFAULT_LOG_SOURCE,
 	isFileLogSource,
+	LOG_SOURCE_IDS,
 	LOG_SOURCES,
-	type LogLine,
+	type FileLogSourceId,
 	type LogSourceId,
 } from '../../shared/logSources';
-import { useLogFileSource } from '../hooks/utils/useLogFileSource';
-import { useStickToBottom } from '../hooks/ui/useStickToBottom';
-import { highlightMatches } from '../utils/highlightMatches';
+import { useLogFileSources } from '../hooks/utils/useLogFileSources';
 import { downloadBlobToClient } from '../utils/clientDownload';
 
 interface SystemLogEntry {
@@ -44,12 +42,22 @@ interface SystemLogEntry {
 	message: string;
 	context?: string;
 	data?: unknown;
+	/** The file log source a line came from; absent for Maestro's own entries. */
+	source?: FileLogSourceId;
+}
+
+/** One entry as text, the same for Export and Copy. */
+function formatLogEntryText(log: SystemLogEntry): string {
+	const timestamp = new Date(log.timestamp).toISOString();
+	const contextStr = log.context ? `[${log.context}]` : '';
+	const dataStr = log.data ? `\n${JSON.stringify(log.data, null, 2)}` : '';
+	return `[${timestamp}] [${log.level.toUpperCase()}] ${contextStr} ${log.message}${dataStr}`;
 }
 
 interface LogViewerProps {
 	theme: Theme;
 	onClose: () => void;
-	/** The source pill to open on (Settings > Models > Open log passes `model-server`). */
+	/** A source to make sure is on (Settings > Models > Open log passes `model-server`). */
 	initialSource?: LogSourceId;
 	logLevel?: string; // Current log level setting (debug, info, warn, error)
 	savedSelectedLevels?: string[]; // Persisted filter selections
@@ -121,6 +129,7 @@ export function LogViewer({
 	onShortcutUsed,
 	onSessionClick,
 }: LogViewerProps) {
+	// Maestro's own entries, newest first.
 	const [logs, setLogs] = useState<SystemLogEntry[]>([]);
 	const [filteredLogs, setFilteredLogs] = useState<SystemLogEntry[]>([]);
 	const [searchOpen, setSearchOpen] = useState(false);
@@ -129,32 +138,42 @@ export function LogViewer({
 	const phone = usePhoneLayout();
 	const [searchQuery, setSearchQuery] = useState('');
 
-	// Which log is shown: Maestro's own, or a supervised process's log file.
-	const [source, setSource] = useState<LogSourceId>(initialSource ?? DEFAULT_LOG_SOURCE);
-	// A deep link that arrives while the viewer is already up (`maestro-cli open
-	// logs --tab model-server`, a second Open log) switches the pill in place.
+	// Which logs are shown. Every source starts on, and their entries are
+	// interleaved by time; a pill turns its source off (never the last one).
+	const [sources, setSources] = useState<ReadonlySet<LogSourceId>>(() => new Set(LOG_SOURCE_IDS));
+	// A deep link (`maestro-cli open logs --tab model-server`, a second Open log)
+	// turns its source back on if it was off, in place.
 	useEffect(() => {
-		if (initialSource) setSource(initialSource);
+		if (!initialSource) return;
+		setSources((prev) => (prev.has(initialSource) ? prev : new Set([...prev, initialSource])));
 	}, [initialSource]);
-	const fileSource = isFileLogSource(source) ? source : null;
-	const fileLog = useLogFileSource(fileSource);
-	const filteredFileLines = useMemo(() => {
-		const query = searchQuery.trim().toLowerCase();
-		if (!query) return fileLog.lines;
-		return fileLog.lines.filter((line) => line.text.toLowerCase().includes(query));
-	}, [fileLog.lines, searchQuery]);
-	// A process log reads top-down, newest at the bottom, so follow its tail.
-	const stickToBottom = useStickToBottom<HTMLDivElement>(
-		filteredFileLines.length + (fileLog.read?.mtimeMs ?? 0),
-		fileSource !== null
+	const toggleSource = useCallback((id: LogSourceId) => {
+		setSources((prev) => {
+			if (prev.has(id) && prev.size === 1) return prev;
+			const next = new Set(prev);
+			if (next.has(id)) next.delete(id);
+			else next.add(id);
+			return next;
+		});
+	}, []);
+	const fileSources = useMemo(
+		() =>
+			LOG_SOURCE_IDS.filter((id): id is FileLogSourceId => isFileLogSource(id) && sources.has(id)),
+		[sources]
 	);
-	const setLogsContainer = useCallback(
-		(node: HTMLDivElement | null) => {
-			containerRef.current = node;
-			stickToBottom(node);
-		},
-		[stickToBottom]
-	);
+	const fileLogs = useLogFileSources(fileSources);
+	const showMaestro = sources.has('maestro');
+
+	// Every shown source's entries, newest first. File lines are reversed into
+	// that order before the stable sort, so lines with the same time keep theirs.
+	const mergedLogs = useMemo<SystemLogEntry[]>(() => {
+		const fileEntries = fileLogs.entries.slice().reverse();
+		if (fileEntries.length === 0) return showMaestro ? logs : [];
+		const merged: SystemLogEntry[] = showMaestro ? [...logs, ...fileEntries] : fileEntries;
+		return merged.sort((a, b) => b.timestamp - a.timestamp);
+	}, [logs, fileLogs.entries, showMaestro]);
+	const truncatedSources = fileSources.filter((id) => fileLogs.reads[id]?.truncated);
+	const failedSources = fileSources.filter((id) => fileLogs.errors[id]);
 
 	// Resolve agent name to session ID for navigation from autorun/cue pills
 	const sessions = useSessionStore((s) => s.sessions);
@@ -289,7 +308,7 @@ export function LogViewer({
 	useEffect(() => {
 		const query = searchQuery.trim().toLowerCase();
 
-		const filtered = logs.filter((log) => {
+		const filtered = mergedLogs.filter((log) => {
 			// First check level filter (fast)
 			if (!selectedLevels.has(log.level)) return false;
 
@@ -315,7 +334,7 @@ export function LogViewer({
 		});
 
 		setFilteredLogs(filtered);
-	}, [logs, searchQuery, selectedLevels]);
+	}, [mergedLogs, searchQuery, selectedLevels]);
 
 	// Register layer on mount
 	// Note: Using 'modal' type because LogViewer blocks all shortcuts (like the original modalOpen check)
@@ -378,34 +397,15 @@ export function LogViewer({
 	};
 
 	const handleExportLogs = () => {
-		if (fileSource) {
-			const text = filteredFileLines.map((line) => line.text).join('\n');
-			downloadBlobToClient(
-				new Blob([text], { type: 'text/plain' }),
-				`${fileSource}-log-${fileTimestampSlug()}.txt`
-			);
-			return;
-		}
-		const logsText = filteredLogs
-			.map((log) => {
-				const timestamp = new Date(log.timestamp).toISOString();
-				const contextStr = log.context ? `[${log.context}]` : '';
-				const dataStr = log.data ? `\n${JSON.stringify(log.data, null, 2)}` : '';
-				return `[${timestamp}] [${log.level.toUpperCase()}] ${contextStr} ${log.message}${dataStr}`;
-			})
-			.join('\n\n');
+		const logsText = filteredLogs.map(formatLogEntryText).join('\n\n');
 		downloadBlobToClient(
 			new Blob([logsText], { type: 'text/plain' }),
-			`maestro-logs-${Date.now()}.txt`
+			`maestro-logs-${fileTimestampSlug()}.txt`
 		);
 	};
 
 	const handleCopyEntry = useCallback(async (log: SystemLogEntry, index: number) => {
-		const timestamp = new Date(log.timestamp).toISOString();
-		const contextStr = log.context ? `[${log.context}]` : '';
-		const dataStr = log.data ? `\n${JSON.stringify(log.data, null, 2)}` : '';
-		const text = `[${timestamp}] [${log.level.toUpperCase()}] ${contextStr} ${log.message}${dataStr}`;
-		const ok = await safeClipboardWrite(text);
+		const ok = await safeClipboardWrite(formatLogEntryText(log));
 		if (ok) {
 			setCopiedIndex(index);
 			setTimeout(() => setCopiedIndex(null), 2000);
@@ -490,18 +490,12 @@ export function LogViewer({
 	// One stripe per shown entry, in the order the list draws them.
 	const timelineItems = useMemo(
 		() =>
-			fileSource
-				? filteredFileLines.map((line) => ({
-						key: `line-${line.number}`,
-						level: line.level as string,
-						title: `${line.level.toUpperCase()}: ${line.text.substring(0, 50)}${line.text.length > 50 ? '...' : ''}`,
-					}))
-				: filteredLogs.map((log, idx) => ({
-						key: `${log.timestamp}-${log.level}-${idx}`,
-						level: log.level as string,
-						title: `${new Date(log.timestamp).toLocaleTimeString()} - ${log.level.toUpperCase()}: ${log.message.substring(0, 50)}${log.message.length > 50 ? '...' : ''}`,
-					})),
-		[fileSource, filteredFileLines, filteredLogs]
+			filteredLogs.map((log, idx) => ({
+				key: `${log.timestamp}-${log.level}-${idx}`,
+				level: log.level as string,
+				title: `${new Date(log.timestamp).toLocaleTimeString()} - ${log.level.toUpperCase()}: ${log.message.substring(0, 50)}${log.message.length > 50 ? '...' : ''}`,
+			})),
+		[filteredLogs]
 	);
 
 	const levelColors = useMemo(() => buildLogLevelColors(theme), [theme]);
@@ -544,9 +538,7 @@ export function LogViewer({
 							className="text-xs opacity-50 whitespace-nowrap"
 							style={{ color: theme.colors.textDim }}
 						>
-							{fileSource
-								? `${filteredFileLines.length} ${filteredFileLines.length === 1 ? 'line' : 'lines'}`
-								: `${filteredLogs.length} ${filteredLogs.length === 1 ? 'entry' : 'entries'}`}
+							{`${filteredLogs.length} ${filteredLogs.length === 1 ? 'entry' : 'entries'}`}
 						</span>
 					)}
 				</div>
@@ -562,7 +554,7 @@ export function LogViewer({
 						<Search className="w-4 h-4" />
 					</button>
 					{/* Expand/Collapse All buttons */}
-					{!fileSource && expandableIndices.length > 0 && (
+					{expandableIndices.length > 0 && (
 						<>
 							<button
 								onClick={expandAll}
@@ -593,8 +585,8 @@ export function LogViewer({
 					>
 						<Download className="w-4 h-4" />
 					</button>
-					{/* A supervised process's log is never truncated from here. */}
-					{!fileSource && (
+					{/* Clears Maestro's own log; a supervised process's file is never truncated from here. */}
+					{showMaestro && (
 						<button
 							onClick={() => setShowClearConfirm(true)}
 							className="p-2 rounded row-hover transition-all"
@@ -627,18 +619,22 @@ export function LogViewer({
 					Source:
 				</span>
 				{LOG_SOURCES.map((entry) => {
-					const isSelected = entry.id === source;
+					const isSelected = sources.has(entry.id);
+					const isLast = isSelected && sources.size === 1;
+					const path = isFileLogSource(entry.id) ? fileLogs.reads[entry.id]?.path : undefined;
 					return (
 						<button
 							key={entry.id}
-							onClick={() => setSource(entry.id)}
+							onClick={() => toggleSource(entry.id)}
 							className="px-3 py-1 rounded text-xs font-bold transition-all shrink-0 whitespace-nowrap uppercase"
 							style={{
 								backgroundColor: isSelected ? theme.colors.accent : 'transparent',
 								color: isSelected ? onFillTextColor(theme.colors.accent) : theme.colors.textDim,
 								border: `1px solid ${isSelected ? theme.colors.accent : theme.colors.border}`,
 							}}
-							title={entry.description}
+							title={[entry.description, path, isLast ? 'At least one source stays on.' : undefined]
+								.filter(Boolean)
+								.join('\n')}
 							aria-pressed={isSelected}
 							data-testid={`log-source-${entry.id}`}
 						>
@@ -647,111 +643,93 @@ export function LogViewer({
 					);
 				})}
 				<div className="w-px h-4 mx-2 shrink-0" style={{ backgroundColor: theme.colors.border }} />
-				{fileSource ? (
-					<span
-						className="text-xs font-mono truncate min-w-0 select-text"
-						style={{ color: theme.colors.textDim }}
-						title={fileLog.read?.path}
-						data-testid="log-source-path"
-					>
-						{fileLog.read?.path ?? 'Loading...'}
-					</span>
-				) : (
-					<>
-						<span
-							className="text-xs font-bold opacity-70 uppercase mr-2 shrink-0"
-							style={{ color: theme.colors.textDim }}
-						>
-							Filter:
-						</span>
-						{/* All button - toggles only enabled levels on/off */}
+				<span
+					className="text-xs font-bold opacity-70 uppercase mr-2 shrink-0"
+					style={{ color: theme.colors.textDim }}
+				>
+					Filter:
+				</span>
+				{/* All button - toggles only enabled levels on/off */}
+				<button
+					onClick={() => {
+						// Only toggle enabled levels
+						const enabledLevelArray = Array.from(enabledLevels);
+						// Check if all enabled levels are currently selected
+						const allEnabledSelected = enabledLevelArray.every((level) =>
+							selectedLevels.has(level)
+						);
+						if (allEnabledSelected) {
+							// Turn off all enabled levels
+							setSelectedLevels((prev) => {
+								const newSet = new Set(prev);
+								enabledLevelArray.forEach((level) => newSet.delete(level));
+								return newSet;
+							});
+						} else {
+							// Turn on all enabled levels
+							setSelectedLevels((prev) => {
+								const newSet = new Set(prev);
+								enabledLevelArray.forEach((level) => newSet.add(level));
+								return newSet;
+							});
+						}
+					}}
+					className="px-3 py-1 rounded text-xs font-bold transition-all shrink-0 whitespace-nowrap"
+					style={{
+						// ALL is highlighted when all enabled levels are selected
+						backgroundColor: Array.from(enabledLevels).every((level) => selectedLevels.has(level))
+							? theme.colors.accent
+							: 'transparent',
+						color: Array.from(enabledLevels).every((level) => selectedLevels.has(level))
+							? onFillTextColor(theme.colors.accent)
+							: theme.colors.textDim,
+						border: `1px solid ${Array.from(enabledLevels).every((level) => selectedLevels.has(level)) ? theme.colors.accent : theme.colors.border}`,
+					}}
+				>
+					ALL
+				</button>
+				{/* Individual level toggle buttons */}
+				{(['debug', 'info', 'warn', 'error', 'toast', 'autorun', 'cue'] as const).map((level) => {
+					if (level === 'cue' && !maestroCueEnabled) return null;
+					const isSelected = selectedLevels.has(level);
+					const isEnabled = enabledLevels.has(level);
+					return (
 						<button
+							key={level}
+							disabled={!isEnabled}
 							onClick={() => {
-								// Only toggle enabled levels
-								const enabledLevelArray = Array.from(enabledLevels);
-								// Check if all enabled levels are currently selected
-								const allEnabledSelected = enabledLevelArray.every((level) =>
-									selectedLevels.has(level)
-								);
-								if (allEnabledSelected) {
-									// Turn off all enabled levels
-									setSelectedLevels((prev) => {
-										const newSet = new Set(prev);
-										enabledLevelArray.forEach((level) => newSet.delete(level));
-										return newSet;
-									});
-								} else {
-									// Turn on all enabled levels
-									setSelectedLevels((prev) => {
-										const newSet = new Set(prev);
-										enabledLevelArray.forEach((level) => newSet.add(level));
-										return newSet;
-									});
-								}
+								if (!isEnabled) return; // Safety check
+								setSelectedLevels((prev) => {
+									const newSet = new Set(prev);
+									if (newSet.has(level)) {
+										newSet.delete(level);
+									} else {
+										newSet.add(level);
+									}
+									return newSet;
+								});
 							}}
 							className="px-3 py-1 rounded text-xs font-bold transition-all shrink-0 whitespace-nowrap"
 							style={{
-								// ALL is highlighted when all enabled levels are selected
-								backgroundColor: Array.from(enabledLevels).every((level) =>
-									selectedLevels.has(level)
-								)
-									? theme.colors.accent
-									: 'transparent',
-								color: Array.from(enabledLevels).every((level) => selectedLevels.has(level))
-									? onFillTextColor(theme.colors.accent)
-									: theme.colors.textDim,
-								border: `1px solid ${Array.from(enabledLevels).every((level) => selectedLevels.has(level)) ? theme.colors.accent : theme.colors.border}`,
+								backgroundColor: isEnabled && isSelected ? getLevelColor(level) : 'transparent',
+								color:
+									isEnabled && isSelected
+										? onFillTextColor(getLevelColor(level))
+										: theme.colors.textDim,
+								border: `1px solid ${isEnabled && isSelected ? getLevelColor(level) : theme.colors.border}`,
+								opacity: isEnabled ? 1 : 0.3,
+								cursor: isEnabled ? 'pointer' : 'not-allowed',
 							}}
-						>
-							ALL
-						</button>
-						{/* Individual level toggle buttons */}
-						{(['debug', 'info', 'warn', 'error', 'toast', 'autorun', 'cue'] as const).map(
-							(level) => {
-								if (level === 'cue' && !maestroCueEnabled) return null;
-								const isSelected = selectedLevels.has(level);
-								const isEnabled = enabledLevels.has(level);
-								return (
-									<button
-										key={level}
-										disabled={!isEnabled}
-										onClick={() => {
-											if (!isEnabled) return; // Safety check
-											setSelectedLevels((prev) => {
-												const newSet = new Set(prev);
-												if (newSet.has(level)) {
-													newSet.delete(level);
-												} else {
-													newSet.add(level);
-												}
-												return newSet;
-											});
-										}}
-										className="px-3 py-1 rounded text-xs font-bold transition-all shrink-0 whitespace-nowrap"
-										style={{
-											backgroundColor:
-												isEnabled && isSelected ? getLevelColor(level) : 'transparent',
-											color:
-												isEnabled && isSelected
-													? onFillTextColor(getLevelColor(level))
-													: theme.colors.textDim,
-											border: `1px solid ${isEnabled && isSelected ? getLevelColor(level) : theme.colors.border}`,
-											opacity: isEnabled ? 1 : 0.3,
-											cursor: isEnabled ? 'pointer' : 'not-allowed',
-										}}
-										title={
-											isEnabled
-												? undefined
-												: `${level} level is disabled (current log level: ${logLevel})`
-										}
-									>
-										{level.toUpperCase()}
-									</button>
-								);
+							title={
+								isEnabled
+									? undefined
+									: `${level} level is disabled (current log level: ${logLevel})`
 							}
-						)}
-					</>
-				)}
+						>
+							{level.toUpperCase()}
+						</button>
+					);
+				})}
 			</div>
 
 			{/* Visual Log History Timeline */}
@@ -822,34 +800,25 @@ export function LogViewer({
 
 			{/* Logs Container */}
 			<div
-				ref={setLogsContainer}
+				ref={containerRef}
 				onScroll={handleScroll}
-				className={`flex-1 overflow-y-auto p-4 outline-none scrollbar-thin ${fileSource ? '' : 'space-y-2'}`}
+				className="flex-1 overflow-y-auto p-4 outline-none scrollbar-thin space-y-2"
 				tabIndex={-1}
 				style={{ backgroundColor: theme.colors.bgMain }}
 			>
-				{fileSource ? (
-					<LogFileLines
-						theme={theme}
-						lines={filteredFileLines}
-						query={searchQuery.trim()}
-						emptyLabel={
-							fileLog.error
-								? `The log could not be read: ${fileLog.error}`
-								: !fileLog.read
-									? 'Loading...'
-									: !fileLog.read.exists
-										? 'Nothing has been logged yet'
-										: fileLog.lines.length === 0
-											? 'The log is empty'
-											: 'No lines match your search'
-						}
-						truncated={fileLog.read?.truncated ?? false}
-						levelColor={getLevelColor}
-					/>
-				) : filteredLogs.length === 0 ? (
+				{failedSources.map((id) => (
+					<div
+						key={`error-${id}`}
+						className="text-xs"
+						style={{ color: theme.colors.error }}
+						data-testid={`log-source-error-${id}`}
+					>
+						The {id} log could not be read: {fileLogs.errors[id]}
+					</div>
+				))}
+				{filteredLogs.length === 0 ? (
 					<div className="text-center py-12 opacity-50" style={{ color: theme.colors.textDim }}>
-						{logs.length === 0 ? 'No logs yet' : 'No logs match your filter'}
+						{mergedLogs.length === 0 ? 'No logs yet' : 'No logs match your filter'}
 					</div>
 				) : (
 					filteredLogs.map((log, index) => (
@@ -1035,6 +1004,17 @@ export function LogViewer({
 						</div>
 					))
 				)}
+				{/* The list runs newest first, so the cut-off older part is at the bottom. */}
+				{truncatedSources.map((id) => (
+					<div
+						key={`truncated-${id}`}
+						className="text-xs text-center opacity-60"
+						style={{ color: theme.colors.textDim }}
+						data-testid={`log-source-truncated-${id}`}
+					>
+						Older {id} lines are not shown.
+					</div>
+				))}
 			</div>
 
 			{/* Footer hint */}
@@ -1068,57 +1048,6 @@ export function LogViewer({
 					onClose={() => setShowClearConfirm(false)}
 				/>
 			)}
-		</div>
-	);
-}
-
-interface LogFileLinesProps {
-	theme: Theme;
-	lines: LogLine[];
-	/** The search text, highlighted in each line. */
-	query: string;
-	/** Shown in place of the lines when there are none. */
-	emptyLabel: string;
-	/** Older text was left out of the read. */
-	truncated: boolean;
-	levelColor: (level: string) => string;
-}
-
-/** A process log file, one monospace row per line, colored by its inferred level. */
-function LogFileLines({
-	theme,
-	lines,
-	query,
-	emptyLabel,
-	truncated,
-	levelColor,
-}: LogFileLinesProps) {
-	if (lines.length === 0) {
-		return (
-			<div className="text-center py-12 opacity-50" style={{ color: theme.colors.textDim }}>
-				{emptyLabel}
-			</div>
-		);
-	}
-	return (
-		<div className="font-mono text-xs select-text" data-testid="log-file-lines">
-			{truncated && (
-				<div className="pb-2 opacity-60" style={{ color: theme.colors.textDim }}>
-					Older lines are not shown.
-				</div>
-			)}
-			{lines.map((line) => (
-				<div
-					key={line.number}
-					className="pl-2 py-px whitespace-pre-wrap break-all border-l-2"
-					style={{
-						borderColor: line.level === 'info' ? 'transparent' : levelColor(line.level),
-						color: line.level === 'info' ? theme.colors.textMain : levelColor(line.level),
-					}}
-				>
-					{highlightMatches(line.text, query, theme.colors.accent)}
-				</div>
-			))}
 		</div>
 	);
 }

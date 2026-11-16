@@ -922,7 +922,7 @@ The card is on **Models -> Sources**, below the endpoints. It is a core part of 
 - **Context is at least 40,960 tokens.** An agent's first prompt is about 14,000 tokens, and a smaller context fails with "Prompt is too long". Maestro sets this for each model.
 - **Changes restart it.** The bind mode, the model count, and the key are read at launch, so changing one restarts a running server.
 - **It is watched.** If the server stops answering, Maestro restarts it, up to 3 times in a row. After that it is left **Failed**, and a red "Maestro model server stopped" notification says why. A start that does not answer within 60 seconds is stopped.
-- **Open log** shows `model-server.log` in the System Log Viewer, on its **Model server** pill: searchable with `Cmd+F` / `Ctrl+F`, and kept current while it is open. Press `Escape` to return to this card. From a terminal, `maestro-cli open logs --tab model-server` opens the same view, and `maestro-cli models server status` prints the file's path.
+- **Open log** shows `model-server.log` in the System Log Viewer, interleaved by time with Maestro's own log (click the **Maestro** pill to hide those): searchable with `Cmd+F` / `Ctrl+F`, filterable by level, and kept current while it is open. Each line is written with its wall-clock time. Press `Escape` to return to this card. From a terminal, `maestro-cli open logs --tab model-server` opens the same view, and `maestro-cli models server status` prints the file's path.
 
 ### Local only or Network
 

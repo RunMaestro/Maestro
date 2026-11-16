@@ -12,6 +12,11 @@
  * stream that is still flushing. A failed write (a full disk, a folder removed)
  * is reported once through `onError` and every later write is dropped: losing a
  * log must never take the process, or its supervisor, down with it.
+ *
+ * With `linePrefix`, every line is written with that prefix (the
+ * supervisor's wall-clock stamp, `logLineStamp()` in `shared/logSources.ts`),
+ * added as the line starts so nothing is held back. Lines are found by byte, so
+ * a chunk that splits a multi-byte character is never decoded on its own.
  */
 
 import * as fs from 'fs';
@@ -23,15 +28,25 @@ export const DEFAULT_CAPPED_LOG_BYTES = 5 * 1024 * 1024;
 /** Suffix of the file the previous contents move to when the cap is reached. */
 export const CAPPED_LOG_PREVIOUS_SUFFIX = '.1';
 
+const NEWLINE = 0x0a;
+const CARRIAGE_RETURN = 0x0d;
+
 export interface CappedLogFileOptions {
 	maxBytes?: number;
 	/** Called once, on the first failed open, write, or rotation. */
 	onError?: (error: unknown) => void;
+	/** Written at the start of every non-blank line, called as the line starts. */
+	linePrefix?: () => string;
 }
 
 export interface CappedLogFile {
 	readonly path: string;
 	write(text: string | Buffer): void;
+	/**
+	 * Write one whole line of the supervisor's own. A line the process left
+	 * unfinished is ended first, so the two never run together.
+	 */
+	writeLine(text: string): void;
 	/** Close the file. Later writes are dropped. Safe to call twice. */
 	close(): void;
 }
@@ -136,6 +151,9 @@ export function openCappedLogFile(
 	let fd: number | null = null;
 	let size = 0;
 	let done = false;
+	// Whether the next byte starts a line. A file whose last line was left
+	// unfinished by an earlier run is continued, not prefixed.
+	let atLineStart = true;
 
 	const closeFd = (): void => {
 		if (fd === null) return;
@@ -156,8 +174,32 @@ export function openCappedLogFile(
 
 	const open = (): void => {
 		fs.mkdirSync(path.dirname(filePath), { recursive: true });
-		fd = fs.openSync(filePath, 'a');
+		fd = fs.openSync(filePath, 'a+');
 		size = fs.fstatSync(fd).size;
+	};
+
+	const readLastByteIsNewline = (): boolean => {
+		if (fd === null || size === 0) return true;
+		const last = Buffer.alloc(1);
+		fs.readSync(fd, last, 0, 1, size - 1);
+		return last[0] === NEWLINE;
+	};
+
+	/** The chunk with `linePrefix` before each non-blank line that starts in it. */
+	const prefixLines = (bytes: Buffer, prefix: () => string): Buffer => {
+		const parts: Buffer[] = [];
+		let start = 0;
+		while (start < bytes.length) {
+			const newline = bytes.indexOf(NEWLINE, start);
+			const end = newline === -1 ? bytes.length : newline + 1;
+			const blank =
+				newline === start || (newline === start + 1 && bytes[start] === CARRIAGE_RETURN);
+			if (atLineStart && !blank) parts.push(Buffer.from(prefix(), 'utf8'));
+			parts.push(bytes.subarray(start, end));
+			atLineStart = newline !== -1;
+			start = end;
+		}
+		return Buffer.concat(parts);
 	};
 
 	const rotate = (): void => {
@@ -168,25 +210,33 @@ export function openCappedLogFile(
 
 	try {
 		open();
+		atLineStart = readLastByteIsNewline();
 	} catch (error) {
 		fail(error);
 	}
 
+	const write = (text: string | Buffer): void => {
+		if (done || fd === null) return;
+		let bytes = typeof text === 'string' ? Buffer.from(text, 'utf8') : text;
+		if (bytes.length === 0) return;
+		if (options.linePrefix) bytes = prefixLines(bytes, options.linePrefix);
+		else atLineStart = bytes[bytes.length - 1] === NEWLINE;
+		// One chunk larger than the whole cap keeps its newest part.
+		if (bytes.length > maxBytes) bytes = bytes.subarray(bytes.length - maxBytes);
+		try {
+			if (size > 0 && size + bytes.length > maxBytes) rotate();
+			fs.writeSync(fd as number, bytes);
+			size += bytes.length;
+		} catch (error) {
+			fail(error);
+		}
+	};
+
 	return {
 		path: filePath,
-		write(text) {
-			if (done || fd === null) return;
-			let bytes = typeof text === 'string' ? Buffer.from(text, 'utf8') : text;
-			if (bytes.length === 0) return;
-			// One chunk larger than the whole cap keeps its newest part.
-			if (bytes.length > maxBytes) bytes = bytes.subarray(bytes.length - maxBytes);
-			try {
-				if (size > 0 && size + bytes.length > maxBytes) rotate();
-				fs.writeSync(fd as number, bytes);
-				size += bytes.length;
-			} catch (error) {
-				fail(error);
-			}
+		write,
+		writeLine(text) {
+			write(`${atLineStart ? '' : '\n'}${text}\n`);
 		},
 		close() {
 			done = true;
