@@ -344,19 +344,38 @@ export class SignalingService {
 			return;
 		}
 
+		if (session.deviceId) {
+			session.send({
+				op: 'error',
+				code: 'malformed',
+				message: 'This connection is already authenticated.',
+			});
+			return;
+		}
+
 		if (session.authAttempts >= AUTH_ATTEMPT_LIMIT) {
 			session.send({ op: 'error', code: 'rate-limited', message: 'Too many failed attempts.' });
 			return;
 		}
+		// Count the attempt before awaiting authenticate() so a burst of concurrent
+		// auth frames on one socket cannot bypass AUTH_ATTEMPT_LIMIT.
+		session.authAttempts += 1;
 
 		const device = await this.options.pairing.authenticate(message.deviceId, message.token);
 		if (this.sessions.get(session.clientId) !== session) return;
+		if (session.deviceId) {
+			session.send({
+				op: 'error',
+				code: 'malformed',
+				message: 'This connection is already authenticated.',
+			});
+			return;
+		}
 		if (this.options.featureEnabled && !this.options.featureEnabled()) {
 			session.send({ op: 'closed', reason: 'A Cappella is disabled.' });
 			return;
 		}
 		if (!device || !this.options.pairing.isDeviceActive(device.id)) {
-			session.authAttempts += 1;
 			session.send({
 				op: 'auth-failed',
 				reason: 'unauthorized',

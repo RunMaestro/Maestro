@@ -420,6 +420,38 @@ describe('disconnection', () => {
 		expect(sent['c1'].some((m) => m.op === 'authenticated')).toBe(false);
 		expect(last('c1')).toMatchObject({ op: 'closed' });
 	});
+
+	it('refuses re-authentication on an already-authenticated socket without orphaning the first device', async () => {
+		const deviceA = await pairDevice();
+		const deviceB = await pairDevice();
+
+		connect('c1');
+		await authenticate('c1', deviceA);
+		expect(service.isOnline(deviceA.deviceId)).toBe(true);
+
+		await authenticate('c1', deviceB);
+		expect(last('c1')).toMatchObject({ op: 'error', code: 'malformed' });
+		expect(service.isOnline(deviceA.deviceId)).toBe(true);
+		expect(service.isOnline(deviceB.deviceId)).toBe(false);
+	});
+
+	it('enforces AUTH_ATTEMPT_LIMIT across a concurrent burst of auth messages', async () => {
+		connect('c1');
+		const burst = Array.from({ length: AUTH_ATTEMPT_LIMIT + 2 }, () =>
+			service.handleMessage('c1', {
+				op: 'auth',
+				deviceId: 'unknown',
+				token: 'wrong',
+				protocolVersion: 1,
+			})
+		);
+		await Promise.all(burst);
+
+		const failed = sent['c1'].filter((m) => m.op === 'auth-failed');
+		const rateLimited = sent['c1'].filter((m) => m.op === 'error' && m.code === 'rate-limited');
+		expect(failed).toHaveLength(AUTH_ATTEMPT_LIMIT);
+		expect(rateLimited).toHaveLength(2);
+	});
 });
 
 describe('parseClientMessage', () => {
