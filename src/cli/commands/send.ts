@@ -660,6 +660,8 @@ export async function send(
 					customModel: autoTurn ? autoTurn.model : sendModel,
 					customEffort: autoTurn ? autoTurn.effort : agent.customEffort,
 					customArgs: agent.customArgs,
+					// The agent's own binary, as a desktop tab spawn uses it.
+					sessionCustomPath: agent.customPath,
 					additionalDirectories: agent.additionalDirectories,
 					customEnvVars: agent.customEnvVars,
 					gatewayUrl: agent.gatewayUrl,

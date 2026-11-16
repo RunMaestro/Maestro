@@ -83,6 +83,7 @@ export async function requestCliSynopsis(
 					customModel: turn.model,
 					customEffort: turn.effort,
 					customArgs: session.customArgs,
+					sessionCustomPath: session.customPath,
 					additionalDirectories: session.additionalDirectories,
 					customEnvVars: session.customEnvVars,
 					gatewayUrl: session.gatewayUrl,

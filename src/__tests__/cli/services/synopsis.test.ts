@@ -160,6 +160,7 @@ describe('requestCliSynopsis', () => {
 		await requestCliSynopsis(
 			mockSession({
 				customArgs: '--flag',
+				customPath: '/agent/bin/claude',
 				customEnvVars: { KEY: 'value' },
 				additionalDirectories,
 				sessionSshRemoteConfig: sshRemoteConfig,
@@ -174,6 +175,7 @@ describe('requestCliSynopsis', () => {
 		const opts = vi.mocked(spawnAgent).mock.calls[0][4];
 		expect(opts).toMatchObject({
 			customArgs: '--flag',
+			sessionCustomPath: '/agent/bin/claude',
 			customEnvVars: { KEY: 'value' },
 			additionalDirectories,
 			sshRemoteConfig,

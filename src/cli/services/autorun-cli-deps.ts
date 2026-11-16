@@ -39,6 +39,7 @@ import { prepareMaestroSystemPromptCli } from './system-prompt';
 function autoRunTurnOptions(session: SessionInfo): SpawnAgentOptions {
 	return {
 		customArgs: session.customArgs,
+		sessionCustomPath: session.customPath,
 		additionalDirectories: session.additionalDirectories,
 		customEnvVars: session.customEnvVars,
 		gatewayUrl: session.gatewayUrl,
@@ -62,6 +63,7 @@ function autoRunTurnOptions(session: SessionInfo): SpawnAgentOptions {
 function goalTurnOptions(session: SessionInfo): SpawnAgentOptions {
 	return {
 		customArgs: session.customArgs,
+		sessionCustomPath: session.customPath,
 		customEnvVars: session.customEnvVars,
 		gatewayUrl: session.gatewayUrl,
 		runOn: session.runOn,
