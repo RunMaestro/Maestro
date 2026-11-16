@@ -43,8 +43,9 @@ export function useAutosizeTextarea({
 }: UseAutosizeTextareaArgs): void {
 	useEffect(() => {
 		const el = textareaRef.current;
-		if (el && !deferredResizeRef?.current) {
-			resizeTextareaToContent(el, maxHeight);
+		// An unchanged textarea is not re-measured, and its scroll is left alone:
+		// both reads would force a synchronous layout of whatever the page dirtied.
+		if (el && !deferredResizeRef?.current && resizeTextareaToContent(el, maxHeight)) {
 			scrollTextareaToCaretEnd(el);
 		}
 	}, [value, resetKey, maxHeight, textareaRef, deferredResizeRef]);

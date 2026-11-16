@@ -3,6 +3,7 @@ import { ipcRenderer } from 'electron';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
 import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
+import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
 
 export function createQueueRemoteApi() {
 	return {
@@ -25,7 +26,9 @@ export function createQueueRemoteApi() {
 				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
-				control?: PianolaQueueControl
+				control?: PianolaQueueControl,
+				/** A Federation sender's own tab chips for this one message (`TurnInput.overrides`). */
+				turnOverrides?: TurnOverrides
 			) => void
 		): (() => void) => {
 			/**
@@ -45,10 +48,11 @@ export function createQueueRemoteApi() {
 				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
-				control?: PianolaQueueControl
+				control?: PianolaQueueControl,
+				turnOverrides?: TurnOverrides
 			) => {
 				try {
-					callback(
+					const args: Parameters<typeof callback> = [
 						sessionId,
 						command,
 						responseChannel,
@@ -60,8 +64,10 @@ export function createQueueRemoteApi() {
 						consultChain,
 						mentionRouting,
 						dispatchCallback,
-						control
-					);
+						control,
+					];
+					if (turnOverrides) args.push(turnOverrides);
+					callback(...args);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, { success: false });
 					throw error;

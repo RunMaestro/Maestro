@@ -1,18 +1,18 @@
 /**
  * @vitest-environment node
  *
- * Migration v21 against a real SQLite engine: the `local_model_runs` rebuild
+ * Migration v22 against a real SQLite engine: the `local_model_runs` rebuild
  * and the three model columns on `query_events`.
  *
- * SQLite cannot alter a CHECK constraint, so v21 builds the table again beside
+ * SQLite cannot alter a CHECK constraint, so v22 builds the table again beside
  * the old one, copies every row, drops the old one and renames the new one
  * into place. That is the one migration in this file's history that DROPS a
  * table holding the user's data, so what is pinned here is not the happy path
  * alone: every row and every value survives, the copy is undone as a whole
  * when any step after it fails, a second run changes nothing, and a database
- * another branch stamped past v21 still gets the schema with its rows intact.
+ * another branch stamped past v22 still gets the schema with its rows intact.
  *
- * The old table is built from the definition v16 shipped, written out below.
+ * The old table is built from the definition v17 shipped, written out below.
  * It must not be imported from schema.ts: that constant is the CURRENT shape.
  */
 
@@ -44,7 +44,7 @@ import { logger } from '../../../main/utils/logger';
 import { LOCAL_MODEL_RUN_SOURCE_TYPES, STATS_DB_VERSION } from '../../../shared/stats-types';
 import { canLoadNodeSqlite, nodeSqliteBetterSqlite3Mock } from '../../helpers/nodeSqlite';
 
-/** `local_model_runs` exactly as migration v16 created it, before v21. */
+/** `local_model_runs` exactly as migration v17 created it, before v22. */
 const V15_LOCAL_MODEL_RUNS_SQL = `
   CREATE TABLE local_model_runs (
     id TEXT PRIMARY KEY,
@@ -81,7 +81,7 @@ interface OldRun {
 }
 
 /**
- * Rows a v20 install can hold: both sources, all three outcomes, every nullable
+ * Rows a v21 install can hold: both sources, all three outcomes, every nullable
  * column both set and NULL, a zero that must not read as NULL, a timestamp past
  * 32 bits, and ids and names that punish a copy built by string splicing.
  */
@@ -252,7 +252,7 @@ function insertOldRun(db: Database.Database, run: OldRun): void {
 	);
 }
 
-/** Put `local_model_runs` back the way v16 left it. Takes its rows with it. */
+/** Put `local_model_runs` back the way v17 left it. Takes its rows with it. */
 function revertLocalModelRuns(db: Database.Database): void {
 	db.prepare('DROP TABLE local_model_runs').run();
 	db.prepare(V15_LOCAL_MODEL_RUNS_SQL).run();
@@ -260,8 +260,8 @@ function revertLocalModelRuns(db: Database.Database): void {
 }
 
 /**
- * A database as a v20 build left it, holding {@link OLD_RUNS} and two agent
- * turns: migrate fully, then take away exactly what v21 adds and stamp 20.
+ * A database as a v21 build left it, holding {@link OLD_RUNS} and two agent
+ * turns: migrate fully, then take away exactly what v22 adds and stamp 21.
  */
 function seededV19Db(): Database.Database {
 	const db = openDb();
@@ -272,7 +272,7 @@ function seededV19Db(): Database.Database {
 		db.prepare(`ALTER TABLE query_events DROP COLUMN ${column}`).run();
 	}
 	db.prepare('DELETE FROM _migrations WHERE version = 21').run();
-	db.pragma('user_version = 20');
+	db.pragma('user_version = 21');
 
 	for (const run of OLD_RUNS) insertOldRun(db, run);
 	db.prepare(
@@ -299,7 +299,7 @@ function failingOn(db: Database.Database, pattern: RegExp, message: string): Dat
 	});
 }
 
-describe.skipIf(!canLoadNodeSqlite())('stats migration v21', () => {
+describe.skipIf(!canLoadNodeSqlite())('stats migration v22', () => {
 	beforeEach(() => {
 		clearLocalModelRunsCache();
 		vi.mocked(logger.warn).mockClear();
@@ -307,15 +307,15 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v21', () => {
 	});
 
 	it('is the target version', () => {
-		expect(getTargetVersion()).toBe(23);
-		expect(STATS_DB_VERSION).toBe(23);
+		expect(getTargetVersion()).toBe(24);
+		expect(STATS_DB_VERSION).toBe(24);
 	});
 
 	describe('the seeded fixture', () => {
 		it('really is the old shape: the wider sources are refused before the migration', () => {
 			const db = seededV19Db();
 
-			expect(getCurrentVersion(db)).toBe(20);
+			expect(getCurrentVersion(db)).toBe(21);
 			expect(columnNames(db, 'local_model_runs')).not.toContain('agent_id');
 			expect(columnNames(db, 'query_events')).not.toContain('run_on_endpoint');
 			expect(allRuns(db)).toHaveLength(OLD_RUNS.length);
@@ -354,7 +354,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v21', () => {
 
 			runMigrations(db);
 
-			expect(getCurrentVersion(db)).toBe(23);
+			expect(getCurrentVersion(db)).toBe(24);
 			expect(getMigrationHistory(db).find((m) => m.version === 21)).toMatchObject({
 				status: 'success',
 			});
@@ -445,7 +445,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v21', () => {
 
 			expect(allRuns(db)).toEqual(once);
 			expect(tableSql(db, 'local_model_runs')).toBe(sqlOnce);
-			expect(getCurrentVersion(db)).toBe(23);
+			expect(getCurrentVersion(db)).toBe(24);
 			expect(logger.warn).not.toHaveBeenCalled();
 		});
 
@@ -503,7 +503,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v21', () => {
 				'idx_local_model_runs_task',
 			]);
 			expect(hasTable(db, LOCAL_MODEL_RUNS_REBUILD_TABLE)).toBe(false);
-			expect(getCurrentVersion(db)).toBe(20);
+			expect(getCurrentVersion(db)).toBe(21);
 			expect(getMigrationHistory(db).find((m) => m.version === 21)).toMatchObject({
 				status: 'failed',
 				errorMessage: 'disk I/O error',
@@ -521,11 +521,11 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v21', () => {
 
 			expect(() => runMigrations(failing)).toThrow('database is locked');
 
-			// One transaction for the whole migration: no half-applied v21.
+			// One transaction for the whole migration: no half-applied v22.
 			expect(allRuns(db)).toEqual(before);
 			expect(columnNames(db, 'local_model_runs')).not.toContain('agent_id');
 			expect(columnNames(db, 'query_events')).not.toContain('run_on_endpoint');
-			expect(getCurrentVersion(db)).toBe(20);
+			expect(getCurrentVersion(db)).toBe(21);
 		});
 
 		it('succeeds on the next start with nothing lost', () => {
@@ -538,7 +538,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v21', () => {
 			runMigrations(db);
 
 			expect(allRuns(db)).toEqual(before.map((row) => ({ ...row, agent_id: null })));
-			expect(getCurrentVersion(db)).toBe(23);
+			expect(getCurrentVersion(db)).toBe(24);
 			expect(getMigrationHistory(db).find((m) => m.version === 21)).toMatchObject({
 				status: 'success',
 			});
@@ -613,12 +613,12 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v21', () => {
 	});
 
 	describe('a fresh database', () => {
-		it('is created in the v21 shape with nothing to rebuild', () => {
+		it('is created in the v22 shape with nothing to rebuild', () => {
 			const db = openDb();
 
 			runMigrations(db);
 
-			expect(getCurrentVersion(db)).toBe(23);
+			expect(getCurrentVersion(db)).toBe(24);
 			expect(columnNames(db, 'local_model_runs')).toContain('agent_id');
 			expect(tableSql(db, 'local_model_runs')).toContain("'system-one'");
 			expect(indexNames(db, 'local_model_runs')).toContain('idx_local_model_runs_agent');
@@ -629,13 +629,13 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v21', () => {
 		});
 	});
 
-	describe('a version number that already covers v21', () => {
+	describe('a version number that already covers v22', () => {
 		it('rebuilds the table of a database stamped 21 without the schema, keeping its rows', () => {
-			// v21 declares isApplied for the same reason v16 does: rc may number a
-			// different migration 21, and user_version is only a number.
+			// v22 declares isApplied for the same reason v17 does: rc may number a
+			// different migration 22, and user_version is only a number.
 			const db = seededV19Db();
 			const before = allRuns(db);
-			db.pragma('user_version = 21');
+			db.pragma('user_version = 22');
 
 			runMigrations(db);
 
@@ -644,7 +644,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v21', () => {
 				expect.arrayContaining([...ADD_QUERY_EVENT_MODEL_COLUMNS])
 			);
 			expect(logger.warn).toHaveBeenCalledTimes(1);
-			expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v21');
+			expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v22');
 		});
 
 		it('repairs a database that has the rebuilt table and lacks one query_events column', () => {
@@ -656,10 +656,10 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v21', () => {
 			runMigrations(db);
 
 			expect(columnNames(db, 'query_events')).toContain('routed_tier');
-			expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v21');
+			expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v22');
 		});
 
-		it('creates the table in the v21 shape when an earlier build never made it', () => {
+		it('creates the table in the v22 shape when an earlier build never made it', () => {
 			const db = seededV19Db();
 			db.prepare('DROP TABLE local_model_runs').run();
 
@@ -673,7 +673,7 @@ describe.skipIf(!canLoadNodeSqlite())('stats migration v21', () => {
 					'idx_local_model_runs_task',
 				])
 			);
-			expect(getCurrentVersion(db)).toBe(23);
+			expect(getCurrentVersion(db)).toBe(24);
 		});
 	});
 

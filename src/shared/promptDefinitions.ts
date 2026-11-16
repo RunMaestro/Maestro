@@ -204,6 +204,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'System One section appended to a local agent system prompt while a System One request from that agent would be answered',
 		category: SYSTEM_ONE_GUIDE_PROMPT_CATEGORY,
 	},
+	{
+		id: 'federation-settings-merge',
+		filename: 'federation-settings-merge.md',
+		description:
+			'Federation settings conflict: proposes one merged text from the host and local versions of a field',
+		category: 'commands',
+	},
 	// Per-agent prompt preambles
 	{
 		id: 'copilot-preamble',
@@ -574,6 +581,7 @@ export const PROMPT_IDS = {
 	SYSTEM_ONE_JUDGE_LOCAL: 'system-one-judge-local',
 	// System One (core system-prompt section)
 	SYSTEM_ONE_SYSTEM: SYSTEM_ONE_SYSTEM_PROMPT_ID,
+	FEDERATION_SETTINGS_MERGE: 'federation-settings-merge',
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System

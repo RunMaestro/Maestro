@@ -704,7 +704,7 @@ export interface ProxyRequest {
 	routedTo?: string;
 	/**
 	 * What the provider counted for the request, from the `usage` in its answer
-	 * (migration v21). Absent when the answer named none or could not be read,
+	 * (migration v22). Absent when the answer named none or could not be read,
 	 * and for a request a background target answered. When present, the four
 	 * numbers are written together, and a class the answer did not name is 0: only
 	 * `providerUsageReportedness` says which numbers the provider gave.
@@ -1015,4 +1015,4 @@ export interface UsageExportResult {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 23;
+export const STATS_DB_VERSION = 24;

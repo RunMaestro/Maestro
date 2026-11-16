@@ -1,4 +1,5 @@
 import type { PianolaQueueControl } from '../../shared/pianola/pianola-dispatch';
+import type { TurnOverrides } from '../../shared/maestro-lib/client/types';
 /**
  * Shared type definitions for the web server module.
  * All web server components should import types from this file to avoid duplication.
@@ -678,7 +679,12 @@ export type EnqueueCommandCallback = (
 	 * queued item is marked so it can never be steered into a running turn.
 	 */
 	dispatchCallback?: boolean,
-	control?: PianolaQueueControl
+	control?: PianolaQueueControl,
+	/**
+	 * The sender's own tab chips for this one message (`TurnInput.overrides`, Federation): the
+	 * queued item runs under them. Never written to the tab.
+	 */
+	turnOverrides?: TurnOverrides
 ) => Promise<EnqueueCommandResult>;
 /**
  * A single queued item, mirrored from the renderer's executionQueue for CLI

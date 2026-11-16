@@ -36,10 +36,10 @@ export interface QueryEventRow {
 	cache_read_tokens: number | null;
 	cache_creation_tokens: number | null;
 	cost_usd: number | null;
-	/** Added in v20; NULL for a turn on the provider's own model. */
+	/** Added in v21; NULL for a turn on the provider's own model. */
 	run_on_endpoint: string | null;
 	run_on_model: string | null;
-	/** Added in v20; NULL for a turn Auto's router did not decide. */
+	/** Added in v21; NULL for a turn Auto's router did not decide. */
 	routed_tier: string | null;
 }
 

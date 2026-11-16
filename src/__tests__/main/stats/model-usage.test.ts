@@ -304,7 +304,7 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 			expect(getModelUsage(db, 'week').byTask[0].latency).toEqual(latency);
 		});
 
-		it('reads a run filed before v20 as endpoint with the server id as the model server', () => {
+		it('reads a run filed before v21 as endpoint with the server id as the model server', () => {
 			run({ sourceType: 'endpoint', endpointId: 'maestro-server', modelId: 'qwen3-coder' });
 			run({ sourceType: 'server', modelId: 'qwen3-coder' });
 

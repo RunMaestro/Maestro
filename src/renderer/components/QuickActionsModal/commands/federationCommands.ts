@@ -22,6 +22,11 @@ interface BuildFederationCommandsArgs {
 	liftedTarget?: { ref: string };
 	/** Show the mirrored agent the active local agent moved to. */
 	openLiftedAgent: () => void;
+	/** Open Edit Agent for a mirrored agent, saved to its host (`HostedAgentSettingsModal`). */
+	editHostedAgent?: (peerId: string, agentId: string) => void;
+	/** Fields of hosted agents waiting for the person (`hostedAgentSettingsStore`). */
+	settingsConflictCount?: number;
+	openSettingsConflicts?: () => void;
 	setQuickActionOpen: (open: boolean) => void;
 }
 
@@ -41,9 +46,24 @@ export function buildFederationCommands({
 	requestMoveToHost,
 	liftedTarget,
 	openLiftedAgent,
+	editHostedAgent,
+	settingsConflictCount = 0,
+	openSettingsConflicts,
 	setQuickActionOpen,
 }: BuildFederationCommandsArgs): QuickAction[] {
 	const actions: QuickAction[] = [];
+	if (settingsConflictCount > 0 && openSettingsConflicts) {
+		actions.push({
+			id: 'federation-settings-conflicts',
+			label: `Review Federation Settings Conflicts (${settingsConflictCount})`,
+			subtext:
+				'Settings a hosted agent and this machine both changed: take the host, keep yours, or merge',
+			action: () => {
+				openSettingsConflicts();
+				setQuickActionOpen(false);
+			},
+		});
+	}
 	if (moveToHost) {
 		actions.push({
 			id: 'federation-move-to-host',
@@ -79,6 +99,17 @@ export function buildFederationCommands({
 				setQuickActionOpen(false);
 			},
 		});
+		if (editHostedAgent) {
+			actions.push({
+				id: 'federation-edit-hosted-agent',
+				label: `Edit Agent on Host (${ref})`,
+				subtext: 'Settings every conductor of this agent shares, saved on its host',
+				action: () => {
+					editHostedAgent(activeMirror.peerId, activeMirror.agentId);
+					setQuickActionOpen(false);
+				},
+			});
+		}
 	}
 	for (const peer of peers) {
 		actions.push({

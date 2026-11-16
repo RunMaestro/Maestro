@@ -1570,7 +1570,8 @@ export class WebServer {
 				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
-				control?: import('../../shared/pianola/pianola-dispatch').PianolaQueueControl
+				control?: import('../../shared/pianola/pianola-dispatch').PianolaQueueControl,
+				turnOverrides?: import('../../shared/maestro-lib/client/types').TurnOverrides
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1583,7 +1584,8 @@ export class WebServer {
 					consultChain,
 					mentionRouting,
 					dispatchCallback,
-					control
+					control,
+					turnOverrides
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>

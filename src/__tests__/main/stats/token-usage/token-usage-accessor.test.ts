@@ -881,6 +881,21 @@ describe('token speed', () => {
 		const { speed } = aggregate(all, { sinceMs: since });
 		expect(speed.overall.outputTokens).toBe(900);
 	});
+
+	it('merges stream-timed calls with the transcript ones, and names every measurable provider', () => {
+		const all = [breakdown({ sessionId: 'a', timestampMs: hour + 60_000, speed: [speedBucket()] })];
+		const stream = [{ agentType: 'pi', buckets: [speedBucket({ model: 'gpt-5.5', calls: 3 })] }];
+
+		const { speed } = aggregate(all, { granularity: 'day' }, undefined, hour + 3_600_000, stream);
+		expect(speed.overall.calls).toBe(5);
+		expect(speed.measuredAgents).toEqual(['claude-code', 'pi']);
+		// From the capabilities: every provider whose tokenSpeedMeasurement is not 'none'.
+		expect(speed.measurableAgents).toEqual(
+			expect.arrayContaining(['claude-code', 'codex', 'copilot-cli', 'omp', 'opencode', 'pi'])
+		);
+		expect(speed.measurableAgents).not.toContain('grok');
+		expect(speed.measurableAgents).not.toContain('terminal');
+	});
 });
 
 describe('Grok usage aggregation', () => {

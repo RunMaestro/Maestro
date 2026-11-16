@@ -26,6 +26,7 @@ import type { AgentRecord } from '../store/records';
 import { liftRefusal, liftSshRemoteId, planAgentLift } from './lift-plan';
 import type { LiftPlan, LiftPlanSummary } from './lift-plan';
 import { peerAgentRef, type LiftedToPointer } from './lift-pointer';
+import { liftFollowUpPatch } from './lift-settings-sync';
 
 export interface LiftRunOptions {
 	/** Build and show the plan, then stop. */
@@ -229,7 +230,18 @@ export async function runLift(
 		if (!imported.ok) {
 			throw (deps.hostCallError ?? defaultHostCallError)(connection.peer, imported.error);
 		}
-		const { agentId: hostAgentId, queued, notices } = imported.value;
+		const { agentId: hostAgentId, queued } = imported.value;
+		const notices = [...(imported.value.notices ?? [])];
+		// The settings an import cannot carry go right after it, so the hosted copy starts whole
+		// and the first settings sync finds nothing to ask about. A refusal here does not undo the
+		// lift: the agent moved, and the sync shows what still differs.
+		const followUp = liftFollowUpPatch(agent);
+		if (followUp) {
+			const updated = await connection.client.agents.update(hostAgentId, followUp);
+			if (!updated.ok) {
+				notices.push(`Some settings did not reach the host: ${updated.error.message}`);
+			}
+		}
 		const pointer: LiftedToPointer = {
 			peer: connection.peer,
 			agentId: hostAgentId,
@@ -253,7 +265,7 @@ export async function runLift(
 			liftedTo: pointer,
 			target: peerAgentRef(pointer.peer, pointer.agentId),
 			queued,
-			...(notices && notices.length > 0 ? { notices } : {}),
+			...(notices.length > 0 ? { notices } : {}),
 		};
 	} finally {
 		await connection.release();

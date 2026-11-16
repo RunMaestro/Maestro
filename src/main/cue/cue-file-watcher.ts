@@ -11,6 +11,7 @@ import * as chokidar from 'chokidar';
 import picomatch from 'picomatch';
 import { isMacOS, isWindows } from '../../shared/platformDetection';
 import { createCueEvent, type CueEvent } from './cue-types';
+import { SHALLOW_WATCH_OPTIONS } from '../utils/watcher-ignore';
 
 export interface CueFileWatcherConfig {
 	watchGlob: string;
@@ -273,11 +274,14 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 			);
 		};
 
+		// SHALLOW_WATCH_OPTIONS keeps "never the tree below" true on macOS too:
+		// FSEvents would stream every event under the project root into JS.
 		const chainWatcher = chokidar.watch(rootAbs, {
 			ignoreInitial: true,
 			persistent: true,
 			depth: segments.length - 1,
 			ignored: (candidate: string) => !chain.has(chainKey(candidate)),
+			...SHALLOW_WATCH_OPTIONS,
 			...pollingOptions(),
 		});
 		chainWatcher.on('addDir', (dirPath: string) => {

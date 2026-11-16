@@ -833,6 +833,56 @@ describe('origin host on a send', () => {
 	});
 });
 
+describe("a sender's turn overrides on a send", () => {
+	it('hands the cleaned turnOverrides to turns.send on enqueue_command and send_command', async () => {
+		const host = recordingClient({ activeTabId: 't-active' });
+		await host.handle({
+			type: 'enqueue_command',
+			sessionId: 'a1',
+			command: 'one',
+			inputMode: 'ai',
+			turnOverrides: { model: ' opus ', effort: 'high', readOnly: true, saveToHistory: false },
+		});
+		await host.handle({
+			type: 'send_command',
+			sessionId: 'a1',
+			command: 'two',
+			inputMode: 'ai',
+			turnOverrides: { readOnly: false },
+		});
+		expect(host.named('turns.send').map((call) => call.args[2])).toEqual([
+			{
+				text: 'one',
+				overrides: { model: 'opus', effort: 'high', readOnly: true, saveToHistory: false },
+			},
+			{ text: 'two', overrides: { readOnly: false } },
+		]);
+	});
+
+	it('leaves out overrides that carry nothing well-formed', async () => {
+		const host = recordingClient({ activeTabId: 't-active' });
+		for (const turnOverrides of [
+			undefined,
+			null,
+			'opus',
+			[],
+			{},
+			{ model: '  ', readOnly: 'yes' },
+		]) {
+			await host.handle({
+				type: 'enqueue_command',
+				sessionId: 'a1',
+				command: 'hi',
+				inputMode: 'ai',
+				turnOverrides,
+			});
+		}
+		for (const call of host.named('turns.send')) {
+			expect(call.args[2]).toEqual({ text: 'hi' });
+		}
+	});
+});
+
 describe('get_history', () => {
 	it('answers the agent History, with a whole limit when one is given', async () => {
 		const host = recordingClient();

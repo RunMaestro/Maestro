@@ -3,7 +3,7 @@
  *
  * The token proxy's effectiveness aggregation (`getProxyEffectiveness`) and the
  * cuts of `getProxyRequestUsage` (agents, effective modes, the total), against a
- * real SQLite engine and the real v22 `proxy_requests` table, seeded through the
+ * real SQLite engine and the real v23 `proxy_requests` table, seeded through the
  * same writer production uses.
  *
  * What is under test is the SQL and the rules around it: a fact the rows do not
@@ -97,7 +97,7 @@ const READING_ROWS = (overrides: Partial<Record<ProxyProviderClassReading, numbe
 	...overrides,
 });
 
-describe.skipIf(!canLoadNodeSqlite())('the proxy usage aggregation on the real v22 table', () => {
+describe.skipIf(!canLoadNodeSqlite())('the proxy usage aggregation on the real v23 table', () => {
 	let db: Database.Database;
 
 	/** Record rows at `startedAt`, inside every range unless a case says where. */

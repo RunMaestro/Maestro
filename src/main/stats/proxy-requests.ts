@@ -28,7 +28,7 @@ import { logger } from '../utils/logger';
 
 const stmtCache = new StatementCache();
 
-/** The columns of `proxy_requests` that exist since migration v22, in table order. */
+/** The columns of `proxy_requests` that exist since migration v23, in table order. */
 const REQUEST_COLUMNS = [
 	'id',
 	'agent_id',
@@ -58,7 +58,7 @@ const REQUEST_COLUMNS = [
 ] as const;
 
 /**
- * Migration v23's telemetry columns, named by the schema's own list: a column
+ * Migration v24's telemetry columns, named by the schema's own list: a column
  * added there is a column `recordProxyRequest()` must supply, or it does not
  * compile.
  */

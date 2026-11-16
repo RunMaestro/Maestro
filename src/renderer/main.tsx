@@ -21,6 +21,7 @@ import { LayerStackProvider } from './contexts/LayerStackContext';
 import { WizardProvider } from './components/Wizard';
 import { logger } from './utils/logger';
 import { startUserLocalModelsSync } from './services/userLocalModels';
+import { installMotionPause } from './utils/motionPause';
 import './index.css';
 
 // Initialize Sentry for renderer process
@@ -207,6 +208,8 @@ if (isAcappellaAudioHost) {
 } else {
 	// The models the user added from Hugging Face join this window's catalog.
 	startUserLocalModelsSync();
+	// App windows only: floating widgets are meant to be watched unfocused.
+	installMotionPause(window);
 	ReactDOM.createRoot(document.getElementById('root')!).render(
 		<React.StrictMode>
 			<ErrorBoundary>

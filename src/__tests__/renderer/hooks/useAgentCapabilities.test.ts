@@ -49,6 +49,7 @@ const baseCapabilities = {
 	supportsAppendSystemPrompt: false,
 	supportsProjectMemory: false,
 	supportsAdditionalDirectories: false,
+	tokenSpeedMeasurement: 'none',
 };
 
 describe('useAgentCapabilities', () => {

@@ -117,15 +117,59 @@ export const EXTERNAL_TEXTAREA_MAX_HEIGHT = 112;
 /** Cap used while the user is actively typing. */
 export const KEYSTROKE_TEXTAREA_MAX_HEIGHT = 176;
 
-export function resizeTextareaToContent(textarea: HTMLTextAreaElement, maxHeight: number): void {
+/** What each textarea was last sized for, so an unchanged one is not re-measured. */
+interface TextareaSizing {
+	value: string;
+	maxHeight: number;
+	/** The `style.height` this module wrote. Anything else means someone else resized it. */
+	height: string;
+}
+const lastSizing = new WeakMap<HTMLTextAreaElement, TextareaSizing>();
+
+/**
+ * Grow `textarea` to fit its content, up to `maxHeight`. Returns `false` when it
+ * skipped the measurement because nothing it depends on changed.
+ *
+ * The measurement is never free. Reading `scrollHeight` forces a synchronous
+ * style and layout pass over whatever the page has dirtied, and the
+ * `height: 'auto'` toggle resizes the composer, so its flex siblings (the
+ * transcript) are laid out again at the transient height. A Nov 2026 field
+ * trace caught one such call forcing a 44ms full-document layout inside a
+ * 162ms task, right after a React commit replaced a few thousand transcript
+ * nodes. The composer value had not changed.
+ *
+ * Skipped only when the element, the value, the cap, and the height this
+ * function last wrote are all unchanged. A new element (a remount), a different
+ * draft, a height set by anything else (a drag grip), or a previous measure
+ * taken while the element was hidden always re-measures.
+ */
+export function resizeTextareaToContent(textarea: HTMLTextAreaElement, maxHeight: number): boolean {
+	const previous = lastSizing.get(textarea);
+	if (
+		previous &&
+		previous.value === textarea.value &&
+		previous.maxHeight === maxHeight &&
+		previous.height === textarea.style.height
+	) {
+		return false;
+	}
 	// Setting height to 'auto' momentarily removes the overflow and collapses the
 	// internal scroll to the top. Capture and restore scrollTop so resizing a
 	// scrolled textarea never yanks the view (and the caret) out of sight. Callers
 	// that want the caret pinned to the bottom re-scroll after this returns.
 	const previousScrollTop = textarea.scrollTop;
 	textarea.style.height = 'auto';
-	textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+	const contentHeight = textarea.scrollHeight;
+	textarea.style.height = `${Math.min(contentHeight, maxHeight)}px`;
 	textarea.scrollTop = previousScrollTop;
+	// A zero height means the element is not rendered (a hidden pane). That is
+	// not an answer worth keeping: it must re-measure once it is shown.
+	if (contentHeight > 0) {
+		lastSizing.set(textarea, { value: textarea.value, maxHeight, height: textarea.style.height });
+	} else {
+		lastSizing.delete(textarea);
+	}
+	return true;
 }
 
 /**

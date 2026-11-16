@@ -24,13 +24,17 @@ import type {
 	ClientResult,
 	MaestroClient,
 	TabPatch,
+	TurnOverrides,
 	TurnSendReceipt,
 } from './types';
 
 /** One thing to do to a peer's agent. */
 export type PeerAgentAction =
-	/** Send a message to a tab. The host adds its own system prompt and template variables. */
-	| { kind: 'send'; tabId: string; text: string; dispatchId?: string }
+	/**
+	 * Send a message to a tab. The host adds its own system prompt and template variables.
+	 * `overrides` are the sender's own tab chips for this one turn; the host tab is not changed.
+	 */
+	| { kind: 'send'; tabId: string; text: string; dispatchId?: string; overrides?: TurnOverrides }
 	/** Stop a tab's turn; without `tabId`, every busy tab of the agent (the Stop pill). */
 	| { kind: 'interrupt'; tabId?: string }
 	| { kind: 'new-tab' }
@@ -105,6 +109,7 @@ export async function runPeerAgentAction(
 				text: action.text,
 				...(action.dispatchId ? { dispatchId: action.dispatchId } : {}),
 				...(context.originHost ? { originHost: context.originHost } : {}),
+				...(action.overrides ? { overrides: action.overrides } : {}),
 			});
 			return sent.ok ? { ok: true, value: { kind: 'send', receipt: sent.value } } : sent;
 		}
@@ -200,11 +205,13 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 			if (typeof value.text !== 'string' || !value.text.trim()) {
 				throw new Error('There is nothing to send.');
 			}
+			const overrides = value.overrides == null ? undefined : parseTurnOverrides(value.overrides);
 			return {
 				kind,
 				tabId: tabId(),
 				text: value.text,
 				...(nonEmptyString(value.dispatchId) ? { dispatchId: value.dispatchId } : {}),
+				...(overrides ? { overrides } : {}),
 			};
 		}
 		case 'interrupt':
@@ -284,6 +291,13 @@ const TAB_PATCH_CHECKS: Record<keyof TabPatch, FieldCheck> = {
 	enterToSend: orNull(isBoolean),
 };
 
+const TURN_OVERRIDE_CHECKS: Record<keyof TurnOverrides, FieldCheck> = {
+	model: isNonEmptyString,
+	effort: isNonEmptyString,
+	readOnly: isBoolean,
+	saveToHistory: isBoolean,
+};
+
 /** Keep the known fields of a patch, each checked for its type; an unknown or bad field throws. */
 function parsePatch<T extends object>(
 	raw: unknown,
@@ -309,6 +323,18 @@ function parseAgentPatch(raw: unknown): AgentPatch {
 
 function parseTabPatch(raw: unknown): TabPatch {
 	return parsePatch<TabPatch>(raw, TAB_PATCH_CHECKS, 'tab settings');
+}
+
+/**
+ * A send's own tab choices, checked like a patch. An unknown or bad field throws; an object with
+ * nothing in it is dropped (undefined), since it overrides nothing.
+ */
+function parseTurnOverrides(raw: unknown): TurnOverrides | undefined {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+		throw new Error('Invalid turn overrides');
+	}
+	if (Object.values(raw).every((value) => value === undefined)) return undefined;
+	return parsePatch<TurnOverrides>(raw, TURN_OVERRIDE_CHECKS, 'turn overrides');
 }
 
 /** The action failed on the host, or never reached it, in words a person can act on. */

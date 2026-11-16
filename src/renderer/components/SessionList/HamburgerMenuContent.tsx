@@ -23,6 +23,7 @@ import {
 	Sparkles,
 	Waypoints,
 	Gauge,
+	GitMerge,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -30,6 +31,10 @@ import { ShortcutHint } from '../ui/ShortcutHint';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
+import {
+	selectHostedConflictCount,
+	useHostedAgentSettingsStore,
+} from '../../stores/hostedAgentSettingsStore';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 import { openUiSurface } from '../../utils/openUiSurface';
 import { openUrl } from '../../utils/openUrl';
@@ -58,6 +63,7 @@ export function HamburgerMenuContent({
 }: HamburgerMenuContentProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
+	const settingsConflictCount = useHostedAgentSettingsStore(selectHostedConflictCount);
 	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	const quickChatHotkey =
 		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
@@ -463,6 +469,27 @@ export function HamburgerMenuContent({
 					{shortcuts.toggleThroughputGauge && (
 						<ShortcutHint theme={theme} keys={shortcuts.toggleThroughputGauge?.keys ?? []} />
 					)}
+				</button>
+			)}
+			{/* Federation: shown only while a hosted agent has settings waiting for the person. */}
+			{settingsConflictCount > 0 && (
+				<button
+					onClick={() => {
+						useHostedAgentSettingsStore.getState().setConflictsOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<GitMerge className="w-5 h-5" style={{ color: theme.colors.warning }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Federation Settings Conflicts
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							{settingsConflictCount} setting{settingsConflictCount === 1 ? '' : 's'} to settle with
+							a host
+						</div>
+					</div>
 				</button>
 			)}
 			{/* Quick Chat is its own window, which only the Electron app has. */}

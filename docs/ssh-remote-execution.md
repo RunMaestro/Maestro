@@ -283,6 +283,8 @@ An SSH agent is owned by your local Maestro, so its turns stop when your laptop 
 
 By default Maestro does this for you: it installs its own `maestro-cli` on a remote that has SSH agents (Linux, macOS, or Windows through Git Bash or WSL), registers the host as a service so it survives reboots where the remote has a service manager (a systemd user session on Linux; on macOS a launch agent, which starts at login; Windows and Linux without systemd have none, and Maestro says how to start the host there), and moves each SSH agent onto it once every sanity check passes. When it cannot, the agent's `SSH` badge turns red and its hover card says what to do; **Settings > SSH Hosts > Federation automation** lists everything that needs you. To do it by hand, right-click an agent and choose **Move to Host**. To keep a remote out of Federation, switch **Federation** off for it under **Settings > SSH Hosts**; to stop the automatic moves everywhere, turn off **Move SSH agents to their host automatically** there.
 
+Once an agent is hosted, its settings live on the host and every Maestro that drives it follows them, while each person's own tab choices (model, effort, read-only, save to History) stay their own. See [Settings of a hosted agent](./federation#settings-of-a-hosted-agent).
+
 ## Full Remote Capabilities
 
 Remote agents support all the features you'd expect from local agents:

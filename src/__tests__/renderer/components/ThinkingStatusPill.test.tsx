@@ -99,6 +99,10 @@ function createThinkingItemWithTab(
 	return { session, tab };
 }
 
+// The pill's live dot. It used to be found by `.animate-pulse`; it is a static
+// halo now because a looping pulse kept the renderer drawing every frame.
+const LIVE_DOT = '.w-2\\.5.h-2\\.5.rounded-full';
+
 describe('ThinkingStatusPill', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
@@ -350,11 +354,12 @@ describe('ThinkingStatusPill', () => {
 			expect(nameElements.length).toBeGreaterThanOrEqual(1);
 		});
 
-		it('shows pulsing indicator dot', () => {
+		it('shows a static live indicator dot (no looping animation)', () => {
 			const item = createThinkingItem();
 			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
-			const indicator = document.querySelector('.animate-pulse');
+			const indicator = document.querySelector(LIVE_DOT);
 			expect(indicator).toBeInTheDocument();
+			expect(indicator?.className).not.toMatch(/animate-/);
 		});
 
 		it('shows Tokens label', () => {
@@ -1457,14 +1462,14 @@ describe('ThinkingStatusPill', () => {
 	});
 
 	describe('styling', () => {
-		it('applies warning color to pulsing indicator in thinking mode', () => {
+		it('applies warning color to live indicator in thinking mode', () => {
 			const item = createThinkingItem();
 			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
-			const indicator = document.querySelector('.animate-pulse');
+			const indicator = document.querySelector(LIVE_DOT);
 			expect(indicator).toHaveStyle({ backgroundColor: mockTheme.colors.warning });
 		});
 
-		it('applies accent color to pulsing indicator in AutoRun mode', () => {
+		it('applies accent color to live indicator in AutoRun mode', () => {
 			const autoRunState: BatchRunState = {
 				isRunning: true,
 				isPaused: false,
@@ -1479,7 +1484,7 @@ describe('ThinkingStatusPill', () => {
 			render(
 				<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} autoRunState={autoRunState} />
 			);
-			const indicator = document.querySelector('.animate-pulse');
+			const indicator = document.querySelector(LIVE_DOT);
 			expect(indicator).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
 

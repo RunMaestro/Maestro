@@ -111,6 +111,8 @@ import {
 	getShortcutUsageByShortcut,
 	clearShortcutUsageCache,
 } from './shortcut-usage';
+import { recordTokenSpeedSample, getTokenSpeedSources, clearTokenSpeedCache } from './token-speed';
+import type { TokenSpeedSample, TokenSpeedSource } from '../../shared/tokenSpeed';
 import {
 	recordWindowOpened,
 	getMultiWindowUsage,
@@ -293,6 +295,7 @@ export class StatsDB {
 			clearSystemOneDecisionsCache();
 			clearImageAnnotationCache();
 			clearShortcutUsageCache();
+			clearTokenSpeedCache();
 			clearMultiWindowUsageCache();
 			clearAggregationCache();
 
@@ -1083,6 +1086,18 @@ export class StatsDB {
 
 	getShortcutUsageByShortcut(range: StatsTimeRange): ShortcutUsageByShortcut[] {
 		return getShortcutUsageByShortcut(this.database, range);
+	}
+
+	// ============================================================================
+	// Token speed timed off the live stream (delegated)
+	// ============================================================================
+
+	recordTokenSpeedSample(agentType: string, sample: TokenSpeedSample): void {
+		recordTokenSpeedSample(this.database, agentType, sample);
+	}
+
+	getTokenSpeedSources(sinceMs?: number): TokenSpeedSource[] {
+		return getTokenSpeedSources(this.database, sinceMs);
 	}
 
 	// ============================================================================

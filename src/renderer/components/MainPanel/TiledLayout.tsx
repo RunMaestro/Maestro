@@ -23,6 +23,7 @@ import {
 	AlertCircle,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
+import { activeStatusHalo } from '../../utils/theme';
 
 import { TerminalOutput, type TerminalOutputProps } from '../TerminalOutput';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
@@ -1027,8 +1028,11 @@ function PaneStatusIndicators({
 			)}
 			{aiTab.state === 'busy' && (
 				<span
-					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-					style={{ backgroundColor: theme.colors.warning }}
+					className="w-2 h-2 rounded-full shrink-0"
+					style={{
+						backgroundColor: theme.colors.warning,
+						boxShadow: activeStatusHalo(theme.colors.warning),
+					}}
 					title="Thinking"
 				/>
 			)}

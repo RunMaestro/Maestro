@@ -2,7 +2,10 @@ import { createPluginSessionLifecycle } from './plugins/plugin-session-lifecycle
 import type { ConfirmQueueItem, ReleaseQueueItem } from './stores/queue-item-receipt';
 import { flushPendingSessionWrites } from './stores/instances';
 import { RelayConversations } from './plugins/relay-conversations';
-import { broadcastSessionLifecycle } from './ipc/handlers/persistence';
+import {
+	broadcastSessionLifecycle,
+	setSessionLifecycleRecipientFilter,
+} from './ipc/handlers/persistence';
 import { transcriptMessagesToLogEntries, stripSynopsisTurns } from '../shared/transcriptMessages';
 import { canonicalJson } from '../shared/canonicalJson';
 import { realpathSync, lstatSync } from 'fs';
@@ -798,6 +801,11 @@ let quitHandler: QuitHandler | null = null;
 // the primary window registers itself as `isMain` when createWindow() runs on
 // app-ready, and secondary windows register via createSecondaryWindow.
 const windowRegistry = new WindowRegistry();
+// Agent lifecycle deltas go to app windows only: feature windows and offscreen
+// browser pages never mount the listener, and every send clones the payload.
+setSessionLifecycleRecipientFilter(
+	(window) => !isHostBrowserPageWindow(window) && !windowRegistry.isFeatureWindow(window)
+);
 const getWindowForSession = (sessionId: string): BrowserWindow | null => {
 	const ownerId = windowRegistry.getWindowForSession(sessionId);
 	const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();

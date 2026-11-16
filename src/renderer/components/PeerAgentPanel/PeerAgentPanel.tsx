@@ -21,12 +21,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, Pencil, Plus, RefreshCw, Star } from 'lucide-react';
+import { Copy, Pencil, Plus, RefreshCw, Settings, Star } from 'lucide-react';
 import type { Theme } from '../../types';
 import { liveTurnKey } from '../../../shared/maestro-lib/client/live-turn';
 import { mirrorKey } from '../../../shared/maestro-lib/client/peer-mirror';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
+import { useHostedAgentSettingsStore } from '../../stores/hostedAgentSettingsStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
@@ -230,6 +231,19 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 					>
 						<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 					</button>
+					<button
+						type="button"
+						onClick={() =>
+							useHostedAgentSettingsStore
+								.getState()
+								.openEditor({ peerId: peer.peerId, agentId: agent.id })
+						}
+						className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
+						title={`Edit Agent on ${peer.name}: settings every conductor shares`}
+						aria-label={`Edit agent settings on ${peer.name}`}
+					>
+						<Settings className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+					</button>
 				</div>
 
 				{disconnected && (
@@ -392,6 +406,7 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 						peerName={peer.name}
 						agentId={agent.id}
 						agentName={agent.name}
+						agent={agent}
 						tab={tabRecord}
 					/>
 				)}

@@ -156,6 +156,26 @@ export const SESSION_LIFECYCLE_SYNC_CHANNEL = 'sessions:lifecycleSync';
 const REMOVED_SESSION_TOMBSTONE_LIMIT = 1000;
 
 /**
+ * Which BrowserWindows hear agent lifecycle deltas. Defaults to all of them;
+ * main narrows it to app windows at startup with
+ * {@link setSessionLifecycleRecipientFilter}.
+ */
+let isSessionLifecycleRecipient: (win: BrowserWindow) => boolean = () => true;
+
+/**
+ * Restrict lifecycle deltas to the windows that consume them. Only app windows
+ * mount `App`, and with it `useSessionLifecycleSync`. Quick Chat, the Cadenza
+ * HUD, floating widgets and offscreen browser pages never listen, yet each
+ * `webContents.send` structured-clones the whole payload (full copies of every
+ * updated agent and its baseline). A Nov 2026 field trace put 291 of the 370
+ * samples under this broadcast in those sends, and the sender window is already
+ * skipped, so all of them went to windows that drop the message.
+ */
+export function setSessionLifecycleRecipientFilter(filter: (win: BrowserWindow) => boolean): void {
+	isSessionLifecycleRecipient = filter;
+}
+
+/**
  * Send an agent lifecycle delta to every client except the one that wrote it.
  *
  * Electron windows are addressed individually so the sender can be skipped by
@@ -173,6 +193,7 @@ export function broadcastSessionLifecycle(
 	for (const win of BrowserWindow.getAllWindows()) {
 		if (!isWebContentsAvailable(win)) continue;
 		if (win.webContents.id === senderWebContentsId) continue;
+		if (!isSessionLifecycleRecipient(win)) continue;
 		win.webContents.send(SESSION_LIFECYCLE_SYNC_CHANNEL, payload);
 	}
 	broadcastBridgeEvent(SESSION_LIFECYCLE_SYNC_CHANNEL, [

@@ -619,6 +619,27 @@ describe('turn records', () => {
 		expect(statsEvents).toHaveLength(1);
 	});
 
+	it("lets the sender's own save-to-History chip decide in place of the tab's", async () => {
+		seed({}, { saveToHistory: false });
+		const { recorder: kept } = await recorder();
+		const saved = await kept.recordTurn(turn({ saveToHistory: true }));
+		expect(saved.history).toMatchObject({ ok: true });
+		expect(await new HistoryManager().getEntries('a1')).toHaveLength(1);
+	});
+
+	it('writes no History entry when the sender turned it off, though the tab saves', async () => {
+		const { recorder: records, repository } = await recorder();
+		const result = await records.recordTurn(turn({ saveToHistory: false }));
+		expect(result.history).toMatchObject({
+			ok: false,
+			reason: 'not-recorded',
+			message: 'The sender chose not to save this turn to History.',
+		});
+		expect(fs.existsSync(path.join(paths.historyDir, 'a1.jsonl'))).toBe(false);
+		expect(repository.getTab('a1', 't1')?.logs).toHaveLength(2);
+		expect(statsEvents).toHaveLength(1);
+	});
+
 	it('records an interrupted turn as the partial answer and usage, with no History entry', async () => {
 		const { recorder: records, repository } = await recorder();
 		const result = await records.recordTurn(

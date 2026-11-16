@@ -14,7 +14,7 @@
  */
 
 import { memo, useCallback, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Copy, Network, Play, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, Network, Play, RefreshCw, Settings } from 'lucide-react';
 import { mirrorKey, type MirroredPeer } from '../../../shared/maestro-lib/client/peer-mirror';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
@@ -35,6 +35,7 @@ import {
 } from '../../utils/peerMirrorView';
 import { getStatusColor } from '../../utils/theme';
 import { FederationBadge } from './FederationBadge';
+import { useHostedAgentSettingsStore } from '../../stores/hostedAgentSettingsStore';
 
 interface MenuTarget {
 	x: number;
@@ -94,6 +95,20 @@ function PeerMenu({
 				>
 					<Copy className="w-3.5 h-3.5" />
 					Copy {mirrorKey(peerId, agentId)}
+				</button>
+			)}
+			{agentId && (
+				<button
+					type="button"
+					className={itemClass}
+					style={{ color: theme.colors.textMain }}
+					onClick={() => {
+						useHostedAgentSettingsStore.getState().openEditor({ peerId, agentId });
+						onDismiss();
+					}}
+				>
+					<Settings className="w-3.5 h-3.5" />
+					Edit Agent...
 				</button>
 			)}
 			<button

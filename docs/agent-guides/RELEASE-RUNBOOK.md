@@ -106,7 +106,8 @@ Each owner, for their branch only:
 1. Read the previous two published releases on the same channel
    (`preflight` lists them; `draft --tag <prev> --show` prints each).
 2. Collect what changed: `git log <previous tag>..origin/<branch>` and the
-   existing draft body, if any.
+   existing draft body, if any. Read `docs/agent-guides/release-framing/<tag>.md`
+   if it exists (see "Approved framing").
 3. Write the notes into the draft with `draft --tag vX --title "vX | <Title>" --notes-file <file>`.
 4. Report to the moderator: version, draft URL, and the list of user-facing
    features in the notes. The RC owner adds branch evidence for each feature.
@@ -179,6 +180,21 @@ readers are not sold the same thing twice). Then `## Before you upgrade` when
 it applies, then `## Also in X.Y.Z-RC` bullets. Calibration: the 1.1.1-RC draft
 reprinted 1.1.0-RC's seven banner paragraphs nearly word for word and still
 linked stable 1.0.0 after 1.0.3 shipped.
+
+### Approved framing
+
+Pedram sometimes approves a release's title and highlights before it is cut.
+That decision lives in `docs/agent-guides/release-framing/<tag>.md` on the
+release branch, and it overrides "Picking the headline" in every phase:
+
+- Phase 1 keeps the approved title and highlight order. Add a new user-visible
+  change as an `Also in` bullet; never re-rank, re-add, or drop a highlight.
+- Phase 3 leads the email subject, Discord, and X with the approved lead and
+  uses only the approved headlines. Skip the re-scoring in Phase 3 step 2.
+- Report the file in the Phase 1 report instead of a headline table.
+
+Never put the framing in the notes as an HTML comment: `sync-release-notes.mjs`
+copies the notes into `docs/releases.md`, where a comment is not valid MDX.
 
 ### Picking the headline
 
@@ -265,7 +281,10 @@ Start only after every release in scope verifies.
 2. **Do not repeat the last announcement.** Read the previous email template
    and Discord post. Lead with what is new since then; anything the last email
    already covered gets one short line at most.
-   **Score the published highlights again for this audience** with the rubric
+   **An approved framing wins.** If `docs/agent-guides/release-framing/<tag>.md`
+   exists on the release branch (`gh api repos/RunMaestro/Maestro/contents/docs/agent-guides/release-framing/<tag>.md?ref=<branch> -q .content | base64 -d`),
+   use its lead and headlines and skip the re-scoring below.
+   **Otherwise, score the published highlights again for this audience** with the rubric
    in "Picking the headline". Email, Discord, and X readers did not read the
    notes, so the notes' order is input, not a rule: lead with the top scorer
    among published features, even when the notes lead with something else, and

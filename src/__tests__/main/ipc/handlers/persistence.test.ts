@@ -83,6 +83,7 @@ import {
 import {
 	registerPersistenceHandlers,
 	SESSION_LIFECYCLE_SYNC_CHANNEL,
+	setSessionLifecycleRecipientFilter,
 	PersistenceHandlerDependencies,
 	PersistenceHandlers,
 	MaestroSettings,
@@ -7371,6 +7372,31 @@ describe('persistence IPC handlers', () => {
 			);
 			expect(lastBridgePayload()?.added[0].aiTabs[0].logs).toEqual([]);
 			expect(lastBridgePayload()?.added[0].deferredContent.tabIds).toEqual(['t1']);
+		});
+
+		it('skips windows the recipient filter rejects (feature windows never listen)', async () => {
+			const makeWindow = (id: number) => ({
+				isDestroyed: () => false,
+				webContents: { id, isDestroyed: () => false, send: vi.fn() },
+			});
+			const appWindow = makeWindow(7);
+			const featureWindow = makeWindow(8);
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([appWindow, featureWindow] as any);
+			setSessionLifecycleRecipientFilter((win) => win !== (featureWindow as any));
+			try {
+				mockSessionsStore.get.mockReturnValue([]);
+				await handlers.get('sessions:setMany')!({} as any, [{ ...baseSession, id: 'new' }]);
+				expect(appWindow.webContents.send).toHaveBeenCalledWith(
+					SESSION_LIFECYCLE_SYNC_CHANNEL,
+					expect.anything()
+				);
+				expect(featureWindow.webContents.send).not.toHaveBeenCalledWith(
+					SESSION_LIFECYCLE_SYNC_CHANNEL,
+					expect.anything()
+				);
+			} finally {
+				setSessionLifecycleRecipientFilter(() => true);
+			}
 		});
 
 		it('tells peers about an agent another client just closed', async () => {

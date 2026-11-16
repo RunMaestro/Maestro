@@ -448,6 +448,16 @@ export const UI_SURFACES: UiSurface[] = [
 		commandPalette: 'About',
 		click: 'the Maestro menu → About Maestro',
 	},
+	{
+		id: 'federation-conflicts',
+		label: 'Federation Settings Conflicts',
+		aliases: ['settings-conflicts', 'hosted-settings-conflicts'],
+		modal: 'federationSettingsConflicts',
+		description:
+			"Settings a hosted agent's host and this machine both changed: take the host, keep yours, or merge.",
+		commandPalette: 'Review Federation Settings Conflicts',
+		click: 'the conflict toast, or Federation Settings Conflicts in the Left Bar hamburger menu',
+	},
 ];
 
 /** Every valid `--tab` value for a surface, or an empty array when it has none. */

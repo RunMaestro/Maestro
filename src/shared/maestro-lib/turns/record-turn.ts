@@ -22,7 +22,8 @@
  *   and tool cards stream live to the client; persisting them is a richer entry model than
  *   this task owns.
  *
- * A tab whose `saveToHistory` chip is off records no History entry (as on the desktop), and an
+ * A tab whose `saveToHistory` chip is off records no History entry (as on the desktop; a sender's
+ * own chip, `RecordedTurn.saveToHistory`, stands in for the tab's for that turn), and an
  * interrupted or crashed turn records none either: History is the record of work that finished.
  * Usage is recorded for every turn that ran.
  */
@@ -82,6 +83,11 @@ export interface RecordedTurn {
 	userEntryWritten?: boolean;
 	/** The machine the person sent the turn from (`TurnInput.originHost`): the entry's `hostname`. */
 	originHost?: string;
+	/**
+	 * The sender's own save-to-History chip for this turn (`TurnOverrides.saveToHistory`), read in
+	 * place of the tab's `saveToHistory`. Absent: the tab's chip decides.
+	 */
+	saveToHistory?: boolean;
 }
 
 /** What happened to each record. A skipped record says why. */
@@ -282,11 +288,14 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 				reason: 'not-recorded',
 				message: 'Native session identity mismatch.',
 			};
-		} else if (tab.saveToHistory === false) {
+		} else if ((turn.saveToHistory ?? tab.saveToHistory) === false) {
 			history = {
 				ok: false,
 				reason: 'not-recorded',
-				message: 'The tab does not save to History.',
+				message:
+					turn.saveToHistory === false
+						? 'The sender chose not to save this turn to History.'
+						: 'The tab does not save to History.',
 			};
 		} else {
 			const context = completed.usage

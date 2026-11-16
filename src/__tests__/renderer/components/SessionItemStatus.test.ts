@@ -34,7 +34,7 @@ describe('getEnhancedStatusColor busy labels', () => {
 
 		expect(status.label).toBe('Running command');
 		// Still busy: only the wording changes, not the signal.
-		expect(status.animate).toBe(true);
+		expect(status.active).toBe(true);
 		expect(status.color).toBe(mockTheme.colors.warning);
 	});
 
@@ -82,7 +82,7 @@ describe('getEnhancedStatusColor consult state', () => {
 		);
 
 		expect(status.label).toBe('Answering a consult');
-		expect(status.animate).toBe(true);
+		expect(status.active).toBe(true);
 		expect(status.color).toBe(mockTheme.colors.warning);
 	});
 
@@ -132,7 +132,7 @@ describe('headless status overlay', () => {
 		expect(
 			getEnhancedStatusColor(session, mockTheme, false, false, false, false, true)
 		).toMatchObject({
-			animate: true,
+			active: true,
 			color: mockTheme.colors.warning,
 			label: 'Running headless turn',
 		});
@@ -150,6 +150,6 @@ describe('headless status overlay', () => {
 				false,
 				false
 			)
-		).toMatchObject({ animate: true, label: 'Thinking' });
+		).toMatchObject({ active: true, label: 'Thinking' });
 	});
 });
