@@ -265,11 +265,11 @@ export function createHistoryDigestWriter(
 				throw new DigestCallFailed(
 					`${label} has no model. Choose one in the Computer History settings or in ${ASSIGNMENT_LOCATION}.`
 				);
-			case 'use-utility-agent':
-				// Unreachable: a task with no agent path resolves to `off` while the
-				// Utility source is the provider.
+			case 'use-provider':
+				// Unreachable: a task with no agent path resolves to `off` while its
+				// Model Map slot is a provider.
 				throw new DigestCallFailed(
-					`${label} cannot run on the Utility Agent. Assign it a local model or an endpoint in ${ASSIGNMENT_LOCATION}.`
+					`${label} cannot run on a provider agent. Assign it a local model or an endpoint in ${ASSIGNMENT_LOCATION}.`
 				);
 			case 'cancelled':
 				throw new DigestCallFailed('The assigned model took too long to write the digest.');

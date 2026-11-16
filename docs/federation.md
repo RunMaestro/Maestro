@@ -61,7 +61,7 @@ A remote with Federation on and a running host is called a **peer**. Its peer na
 There is nothing to set up. With **Move SSH agents to their host automatically** on (the default, in **Settings > SSH Hosts > Federation automation**), Maestro does the whole job on its own, one remote and one agent at a time:
 
 1. It checks each SSH remote for a Maestro host.
-2. Where a remote has an SSH agent but no host, it installs its own `maestro-cli` there. See [What Maestro installs on the remote](#what-maestro-installs-on-the-remote).
+2. Where a remote has an SSH agent but no host, it installs its own `maestro-cli` there. A `maestro-cli` too old to run a host is upgraded the same way. See [What Maestro installs on the remote](#what-maestro-installs-on-the-remote).
 3. It registers the host with the remote's service manager and starts it. See [Durability](#durability).
 4. It moves each SSH agent onto the host once every [sanity check](#automatic-moves-and-their-sanity-checks) passes.
 
@@ -237,6 +237,18 @@ maestro-cli lift docs --with-env   # also send secret env vars
 ```
 
 A lift refuses, and moves nothing, while a tab is running a turn, when no host runs on the remote, or when the agent is not an SSH remote agent. The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. A lift is one way: there is no automatic move back to an SSH agent. [Lift an SSH Agent Onto Its Host](./cli#lift-an-ssh-agent-onto-its-host) lists every refusal code.
+
+### Settings stay in step
+
+After a lift, the local agent and the hosted agent keep the same settings. Change a setting on the local agent (in **Edit Agent**, with the composer chips, by renaming or starring a tab, or with `maestro-cli update-agent`) and Maestro sends it to the host. A change made on the host comes back to the local agent.
+
+- **What syncs:** name, provider, working directory, model, effort, context window, custom path and arguments, nudge message, new session message, bookmark, token source (maestro-p mode), Codex transport, harness control mode, the Auto Run folder (only inside the working directory, as in a lift), custom env vars, and for each tab both sides hold: name, star, model, effort, read-only, thinking, save to History, and Enter to send.
+- **What stays local:** the Left Bar group, the SSH settings, and the maestro-p binary path. A secret env var syncs only when the host already holds it (you sent it with `--with-env`). A host env var you never set on this agent is never changed or copied back.
+- **When the peer is down:** your change waits and goes out when the peer reconnects.
+- **When both sides changed the same setting:** your local change wins.
+- **When the host refuses a change:** for example, a new working directory while a turn runs. A toast says why, and the local agent shows the host's value again.
+
+Read the host's copy back with `maestro-cli show agent <peer:agent> --json`.
 
 ## Durability
 

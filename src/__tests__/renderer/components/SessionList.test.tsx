@@ -18,6 +18,7 @@ import { WindowProvider } from '../../../renderer/contexts/WindowContext';
 import type { Session, Group, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { seedSidebarNav, resetSidebarNavStore } from '../../helpers/seedSidebarNav';
+import { useSidebarNavStore } from '../../../renderer/stores/sidebarNavStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -1043,6 +1044,88 @@ describe('SessionList', () => {
 			render(<SessionList {...createDefaultProps({ sortedSessions: [pianola] })} />);
 
 			expect(screen.queryByText('Maestro Pianola')).toBeNull();
+		});
+	});
+
+	// ============================================================================
+	// Published Row Order (what Cmd+[ / Cmd+] walks)
+	// ============================================================================
+
+	describe('Published Row Order', () => {
+		const rowIds = () =>
+			(useSidebarNavStore.getState().visibleRows ?? []).map((row) =>
+				row.type === 'session' ? row.id : `${row.type}:${row.id}`
+			);
+
+		it('publishes exactly the rows drawn under the unread filter', () => {
+			// The reported layout: the unread filter hides Bookmarks, forces a
+			// collapsed group and closed worktrees open, and drops idle children.
+			const g = createMockGroup({ id: 'g', name: 'Maestro', collapsed: true });
+			const maestro = createMockSession({
+				id: 'maestro',
+				name: 'Maestro',
+				groupId: 'g',
+				bookmarked: true,
+				worktreesExpanded: false,
+			});
+			const rc = createMockSession({ id: 'rc', name: 'rc', parentSessionId: 'maestro' });
+			const acappella = createMockSession({
+				id: 'acappella',
+				name: 'acappella',
+				parentSessionId: 'maestro',
+				state: 'busy',
+			});
+			const cue = createMockSession({ id: 'cue', name: 'Cue Main', groupId: 'g' });
+			const f1476 = createMockSession({
+				id: 'f1476',
+				name: 'feat/1476',
+				parentSessionId: 'cue',
+				state: 'busy',
+			});
+			const f1475 = createMockSession({
+				id: 'f1475',
+				name: 'feat/1475',
+				parentSessionId: 'cue',
+				state: 'busy',
+			});
+			const idle = createMockSession({ id: 'idle', name: 'Idle' });
+			const busy = createMockSession({ id: 'busy', name: 'Busy', state: 'busy' });
+			const all = [maestro, rc, acappella, cue, f1476, f1475, idle, busy];
+			useSessionStore.setState({ sessions: all, groups: [g], activeSessionId: 'f1475' });
+			useUIStore.setState({ leftSidebarOpen: true, showUnreadAgentsOnly: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: all })} />);
+
+			expect(rowIds()).toEqual(['cue', 'f1475', 'f1476', 'maestro', 'acappella', 'busy']);
+		});
+
+		it('leaves out collapsed groups, closed worktrees, and a collapsed Bookmarks section', () => {
+			const g = createMockGroup({ id: 'g', name: 'Group', collapsed: true });
+			const inGroup = createMockSession({ id: 'in-group', name: 'In Group', groupId: 'g' });
+			const parent = createMockSession({
+				id: 'parent',
+				name: 'Parent',
+				bookmarked: true,
+				worktreesExpanded: false,
+			});
+			const child = createMockSession({ id: 'child', name: 'child', parentSessionId: 'parent' });
+			const all = [inGroup, parent, child];
+			useSessionStore.setState({ sessions: all, groups: [g], activeSessionId: 'parent' });
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: all })} />);
+
+			expect(rowIds()).toEqual(['parent']);
+		});
+
+		it('publishes nothing while the sidebar is in skinny mode', () => {
+			const a = createMockSession({ id: 'a', name: 'Alpha' });
+			useSessionStore.setState({ sessions: [a], activeSessionId: 'a' });
+			useUIStore.setState({ leftSidebarOpen: false });
+
+			render(<SessionList {...createDefaultProps({ sortedSessions: [a] })} />);
+
+			expect(useSidebarNavStore.getState().visibleRows).toBeNull();
 		});
 	});
 
@@ -4685,22 +4768,15 @@ describe('SessionList', () => {
 			expect(band.contains(screen.getByTestId('icon-trophy'))).toBe(true);
 		});
 
-		// Minimizing is a promise that the widget is parked somewhere reachable,
-		// and the pill is the only place it parks. The collapsed rail used to skip
-		// it on the grounds that a 64px strip belongs to the agents, which made
-		// minimize equal vanish there: no pill, no widget, and the only route back
-		// an unbound shortcut.
-		it('keeps the minimized player reachable on the collapsed rail', () => {
+		// The collapsed rail is an icon strip for agents. A minimized player is
+		// restored from the expanded Left Bar, so the rail never shows the pill.
+		it('keeps the minimized player off the collapsed rail', () => {
 			useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
 			showNowPlayingPill();
 			render(<SessionList {...createDefaultProps({})} />);
 
-			const pill = screen.getByTestId('now-playing-indicator');
-			expect(pill).toBeTruthy();
-			// Compact: the rail is 64px, so the filename is dropped rather than
-			// clipped, leaving the transport and the way back.
-			expect(pill.textContent).toBe('');
-			expect(screen.getByTestId('now-playing-restore')).toBeTruthy();
+			expect(screen.queryByTestId('now-playing-indicator')).toBeNull();
+			expect(screen.queryByTestId('now-playing-restore')).toBeNull();
 		});
 
 		it('leaves the collapsed rail alone when nothing is minimized', () => {

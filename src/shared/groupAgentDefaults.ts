@@ -125,7 +125,7 @@ const GROUP_DEFAULT_FIELDS: Record<GroupDefaultKey, GroupDefaultField> = {
 		providerBound: true,
 	},
 	// Models
-	runOn: { label: 'Run On', publishable: true, providerBound: true },
+	runOn: { label: 'Model Source', publishable: true, providerBound: true },
 	tierTargets: { label: 'Tier Targets', publishable: true, providerBound: true, write: 'merge' },
 	backgroundRequests: {
 		label: 'Background Requests',
@@ -444,7 +444,7 @@ const REMOTE_CANNOT_REACH_SOURCE =
 	"This agent runs on an SSH remote, which cannot reach a source on this machine's loopback address.";
 
 /**
- * Why a Run on or tier target must not be written to this agent, or
+ * Why a model source or tier target must not be written to this agent, or
  * `undefined` when it may be. The one case decided here is the one a launch
  * would refuse for where the agent runs, not for what the target is: a
  * loopback source and an agent on an SSH remote. The launch's own resolver
@@ -489,7 +489,7 @@ function nonEmpty<Value>(record: Record<string, Value>): Record<string, Value> |
  *     never named is left alone. A variable lives in exactly one of the two
  *     env records (`parkedRecords.ts`), and the profile's side wins it.
  *   - Lists replace. The agent's own rows are gone.
- *   - A Run on or tier target the agent's SSH remote cannot reach is skipped,
+ *   - A model source or tier target the agent's SSH remote cannot reach is skipped,
  *     with the reason.
  *   - The two token proxy fields are returned in `proxy`, not written.
  *
@@ -640,7 +640,7 @@ export interface GroupDefaultsSeed {
  *   - An SSH remote that was deleted since the defaults were saved. The seed
  *     runs on this machine and says so (`sshRemoteMissing`); it is never
  *     handed a remote id that resolves to nothing.
- *   - A Run on target the seed's own SSH remote cannot reach (a source on this
+ *   - A model source the seed's own SSH remote cannot reach (a source on this
  *     machine's loopback address). It is not seeded, with the reason.
  *
  * The remote is decided first, so a seed whose remote is gone keeps a loopback
@@ -815,14 +815,14 @@ const NON_FIELD_KEYS: ReadonlySet<GroupDefaultKey> = new Set<GroupDefaultKey>([
  * group, with whatever the caller set explicitly laid over them. The rules are
  * the create form's own, so a scripted create and a click store the same agent:
  *
- *   - A provider-bound default (path, arguments, model, effort, Run on, the
+ *   - A provider-bound default (path, arguments, model, effort, model source, the
  *     gateway, ...) is taken only when the seed names `toolType`. A default
  *     written for one provider's binary is never handed to another.
  *   - An explicit value beats the seed's, always. An absent one (`undefined`)
  *     is no opinion and leaves the seed's.
  *   - Environment variables merge key by key, the explicit side winning, which
  *     is how the form lays the profile's variables over a provider's own.
- *   - The gateway and a Run on target exclude each other (a target takes the
+ *   - The gateway and a model source exclude each other (a target takes the
  *     gateway's place at launch), so an explicit one drops the seed's other.
  *
  * Lists and records are cloned: the new agent's record must not alias the

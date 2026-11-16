@@ -41,7 +41,11 @@ vi.mock('../../../../main/utils/sentry', () => sentry);
 import { PARAKEET_TDT_V2_ID, QWEN3_1_7B_ID } from '../../../../shared/local-models/model-catalog';
 import type { ModelServerStatus } from '../../../../shared/local-models/model-server';
 import { ModelServerError } from '../../../../main/local-models/errors';
-import { MODEL_SERVER_STATE_FILE } from '../../../../main/local-models/server/config-store';
+import {
+	MODEL_SERVER_STATE_FILE,
+	readModelServerConfig,
+	writeModelServerSettings,
+} from '../../../../main/local-models/server/config-store';
 import type { ServerModelPreset } from '../../../../main/local-models/server/presets';
 import {
 	configureModelServer,
@@ -56,6 +60,7 @@ import {
 	modelServerServingLoaded,
 	onModelServerStateChange,
 	resetModelServerForTests,
+	resumeModelServerAtLaunch,
 	startModelServer,
 	stopModelServer,
 	stopModelServerNow,
@@ -401,6 +406,59 @@ describe('starting and stopping', () => {
 			'the port to be released'
 		);
 		await waitForStatus((status) => status.state === 'stopped' && status.pid === null);
+	});
+});
+
+describe('starting with Maestro', () => {
+	it('remembers a Start for the next launch and forgets it on Stop', async () => {
+		expect((await getModelServerStatus()).startOnLaunch).toBe(false);
+
+		expect((await startModelServer()).startOnLaunch).toBe(true);
+		expect((await readModelServerConfig(tempRoot.dir)).startOnLaunch).toBe(true);
+
+		expect((await stopModelServer()).startOnLaunch).toBe(false);
+		expect((await readModelServerConfig(tempRoot.dir)).startOnLaunch).toBe(false);
+	});
+
+	it("leaves the choice alone for a start or stop that is not the user's", async () => {
+		await startModelServer({ remember: false });
+		expect((await readModelServerConfig(tempRoot.dir)).startOnLaunch).toBe(false);
+
+		await writeModelServerSettings(tempRoot.dir, { startOnLaunch: true });
+		await stopModelServer({ remember: false });
+		expect((await readModelServerConfig(tempRoot.dir)).startOnLaunch).toBe(true);
+	});
+
+	it('does not remember a start a task asked for', async () => {
+		await ensureModelServerFor(QWEN3_1_7B_ID);
+		expect((await getModelServerStatus()).startOnLaunch).toBe(false);
+	});
+
+	it('does not remember a Start that failed', async () => {
+		configure({ resolveBinary: async () => null });
+		await caught(startModelServer());
+		expect((await getModelServerStatus()).startOnLaunch).toBe(false);
+	});
+
+	it('starts at launch only when it was left on', async () => {
+		await resumeModelServerAtLaunch();
+		expect(spawnServer).not.toHaveBeenCalled();
+
+		await writeModelServerSettings(tempRoot.dir, { startOnLaunch: true });
+		await resumeModelServerAtLaunch();
+		expect(await getModelServerStatus()).toMatchObject({ state: 'running', startOnLaunch: true });
+	});
+
+	it('reports a launch start that fails on the card, without throwing', async () => {
+		await writeModelServerSettings(tempRoot.dir, { startOnLaunch: true });
+		configure({ resolveBinary: async () => null });
+
+		await expect(resumeModelServerAtLaunch()).resolves.toBeUndefined();
+		const status = await getModelServerStatus();
+		expect(status.state).toBe('failed');
+		expect(status.lastError).toBeTruthy();
+		// The choice outlives a launch it could not keep.
+		expect(status.startOnLaunch).toBe(true);
 	});
 });
 

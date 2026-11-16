@@ -583,7 +583,7 @@ describe('batch-processor', () => {
 				});
 			};
 
-			it("runs the task on the agent's Run on target", async () => {
+			it("runs the task on the agent's model source", async () => {
 				singleTask();
 				const runOn = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
 
@@ -2427,7 +2427,7 @@ describe('batch-processor', () => {
 			});
 		});
 
-		it("keeps the agent's own Run on target for a tier that names no place", async () => {
+		it("keeps the agent's own model source for a tier that names no place", async () => {
 			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" -->\n- [ ] Task one');
 
 			// On the provider, only the built-in table maps `high`: a model, no place.

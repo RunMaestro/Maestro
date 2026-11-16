@@ -474,24 +474,6 @@ export function isCueDbReady(): boolean {
 }
 
 /**
- * True when `err` is SQLite saying the file itself is damaged: `SQLITE_CORRUPT`
- * ("database disk image is malformed", plus its extended codes) or
- * `SQLITE_NOTADB` ("file is not a database"). better-sqlite3 puts the result
- * code on `SqliteError.code`.
- *
- * These do not heal on a retry or a restart: the same bytes fail the same way
- * on every boot. Lock contention (`SQLITE_BUSY`), a full disk or a permission
- * error are not corruption and stay out of this set.
- */
-export function isCueDbCorruptionError(err: unknown): boolean {
-	const code = (err as { code?: unknown } | null)?.code;
-	if (typeof code !== 'string') return false;
-	return (
-		code === 'SQLITE_NOTADB' || code === 'SQLITE_CORRUPT' || code.startsWith('SQLITE_CORRUPT_')
-	);
-}
-
-/**
  * Move a damaged Cue database aside so the next initCueDb() starts clean.
  *
  * Closes the live handle first, then renames `cue.db` and its `-wal` / `-shm`
@@ -1478,6 +1460,91 @@ function recentCueEventsIn(
 	) as CueEventRow[];
 
 	return rows.map(rowToCueEventRecord);
+}
+
+/**
+ * The columns the Usage Dashboard's Cue aggregation reads, one row per run.
+ * Leaves out the payload and the stored output (`full_output` can be tens of
+ * KB per run), which the aggregation never looks at.
+ */
+export type CueStatsEventRecord = Pick<
+	CueEventRecord,
+	| 'id'
+	| 'type'
+	| 'sessionId'
+	| 'subscriptionName'
+	| 'status'
+	| 'createdAt'
+	| 'completedAt'
+	| 'pipelineId'
+	| 'chainRootId'
+	| 'parentEventId'
+	| 'providerSessionId'
+	| 'streamUsageJson'
+> & {
+	/**
+	 * True when the engine-start sweep settled this run (`failOrphanedRunningEvents`):
+	 * its `completed_at` is when the NEXT engine started, so its "duration" is
+	 * downtime, not run time.
+	 */
+	orphaned?: boolean;
+};
+
+/**
+ * Cue runs created at or after `since`, newest first, with only the columns
+ * the stats aggregation needs. `orphanedMessage` is the error message the
+ * engine-start sweep stamps on runs it settled; rows carrying it come back
+ * flagged `orphaned`.
+ *
+ * Returns `[]` when the DB is not initialized, like {@link getRecentCueEvents}.
+ */
+export function getCueEventsForStats(
+	since: number,
+	orphanedMessage: string
+): CueStatsEventRecord[] {
+	if (!db) return [];
+	const rows = db
+		.prepare(
+			`SELECT id, type, session_id, subscription_name, status, created_at, completed_at,
+			        pipeline_id, chain_root_id, parent_event_id, provider_session_id,
+			        stream_usage_json,
+			        CASE WHEN error_message = ? THEN 1 ELSE 0 END AS orphaned
+			 FROM cue_events
+			 WHERE created_at >= ?
+			 ORDER BY created_at DESC`
+		)
+		.all(orphanedMessage, since) as Array<
+		Pick<
+			CueEventRow,
+			| 'id'
+			| 'type'
+			| 'session_id'
+			| 'subscription_name'
+			| 'status'
+			| 'created_at'
+			| 'completed_at'
+			| 'pipeline_id'
+			| 'chain_root_id'
+			| 'parent_event_id'
+			| 'provider_session_id'
+			| 'stream_usage_json'
+		> & { orphaned: number }
+	>;
+	return rows.map((row) => ({
+		id: row.id,
+		type: row.type,
+		sessionId: row.session_id,
+		subscriptionName: row.subscription_name,
+		status: row.status,
+		createdAt: row.created_at,
+		completedAt: row.completed_at,
+		pipelineId: row.pipeline_id,
+		chainRootId: row.chain_root_id,
+		parentEventId: row.parent_event_id,
+		providerSessionId: row.provider_session_id,
+		streamUsageJson: row.stream_usage_json,
+		orphaned: row.orphaned === 1,
+	}));
 }
 
 /**

@@ -1253,6 +1253,7 @@ export const LogItem = memo(
 									</span>
 									<button
 										onClick={async () => {
+											// Async: an AI message leaves only after its provider transcript edit.
 											const nextIndex = await onDeleteLog(log.id);
 											onSetDeleteConfirmLogId(null);
 											if (nextIndex !== null && nextIndex >= 0) {

@@ -13,7 +13,7 @@
  * This component only lays them out.
  */
 
-import { memo, useMemo, useState } from 'react';
+import { memo, useMemo, useState, type MouseEvent } from 'react';
 import {
 	CalendarDays,
 	Clock,
@@ -36,13 +36,12 @@ import {
 	formatHourOfDay,
 	formatNumber,
 } from '../../../shared/formatters';
-import { MetricCard } from './MetricCard';
+import { MetricCard } from './SummaryCards';
 import { PercentilesCard } from './PercentilesCard';
 import { chunkIntoEqualGroups, computeAxisLabelIndices, PHONE_AXIS_LABELS } from './chartUtils';
-import { formatHourShort } from './tasksByHourUtils';
-import { parseYmd } from './delegationTrendUtils';
+import { parseLocalYmd } from '../../../shared/localDay';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
-import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { ChartTooltip } from '../widgets';
 
 interface PromptCadenceStatsProps {
 	cadence: PromptCadence;
@@ -74,7 +73,9 @@ function formatRate(value: number): string {
 }
 
 function shortDay(ymd: string): string {
-	return parseYmd(ymd)?.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) ?? ymd;
+	return (
+		parseLocalYmd(ymd)?.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) ?? ymd
+	);
 }
 
 function bucketLabel(bucket: PromptBucket): string {
@@ -177,7 +178,7 @@ const MiniBars = memo(function MiniBars({
 	);
 });
 
-const HOUR_LABELS = Array.from({ length: 24 }, (_, hour) => formatHourShort(hour));
+const HOUR_LABELS = Array.from({ length: 24 }, (_, hour) => formatHourOfDay(hour));
 const HOUR_AXIS = new Set([0, 6, 12, 18, 23]);
 
 export const PromptCadenceStats = memo(function PromptCadenceStats({
@@ -185,7 +186,16 @@ export const PromptCadenceStats = memo(function PromptCadenceStats({
 	theme,
 }: PromptCadenceStatsProps) {
 	const [hovered, setHovered] = useState<number | null>(null);
+	const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
 	const phone = usePhoneLayout();
+	const hoverBar = (index: number) => (event: MouseEvent) => {
+		setHovered(index);
+		setAnchor({ x: event.clientX, y: event.clientY });
+	};
+	const leaveBar = () => {
+		setHovered(null);
+		setAnchor(null);
+	};
 
 	const buckets = useMemo(() => buildBuckets(cadence.days), [cadence.days]);
 	const maxValue = useMemo(
@@ -281,9 +291,9 @@ export const PromptCadenceStats = memo(function PromptCadenceStats({
 				/>
 				<MetricCard
 					icon={<Flame className="w-4 h-4" />}
-					label="Current Streak"
+					label="Streak in Range"
 					value={`${cadence.currentStreak} ${cadence.currentStreak === 1 ? 'day' : 'days'}`}
-					subValue={`longest ${cadence.longestStreak} ${cadence.longestStreak === 1 ? 'day' : 'days'}`}
+					subValue={`longest in range ${cadence.longestStreak} ${cadence.longestStreak === 1 ? 'day' : 'days'}`}
 					theme={theme}
 					testId="prompt-streak"
 				/>
@@ -349,17 +359,7 @@ export const PromptCadenceStats = memo(function PromptCadenceStats({
 
 					<div className="relative">
 						{hoveredBucket && (
-							<div
-								className="absolute z-10 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none"
-								style={{
-									left: `${((hovered! + 0.5) / buckets.length) * 100}%`,
-									bottom: '100%',
-									transform: 'translateX(-50%)',
-									marginBottom: '8px',
-									...elevatedSurfaceStyle(theme),
-									color: theme.colors.textMain,
-								}}
-							>
+							<ChartTooltip anchor={anchor} theme={theme} testId="prompt-cadence-tooltip">
 								<div className="font-medium mb-1">{bucketLabel(hoveredBucket)}</div>
 								<div className="flex flex-col gap-0.5" style={{ color: theme.colors.textDim }}>
 									<span>
@@ -369,7 +369,7 @@ export const PromptCadenceStats = memo(function PromptCadenceStats({
 									</span>
 									<span>7-day average {formatRate(hoveredBucket.rolling)}</span>
 								</div>
-							</div>
+							</ChartTooltip>
 						)}
 
 						<div className="relative" style={{ height: CHART_HEIGHT }}>
@@ -382,8 +382,9 @@ export const PromptCadenceStats = memo(function PromptCadenceStats({
 									<div
 										key={bucket.date}
 										className="flex-1 h-full flex flex-col justify-end"
-										onMouseEnter={() => setHovered(index)}
-										onMouseLeave={() => setHovered(null)}
+										onMouseEnter={hoverBar(index)}
+										onMouseMove={hoverBar(index)}
+										onMouseLeave={leaveBar}
 										data-testid="prompt-cadence-bar"
 									>
 										<div

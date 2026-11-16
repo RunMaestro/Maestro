@@ -7,7 +7,7 @@
  * - Medium screens (600-900px): 2-column charts, 3-column summary cards grid
  * - Wide screens (>900px): 2-column charts, 5-column summary cards grid
  *
- * Note: SummaryCards always renders 10 metric cards regardless of grid column count.
+ * Note: SummaryCards renders the same metric cards regardless of grid column count.
  *
  * The responsive system uses ResizeObserver to track container width and
  * dynamically adjusts grid column counts via CSS grid.
@@ -260,18 +260,15 @@ const createSampleData = () => ({
 		{ hour: 14, count: 60, duration: 1440000 },
 		{ hour: 15, count: 50, duration: 1200000 },
 	],
+	byDayHour: [],
+	window: { startYmd: '2024-01-15', endYmd: '2024-01-18' },
+	earliestQueryAt: null,
+	streak: { current: 0, longest: 4 },
 	totalSessions: 25,
-	sessionsByAgent: { 'claude-code': 15, terminal: 10 },
-	sessionsByDay: [
-		{ date: '2024-01-15', count: 5 },
-		{ date: '2024-01-16', count: 7 },
-		{ date: '2024-01-17', count: 6 },
-		{ date: '2024-01-18', count: 7 },
-	],
-	avgSessionDuration: 144000,
 	byAgentByDay: {},
 	bySessionByDay: {},
 	bySessionSource: {},
+	byAgentWorktree: {},
 });
 
 describe('UsageDashboard Responsive Layout', () => {
@@ -475,17 +472,18 @@ describe('UsageDashboard Responsive Layout', () => {
 			});
 		});
 
-		it('renders all 14 metric cards regardless of column count', async () => {
+		it('renders all 13 metric cards regardless of column count', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
 				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
 			});
 
-			// Card count grew from 10 to 12 (Interactive % / Local % were
-			// replaced with Current Streak / Best Day / Active Days / Worktree %).
+			// 13 range and live cards. The Peak Hour card moved to the radial
+			// Activity by Hour chart, and the Interactive vs Delegated card is
+			// hidden because the mocked delegation split tracked no time.
 			const metricCards = screen.getAllByTestId('metric-card');
-			expect(metricCards).toHaveLength(14);
+			expect(metricCards).toHaveLength(13);
 		});
 	});
 

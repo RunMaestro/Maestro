@@ -7,7 +7,7 @@
  *
  *   - the harness's own catalogue, from the agent detector (the same list its
  *     model picker offers, with the description and order Codex states);
- *   - the Run on targets, for a harness with a Run on recipe: the Maestro model
+ *   - the model sources, for a harness with a model source recipe: the Maestro model
  *     server and each ENABLED saved source, with the models each lists now.
  *
  * Asking is a read. The model server answers from disk and is never started

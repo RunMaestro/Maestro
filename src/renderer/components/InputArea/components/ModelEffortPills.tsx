@@ -26,7 +26,7 @@ interface ModelEffortPillsProps {
 	 */
 	shortcutKeys?: string[];
 	currentModel?: string;
-	/** Effective Run on model and source, when they override the provider model. */
+	/** Effective model source (model and source), when they override the provider model. */
 	runOn?: string;
 	currentEffort?: string;
 	availableModels: string[];
@@ -55,6 +55,15 @@ interface ModelEffortPillsProps {
 	effortMenuOpen: boolean;
 	setEffortMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
 	effortMenuRef: React.RefObject<HTMLDivElement>;
+	/**
+	 * Which edge of the pills the menus line up with. `start` (default) opens
+	 * them rightward from the pill's left edge, for the composer's left-aligned
+	 * toolbar. `end` opens them leftward from the pill's right edge, for pills
+	 * pushed to the right of their container (the queued-message editor): a
+	 * menu opened rightward there overflows the container, and focusing its
+	 * filter scrolls the whole dialog sideways to reveal it.
+	 */
+	menuAlign?: 'start' | 'end';
 }
 
 export const ModelEffortPills = memo(function ModelEffortPills({
@@ -77,14 +86,17 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 	effortMenuOpen,
 	setEffortMenuOpen,
 	effortMenuRef,
+	menuAlign = 'start',
 }: ModelEffortPillsProps) {
+	const alignEnd = menuAlign === 'end';
+	const menuEdgeClass = alignEnd ? 'right-0' : 'left-0';
 	const [typedModel, setTypedModel] = useState('');
 	const [modelFilter, setModelFilter] = useState('');
 	const modelMenu = useResizableModal({
 		resizeKey: 'composer-model-picker',
 		defaultSize: { width: 420, height: 320 },
 		minSize: { width: 260, height: 180 },
-		anchor: 'bottom-left',
+		anchor: alignEnd ? 'bottom-right' : 'bottom-left',
 		enabled: isVisible && modelMenuOpen,
 	});
 	const modelOptions = availableModels.includes('') ? availableModels : ['', ...availableModels];
@@ -116,7 +128,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 						}}
 						title={
 							runOn
-								? `Run on: ${runOn}. This target overrides named provider models. Change Run on in Edit Agent > Models.`
+								? `Model source: ${runOn}. This source overrides named provider models. Change the model source in Edit Agent > Models.`
 								: isAutoModel(currentModel) && autoModelTitle
 									? `${autoModelTitle} Click to change${shortcutSuffix(shortcutKeys)}`
 									: `Change model${shortcutSuffix(shortcutKeys)}`
@@ -131,7 +143,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 						<div
 							ref={modelMenu.modalRef}
 							data-testid="model-picker"
-							className="absolute bottom-full left-0 mb-1 flex flex-col rounded z-50"
+							className={`absolute bottom-full ${menuEdgeClass} mb-1 flex flex-col rounded z-50`}
 							style={{
 								...modelMenu.style,
 								...elevatedSurfaceStyle(theme),
@@ -162,8 +174,8 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 							/>
 							{runOn && (
 								<p className="px-3 py-2 text-xs" style={{ color: theme.colors.textDim }}>
-									Run on: {runOn}. This target overrides named provider models. Change Run on in
-									Edit Agent &gt; Models.
+									Model source: {runOn}. This source overrides named provider models. Change the
+									model source in Edit Agent &gt; Models.
 								</p>
 							)}
 							<div className="shrink-0 flex p-2">
@@ -264,7 +276,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 								onResetSize={modelMenu.onResetSize}
 								canReset={modelMenu.canReset}
 								accentColor={theme.colors.accent}
-								directions={['n', 'e', 'ne']}
+								directions={alignEnd ? ['n', 'w', 'nw'] : ['n', 'e', 'ne']}
 							/>
 						</div>
 					)}
@@ -290,7 +302,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 					</button>
 					{effortMenuOpen && (
 						<div
-							className="absolute bottom-full left-0 mb-1 rounded z-50"
+							className={`absolute bottom-full ${menuEdgeClass} mb-1 rounded z-50`}
 							style={{
 								...elevatedSurfaceStyle(theme),
 							}}

@@ -22,7 +22,12 @@ import fs from 'fs/promises';
 import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { createSafeSend } from '../../utils/safe-send';
-import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
+import {
+	getSessionStorage,
+	hasSessionStorage,
+	getAllSessionStorages,
+	type DeleteMessagePairResult,
+} from '../../agents';
 import {
 	getLiveSessions,
 	getSshRemoteById,
@@ -966,8 +971,9 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				sessionId: string,
 				userMessageUuid: string,
 				fallbackContent?: string,
-				sshRemoteId?: string
-			): Promise<{ success: boolean; error?: string; linesRemoved?: number }> => {
+				sshRemoteId?: string,
+				ownerAgentId?: string
+			): Promise<DeleteMessagePairResult> => {
 				if (agentId === 'grok') {
 					// This legacy mutation request has no account/host ownership or
 					// native generation receipt. Never infer either from a native ID,
@@ -982,6 +988,21 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				if (!storage) {
 					logger.warn(`No session storage available for agent: ${agentId}`, LOG_CONTEXT);
 					return { success: false, error: `No session storage available for agent: ${agentId}` };
+				}
+
+				// An owned delete edits the transcript the agent itself resumes: its own
+				// account directory (CODEX_HOME, CLAUDE_CONFIG_DIR) and its SSH target,
+				// resolved exactly as an owned history read resolves them.
+				if (ownerAgentId !== undefined) {
+					const { sshConfig, configDir } = resolveHistoryScope(agentId, sshRemoteId, ownerAgentId);
+					return storage.deleteMessagePair(
+						projectPath,
+						sessionId,
+						userMessageUuid,
+						fallbackContent,
+						sshConfig,
+						configDir
+					);
 				}
 
 				// A remote agent's transcript lives on the remote. When its remote cannot

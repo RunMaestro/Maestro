@@ -25,11 +25,11 @@ import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import {
 	localModelAssignmentSourceLabel,
+	modelMapRoleOf,
 	resolveLocalModelAssignment,
-	resolveUtilityProvider,
 	type LocalModelAssignments,
-	type UtilitySource,
 } from '../../shared/local-models/tasks';
+import { resolveSlotProvider, type ModelMap } from '../../shared/local-models/model-map';
 import { useSettingsStore } from '../stores/settingsStore';
 
 /**
@@ -37,7 +37,8 @@ import { useSettingsStore } from '../stores/settingsStore';
  *
  * Which model answers is the `ai-command` Local Models assignment, so the label
  * follows it:
- *   - the default (`utility-agent`) is the tab's own provider, so the turn's
+ *   - a Model Map slot on a provider names that provider; a slot that follows
+ *     the session (the default) is the tab's own provider, so the turn's
  *     codified model and effort are the answer;
  *   - a local model or an endpoint is named instead (`Qwen3 1.7B`,
  *     `qwen3:latest on Ollama`), with no effort: those sources have no effort
@@ -51,13 +52,13 @@ export function resolveAiCommandProvenance(
 	turn: { turnModel?: string; turnEffort?: string },
 	assignments: LocalModelAssignments | undefined,
 	endpoints: readonly LocalModelEndpoint[],
-	utilitySource?: UtilitySource,
-	utilityProvider?: { utilityAgentId: string | null; utilityModelId: string | null }
+	modelMap?: ModelMap
 ): { model?: string; effort?: string } {
-	const assignment = resolveLocalModelAssignment(assignments, 'ai-command', utilitySource);
-	if (assignment.type === 'utility-agent') {
-		const provider = resolveUtilityProvider({ ...utilityProvider, utilitySource }, '');
-		if (provider.usesUtilityProvider) {
+	const assignment = resolveLocalModelAssignment(assignments, 'ai-command', modelMap);
+	const role = modelMapRoleOf(assignment);
+	if (role) {
+		const provider = modelMap ? resolveSlotProvider(modelMap[role], '') : null;
+		if (provider?.usesMappedProvider) {
 			return {
 				model: provider.modelId ?? `${getAgentDisplayName(provider.agentType)} (default model)`,
 			};
@@ -99,13 +100,12 @@ export async function requestAiCommand(options: {
 	// tab's commands in true chronological order.
 	const recentCommands = collectRecentCommands(tab?.logs ?? []);
 
-	const { localModelAssignments, localModelEndpoints, utilitySource } = useSettingsStore.getState();
+	const { localModelAssignments, localModelEndpoints, modelMap } = useSettingsStore.getState();
 	const provenance = resolveAiCommandProvenance(
 		{ turnModel, turnEffort },
 		localModelAssignments,
 		localModelEndpoints,
-		utilitySource,
-		useSettingsStore.getState()
+		modelMap
 	);
 
 	useAiCommandStore.getState().beginAiCommand({

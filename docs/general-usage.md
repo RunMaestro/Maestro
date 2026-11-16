@@ -50,6 +50,10 @@ The header pill and the command palette act on the agent you're looking at. The 
 
 Pull and push stream their output as it happens, so you can watch the transfer and read git's error message if it fails. Dismissing the modal leaves the command running; **Cancel** stops it. When a push fails because the branch has no upstream, the modal offers a one-click **Push and Set Upstream** retry.
 
+### Reviewing a diff
+
+You can review an agent's changes like a pull request. In the diff viewer, click or drag line numbers (or use `Down` / `Up` and `C`) to pin a comment to one or more lines, collect comments across files in the **Review** tray, and send them back to the agent as one review. Each comment names its file and lines and quotes its hunk. See [Reviewing Diffs](./diff-review).
+
 Working-tree changes are shown by the **git status widget** beside the pill (`+` additions, `−` deletions, `~` modified). Hover it for a list of changed files with diff bars, plus shortcuts to the full diff and the log.
 
 ## File Explorer and Preview
@@ -979,7 +983,7 @@ If automation needs an instruction on every turn, put it in the New Session Mess
 
 ### Editing Agents
 
-Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. The modal has five tabs: **General** (name, group, working directory, additional directories, new session message, nudge message), **Provider** (provider, custom path and arguments, model, effort, context window, environment variables), **Models** (Run on target, tiers, gateway and token proxy, System One), **Peers** (which other agents this one may [consult or delegate to](./agent-delegation)), and **SSH** (remote execution). `Cmd+Shift+[` and `Cmd+Shift+]` (`Ctrl+Shift+[` and `Ctrl+Shift+]` on Windows and Linux) move between the tabs; in Edit Agent, `Cmd+[` and `Cmd+]` (`Ctrl+[` and `Ctrl+]`) do too. A tab shows a dot when it holds a field with an error, and the modal is resizable and remembers its size. The same tabs make up the New Agent dialog and [Group Settings](./features#groups). Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar. From the command line, `maestro-cli show agent <agent>` reads the same fields and `maestro-cli update-agent <agent>` writes them (see [Creating, Updating, and Removing Agents](./cli#creating-updating-and-removing-agents)).
+Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. The modal has five tabs: **General** (name, group, working directory, additional directories, new session message, nudge message), **Provider** (provider, custom path and arguments, model, effort, context window, environment variables), **Models** (model source, tiers, gateway and token proxy, System One), **Peers** (which other agents this one may [consult or delegate to](./agent-delegation)), and **SSH** (remote execution). `Cmd+Shift+[` and `Cmd+Shift+]` (`Ctrl+Shift+[` and `Ctrl+Shift+]` on Windows and Linux) move between the tabs; in Edit Agent, `Cmd+[` and `Cmd+]` (`Ctrl+[` and `Ctrl+]`) do too. A tab shows a dot when it holds a field with an error, and the modal is resizable and remembers its size. The same tabs make up the New Agent dialog and [Group Settings](./features#groups). Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar. From the command line, `maestro-cli show agent <agent>` reads the same fields and `maestro-cli update-agent <agent>` writes them (see [Creating, Updating, and Removing Agents](./cli#creating-updating-and-removing-agents)).
 
 Changing the **Agent Provider** here is a plain switch by default. Tabs, transcripts, drafts, queued messages, and file previews are kept; each tab starts a new conversation on the new provider, and switching back resumes the old one. The provider's own settings (binary path, arguments, environment, model, effort) are parked per provider, so switching back restores them too.
 
@@ -1041,7 +1045,7 @@ Organize agents into groups for better project management:
 
 **Defaults for new agents:**
 
-- Right-click the group header → **Group Settings...** (or `Cmd+K` / `Ctrl+K` → "Group Settings" while an agent in the group is active) to set what a new agent in the group starts with, and the text of the group's pill label. See [Groups](./features#groups).
+- Right-click the group header → **Group Settings...** (or `Cmd+K` / `Ctrl+K` → "Group Settings" while an agent in the group is active) to set what a new agent in the group starts with, the text of the group's pill label, and the [Onboarding and Offboarding](./features#onboarding-and-offboarding) prompts the group runs when an agent joins or leaves it. See [Groups](./features#groups).
 
 **Hiding a group:**
 

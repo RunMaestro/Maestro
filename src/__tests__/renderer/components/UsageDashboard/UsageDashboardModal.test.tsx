@@ -18,9 +18,12 @@ import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useClaudeUsageStore } from '../../../../renderer/stores/claudeUsageStore';
 import { useCodexUsageStore } from '../../../../renderer/stores/codexUsageStore';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import type { Session } from '../../../../renderer/types';
 import { mockTheme } from '../../../helpers/mockTheme';
 import type { StatsAggregation } from '../../../../shared/stats-types';
 import { emptyPromptCadence } from '../../../../shared/promptCadence';
+import { clearCachedResources } from '../../../../renderer/hooks/utils/useCachedResource';
 
 // useModalLayer needs a LayerStackProvider in real renders. The stack
 // behavior is irrelevant to this test, so stub the context hook.
@@ -62,6 +65,48 @@ vi.mock('../../../../renderer/components/UsageDashboard/ModelUsage', () => ({
 		>
 			ModelUsageStats stub
 		</div>
+	),
+}));
+
+// The agent-list and Auto Run tabs are stubbed: these tests cover which tabs the
+// modal lets past its empty-state gate and what it hands them, not the panels.
+vi.mock(
+	'../../../../renderer/components/UsageDashboard/UsageDashboardModal/views/AgentsView',
+	() => ({
+		AgentsView: () => <div data-testid="agents-view-mock">Agents stub</div>,
+	})
+);
+vi.mock(
+	'../../../../renderer/components/UsageDashboard/UsageDashboardModal/views/AgentOverviewView',
+	() => ({
+		AgentOverviewView: () => <div data-testid="agent-overview-view-mock">Agent Overview stub</div>,
+	})
+);
+vi.mock(
+	'../../../../renderer/components/UsageDashboard/UsageDashboardModal/views/AutoRunView',
+	() => ({
+		AutoRunView: () => <div data-testid="autorun-view-mock">Auto Run stub</div>,
+	})
+);
+// Groups stub: one button per group that opens its detail modal, the way a
+// tile click does, handing over the rollup the tile was drawn from.
+vi.mock(
+	'../../../../renderer/components/UsageDashboard/UsageDashboardModal/views/GroupsView',
+	() => ({
+		GroupsView: ({
+			onSelectGroup,
+		}: {
+			onSelectGroup: (rollup: { groupId: string; queries: number }) => void;
+		}) => (
+			<div data-testid="groups-view-mock">
+				<button onClick={() => onSelectGroup({ groupId: 'g1', queries: -1 })}>Open group g1</button>
+			</div>
+		),
+	})
+);
+vi.mock('../../../../renderer/components/UsageDashboard/GroupDetailModal', () => ({
+	GroupDetailModal: ({ rollup }: { rollup: { name: string; queries: number } }) => (
+		<div data-testid="group-detail-mock" data-name={rollup.name} data-queries={rollup.queries} />
 	),
 }));
 
@@ -126,16 +171,23 @@ const populatedAggregation: StatsAggregation = {
 		{ hour: 9, count: 15, duration: 900_000 },
 		{ hour: 14, count: 27, duration: 2_700_000 },
 	],
-	totalSessions: 6,
-	sessionsByAgent: { 'claude-code': 4, codex: 2 },
-	sessionsByDay: [
-		{ date: '2026-04-22', count: 3 },
-		{ date: '2026-04-23', count: 3 },
+	byDayHour: [
+		{ date: '2026-04-22', hour: 9, count: 15, duration: 900_000 },
+		{ date: '2026-04-23', hour: 14, count: 27, duration: 2_700_000 },
 	],
-	avgSessionDuration: 600_000,
+	window: { startYmd: '2026-04-22', endYmd: '2026-04-23' },
+	earliestQueryAt: new Date(2026, 3, 22, 9, 0).getTime(),
+	streak: { current: 2, longest: 2 },
+	totalSessions: 6,
 	byAgentByDay: {},
 	bySessionByDay: {},
 	bySessionSource: {},
+	bySessionLastQuery: {},
+	bySessionTokens: {},
+	worktreeQueries: 0,
+	parentQueries: 42,
+	byAgentWorktree: {},
+	imageAnnotations: 0,
 };
 
 const emptyAggregation: StatsAggregation = {
@@ -147,14 +199,21 @@ const emptyAggregation: StatsAggregation = {
 	bySource: { user: 0, auto: 0 },
 	byLocation: { local: 0, remote: 0 },
 	byDay: [],
+	byDayHour: [],
+	window: { startYmd: '2026-04-23', endYmd: '2026-04-23' },
+	earliestQueryAt: null,
+	streak: { current: 0, longest: 0 },
 	byHour: [],
 	totalSessions: 0,
-	sessionsByAgent: {},
-	sessionsByDay: [],
-	avgSessionDuration: 0,
 	byAgentByDay: {},
 	bySessionByDay: {},
 	bySessionSource: {},
+	bySessionLastQuery: {},
+	bySessionTokens: {},
+	worktreeQueries: 0,
+	parentQueries: 0,
+	byAgentWorktree: {},
+	imageAnnotations: 0,
 };
 
 const mockStats = {
@@ -175,6 +234,7 @@ const mockStats = {
 // the bridge defined so the fetch doesn't throw a TypeError.
 const mockCueStats = {
 	getAggregation: vi.fn(),
+	getSourceTotals: vi.fn(),
 };
 
 const mockDialog = { saveFile: vi.fn() };
@@ -231,6 +291,9 @@ function seedCodexUsageSnapshots() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// The dashboard payload is cached per range at module scope; start each test
+	// from an empty cache so one test's fixture cannot render in the next.
+	clearCachedResources();
 	useClaudeUsageStore.getState().__resetForTests();
 	useCodexUsageStore.getState().__resetForTests();
 	// The dashboard remembers the last-selected tab in the (singleton) uiStore.
@@ -241,6 +304,7 @@ beforeEach(() => {
 	mockAgents.refreshClaudeUsageSnapshots.mockResolvedValue({ refreshed: 1 });
 	mockAgents.refreshCodexUsageSnapshots.mockResolvedValue({ refreshed: 1 });
 	mockCueStats.getAggregation.mockResolvedValue(null);
+	mockCueStats.getSourceTotals.mockResolvedValue({ occurrences: 0, totalDurationMs: 0, tokens: 0 });
 	(window as unknown as { maestro: Record<string, unknown> }).maestro = {
 		stats: mockStats,
 		cueStats: mockCueStats,
@@ -623,5 +687,147 @@ describe('UsageDashboardModal - provider quota tabs', () => {
 			expect(screen.getByTestId('codex-usage-mock')).toBeInTheDocument();
 		});
 		expect(screen.queryByText(/No usage data yet/i)).not.toBeInTheDocument();
+	});
+});
+
+describe('UsageDashboardModal - empty-range gate', () => {
+	it.each([
+		['Agent Overview', 'agent-overview-view-mock'],
+		['Agents', 'agents-view-mock'],
+		['Auto Run', 'autorun-view-mock'],
+		['Cue', 'cue-stats-mock'],
+	])('renders %s for a range with no queries', async (tabName, testId) => {
+		setEncoreFlags({ maestroCue: true, usageStats: true });
+		mockStats.getAggregation.mockResolvedValue(emptyAggregation);
+
+		render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
+		await waitFor(() => {
+			expect(screen.getByText(/No usage data yet/i)).toBeInTheDocument();
+		});
+
+		await act(async () => {
+			fireEvent.click(screen.getByRole('tab', { name: tabName }));
+		});
+		await waitFor(() => {
+			expect(screen.getByTestId(testId)).toBeInTheDocument();
+		});
+		expect(screen.queryByText(/No usage data yet/i)).not.toBeInTheDocument();
+	});
+
+	it('wraps the Cue panel in its keyboard section', async () => {
+		setEncoreFlags({ maestroCue: true, usageStats: true });
+		render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
+		await waitFor(() => {
+			expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+		});
+		await act(async () => {
+			fireEvent.click(screen.getByRole('tab', { name: 'Cue' }));
+		});
+		const section = await screen.findByTestId('section-cue-stats');
+		expect(section).toContainElement(screen.getByTestId('cue-stats-mock'));
+	});
+
+	it.each(['Overview', 'Activity'])('keeps the empty state on %s', async (tabName) => {
+		setEncoreFlags({ maestroCue: false, usageStats: true });
+		mockStats.getAggregation.mockResolvedValue(emptyAggregation);
+		useUIStore
+			.getState()
+			.setUsageDashboardViewMode(tabName === 'Overview' ? 'overview' : 'activity');
+
+		render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
+		await waitFor(() => {
+			expect(screen.getByText(/No usage data yet/i)).toBeInTheDocument();
+		});
+		expect(screen.getByRole('tab', { name: tabName })).toHaveAttribute('aria-selected', 'true');
+	});
+});
+
+describe('UsageDashboardModal - range labels and Cue totals', () => {
+	it('shows where All Time starts, from the first recorded query', async () => {
+		setEncoreFlags({ maestroCue: false, usageStats: true });
+		render(
+			<UsageDashboardModal
+				isOpen={true}
+				onClose={() => {}}
+				theme={mockTheme}
+				defaultTimeRange="all"
+			/>
+		);
+		await waitFor(() => {
+			expect(
+				screen.getByRole('option', { name: 'All Time (since Apr 22, 2026)' })
+			).toBeInTheDocument();
+		});
+		expect(screen.getByText('Showing All Time (since Apr 22, 2026)')).toBeInTheDocument();
+		expect(screen.getByRole('option', { name: 'Last 7 Days' })).toBeInTheDocument();
+	});
+
+	it('reads the Cue aggregate for the Overview only', async () => {
+		setEncoreFlags({ maestroCue: true, usageStats: true });
+		useUIStore.getState().setUsageDashboardViewMode('activity');
+
+		render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
+		await waitFor(() => {
+			expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+		});
+		expect(mockCueStats.getSourceTotals).not.toHaveBeenCalled();
+
+		await act(async () => {
+			fireEvent.click(screen.getByRole('tab', { name: 'Overview' }));
+		});
+		await waitFor(() => {
+			expect(mockCueStats.getSourceTotals).toHaveBeenCalledWith('week');
+		});
+	});
+});
+
+describe('UsageDashboardModal - group detail stays live', () => {
+	afterEach(() => {
+		useSessionStore.setState({ groups: [] });
+		mockStats.onStatsUpdate.mockImplementation(() => () => {});
+	});
+
+	it('derives the group header from the current aggregation, not the click-time rollup', async () => {
+		setEncoreFlags({ maestroCue: false, usageStats: true });
+		useSessionStore.setState({
+			groups: [{ id: 'g1', name: 'Client', emoji: '', collapsed: false }] as never,
+		});
+		const member = {
+			id: 's1',
+			name: 'Worker',
+			toolType: 'claude-code',
+			groupId: 'g1',
+		} as unknown as Session;
+		const withQueries = (count: number): StatsAggregation => ({
+			...populatedAggregation,
+			bySessionByDay: { s1: [{ date: '2026-04-23', count, duration: 1000 }] },
+		});
+		mockStats.getAggregation.mockResolvedValue(withQueries(5));
+		let emitStatsUpdate: (table?: string) => void = () => {};
+		mockStats.onStatsUpdate.mockImplementation(((handler: (table?: string) => void) => {
+			emitStatsUpdate = handler;
+			return () => {};
+		}) as never);
+		useUIStore.getState().setUsageDashboardViewMode('groups');
+
+		render(
+			<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} sessions={[member]} />
+		);
+		// Find outside act(): an async act scope holds React's commits until it
+		// ends, so a query awaited inside it never sees the loaded tab.
+		const openGroup = await screen.findByText('Open group g1');
+		await act(async () => {
+			fireEvent.click(openGroup);
+		});
+		const detail = await screen.findByTestId('group-detail-mock');
+		expect(detail).toHaveAttribute('data-name', 'Client');
+		expect(detail).toHaveAttribute('data-queries', '5');
+
+		mockStats.getAggregation.mockResolvedValue(withQueries(9));
+		act(() => emitStatsUpdate('query_events'));
+		await waitFor(
+			() => expect(screen.getByTestId('group-detail-mock')).toHaveAttribute('data-queries', '9'),
+			{ timeout: 3000 }
+		);
 	});
 });

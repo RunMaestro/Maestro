@@ -751,7 +751,7 @@ describe('GitDiffViewer', () => {
 
 			unmount();
 
-			expect(removeEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
+			expect(removeEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function), false);
 			removeEventListenerSpy.mockRestore();
 		});
 	});

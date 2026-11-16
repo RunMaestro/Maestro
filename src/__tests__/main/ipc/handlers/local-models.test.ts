@@ -140,7 +140,7 @@ vi.mock('../../../../main/local-models/hardware', () => ({
 }));
 
 vi.mock('../../../../main/local-models/task-router', () => ({
-	runLocalTaskRequest: vi.fn(async () => ({ status: 'use-utility-agent' })),
+	runLocalTaskRequest: vi.fn(async () => ({ status: 'use-provider' })),
 }));
 
 vi.mock('../../../../main/local-models/task-readiness', () => ({
@@ -685,7 +685,7 @@ describe('task router channel', () => {
 	it('hands runTask its task id and input untouched', async () => {
 		const input = { prompt: 'Fix the login timeout' };
 		await expect(handlerFor('localModels:runTask')({}, 'tab-naming', input)).resolves.toEqual({
-			status: 'use-utility-agent',
+			status: 'use-provider',
 		});
 		expect(runLocalTaskRequest).toHaveBeenCalledWith('tab-naming', input);
 	});
@@ -722,7 +722,7 @@ describe('task router channel', () => {
 		expect(suggestTabCleanup).toHaveBeenCalledWith();
 	});
 
-	it('hands a Run on test its request untouched and returns the verdict', async () => {
+	it('hands a model source test its request untouched and returns the verdict', async () => {
 		const request = {
 			agentId: 'agent-1',
 			target: { type: 'source', endpointId: 'ep-1', model: 'm' },

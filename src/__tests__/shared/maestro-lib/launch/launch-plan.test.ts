@@ -517,7 +517,7 @@ describe('buildAgentLaunchPlan', () => {
 		});
 	});
 
-	describe("the agent's Run on target", () => {
+	describe("the agent's model source", () => {
 		const SURFACES = ['desktop', 'cli', 'cue'] as const;
 		const OLLAMA: LocalModelEndpoint = {
 			id: 'ep-ollama',
@@ -850,8 +850,8 @@ describe('buildAgentLaunchPlan', () => {
 		});
 
 		it('does not let a gateway that could not be used refuse a launch that skips it', () => {
-			// A loopback gateway refuses an SSH launch on its own. With a Run on
-			// target the launch never goes through it.
+			// A loopback gateway refuses an SSH launch on its own. With a model
+			// source the launch never goes through it.
 			const result = buildAgentLaunchPlan(
 				input({
 					sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
@@ -920,7 +920,7 @@ describe('buildAgentLaunchPlan', () => {
 
 				expect(result).toMatchObject({ ok: false, reason });
 				if (result.ok) throw new Error('expected a refusal');
-				expect(result.error).toContain('Run on');
+				expect(result.error).toContain('model source');
 			}
 		});
 

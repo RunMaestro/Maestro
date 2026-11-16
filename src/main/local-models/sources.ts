@@ -8,19 +8,24 @@
 import {
 	formatLocalModelAssignmentSpec,
 	inheritsProviderWithoutAgentPath,
-	parseUtilitySource,
 	resolveLocalModelAssignments,
 	type LocalModelAssignment,
 	type LocalModelAssignments,
 	type LocalModelTaskId,
 } from '../../shared/local-models/tasks';
+import {
+	readModelMap,
+	type ModelMap,
+	type ModelMapRole,
+} from '../../shared/local-models/model-map';
 import { getSettingsStore } from '../stores/getters';
+import type { SettingsStoreInterface } from '../stores/types';
 
 export type LocalModelSource =
 	| { type: 'local'; modelId: string; language?: string }
 	| { type: 'endpoint'; endpointId: string; model: string };
 
-/** The source an assignment runs on, or null for `off` and `utility-agent`. */
+/** The source an assignment runs on, or null for `off`, `system-one` and a Model Map slot left on a provider. */
 export function sourceForAssignment(assignment: LocalModelAssignment): LocalModelSource | null {
 	if (assignment.type === 'local') return { ...assignment };
 	if (assignment.type === 'endpoint') {
@@ -43,27 +48,42 @@ export function localModelSourceKey(source: LocalModelSource): string {
 }
 
 /**
- * Effective assignments, including the shared utility source. Both execution
- * and readiness read this so an inherited source is checked and run alike.
+ * A settings store as the getter the shared readers take (`readModelMap`,
+ * `resolveTaskProvider`). Defaults to the app's store; a handler passes its
+ * injected one so its tests drive the same reads.
+ */
+export function settingsReader(store: object = getSettingsStore()): (key: string) => unknown {
+	const settings = store as SettingsStoreInterface;
+	return (key) => settings.get(key);
+}
+
+/** The Model Map in force, including the migration from the old Utility source. */
+export function readStoredModelMap(): ModelMap {
+	return readModelMap(settingsReader());
+}
+
+/**
+ * Effective assignments, with each Model Map slot a task inherits resolved.
+ * Both execution and readiness read this so an inherited source is checked
+ * and run alike.
  */
 export function readLocalModelAssignments(): LocalModelAssignments | undefined {
-	const settings = getSettingsStore();
 	return resolveLocalModelAssignments(
-		settings.get('localModelAssignments', {}) as LocalModelAssignments | undefined,
-		parseUtilitySource(settings.get('utilitySource'))
+		getSettingsStore().get('localModelAssignments', {}) as LocalModelAssignments | undefined,
+		readStoredModelMap()
 	);
 }
 
 /**
- * Whether a task is off only because it inherits a provider Utility source it
- * cannot run on. Reads the STORED choice, which {@link readLocalModelAssignments}
- * has already resolved away.
+ * The Model Map slot a task is off because of: a provider it cannot run on. Reads the STORED choice, which
+ * {@link readLocalModelAssignments} has already resolved away.
  */
-export function readInheritsProviderWithoutAgentPath(taskId: LocalModelTaskId): boolean {
-	const settings = getSettingsStore();
+export function readInheritsProviderWithoutAgentPath(
+	taskId: LocalModelTaskId
+): ModelMapRole | null {
 	return inheritsProviderWithoutAgentPath(
-		settings.get('localModelAssignments', {}) as LocalModelAssignments | undefined,
+		getSettingsStore().get('localModelAssignments', {}) as LocalModelAssignments | undefined,
 		taskId,
-		parseUtilitySource(settings.get('utilitySource'))
+		readStoredModelMap()
 	);
 }

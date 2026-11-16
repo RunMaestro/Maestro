@@ -18,7 +18,7 @@ import { readBackgroundField } from '../../../../shared/focusPlacement';
 import { parseRunOnTarget, type RunOnTarget } from '../../../../shared/local-models/run-on';
 
 /**
- * A run's own Run on target (CLI `--run-on`), read as data. `undefined` when the
+ * A run's own model source (CLI `--model-source`), read as data. `undefined` when the
  * message names none; `null` after an error was sent, because a malformed
  * target is refused, never launched on the provider in its place.
  */

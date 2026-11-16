@@ -26,7 +26,7 @@ import {
 	missingRuntimeLabel,
 	type MissingBinaryRuntime,
 } from '../../../../shared/agentInstall';
-import { hostPlatform } from '../../../utils/platformUtils';
+import { getPlatform } from '../../../utils/platformUtils';
 import type { AgentErrorType, ToolType } from '../../../types';
 
 /**
@@ -108,7 +108,7 @@ function missingBinaryHint(
 		}
 		return `${label} is not on PATH. Install ${label} or put it on PATH, then start the wizard over.`;
 	}
-	const install = getAgentInstallCommand(agentType, hostPlatform());
+	const install = getAgentInstallCommand(agentType, getPlatform());
 	return install
 		? `Run "${install}" to install it, then start the wizard over.`
 		: (RECOVERY_HINTS.agent_not_installed ?? RECOVERY_HINTS.unknown);
@@ -187,7 +187,7 @@ export function detectWizardError(
 			message: agentNotInstalledMessage(
 				agentType,
 				missingBinary.reason,
-				hostPlatform(),
+				getPlatform(),
 				missingBinary.runtime
 			),
 			recoveryHint: missingBinaryHint(agentType, missingBinary.reason, missingBinary.runtime),

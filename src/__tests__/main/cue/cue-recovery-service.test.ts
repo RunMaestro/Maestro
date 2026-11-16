@@ -24,8 +24,6 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	pruneCueEvents: (...args: unknown[]) => mockPruneCueEvents(...args),
 	failOrphanedRunningEvents: (message: string) => mockFailOrphanedRunningEvents(message),
 	getLastHeartbeat: () => mockGetLastHeartbeat(),
-	isCueDbCorruptionError: (err: unknown) =>
-		(err as { code?: string } | null)?.code === 'SQLITE_CORRUPT',
 	quarantineCorruptCueDb: () => mockQuarantineCorruptCueDb(),
 }));
 

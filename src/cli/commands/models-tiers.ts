@@ -7,7 +7,7 @@
 //             default or Built-in). Reads the settings file; works with Maestro
 //             closed.
 //   options   what one harness can launch a tier on: its own catalogue and the
-//             Run on targets, each in the spelling `set` takes. Asks the
+//             model sources, each in the spelling `set` takes. Asks the
 //             desktop, which owns the agent detector and the sources.
 //   suggest   a suggestion per tier with its reason, from the same options and
 //             the same rules as the table's Suggest button. `--apply` saves it.

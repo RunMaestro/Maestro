@@ -79,7 +79,7 @@ export interface CueExecutionConfig {
 	/** The agent's Local Models gateway URL, applied by the launch plan. */
 	gatewayUrl?: string;
 	/**
-	 * The agent's stored Run on target, as data (`prepareAgentRunOn` validates
+	 * The agent's stored model source, as data (`prepareAgentRunOn` validates
 	 * it). One that names a source replaces `customModel` and the gateway.
 	 */
 	runOn?: unknown;

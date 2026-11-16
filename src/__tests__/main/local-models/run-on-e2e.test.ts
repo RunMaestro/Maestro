@@ -12,7 +12,7 @@
  * `main/index.ts` wires them, with the real model server behind
  * `modelServerForHarness`.
  *
- * For every provider that has a Run on recipe and whose CLI is on PATH, one
+ * For every provider that has a model source recipe and whose CLI is on PATH, one
  * turn must complete, and three things must show the server served it:
  * - the process was started with the server's address, the server's key and
  *   the target's model, and nothing else as the model;
@@ -131,7 +131,7 @@ const HARNESS_HOMES: Readonly<Record<string, (home: string) => Record<string, st
 	}),
 };
 
-/** Every provider with a Run on recipe, and the command its harness is started with. */
+/** Every provider with a model source recipe, and the command its harness is started with. */
 const HARNESSES = AGENT_IDS.filter((id) => agentRunOnSupport(id).supported).map((toolType) => {
 	const command = getAgentDefinition(toolType)?.command ?? toolType;
 	return { toolType, command, available: RUN && isOnPath(command) };

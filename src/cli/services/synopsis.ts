@@ -23,7 +23,7 @@ export interface CliSynopsisRequest {
 	effort?: string;
 	/**
 	 * Where the summarized turn ran, as data, when a tier's target decided it
-	 * (`turnRunOnTarget`). Absent means the agent's own Run on target.
+	 * (`turnRunOnTarget`). Absent means the agent's own model source.
 	 */
 	runOn?: unknown;
 	/** True when the summarized turn was read-only. */

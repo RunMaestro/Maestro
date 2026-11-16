@@ -1,6 +1,6 @@
 /**
  * Tests for settingsSections.ts - the registry that lets the Settings search
- * render a section inline - and for the `toggle` keys search entries carry.
+ * render a section inline.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -78,33 +78,5 @@ describe('settingsSections', () => {
 				encoreFeatures: { ...state.encoreFeatures, directorNotes: true },
 			})
 		).toBe(true);
-	});
-});
-
-describe('searchable-setting toggles', () => {
-	const toggles = ALL_SEARCHABLE_SETTINGS.filter((s) => s.toggle);
-
-	it('annotates the single-switch entries', () => {
-		expect(toggles.map((s) => s.id)).toEqual(
-			expect.arrayContaining([
-				'general-spell-check',
-				'general-group-cue-entries',
-				'display-group-chat-auto-scroll',
-			])
-		);
-	});
-
-	it.each(toggles.map((s) => [s.id, s.toggle!] as const))(
-		'%s names a boolean setting with a store setter (%s)',
-		(_id, key) => {
-			const state = useSettingsStore.getState() as unknown as Record<string, unknown>;
-			expect(typeof state[key]).toBe('boolean');
-			expect(typeof state[`set${key.charAt(0).toUpperCase()}${key.slice(1)}`]).toBe('function');
-		}
-	);
-
-	it('only annotates entries whose section the search can also open', () => {
-		const orphaned = toggles.filter((s) => !findSettingsSection(s.id)).map((s) => s.id);
-		expect(orphaned).toEqual([]);
 	});
 });

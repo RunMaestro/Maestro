@@ -165,10 +165,8 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	},
 	// Throughput Gauge: scope, metric, layout, style, and rate window
 	throughputGaugeSettings: { ...DEFAULT_THROUGHPUT_GAUGE_SETTINGS },
-	// Utility agent for auxiliary tasks (tab naming, context grooming); null = use session agent
-	utilityAgentId: null,
-	utilitySource: { type: 'utility-agent' },
-	utilityModelId: null,
+	// Model Map; null reads the old Utility source into the Housekeeping slot (readModelMap)
+	modelMap: null,
 	// Coworking: agent ids allowed to use browser interaction tools (empty = all off)
 	coworkingBrowserInteraction: [],
 	// Coworking: per-agent browser-interaction per-call confirm policy (off|dangerous|all; default dangerous)

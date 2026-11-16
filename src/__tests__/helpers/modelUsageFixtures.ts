@@ -69,7 +69,7 @@ export const EMPTY_MODEL_USAGE: ModelUsage = {
 };
 
 /**
- * A range with every block filled: the model server (runs, Run on turns and a
+ * A range with every block filled: the model server (runs, model source turns and a
  * routed request), a provider's own cloud, Jev, two tasks, one Run on agent and
  * one agent with runs only, decisions the ledger no longer fully covers, and
  * proxy traffic with one unattributed row.

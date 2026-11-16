@@ -60,13 +60,15 @@ describe('GatewayUrlField', () => {
 	it('is disabled with the reason the host gives, keeping the stored URL', () => {
 		const { input } = renderField({
 			value: 'http://127.0.0.1:8787',
-			disabledReason: 'Not applied while Run on is a source.',
+			disabledReason: 'Not applied while the model source is a Local Models source.',
 		});
 
 		expect(input.disabled).toBe(true);
 		expect(input.value).toBe('http://127.0.0.1:8787');
 		// The reason takes the place of what the launch would have done.
-		expect(status()).toHaveTextContent('Not applied while Run on is a source.');
+		expect(status()).toHaveTextContent(
+			'Not applied while the model source is a Local Models source.'
+		);
 		expect(status()).toHaveAttribute('data-tone', 'dim');
 	});
 

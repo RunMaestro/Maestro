@@ -31,7 +31,7 @@
 import * as path from 'path';
 import * as fsp from 'fs/promises';
 import * as crypto from 'crypto';
-import { app } from 'electron';
+import { getAppUserDataDir } from '../utils/app-user-data';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { isExpectedSessionReadError } from '../utils/session-read-errors';
@@ -122,7 +122,7 @@ export class SessionInfoCache {
 	constructor(agentId: string, baseDir?: string) {
 		this.agentId = agentId;
 		this.dir = path.join(
-			baseDir ?? path.join(app.getPath('userData'), 'stats-cache'),
+			baseDir ?? path.join(getAppUserDataDir(), 'stats-cache'),
 			'session-info',
 			agentId
 		);

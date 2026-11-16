@@ -47,7 +47,7 @@ import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { imageList, imageSave } from './commands/image';
 import { openGraph } from './commands/open-graph';
-import { openBrowser, closeBrowser } from './commands/open-browser';
+import { openBrowser, closeBrowser, browserPick } from './commands/open-browser';
 import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
@@ -157,7 +157,7 @@ import {
 	modelsEndpointsUpdate,
 } from './commands/models-endpoints';
 import { modelsConfigSet, modelsConfigShow } from './commands/models-config';
-import { modelsAssign, modelsTasks } from './commands/models-assign';
+import { modelsAssign, modelsMap, modelsTasks } from './commands/models-assign';
 import { loadUserLocalModels } from './services/storage';
 import {
 	modelsAddHf,
@@ -293,12 +293,25 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsIndexing, statsModels, statsQuery, statsTokens } from './commands/stats';
+import {
+	stats,
+	statsActivity,
+	statsAgents,
+	statsCue,
+	statsDelegation,
+	statsExport,
+	statsIndexing,
+	statsModels,
+	statsPlanUsage,
+	statsQuery,
+	statsTokens,
+} from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
 import { groupSettings } from './commands/group-settings';
 import { updateGroupSettings } from './commands/update-group-settings';
+import { runGroupLifecycle } from './commands/run-group-lifecycle';
 import { delegationGraph } from './commands/delegation-graph';
 import {
 	stopAutoRun,
@@ -310,6 +323,14 @@ import {
 	autoRunFolder,
 } from './commands/auto-run-control';
 import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
+import {
+	diffReviewAdd,
+	diffReviewClear,
+	diffReviewEdit,
+	diffReviewList,
+	diffReviewRemove,
+	diffReviewSend,
+} from './commands/diff-review';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import { agentTestRunOn } from './commands/agent-test-run-on';
@@ -653,10 +674,10 @@ program
 		"Reasoning effort for this run only, overriding the agent's configured default"
 	)
 	.option(
-		'--run-on <target>',
-		'Where this run\'s model runs, overriding the agent\'s Run on target: <source id>:<model>, or "provider"'
+		'--model-source <target>',
+		'Where this run\'s model runs, overriding the agent\'s model source: <source id>:<model>, or "provider"'
 	)
-	.option('--run-on-context <tokens>', 'Context size for the --run-on source')
+	.option('--model-source-context <tokens>', 'Context size for the model named by --model-source')
 	.action(async (agentId: string, goal: string, options: Record<string, unknown>) => {
 		const { goalRun } = await import('./commands/goal-run');
 		return goalRun(agentId, goal, options);
@@ -1319,6 +1340,22 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(closeBrowser);
 
+// Browser pick command - Design Mode by selector: add an element of a browser
+// tab (selector, trimmed HTML, computed styles, cropped screenshot) to the
+// owning agent's composer, through the same code a click in Design Mode runs.
+program
+	.command('browser-pick <tab>')
+	.description(
+		"Add an element of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)"
+	)
+	.requiredOption('-s, --selector <css>', 'CSS selector of the element (the first match is used)')
+	.option('--note <text>', 'Note added under the element, as typed in the pick card')
+	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
+	.option('--background', 'Add it without switching the view to the AI tab')
+	.option('--focus', 'Switch to the AI tab the element lands in (default)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserPick);
+
 // Open terminal command - open a new terminal tab in the Maestro desktop app
 program
 	.command('open-terminal')
@@ -1428,12 +1465,12 @@ program
 		'Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)'
 	)
 	.option(
-		'--run-on <target>',
-		"Where this run's model runs, overriding the agent's Run on target: <source id>:<model> (a Local Models source), or \"provider\" for the provider's own models"
+		'--model-source <target>',
+		"Where this run's model runs, overriding the agent's model source: <source id>:<model> (a Local Models source), or \"provider\" for the provider's own models"
 	)
 	.option(
-		'--run-on-context <tokens>',
-		"Context size for the --run-on source (default: what the source reports, or the agent's own when it is the same source and model)"
+		'--model-source-context <tokens>',
+		"Context size for the model named by --model-source (default: what the source reports, or the agent's own when it is the same source and model)"
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(autoRun);
@@ -1525,6 +1562,69 @@ steerAutoRun
 	.option('--focus', 'Accepted and ignored: cancelling a note raises no notice')
 	.option('--json', 'Output the cancelled note as JSON')
 	.action(steerAutoRunCancel);
+
+// Git Diff review comments - the CLI half of the Git Diff viewer's Review tray.
+// Comments are pinned to lines of the agent's current diff and sent to it as
+// one prompt, each with its path:lines and hunk.
+const diffReview = program
+	.command('diff-review')
+	.description("Pin review comments to lines of an agent's git diff and send them as one review");
+
+diffReview
+	.command('list')
+	.description('Show the pending comments, flagging any whose lines changed since')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(diffReviewList);
+
+diffReview
+	.command('add <path> <lines> <comment>')
+	.description('Pin a comment to path:lines of the current diff (lines: 12 or 12-14)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--side <side>', 'Which version the line numbers are in: new (default) or old', 'new')
+	.option('--background', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--json', 'Output the new comment as JSON')
+	.action(diffReviewAdd);
+
+diffReview
+	.command('edit <comment-id> <comment>')
+	.description('Reword a pending comment, keeping its id and lines (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--json', 'Output the updated comment as JSON')
+	.action(diffReviewEdit);
+
+diffReview
+	.command('remove <comment-id>')
+	.description('Drop one pending comment (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--json', 'Output the removed comment as JSON')
+	.action(diffReviewRemove);
+
+diffReview
+	.command('clear')
+	.description('Discard every pending comment')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: discarding raises no notice')
+	.option('--focus', 'Accepted and ignored: discarding raises no notice')
+	.option('--json', 'Output as JSON')
+	.action(diffReviewClear);
+
+diffReview
+	.command('send')
+	.description('Send every current comment to the agent as one queued prompt')
+	.requiredOption('-a, --agent <id>', 'Agent to send the review to')
+	.option('--compose', "Put the review in the agent's message box instead of sending it")
+	.option('--background', 'Deliver without switching the view (the default)')
+	.option('--focus', 'Take the user to the agent, as the Send Review button does')
+	.option('--json', 'Output what was sent, what was left behind, and the prompt as JSON')
+	.action(diffReviewSend);
 
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program
@@ -1719,10 +1819,13 @@ cue
 	.option('--per-document', 'With --auto-run: one agent turn per document instead of one per task')
 	.option('--ignore-model-hints', "With --auto-run: ignore the documents' MAESTRO:MODEL hints")
 	.option(
-		'--run-on <target>',
-		'With --auto-run: where the run\'s model runs, <source id>:<model> or "provider" (as auto-run --run-on)'
+		'--model-source <target>',
+		'With --auto-run: where the run\'s model runs, <source id>:<model> or "provider" (as auto-run --model-source)'
 	)
-	.option('--run-on-context <tokens>', 'With --auto-run: context size for the --run-on source')
+	.option(
+		'--model-source-context <tokens>',
+		'With --auto-run: context size for the model named by --model-source'
+	)
 	.option('--no-auto-resume', 'With --auto-run: stay paused after an agent error')
 	.option('--auto-resume-after <minutes>', 'With --auto-run: minutes between auto-resume attempts')
 	.option('--max-auto-resumes <n>', 'With --auto-run: auto-resume attempt ceiling')
@@ -2280,12 +2383,12 @@ program
 		"Local Models gateway: an HTTP proxy this agent's provider traffic goes through, set as its base-URL variable at launch. Set the Maestro token proxy mode afterwards with update-agent --proxy-mode"
 	)
 	.option(
-		'--run-on <target>',
+		'--model-source <target>',
 		"Where this agent's model runs: provider (the default), or <source id>:<model> for a model on a Local Models source (maestro-server for the Maestro model server; ids from models endpoints list). The agent keeps its provider's CLI"
 	)
 	.option(
-		'--run-on-context <tokens>',
-		"Context size the harness is told a --run-on source has (at least 40960; default: the model's catalog context on the Maestro model server, elsewhere the context the source reports for the model, else 40960)"
+		'--model-source-context <tokens>',
+		"Context size the harness is told a --model-source source has (at least 40960; default: the model's catalog context on the Maestro model server, elsewhere the context the source reports for the model, else 40960)"
 	)
 	// The Peers tab of the New Agent dialog, spelled as on update-agent.
 	.option(
@@ -2481,12 +2584,12 @@ program
 		'Local Models gateway URL ("none" clears). Not combinable with --proxy-mode'
 	)
 	.option(
-		'--run-on <target>',
+		'--model-source <target>',
 		'Where new agents run their model: provider, or <source id>:<model> on a Local Models source'
 	)
 	.option(
-		'--run-on-context <tokens>',
-		'Context size the harness is told the Run on source has (at least 40960)'
+		'--model-source-context <tokens>',
+		'Context size the harness is told the model source has (at least 40960)'
 	)
 	.option(
 		'--proxy-mode <mode>',
@@ -2563,8 +2666,63 @@ program
 		"Also write this call's changes into the agents already in the group (provider, working directory and SSH remote are never written; env vars merge by key, lists replace). Needs --yes unless you answer a prompt"
 	)
 	.option('--yes', 'Confirm a --publish without asking')
+	.option(
+		'--onboarding <on|off|clear>',
+		'Onboarding: the prompt the group runs when an agent joins it. on/off keeps the prompt; clear removes the hook'
+	)
+	.option(
+		'--onboarding-prompt <text|@file>',
+		'The Onboarding prompt ({{VARIABLES}} allowed). @path reads it from a file'
+	)
+	.option(
+		'--onboarding-events <list>',
+		'Which agents fire Onboarding, comma separated: agent, worktree'
+	)
+	.option(
+		'--onboarding-runs-in <self|agent>',
+		'The agent that runs the Onboarding prompt: self (the agent itself) or another agent by id or name'
+	)
+	.option('--onboarding-tab <name>', 'Tab name the Onboarding prompt runs in (empty string resets)')
+	.option('--onboarding-tier <default|low|medium|high>', 'Model tier the Onboarding turn runs at')
+	.option(
+		'--offboarding <on|off|clear>',
+		'Offboarding: the prompt the group runs when an agent leaves it. on/off keeps the prompt; clear removes the hook'
+	)
+	.option(
+		'--offboarding-prompt <text|@file>',
+		'The Offboarding prompt ({{VARIABLES}} allowed). @path reads it from a file'
+	)
+	.option(
+		'--offboarding-events <list>',
+		'Which agents fire Offboarding, comma separated: agent, worktree'
+	)
+	.option(
+		'--offboarding-runs-in <self|agent>',
+		'The agent that runs the Offboarding prompt: self (the agent itself) or another agent by id or name'
+	)
+	.option(
+		'--offboarding-tab <name>',
+		'Tab name the Offboarding prompt runs in (empty string resets)'
+	)
+	.option('--offboarding-tier <default|low|medium|high>', 'Model tier the Offboarding turn runs at')
+	.option(
+		'--offboarding-timeout <minutes>',
+		'Minutes removal waits for the Offboarding turn before it goes ahead (1-60, empty string resets to 5)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((groupId, options) => updateGroupSettings(groupId, options));
+
+// Run a group's Onboarding or Offboarding prompt now, on one agent of the group:
+// Group Settings > Lifecycle > "Run now on an agent...". Writes nothing, and an
+// Offboarding run removes nothing.
+program
+	.command('run-group-lifecycle <group-id> <stage>')
+	.description(
+		"Run a group's Onboarding or Offboarding prompt now on one of its agents (requires the desktop app). Removes nothing"
+	)
+	.requiredOption('-a, --agent <id>', 'The agent the prompt is about (it must be in the group)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((groupId, stage, options) => runGroupLifecycle(groupId, stage, options));
 
 // Create-worktree command - create a new agent in a git worktree off a parent
 // agent, without an Auto Run playbook. The parent agent must already exist in
@@ -2648,12 +2806,12 @@ program
 		'Local Models gateway: an HTTP proxy this agent\'s provider traffic goes through, set as its base-URL variable at launch ("none" clears)'
 	)
 	.option(
-		'--run-on <target>',
+		'--model-source <target>',
 		"Where this agent's model runs: provider (its provider's own model; clears a target), or <source id>:<model> for a model on a Local Models source (maestro-server for the Maestro model server; ids from models endpoints list). Check it with agent test-run-on"
 	)
 	.option(
-		'--run-on-context <tokens>',
-		"Context size the harness is told the Run on source has (at least 40960). Alone, it changes the context of the agent's current target"
+		'--model-source-context <tokens>',
+		"Context size the harness is told the model source has (at least 40960). Alone, it changes the context of the agent's current model source"
 	)
 	.option(
 		'--proxy-mode <mode>',
@@ -2794,7 +2952,7 @@ const agentCmd = program.command('agent').description('Act on one agent');
 agentCmd
 	.command('test-run-on <agent-id>')
 	.description(
-		"Send one short read-only turn through the agent's harness on its Run on target and report the reply (requires the desktop app)"
+		"Send one short read-only turn through the agent's harness on its model source and report the reply (requires the desktop app)"
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agentId, options) => agentTestRunOn(agentId, options));
@@ -4612,10 +4770,18 @@ models
 models
 	.command('assign <task-id> <assignment>')
 	.description(
-		'Choose what a task runs on: off | utility-agent | system-one | local:<model-id> | endpoint:<endpoint>:<model>'
+		'Choose what a task runs on: off | agent-model | housekeeping-model | system-one | local:<model-id> | endpoint:<endpoint>:<model>'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(modelsAssign);
+
+models
+	.command('map [slot] [source]')
+	.description(
+		'Show the Model Map, or set a slot (agent | housekeeping) to: provider | provider:<agent-id>[:<model>] | local:<model-id> | endpoint:<endpoint>:<model>'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(modelsMap);
 
 models
 	.command('tasks')
@@ -4738,6 +4904,10 @@ modelServer
 	.option('--bind <mode>', 'local (127.0.0.1, this machine) | network (0.0.0.0, needs the key)')
 	.option('--max-models <n>', 'Models loaded at the same time (1 to 16, default 1)')
 	.option('--rotate-key', 'Replace the API key; whatever used the old key needs the new one')
+	.option(
+		'--start-on-launch <on|off>',
+		'Whether it starts when Maestro starts (start turns this on, stop turns it off)'
+	)
 	.option(
 		'--build <choice>',
 		'Install this engine build: default | cpu | cuda | rocm (cuda and rocm on Windows and Linux x64 only)'
@@ -4913,7 +5083,7 @@ modelTiers
 modelTiers
 	.command('options <harness>')
 	.description(
-		'What a harness can launch a tier on: its own catalogue and the Run on targets, each in the spelling "tiers set" takes (requires the desktop app)'
+		'What a harness can launch a tier on: its own catalogue and the model sources, each in the spelling "tiers set" takes (requires the desktop app)'
 	)
 	.option('--refresh', "Ask the harness again instead of using the app's cached list")
 	.option('--json', 'Output as JSON (for scripting)')
@@ -5596,7 +5766,7 @@ const statsCommand = encoreCommand(program, 'stats', 'usageStats', encoreFlags)
 statsCommand
 	.command('models')
 	.description(
-		"Show what every model other than a provider's own did: sources, tasks, Run on agents, System One and the token proxy (the Usage Dashboard's Models tab)"
+		"Show what every model other than a provider's own did: sources, tasks, agents on a model source, System One and the token proxy (the Usage Dashboard's Models tab)"
 	)
 	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
 	.option('--json', 'Output the full model usage record as JSON')
@@ -5631,6 +5801,62 @@ encoreCommand(program, 'stats-query <sql>', 'usageStats', encoreFlags)
 	)
 	.option('--json', 'Output rows as JSON instead of a tab-separated table')
 	.action(statsQuery);
+
+program
+	.command('stats-delegation')
+	.description(
+		'Show the delegation split (interactive turns vs Auto Run tasks vs Cue runs) for a range and per day'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output totals, delegated share, and the per-day split as JSON')
+	.action(statsDelegation);
+
+program
+	.command('stats-cue')
+	.description(
+		'Show the Usage Dashboard Cue tab: run totals, durations, and per-pipeline breakdowns'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option(
+		'--exclude-trigger <type>',
+		'Leave out a trigger type, like the Cue tab filter chips (repeatable)',
+		(value: string, prev: string[]) => [...prev, value],
+		[] as string[]
+	)
+	.option('--json', 'Output the full Cue statistics object as JSON')
+	.action(statsCue);
+
+program
+	.command('stats-plan-usage')
+	.description('Show the last sampled plan usage per Anthropic (Claude) and OpenAI (Codex) account')
+	.option('--provider <provider>', 'Only one provider: claude or codex')
+	.option('--json', 'Output the accounts as JSON')
+	.action(statsPlanUsage);
+
+program
+	.command('stats-agents')
+	.description('Show Agents Over Time: agents that existed each day, plus created and deleted')
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output the daily series as JSON')
+	.action(statsAgents);
+
+program
+	.command('stats-activity')
+	.description(
+		'Show Auto Run runs, wizard runs, resilience outages, and shortcut presses for a range and per day'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output totals and the daily counts as JSON')
+	.action(statsActivity);
+
+program
+	.command('stats-export')
+	.description('Export everything the Usage Dashboard reads for a range (the Export button)')
+	.requiredOption('-o, --output <path>', 'File to write (a .zip of CSVs, or a .json file)')
+	.option('-f, --format <format>', 'csv (a zip of CSV files) or json (default: csv)')
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output the result (path, row counts, notes) as JSON')
+	.action(statsExport);
 
 // Plugin authoring commands - scaffold, validate, sign, and package a Maestro
 // plugin from the command line. The manifest/signature contracts are the shared

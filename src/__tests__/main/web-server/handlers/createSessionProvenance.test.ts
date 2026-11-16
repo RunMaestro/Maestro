@@ -108,11 +108,11 @@ describe('handleCreateSession - Local Models gateway', () => {
 	});
 });
 
-describe('handleCreateSession - Run on target', () => {
+describe('handleCreateSession - model source', () => {
 	const runOn = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
 
 	it('passes runOn through the config allowlist, as data for the renderer to check', () => {
-		// `create-agent --run-on` sends it; without the allowlist entry the agent
+		// `create-agent --model-source` sends it; without the allowlist entry the agent
 		// would be created on its provider's model and the CLI would report success.
 		expect(created({ runOn })?.runOn).toEqual(runOn);
 	});
@@ -143,7 +143,7 @@ describe('handleCreateSession - group defaults', () => {
 		createSession.mockResolvedValue({
 			sessionId: 'new-1',
 			seededFromGroup: 'g-1',
-			skipped: ['Run On: the source is on this machine'],
+			skipped: ['Model Source: the source is on this machine'],
 		});
 		const ctx = makeCtx();
 
@@ -167,7 +167,7 @@ describe('handleCreateSession - group defaults', () => {
 				success: true,
 				sessionId: 'new-1',
 				seededFromGroup: 'g-1',
-				skipped: ['Run On: the source is on this machine'],
+				skipped: ['Model Source: the source is on this machine'],
 			})
 		);
 	});

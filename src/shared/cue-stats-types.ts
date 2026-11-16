@@ -9,11 +9,22 @@ import type { DurationPercentiles } from './percentiles';
 
 export type CueStatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
 
+/** How many runs `CueStatsAggregation.slowestRuns` carries at most. */
+export const CUE_SLOWEST_RUNS_LIMIT = 50;
+
 export interface CueStatsTotals {
+	/** Every run in the window, whatever its status. */
 	occurrences: number;
 	successCount: number;
 	failureCount: number;
+	/**
+	 * Summed run time of COMPLETED runs only. A failed, timed-out or stopped
+	 * run's `completed_at` can be the moment the next engine started (a crash
+	 * swept it), so its span is not run time. Average with `timedRunCount`.
+	 */
 	totalDurationMs: number;
+	/** Runs that contributed to `totalDurationMs` (completed runs with an end time). */
+	timedRunCount: number;
 	totalInputTokens: number;
 	totalOutputTokens: number;
 	totalCacheReadTokens: number;
@@ -66,6 +77,38 @@ export interface CueChain {
 	totals: CueStatsTotals;
 }
 
+/**
+ * One finished run ranked by duration, for the Slowest Runs table. Covers every
+ * terminal status (a run that timed out after 20 minutes is slow too), except
+ * runs settled by the engine-start sweep, whose span is downtime.
+ */
+export interface CueSlowRun {
+	eventId: string;
+	subscriptionName: string;
+	pipelineId: string | null;
+	/** Provider id of the agent that ran it ('claude-code', ...), null when unknown. */
+	agentType: string | null;
+	/** 'completed' | 'failed' | 'timeout' | 'stopped' */
+	status: string;
+	startedAtMs: number;
+	durationMs: number;
+	/** Input + output tokens, 0 when the run produced none or none were attributed. */
+	tokens: number;
+}
+
+/** The three Cue figures the Overview's source chart needs, without the full rollup. */
+export interface CueStatsSourceTotals {
+	occurrences: number;
+	/** Run time of completed runs (see `CueStatsTotals.totalDurationMs`). */
+	totalDurationMs: number;
+	/** Input + output tokens. */
+	tokens: number;
+}
+
+/**
+ * One time bucket. The series is zero-filled: every bucket from the window's
+ * first bucket (the first run's, for `all`) through the current one is present.
+ */
 export interface CueTimeBucket {
 	bucketStartMs: number;
 	occurrences: number;
@@ -94,13 +137,16 @@ export interface CueStatsAggregation {
 	windowEndMs: number;
 	totals: CueStatsTotals;
 	/**
-	 * Run duration distribution (p50/p75/p90/p95/p99/max) across every completed
-	 * run in the window. Durations come from `completed_at - created_at`;
-	 * in-flight runs (no `completed_at`) are excluded, so `count` may be lower
-	 * than `totals.occurrences`.
+	 * Run duration distribution (p50/p75/p90/p95/p99/max) across every run
+	 * with status `completed` in the window. Durations come from
+	 * `completed_at - created_at`; failed, timed-out, stopped and in-flight
+	 * runs are excluded, so `count` equals `totals.timedRunCount`.
 	 */
 	durationPercentiles: DurationPercentiles;
+	/** Up to `CUE_SLOWEST_RUNS_LIMIT` finished runs, slowest first. */
+	slowestRuns: CueSlowRun[];
 	byPipeline: CueStatsByGroup[];
+	/** Keyed by PROVIDER id (agent type), not by agent: label it "provider". */
 	byAgent: CueStatsByGroup[];
 	bySubscription: CueStatsByGroup[];
 	/** Distribution by event trigger type (e.g. `file.changed`, `time.scheduled`). */

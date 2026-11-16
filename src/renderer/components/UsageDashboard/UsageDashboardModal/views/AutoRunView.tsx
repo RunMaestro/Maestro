@@ -12,7 +12,6 @@ export function AutoRunView({
 	data,
 	timeRange,
 	theme,
-	layout,
 	focusedSection,
 	setSectionRef,
 	handleSectionKeyDown,
@@ -28,7 +27,7 @@ export function AutoRunView({
 				style={{ animationDelay: '0ms' }}
 			>
 				<ChartErrorBoundary theme={theme} chartName="Auto Run Stats">
-					<AutoRunStats timeRange={timeRange} theme={theme} columns={layout.autoRunStatsCols} />
+					<AutoRunStats timeRange={timeRange} theme={theme} />
 				</ChartErrorBoundary>
 			</DashboardSection>
 
@@ -57,11 +56,13 @@ export function AutoRunView({
 				theme={theme}
 				style={{ animationDelay: '50ms' }}
 			>
-				<ChartErrorBoundary theme={theme} chartName="Auto Run Task Duration Percentiles">
+				{/* Per agent TURN (one invocation on a document), not per checkbox:
+				    the tiles above count checkboxes, this reads auto_run_tasks. */}
+				<ChartErrorBoundary theme={theme} chartName="Auto Run Agent Turn Duration Percentiles">
 					<PercentilesCard
 						theme={theme}
-						title="Task Duration Percentiles"
-						unitLabel="tasks"
+						title="Agent Turn Duration Percentiles"
+						unitLabel="agent turns"
 						distribution={data.autoRunTaskDurationPercentiles}
 					/>
 				</ChartErrorBoundary>
@@ -75,7 +76,7 @@ export function AutoRunView({
 				theme={theme}
 				style={{ animationDelay: '100ms' }}
 			>
-				<ChartErrorBoundary theme={theme} chartName="Tasks by Hour">
+				<ChartErrorBoundary theme={theme} chartName="Agent Turns by Time of Day">
 					<TasksByHourChart timeRange={timeRange} theme={theme} />
 				</ChartErrorBoundary>
 			</DashboardSection>

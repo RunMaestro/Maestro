@@ -500,7 +500,7 @@ describe('tabContextOps wire helpers', () => {
 					{ id: 'activity', status: 'clear', statement: 'Idle.', uncertainty: [] },
 					{ id: 'pressure', status: 'unknown', statement: 'No record.', uncertainty: ['x'] },
 				],
-				routing: ['Run on: Provider.'],
+				routing: ['Model source: Provider.'],
 				advice: ['A sentence.'],
 				unknowns: ['pressure: No record.'],
 				...overrides,

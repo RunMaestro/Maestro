@@ -65,7 +65,12 @@ import type {
 	ForwardedHostEndpoint,
 	SshForwardLease,
 } from '../../shared/maestro-lib/client/ssh-forward';
-import type { MaestroClient, TurnEvent } from '../../shared/maestro-lib/client/types';
+import type {
+	AgentPatchField,
+	ClientErrorCode,
+	MaestroClient,
+	TurnEvent,
+} from '../../shared/maestro-lib/client/types';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { HistoryEntry } from '../../shared/types';
 import type { SshRemoteConfig } from '../../shared/types';
@@ -117,10 +122,20 @@ export interface PeerReconnectResult {
 	peer?: MirrorPeerSummary;
 }
 
-/** What `act()` answers. `unknown`: the host may have taken a send; do not resend blindly. */
+/**
+ * What `act()` answers. `unknown`: the host may have taken a send; do not resend blindly. `code`
+ * says why it failed: `host-unavailable` when the peer was not connected and nothing was sent.
+ */
 export type PeerActionAnswer =
 	| { ok: true; result: PeerAgentActionResult }
-	| { ok: false; error: string; unknown?: boolean };
+	| {
+			ok: false;
+			error: string;
+			unknown?: boolean;
+			code?: ClientErrorCode;
+			/** `update-agent` only: the fields the host applied before it refused the rest. */
+			appliedFields?: AgentPatchField[];
+	  };
 
 export interface TranscriptReadOptions {
 	tail?: number;
@@ -300,7 +315,8 @@ export class PeerMirrorService {
 	}
 
 	/**
-	 * Drive a mirrored agent (FED-SSH-06): send, Stop, new tab, rename or star a tab, through the
+	 * Drive a mirrored agent (FED-SSH-06): send, Stop, new tab, rename or star a tab, change the
+	 * agent's or a tab's settings, through the
 	 * same `runPeerAgentAction()` the CLI's `peer:agent` verbs run. Never queued: a peer that is not
 	 * connected right now answers an error at once, and nothing is held for a reconnect. The host's
 	 * own events then update the mirror (a new tab, a rename, the turn's stream).
@@ -317,6 +333,7 @@ export class PeerMirrorService {
 			const reason = entry.state.error ? ` ${entry.state.error}` : '';
 			return {
 				ok: false,
+				code: 'host-unavailable',
 				error: `Not connected to peer "${peerId}" (${entry.state.connection}). Nothing was sent.${reason}`,
 			};
 		}
@@ -331,7 +348,9 @@ export class PeerMirrorService {
 			return {
 				ok: false,
 				error: peerActionErrorMessage(peerId, result.error),
+				code: result.error.code,
 				...(result.error.unknown ? { unknown: true } : {}),
+				...(result.error.appliedFields ? { appliedFields: result.error.appliedFields } : {}),
 			};
 		}
 		return { ok: true, result: result.value };

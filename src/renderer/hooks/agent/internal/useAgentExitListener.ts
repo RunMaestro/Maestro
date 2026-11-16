@@ -354,7 +354,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							currentSession.sshRemoteId || currentSession.sessionSshRemoteConfig?.enabled
 						),
 						// Read from the tab's send-time stamps, never the live agent record:
-						// a Run on target edited mid-turn must not refile the turn that is
+						// a model source edited mid-turn must not refile the turn that is
 						// already running somewhere else.
 						modelStats: turnModelStatsFields({
 							runOn: completedTab?.turnRunOnSource,

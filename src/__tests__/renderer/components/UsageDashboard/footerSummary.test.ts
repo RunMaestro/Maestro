@@ -35,9 +35,6 @@ const buildData = (overrides: Partial<StatsAggregation> = {}): StatsAggregation 
 		byDay: [],
 		byHour: [],
 		totalSessions: 0,
-		sessionsByAgent: {},
-		sessionsByDay: [],
-		avgSessionDuration: 0,
 		byAgentByDay: {},
 		bySessionByDay: {},
 		bySessionSource: {},
@@ -56,24 +53,33 @@ const buildSession = (overrides: Partial<Session>): Session =>
 	}) as Session;
 
 describe('buildOverviewSummary', () => {
-	it('states volume, fleet size, and active days', () => {
+	it('states volume, active agents, and active days', () => {
 		const data = buildData({
 			totalQueries: 2100,
+			totalSessions: 3,
+			// byDay is gap-filled: the zero day is in the window but not active.
 			byDay: [
 				{ date: '2026-09-01', count: 100, duration: 0 },
-				{ date: '2026-09-02', count: 2000, duration: 0 },
+				{ date: '2026-09-02', count: 0, duration: 0 },
+				{ date: '2026-09-03', count: 2000, duration: 0 },
 			],
 		});
-		const sessions = [
-			buildSession({ id: 's1' }),
-			buildSession({ id: 's2' }),
-			buildSession({ id: 's3', toolType: 'terminal' }),
-		];
 
-		expect(buildOverviewSummary(data, sessions)).toBe('2.1K queries · 2 agents · 2 active days');
+		expect(buildOverviewSummary(data)).toBe('2.1K queries · 3 active agents · 2 active days');
 	});
 
-	it('drops the agent count when no sessions are supplied', () => {
+	it('counts agents that worked in the range, not the live agent list', () => {
+		// The cards divide queries by the same count; the footer must agree.
+		const data = buildData({
+			totalQueries: 5,
+			totalSessions: 1,
+			byDay: [{ date: '2026-09-01', count: 5, duration: 0 }],
+		});
+
+		expect(buildOverviewSummary(data)).toBe('5 queries · 1 active agent · 1 active day');
+	});
+
+	it('drops the agent count when none is recorded', () => {
 		const data = buildData({
 			totalQueries: 5,
 			byDay: [{ date: '2026-09-01', count: 5, duration: 0 }],
@@ -205,7 +211,7 @@ describe('buildActivitySummary', () => {
 		});
 
 		expect(buildActivitySummary(data)).toBe(
-			'Peak hour 8 PM · busiest Aug 22 with 164 · 2 active days'
+			'Peak hour 8 PM · busiest Aug 22, 2026 with 164 queries · 2 active days'
 		);
 	});
 
@@ -313,12 +319,13 @@ describe('buildQuotaSummary', () => {
 describe('buildModalOwnedFooterSummary', () => {
 	const data = buildData({
 		totalQueries: 10,
+		totalSessions: 2,
 		byDay: [{ date: '2026-09-01', count: 10, duration: 0 }],
 	});
 
 	it('describes the tabs the modal has data for', () => {
 		expect(buildModalOwnedFooterSummary('overview', { data, sessions: [] })).toBe(
-			'10 queries · 0 agents · 1 active day'
+			'10 queries · 2 active agents · 1 active day'
 		);
 	});
 

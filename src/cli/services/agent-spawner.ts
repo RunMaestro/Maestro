@@ -962,7 +962,7 @@ async function spawnClaudeAgent(
 		: (overrides.agentCommand ?? (await resolveLocalAgentCommand('claude-code')));
 	const sshEnabled = !!sshRemoteConfig?.enabled;
 
-	// The agent's Run on target, with its source looked up (see prepareCliRunOn).
+	// The agent's model source, with its source looked up (see prepareCliRunOn).
 	// One that cannot run fails the turn by name; it never runs on Claude's own
 	// model instead.
 	const preparedRunOn = await prepareCliRunOn({
@@ -1524,7 +1524,7 @@ async function spawnJsonLineAgent(
 		? getAgentCommand(toolType)
 		: (overrides.agentCommand ?? (await resolveLocalAgentCommand(toolType)));
 
-	// The agent's Run on target, with its source looked up (see prepareCliRunOn).
+	// The agent's model source, with its source looked up (see prepareCliRunOn).
 	// One that cannot run fails the turn by name; it never runs on the
 	// provider's own model instead.
 	const preparedRunOn = await prepareCliRunOn({
@@ -1987,7 +1987,7 @@ export interface SpawnAgentOptions {
 	 */
 	gatewayUrl?: string;
 	/**
-	 * The agent's stored Run on target, as data (the launch validates it). One
+	 * The agent's stored model source, as data (the launch validates it). One
 	 * that names a source replaces `customModel` and the gateway: the launch plan
 	 * points the harness at the source, and fails the spawn by name when the
 	 * source cannot serve the model. It never falls back to the provider's model.

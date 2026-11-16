@@ -609,7 +609,7 @@ describe('applyGroupDefaultsToSession', () => {
 		expect(applyGroupDefaultsToSession(agent({ toolType: 'codex' }), diff).proxy).toBeUndefined();
 	});
 
-	it("skips a Run on target the agent's SSH remote cannot reach, and says why", () => {
+	it("skips a model source the agent's SSH remote cannot reach, and says why", () => {
 		const diff = diffGroupDefaults(
 			{ toolType: 'claude-code' },
 			{ toolType: 'claude-code', runOn: LOCAL_TARGET, nudgeMessage: 'Be brief.' }
@@ -623,7 +623,7 @@ describe('applyGroupDefaultsToSession', () => {
 		);
 		expect(remote.next.runOn).toBeUndefined();
 		expect(remote.skipped).toEqual([
-			{ label: 'Run On', reason: expect.stringContaining('SSH remote') },
+			{ label: 'Model Source', reason: expect.stringContaining('SSH remote') },
 		]);
 		// The rest of the save still reaches it.
 		expect(remote.next.nudgeMessage).toBe('Be brief.');
@@ -634,7 +634,7 @@ describe('applyGroupDefaultsToSession', () => {
 		expect(local.skipped).toEqual([]);
 	});
 
-	it('writes a Run on target the remote can reach', () => {
+	it('writes a model source the remote can reach', () => {
 		const diff = diffGroupDefaults(
 			{ toolType: 'claude-code' },
 			{ toolType: 'claude-code', runOn: CLOUD_TARGET }
@@ -723,7 +723,7 @@ describe('resolveGroupDefaultsSeed', () => {
 		expect(result.sshRemoteMissing).toBe(false);
 	});
 
-	it("leaves out a Run on target the seed's own SSH remote cannot reach, with the reason", () => {
+	it("leaves out a model source the seed's own SSH remote cannot reach, with the reason", () => {
 		const result = resolveGroupDefaultsSeed(
 			{ toolType: 'claude-code', sessionSshRemoteConfig: SSH, runOn: LOCAL_TARGET },
 			{ sshRemoteIds: ['remote-1'], endpoints: [OLLAMA, CLOUD] }
@@ -731,11 +731,11 @@ describe('resolveGroupDefaultsSeed', () => {
 
 		expect(result.seed).not.toHaveProperty('runOn');
 		expect(result.skipped).toHaveLength(1);
-		expect(result.skipped[0].label).toBe('Run On');
+		expect(result.skipped[0].label).toBe('Model Source');
 		expect(result.skipped[0].reason).toMatch(/SSH remote/);
 	});
 
-	it('keeps a loopback Run on target when the seed runs locally', () => {
+	it('keeps a loopback model source when the seed runs locally', () => {
 		const local = resolveGroupDefaultsSeed(
 			{ toolType: 'claude-code', runOn: LOCAL_TARGET },
 			{ endpoints: [OLLAMA] }
@@ -971,7 +971,7 @@ describe('groupDefaultsCreateFields', () => {
 		expect(fields.sessionSshRemoteConfig).toEqual({ enabled: true, remoteId: 'remote-2' });
 	});
 
-	it('drops the seed gateway beside an explicit Run on target, and the seed target beside an explicit gateway', () => {
+	it('drops the seed gateway beside an explicit model source, and the seed target beside an explicit gateway', () => {
 		const target = {
 			type: 'source',
 			endpointId: 'ep',

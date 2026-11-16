@@ -24,13 +24,15 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, FormInput, ToggleSwitch } from './ui';
 import { ModalTabStrip, useModalTabs } from './ui/ModalTabStrip';
 import { AGENT_TILES } from './Wizard/screens/AgentSelectionScreen';
-import { AgentConfigPanel } from './shared/AgentConfigPanel';
+import { AgentConfigPanel, type AgentConfigOptionsProps } from './shared/AgentConfigPanel';
 import { agentEnvVarHandlers } from './shared/agentEnvVarHandlers';
 import {
+	AgentModelSection,
 	AgentSettingsPanel,
 	ProviderEnvironmentSection,
 	AgentProviderSelect,
 	MODERATOR_TAB_IDS,
+	ModelsTab,
 	ProviderTab,
 	SshTab,
 	buildAgentSettingsTabs,
@@ -579,6 +581,35 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 		? MODAL_PRIORITIES.NEW_GROUP_CHAT
 		: MODAL_PRIORITIES.EDIT_GROUP_CHAT;
 
+	// The moderator's provider config options, shared by the Provider tab (the
+	// harness options) and the Models tab (the model options).
+	const moderatorOptionProps = selectedAgentConfig
+		? ({
+				theme,
+				agent: selectedAgentConfig,
+				agentConfig: {
+					...ac.agentConfig,
+					...providerConfigDraft,
+					model: customModel ?? ac.agentConfig.model,
+				},
+				onConfigChange: (key, value) => {
+					if (key === 'model') {
+						setCustomModel(value);
+						return;
+					}
+					setProviderConfigDraft((previous) => ({ ...previous, [key]: value }));
+				},
+				onConfigBlur: () => {
+					/* Saved with the group chat. */
+				},
+				availableModels: ac.availableModels,
+				loadingModels: ac.loadingModels,
+				onRefreshModels: ac.refreshModels,
+				dynamicOptions: ac.dynamicOptions,
+				loadingDynamicOptions: ac.loadingDynamicOptions,
+			} satisfies AgentConfigOptionsProps)
+		: null;
+
 	return (
 		<>
 			<Modal
@@ -783,8 +814,9 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 									{selectedTile?.name} moderates {name.trim() || 'this group chat'}.
 								</div>
 								<p className="text-xs" style={{ color: theme.colors.textDim }}>
-									Choose the provider, account, model and environment on Provider. Choose where the
-									moderator runs on SSH. Save Changes returns to the group chat form.
+									Choose the provider, account and environment on Provider, and the model on Models.
+									Choose where the moderator runs on SSH. Save Changes returns to the group chat
+									form.
 								</p>
 							</AgentSettingsPanel>
 						)}
@@ -802,7 +834,7 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 									/>
 								}
 								picker={
-									selectedAgentConfig && selectedTile ? (
+									moderatorOptionProps && selectedTile ? (
 										// The same provider controls used by the other agent forms.
 										<div className="space-y-4">
 											<AgentProviderSelect
@@ -827,29 +859,10 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 											>
 												{selectedTile.name} Settings
 											</div>
-											{ac.selectedAgent === 'grok' && (
-												<p
-													className="text-xs"
-													style={{ color: theme.colors.textDim }}
-													role="status"
-												>
-													{!discoveryCwd
-														? 'Model and effort discovery is unavailable until the moderator workspace is known. Enter values manually or keep the configured values.'
-														: ac.modelDiscoveryStatus === 'discovered' &&
-															  Object.values(ac.dynamicOptionStatuses).includes('discovered')
-															? 'Model and effort options apply to this moderator configuration. Manual values are preserved.'
-															: ac.modelDiscoveryStatus === 'configured-fallback' ||
-																  Object.values(ac.dynamicOptionStatuses).includes(
-																		'configured-fallback'
-																  )
-																? 'Discovery is unavailable. Showing configured model or effort values; manual values are preserved.'
-																: 'Model or effort discovery is unavailable. Configured and manual values are preserved.'}
-												</p>
-											)}
 											<AgentConfigPanel
-												theme={theme}
-												agent={selectedAgentConfig}
+												{...moderatorOptionProps}
 												hideEnvVars
+												hideModelOptions
 												customPath={ac.customPath}
 												onCustomPathChange={ac.setCustomPath}
 												onCustomPathBlur={() => {
@@ -861,26 +874,6 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 													/* Local state only */
 												}}
 												{...envVarProps}
-												agentConfig={{
-													...ac.agentConfig,
-													...providerConfigDraft,
-													model: customModel ?? ac.agentConfig.model,
-												}}
-												onConfigChange={(key, value) => {
-													if (key === 'model') {
-														setCustomModel(value);
-														return;
-													}
-													setProviderConfigDraft((previous) => ({ ...previous, [key]: value }));
-												}}
-												onConfigBlur={() => {
-													/* Saved with the group chat. */
-												}}
-												availableModels={ac.availableModels}
-												loadingModels={ac.loadingModels}
-												onRefreshModels={ac.refreshModels}
-												dynamicOptions={ac.dynamicOptions}
-												loadingDynamicOptions={ac.loadingDynamicOptions}
 												onRefreshAgent={ac.refreshAgent}
 												refreshingAgent={ac.refreshingAgent}
 												isSshEnabled={!!ac.sshRemoteConfig?.enabled}
@@ -903,6 +896,41 @@ export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
 												? 'Detecting agents...'
 												: 'Choose a moderator on the General tab to set its provider options.'}
 										</p>
+									)
+								}
+							/>
+						)}
+
+						{activeTab === 'models' && (
+							<ModelsTab
+								theme={theme}
+								idPrefix={TAB_ID_PREFIX}
+								model={
+									moderatorOptionProps && (
+										// The same model picker as the other agent forms. The moderator
+										// runs on its provider's own models, so it lists no sources.
+										<div className="space-y-4">
+											{ac.selectedAgent === 'grok' && (
+												<p
+													className="text-xs"
+													style={{ color: theme.colors.textDim }}
+													role="status"
+												>
+													{!discoveryCwd
+														? 'Model and effort discovery is unavailable until the moderator workspace is known. Enter values manually or keep the configured values.'
+														: ac.modelDiscoveryStatus === 'discovered' &&
+															  Object.values(ac.dynamicOptionStatuses).includes('discovered')
+															? 'Model and effort options apply to this moderator configuration. Manual values are preserved.'
+															: ac.modelDiscoveryStatus === 'configured-fallback' ||
+																  Object.values(ac.dynamicOptionStatuses).includes(
+																		'configured-fallback'
+																  )
+																? 'Discovery is unavailable. Showing configured model or effort values; manual values are preserved.'
+																: 'Model or effort discovery is unavailable. Configured and manual values are preserved.'}
+												</p>
+											)}
+											<AgentModelSection {...moderatorOptionProps} />
+										</div>
 									)
 								}
 							/>

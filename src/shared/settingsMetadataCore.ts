@@ -26,26 +26,14 @@ function getDefaultShell(): string {
 }
 
 export const CORE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
-	// --- Utility Agent ---
-	// Auxiliary work (tab naming, context grooming) does not need the session's
-	// own agent. Both null keeps the previous behavior exactly.
-	utilitySource: {
+	// --- Model Map ---
+	// The Agent and Housekeeping models System Two tasks point at. Null reads
+	// the old utilitySource / utilityAgentId / utilityModelId into the
+	// Housekeeping slot, so an existing setup keeps working unchanged.
+	modelMap: {
 		description:
-			"Shared source for tasks assigned to Utility source. Use { type: 'utility-agent' } for the provider selected by utilityAgentId / utilityModelId, { type: 'local', modelId }, or { type: 'endpoint', endpointId, model }. Explicit task assignments take priority.",
+			"The Model Map: { agent, housekeeping }, the two models System Two tasks inherit through the agent-model and housekeeping-model assignments. Each slot is { type: 'provider', agentId?, modelId? } (no agentId follows the session's provider; modelId overrides that agent's model), { type: 'local', modelId }, or { type: 'endpoint', endpointId, model }. Housekeeping also runs context grooming when it is a provider. Set one slot with `maestro-cli models map`.",
 		type: 'object',
-		default: { type: 'utility-agent' },
-		category: 'advanced',
-	},
-	utilityAgentId: {
-		description:
-			'Agent to use for auxiliary tasks (tab naming, context grooming). When null, uses the session agent.',
-		type: 'string',
-		default: null,
-		category: 'advanced',
-	},
-	utilityModelId: {
-		description: 'Model override for the utility agent. When null, uses the agent default model.',
-		type: 'string',
 		default: null,
 		category: 'advanced',
 	},

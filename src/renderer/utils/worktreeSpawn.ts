@@ -13,7 +13,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { gitService } from '../services/git';
 import { notifyToast } from '../stores/notificationStore';
-import { buildWorktreeSession } from './worktreeSession';
+import { buildWorktreeSession, recordWorktreeAgentsCreated } from './worktreeSession';
 import {
 	markWorktreePathAsRecentlyCreated,
 	clearRecentlyCreatedWorktreePath,
@@ -23,6 +23,7 @@ import {
 } from './worktreeDedup';
 import { sanitizeGitBranchName } from '../../shared/gitUtils';
 import { runWorktreeSetupScript } from './worktreeSetupScript';
+import { startGroupOnboarding } from '../services/groupLifecycle';
 
 /**
  * TTL for the pre-`git worktree add` dedup mark. Sized to comfortably outlast a
@@ -256,7 +257,11 @@ export async function spawnWorktreeAgentAndDispatch(
 				...prev.map((s) => (s.id === parentSession.id ? { ...s, worktreesExpanded: true } : s)),
 				newSession,
 			]);
+		recordWorktreeAgentsCreated([newSession]);
 		dispatchSessionId = newSession.id;
+		// The group's Onboarding prompt, when it has one. It queues in its own tab,
+		// beside whatever this spawn dispatches.
+		startGroupOnboarding(newSession.id);
 	}
 
 	// Step 6: Populate config.worktree for PR creation if requested

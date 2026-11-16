@@ -781,7 +781,7 @@ describe('resolveRunOnLaunch: refusals', () => {
 
 			expect(resolution.code).toBe('run-on-unsupported-provider');
 			expect(resolution.message).toContain('qwen3:latest on Ollama');
-			expect(resolution.message).toContain('Set Run on to Provider');
+			expect(resolution.message).toContain('Set the model source to Provider');
 		}
 	);
 
@@ -797,7 +797,7 @@ describe('resolveRunOnLaunch: refusals', () => {
 		const resolution = refused({ target: target as unknown as RunOnTarget });
 
 		expect(resolution.code).toBe('run-on-invalid-target');
-		expect(resolution.message).toContain('set Run on to Provider');
+		expect(resolution.message).toContain('set the model source to Provider');
 	});
 
 	it.each<[string, LocalModelEndpoint | null | undefined]>([
@@ -895,7 +895,7 @@ describe('runOnUnavailable', () => {
 		expect(refusal).toMatchObject({ kind: 'refused', code });
 		expect(refusal.message).toContain('This agent is set to run on qwen3:latest on Ollama, but ');
 		expect(refusal.message).toContain(expected);
-		expect(refusal.message).toContain('set Run on to Provider');
+		expect(refusal.message).toContain('set the model source to Provider');
 	});
 
 	it('names the Maestro model server and what it said when it cannot serve the model', () => {
@@ -908,7 +908,7 @@ describe('runOnUnavailable', () => {
 
 		expect(refusal.code).toBe('run-on-server-failed');
 		expect(refusal.message).toBe(
-			'This agent is set to run on gpt-oss 20B (MXFP4) on Maestro model server, but the Maestro model server could not serve it (The llama-server engine is not installed). Fix the source, or set Run on to Provider.'
+			'This agent is set to run on gpt-oss 20B (MXFP4) on Maestro model server, but the Maestro model server could not serve it (The llama-server engine is not installed). Fix the source, or set the model source to Provider.'
 		);
 	});
 });
@@ -1068,7 +1068,7 @@ describe('parseRunOnEdit', () => {
 	it("refuses a malformed target with the parser's own reason", () => {
 		const edit = parseRunOnEdit('claude-code', { type: 'source', endpointId: OLLAMA.id });
 
-		expect(edit).toEqual({ ok: false, error: 'A Run on target names a model.' });
+		expect(edit).toEqual({ ok: false, error: 'A model source names a model.' });
 	});
 
 	it('refuses a context under the agent minimum', () => {

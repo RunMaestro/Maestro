@@ -8,6 +8,7 @@ describe('getErrorTitleForType', () => {
 		['rate_limited', 'Rate Limit Exceeded'],
 		['network_error', 'Connection Error'],
 		['agent_crashed', 'Agent Error'],
+		['agent_not_installed', 'Provider CLI Not Installed'],
 		['permission_denied', 'Permission Denied'],
 		['session_not_found', 'Session Not Found'],
 	] as const)('maps %s to %s', (type, expected) => {

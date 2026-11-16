@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
+import { withHealthyIntegrityCheck } from '../../helpers/sqlitePragmaMock';
 
 // Track Database constructor calls to verify file path
 let lastDbPath: string | null = null;
@@ -41,7 +42,7 @@ vi.mock('better-sqlite3', () => {
 			constructor(dbPath: string) {
 				lastDbPath = dbPath;
 			}
-			pragma = mockDb.pragma;
+			pragma = withHealthyIntegrityCheck(mockDb.pragma);
 			prepare = mockDb.prepare;
 			close = mockDb.close;
 			transaction = mockDb.transaction;
@@ -293,23 +294,24 @@ describe('StatsDB class (mocked)', () => {
 			const db = new StatsDB();
 			db.initialize();
 
-			// Migrations v1-v22: initial schema, is_remote column, session_lifecycle
+			// Migrations v1-v23: initial schema, is_remote column, session_lifecycle
 			// table, compound indexes, is_worktree column, image_annotations table,
 			// shortcut_usage_daily table, multi_window_usage_daily table,
 			// query_events token/cost columns, resilience_events table,
 			// wizard_runs table, query_events user_name column, wizard_runs.active_ms,
-			// auto_run_sessions kind column, local_model_runs table, proxy_requests
+			// shortcut_usage_by_id table + idx_query_start_session (v14),
+			// auto_run_sessions kind column (v15), local_model_runs table, proxy_requests
 			// table, proxy_requests routed_to column, s1_decisions table,
 			// s1_decisions tab_id and cached columns, the local_model_runs rebuild
 			// with the query_events Run on and routed tier columns, the proxy_requests
 			// provider usage columns, and the proxy_requests telemetry columns (effective
 			// mode, block counts, provider reportedness).
-			expect(db.getTargetVersion()).toBe(22);
+			expect(db.getTargetVersion()).toBe(23);
 		});
 
 		it('should return false from hasPendingMigrations() when up to date', async () => {
 			mockDb.pragma.mockImplementation((sql: string) => {
-				if (sql === 'user_version') return [{ user_version: 22 }];
+				if (sql === 'user_version') return [{ user_version: 23 }];
 				return undefined;
 			});
 
@@ -325,7 +327,7 @@ describe('StatsDB class (mocked)', () => {
 			// by checking current version < target version
 
 			// Simulate a database that's already at the target version
-			let currentVersion = 22;
+			let currentVersion = 23;
 			mockDb.pragma.mockImplementation((sql: string) => {
 				if (sql === 'user_version') return [{ user_version: currentVersion }];
 				// Handle version updates from migration
@@ -340,8 +342,8 @@ describe('StatsDB class (mocked)', () => {
 			db.initialize();
 
 			// At target version, no pending migrations
-			expect(db.getCurrentVersion()).toBe(22);
-			expect(db.getTargetVersion()).toBe(22);
+			expect(db.getCurrentVersion()).toBe(23);
+			expect(db.getTargetVersion()).toBe(23);
 			expect(db.hasPendingMigrations()).toBe(false);
 		});
 
@@ -535,6 +537,73 @@ describe('StatsDB class (mocked)', () => {
 
 			expect(mockDb.close).toHaveBeenCalledTimes(1);
 			expect(mockFlushQueryEventsSync).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('initialization result (database reset notice)', () => {
+		it('is null when the database opens cleanly', async () => {
+			mockDb.pragma.mockImplementation(((name: string) =>
+				name === 'integrity_check'
+					? [{ integrity_check: 'ok' }]
+					: [{ user_version: 0 }]) as unknown as () => Array<{ user_version: number }>);
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			expect(db.getInitializationResult()).toBeNull();
+		});
+
+		it('reports a damaged database that was replaced by a fresh one, once', async () => {
+			// The default pragma mock fails the integrity check, and there are no
+			// daily backups, so initialize() moves the file aside and starts over.
+			mockDb.pragma.mockImplementation(((name: string) =>
+				name === 'integrity_check'
+					? [{ integrity_check: 'database disk image is malformed' }]
+					: [{ user_version: 0 }]) as unknown as () => Array<{ user_version: number }>);
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const result = db.getInitializationResult();
+			expect(result).toMatchObject({ success: true, wasReset: true });
+			expect(result?.backupPath).toMatch(/stats\.db\.corrupted\.\d+$/);
+			expect(result?.userMessage).toContain('no usable backup was found');
+			expect(result?.userMessage).toContain(result!.backupPath!);
+
+			db.clearInitializationResult();
+			expect(db.getInitializationResult()).toBeNull();
+		});
+	});
+
+	describe('describeRecovery', () => {
+		it('names the backup day a restore came from', async () => {
+			const { describeRecovery } = await import('../../../main/stats/stats-db');
+
+			const result = describeRecovery(
+				{
+					recovered: true,
+					restoredFromBackup: true,
+					backupPath: '/data/stats.db.daily.2026-11-12',
+					corruptedPath: '/data/stats.db.corrupted.1',
+				},
+				true
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.wasReset).toBe(true);
+			expect(result.backupPath).toBe('/data/stats.db.corrupted.1');
+			expect(result.userMessage).toContain('the backup of 2026-11-12');
+			expect(result.userMessage).toContain('/data/stats.db.corrupted.1');
+		});
+
+		it('says recording is off when no database could be opened', async () => {
+			const { describeRecovery } = await import('../../../main/stats/stats-db');
+
+			const result = describeRecovery({ recovered: false, error: 'EACCES' }, false);
+
+			expect(result).toMatchObject({ success: false, wasReset: true, error: 'EACCES' });
+			expect(result.userMessage).toContain('not being recorded');
+			expect(result.userMessage).not.toContain('kept at');
 		});
 	});
 });

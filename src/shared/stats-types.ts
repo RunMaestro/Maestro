@@ -54,7 +54,7 @@ export interface QueryEvent {
 	/** Cost in USD for this turn, when the provider reports one. */
 	costUsd?: number;
 	/**
-	 * The Run on source this turn launched on (`RunOnSourceTarget`): the
+	 * The model source this turn launched on (`RunOnSourceTarget`): the
 	 * endpoint's id (`maestro-server` for the Maestro model server) and the model
 	 * name that source serves. Set together. Both absent for a turn on the
 	 * provider's own model, and for rows recorded before the columns existed.
@@ -143,7 +143,9 @@ export interface SessionLifecycleEvent {
 }
 
 /**
- * Time range for querying stats
+ * Time range for querying stats. Every bounded range is CALENDAR-ALIGNED: it
+ * starts at local midnight N-1 days before today and ends now (see
+ * `getTimeRangeStart()` in `src/shared/statsTimeRange.ts`).
  */
 export type StatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
 
@@ -162,6 +164,19 @@ export function isStatsTimeRange(value: unknown): value is StatsTimeRange {
 }
 
 /**
+ * Which stats table a write touched. Carried by the `stats:updated` event so a
+ * dashboard panel refetches only when a table it reads changed.
+ */
+export type StatsTable =
+	| 'query_events'
+	| 'auto_run'
+	| 'session_lifecycle'
+	| 'shortcut_usage'
+	| 'image_annotations'
+	| 'wizard_runs'
+	| 'resilience';
+
+/**
  * Aggregated stats for dashboard display
  */
 export interface StatsAggregation {
@@ -176,19 +191,39 @@ export interface StatsAggregation {
 	autoRunTaskDurationPercentiles: DurationPercentiles;
 	byAgent: Record<string, { count: number; duration: number }>;
 	bySource: { user: number; auto: number };
+	/**
+	 * Queries and duration per local calendar day. GAP-FILLED: one row for every
+	 * day from `window.startYmd` to `window.endYmd`, zero rows included, so a
+	 * chart can treat the index as a time axis.
+	 */
 	byDay: Array<{ date: string; count: number; duration: number }>;
+	/**
+	 * Queries and duration per local day and hour of day. Sparse: only cells
+	 * with at least one query. Feeds the Activity Heatmap's hour layouts.
+	 */
+	byDayHour: Array<{ date: string; hour: number; count: number; duration: number }>;
+	/**
+	 * The calendar window this aggregation covers. `startYmd` is the first local
+	 * day of the range (for All Time: the day of the first recorded query, or
+	 * today when there is none); `endYmd` is today. Per-entity day series
+	 * (`byAgentByDay`, `bySessionByDay`) stay sparse: fill them with
+	 * `fillDaySeries()` from `src/shared/daySeries.ts` over this window.
+	 */
+	window: { startYmd: string; endYmd: string };
+	/** Epoch ms of the first query ever recorded (any range), or null when none. */
+	earliestQueryAt: number | null;
+	/**
+	 * Consecutive days with at least one query, over ALL recorded history (not
+	 * the selected range), so a range cannot truncate a streak. `current` counts
+	 * back from today, or from yesterday when today has no query yet.
+	 */
+	streak: { current: number; longest: number };
 	/** Breakdown by session location (local vs SSH remote) */
 	byLocation: { local: number; remote: number };
 	/** Breakdown by hour of day (0-23) for peak hours chart */
 	byHour: Array<{ hour: number; count: number; duration: number }>;
-	/** Total unique sessions launched in the time period */
+	/** Distinct agents (Maestro agent ids) with at least one query in the range. */
 	totalSessions: number;
-	/** Sessions by agent type */
-	sessionsByAgent: Record<string, number>;
-	/** Sessions launched per day */
-	sessionsByDay: Array<{ date: string; count: number }>;
-	/** Average session duration in ms (for closed sessions) */
-	avgSessionDuration: number;
 	/** Queries and duration by provider per day (for provider comparison) */
 	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 	/** Queries and duration by Maestro session per day (for agent usage chart) */
@@ -213,17 +248,21 @@ export interface StatsAggregation {
 	worktreeQueries: number;
 	/** Count of queries originating from parent (non-worktree) agents */
 	parentQueries: number;
-	/** Detailed worktree breakdown including duration totals (for activity split bar) */
-	byWorktreeStatus: {
-		worktree: { count: number; duration: number };
-		parent: { count: number; duration: number };
-	};
+	/**
+	 * Queries and duration per provider, split by the worktree flag recorded on
+	 * each query when it ran. Exact even after the worktree agent is deleted,
+	 * unlike any split rebuilt from the live agent list. Legacy rows with no flag
+	 * count as `parent`.
+	 */
+	byAgentWorktree: Record<
+		string,
+		{ worktree: { count: number; duration: number }; parent: { count: number; duration: number } }
+	>;
 	/** Number of image annotations saved in the time range */
 	imageAnnotations: number;
 	/**
 	 * How often the user prompts agents: interactive turns only, per calendar
-	 * day, hour and weekday. Unlike every other field here the window is
-	 * calendar-aligned (N local days including today), not rolling.
+	 * day, hour and weekday, over the same calendar window as every other field.
 	 */
 	prompts: PromptCadence;
 }
@@ -262,6 +301,25 @@ export interface StatsFilters {
 export interface ShortcutUsageDay {
 	date: string;
 	count: number;
+}
+
+/**
+ * Firings of one shortcut over a range. Only firings recorded since stats
+ * schema v14 name their shortcut, so these sum to at most the daily total.
+ */
+export interface ShortcutUsageByShortcut {
+	shortcutId: string;
+	count: number;
+}
+
+/**
+ * Auto Run agent turns that started in one local hour of the day, over a range.
+ * `hour` is 0-23. One entry per hour, zero-filled.
+ */
+export interface AutoRunTurnsByHour {
+	hour: number;
+	count: number;
+	successCount: number;
 }
 
 /**
@@ -365,7 +423,7 @@ export type LocalModelRunSourceType = (typeof LOCAL_MODEL_RUN_SOURCE_TYPES)[numb
  * called a local model, the Maestro model server or an endpoint for a task (see
  * `src/main/local-models/task-router.ts`), or a System One request was sent to
  * a remote engine (see `src/main/local-models/system-one/decisions.ts`). A task
- * that was off, or handed back to its Utility Agent path, is not a run.
+ * that was off, or handed back to its provider agent path, is not a run.
  */
 export interface LocalModelRun {
 	id: string;
@@ -957,4 +1015,4 @@ export interface UsageExportResult {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 22;
+export const STATS_DB_VERSION = 23;

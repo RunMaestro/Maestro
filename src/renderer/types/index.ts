@@ -361,7 +361,7 @@ export interface LogEntry {
 	/** A committed native import, rendered as a standalone transcript marker. */
 	contextTranslation?: ContextTranslationRecord;
 	turnEffort?: string;
-	// Where this turn ran when the agent's Run on target was a source, copied
+	// Where this turn ran when the agent's model source was a source, copied
 	// from `AITab.turnRunOn`. Shown in place of the model pill.
 	turnRunOn?: string;
 	// Set when this turn was sent on the Auto model, copied from
@@ -1007,7 +1007,7 @@ export interface AITab {
 	providerSessions?: Partial<Record<ToolType, ProviderTabSession>>;
 	/** Absent inherits the agent's provider; a named provider explicitly pins this tab. */
 	tabProvider?: ToolType;
-	/** Per-provider Run on choice; absent inherits the matching harness default. */
+	/** Per-provider model source choice; absent inherits the matching harness default. */
 	runOn?: RunOnTarget;
 	/** Latest native owner awaiting lazy translation, even if the destination has an older slot. */
 	pendingTranslation?: ToolType;
@@ -1039,14 +1039,14 @@ export interface AITab {
 	turnModel?: string;
 	turnEffort?: string;
 	/**
-	 * Where the most recent turn ran when the agent's Run on target was a source
+	 * Where the most recent turn ran when the agent's model source was a source
 	 * (`qwen3:latest · Ollama`), captured with the fields above. A label only:
 	 * the launch reads the target itself from the agent record. Undefined for a
 	 * turn on the provider's own model.
 	 */
 	turnRunOn?: string;
 	/**
-	 * The source behind `turnRunOn`, frozen with it: the agent's Run on target as
+	 * The source behind `turnRunOn`, frozen with it: the agent's model source as
 	 * it stood at send, or the place Auto chose. It is what the turn's stats row
 	 * names (`query_events.run_on_endpoint` / `run_on_model`), so a target edited
 	 * while the turn is in flight does not refile it. Undefined for a turn on the
@@ -1775,12 +1775,12 @@ export interface Session {
 	// effect only in compress or compress-early, and is cleared with the mode. See
 	// OFF_TOKEN_PROXY_FIELDS in shared/local-models/token-proxy.ts.
 	tokenProxyRetrieval?: boolean;
-	// Run on: where this agent's model runs. Absent (or provider) is the
+	// Model source: where this agent's model runs. Absent (or provider) is the
 	// provider's own model; a source target points the same harness at a model on
 	// a Local Models source at launch. See shared/local-models/run-on.ts.
 	runOn?: RunOnTarget;
 	// Tier targets: where a turn that asks for a model tier launches for this
-	// agent (a provider model or a Run on target). An absent tier follows the
+	// agent (a provider model or a model source). An absent tier follows the
 	// harness default, then the built-in table. See resolveTierTarget in
 	// shared/modelTiers.ts.
 	tierTargets?: TierTargets;
@@ -1922,7 +1922,7 @@ export interface ProcessConfig {
 	sessionCustomModel?: string;
 	sessionCustomEffort?: string;
 	sessionCustomContextWindow?: number;
-	// The Run on target this turn launches on in place of the agent's stored
+	// The model source this turn launches on in place of the agent's stored
 	// one: a tier's target, set only by a spawn that resolved a tier.
 	runOnOverride?: RunOnTarget;
 	// The consult chain this turn runs IN, already at its own depth, when

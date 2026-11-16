@@ -4,7 +4,7 @@
  * Answers what the wizard actually bought you: how long you spent talking to
  * it, how many times you reached for it, how many Auto Run documents came out,
  * and how many tasks those documents contain. Metric tiles up top, then a
- * per-day timeline of runs split by outcome and a new-vs-iterate breakdown.
+ * per-day timeline of runs split by outcome.
  *
  * Data source: `wizard_runs` (one row per conversation, upserted at every
  * milestone - see `WizardRun` in shared/stats-types.ts). Self-contained on
@@ -12,14 +12,19 @@
  * moving it to a different tab is a one-line change.
  */
 
-import { memo, useState, useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { Wand2, Clock, FileText, ListChecks, MessagesSquare, Sparkles } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, WizardRun } from '../../../shared/stats-types';
-import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
-import { MetricCard } from './MetricCard';
+import { formatDurationHuman, formatNumber } from '../../../shared/formatters';
+import { toLocalYmd } from '../../../shared/localDay';
+import { localDaysBetween } from '../../../shared/daySeries';
+import { usageReadWindow } from '../../../shared/usageDashboardReads';
+import { StatCardGrid } from '../widgets';
+import type { StatCardDatum } from '../widgets';
+import { DashboardPanelState } from './DashboardPanelState';
+import { DayBarTimeline, type DayBarEntry } from './DayBarTimeline';
 import { useDashboardResource } from './useDashboardResource';
-import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface WizardStatsProps {
 	/** Current time range for filtering */
@@ -28,115 +33,166 @@ interface WizardStatsProps {
 	theme: Theme;
 }
 
-/** Local-midnight day key, so bars bucket by the user's calendar day. */
-function dayKey(ts: number): string {
-	const d = new Date(ts);
-	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-interface DayBucket {
-	key: string;
-	label: string;
-	generated: number;
-	other: number;
-	documents: number;
-}
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 const NO_RUNS: WizardRun[] = [];
 
+export interface WizardSummary {
+	runs: number;
+	inline: number;
+	iterate: number;
+	productive: number;
+	documents: number;
+	tasks: number;
+	exchanges: number;
+	totalMs: number;
+	untimed: number;
+	averageMs: number;
+	averageExchanges: number;
+	tasksPerDoc: number;
+	docsPerProductiveRun: number;
+	hitRate: number;
+}
+
+export function summarizeWizardRuns(runs: WizardRun[]): WizardSummary {
+	const productive = runs.filter((r) => r.documents > 0);
+	const documents = runs.reduce((sum, r) => sum + r.documents, 0);
+	const tasks = runs.reduce((sum, r) => sum + r.tasks, 0);
+	const exchanges = runs.reduce((sum, r) => sum + r.exchanges, 0);
+	// Active time only (agent turns plus capped user gaps), never
+	// endedAt - startedAt: a wizard tab left open for days is not time spent
+	// in the wizard. Rows recorded before activeMs existed are left out of
+	// the time figures rather than guessed at.
+	const timed = runs.filter((r) => r.activeMs !== undefined);
+	const totalMs = timed.reduce((sum, r) => sum + Math.max(0, r.activeMs ?? 0), 0);
+	return {
+		runs: runs.length,
+		inline: runs.filter((r) => r.surface === 'inline').length,
+		iterate: runs.filter((r) => r.mode === 'iterate').length,
+		productive: productive.length,
+		documents,
+		tasks,
+		exchanges,
+		totalMs,
+		untimed: runs.length - timed.length,
+		averageMs: timed.length > 0 ? Math.round(totalMs / timed.length) : 0,
+		averageExchanges: runs.length > 0 ? Math.round((exchanges / runs.length) * 10) / 10 : 0,
+		tasksPerDoc: documents > 0 ? Math.round((tasks / documents) * 10) / 10 : 0,
+		docsPerProductiveRun:
+			productive.length > 0 ? Math.round((documents / productive.length) * 10) / 10 : 0,
+		hitRate: runs.length > 0 ? Math.round((productive.length / runs.length) * 100) : 0,
+	};
+}
+
+/** One entry per day of the range: runs that produced documents, then runs that did not. */
+export function buildWizardDays(
+	runs: WizardRun[],
+	timeRange: StatsTimeRange,
+	colors: { produced: string; none: string },
+	now: number = Date.now()
+): Array<DayBarEntry & { produced: number; none: number; documents: number }> {
+	if (runs.length === 0) return [];
+	const earliest = toLocalYmd(Math.min(...runs.map((r) => r.startedAt)));
+	const window = usageReadWindow(timeRange, earliest, now);
+	const byDay = new Map<string, { produced: number; none: number; documents: number }>();
+	for (const run of runs) {
+		const key = toLocalYmd(run.startedAt);
+		const day = byDay.get(key) ?? { produced: 0, none: 0, documents: 0 };
+		if (run.documents > 0) day.produced++;
+		else day.none++;
+		day.documents += run.documents;
+		byDay.set(key, day);
+	}
+	return localDaysBetween(window.startYmd, window.endYmd).map((date) => {
+		const day = byDay.get(date) ?? { produced: 0, none: 0, documents: 0 };
+		return {
+			date,
+			...day,
+			segments: [
+				{ value: day.produced, color: colors.produced },
+				{ value: day.none, color: colors.none },
+			],
+		};
+	});
+}
+
+function plural(n: number, word: string): string {
+	return `${formatNumber(n)} ${word}${n === 1 ? '' : 's'}`;
+}
+
 export const WizardStats = memo(function WizardStats({ timeRange, theme }: WizardStatsProps) {
-	const { data, loading } = useDashboardResource(
+	const { data, loading, error, refresh } = useDashboardResource(
 		`wizard-runs:${timeRange}`,
 		() => window.maestro.stats.getWizardRuns(timeRange),
-		'fetchWizardStats'
+		'fetchWizardStats',
+		{ tables: ['wizard_runs'] }
 	);
 	const runs = data ?? NO_RUNS;
-	const [hoveredDay, setHoveredDay] = useState<number | null>(null);
+	const summary = useMemo(() => summarizeWizardRuns(runs), [runs]);
+	const days = useMemo(
+		() =>
+			buildWizardDays(runs, timeRange, {
+				produced: theme.colors.accent,
+				none: theme.colors.textDim,
+			}),
+		[runs, timeRange, theme.colors.accent, theme.colors.textDim]
+	);
 
-	const summary = useMemo(() => {
-		const productive = runs.filter((r) => r.documents > 0);
-		const documents = runs.reduce((sum, r) => sum + r.documents, 0);
-		const tasks = runs.reduce((sum, r) => sum + r.tasks, 0);
-		const exchanges = runs.reduce((sum, r) => sum + r.exchanges, 0);
-		// Active time only (agent turns plus capped user gaps), never
-		// endedAt - startedAt: a wizard tab left open for days is not time spent
-		// in the wizard. Rows recorded before activeMs existed are left out of
-		// the time figures rather than guessed at.
-		const timed = runs.filter((r) => r.activeMs !== undefined);
-		const totalMs = timed.reduce((sum, r) => sum + Math.max(0, r.activeMs ?? 0), 0);
-		return {
-			runs: runs.length,
-			inline: runs.filter((r) => r.surface === 'inline').length,
-			iterate: runs.filter((r) => r.mode === 'iterate').length,
-			productive: productive.length,
-			documents,
-			tasks,
-			exchanges,
-			totalMs,
-			untimed: runs.length - timed.length,
-			averageMs: timed.length > 0 ? Math.round(totalMs / timed.length) : 0,
-			averageExchanges: runs.length > 0 ? Math.round((exchanges / runs.length) * 10) / 10 : 0,
-			tasksPerDoc: documents > 0 ? Math.round((tasks / documents) * 10) / 10 : 0,
-			docsPerProductiveRun:
-				productive.length > 0 ? Math.round((documents / productive.length) * 10) / 10 : 0,
-			hitRate: runs.length > 0 ? Math.round((productive.length / runs.length) * 100) : 0,
-		};
-	}, [runs]);
-
-	// Contiguous day buckets from the earliest run to today, so quiet days
-	// render as gaps rather than being squeezed out of the timeline.
-	const days = useMemo((): DayBucket[] => {
-		if (runs.length === 0) return [];
-		const earliest = Math.min(...runs.map((r) => r.startedAt));
-		const buckets = new Map<string, DayBucket>();
-		for (let ts = earliest; dayKey(ts) <= dayKey(Date.now()); ts += DAY_MS) {
-			const key = dayKey(ts);
-			buckets.set(key, {
-				key,
-				label: new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-				generated: 0,
-				other: 0,
-				documents: 0,
-			});
-		}
-		for (const run of runs) {
-			const bucket = buckets.get(dayKey(run.startedAt));
-			if (!bucket) continue;
-			if (run.documents > 0) bucket.generated++;
-			else bucket.other++;
-			bucket.documents += run.documents;
-		}
-		return Array.from(buckets.values());
-	}, [runs]);
-
-	const maxDay = useMemo(() => Math.max(...days.map((d) => d.generated + d.other), 1), [days]);
-
-	if (loading) return null;
-
-	if (runs.length === 0) {
-		return (
-			<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
-				<h3
-					className="text-sm font-medium mb-2 flex items-center gap-2"
-					style={{ color: theme.colors.textMain }}
-				>
-					<Wand2 className="w-4 h-4" style={{ color: theme.colors.accent }} />
-					Wizard
-				</h3>
-				<div className="text-sm" style={{ color: theme.colors.textDim }}>
-					No wizard runs in this time range. Type <code>/wizard</code> in an agent to plan Auto Run
-					documents through a conversation, and the runs show up here.
-				</div>
-			</div>
-		);
-	}
-
-	const hovered = hoveredDay !== null ? days[hoveredDay] : null;
+	const cards: StatCardDatum[] = [
+		{
+			label: 'Time in the Wizard',
+			icon: Clock,
+			value: summary.totalMs,
+			displayValue:
+				summary.totalMs > 0
+					? formatDurationHuman(summary.totalMs)
+					: summary.untimed === summary.runs
+						? '-'
+						: '0m',
+			caption:
+				[
+					summary.averageMs > 0 ? `${formatDurationHuman(summary.averageMs)} per run` : null,
+					summary.untimed > 0 ? `${summary.untimed} earlier untimed` : null,
+				]
+					.filter(Boolean)
+					.join(' · ') || undefined,
+		},
+		{
+			label: 'Wizard Runs',
+			icon: Wand2,
+			value: summary.runs,
+			caption: `${summary.inline} inline · ${summary.runs - summary.inline} onboarding`,
+		},
+		{
+			label: 'Docs Produced',
+			icon: FileText,
+			value: summary.documents,
+			caption:
+				summary.docsPerProductiveRun > 0
+					? `${summary.docsPerProductiveRun} per productive run`
+					: undefined,
+		},
+		{
+			label: 'Tasks Written',
+			icon: ListChecks,
+			value: summary.tasks,
+			caption: summary.tasksPerDoc > 0 ? `${summary.tasksPerDoc} per document` : undefined,
+		},
+		{
+			label: 'Messages Sent',
+			icon: MessagesSquare,
+			value: summary.exchanges,
+			caption: `${summary.averageExchanges} per run`,
+		},
+		{
+			label: 'Runs That Shipped',
+			icon: Sparkles,
+			value: summary.hitRate,
+			displayValue: `${summary.hitRate}%`,
+			caption: `${summary.productive} of ${summary.runs} · ${summary.iterate} revised existing docs`,
+		},
+	];
 
 	return (
-		<div data-testid="wizard-stats">
+		<div data-testid="wizard-stats" role="region" aria-label="Wizard statistics">
 			<h3
 				className="text-sm font-medium mb-3 flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
@@ -144,188 +200,48 @@ export const WizardStats = memo(function WizardStats({ timeRange, theme }: Wizar
 				<Wand2 className="w-4 h-4" style={{ color: theme.colors.accent }} />
 				Wizard
 			</h3>
-
-			{/* Metric tiles */}
-			<div
-				className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4"
-				data-testid="wizard-metrics"
-				role="region"
-				aria-label="Wizard summary metrics"
+			<DashboardPanelState
+				theme={theme}
+				loading={loading}
+				error={error}
+				empty={runs.length === 0}
+				emptyMessage="No wizard runs in this time range. Type /wizard in an agent to plan Auto Run documents through a conversation, and the runs show up here."
+				onRetry={() => void refresh()}
+				testId="wizard-stats"
 			>
-				<MetricCard
-					testId="wizard-metric-card"
-					icon={<Clock className="w-4 h-4" />}
-					label="Time in the Wizard"
-					value={
-						summary.totalMs > 0
-							? formatDuration(summary.totalMs)
-							: summary.untimed === summary.runs
-								? '-'
-								: '0m'
-					}
-					subValue={
-						[
-							summary.averageMs > 0 ? `${formatDuration(summary.averageMs)} per run` : null,
-							summary.untimed > 0 ? `${summary.untimed} earlier untimed` : null,
-						]
-							.filter(Boolean)
-							.join(' · ') || undefined
-					}
-					theme={theme}
-				/>
-				<MetricCard
-					testId="wizard-metric-card"
-					icon={<Wand2 className="w-4 h-4" />}
-					label="Wizard Runs"
-					value={formatNumber(summary.runs)}
-					subValue={`${summary.inline} inline · ${summary.runs - summary.inline} onboarding`}
-					theme={theme}
-				/>
-				<MetricCard
-					testId="wizard-metric-card"
-					icon={<FileText className="w-4 h-4" />}
-					label="Docs Produced"
-					value={formatNumber(summary.documents)}
-					subValue={
-						summary.docsPerProductiveRun > 0
-							? `${summary.docsPerProductiveRun} per productive run`
-							: undefined
-					}
-					theme={theme}
-				/>
-				<MetricCard
-					testId="wizard-metric-card"
-					icon={<ListChecks className="w-4 h-4" />}
-					label="Tasks Written"
-					value={formatNumber(summary.tasks)}
-					subValue={summary.tasksPerDoc > 0 ? `${summary.tasksPerDoc} per document` : undefined}
-					theme={theme}
-				/>
-				<MetricCard
-					testId="wizard-metric-card"
-					icon={<MessagesSquare className="w-4 h-4" />}
-					label="Messages Sent"
-					value={formatNumber(summary.exchanges)}
-					subValue={`${summary.averageExchanges} per run`}
-					theme={theme}
-				/>
-				<MetricCard
-					testId="wizard-metric-card"
-					icon={<Sparkles className="w-4 h-4" />}
-					label="Runs That Shipped"
-					value={`${summary.hitRate}%`}
-					subValue={`${summary.productive} of ${summary.runs} · ${summary.iterate} revised existing docs`}
-					theme={theme}
-				/>
-			</div>
-
-			{/* Per-day timeline */}
-			<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
-				<div className="flex items-center justify-between mb-3">
-					<h4 className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
-						Wizard Runs Over Time
-					</h4>
-					<div className="flex items-center gap-3 text-xs" style={{ color: theme.colors.textDim }}>
-						<span className="flex items-center gap-1">
-							<span
-								className="inline-block w-2.5 h-2.5 rounded-sm"
-								style={{ backgroundColor: theme.colors.accent }}
-							/>
-							Produced docs
-						</span>
-						<span className="flex items-center gap-1">
-							<span
-								className="inline-block w-2.5 h-2.5 rounded-sm"
-								style={{ backgroundColor: theme.colors.textDim }}
-							/>
-							No docs
-						</span>
-					</div>
-				</div>
-
-				<div className="relative">
-					{hovered && hovered.generated + hovered.other > 0 && (
-						<div
-							className="absolute z-10 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none"
-							style={{
-								left: `${((hoveredDay! + 0.5) / days.length) * 100}%`,
-								bottom: '100%',
-								transform: 'translateX(-50%)',
-								marginBottom: '8px',
-								...elevatedSurfaceStyle(theme),
-								color: theme.colors.textMain,
-							}}
-						>
-							<div className="font-medium mb-1">{hovered.label}</div>
-							<div style={{ color: theme.colors.textDim }}>
-								{hovered.generated > 0 && (
-									<div>
-										{hovered.generated} run{hovered.generated === 1 ? '' : 's'} produced{' '}
-										{hovered.documents} doc{hovered.documents === 1 ? '' : 's'}
-									</div>
-								)}
-								{hovered.other > 0 && <div>{hovered.other} without docs</div>}
-							</div>
-						</div>
-					)}
-
-					<div
-						className="flex items-end justify-center gap-0.5 h-20"
-						role="img"
-						aria-label="Wizard runs per day, split by whether they produced Auto Run documents"
-					>
-						{days.map((day, i) => {
-							const total = day.generated + day.other;
+				<div className="space-y-4">
+					<StatCardGrid theme={theme} cards={cards} />
+					<DayBarTimeline
+						days={days}
+						theme={theme}
+						title="Wizard Runs Over Time"
+						legend={[
+							{ label: 'Produced docs', color: theme.colors.accent },
+							{ label: 'No docs', color: theme.colors.textDim },
+						]}
+						ariaLabel="Wizard runs per day, split by whether they produced Auto Run documents"
+						testId="wizard-timeline"
+						describeDay={(day) => {
+							const d = day as (typeof days)[number];
+							return `${day.date}: ${plural(d.produced, 'run')} produced docs, ${formatNumber(d.none)} without`;
+						}}
+						renderTooltip={(day) => {
+							const d = day as (typeof days)[number];
+							if (d.produced + d.none === 0) return <div>No wizard runs</div>;
 							return (
-								<div
-									key={day.key}
-									className="flex-1 flex flex-col justify-end h-full cursor-default"
-									// Cap the column so a 1-3 day range reads as bars, not slabs.
-									style={{ maxWidth: 48 }}
-									onMouseEnter={() => setHoveredDay(i)}
-									onMouseLeave={() => setHoveredDay(null)}
-								>
-									{/* Barren runs on top, so the "produced something" base reads first. */}
-									{day.other > 0 && (
-										<div
-											className="w-full rounded-t-sm"
-											style={{
-												height: `${(day.other / maxDay) * 100}%`,
-												backgroundColor: theme.colors.textDim,
-												opacity: hoveredDay === i ? 0.9 : 0.5,
-											}}
-										/>
+								<>
+									{d.produced > 0 && (
+										<div>
+											{plural(d.produced, 'run')} produced {plural(d.documents, 'doc')}
+										</div>
 									)}
-									{day.generated > 0 && (
-										<div
-											className={`w-full ${day.other === 0 ? 'rounded-t-sm' : ''}`}
-											style={{
-												height: `${(day.generated / maxDay) * 100}%`,
-												backgroundColor: theme.colors.accent,
-												opacity: hoveredDay === i ? 1 : 0.75,
-											}}
-										/>
-									)}
-									{total === 0 && (
-										<div
-											className="w-full"
-											style={{ height: 2, backgroundColor: `${theme.colors.border}80` }}
-										/>
-									)}
-								</div>
+									{d.none > 0 && <div>{formatNumber(d.none)} without docs</div>}
+								</>
 							);
-						})}
-					</div>
-
-					<div
-						className="flex justify-between mt-1 text-2xs"
-						style={{ color: theme.colors.textDim }}
-					>
-						<span>{days[0]?.label}</span>
-						<span>{days[days.length - 1]?.label}</span>
-					</div>
+						}}
+					/>
 				</div>
-			</div>
+			</DashboardPanelState>
 		</div>
 	);
 });

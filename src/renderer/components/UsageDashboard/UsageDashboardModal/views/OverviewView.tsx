@@ -1,4 +1,5 @@
 import { getAgentDisplayName } from '../../../../../shared/agentMetadata';
+import { resolveCueHistoryRetentionDays } from '../../../../../shared/cue/retention';
 import { AgentComparisonChart } from '../../AgentComparisonChart';
 import { ChartErrorBoundary } from '../../ChartErrorBoundary';
 import { DelegationScoreCard } from '../../DelegationScoreCard';
@@ -36,14 +37,51 @@ export function OverviewView({
 	// the source of truth for it.
 	const delegationMilestone = useSettingsStore((s) => s.delegationMilestone);
 	const unlockDelegationMilestone = useSettingsStore((s) => s.unlockDelegationMilestone);
-	// `cue_events` is pruned to a week, `query_events` never is, so the merged
-	// lifetime totals weigh 7 days of Cue against the whole install. This is the
-	// same Cue time the About card shows, accumulated in settings and never
-	// pruned - see `withLifetimeCueTime`.
+	// `cue_events` is pruned to the Cue retention window, `query_events` never
+	// is, so the merged lifetime totals would weigh a few days of Cue against the
+	// whole install. This is the same Cue time the About card shows, accumulated
+	// in settings and never pruned - see `withLifetimeCueTime`.
 	const lifetimeCueMs = useSettingsStore((s) => s.autoRunStats.cueTimeMs);
 	const lifetimeTotals = useMemo(
 		() => (lifetimeDelegation ? withLifetimeCueTime(lifetimeDelegation, lifetimeCueMs) : null),
 		[lifetimeDelegation, lifetimeCueMs]
+	);
+
+	// Cue is an Encore Feature: with it off, the Query Source donut draws no Cue
+	// slice at all. With it on, a range longer than Cue's run-history retention
+	// can only count the retained days, and the surfaces that put Cue into a
+	// ratio say so. `byDay` is gap-filled, so its length is the range in days.
+	const cueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
+	const cueRetentionSetting = useSettingsStore((s) => s.cueHistoryRetentionDays);
+	const retentionDays = resolveCueHistoryRetentionDays(cueRetentionSetting);
+	const cueRetentionDays = cueEnabled && data.byDay.length > retentionDays ? retentionDays : null;
+
+	const percentileBreakdown = useMemo(
+		() =>
+			Object.entries(data.queryDurationPercentilesByAgent).map(([agentType, distribution]) => ({
+				label: getAgentDisplayName(agentType),
+				distribution,
+			})),
+		[data.queryDurationPercentilesByAgent]
+	);
+
+	// The location donut only exists for someone who ran a query over SSH: for
+	// everyone else it would be a permanent 100% Local ring. `sections.ts` drops
+	// its id from keyboard navigation under the same condition.
+	const showLocation = (data.byLocation?.remote ?? 0) > 0;
+
+	const sourceChart = (
+		<ChartErrorBoundary theme={theme} chartName="Query Source">
+			<SourceDistributionChart
+				data={data}
+				theme={theme}
+				colorBlindMode={colorBlindMode}
+				delegation={delegationTotals}
+				includeCue={cueEnabled}
+				cueTokens={cueSourceTotals?.tokens ?? null}
+				cueRetentionDays={cueRetentionDays}
+			/>
+		</ChartErrorBoundary>
 	);
 
 	return (
@@ -81,6 +119,7 @@ export function OverviewView({
 						columns={layout.summaryCardsCols}
 						sessions={sessions}
 						delegation={delegationTotals}
+						cueRetentionDays={cueRetentionDays}
 						colorBlindMode={colorBlindMode}
 					/>
 				</ChartErrorBoundary>
@@ -131,13 +170,9 @@ export function OverviewView({
 						theme={theme}
 						title="Query Duration Percentiles"
 						unitLabel="queries"
+						breakdownLabel="By Provider"
 						distribution={data.queryDurationPercentiles}
-						breakdown={Object.entries(data.queryDurationPercentilesByAgent).map(
-							([agentType, distribution]) => ({
-								label: getAgentDisplayName(agentType),
-								distribution,
-							})
-						)}
+						breakdown={percentileBreakdown}
 					/>
 				</ChartErrorBoundary>
 			</DashboardSection>
@@ -151,12 +186,7 @@ export function OverviewView({
 				style={{ minHeight: '180px', animationDelay: '100ms' }}
 			>
 				<ChartErrorBoundary theme={theme} chartName="Provider Comparison">
-					<AgentComparisonChart
-						data={data}
-						theme={theme}
-						colorBlindMode={colorBlindMode}
-						sessions={sessions}
-					/>
+					<AgentComparisonChart data={data} theme={theme} colorBlindMode={colorBlindMode} />
 				</ChartErrorBoundary>
 			</DashboardSection>
 
@@ -174,51 +204,60 @@ export function OverviewView({
 						timeRange={timeRange}
 						theme={theme}
 						colorBlindMode={colorBlindMode}
-						sessions={sessions}
 					/>
 				</ChartErrorBoundary>
 			</DashboardSection>
 
-			<div
-				className="grid gap-6 dashboard-section-enter"
-				style={{
-					gridTemplateColumns: `repeat(${layout.chartGridCols}, minmax(0, 1fr))`,
-					animationDelay: '150ms',
-				}}
-			>
+			{showLocation ? (
+				<div
+					className="grid gap-6 dashboard-section-enter"
+					style={{
+						gridTemplateColumns: `repeat(${layout.chartGridCols}, minmax(0, 1fr))`,
+						animationDelay: '150ms',
+					}}
+				>
+					<DashboardSection
+						sectionId="source-distribution"
+						focusedSection={focusedSection}
+						setSectionRef={setSectionRef}
+						handleSectionKeyDown={handleSectionKeyDown}
+						theme={theme}
+						className="outline-none rounded-lg transition-shadow"
+						style={{ minHeight: '240px' }}
+					>
+						{sourceChart}
+					</DashboardSection>
+
+					<DashboardSection
+						sectionId="location-distribution"
+						focusedSection={focusedSection}
+						setSectionRef={setSectionRef}
+						handleSectionKeyDown={handleSectionKeyDown}
+						theme={theme}
+						className="outline-none rounded-lg transition-shadow"
+						style={{ minHeight: '240px' }}
+					>
+						<ChartErrorBoundary theme={theme} chartName="Query Location">
+							<LocationDistributionChart
+								data={data}
+								theme={theme}
+								colorBlindMode={colorBlindMode}
+							/>
+						</ChartErrorBoundary>
+					</DashboardSection>
+				</div>
+			) : (
 				<DashboardSection
 					sectionId="source-distribution"
 					focusedSection={focusedSection}
 					setSectionRef={setSectionRef}
 					handleSectionKeyDown={handleSectionKeyDown}
 					theme={theme}
-					className="outline-none rounded-lg transition-shadow"
-					style={{ minHeight: '240px' }}
+					style={{ minHeight: '240px', animationDelay: '150ms' }}
 				>
-					<ChartErrorBoundary theme={theme} chartName="Source Distribution">
-						<SourceDistributionChart
-							data={data}
-							theme={theme}
-							colorBlindMode={colorBlindMode}
-							cueTotals={cueSourceTotals}
-						/>
-					</ChartErrorBoundary>
+					{sourceChart}
 				</DashboardSection>
-
-				<DashboardSection
-					sectionId="location-distribution"
-					focusedSection={focusedSection}
-					setSectionRef={setSectionRef}
-					handleSectionKeyDown={handleSectionKeyDown}
-					theme={theme}
-					className="outline-none rounded-lg transition-shadow"
-					style={{ minHeight: '240px' }}
-				>
-					<ChartErrorBoundary theme={theme} chartName="Location Distribution">
-						<LocationDistributionChart data={data} theme={theme} colorBlindMode={colorBlindMode} />
-					</ChartErrorBoundary>
-				</DashboardSection>
-			</div>
+			)}
 
 			<DashboardSection
 				sectionId="radial-activity"

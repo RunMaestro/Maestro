@@ -51,8 +51,8 @@ import { Spinner } from './ui/Spinner';
 
 /**
  * What a button may draw, from the main process's verdict. `off` and
- * `utility-agent` both mean nobody assigned dictation a speech model, so
- * nothing is offered.
+ * `provider` both mean nobody assigned dictation a speech model, so nothing is
+ * offered.
  *
  * `microphoneBlocker` is why THIS client cannot record even with a ready model
  * (a browser over plain HTTP has no microphone API), or null when it can. The

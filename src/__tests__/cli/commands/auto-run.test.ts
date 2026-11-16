@@ -24,7 +24,7 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 	resolveTargetSessionId: vi.fn(),
 }));
 
-// The stores `--run-on` is read against: the agent, and the saved sources.
+// The stores `--model-source` is read against: the agent, and the saved sources.
 vi.mock('../../../cli/services/storage', () => ({
 	readSessions: vi.fn(() => [
 		{
@@ -557,14 +557,14 @@ describe('auto-run command', () => {
 			expect(getSent()!.ignoreModelHints).toBe(true);
 		});
 
-		it("should send the run's Run on target from --run-on", async () => {
+		it("should send the run's model source from --model-source", async () => {
 			const getSent = captureSentMessage();
 
 			await autoRun(['/path/to/doc.md'], {
 				agent: 'agent-123',
 				launch: true,
-				runOn: 'ep-ollama:deepseek-v4.1-flash:cloud',
-				runOnContext: '1000000',
+				modelSource: 'ep-ollama:deepseek-v4.1-flash:cloud',
+				modelSourceContext: '1000000',
 			});
 
 			expect(getSent()!.runOn).toEqual({
@@ -575,45 +575,45 @@ describe('auto-run command', () => {
 			});
 		});
 
-		it("should keep the agent's own context when --run-on names its own source and model", async () => {
+		it("should keep the agent's own context when --model-source names its own source and model", async () => {
 			const getSent = captureSentMessage();
 
 			await autoRun(['/path/to/doc.md'], {
 				agent: 'agent-123',
 				launch: true,
-				runOn: 'ep-ollama:qwen3:latest',
+				modelSource: 'ep-ollama:qwen3:latest',
 			});
 
 			expect(getSent()!.runOn).toMatchObject({ model: 'qwen3:latest', contextTokens: 524288 });
 		});
 
-		it('should send the provider for --run-on provider', async () => {
+		it('should send the provider for --model-source provider', async () => {
 			const getSent = captureSentMessage();
 
 			await autoRun(['/path/to/doc.md'], {
 				agent: 'agent-123',
 				launch: true,
-				runOn: 'provider',
+				modelSource: 'provider',
 				model: 'o3',
 			});
 
 			expect(getSent()).toMatchObject({ model: 'o3', runOn: { type: 'provider' } });
 		});
 
-		it('should refuse a --run-on source that is not configured', async () => {
+		it('should refuse a --model-source source that is not configured', async () => {
 			captureSentMessage();
 
 			await autoRun(['/path/to/doc.md'], {
 				agent: 'agent-123',
 				launch: true,
-				runOn: 'ep-gone:qwen3:latest',
+				modelSource: 'ep-gone:qwen3:latest',
 			});
 
-			expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('--run-on'));
+			expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('--model-source'));
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 
-		it('should omit runOn entirely when --run-on is not given', async () => {
+		it('should omit runOn entirely when --model-source is not given', async () => {
 			const getSent = captureSentMessage();
 
 			await autoRun(['/path/to/doc.md'], { agent: 'agent-123', launch: true });

@@ -237,6 +237,14 @@ describe('provider translation probe', () => {
 		await expect(
 			writeProbeScratchFile(home, '.maestro/scratch/symlink.json', 'bad')
 		).rejects.toThrow();
+		// A dangling link must not create its target outside scratch either
+		// (Windows has no O_NOFOLLOW, so the open would follow it).
+		const missing = path.join(outside, 'created.json');
+		await symlink(missing, path.join(home, '.maestro/scratch/dangling.json'), 'file');
+		await expect(
+			writeProbeScratchFile(home, '.maestro/scratch/dangling.json', 'bad')
+		).rejects.toThrow();
+		expect(await readdir(outside)).toEqual(['private.json']);
 		await link(privateFile, path.join(home, '.maestro/scratch/hardlink.json'));
 		await expect(
 			writeProbeScratchFile(home, '.maestro/scratch/hardlink.json', 'bad')

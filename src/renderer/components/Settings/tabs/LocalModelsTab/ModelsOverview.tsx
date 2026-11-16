@@ -227,9 +227,9 @@ export function ModelsOverview({
 							Maestro does small model work beside your agents: it names tabs, writes summaries,
 							turns a request into a shell command, screens untrusted text, and more. Each of those
 							is a <b>task</b>, and each task can run on a model on this computer, on a model server
-							you run, on System One, or on the Utility Agent. An <b>active task</b> is one you have
-							given a source; the rest are off and keep their old behavior. Nothing downloads,
-							starts, or calls a server until you ask.
+							you run, on System One, or on a provider agent through the Model Map. An{' '}
+							<b>active task</b> is one you have given a source; the rest are off and keep their old
+							behavior. Nothing downloads, starts, or calls a server until you ask.
 						</>
 					}
 				>

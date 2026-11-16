@@ -8,12 +8,45 @@ import type { StoredSession } from '../../stores/types';
 import { execGit } from '../../utils/remote-git';
 import { getSshRemoteById } from '../../stores';
 import { parseGitBranches } from '../../../shared/gitUtils';
+import { requestFromRenderer } from './remoteRequest';
+import {
+	normalizeDiffReviewCommandResult,
+	type DiffReviewCommandRequest,
+	type DiffReviewCommandResult,
+} from '../../../shared/diffReviewCommands';
+
+/**
+ * `add`, `list` and `send` run `git diff` in the renderer, over SSH for a
+ * remote agent, before answering; the 3s default would fail a large repo.
+ */
+const DIFF_REVIEW_TIMEOUT_MS = 30_000;
 
 export function registerGitCallbacks(
 	server: WebServer,
-	deps: Pick<WebServerFactoryDependencies, 'getMainWindow' | 'sessionsStore'>
+	deps: Pick<
+		WebServerFactoryDependencies,
+		'getMainWindow' | 'sessionsStore' | 'getWindowForSession'
+	>
 ): void {
-	const { getMainWindow, sessionsStore } = deps;
+	const { getMainWindow, sessionsStore, getWindowForSession } = deps;
+
+	// Diff review verbs are a ROUND TRIP: the caller is told which comment was
+	// added or removed, what is pending, or what the agent was sent. The request
+	// goes to the window that owns the agent, because the viewer that draws the
+	// pending comments, and the queue the review lands in, are that renderer's.
+	server.setDiffReviewCommandCallback(async (request: DiffReviewCommandRequest) => {
+		const targetWindow = getWindowForSession?.(request.sessionId) ?? getMainWindow();
+		if (!targetWindow || !isWebContentsAvailable(targetWindow)) {
+			logger.warn('No window is available for diffReviewCommand', 'WebServer');
+			return { success: false, error: 'Maestro window is not available' };
+		}
+		return requestFromRenderer<DiffReviewCommandResult>(targetWindow, 'remote:diffReviewCommand', {
+			fallback: { success: false, error: 'Maestro did not answer the diff review request' },
+			parse: normalizeDiffReviewCommandResult,
+			timeoutMs: DIFF_REVIEW_TIMEOUT_MS,
+			args: [request],
+		});
+	});
 
 	// Set up callback for web server to get git status
 	// Uses IPC request-response pattern with timeout

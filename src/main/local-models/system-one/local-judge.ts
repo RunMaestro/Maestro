@@ -151,7 +151,7 @@ export async function askLocalJudge(
 
 		switch (verdict.status) {
 			case 'off':
-			case 'use-utility-agent':
+			case 'use-provider':
 				// The assignment was read a moment ago; this is one that changed since.
 				throw noModelError(taskId);
 			case 'cancelled':

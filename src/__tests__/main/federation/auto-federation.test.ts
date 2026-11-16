@@ -253,6 +253,24 @@ describe('AutoFederationCoordinator: keeping hosts', () => {
 		expect(snapshot.agents[0].state).toBe('moved');
 	});
 
+	it('upgrades a CLI too old to run a host, under the same rules as an install', async () => {
+		const lonely = world({ agents: [], peers: [peer('r1', 'outdated')] });
+		expect((await lonely.coordinator.runNow({ force: false })).remotes[0]).toMatchObject({
+			state: 'waiting',
+			reason: 'The maestro-cli here is too old to run a host, and no SSH agent needs one.',
+		});
+		expect(lonely.deps.setupHost).not.toHaveBeenCalled();
+
+		const off = world({ autoMove: false, peers: [peer('r1', 'outdated')] });
+		await off.coordinator.runNow({ force: false });
+		expect(off.deps.setupHost).not.toHaveBeenCalled();
+
+		const wanted = world({ peers: [peer('r1', 'outdated')] });
+		const snapshot = await wanted.coordinator.runNow({ force: false });
+		expect(wanted.deps.setupHost).toHaveBeenCalledTimes(1);
+		expect(snapshot.agents[0].state).toBe('moved');
+	});
+
 	it('blocks a remote whose setup failed with the fix, and waits before trying again', async () => {
 		const w = world({
 			peers: [peer('r1', 'not-installed')],

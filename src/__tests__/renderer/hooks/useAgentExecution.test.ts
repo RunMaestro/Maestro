@@ -716,7 +716,7 @@ describe('useAgentExecution', () => {
 			expect(session.customEffort).toBe('low');
 		});
 
-		it("sends a tier's Run on target with the spawn, and nothing when the task names none", async () => {
+		it("sends a tier's model source with the spawn, and nothing when the task names none", async () => {
 			const local = { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' };
 			const session = createMockSession({
 				state: 'busy',
@@ -804,7 +804,7 @@ describe('useAgentExecution', () => {
 				expect(row).not.toHaveProperty('routedTier');
 			});
 
-			it("names the agent's own Run on source when the task names no place", async () => {
+			it("names the agent's own model source when the task names no place", async () => {
 				const row = await recordedRow(sessionWith({ runOn: ollama }), {});
 
 				expect(row).toMatchObject({ runOnEndpoint: 'ep-ollama', runOnModel: 'qwen3:latest' });

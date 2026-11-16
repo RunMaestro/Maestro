@@ -30,6 +30,7 @@ import {
 	isLocalModelTaskId,
 	LOCAL_MODEL_TASK_IDS,
 	LOCAL_MODEL_TASKS,
+	modelMapRoleOf,
 	OFF_ASSIGNMENT,
 	resolveLocalModelAssignment,
 	taskAcceptsLocalKind,
@@ -69,6 +70,7 @@ import { runtimeSetupLocation } from './runtime/runtime-consumers';
 import { isServerEngineInstalled } from './server/engine-store';
 import { isServerModel } from './server/presets';
 import { readInheritsProviderWithoutAgentPath, readLocalModelAssignments } from './sources';
+import { MODEL_MAP_ROLE_LABELS, type ModelMapRole } from '../../shared/local-models/model-map';
 import { getSystemOneReport } from './system-one/service';
 
 const NEED_LABELS: Record<LocalModelTaskDefinition['needs'], string> = {
@@ -109,16 +111,16 @@ export interface ResolveTaskReadinessOptions {
 	/** The System One engine in force, read from its settings. Defaults to the service's report. */
 	readSystemOne?: () => Promise<SystemOneEngineStanding>;
 	/**
-	 * Whether a task is off only because it inherits a provider Utility source
-	 * it has no path for. Defaults to the settings, unless `assignments` is
-	 * injected (a test), where it defaults to never.
+	 * The Model Map slot a task is off because of: it inherits a slot that is a
+	 * provider, and has no path for one. Defaults to the settings, unless
+	 * `assignments` is injected (a test), where it defaults to never.
 	 */
-	readInheritsProvider?: (taskId: LocalModelTaskId) => boolean;
+	readInheritsProvider?: (taskId: LocalModelTaskId) => ModelMapRole | null;
 }
 
 function inheritsProviderReader(
 	options: ResolveTaskReadinessOptions
-): ((taskId: LocalModelTaskId) => boolean) | undefined {
+): ((taskId: LocalModelTaskId) => ModelMapRole | null) | undefined {
 	return (
 		options.readInheritsProvider ??
 		(options.assignments ? undefined : readInheritsProviderWithoutAgentPath)
@@ -135,15 +137,17 @@ export async function resolveTaskReadiness(
 ): Promise<LocalModelTaskReadiness> {
 	const assignments = options.assignments ?? readLocalModelAssignments();
 	const task = LOCAL_MODEL_TASKS[taskId];
-	if (inheritsProviderReader(options)?.(taskId)) {
+	const providerRole = inheritsProviderReader(options)?.(taskId);
+	if (providerRole) {
+		const slot = MODEL_MAP_ROLE_LABELS[providerRole];
 		return {
 			taskId,
 			label: task.label,
 			needs: task.needs,
 			assignment: OFF_ASSIGNMENT,
 			state: 'off',
-			detail: `${task.label} uses the Utility source, which is a provider agent. ${task.label} runs only on a model, so it is off.`,
-			suggestedAction: `Set the Utility source to a local model or an endpoint in ${modelsSettingsLocation('system-two')}, or assign ${task.label} one in ${taskAssignmentLocation(task.id)}.`,
+			detail: `${task.label} uses the ${slot}, which is a provider agent. ${task.label} runs only on a model, so it is off.`,
+			suggestedAction: `Set the ${slot} to a local model or an endpoint in ${modelsSettingsLocation('system-two')}, or assign ${task.label} one in ${taskAssignmentLocation(task.id)}.`,
 		};
 	}
 	return resolveForAssignment(task, resolveLocalModelAssignment(assignments, taskId), options);
@@ -215,11 +219,12 @@ async function resolveForAssignment(
 					endpointServesNeed(task.needs) ? 'a local model or an endpoint' : 'a local model'
 				} in ${taskAssignmentLocation(task.id)}.`,
 			};
-		case 'utility-agent':
+		case 'agent-model':
+		case 'housekeeping-model':
 			return {
 				...base,
-				state: 'utility-agent',
-				detail: `${task.label} runs on the Utility Agent.`,
+				state: 'provider',
+				detail: `${task.label} runs on the ${MODEL_MAP_ROLE_LABELS[modelMapRoleOf(assignment) ?? 'housekeeping']}, a provider agent.`,
 			};
 		case 'local':
 			if (

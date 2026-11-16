@@ -209,7 +209,7 @@ export interface CueAutoRunConfig {
 	/** "Fresh context per" in the Auto Run window: one agent turn per task
 	 *  (`task`, the default when absent) or one per document (`document`). */
 	task_selection_mode?: TaskSelectionMode;
-	/** Where the run's model runs, in place of the agent's own Run on target
+	/** Where the run's model runs, in place of the agent's own model source
 	 *  (`BatchRunConfig.runOn`). Absent means the agent's own. */
 	run_on?: RunOnTarget;
 	/** Ignore the documents' `MAESTRO:MODEL` hints and run every task on the

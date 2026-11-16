@@ -274,7 +274,7 @@ inspection or audio quality. Failures reject with an allowlisted `Media*` code;
 provider/network diagnostics are not returned by this forwarding path.
 
 Only local standard Codex and Claude API harness destinations are supported.
-SSH, Run on/Auto routing, custom launchers or custom arguments, and other provider
+SSH, model source/Auto routing, custom launchers or custom arguments, and other provider
 harnesses fail `MediaUnavailable`; the Host never changes the selected model or
 routes a turn elsewhere to accommodate an attachment.
 

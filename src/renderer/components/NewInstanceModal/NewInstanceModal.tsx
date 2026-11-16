@@ -35,6 +35,7 @@ import { ThemedSelect } from '../shared/ThemedSelect';
 import { GatewayUrlField } from '../shared/GatewayUrlField';
 import {
 	AGENT_FORM_TAB_IDS,
+	AgentModelSection,
 	buildAgentSettingsTabs,
 	ProviderEnvironmentSection,
 	firstTabWithError,
@@ -53,7 +54,6 @@ import {
 	type RunOnSourceTarget,
 	type RunOnTarget,
 } from '../../../shared/local-models/run-on';
-import { RunOnField } from '../shared/RunOnField';
 import { TOKEN_PROXY_NAME } from '../../../shared/local-models/token-proxy';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useSessionStore } from '../../stores/sessionStore';
@@ -916,7 +916,7 @@ export function NewInstanceModal({
 		[agents, dynamicOptions]
 	);
 
-	// A provider whose harness has no Run on recipe runs on its own model, so a
+	// A provider whose harness has no model source recipe runs on its own model, so a
 	// target chosen under another provider is neither shown nor stored for it.
 	const effectiveRunOn: RunOnTarget = useMemo(
 		() => (agentRunOnSupport(selectedAgent).supported ? runOn : { type: 'provider' }),
@@ -925,6 +925,26 @@ export function NewInstanceModal({
 	// What the Auto model choice is judged against besides the provider: a new
 	// agent has no tier targets of its own yet, so only where it runs.
 	const autoModelFor = useMemo(() => ({ runOn: effectiveRunOn }), [effectiveRunOn]);
+
+	// The selected provider, whose model options the Models tab draws.
+	const selectedAgentConfig = useMemo(
+		() =>
+			selectedAgent && SUPPORTED_AGENTS.includes(selectedAgent)
+				? (agents.find((a) => a.id === selectedAgent) ?? null)
+				: null,
+		[agents, selectedAgent]
+	);
+	// The provider card loads its model list when it expands; the Models tab can
+	// be opened first, so it asks once per provider too. Both loaders skip a
+	// provider already loaded. The ref keeps an empty list from asking again.
+	const modelsTabLoadedRef = useRef(new Set<string>());
+	useEffect(() => {
+		if (activeTab !== 'models' || !selectedAgentConfig) return;
+		if (modelsTabLoadedRef.current.has(selectedAgentConfig.id)) return;
+		modelsTabLoadedRef.current.add(selectedAgentConfig.id);
+		void loadModelsForAgent(selectedAgentConfig.id);
+		void loadDynamicOptionsForAgent(selectedAgentConfig.id);
+	}, [activeTab, selectedAgentConfig, loadModelsForAgent, loadDynamicOptionsForAgent]);
 
 	// The group defaults this form has no control for (tiers, switched-off
 	// variables, the token proxy, System One). They are stamped onto the agent
@@ -1073,7 +1093,7 @@ export function NewInstanceModal({
 			return;
 		}
 
-		// The Run on target goes through the validator every writer shares. A
+		// The model source goes through the validator every writer shares. A
 		// refusal shows on the Models tab.
 		const runOnEdit = parseRunOnTarget(effectiveRunOn);
 		if (!runOnEdit.ok) {
@@ -1844,6 +1864,7 @@ export function NewInstanceModal({
 								<AgentPickerGrid
 									theme={theme}
 									hideEnvVars
+									hideModelOptions
 									autoModelFor={autoModelFor}
 									loading={loading}
 									sshConnectionError={sshConnectionError}
@@ -2000,27 +2021,60 @@ export function NewInstanceModal({
 					<ModelsTab
 						theme={theme}
 						idPrefix="new-agent"
-						runOn={
-							selectedAgent ? (
-								<div data-testid="new-agent-run-on">
-									<RunOnField
+						model={
+							selectedAgentConfig ? (
+								<div data-testid="new-agent-model">
+									<AgentModelSection
 										theme={theme}
-										toolType={selectedAgent}
-										value={effectiveRunOn}
-										onChange={(target) => {
-											setRunOn(target);
-											setRunOnError(undefined);
+										agent={selectedAgentConfig}
+										autoModelFor={autoModelFor}
+										agentConfig={agentConfigs[selectedAgentConfig.id] || {}}
+										onConfigChange={(key, value) => {
+											setAgentConfigs((prev) => ({
+												...prev,
+												[selectedAgentConfig.id]: { ...prev[selectedAgentConfig.id], [key]: value },
+											}));
 										}}
-										userEnvVars={customAgentEnvVars[selectedAgent]}
-										sshRemoteName={sshRemoteName}
-										error={runOnError}
-										onTest={handleTestRunOn}
-										testBlockedReason={
-											workingDir.trim() === ''
-												? 'Choose a working directory on the General tab first.'
-												: undefined
+										onConfigBlur={() => {
+											// Draft edits belong to onCreate, never the provider's shared defaults.
+										}}
+										availableModels={
+											selectedAgentConfig.id === 'grok'
+												? grokOptions.models
+												: availableModels[selectedAgentConfig.id] || []
 										}
-										testId="new-agent-run-on-field"
+										loadingModels={
+											selectedAgentConfig.id === 'grok'
+												? !!grokRequest && !grokOptions.loaded
+												: loadingModels[selectedAgentConfig.id] || false
+										}
+										onRefreshModels={() => loadModelsForAgent(selectedAgentConfig.id, true)}
+										dynamicOptions={
+											selectedAgentConfig.id === 'grok'
+												? { [getEffortConfigKey(selectedAgentConfig)]: grokOptions.efforts }
+												: dynamicOptions[selectedAgentConfig.id] || {}
+										}
+										loadingDynamicOptions={
+											selectedAgentConfig.id === 'grok'
+												? !!grokRequest && !grokOptions.loaded
+												: loadingDynamicOptions[selectedAgentConfig.id] || false
+										}
+										modelSource={{
+											value: effectiveRunOn,
+											onChange: (target) => {
+												setRunOn(target);
+												setRunOnError(undefined);
+											},
+											userEnvVars: customAgentEnvVars[selectedAgentConfig.id],
+											sshRemoteName,
+											error: runOnError,
+											onTest: handleTestRunOn,
+											testBlockedReason:
+												workingDir.trim() === ''
+													? 'Choose a working directory on the General tab first.'
+													: undefined,
+											testId: 'new-agent-model-source',
+										}}
 									/>
 								</div>
 							) : undefined

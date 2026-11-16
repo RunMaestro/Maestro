@@ -14,6 +14,8 @@ import { buildSshCommand, execSshCommand, RemoteCommandOptions } from './ssh-com
 import { logger } from './logger';
 import { isWorktreeAlreadyUsedError, parseWorktreePathForBranch } from '../../shared/gitUtils';
 import { shellEscapeRemotePath } from './shell-escape';
+import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
+import { yieldToEventLoop } from './concurrency';
 
 const LOG_CONTEXT = '[RemoteGit]';
 
@@ -152,6 +154,7 @@ export function isGitTimeout(result: ExecResult): boolean {
 // git process actually exits, not when a caller gives up on it, so a process
 // that ignores its kill signal still blocks new spawns for that folder.
 const readOnlyGitInFlight = new Map<string, Promise<ExecResult>>();
+const readOnlyGitStarts = createKeyedWriteQueue();
 
 /**
  * Disables git's optional locks (the index refresh `git status` writes back).
@@ -186,12 +189,24 @@ export async function execGitReadOnly(
 	const key = [sshRemote?.id ?? '', sshRemote ? (remoteCwd ?? '') : localCwd, ...args].join('\0');
 	let run = readOnlyGitInFlight.get(key);
 	if (!run) {
-		run = execGit(args, localCwd, sshRemote, remoteCwd, {
-			timeout: timeoutMs,
-			env: NO_OPTIONAL_LOCKS_ENV,
-		}).finally(() => {
-			readOnlyGitInFlight.delete(key);
-		});
+		const capturedArgs = [...args];
+		// Serialize only synchronous starts, yielding between them so a large
+		// poll fan-out cannot monopolize the main thread that serves tab actions.
+		// Wrapping the promise releases the queue before slow git/SSH I/O ends.
+		run = readOnlyGitStarts
+			.enqueue('start', async () => {
+				await yieldToEventLoop();
+				return {
+					pending: execGit(capturedArgs, localCwd, sshRemote, remoteCwd, {
+						timeout: timeoutMs,
+						env: NO_OPTIONAL_LOCKS_ENV,
+					}),
+				};
+			})
+			.then(({ pending }) => pending)
+			.finally(() => {
+				readOnlyGitInFlight.delete(key);
+			});
 		readOnlyGitInFlight.set(key, run);
 	}
 

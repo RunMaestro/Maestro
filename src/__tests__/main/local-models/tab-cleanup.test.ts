@@ -511,7 +511,7 @@ describe('suggestTabCleanup', () => {
 
 	it.each([
 		[{ status: 'off' }, 'off', /is off/],
-		[{ status: 'use-utility-agent' }, 'unavailable', /cannot run on the Utility Agent/],
+		[{ status: 'use-provider' }, 'unavailable', /cannot run on a provider agent/],
 		[{ status: 'cancelled', source: ENDPOINT_SOURCE }, 'cancelled', /took too long/],
 		[
 			{

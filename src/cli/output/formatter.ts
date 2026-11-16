@@ -6,6 +6,7 @@ import {
 	formatDurationDecimal,
 	formatRelativeTime,
 	formatSize,
+	truncateAtWordBoundary,
 } from '../../shared/formatters';
 import {
 	MODEL_SERVER_NAME,
@@ -93,6 +94,15 @@ import {
 	type GroupDefaultsFieldChange,
 } from '../../shared/groupAgentDefaults';
 import type { GroupSettingsPublishReport } from '../../shared/groupSettingsUpdate';
+import {
+	GROUP_LIFECYCLE_STAGE_LABELS,
+	GROUP_LIFECYCLE_STAGES,
+	GROUP_LIFECYCLE_TRIGGER_LABELS,
+	lifecycleTabName,
+	offboardingTimeoutMs,
+	type GroupLifecycle,
+	type GroupLifecycleRunReport,
+} from '../../shared/groupLifecycle';
 import type { GroupAgentDefaults } from '../../shared/types';
 import { formatBackgroundRequestsSpec } from '../../shared/local-models/background-requests';
 import { formatRunOnSpec } from '../../shared/local-models/run-on';
@@ -654,7 +664,7 @@ export interface AgentDetailDisplay {
 	tokenProxyMode?: string | null;
 	/** Whether the model may ask the token proxy for a compressed result's original. */
 	tokenProxyRetrieval?: boolean;
-	/** The Run on target; a source target carries its context size. */
+	/** The model source; a source target carries its context size. */
 	runOn?: unknown;
 	runOnLabel?: string | null;
 	runOnProblem?: string | null;
@@ -779,12 +789,12 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	if (agent.tokenProxyRetrieval) addConfig('Retrieval', 'on');
 	// Shown only for an agent on a source: the provider's own model is the default.
 	if (agent.runOnProblem) {
-		addConfig('Run on', c('red', `unusable target: ${agent.runOnProblem}`));
+		addConfig('Model source', c('red', `unusable: ${agent.runOnProblem}`));
 	} else if (agent.runOnLabel) {
 		const contextTokens = (agent.runOn as { contextTokens?: unknown } | null | undefined)
 			?.contextTokens;
 		addConfig(
-			'Run on',
+			'Model source',
 			typeof contextTokens === 'number'
 				? `${agent.runOnLabel} ${dim(`(context ${contextTokens} tokens)`)}`
 				: agent.runOnLabel
@@ -1200,7 +1210,7 @@ const TASK_READINESS_STATE: Record<
 	{ label: string; color: keyof typeof colors }
 > = {
 	ready: { label: 'ready', color: 'green' },
-	'utility-agent': { label: 'utility agent', color: 'blue' },
+	provider: { label: 'provider agent', color: 'blue' },
 	off: { label: 'off', color: 'gray' },
 	unavailable: { label: 'unavailable', color: 'red' },
 };
@@ -1526,7 +1536,7 @@ function decisionOutcomeLine(counts: ModelUsageDecisionCounts): string {
  * `maestro-cli stats models`: what every model other than a provider's own did
  * in the range, the way the Usage Dashboard's Models tab draws it: the sources
  * (with the providers' own cloud for comparison), the tasks, the agents that
- * ran turns on a Run on source, System One's decisions and the token proxy.
+ * ran turns on a model source, System One's decisions and the token proxy.
  */
 export function formatModelUsage(usage: ModelUsage): string {
 	const { totals } = usage;
@@ -1592,7 +1602,7 @@ export function formatModelUsage(usage: ModelUsage): string {
 
 	const runOnAgents = usage.byAgent.filter((agent) => agent.turns > 0);
 	if (runOnAgents.length > 0) {
-		lines.push('', bold('Agents (Run on turns)'));
+		lines.push('', bold('Agents (model source turns)'));
 		for (const agent of runOnAgents) {
 			const targets = agent.targets
 				.map((target) => `${target.model} on ${target.sourceLabel} ${target.turns}`)
@@ -1683,6 +1693,12 @@ export function formatModelServerReport(report: ModelServerReport): string {
 	);
 	if (status.pid !== null) lines.push(row('Process', `pid ${status.pid}`));
 	if (status.startedAt !== null) lines.push(row('Up since', formatRelativeTime(status.startedAt)));
+	lines.push(
+		row(
+			'At launch',
+			status.startOnLaunch ? 'starts with Maestro' : dim('stays stopped when Maestro starts')
+		)
+	);
 
 	if (report.installing) {
 		const { phase, bytes, totalBytes, choice } = report.installing;
@@ -1949,6 +1965,35 @@ export function formatLocalModelTasks(
 	if (readinessError) {
 		lines.push('');
 		lines.push(dim(`Readiness unavailable (${readinessError}). Assignments are from settings.`));
+	}
+	return lines.join('\n');
+}
+
+/** One slot of the Model Map, as `models map` prints it. */
+export interface ModelMapSlotDisplay {
+	role: string;
+	label: string;
+	/** The slot in its `models map` spelling. */
+	spec: string;
+	/** What a person calls the slot's choice. */
+	source: string;
+	/** Labels of the tasks that inherit the slot. */
+	tasks: string[];
+}
+
+/** `maestro-cli models map`: each slot, what it runs on, and the tasks that inherit it. */
+export function formatModelMap(rows: ModelMapSlotDisplay[]): string {
+	const lines: string[] = [bold(c('cyan', 'MODEL MAP')), ''];
+	const roleWidth = Math.max(...rows.map((row) => row.role.length));
+	for (const row of rows) {
+		lines.push(
+			`  ${c('white', row.role.padEnd(roleWidth))}  ${c('blue', row.spec)}  ${dim(row.source)}`
+		);
+		const indent = ' '.repeat(roleWidth + 4);
+		lines.push(`${indent}${dim(row.label)}`);
+		lines.push(
+			`${indent}${dim(`used by: ${row.tasks.length > 0 ? row.tasks.join(', ') : 'no task'}`)}`
+		);
 	}
 	return lines.join('\n');
 }
@@ -2486,6 +2531,34 @@ export interface GroupSettingsView {
 	badgeLabel: string;
 	badgeLabelSource: 'custom' | 'automatic';
 	defaults: GroupAgentDefaults | null;
+	/** Absent on a view built before lifecycle prompts existed. */
+	lifecycle?: GroupLifecycle | null;
+}
+
+/** The Onboarding and Offboarding lines of `group-settings`. */
+function formatGroupLifecycleLines(lifecycle: GroupLifecycle | null | undefined): string[] {
+	const lines = ['', `  ${bold(c('white', 'Lifecycle prompts'))}`];
+	for (const stage of GROUP_LIFECYCLE_STAGES) {
+		const label = GROUP_LIFECYCLE_STAGE_LABELS[stage];
+		const hook = lifecycle?.[stage];
+		if (!hook) {
+			lines.push(`    ${`${label}:`.padEnd(13)} ${dim('none')}`);
+			continue;
+		}
+		const events = hook.triggers.map((trigger) => GROUP_LIFECYCLE_TRIGGER_LABELS[stage][trigger]);
+		const details = [
+			hook.enabled ? c('green', 'on') : dim('off'),
+			events.length > 0 ? events.join(', ') : 'no events',
+			hook.runsInAgentId ? `runs in ${hook.runsInAgentId}` : 'runs in the agent itself',
+			`tab "${lifecycleTabName(hook, stage)}"`,
+			`tier ${hook.tier ?? 'default'}`,
+			...(stage === 'offboarding' ? [`waits up to ${offboardingTimeoutMs(hook) / 60_000} min`] : []),
+		];
+		lines.push(`    ${`${label}:`.padEnd(13)} ${details.join(' · ')}`);
+		const firstLine = hook.prompt.trim().split(/\r?\n/)[0] ?? '';
+		lines.push(`    ${''.padEnd(13)} ${dim(truncateAtWordBoundary(firstLine, 80) || '(no prompt)')}`);
+	}
+	return lines;
 }
 
 /**
@@ -2503,6 +2576,7 @@ export function formatGroupSettings(group: GroupSettingsView): string {
 	];
 	if (!group.defaults) {
 		lines.push(`  ${c('white', 'Defaults:')}    ${dim('no defaults')}`);
+		lines.push(...formatGroupLifecycleLines(group.lifecycle));
 		return lines.join('\n');
 	}
 	lines.push(`  ${bold(c('white', 'Defaults for a new agent in this group'))}`);
@@ -2513,6 +2587,7 @@ export function formatGroupSettings(group: GroupSettingsView): string {
 			`    ${`${groupDefaultLabel(key)}:`.padEnd(width + 1)} ${describeGroupDefaultValue(key, group.defaults[key])}`
 		);
 	}
+	lines.push(...formatGroupLifecycleLines(group.lifecycle));
 	return lines.join('\n');
 }
 
@@ -2548,6 +2623,23 @@ export function formatGroupSettingsUpdate(
 			lines.push(`  Skipped on ${skip.agentName}: ${skip.label}. ${skip.reason}`);
 		}
 	}
+	return lines.join('\n');
+}
+
+/** What `run-group-lifecycle` did, for a person. */
+export function formatGroupLifecycleRun(
+	groupName: string,
+	run: GroupLifecycleRunReport,
+	names: { subject: string; runAgent: string }
+): string {
+	const label = GROUP_LIFECYCLE_STAGE_LABELS[run.stage];
+	const where =
+		run.runAgentId === run.subjectAgentId
+			? `${names.subject}, tab "${run.tabName}"`
+			: `${names.runAgent}, tab "${run.tabName}" (about ${names.subject})`;
+	const lines = [formatSuccess(`Queued ${groupName}'s ${label} prompt in ${where}`)];
+	if (run.stage === 'offboarding') lines.push(dim('  Nothing was removed: this only runs the prompt.'));
+	lines.push(dim(`  Tab id: ${run.tabId}`));
 	return lines.join('\n');
 }
 

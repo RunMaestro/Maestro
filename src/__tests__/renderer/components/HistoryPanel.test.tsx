@@ -2695,7 +2695,7 @@ describe('HistoryPanel', () => {
 			return input;
 		}
 
-		it.each(['off', 'unavailable', 'utility-agent'])(
+		it.each(['off', 'unavailable', 'provider'])(
 			'does not offer the toggle while the task is %s',
 			async (state) => {
 				mockTaskReadiness.mockResolvedValue([{ taskId: 'semantic-search', state }]);

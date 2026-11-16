@@ -177,7 +177,7 @@ export function installModelServerEngine(
 					const { state } = await getModelServerStatus();
 					if (state === 'stopped' || state === 'failed') return;
 					restartAfter = state !== 'stopping';
-					await stopModelServer();
+					await stopModelServer({ remember: false });
 				},
 			});
 		} finally {
@@ -185,7 +185,7 @@ export function installModelServerEngine(
 		}
 		if (restartAfter) {
 			try {
-				await startModelServer();
+				await startModelServer({ remember: false });
 			} catch (error) {
 				// The install succeeded. The report carries the start's error in
 				// `status.lastError`, which is what the card and the CLI show.
@@ -204,7 +204,7 @@ export function installModelServerEngine(
 }
 
 /**
- * Apply a settings change sent over a transport: `{ bind?, maxModels?, rotateKey? }`.
+ * Apply a settings change sent over a transport: `{ bind?, maxModels?, rotateKey?, startOnLaunch? }`.
  * The bind mode and model count are validated by the config store, which names
  * a value it refuses.
  */
@@ -214,16 +214,27 @@ export function updateModelServerConfigRequest(raw: unknown): Promise<ModelServe
 			new ModelServerError('A model server settings change must be an object.', 'invalid-setting')
 		);
 	}
-	const patch = raw as { bind?: unknown; maxModels?: unknown; rotateKey?: unknown };
+	const patch = raw as {
+		bind?: unknown;
+		maxModels?: unknown;
+		rotateKey?: unknown;
+		startOnLaunch?: unknown;
+	};
 	if (patch.rotateKey !== undefined && typeof patch.rotateKey !== 'boolean') {
 		return Promise.reject(
 			new ModelServerError('rotateKey must be true or false.', 'invalid-setting')
+		);
+	}
+	if (patch.startOnLaunch !== undefined && typeof patch.startOnLaunch !== 'boolean') {
+		return Promise.reject(
+			new ModelServerError('startOnLaunch must be true or false.', 'invalid-setting')
 		);
 	}
 	return updateModelServerConfig({
 		bind: patch.bind as ModelServerStatus['bind'] | undefined,
 		maxModels: patch.maxModels as number | undefined,
 		rotateKey: patch.rotateKey === true,
+		startOnLaunch: patch.startOnLaunch as boolean | undefined,
 	});
 }
 

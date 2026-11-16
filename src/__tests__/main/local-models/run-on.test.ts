@@ -166,7 +166,7 @@ describe('prepareAgentRunOn: a saved source', () => {
 		if (prepared.kind !== 'refused') throw new Error('expected a refusal');
 		expect(prepared.message).toContain('qwen3:latest on Ollama');
 		expect(prepared.message).toContain('Could not reach "Ollama"');
-		expect(prepared.message).toContain('set Run on to Provider');
+		expect(prepared.message).toContain('set the model source to Provider');
 	});
 
 	it('refuses a model the source does not serve, and names what it does serve', async () => {
@@ -715,7 +715,7 @@ describe('logRunOnLaunch', () => {
 
 		expect(logger.info).toHaveBeenCalledTimes(1);
 		const [message, context, data] = vi.mocked(logger.info).mock.calls[0];
-		expect(message).toBe('Running claude-code on qwen3:latest (Run on)');
+		expect(message).toBe('Running claude-code on qwen3:latest (model source)');
 		expect(context).toBe('[Test]');
 		expect(data).toMatchObject({ sessionId: 'a1-ai-t1', envVars: runOn.envVarNames });
 	});

@@ -4,7 +4,7 @@
  *
  * One row per installed harness that can select a model, three pickers per
  * row. A picker offers the harness's own catalogue and, for a harness with a
- * Run on recipe, every model the sources list (`buildTierTargetOptionGroups`).
+ * model source recipe, every model the sources list (`buildTierTargetOptionGroups`).
  * Beside each picker is the layer the value comes from: Harness default (set
  * here) or Built-in (Maestro's own table). An agent that sets the tier itself
  * overrides both.

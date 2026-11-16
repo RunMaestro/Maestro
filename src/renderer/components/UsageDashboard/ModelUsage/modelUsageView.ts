@@ -282,10 +282,10 @@ export function latencyBarPercent(ms: number, maxMs: number): number {
 }
 
 // ---------------------------------------------------------------------------
-// Run on agents
+// Model source agents
 // ---------------------------------------------------------------------------
 
-/** The agents that launched turns on a Run on source: the ones the tiles draw. */
+/** The agents that launched turns on a model source: the ones the tiles draw. */
 export function runOnAgents(agents: readonly ModelUsageAgent[]): ModelUsageAgent[] {
 	return agents.filter((agent) => agent.turns > 0);
 }

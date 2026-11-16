@@ -1814,7 +1814,7 @@ describe('process IPC handlers', () => {
 			});
 		});
 
-		describe("the agent's Run on target", () => {
+		describe("the agent's model source", () => {
 			const OLLAMA = {
 				id: 'ep-ollama',
 				name: 'Ollama',

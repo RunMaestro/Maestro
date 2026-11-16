@@ -28,11 +28,11 @@ import {
  * provider with no base-URL variable) fails the launch by name rather than
  * sending the turn to another endpoint.
  *
- * So is an agent's Run on target (`resolveRunOnLaunch`): the variables and root
+ * So is an agent's model source (`resolveRunOnLaunch`): the variables and root
  * arguments that point the harness at the source, and the model, which takes
  * the place of the agent's own in its model flag. A target that cannot run
  * fails the launch by name; it never runs the turn on the provider's model. A
- * Run on target takes the gateway's place: the gateway routes to the provider's
+ * model source takes the gateway's place: the gateway routes to the provider's
  * cloud, which is not where the turn is going, so the plan skips it and says so
  * (`runOn.skippedGatewayUrl`).
  *
@@ -98,13 +98,13 @@ export interface LaunchPlanAgent extends PromptDeliveryAgent {
 	defaultEnvVars?: Record<string, string>;
 	batchModeEnvVars?: Record<string, string>;
 	readOnlyEnvOverrides?: Record<string, string>;
-	/** The provider's model flag, which a Run on target's model goes through. */
+	/** The provider's model flag, which a model source's model goes through. */
 	modelArgs?: (modelId: string) => string[];
-	/** The provider's batch subcommand, which a Run on target's own arguments follow. */
+	/** The provider's batch subcommand, which a model source's own arguments follow. */
 	batchModePrefix?: string[];
 }
 
-/** What an agent's Run on target did to a launch. */
+/** What an agent's model source did to a launch. */
 export interface LaunchPlanRunOn {
 	/** The model the harness was told to use, in place of the agent's own. */
 	model: string;
@@ -128,7 +128,7 @@ export interface LaunchPlanRunOn {
 }
 
 /**
- * Turn a resolved Run on target into what a launch carries: its arguments, and
+ * Turn a resolved model source into what a launch carries: its arguments, and
  * the record of what was done. The arguments get the target's root arguments in
  * front, where a CLI reads a global option, its subcommand arguments after the
  * provider's batch subcommand (`placeSubcommandArgs`), and its model in the
@@ -141,7 +141,7 @@ export function applyRunOnToLaunch(input: {
 	toolType: string;
 	args: readonly string[];
 	runOn: Extract<RunOnLaunchResolution, { kind: 'inject' }>;
-	/** The agent's stored gateway, which a Run on target takes the place of. */
+	/** The agent's stored gateway, which a model source takes the place of. */
 	gatewayUrl?: string | null;
 }):
 	| { ok: true; args: string[]; runOn: LaunchPlanRunOn }
@@ -154,7 +154,7 @@ export function applyRunOnToLaunch(input: {
 		return {
 			ok: false,
 			reason: 'run-on-unsupported-provider',
-			error: `This agent is set to run on ${runOn.model}, but Maestro has no model flag for "${input.toolType}" to name it with. Set Run on to Provider to run the agent.`,
+			error: `This agent is set to run on ${runOn.model}, but Maestro has no model flag for "${input.toolType}" to name it with. Set the model source to Provider to run the agent.`,
 		};
 	}
 	const skippedGatewayUrl = input.gatewayUrl?.trim();
@@ -242,7 +242,7 @@ export interface AgentLaunchInput {
 	 */
 	gateway?: { toolType: string; url?: string | null };
 	/**
-	 * The agent's Run on target with its source looked up (`prepareAgentRunOn`).
+	 * The agent's model source with its source looked up (`prepareAgentRunOn`).
 	 * Omit for an agent that runs on its provider's model.
 	 */
 	runOn?: ResolvedRunOn;
@@ -297,7 +297,7 @@ interface LaunchPlanCommon {
 	args: string[];
 	/**
 	 * `args` without the prompt: the caller's arguments with the gateway's root
-	 * arguments, or the Run on target's root arguments and model, applied. For a
+	 * arguments, or the model source's root arguments and model, applied. For a
 	 * caller that places the prompt itself (desktop), which must spawn from this
 	 * list and not from the one it passed in.
 	 */
@@ -325,7 +325,7 @@ interface LaunchPlanCommon {
 	 */
 	gateway: { envVar: string; url: string; args: string[]; subcommandArgs: string[] } | undefined;
 	/**
-	 * The Run on target this launch uses, when it has one: `envVars` carries its
+	 * The model source this launch uses, when it has one: `envVars` carries its
 	 * variables, and `args` and `launchArgs` already carry its root arguments
 	 * and its model.
 	 */
@@ -380,7 +380,7 @@ export type AgentLaunchPlanResult =
  * Plan an agent launch. Fails, before anything is spawned, when SSH is on and
  * no usable remote is configured (it never falls back to running locally),
  * when the agent's gateway cannot be used (it never falls back to running
- * without it), and when its Run on target cannot run (it never falls back to
+ * without it), and when its model source cannot run (it never falls back to
  * the provider's model).
  */
 export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanResult {
@@ -449,7 +449,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 		return { ok: false, reason: runOn.code, error: runOn.message };
 	}
 
-	// A Run on target takes the gateway's place, so the gateway is not resolved
+	// A model source takes the gateway's place, so the gateway is not resolved
 	// at all: one that could not be used must not refuse a launch that was never
 	// going through it.
 	const gateway =

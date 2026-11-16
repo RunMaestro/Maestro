@@ -54,9 +54,9 @@ export interface SpawnProcessConfig {
 	sessionCustomModel?: string; // Session-specific model selection
 	sessionCustomEffort?: string; // Session-specific effort/reasoning level
 	sessionCustomContextWindow?: number; // Session-specific context window size
-	// The Run on target THIS turn launches on in place of the agent's stored one:
+	// The model source THIS turn launches on in place of the agent's stored one:
 	// a tier's target, resolved by the renderer for an Auto Run task
-	// (`turnRunOnTarget`). Data, validated by the Run on path. Absent means the
+	// (`turnRunOnTarget`). Data, validated by the model source path. Absent means the
 	// agent's own target, which the handler reads from the store.
 	runOnOverride?: unknown;
 	// Session's Additional Directories. Providers that declare

@@ -2,7 +2,7 @@
  * useHarnessTierOptions - what each installed harness can launch a tier on.
  *
  * One row per installed harness that can select a model, each with its own
- * catalogue and the Run on targets the sources list (`listHarnessTierOptions`
+ * catalogue and the model sources the sources list (`listHarnessTierOptions`
  * in the main process, the function `maestro-cli models tiers options` calls).
  *
  * With a `harness` it asks for that one alone, installed or not: the agent's

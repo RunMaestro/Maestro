@@ -120,6 +120,18 @@ describe('CoworkingRegistry browser methods', () => {
 		expect(registry.resolveBrowserTabUuidForSession('s1', 'browser:1')).toBe('u-a');
 	});
 
+	it('getBrowserIdForTab maps a tab back to its browser:N id, scoped and privacy-safe', () => {
+		registry.syncSessionBrowsers('s1', [input('u-a'), hidden('u-b')], false);
+		registry.syncSessionBrowsers('s2', [input('u-c')], false);
+		expect(registry.getBrowserIdForTab('s1', 'u-a')).toBe('browser:1');
+		// Hidden is indistinguishable from unknown: no id to hand out.
+		expect(registry.getBrowserIdForTab('s1', 'u-b')).toBeNull();
+		// Another session's tab does not resolve in this one.
+		expect(registry.getBrowserIdForTab('s1', 'u-c')).toBeNull();
+		expect(registry.getBrowserIdForTab('s2', 'u-c')).toBe('browser:1');
+		expect(registry.getBrowserIdForTab('s1', 'never-synced')).toBeNull();
+	});
+
 	it('keeps browser:N ids stable across hide -> unhide -> sync cycles', () => {
 		registry.syncSessionBrowsers('s1', [input('u-a'), input('u-b')], false);
 		expect(registry.resolveBrowserTabUuidForSession('s1', 'browser:2')).toBe('u-b');

@@ -12,6 +12,8 @@
 //   set      --bind local|network, --max-models <n>, --rotate-key, and
 //            --build default|cpu|cuda|rocm (installs that build of the engine).
 //            A running server restarts to apply any of them.
+//            --start-on-launch on|off sets whether it starts with Maestro
+//            (start turns it on and stop turns it off, like the card).
 //   key      print the API key a harness needs (the card's Copy)
 //
 // Exit codes, for scripts: `status` exits non-zero when the server is `failed`
@@ -31,6 +33,7 @@ import {
 import { isServerBuildChoice, SERVER_BUILD_CHOICES } from '../../shared/local-models/server-engine';
 import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
 import { failCommand, failFromError } from '../services/session-command';
+import { parseCliBool } from '../utils/parse';
 
 /** A status read: a config file, the engine manifest, one loopback request. */
 const STATUS_TIMEOUT_MS = 15_000;
@@ -129,6 +132,7 @@ interface SetOptions extends JsonOption {
 	maxModels?: string;
 	rotateKey?: boolean;
 	build?: string;
+	startOnLaunch?: string;
 }
 
 export async function modelsServerSet(options: SetOptions): Promise<void> {
@@ -155,6 +159,13 @@ export async function modelsServerSet(options: SetOptions): Promise<void> {
 		payload.maxModels = count;
 	}
 	if (options.rotateKey) payload.rotateKey = true;
+	if (options.startOnLaunch !== undefined) {
+		try {
+			payload.startOnLaunch = parseCliBool(options.startOnLaunch, '--start-on-launch');
+		} catch (error) {
+			failCommand((error as Error).message, options.json, ExitCode.InvalidUsage);
+		}
+	}
 	if (options.build !== undefined) {
 		if (!isServerBuildChoice(options.build)) {
 			failCommand(
@@ -167,7 +178,7 @@ export async function modelsServerSet(options: SetOptions): Promise<void> {
 	}
 	if (Object.keys(payload).length === 1) {
 		failCommand(
-			'Nothing to change. Pass --bind, --max-models, --rotate-key or --build.',
+			'Nothing to change. Pass --bind, --max-models, --rotate-key, --start-on-launch or --build.',
 			options.json,
 			ExitCode.InvalidUsage
 		);

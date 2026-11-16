@@ -231,7 +231,7 @@ export interface DocumentReadResult {
 
 /**
  * Per-task model/effort resolved from the document's `MAESTRO:MODEL` hint, and
- * the Run on target when the hint's tier names a place. Undefined on an axis
+ * the model source when the hint's tier names a place. Undefined on an axis
  * means the agent's configured value stands.
  */
 export type AutoRunTurnOverrides = Pick<
@@ -455,7 +455,7 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			const ignoreModelHints = runOverrides?.ignoreModelHints === true;
 			const baselineModel = runOverrides?.modelOverride ?? session.customModel;
 			const baselineEffort = runOverrides?.effortOverride ?? session.customEffort;
-			// The run's Run on target stands in for the agent's own, exactly as its
+			// The run's model source stands in for the agent's own, exactly as its
 			// model does: the baseline a document's tier hint can still override.
 			const runRunOn = runOverrides?.runOnOverride;
 			// Where a tier launches for this agent: its own tier targets, then the

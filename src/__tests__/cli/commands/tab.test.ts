@@ -764,7 +764,7 @@ describe('tab commands', () => {
 				readiness: [
 					{ id: 'pressure', status: 'unknown', statement: 'No record.', uncertainty: [] },
 				],
-				routing: ['Run on: Provider.'],
+				routing: ['Model source: Provider.'],
 				advice: ['A sentence.'],
 				unknowns: ['pressure: No record.'],
 			};

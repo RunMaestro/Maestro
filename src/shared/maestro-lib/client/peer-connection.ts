@@ -19,6 +19,8 @@ import type { MaestroClient } from './types';
 export type PeerConnectErrorCode =
 	/** The remote has no usable `maestro-cli`. */
 	| 'not-installed'
+	/** The remote's `maestro-cli` predates the host verbs: an install to upgrade, not a network fault. */
+	| 'outdated'
 	/** The CLI is there, but no host is running. */
 	| 'host-down'
 	/** The SSH forward could not be opened. */
@@ -83,6 +85,11 @@ export function peerStartFix(peer: string): string {
 	return `Start it with: maestro-cli remote-host start ${peer}`;
 }
 
+/** The `remote-host install` line that upgrades a peer's `maestro-cli` and starts its host. */
+export function peerUpgradeFix(peer: string): string {
+	return `Install this version there with: maestro-cli remote-host install ${peer} --start`;
+}
+
 /** Turn a forward failure into an error that names the peer and the fix. */
 export function peerForwardError(peer: string, error: unknown): PeerConnectError {
 	if (error instanceof PeerConnectError) return error;
@@ -108,6 +115,9 @@ export function peerForwardError(peer: string, error: unknown): PeerConnectError
 					peer
 				);
 		}
+	}
+	if (error instanceof RemoteDiscoveryError && error.code === 'unsupported') {
+		return new PeerConnectError('outdated', `${error.message} ${peerUpgradeFix(peer)}`, peer);
 	}
 	if (error instanceof RemoteDiscoveryError) {
 		return new PeerConnectError(

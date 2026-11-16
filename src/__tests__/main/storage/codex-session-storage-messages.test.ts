@@ -628,7 +628,9 @@ describe('CodexSessionStorage - readSessionMessages', () => {
 		// not match, so the lookup falls back to each file's header. It must read
 		// only that header: the fallback runs for every rollout until the match,
 		// and a rollout can be hundreds of MB (#1862).
-		const sessionsDir = path.join('/home', 'user', '.codex', 'sessions');
+		// Built with path.join because the lookup joins with the platform
+		// separator: on Windows it asks for `\home\user\...`, not `/home/user/...`.
+		const sessionsDir = path.join('/home/user/.codex', 'sessions');
 		const dir = path.join(sessionsDir, '2026', '03', '08');
 		const other = path.join(
 			dir,

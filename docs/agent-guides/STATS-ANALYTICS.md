@@ -1,4 +1,4 @@
-<!-- Verified 2026-04-10 against origin/rc (06e5a2eb3) -->
+<!-- Verified 2026-11-14 against main (Usage Dashboard overhaul) -->
 
 # Stats and Analytics System
 
@@ -13,11 +13,12 @@ Renderer (Usage Dashboard)        Main Process
 | SummaryCards          | ------> | getStatsDB() singleton    |
 | ActivityHeatmap       |         | StatsDB class             |
 | AgentUsageChart       |         |   +-- query-events.ts     |
-| PeakHoursChart        |         |   +-- auto-run.ts         |
+| RadialActivityChart   |         |   +-- auto-run.ts         |
 | SessionStats          |         |   +-- session-lifecycle.ts |
 | ...charts...          | <------ |   +-- aggregations.ts     |
-+-----------------------+ stats:  |   +-- data-management.ts  |
++-----------------------+ stats:  |   +-- usage-export.ts     |
                          updated  +---------------------------+
+                         (table)
                                           |
                                     +-----v-----+
                                     | stats.db   |  (SQLite, WAL mode)
@@ -40,22 +41,22 @@ Uses WAL (Write-Ahead Logging) journal mode for better concurrent access.
 
 Tracks individual AI query/response cycles:
 
-| Column            | Type             | Description                                                                      |
-| ----------------- | ---------------- | -------------------------------------------------------------------------------- |
-| `id`              | TEXT PK          | UUID                                                                             |
-| `session_id`      | TEXT NOT NULL    | Maestro session ID                                                               |
-| `agent_type`      | TEXT NOT NULL    | Agent type (e.g. `claude-code`)                                                  |
-| `source`          | TEXT NOT NULL    | `'user'` or `'auto'` (Auto Run)                                                  |
-| `start_time`      | INTEGER NOT NULL | Unix timestamp (ms)                                                              |
-| `duration`        | INTEGER NOT NULL | Duration in ms                                                                   |
-| `project_path`    | TEXT             | Normalized project path                                                          |
-| `tab_id`          | TEXT             | AI tab that issued the query                                                     |
-| `is_remote`       | INTEGER          | SSH remote flag (added in v2)                                                    |
-| `is_worktree`     | INTEGER          | Worktree agent flag (v5)                                                         |
-| `user_name`       | TEXT             | Web Login sender (v12)                                                           |
-| `run_on_endpoint` | TEXT             | Run on source the turn launched on: saved endpoint id, or `maestro-server` (v20) |
-| `run_on_model`    | TEXT             | The model that source ran, written WITH `run_on_endpoint` (v20)                  |
-| `routed_tier`     | TEXT             | Tier Auto's router chose: `low`, `medium` or `high` (v20)                        |
+| Column            | Type             | Description                                                                     |
+| ----------------- | ---------------- | ------------------------------------------------------------------------------- |
+| `id`              | TEXT PK          | UUID                                                                            |
+| `session_id`      | TEXT NOT NULL    | Maestro agent id (no tab part)                                                  |
+| `agent_type`      | TEXT NOT NULL    | Agent type (e.g. `claude-code`)                                                 |
+| `source`          | TEXT NOT NULL    | `'user'` or `'auto'` (Auto Run)                                                 |
+| `start_time`      | INTEGER NOT NULL | Unix timestamp (ms)                                                             |
+| `duration`        | INTEGER NOT NULL | Duration in ms                                                                  |
+| `project_path`    | TEXT             | Normalized project path                                                         |
+| `tab_id`          | TEXT             | AI tab that issued the query                                                    |
+| `is_remote`       | INTEGER          | SSH remote flag (added in v2)                                                   |
+| `is_worktree`     | INTEGER          | Worktree agent flag (v5)                                                        |
+| `user_name`       | TEXT             | Web Login sender (v12)                                                          |
+| `run_on_endpoint` | TEXT             | model source the turn launched on: saved endpoint id, or `maestro-server` (v21) |
+| `run_on_model`    | TEXT             | The model that source ran, written WITH `run_on_endpoint` (v21)                 |
+| `routed_tier`     | TEXT             | Tier Auto's router chose: `low`, `medium` or `high` (v21)                       |
 
 `user_name` is the Web Login account that SENT the turn, and NULL means "nobody
 was signed in" - a turn typed at the desktop, which is every turn while Web
@@ -63,10 +64,10 @@ Login is off. It is stamped by `stats:record-query` from what the spawn noted
 (`resolveTurnActor`), never from the acting user at write time: the row is
 written by the desktop renderer's exit listener even for a turn a browser sent.
 
-The three v20 columns are the Models tab's only record of where an agent turn ran, and
+The three v21 columns are the Models tab's only record of where an agent turn ran, and
 `turnModelStatsFields({ runOn, auto })` in `src/shared/autoTurn.ts` shapes them for both writers of the
 row (the renderer's exit listener and the Auto Run spawn). They are frozen at SEND from the tab's
-`turnRunOnSource` and `turnAuto` stamps, never read from the live agent record, so a Run on target edited
+`turnRunOnSource` and `turnAuto` stamps, never read from the live agent record, so a model source edited
 mid-turn does not refile the turn. `run_on_endpoint` and `run_on_model` are written together or not at
 all, and `routed_tier` is bound only when it is one of the three levels. NULL in all three means the turn
 ran on the provider's own cloud, which is what the Models tab compares everything else against.
@@ -74,7 +75,11 @@ ran on the provider's own cloud, which is what the Models tab compares everythin
 and the place it stayed. `query_events` has one writer, the renderer, so a Cue run and a headless
 `maestro-cli send` write no row on any model and are not counted there.
 
-**Indexes**: `start_time`, `agent_type`, `source`, `session_id`, `project_path`, `is_remote`, `is_worktree`, `user_name`, compound `(start_time, agent_type)`, `(start_time, project_path)`, `(start_time, source)`
+**Indexes**: `start_time`, `agent_type`, `source`, `session_id`, `project_path`, `is_remote`, `is_worktree`, `user_name`, compound `(start_time, agent_type)`, `(start_time, project_path)`, `(start_time, source)`, `(start_time, session_id)` (v14)
+
+`session_id` is the Maestro agent id (`Session.id`), never a tab or process id,
+so `COUNT(DISTINCT session_id)` is "agents with a query", which is what
+`StatsAggregation.totalSessions` reports.
 
 Note there is deliberately **no index on `tab_id` and no aggregation that groups by it**. The one consumer, the Usage Dashboard's per-tab breakdown (`UsageDashboard/TabBreakdown.tsx`), groups client-side over the rows `AgentDetailModal` has already fetched for a single agent via `getStats('all', { sessionId })`. That set is one agent's events, not the whole table, so it stays cheap and needs no new IPC. Reach for a real index only if something ever needs to query by tab across all agents.
 
@@ -150,12 +155,15 @@ totals. The renderer side of that state machine is `src/renderer/services/wizard
 
 #### `session_lifecycle` (Migration v3)
 
-Tracks session creation and closure for duration analytics:
+Tracks when an agent was created and deleted. Its one dashboard reader is the
+Agent Overview's Agents Over Time chart (`AgentCountTrendChart`, via
+`stats:get-session-lifecycle`), the only record of an agent that no longer
+exists. The aggregation does not read it:
 
 | Column         | Type                 | Description                       |
 | -------------- | -------------------- | --------------------------------- |
 | `id`           | TEXT PK              | UUID                              |
-| `session_id`   | TEXT NOT NULL UNIQUE | Maestro session ID                |
+| `session_id`   | TEXT NOT NULL UNIQUE | Maestro agent id                  |
 | `agent_type`   | TEXT NOT NULL        | Agent type                        |
 | `project_path` | TEXT                 | Project path                      |
 | `created_at`   | INTEGER NOT NULL     | Creation timestamp (ms)           |
@@ -165,7 +173,7 @@ Tracks session creation and closure for duration analytics:
 
 **Indexes**: `created_at`, `agent_type`
 
-#### `local_model_runs` (Migration v15, rebuilt v20)
+#### `local_model_runs` (Migration v16, rebuilt v21)
 
 One row per run that reached a model other than a provider's own. Written by the task router
 (`src/main/stats/local-model-runs.ts`) and, for System One, by `recordSystemOneDecision()`:
@@ -174,7 +182,7 @@ One row per run that reached a model other than a provider's own. Written by the
 | ------------- | ---------------- | ------------------------------------------------------------------------------------------- |
 | `id`          | TEXT PK          | UUID                                                                                        |
 | `task_id`     | TEXT NOT NULL    | Local Models task (`agent:<verb>` for a request an agent sent System One)                   |
-| `source_type` | TEXT NOT NULL    | `'local'`, `'endpoint'`, `'server'` or `'system-one'` (CHECK, widened v20)                  |
+| `source_type` | TEXT NOT NULL    | `'local'`, `'endpoint'`, `'server'` or `'system-one'` (CHECK, widened v21)                  |
 | `model_id`    | TEXT NOT NULL    | Catalog id, the server's model name, or the model a System One engine named                 |
 | `endpoint_id` | TEXT             | Saved endpoint id, or the System One engine id. NULL for `local` and `server`               |
 | `started_at`  | INTEGER NOT NULL | Unix timestamp (ms)                                                                         |
@@ -183,7 +191,7 @@ One row per run that reached a model other than a provider's own. Written by the
 | `error_code`  | TEXT             | Classified failure (`timeout`, `network`, ...), NULL on success                             |
 | `tokens_in`   | INTEGER          | Tokens read, when the source reports them                                                   |
 | `tokens_out`  | INTEGER          | Tokens written, when the source reports them                                                |
-| `agent_id`    | TEXT             | Agent the run was for, NULL when the caller knew none (v20)                                 |
+| `agent_id`    | TEXT             | Agent the run was for, NULL when the caller knew none (v21)                                 |
 
 **Indexes**: `started_at`, compound `(task_id, started_at)`, compound `(agent_id, started_at)`
 
@@ -193,17 +201,17 @@ One row per run that reached a model other than a provider's own. Written by the
 to all time. A decision answered from the cache, with no engine chosen, or decided by a local router
 leaves no run, because the local model's own run is already filed under its real source.
 
-Rows written before v20 are not relabeled. A run on the model server recorded earlier stays
+Rows written before v21 are not relabeled. A run on the model server recorded earlier stays
 `endpoint` with `endpoint_id = 'maestro-server'`, and `modelUsageRunSource()` in
 `src/shared/local-models/model-usage.ts` reads that as the server.
 
-The v20 migration rebuilds the table, because SQLite cannot alter a CHECK constraint. `rebuildLocalModelRuns`
+The v21 migration rebuilds the table, because SQLite cannot alter a CHECK constraint. `rebuildLocalModelRuns`
 creates `local_model_runs_rebuild`, copies every row by named column, compares the two row counts and
 throws on a mismatch, drops the old table, renames the new one into place and recreates the indexes, all
 inside the runner's one transaction. `CREATE_LOCAL_MODEL_RUNS_SQL` is the current shape, so a fresh database
 has nothing to rebuild.
 
-#### `proxy_requests` (Migration v16; `routed_to` v17, provider counts v21, telemetry v22)
+#### `proxy_requests` (Migration v17; `routed_to` v18, provider counts v22, telemetry v23)
 
 One row per model request the Maestro token proxy carried that held a message list. Written by
 `recordProxyRequest()` (`src/main/stats/proxy-requests.ts`) from `proxyRequestFromLog()`:
@@ -223,23 +231,23 @@ One row per model request the Maestro token proxy carried that held a message li
 | `blocks_compressed`, `cache_hits`                                           | INTEGER NOT NULL | Blocks sent shortened; verdicts reused from Maestro's cache (not provider prompt-cache use)      |
 | `compressor_counts`, `new_blocks`                                           | TEXT (JSON)      | Per-compressor counts; blocks shortened for the first time in this request                       |
 | `skip_reason`                                                               | TEXT             | Why a compress mode body went out unread. Open text; `TOKEN_PROXY_SKIP_REASONS` for this build   |
-| `routed_to`                                                                 | TEXT             | Local Models target a background request was sent to (v17)                                       |
-| `provider_input_tokens`, `provider_cache_read_tokens`                       | INTEGER          | What the provider counted (v21). NULL when the answer named none                                 |
+| `routed_to`                                                                 | TEXT             | Local Models target a background request was sent to (v18)                                       |
+| `provider_input_tokens`, `provider_cache_read_tokens`                       | INTEGER          | What the provider counted (v22). NULL when the answer named none                                 |
 | `provider_cache_write_tokens`, `provider_output_tokens`                     | INTEGER          | A class the answer did not name is stored as 0; reportedness says which were given               |
-| `effective_mode`                                                            | TEXT             | The mode in force: `passthrough`, `compress` or `compress-early` (v22)                           |
-| `blocks_protected`                                                          | INTEGER          | Left out because the result is recent or carries the cache breakpoint (v22)                      |
-| `blocks_vetoed_failed`, `blocks_vetoed_recovery`, `blocks_vetoed_retrieval` | INTEGER          | Left out because the result failed, was a recovery command's output, or was retrieved text (v22) |
-| `blocks_candidates`, `blocks_below_threshold`                               | INTEGER          | Blocks eligible for a verdict; those under the size threshold (v22)                              |
-| `blocks_kept`, `blocks_store_failed`, `blocks_model_failed`                 | INTEGER          | Kept whole; left alone because the cache failed; model summary failed (v22)                      |
-| `provider_input_reportedness`, `provider_cache_read_reportedness`           | TEXT             | `reported`, `derived`, `not-applicable` or `unreported` for each provider count (v22)            |
-| `provider_cache_write_reportedness`, `provider_output_reportedness`         | TEXT             | The same, for cache writes and output (v22)                                                      |
+| `effective_mode`                                                            | TEXT             | The mode in force: `passthrough`, `compress` or `compress-early` (v23)                           |
+| `blocks_protected`                                                          | INTEGER          | Left out because the result is recent or carries the cache breakpoint (v23)                      |
+| `blocks_vetoed_failed`, `blocks_vetoed_recovery`, `blocks_vetoed_retrieval` | INTEGER          | Left out because the result failed, was a recovery command's output, or was retrieved text (v23) |
+| `blocks_candidates`, `blocks_below_threshold`                               | INTEGER          | Blocks eligible for a verdict; those under the size threshold (v23)                              |
+| `blocks_kept`, `blocks_store_failed`, `blocks_model_failed`                 | INTEGER          | Kept whole; left alone because the cache failed; model summary failed (v23)                      |
+| `provider_input_reportedness`, `provider_cache_read_reportedness`           | TEXT             | `reported`, `derived`, `not-applicable` or `unreported` for each provider count (v23)            |
+| `provider_cache_write_reportedness`, `provider_output_reportedness`         | TEXT             | The same, for cache writes and output (v23)                                                      |
 
 **Indexes**: `started_at`, compound `(agent_id, started_at)`
 
-The fourteen v22 columns are `ProxyRequest.effectiveMode`, `blockCounts` (one column per count, the
+The fourteen v23 columns are `ProxyRequest.effectiveMode`, `blockCounts` (one column per count, the
 three vetoes included) and `providerUsageReportedness` (one column per class). **NULL is unknown,
 never zero.** The migration adds them bare: no DEFAULT, no CHECK, no index and no backfill, so a row
-written before v22 is unknown in all fourteen. `effective_mode` is deliberately not filled from `mode`
+written before v23 is unknown in all fourteen. `effective_mode` is deliberately not filled from `mode`
 (a stored `compress` is `compress` or `compress-early`) or from the agent's current setting, which
 may have changed since the request. The nine counts are written together or not at all, so
 `COUNT(blocks_candidates)` is the number of requests with counts; a counted request that found
@@ -318,7 +326,8 @@ closeStatsDB();
 The singleton is lazy-initialized on first call to `getStatsDB()`. The `StatsDB` class constructor sets the database path to `{userData}/stats.db`. The `initialize()` method handles:
 
 1. Directory creation
-2. Corruption detection and recovery (integrity check, backup restore)
+2. Corruption detection and recovery (integrity check, backup restore), recorded
+   for the renderer's one-shot notice (see Integrity and Recovery)
 3. WAL mode enablement
 4. Migration execution
 5. Daily backup creation (keeps 7 days)
@@ -328,30 +337,31 @@ The singleton is lazy-initialized on first call to `getStatsDB()`. The `StatsDB`
 
 Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorded in the `_migrations` table. The current schema version is stored in SQLite's `user_version` pragma.
 
-| Version | Description                                                                                                          |
-| ------- | -------------------------------------------------------------------------------------------------------------------- |
-| v1      | Initial schema: `query_events`, `auto_run_sessions`, `auto_run_tasks`                                                |
-| v2      | Add `is_remote` column to `query_events` for SSH tracking                                                            |
-| v3      | Add `session_lifecycle` table                                                                                        |
-| v4      | Add compound indexes on `query_events` for dashboard performance                                                     |
-| v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`                                                   |
-| v6      | Add `image_annotations` table                                                                                        |
-| v7      | Add `shortcut_usage_daily` table                                                                                     |
-| v8      | Add `multi_window_usage_daily` table                                                                                 |
-| v9      | Add per-turn token and cost columns to `query_events`                                                                |
-| v10     | Add `resilience_events` table                                                                                        |
-| v11     | Add `wizard_runs` table                                                                                              |
-| v12     | Add `user_name` column to `query_events` for Web Login attribution                                                   |
-| v13     | Add `active_ms` column to `wizard_runs`                                                                              |
-| v14     | Add `kind` column to `auto_run_sessions`                                                                             |
-| v15     | Add `local_model_runs` table for Local Models task router runs                                                       |
-| v16     | Add `proxy_requests` table for the Maestro token proxy                                                               |
-| v17     | Add `routed_to` column to `proxy_requests`                                                                           |
-| v18     | Add `s1_decisions` table for the System One decision ledger                                                          |
-| v19     | Add `tab_id` and `cached` columns to `s1_decisions`                                                                  |
-| v20     | Rebuild `local_model_runs` (wider `source_type`, `agent_id`); add Run on and `routed_tier` columns to `query_events` |
-| v21     | Add the provider's token counts (`provider_*_tokens`) to `proxy_requests`                                            |
-| v22     | Add `effective_mode`, block counts and provider reportedness to `proxy_requests`                                     |
+| Version | Description                                                                                                                |
+| ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| v1      | Initial schema: `query_events`, `auto_run_sessions`, `auto_run_tasks`                                                      |
+| v2      | Add `is_remote` column to `query_events` for SSH tracking                                                                  |
+| v3      | Add `session_lifecycle` table                                                                                              |
+| v4      | Add compound indexes on `query_events` for dashboard performance                                                           |
+| v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`                                                         |
+| v6      | Add `image_annotations` table                                                                                              |
+| v7      | Add `shortcut_usage_daily` table                                                                                           |
+| v8      | Add `multi_window_usage_daily` table                                                                                       |
+| v9      | Add per-turn token and cost columns to `query_events`                                                                      |
+| v10     | Add `resilience_events` table                                                                                              |
+| v11     | Add `wizard_runs` table                                                                                                    |
+| v12     | Add `user_name` column to `query_events` for Web Login attribution                                                         |
+| v13     | Add `active_ms` column to `wizard_runs`                                                                                    |
+| v14     | Add `shortcut_usage_by_id` and the `(start_time, session_id)` index                                                        |
+| v15     | Add `kind` column to `auto_run_sessions`                                                                                   |
+| v16     | Add `local_model_runs` table for Local Models task router runs                                                             |
+| v17     | Add `proxy_requests` table for the Maestro token proxy                                                                     |
+| v18     | Add `routed_to` column to `proxy_requests`                                                                                 |
+| v19     | Add `s1_decisions` table for the System One decision ledger                                                                |
+| v20     | Add `tab_id` and `cached` columns to `s1_decisions`                                                                        |
+| v21     | Rebuild `local_model_runs` (wider `source_type`, `agent_id`); add model source and `routed_tier` columns to `query_events` |
+| v22     | Add the provider's token counts (`provider_*_tokens`) to `proxy_requests`                                                  |
+| v23     | Add `effective_mode`, block counts and provider reportedness to `proxy_requests`                                           |
 
 To add a new migration:
 
@@ -433,22 +443,41 @@ interface StatsFilters {
 
 ### Aggregation Type
 
+`StatsAggregation` is the contract between `aggregations.ts` and every dashboard
+panel. The fields that are easy to misread:
+
 ```typescript
 interface StatsAggregation {
 	totalQueries: number;
 	totalDuration: number;
 	avgDuration: number;
+	queryDurationPercentiles: DurationPercentiles;
+	queryDurationPercentilesByAgent: Record<string, DurationPercentiles>;
+	autoRunTaskDurationPercentiles: DurationPercentiles;
 	byAgent: Record<string, { count: number; duration: number }>;
 	bySource: { user: number; auto: number };
+	// GAP-FILLED: one row per local day from window.startYmd to window.endYmd
 	byDay: Array<{ date: string; count: number; duration: number }>;
+	// Sparse: (local day, hour) cells with at least one query
+	byDayHour: Array<{ date: string; hour: number; count: number; duration: number }>;
+	// The range's first local day (All Time: day of the first query, or today) and today
+	window: { startYmd: string; endYmd: string };
+	earliestQueryAt: number | null; // first query ever, any range
+	streak: { current: number; longest: number }; // over ALL history, not the range
 	byLocation: { local: number; remote: number };
-	byHour: Array<{ hour: number; count: number; duration: number }>;
-	totalSessions: number;
-	sessionsByAgent: Record<string, number>;
-	sessionsByDay: Array<{ date: string; count: number }>;
-	avgSessionDuration: number;
-	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
-	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+	byHour: Array<{ hour: number; count: number; duration: number }>; // sparse
+	totalSessions: number; // distinct AGENTS with at least one query in range
+	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>; // sparse
+	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>; // sparse
+	bySessionSource: Record<string, { user: number; auto: number }>;
+	bySessionLastQuery: Record<string, number>;
+	bySessionTokens: Record<string, SessionTokenTotals>; // agents with no priced row omitted
+	worktreeQueries: number;
+	parentQueries: number;
+	// Per provider, from the is_worktree flag on each row (NULL counts as parent)
+	byAgentWorktree: Record<string, { worktree: Slice; parent: Slice }>;
+	imageAnnotations: number;
+	prompts: PromptCadence; // interactive turns only, same calendar window
 }
 ```
 
@@ -465,9 +494,9 @@ interface StatsAggregation {
 | `cacheHits`                 | Verdict reuse from Maestro's compression cache. Not provider prompt-cache usage (`providerCacheReadTokens`).                                                                                                                                                                                                     |
 | `providerUsageReportedness` | How each provider count got its number: `reported`, `derived`, `not-applicable` or `unreported`, per class (`input`, `cacheRead`, `cacheWrite`, `output`). Absent on a row written before it was tracked: its provider numbers are `legacy` (unknown), not reported. Read it with `proxyProviderClassReading()`. |
 
-Stored by migration v22 (see the `proxy_requests` table above): `effectiveMode` is `effective_mode`, `blockCounts` is
+Stored by migration v23 (see the `proxy_requests` table above): `effectiveMode` is `effective_mode`, `blockCounts` is
 the nine `blocks_*` columns, and `providerUsageReportedness` is the four `provider_*_reportedness` columns. A row
-that predates v22 is NULL in all of them.
+that predates v23 is NULL in all of them.
 
 A figure drawn from rows is one of three kinds (`ProxyEvidenceKind`): `measured`, `estimate` (characters / 4: `originalTokens`, `sentTokens`) or `opportunity` (never stored). The kinds are never added into one savings number. Build figures with `proxyFigure()` and total them only with `addProxyFigures()`; see "How sure a token proxy figure is" in [CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md).
 
@@ -492,14 +521,14 @@ Reads of a compressed block's original are not row facts. `TokenProxyRecoveryObs
 Rules a reader of these fields needs:
 
 - **One scan for the cuts.** The per-agent totals, `byMode`, `byRoute` and the grand total are rolled up from one `GROUP BY agent_id, effective_mode, route` scan, so each cut adds up to the total. `getProxyEffectiveness(db, startTime)` in `src/main/stats/proxy-effectiveness.ts` reads one scan grouped by skip reason (traffic, counts, skips and provider readings) and three more for what a roll-up cannot give: the algorithms (each distinct JSON cell is parsed once), the timings (percentiles need the values) and the days. Add a column to a scan before you add a scan.
-- **A historical mode stays unknown.** A row from before v22 has no `effective_mode`, and it is `effectiveMode: null`, a stored passthrough row included. The stored `mode` is not a fallback (a stored `compress` is either compress mode) and neither is the agent's setting today. A mode text this build does not know reads the same way (`asTokenProxyRequestMode()`).
-- **Counts have coverage.** `blocks.coverage.counted` is `COUNT(blocks_candidates)`, the requests the compressor ran on since v22, out of the requests read. `counts` is null when none is counted, and then the counts are unknown, not zero. Every number in `counts` covers the counted requests only, so `candidates = belowThreshold + storeFailed + kept + shortened` holds for the sums. A request read before v22 is in `traffic` and `blocksShortened`, and not in `counts`.
+- **A historical mode stays unknown.** A row from before v23 has no `effective_mode`, and it is `effectiveMode: null`, a stored passthrough row included. The stored `mode` is not a fallback (a stored `compress` is either compress mode) and neither is the agent's setting today. A mode text this build does not know reads the same way (`asTokenProxyRequestMode()`).
+- **Counts have coverage.** `blocks.coverage.counted` is `COUNT(blocks_candidates)`, the requests the compressor ran on since v23, out of the requests read. `counts` is null when none is counted, and then the counts are unknown, not zero. Every number in `counts` covers the counted requests only, so `candidates = belowThreshold + storeFailed + kept + shortened` holds for the sums. A request read before v23 is in `traffic` and `blocksShortened`, and not in `counts`.
 - **Verdict reuse is not the provider's cache.** `blocks.counts.verdictReuse` is Maestro's compression cache. `providerClasses.cacheRead` is the provider's prompt cache. They are different facts: never add them.
 - **Provider classes are summed where measured.** A class's `tokens` sums the requests whose reading is `reported` or `derived`, and is unknown when none is. `rows` counts every reading, and the six add up to the requests. `totals.provider` still adds the stored numbers for compatibility: it includes default zeros and legacy numbers, so it is not a measured total.
 - **Algorithms overlap.** A block that several algorithms shortened is listed under each of them. The `blocks` of `algorithms.algorithms` add up to more than `uniqueBlocks` then. Never add them to get blocks.
 - **Latency needs samples, and a mean says how many.** The distribution is `percentilesFromSorted()` over the requests with a processing time. It is withheld below `PROXY_LATENCY_MIN_SAMPLES` (`insufficient-samples`), a display policy: 30 samples do not make p95 or p99 stable. A request that was read and has no time is `untimed` and is left out. `avgAddedLatencyMs` divides by the timed requests and is 0 when none is, which reads the same as a measured 0 ms. `timedRequests` on the total, each agent and each mode is the sample of its mean, so 0 there means "no time", not "0 ms". The `latency` block speaks for the whole range. A reader that shows a mean must show it against `timedRequests`.
 - **Days are local.** `trend` uses SQLite `localtime`, the boundary of every per-day stat, and lists only the days that have a request. The first day of a rolling range (week, month) is partial. A chart that wants one slot per day lays the days out itself (`proxyTrendView()` in `ModelUsage/modelUsageView.ts`), with a gap, never a 0, for a day with no request body read.
-- **The reader needs the v22 columns**, as the writer does. A database whose v22 migration failed cannot be read until the next start applies it.
+- **The reader needs the v23 columns**, as the writer does. A database whose v23 migration failed cannot be read until the next start applies it.
 
 ### Saying the Token Proxy Report
 
@@ -515,42 +544,68 @@ A surface does not word `ProxyRequestUsage` itself. `src/shared/local-models/tok
 - **Diagnostics are the same lines as the CLI.** The Gateway card's Diagnostics disclosure is `describeProxyEffectiveness()` plus the latest days of `describeProxyTrend()`: it adds no count of its own, so an observed skip or a partial range reads in the words `maestro-cli models proxy status` prints. Modes and provider routes are rows of the totals table (`describeProxyMode()`, `describeProxyRoute()`), which keeps a route this build does not know under its stored name.
 - **No money, no quality.** No dollar basis or quality check exists. `TOKEN_PROXY_RESULTS_NOT_EVALUATED_NOTE` is said wherever a saving is shown.
 
+Per-entity day series (`byAgentByDay`, `bySessionByDay`) stay sparse. To draw one
+on a time axis, fill it over `window` with `fillDaySeries()` /
+`localDaysBetween()` from `src/shared/daySeries.ts`; never plot sparse rows by
+index, which squeezes idle days out of the chart.
+
+Every bounded range is CALENDAR-ALIGNED: `getTimeRangeStart()` in
+`src/shared/statsTimeRange.ts` returns local midnight N-1 days before today
+(`STATS_RANGE_DAYS`), so "Last 7 days" is seven whole local days, today included,
+and every day bucket is a full day. There is no retention: All Time is
+everything since the stats database was created (or last reset after
+corruption), and `earliestQueryAt` says when that was.
+
 ## IPC Handlers
 
-Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollectionEnabled` in settings before recording data.
+Registered in `src/main/ipc/handlers/stats.ts`. Every handler that STARTS a
+record checks `statsCollectionEnabled` and records nothing when it is off.
+Handlers that only finish an existing record (`stats:end-autorun`,
+`stats:record-session-closed`) do not check it: a run or agent that began while
+collection was on must still be closed, or it would be left with a zero
+duration forever.
 
 ### Recording
 
-| Handler                        | Description                                                             |
-| ------------------------------ | ----------------------------------------------------------------------- |
-| `stats:record-query`           | Insert a `QueryEvent`. Broadcasts `stats:updated` to renderer.          |
-| `stats:start-autorun`          | Insert an `AutoRunSession` with `duration: 0`. Returns the ID.          |
-| `stats:end-autorun`            | Update an `AutoRunSession` with final `duration` and `tasksCompleted`.  |
-| `stats:record-task`            | Insert an `AutoRunTask` for a completed task within an Auto Run.        |
-| `stats:record-session-created` | Insert a `SessionLifecycleEvent` (session launched).                    |
-| `stats:record-session-closed`  | Update `SessionLifecycleEvent` with `closedAt` and computed `duration`. |
+| Handler                         | Description                                                             |
+| ------------------------------- | ----------------------------------------------------------------------- |
+| `stats:record-query`            | Buffer a `QueryEvent` (see Broadcast for when it is announced).         |
+| `stats:start-autorun`           | Insert an `AutoRunSession` with `duration: 0`. Returns the ID.          |
+| `stats:end-autorun`             | Update an `AutoRunSession` with final `duration` and `tasksCompleted`.  |
+| `stats:record-task`             | Insert an `AutoRunTask` for a completed task within an Auto Run.        |
+| `stats:record-session-created`  | Insert a `SessionLifecycleEvent` (session launched).                    |
+| `stats:record-session-closed`   | Update `SessionLifecycleEvent` with `closedAt` and computed `duration`. |
+| `stats:record-resilience`       | Insert a resolved Agent Resilience outage.                              |
+| `stats:record-wizard-run`       | Upsert one Auto Run wizard run (every milestone).                       |
+| `stats:record-shortcut-usage`   | Bump the day's (and the shortcut's) firing counter.                     |
+| `stats:record-image-annotation` | Insert an image annotation save.                                        |
 
 ### Querying
 
-| Handler                        | Description                                                            |
-| ------------------------------ | ---------------------------------------------------------------------- |
-| `stats:get-stats`              | Get `QueryEvent[]` with time range and optional filters                |
-| `stats:get-autorun-sessions`   | Get `AutoRunSession[]` within a time range                             |
-| `stats:get-autorun-tasks`      | Get `AutoRunTask[]` for a specific Auto Run session                    |
-| `stats:get-aggregation`        | Get `StatsAggregation` for a time range (used by dashboard)            |
-| `stats:get-session-lifecycle`  | Get `SessionLifecycleEvent[]` within a time range                      |
-| `stats:get-earliest-timestamp` | Get the earliest recorded event timestamp (used for "all time" ranges) |
-| `stats:get-model-usage`        | Get the `ModelUsage` record for a range (the Models tab; see below)    |
+| Handler                       | Description                                                         |
+| ----------------------------- | ------------------------------------------------------------------- |
+| `stats:get-stats`             | Get `QueryEvent[]` with time range and optional filters             |
+| `stats:get-autorun-sessions`  | Get `AutoRunSession[]` within a time range                          |
+| `stats:get-autorun-tasks`     | Get `AutoRunTask[]` for a specific Auto Run session                 |
+| `stats:get-aggregation`       | Get `StatsAggregation` for a time range (used by dashboard)         |
+| `stats:get-session-lifecycle` | Get `SessionLifecycleEvent[]` within a time range                   |
+| `stats:get-model-usage`       | Get the `ModelUsage` record for a range (the Models tab; see below) |
+
+The first query ever recorded is `StatsAggregation.earliestQueryAt`; there is no
+separate read for it.
 
 ### Data Management
 
 | Handler                             | Description                                                                          |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
 | `stats:export`                      | Export every stats table, token usage, and Cue runs for a range as JSON or a CSV zip |
-| `stats:clear-old-data`              | Delete records older than N days (transactional across all tables)                   |
 | `stats:get-database-size`           | Get the database file size in bytes                                                  |
-| `stats:get-initialization-result`   | Get the result of the one-shot DB initialization (used by the settings health panel) |
-| `stats:clear-initialization-result` | Clear the cached initialization result                                               |
+| `stats:get-initialization-result`   | What opening the DB had to do to a damaged file (null when it opened cleanly)        |
+| `stats:clear-initialization-result` | Forget that result once the renderer has shown it                                    |
+
+There is no cleanup handler: nothing prunes the stats database. The export logic
+lives in `usage-export.ts` (shared with `maestro-cli stats-export`), and the
+delegation merge in `usage-dashboard-reads.ts`.
 
 ### Model usage (`getModelUsage`)
 
@@ -580,7 +635,7 @@ knows: the saved endpoints, the OpenJev URL and agent names. The record has six 
 | `totals`    | the other blocks                                     | requests, tokens, errors, and the on-this-machine share                              |
 | `sources`   | `local_model_runs`, `query_events`, `proxy_requests` | one row per source: kind, location, units, tokens, errors, latency                   |
 | `byTask`    | `local_model_runs`                                   | per task, with where each ran                                                        |
-| `byAgent`   | `local_model_runs`, `query_events`                   | any agent that used another model; the tab shows `turns > 0` as Run on               |
+| `byAgent`   | `local_model_runs`, `query_events`                   | any agent that used another model; the tab shows `turns > 0` as model source         |
 | `systemOne` | `s1_decisions`, `query_events`                       | outcome split per task and engine, Auto's `routedTiers`, `coversRange`               |
 | `proxy`     | `proxy_requests`                                     | totals, `byMode` and `effectiveness` from `getProxyRequestUsage()`, estimates marked |
 
@@ -596,7 +651,7 @@ Rules a new reader of the record needs:
   divide tokens by it. `modelUsageSourceLatency()` names the unit a latency is in: a request when the source
   answered model calls, a turn only when it has none on record.
 - **Latency is answered work only.** A failed run's duration is its timeout.
-- **A provider's own cloud is a source kind** (`provider:<agent type>`) from `query_events` rows with no Run on
+- **A provider's own cloud is a source kind** (`provider:<agent type>`) from `query_events` rows with no model source
   source. `errors` is always 0 there, because `query_events` records no outcome, and cache tokens are
   `cachedTokensIn`, never folded into `tokensIn`.
 - **`onDevice` is three-valued.** The in-process engine and the model server are `true`. An endpoint is
@@ -615,31 +670,58 @@ the blocks come from the panel's own fetch, not the shared aggregation.
 
 ### Broadcast
 
-When data is recorded, `stats:updated` is sent to the renderer via `mainWindow.webContents.send()`. The dashboard components listen for this event to trigger a refresh.
+Every write broadcasts `stats:updated` with the `StatsTable` it touched as the
+event argument (`'query_events'`, `'auto_run'`, `'session_lifecycle'`,
+`'shortcut_usage'`, `'image_annotations'`, `'wizard_runs'`, `'resilience'`), to
+EVERY window (`BrowserWindow.getAllWindows()`, since any window can open the
+dashboard) and to web-desktop bridge clients.
+
+Query events are buffered (`query-events-buffer.ts`, flushed every 500ms or 50
+events), so `stats:record-query` does not broadcast. The buffer's flush listener
+announces `'query_events'` once the batch is COMMITTED, so a panel refetching on
+the event reads the new rows instead of racing the flush timer.
+
+On the renderer side, `useDashboardResource(key, fetcher, operation, { tables })`
+refetches only for the tables a panel reads and collapses a burst into one
+trailing refetch (`DASHBOARD_RESOURCE_DEBOUNCE_MS`).
 
 ## Query Patterns
 
 ### Aggregation Queries
 
-The `getAggregatedStats()` function in `src/main/stats/aggregations.ts` decomposes the aggregation into focused sub-queries:
+`getAggregatedStats()` in `src/main/stats/aggregations.ts` runs a handful of
+grouped passes and rolls each up in JS:
 
-| Sub-query             | SQL Pattern                                                  | Purpose                    |
-| --------------------- | ------------------------------------------------------------ | -------------------------- |
-| `queryTotals`         | `COUNT(*), SUM(duration)`                                    | Total queries and duration |
-| `queryByAgent`        | `GROUP BY agent_type`                                        | Breakdown by agent         |
-| `queryBySource`       | `GROUP BY source`                                            | User vs Auto Run split     |
-| `queryByLocation`     | `GROUP BY is_remote`                                         | Local vs SSH remote        |
-| `queryByDay`          | `GROUP BY date(start_time/1000, 'unixepoch', 'localtime')`   | Daily counts               |
-| `queryByAgentByDay`   | `GROUP BY agent_type, date(...)`                             | Per-agent daily counts     |
-| `queryByHour`         | `GROUP BY strftime('%H', ...)`                               | Hourly distribution        |
-| `querySessionStats`   | `COUNT(DISTINCT session_id)`, `AVG(duration)` from lifecycle | Session metrics            |
-| `queryBySessionByDay` | `GROUP BY session_id, date(...)`                             | Per-session daily counts   |
+| Pass              | SQL shape                                                                  | Feeds                                                                                                        |
+| ----------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| bounds            | `MIN(start_time)` overall and for `source != 'auto'`                       | `earliestQueryAt`, All Time `window`, prompt window                                                          |
+| activity cube     | `GROUP BY` local day, hour, provider, source, remote, worktree             | totals, `byAgent`, `bySource`, `byLocation`, `byDay`, `byDayHour`, `byHour`, `byAgentByDay`, worktree splits |
+| per agent         | `GROUP BY session_id`, local day, source (+ token sums, `MAX(start_time)`) | `totalSessions`, `bySessionByDay`, `bySessionSource`, `bySessionLastQuery`, `bySessionTokens`                |
+| query percentiles | `ROW_NUMBER() OVER (...)` overall and per provider                         | `queryDurationPercentiles*` (only the rows at a percentile rank come back)                                   |
+| task percentiles  | same, over `auto_run_tasks`                                                | `autoRunTaskDurationPercentiles`                                                                             |
+| prompt times      | `start_time` of non-auto rows in the window (one column)                   | `prompts` (gaps between prompts need raw timestamps)                                                         |
+| active days       | `SELECT DISTINCT` local day, all history (skipped for All Time)            | `streak`                                                                                                     |
+| image annotations | `COUNT(*)`                                                                 | `imageAnnotations`                                                                                           |
 
-All sub-queries filter by `start_time >= ?` using `getTimeRangeStart(range)` which converts the `StatsTimeRange` enum to a millisecond timestamp.
+Every range-scoped pass binds `start_time >= getTimeRangeStart(range)`. The
+percentile SQL picks the same ranks `percentileOfSorted()` does
+(`min(n - 1, floor(p / 100 * n))`), and the JS side hands them to
+`percentilesFromSorted()` in a sparse array, so the index rule lives in one
+place.
+
+### Memo
+
+The result is memoized per range in the main process and reused until the
+database changes or the local day rolls over. The key is
+`total_changes()` (moves on every write through this connection: the query
+buffer flush, Auto Run, everything) plus `PRAGMA data_version` (moves when
+another connection commits, such as a repair script) plus today's date. A new
+connection (startup, corruption recovery) or `StatsDB.close()` drops it. The
+all-history streak is cached once per key and shared by every range.
 
 ### Statement Caching
 
-The `StatementCache` class (in `utils.ts`) caches prepared statements per SQL string to avoid re-preparing on every call. Caches are cleared when the database is closed.
+The `StatementCache` class (in `utils.ts`) caches prepared statements per SQL string to avoid re-preparing on every call. Caches are cleared when the database is closed; the aggregation's cache also clears itself when it sees a different connection.
 
 ### Performance Monitoring
 
@@ -659,6 +741,10 @@ On startup, the database runs `PRAGMA integrity_check`. If corruption is detecte
 2. Available backups are tested for integrity
 3. The most recent valid backup is restored
 4. If no backup is valid, a fresh database is created
+5. `StatsDB.getInitializationResult()` records what happened (`describeRecovery()`
+   builds the message). The renderer's lifecycle-owner window reads it through
+   `stats:get-initialization-result` on startup, shows a sticky "Usage Statistics
+   Reset" toast, and clears it, so a reset is never silent.
 
 ### Backup System
 
@@ -676,31 +762,31 @@ On startup, the database runs `PRAGMA integrity_check`. If corruption is detecte
 
 Located in `src/renderer/components/UsageDashboard/`:
 
-| Component                       | Purpose                                                     |
-| ------------------------------- | ----------------------------------------------------------- |
-| `UsageDashboardModal.tsx`       | Top-level modal with time range selector and tab layout     |
-| `SummaryCards.tsx`              | Top-level KPI cards (total queries, avg duration, sessions) |
-| `ActivityHeatmap.tsx`           | Calendar heatmap of daily activity                          |
-| `AgentUsageChart.tsx`           | Bar/line chart comparing queries per agent over time        |
-| `AgentComparisonChart.tsx`      | Side-by-side agent comparison                               |
-| `AgentEfficiencyChart.tsx`      | Duration efficiency by agent                                |
-| `PeakHoursChart.tsx`            | Hourly distribution of queries                              |
-| `DurationTrendsChart.tsx`       | Duration trends over time                                   |
-| `SourceDistributionChart.tsx`   | User vs Auto Run pie chart                                  |
-| `LocationDistributionChart.tsx` | Local vs SSH remote distribution                            |
-| `WeekdayComparisonChart.tsx`    | Weekday activity comparison                                 |
-| `TasksByHourChart.tsx`          | Auto Run tasks by hour                                      |
-| `AutoRunStats.tsx`              | Auto Run session statistics and details                     |
-| `WizardStats.tsx`               | Auto Run wizard usage: time, runs, documents, tasks         |
-| `MetricCard.tsx`                | Shared labeled single-number tile for those metric rows     |
-| `LongestAutoRunsTable.tsx`      | Table of longest Auto Run sessions                          |
-| `SessionStats.tsx`              | Session lifecycle statistics                                |
-| `ChartErrorBoundary.tsx`        | Error boundary for individual charts                        |
-| `ChartSkeletons.tsx`            | Loading skeletons for chart placeholders                    |
-| `EmptyState.tsx`                | Empty state when no data exists                             |
-| `UsageDashboardFooter.tsx`      | Status bar: range label, per-tab summary, Esc hint          |
-| `footerSummary.ts`              | All footer summary copy, as pure builders (see below)       |
-| `useFooterSummary.ts`           | Store letting a panel publish its own footer line           |
+| Component                       | Purpose                                                    |
+| ------------------------------- | ---------------------------------------------------------- |
+| `UsageDashboardModal.tsx`       | Top-level modal with time range selector and tab layout    |
+| `SummaryCards.tsx`              | Overview KPI cards (agents, queries, tokens, streak, ...)  |
+| `ActivityHeatmap.tsx`           | Calendar heatmap of daily activity                         |
+| `AgentUsageChart.tsx`           | Bar/line chart comparing queries per agent over time       |
+| `AgentComparisonChart.tsx`      | Side-by-side agent comparison                              |
+| `RadialActivityChart.tsx`       | Hour-of-day and day-of-week polar charts                   |
+| `DurationTrendsChart.tsx`       | Duration trends over time                                  |
+| `SourceDistributionChart.tsx`   | User vs Auto Run pie chart                                 |
+| `LocationDistributionChart.tsx` | Local vs SSH remote distribution                           |
+| `TasksByHourChart.tsx`          | Auto Run tasks by hour                                     |
+| `AutoRunStats.tsx`              | Auto Run session statistics and details                    |
+| `WizardStats.tsx`               | Auto Run wizard usage: time, runs, documents, tasks        |
+| `LongestAutoRunsTable.tsx`      | Table of longest Auto Run sessions                         |
+| `SessionStats.tsx`              | Agent Overview fleet statistics (Agent Statistics section) |
+| `AgentCountTrendChart.tsx`      | Agents Over Time (reads `session_lifecycle`)               |
+| `DashboardPanelState.tsx`       | Shared loading / error / empty wrapper for a panel         |
+| `useDashboardResource.ts`       | Cached panel fetch, refetched per `stats:updated` table    |
+| `ChartErrorBoundary.tsx`        | Error boundary for individual charts                       |
+| `ChartSkeletons.tsx`            | Loading skeletons for chart placeholders                   |
+| `EmptyState.tsx`                | Empty state when no data exists                            |
+| `UsageDashboardFooter.tsx`      | Status bar: range label, per-tab summary, Esc hint         |
+| `footerSummary.ts`              | All footer summary copy, as pure builders (see below)      |
+| `useFooterSummary.ts`           | Store letting a panel publish its own footer line          |
 
 ### Range-Scoped vs Lifetime Token Totals
 
@@ -715,7 +801,7 @@ counter:
 
 `usageStats` is a counter that only ever grows, so it **cannot** move when the
 range selector does. The Overview tab's Tokens and Cost cards were summing it,
-and reported the same figure on This Week as on This Year while every other card
+and reported the same figure on Last 7 Days as on Last 365 Days while every other card
 on the tab changed (issue #1399). Anything rendered under a range selector reads
 `bySessionTokens` through `aggregateRangeUsage()`; the per-agent detail modal,
 which has no range at all, legitimately keeps the lifetime figure.
@@ -767,21 +853,23 @@ copy rather than a rewrite.
 
 All stats code is in `src/main/stats/`:
 
-| File                   | Purpose                                                                                       |
-| ---------------------- | --------------------------------------------------------------------------------------------- |
-| `index.ts`             | Module barrel - re-exports all public APIs                                                    |
-| `stats-db.ts`          | Core `StatsDB` class: lifecycle, integrity, VACUUM, backup/restore                            |
-| `singleton.ts`         | Singleton instance management and performance metrics API                                     |
-| `schema.ts`            | SQL table/index definitions and `runStatements()` utility                                     |
-| `migrations.ts`        | Migration registry and execution engine                                                       |
-| `types.ts`             | Internal types (IntegrityCheckResult, BackupResult, Migration, etc.)                          |
-| `query-events.ts`      | QueryEvent CRUD with statement caching                                                        |
-| `auto-run.ts`          | AutoRunSession and AutoRunTask CRUD                                                           |
-| `session-lifecycle.ts` | SessionLifecycleEvent CRUD                                                                    |
-| `aggregations.ts`      | Aggregation sub-queries and orchestrator                                                      |
-| `data-management.ts`   | Data cleanup (transactional) and CSV export                                                   |
-| `row-mappers.ts`       | SQLite row to TypeScript object mappers                                                       |
-| `utils.ts`             | Shared utilities (ID generation, time range, path normalization, StatementCache, PerfMetrics) |
+| File                       | Purpose                                                                                       |
+| -------------------------- | --------------------------------------------------------------------------------------------- |
+| `index.ts`                 | Module barrel - re-exports all public APIs                                                    |
+| `stats-db.ts`              | Core `StatsDB` class: lifecycle, integrity, VACUUM, backup/restore                            |
+| `singleton.ts`             | Singleton instance management and performance metrics API                                     |
+| `schema.ts`                | SQL table/index definitions and `runStatements()` utility                                     |
+| `migrations.ts`            | Migration registry and execution engine                                                       |
+| `types.ts`                 | Internal types (IntegrityCheckResult, BackupResult, Migration, etc.)                          |
+| `query-events.ts`          | QueryEvent CRUD with statement caching                                                        |
+| `auto-run.ts`              | AutoRunSession and AutoRunTask CRUD                                                           |
+| `session-lifecycle.ts`     | SessionLifecycleEvent CRUD                                                                    |
+| `aggregations.ts`          | Grouped aggregation passes, rollups, streak, and the per-range memo                           |
+| `query-events-buffer.ts`   | Batched query-event writes and the post-commit flush listener                                 |
+| `usage-export.ts`          | Dashboard export (JSON or CSV zip), shared by IPC and the CLI                                 |
+| `usage-dashboard-reads.ts` | Reads shared by the IPC handlers and the CLI (delegation, Cue, quota)                         |
+| `row-mappers.ts`           | SQLite row to TypeScript object mappers                                                       |
+| `utils.ts`                 | Shared utilities (ID generation, time range, path normalization, StatementCache, PerfMetrics) |
 
 ## Key Source Files
 
@@ -794,7 +882,9 @@ All stats code is in `src/main/stats/`:
 | `src/main/stats/aggregations.ts`          | Dashboard aggregation queries |
 | `src/main/stats/query-events.ts`          | Query event CRUD              |
 | `src/main/stats/session-lifecycle.ts`     | Session lifecycle CRUD        |
-| `src/main/stats/data-management.ts`       | Cleanup and CSV export        |
+| `src/main/stats/usage-export.ts`          | Dashboard export              |
+| `src/shared/statsTimeRange.ts`            | Calendar-aligned range starts |
+| `src/shared/daySeries.ts`                 | Gap-filling day series        |
 | `src/main/ipc/handlers/stats.ts`          | IPC handler registration      |
 | `src/shared/stats-types.ts`               | Shared type definitions       |
 | `src/renderer/components/UsageDashboard/` | Dashboard UI components       |

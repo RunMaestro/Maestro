@@ -44,7 +44,7 @@ vi.mock('../../../../main/prompt-manager', () => ({
 	),
 }));
 
-// The Local Models router answers `use-utility-agent` (the default assignment)
+// The Local Models router answers `use-provider` (the default assignment)
 // unless a test says otherwise, so every agent-path test runs unchanged.
 vi.mock('../../../../main/local-models/task-router', () => ({
 	runLocalTask: vi.fn(),
@@ -94,7 +94,7 @@ describe('aiCommand IPC handler', () => {
 		vi.clearAllMocks();
 		settingsValues = {};
 		mockGroomContext.mockResolvedValue({ response: 'du -sh *' });
-		mockRunLocalTask.mockResolvedValue({ status: 'use-utility-agent' });
+		mockRunLocalTask.mockResolvedValue({ status: 'use-provider' });
 		(getConfiguredLocalModelEndpoints as Mock).mockReturnValue([]);
 		getAgent = vi.fn().mockResolvedValue({ id: 'claude-code', available: true });
 
@@ -136,9 +136,37 @@ describe('aiCommand IPC handler', () => {
 		expect(options.projectRoot).toBe('/repo');
 	});
 
-	it('uses the configured utility provider without leaking the tab provider configuration', async () => {
+	it('reads the old Utility provider keys as the Housekeeping model AI command mode follows', async () => {
 		settingsValues.utilityAgentId = 'codex';
 		settingsValues.utilityModelId = 'gpt-model';
+		await invokeSuggest({});
+		expect(mockGroomContext).toHaveBeenCalledWith(
+			expect.objectContaining({ agentType: 'codex', sessionCustomModel: 'gpt-model' }),
+			expect.anything(),
+			expect.anything()
+		);
+	});
+
+	it('runs on the Agent model when AI command mode is mapped to it', async () => {
+		settingsValues.modelMap = {
+			agent: { type: 'provider', agentId: 'opencode', modelId: 'big-model' },
+			housekeeping: { type: 'provider', agentId: 'codex', modelId: 'gpt-model' },
+		};
+		settingsValues.localModelAssignments = { 'ai-command': { type: 'agent-model' } };
+		await invokeSuggest({});
+		expect(getAgent).toHaveBeenCalledWith('opencode');
+		expect(mockGroomContext).toHaveBeenCalledWith(
+			expect.objectContaining({ agentType: 'opencode', sessionCustomModel: 'big-model' }),
+			expect.anything(),
+			expect.anything()
+		);
+	});
+
+	it('uses the mapped provider without leaking the tab provider configuration', async () => {
+		settingsValues.modelMap = {
+			agent: { type: 'provider' },
+			housekeeping: { type: 'provider', agentId: 'codex', modelId: 'gpt-model' },
+		};
 		await invokeSuggest({
 			customPath: '/bin/claude',
 			customArgs: '--claude-flag',
@@ -273,7 +301,7 @@ describe('aiCommand IPC handler', () => {
 
 			expect(mockRunLocalTask).toHaveBeenCalledTimes(1);
 			expect(mockRunLocalTask.mock.calls[0][0]).toBe('ai-command');
-			// `use-utility-agent`: the tab's own provider answers, exactly as before.
+			// `use-provider`: the tab's own provider answers, exactly as before.
 			expect(mockGroomContext).toHaveBeenCalledTimes(1);
 			expect(mockGroomContext.mock.calls[0][0].prompt).toMatch(/^PROMPT /);
 			expect(result).toEqual({ success: true, command: 'du -sh *' });

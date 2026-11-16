@@ -343,7 +343,7 @@ describe('Suggest', () => {
 			expect(suggested.low.target).toEqual({ type: 'provider-model', model: 'opus' });
 		});
 
-		it('does not apply to a harness with no Run on recipe', () => {
+		it('does not apply to a harness with no model source recipe', () => {
 			const suggested = suggestHarnessTierDefaults(
 				'factory-droid',
 				[],
@@ -447,6 +447,7 @@ describe('the rows of a harness', () => {
 			target: null,
 			source: null,
 			builtIn: null,
+			code: 'tier-unmapped',
 		});
 	});
 
@@ -515,7 +516,7 @@ describe('a target about to be stored', () => {
 		});
 	});
 
-	it('refuses a source on a harness with no Run on recipe', () => {
+	it('refuses a source on a harness with no model source recipe', () => {
 		const edit = parseTierTargetEdit('factory-droid', LOCAL);
 		expect(edit.ok).toBe(false);
 	});

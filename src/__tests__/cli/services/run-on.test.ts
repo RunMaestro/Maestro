@@ -190,7 +190,7 @@ describe('prepareCliRunOn: the Maestro model server', () => {
 		if (prepared.kind !== 'refused') throw new Error('expected a refusal');
 		expect(prepared.message).toContain('runs inside the Maestro app');
 		expect(prepared.message).toContain('Maestro desktop app is not running');
-		expect(prepared.message).toContain('set Run on to Provider');
+		expect(prepared.message).toContain('set the model source to Provider');
 	});
 
 	it("refuses with the app's reason when the server cannot serve the model", async () => {
@@ -235,21 +235,24 @@ describe('readRunOnFlags', () => {
 	});
 
 	it.each(['provider', 'Provider', ' provider '])('clears the target for %j', (runOn) => {
-		expect(readRunOnFlags({ runOn }, { ...CLAUDE, runOn: BIG })).toEqual({
+		expect(readRunOnFlags({ modelSource: runOn }, { ...CLAUDE, runOn: BIG })).toEqual({
 			kind: 'set',
 			target: undefined,
 		});
 	});
 
 	it('names a saved source, at the context the picker field starts at', () => {
-		expect(readRunOnFlags({ runOn: 'ep-ws:big-model' }, CLAUDE)).toEqual({
+		expect(readRunOnFlags({ modelSource: 'ep-ws:big-model' }, CLAUDE)).toEqual({
 			kind: 'set',
 			target: BIG_DEFAULT,
 		});
 	});
 
 	it("starts a model on the Maestro model server at the catalog's context", () => {
-		const edit = readRunOnFlags({ runOn: `${MODEL_SERVER_ENDPOINT_ID}:${GPT_OSS_20B_ID}` }, CLAUDE);
+		const edit = readRunOnFlags(
+			{ modelSource: `${MODEL_SERVER_ENDPOINT_ID}:${GPT_OSS_20B_ID}` },
+			CLAUDE
+		);
 
 		expect(edit).toEqual({
 			kind: 'set',
@@ -268,7 +271,7 @@ describe('readRunOnFlags', () => {
 	it('ends the source id at the first colon, so a model name may hold one', () => {
 		storage.readLocalModelEndpoints.mockReturnValue([{ ...WORKSTATION, id: 'ep-ollama' }]);
 
-		const edit = readRunOnFlags({ runOn: 'ep-ollama:qwen3:latest' }, CLAUDE);
+		const edit = readRunOnFlags({ modelSource: 'ep-ollama:qwen3:latest' }, CLAUDE);
 
 		expect(edit).toMatchObject({
 			kind: 'set',
@@ -277,14 +280,16 @@ describe('readRunOnFlags', () => {
 	});
 
 	it('starts a newly named target at the context its source reports', () => {
-		expect(readRunOnFlags({ runOn: 'ep-ws:big-model' }, CLAUDE, 1_048_576)).toEqual({
+		expect(readRunOnFlags({ modelSource: 'ep-ws:big-model' }, CLAUDE, 1_048_576)).toEqual({
 			kind: 'set',
 			target: { ...BIG, contextTokens: 1_048_576 },
 		});
 	});
 
 	it('stores the context it is given', () => {
-		expect(readRunOnFlags({ runOn: 'ep-ws:big-model', runOnContext: ' 131072 ' }, CLAUDE)).toEqual({
+		expect(
+			readRunOnFlags({ modelSource: 'ep-ws:big-model', modelSourceContext: ' 131072 ' }, CLAUDE)
+		).toEqual({
 			kind: 'set',
 			target: { ...BIG, contextTokens: 131_072 },
 		});
@@ -293,7 +298,9 @@ describe('readRunOnFlags', () => {
 	it('keeps the stored context when the same target is named again', () => {
 		const stored = { ...BIG, contextTokens: 131_072 };
 
-		expect(readRunOnFlags({ runOn: 'ep-ws:big-model' }, { ...CLAUDE, runOn: stored })).toEqual({
+		expect(
+			readRunOnFlags({ modelSource: 'ep-ws:big-model' }, { ...CLAUDE, runOn: stored })
+		).toEqual({
 			kind: 'set',
 			target: stored,
 		});
@@ -302,7 +309,7 @@ describe('readRunOnFlags', () => {
 	it('starts another model on the same source from its own default', () => {
 		const stored = { ...BIG, contextTokens: 131_072 };
 
-		expect(readRunOnFlags({ runOn: 'ep-ws:other' }, { ...CLAUDE, runOn: stored })).toEqual({
+		expect(readRunOnFlags({ modelSource: 'ep-ws:other' }, { ...CLAUDE, runOn: stored })).toEqual({
 			kind: 'set',
 			target: { ...BIG, model: 'other', contextTokens: RUN_ON_DEFAULT_CONTEXT_TOKENS },
 		});
@@ -311,7 +318,7 @@ describe('readRunOnFlags', () => {
 	it("changes only the context of the agent's current target when given the context alone", () => {
 		expect(
 			readRunOnFlags(
-				{ runOnContext: '65536' },
+				{ modelSourceContext: '65536' },
 				{ ...CLAUDE, runOn: { ...BIG, contextTokens: 131_072 } }
 			)
 		).toEqual({ kind: 'set', target: { ...BIG, contextTokens: 65_536 } });
@@ -320,72 +327,81 @@ describe('readRunOnFlags', () => {
 	it.each([[undefined], [{ type: 'provider' }], [{ type: 'source' }]])(
 		'refuses the context alone for an agent with no usable source target (%j)',
 		(runOn) => {
-			const edit = readRunOnFlags({ runOnContext: '65536' }, { ...CLAUDE, runOn });
+			const edit = readRunOnFlags({ modelSourceContext: '65536' }, { ...CLAUDE, runOn });
 
 			expect(edit.kind).toBe('refused');
-			if (edit.kind === 'refused') expect(edit.error).toContain('Pass --run-on');
+			if (edit.kind === 'refused') expect(edit.error).toContain('Pass --model-source');
 		}
 	);
 
-	it('refuses a context beside --run-on provider', () => {
-		const edit = readRunOnFlags({ runOn: 'provider', runOnContext: '65536' }, CLAUDE);
+	it('refuses a context beside --model-source provider', () => {
+		const edit = readRunOnFlags({ modelSource: 'provider', modelSourceContext: '65536' }, CLAUDE);
 
 		expect(edit.kind).toBe('refused');
 		if (edit.kind === 'refused')
-			expect(edit.error).toContain('does not apply to --run-on provider');
+			expect(edit.error).toContain('does not apply to --model-source provider');
 	});
 
 	it.each(['64k', '65536.5', '-1', '', '1e5'])('refuses %j as a context size', (runOnContext) => {
-		const edit = readRunOnFlags({ runOn: 'ep-ws:big-model', runOnContext }, CLAUDE);
+		const edit = readRunOnFlags(
+			{ modelSource: 'ep-ws:big-model', modelSourceContext: runOnContext },
+			CLAUDE
+		);
 
 		expect(edit.kind).toBe('refused');
 		if (edit.kind === 'refused') {
-			expect(edit.error).toContain('--run-on-context expects a whole number of tokens');
+			expect(edit.error).toContain('--model-source-context expects a whole number of tokens');
 		}
 	});
 
 	it('refuses a context under the agent minimum, by the shared rule', () => {
-		const edit = readRunOnFlags({ runOn: 'ep-ws:big-model', runOnContext: '8192' }, CLAUDE);
+		const edit = readRunOnFlags(
+			{ modelSource: 'ep-ws:big-model', modelSourceContext: '8192' },
+			CLAUDE
+		);
 
 		expect(edit.kind).toBe('refused');
 		if (edit.kind === 'refused') {
-			expect(edit.error).toMatch(/^--run-on-context: .*at least 40960 tokens/);
+			expect(edit.error).toMatch(/^--model-source-context: .*at least 40960 tokens/);
 		}
 	});
 
 	it('refuses a spelling that is not a target', () => {
-		const edit = readRunOnFlags({ runOn: 'big-model' }, CLAUDE);
+		const edit = readRunOnFlags({ modelSource: 'big-model' }, CLAUDE);
 
 		expect(edit.kind).toBe('refused');
-		if (edit.kind === 'refused') expect(edit.error).toMatch(/^--run-on: .*<source id>:<model>/);
+		if (edit.kind === 'refused')
+			expect(edit.error).toMatch(/^--model-source: .*<source id>:<model>/);
 	});
 
 	it('refuses a source id that names nothing, before any launch does', () => {
-		const edit = readRunOnFlags({ runOn: 'ep-typo:big-model' }, CLAUDE);
+		const edit = readRunOnFlags({ modelSource: 'ep-typo:big-model' }, CLAUDE);
 
 		expect(edit.kind).toBe('refused');
 		if (edit.kind === 'refused') {
-			expect(edit.error).toContain('--run-on: No source has the id "ep-typo"');
+			expect(edit.error).toContain('--model-source: No source has the id "ep-typo"');
 			expect(edit.error).toContain('ep-ws (Workstation)');
 		}
 	});
 
 	it("refuses a source for a provider with no recipe, with the provider's reason", () => {
-		const edit = readRunOnFlags({ runOn: 'ep-ws:big-model' }, { toolType: 'gemini-cli' });
+		const edit = readRunOnFlags({ modelSource: 'ep-ws:big-model' }, { toolType: 'gemini-cli' });
 
 		expect(edit.kind).toBe('refused');
 		if (edit.kind === 'refused') expect(edit.error).toContain('speaks only the Gemini API');
 	});
 
 	it('still clears a target left on a provider with no recipe', () => {
-		expect(readRunOnFlags({ runOn: 'provider' }, { toolType: 'gemini-cli', runOn: BIG })).toEqual({
+		expect(
+			readRunOnFlags({ modelSource: 'provider' }, { toolType: 'gemini-cli', runOn: BIG })
+		).toEqual({
 			kind: 'set',
 			target: undefined,
 		});
 	});
 
 	it("asks no source and no app: whether the model is served is the test verb's question", () => {
-		readRunOnFlags({ runOn: 'ep-ws:big-model' }, CLAUDE);
+		readRunOnFlags({ modelSource: 'ep-ws:big-model' }, CLAUDE);
 
 		expect(endpointClient.listEndpointModels).not.toHaveBeenCalled();
 		expect(withMaestroClient).not.toHaveBeenCalled();
@@ -399,7 +415,7 @@ describe('reportedRunOnFlagContext', () => {
 			result: { ok: true, models: [{ id: 'big-model', contextTokens: 262_144 }, { id: 'other' }] },
 		});
 
-		expect(await reportedRunOnFlagContext({ runOn: 'ep-ws:big-model' })).toBe(262_144);
+		expect(await reportedRunOnFlagContext({ modelSource: 'ep-ws:big-model' })).toBe(262_144);
 		expect(bridge.sendCommand).toHaveBeenCalledWith(
 			{ type: 'local_models_endpoint_models', endpoint: 'ep-ws' },
 			'local_models_endpoint_models_result'
@@ -407,12 +423,12 @@ describe('reportedRunOnFlagContext', () => {
 	});
 
 	it.each([
-		['no --run-on', {}],
-		['a context already given', { runOn: 'ep-ws:big-model', runOnContext: '65536' }],
-		['the provider', { runOn: 'provider' }],
+		['no --model-source', {}],
+		['a context already given', { modelSource: 'ep-ws:big-model', modelSourceContext: '65536' }],
+		['the provider', { modelSource: 'provider' }],
 		[
 			'the Maestro model server, whose catalog answers',
-			{ runOn: `${MODEL_SERVER_ENDPOINT_ID}:${GPT_OSS_20B_ID}` },
+			{ modelSource: `${MODEL_SERVER_ENDPOINT_ID}:${GPT_OSS_20B_ID}` },
 		],
 	])('asks nothing for %s', async (_label, flags) => {
 		expect(await reportedRunOnFlagContext(flags)).toBeUndefined();
@@ -424,15 +440,15 @@ describe('reportedRunOnFlagContext', () => {
 			success: true,
 			result: { ok: true, models: [{ id: 'big-model' }] },
 		});
-		expect(await reportedRunOnFlagContext({ runOn: 'ep-ws:big-model' })).toBeUndefined();
+		expect(await reportedRunOnFlagContext({ modelSource: 'ep-ws:big-model' })).toBeUndefined();
 
 		bridge.sendCommand.mockResolvedValue({
 			success: true,
 			result: { ok: false, error: { kind: 'network', message: 'down' } },
 		});
-		expect(await reportedRunOnFlagContext({ runOn: 'ep-ws:big-model' })).toBeUndefined();
+		expect(await reportedRunOnFlagContext({ modelSource: 'ep-ws:big-model' })).toBeUndefined();
 
 		bridge.connectError = new Error('Maestro is not running');
-		expect(await reportedRunOnFlagContext({ runOn: 'ep-ws:big-model' })).toBeUndefined();
+		expect(await reportedRunOnFlagContext({ modelSource: 'ep-ws:big-model' })).toBeUndefined();
 	});
 });

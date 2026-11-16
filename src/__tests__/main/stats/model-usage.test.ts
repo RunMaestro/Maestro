@@ -15,6 +15,7 @@ vi.mock('../../../main/utils/logger', () => ({
 
 import { runMigrations } from '../../../main/stats/migrations';
 import { getModelUsage } from '../../../main/stats/model-usage';
+import { getTimeRangeStart } from '../../../shared/statsTimeRange';
 import {
 	clearLocalModelRunsCache,
 	recordLocalModelRun,
@@ -162,7 +163,7 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 		const usage = getModelUsage(db, 'week');
 
 		expect(usage.range).toBe('week');
-		expect(usage.since).toBe(NOW - 7 * DAY_MS);
+		expect(usage.since).toBe(getTimeRangeStart('week', NOW));
 		expect(usage.totals).toEqual({
 			requests: 0,
 			otherModelRequests: 0,
@@ -355,7 +356,7 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 			]);
 		});
 
-		it('counts a turn on its Run on source, and one on the provider under the provider', () => {
+		it('counts a turn on its model source, and one on the provider under the provider', () => {
 			turn({ duration: 10_000, inputTokens: 50, outputTokens: 5, cacheReadTokens: 900 });
 			turn({ duration: 30_000, inputTokens: 70, outputTokens: 7, cacheCreationTokens: 100 });
 			turn({ agentType: 'codex', sessionId: 'agent-b', duration: 20_000 });
@@ -523,7 +524,7 @@ describe.skipIf(!canLoadNodeSqlite())('getModelUsage', () => {
 		]);
 	});
 
-	it('lists the agents that used another model: Run on turns, and the runs filed for them', () => {
+	it('lists the agents that used another model: model source turns, and the runs filed for them', () => {
 		turn({
 			sessionId: 'agent-a',
 			runOnEndpoint: 'ep-ollama',

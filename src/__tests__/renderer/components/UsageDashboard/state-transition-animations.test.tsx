@@ -220,12 +220,11 @@ beforeEach(() => {
 			{ hour: 14, count: 60, duration: 2160000 },
 		],
 		totalSessions: 20,
-		sessionsByAgent: { 'claude-code': 15, opencode: 5 },
-		sessionsByDay: [
-			{ date: '2024-01-01', count: 10 },
-			{ date: '2024-01-02', count: 10 },
-		],
-		avgSessionDuration: 180000,
+		byDayHour: [],
+		window: { startYmd: '2024-01-01', endYmd: '2024-01-02' },
+		earliestQueryAt: null,
+		streak: { current: 0, longest: 2 },
+		byAgentWorktree: {},
 		byAgentByDay: {},
 		bySessionByDay: {},
 		bySessionSource: {},
@@ -352,14 +351,16 @@ describe('Usage Dashboard State Transition Animations', () => {
 			bySource: { user: 70, auto: 30 },
 			byLocation: { local: 80, remote: 20 },
 			byDay: [],
+			byDayHour: [],
+			window: { startYmd: '2026-01-01', endYmd: '2026-01-07' },
+			earliestQueryAt: null,
+			streak: { current: 0, longest: 0 },
 			byHour: [],
 			totalSessions: 15,
-			sessionsByAgent: { 'claude-code': 15 },
-			sessionsByDay: [],
-			avgSessionDuration: 240000,
 			byAgentByDay: {},
 			bySessionByDay: {},
 			bySessionSource: {},
+			byAgentWorktree: {},
 		};
 
 		it('applies card-enter class to metric cards', () => {
@@ -375,7 +376,7 @@ describe('Usage Dashboard State Transition Animations', () => {
 			render(<SummaryCards data={mockData} theme={mockTheme} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards.length).toBe(14); // 14 metric cards (Tokens + Cost added)
+			expect(cards.length).toBe(13); // 13 metric cards (no delegation split passed)
 
 			// Verify each card has incrementing animation delay
 			cards.forEach((card, index) => {
@@ -391,11 +392,11 @@ describe('Usage Dashboard State Transition Animations', () => {
 			expect(cards[0]).toHaveStyle({ animationDelay: '0ms' });
 		});
 
-		it('last card has 1040ms delay (13 * 80ms)', () => {
+		it('last card has 960ms delay (12 * 80ms)', () => {
 			render(<SummaryCards data={mockData} theme={mockTheme} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards[13]).toHaveStyle({ animationDelay: '1040ms' });
+			expect(cards[12]).toHaveStyle({ animationDelay: '960ms' });
 		});
 	});
 
@@ -444,10 +445,16 @@ describe('Usage Dashboard State Transition Animations', () => {
 				expect(sessionStatsSection).toHaveClass('dashboard-section-enter');
 				expect(sessionStatsSection).toHaveStyle({ animationDelay: '0ms' });
 
-				// Agent efficiency is second with 50ms delay
-				const efficiencySection = screen.getByTestId('section-agent-efficiency');
-				expect(efficiencySection).toHaveClass('dashboard-section-enter');
-				expect(efficiencySection).toHaveStyle({ animationDelay: '50ms' });
+				// Agents Over Time follows it with a 15ms delay
+				const countTrendSection = screen.getByTestId('section-agent-count-trend');
+				expect(countTrendSection).toHaveClass('dashboard-section-enter');
+				expect(countTrendSection).toHaveStyle({ animationDelay: '15ms' });
+
+				// Agent Usage comes next with a 50ms delay (Agent Efficiency is gone)
+				expect(screen.queryByTestId('section-agent-efficiency')).not.toBeInTheDocument();
+				const usageSection = screen.getByTestId('section-agent-usage');
+				expect(usageSection).toHaveClass('dashboard-section-enter');
+				expect(usageSection).toHaveStyle({ animationDelay: '50ms' });
 			});
 		});
 
@@ -467,9 +474,12 @@ describe('Usage Dashboard State Transition Animations', () => {
 				expect(heatmap).toHaveClass('dashboard-section-enter');
 				expect(heatmap).toHaveStyle({ animationDelay: '0ms' });
 
+				// Weekday vs Weekend is gone, so Duration Trends is the next step in
+				// the stagger after the heatmap.
+				expect(screen.queryByTestId('section-weekday-comparison')).toBeNull();
 				const trends = screen.getByTestId('section-duration-trends');
 				expect(trends).toHaveClass('dashboard-section-enter');
-				expect(trends).toHaveStyle({ animationDelay: '100ms' });
+				expect(trends).toHaveStyle({ animationDelay: '50ms' });
 			});
 		});
 

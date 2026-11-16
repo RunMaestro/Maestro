@@ -102,7 +102,7 @@ export function promptCacheLifetimeMs(toolType: ToolType): number {
 export interface AutoSessionLaunch {
 	/** The model it ran on. `undefined` is the agent's default. */
 	model?: string;
-	/** The place it ran, when a tier decided it. `undefined` is the agent's own Run on target. */
+	/** The place it ran, when a tier decided it. `undefined` is the agent's own model source. */
 	runOn?: RunOnTarget;
 	/** Epoch ms of the session's last activity. `undefined` when nobody knows. */
 	lastActiveAt?: number;
@@ -211,7 +211,7 @@ export interface AutoTurnStamp {
 	route?: AutoRouteStamp;
 	/**
 	 * Where the turn launches, when Auto decided the place: the tier's target, or
-	 * the place the held session ran. Absent means the agent's own Run on target.
+	 * the place the held session ran. Absent means the agent's own model source.
 	 */
 	runOn?: RunOnTarget;
 	/** Set when the tier names a target that cannot be used. The turn must not launch. */
@@ -315,7 +315,7 @@ export function resolveAutoTurn(input: AutoTurnInput): AutoTurn {
 	const resolved = resolveTurnSettings(toolType, hint, hold?.model, agentEffort, routing);
 
 	// The place: the tier's target when a tier applied, else where the held
-	// session ran. Neither means the agent's own Run on target stands.
+	// session ran. Neither means the agent's own model source stands.
 	const runOn = resolved.runOn ?? (tier ? undefined : hold?.runOn);
 	// A marker that fixes both axes asked the router nothing, so there is
 	// nothing for an Auto line to say: the marker's own notes are the record.
@@ -358,7 +358,7 @@ export function pendingAutoTurnStamp(hold: AutoModelHold | undefined): AutoTurnS
  * A turn's Auto as a pill reads it: `Auto → medium · sonnet`,
  * `Auto → low · qwen3.5-4b · Maestro`, `Auto (router off)`,
  * `Auto (no decision)`. `target` is what the turn launched on, as its own pill
- * names it: the Run on label, else the model. A routed turn that kept the
+ * names it: the model source label, else the model. A routed turn that kept the
  * session's model says so in place of the tier, because the tier was not
  * applied.
  */
@@ -402,7 +402,7 @@ export interface AutoTurnReport {
 
 /**
  * A resolved Auto turn as its report. `target` is where the turn runs as a
- * person reads it (a Run on label) when the caller has one; otherwise the model
+ * person reads it (a model source label) when the caller has one; otherwise the model
  * names it.
  */
 export function autoTurnReport(

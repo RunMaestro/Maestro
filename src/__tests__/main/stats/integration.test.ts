@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
+import { withHealthyIntegrityCheck } from '../../helpers/sqlitePragmaMock';
 
 // Track Database constructor calls to verify file path
 let lastDbPath: string | null = null;
@@ -41,7 +42,7 @@ vi.mock('better-sqlite3', () => {
 			constructor(dbPath: string) {
 				lastDbPath = dbPath;
 			}
-			pragma = mockDb.pragma;
+			pragma = withHealthyIntegrityCheck(mockDb.pragma);
 			prepare = mockDb.prepare;
 			close = mockDb.close;
 			transaction = mockDb.transaction;

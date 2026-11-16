@@ -232,7 +232,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const manualGrokOptions = runAgent?.toolType === 'grok';
 
 	// What this run can launch on besides the provider's own list: every model a
-	// Local Models source lists, for a harness with a Run on recipe.
+	// Local Models source lists, for a harness with a model source recipe.
 	const { options: harnessOptions } = useHarnessTierOptions(runAgent?.toolType);
 	const harnessRow = useMemo(
 		() => harnessOptions?.find((row) => row.harness === runAgent?.toolType),

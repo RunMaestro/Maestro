@@ -1,25 +1,13 @@
 import type { AutoRunSession } from '../../../shared/stats-types';
 import { formatTimestamp } from '../../../shared/formatters';
-import { isGoalRunDocument } from '../../../shared/goalDriven/goalRunLabel';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import { isGoalRunDocument, goalRunLabel } from '../../../shared/goalDriven/goalRunLabel';
 
-export const MAX_LONGEST_AUTORUN_ROWS = 25;
-const EMPTY_TABLE_CELL = String.fromCharCode(8212);
+/** Rows the Longest Auto Runs table shows before "Show more". */
+export const LONGEST_AUTORUN_PAGE_SIZE = 25;
+export const EMPTY_TABLE_CELL = '-';
 
-export function formatAgentName(agentType: string): string {
-	const names: Record<string, string> = {
-		'claude-code': 'Claude Code',
-		opencode: 'OpenCode',
-		'openai-codex': 'OpenAI Codex',
-		codex: 'Codex',
-		'gemini-cli': 'Gemini CLI',
-		'qwen3-coder': 'Qwen3 Coder',
-		'factory-droid': 'Factory Droid',
-		copilot: 'GitHub Copilot',
-		grok: 'Grok CLI',
-		terminal: 'Terminal',
-	};
-	return names[agentType] || agentType;
-}
+export type AutoRunSortKey = 'duration' | 'start' | 'provider' | 'document' | 'tasks' | 'project';
 
 export function extractFileName(path?: string): string {
 	if (!path) return EMPTY_TABLE_CELL;
@@ -43,16 +31,58 @@ export function formatAutoRunDate(timestamp: number): string {
 
 export const formatAutoRunTime = (timestamp: number) => formatTimestamp(timestamp, 'time');
 
-export function getTopAutoRunSessions(
+/** Provider display name for a run's agent type. */
+export const formatAutoRunProvider = (agentType: string) => getAgentDisplayName(agentType);
+
+/** The document column's text: the goal for a goal run, else the file name. */
+export function autoRunDocumentLabel(session: AutoRunSession): string {
+	return isGoalRunDocument(session.documentPath)
+		? goalRunLabel(session.documentPath)
+		: extractFileName(session.documentPath);
+}
+
+/** Ticked share of a run's checkboxes (a goal run's progress), for sorting. */
+function taskSortValue(session: AutoRunSession): number {
+	if (isGoalRunDocument(session.documentPath)) return (session.tasksCompleted ?? 0) / 100;
+	if (!session.tasksTotal) return -1;
+	return (session.tasksCompleted ?? 0) / session.tasksTotal;
+}
+
+/** Runs ordered by the chosen column; ties fall back to longest first. */
+export function sortAutoRunSessions(
 	sessions: AutoRunSession[],
-	maxRows = MAX_LONGEST_AUTORUN_ROWS
+	key: AutoRunSortKey,
+	descending: boolean
 ): AutoRunSession[] {
-	return [...sessions].sort((a, b) => b.duration - a.duration).slice(0, maxRows);
+	const compare = (a: AutoRunSession, b: AutoRunSession): number => {
+		switch (key) {
+			case 'duration':
+				return a.duration - b.duration;
+			case 'start':
+				return a.startTime - b.startTime;
+			case 'provider':
+				return formatAutoRunProvider(a.agentType).localeCompare(formatAutoRunProvider(b.agentType));
+			case 'document':
+				return autoRunDocumentLabel(a).localeCompare(autoRunDocumentLabel(b));
+			case 'tasks':
+				return taskSortValue(a) - taskSortValue(b);
+			case 'project':
+				return extractProjectName(a.projectPath).localeCompare(extractProjectName(b.projectPath));
+		}
+	};
+	return [...sessions].sort((a, b) => {
+		const diff = compare(a, b);
+		if (diff !== 0) return descending ? -diff : diff;
+		return b.duration - a.duration;
+	});
 }
 
 export function formatAutoRunTasksLabel(session: AutoRunSession): string {
 	if (isGoalRunDocument(session.documentPath)) {
 		return `${session.tasksCompleted ?? 0}%`;
+	}
+	if (session.duration <= 0) {
+		return session.tasksTotal != null ? `- / ${session.tasksTotal}` : EMPTY_TABLE_CELL;
 	}
 	if (session.tasksTotal != null) {
 		return `${session.tasksCompleted ?? 0} / ${session.tasksTotal}`;

@@ -1586,6 +1586,61 @@ export async function submitFeedbackConversation(
 		sshRemoteEnabled: payload.sshRemoteEnabled,
 	});
 
+	// Secret screen, before anything is uploaded. The issue text and the
+	// support package are screened together so a refusal lists every finding at
+	// once, and a refusal uploads nothing: no screenshots, no package, no issue.
+	const allowSecrets = payload.allowSecrets === true;
+	const findings: SecretFinding[] = [];
+	let secretScreenNote: string | undefined;
+	if (!allowSecrets) {
+		const screen = await screenForSecrets(
+			feedbackTextParts({
+				summary: summaryField.value,
+				expected: expectedField.value,
+				actual: actualField.value,
+				steps: reproField.value,
+				context: contextField.value,
+			})
+		);
+		findings.push(...screen.findings);
+		secretScreenNote = screen.note;
+	}
+
+	// Live state as of filing: an anonymized section on the issue, and the Auto
+	// Run counters the support package cannot read on its own (they live only in
+	// the renderer, so a package built here used to ship that section empty).
+	const liveDiagnosis = await captureFeedbackLiveDiagnosis();
+
+	// Generate the debug package if requested. It screens its own contents and
+	// writes no zip when it finds something.
+	let debugPackagePath: string | undefined;
+	if (payload.includeDebugPackage && debugPackageDeps) {
+		try {
+			const packageResult = await generateDebugPackage(os.tmpdir(), debugPackageDeps, {
+				allowSecrets,
+			});
+			if (packageResult.secretFindings?.length) {
+				findings.push(...packageResult.secretFindings);
+				secretScreenNote ??= packageResult.secretScreenNote;
+			} else if (packageResult.success && packageResult.path) {
+				debugPackagePath = packageResult.path;
+			}
+		} catch (e) {
+			void captureException(e);
+			logger.warn(`Failed to generate debug package: ${e}`, LOG_CONTEXT);
+		}
+	}
+	const discardDebugPackage = async (): Promise<void> => {
+		if (debugPackagePath) await fs.unlink(debugPackagePath).catch(() => {});
+		debugPackagePath = undefined;
+	};
+
+	if (findings.length > 0) {
+		await discardDebugPackage();
+		return secretScreenRefusal(findings, 'the feedback', secretScreenNote);
+	}
+
+	// Upload attachments
 	const normalizedAttachments = Array.isArray(payload.attachments)
 		? payload.attachments.filter(
 				(a): a is FeedbackAttachmentInput =>
@@ -1617,96 +1672,39 @@ export async function submitFeedbackConversation(
 		typeof payload.reviewedFingerprint === 'string' &&
 		payload.reviewedFingerprint !== fingerprint
 	) {
+		await discardDebugPackage();
 		return {
 			success: false,
 			error: 'The report changed after you reviewed it. Review it again before submitting.',
 		};
 	}
 	if (inFlightReportFingerprints.has(fingerprint)) {
+		await discardDebugPackage();
 		return {
 			success: false,
 			error: 'This report is already being filed.',
 		};
 	}
 	if (filedReportFingerprints.has(fingerprint)) {
+		await discardDebugPackage();
 		return {
 			success: false,
 			error: 'This report has already been filed. Start a new report to file another issue.',
 		};
 	}
 
-	// Claim it before the first await so a second submit during the screen, the
-	// uploads and issue creation is refused instead of filing a duplicate. The
-	// finally below releases only this report's claim unless the issue was
-	// created, where it stays filed.
+	// Claim it before the first await so a second submit during the uploads and
+	// issue creation is refused instead of filing a duplicate. The finally below
+	// releases only this report's claim unless the issue was created, where it
+	// stays filed.
 	inFlightReportFingerprints.add(fingerprint);
-	let debugPackagePath: string | undefined;
-	const discardDebugPackage = async (): Promise<void> => {
-		if (debugPackagePath) await fs.unlink(debugPackagePath).catch(() => {});
-		debugPackagePath = undefined;
-	};
 	try {
-		// Secret screen, before anything is uploaded. The issue text and the
-		// support package are screened together so a refusal lists every finding
-		// at once, and a refusal uploads nothing: no screenshots, no package, no
-		// issue.
-		const allowSecrets = payload.allowSecrets === true;
-		const findings: SecretFinding[] = [];
-		let secretScreenNote: string | undefined;
-		if (!allowSecrets) {
-			const screen = await screenForSecrets(
-				feedbackTextParts({
-					summary: summaryField.value,
-					expected: expectedField.value,
-					actual: actualField.value,
-					steps: reproField.value,
-					context: contextField.value,
-				})
-			);
-			findings.push(...screen.findings);
-			secretScreenNote = screen.note;
-		}
-
-		// Live state as of filing: an anonymized section on the issue, and the
-		// Auto Run counters the support package cannot read on its own (they live
-		// only in the renderer, so a package built here used to ship that section
-		// empty).
-		const liveDiagnosis = await captureFeedbackLiveDiagnosis();
-
-		// Generate the debug package if requested. It screens its own contents
-		// and writes no zip when it finds something.
-		const warnings: string[] = [];
-		const packageNotBuilt =
-			'The support package could not be built, so it is not included in the report.';
-		if (payload.includeDebugPackage && debugPackageDeps) {
-			try {
-				const packageResult = await generateDebugPackage(os.tmpdir(), debugPackageDeps, {
-					allowSecrets,
-				});
-				if (packageResult.secretFindings?.length) {
-					findings.push(...packageResult.secretFindings);
-					secretScreenNote ??= packageResult.secretScreenNote;
-				} else if (packageResult.success && packageResult.path) {
-					debugPackagePath = packageResult.path;
-				} else {
-					warnings.push(packageNotBuilt);
-				}
-			} catch (e) {
-				void captureException(e);
-				logger.warn(`Failed to generate debug package: ${e}`, LOG_CONTEXT);
-				warnings.push(packageNotBuilt);
-			}
-		}
-
-		if (findings.length > 0) {
-			return secretScreenRefusal(findings, 'the feedback', secretScreenNote);
-		}
-
-		// An upload failure is reported as a result, not thrown: a throw crosses
-		// IPC as "Error invoking remote method ...", burying the gh guidance it
-		// carries. A failed screenshot degrades to a warning so the rest of the
-		// report still files, and screenshots that did upload keep their links.
+		// An upload failure is reported as a result, not thrown: a throw crosses IPC
+		// as "Error invoking remote method ...", burying the gh guidance it carries.
+		// A failed screenshot degrades to a warning so the rest of the report still
+		// files, and screenshots that did upload keep their links.
 		let attachmentMarkdown: string;
+		const warnings: string[] = [];
 		try {
 			const result = await uploadAttachments(normalizedAttachments, { degrade: true });
 			attachmentMarkdown = result.markdown;
@@ -1729,7 +1727,9 @@ export async function submitFeedbackConversation(
 					: 'None';
 		}
 
-		// Upload the debug package generated above
+		// Upload the debug package generated (and screened) above. A requested
+		// package with no path was not built, since a package with findings
+		// already refused the whole report.
 		let debugPackageMarkdown = '';
 		if (debugPackagePath) {
 			try {
@@ -1748,6 +1748,8 @@ export async function submitFeedbackConversation(
 					'The support package could not be uploaded, so it is not included in the report.'
 				);
 			}
+		} else if (payload.includeDebugPackage && debugPackageDeps) {
+			warnings.push('The support package could not be built, so it is not included in the report.');
 		}
 
 		// Upload performance trace if one was captured from the modal. The temp
@@ -1854,6 +1856,7 @@ export async function submitFeedbackConversation(
 			await fs.unlink(bodyFile).catch(() => {});
 		}
 	} finally {
+		// Any exit before the upload above (a gh login refusal) leaves the zip.
 		await discardDebugPackage();
 		inFlightReportFingerprints.delete(fingerprint);
 	}

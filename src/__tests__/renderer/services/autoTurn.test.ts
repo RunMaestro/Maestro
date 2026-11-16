@@ -486,7 +486,7 @@ it('rejects a late router answer after a new turn takes the same tab', async () 
 	expect(liveTab().turnAuto).toBe(freshStamp);
 });
 
-it('passes a captured provider Run on target for a named model', () => {
+it('passes a captured provider model source for a named model', () => {
 	expect(turnSpawnSettings(null, { model: 'opus', runOn: { type: 'provider' } })).toEqual({
 		sessionCustomModel: 'opus',
 		sessionCustomEffort: undefined,

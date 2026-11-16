@@ -11,11 +11,15 @@ import type { LocalModelListing } from '../../../../../main/local-models/service
 import type { LocalModelEndpoint } from '../../../../../shared/local-models/endpoints';
 import type { LocalModelTaskReadiness } from '../../../../../shared/local-models/task-readiness';
 import { LocalModelsAssignmentsSection } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/LocalModelsAssignmentsSection';
-import { UtilityAgentSettings } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/UtilityAgentSettings';
-import { buildAssignmentOptionGroups } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/assignmentOptions';
+import { ModelMapSettings } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/ModelMapSettings';
+import {
+	buildAssignmentOptionGroups,
+	buildModelMapSlotOptionGroups,
+} from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/assignmentOptions';
 import { useLocalModelEndpoints, useLocalModels } from '../../../../../renderer/hooks/localModels';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import type { SystemOneEngineChoice } from '../../../../../shared/local-models/system-one-settings';
+import { DEFAULT_MODEL_MAP } from '../../../../../shared/local-models/model-map';
 import {
 	LOCAL_MODEL_TASKS,
 	isLocalModelOfferedForTask,
@@ -107,7 +111,7 @@ function Section() {
 	const endpoints = useLocalModelEndpoints();
 	return (
 		<>
-			<UtilityAgentSettings theme={theme} models={models} endpoints={endpoints} />
+			<ModelMapSettings theme={theme} models={models} endpoints={endpoints} />
 			<LocalModelsAssignmentsSection
 				theme={theme}
 				system="one"
@@ -146,60 +150,125 @@ describe('LocalModelsAssignmentsSection', () => {
 		useSettingsStore.setState({
 			localModelAssignments: {},
 			localModelEndpoints: [ollama],
-			utilityAgentId: null,
-			utilityModelId: null,
-			utilitySource: { type: 'utility-agent' },
+			modelMap: DEFAULT_MODEL_MAP,
 		});
 	});
 
-	it('offers providers, installed text models and endpoints as the shared utility source', async () => {
+	it('offers providers, installed text models and endpoints in each Model Map slot', async () => {
 		vi.mocked(window.maestro.agents.detect).mockResolvedValue([
 			{ id: 'codex', name: 'Codex', available: true },
 		] as never);
 		render(<Section />);
-		await waitFor(() => expect(optionLabels('Source')).toContain(qwenName));
-		await waitFor(() => expect(optionLabels('Source')).toContain('llama3.2:latest'));
-		await waitFor(() => expect(optionLabels('Source')).toContain('Codex'));
-		expect(optionLabels('Source')).not.toContain(bgeName);
-		expect(optionLabels('Source')).not.toContain('Off');
+		for (const slot of ['Agent model', 'Housekeeping model']) {
+			await waitFor(() => expect(optionLabels(slot)).toContain(qwenName));
+			await waitFor(() => expect(optionLabels(slot)).toContain('llama3.2:latest'));
+			await waitFor(() => expect(optionLabels(slot)).toContain('Codex'));
+			expect(optionLabels(slot)).toContain('Session provider (same as the tab)');
+			expect(optionLabels(slot)).not.toContain(bgeName);
+			expect(optionLabels(slot)).not.toContain('Off');
+		}
+		expect(screen.getByLabelText('Housekeeping model')).toHaveValue('provider');
 
-		fireEvent.change(screen.getByLabelText('Source'), {
+		fireEvent.change(screen.getByLabelText('Housekeeping model'), {
 			target: { value: `local:${QWEN3_1_7B_ID}` },
 		});
-		expect(useSettingsStore.getState().utilitySource).toEqual({
-			type: 'local',
-			modelId: QWEN3_1_7B_ID,
+		expect(useSettingsStore.getState().modelMap).toEqual({
+			agent: { type: 'provider' },
+			housekeeping: { type: 'local', modelId: QWEN3_1_7B_ID },
 		});
-		expect(window.maestro.settings.set).toHaveBeenCalledWith('utilitySource', {
-			type: 'local',
-			modelId: QWEN3_1_7B_ID,
+		expect(window.maestro.settings.set).toHaveBeenCalledWith('modelMap', {
+			agent: { type: 'provider' },
+			housekeeping: { type: 'local', modelId: QWEN3_1_7B_ID },
 		});
-		expect(screen.getByLabelText('Tab naming')).toHaveValue('utility-agent');
+		// Tasks keep following the slot; their picker names what it runs on.
+		expect(screen.getByLabelText('Tab naming')).toHaveValue('housekeeping-model');
+		expect(optionLabels('Tab naming')).toEqual(
+			expect.arrayContaining(['Agent model: Session provider', `Housekeeping model: ${qwenName}`])
+		);
 		expect(
 			within(screen.getByTestId('local-models-task-ai-command')).getByText(/kills a process/)
 		).toBeInTheDocument();
 
-		fireEvent.change(screen.getByLabelText('Source'), {
+		fireEvent.change(screen.getByLabelText('Housekeeping model'), {
 			target: { value: 'endpoint:ep-ollama:llama3.2:latest' },
 		});
-		expect(useSettingsStore.getState().utilitySource).toEqual({
+		expect(useSettingsStore.getState().modelMap.housekeeping).toEqual({
 			type: 'endpoint',
 			endpointId: 'ep-ollama',
 			model: 'llama3.2:latest',
 		});
-		fireEvent.change(screen.getByLabelText('Source'), { target: { value: 'provider:codex' } });
-		expect(useSettingsStore.getState().utilitySource).toEqual({ type: 'utility-agent' });
-		expect(useSettingsStore.getState().utilityAgentId).toBe('codex');
-		expect(screen.getByLabelText('Model override')).toBeInTheDocument();
+
+		fireEvent.change(screen.getByLabelText('Agent model'), { target: { value: 'provider:codex' } });
+		expect(useSettingsStore.getState().modelMap.agent).toEqual({
+			type: 'provider',
+			agentId: 'codex',
+		});
+		// The endpoint slot is untouched by the other slot's change.
+		expect(useSettingsStore.getState().modelMap.housekeeping.type).toBe('endpoint');
+
+		fireEvent.change(screen.getByLabelText('Agent model model override'), {
+			target: { value: 'gpt-4o-mini' },
+		});
+		expect(useSettingsStore.getState().modelMap.agent).toEqual({
+			type: 'provider',
+			agentId: 'codex',
+			modelId: 'gpt-4o-mini',
+		});
+		// The override does not move the select off the provider's option.
+		expect(screen.getByLabelText('Agent model')).toHaveValue('provider:codex');
+		expect(screen.queryByLabelText('Housekeeping model model override')).toBeNull();
 	});
 
-	it('keeps a missing shared model selected and rechecks inherited task readiness on changes', async () => {
-		useSettingsStore.setState({ utilitySource: { type: 'local', modelId: 'removed-model' } });
+	it('names the tasks that follow each slot, Summaries and Git drafts on the Agent model by default', () => {
 		render(<Section />);
-		expect(screen.getByLabelText('Source')).toHaveValue('local:removed-model');
-		expect(optionLabels('Source').some((label) => label.includes('removed-model'))).toBe(true);
+		expect(screen.getByTestId('model-map-agent-used-by')).toHaveTextContent(
+			'Used by: Summaries, Git drafts'
+		);
+		const housekeeping = screen.getByTestId('model-map-housekeeping-used-by');
+		expect(housekeeping).toHaveTextContent('Tab naming');
+		expect(housekeeping).not.toHaveTextContent('Git drafts');
+		expect(screen.getByLabelText('Git drafts')).toHaveValue('agent-model');
+		expect(screen.getByLabelText('Summaries')).toHaveValue('agent-model');
+	});
+
+	it('moves a task to the other slot when it is pointed there', () => {
+		useSettingsStore.setState({
+			localModelAssignments: { 'git-drafts': { type: 'housekeeping-model' } },
+		});
+		render(<Section />);
+		expect(screen.getByTestId('model-map-agent-used-by')).toHaveTextContent('Used by: Summaries');
+		expect(screen.getByTestId('model-map-agent-used-by')).not.toHaveTextContent('Git drafts');
+		expect(screen.getByTestId('model-map-housekeeping-used-by')).toHaveTextContent('Git drafts');
+	});
+
+	it('says when a slot has no task', () => {
+		useSettingsStore.setState({
+			localModelAssignments: {
+				'tab-summary': { type: 'housekeeping-model' },
+				'git-drafts': { type: 'off' },
+			},
+		});
+		render(<Section />);
+		expect(screen.getByTestId('model-map-agent-used-by')).toHaveTextContent('No task uses it yet.');
+	});
+
+	it('keeps a missing slot model selected and rechecks inherited task readiness on changes', async () => {
+		useSettingsStore.setState({
+			modelMap: {
+				agent: { type: 'provider' },
+				housekeeping: { type: 'local', modelId: 'removed-model' },
+			},
+		});
+		render(<Section />);
+		expect(screen.getByLabelText('Housekeeping model')).toHaveValue('local:removed-model');
+		expect(
+			optionLabels('Housekeeping model').some((label) => label.includes('removed-model'))
+		).toBe(true);
 		const calls = api().taskReadiness.mock.calls.length;
-		fireEvent.change(screen.getByLabelText('Source'), { target: { value: 'utility-agent' } });
+		fireEvent.change(screen.getByLabelText('Housekeeping model'), {
+			target: { value: 'provider' },
+		});
+		expect(useSettingsStore.getState().modelMap.housekeeping).toEqual({ type: 'provider' });
 		await waitFor(() => expect(api().taskReadiness.mock.calls.length).toBeGreaterThan(calls));
 	});
 
@@ -208,18 +277,19 @@ describe('LocalModelsAssignmentsSection', () => {
 		await waitFor(() => expect(optionLabels('Tab naming')).toContain(qwenName));
 		await waitFor(() => expect(optionLabels('Tab naming')).toContain('llama3.2:latest'));
 
-		// Text generation: Utility Agent, the installed text model, the endpoint model.
+		// Text generation: both Model Map slots, the installed text model, the endpoint model.
+		const slots = ['Agent model: Session provider', 'Housekeeping model: Session provider'];
 		const tabNaming = optionLabels('Tab naming');
-		expect(tabNaming).toEqual(expect.arrayContaining(['Off', 'Utility source']));
+		expect(tabNaming).toEqual(expect.arrayContaining(['Off', ...slots]));
 		expect(tabNaming).not.toContain(bgeName);
-		// A System Two task with no agent path still inherits the Utility source.
-		expect(optionLabels('Git drafts')).toEqual(expect.arrayContaining(['Off', 'Utility source']));
+		// A System Two task with no agent path still inherits a slot.
+		expect(optionLabels('Git drafts')).toEqual(expect.arrayContaining(['Off', ...slots]));
 
-		// Embeddings: no Utility Agent path, only the embedding model.
+		// Embeddings: no Model Map slot, only the embedding model.
 		const semantic = optionLabels('Semantic search');
 		expect(semantic).toContain(bgeName);
 		expect(semantic).not.toContain(qwenName);
-		expect(semantic).not.toContain('Utility source');
+		expect(semantic.some((label) => label.includes(' model: '))).toBe(false);
 
 		// Classifiers: no installed classifier and no endpoint can serve one.
 		expect(optionLabels('Prompt-injection screen')).toEqual(['Off']);
@@ -409,13 +479,48 @@ describe('buildAssignmentOptionGroups', () => {
 	it('groups local models and each enabled endpoint, skipping disabled ones', () => {
 		const groups = buildAssignmentOptionGroups(
 			LOCAL_MODEL_TASKS['tab-naming'],
-			{ type: 'utility-agent' },
+			{ type: 'housekeeping-model' },
 			sources
 		);
 		expect(groups.map((group) => group.label)).toEqual([null, 'Local models', 'Ollama']);
+		// Without the map the slots are named alone.
+		expect(groups[0].options).toEqual([
+			{ value: 'off', label: 'Off' },
+			{ value: 'agent-model', label: 'Agent model' },
+			{ value: 'housekeeping-model', label: 'Housekeeping model' },
+		]);
 		expect(groups[2].options).toEqual([
 			{ value: 'endpoint:ep-ollama:qwen3:latest', label: 'qwen3:latest' },
 		]);
+	});
+
+	it('names what each Model Map slot runs on when the map is passed', () => {
+		const head = buildAssignmentOptionGroups(
+			LOCAL_MODEL_TASKS['tab-naming'],
+			{ type: 'agent-model' },
+			{
+				...sources,
+				modelMap: {
+					agent: { type: 'endpoint', endpointId: 'ep-ollama', model: 'qwen3:latest' },
+					housekeeping: { type: 'provider', agentId: 'codex', modelId: 'gpt-4o-mini' },
+				},
+			}
+		)[0].options;
+		expect(head).toEqual([
+			{ value: 'off', label: 'Off' },
+			{ value: 'agent-model', label: 'Agent model: qwen3:latest on Ollama' },
+			{ value: 'housekeeping-model', label: 'Housekeeping model: Codex (gpt-4o-mini)' },
+		]);
+	});
+
+	it('offers no Model Map slot to a task that cannot inherit one', () => {
+		const values = buildAssignmentOptionGroups(
+			LOCAL_MODEL_TASKS['semantic-search'],
+			{ type: 'off' },
+			sources
+		).flatMap((group) => group.options.map((option) => option.value));
+		expect(values).not.toContain('agent-model');
+		expect(values).not.toContain('housekeeping-model');
 	});
 
 	describe('the fail policy column', () => {
@@ -534,7 +639,7 @@ describe('buildAssignmentOptionGroups', () => {
 
 	describe('System One as a source', () => {
 		const SYSTEM_ONE = { type: 'system-one' } as const;
-		/** The ungrouped head of a task's picker: Off, the Utility Agent, System One. */
+		/** The ungrouped head of a task's picker: Off, the Model Map slots, System One. */
 		const head = (
 			taskId: LocalModelTaskId,
 			engine?: SystemOneEngineChoice,
@@ -595,6 +700,55 @@ describe('buildAssignmentOptionGroups', () => {
 			expect(
 				head('cue-gate', 'jev-cloud', SYSTEM_ONE).filter((option) => option.value === 'system-one')
 			).toHaveLength(1);
+		});
+	});
+});
+
+describe('buildModelMapSlotOptionGroups', () => {
+	const gemmaName = getLocalModel(GEMMA_4_E4B_ID)!.displayName;
+	const sources = {
+		listings: [QWEN3_1_7B_ID, GEMMA_4_E4B_ID, BGE_SMALL_EN_ID].map(installed),
+		endpoints: [ollama],
+		endpointModels: { 'ep-ollama': { ok: true as const, models: [{ id: 'qwen3:latest' }] } },
+	};
+	const labels = (groups: ReturnType<typeof buildModelMapSlotOptionGroups>) =>
+		groups.map((group) => [group.label, group.options.map((option) => option.label)]);
+
+	it('groups the models the Library recommends for the Agent model first', () => {
+		expect(labels(buildModelMapSlotOptionGroups('agent', { type: 'provider' }, sources))).toEqual([
+			['Agent-ready models', [gemmaName]],
+			['Other local models', [qwenName]],
+			['Ollama', ['qwen3:latest']],
+		]);
+	});
+
+	it('leaves out Other local models when every installed model is recommended', () => {
+		expect(
+			labels(buildModelMapSlotOptionGroups('housekeeping', { type: 'provider' }, sources))
+		).toEqual([
+			['Housekeeping models', [qwenName, gemmaName]],
+			['Ollama', ['qwen3:latest']],
+		]);
+	});
+
+	it('never offers Off or a slot, and keeps a current model that is not installed', () => {
+		const groups = buildModelMapSlotOptionGroups(
+			'housekeeping',
+			{ type: 'local', modelId: QWEN3_5_4B_ID },
+			sources
+		);
+		const values = groups.flatMap((group) => group.options.map((option) => option.value));
+		expect(values).not.toContain('off');
+		expect(values).not.toContain('agent-model');
+		expect(values).not.toContain('housekeeping-model');
+		expect(groups[0]).toEqual({
+			label: null,
+			options: [
+				{
+					value: `local:${QWEN3_5_4B_ID}`,
+					label: `${getLocalModel(QWEN3_5_4B_ID)!.displayName} (not installed)`,
+				},
+			],
 		});
 	});
 });
@@ -738,8 +892,7 @@ describe('LocalModelsAssignmentsSection and System One', () => {
 		useSettingsStore.setState({
 			localModelAssignments: {},
 			localModelEndpoints: [],
-			utilityAgentId: null,
-			utilityModelId: null,
+			modelMap: DEFAULT_MODEL_MAP,
 		});
 	});
 

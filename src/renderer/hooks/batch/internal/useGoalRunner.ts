@@ -825,7 +825,7 @@ export function useGoalRunner({
 								customModel: config.model || session.customModel,
 								customEffort: config.effort || session.customEffort,
 								// Resume where the iteration ran: a session started on the run's
-								// Run on target lives on that source, not the agent's own.
+								// model source lives on that source, not the agent's own.
 								...(config.runOn && { runOnOverride: config.runOn }),
 								customContextWindow: session.customContextWindow,
 								enableMaestroP: session.enableMaestroP,
@@ -940,7 +940,14 @@ export function useGoalRunner({
 
 				if (statsAutoRunId) {
 					try {
-						await window.maestro.stats.endAutoRun(statsAutoRunId, totalElapsedMs, finalProgress);
+						// Progress is on a 0-100 scale and the run row was started with
+						// tasksTotal 100, so the total stays 100.
+						await window.maestro.stats.endAutoRun(
+							statsAutoRunId,
+							totalElapsedMs,
+							finalProgress,
+							100
+						);
 					} catch (statsError) {
 						logger.warn('[GoalRunner] Failed to end stats tracking:', undefined, statsError);
 					}

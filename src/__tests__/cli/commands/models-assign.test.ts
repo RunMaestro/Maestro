@@ -1,10 +1,12 @@
 /**
  * @file models-assign.test.ts
- * @description Tests for `maestro-cli models assign` and `models tasks`:
+ * @description Tests for `maestro-cli models assign`, `models tasks` and `models map`:
  * assign validates and stores through the same shared helpers as the Settings
  * picker (wrong kind refused, endpoint named by id prefix or name stored by
  * full id, the default removes the entry), and tasks lists every assignment
  * with readiness when the desktop answers and without it when it does not.
+ * map shows and sets the two Model Map slots with the same checks as the card
+ * in Settings.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -13,7 +15,8 @@ vi.mock('../../../cli/services/storage', () => ({
 	readLocalModelAssignments: vi.fn(() => ({})),
 	writeLocalModelAssignments: vi.fn(),
 	readLocalModelEndpoints: vi.fn(() => []),
-	readSettingValue: vi.fn(),
+	readStoredModelMap: vi.fn(),
+	writeModelMap: vi.fn(),
 }));
 
 vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
@@ -21,18 +24,20 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 	withMaestroClient: vi.fn(),
 }));
 
-import { modelsAssign, modelsTasks } from '../../../cli/commands/models-assign';
+import { modelsAssign, modelsMap, modelsTasks } from '../../../cli/commands/models-assign';
 import {
 	readLocalModelAssignments,
 	readLocalModelEndpoints,
-	readSettingValue,
+	readStoredModelMap,
 	writeLocalModelAssignments,
+	writeModelMap,
 } from '../../../cli/services/storage';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { ExitCode } from '../../../cli/exit-codes';
 import { BGE_SMALL_EN_ID, QWEN3_1_7B_ID } from '../../../shared/local-models/model-catalog';
 import { LOCAL_MODEL_TASK_IDS } from '../../../shared/local-models/tasks';
 import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
+import { DEFAULT_MODEL_MAP, SESSION_PROVIDER_SLOT } from '../../../shared/local-models/model-map';
 import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
 
 const ollama: LocalModelEndpoint = {
@@ -61,7 +66,7 @@ describe('models assign / tasks commands', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.mocked(readSettingValue).mockReturnValue(undefined);
+		vi.mocked(readStoredModelMap).mockReturnValue(DEFAULT_MODEL_MAP);
 		vi.mocked(readLocalModelAssignments).mockReturnValue({});
 		vi.mocked(readLocalModelEndpoints).mockReturnValue([ollama]);
 		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -149,9 +154,35 @@ describe('models assign / tasks commands', () => {
 				'tab-naming': { type: 'off' },
 			});
 
-			modelsAssign('tab-naming', 'utility-agent', {});
+			modelsAssign('tab-naming', 'housekeeping-model', {});
 
 			expect(writeLocalModelAssignments).toHaveBeenCalledWith({});
+			expect(logSpy.mock.calls.map((call) => String(call[0])).join('\n')).toMatch(
+				/follows the Housekeeping model: maestro-cli models map housekeeping/
+			);
+		});
+
+		it('points a task at the Agent model, and still takes the old utility-agent spelling', () => {
+			modelsAssign('tab-naming', 'agent-model', {});
+			expect(writeLocalModelAssignments).toHaveBeenLastCalledWith({
+				'tab-naming': { type: 'agent-model' },
+			});
+
+			// Git drafts is on the Agent model by default, so naming it removes the entry.
+			vi.mocked(readLocalModelAssignments).mockReturnValue({ 'git-drafts': { type: 'off' } });
+			modelsAssign('git-drafts', 'agent-model', {});
+			expect(writeLocalModelAssignments).toHaveBeenLastCalledWith({});
+
+			vi.mocked(readLocalModelAssignments).mockReturnValue({ 'tab-naming': { type: 'off' } });
+			modelsAssign('tab-naming', 'utility-agent', {});
+			expect(writeLocalModelAssignments).toHaveBeenLastCalledWith({});
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('refuses a Model Map slot for a task that cannot use one', () => {
+			expect(() => modelsAssign('cue-gate', 'agent-model', {})).toThrow('__exit__');
+			expect(errorSpy.mock.calls[0][0]).toMatch(/Cue gate cannot use the Model Map/);
+			expect(writeLocalModelAssignments).not.toHaveBeenCalled();
 		});
 
 		it('assigns a task with typed questions to System One, and says where its engine is chosen', () => {
@@ -182,7 +213,7 @@ describe('models assign / tasks commands', () => {
 		it('refuses a malformed spec and an unknown task as usage errors', () => {
 			expect(() => modelsAssign('tab-naming', 'ollama/qwen3', {})).toThrow('__exit__');
 			expect(errorSpy.mock.calls[0][0]).toMatch(
-				/Assignment must be off, utility-agent, system-one, local:<model-id>, or endpoint/
+				/Assignment must be off, agent-model, housekeeping-model, system-one, local:<model-id>, or endpoint/
 			);
 
 			expect(() => modelsAssign('tab-nameing', 'off', {})).toThrow('__exit__');
@@ -193,8 +224,11 @@ describe('models assign / tasks commands', () => {
 	});
 
 	describe('tasks', () => {
-		it('lists inherited utility sources even when the desktop cannot be asked', async () => {
-			vi.mocked(readSettingValue).mockReturnValue({ type: 'local', modelId: QWEN3_1_7B_ID });
+		it('lists tasks resolved through the Model Map even when the desktop cannot be asked', async () => {
+			vi.mocked(readStoredModelMap).mockReturnValue({
+				agent: SESSION_PROVIDER_SLOT,
+				housekeeping: { type: 'local', modelId: QWEN3_1_7B_ID },
+			});
 			vi.mocked(readLocalModelAssignments).mockReturnValue({ 'tab-summary': { type: 'off' } });
 			vi.mocked(withMaestroClient).mockRejectedValue(new Error('Maestro is not running'));
 			await modelsTasks({ json: true });
@@ -206,6 +240,10 @@ describe('models assign / tasks commands', () => {
 			});
 			expect(
 				result.tasks.find((task: { taskId: string }) => task.taskId === 'tab-summary')
+			).toMatchObject({ spec: 'off' });
+			// Git drafts follows the Agent model, still the session provider, and has no agent path.
+			expect(
+				result.tasks.find((task: { taskId: string }) => task.taskId === 'git-drafts')
 			).toMatchObject({ spec: 'off' });
 		});
 
@@ -226,7 +264,7 @@ describe('models assign / tasks commands', () => {
 			expect(output).toMatch(/semantic-search\s+local:bge-small-en-v1\.5\s+unavailable/);
 			expect(output).toMatch(/\[model-not-installed\]/);
 			expect(output).toMatch(/-> Download it in Settings\./);
-			expect(output).toMatch(/tab-naming\s+utility-agent/);
+			expect(output).toMatch(/tab-naming\s+housekeeping-model/);
 			expect(exitSpy).not.toHaveBeenCalled();
 		});
 
@@ -239,9 +277,96 @@ describe('models assign / tasks commands', () => {
 			expect(parsed.success).toBe(true);
 			expect(parsed.readinessError).toBe('Maestro is not running');
 			expect(parsed.tasks).toHaveLength(LOCAL_MODEL_TASK_IDS.length);
-			expect(parsed.tasks[0]).toMatchObject({ taskId: 'tab-naming', spec: 'utility-agent' });
+			expect(parsed.tasks[0]).toMatchObject({
+				taskId: 'tab-naming',
+				spec: 'housekeeping-model',
+				allowsModelMap: true,
+			});
 			expect(parsed.tasks[0].readiness).toBeUndefined();
 			expect(exitSpy).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('map', () => {
+		it('shows both slots with what they run on and the tasks that follow them', () => {
+			vi.mocked(readLocalModelAssignments).mockReturnValue({
+				'git-drafts': { type: 'housekeeping-model' },
+			});
+
+			modelsMap(undefined, undefined, { json: true });
+
+			const parsed = JSON.parse(String(logSpy.mock.calls[0][0]));
+			expect(parsed.success).toBe(true);
+			expect(parsed.modelMap.agent).toMatchObject({
+				spec: 'provider',
+				source: 'Session provider',
+				tasks: ['Summaries'],
+			});
+			expect(parsed.modelMap.housekeeping.tasks).toContain('Tab naming');
+			expect(parsed.modelMap.housekeeping.tasks).toContain('Git drafts');
+			expect(parsed.modelMap.housekeeping.tasks).not.toContain('Summaries');
+			expect(writeModelMap).not.toHaveBeenCalled();
+
+			logSpy.mockClear();
+			modelsMap(undefined, undefined, {});
+			const output = String(logSpy.mock.calls[0][0]);
+			expect(output).toMatch(/MODEL MAP/);
+			expect(output).toMatch(/agent\s+provider/);
+			expect(output).toMatch(/used by: Summaries/);
+		});
+
+		it('sets one slot and keeps the other', () => {
+			modelsMap('housekeeping', `local:${QWEN3_1_7B_ID}`, {});
+
+			expect(writeModelMap).toHaveBeenCalledWith({
+				agent: SESSION_PROVIDER_SLOT,
+				housekeeping: { type: 'local', modelId: QWEN3_1_7B_ID },
+			});
+			expect(String(logSpy.mock.calls[0][0])).toContain(
+				`Housekeeping model -> local:${QWEN3_1_7B_ID}`
+			);
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('sets a provider with a model override that contains a colon', () => {
+			modelsMap('agent', 'provider:opencode:ollama:qwen3:latest', { json: true });
+
+			expect(writeModelMap).toHaveBeenCalledWith({
+				agent: { type: 'provider', agentId: 'opencode', modelId: 'ollama:qwen3:latest' },
+				housekeeping: SESSION_PROVIDER_SLOT,
+			});
+			expect(JSON.parse(String(logSpy.mock.calls[0][0])).modelMap.agent.spec).toBe(
+				'provider:opencode:ollama:qwen3:latest'
+			);
+		});
+
+		it('resolves an endpoint by name and stores its full id', () => {
+			modelsMap('agent', 'endpoint:ollama:qwen3:latest', {});
+
+			expect(writeModelMap).toHaveBeenCalledWith({
+				agent: { type: 'endpoint', endpointId: ollama.id, model: 'qwen3:latest' },
+				housekeeping: SESSION_PROVIDER_SLOT,
+			});
+		});
+
+		it('refuses an unknown slot, a malformed source, an unknown agent and a non-text model', () => {
+			expect(() => modelsMap('utility', 'provider', {})).toThrow('__exit__');
+			expect(errorSpy.mock.calls[0][0]).toMatch(/Unknown slot "utility"/);
+
+			expect(() => modelsMap('agent', 'off', {})).toThrow('__exit__');
+			expect(errorSpy.mock.calls[1][0]).toMatch(/A slot must be provider/);
+
+			expect(() => modelsMap('agent', 'provider:nope-agent', {})).toThrow('__exit__');
+			expect(errorSpy.mock.calls[2][0]).toMatch(/"nope-agent" is not a known agent/);
+
+			expect(() => modelsMap('housekeeping', `local:${BGE_SMALL_EN_ID}`, {})).toThrow('__exit__');
+			expect(errorSpy.mock.calls[3][0]).toMatch(/needs a text-gen model/);
+
+			expect(() => modelsMap('agent', 'endpoint:lmstudio:qwen3', {})).toThrow('__exit__');
+			expect(errorSpy.mock.calls[4][0]).toMatch(/No endpoint matches "lmstudio"/);
+
+			expect(exitSpy).toHaveBeenCalledWith(ExitCode.InvalidUsage);
+			expect(writeModelMap).not.toHaveBeenCalled();
 		});
 	});
 });

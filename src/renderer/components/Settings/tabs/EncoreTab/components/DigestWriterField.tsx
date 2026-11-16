@@ -141,6 +141,7 @@ function DigestModelPicker({ theme, selectStyle }: DigestModelPickerProps) {
 	const endpoints = useLocalModelEndpoints();
 	const assignments = useSettingsStore((s) => s.localModelAssignments);
 	const setLocalModelAssignments = useSettingsStore((s) => s.setLocalModelAssignments);
+	const modelMap = useSettingsStore((s) => s.modelMap);
 	const assignment = resolveLocalModelAssignment(assignments, DIGEST_TASK_ID);
 	// Why the last pick was refused, until the next pick.
 	const [problem, setProblem] = useState<string | null>(null);
@@ -151,13 +152,14 @@ function DigestModelPicker({ theme, selectStyle }: DigestModelPickerProps) {
 				listings: models.listings,
 				endpoints: endpoints.endpoints,
 				endpointModels: endpoints.models,
+				modelMap,
 			}).map((group) => ({
 				...group,
 				options: group.options.map((option) =>
 					option.value === 'off' ? { ...option, label: CHOOSE_MODEL_LABEL } : option
 				),
 			})),
-		[task, assignment, models.listings, endpoints.endpoints, endpoints.models]
+		[task, assignment, models.listings, endpoints.endpoints, endpoints.models, modelMap]
 	);
 	// The head group is the unassigned option alone until a source can do the job.
 	const hasSources = groups.length > 1;

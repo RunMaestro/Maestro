@@ -1118,7 +1118,7 @@ describe('useSessionCrud', () => {
 			expect(session.tokenProxyMode).toBeUndefined();
 		});
 
-		// The New Agent Models tab's Run on target. Absent means the provider's
+		// The New Agent Models tab's model source. Absent means the provider's
 		// own model, which is how every agent created before it reads.
 		it.each([
 			[{ type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest', contextTokens: 40960 }],

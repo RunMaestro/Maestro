@@ -4,7 +4,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildWorktreeSession } from '../../../renderer/utils/worktreeSession';
+import {
+	buildWorktreeSession,
+	recordWorktreeAgentsCreated,
+} from '../../../renderer/utils/worktreeSession';
 import type { AITab, Session } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
 
@@ -92,7 +95,7 @@ describe('buildWorktreeSession', () => {
 		expect(session.tokenProxyMode).toBe('compress');
 		// And whether its model can ask the proxy for a compressed original.
 		expect(session.tokenProxyRetrieval).toBe(true);
-		// And the Run on target: a worktree agent on the provider's cloud model
+		// And the model source: a worktree agent on the provider's cloud model
 		// while its parent runs on a local one would spend money silently.
 		expect(session.runOn).toEqual({
 			type: 'source',
@@ -404,4 +407,41 @@ describe('buildWorktreeSession', () => {
 			expect(parent).toEqual(original);
 		}
 	);
+});
+
+describe('recordWorktreeAgentsCreated', () => {
+	beforeEach(() => {
+		vi.mocked(window.maestro.stats.recordSessionCreated).mockClear();
+	});
+
+	it('records one worktree lifecycle row per added agent', () => {
+		recordWorktreeAgentsCreated([
+			{
+				id: 'wt-1',
+				toolType: 'codex',
+				cwd: '/repo/wt-1',
+				createdAt: 1234,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			} as Session,
+			{ id: 'wt-2', toolType: 'claude-code', cwd: '/repo/wt-2', createdAt: 5678 } as Session,
+		]);
+
+		expect(window.maestro.stats.recordSessionCreated).toHaveBeenCalledTimes(2);
+		expect(window.maestro.stats.recordSessionCreated).toHaveBeenCalledWith({
+			sessionId: 'wt-1',
+			agentType: 'codex',
+			projectPath: '/repo/wt-1',
+			createdAt: 1234,
+			isRemote: true,
+			isWorktree: true,
+		});
+		expect(window.maestro.stats.recordSessionCreated).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'wt-2', isRemote: false, isWorktree: true })
+		);
+	});
+
+	it('records nothing for an empty list', () => {
+		recordWorktreeAgentsCreated([]);
+		expect(window.maestro.stats.recordSessionCreated).not.toHaveBeenCalled();
+	});
 });

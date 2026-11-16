@@ -3,15 +3,20 @@
  *
  * These tests verify that the stats:updated event is broadcast correctly
  * after each database write operation, ensuring real-time dashboard updates.
+ * The event names the table that changed and reaches every open window.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
 import { registerStatsHandlers } from '../../../../main/ipc/handlers/stats';
 import * as statsDbModule from '../../../../main/stats';
 import type { StatsDB } from '../../../../main/stats';
 import { runAsActingUser } from '../../../../main/web-server/auth/acting-user';
 import { noteTurnActor, resetTurnActors } from '../../../../main/web-server/auth/turn-attribution';
+
+// Every open window, as BrowserWindow.getAllWindows() reports them. Stats
+// updates broadcast to all of them (any window can show the dashboard).
+const openWindows = vi.hoisted(() => ({ all: [] as unknown[] }));
 
 // Mock electron's ipcMain, BrowserWindow, and app
 vi.mock('electron', () => ({
@@ -19,7 +24,7 @@ vi.mock('electron', () => ({
 		handle: vi.fn(),
 		removeHandler: vi.fn(),
 	},
-	BrowserWindow: vi.fn(),
+	BrowserWindow: { getAllWindows: vi.fn(() => openWindows.all) },
 	app: {
 		// Stats handler now registers a before-quit hook to flush the
 		// query-events buffer; tests don't exercise the hook so a noop is fine.
@@ -29,14 +34,20 @@ vi.mock('electron', () => ({
 	},
 }));
 
-// The export handler's collaborators: the bundle builder/writer and the token
-// scan, which would otherwise read real agent session files from disk.
-const mockBuildUsageExport = vi.fn();
-const mockWriteUsageExport = vi.fn();
+// The export handler delegates to exportUsageData (covered in
+// usage-export.test.ts); the token accessor would otherwise read real agent
+// session files from disk.
+const mockExportUsageData = vi.fn();
 vi.mock('../../../../main/stats/usage-export', () => ({
-	buildUsageExport: (...args: unknown[]) => mockBuildUsageExport(...args),
-	writeUsageExport: (...args: unknown[]) => mockWriteUsageExport(...args),
-	countUsageExportRows: () => ({ 'query-events': 3 }),
+	exportUsageData: (...args: unknown[]) => mockExportUsageData(...args),
+}));
+// The delegation reads live in usage-dashboard-reads.ts (covered in
+// usage-dashboard-reads.test.ts); the handlers only forward the range.
+const mockGetDelegationTotals = vi.fn();
+const mockGetDelegationByDay = vi.fn();
+vi.mock('../../../../main/stats/usage-dashboard-reads', () => ({
+	getDelegationTotals: (...args: unknown[]) => mockGetDelegationTotals(...args),
+	getDelegationByDay: (...args: unknown[]) => mockGetDelegationByDay(...args),
 }));
 const mockGetTokenUsageAggregate = vi.fn();
 vi.mock('../../../../main/stats/token-usage/token-usage-accessor', () => ({
@@ -51,8 +62,6 @@ vi.mock('../../../../main/local-models/model-usage', () => ({
 // Mock the stats-db module
 vi.mock('../../../../main/stats', () => ({
 	getStatsDB: vi.fn(),
-	getInitializationResult: vi.fn(),
-	clearInitializationResult: vi.fn(),
 }));
 
 // Mock the query-events buffer so tests can verify it's called without
@@ -60,10 +69,20 @@ vi.mock('../../../../main/stats', () => ({
 // this buffer instead of calling db.insertQueryEvent directly.
 const mockEnqueueQueryEvent = vi.fn(() => 'buffered-query-event-id');
 const mockFlushQueryEventsSync = vi.fn();
+// The flush listener the handler registers: query events are announced when
+// the buffer commits them, not when they are enqueued. `flushBuffer()` plays
+// the commit.
+const bufferFlush = vi.hoisted(() => ({ listener: null as ((count: number) => void) | null }));
 vi.mock('../../../../main/stats/query-events-buffer', () => ({
 	enqueueQueryEvent: (...args: unknown[]) => mockEnqueueQueryEvent(...args),
 	flushQueryEventsSync: () => mockFlushQueryEventsSync(),
+	setQueryEventsFlushListener: (listener: ((count: number) => void) | null) => {
+		bufferFlush.listener = listener;
+	},
 }));
+function flushBuffer(count = 1): void {
+	bufferFlush.listener?.(count);
+}
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -106,6 +125,9 @@ describe('stats IPC handlers', () => {
 			insertQueryEvent: vi.fn().mockReturnValue('query-event-id'),
 			insertAutoRunSession: vi.fn().mockReturnValue('autorun-session-id'),
 			updateAutoRunSession: vi.fn().mockReturnValue(true),
+			finishAutoRunSession: vi.fn().mockReturnValue(true),
+			getAutoRunTurnsByHour: vi.fn().mockReturnValue([]),
+			getShortcutUsageByShortcut: vi.fn().mockReturnValue([]),
 			insertAutoRunTask: vi.fn().mockReturnValue('autorun-task-id'),
 			getQueryEvents: vi.fn().mockReturnValue([]),
 			getAutoRunSessions: vi.fn().mockReturnValue([]),
@@ -119,15 +141,25 @@ describe('stats IPC handlers', () => {
 				byLocation: { local: 0, remote: 0 },
 				byDay: [],
 				byHour: [],
+				byDayHour: [],
+				window: { startYmd: '2026-11-08', endYmd: '2026-11-14' },
+				earliestQueryAt: null,
+				streak: { current: 0, longest: 0 },
 				totalSessions: 0,
-				sessionsByAgent: {},
-				sessionsByDay: [],
-				avgSessionDuration: 0,
 				byAgentByDay: {},
 				bySessionByDay: {},
 				bySessionSource: {},
+				bySessionLastQuery: {},
+				bySessionTokens: {},
+				worktreeQueries: 0,
+				parentQueries: 0,
+				byAgentWorktree: {},
+				imageAnnotations: 0,
 			}),
-			clearOldData: vi.fn().mockReturnValue({ success: true, deletedCount: 0 }),
+			getInitializationResult: vi.fn().mockReturnValue(null),
+			clearInitializationResult: vi.fn(),
+			recordResilienceEvent: vi.fn().mockReturnValue('resilience-id'),
+			recordWizardRun: vi.fn().mockReturnValue('wizard-run-id'),
 			getDatabaseSize: vi.fn().mockReturnValue({ sizeBytes: 1024, sizeFormatted: '1 KB' }),
 			recordSessionCreated: vi.fn().mockReturnValue('session-lifecycle-id'),
 			recordSessionClosed: vi.fn().mockReturnValue(true),
@@ -148,6 +180,7 @@ describe('stats IPC handlers', () => {
 		};
 
 		getMainWindow = () => mockMainWindow;
+		openWindows.all = [mockMainWindow];
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -156,7 +189,7 @@ describe('stats IPC handlers', () => {
 		});
 
 		// Register handlers with our mock getMainWindow
-		registerStatsHandlers({ getMainWindow });
+		registerStatsHandlers({});
 	});
 
 	afterEach(() => {
@@ -172,11 +205,11 @@ describe('stats IPC handlers', () => {
 				'stats:record-task',
 				'stats:get-stats',
 				'stats:get-autorun-sessions',
-				'stats:get-autorun-tasks',
+				'stats:get-autorun-turns-by-hour',
+				'stats:get-shortcut-usage-by-shortcut',
 				'stats:get-aggregation',
 				'stats:get-model-usage',
 				'stats:export',
-				'stats:clear-old-data',
 				'stats:get-database-size',
 				'stats:record-session-created',
 				'stats:record-session-closed',
@@ -186,6 +219,11 @@ describe('stats IPC handlers', () => {
 			for (const channel of expectedChannels) {
 				expect(handlers.has(channel)).toBe(true);
 			}
+		});
+
+		it('no longer registers the retired cleanup and earliest-timestamp channels', () => {
+			expect(handlers.has('stats:clear-old-data')).toBe(false);
+			expect(handlers.has('stats:get-earliest-timestamp')).toBe(false);
 		});
 
 		// PR-B 1.5: registerStatsHandlers must wire flushQueryEventsSync to
@@ -239,19 +277,43 @@ describe('stats IPC handlers', () => {
 
 				// PR-B 1.5: enqueueQueryEvent is called instead of insertQueryEvent
 				expect(mockEnqueueQueryEvent).toHaveBeenCalledWith(mockStatsDB.database, queryEvent);
-				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
+				// Nothing is announced until the buffer commits the row...
+				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+
+				flushBuffer();
+
+				// ...then every window and web-desktop client hears which table moved.
+				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith(
+					'stats:updated',
+					'query_events'
+				);
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
-				// The same event fans out to web-desktop bridge clients.
-				expect(broadcastBridgeEvent).toHaveBeenCalledWith('stats:updated', []);
+				expect(broadcastBridgeEvent).toHaveBeenCalledWith('stats:updated', ['query_events']);
 			});
 
-			it('should not broadcast when main window is null', async () => {
-				const nullWindowGetMainWindow = () => null;
-				handlers.clear();
-				vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
-					handlers.set(channel, handler);
+			it('reaches every open window, not just the main one', async () => {
+				const secondWindow = {
+					webContents: { send: vi.fn(), isDestroyed: vi.fn().mockReturnValue(false) },
+					isDestroyed: vi.fn().mockReturnValue(false),
+				};
+				openWindows.all = [mockMainWindow, secondWindow];
+
+				await handlers.get('stats:record-task')!({} as any, {
+					autoRunSessionId: 'autorun-session-1',
+					sessionId: 'session-1',
+					agentType: 'claude-code',
+					taskIndex: 0,
+					startTime: Date.now(),
+					duration: 1000,
+					success: true,
 				});
-				registerStatsHandlers({ getMainWindow: nullWindowGetMainWindow });
+
+				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated', 'auto_run');
+				expect(secondWindow.webContents.send).toHaveBeenCalledWith('stats:updated', 'auto_run');
+			});
+
+			it('should not broadcast when no window is open', async () => {
+				openWindows.all = [];
 
 				const handler = handlers.get('stats:record-query');
 				const queryEvent = {
@@ -263,6 +325,7 @@ describe('stats IPC handlers', () => {
 				};
 
 				await handler!({} as any, queryEvent);
+				flushBuffer();
 
 				// No error should be thrown, and no send should happen
 				expect(mockEnqueueQueryEvent).toHaveBeenCalled();
@@ -282,6 +345,7 @@ describe('stats IPC handlers', () => {
 				};
 
 				await handler!({} as any, queryEvent);
+				flushBuffer();
 
 				expect(mockEnqueueQueryEvent).toHaveBeenCalled();
 				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
@@ -360,13 +424,8 @@ describe('stats IPC handlers', () => {
 		});
 
 		describe('web-desktop bridge fanout', () => {
-			it('should still reach bridge clients when the main window is null', async () => {
-				const nullWindowGetMainWindow = () => null;
-				handlers.clear();
-				vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
-					handlers.set(channel, handler);
-				});
-				registerStatsHandlers({ getMainWindow: nullWindowGetMainWindow });
+			it('should still reach bridge clients when no window is open', async () => {
+				openWindows.all = [];
 
 				const handler = handlers.get('stats:record-query');
 				await handler!({} as any, {
@@ -377,9 +436,11 @@ describe('stats IPC handlers', () => {
 					duration: 5000,
 				});
 
+				flushBuffer();
+
 				// Desktop renderer skipped (no window), but web clients still get it.
 				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
-				expect(broadcastBridgeEvent).toHaveBeenCalledWith('stats:updated', []);
+				expect(broadcastBridgeEvent).toHaveBeenCalledWith('stats:updated', ['query_events']);
 			});
 
 			it('should still reach bridge clients when the main window is destroyed', async () => {
@@ -394,8 +455,10 @@ describe('stats IPC handlers', () => {
 					duration: 5000,
 				});
 
+				flushBuffer();
+
 				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
-				expect(broadcastBridgeEvent).toHaveBeenCalledWith('stats:updated', []);
+				expect(broadcastBridgeEvent).toHaveBeenCalledWith('stats:updated', ['query_events']);
 			});
 		});
 
@@ -415,7 +478,7 @@ describe('stats IPC handlers', () => {
 
 				expect(result).toBe('autorun-session-id');
 				expect(mockStatsDB.insertAutoRunSession).toHaveBeenCalled();
-				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
+				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated', 'auto_run');
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
 			});
 
@@ -457,23 +520,64 @@ describe('stats IPC handlers', () => {
 				const result = await handler!({} as any, 'autorun-session-id', 60000, 4);
 
 				expect(result).toBe(true);
-				expect(mockStatsDB.updateAutoRunSession).toHaveBeenCalledWith('autorun-session-id', {
-					duration: 60000,
-					tasksCompleted: 4,
-				});
-				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
+				expect(mockStatsDB.finishAutoRunSession).toHaveBeenCalledWith(
+					'autorun-session-id',
+					60000,
+					4,
+					undefined
+				);
+				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated', 'auto_run');
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
 			});
 
 			it('should broadcast stats:updated even when session not found', async () => {
-				vi.mocked(mockStatsDB.updateAutoRunSession).mockReturnValue(false);
+				vi.mocked(mockStatsDB.finishAutoRunSession!).mockReturnValue(false);
 
 				const handler = handlers.get('stats:end-autorun');
 				const result = await handler!({} as any, 'nonexistent-id', 60000, 4);
 
 				expect(result).toBe(false);
 				// Should still broadcast - UI may need to refresh regardless
-				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
+				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated', 'auto_run');
+			});
+		});
+
+		describe('stats:end-autorun tasks total', () => {
+			it('forwards a finite tasksTotal and drops anything else', async () => {
+				const handler = handlers.get('stats:end-autorun');
+
+				await handler!({} as any, 'run-1', 1000, 12, 12);
+				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith('run-1', 1000, 12, 12);
+
+				await handler!({} as any, 'run-2', 1000, 3, Number.NaN);
+				expect(mockStatsDB.finishAutoRunSession).toHaveBeenLastCalledWith(
+					'run-2',
+					1000,
+					3,
+					undefined
+				);
+			});
+		});
+
+		describe('stats:get-autorun-turns-by-hour', () => {
+			it('reads the grouped turns for the range', async () => {
+				const hours = [{ hour: 9, count: 2, successCount: 1 }];
+				vi.mocked(mockStatsDB.getAutoRunTurnsByHour!).mockReturnValue(hours);
+				const handler = handlers.get('stats:get-autorun-turns-by-hour');
+
+				expect(await handler!({} as any, 'week')).toBe(hours);
+				expect(mockStatsDB.getAutoRunTurnsByHour).toHaveBeenCalledWith('week');
+			});
+		});
+
+		describe('stats:get-shortcut-usage-by-shortcut', () => {
+			it('reads per-shortcut counts for the range', async () => {
+				const rows = [{ shortcutId: 'toggleSidebar', count: 4 }];
+				vi.mocked(mockStatsDB.getShortcutUsageByShortcut!).mockReturnValue(rows);
+				const handler = handlers.get('stats:get-shortcut-usage-by-shortcut');
+
+				expect(await handler!({} as any, 'month')).toBe(rows);
+				expect(mockStatsDB.getShortcutUsageByShortcut).toHaveBeenCalledWith('month');
 			});
 		});
 
@@ -495,7 +599,7 @@ describe('stats IPC handlers', () => {
 
 				expect(result).toBe('autorun-task-id');
 				expect(mockStatsDB.insertAutoRunTask).toHaveBeenCalledWith(task);
-				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
+				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated', 'auto_run');
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
 			});
 		});
@@ -508,8 +612,25 @@ describe('stats IPC handlers', () => {
 				const result = await handler!({} as any, firedAt);
 
 				expect(result).toBe('2026-06-21');
-				expect(mockStatsDB.incrementShortcutUsage).toHaveBeenCalledWith(firedAt);
-				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
+				expect(mockStatsDB.incrementShortcutUsage).toHaveBeenCalledWith(firedAt, undefined);
+				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith(
+					'stats:updated',
+					'shortcut_usage'
+				);
+			});
+
+			it('passes the shortcut id through, ignoring a non-string one', async () => {
+				const handler = handlers.get('stats:record-shortcut-usage');
+				const firedAt = Date.UTC(2026, 5, 21, 12, 0, 0);
+
+				await handler!({} as any, firedAt, 'toggleSidebar');
+				expect(mockStatsDB.incrementShortcutUsage).toHaveBeenLastCalledWith(
+					firedAt,
+					'toggleSidebar'
+				);
+
+				await handler!({} as any, firedAt, 42);
+				expect(mockStatsDB.incrementShortcutUsage).toHaveBeenLastCalledWith(firedAt, undefined);
 			});
 
 			// MAESTRO-SP: a shortcut can fire before the stats DB finishes
@@ -554,17 +675,6 @@ describe('stats IPC handlers', () => {
 			});
 		});
 
-		describe('stats:get-autorun-tasks', () => {
-			it('should not broadcast stats:updated when getting Auto Run tasks', async () => {
-				const handler = handlers.get('stats:get-autorun-tasks');
-
-				await handler!({} as any, 'autorun-session-1');
-
-				expect(mockStatsDB.getAutoRunTasks).toHaveBeenCalledWith('autorun-session-1');
-				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
-			});
-		});
-
 		describe('stats:get-aggregation', () => {
 			it('should not broadcast stats:updated when getting aggregation', async () => {
 				const handler = handlers.get('stats:get-aggregation');
@@ -597,70 +707,47 @@ describe('stats IPC handlers', () => {
 			});
 		});
 
-		describe('stats:export', () => {
-			beforeEach(() => {
-				mockBuildUsageExport.mockReturnValue({ bundle: true });
-				mockWriteUsageExport.mockResolvedValue(undefined);
-				mockGetTokenUsageAggregate.mockResolvedValue({ totals: {} });
-			});
+		describe('delegation reads', () => {
+			it('forward the range to the shared delegation reads', async () => {
+				mockGetDelegationTotals.mockReturnValue({ totals: true });
+				mockGetDelegationByDay.mockReturnValue([{ date: '2026-11-14' }]);
 
-			it('writes the bundle, reports row counts, and does not broadcast stats:updated', async () => {
+				await expect(
+					handlers.get('stats:get-delegation-totals')!({} as any, 'month')
+				).resolves.toEqual({ totals: true });
+				await expect(handlers.get('stats:get-delegation-by-day')!({} as any)).resolves.toEqual([
+					{ date: '2026-11-14' },
+				]);
+				expect(mockGetDelegationTotals).toHaveBeenCalledWith('month');
+				expect(mockGetDelegationByDay).toHaveBeenCalledWith('all');
+			});
+		});
+
+		describe('stats:export', () => {
+			it('hands the request to exportUsageData and does not broadcast stats:updated', async () => {
+				const result = { path: '/tmp/usage.json', format: 'json', rowCounts: {}, notes: [] };
+				mockExportUsageData.mockResolvedValue(result);
 				const handler = handlers.get('stats:export');
 
-				const result = await handler!({} as any, 'all', 'json', '/tmp/usage.json');
+				await expect(handler!({} as any, 'all', 'json', '/tmp/usage.json')).resolves.toEqual(
+					result
+				);
 
-				expect(mockBuildUsageExport).toHaveBeenCalledWith(
+				expect(mockExportUsageData).toHaveBeenCalledWith(
 					expect.objectContaining({
 						range: 'all',
-						sinceMs: 0,
+						format: 'json',
+						filePath: '/tmp/usage.json',
 						appVersion: '0.0.0-test',
-						cueEvents: null,
-						tokenUsage: { totals: {} },
 					})
 				);
-				expect(mockWriteUsageExport).toHaveBeenCalledWith('/tmp/usage.json', 'json', {
-					bundle: true,
-				});
-				expect(result).toEqual({
-					path: '/tmp/usage.json',
-					format: 'json',
-					rowCounts: { 'query-events': 3 },
-					notes: ['Cue runs are not included because Maestro Cue is off.'],
-				});
 				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
-			});
-
-			it('still exports when the token scan fails, and says so', async () => {
-				mockGetTokenUsageAggregate.mockRejectedValue(new Error('scan failed'));
-				const handler = handlers.get('stats:export');
-
-				const result = await handler!({} as any, 'week', 'csv', '/tmp/usage.zip');
-
-				expect(mockBuildUsageExport).toHaveBeenCalledWith(
-					expect.objectContaining({ tokenUsage: null })
-				);
-				expect(mockWriteUsageExport).toHaveBeenCalledWith('/tmp/usage.zip', 'csv', {
-					bundle: true,
-				});
-				expect(result.notes).toContain('Token usage is not included: scan failed');
-			});
-
-			it('rejects an unknown format or a relative path before writing', async () => {
-				const handler = handlers.get('stats:export');
-
-				await expect(handler!({} as any, 'all', 'xml', '/tmp/usage.xml')).rejects.toThrow(
-					'Unsupported export format'
-				);
-				await expect(handler!({} as any, 'all', 'json', 'usage.json')).rejects.toThrow(
-					'Export path must be absolute'
-				);
-				expect(mockWriteUsageExport).not.toHaveBeenCalled();
 			});
 		});
 	});
 
 	describe('broadcast timing', () => {
-		it('should broadcast after enqueueing the query event', async () => {
+		it('should broadcast only once the buffer commits the query event', async () => {
 			const executionOrder: string[] = [];
 
 			mockEnqueueQueryEvent.mockImplementation(() => {
@@ -681,7 +768,10 @@ describe('stats IPC handlers', () => {
 				duration: 5000,
 			});
 
-			// PR-B 1.5: enqueue is sync (no DB write yet); broadcast follows.
+			// Enqueue is sync (no DB write yet); the broadcast waits for the commit,
+			// so a dashboard refetching on it reads the new row.
+			expect(executionOrder).toEqual(['enqueue']);
+			flushBuffer();
 			expect(executionOrder).toEqual(['enqueue', 'broadcast']);
 		});
 	});
@@ -723,12 +813,31 @@ describe('stats IPC handlers', () => {
 			const endAutoRunHandler = handlers.get('stats:end-autorun');
 			await endAutoRunHandler!({} as any, 'autorun-session-id', 60000, 3);
 
+			// The buffered query event commits last
+			flushBuffer();
+
 			// Should have broadcast 4 times (once per write operation)
 			expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(4);
-			expect(mockMainWindow.webContents.send).toHaveBeenNthCalledWith(1, 'stats:updated');
-			expect(mockMainWindow.webContents.send).toHaveBeenNthCalledWith(2, 'stats:updated');
-			expect(mockMainWindow.webContents.send).toHaveBeenNthCalledWith(3, 'stats:updated');
-			expect(mockMainWindow.webContents.send).toHaveBeenNthCalledWith(4, 'stats:updated');
+			expect(mockMainWindow.webContents.send).toHaveBeenNthCalledWith(
+				1,
+				'stats:updated',
+				'auto_run'
+			);
+			expect(mockMainWindow.webContents.send).toHaveBeenNthCalledWith(
+				2,
+				'stats:updated',
+				'auto_run'
+			);
+			expect(mockMainWindow.webContents.send).toHaveBeenNthCalledWith(
+				3,
+				'stats:updated',
+				'auto_run'
+			);
+			expect(mockMainWindow.webContents.send).toHaveBeenNthCalledWith(
+				4,
+				'stats:updated',
+				'query_events'
+			);
 		});
 	});
 
@@ -748,17 +857,15 @@ describe('stats IPC handlers', () => {
 
 				expect(result).toBe('session-lifecycle-id');
 				expect(mockStatsDB.recordSessionCreated).toHaveBeenCalledWith(lifecycleEvent);
-				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
+				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith(
+					'stats:updated',
+					'session_lifecycle'
+				);
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
 			});
 
-			it('should not broadcast when main window is null', async () => {
-				const nullWindowGetMainWindow = () => null;
-				handlers.clear();
-				vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
-					handlers.set(channel, handler);
-				});
-				registerStatsHandlers({ getMainWindow: nullWindowGetMainWindow });
+			it('should not send to a window when none is open', async () => {
+				openWindows.all = [];
 
 				const handler = handlers.get('stats:record-session-created');
 				const lifecycleEvent = {
@@ -798,7 +905,10 @@ describe('stats IPC handlers', () => {
 
 				expect(result).toBe(true);
 				expect(mockStatsDB.recordSessionClosed).toHaveBeenCalledWith(sessionId, closedAt);
-				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
+				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith(
+					'stats:updated',
+					'session_lifecycle'
+				);
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledTimes(1);
 			});
 
@@ -820,7 +930,10 @@ describe('stats IPC handlers', () => {
 
 				expect(result).toBe(false);
 				// Should still broadcast - UI may need to refresh regardless
-				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
+				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith(
+					'stats:updated',
+					'session_lifecycle'
+				);
 			});
 		});
 
@@ -836,28 +949,67 @@ describe('stats IPC handlers', () => {
 		});
 	});
 
-	describe('clear old data handler', () => {
-		describe('stats:clear-old-data', () => {
-			it('should broadcast stats:updated after clearing old data', async () => {
-				const handler = handlers.get('stats:clear-old-data');
-
-				const result = await handler!({} as any, 30);
-
-				expect(result).toEqual({ success: true, deletedCount: 0 });
-				expect(mockStatsDB.clearOldData).toHaveBeenCalledWith(30);
-				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
+	describe('resilience and wizard writes', () => {
+		it('broadcasts the resilience table after recording an outage', async () => {
+			const result = await handlers.get('stats:record-resilience')!({} as any, {
+				id: 'outage-1',
+				sessionId: 'session-1',
+				agentType: 'claude-code',
+				strategy: 'availability',
+				outcome: 'recovered',
+				startedAt: 1,
+				resolvedAt: 2,
+				retries: 1,
 			});
 
-			it('should not broadcast when clear fails', async () => {
-				vi.mocked(mockStatsDB.clearOldData).mockReturnValue({ success: false, deletedCount: 0 });
+			expect(result).toBe('resilience-id');
+			expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated', 'resilience');
+		});
 
-				const handler = handlers.get('stats:clear-old-data');
-				const result = await handler!({} as any, 30);
-
-				expect(result).toEqual({ success: false, deletedCount: 0 });
-				// Should not broadcast on failure
-				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+		it('broadcasts the wizard table after a wizard milestone', async () => {
+			const result = await handlers.get('stats:record-wizard-run')!({} as any, {
+				id: 'run-1',
+				sessionId: 'session-1',
+				agentType: 'claude-code',
+				surface: 'inline',
+				mode: 'new',
+				outcome: 'in-progress',
+				startedAt: 1,
+				endedAt: 2,
+				exchanges: 1,
+				documents: 0,
+				tasks: 0,
 			});
+
+			expect(result).toBe('wizard-run-id');
+			expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated', 'wizard_runs');
+		});
+	});
+
+	describe('initialization result', () => {
+		it('returns what opening the database had to do', async () => {
+			const notice = {
+				success: true,
+				wasReset: true,
+				backupPath: '/data/stats.db.corrupted.1',
+				userMessage: 'The usage statistics database was damaged...',
+			};
+			vi.mocked(mockStatsDB.getInitializationResult!).mockReturnValue(notice);
+
+			await expect(handlers.get('stats:get-initialization-result')!({} as any)).resolves.toEqual(
+				notice
+			);
+		});
+
+		it('returns null when the database opened cleanly', async () => {
+			await expect(handlers.get('stats:get-initialization-result')!({} as any)).resolves.toBeNull();
+		});
+
+		it('clears the result once the renderer has shown it', async () => {
+			await expect(handlers.get('stats:clear-initialization-result')!({} as any)).resolves.toBe(
+				true
+			);
+			expect(mockStatsDB.clearInitializationResult).toHaveBeenCalledTimes(1);
 		});
 	});
 });

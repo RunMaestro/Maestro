@@ -134,7 +134,7 @@ describe('resolveCliAutoTurn', () => {
 				prompt: 'p',
 				route,
 			})
-		).rejects.toThrow('Run on target');
+		).rejects.toThrow('model source');
 		expect(route).not.toHaveBeenCalled();
 	});
 

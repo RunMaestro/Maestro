@@ -64,7 +64,7 @@ export const MODELS_SETTINGS_PANEL_SUMMARIES: Readonly<
 	'system-one':
 		'Fast judgments: a yes or no, a label, a score, a vector, or a transcript. The Cue gate, prompt-injection and secret screens, voice routing, dictation, semantic search.',
 	'system-two':
-		'Text for someone to read or run: tab names, summaries, shell commands, pull request drafts, spoken notices. Also the Utility Agent and the tier defaults.',
+		'Text for someone to read or run: tab names, summaries, shell commands, pull request drafts, spoken notices. Also the Model Map and the tier defaults.',
 	gateway:
 		"A proxy for an agent's own provider traffic: Headroom, LiteLLM, or Maestro's token proxy, which can compress tool results to save tokens.",
 });

@@ -448,10 +448,10 @@ export interface AgentEnvLayers {
 	 */
 	gatewayEnvVars?: Record<string, string>;
 	/**
-	 * The variables the agent's Run on target sets (`resolveRunOnLaunch`): the
+	 * The variables the agent's model source sets (`resolveRunOnLaunch`): the
 	 * source's base URL and key, the model for each tier, the context size. The
 	 * launch plan passes only the ones the user layer does not set itself, and
-	 * never together with `gatewayEnvVars` (a Run on target takes the gateway's
+	 * never together with `gatewayEnvVars` (a model source takes the gateway's
 	 * place), so it sits in the same slot for the same reason.
 	 */
 	runOnEnvVars?: Record<string, string>;
@@ -462,7 +462,7 @@ export interface AgentEnvLayers {
 	 */
 	readOnlyEnvOverrides?: Record<string, string>;
 	/**
-	 * Variables the agent's Run on target ADDS TO instead of setting
+	 * Variables the agent's model source ADDS TO instead of setting
 	 * (`resolveRunOnLaunch`'s `envVarMerges`): OpenCode's inline config, which
 	 * also carries Maestro's permission block and its read-only override. Each
 	 * merge is handed the value every layer above has settled on, the read-only
@@ -599,8 +599,8 @@ function buildDesktopAgentEnvironment(options: BuildAgentEnvironmentOptions): No
  *
  * The shell wins over the provider defaults, so a value exported in the shell
  * that runs the command survives; the user's own vars override it, because the
- * user explicitly opted into them, and so do the agent's gateway and its Run on
- * target, which the user set on this one agent. `process.env` is inherited as it is, with
+ * user explicitly opted into them, and so do the agent's gateway and its model
+ * source, which the user set on this one agent. `process.env` is inherited as it is, with
  * PATH expanded. Values are written as given: no `~/` expansion, and a blank
  * value is exported blank. MAESTRO_SESSION_RESUMED is set for a resumed turn
  * and cleared otherwise, as on desktop, so a marker inherited from the shell

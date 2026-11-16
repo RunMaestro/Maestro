@@ -214,7 +214,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'auto-run': [
 		'maestro-cli auto-run ./phase-01.md ./phase-02.md --agent <agent-id> --launch',
 		'maestro-cli auto-run ./phase-01.md --agent <agent-id> --save-as "Release prep"',
-		'maestro-cli auto-run ./phase-01.md --agent <agent-id> --launch --run-on <source-id>:<model>',
+		'maestro-cli auto-run ./phase-01.md --agent <agent-id> --launch --model-source <source-id>:<model>',
 	],
 	'stop-auto-run': ['maestro-cli stop-auto-run --agent <agent-id>'],
 	'resume-auto-run': ['maestro-cli resume-auto-run --agent <agent-id>'],
@@ -287,7 +287,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	// Agents and groups
 	'create-agent': [
 		'maestro-cli create-agent "API Worker" --cwd ~/code/api --type claude-code --group <group-id>',
-		'maestro-cli create-agent "Local Coder" --cwd . --run-on maestro-server:<model-id>',
+		'maestro-cli create-agent "Local Coder" --cwd . --model-source maestro-server:<model-id>',
 	],
 	'create-group': ['maestro-cli create-group "Backend" --emoji "🛠️" --color "#9146FF"'],
 	'remove-group': ['maestro-cli remove-group <group-id> --force'],
@@ -301,6 +301,11 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'update-group-settings': [
 		'maestro-cli update-group-settings <group-id> --provider claude-code --model opus',
 		'maestro-cli update-group-settings <group-id> --short-label "API" --publish --yes',
+		'maestro-cli update-group-settings <group-id> --onboarding on --onboarding-prompt @onboard.md --onboarding-tier low',
+		'maestro-cli update-group-settings <group-id> --offboarding on --offboarding-prompt "Stop the servers you started" --offboarding-timeout 10',
+	],
+	'run-group-lifecycle': [
+		'maestro-cli run-group-lifecycle <group-id> onboarding --agent <agent-id>',
 	],
 	'create-worktree': [
 		'maestro-cli create-worktree --agent <agent-id> --branch feat/search --base-branch main',
@@ -309,7 +314,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'update-agent': [
 		'maestro-cli update-agent <agent-id> --model opus --effort high',
 		'maestro-cli update-agent <agent-id> --provider codex --convert --accept-translation-limitations',
-		'maestro-cli update-agent <agent-id> --run-on maestro-server:<model-id> --run-on-context 65536',
+		'maestro-cli update-agent <agent-id> --model-source maestro-server:<model-id> --model-source-context 65536',
 		'maestro-cli update-agent <agent-id> --peer docs-agent:r --remove-peer legacy-agent',
 	],
 	'agent test-run-on': ['maestro-cli agent test-run-on <agent-id> --json'],
@@ -543,9 +548,15 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'models assign': [
 		'maestro-cli models assign tab-naming local:<model-id>',
 		'maestro-cli models assign model-routing endpoint:<endpoint>:<model>',
+		'maestro-cli models assign git-drafts agent-model',
 		'maestro-cli models assign cue-gate off',
 	],
 	'models tasks': ['maestro-cli models tasks --json'],
+	'models map': [
+		'maestro-cli models map',
+		'maestro-cli models map housekeeping local:<model-id>',
+		'maestro-cli models map agent provider:claude-code:sonnet',
+	],
 	'models run': [
 		'maestro-cli models run <task-id> --input "Name this tab: fix the login redirect"',
 		'maestro-cli models run git-drafts --cwd ~/code/api --base main',
@@ -567,7 +578,10 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'models server status': ['maestro-cli models server status --json'],
 	'models server start': ['maestro-cli models server start'],
 	'models server stop': ['maestro-cli models server stop'],
-	'models server set': ['maestro-cli models server set --bind local --max-models 2'],
+	'models server set': [
+		'maestro-cli models server set --bind local --max-models 2',
+		'maestro-cli models server set --start-on-launch off',
+	],
 	'models server key': ['maestro-cli models server key'],
 	'models tiers list': ['maestro-cli models tiers list --harness claude-code'],
 	'models tiers options': ['maestro-cli models tiers options claude-code --refresh'],
@@ -696,6 +710,25 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'stats-query': [
 		'maestro-cli stats-query "SELECT agent_id, COUNT(*) FROM query_events WHERE start_time > ? GROUP BY agent_id" --param 1760000000000',
 	],
+	'stats-delegation': ['maestro-cli stats-delegation --range month --json'],
+	'stats-cue': ['maestro-cli stats-cue --range week --json'],
+	'stats-plan-usage': ['maestro-cli stats-plan-usage --provider claude --json'],
+	'stats-agents': ['maestro-cli stats-agents --range month --json'],
+	'stats-activity': ['maestro-cli stats-activity --range week --json'],
+	'stats-export': ['maestro-cli stats-export --format csv --output ./usage.zip --range all'],
+	'browser-pick': [
+		'maestro-cli browser-pick browser:1 --selector "main h1" --note "Make this larger"',
+	],
+	'diff-review list': ['maestro-cli diff-review list --agent <agent-id> --json'],
+	'diff-review add': [
+		'maestro-cli diff-review add src/app.ts 12-18 "Handle the empty case" --agent <agent-id>',
+	],
+	'diff-review edit': [
+		'maestro-cli diff-review edit <comment-id> "Handle the empty list too" --agent <agent-id>',
+	],
+	'diff-review remove': ['maestro-cli diff-review remove <comment-id> --agent <agent-id>'],
+	'diff-review clear': ['maestro-cli diff-review clear --agent <agent-id>'],
+	'diff-review send': ['maestro-cli diff-review send --agent <agent-id>'],
 	'plugin list': ['maestro-cli plugin list --json'],
 	'plugin update': ['maestro-cli plugin update ./my-plugin'],
 	'plugin init': ['maestro-cli plugin init ./my-plugin --tier 1 --id my-plugin'],

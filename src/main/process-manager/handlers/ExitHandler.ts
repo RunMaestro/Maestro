@@ -17,6 +17,7 @@ import { getSshRemoteById } from '../../stores/getters';
 import { noteSshExit } from '../../ssh-reachability';
 import {
 	describeSshUnreachable,
+	isSshConnectionFailure,
 	SSH_CONNECTION_FAILED_EXIT_CODE,
 } from '../../../shared/sshConnection';
 import {
@@ -277,9 +278,9 @@ export class ExitHandler {
 
 		// A CLI that never started is not a crash. Classified ahead of the parser,
 		// whose fallback for an unrecognized non-zero exit is the bare
-		// "Agent exited with code N" that gives the user nothing to act on. A Stop
-		// is never classified: the stopped turn settles as interrupted below.
-		if (!managedProcess.interrupted && !managedProcess.errorEmitted && code !== 0) {
+		// "Agent exited with code N" that gives the user nothing to act on. A
+		// stopped turn is never classified, so a Stop cannot surface as an error.
+		if (!managedProcess.errorEmitted && !managedProcess.interrupted && code !== 0) {
 			const notInstalled = this.notInstalledError(sessionId, managedProcess, {
 				exitCode: code,
 				stderr: managedProcess.stderrBuffer || '',
@@ -308,11 +309,11 @@ export class ExitHandler {
 		// (detectErrorFromExit, then an SSH-pattern fallback, then omp's
 		// silent-exit override). Skipped entirely once managedProcess.interrupted
 		// is true or an error was already emitted upstream (the terminal-envelope-
-		// flush branch above) - matching the original per-check errorEmitted
-		// guards, plus a stricter rule approved for this migration: a user-
-		// requested stop skips this whole cascade (detectErrorFromExit and the
-		// SSH match included, not just the omp override), so a stopped turn can
-		// never surface as a crash.
+		// flush branch above, or the not-installed check just before this) -
+		// matching the original per-check errorEmitted guards, plus a stricter
+		// rule approved for this migration: a user-requested stop skips this whole
+		// cascade (detectErrorFromExit and the SSH match included, not just the
+		// omp override), so a stopped turn can never surface as a crash.
 		let settlement: TurnSettlement | undefined;
 
 		// Tell the reachability tracker how ssh ended. A Stop kills the local ssh
@@ -346,13 +347,23 @@ export class ExitHandler {
 			// stays `null` (nothing found) rather than gating this whole block
 			// on `outputParser`.
 			let sshExplicitError: AgentError | undefined;
-			const providerError = outputParser
+			const parserError = outputParser
 				? outputParser.detectErrorFromExit(
 						code,
 						managedProcess.stderrBuffer || '',
 						managedProcess.stdoutBuffer || managedProcess.streamedText || ''
 					)
 				: null;
+			// ssh that lost its host exits 255, and every parser's last resort calls
+			// a bare non-zero exit a crash ("Agent exited with code 255"). Letting
+			// that win would skip the SSH checks below, so the outage dialog and the
+			// availability retry, which both key on a network_error carrying
+			// sshRemoteId, never fire and every queued message burns as a crash.
+			const isSshTransportCrash =
+				parserError?.type === 'agent_crashed' &&
+				Boolean(managedProcess.sshRemoteId) &&
+				isSshConnectionFailure(code);
+			const providerError = isSshTransportCrash ? null : parserError;
 
 			if (providerError === null && managedProcess.sshRemoteId) {
 				const stderrToCheck = managedProcess.stderrBuffer || '';

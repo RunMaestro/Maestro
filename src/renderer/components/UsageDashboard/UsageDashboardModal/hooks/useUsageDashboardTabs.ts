@@ -55,6 +55,16 @@ export function useUsageDashboardTabs({
 		[contentRef, onViewModeChanged, setUsageDashboardViewMode]
 	);
 
+	// A deep link (`maestro-cli open usage-dashboard --tab`, `openUiSurface`)
+	// writes the store while the dashboard may already be open. Follow it, or the
+	// open dashboard keeps its old tab while the caller is told it switched.
+	const storeViewMode = useUIStore((s) => s.usageDashboardViewMode);
+	useEffect(() => {
+		if (storeViewMode !== viewModeRef.current) {
+			switchViewMode(storeViewMode);
+		}
+	}, [storeViewMode, switchViewMode]);
+
 	useEffect(() => {
 		if (!viewModeTabs.some((tab) => tab.value === viewMode)) {
 			switchViewMode('overview');

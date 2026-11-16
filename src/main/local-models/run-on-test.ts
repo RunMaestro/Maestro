@@ -1,7 +1,7 @@
 /**
- * Testing an agent's Run on target: one short turn through the real harness.
+ * Testing an agent's model source: one short turn through the real harness.
  *
- * The Test button in the Run on picker and `maestro-cli agent test-run-on` both
+ * The Test button in the model source picker and `maestro-cli agent test-run-on` both
  * end here. A test is the agent's own launch, not an imitation of it: the
  * stored agent (or the form's unsaved values on top of it), the same
  * `prepareLaunchRunOn` and `buildAgentLaunchPlan` a chat turn goes through, the
@@ -122,13 +122,13 @@ function failureDetail(text: string | undefined): string {
 }
 
 /**
- * Send one short turn through an agent's harness on its Run on target and
+ * Send one short turn through an agent's harness on its model source and
  * report what came back. Never throws for a target that cannot run: every such
  * case is a result with the reason.
  */
 export async function testAgentRunOn(rawRequest: unknown): Promise<RunOnTestResult> {
 	if (!deps) {
-		throw new Error('A Run on test was requested before configureRunOnTest() was called.');
+		throw new Error('A model source test was requested before configureRunOnTest() was called.');
 	}
 	const resolver = deps;
 	const request = parseRunOnTestRequest(rawRequest);
@@ -140,7 +140,10 @@ export async function testAgentRunOn(rawRequest: unknown): Promise<RunOnTestResu
 
 	const toolType = request.subject?.toolType ?? stringField(stored, 'toolType');
 	if (!toolType) {
-		return failure('run-on-test-invalid-request', 'A Run on test needs an agent or a provider.');
+		return failure(
+			'run-on-test-invalid-request',
+			'A model source test needs an agent or a provider.'
+		);
 	}
 	const agentName = getAgentDisplayName(toolType);
 
@@ -148,7 +151,7 @@ export async function testAgentRunOn(rawRequest: unknown): Promise<RunOnTestResu
 	if (!storedRunOnNamesSource(target)) {
 		return failure(
 			'run-on-test-provider-target',
-			`This agent runs on its provider's own model, so there is no source to test. Pick a model under Run on first.`
+			`This agent runs on its provider's own model, so there is no source to test. Pick a model under Model source first.`
 		);
 	}
 
@@ -167,7 +170,7 @@ export async function testAgentRunOn(rawRequest: unknown): Promise<RunOnTestResu
 	if (!cwd) {
 		return failure(
 			'run-on-test-invalid-request',
-			'A Run on test needs a working directory. Choose one for the agent first.'
+			'A model source test needs a working directory. Choose one for the agent first.'
 		);
 	}
 
@@ -261,7 +264,7 @@ export async function testAgentRunOn(rawRequest: unknown): Promise<RunOnTestResu
 	});
 	if (!planned.ok) {
 		// An SSH remote that cannot be resolved is the one refusal that is not a
-		// Run on code.
+		// model source code.
 		const code = planned.reason.startsWith('run-on-')
 			? (planned.reason as RunOnTestFailureCode)
 			: 'run-on-test-not-startable';
@@ -271,7 +274,7 @@ export async function testAgentRunOn(rawRequest: unknown): Promise<RunOnTestResu
 	if (!plan.runOn || prepared.kind !== 'ready') {
 		// The target names a source, so a plan without it applied would send the
 		// test turn to the provider's model. That must never be started.
-		throw new Error('A Run on test was planned without its target applied.');
+		throw new Error('A model source test was planned without its target applied.');
 	}
 	const sessionId = `run-on-test-${Date.now()}`;
 	logRunOnLaunch(LOG_CONTEXT, { sessionId, toolType }, plan.runOn);

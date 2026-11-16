@@ -132,10 +132,10 @@ describe('ToolbarControls', () => {
 		});
 		expect(screen.getByPlaceholderText('Filter models...')).toBeInTheDocument();
 		expect(screen.queryByTestId('composer-run-on')).not.toBeInTheDocument();
-		expect(screen.queryByText('Run on')).not.toBeInTheDocument();
+		expect(screen.queryByText('Model source')).not.toBeInTheDocument();
 	});
 
-	it.each([false, true])('shows the effective Run on target on phone=%s', (phone) => {
+	it.each([false, true])('shows the effective model source on phone=%s', (phone) => {
 		// InputArea resolves the label from the tab's provider projection
 		// (useComposerModelChoices); the toolbar shows it in place of the model.
 		mockedUsePhoneLayout.mockReturnValue(phone);
@@ -151,7 +151,7 @@ describe('ToolbarControls', () => {
 		expect(screen.queryByText('opus[1m]')).not.toBeInTheDocument();
 	});
 
-	it('shows the Auto pill when no Run on target replaces it', () => {
+	it('shows the Auto pill when no model source replaces it', () => {
 		renderToolbar({
 			currentModel: 'auto',
 			availableModels: ['auto', 'opus[1m]'],

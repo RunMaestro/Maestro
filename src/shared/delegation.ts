@@ -22,13 +22,14 @@
  * THE TWO TABLES DO NOT COVER THE SAME HISTORY, and the asymmetry is severe
  * enough to invert the number if it is ignored:
  *
- *   - `query_events` is never pruned automatically. `clearOldData` exists on
- *     the IPC surface but nothing calls it, so interactive and Auto Run rows go
- *     back to the install.
- *   - `cue_events` is pruned to `CUE_EVENT_RETENTION_DAYS` on every engine
- *     start (`pruneCueEvents` in cue-recovery-service).
+ *   - `query_events` is never pruned: the stats DB has no retention, so
+ *     interactive and Auto Run rows go back to the install.
+ *   - `cue_events` is pruned on every engine start (`pruneCueEvents` in
+ *     cue-recovery-service) to the user's Cue history retention setting
+ *     (`cueHistoryRetentionDays`, default 14 days; read it through
+ *     `resolveCueHistoryRetentionDays()` in `src/shared/cue/retention.ts`).
  *
- * So a lifetime score built from both tables measures a week of Cue against
+ * So a lifetime score built from both tables measures a few weeks of Cue against
  * years of interactive work, and gets WORSE the longer Maestro is installed -
  * the interactive side grows forever while the Cue side is capped. That is
  * exactly backwards for a score meant to reward delegating more. The lifetime
@@ -38,14 +39,6 @@
  *
  * No Electron imports: the CLI and tests bundle this.
  */
-
-/**
- * How many days of Cue run history survive. Must match `EVENT_PRUNE_AGE_MS` in
- * `src/main/cue/cue-recovery-service.ts`, which is what actually deletes the
- * rows. Surfaces read this to tell the user when a range reaches past the data
- * rather than quietly drawing a Cue slice of zero.
- */
-export const CUE_EVENT_RETENTION_DAYS = 7;
 
 /**
  * One contributor to the delegation split.
@@ -143,8 +136,9 @@ export function delegationPercentByCount(totals: DelegationTotals): number {
  * Swap in the lifetime Cue accumulator for a score that claims to cover all
  * history.
  *
- * `cue_events` only retains `CUE_EVENT_RETENTION_DAYS`, while `query_events` is
- * never pruned, so the merged totals weigh one week of Cue against the entire
+ * `cue_events` only retains the Cue history retention window (a user setting,
+ * see `resolveCueHistoryRetentionDays()`), while `query_events` is never
+ * pruned, so the merged totals weigh a few weeks of Cue against the entire
  * install. `autoRunStats.cueTimeMs` is the same time counted a different way:
  * the engine credits it live as runs complete and it is persisted in settings,
  * so it survives the prune. Feeding it here is what stops the score sliding

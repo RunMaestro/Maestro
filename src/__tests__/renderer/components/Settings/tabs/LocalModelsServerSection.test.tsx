@@ -68,6 +68,7 @@ function report(overrides: Partial<ModelServerReport> = {}): ModelServerReport {
 			models: ['qwen3-1.7b-instruct-q4km'],
 			loadedModels: ['qwen3-1.7b-instruct-q4km'],
 			keyStorage: 'os',
+			startOnLaunch: true,
 			logPath: '/data/logs/model-server.log',
 		},
 		engine: {
@@ -108,6 +109,7 @@ function fakeServer(overrides: Partial<ModelServerHookState> = {}): ModelServerH
 		stop: vi.fn().mockResolvedValue(undefined),
 		setBind: vi.fn().mockResolvedValue(undefined),
 		setMaxModels: vi.fn().mockResolvedValue(undefined),
+		setStartOnLaunch: vi.fn().mockResolvedValue(undefined),
 		rotateKey: vi.fn().mockResolvedValue(undefined),
 		readKey: vi.fn().mockResolvedValue('sk-maestro-secret'),
 		installEngine: vi.fn().mockResolvedValue(undefined),
@@ -359,6 +361,29 @@ describe('LocalModelsServerCard', () => {
 		render(<LocalModelsServerCard theme={theme} server={server} />);
 		fireEvent.change(screen.getByTestId('model-server-max-models'), { target: { value: '3' } });
 		expect(server.setMaxModels).toHaveBeenCalledWith(3);
+	});
+
+	it('shows Start with Maestro and turns it off', () => {
+		const server = fakeServer();
+		render(<LocalModelsServerCard theme={theme} server={server} />);
+		const row = screen.getByTestId('model-server-start-on-launch');
+		expect(row).toHaveTextContent(/Starts when Maestro starts/);
+		fireEvent.click(screen.getByRole('switch', { name: 'Start with Maestro' }));
+		expect(server.setStartOnLaunch).toHaveBeenCalledWith(false);
+	});
+
+	it('says a server left stopped stays stopped at launch', () => {
+		render(
+			<LocalModelsServerCard
+				theme={theme}
+				server={fakeServer({
+					report: report({ status: { ...report().status, startOnLaunch: false } }),
+				})}
+			/>
+		);
+		expect(screen.getByTestId('model-server-start-on-launch')).toHaveTextContent(
+			/Stays stopped when Maestro starts/
+		);
 	});
 
 	it('reads the key only when Copy is pressed, and copies it', async () => {

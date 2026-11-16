@@ -56,7 +56,7 @@ export function cueTurnSettingsOf(sub: CueTurnSettings): CueTurnSettings | undef
  * `agentModel` / `agentEffort` are the agent's own configured values, and
  * `routing` its tier targets and the harness defaults, so a subscription's
  * tier launches where the same tier launches in a playbook. A pinned model
- * names the model only: the run stays on the agent's own Run on target.
+ * names the model only: the run stays on the agent's own model source.
  */
 export function resolveCueTurnSettings(
 	toolType: ToolType,
@@ -110,7 +110,7 @@ export function cueAutoMarker(settings: CueTurnSettings | undefined): ModelHint 
 export interface CueTurnLaunch {
 	customModel?: string;
 	customEffort?: string;
-	/** The Run on target the run launches on, as data for the Run on path. */
+	/** The model source the run launches on, as data for the model source path. */
 	runOn?: unknown;
 	/** Set when the turn's tier names a target that cannot be used. The run must not start. */
 	launchRefusal?: string;

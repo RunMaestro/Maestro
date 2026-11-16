@@ -9,9 +9,6 @@
  * snapshot store. Sessions without an explicit env var fall back to that
  * provider's implicit default account dir. Agents billing an API key, gateway,
  * or cloud provider are on no account's plan and are not counted.
- *
- * The result includes selection state (which account tab is active) clamped to
- * the first account whenever the current selection disappears.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -57,9 +54,6 @@ export interface UseQuotaAccountsResult {
 	 * SSH-remote agents are NOT counted - see the note on the counting loop below.
 	 */
 	agentCountsByAccount: Record<string, number>;
-	selectedKey: string | null;
-	setSelectedKey: (key: string) => void;
-	effectiveSelectedKey: string | null;
 }
 
 export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccountsResult {
@@ -204,26 +198,5 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 		deriveShortName,
 	]);
 
-	// Sub-tab selection. Defaults to the first account; clamps back to the
-	// first whenever the selected key disappears.
-	const [selectedKey, setSelectedKey] = useState<string | null>(null);
-	useEffect(() => {
-		if (configuredAccountKeys.length === 0) {
-			if (selectedKey !== null) setSelectedKey(null);
-			return;
-		}
-		if (selectedKey === null || !configuredAccountKeys.includes(selectedKey)) {
-			setSelectedKey(configuredAccountKeys[0]);
-		}
-	}, [configuredAccountKeys, selectedKey]);
-
-	const effectiveSelectedKey = selectedKey ?? configuredAccountKeys[0] ?? null;
-
-	return {
-		configuredAccountKeys,
-		agentCountsByAccount,
-		selectedKey,
-		setSelectedKey,
-		effectiveSelectedKey,
-	};
+	return { configuredAccountKeys, agentCountsByAccount };
 }

@@ -26,7 +26,6 @@ import { parseNativeLines } from '../../shared/maestro-lib/translation/native-re
  * ```
  */
 
-import { app } from 'electron';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
@@ -34,6 +33,7 @@ import type Store from 'electron-store';
 import type { ClaudeSessionOriginsData } from '../stores/types';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { getAppUserDataDir } from '../utils/app-user-data';
 import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
 import type {
 	AgentSessionInfo,
@@ -41,6 +41,8 @@ import type {
 	SessionReadOptions,
 	SessionMessage,
 } from '../agents';
+import type { DeleteMessagePairResult } from '../agents';
+import { MESSAGE_NOT_IN_TRANSCRIPT } from '../agents/session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { BaseSessionStorage, MessagePageCollector } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
@@ -223,7 +225,7 @@ interface CodexSessionCache {
 }
 
 function getCodexSessionCachePath(): string {
-	return path.join(app.getPath('userData'), 'stats-cache', CODEX_SESSION_CACHE_FILENAME);
+	return path.join(getAppUserDataDir(), 'stats-cache', CODEX_SESSION_CACHE_FILENAME);
 }
 
 async function loadCodexSessionCache(): Promise<CodexSessionCache | null> {
@@ -1303,14 +1305,17 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		sessionId: string,
 		userMessageUuid: string,
 		fallbackContent?: string,
-		sshConfig?: SshRemoteConfig
-	): Promise<{ success: boolean; error?: string; linesRemoved?: number }> {
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
+	): Promise<DeleteMessagePairResult> {
 		// Delete operations on remote sessions are not supported
 		if (sshConfig) {
 			logger.warn('Delete message pair not supported for SSH remote sessions', LOG_CONTEXT);
 			return { success: false, error: 'Delete not supported for remote sessions' };
 		}
-		const sessionFilePath = await this.findSessionFile(sessionId);
+		// The agent's own CODEX_HOME: a rollout copied between two homes keeps its
+		// session ID, and the default home would edit the copy the agent never reads.
+		const sessionFilePath = await this.findSessionFile(sessionId, accountDir);
 
 		if (!sessionFilePath) {
 			logger.warn('Codex session file not found for deletion', LOG_CONTEXT, { sessionId });
@@ -1505,7 +1510,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 					userMessageUuid,
 					hasFallback: !!fallbackContent,
 				});
-				return { success: false, error: 'User message not found' };
+				return MESSAGE_NOT_IN_TRANSCRIPT;
 			}
 
 			// Find the end of the response (next user message) and collect tool_call IDs being deleted

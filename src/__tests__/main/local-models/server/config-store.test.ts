@@ -72,6 +72,7 @@ describe('readModelServerConfig', () => {
 			bind: 'local',
 			maxModels: 1,
 			keyStorage: null,
+			startOnLaunch: false,
 		});
 		await expect(fs.access(stateFile())).rejects.toThrow();
 	});
@@ -79,13 +80,20 @@ describe('readModelServerConfig', () => {
 	it('drops a field it cannot use and keeps the rest', async () => {
 		await fs.writeFile(
 			stateFile(),
-			JSON.stringify({ port: 'eighty', bind: 'lan', maxModels: 0, key: { sealed: 7 } })
+			JSON.stringify({
+				port: 'eighty',
+				bind: 'lan',
+				maxModels: 0,
+				key: { sealed: 7 },
+				startOnLaunch: 'yes',
+			})
 		);
 		expect(await readModelServerConfig(dir)).toEqual({
 			port: null,
 			bind: 'local',
 			maxModels: 1,
 			keyStorage: null,
+			startOnLaunch: false,
 		});
 		await fs.writeFile(stateFile(), JSON.stringify({ port: 41234, bind: 'network', maxModels: 2 }));
 		expect(await readModelServerConfig(dir)).toMatchObject({
@@ -170,6 +178,27 @@ describe('writeModelServerSettings', () => {
 			expect((error as ModelServerError).code).toBe('invalid-setting');
 		}
 		await expect(fs.access(stateFile())).rejects.toThrow();
+	});
+
+	it('turns start-on-launch on and off, leaving the other settings as they were', async () => {
+		await writeModelServerSettings(dir, { bind: 'network', maxModels: 2 });
+
+		expect(await writeModelServerSettings(dir, { startOnLaunch: true })).toMatchObject({
+			startOnLaunch: true,
+			bind: 'network',
+			maxModels: 2,
+		});
+		expect((await readModelServerConfig(dir)).startOnLaunch).toBe(true);
+		expect((await writeModelServerSettings(dir, { startOnLaunch: false })).startOnLaunch).toBe(
+			false
+		);
+	});
+
+	it('refuses a start-on-launch value that is not a boolean', async () => {
+		const error = await writeModelServerSettings(dir, {
+			startOnLaunch: 'yes' as never,
+		}).catch((caught: unknown) => caught);
+		expect((error as ModelServerError).code).toBe('invalid-setting');
 	});
 });
 

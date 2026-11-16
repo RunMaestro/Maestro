@@ -61,6 +61,8 @@ import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { isImeComposing } from '../utils/ime';
+import { isEditingTextTarget } from '../utils/editableTarget';
+import { shortcutText } from '../components/ui/ShortcutHint';
 import { ZOOM_VIEWER_ATTR, ZoomViewerHost, useZoomViewerStore } from '../components/ZoomViewer';
 import { LayerStackProvider } from '../contexts/LayerStackContext';
 import type { Theme } from '../types';
@@ -100,7 +102,27 @@ const QUICK_CHAT_KEYS = {
 	keep: 's',
 	pin: 'p',
 	close: 'w',
+	/**
+	 * Attach images. Select-all keeps the letter while the caret is in a field
+	 * with text in it: see `claimsAttachChord`.
+	 */
+	attach: 'a',
+	/** The microphone, while A Cappella is on. */
+	mic: 'm',
 } as const;
+
+/**
+ * Whether Cmd+A means "attach images" here rather than select-all. An empty
+ * field has nothing to select, so the chord is free there; a field with text
+ * keeps select-all, or clearing a long draft would mean deleting it by hand.
+ */
+function claimsAttachChord(target: EventTarget | null): boolean {
+	if (!isEditingTextTarget(target)) return true;
+	if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+		return target.value.length === 0;
+	}
+	return !(target as HTMLElement).textContent;
+}
 
 /**
  * Chords that take Shift too: the thinking toggle, on the same chord the main
@@ -288,6 +310,13 @@ function QuickChatWindow() {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const composerRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	/**
+	 * Set by a new chat and cleared by anything the user does in it (typing,
+	 * staging an image, picking a tab, agent, or recent chat). While it holds,
+	 * Cmd+N again flips the next message between the Default Tab setting's two
+	 * choices instead of starting yet another empty chat.
+	 */
+	const freshChatRef = useRef(false);
 
 	// This window boots its own renderer and never runs useSettings: load the
 	// settings, follow changes made in the main window, and apply the typography.
@@ -426,6 +455,7 @@ function QuickChatWindow() {
 	const pickAgent = useCallback(
 		(agentId: string) => {
 			setPicker(null);
+			freshChatRef.current = false;
 			// Picking the agent the chat is already on is not a reason to wipe it.
 			const done =
 				agentId === snapshot.agentId ? Promise.resolve(true) : run({ type: 'setAgent', agentId });
@@ -436,6 +466,7 @@ function QuickChatWindow() {
 	const pickTab = useCallback(
 		(pickerId: string) => {
 			setPicker(null);
+			freshChatRef.current = false;
 			void run({ type: 'setTab', choice: tabChoiceFromPickerId(pickerId) }).then(() =>
 				textareaRef.current?.focus()
 			);
@@ -445,6 +476,7 @@ function QuickChatWindow() {
 	const pickRecent = useCallback(
 		(chatId: string) => {
 			setPicker(null);
+			freshChatRef.current = false;
 			// Picking the chat already in the window is not a reason to reload it.
 			const done =
 				chatId === snapshot.chatId ? Promise.resolve(true) : run({ type: 'recall', chatId });
@@ -455,10 +487,29 @@ function QuickChatWindow() {
 	const pickerShortcut = ['Meta', QUICK_CHAT_KEYS.picker];
 	const tabPickerShortcut = ['Meta', QUICK_CHAT_KEYS.tabPicker];
 	const newChat = useCallback(() => {
+		const untouched =
+			freshChatRef.current &&
+			draft.length === 0 &&
+			images.length === 0 &&
+			snapshot.messages.length === 0 &&
+			!snapshot.busy;
+		if (untouched) {
+			void run({
+				type: 'setTab',
+				choice: { kind: snapshot.next.kind === 'new' ? 'auto' : 'new' },
+			}).then(() => textareaRef.current?.focus());
+			return;
+		}
 		setDraft('');
 		setImages([]);
+		freshChatRef.current = true;
 		void run({ type: 'new' }).then(() => textareaRef.current?.focus());
-	}, [run]);
+	}, [run, draft, images.length, snapshot.messages.length, snapshot.busy, snapshot.next.kind]);
+	// Anything staged makes the chat no longer fresh, even if it is removed again.
+	useEffect(() => {
+		if (images.length > 0) freshChatRef.current = false;
+	}, [images.length]);
+	const openImagePicker = useCallback(() => fileInputRef.current?.click(), []);
 	const togglePersistent = useCallback(
 		() => void run({ type: 'setPersistent', persistent: !snapshot.persistent }),
 		[run, snapshot.persistent]
@@ -522,6 +573,8 @@ function QuickChatWindow() {
 			[QUICK_CHAT_KEYS.pin]: togglePinned,
 			// Closes the window whatever is open in it, unlike Escape.
 			[QUICK_CHAT_KEYS.close]: hide,
+			// No microphone without A Cappella: the key stays unclaimed then.
+			...(voice.enabled && { [QUICK_CHAT_KEYS.mic]: voice.toggle }),
 		};
 		const shiftChords: Record<string, () => void> = {
 			[QUICK_CHAT_SHIFT_KEYS.thinking]: cycleThinking,
@@ -547,7 +600,15 @@ function QuickChatWindow() {
 				else adjustFontScale(zoom);
 				return;
 			}
-			const action = (e.shiftKey ? shiftChords : chords)[e.key.toLowerCase()];
+			const key = e.key.toLowerCase();
+			// Select-all keeps the letter in a field with text in it.
+			if (!e.shiftKey && key === QUICK_CHAT_KEYS.attach) {
+				if (!claimsAttachChord(e.target)) return;
+				e.preventDefault();
+				if (!e.repeat) openImagePicker();
+				return;
+			}
+			const action = (e.shiftKey ? shiftChords : chords)[key];
 			if (!action) return;
 			e.preventDefault();
 			// A held chord auto-repeats; acting on each repeat flips a toggle back.
@@ -568,6 +629,9 @@ function QuickChatWindow() {
 		togglePinned,
 		cycleThinking,
 		openInMaestro,
+		openImagePicker,
+		voice.enabled,
+		voice.toggle,
 		zoomOpen,
 		adjustFontScale,
 		resetFontScale,
@@ -629,11 +693,16 @@ function QuickChatWindow() {
 			: next.kind === 'new'
 				? 'Your next message starts a new tab, and the chat continues there.'
 				: 'Maestro finds the tab that fits your message. Pick one to choose it yourself.';
+	// Before the first message, a second Cmd+N flips between the two defaults.
+	const tabHintWithToggle =
+		!hasConversation && next.kind !== 'tab'
+			? `${tabHint} Press ${shortcutText(['Meta', QUICK_CHAT_KEYS.newChat])} again to switch between Choose tab and New tab.`
+			: tabHint;
 	const tabButton = (
 		<QuickChatTooltip
 			theme={theme}
 			label="Choose the tab"
-			hint={tabHint}
+			hint={tabHintWithToggle}
 			shortcut={tabPickerShortcut}
 			triggerClassName="inline-flex min-w-0"
 		>
@@ -723,7 +792,10 @@ function QuickChatWindow() {
 				// the draft. A second row would sit empty under the first line.
 				rows={1}
 				value={draft}
-				onChange={(e) => setDraft(e.target.value)}
+				onChange={(e) => {
+					freshChatRef.current = false;
+					setDraft(e.target.value);
+				}}
 				onPaste={onPaste}
 				onKeyDown={(e) => {
 					if (e.key === 'Enter' && !e.shiftKey && !isImeComposing(e)) {
@@ -755,8 +827,9 @@ function QuickChatWindow() {
 				<IconButton
 					theme={theme}
 					label="Attach images"
-					hint="Or paste or drop them here."
-					onClick={() => fileInputRef.current?.click()}
+					hint="Or paste or drop them here. With text in the draft, the chord selects it instead."
+					shortcut={['Meta', QUICK_CHAT_KEYS.attach]}
+					onClick={openImagePicker}
 				>
 					<ImagePlus className="w-4 h-4" />
 				</IconButton>
@@ -823,7 +896,12 @@ function QuickChatWindow() {
 				{/* Beside Send, as in the main composer: speaking is a way of
 				    submitting a message. */}
 				{voice.enabled && (
-					<QuickChatVoiceButton theme={theme} voice={voice} agentName={agentName} />
+					<QuickChatVoiceButton
+						theme={theme}
+						voice={voice}
+						agentName={agentName}
+						shortcut={['Meta', QUICK_CHAT_KEYS.mic]}
+					/>
 				)}
 				{/* Stop sits BESIDE Send while something is in motion, not in its
 				    place: the next message can go out before the last is answered. */}

@@ -17,6 +17,7 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readTextLf } from '../helpers/sourceText';
 
 const SRC = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -32,15 +33,12 @@ function listSources(dir: string, found: string[] = []): string[] {
 
 /** Source without comments, so a sentence that names a function is not a use of it. */
 function code(text: string): string {
-	return text
-		.replace(/\r\n/g, '\n')
-		.replace(/\/\*[\s\S]*?\*\//g, '')
-		.replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+	return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
 }
 
 const FILES = listSources(SRC).map((file) => ({
 	relative: path.relative(SRC, file).split(path.sep).join('/'),
-	text: code(fs.readFileSync(file, 'utf8')),
+	text: code(readTextLf(file)),
 }));
 
 const filesWhere = (test: (text: string) => boolean): string[] =>

@@ -255,7 +255,7 @@ describe('useAgentExitListener', () => {
 			expect(row).not.toHaveProperty('routedTier');
 		});
 
-		it('names the Run on source the turn was sent on', async () => {
+		it('names the model source the turn was sent on', async () => {
 			const row = await recordedRow(
 				{ turnRunOn: 'qwen3:latest · Ollama', turnRunOnSource: OLLAMA_QWEN },
 				{ runOn: OLLAMA_QWEN }

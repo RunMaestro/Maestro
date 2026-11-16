@@ -241,7 +241,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	);
 
 	// The model pill's choices for the tab's provider: Auto where it can act,
-	// and the Run on target in place of a named model.
+	// and the model source in place of a named model.
 	const modelChoices = useComposerModelChoices(
 		composerProvider.agent,
 		availableModels,
@@ -315,27 +315,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// local model or endpoint.
 	const localModelAssignments = useSettingsStore((s) => s.localModelAssignments);
 	const localModelEndpoints = useSettingsStore((s) => s.localModelEndpoints);
-	const utilitySource = useSettingsStore((s) => s.utilitySource);
-	const utilityAgentId = useSettingsStore((s) => s.utilityAgentId);
-	const utilityModelId = useSettingsStore((s) => s.utilityModelId);
+	const modelMap = useSettingsStore((s) => s.modelMap);
 	const draftProvenance = useMemo(
 		() =>
 			resolveAiCommandProvenance(
 				{ turnModel, turnEffort },
 				localModelAssignments,
 				localModelEndpoints,
-				utilitySource,
-				{ utilityAgentId, utilityModelId }
+				modelMap
 			),
-		[
-			turnModel,
-			turnEffort,
-			localModelAssignments,
-			localModelEndpoints,
-			utilitySource,
-			utilityAgentId,
-			utilityModelId,
-		]
+		[turnModel, turnEffort, localModelAssignments, localModelEndpoints, modelMap]
 	);
 	const aiCommandModel = aiCommandEntry ? aiCommandEntry.model : draftProvenance.model;
 	const aiCommandEffort = aiCommandEntry ? aiCommandEntry.effort : draftProvenance.effort;

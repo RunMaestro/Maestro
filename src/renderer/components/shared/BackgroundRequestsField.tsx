@@ -3,7 +3,7 @@
  * sends an agent's side requests: Off, or a model on a source that serves the
  * Anthropic Messages route.
  *
- * It lists the same sources the Run on picker lists, minus the ones a
+ * It lists the same sources the model source picker lists, minus the ones a
  * background request cannot be sent to (`buildBackgroundRequestsOptionGroups`),
  * and says under the picker what is routed and what never is. The host decides
  * when the control is shown at all: it only means something for a Claude Code

@@ -109,6 +109,11 @@ export interface ModelServerStatus {
 	loadedModels: string[];
 	/** Null until a key exists. */
 	keyStorage: ModelServerKeyStorage | null;
+	/**
+	 * Start it when Maestro starts. Start turns it on and Stop turns it off, so
+	 * a server the user left running runs again after a restart.
+	 */
+	startOnLaunch: boolean;
 	/** The server's own log: its stdout and stderr, size-capped. */
 	logPath: string;
 }

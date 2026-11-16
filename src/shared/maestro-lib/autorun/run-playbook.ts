@@ -69,7 +69,7 @@ export interface RunPlaybookOptions {
 	/** Run-scoped reasoning effort override (same contract as `model`). */
 	effort?: string;
 	/**
-	 * Run-scoped Run on target, in place of the agent's own for every task (a
+	 * Run-scoped model source, in place of the agent's own for every task (a
 	 * document's tier hint still decides its own tasks). Same contract as `model`.
 	 */
 	runOn?: RunOnTarget;

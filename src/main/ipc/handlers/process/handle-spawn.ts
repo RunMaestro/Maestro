@@ -533,7 +533,7 @@ async function handleProcessSpawnImpl(
 		sessionCustomEnvVars: config.sessionCustomEnvVars,
 	};
 
-	// The agent this spawn runs AS, and the Run on target it launches on. Looked up by
+	// The agent this spawn runs AS, and the model source it launches on. Looked up by
 	// `agentIdFromProcessId`, which strips every process suffix: an Auto Run task
 	// (`{agentId}-batch-{ts}`) and the History synopsis (`{agentId}-synopsis-{ts}`)
 	// are the agent's own work and run where its typed turns run. The synopsis
@@ -544,7 +544,7 @@ async function handleProcessSpawnImpl(
 	// this turn (an Auto Run task on a tier the agent or the harness default
 	// sends elsewhere), or the target an Auto Run picked for itself. A caller
 	// that leaves it out gets the agent's own target, and one that sets it is
-	// checked like a stored one, so it cannot name a place the Run on path
+	// checked like a stored one, so it cannot name a place the model source path
 	// would not launch on.
 	const launchAgentId = agentIdFromProcessId(config.sessionId);
 	const launchAgent = (
@@ -747,7 +747,7 @@ async function handleProcessSpawnImpl(
 	};
 
 	let effectiveCustomEnvVars: Record<string, string> | undefined;
-	// What the agent's Run on target did to this launch, when it has one.
+	// What the agent's model source did to this launch, when it has one.
 	let appliedRunOn: LaunchPlanRunOn | undefined;
 	let launchPermission: LaunchPermissionDecision | undefined;
 	let launchInput: AgentLaunchInput | undefined;
@@ -782,7 +782,7 @@ async function handleProcessSpawnImpl(
 		const providerCustomEnvVars = agentConfigValues.customEnvVars as
 			| Record<string, string>
 			| undefined;
-		// The agent's Run on target: its source looked up and asked whether it
+		// The agent's model source: its source looked up and asked whether it
 		// can serve the model (starting the Maestro model server when the target
 		// is one of its models). A target that cannot run refuses the spawn by
 		// name; it never runs the turn on the provider's model.
@@ -794,7 +794,7 @@ async function handleProcessSpawnImpl(
 			sshStore,
 		});
 		if (preparedRunOn.kind === 'refused') {
-			logger.error('Run on target cannot run; not spawning', LOG_CONTEXT, {
+			logger.error('Model source cannot run; not spawning', LOG_CONTEXT, {
 				sessionId: config.sessionId,
 				reason: preparedRunOn.code,
 			});
@@ -815,7 +815,7 @@ async function handleProcessSpawnImpl(
 		// it must be in the base URL the plan hands the process. The bridge's run
 		// proof names `baseSessionId`, so the gateway agent must be that agent
 		// (an Auto Run task or a synopsis spawns under another id and gets no
-		// bridge). A Run on target takes the gateway's place: nothing to bind.
+		// bridge). A model source takes the gateway's place: nothing to bind.
 		if (
 			launchGatewayUrl &&
 			mcpBridgeReachable &&
@@ -888,7 +888,7 @@ async function handleProcessSpawnImpl(
 				});
 			} else {
 				// The SSH remote could not be resolved, the agent's gateway cannot be
-				// used, or its Run on target cannot run; `reason` says which. Each
+				// used, or its model source cannot run; `reason` says which. Each
 				// refuses the spawn rather than run the turn somewhere the user did
 				// not choose.
 				logger.error('Launch plan refused; not spawning', LOG_CONTEXT, {
@@ -912,7 +912,7 @@ async function handleProcessSpawnImpl(
 		// This handler places the prompt itself, so it spawns from the plan's
 		// `launchArgs`: `finalArgs` with the gateway's config arguments in front
 		// (a provider whose base-URL variable is not enough, Codex), or with the
-		// Run on target's root arguments and its model. That model takes the
+		// model source's root arguments and its model. That model takes the
 		// place of the agent's own (its stored model, a tier model, the
 		// synopsis's cheap model): each names something the source does not serve.
 		finalArgs = planResult.plan.launchArgs;
@@ -1533,7 +1533,7 @@ async function handleProcessSpawnImpl(
 	signal.throwIfAborted();
 	// Get contextWindow: session-level override takes priority over agent-level config
 	// Falls back to the agent's configOptions default (e.g., 400000 for Codex, 128000 for OpenCode)
-	// A Run on target states its own: the window the harness was told it has.
+	// A model source states its own: the window the harness was told it has.
 	const contextWindow = getContextWindowValue(
 		agent,
 		agentConfigValues,

@@ -22,8 +22,10 @@ export type ModalResizeDirection = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 
  * a surface should expose only the `s`, `e` and `se` handles: dragging `n` or
  * `w` would have to move the anchor, which this hook does not do.
  * `bottom-left` pins a menu above its trigger and exposes `n`, `e` and `ne`.
+ * `bottom-right` pins a menu above a right-aligned trigger (it opens leftward,
+ * toward the space it has) and exposes `n`, `w` and `nw`.
  */
-export type ModalResizeAnchor = 'center' | 'top-left' | 'bottom-left';
+export type ModalResizeAnchor = 'center' | 'top-left' | 'bottom-left' | 'bottom-right';
 
 export interface UseResizableModalOptions {
 	resizeKey: ModalResizeKey;
@@ -47,6 +49,7 @@ export interface UseResizableModalOptions {
 	 * would make the frame race away from the pointer at twice its speed.
 	 * `bottom-left` uses the same 1:1 deltas for a menu above its trigger;
 	 * expose only `n`, `e` and `ne` handles so its bottom-left stays pinned.
+	 * `bottom-right` is its mirror: `n`, `w` and `nw` keep the bottom-right pinned.
 	 */
 	anchor?: ModalResizeAnchor;
 }

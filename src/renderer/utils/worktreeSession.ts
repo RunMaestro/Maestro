@@ -153,7 +153,7 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		gatewayUrl: params.parentSession.gatewayUrl,
 		tokenProxyMode: params.parentSession.tokenProxyMode,
 		tokenProxyRetrieval: params.parentSession.tokenProxyRetrieval,
-		// And the same Run on target: a worktree agent on the provider's cloud
+		// And the same model source: a worktree agent on the provider's cloud
 		// model while its parent runs on a local one would spend money the user
 		// chose not to spend.
 		runOn: params.parentSession.runOn,
@@ -180,4 +180,28 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		newSessionMessage: isLegacy ? undefined : params.parentSession.newSessionMessage,
 		autoRunFolderPath: isLegacy ? undefined : params.parentSession.autoRunFolderPath,
 	} as Session;
+}
+
+/**
+ * Record that worktree agents were just added to the Left Bar, in the stats
+ * `session_lifecycle` table. Call it once the agents are in the store, with the
+ * agents that were added.
+ *
+ * Every other creation path (new agent, wizard, CLI, Symphony) records its row;
+ * worktree agents never did, so the Usage Dashboard's "Agents Over Time" could
+ * not see a worktree agent once it was deleted, and undercounted every day it
+ * existed. A repeat row for one id is harmless: the timeline keeps one lifespan
+ * per agent.
+ */
+export function recordWorktreeAgentsCreated(sessions: readonly Session[]): void {
+	for (const session of sessions) {
+		void window.maestro.stats.recordSessionCreated({
+			sessionId: session.id,
+			agentType: session.toolType,
+			projectPath: session.cwd,
+			createdAt: session.createdAt || Date.now(),
+			isRemote: Boolean(session.sessionSshRemoteConfig?.enabled),
+			isWorktree: true,
+		});
+	}
 }

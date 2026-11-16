@@ -114,7 +114,7 @@ export type SpawnBuildResult = SpawnBuildSuccess | SpawnBuildError;
  * 3. Apply config overrides (custom model, args)
  * 4. Plan the launch (target, command, env, prompt delivery) via
  *    `buildAgentLaunchPlan`, failing on an unresolvable SSH remote, a gateway
- *    that cannot be used, or a Run on target that cannot run
+ *    that cannot be used, or a model source that cannot run
  * 5. Wrap a remote launch with SSH, or realize a local maestro-p decision
  */
 export async function buildSpawnSpec(
@@ -233,7 +233,7 @@ export async function buildSpawnSpec(
 			| undefined
 	);
 
-	// The agent's Run on target: its source looked up and asked whether it can
+	// The agent's model source: its source looked up and asked whether it can
 	// serve the model, before the plan. A Cue run is the agent working
 	// unattended, so it runs where the agent's own turns run. One that cannot
 	// fails the run by name; it never runs on the provider's model.
@@ -275,8 +275,8 @@ export async function buildSpawnSpec(
 		agentCustomEnvVars: agentEnvVars,
 		sessionCustomEnvVars: sessionEnvVars,
 		// The agent's Local Models gateway. A gateway that cannot be used (a
-		// loopback URL for an SSH remote) fails the run by name below. A Run on
-		// target takes its place: the plan then skips it.
+		// loopback URL for an SSH remote) fails the run by name below. A model
+		// source takes its place: the plan then skips it.
 		gateway: { toolType, url: launchGatewayUrl },
 		runOn: preparedRunOn.kind === 'ready' ? preparedRunOn.runOn : undefined,
 		// A Cue run is a Cue run no matter what the agent's env overrides say.

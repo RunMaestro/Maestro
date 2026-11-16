@@ -397,7 +397,7 @@ describe('resolveAgentEnvVars: the record Maestro sets (and sends over SSH)', ()
 	});
 });
 
-describe('runOnEnvVarMerges: a variable a Run on target adds to', () => {
+describe('runOnEnvVarMerges: a variable a model source adds to', () => {
 	const merges = { DOC: (current: string | undefined) => `${current ?? 'none'}+provider` };
 
 	it('is built from the value every other layer settled on, the read-only override included', () => {

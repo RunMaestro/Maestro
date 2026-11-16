@@ -228,12 +228,12 @@ export async function draftPullRequest(
 				'off',
 				`${task.label} is off. Assign it a local model or an endpoint in ${ASSIGNMENT_LOCATION}.`
 			);
-		case 'use-utility-agent':
-			// Unreachable: a task with no agent path resolves to `off` while the
-			// Utility source is the provider. There is no agent path to keep.
+		case 'use-provider':
+			// Unreachable: a task with no agent path resolves to `off` while its
+			// Model Map slot is a provider. There is no agent path to keep.
 			return fail(
 				'unavailable',
-				`${task.label} cannot run on the Utility Agent. Assign it a local model or an endpoint in ${ASSIGNMENT_LOCATION}.`
+				`${task.label} cannot run on a provider agent. Assign it a local model or an endpoint in ${ASSIGNMENT_LOCATION}.`
 			);
 		case 'cancelled':
 			logger.warn('Pull request draft timed out', LOG_CONTEXT, { source: verdict.source });

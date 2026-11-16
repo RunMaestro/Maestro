@@ -31,11 +31,31 @@ export function formatMarkdownQuote(text: string): string {
  * selection.
  */
 export function appendQuoteToDraft(draft: string, selection: string): string {
-	const quote = formatMarkdownQuote(selection);
-	if (!quote) return draft;
+	return appendBlockToDraft(draft, formatMarkdownQuote(selection));
+}
+
+/**
+ * Append a Markdown block (a fenced passage, a Design Mode element, a diff
+ * review) to a draft
+ * as-is, with the same spacing rules as {@link appendQuoteToDraft}: one blank
+ * line before it, one after it so the caret lands on a fresh line. Returns the
+ * draft unchanged for a blank block.
+ */
+export function appendBlockToDraft(draft: string, block: string): string {
+	const body = block.replace(/\r\n?/g, '\n').replace(/^\n+|\s+$/g, '');
+	if (!body) return draft;
 	const trimmed = draft.replace(/\s+$/, '');
 	const prefix = trimmed ? `${trimmed}\n\n` : '';
-	return `${prefix}${quote}\n\n`;
+	return `${prefix}${body}\n\n`;
+}
+
+/**
+ * A Markdown code fence that `body` cannot close early: one backtick longer
+ * than the longest backtick run inside it, and never shorter than three.
+ */
+export function markdownFenceFor(body: string): string {
+	const longestRun = Math.max(0, ...(body.match(/`+/g) ?? []).map((run) => run.length));
+	return '`'.repeat(Math.max(3, longestRun + 1));
 }
 
 /** A passage of a file, as the File Preview editor hands it to an agent. */
@@ -67,8 +87,7 @@ export function formatFileLineReference(
  */
 export function formatFileSelection(selection: FileSelectionReference): string {
 	const body = selection.text.replace(/\r\n?/g, '\n').replace(/\n+$/, '');
-	const longestRun = Math.max(0, ...(body.match(/`+/g) ?? []).map((run) => run.length));
-	const fence = '`'.repeat(Math.max(3, longestRun + 1));
+	const fence = markdownFenceFor(body);
 	const info = selection.language && selection.language !== 'text' ? selection.language : '';
 	const ref = formatFileLineReference(selection.path, selection.startLine, selection.endLine);
 	return `\`${ref}\`\n${fence}${info}\n${body}\n${fence}`;

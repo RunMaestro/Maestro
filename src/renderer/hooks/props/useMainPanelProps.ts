@@ -143,7 +143,7 @@ export interface UseMainPanelPropsDeps {
 	getContextColor: (usage: number, theme: Theme) => string;
 	setActiveSessionId: (id: string) => void;
 	handleStopBatchRun: (sessionId?: string) => void;
-	handleDeleteLog: (logId: string) => number | null | Promise<number | null>;
+	handleDeleteLog: (logId: string) => Promise<number | null>;
 	handleRemoveQueuedItem: (itemId: string) => void;
 	handleToggleQueuedItemPause: (itemId: string) => void;
 	handleMergeQueuedItem: (itemId: string) => void;
@@ -508,7 +508,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 				// Also bump the daily-firings counter so the Usage Dashboard bar
 				// chart reflects shortcuts handled inside subcomponents (not just
 				// the ones routed through useMainKeyboardHandler).
-				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
+				void window.maestro?.stats?.recordShortcutUsage?.(Date.now(), shortcutId);
 			},
 			ghCliAvailable: deps.ghCliAvailable,
 			onPublishGist: () => deps.setGistPublishModalOpen(true),

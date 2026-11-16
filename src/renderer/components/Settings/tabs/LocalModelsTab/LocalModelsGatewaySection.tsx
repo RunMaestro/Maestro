@@ -185,7 +185,7 @@ export function LocalModelsGatewaySection({ theme }: LocalModelsGatewaySectionPr
 						Every agent follows this default unless it is listed below as an override. Changing it
 						moves every agent that follows it, and new agents start on it.
 						{directAgentCount > 0 &&
-							` ${directAgentCount} agent${directAgentCount === 1 ? '' : 's'} cannot use the proxy (SSH remote, Run on source, or a provider without gateway support) and ${directAgentCount === 1 ? 'goes' : 'go'} direct.`}
+							` ${directAgentCount} agent${directAgentCount === 1 ? '' : 's'} cannot use the proxy (SSH remote, model source, or a provider without gateway support) and ${directAgentCount === 1 ? 'goes' : 'go'} direct.`}
 					</p>
 					<fieldset disabled={defaultBusy} className="min-w-0">
 						<SegmentedControl

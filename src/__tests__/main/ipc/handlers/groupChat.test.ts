@@ -64,7 +64,7 @@ vi.mock('../../../../main/utils/context-groomer', async (importOriginal) => ({
 	groomContext: vi.fn(),
 }));
 
-// The Local Models router answers `use-utility-agent` (the default assignment)
+// The Local Models router answers `use-provider` (the default assignment)
 // unless a test says otherwise.
 vi.mock('../../../../main/local-models/task-router', () => ({
 	runLocalTask: vi.fn(),
@@ -134,13 +134,13 @@ vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
 // Mock the main-process stores. Only the sessions store matters here: it is what
 // resolveParticipantSshRemoteConfig reads to recover a participant's SSH config.
 const mockStoredSessions: Record<string, unknown>[] = [];
-const mockUtilitySettings = new Map<string, unknown>();
+const mockSettingsValues = new Map<string, unknown>();
 vi.mock('../../../../main/stores', () => ({
 	getSessionsStore: () => ({
 		get: () => mockStoredSessions,
 	}),
 	getSettingsStore: () => ({
-		get: (key: string) => mockUtilitySettings.get(key),
+		get: (key: string) => mockSettingsValues.get(key),
 	}),
 	getAgentConfigsStore: () => ({
 		get: () => ({ codex: { customEnvVars: { CODEX_CONFIG: 'utility' } } }),
@@ -171,7 +171,7 @@ describe('groupChat IPC handlers', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		mockUtilitySettings.clear();
+		mockSettingsValues.clear();
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -211,7 +211,7 @@ describe('groupChat IPC handlers', () => {
 		// or one test's items and armed drains leak into the next.
 		resetGroupChatQueueForTests();
 
-		vi.mocked(runLocalTask).mockResolvedValue({ status: 'use-utility-agent' });
+		vi.mocked(runLocalTask).mockResolvedValue({ status: 'use-provider' });
 		resetLocalTaskNotices();
 
 		// Register handlers
@@ -1610,7 +1610,7 @@ describe('groupChat IPC handlers', () => {
 			} as never);
 		});
 
-		it('keeps the agent turn for use-utility-agent, resuming the provider session', async () => {
+		it('keeps the agent turn for use-provider, resuming the provider session', async () => {
 			await reset();
 
 			expect(groomContext).toHaveBeenCalledWith(
@@ -1625,15 +1625,19 @@ describe('groupChat IPC handlers', () => {
 		});
 
 		it.each([
-			{ utilityAgentId: null, cwd: '/proj', agentType: 'claude-code', trusted: true },
-			{ utilityAgentId: null, cwd: '/elsewhere', agentType: 'claude-code', trusted: false },
-			{ utilityAgentId: 'codex', cwd: '/proj', agentType: 'codex', trusted: true },
-			{ utilityAgentId: 'codex', cwd: '/elsewhere', agentType: 'codex', trusted: false },
+			{ mappedAgentId: undefined, cwd: '/proj', agentType: 'claude-code', trusted: true },
+			{ mappedAgentId: undefined, cwd: '/elsewhere', agentType: 'claude-code', trusted: false },
+			{ mappedAgentId: 'codex', cwd: '/proj', agentType: 'codex', trusted: true },
+			{ mappedAgentId: 'codex', cwd: '/elsewhere', agentType: 'codex', trusted: false },
 		])(
-			'bounds folder trust to the participant directory with $utilityAgentId at $cwd',
-			async ({ utilityAgentId, cwd, agentType, trusted }) => {
+			'bounds folder trust to the participant directory with $mappedAgentId at $cwd',
+			async ({ mappedAgentId, cwd, agentType, trusted }) => {
 				mockStoredSessions.push({ id: 'backend', name: 'Backend', cwd: '/proj' });
-				mockUtilitySettings.set('utilityAgentId', utilityAgentId);
+				// Summaries follow the Agent model by default.
+				mockSettingsValues.set('modelMap', {
+					agent: { type: 'provider', agentId: mappedAgentId },
+					housekeeping: { type: 'provider' },
+				});
 
 				await handlers.get('groupChat:resetParticipantContext')!({} as any, 'gc-1', 'Backend', cwd);
 
@@ -1645,9 +1649,56 @@ describe('groupChat IPC handlers', () => {
 			}
 		);
 
-		it('summarizes on the utility provider with chat history and no participant native session', async () => {
-			mockUtilitySettings.set('utilityAgentId', 'codex');
-			mockUtilitySettings.set('utilityModelId', 'gpt-model');
+		it('reads the old Utility provider keys as the Housekeeping model, which a summary follows only when pointed at it', async () => {
+			mockSettingsValues.set('utilityAgentId', 'codex');
+			mockSettingsValues.set('utilityModelId', 'gpt-model');
+			mockSettingsValues.set('localModelAssignments', {
+				'tab-summary': { type: 'housekeeping-model' },
+			});
+			await reset();
+			expect(groomContext).toHaveBeenCalledWith(
+				expect.objectContaining({ agentType: 'codex', sessionCustomModel: 'gpt-model' }),
+				mockProcessManager,
+				mockAgentDetector
+			);
+		});
+
+		it('keeps the participant provider for a summary on its default Agent model when only the old keys exist', async () => {
+			mockSettingsValues.set('utilityAgentId', 'codex');
+			mockSettingsValues.set('utilityModelId', 'gpt-model');
+			await reset();
+			expect(groomContext).toHaveBeenCalledWith(
+				expect.objectContaining({
+					agentType: 'claude-code',
+					agentSessionId: 'provider-session-1',
+				}),
+				mockProcessManager,
+				mockAgentDetector
+			);
+		});
+
+		it('summarizes on the Agent model by default', async () => {
+			mockSettingsValues.set('modelMap', {
+				agent: { type: 'provider', agentId: 'codex', modelId: 'big-model' },
+				housekeeping: { type: 'provider', agentId: 'opencode' },
+			});
+			await reset();
+			expect(groomContext).toHaveBeenCalledWith(
+				expect.objectContaining({
+					agentType: 'codex',
+					agentSessionId: undefined,
+					sessionCustomModel: 'big-model',
+				}),
+				mockProcessManager,
+				mockAgentDetector
+			);
+		});
+
+		it('summarizes on the mapped provider with chat history and no participant native session', async () => {
+			mockSettingsValues.set('modelMap', {
+				agent: { type: 'provider', agentId: 'codex', modelId: 'gpt-model' },
+				housekeeping: { type: 'provider' },
+			});
 			await reset();
 			expect(groomContext).toHaveBeenCalledWith(
 				expect.objectContaining({

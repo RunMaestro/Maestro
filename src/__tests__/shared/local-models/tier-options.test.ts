@@ -72,7 +72,7 @@ describe('buildTierTargetOptionGroups', () => {
 		expect(groups[3].options).toEqual([{ value: 'ep-ollama:qwen3:latest', label: 'qwen3:latest' }]);
 	});
 
-	it('labels a model on the Maestro server as the Run on picker does', () => {
+	it('labels a model on the Maestro server as the model source picker does', () => {
 		const server = groupsFor(CLAUDE, undefined)[2];
 		const entry = getLocalModel(GPT_OSS_20B_ID);
 
@@ -81,7 +81,7 @@ describe('buildTierTargetOptionGroups', () => {
 		expect(server.options[0].label).toContain('Agent-ready');
 	});
 
-	it('offers no source to a harness with no Run on recipe', () => {
+	it('offers no source to a harness with no model source recipe', () => {
 		const droid: HarnessTierOptions = {
 			...CLAUDE,
 			harness: 'factory-droid',
@@ -147,6 +147,14 @@ describe('agentTierFallthroughLabel', () => {
 	it('says so when no layer maps the tier', () => {
 		const [low] = agentTierRows({ toolType: 'opencode' });
 		expect(agentTierFallthroughLabel(low)).toBe('Harness default (not mapped)');
+	});
+
+	it("names the agent's model when the built-in table would replace a pinned model", () => {
+		const [low] = agentTierRows({ toolType: 'codex', customModel: 'gpt-daybreak-blue-latest' });
+		expect(low).toMatchObject({ target: null, source: null, code: 'tier-agent-model-pinned' });
+		expect(agentTierFallthroughLabel(low)).toBe(
+			`Harness default (${TIER_AGENT_MODEL_LABEL.toLowerCase()})`
+		);
 	});
 
 	it('says so when the harness default cannot be used', () => {

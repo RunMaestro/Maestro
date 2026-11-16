@@ -101,7 +101,7 @@ visible and show an error. Preserve logs appended while deletion is pending.
 
 ## Analytics & Visualization
 
-- `stats` - Usage statistics: recordQuery, getAggregation, getTokenUsage, getDelegationTotals / getDelegationByDay, exportUsage, clearOldData, getDatabaseSize, recordResilience, getSessionLifecycle
+- `stats` - Usage statistics: recordQuery, getAggregation, getTokenUsage, getDelegationTotals / getDelegationByDay, exportUsage, getDatabaseSize, recordResilience, getSessionLifecycle
 - `stats` - Auto Run tracking: startAutoRun, endAutoRun, recordAutoTask, getAutoRunSessions, getAutoRunTasks
 - `stats` - Real-time updates via `stats:updated` event broadcast
 - `cueStats` - Cue analytics: getAggregation, getHistoricalConductorCredit

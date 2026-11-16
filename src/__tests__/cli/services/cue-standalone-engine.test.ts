@@ -4,7 +4,7 @@
  * The desktop registers every provider's output parser at boot; the standalone
  * runner has to do it itself, or every prompt run is recorded as raw
  * stream-json with no provider session id and no usage. The same goes for the
- * stores an agent's Run on target is looked up in: unwired, a run of such an
+ * stores an agent's model source is looked up in: unwired, a run of such an
  * agent throws rather than run on its provider's model.
  */
 
@@ -207,7 +207,7 @@ describe('buildStandaloneCueEngineDeps', () => {
 		expect(executeCuePrompt.mock.calls[0][0].customEffort).toBeUndefined();
 	});
 
-	it("hands the run the agent's Run on target, with its lookup wired first", async () => {
+	it("hands the run the agent's model source, with its lookup wired first", async () => {
 		executeCuePrompt.mockClear();
 		executeCuePrompt.mockImplementation(async () => {
 			// The spawn builder looks the target's source up through these stores.
@@ -347,7 +347,7 @@ describe('buildStandaloneCueEngineDeps', () => {
 			});
 			expect(await config.resolveLateTurn('p')).toMatchObject({ runOn: local });
 
-			// With no place of its own the turn stays on the agent's Run on target.
+			// With no place of its own the turn stays on the agent's model source.
 			resolveCliAutoTurn.mockResolvedValueOnce({ model: 'haiku', notes: [], warnings: [] });
 			expect(await config.resolveLateTurn('p')).toMatchObject({ runOn: RUN_ON });
 

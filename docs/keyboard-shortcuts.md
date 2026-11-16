@@ -32,7 +32,7 @@ Tips and gotchas:
 
 [Quick Chat](./quick-chat) has its own system-wide hotkey, `Opt+Space` on macOS and `Alt+Space` on Windows and Linux by default. It opens a small floating chat window from any app, brings it to the front if it is behind another window, and closes it if it is in front. Change or clear it in **Settings -> Plugins -> Quick Chat -> Settings**.
 
-Inside the Quick Chat window: `Enter` sends, `Shift+Enter` adds a line, `Cmd+N` / `Ctrl+N` starts a new chat, `Cmd+O` / `Ctrl+O` opens the agent picker, `Cmd+T` / `Ctrl+T` opens the tab picker (where the next message goes), `Cmd+Y` / `Ctrl+Y` opens the recent chats to bring one back, `Cmd+S` / `Ctrl+S` keeps the chat as a tab (or makes it temporary again), `Cmd+P` / `Ctrl+P` pins the window on top (or unpins it), `Cmd+Shift+K` / `Ctrl+Shift+K` cycles the agent's thinking (hidden, shown while it works, kept), `Cmd+Shift+T` / `Ctrl+Shift+T` opens the chat as a tab in Maestro, `Cmd+=` / `Cmd+-` / `Cmd+0` (`Ctrl` off macOS) make the conversation text bigger, smaller, or back to normal, `Esc` closes the window (or, with the picker open, just the picker), `Cmd+W` / `Ctrl+W` closes the window even with the picker open, and ``Cmd+` `` / ``Cmd+Shift+` `` (macOS) switch between Quick Chat and the Maestro windows, leaving Quick Chat up. The [show Maestro hotkey](#system-wide-hotkey-summon-maestro) also closes Quick Chat on its way to the Maestro window.
+Inside the Quick Chat window: `Enter` sends, `Shift+Enter` adds a line, `Cmd+N` / `Ctrl+N` starts a new chat (press it again before typing to switch the first message between Choose tab and New tab), `Cmd+A` / `Ctrl+A` attaches images when the draft is empty (with text, it selects the text), `Cmd+M` / `Ctrl+M` starts or ends the voice session when [A Cappella](./voice-mode) is on, `Cmd+O` / `Ctrl+O` opens the agent picker, `Cmd+T` / `Ctrl+T` opens the tab picker (where the next message goes), `Cmd+Y` / `Ctrl+Y` opens the recent chats to bring one back, `Cmd+S` / `Ctrl+S` keeps the chat as a tab (or makes it temporary again), `Cmd+P` / `Ctrl+P` pins the window on top (or unpins it), `Cmd+Shift+K` / `Ctrl+Shift+K` cycles the agent's thinking (hidden, shown while it works, kept), `Cmd+Shift+T` / `Ctrl+Shift+T` opens the chat as a tab in Maestro, `Cmd+=` / `Cmd+-` / `Cmd+0` (`Ctrl` off macOS) make the conversation text bigger, smaller, or back to normal, `Esc` closes the window (or, with the picker open, just the picker), `Cmd+W` / `Ctrl+W` closes the window even with the picker open, and ``Cmd+` `` / ``Cmd+Shift+` `` (macOS) switch between Quick Chat and the Maestro windows, leaving Quick Chat up. The [show Maestro hotkey](#system-wide-hotkey-summon-maestro) also closes Quick Chat on its way to the Maestro window.
 
 No two system-wide hotkeys can share a combo. If you set one to a combo another already holds, the second registration fails and Maestro tells you.
 
@@ -176,6 +176,19 @@ comment. `Cmd+[` and `Cmd+]` keep switching agents, so indent with `Tab` and
 `Shift+Tab` instead. With **Vim keybindings** on, `Esc` returns to Vim's normal
 mode, and `Cmd+E` leaves the editor.
 
+## Git Diff Review
+
+These work while the Git Diff viewer is open over an agent that can take a
+review. See [Reviewing Diffs](./diff-review).
+
+| Action                        | macOS                     | Windows/Linux             |
+| ----------------------------- | ------------------------- | ------------------------- |
+| Move the line cursor          | `Down` / `Up`             | `Down` / `Up`             |
+| Extend the line selection     | `Shift+Down` / `Shift+Up` | `Shift+Down` / `Shift+Up` |
+| Comment on the selected lines | `C`                       | `C`                       |
+| Save the comment              | `Cmd+Enter`               | `Ctrl+Enter`              |
+| Send the review               | `Cmd+Shift+Enter`         | `Ctrl+Shift+Enter`        |
+
 ## Group Chat
 
 A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.
@@ -238,6 +251,7 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 | New Terminal Tab             | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
 | Focus Browser Address Bar    | `Cmd+L`                 | `Ctrl+L`                  |
 | Find in Browser Tab          | `Cmd+F`                 | `Ctrl+F`                  |
+| Toggle Browser Design Mode   | `Cmd+Shift+C`           | `Ctrl+Shift+C`            |
 | Focus Active Tab             | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
 | Snooze Tab                   | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
 | Change Tabs Model and Effort | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
@@ -263,7 +277,7 @@ In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
 Right Bar instead, switching between the Participants and History panels. The Right
 Bar opens if it was closed.
 
-Inside the **Change Tabs Model and Effort** console, `Cmd+R` / `Ctrl+R` re-reads the model list, so a model you just installed shows up without leaving the console. See [Changing a Tab's Model and Effort](./general-usage#changing-a-tabs-model-and-effort). The console also offers **Auto**, which lets the model router pick the tier and effort of each turn (`maestro-cli tab model <tab-id> auto`). See [Model routing and Auto](./local-models#model-routing-and-auto). [Run on](./local-models#run-on) and [Tiers](./local-models#tiers) have no shortcut of their own: set them on the **Models** tab of the agent's settings (**Open Agent Settings**, `Opt+Cmd+,`), or with `maestro-cli update-agent <agent-id> --run-on <target>` and `--tier <tier=target>`.
+Inside the **Change Tabs Model and Effort** console, `Cmd+R` / `Ctrl+R` re-reads the model list, so a model you just installed shows up without leaving the console. See [Changing a Tab's Model and Effort](./general-usage#changing-a-tabs-model-and-effort). The console also offers **Auto**, which lets the model router pick the tier and effort of each turn (`maestro-cli tab model <tab-id> auto`). See [Model routing and Auto](./local-models#model-routing-and-auto). [Model source](./local-models#model-source) and [Tiers](./local-models#tiers) have no shortcut of their own: set them on the **Models** tab of the agent's settings (**Open Agent Settings**, `Opt+Cmd+,`), or with `maestro-cli update-agent <agent-id> --model-source <target>` and `--tier <tier=target>`.
 
 **Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
 
@@ -541,10 +555,14 @@ on top of it.
 
 ## Usage Dashboard
 
-The dashboard's own keys, including the ones that move between its tabs (the
-**Models** tab among them), are in
-[Usage Dashboard Keyboard Navigation](./usage-dashboard#keyboard-navigation).
-The Models tab adds no keys of its own.
+These keys move between the dashboard's tabs while it is open. See
+[Keyboard Navigation](./usage-dashboard#keyboard-navigation) for the keys that
+move between sections inside a tab. The **Models** tab adds no keys of its own.
+
+| Action       | macOS         | Windows/Linux  |
+| ------------ | ------------- | -------------- |
+| Previous tab | `Cmd+Shift+[` | `Ctrl+Shift+[` |
+| Next tab     | `Cmd+Shift+]` | `Ctrl+Shift+]` |
 
 The Agents and Groups tabs draw one tile per agent or group. The tile size is
 yours to set, and it is remembered across restarts. See
@@ -623,26 +641,28 @@ branch, so all of this reaches commits the List view does not hold.
 
 ## Settings Search
 
-Type in the search box at the top of Settings to find a setting on any tab. You
-can change most results without leaving the search: a single on/off setting
-shows its switch on the result row, and a larger setting opens its full section
-under the row.
+Type in the search box at the top of Settings to find a setting on any tab. The
+results are a filtered view of Settings: each matching section appears once,
+already open, and shows only the controls that match, so you change a setting
+right where you found it. **Show all** at the bottom of a section shows the rest
+of it. A match with nothing to change in place, such as the theme picker, is a
+row that opens its tab.
 
-| Action                                   | macOS              | Windows/Linux      |
-| ---------------------------------------- | ------------------ | ------------------ |
-| Focus the search box                     | `Cmd+F`            | `Ctrl+F`           |
-| Move from the search box into results    | `Down Arrow`       | `Down Arrow`       |
-| Move between results                     | `Up/Down Arrow`    | `Up/Down Arrow`    |
-| Flip a switch, or open/close its section | `Space`            | `Space`            |
-| Open or close a section                  | `Right/Left Arrow` | `Right/Left Arrow` |
-| Go to the setting on its tab             | `Enter`            | `Enter`            |
-| Back to the search box                   | `Esc`              | `Esc`              |
+Search matches inside words from three characters on. A shorter query, such as
+`gh` or `ai`, matches only a whole word in a setting's name or keywords.
 
-`Space` only acts on a result when the result has focus, so you can still type a
-space in a search of two or more words. `Enter` in the search box goes to the
-highlighted result. A result with nothing to change in place, such as the theme
-picker, goes to its tab with either key. Typing any letter while a result has
-focus returns you to the search box.
+| Action                                | macOS        | Windows/Linux |
+| ------------------------------------- | ------------ | ------------- |
+| Focus the search box                  | `Cmd+F`      | `Ctrl+F`      |
+| Move from the search box into results | `Down Arrow` | `Down Arrow`  |
+| Move between controls                 | `Tab`        | `Tab`         |
+| Go to the top result on its tab       | `Enter`      | `Enter`       |
+| Back to the search box (from a row)   | `Esc`        | `Esc`         |
+| Clear the search                      | `Esc`        | `Esc`         |
+
+`Enter` in the search box goes to the top result's tab. Each section's header
+has a button that opens that section on its tab. Inside a section, `Esc` is
+left to the section's own controls.
 
 ## Settings Tabs and the Models Library
 

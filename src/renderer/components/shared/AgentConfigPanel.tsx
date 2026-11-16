@@ -9,10 +9,16 @@
  * - Custom path input
  * - Custom arguments input
  * - Environment variables (`AgentEnvVarsSection`, unless `hideEnvVars`)
- * - Agent-specific config options (contextWindow, model, etc.)
+ * - Agent-specific config options (`AgentConfigOptions`): the harness's own,
+ *   and the model ones (model, effort, context window) unless
+ *   `hideModelOptions`, for a tabbed form that draws those on its Models tab.
+ *
+ * The Model field lists the provider's models and, when the host passes
+ * `modelSources`, every model a Local Models source serves, grouped by source:
+ * one picker for the agent's model and where it runs.
  */
 
-import { useState, useRef, useMemo, useEffect } from 'react';
+import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { RefreshCw, ChevronDown } from 'lucide-react';
 import { ToggleButtonGroup } from '../ToggleButtonGroup';
 import type { Theme, AgentConfig, AgentConfigOption } from '../../types';
@@ -43,6 +49,9 @@ import type { TierTargetAgent } from '../../../shared/modelTiers';
 import type { ToolType } from '../../../shared/types';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 import { getPermissionModeTooltip } from '../../../shared/agentMetadata';
+import { formatCountNoun } from '../../../shared/formatters';
+import { isModelConfigOption } from '../AgentSettings/agentSettingsTabs';
+import type { ModelSourceChoices } from './ModelSourceDetails';
 
 const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
 
@@ -82,6 +91,9 @@ const HARNESS_CONTROL_OPTIONS: { value: HarnessControlMode; label: string }[] = 
 	{ value: 'native', label: 'native control' },
 ];
 
+/** A stable empty list, so the Model field's memos hold while no sources are listed. */
+const NO_SOURCE_GROUPS: ModelSourceChoices['groups'] = [];
+
 // Separate component for text input with optional discovered options
 // This avoids the browser's native datalist styling issues
 interface ModelTextInputProps {
@@ -96,6 +108,14 @@ interface ModelTextInputProps {
 	onRefreshModels?: () => void;
 	/** The Auto choice for this agent, when the surface offers one. Model field only. */
 	autoModel?: AutoModelChoice | null;
+	/**
+	 * Source models listed after the provider's, and the agent's model source.
+	 * Model field only. A provider model picked, typed or cleared sets the model
+	 * source back to the provider; a source model leaves `value` untouched.
+	 */
+	sources?: ModelSourceChoices;
+	/** Heads the provider's own models while sources are listed under them. */
+	providerLabel?: string;
 }
 
 function ModelTextInput({
@@ -109,6 +129,8 @@ function ModelTextInput({
 	loadingOptions,
 	onRefreshModels,
 	autoModel,
+	sources,
+	providerLabel,
 }: ModelTextInputProps): JSX.Element {
 	const [showDropdown, setShowDropdown] = useState(false);
 	const [filterText, setFilterText] = useState('');
@@ -142,6 +164,33 @@ function ModelTextInput({
 		return modelOptions.filter((m) => m.toLowerCase().includes(lower));
 	}, [modelOptions, filterText]);
 
+	// The source groups, narrowed by the same filter. A group with nothing left
+	// is dropped, header and all.
+	const sourceGroups = sources?.groups ?? NO_SOURCE_GROUPS;
+	const filteredSourceGroups = useMemo(() => {
+		if (!filterText) return sourceGroups;
+		const lower = filterText.toLowerCase();
+		return sourceGroups
+			.map((group) => ({
+				...group,
+				options: group.options.filter(
+					(o) => o.label.toLowerCase().includes(lower) || group.label.toLowerCase().includes(lower)
+				),
+			}))
+			.filter((group) => group.options.length > 0);
+	}, [sourceGroups, filterText]);
+	const sourceModelCount = sourceGroups.reduce((sum, group) => sum + group.options.length, 0);
+	// What the count line says: the models the sources list (an unlisted current
+	// target is not one of them) and how many places list any, the provider
+	// included when it lists its own.
+	const listedSourceGroups = sourceGroups.filter((group) => !group.unlisted);
+	const listedSourceModelCount = listedSourceGroups.reduce(
+		(sum, group) => sum + group.options.length,
+		0
+	);
+	const listingSourceCount = listedSourceGroups.length + (availableOptions.length > 0 ? 1 : 0);
+	const selectedSource = sources?.selected ?? null;
+
 	// Close dropdown when clicking outside
 	useEffect(() => {
 		const handleClickOutside = (e: MouseEvent) => {
@@ -161,15 +210,49 @@ function ModelTextInput({
 	}, [showDropdown, isFiltering]);
 
 	const isModelField = option.key === 'model';
-	const hasOptions = !disabled && modelOptions.length > 0;
+	const hasOptions = !disabled && (modelOptions.length > 0 || sourceModelCount > 0);
 	const isEffortField = option.key === 'effort' || option.key === 'reasoningEffort';
 
-	// Display value: when filtering, show filter text; otherwise show actual value
-	const displayValue = isFiltering ? filterText : value;
+	// Display value: when filtering, show filter text; otherwise the source model
+	// the agent runs on, else its provider model.
+	const shownValue = selectedSource ? selectedSource.model : value;
+	const displayValue = isFiltering ? filterText : shownValue;
+
+	/** A provider model was picked, typed or cleared: the provider runs it. */
+	const commitProviderModel = (model: string) => {
+		onChange(model);
+		committedValueRef.current = model;
+		sources?.onProvider();
+		onBlur(model);
+	};
+	const closeDropdown = () => {
+		setShowDropdown(false);
+		setFilterText('');
+		setIsFiltering(false);
+	};
+	const groupHeader = (label: string) => (
+		<div
+			key={`header-${label}`}
+			className="px-3 pt-2 pb-1 text-2xs font-bold uppercase tracking-wide"
+			style={{ color: theme.colors.textDim }}
+		>
+			{label}
+		</div>
+	);
 
 	return (
 		<>
 			<div className="flex gap-2" ref={containerRef}>
+				{selectedSource && !isFiltering && (
+					<span
+						className="self-center px-2 py-0.5 rounded-full text-xs-plus font-semibold whitespace-nowrap"
+						style={{ backgroundColor: theme.colors.accent + '22', color: theme.colors.accent }}
+						title={`Runs on ${selectedSource.sourceName}`}
+						data-testid="model-source-chip"
+					>
+						{selectedSource.sourceName}
+					</span>
+				)}
 				<div className="relative flex-1">
 					<input
 						ref={inputRef}
@@ -190,8 +273,10 @@ function ModelTextInput({
 							}
 						}}
 						onFocus={() => {
+							// Open on the whole list: the shown value is not a filter, so a
+							// source model chosen earlier never hides the provider's models.
 							if (hasOptions) {
-								setFilterText(value);
+								setFilterText('');
 								setShowDropdown(true);
 							}
 						}}
@@ -208,15 +293,18 @@ function ModelTextInput({
 								setShowDropdown(false);
 								if (isFiltering) {
 									// If user was filtering but didn't select, keep the filter text as the value
-									// (explicit values remain valid inputs when discovery is unavailable)
-									if (filterText !== committedValueRef.current) {
-										onChange(filterText);
-										committedValueRef.current = filterText;
+									// (explicit values remain valid inputs when discovery is unavailable).
+									// Typed text names a provider model, so a source model the
+									// agent ran on gives way to it.
+									if (
+										filterText !==
+										(selectedSource ? selectedSource.model : committedValueRef.current)
+									) {
 										setIsFiltering(false);
 										setFilterText('');
 										// Pass the newly committed value so the consumer can save it
 										// without relying on stale React state
-										onBlur(filterText);
+										commitProviderModel(filterText);
 										return;
 									}
 									setIsFiltering(false);
@@ -248,56 +336,87 @@ function ModelTextInput({
 						</button>
 					)}
 					{/* Custom dropdown */}
-					{hasOptions && showDropdown && filteredOptions.length > 0 && (
-						<div
-							className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded"
-							style={{
-								...elevatedSurfaceStyle(theme),
-							}}
-						>
-							{filteredOptions.map((model) => (
-								<button
-									key={model}
-									type="button"
-									onClick={(e) => {
-										e.stopPropagation();
-										selectionMadeRef.current = true;
-										onChange(model);
-										committedValueRef.current = model;
-										setShowDropdown(false);
-										setFilterText('');
-										setIsFiltering(false);
-										onBlur(model);
-									}}
-									title={isAutoModel(model) ? autoModel?.title : undefined}
-									className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-white/10 transition-colors"
-									style={{
-										color: model === value ? theme.colors.accent : theme.colors.textMain,
-										backgroundColor: model === value ? 'rgba(255,255,255,0.05)' : undefined,
-									}}
-								>
-									{modelChoiceLabel(model)}
-									{isAutoModel(model) && autoModel && (
-										<span className="ml-2 font-sans" style={{ color: theme.colors.textDim }}>
-											{autoModelAxesNote(autoModel.support)}
-										</span>
-									)}
-								</button>
-							))}
-						</div>
-					)}
+					{hasOptions &&
+						showDropdown &&
+						(filteredOptions.length > 0 || filteredSourceGroups.length > 0) && (
+							<div
+								className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded"
+								style={{
+									...elevatedSurfaceStyle(theme),
+								}}
+							>
+								{filteredSourceGroups.length > 0 &&
+									filteredOptions.length > 0 &&
+									providerLabel &&
+									groupHeader(providerLabel)}
+								{filteredOptions.map((model) => (
+									<button
+										key={model}
+										type="button"
+										onClick={(e) => {
+											e.stopPropagation();
+											selectionMadeRef.current = true;
+											closeDropdown();
+											commitProviderModel(model);
+										}}
+										title={isAutoModel(model) ? autoModel?.title : undefined}
+										className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-white/10 transition-colors"
+										style={{
+											color:
+												model === value && !selectedSource
+													? theme.colors.accent
+													: theme.colors.textMain,
+											backgroundColor:
+												model === value && !selectedSource ? 'rgba(255,255,255,0.05)' : undefined,
+										}}
+									>
+										{modelChoiceLabel(model)}
+										{isAutoModel(model) && autoModel && (
+											<span className="ml-2 font-sans" style={{ color: theme.colors.textDim }}>
+												{autoModelAxesNote(autoModel.support)}
+											</span>
+										)}
+									</button>
+								))}
+								{filteredSourceGroups.map((group) => (
+									<div key={group.label} data-testid="model-source-group">
+										{groupHeader(group.label)}
+										{group.options.map((choice) => {
+											const chosen = selectedSource?.spec === choice.value;
+											return (
+												<button
+													key={choice.value}
+													type="button"
+													onClick={(e) => {
+														e.stopPropagation();
+														selectionMadeRef.current = true;
+														closeDropdown();
+														sources?.onSelect(choice.value);
+													}}
+													className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-white/10 transition-colors"
+													style={{
+														color: chosen ? theme.colors.accent : theme.colors.textMain,
+														backgroundColor: chosen ? 'rgba(255,255,255,0.05)' : undefined,
+													}}
+													data-testid="model-source-option"
+													data-value={choice.value}
+												>
+													{choice.label}
+												</button>
+											);
+										})}
+									</div>
+								))}
+							</div>
+						)}
 				</div>
-				{(isModelField || isEffortField) && value && (
+				{(isModelField || isEffortField) && (value || selectedSource) && (
 					<button
 						onClick={(e) => {
 							e.stopPropagation();
 							selectionMadeRef.current = true;
-							onChange('');
-							committedValueRef.current = '';
-							setShowDropdown(false);
-							setFilterText('');
-							setIsFiltering(false);
-							onBlur('');
+							closeDropdown();
+							commitProviderModel('');
 						}}
 						className="px-2 py-1.5 rounded text-xs whitespace-nowrap"
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
@@ -328,11 +447,16 @@ function ModelTextInput({
 					{isModelField ? 'Loading available models...' : 'Loading effort options...'}
 				</p>
 			)}
-			{isModelField && !loadingOptions && availableOptions.length > 0 && !disabled && (
-				<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-					{availableOptions.length} model{availableOptions.length !== 1 ? 's' : ''} available
-				</p>
-			)}
+			{isModelField &&
+				!loadingOptions &&
+				availableOptions.length + listedSourceModelCount > 0 &&
+				!disabled && (
+					<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
+						{listedSourceModelCount > 0
+							? `${formatCountNoun(availableOptions.length + listedSourceModelCount, 'model')} from ${formatCountNoun(listingSourceCount, 'source')}`
+							: `${formatCountNoun(availableOptions.length, 'model')} available`}
+					</p>
+				)}
 			{isModelField && autoModel && isAutoModel(value) && (
 				<p
 					className="text-xs mt-1"
@@ -385,6 +509,14 @@ export interface AgentConfigPanelProps extends Pick<
 	 */
 	hideEnvVars?: boolean;
 	/**
+	 * Skip the model options (`isModelConfigOption`: model, effort, reasoning
+	 * summary, context window). A tabbed agent form sets this and draws them on
+	 * its Models tab with `AgentConfigOptions scope="model"`.
+	 */
+	hideModelOptions?: boolean;
+	/** Source models the Model field also lists. See `AgentConfigOptionsProps`. */
+	modelSources?: ModelSourceChoices;
+	/**
 	 * Replace both records whole. Pass it to get the Basic / Advanced toggle,
 	 * where Advanced edits every variable as `.env` text; omit it and the panel
 	 * is rows only. It exists because the row callbacks above cannot express a
@@ -419,7 +551,7 @@ export interface AgentConfigPanelProps extends Pick<
 	 * send path passes it (New Agent, Edit Agent). The moderator, the wizard and
 	 * the creation dialog do not, because their turns are never routed. The
 	 * value is the part of the agent the choice is judged against besides its
-	 * provider: its tier targets and its Run on target, as the form holds them.
+	 * provider: its tier targets and its model source, as the form holds them.
 	 */
 	autoModelFor?: Pick<TierTargetAgent, 'tierTargets' | 'runOn'>;
 	// Dynamic config options (for select fields with dynamic: true)
@@ -490,6 +622,8 @@ export function AgentConfigPanel({
 	onEnvVarAdd,
 	onEnvVarsBlur,
 	hideEnvVars = false,
+	hideModelOptions = false,
+	modelSources,
 	onEnvVarsReplace,
 	agentConfig,
 	configOptionNotes,
@@ -525,17 +659,6 @@ export function AgentConfigPanel({
 	harnessControlMode = 'current',
 	onHarnessControlModeChange,
 }: AgentConfigPanelProps): JSX.Element {
-	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
-		const maybePromise = onConfigBlur(key, committedValue);
-		if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
-			void (maybePromise as Promise<void>).catch((error: unknown) => {
-				logger.error(`Failed to persist config field "${key}":`, undefined, error);
-			});
-		}
-	};
-	const autoModel = useAutoModelChoice(
-		autoModelFor ? { toolType: agent.id as ToolType, ...autoModelFor } : null
-	);
 	const padding = compact ? 'p-2' : 'p-3';
 	const spacing = compact ? 'space-y-2' : 'space-y-3';
 	// Probe the SSH remote for maestro-p. When it's known-absent the remote can't
@@ -938,146 +1061,23 @@ export function AgentConfigPanel({
 			)}
 
 			{/* Agent-specific configuration options (contextWindow, model, etc.) */}
-			{agent.configOptions &&
-				agent.configOptions.length > 0 &&
-				agent.configOptions.map((option: AgentConfigOption) => {
-					return (
-						<fieldset
-							key={option.key}
-							disabled={option.key === 'model' && !agent.capabilities?.supportsModelSelection}
-							className={`${padding} min-w-0 rounded border`}
-							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
-						>
-							<label
-								className="block text-xs font-medium mb-2"
-								style={{ color: theme.colors.textDim }}
-							>
-								{option.label}
-							</label>
-							{option.type === 'number' && (
-								<input
-									type="number"
-									aria-label={option.label}
-									value={agentConfig[option.key] ?? option.default}
-									onChange={(e) => {
-										const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
-										onConfigChange(option.key, isNaN(value) ? 0 : value);
-									}}
-									onBlur={(e) => {
-										const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
-										callOnConfigBlurSafely(option.key, isNaN(value) ? 0 : value);
-									}}
-									onClick={(e) => e.stopPropagation()}
-									placeholder={option.default?.toString() || '0'}
-									min={0}
-									className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
-									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								/>
-							)}
-							{option.type === 'text' && (
-								<ModelTextInput
-									theme={theme}
-									option={option}
-									value={agentConfig[option.key] ?? option.default}
-									onChange={(value) => onConfigChange(option.key, value)}
-									onBlur={(committedValue) => callOnConfigBlurSafely(option.key, committedValue)}
-									availableOptions={
-										option.key === 'model' ? availableModels : (dynamicOptions[option.key] ?? [])
-									}
-									loadingOptions={option.key === 'model' ? loadingModels : loadingDynamicOptions}
-									disabled={option.key === 'model' && !agent.capabilities?.supportsModelSelection}
-									autoModel={option.key === 'model' ? autoModel : null}
-									onRefreshModels={
-										option.key === 'model' && agent.capabilities?.supportsModelSelection
-											? onRefreshModels
-											: undefined
-									}
-								/>
-							)}
-							{option.type === 'checkbox' && (
-								<label
-									className="flex items-center gap-2 cursor-pointer"
-									onClick={(e) => e.stopPropagation()}
-								>
-									<input
-										type="checkbox"
-										checked={agentConfig[option.key] ?? option.default}
-										onChange={(e) => {
-											onConfigChange(option.key, e.target.checked);
-											// Immediately persist checkbox changes
-											callOnConfigBlurSafely(option.key, e.target.checked);
-										}}
-										className="w-4 h-4"
-										style={{ accentColor: theme.colors.accent }}
-									/>
-									<span className="text-xs" style={{ color: theme.colors.textMain }}>
-										Enabled
-									</span>
-								</label>
-							)}
-							{option.type === 'select' &&
-								(() => {
-									// Dynamic selects get their options from IPC discovery
-									const opts =
-										option.dynamic && dynamicOptions[option.key]?.length
-											? dynamicOptions[option.key]
-											: option.options;
-									if (!opts || opts.length === 0) {
-										if (option.dynamic && loadingDynamicOptions) {
-											return (
-												<p className="text-xs" style={{ color: theme.colors.textDim }}>
-													Loading options...
-												</p>
-											);
-										}
-										return null;
-									}
-									return (
-										<select
-											aria-label={option.label}
-											value={agentConfig[option.key] ?? option.default ?? ''}
-											onChange={(e) => {
-												onConfigChange(option.key, e.target.value);
-												callOnConfigBlurSafely(option.key, e.target.value);
-											}}
-											onClick={(e) => e.stopPropagation()}
-											className="w-full p-2 rounded border bg-transparent outline-none text-xs cursor-pointer"
-											style={{
-												borderColor: theme.colors.border,
-												color: theme.colors.textMain,
-												backgroundColor: theme.colors.bgMain,
-											}}
-										>
-											{opts.map((opt) => (
-												<option
-													key={opt}
-													value={opt}
-													style={{ backgroundColor: theme.colors.bgMain }}
-												>
-													{opt || '(default)'}
-												</option>
-											))}
-										</select>
-									);
-								})()}
-							{option.key === 'model' && !agent.capabilities?.supportsModelSelection && (
-								<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-									Model selection is unavailable for this provider.
-								</p>
-							)}
-							{configOptionNotes?.[option.key] && (
-								<p
-									className="text-xs mt-2"
-									style={{ color: theme.colors.warning }}
-									data-testid={`config-option-note-${option.key}`}
-								>
-									{configOptionNotes[option.key]}
-								</p>
-							)}
-							<p className="text-xs opacity-50 mt-2">{option.description}</p>
-						</fieldset>
-					);
-				})}
+			<AgentConfigOptions
+				theme={theme}
+				agent={agent}
+				scope={hideModelOptions ? 'harness' : 'all'}
+				agentConfig={agentConfig}
+				configOptionNotes={configOptionNotes}
+				onConfigChange={onConfigChange}
+				onConfigBlur={onConfigBlur}
+				availableModels={availableModels}
+				loadingModels={loadingModels}
+				onRefreshModels={onRefreshModels}
+				autoModelFor={autoModelFor}
+				modelSources={modelSources}
+				dynamicOptions={dynamicOptions}
+				loadingDynamicOptions={loadingDynamicOptions}
+				compact={compact}
+			/>
 
 			{/* Automatic usage resets - Codex only, and last, so it sits directly
 			    under Reasoning Effort where the Codex settings end.
@@ -1118,5 +1118,226 @@ export function AgentConfigPanel({
 				</div>
 			)}
 		</div>
+	);
+}
+
+export type AgentConfigOptionScope = 'all' | 'harness' | 'model';
+
+export interface AgentConfigOptionsProps extends Pick<
+	AgentConfigPanelProps,
+	| 'theme'
+	| 'agent'
+	| 'agentConfig'
+	| 'configOptionNotes'
+	| 'onConfigChange'
+	| 'onConfigBlur'
+	| 'availableModels'
+	| 'loadingModels'
+	| 'onRefreshModels'
+	| 'autoModelFor'
+	| 'dynamicOptions'
+	| 'loadingDynamicOptions'
+	| 'compact'
+> {
+	/**
+	 * Which of the provider's config options to draw: `model` the model ones
+	 * (`isModelConfigOption`), `harness` the rest, `all` both.
+	 */
+	scope?: AgentConfigOptionScope;
+	/**
+	 * Local Models source models the Model field lists after the provider's, and
+	 * the agent's model source. Omit for a surface whose agent runs on its
+	 * provider only (the group chat moderator).
+	 */
+	modelSources?: ModelSourceChoices;
+	/** Drawn at the foot of the Model field: the model source details. */
+	modelSourceDetails?: ReactNode;
+}
+
+/**
+ * The provider's config options, one fieldset each. `AgentConfigPanel` draws
+ * them under the harness settings; a tabbed agent form draws the model ones on
+ * its Models tab instead (`scope="model"`), with the same props.
+ */
+export function AgentConfigOptions({
+	theme,
+	agent,
+	scope = 'all',
+	agentConfig,
+	configOptionNotes,
+	onConfigChange,
+	onConfigBlur,
+	availableModels = [],
+	loadingModels = false,
+	onRefreshModels,
+	autoModelFor,
+	modelSources,
+	modelSourceDetails,
+	dynamicOptions = {},
+	loadingDynamicOptions = false,
+	compact = false,
+}: AgentConfigOptionsProps): JSX.Element | null {
+	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
+		const maybePromise = onConfigBlur(key, committedValue);
+		if (maybePromise && typeof (maybePromise as Promise<void>).catch === 'function') {
+			void (maybePromise as Promise<void>).catch((error: unknown) => {
+				logger.error(`Failed to persist config field "${key}":`, undefined, error);
+			});
+		}
+	};
+	const autoModel = useAutoModelChoice(
+		autoModelFor ? { toolType: agent.id as ToolType, ...autoModelFor } : null
+	);
+	const padding = compact ? 'p-2' : 'p-3';
+	const options = (agent.configOptions ?? []).filter(
+		(option) => scope === 'all' || isModelConfigOption(option.key) === (scope === 'model')
+	);
+	if (options.length === 0) return null;
+
+	return (
+		<>
+			{options.map((option: AgentConfigOption) => {
+				const sourcesHere = option.key === 'model' ? modelSources : undefined;
+				return (
+					<fieldset
+						key={option.key}
+						disabled={option.key === 'model' && !agent.capabilities?.supportsModelSelection}
+						className={`${padding} min-w-0 rounded border`}
+						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+					>
+						<label
+							className="block text-xs font-medium mb-2"
+							style={{ color: theme.colors.textDim }}
+						>
+							{option.label}
+						</label>
+						{option.type === 'number' && (
+							<input
+								type="number"
+								aria-label={option.label}
+								value={agentConfig[option.key] ?? option.default}
+								onChange={(e) => {
+									const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+									onConfigChange(option.key, isNaN(value) ? 0 : value);
+								}}
+								onBlur={(e) => {
+									const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+									callOnConfigBlurSafely(option.key, isNaN(value) ? 0 : value);
+								}}
+								onClick={(e) => e.stopPropagation()}
+								placeholder={option.default?.toString() || '0'}
+								min={0}
+								className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							/>
+						)}
+						{option.type === 'text' && (
+							<ModelTextInput
+								theme={theme}
+								option={option}
+								value={agentConfig[option.key] ?? option.default}
+								onChange={(value) => onConfigChange(option.key, value)}
+								onBlur={(committedValue) => callOnConfigBlurSafely(option.key, committedValue)}
+								availableOptions={
+									option.key === 'model' ? availableModels : (dynamicOptions[option.key] ?? [])
+								}
+								loadingOptions={option.key === 'model' ? loadingModels : loadingDynamicOptions}
+								disabled={option.key === 'model' && !agent.capabilities?.supportsModelSelection}
+								autoModel={option.key === 'model' ? autoModel : null}
+								sources={sourcesHere}
+								providerLabel={agent.name}
+								onRefreshModels={
+									option.key === 'model' && agent.capabilities?.supportsModelSelection
+										? onRefreshModels
+										: undefined
+								}
+							/>
+						)}
+						{option.type === 'checkbox' && (
+							<label
+								className="flex items-center gap-2 cursor-pointer"
+								onClick={(e) => e.stopPropagation()}
+							>
+								<input
+									type="checkbox"
+									checked={agentConfig[option.key] ?? option.default}
+									onChange={(e) => {
+										onConfigChange(option.key, e.target.checked);
+										// Immediately persist checkbox changes
+										callOnConfigBlurSafely(option.key, e.target.checked);
+									}}
+									className="w-4 h-4"
+									style={{ accentColor: theme.colors.accent }}
+								/>
+								<span className="text-xs" style={{ color: theme.colors.textMain }}>
+									Enabled
+								</span>
+							</label>
+						)}
+						{option.type === 'select' &&
+							(() => {
+								// Dynamic selects get their options from IPC discovery
+								const opts =
+									option.dynamic && dynamicOptions[option.key]?.length
+										? dynamicOptions[option.key]
+										: option.options;
+								if (!opts || opts.length === 0) {
+									if (option.dynamic && loadingDynamicOptions) {
+										return (
+											<p className="text-xs" style={{ color: theme.colors.textDim }}>
+												Loading options...
+											</p>
+										);
+									}
+									return null;
+								}
+								return (
+									<select
+										aria-label={option.label}
+										value={agentConfig[option.key] ?? option.default ?? ''}
+										onChange={(e) => {
+											onConfigChange(option.key, e.target.value);
+											callOnConfigBlurSafely(option.key, e.target.value);
+										}}
+										onClick={(e) => e.stopPropagation()}
+										className="w-full p-2 rounded border bg-transparent outline-none text-xs cursor-pointer"
+										style={{
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+											backgroundColor: theme.colors.bgMain,
+										}}
+									>
+										{opts.map((opt) => (
+											<option
+												key={opt}
+												value={opt}
+												style={{ backgroundColor: theme.colors.bgMain }}
+											>
+												{opt || '(default)'}
+											</option>
+										))}
+									</select>
+								);
+							})()}
+						{option.key === 'model' && !agent.capabilities?.supportsModelSelection && (
+							<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
+								Model selection is unavailable for this provider.
+							</p>
+						)}
+						{configOptionNotes?.[option.key] && (
+							<p
+								className="text-xs mt-2"
+								style={{ color: theme.colors.warning }}
+								data-testid={`config-option-note-${option.key}`}
+							>
+								{configOptionNotes[option.key]}
+							</p>
+						)}
+						<p className="text-xs opacity-50 mt-2">{option.description}</p>
+						{option.key === 'model' && modelSourceDetails}
+					</fieldset>
+				);
+			})}
+		</>
 	);
 }

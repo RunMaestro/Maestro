@@ -299,6 +299,12 @@ export interface Group {
 	/** Seed values copied into the create-agent form for a new agent in this group. */
 	defaults?: GroupAgentDefaults;
 	/**
+	 * Prompts the group runs when an agent joins it (Onboarding) and before one
+	 * leaves it (Offboarding). Unlike `defaults`, these are read at the moment of
+	 * the event, never copied into an agent. See `src/shared/groupLifecycle.ts`.
+	 */
+	lifecycle?: import('./groupLifecycle').GroupLifecycle;
+	/**
 	 * Parked out of the Left Bar. A middle ground between keeping a group on
 	 * screen and deleting it: hiding SUPPRESSES the group from the list, it
 	 * never restricts access, so the agents inside stay reachable through
@@ -402,7 +408,7 @@ export interface SessionInfo {
 	 */
 	tokenProxyRetrieval?: boolean;
 	/**
-	 * Run on: where this agent's model runs. Absent (or `provider`) is the
+	 * Model source: where this agent's model runs. Absent (or `provider`) is the
 	 * provider's own cloud model; a `source` target points the same harness at a
 	 * model on a Local Models source, resolved at launch by `resolveRunOnLaunch`
 	 * (see `shared/local-models/run-on.ts`). A source target means the gateway
@@ -411,8 +417,8 @@ export interface SessionInfo {
 	runOn?: RunOnTarget;
 	/**
 	 * Tier targets: where a turn that asks for a model tier (`low`, `medium`,
-	 * `high`) launches for this agent. Each is a provider model or a Run on
-	 * target. An absent tier means "Harness default": it follows the
+	 * `high`) launches for this agent. Each is a provider model or a model
+	 * source. An absent tier means "Harness default": it follows the
 	 * `harnessTierDefaults` setting, then the built-in table. Resolved at launch
 	 * by `resolveTierTarget` (see `shared/modelTiers.ts`).
 	 */
@@ -983,7 +989,7 @@ export interface BatchRunConfig {
 	model?: string;
 	effort?: string;
 	/**
-	 * Where this run's model runs, in place of the agent's own Run on target:
+	 * Where this run's model runs, in place of the agent's own model source:
 	 * a model on a Local Models source, or `provider` to run a source-backed
 	 * agent on its provider's model (`model` then names it). Absent: the
 	 * agent's own target. A document's tier hint still wins for its tasks.

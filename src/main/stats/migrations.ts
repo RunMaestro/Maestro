@@ -27,6 +27,8 @@ import {
 	CREATE_IMAGE_ANNOTATIONS_SQL,
 	CREATE_IMAGE_ANNOTATIONS_INDEXES_SQL,
 	CREATE_SHORTCUT_USAGE_DAILY_SQL,
+	CREATE_SHORTCUT_USAGE_BY_ID_SQL,
+	CREATE_QUERY_START_SESSION_INDEX_SQL,
 	CREATE_MULTI_WINDOW_USAGE_DAILY_SQL,
 	ADD_QUERY_EVENT_TOKEN_COLUMNS,
 	CREATE_RESILIENCE_EVENTS_SQL,
@@ -152,63 +154,74 @@ function getMigrations(): Migration[] {
 		},
 		{
 			version: 14,
-			description: 'Add kind column to auto_run_sessions for goal-driven vs spec-driven split',
+			description:
+				'Add shortcut_usage_by_id table and the (start_time, session_id) index on query_events',
 			up: (db) => migrateV14(db),
+			isApplied: (db) => hasTable(db, 'shortcut_usage_by_id'),
 		},
 		{
+			// rc first shipped this as v14, the number main gave shortcut_usage_by_id.
+			// A database an rc build left at v14 has `kind` but not main's v14, so
+			// both declare isApplied and repairSkippedMigrations fills the gap.
 			version: 15,
-			description: 'Add local_model_runs table for Local Models task router runs',
+			description: 'Add kind column to auto_run_sessions for goal-driven vs spec-driven split',
 			up: (db) => migrateV15(db),
-			isApplied: (db) => hasTable(db, 'local_model_runs'),
+			isApplied: (db) => hasColumn(db, 'auto_run_sessions', 'kind'),
 		},
 		{
 			version: 16,
-			description: 'Add proxy_requests table for the Maestro token proxy',
+			description: 'Add local_model_runs table for Local Models task router runs',
 			up: (db) => migrateV16(db),
-			isApplied: (db) => hasTable(db, 'proxy_requests'),
+			isApplied: (db) => hasTable(db, 'local_model_runs'),
 		},
 		{
 			version: 17,
-			description: 'Add routed_to column to proxy_requests for background request routing',
+			description: 'Add proxy_requests table for the Maestro token proxy',
 			up: (db) => migrateV17(db),
-			isApplied: (db) => hasColumn(db, 'proxy_requests', 'routed_to'),
+			isApplied: (db) => hasTable(db, 'proxy_requests'),
 		},
 		{
 			version: 18,
-			description: 'Add s1_decisions table for the System One decision ledger',
+			description: 'Add routed_to column to proxy_requests for background request routing',
 			up: (db) => migrateV18(db),
-			isApplied: (db) => hasTable(db, 's1_decisions'),
+			isApplied: (db) => hasColumn(db, 'proxy_requests', 'routed_to'),
 		},
 		{
 			version: 19,
-			description: 'Add tab_id and cached columns to s1_decisions for agent requests',
+			description: 'Add s1_decisions table for the System One decision ledger',
 			up: (db) => migrateV19(db),
+			isApplied: (db) => hasTable(db, 's1_decisions'),
+		},
+		{
+			version: 20,
+			description: 'Add tab_id and cached columns to s1_decisions for agent requests',
+			up: (db) => migrateV20(db),
 			isApplied: (db) =>
 				hasColumn(db, 's1_decisions', 'tab_id') && hasColumn(db, 's1_decisions', 'cached'),
 		},
 		{
-			version: 20,
+			version: 21,
 			description:
 				'Widen local_model_runs.source_type, add its agent_id, and add Run on and routed tier columns to query_events',
-			up: (db) => migrateV20(db),
+			up: (db) => migrateV21(db),
 			isApplied: (db) =>
 				localModelRunsIsCurrent(db) &&
 				ADD_QUERY_EVENT_MODEL_COLUMNS.every((column) => hasColumn(db, 'query_events', column)),
 		},
 		{
-			version: 21,
+			version: 22,
 			description: "Add the provider's own token counts to proxy_requests",
-			up: (db) => migrateV21(db),
+			up: (db) => migrateV22(db),
 			isApplied: (db) =>
 				ADD_PROXY_REQUEST_PROVIDER_USAGE_COLUMNS.every((column) =>
 					hasColumn(db, 'proxy_requests', column)
 				),
 		},
 		{
-			version: 22,
+			version: 23,
 			description:
 				'Add effective mode, block counts and provider usage reportedness to proxy_requests',
-			up: (db) => migrateV22(db),
+			up: (db) => migrateV23(db),
 			isApplied: (db) =>
 				ADD_PROXY_REQUEST_TELEMETRY_COLUMNS.every(({ name }) =>
 					hasColumn(db, 'proxy_requests', name)
@@ -474,13 +487,28 @@ function migrateV13(db: Database.Database): void {
 }
 
 /**
- * Migration v14: `kind` column on auto_run_sessions ('goal-driven' |
+ * Migration v14:
+ * - `shortcut_usage_by_id`: per-shortcut, per-day firing counts, so the
+ *   Shortcuts tab can show which shortcuts get used. History before this
+ *   version only has the daily total, so the per-shortcut list starts empty.
+ * - `idx_query_start_session`: covers the dashboard's "distinct agents with a
+ *   query in range" count.
+ * Both statements are idempotent, so a partially applied run is safe to repeat.
+ */
+function migrateV14(db: Database.Database): void {
+	db.prepare(CREATE_SHORTCUT_USAGE_BY_ID_SQL).run();
+	db.prepare(CREATE_QUERY_START_SESSION_INDEX_SQL).run();
+	logger.debug('Created shortcut_usage_by_id table and idx_query_start_session', LOG_CONTEXT);
+}
+
+/**
+ * Migration v15: `kind` column on auto_run_sessions ('goal-driven' |
  * 'spec-driven'), so the Usage Dashboard can split Auto Run time by engine.
  *
  * Additive with a DEFAULT, so every existing row reads back as spec-driven with
  * its other fields untouched. Guarded by hasColumn for the same reason as v5.
  */
-function migrateV14(db: Database.Database): void {
+function migrateV15(db: Database.Database): void {
 	if (!hasColumn(db, 'auto_run_sessions', 'kind')) {
 		db.prepare(ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL).run();
 	}
@@ -488,37 +516,37 @@ function migrateV14(db: Database.Database): void {
 }
 
 /**
- * Migration v15: local_model_runs - one row per Local Models task run that
+ * Migration v16: local_model_runs - one row per Local Models task run that
  * reached a model (local or endpoint), so the Usage Dashboard can show what
  * housekeeping ran where, how long it took, and what failed.
  *
- * Declares `isApplied` like v8 onwards: if rc lands a different v15 first, an
- * install stamped 15 by that build still gets this table.
+ * Declares `isApplied` like v8 onwards: if rc lands a different v16 first, an
+ * install stamped 16 by that build still gets this table.
  */
-function migrateV15(db: Database.Database): void {
+function migrateV16(db: Database.Database): void {
 	runStatements(db, CREATE_LOCAL_MODEL_RUNS_SQL);
 	runStatements(db, CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL);
 	logger.debug('Created local_model_runs table', LOG_CONTEXT);
 }
 
 /**
- * Migration v16: proxy_requests - one row per model request the Maestro token
+ * Migration v17: proxy_requests - one row per model request the Maestro token
  * proxy carried, so the Local Models tab can show what it saved and what it
- * cost in latency. Declares `isApplied` for the same reason v15 does.
+ * cost in latency. Declares `isApplied` for the same reason v16 does.
  */
-function migrateV16(db: Database.Database): void {
+function migrateV17(db: Database.Database): void {
 	runStatements(db, CREATE_PROXY_REQUESTS_SQL);
 	runStatements(db, CREATE_PROXY_REQUESTS_INDEXES_SQL);
 	logger.debug('Created proxy_requests table', LOG_CONTEXT);
 }
 
 /**
- * Migration v17: proxy_requests.routed_to - the Local Models target a
+ * Migration v18: proxy_requests.routed_to - the Local Models target a
  * background request was sent to in place of the provider. A table created by
- * v16 at this version already has the column, so the body is guarded; it
- * declares `isApplied` so a database stamped 17 by another branch still gets it.
+ * v17 at this version already has the column, so the body is guarded; it
+ * declares `isApplied` so a database stamped 18 by another branch still gets it.
  */
-function migrateV17(db: Database.Database): void {
+function migrateV18(db: Database.Database): void {
 	if (!hasColumn(db, 'proxy_requests', 'routed_to')) {
 		db.prepare(ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL).run();
 	}
@@ -526,23 +554,23 @@ function migrateV17(db: Database.Database): void {
 }
 
 /**
- * Migration v18: s1_decisions - one row per task run that was handed to a
+ * Migration v19: s1_decisions - one row per task run that was handed to a
  * System One engine, so the ledger can show what was decided and what happened
- * when no answer came. Declares `isApplied` for the same reason v15 does.
+ * when no answer came. Declares `isApplied` for the same reason v16 does.
  */
-function migrateV18(db: Database.Database): void {
+function migrateV19(db: Database.Database): void {
 	runStatements(db, CREATE_S1_DECISIONS_SQL);
 	runStatements(db, CREATE_S1_DECISIONS_INDEXES_SQL);
 	logger.debug('Created s1_decisions table', LOG_CONTEXT);
 }
 
 /**
- * Migration v19: s1_decisions.tab_id and s1_decisions.cached - the AI tab an
+ * Migration v20: s1_decisions.tab_id and s1_decisions.cached - the AI tab an
  * agent's own request came from, and whether it was answered from the answer
- * cache. A table created by v18 at this version already has both, so each is
- * guarded; it declares `isApplied` for the same reason v17 does.
+ * cache. A table created by v19 at this version already has both, so each is
+ * guarded; it declares `isApplied` for the same reason v18 does.
  */
-function migrateV19(db: Database.Database): void {
+function migrateV20(db: Database.Database): void {
 	if (!hasColumn(db, 's1_decisions', 'tab_id')) {
 		db.prepare(ADD_S1_DECISION_TAB_ID_COLUMN_SQL).run();
 	}
@@ -553,7 +581,7 @@ function migrateV19(db: Database.Database): void {
 }
 
 /**
- * Migration v20: what the Usage Dashboard's Models tab needs and nothing
+ * Migration v21: what the Usage Dashboard's Models tab needs and nothing
  * recorded.
  *
  *   - `local_model_runs.source_type` gains `server` (a run the Maestro model
@@ -563,9 +591,9 @@ function migrateV19(db: Database.Database): void {
  *     where an agent turn's model ran, and the tier Auto's router chose.
  *
  * Every step is guarded, so the body is safe to repeat, and it declares
- * `isApplied` for the same reason v15 does.
+ * `isApplied` for the same reason v16 does.
  */
-function migrateV20(db: Database.Database): void {
+function migrateV21(db: Database.Database): void {
 	rebuildLocalModelRuns(db);
 	db.prepare(CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL).run();
 
@@ -581,14 +609,14 @@ function migrateV20(db: Database.Database): void {
 }
 
 /**
- * Migration v21: proxy_requests gains what the provider counted for each
+ * Migration v22: proxy_requests gains what the provider counted for each
  * request (uncached input, cache reads, cache writes, output), read from the
  * `usage` in its answer. The proxy's own figures are characters / 4 and exist
  * only for requests it read; these are exact and cover passthrough too. Each
  * column is guarded, and `isApplied` is declared, for a database another
- * branch stamped past 21.
+ * branch stamped past 22.
  */
-function migrateV21(db: Database.Database): void {
+function migrateV22(db: Database.Database): void {
 	for (const column of ADD_PROXY_REQUEST_PROVIDER_USAGE_COLUMNS) {
 		if (hasColumn(db, 'proxy_requests', column)) continue;
 		db.prepare(`ALTER TABLE proxy_requests ADD COLUMN ${column} INTEGER`).run();
@@ -597,7 +625,7 @@ function migrateV21(db: Database.Database): void {
 }
 
 /**
- * Migration v22: proxy_requests gains the telemetry facts of the `ProxyRequest`
+ * Migration v23: proxy_requests gains the telemetry facts of the `ProxyRequest`
  * contract: the mode a request was carried as, what compress mode did with each
  * block of tool-result text, and how each provider count got its number. See
  * `ADD_PROXY_REQUEST_TELEMETRY_COLUMNS` for what each column holds.
@@ -610,9 +638,9 @@ function migrateV21(db: Database.Database): void {
  * since the request). `mode` and its CHECK are untouched, so nothing is rebuilt
  * and no row is rewritten. Each column is guarded, so a database that already
  * has some of them takes only the rest, and `isApplied` is declared for a
- * database another branch stamped past 22.
+ * database another branch stamped past 23.
  */
-function migrateV22(db: Database.Database): void {
+function migrateV23(db: Database.Database): void {
 	for (const { name, type } of ADD_PROXY_REQUEST_TELEMETRY_COLUMNS) {
 		if (hasColumn(db, 'proxy_requests', name)) continue;
 		db.prepare(`ALTER TABLE proxy_requests ADD COLUMN ${name} ${type}`).run();
@@ -621,7 +649,7 @@ function migrateV22(db: Database.Database): void {
 }
 
 /**
- * Whether `local_model_runs` has the v20 shape: the `agent_id` column, and a
+ * Whether `local_model_runs` has the v21 shape: the `agent_id` column, and a
  * `source_type` CHECK that names `system-one`. A CHECK cannot be read through a
  * pragma, so the test is on the table's stored definition.
  */
@@ -634,7 +662,7 @@ function localModelRunsIsCurrent(db: Database.Database): boolean {
 }
 
 /**
- * Give `local_model_runs` its v20 shape without losing a row.
+ * Give `local_model_runs` its v21 shape without losing a row.
  *
  * SQLite cannot alter a CHECK constraint, so this is the table rebuild its
  * documentation prescribes: create the new table beside the old one, copy
@@ -649,7 +677,7 @@ function localModelRunsIsCurrent(db: Database.Database): boolean {
  */
 function rebuildLocalModelRuns(db: Database.Database): void {
 	if (!hasTable(db, 'local_model_runs')) {
-		// Stamped past v15 by a build that never created it: there is nothing to copy.
+		// Stamped past v16 by a build that never created it: there is nothing to copy.
 		runStatements(db, CREATE_LOCAL_MODEL_RUNS_SQL);
 		runStatements(db, CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL);
 		return;

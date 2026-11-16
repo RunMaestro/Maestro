@@ -7,12 +7,18 @@
  *     bind        'local' (127.0.0.1) or 'network' (0.0.0.0)
  *     maxModels   models loaded at once
  *     key         the API key, sealed
+ *     startOnLaunch whether Maestro starts it when Maestro starts
  *
  * **The port is kept**, for the reason the token proxy keeps its own: what
  * points at the server names it (a harness set up by hand, the endpoint Maestro
  * registers for the server), so a port that moved between launches would leave
  * all of that pointing at nothing, or at whatever took the old one. When the
  * port is taken at start, the server does not move: the start fails by name.
+ *
+ * **Start on launch follows the user.** Pressing Start turns it on and pressing
+ * Stop turns it off (`startModelServer` / `stopModelServer` in the supervisor), so a server the user left
+ * running is running again after a restart. A start a task asked for does not
+ * change it. Unset, it is off: a server nobody started stays stopped.
  *
  * **The key** is 32 random bytes, made the first time it is needed. It is sealed
  * with the key the OS holds for the app (`safeStorageSeal`), or, on a machine
@@ -78,6 +84,8 @@ export interface ModelServerConfig {
 	maxModels: number;
 	/** Null until a key exists. */
 	keyStorage: ModelServerKeyStorage | null;
+	/** Start it when Maestro starts. */
+	startOnLaunch: boolean;
 }
 
 export interface ModelServerKey {
@@ -90,6 +98,7 @@ interface StoredState {
 	bind?: ModelServerBind;
 	maxModels?: number;
 	key?: StoredSecret;
+	startOnLaunch?: boolean;
 }
 
 /** Keep the fields that are usable; a field that is not is dropped with a warning. */
@@ -103,6 +112,10 @@ function normalizeState(parsed: unknown): StoredState {
 	if (isModelServerMaxModels(record.maxModels)) state.maxModels = record.maxModels;
 	else if (record.maxModels !== undefined) {
 		logger.warn('Ignoring an unusable model count', LOG_CONTEXT);
+	}
+	if (typeof record.startOnLaunch === 'boolean') state.startOnLaunch = record.startOnLaunch;
+	else if (record.startOnLaunch !== undefined) {
+		logger.warn('Ignoring an unusable start-on-launch value', LOG_CONTEXT);
 	}
 	if (isStoredSecret(record.key)) state.key = record.key;
 	else if (record.key !== undefined) logger.warn('Ignoring an unusable sealed key', LOG_CONTEXT);
@@ -122,6 +135,7 @@ function configOf(state: StoredState): ModelServerConfig {
 		bind: state.bind ?? DEFAULT_MODEL_SERVER_BIND,
 		maxModels: state.maxModels ?? DEFAULT_MODEL_SERVER_MAX_MODELS,
 		keyStorage: state.key?.storage ?? null,
+		startOnLaunch: state.startOnLaunch === true,
 	};
 }
 
@@ -146,6 +160,7 @@ export function ensureModelServerPort(dataDir: string): Promise<number> {
 export interface ModelServerSettingsPatch {
 	bind?: ModelServerBind;
 	maxModels?: number;
+	startOnLaunch?: boolean;
 }
 
 /** Change the bind mode or the model count. Rejects with `invalid-setting` for a value it does not accept. */
@@ -165,11 +180,15 @@ export async function writeModelServerSettings(
 			'invalid-setting'
 		);
 	}
+	if (patch.startOnLaunch !== undefined && typeof patch.startOnLaunch !== 'boolean') {
+		throw new ModelServerError('startOnLaunch must be true or false.', 'invalid-setting');
+	}
 	return stateFile.update(dataDir, async (state, save) => {
 		const next: StoredState = {
 			...state,
 			...(patch.bind !== undefined ? { bind: patch.bind } : {}),
 			...(patch.maxModels !== undefined ? { maxModels: patch.maxModels } : {}),
+			...(patch.startOnLaunch !== undefined ? { startOnLaunch: patch.startOnLaunch } : {}),
 		};
 		await save(next);
 		return configOf(next);

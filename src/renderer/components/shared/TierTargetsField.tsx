@@ -32,6 +32,7 @@ import {
 	agentTierRows,
 	formatTierTargetSpec,
 	parseTierTargetSpec,
+	TIER_AGENT_MODEL_PINNED_LABEL,
 	TIER_NOT_MAPPED_LABEL,
 	TIER_TARGET_SOURCE_LABELS,
 	tierHarnessProblem,
@@ -54,10 +55,15 @@ export interface TierTargetsFieldProps {
 	value: TierTargets;
 	onChange: (next: TierTargets) => void;
 	/**
-	 * The form's Run on target. The built-in table names the provider's own
+	 * The form's model source. The built-in table names the provider's own
 	 * models, so it does not apply to an agent that runs on a source.
 	 */
 	runOn: RunOnTarget;
+	/**
+	 * The form's model. The built-in table does not replace a model outside
+	 * every tier family it follows (a fine-tune, an access-program model).
+	 */
+	model?: string;
 	/** A save error from the host. */
 	error?: string;
 	testId?: string;
@@ -120,6 +126,7 @@ function TierTargetPickers({
 	value,
 	onChange,
 	runOn,
+	model,
 	error,
 	testId = 'tier-targets-field',
 }: TierTargetsFieldProps) {
@@ -136,12 +143,13 @@ function TierTargetPickers({
 	// Each tier as a launch would resolve it with the form as it stands, and as
 	// it would resolve with no target on the agent (the first choice's value).
 	const resolved = useMemo(
-		() => agentTierRows({ toolType, tierTargets: value, runOn }, harnessDefaults),
-		[toolType, value, runOn, harnessDefaults]
+		() =>
+			agentTierRows({ toolType, tierTargets: value, runOn, customModel: model }, harnessDefaults),
+		[toolType, value, runOn, model, harnessDefaults]
 	);
 	const fallthrough = useMemo(
-		() => agentTierRows({ toolType, runOn }, harnessDefaults),
-		[toolType, runOn, harnessDefaults]
+		() => agentTierRows({ toolType, runOn, customModel: model }, harnessDefaults),
+		[toolType, runOn, model, harnessDefaults]
 	);
 
 	const choose = (tier: ModelTier, spec: string) => {
@@ -192,7 +200,9 @@ function TierTargetPickers({
 						});
 						const sourceLabel = entry.source
 							? TIER_TARGET_SOURCE_LABELS[entry.source]
-							: TIER_NOT_MAPPED_LABEL;
+							: entry.code === 'tier-agent-model-pinned'
+								? TIER_AGENT_MODEL_PINNED_LABEL
+								: TIER_NOT_MAPPED_LABEL;
 						return (
 							<div key={tier} className="min-w-0 space-y-1">
 								<div className="flex items-center justify-between gap-1">

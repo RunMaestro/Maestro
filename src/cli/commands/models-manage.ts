@@ -17,7 +17,7 @@
 // against the hardware profile the desktop read.
 
 import { withMaestroClient } from '../services/maestro-client';
-import { readLocalModelAssignments, readSettingValue } from '../services/storage';
+import { readLocalModelAssignments, readStoredModelMap } from '../services/storage';
 import { ExitCode, exitWith } from '../exit-codes';
 import {
 	formatLocalModels,
@@ -42,7 +42,7 @@ import {
 	type HardwareProfile,
 	type ModelFit,
 } from '../../shared/local-models/model-fit';
-import { parseUtilitySource, tasksUsingLocalModel } from '../../shared/local-models/tasks';
+import { tasksUsingLocalModel } from '../../shared/local-models/tasks';
 import { modelsSettingsLocation } from '../../shared/local-models/settings-location';
 import {
 	USER_MODEL_UNVERIFIED_DETAIL,
@@ -122,7 +122,7 @@ function usedBy(modelId: string): string[] {
 	const tasks = tasksUsingLocalModel(
 		readLocalModelAssignments(),
 		modelId,
-		parseUtilitySource(readSettingValue('utilitySource'))
+		readStoredModelMap()
 	).map((task) => task.label);
 	const voice = voiceModelUsageLabel(modelId);
 	return voice ? [...tasks, voice] : tasks;
@@ -321,7 +321,7 @@ export async function modelsRemoveHf(modelId: string, options: RemoveOptions): P
 	const tasks = tasksUsingLocalModel(
 		readLocalModelAssignments(),
 		modelId,
-		parseUtilitySource(readSettingValue('utilitySource'))
+		readStoredModelMap()
 	).map((task) => task.label);
 	if (tasks.length > 0 && !options.force) {
 		failCommand(
@@ -508,7 +508,7 @@ export async function modelsRemove(modelId: string, options: RemoveOptions): Pro
 	const tasks = tasksUsingLocalModel(
 		readLocalModelAssignments(),
 		modelId,
-		parseUtilitySource(readSettingValue('utilitySource'))
+		readStoredModelMap()
 	).map((task) => task.label);
 	if (tasks.length > 0 && !options.force) {
 		failCommand(

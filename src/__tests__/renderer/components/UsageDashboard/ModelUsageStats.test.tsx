@@ -4,7 +4,7 @@
  * Verifies:
  * - the skeleton shows until the record arrives
  * - a seeded record draws every block: the cards, the sources table, the
- *   latency bars, the tasks, the Run on agents, System One and the token proxy
+ *   latency bars, the tasks, the model source agents, System One and the token proxy
  * - the sources and tasks tables sort from their headers
  * - a range with nothing on another model shows the empty state, which says
  *   what fills the tab and opens Settings > Models
@@ -118,23 +118,24 @@ describe('ModelUsageStats', () => {
 	describe('with a seeded record', () => {
 		it('states the four headline numbers', async () => {
 			await renderLoaded(BUSY_MODEL_USAGE);
+			// The headline figure counts up (AnimatedNumber); the card's label states it at once.
 
 			// Work on other models only: the provider's 40 turns are not in it.
 			const requests = screen.getByTestId('model-usage-card-requests');
-			expect(requests).toHaveTextContent('124');
+			expect(requests).toHaveAttribute('aria-label', expect.stringContaining(': 124,'));
 			expect(requests).toHaveTextContent('2 sources · 3 failed');
 
 			const tokens = screen.getByTestId('model-usage-card-tokens');
-			expect(tokens).toHaveTextContent('54.1K');
+			expect(tokens).toHaveAttribute('aria-label', expect.stringContaining(': 54.1K,'));
 			expect(tokens).toHaveTextContent('50.0K in · 4.1K out');
 
 			// The share is of ALL the work, the providers' own cloud included.
 			const onDevice = screen.getByTestId('model-usage-card-on-device');
-			expect(onDevice).toHaveTextContent('25%');
+			expect(onDevice).toHaveAttribute('aria-label', expect.stringContaining(': 25%,'));
 			expect(onDevice).toHaveTextContent('41 of 164 requests');
 
 			const decisions = screen.getByTestId('model-usage-card-decisions');
-			expect(decisions).toHaveTextContent('90');
+			expect(decisions).toHaveAttribute('aria-label', expect.stringContaining(': 90,'));
 			expect(decisions).toHaveTextContent('86 answered · $0.001900');
 		});
 
@@ -257,7 +258,7 @@ describe('ModelUsageStats', () => {
 			expect(tile).toHaveTextContent('Claude Code');
 			expect(tile).toHaveAttribute(
 				'aria-label',
-				'Alpha: 4 Run on turns on qwen3-coder on Maestro model server'
+				'Alpha: 4 model source turns on qwen3-coder on Maestro model server'
 			);
 			// Beta had runs filed for it and launched nothing on another model.
 			expect(screen.queryByTestId('model-usage-agent-agent-beta-0002')).not.toBeInTheDocument();
@@ -972,7 +973,7 @@ describe('ModelUsageStats', () => {
 			expect(screen.getByTestId('model-usage-tasks-empty')).toHaveTextContent(
 				'Settings > Models > System Two'
 			);
-			expect(screen.getByTestId('model-usage-agents-empty')).toHaveTextContent('Run on target');
+			expect(screen.getByTestId('model-usage-agents-empty')).toHaveTextContent('model source');
 			expect(screen.getByTestId('model-usage-system-one-empty')).toHaveTextContent(
 				'Settings > Models > System One'
 			);

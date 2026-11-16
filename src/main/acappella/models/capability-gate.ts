@@ -49,11 +49,12 @@ import {
 import { resolveTaskReadiness } from '../../local-models/task-readiness';
 import { hasCredential } from '../providers/credentials';
 import type { MicPermission } from '../../../shared/acappella/protocol';
-import type {
-	VoiceReadiness,
-	VoiceSlot,
-	VoiceSlotReadiness,
-	VoiceSlotUnsatisfiedReason,
+import {
+	VOICE_SLOT_LABELS,
+	type VoiceReadiness,
+	type VoiceSlot,
+	type VoiceSlotReadiness,
+	type VoiceSlotUnsatisfiedReason,
 } from '../../../shared/acappella/readiness';
 import { getMicPermission } from '../permissions/mic-permission';
 import {
@@ -149,14 +150,6 @@ function requirementFor(providerId: string): VoiceProviderRequirement {
  * "microphone access denied" first does not need to read the rest.
  */
 const SLOT_ORDER: VoiceSlot[] = ['microphone', 'stt', 'tts', 'brain', 'wake-word'];
-
-const SLOT_LABELS: Record<VoiceSlot, string> = {
-	microphone: 'Microphone',
-	stt: 'Speech-to-Text',
-	tts: 'Text-to-Speech',
-	brain: 'Conductor Brain',
-	'wake-word': 'Wake word',
-};
 
 export interface ResolveVoiceReadinessOptions {
 	readVoiceStudioStatus?: (config: VoiceStudioConfig) => Promise<VoiceStudioStatus>;
@@ -340,7 +333,7 @@ async function runtimeFailureFor(
 		providerId,
 		satisfied: false,
 		reason: 'runtime-unavailable',
-		detail: `${SLOT_LABELS[slot]}: ${failure.message}`,
+		detail: `${VOICE_SLOT_LABELS[slot]}: ${failure.message}`,
 		suggestedAction: failure.suggestedAction,
 	};
 }
@@ -351,7 +344,7 @@ async function resolveSlot(
 	options: ResolveVoiceReadinessOptions,
 	readModelStatus: (modelId: string) => Promise<ModelStatus>
 ): Promise<VoiceSlotReadiness> {
-	const label = SLOT_LABELS[slot];
+	const label = VOICE_SLOT_LABELS[slot];
 	const requirement = requirementFor(providerId);
 
 	if (requirement.kind === 'none') {
@@ -553,7 +546,7 @@ async function resolveAssignedSource(
 	readModelStatus: (modelId: string) => Promise<ModelStatus>,
 	localOnly = false
 ): Promise<VoiceSlotReadiness> {
-	const label = SLOT_LABELS[slot];
+	const label = VOICE_SLOT_LABELS[slot];
 	const readRuntimeFailure = options.readRuntimeFailure;
 	const readTaskReadiness =
 		options.readTaskReadiness ??
@@ -629,7 +622,7 @@ async function resolveWakeClassifier(
 	readModelStatus: (modelId: string) => Promise<ModelStatus>,
 	hasEnrolledWakePhrase: (phrase: string) => boolean
 ): Promise<VoiceSlotReadiness | null> {
-	const label = SLOT_LABELS['wake-word'];
+	const label = VOICE_SLOT_LABELS['wake-word'];
 	// A phrase the user recorded themselves needs nothing but the front end,
 	// which the caller has already found installed. It also outranks a pretrained
 	// classifier for the same words, exactly as it does in the detector.

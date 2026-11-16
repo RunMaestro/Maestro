@@ -81,7 +81,33 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'star-tab': 'Could not change the star',
 	'remove-queued': 'Could not remove the queued message',
 	'pause-queued': 'Could not hold or resume the queued message',
+	'update-agent': 'Could not change the agent on its host',
+	'update-tab': 'Could not change the tab on its host',
 };
+
+/** What the main-process service answered for one action (`PeerMirrorService.act()`). */
+export type MirroredActionAnswer = Awaited<
+	ReturnType<NonNullable<typeof window.maestro.federation>['act']>
+>;
+
+/**
+ * Run one action on a mirrored agent and hand back the service's answer as is, with no toast:
+ * for a caller that decides itself what a failure means (the settings sync retries a peer that
+ * is down). An IPC failure answers `{ ok: false }` with no `code`. Null without the API.
+ */
+export async function callMirroredAgentAction(
+	peerId: string,
+	agentId: string,
+	action: PeerAgentAction
+): Promise<MirroredActionAnswer | null> {
+	const api = window.maestro?.federation;
+	if (!api) return null;
+	try {
+		return await api.act(peerId, agentId, action);
+	} catch (caught) {
+		return { ok: false, error: ipcErrorMessage(caught) };
+	}
+}
 
 /**
  * Run one action on a mirrored agent through the main-process service. A failure (the peer is
@@ -93,18 +119,12 @@ export async function actOnMirroredAgent(
 	agentId: string,
 	action: PeerAgentAction
 ): Promise<PeerAgentActionResult | null> {
-	const api = window.maestro?.federation;
-	if (!api) return null;
-	let error: string;
-	try {
-		const answer = await api.act(peerId, agentId, action);
-		if (answer.ok) return answer.result;
-		error = answer.unknown
-			? `${answer.error} The host may have taken it: check the tab before sending again.`
-			: answer.error;
-	} catch (caught) {
-		error = ipcErrorMessage(caught);
-	}
+	const answer = await callMirroredAgentAction(peerId, agentId, action);
+	if (!answer) return null;
+	if (answer.ok) return answer.result;
+	const error = answer.unknown
+		? `${answer.error} The host may have taken it: check the tab before sending again.`
+		: answer.error;
 	notifyToast({ color: 'red', title: ACTION_FAILURE_TITLES[action.kind], message: error });
 	return null;
 }

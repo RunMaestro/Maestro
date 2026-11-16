@@ -787,7 +787,8 @@ describe('UnifiedHistoryTab', () => {
 			const afterUsed = useSettingsStore.getState().keyboardMasteryStats.usedShortcuts;
 			expect(afterUsed).toContain('searchDirectorNotes');
 			expect(vi.mocked(window.maestro.stats.recordShortcutUsage)).toHaveBeenCalledWith(
-				expect.any(Number)
+				expect.any(Number),
+				'searchDirectorNotes'
 			);
 		});
 

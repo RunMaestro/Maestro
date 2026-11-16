@@ -92,7 +92,7 @@ import {
 	type StatCardDatum,
 } from '../../widgets';
 import { EntityTile, type EntityTileStat } from '../EntityTile';
-import { MetricCard } from '../MetricCard';
+import { MetricCard } from '../SummaryCards';
 import { AGENT_TILE_MIN_WIDTH, tileGridColumns } from '../tileScale';
 import { LatencyBars } from './LatencyBars';
 import {
@@ -663,7 +663,7 @@ export const ModelTasksTable = memo(function ModelTasksTable({
 });
 
 // ---------------------------------------------------------------------------
-// Run on agents
+// Model source agents
 // ---------------------------------------------------------------------------
 
 function runOnAgentStats(agent: ModelUsageAgent): EntityTileStat[] {
@@ -694,10 +694,10 @@ export const RunOnAgentTiles = memo(function RunOnAgentTiles({
 }) {
 	const runOn = useMemo(() => runOnAgents(agents), [agents]);
 	return (
-		<SectionCard theme={theme} title="Run On Agents" icon={Bot}>
+		<SectionCard theme={theme} title="Model Source Agents" icon={Bot}>
 			{runOn.length === 0 ? (
 				<SectionEmpty theme={theme} testId="model-usage-agents-empty" actions={setupActions}>
-					No agent ran a turn on another model in this range. Set a Run on target on the Models tab
+					No agent ran a turn on another model in this range. Set a model source on the Models tab
 					of an agent&apos;s settings.
 				</SectionEmpty>
 			) : (
@@ -727,7 +727,7 @@ export const RunOnAgentTiles = memo(function RunOnAgentTiles({
 								}
 								stats={runOnAgentStats(agent)}
 								animationIndex={index}
-								ariaLabel={`${name}: ${plural(agent.turns, 'Run on turn')} on ${targets}`}
+								ariaLabel={`${name}: ${plural(agent.turns, 'model source turn')} on ${targets}`}
 								testId={`model-usage-agent-${agent.agentId}`}
 							/>
 						);

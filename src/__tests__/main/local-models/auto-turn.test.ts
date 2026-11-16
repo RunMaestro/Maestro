@@ -63,7 +63,7 @@ describe('resolveAgentAutoTurn', () => {
 				tab: { agentSessionId: null },
 				prompt: 'p',
 			})
-		).rejects.toThrow('Run on target');
+		).rejects.toThrow('model source');
 		expect(routeTurn).not.toHaveBeenCalled();
 	});
 

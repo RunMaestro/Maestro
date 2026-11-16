@@ -17,6 +17,7 @@ import {
 } from '../../../renderer/services/aiCommand';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { QWEN3_1_7B_ID, getLocalModel } from '../../../shared/local-models/model-catalog';
+import { DEFAULT_MODEL_MAP } from '../../../shared/local-models/model-map';
 import type { LocalModelEndpoint } from '../../../shared/local-models/endpoints';
 import {
 	aiCommandKey,
@@ -67,9 +68,7 @@ beforeEach(() => {
 	useSettingsStore.setState({
 		localModelAssignments: {},
 		localModelEndpoints: [],
-		utilitySource: { type: 'utility-agent' },
-		utilityAgentId: null,
-		utilityModelId: null,
+		modelMap: DEFAULT_MODEL_MAP,
 	});
 	suggest = vi.fn().mockResolvedValue({ success: true, command: 'du -sh *' });
 	(window as unknown as { maestro: unknown }).maestro = { aiCommand: { suggest } };
@@ -113,39 +112,36 @@ describe('resolveAiCommandProvenance', () => {
 		expect(resolveAiCommandProvenance(turn, { 'ai-command': { type: 'off' } }, [])).toEqual({});
 	});
 
-	it('names the inherited utility model and keeps explicit Off authoritative', () => {
-		const utility = { type: 'local', modelId: QWEN3_1_7B_ID } as const;
-		expect(resolveAiCommandProvenance(turn, {}, [], utility)).toEqual({ model: QWEN_NAME });
+	it('names the model of the inherited slot and keeps explicit Off authoritative', () => {
+		const modelMap = {
+			agent: { type: 'provider' },
+			housekeeping: { type: 'local', modelId: QWEN3_1_7B_ID },
+		} as const;
+		expect(resolveAiCommandProvenance(turn, {}, [], modelMap)).toEqual({ model: QWEN_NAME });
 		expect(
-			resolveAiCommandProvenance(turn, { 'ai-command': { type: 'off' } }, [], utility)
+			resolveAiCommandProvenance(turn, { 'ai-command': { type: 'off' } }, [], modelMap)
 		).toEqual({});
+		// A task pointed at the other slot follows that one instead.
+		expect(
+			resolveAiCommandProvenance(turn, { 'ai-command': { type: 'agent-model' } }, [], modelMap)
+		).toEqual({ model: 'opus', effort: 'high' });
 	});
 
-	it('names the utility provider model without claiming the tab effort applies', () => {
-		expect(
-			resolveAiCommandProvenance(
-				turn,
-				{},
-				[],
-				{ type: 'utility-agent' },
-				{
-					utilityAgentId: 'codex',
-					utilityModelId: 'gpt-model',
-				}
-			)
-		).toEqual({ model: 'gpt-model' });
-		expect(
-			resolveAiCommandProvenance(
-				turn,
-				{},
-				[],
-				{ type: 'utility-agent' },
-				{
-					utilityAgentId: 'codex',
-					utilityModelId: null,
-				}
-			)
-		).toEqual({ model: 'Codex (default model)' });
+	it('names a mapped provider model without claiming the tab effort applies', () => {
+		const withHousekeeping = (modelId?: string) => ({
+			agent: { type: 'provider' } as const,
+			housekeeping: {
+				type: 'provider',
+				agentId: 'codex',
+				...(modelId ? { modelId } : {}),
+			} as const,
+		});
+		expect(resolveAiCommandProvenance(turn, {}, [], withHousekeeping('gpt-model'))).toEqual({
+			model: 'gpt-model',
+		});
+		expect(resolveAiCommandProvenance(turn, {}, [], withHousekeeping())).toEqual({
+			model: 'Codex (default model)',
+		});
 	});
 });
 

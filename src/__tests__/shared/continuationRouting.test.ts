@@ -88,9 +88,9 @@ describe('describeContinuationRouting', () => {
 		it('reads a malformed stored target as not usable, with the owner reason, and does not throw', () => {
 			const routing = describeContinuationRouting({ toolType: 'claude-code', runOn: 'nonsense' });
 			expect(routing.runOn.kind).toBe('invalid');
-			expect(routing.runOn.label).toMatch(/Run on target is an object/);
+			expect(routing.runOn.label).toMatch(/model source is an object/);
 			expect(describeRoutingLines(routing)[1]).toMatch(
-				/^Run on: the stored target is not usable \(/
+				/^Model source: the stored target is not usable \(/
 			);
 		});
 
@@ -105,7 +105,7 @@ describe('describeContinuationRouting', () => {
 			expect(routing.runOn.kind).toBe('unsupported');
 			expect(routing.runOn.label).toBe(support.supported ? '' : support.reason);
 			expect(describeRoutingLines(routing)[1]).toMatch(
-				/^Run on: a source is stored, but this harness cannot run on one \(/
+				/^Model source: a source is stored, but this harness cannot run on one \(/
 			);
 			// An explicit provider target needs no recipe.
 			expect(
@@ -120,7 +120,7 @@ describe('describeContinuationRouting', () => {
 				endpoints: ENDPOINTS,
 			});
 			const line = describeRoutingLines(routing)[1];
-			expect(line).toMatch(/^Run on: configured for .*qwen3/);
+			expect(line).toMatch(/^Model source: configured for .*qwen3/);
 			expect(line).not.toMatch(/\bwill\b|\bsent\b|\breachable\b/);
 		});
 
@@ -251,7 +251,7 @@ describe('describeContinuationRouting', () => {
 			expect(lines[0]).toBe(
 				"Provider claude-code; model opus (set on the tab); effort default (the provider's default)."
 			);
-			expect(lines[1]).toBe('Run on: Provider.');
+			expect(lines[1]).toBe('Model source: Provider.');
 			expect(lines[2]).toMatch(/^Tier targets: low = .* \(Built-in\), medium = .*, high = .*\.$/);
 			expect(lines[3]).toBe('Background requests: not routed (they go to the provider).');
 			expect(lines[4]).toBe(

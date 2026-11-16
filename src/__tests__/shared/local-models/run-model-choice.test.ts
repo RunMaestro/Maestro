@@ -127,7 +127,7 @@ describe('buildRunModelChoiceGroups', () => {
 		expect(values(ON_PROVIDER, 'provider:gone', ['o3'])).toContain('provider:gone');
 	});
 
-	it('offers no source models for a harness with no Run on recipe', () => {
+	it('offers no source models for a harness with no model source recipe', () => {
 		const groups = buildRunModelChoiceGroups({
 			agent: ON_PROVIDER,
 			options: { ...ROW, runOn: { supported: false, reason: 'no recipe' } },

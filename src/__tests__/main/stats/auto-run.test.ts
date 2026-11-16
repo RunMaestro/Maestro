@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
+import { withHealthyIntegrityCheck } from '../../helpers/sqlitePragmaMock';
 
 // Track Database constructor calls to verify file path
 let lastDbPath: string | null = null;
@@ -41,7 +42,7 @@ vi.mock('better-sqlite3', () => {
 			constructor(dbPath: string) {
 				lastDbPath = dbPath;
 			}
-			pragma = mockDb.pragma;
+			pragma = withHealthyIntegrityCheck(mockDb.pragma);
 			prepare = mockDb.prepare;
 			close = mockDb.close;
 			transaction = mockDb.transaction;
@@ -222,7 +223,7 @@ describe('Auto Run session and task recording', () => {
 		});
 
 		it('reads a row from before the kind column as spec-driven with its other fields unchanged', async () => {
-			// A pre-v14 row has no `kind` key at all.
+			// A pre-v15 row has no `kind` key at all.
 			mockStatement.all.mockReturnValue([
 				{
 					id: 'legacy',
@@ -281,7 +282,7 @@ describe('Auto Run session and task recording', () => {
 		});
 	});
 
-	describe('migration v14 (auto_run_sessions.kind)', () => {
+	describe('migration v15 (auto_run_sessions.kind)', () => {
 		const setDbState = (version: number, autoRunColumns: string[]) => {
 			mockDb.pragma.mockImplementation((sql: string) => {
 				if (sql === 'user_version') return [{ user_version: version }];
@@ -297,8 +298,8 @@ describe('Auto Run session and task recording', () => {
 				.map(([sql]) => sql)
 				.filter((sql) => /ALTER TABLE auto_run_sessions ADD COLUMN kind/.test(sql));
 
-		it("adds the kind column with DEFAULT 'spec-driven' to a v13 database", async () => {
-			setDbState(13, ['id', 'session_id', 'duration']);
+		it("adds the kind column with DEFAULT 'spec-driven' to a v14 database", async () => {
+			setDbState(14, ['id', 'session_id', 'duration']);
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -310,7 +311,7 @@ describe('Auto Run session and task recording', () => {
 		});
 
 		it('is a no-op when the kind column already exists', async () => {
-			setDbState(13, ['id', 'session_id', 'duration', 'kind']);
+			setDbState(14, ['id', 'session_id', 'duration', 'kind']);
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();

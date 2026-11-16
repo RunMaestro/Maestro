@@ -91,9 +91,19 @@ export async function updateGroupSettings(
 		);
 	}
 
+	// An app older than lifecycle prompts answers without the field, having
+	// dropped the patch it did not know. Say so rather than report a change.
+	if (request.lifecyclePatch && result.lifecycle === undefined) {
+		return failCommand(
+			'The running Maestro desktop app does not know Onboarding and Offboarding prompts. Update the app, then run this again.',
+			options.json
+		);
+	}
+
 	const mismatch = verifyPersistedGroupSettings(resolvedGroupId, {
 		defaults: result.defaults ?? null,
 		shortLabel: result.shortLabel ?? null,
+		...(result.lifecycle !== undefined ? { lifecycle: result.lifecycle } : {}),
 	});
 	if (mismatch) return failCommand(mismatch, options.json);
 

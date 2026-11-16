@@ -51,7 +51,7 @@ export interface RunGoalOptions {
 	/** Run-scoped reasoning effort override (same contract as `model`). */
 	effort?: string;
 	/**
-	 * Run-scoped Run on target, in place of the agent's own, for every
+	 * Run-scoped model source, in place of the agent's own, for every
 	 * iteration and handoff (same contract as `model`).
 	 */
 	runOn?: RunOnTarget;

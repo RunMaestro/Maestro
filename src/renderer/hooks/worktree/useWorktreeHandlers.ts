@@ -31,7 +31,7 @@ import {
 import { useSettingsStore } from '../../stores/settingsStore';
 import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
-import { buildWorktreeSession } from '../../utils/worktreeSession';
+import { buildWorktreeSession, recordWorktreeAgentsCreated } from '../../utils/worktreeSession';
 import { isPathAtOrUnderRoot } from '../../../shared/worktreePaths';
 import {
 	isRecentlyCreatedWorktreePath,
@@ -40,6 +40,7 @@ import {
 	sessionOwnedByParent,
 } from '../../utils/worktreeDedup';
 import { runWorktreeSetupScript } from '../../utils/worktreeSetupScript';
+import { offboardBeforeRemoval, startGroupOnboarding } from '../../services/groupLifecycle';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { generateId } from '../../utils/ids';
@@ -94,7 +95,7 @@ export interface WorktreeHandlersReturn {
 	handleCloseCreateWorktreeModal: () => void;
 	handleCreateWorktree: (branchName: string, baseBranch?: string) => Promise<void>;
 	handleCloseDeleteWorktreeModal: () => void;
-	handleConfirmDeleteWorktree: () => void;
+	handleConfirmDeleteWorktree: () => Promise<void>;
 	handleConfirmAndDeleteWorktreeOnDisk: () => Promise<void>;
 	handlePRCreated: (prDetails: PRDetails) => Promise<void>;
 	refreshWorktreeState: () => Promise<void>;
@@ -791,6 +792,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 					const unmarkedSessions = newWorktreeSessions.filter((s) => !isRecentlyCreated(s.cwd));
 					if (unmarkedSessions.length === 0) return;
 					useSessionStore.getState().setSessions((prev) => [...prev, ...unmarkedSessions]);
+					recordWorktreeAgentsCreated(unmarkedSessions);
 					// Expand worktrees on parent
 					useSessionStore.getState().updateSession(activeSession.id, { worktreesExpanded: true });
 					notifyToast({
@@ -946,9 +948,12 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 						...prev.map((s) => (s.id === activeSession.id ? { ...s, worktreesExpanded: true } : s)),
 						worktreeSession,
 					]);
+				recordWorktreeAgentsCreated([worktreeSession]);
 
 				// Auto-focus the new worktree session
 				useSessionStore.getState().setActiveSessionId(worktreeSession.id);
+				// The group's Onboarding prompt, when it has one.
+				startGroupOnboarding(worktreeSession.id);
 
 				notifyToast({
 					type: reusedExisting ? 'info' : 'success',
@@ -1081,9 +1086,12 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				}),
 				worktreeSession,
 			]);
+			recordWorktreeAgentsCreated([worktreeSession]);
 
 			// Auto-focus the new worktree session
 			useSessionStore.getState().setActiveSessionId(worktreeSession.id);
+			// The group's Onboarding prompt, when it has one.
+			startGroupOnboarding(worktreeSession.id);
 
 			notifyToast({
 				type: reusedExisting ? 'info' : 'success',
@@ -1101,9 +1109,11 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 		getModalActions().setDeleteWorktreeSession(null);
 	}, []);
 
-	const handleConfirmDeleteWorktree = useCallback(() => {
+	const handleConfirmDeleteWorktree = useCallback(async () => {
 		const deleteWtSession = useModalStore.getState().getData('deleteWorktree')?.session ?? null;
 		if (!deleteWtSession) return;
+		// The group's Offboarding prompt runs first, and removal waits for it.
+		await offboardBeforeRemoval(deleteWtSession.id);
 		// Remove the session but keep the worktree on disk
 		useSessionStore
 			.getState()
@@ -1113,6 +1123,9 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 	const handleConfirmAndDeleteWorktreeOnDisk = useCallback(async () => {
 		const deleteWtSession = useModalStore.getState().getData('deleteWorktree')?.session ?? null;
 		if (!deleteWtSession) return;
+		// Offboarding runs while the worktree is still on disk, so it can tear down
+		// what lives there.
+		await offboardBeforeRemoval(deleteWtSession.id);
 		// Remove the session AND delete the worktree from disk
 		const result = await window.maestro.git.removeWorktree(deleteWtSession.cwd, true);
 		if (!result.success) {
@@ -1423,9 +1436,11 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 			const staleSet = new Set(staleSessionIds);
 			const reassignedSet = new Set(reassignedSessionIds);
 			const removalSet = new Set([...staleSessionIds, ...reassignedSessionIds]);
+			let closedIds: string[] = [];
 			useSessionStore.getState().setSessions((prev) => {
 				const removed = prev.filter((s) => removalSet.has(s.id) && removalGuards.get(s.id)?.(s));
 				const currentRemovalIds = new Set(removed.map((s) => s.id));
+				closedIds = [...currentRemovalIds];
 				for (const s of removed) {
 					if (reassignedSet.has(s.id)) {
 						notifyToast({
@@ -1443,9 +1458,14 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				}
 				return prev.filter((s) => !currentRemovalIds.has(s.id));
 			});
+			// The agents this scan removed are gone from the Left Bar; record the
+			// closure so the Usage Dashboard's agent count drops on this day.
+			const closedAt = Date.now();
+			for (const id of closedIds) void window.maestro.stats.recordSessionClosed(id, closedAt);
 		}
 
 		if (newWorktreeSessions.length > 0) {
+			let addedSessions: Session[] = [];
 			useSessionStore.getState().setSessions((prev) => {
 				const pathKey = (session: Session) => {
 					const remoteId = getSshRemoteId(session, true);
@@ -1478,9 +1498,11 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 						!currentPaths.has(pathKey(s)) &&
 						!currentRawPaths.has(rawPathKey(s))
 				);
+				addedSessions = trulyNew;
 				if (trulyNew.length === 0) return prev;
 				return [...prev, ...trulyNew];
 			});
+			recordWorktreeAgentsCreated(addedSessions);
 
 			const parentIds = new Set(newWorktreeSessions.map((s) => s.parentSessionId));
 			useSessionStore
@@ -1666,6 +1688,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 					return [...prev, worktreeSession];
 				});
 				if (!added) return;
+				recordWorktreeAgentsCreated([worktreeSession]);
 
 				useSessionStore.getState().updateSession(sessionId, { worktreesExpanded: true });
 
@@ -1838,6 +1861,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 
 				// Add all new sessions in a single update (uses functional update to get fresh state)
 				if (newSessionsToAdd.length > 0) {
+					let addedSessions: Session[] = [];
 					useSessionStore.getState().setSessions((prev) => {
 						// Double-check against current state to avoid duplicates
 						const currentPaths = new Set(
@@ -1846,9 +1870,11 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 						const trulyNew = newSessionsToAdd.filter(
 							(s) => !currentPaths.has(normalizePath(s.cwd))
 						);
+						addedSessions = trulyNew;
 						if (trulyNew.length === 0) return prev;
 						return [...prev, ...trulyNew];
 					});
+					recordWorktreeAgentsCreated(addedSessions);
 
 					for (const session of newSessionsToAdd) {
 						notifyToast({

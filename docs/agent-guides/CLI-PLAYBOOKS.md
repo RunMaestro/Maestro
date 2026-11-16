@@ -52,9 +52,10 @@ src/cli/
 │   ├── show-agent.ts
 │   ├── show-playbook.ts
 │   ├── status.ts
-│   ├── agent-test-run-on.ts   # Run on Test button (agent test-run-on)
+│   ├── agent-test-run-on.ts   # Model source Test button (agent test-run-on)
 │   ├── delegation-graph.ts    # Read the Delegation Graph (no app needed)
 │   ├── group-settings.ts      # Read a group's defaults; update-group-settings.ts writes them
+│   ├── run-group-lifecycle.ts # Run a group's Onboarding or Offboarding prompt now
 │   ├── models-*.ts            # manage, assign, run, status, index, proxy, server, tiers, config, runtimes, endpoints
 │   ├── search.ts              # Search past work: text, or --semantic
 │   ├── stats.ts               # stats, and stats models (the Models tab as data)
@@ -233,7 +234,7 @@ maestro-cli show agent <id> [--show-secrets] [--json]
 
 - `effectiveEnv` is `resolveAgentEnvironment()` (`src/shared/agentEnvironment.ts`) over the global, agent (or tab session) and gateway layers: every variable the agent is spawned with, the layer that won (`source`), and the layers it overrode (`shadowedBy`). `parkedEnvVars` are the variables switched off with `update-agent --env-park`.
 - Values whose key `isSecretEnvKey()` flags (and the same keys in `customEnvVars`) are masked with `maskEnvValue()` unless `--show-secrets` is passed, as `settings list` does.
-- Reads the stored agent. It also prints the resolved peer roster (`peers`), the Run on target (`runOn`, `runOnSpec`) and each tier with where it came from.
+- Reads the stored agent. It also prints the resolved peer roster (`peers`), the model source (`runOn`, `runOnSpec`) and each tier with where it came from.
 
 ### `show playbook <id>`
 
@@ -375,7 +376,7 @@ Options:
 - `--env KEY=VALUE` - Repeatable environment variable; parsed into a `Record<string, string>`
 - `--context-window <size>` - Validated as positive integer
 - `--ssh-remote <id>` + `--ssh-cwd <path>` - Builds `sessionSshRemoteConfig` for remote execution
-- `--run-on`, `--run-on-context`, `--gateway-url` - Where the model runs and the gateway, checked like the `update-agent` flags
+- `--model-source`, `--model-source-context`, `--gateway-url` - Where the model runs and the gateway, checked like the `update-agent` flags
 - `--peer`, `--peer-note`, `--group-peers`, `--worktree-peers` - Peers, read by `readPeerFlags()` (`services/peer-flags.ts`) and written after the create by the same `update_session_config` message `update-agent --peer` sends, so one applier owns the rules. `create-agent` has no `--remove-peer` (a new agent has no row to remove), `--tier`, `--background-requests`, `--system-one` or `--proxy-mode`: set those with `update-agent` afterwards. `src/__tests__/prompts/maestroCliPrompt.test.ts` pins this, so adding one fails the test on purpose and the agent-facing map gets updated with it.
 - `--type` lists `PICKABLE_AGENT_IDS` in its help; `--model auto` is the model router.
 
@@ -411,7 +412,7 @@ maestro-cli update-agent <agent-id> [setting flags: --nudge --model --effort --e
 
 The setting flags are read by `buildConfigPatch()` (`services/agent-setting-flags.ts`), shared with `update-group-settings`, and ride one `update_session_config` message. The renderer applies the patch with the validators the Edit Agent dialog saves with, so a flag and a click cannot store different things:
 
-- `--proxy-mode <off|passthrough|compress|compress-early>`, `--gateway-url`, `--run-on`, `--run-on-context`, `--tier <tier=target>` (repeatable), `--background-requests <target|none>`, `--system-one <on|off>`, and `--model auto` are the Models tab.
+- `--proxy-mode <off|passthrough|compress|compress-early>`, `--gateway-url`, `--model-source`, `--model-source-context`, `--tier <tier=target>` (repeatable), `--background-requests <target|none>`, `--system-one <on|off>`, and `--model auto` are the Models tab.
 - `--retry-on-availability`, `--retry-on-token-exhaustion`, `--codex-auto-reset` (`true|false|default`), `--additional-dir <path[:rw]>`, `--clear-additional-dirs`, `--env-park KEY`, `--env-unpark KEY` and `--share-history-to-project-dir` are applied by `applyAgentConfigExtras()` in `src/shared/agentConfigExtras.ts`, over `setKeysParked()` (`src/shared/parkedRecords.ts`) and `normalizeAdditionalDirectories()`. `default` writes `null`, which the patch reads as "drop the choice" (the retries are on by default, which is why it is not `false`).
 - `--peer`, `--peer-note`, `--remove-peer`, `--group-peers`, `--worktree-peers` are the Peers tab (`peerAgentEdits` in the same patch). `--peer x:none` excludes a peer from a grant; `--remove-peer x` deletes the row.
 - `--json` reports the patch it sent, not the stored result. Read the result with `show agent <id> --json`.
@@ -452,7 +453,8 @@ maestro-cli models verify <model-id> [--json]
 Which source each Local Models task runs on. Implemented in `src/cli/commands/models-assign.ts`.
 
 ```bash
-maestro-cli models assign <task-id> <off|utility-agent|local:<model-id>|endpoint:<endpoint>:<model>> [--json]
+maestro-cli models assign <task-id> <off|agent-model|housekeeping-model|system-one|local:<model-id>|endpoint:<endpoint>:<model>> [--json]
+maestro-cli models map [agent|housekeeping <provider[:<agent-id>[:<model>]]|local:<model-id>|endpoint:<endpoint>:<model>>] [--json]
 maestro-cli models tasks [--json]
 ```
 
@@ -505,7 +507,7 @@ Runs a text task through its assignment, or the two file and repository forms be
 maestro-cli models run <task-id> --input <text> [--system <text>] [--max-tokens <n>] [--json]
 ```
 
-- Exit codes follow the split `s1 route` uses: `6` when the task is switched off or assigned to the Utility Agent (nothing local will answer; do not retry), `7` when the task ran and could not answer (unavailable, cancelled, no changes), `2` for a bad invocation, `3`/`4`/`5` for the app.
+- Exit codes follow the split `s1 route` uses: `6` when the task is switched off or follows a Model Map slot on a provider agent (nothing local will answer; do not retry), `7` when the task ran and could not answer (unavailable, cancelled, no changes), `2` for a bad invocation, `3`/`4`/`5` for the app.
 
 ### `models server status|start|stop|set|key`
 
@@ -515,11 +517,11 @@ The Maestro model server (`llama-server`), the card in Settings -> Models -> Sou
 maestro-cli models server status [--json]
 maestro-cli models server start [--json]
 maestro-cli models server stop [--json]
-maestro-cli models server set [--bind local|network] [--max-models <n>] [--rotate-key] [--build default|cpu|cuda|rocm] [--json]
+maestro-cli models server set [--bind local|network] [--max-models <n>] [--rotate-key] [--start-on-launch on|off] [--build default|cpu|cuda|rocm] [--json]
 maestro-cli models server key [--json]
 ```
 
-- `start` and `stop` wait until the server answers or exits. A running server restarts to apply any `set`. `--bind network` needs the key; `--rotate-key` invalidates whatever used the old one.
+- `start` and `stop` wait until the server answers or exits. A running server restarts to apply any `set`. `--bind network` needs the key; `--rotate-key` invalidates whatever used the old one. `start` turns start-on-launch on and `stop` turns it off, so a server left running starts again with Maestro; `--start-on-launch` changes only that and restarts nothing.
 - `status` exits non-zero only when the server is `failed` (could not start, or crashed repeatedly); a stopped server is not a failure. `key` prints the key a harness sends, made on first use.
 
 ### `models tiers list|options|suggest|set|reset`
@@ -534,7 +536,7 @@ maestro-cli models tiers set <harness> <low|medium|high> <default|provider|provi
 maestro-cli models tiers reset <harness> [--tier <tier>] [--json]
 ```
 
-- `list`, `set`, `reset` and `suggest --apply` read and write the `harnessTierDefaults` setting in the settings file, so they work with Maestro closed and the watcher reloads every window. `options` and `suggest` ask the desktop, which owns the agent detector and the Run on sources.
+- `list`, `set`, `reset` and `suggest --apply` read and write the `harnessTierDefaults` setting in the settings file, so they work with Maestro closed and the watcher reloads every window. `options` and `suggest` ask the desktop, which owns the agent detector and the model sources.
 - They check and store through the helpers the Tier defaults table uses (`parseTierTargetSpec()`, `parseTierTargetEdit()`, `withHarnessTierDefault()`, `suggestHarnessTierDefaults()` in `src/shared/modelTiers.ts`), so the CLI cannot save a target the table would refuse. `default` clears a tier. Each tier prints the layer it came from (Harness default or Built-in).
 
 ### `models config show|set`
@@ -550,7 +552,7 @@ Both read and write the settings file, so they work with Maestro closed. The val
 
 ### `agent test-run-on <agent-id>`
 
-The Run on picker's Test button. Implemented in `src/cli/commands/agent-test-run-on.ts`. One WS round trip to `testAgentRunOn()` (`src/main/local-models/run-on-test.ts`), which sends one short read-only turn through the agent's own harness on its STORED Run on target. Only the agent id is sent, so there is no way to test an unsaved draft from the CLI: write the target with `update-agent --run-on`, then test it. A Provider target has nothing to test and is refused. Its outer timeout is long enough for the model server to start and a cold model to load; the app applies its own budget to each step and answers with the reason when one runs out.
+The model source picker's Test button. Implemented in `src/cli/commands/agent-test-run-on.ts`. One WS round trip to `testAgentRunOn()` (`src/main/local-models/run-on-test.ts`), which sends one short read-only turn through the agent's own harness on its STORED model source. Only the agent id is sent, so there is no way to test an unsaved draft from the CLI: write the target with `update-agent --model-source`, then test it. A Provider target has nothing to test and is refused. Its outer timeout is long enough for the model server to start and a cold model to load; the app applies its own budget to each step and answers with the reason when one runs out.
 
 ### `s1` (System One)
 
@@ -601,7 +603,7 @@ maestro-cli voice wake record|stop|add|undo|clear-background|train|status|list|r
 
 ### `stats` and `stats models`
 
-Implemented in `src/cli/commands/stats.ts`. Both are one WS round trip to the desktop, which owns the open stats database. `stats [--range <r>]` is the aggregated dashboard; `stats models [--range <r>]` is the Models tab as data, from `readModelUsage()` (`src/main/local-models/model-usage.ts`) over `getModelUsage()`: what every model other than a provider's own did, by source and task, the Run on agents, System One, and what the token proxy saved. `--range` is `day|week|month|quarter|year|all` (default `week`). `stats-query "<sql>"` runs a read-only query; it is enforced read-only in the main process.
+Implemented in `src/cli/commands/stats.ts`. Both are one WS round trip to the desktop, which owns the open stats database. `stats [--range <r>]` is the aggregated dashboard; `stats models [--range <r>]` is the Models tab as data, from `readModelUsage()` (`src/main/local-models/model-usage.ts`) over `getModelUsage()`: what every model other than a provider's own did, by source and task, the agents on a model source, System One, and what the token proxy saved. `--range` is `day|week|month|quarter|year|all` (default `week`). `stats-query "<sql>"` runs a read-only query; it is enforced read-only in the main process.
 
 ### `delegation graph`
 
@@ -626,6 +628,8 @@ maestro-cli open group-settings --group <group-id>
 - The read needs no app. The write is one `update_group_settings` message: the renderer owns the group list and the validator the dialog saves with, so the flags are the `update-agent` ones (`buildConfigPatch()`, `readPeerFlags()`) and the app builds the profile. The CLI then reads the group back, because an older app would drop a field it does not know.
 - Profile only is the default. `--publish` also writes THIS call's diff into the group's existing agents by the dialog's "Update N agents" rules (`summarizeGroupDefaultsDiff()`), and has no undo on the CLI, so it asks on a terminal or needs `--yes`.
 - `create-agent --group` seeds a new agent from the profile (`seedRemoteCreate()`); `--no-group-defaults` skips it.
+- The `--onboarding*` and `--offboarding*` flags ride the same message as a `lifecyclePatch` (`readLifecycleFlags()`, checked by `groupLifecycleProblem()` in `src/shared/groupLifecycle.ts`). They are not defaults: never copied into an agent, never published, untouched by `--clear`. `group-settings --json` reads them back as `lifecycle`.
+- `run-group-lifecycle <group> <onboarding|offboarding> --agent <agent>` (`src/cli/commands/run-group-lifecycle.ts`) sends a `runLifecycle` request on the same message; it writes nothing, cannot ride with a write, and calls `runGroupLifecycleNow()`, the runner behind the dialog's "Run now". An Offboarding run removes nothing.
 - `open group-settings --group` has `groupRequired` on its `UI_SURFACES` entry and no hotkey: a global chord has no group to act on.
 - `open agent-settings --agent <id> [--tab <tab>]` opens Edit Agent the same way. Its entry has `agentClick`, which makes `--agent` valid and required, and its tabs come from `AGENT_SETTINGS_TAB_IDS` (`src/shared/agentSettingsTabs.ts`), the list the form's own strip is built from. The bridge handler refuses an agent that is gone (`getSessions`), because the renderer would open nothing and say nothing.
 

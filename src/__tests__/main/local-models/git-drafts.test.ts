@@ -93,9 +93,9 @@ beforeEach(() => {
 });
 
 describe('draftPullRequest', () => {
-	it('is off while it inherits a provider Utility source, without reading the repository or asking a model', async () => {
-		// The default: the task inherits the Utility source, and a provider one
-		// resolves to off because drafting has no agent path.
+	it('is off while it inherits a provider Housekeeping model, without reading the repository or asking a model', async () => {
+		// The default: the task inherits the Housekeeping model, and a provider
+		// one resolves to off because drafting has no agent path.
 		vi.mocked(readLocalModelAssignments).mockReturnValue({ 'git-drafts': { type: 'off' } });
 
 		const result = await draftPullRequest({ cwd: CWD, baseBranch: 'main' });
@@ -252,13 +252,13 @@ describe('draftPullRequest', () => {
 		});
 	});
 
-	it('refuses the Utility Agent: the task has no agent path to keep', async () => {
-		vi.mocked(runLocalTask).mockResolvedValue({ status: 'use-utility-agent' });
+	it('refuses a provider Model Map slot: the task has no agent path to keep', async () => {
+		vi.mocked(runLocalTask).mockResolvedValue({ status: 'use-provider' });
 
 		const result = await draftPullRequest({ cwd: CWD, baseBranch: 'main' });
 
 		expect(result).toMatchObject({ success: false, status: 'unavailable' });
-		expect(result.success === false && result.error).toMatch(/cannot run on the Utility Agent/);
+		expect(result.success === false && result.error).toMatch(/cannot run on a provider agent/);
 	});
 
 	it('names the model when its reply is not a usable draft', async () => {

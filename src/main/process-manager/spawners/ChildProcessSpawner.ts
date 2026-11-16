@@ -33,9 +33,12 @@ import { argsResumeSession } from '../utils/resumeArgs';
 import { emitAgentErrorAfterOutput } from '../utils/agentErrorEmit';
 import { armStdioCloseWatchdog } from '../utils/stdioCloseWatchdog';
 import {
+	buildPreLaunchReapScript,
 	newRemotePidFilePath,
+	reapRemoteAgent,
 	signalRemoteAgent,
 	sshConnectionArgs,
+	takePendingRemoteReaps,
 	withRemotePidRecord,
 } from '../../utils/ssh-remote-signal';
 import { isWindows } from '../../../shared/platformDetection';
@@ -507,8 +510,18 @@ export class ChildProcessSpawner {
 
 			let stdinText: string | undefined;
 			if (config.sshStdinScript) {
+				// An earlier turn on this tab whose connection dropped may still be
+				// running remotely, on the session this launch resumes. Stop it here,
+				// on the connection that is about to prove the host answers. A
+				// prompt-owner launch must stay one compound, so its turn leaves the
+				// orphan to the reap's own retries.
+				const orphanReap =
+					sshRemotePidFile && remoteArtifactPath === undefined
+						? buildPreLaunchReapScript(takePendingRemoteReaps(sessionId))
+						: '';
 				stdinText = sshRemotePidFile
-					? withRemotePidRecord(config.sshStdinScript, sshRemotePidFile, remoteArtifactPath)
+					? orphanReap +
+						withRemotePidRecord(config.sshStdinScript, sshRemotePidFile, remoteArtifactPath)
 					: config.sshStdinScript;
 				logger.debug('[ProcessManager] Sending SSH stdin script', 'ProcessManager', {
 					sessionId,
@@ -850,16 +863,20 @@ export class ChildProcessSpawner {
 				// running it is a second writer on the session, and the next resume
 				// (the synopsis, or the user's next send) is refused. A Stop already
 				// signalled the remote; a finished agent leaves nothing to signal.
+				// The outage that dropped the turn usually refuses the first signal
+				// too, so the reap retries until the host answers.
 				if (
 					sshRemotePidFile &&
 					!remoteArtifactPath &&
 					!managedProcess.interrupted &&
 					((exit.exitCode ?? 0) !== 0 || exit.signal)
 				) {
-					signalRemoteAgent(
-						{ sshCommand: command, sshArgs: finalArgs, pidFile: sshRemotePidFile, sessionId },
-						'terminate'
-					);
+					reapRemoteAgent({
+						sshCommand: command,
+						sshArgs: finalArgs,
+						pidFile: sshRemotePidFile,
+						sessionId,
+					});
 				}
 				// Hand the exiting process in explicitly: it may already have been
 				// unregistered, and handleExit must settle THIS process rather than

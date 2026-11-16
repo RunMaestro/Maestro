@@ -33,6 +33,7 @@ import type { Theme } from '../../../../types';
 import { safeClipboardWrite } from '../../../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../../../utils/flashCopiedToClipboard';
 import { ToggleButtonGroup } from '../../../ToggleButtonGroup';
+import { ToggleSwitch } from '../../../ui/ToggleSwitch';
 import { CopyIconButton } from '../../../ui/CopyIconButton';
 import { MiniBadge } from '../../../ui/MiniBadge';
 import { ProgressBar } from '../../../ui/ProgressBar';
@@ -174,8 +175,9 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 				</div>
 				<p className="text-xs opacity-70">
 					Serves your downloaded text models to agent harnesses (Claude Code, Codex, OpenCode) over
-					HTTP. It starts only when you press Start or when a task assigned to it needs it, and it
-					stops when Maestro quits.
+					HTTP. It starts when you press Start or when a task assigned to it needs it, and it stops
+					when Maestro quits. A server you started runs again when Maestro starts, until you press
+					Stop.
 				</p>
 				{status.lastError && (
 					<p className="text-xs select-text" style={{ color: theme.colors.error }}>
@@ -325,6 +327,29 @@ export function LocalModelsServerCard({ theme, server }: LocalModelsServerCardPr
 						A port is chosen the first time the server starts, and kept.
 					</p>
 				)}
+			</div>
+
+			{/* Start with Maestro */}
+			<div
+				className="flex items-start justify-between gap-3"
+				data-testid="model-server-start-on-launch"
+			>
+				<div className="min-w-0">
+					<CardRowTitle theme={theme}>Start with Maestro</CardRowTitle>
+					<p className="text-xs opacity-70 mt-0.5">
+						{status.startOnLaunch
+							? 'Starts when Maestro starts. Stop turns this off.'
+							: 'Stays stopped when Maestro starts. Start turns this on.'}
+					</p>
+				</div>
+				<ToggleSwitch
+					theme={theme}
+					checked={status.startOnLaunch}
+					onChange={(next) => void server.setStartOnLaunch(next)}
+					disabled={acting}
+					size="sm"
+					ariaLabel="Start with Maestro"
+				/>
 			</div>
 
 			{/* Who can reach it */}

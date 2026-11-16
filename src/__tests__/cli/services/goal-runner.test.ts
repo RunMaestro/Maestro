@@ -384,7 +384,7 @@ describe('goal-runner (runGoal)', () => {
 		});
 	});
 
-	it("runs every spawn on the agent's Run on target", async () => {
+	it("runs every spawn on the agent's model source", async () => {
 		const runOn = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
 
 		await collectEvents(runGoal(mockSession({ runOn } as never), goalConfig()));

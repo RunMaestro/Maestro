@@ -113,7 +113,7 @@ const GATEWAY_SUPPORT: Record<AgentId, AgentGatewaySupport> = {
 	// variable is BYOK: it switches the CLI off GitHub's model routing and sends
 	// only the provider key, so a Copilot subscription cannot be proxied with it
 	// (that needs the Copilot token exchange, which Maestro does not do), and a
-	// BYOK user already sets it, which rule 1 lets win. Not mapped. Run on
+	// BYOK user already sets it, which rule 1 lets win. Not mapped. The model source
 	// (`run-on.ts`) uses the same variable for a local model on purpose.
 	'copilot-cli': {
 		supported: false,

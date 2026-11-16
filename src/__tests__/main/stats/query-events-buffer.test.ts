@@ -8,6 +8,7 @@ import {
 	flushQueryEventsSync,
 	getQueryEventBufferSize,
 	resetQueryEventBufferForTests,
+	setQueryEventsFlushListener,
 	QUERY_EVENT_BATCH_SIZE,
 	QUERY_EVENT_FLUSH_INTERVAL_MS,
 } from '../../../main/stats/query-events-buffer';
@@ -219,7 +220,7 @@ describe('query-events-buffer', () => {
 		expect(stmt.run).toHaveBeenCalledTimes(1);
 		const args = stmt.run.mock.calls[0];
 		// 19 columns: the 10 identity/timing/flag columns, the Web Login
-		// sender, the five token and cost columns, plus the Run on source
+		// sender, the five token and cost columns, plus the model source
 		// (endpoint, model) and the routed tier. This used to be 9 - the
 		// buffered statement had silently dropped is_worktree, so every
 		// interactive turn wrote NULL there while the direct insert path
@@ -263,7 +264,7 @@ describe('query-events-buffer', () => {
 		expect(stmt.run.mock.calls[0].slice(16)).toEqual([null, null, null]);
 	});
 
-	it('carries the Run on source and the routed tier through the buffer', () => {
+	it('carries the model source and the routed tier through the buffer', () => {
 		// The buffered statement is the one production uses, and it is the one
 		// that once dropped a column the direct path wrote.
 		const { db, stmt } = makeMockDb();
@@ -411,6 +412,57 @@ describe('query-events-buffer', () => {
 			expect(() => flushQueryEventsSync()).not.toThrow();
 			expect(getQueryEventBufferSize()).toBe(0);
 			expect(captureException).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('flush listener (stats:updated after commit)', () => {
+		it('is told how many events a committed batch held', () => {
+			const { db } = makeMockDb();
+			const listener = vi.fn();
+			setQueryEventsFlushListener(listener);
+
+			enqueueQueryEvent(db as never, sampleEvent);
+			enqueueQueryEvent(db as never, sampleEvent);
+			expect(listener).not.toHaveBeenCalled();
+
+			vi.advanceTimersByTime(QUERY_EVENT_FLUSH_INTERVAL_MS);
+			expect(listener).toHaveBeenCalledTimes(1);
+			expect(listener).toHaveBeenCalledWith(2);
+		});
+
+		it('is not told about a batch that failed to commit', () => {
+			const { db } = makeMockDb();
+			db.transaction = (() => () => {
+				throw new Error('disk full');
+			}) as MockTransactionFactory;
+			const listener = vi.fn();
+			setQueryEventsFlushListener(listener);
+
+			enqueueQueryEvent(db as never, sampleEvent);
+			flushQueryEventsSync();
+
+			expect(listener).not.toHaveBeenCalled();
+		});
+
+		it('is not told when there was nothing to flush', () => {
+			const listener = vi.fn();
+			setQueryEventsFlushListener(listener);
+
+			flushQueryEventsSync();
+
+			expect(listener).not.toHaveBeenCalled();
+		});
+
+		it('is dropped by the test reset', () => {
+			const { db } = makeMockDb();
+			const listener = vi.fn();
+			setQueryEventsFlushListener(listener);
+			resetQueryEventBufferForTests();
+
+			enqueueQueryEvent(db as never, sampleEvent);
+			flushQueryEventsSync();
+
+			expect(listener).not.toHaveBeenCalled();
 		});
 	});
 });

@@ -78,8 +78,8 @@ interface CreateAgentOptions {
 	syncHistoryToRemote?: string;
 	autoRunFolder?: string;
 	gatewayUrl?: string;
-	runOn?: string;
-	runOnContext?: string;
+	modelSource?: string;
+	modelSourceContext?: string;
 	background?: boolean;
 	focus?: boolean;
 	json?: boolean;
@@ -275,8 +275,8 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 		gatewayUrl = edit.gatewayUrl ?? undefined;
 	}
 
-	// `--run-on provider|<source id>:<model>` and `--run-on-context <n>`: the New
-	// Agent Models tab's Run on picker. Read into the target the picker would
+	// `--model-source provider|<source id>:<model>` and `--model-source-context <n>`: the New
+	// Agent Models tab's model source picker. Read into the target the picker would
 	// store, and checked against the provider and the saved sources, so a create
 	// never stores a target the agent's first launch would refuse.
 	let runOn: RunOnSourceTarget | undefined;
@@ -443,7 +443,7 @@ export async function createAgent(name: string, options: CreateAgentFlags): Prom
 				}
 				if (runOn) {
 					console.log(
-						`  Run on: ${formatRunOnSpec(runOn)} (context ${runOn.contextTokens} tokens)`
+						`  Model source: ${formatRunOnSpec(runOn)} (context ${runOn.contextTokens} tokens)`
 					);
 				}
 				if (peerPatch) console.log('  Peers: saved (read them with show agent)');

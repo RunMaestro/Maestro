@@ -76,7 +76,9 @@ describe('useScrollLogHandlers', () => {
 			cwd: '/repo',
 			aiCommandHistory: ['run tests', 'next'],
 		});
-		vi.mocked(window.maestro.agentSessions.deleteMessagePair).mockResolvedValue({ success: true });
+		vi.mocked(window.maestro.agentSessions.deleteMessagePair).mockResolvedValue({
+			success: true,
+		});
 		const { result } = renderHook(() => useScrollLogHandlers());
 
 		let nextIndex: number | null = null;
@@ -87,14 +89,172 @@ describe('useScrollLogHandlers', () => {
 		expect(nextIndex).toBe(0);
 		expect(getSession().aiTabs[0].logs.map((log) => log.id)).toEqual(['u2']);
 		expect(getSession().aiCommandHistory).toEqual(['next']);
+		// Routed to the agent's own provider, with its id so main resolves its account.
 		expect(window.maestro.agentSessions.deleteMessagePair).toHaveBeenCalledWith(
 			'claude-code',
 			'/repo',
 			'agent-1',
 			'u1',
 			'run tests',
-			undefined
+			undefined,
+			getSession().id
 		);
+		expect(window.maestro.claude.deleteMessagePair).not.toHaveBeenCalled();
+	});
+
+	describe('provider transcript deletion', () => {
+		const pairLogs = () =>
+			[
+				{ id: 'u1', source: 'user', text: 'try again', timestamp: 1 },
+				{ id: 'e1', source: 'error', text: 'Agent exited with code 1', timestamp: 2 },
+			] as any;
+
+		beforeEach(() => {
+			resetStore(useNotificationStore);
+			useNotificationStore.getState().setDefaultDuration(0);
+			useNotificationStore.getState().setOsNotifications(false);
+		});
+
+		afterEach(() => {
+			resetStore(useNotificationStore);
+			vi.mocked(window.maestro.agentSessions.deleteMessagePair).mockResolvedValue({
+				success: true,
+			});
+		});
+
+		it('removes a message the provider never recorded (a turn that failed at start)', async () => {
+			setupSession({
+				toolType: 'codex',
+				cwd: '/repo',
+				aiTabs: [createMockAITab({ id: 'ai-1', agentSessionId: 'codex-1', logs: pairLogs() })],
+			});
+			vi.mocked(window.maestro.agentSessions.deleteMessagePair).mockResolvedValue({
+				success: true,
+				linesRemoved: 0,
+				notInTranscript: true,
+			});
+			const { result } = renderHook(() => useScrollLogHandlers());
+
+			await act(async () => {
+				await result.current.handleDeleteLog('u1');
+			});
+
+			expect(getSession().aiTabs[0].logs).toEqual([]);
+			expect(useNotificationStore.getState().toasts).toEqual([]);
+		});
+
+		it('keeps the message and says so when the provider cannot delete it', async () => {
+			setupSession({
+				toolType: 'codex',
+				cwd: '/repo',
+				aiTabs: [createMockAITab({ id: 'ai-1', agentSessionId: 'codex-1', logs: pairLogs() })],
+			});
+			vi.mocked(window.maestro.agentSessions.deleteMessagePair).mockResolvedValue({
+				success: false,
+				error: 'Session file not found',
+			});
+			const { result } = renderHook(() => useScrollLogHandlers());
+
+			let nextIndex: number | null = 0;
+			await act(async () => {
+				nextIndex = await result.current.handleDeleteLog('u1');
+			});
+
+			expect(nextIndex).toBeNull();
+			expect(getSession().aiTabs[0].logs.map((log) => log.id)).toEqual(['u1', 'e1']);
+			expect(useNotificationStore.getState().toasts).toEqual([
+				expect.objectContaining({
+					color: 'red',
+					title: 'Message was not deleted',
+					message: expect.stringContaining('Session file not found'),
+					tabId: 'ai-1',
+				}),
+			]);
+		});
+
+		it('keeps output that streamed in while the provider edit was pending', async () => {
+			setupSession({
+				toolType: 'codex',
+				cwd: '/repo',
+				aiTabs: [
+					createMockAITab({
+						id: 'ai-1',
+						agentSessionId: 'codex-1',
+						logs: [...pairLogs(), { id: 'u2', source: 'user', text: 'next', timestamp: 3 }],
+					}),
+				],
+			});
+			let finish: (value: { success: boolean }) => void = () => {};
+			vi.mocked(window.maestro.agentSessions.deleteMessagePair).mockReturnValue(
+				new Promise((resolve) => {
+					finish = resolve;
+				})
+			);
+			const { result } = renderHook(() => useScrollLogHandlers());
+
+			let pending: Promise<number | null> = Promise.resolve(null);
+			act(() => {
+				pending = result.current.handleDeleteLog('u1');
+			});
+			act(() => {
+				useSessionStore.getState().setSessions((prev) =>
+					prev.map((session) => ({
+						...session,
+						aiTabs: session.aiTabs.map((tab) => ({
+							...tab,
+							logs: [...tab.logs, { id: 'a2', source: 'stdout', text: 'streamed', timestamp: 4 }],
+						})),
+					}))
+				);
+			});
+			await act(async () => {
+				finish({ success: true });
+				await pending;
+			});
+
+			expect(getSession().aiTabs[0].logs.map((log) => log.id)).toEqual(['u2', 'a2']);
+		});
+
+		it('passes the remote working directory and remote id for an SSH agent', async () => {
+			setupSession({
+				toolType: 'claude-code',
+				cwd: '/local/repo',
+				projectRoot: '/local/repo',
+				remoteCwd: '/home/me/repo',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				aiTabs: [createMockAITab({ id: 'ai-1', agentSessionId: 'claude-1', logs: pairLogs() })],
+			});
+			const { result } = renderHook(() => useScrollLogHandlers());
+
+			await act(async () => {
+				await result.current.handleDeleteLog('u1');
+			});
+
+			expect(window.maestro.agentSessions.deleteMessagePair).toHaveBeenCalledWith(
+				'claude-code',
+				'/home/me/repo',
+				'claude-1',
+				'u1',
+				'try again',
+				'remote-1',
+				getSession().id
+			);
+		});
+
+		it('removes a message from a tab that never reached a provider session', async () => {
+			setupSession({
+				toolType: 'codex',
+				aiTabs: [createMockAITab({ id: 'ai-1', agentSessionId: null, logs: pairLogs() })],
+			});
+			const { result } = renderHook(() => useScrollLogHandlers());
+
+			await act(async () => {
+				await result.current.handleDeleteLog('u1');
+			});
+
+			expect(getSession().aiTabs[0].logs).toEqual([]);
+			expect(window.maestro.agentSessions.deleteMessagePair).not.toHaveBeenCalled();
+		});
 	});
 
 	it('keeps OpenCode context visible when native deletion is unsupported', async () => {
@@ -123,7 +283,8 @@ describe('useScrollLogHandlers', () => {
 			'ses-opencode',
 			'u1',
 			'unrelated request',
-			undefined
+			undefined,
+			getSession().id
 		);
 		expect(window.maestro.claude.deleteMessagePair).not.toHaveBeenCalled();
 		expect(getSession().aiTabs[0].logs).toEqual(tab.logs);
@@ -159,7 +320,8 @@ describe('useScrollLogHandlers', () => {
 			'claude-parked',
 			'u1',
 			'old request',
-			undefined
+			undefined,
+			getSession().id
 		);
 		expect(getSession().aiTabs[0].logs).toEqual([]);
 		expect(getSession().aiTabs[0].agentSessionId).toBe('codex-current');
@@ -191,7 +353,8 @@ describe('useScrollLogHandlers', () => {
 			'remote-session',
 			'u1',
 			'remote request',
-			'remote-1'
+			'remote-1',
+			getSession().id
 		);
 		expect(getSession().aiTabs[0].logs).toEqual([]);
 		expect(getSession().aiCommandHistory).toEqual([]);
@@ -287,7 +450,8 @@ describe('useScrollLogHandlers', () => {
 			'ses-opencode',
 			'u1',
 			'remove me',
-			undefined
+			undefined,
+			getSession().id
 		);
 		expect(getSession().aiTabs[0].logs).toEqual([appended]);
 	});
@@ -339,7 +503,7 @@ describe('useScrollLogHandlers', () => {
 				const snapshot = structuredClone(getSession());
 				const { result } = renderHook(() => useScrollLogHandlers());
 				await act(async () => {
-					expect(await result.current.handleDeleteLog('u1')).toBeNull();
+					await expect(result.current.handleDeleteLog('u1')).resolves.toBeNull();
 				});
 				expect(getSession()).toEqual(snapshot);
 				expect(useNotificationStore.getState().toasts).toEqual([
@@ -404,7 +568,7 @@ describe('useScrollLogHandlers', () => {
 			});
 			const initial = renderHook(() => useScrollLogHandlers());
 			await act(async () => {
-				expect(await initial.result.current.handleDeleteLog('u1')).toBeNull();
+				await expect(initial.result.current.handleDeleteLog('u1')).resolves.toBeNull();
 			});
 			const persisted = JSON.parse(JSON.stringify(getSession()));
 			initial.unmount();
@@ -418,7 +582,7 @@ describe('useScrollLogHandlers', () => {
 			const { result } = renderHook(() => useScrollLogHandlers());
 			for (const logId of ['u1', 'u2']) {
 				await act(async () => {
-					expect(await result.current.handleDeleteLog(logId)).toBeNull();
+					await expect(result.current.handleDeleteLog(logId)).resolves.toBeNull();
 				});
 			}
 			await act(async () => {
@@ -451,7 +615,7 @@ describe('useScrollLogHandlers', () => {
 				const snapshot = structuredClone(useSessionStore.getState().sessions);
 				const { result } = renderHook(() => useScrollLogHandlers());
 				await act(async () => {
-					expect(await result.current.handleDeleteLog(logId)).toBeNull();
+					await expect(result.current.handleDeleteLog(logId)).resolves.toBeNull();
 				});
 				expect(useSessionStore.getState().sessions).toEqual(snapshot);
 				expect(useNotificationStore.getState().toasts).toEqual([]);
@@ -573,9 +737,9 @@ describe('useScrollLogHandlers', () => {
 		});
 		const { result } = renderHook(() => useScrollLogHandlers());
 
-		expect(await result.current.handleDeleteLog('s1')).toBeNull();
+		await expect(result.current.handleDeleteLog('s1')).resolves.toBeNull();
 		await act(async () => {
-			expect(await result.current.handleDeleteLog('u1')).toBeNull();
+			await expect(result.current.handleDeleteLog('u1')).resolves.toBeNull();
 		});
 
 		expect(getSession().shellLogs.map((log) => log.id)).toEqual(['s1']);

@@ -40,6 +40,8 @@ export interface MainPanelHandle {
 	focusBrowserAddressBar: () => void;
 	/** Open the in-page find bar in the active browser tab */
 	openBrowserFind: () => void;
+	/** Turn Design Mode on or off in the active browser tab */
+	toggleBrowserDesignMode: () => void;
 	/** Navigate back in the active browser tab's history */
 	browserBack: () => void;
 	/** Navigate forward in the active browser tab's history */

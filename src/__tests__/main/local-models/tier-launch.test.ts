@@ -160,7 +160,7 @@ describe('a document with a low task and a high task', () => {
 		routing: { tierTargets: { low: ON_SERVER }, harnessDefaults: {} },
 	};
 
-	it('launches the low task on the local source, through the Run on recipe', async () => {
+	it('launches the low task on the local source, through the model source recipe', async () => {
 		const launch = await launchNextTask(DOCUMENT, agent);
 		const plan = planOf(launch);
 

@@ -163,7 +163,7 @@ async function agentEffectiveModel(session: Session): Promise<string | undefined
  *   route its provider and credential need) unless it is there already, and
  *   store the mode. They are refused for a provider that cannot use a gateway
  *   and for an agent on an SSH remote, which cannot reach this machine's
- *   loopback address. A Run on source also refuses a gateway: its own model
+ *   loopback address. A model source also refuses a gateway: its own model
  *   route already owns the target. Clearing remains allowed.
  *
  * Resolves once main holds the new values, so the next request uses them.
@@ -222,7 +222,7 @@ export type SetAgentBackgroundRequestsResult =
 
 /**
  * Why an agent cannot be put on the Maestro token proxy, or null when it can.
- * A Run on source owns the agent's model route; a provider without gateway
+ * A model source owns the agent's model route; a provider without gateway
  * support has no base-URL variable to set; an agent on an SSH remote cannot
  * reach this machine's loopback address. The one rule the per-agent writer,
  * the proxy default and the Gateway table all apply.

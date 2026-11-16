@@ -112,7 +112,7 @@ export function PullRequestDraftButton({
 		}
 	}, [cwd, baseBranch, onDraft, refresh]);
 
-	if (!verdict || verdict.state === 'off' || verdict.state === 'utility-agent') return null;
+	if (!verdict || verdict.state === 'off' || verdict.state === 'provider') return null;
 
 	const unavailable = verdict.state === 'unavailable';
 	const sourceLabel = localModelAssignmentSourceLabel(verdict.assignment, endpoints);

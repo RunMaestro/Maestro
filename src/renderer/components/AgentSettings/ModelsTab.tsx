@@ -1,8 +1,10 @@
 /**
- * ModelsTab - where the agent's model runs, and what its requests pass
+ * ModelsTab - which model the agent runs and where, and what its requests pass
  * through on the way.
  *
- * Each section is a slot the modal fills: `runOn` (the model target picker),
+ * Each section is a slot the modal fills: `model` (`AgentModelSection`: the
+ * Model field, which also lists Local Models source models, with effort and
+ * the other model options),
  * `tiers` (where a `low`, `medium` or `high` task launches, for a modal that
  * edits an existing agent) and `gateway` (`GatewayUrlField`, plus the Maestro
  * token proxy mode and its Background requests picker where the modal offers
@@ -17,22 +19,22 @@ import { EmptyStatePlaceholder } from '../ui/EmptyStatePlaceholder';
 import { AgentSettingsPanel, type AgentSettingsPanelBaseProps } from './AgentSettingsPanel';
 
 export interface ModelsTabProps extends AgentSettingsPanelBaseProps {
-	runOn?: ReactNode;
+	model?: ReactNode;
 	tiers?: ReactNode;
 	gateway?: ReactNode;
 	systemOne?: ReactNode;
 }
 
-export function ModelsTab({ theme, idPrefix, runOn, tiers, gateway, systemOne }: ModelsTabProps) {
-	const empty = !runOn && !tiers && !gateway && !systemOne;
+export function ModelsTab({ theme, idPrefix, model, tiers, gateway, systemOne }: ModelsTabProps) {
+	const empty = !model && !tiers && !gateway && !systemOne;
 	return (
 		<AgentSettingsPanel
 			theme={theme}
 			idPrefix={idPrefix}
 			tab="models"
-			intro="Where this agent's model runs, and what its requests pass through."
+			intro="Which model this agent runs and where, and what its requests pass through."
 		>
-			{runOn}
+			{model}
 			{tiers}
 			{gateway}
 			{systemOne}

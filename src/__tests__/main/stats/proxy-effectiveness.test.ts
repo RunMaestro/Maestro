@@ -200,7 +200,8 @@ describe.skipIf(!canLoadNodeSqlite())('the proxy usage aggregation on the real v
 		});
 
 		it('reads from the same start as the totals', () => {
-			expect(getTimeRangeStart('week')).toBe(NOW - 7 * DAY_MS);
+			// Calendar-aligned: local midnight six days before today, today included.
+			expect(getTimeRangeStart('week')).toBe(new Date(2027, 0, 14).getTime());
 			add(passthroughProxyRow(), getTimeRangeStart('week'));
 			add(passthroughProxyRow(), getTimeRangeStart('week') - 1);
 
@@ -872,13 +873,14 @@ describe.skipIf(!canLoadNodeSqlite())('the proxy usage aggregation on the real v
 			expect(sum((day) => day.blocksShortened)).toBe(result.effectiveness!.traffic.blocksShortened);
 		});
 
-		it('starts a rolling range part way through its first day', () => {
-			// A week back from the afternoon of the 20th starts on the afternoon of the 13th.
-			add(passthroughProxyRow(), local(13, 9));
-			add(passthroughProxyRow(), local(13, 16));
+		it('starts a range at local midnight of its first day', () => {
+			// A week back from the 20th starts at midnight on the 14th, so the whole
+			// first day is in it and the evening before is not.
+			add(passthroughProxyRow(), local(13, 23));
+			add(passthroughProxyRow(), local(14, 0, 1));
 
 			expect(effectiveness('week').trend).toEqual([
-				expect.objectContaining({ date: '2027-01-13', requests: 1 }),
+				expect.objectContaining({ date: '2027-01-14', requests: 1 }),
 			]);
 		});
 	});

@@ -1078,7 +1078,8 @@ describe('Forced parallel send shortcut', () => {
 		const used = useSettingsStore.getState().keyboardMasteryStats.usedShortcuts;
 		expect(used).toContain('forcedParallelSend');
 		expect(vi.mocked(window.maestro.stats.recordShortcutUsage)).toHaveBeenCalledWith(
-			expect.any(Number)
+			expect.any(Number),
+			'forcedParallelSend'
 		);
 	});
 

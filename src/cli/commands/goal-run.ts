@@ -39,9 +39,9 @@ interface GoalRunOptions {
 	 */
 	model?: string;
 	effort?: string;
-	/** This run's Run on target (`<source id>:<model>` or `provider`), and its context. */
-	runOn?: string;
-	runOnContext?: string;
+	/** This run's model source (`<source id>:<model>` or `provider`), and its context. */
+	modelSource?: string;
+	modelSourceContext?: string;
 	/**
 	 * Hand the run to the running desktop app instead of executing it in this
 	 * process. The run then behaves exactly like one started from the Auto Run
@@ -306,9 +306,9 @@ export async function goalRun(
 		// provider (and honors SSH remotes), so a CLI-side `detectAgent` here would
 		// reject a perfectly runnable agent just because this machine lacks the
 		// binary. Everything after this point is the headless path.
-		// The run's Run on target, by the rules `update-agent --run-on` follows.
+		// The run's model source, by the rules `update-agent --model-source` follows.
 		let runOn: RunOnTarget | undefined;
-		if (options.runOn !== undefined || options.runOnContext !== undefined) {
+		if (options.modelSource !== undefined || options.modelSourceContext !== undefined) {
 			const edit = readRunOnFlags(options, agent, await reportedRunOnFlagContext(options));
 			if (edit.kind === 'refused') {
 				if (useJson) emitError(edit.error, 'BAD_RUN_ON');

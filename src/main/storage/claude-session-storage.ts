@@ -13,13 +13,14 @@ import { parseNativeLines } from '../../shared/maestro-lib/translation/native-re
  */
 
 import path from 'path';
+import { isMainThread } from 'node:worker_threads';
 import os from 'os';
 import fs from 'fs/promises';
-import Store from 'electron-store';
+import type Store from 'electron-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { isExpectedSessionReadError } from '../utils/session-read-errors';
-import { encodeClaudeProjectPath } from '../utils/statsCache';
+import { encodeClaudeProjectPath } from '../../shared/pathUtils';
 import {
 	readFileRemote,
 	listDirWithStatsRemote,
@@ -43,7 +44,9 @@ import type {
 	AgentSessionOrigin,
 	SessionOriginInfo,
 	SessionMessage,
+	DeleteMessagePairResult,
 } from '../agents';
+import { MESSAGE_NOT_IN_TRANSCRIPT } from '../agents/session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import type {
 	ClaudeSessionOrigin,
@@ -54,7 +57,6 @@ import { BaseSessionStorage, MessagePageCollector } from './base-session-storage
 import { forEachJsonlLine } from '../utils/jsonl-stream';
 import { setClaudeSessionOrigin } from './claude-session-origins';
 import type { SearchableMessage } from './base-session-storage';
-import { getProviderAccountDirs } from '../agents/provider-account-dirs';
 export type { ClaudeSessionOriginsData } from '../stores/types';
 
 /**
@@ -276,20 +278,34 @@ async function parseSessionFileRemote(
  * Provides access to Claude Code's local session storage at ~/.claude/projects/
  * Supports both local filesystem access and remote access via SSH.
  */
+/**
+ * Every Claude account tree on this machine, for a session that is not in the
+ * agent's own account.
+ *
+ * Loaded on demand: the lookup reads Maestro's stores, which load `electron`,
+ * and Pianola's memory worker loads this module in a worker thread, where
+ * `electron` does not exist. The worker reads the agent's own tree only.
+ */
+async function otherClaudeAccountDirs(): Promise<string[]> {
+	if (!isMainThread) return [];
+	const { getProviderAccountDirs } = await import('../agents/provider-account-dirs');
+	return getProviderAccountDirs('claude-code');
+}
+
 export class ClaudeSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'claude-code';
 
 	private originsStore: Store<ClaudeSessionOriginsData>;
 
-	constructor(originsStore?: Store<ClaudeSessionOriginsData>) {
+	/**
+	 * `originsStore` is required, never built here: constructing an
+	 * `electron-store` needs `electron`, and Pianola's memory worker loads this
+	 * class in a worker thread, where `electron` does not exist. Main builds the
+	 * store (`initializeSessionStorages`); the worker passes a read-only stand-in.
+	 */
+	constructor(originsStore: Store<ClaudeSessionOriginsData>) {
 		super();
-		// Use provided store or create a new one
-		this.originsStore =
-			originsStore ||
-			new Store<ClaudeSessionOriginsData>({
-				name: 'claude-session-origins',
-				defaults: { origins: {} },
-			});
+		this.originsStore = originsStore;
 	}
 
 	/**
@@ -315,8 +331,17 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 * view, or edited from Maestro. Falls back to the default path so a missing
 	 * file still fails with the usual read error.
 	 */
-	private async locateLocalSessionFile(projectPath: string, sessionId: string): Promise<string> {
-		const defaultFile = path.join(this.getEncodedProjectDir(projectPath), `${sessionId}.jsonl`);
+	private async locateLocalSessionFile(
+		projectPath: string,
+		sessionId: string,
+		ownerAccountDir?: string
+	): Promise<string> {
+		// An agent's own account is the first place to look: the same session ID
+		// can sit in two account trees when a transcript was copied between them.
+		const defaultFile = path.join(
+			this.getEncodedProjectDir(projectPath, ownerAccountDir),
+			`${sessionId}.jsonl`
+		);
 		const exists = async (file: string): Promise<boolean> => {
 			try {
 				await fs.access(file);
@@ -326,7 +351,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			}
 		};
 		if (await exists(defaultFile)) return defaultFile;
-		for (const accountDir of await getProviderAccountDirs('claude-code')) {
+		for (const accountDir of await otherClaudeAccountDirs()) {
 			const candidate = path.join(
 				this.getEncodedProjectDir(projectPath, accountDir),
 				`${sessionId}.jsonl`
@@ -856,12 +881,13 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		sessionId: string,
 		userMessageUuid: string,
 		fallbackContent?: string,
-		sshConfig?: SshRemoteConfig
-	): Promise<{ success: boolean; error?: string; linesRemoved?: number }> {
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
+	): Promise<DeleteMessagePairResult> {
 		try {
 			const sessionFile = sshConfig
-				? this.getSessionPath(projectPath, sessionId, sshConfig)!
-				: await this.locateLocalSessionFile(projectPath, sessionId);
+				? `${this.getRemoteEncodedProjectDir(projectPath, accountDir)}/${sessionId}.jsonl`
+				: await this.locateLocalSessionFile(projectPath, sessionId, accountDir);
 
 			let content: string;
 			if (sshConfig) {
@@ -882,7 +908,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 					hasFallback: !!fallbackContent,
 					remote: !!sshConfig,
 				});
-				return { success: false, error: 'User message not found' };
+				return MESSAGE_NOT_IN_TRANSCRIPT;
 			}
 
 			if (sshConfig) {

@@ -45,6 +45,8 @@ import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
 import { runRemoteMessagePinCommand } from '../../services/messagePins';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
+import { runRemoteDiffReviewCommand } from '../../services/diffReview';
+import type { DiffReviewCommandResult } from '../../../shared/diffReviewCommands';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
 import type { ClosedTabCommandResult } from '../../../shared/closedTabCommands';
 import type { MessagePinCommandResult } from '../../../shared/messagePinCommands';
@@ -330,6 +332,29 @@ async function buildSessionGistBody(session: Session, agentSessionId: string): P
 			? `_Older messages truncated - showing the most recent ${GIST_SESSION_MESSAGE_LIMIT}._\n\n${body}`
 			: body,
 	};
+}
+
+/** Publish the owner's current tab IDs; browser clients never mint replacement IDs. */
+function broadcastTabInventory(session: Session, activeTabChanged = false): void {
+	const tabsForBroadcast = session.aiTabs.map((tab) => ({
+		id: tab.id,
+		agentSessionId: tab.agentSessionId,
+		...inspectTabProvider(tab, session),
+		name: tab.name,
+		starred: tab.starred,
+		inputValue: tab.inputValue,
+		usageStats: tab.usageStats,
+		createdAt: tab.createdAt,
+		state: tab.state,
+		thinkingStartTime: tab.thinkingStartTime,
+		hasUnread: tab.hasUnread,
+	}));
+	window.maestro.web.broadcastTabsChange(
+		session.id,
+		tabsForBroadcast,
+		session.activeTabId || session.aiTabs[0]?.id || '',
+		activeTabChanged
+	);
 }
 
 /**
@@ -1061,6 +1086,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const unsubscribeCloseTab = window.maestro.process.onRemoteCloseTab(
 			(sessionId: string, tabId: string, responseChannel: string) => {
 				let closed = false;
+				let closedSession: Session | undefined;
 				try {
 					updateSessionWith(sessionId, (s) => {
 						const tab = s.aiTabs.find((t) => t.id === tabId);
@@ -1075,8 +1101,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							? result.session
 							: addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
 						closed = true;
+						closedSession = updated;
 						return updated;
 					});
+					// Do not leave a confirmed close waiting for the 500ms inventory poll.
+					if (closedSession) broadcastTabInventory(closedSession);
 				} finally {
 					window.maestro.process.sendRemoteCloseTabResponse(responseChannel, closed);
 				}
@@ -2345,6 +2374,31 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	// Handle a remote Git Diff review verb (`maestro-cli diff-review`). The
+	// pending comments are this renderer's state (the viewer draws them), so
+	// every verb is answered here, through the same service the viewer's Send
+	// Review and Edit in Composer buttons call.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteDiffReviewCommand(
+			(request, responseChannel) => {
+				const reply = (result: DiffReviewCommandResult) =>
+					window.maestro.process.sendRemoteDiffReviewCommandResponse(responseChannel, result);
+				runRemoteDiffReviewCommand(request)
+					.then(reply)
+					.catch((error) => {
+						logger.error('[useRemoteIntegration] Diff review command failed', undefined, error);
+						reply({
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
 	// Handle a remote Auto Run steering verb (`maestro-cli steer-auto-run`). The
 	// notes are this renderer's state and its run loop is what reads them, so
 	// every verb is answered here, through the same service the Thought Stream
@@ -2849,26 +2903,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					prev.tabsHash !== current.tabsHash ||
 					activeTabChanged
 				) {
-					const tabsForBroadcast = session.aiTabs.map((tab) => ({
-						id: tab.id,
-						agentSessionId: tab.agentSessionId,
-						...inspectTabProvider(tab, session),
-						name: tab.name,
-						starred: tab.starred,
-						inputValue: tab.inputValue,
-						usageStats: tab.usageStats,
-						createdAt: tab.createdAt,
-						state: tab.state,
-						thinkingStartTime: tab.thinkingStartTime,
-						hasUnread: tab.hasUnread,
-					}));
-
-					window.maestro.web.broadcastTabsChange(
-						session.id,
-						tabsForBroadcast,
-						current.activeTabId,
-						activeTabChanged
-					);
+					broadcastTabInventory(session, activeTabChanged);
 
 					prevTabsRef.current.set(session.id, current);
 				}

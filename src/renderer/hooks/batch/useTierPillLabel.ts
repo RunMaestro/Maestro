@@ -9,7 +9,7 @@ import { tierPillLabel, type ModelTier } from '../../../shared/modelTiers';
  * (`low · qwen3.5-4b · Maestro`, `high · opus`), or `undefined` for a tier
  * that names no target on this agent.
  *
- * Reads what a launch reads (the agent's tier targets and Run on target, then
+ * Reads what a launch reads (the agent's tier targets and model source, then
  * the harness defaults) through `tierPillLabel`, so the Auto Run panel's model
  * pills and the task's launch cannot disagree. Subscribes to those four agent
  * fields only: the panel must not re-render on every transcript update.

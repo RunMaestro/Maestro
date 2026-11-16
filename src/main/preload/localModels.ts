@@ -282,11 +282,15 @@ function createModelServerApi() {
 		/** Stop it and wait for it to exit. */
 		stop: (): Promise<ModelServerStatus> => ipcRenderer.invoke('localModels:server:stop'),
 
-		/** Change the bind mode or model count, or rotate the key. A running server restarts. */
+		/**
+		 * Change the bind mode or model count, rotate the key (a running server
+		 * restarts for these), or turn start-on-launch on or off.
+		 */
 		set: (patch: {
 			bind?: ModelServerBind;
 			maxModels?: number;
 			rotateKey?: boolean;
+			startOnLaunch?: boolean;
 		}): Promise<ModelServerStatus> => ipcRenderer.invoke('localModels:server:set', patch),
 
 		/** The server's API key, made on first use. For Copy; never log it. */
@@ -481,7 +485,7 @@ export function createLocalModelsApi() {
 
 		/**
 		 * Run a text-generation task through the user's assignment for it. Answers
-		 * `off` or `use-utility-agent` without touching a model; the caller keeps
+		 * `off` or `use-provider` without touching a model; the caller keeps
 		 * its existing path for the latter. Never falls back to another source.
 		 */
 		runTask: (

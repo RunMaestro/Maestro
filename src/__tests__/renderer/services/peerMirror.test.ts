@@ -13,6 +13,7 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 });
 
 import {
+	callMirroredAgentAction,
 	openMirroredAgentByKey,
 	removeMirrorQueuedItem,
 	setMirrorQueuedItemPaused,
@@ -145,6 +146,39 @@ describe('services/peerMirror', () => {
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({ color: 'red', title: 'Could not remove the queued message' })
 			);
+		});
+	});
+
+	describe('callMirroredAgentAction', () => {
+		it('hands back the answer as is, failure code included, with no toast', async () => {
+			const refusal = {
+				ok: false,
+				error: 'Not connected to peer "box".',
+				code: 'host-unavailable',
+			};
+			act$.mockResolvedValue(refusal);
+			const action = { kind: 'update-agent' as const, patch: { model: 'opus' } };
+			expect(await callMirroredAgentAction('box', 'a1', action)).toEqual(refusal);
+			expect(act$).toHaveBeenCalledWith('box', 'a1', action);
+			expect(notifyToast).not.toHaveBeenCalled();
+		});
+
+		it('answers a failed IPC call as a failure with no code', async () => {
+			act$.mockRejectedValue(new Error('channel closed'));
+			const answer = await callMirroredAgentAction('box', 'a1', {
+				kind: 'update-tab',
+				tabId: 't1',
+				patch: { readOnly: true },
+			});
+			expect(answer).toMatchObject({ ok: false });
+			expect(answer && !answer.ok ? answer.code : 'none').toBeUndefined();
+		});
+
+		it('answers null without the federation API', async () => {
+			delete maestro.federation;
+			expect(
+				await callMirroredAgentAction('box', 'a1', { kind: 'update-agent', patch: { name: 'x' } })
+			).toBeNull();
 		});
 	});
 });

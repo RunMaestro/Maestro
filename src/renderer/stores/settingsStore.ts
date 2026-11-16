@@ -49,11 +49,14 @@ import {
 } from '../../shared/local-models/endpoints';
 import {
 	parseLocalModelAssignments,
-	parseUtilitySource,
-	UTILITY_AGENT_ASSIGNMENT,
 	type LocalModelAssignments,
-	type UtilitySource,
 } from '../../shared/local-models/tasks';
+import {
+	DEFAULT_MODEL_MAP,
+	parseModelMap,
+	readModelMap,
+	type ModelMap,
+} from '../../shared/local-models/model-map';
 import { parseHarnessTierDefaults, type HarnessTierDefaults } from '../../shared/modelTiers';
 import { asTokenProxyMode, type TokenProxyMode } from '../../shared/local-models/token-proxy';
 import {
@@ -524,9 +527,7 @@ export interface SettingsStoreState
 	disableConfetti: boolean;
 	suppressWindowsWarning: boolean;
 	userMessageAlignment: 'left' | 'right';
-	utilityAgentId: string | null;
-	utilitySource: UtilitySource;
-	utilityModelId: string | null;
+	modelMap: ModelMap;
 	encoreFeatures: EncoreFeatureFlags;
 	symphonyRegistryUrls: string[];
 	coworkingBrowserInteraction: string[];
@@ -663,9 +664,7 @@ export interface SettingsStoreActions
 	setDisableConfetti: (value: boolean) => void;
 	setSuppressWindowsWarning: (value: boolean) => void;
 	setUserMessageAlignment: (value: 'left' | 'right') => void;
-	setUtilityAgentId: (value: string | null) => void;
-	setUtilitySource: (value: UtilitySource) => void;
-	setUtilityModelId: (value: string | null) => void;
+	setModelMap: (value: ModelMap) => void;
 	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
 	setSymphonyRegistryUrls: (value: string[]) => void;
 	setCoworkingBrowserInteraction: (value: string[]) => void;
@@ -944,9 +943,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		disableConfetti: false,
 		suppressWindowsWarning: false,
 		userMessageAlignment: 'right',
-		utilityAgentId: null,
-		utilitySource: UTILITY_AGENT_ASSIGNMENT,
-		utilityModelId: null,
+		modelMap: DEFAULT_MODEL_MAP,
 		encoreFeatures: DEFAULT_ENCORE_FEATURES,
 		symphonyRegistryUrls: [],
 		coworkingBrowserInteraction: [],
@@ -1525,20 +1522,10 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('userMessageAlignment', value);
 		},
 
-		setUtilityAgentId: (value) => {
-			set({ utilityAgentId: value });
-			window.maestro.settings.set('utilityAgentId', value);
-		},
-
-		setUtilitySource: (value) => {
-			const utilitySource = parseUtilitySource(value);
-			set({ utilitySource });
-			window.maestro.settings.set('utilitySource', utilitySource);
-		},
-
-		setUtilityModelId: (value) => {
-			set({ utilityModelId: value });
-			window.maestro.settings.set('utilityModelId', value);
+		setModelMap: (value) => {
+			const modelMap = parseModelMap(value) ?? DEFAULT_MODEL_MAP;
+			set({ modelMap });
+			window.maestro.settings.set('modelMap', modelMap);
 		},
 
 		setEncoreFeatures: (value) => {
@@ -2821,13 +2808,8 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['userMessageAlignment'] !== undefined)
 			patch.userMessageAlignment = allSettings['userMessageAlignment'] as 'left' | 'right';
 
-		if (allSettings['utilityAgentId'] !== undefined)
-			patch.utilityAgentId = allSettings['utilityAgentId'] as string | null;
-
-		patch.utilitySource = parseUtilitySource(allSettings['utilitySource']);
-
-		if (allSettings['utilityModelId'] !== undefined)
-			patch.utilityModelId = allSettings['utilityModelId'] as string | null;
+		// Reads the old Utility source into the Housekeeping slot until a map is saved.
+		patch.modelMap = readModelMap((key) => allSettings[key]);
 
 		// Encore Features (merge with defaults so a flag the stored object predates
 		// keeps its default instead of reading as off)
@@ -3249,8 +3231,7 @@ export function getSettingsActions() {
 		setOpenedFilePlacement: state.setOpenedFilePlacement,
 		setFileTabAutoRefreshEnabled: state.setFileTabAutoRefreshEnabled,
 		setSuppressWindowsWarning: state.setSuppressWindowsWarning,
-		setUtilityAgentId: state.setUtilityAgentId,
-		setUtilityModelId: state.setUtilityModelId,
+		setModelMap: state.setModelMap,
 		setEncoreFeatures: state.setEncoreFeatures,
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
 		setQuickChatSettings: state.setQuickChatSettings,

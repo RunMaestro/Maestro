@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 import type { AgentConfig, Group, GroupAgentDefaults, Theme, ToolType } from '../../types';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import {
@@ -10,6 +11,15 @@ import {
 	type GroupDefaultsDiff,
 } from '../../../shared/groupAgentDefaults';
 import { backgroundRequestsSupport } from '../../../shared/local-models/background-requests';
+import {
+	defaultLifecycleHook,
+	groupLifecycleProblem,
+	normalizeGroupLifecycle,
+	withGroupLifecycle,
+	type GroupLifecycleHook,
+	type GroupLifecycleProblem,
+	type GroupLifecycleStage,
+} from '../../../shared/groupLifecycle';
 import {
 	agentRunOnSupport,
 	isRunOnSourceTarget,
@@ -25,9 +35,11 @@ import {
 	publishGroupDefaults,
 } from '../../services/groupDefaultsPublish';
 import { useSessionStore } from '../../stores/sessionStore';
+import { lifecycleGroupFor } from '../../services/groupLifecycle';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getEffortConfigKey } from '../../utils/agentEffort';
 import {
+	AgentModelSection,
 	AGENT_FORM_TAB_IDS,
 	AgentProviderSelect,
 	BrowseFolderButton,
@@ -40,19 +52,19 @@ import {
 	ProviderTab,
 	sshFolderPickerUnavailableTitle,
 	SshTab,
+	type AgentSettingsTabId,
 } from '../AgentSettings';
 import { ConfirmModal } from '../ConfirmModal';
 import { SUPPORTED_AGENTS } from '../NewInstanceModal/types';
-import { AgentConfigPanel } from '../shared/AgentConfigPanel';
+import { AgentConfigPanel, type AgentConfigOptionsProps } from '../shared/AgentConfigPanel';
 import { agentEnvVarHandlers } from '../shared/agentEnvVarHandlers';
 import { BackgroundRequestsField } from '../shared/BackgroundRequestsField';
 import { GatewayUrlField } from '../shared/GatewayUrlField';
-import { RunOnField } from '../shared/RunOnField';
 import { TierTargetsField } from '../shared/TierTargetsField';
 import { TokenProxyModeField, tokenProxyModeBlocker } from '../shared/TokenProxyModeField';
 import { FormFieldLabel, FormInput, Modal, ModalFooter, ToggleSwitch } from '../ui';
 import { MODAL_BUTTON_BASE_CLASS } from '../ui/Modal';
-import { ModalTabStrip, useModalTabs } from '../ui/ModalTabStrip';
+import { ModalTabStrip, useModalTabs, type ModalTab } from '../ui/ModalTabStrip';
 import {
 	buildGroupDefaults,
 	groupDefaultsToForm,
@@ -62,10 +74,34 @@ import {
 	type GroupDefaultsForm,
 } from './groupDefaultsForm';
 import { GroupPillLabelField } from './GroupPillLabelField';
+import { LifecycleTab, type LifecycleAgentOption } from './LifecycleTab';
 import { PublishDefaultsDialog, type PublishDialogMember } from './PublishDefaultsDialog';
 import { isImeComposing } from '../../utils/ime';
 
 const TAB_ID_PREFIX = 'group-settings';
+
+/**
+ * The Lifecycle tab is Group Settings' own: the group's Onboarding and
+ * Offboarding prompts. It is no part of the agent form, so it is not in the
+ * shared tab list New Agent and Edit Agent draw.
+ */
+const LIFECYCLE_TAB_ID = 'lifecycle';
+type GroupSettingsTabId = AgentSettingsTabId | typeof LIFECYCLE_TAB_ID;
+const GROUP_SETTINGS_TAB_IDS: readonly GroupSettingsTabId[] = [
+	...AGENT_FORM_TAB_IDS,
+	LIFECYCLE_TAB_ID,
+];
+
+/** The draft the Lifecycle tab edits: every stage present, from the stored hook or its default. */
+function lifecycleDraftFrom(
+	stored: Group['lifecycle']
+): Record<GroupLifecycleStage, GroupLifecycleHook> {
+	const lifecycle = normalizeGroupLifecycle(stored);
+	return {
+		onboarding: lifecycle?.onboarding ?? defaultLifecycleHook('onboarding'),
+		offboarding: lifecycle?.offboarding ?? defaultLifecycleHook('offboarding'),
+	};
+}
 
 /**
  * Every provider a user can pick, installed on this machine or not: a group's
@@ -160,6 +196,13 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 	});
 	// The group's own pill label. Not a default, so it is held apart from the form.
 	const [shortLabel, setShortLabel] = useState(() => group.shortLabel ?? '');
+	// The Lifecycle tab's prompts. Not defaults either: read at the event, never copied.
+	const [lifecycleDraft, setLifecycleDraft] = useState(() => lifecycleDraftFrom(group.lifecycle));
+	const [lifecycleError, setLifecycleError] = useState<GroupLifecycleProblem | null>(null);
+	const setLifecycleHook = useCallback((stage: GroupLifecycleStage, hook: GroupLifecycleHook) => {
+		setLifecycleDraft((prev) => ({ ...prev, [stage]: hook }));
+		setLifecycleError((prev) => (prev?.stage === stage ? null : prev));
+	}, []);
 	const setField = useCallback(
 		<Key extends keyof OwnFormState>(key: Key, value: OwnFormState[Key]) =>
 			setOwn((prev) => ({ ...prev, [key]: value })),
@@ -190,17 +233,19 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 	// The live fleet, for the Peers picker and the group grant's member count.
 	const peerFleet = usePeerFleet(group.id);
 
-	const { activeTab, setActiveTab } = useModalTabs({
-		tabs: AGENT_FORM_TAB_IDS,
+	const { activeTab, setActiveTab } = useModalTabs<GroupSettingsTabId>({
+		tabs: GROUP_SETTINGS_TAB_IDS,
 		initialTab: 'general',
 		rememberKey: 'group-settings',
 		enabled: true,
 	});
 
-	// The provider's own config and models load while the Provider tab shows.
+	// The provider's own config loads while the Provider tab shows, and its
+	// models while either tab that draws a provider field does (the Model field
+	// is on Models).
 	const { setConfigExpanded } = ac;
 	useEffect(() => {
-		setConfigExpanded(activeTab === 'provider');
+		setConfigExpanded(activeTab === 'provider' || activeTab === 'models');
 	}, [activeTab, setConfigExpanded]);
 
 	const toolType = ac.selectedAgent as ToolType | null;
@@ -246,7 +291,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 			setOwn((prev) => ({
 				...prev,
 				...PROVIDER_BOUND_DEFAULTS,
-				// A Run on target names a source and a model, not a provider, so it
+				// A model source names a source and a model, not a provider, so it
 				// is carried across. A provider whose harness cannot use one starts over.
 				runOn: next && agentRunOnSupport(next).supported ? prev.runOn : { type: 'provider' },
 			}));
@@ -269,9 +314,31 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 		if (saveError) fields.push(saveError.field);
 		return fields;
 	}, [workingDirError, saveError]);
-	const tabs = useMemo(
-		() => buildAgentSettingsTabs(AGENT_FORM_TAB_IDS, errorFields),
-		[errorFields]
+	const tabs = useMemo<ModalTab<GroupSettingsTabId>[]>(
+		() => [
+			...buildAgentSettingsTabs(AGENT_FORM_TAB_IDS, errorFields),
+			{ id: LIFECYCLE_TAB_ID, label: 'Lifecycle', icon: RefreshCw, hasError: !!lifecycleError },
+		],
+		[errorFields, lifecycleError]
+	);
+
+	// The pickers of the Lifecycle tab: every agent (a steward may sit in any
+	// group), and the agents this group's lifecycle applies to.
+	const sessions = useSessionStore((s) => s.sessions);
+	const groups = useSessionStore((s) => s.groups);
+	const lifecycleAgents = useMemo<LifecycleAgentOption[]>(
+		() =>
+			sessions
+				.filter((agent) => agent.toolType !== 'terminal')
+				.map((agent) => ({ id: agent.id, name: agent.name })),
+		[sessions]
+	);
+	const lifecycleMembers = useMemo<LifecycleAgentOption[]>(
+		() =>
+			sessions
+				.filter((agent) => lifecycleGroupFor(agent, groups)?.id === group.id)
+				.map((agent) => ({ id: agent.id, name: agent.name })),
+		[sessions, groups, group.id]
 	);
 
 	// The profile and the pill label, in one write. A blank label removes
@@ -280,11 +347,16 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 		(defaults: GroupAgentDefaults | undefined) => {
 			setGroups((prev) =>
 				prev.map((g) =>
-					g.id === group.id ? withGroupShortLabel(withGroupDefaults(g, defaults), shortLabel) : g
+					g.id === group.id
+						? withGroupLifecycle(
+								withGroupShortLabel(withGroupDefaults(g, defaults), shortLabel),
+								lifecycleDraft
+							)
+						: g
 				)
 			);
 		},
-		[setGroups, group.id, shortLabel]
+		[setGroups, group.id, shortLabel, lifecycleDraft]
 	);
 
 	// Save builds the profile with every blank or default-valued field omitted
@@ -296,6 +368,16 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 	// label only, a provider or directory only). That saves with no dialog,
 	// because a dialog with nothing to decide teaches people to dismiss it unread.
 	const handleSave = useCallback(() => {
+		// The lifecycle prompts are checked first: a problem there is on a tab the
+		// person may not be looking at, and the defaults below may open a dialog.
+		const lifecycleProblem = groupLifecycleProblem(lifecycleDraft, {
+			liveAgentIds: useSessionStore.getState().sessions.map((agent) => agent.id),
+		});
+		if (lifecycleProblem) {
+			setLifecycleError(lifecycleProblem);
+			setActiveTab(LIFECYCLE_TAB_ID);
+			return;
+		}
 		const result = buildGroupDefaults(form, { homeDir, sshRemoteName, endpoints });
 		if (!result.ok) {
 			// The working directory reports its own problem live, under its input.
@@ -332,6 +414,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 		writeProfile,
 		onClose,
 		setActiveTab,
+		lifecycleDraft,
 	]);
 
 	// The profile and the agents in one pass: the service writes every member
@@ -399,7 +482,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 			? ac.customEnvVars
 			: (ac.agentConfig.customEnvVars as Record<string, string> | undefined);
 
-	// A Run on target takes the gateway's place: both gateway controls say so.
+	// A source model takes the gateway's place: both gateway controls say so.
 	const gatewaySkippedReason = isRunOnSourceTarget(own.runOn)
 		? RUN_ON_GATEWAY_SKIPPED_REASON
 		: undefined;
@@ -408,6 +491,40 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 	const proxyMode = proxyBlocker ? 'off' : own.tokenProxyMode;
 	const offersBackgroundRequests =
 		!!toolType && backgroundRequestsSupport(toolType).supported && proxyMode !== 'off';
+
+	// The provider's config options, shared by the Provider tab (the harness
+	// options) and the Models tab (the model options).
+	const groupOptionProps =
+		toolType && selectedAgentConfig
+			? ({
+					theme,
+					agent: selectedAgentConfig,
+					autoModelFor: { tierTargets: own.tierTargets, runOn: own.runOn },
+					agentConfig: panelConfig,
+					onConfigChange: (key, value) => {
+						// Model, effort and context window belong to the group once
+						// touched. Every other option is the provider's own config,
+						// as it is in every other form that mounts this panel.
+						if (key === 'model') setField('customModel', value);
+						else if (key === effortKey) setField('customEffort', value);
+						else if (key === 'contextWindow') setField('customContextWindow', value);
+						else {
+							const next = { ...ac.agentConfig, [key]: value };
+							ac.setAgentConfig(next);
+							ac.agentConfigRef.current = next;
+						}
+					},
+					onConfigBlur: async (key) => {
+						if (key === 'model' || key === effortKey || key === 'contextWindow') return;
+						await ac.saveAgentConfig(toolType);
+					},
+					availableModels: ac.availableModels,
+					loadingModels: ac.loadingModels,
+					onRefreshModels: ac.refreshModels,
+					dynamicOptions: ac.dynamicOptions,
+					loadingDynamicOptions: ac.loadingDynamicOptions,
+				} satisfies AgentConfigOptionsProps)
+			: null;
 
 	return (
 		<>
@@ -458,18 +575,31 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 					}}
 					data-testid="group-settings-explainer"
 				>
-					<p>
-						These are the starting values for{' '}
-						<strong style={{ color: theme.colors.textMain }}>new</strong> agents created in this
-						group. When you add an agent here, the create-agent form opens with everything below
-						already filled in, and you can change any of it before, or after, the agent is created.
-					</p>
-					<p>
-						Nothing here is read while an agent runs. Every agent keeps its own settings, and moving
-						an agent into this group does not change it. When you save a change, Maestro asks
-						whether to publish that change to the agents already in this group, or to keep it for
-						new agents only. Leave a field blank to use the Maestro default.
-					</p>
+					{activeTab === LIFECYCLE_TAB_ID ? (
+						<p data-testid="group-settings-lifecycle-explainer">
+							Unlike the other tabs, these prompts are{' '}
+							<strong style={{ color: theme.colors.textMain }}>not copied into agents</strong>.
+							Maestro reads them at the moment an agent or worktree joins or leaves this group, so
+							an edit here applies to the next event. Each prompt runs in a tab of its own, in the
+							background.
+						</p>
+					) : (
+						<>
+							<p>
+								These are the starting values for{' '}
+								<strong style={{ color: theme.colors.textMain }}>new</strong> agents created in this
+								group. When you add an agent here, the create-agent form opens with everything below
+								already filled in, and you can change any of it before, or after, the agent is
+								created.
+							</p>
+							<p>
+								Nothing here is read while an agent runs. Every agent keeps its own settings, and
+								moving an agent into this group does not change it. When you save a change, Maestro
+								asks whether to publish that change to the agents already in this group, or to keep
+								it for new agents only. Leave a field blank to use the Maestro default.
+							</p>
+						</>
+					)}
 				</div>
 
 				<ModalTabStrip
@@ -562,18 +692,18 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 									</AgentProviderSelect>
 
 									{/* Provider settings (path, args, provider-specific options). Its
-									    env vars share this Provider tab. Path, args, model, effort
-									    and context window are saved with the group. */}
-									{toolType && selectedAgentConfig && (
+									    env vars share this Provider tab; the model options are on
+									    the Models tab. Path, args, model, effort and context window
+									    are saved with the group. */}
+									{groupOptionProps && (
 										<div>
 											<FormFieldLabel theme={theme}>
-												{getAgentDisplayName(toolType)} Settings
+												{getAgentDisplayName(groupOptionProps.agent.id)} Settings
 											</FormFieldLabel>
 											<AgentConfigPanel
-												theme={theme}
-												agent={selectedAgentConfig}
+												{...groupOptionProps}
 												hideEnvVars
-												autoModelFor={{ tierTargets: own.tierTargets, runOn: own.runOn }}
+												hideModelOptions
 												customPath={ac.customPath}
 												onCustomPathChange={ac.setCustomPath}
 												onCustomPathBlur={() => {
@@ -585,30 +715,6 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 													/* Saved on modal save */
 												}}
 												{...envVarProps}
-												agentConfig={panelConfig}
-												onConfigChange={(key, value) => {
-													// Model, effort and context window belong to the group once
-													// touched. Every other option is the provider's own config,
-													// as it is in every other form that mounts this panel.
-													if (key === 'model') setField('customModel', value);
-													else if (key === effortKey) setField('customEffort', value);
-													else if (key === 'contextWindow') setField('customContextWindow', value);
-													else {
-														const next = { ...ac.agentConfig, [key]: value };
-														ac.setAgentConfig(next);
-														ac.agentConfigRef.current = next;
-													}
-												}}
-												onConfigBlur={async (key) => {
-													if (key === 'model' || key === effortKey || key === 'contextWindow')
-														return;
-													await ac.saveAgentConfig(toolType);
-												}}
-												availableModels={ac.availableModels}
-												loadingModels={ac.loadingModels}
-												onRefreshModels={ac.refreshModels}
-												dynamicOptions={ac.dynamicOptions}
-												loadingDynamicOptions={ac.loadingDynamicOptions}
 												onRefreshAgent={ac.refreshAgent}
 												refreshingAgent={ac.refreshingAgent}
 												isSshEnabled={sshRemoteChosen}
@@ -662,31 +768,38 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 						<ModelsTab
 							theme={theme}
 							idPrefix={TAB_ID_PREFIX}
-							runOn={
-								toolType ? (
-									<div data-testid="group-settings-run-on">
-										<RunOnField
-											theme={theme}
-											toolType={toolType}
-											value={own.runOn}
-											onChange={(target) => {
-												setField('runOn', target);
-												clearError('runOn');
+							model={
+								groupOptionProps ? (
+									<div data-testid="group-settings-model">
+										<AgentModelSection
+											{...groupOptionProps}
+											modelSource={{
+												value: own.runOn,
+												onChange: (target) => {
+													setField('runOn', target);
+													clearError('runOn');
+												},
+												userEnvVars: effectiveEnvVars,
+												sshRemoteName,
+												error: errorFor('runOn'),
+												testId: 'group-settings-model-source',
 											}}
-											userEnvVars={effectiveEnvVars}
-											sshRemoteName={sshRemoteName}
-											error={errorFor('runOn')}
-											testId="group-settings-run-on-field"
 										/>
 									</div>
+								) : toolType ? (
+									ac.isDetecting ? (
+										<p className="text-sm" style={{ color: theme.colors.textDim }}>
+											Detecting agents...
+										</p>
+									) : undefined
 								) : (
 									<p
 										className="text-sm"
 										style={{ color: theme.colors.textDim }}
 										data-testid="group-settings-models-no-provider"
 									>
-										Choose a provider on the Provider tab to set where its model runs, its tiers and
-										its gateway. A model target belongs to one provider's harness.
+										Choose a provider on the Provider tab to set its model, its tiers and its
+										gateway. A model belongs to one provider's harness.
 									</p>
 								)
 							}
@@ -702,6 +815,7 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 												clearError('tierTargets');
 											}}
 											runOn={own.runOn}
+											model={own.customModel}
 											error={errorFor('tierTargets')}
 											testId="group-settings-tier-targets"
 										/>
@@ -821,6 +935,18 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 							sshRemotes={ac.sshRemotes}
 							sshRemoteConfig={ac.sshRemoteConfig}
 							onSshRemoteConfigChange={ac.setSshRemoteConfig}
+						/>
+					)}
+
+					{activeTab === LIFECYCLE_TAB_ID && (
+						<LifecycleTab
+							theme={theme}
+							groupId={group.id}
+							hooks={lifecycleDraft}
+							onChange={setLifecycleHook}
+							problem={lifecycleError}
+							agents={lifecycleAgents}
+							members={lifecycleMembers}
 						/>
 					)}
 				</div>

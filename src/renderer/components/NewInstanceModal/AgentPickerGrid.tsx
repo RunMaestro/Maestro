@@ -61,6 +61,7 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 	codexTransportByAgent,
 	onCodexTransportChange,
 	hideEnvVars = false,
+	hideModelOptions = false,
 	autoModelFor,
 	harnessControlModeByAgent,
 	onHarnessControlModeChange,
@@ -248,6 +249,7 @@ export const AgentPickerGrid = React.memo(function AgentPickerGrid({
 											theme={theme}
 											agent={agent}
 											hideEnvVars={hideEnvVars}
+											hideModelOptions={hideModelOptions}
 											autoModelFor={autoModelFor}
 											customPath={customAgentPaths[agent.id] || ''}
 											onCustomPathChange={(value) => {

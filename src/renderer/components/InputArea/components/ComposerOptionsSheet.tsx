@@ -53,7 +53,7 @@ interface ComposerOptionsSheetProps {
 	tabShowThinking: ThinkingMode;
 	onThinkingModeChange?: (mode: ThinkingMode) => void;
 	currentModel?: string;
-	/** Effective Run on model and source, when they override the provider model. */
+	/** Effective model source (model and source), when they override the provider model. */
 	runOn?: string;
 	availableModels: string[];
 	/** What the Auto row says for this agent. Auto itself is in `availableModels`. */
@@ -223,8 +223,8 @@ export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 				>
 					{runOn && (
 						<p className="px-4 py-2 text-xs" style={{ color: theme.colors.textDim }}>
-							Run on: {runOn}. This target overrides named provider models. Change Run on in Edit
-							Agent &gt; Models.
+							Model source: {runOn}. This source overrides named provider models. Change the model
+							source in Edit Agent &gt; Models.
 						</p>
 					)}
 					{onModelChange &&

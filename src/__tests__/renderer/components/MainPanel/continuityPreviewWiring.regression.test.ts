@@ -13,15 +13,12 @@
  * Agent, which first switch to the tab and then open a modal on the active tab,
  * the preview opens for the tab it was asked about and selects nothing.
  */
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readTextLf } from '../../../helpers/sourceText';
 
 const read = (file: string) =>
-	readFileSync(
-		resolve(__dirname, '../../../../renderer/components/MainPanel', file),
-		'utf8'
-	).replace(/\r\n/g, '\n');
+	readTextLf(resolve(__dirname, '../../../../renderer/components/MainPanel', file));
 
 const MAIN_PANEL = read('MainPanel.tsx');
 const TILED_LAYOUT = read('TiledLayout.tsx');

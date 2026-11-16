@@ -115,6 +115,14 @@ describe('applyGroupDefaultsPatch', () => {
 			if (!result.ok) expect(result.error).toContain('--model');
 		});
 
+		it('names the model source by its CLI flag when the group has no provider', () => {
+			const result = apply(undefined, {
+				runOn: { type: 'source', endpointId: 'ollama', model: 'qwen3', contextTokens: 65536 },
+			});
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.error).toContain('--model-source belongs to one provider');
+		});
+
 		it('clears the provider and everything bound to it with null', () => {
 			const defaults = defaultsOf(
 				apply(

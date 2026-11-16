@@ -16,7 +16,7 @@
  *   assignments and fail policies, then what agents may ask and spend, and
  *   the decision ledger.
  * - System Two: the tasks whose output is text for someone to read or run,
- *   with their assignments, the Utility Agent, and the harness tier defaults
+ *   with their assignments, the Model Map, and the harness tier defaults
  *   (which model a low, medium or high task launches on).
  * - Gateway: the proxy each agent's own provider traffic goes through, and
  *   what the Maestro token proxy carried.
@@ -63,7 +63,7 @@ import { SystemOneAgentsSection } from './SystemOneAgentsSection';
 import { SystemOneEngineSection } from './SystemOneEngineCard';
 import { SystemOneLedgerSection } from './SystemOneLedgerSection';
 import { TierDefaultsSection } from './TierDefaultsSection';
-import { UtilityAgentSettings } from './UtilityAgentSettings';
+import { ModelMapSettings } from './ModelMapSettings';
 import type { ModelsSettingsNav } from './useModelsSettingsNav';
 
 /**
@@ -177,7 +177,7 @@ export function ModelsSettingsTab({ theme, nav }: ModelsSettingsTabProps) {
 
 			{panel === 'system-two' && (
 				<>
-					<UtilityAgentSettings theme={theme} models={models} endpoints={endpoints} />
+					<ModelMapSettings theme={theme} models={models} endpoints={endpoints} />
 					<div data-setting-id="local-models-system-two">
 						<SettingsSectionHeading
 							icon={Sparkles}

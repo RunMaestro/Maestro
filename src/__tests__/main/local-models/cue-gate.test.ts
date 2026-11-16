@@ -125,11 +125,11 @@ describe('evaluateCueGate', () => {
 		expect(check.reason).toMatch(/took too long/);
 	});
 
-	it('is unavailable, with no agent path, for a hand-edited Utility Agent assignment', async () => {
-		vi.mocked(runLocalTask).mockResolvedValue({ status: 'use-utility-agent' });
+	it('is unavailable, with no agent path, for a hand-edited Model Map assignment', async () => {
+		vi.mocked(runLocalTask).mockResolvedValue({ status: 'use-provider' });
 		const check = await evaluateCueGate(REQUEST);
 		expect(check.status).toBe('unavailable');
-		expect(check.reason).toMatch(/cannot run on the Utility Agent/);
+		expect(check.reason).toMatch(/cannot run on a provider agent/);
 	});
 
 	it('lets an unclassified engine failure propagate to its caller', async () => {

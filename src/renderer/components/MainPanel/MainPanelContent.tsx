@@ -39,6 +39,7 @@ import { useTabStore } from '../../stores/tabStore';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type { BrowserTab } from '../../../shared/browserPage';
+import { deliverDesignPick } from '../../services/designModePick';
 import type {
 	Session,
 	Theme,
@@ -1331,6 +1332,13 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							isActive={isBrowserFocusActive}
 							onUpdateTab={(tid, updates) =>
 								handleBrowserTabUpdate?.(activeSession.id, tid, updates)
+							}
+							onDesignPick={async (capture) =>
+								!!(await deliverDesignPick({
+									...capture,
+									sessionId: activeSession.id,
+									browserTabId: tabId,
+								}))
 							}
 						/>
 					</div>

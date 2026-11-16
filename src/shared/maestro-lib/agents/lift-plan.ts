@@ -65,6 +65,16 @@ export function liftRemoteCwd(agent: AgentRecord): string {
 }
 
 /**
+ * The playbook folder the host keeps for the agent, or undefined for the host's default. A folder
+ * outside the working directory is a path on the remote the host may not mean the same way, so it
+ * stays behind and the host uses `.maestro/playbooks` under `cwd`.
+ */
+export function liftedAutoRunFolder(agent: AgentRecord, cwd: string): string | undefined {
+	const folder = stringField(agent.autoRunFolderPath);
+	return folder && cwd && isPathAtOrUnderRoot(folder, cwd) ? folder : undefined;
+}
+
+/**
  * The first reason the agent cannot be lifted, from its record alone, or null. Checked in the
  * order a person fixes them. `remotes` is this machine's SSH remote list.
  */
@@ -295,10 +305,8 @@ export function planAgentLift(input: PlanAgentLiftInput): LiftPlan {
 	}
 	stays.push(...queueStays);
 
-	// A playbook folder outside the working directory is a path on the remote the host may not
-	// mean the same way; the host's default (`.maestro/playbooks` under cwd) is used instead.
 	const autoRunFolder = stringField(agent.autoRunFolderPath);
-	const keepAutoRun = autoRunFolder && cwd && isPathAtOrUnderRoot(autoRunFolder, cwd);
+	const keepAutoRun = liftedAutoRunFolder(agent, cwd) !== undefined;
 	if (autoRunFolder && !keepAutoRun) {
 		stays.push({
 			kind: 'auto-run-folder',

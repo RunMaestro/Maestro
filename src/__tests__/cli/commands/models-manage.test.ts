@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 
 vi.mock('../../../cli/services/storage', () => ({
 	readLocalModelAssignments: vi.fn(() => ({})),
-	readSettingValue: vi.fn(),
+	readStoredModelMap: vi.fn(),
 }));
 
 vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
@@ -31,7 +31,8 @@ import {
 	modelsRemoveHf,
 	modelsVerify,
 } from '../../../cli/commands/models-manage';
-import { readLocalModelAssignments, readSettingValue } from '../../../cli/services/storage';
+import { readLocalModelAssignments, readStoredModelMap } from '../../../cli/services/storage';
+import { DEFAULT_MODEL_MAP } from '../../../shared/local-models/model-map';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { ExitCode } from '../../../cli/exit-codes';
 import {
@@ -119,7 +120,7 @@ describe('models list|install|pause|cancel|remove|verify commands', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.mocked(readSettingValue).mockReturnValue(undefined);
+		vi.mocked(readStoredModelMap).mockReturnValue(DEFAULT_MODEL_MAP);
 		vi.mocked(readLocalModelAssignments).mockReturnValue({});
 		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -448,12 +449,17 @@ describe('models list|install|pause|cancel|remove|verify commands', () => {
 	});
 
 	describe('remove', () => {
-		it('includes inherited utility tasks in the in-use guard', async () => {
-			vi.mocked(readSettingValue).mockReturnValue({ type: 'local', modelId: QWEN3_1_7B_ID });
+		it('includes tasks that follow a Model Map slot in the in-use guard', async () => {
+			vi.mocked(readStoredModelMap).mockReturnValue({
+				agent: DEFAULT_MODEL_MAP.agent,
+				housekeeping: { type: 'local', modelId: QWEN3_1_7B_ID },
+			});
 			await expect(modelsRemove(QWEN3_1_7B_ID, {})).rejects.toThrow('__exit__');
+			// Summaries and Git drafts follow the Agent model, so they are not named.
 			expect(errorSpy.mock.calls[0][0]).toMatch(
-				/assigned to Tab naming, Summaries, AI command mode/
+				/assigned to Tab naming, AI command mode, Spoken notices/
 			);
+			expect(errorSpy.mock.calls[0][0]).not.toMatch(/Summaries/);
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 

@@ -439,6 +439,35 @@ describe('VoiceProvidersPanel', () => {
 		expect(window.maestro.settings.set).not.toHaveBeenCalled();
 	});
 
+	it('names each ready slot in the preset summary', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValue({});
+		vi.mocked(voice().models.readiness).mockResolvedValue({
+			canStartSession: true,
+			canRunHandsFree: true,
+			slots: (['microphone', 'stt', 'tts', 'brain', 'wake-word'] as const).map((slot) => ({
+				slot,
+				providerId: 'any',
+				satisfied: true,
+			})),
+			blocking: [],
+		});
+
+		render(<VoiceProvidersPanel theme={mockTheme} enabled />);
+		await screen.findByText('Everything runs on this Mac');
+
+		// A bare "Ready." per slot is five identical lines that say nothing about
+		// which slot each one is.
+		for (const label of [
+			'Microphone',
+			'Speech-to-Text',
+			'Text-to-Speech',
+			'Conductor Brain',
+			'Wake word',
+		]) {
+			expect(await screen.findByText(`${label}:`)).toBeInTheDocument();
+		}
+	});
+
 	it('keeps a legacy mixed configuration editable without rewriting it', async () => {
 		vi.mocked(window.maestro.settings.get).mockResolvedValue({
 			providers: { stt: 'whisper-local', tts: 'elevenlabs-tts', brain: 'anthropic-brain' },

@@ -949,7 +949,7 @@ describe('runAutoRunInRuntime', () => {
 		});
 	});
 
-	it("forwards the run's Run on target", async () => {
+	it("forwards the run's model source", async () => {
 		const runOn = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
 		const { launch } = await launched({ runOn });
 		expect(launch).toHaveBeenCalledWith('a1', expect.objectContaining({ runOn }));

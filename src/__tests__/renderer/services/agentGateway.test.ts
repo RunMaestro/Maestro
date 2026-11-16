@@ -482,7 +482,7 @@ describe('flushAgentToStore', () => {
 
 describe('setAgentTokenProxyMode', () => {
 	it.each(['passthrough', 'compress', 'compress-early'] as const)(
-		'refuses %s on a Run on source before setting up or persisting the proxy',
+		'refuses %s on a model source before setting up or persisting the proxy',
 		async (mode) => {
 			const original = seed({ runOn: QWEN });
 			expect(await setAgentTokenProxyMode('agent-1', mode)).toEqual({
@@ -495,7 +495,7 @@ describe('setAgentTokenProxyMode', () => {
 		}
 	);
 
-	it('still clears stale proxy settings on a Run on source', async () => {
+	it('still clears stale proxy settings on a model source', async () => {
 		seed({ runOn: QWEN, gatewayUrl: proxyUrl('/anthropic'), tokenProxyMode: 'compress' });
 		expect(await setAgentTokenProxyMode('agent-1', 'off')).toMatchObject({ ok: true, mode: 'off' });
 		expect(stored().gatewayUrl).toBeUndefined();
@@ -694,7 +694,7 @@ describe('setAgentTokenProxyMode', () => {
 });
 
 describe('setAgentGatewayUrl and the proxy mode', () => {
-	it('refuses setting a gateway on a Run on source while allowing it to be cleared', async () => {
+	it('refuses setting a gateway on a model source while allowing it to be cleared', async () => {
 		const original = seed({ runOn: QWEN, gatewayUrl: 'https://old.example.com' });
 		expect(await setAgentGatewayUrl('agent-1', 'https://new.example.com')).toEqual({
 			ok: false,

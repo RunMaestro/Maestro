@@ -97,6 +97,10 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 		}
 
 		if (isAIMode && currentActiveTab) {
+			// The provider that ran this turn (a tab may have switched since), and
+			// its session for this tab. The message leaves the tab only once it has
+			// left the agent's context too, or the provider confirms it never
+			// recorded it (a turn that failed before the provider wrote anything).
 			const provider =
 				log.turnProvider ?? resolveTabNativeProvider(currentActiveTab, currentSession);
 			const projected = projectTabProvider(currentSession, currentActiveTab, provider);
@@ -104,7 +108,8 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 			if (agentSessionId) {
 				try {
 					// A remote agent's transcript lives on its SSH remote, under the
-					// remote working directory rather than the local cwd.
+					// remote working directory rather than the local cwd. Passing the
+					// agent's id lets main resolve its own account directory too.
 					const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(
 						projected.agent
 					);
@@ -114,13 +119,14 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 						agentSessionId,
 						logId,
 						log.text,
-						sshRemoteId
+						sshRemoteId,
+						currentSession.id
 					);
 					if (!result.success) throw new Error(result.error || 'The provider refused deletion.');
 				} catch (error) {
 					logger.error('[handleDeleteLog] Provider deletion failed', undefined, error);
 					notifyToast({
-						type: 'error',
+						color: 'red',
 						title: 'Message was not deleted',
 						message: `It remains in the agent's context. ${error instanceof Error ? error.message : String(error)}`,
 						sessionId: currentSession.id,
@@ -131,6 +137,8 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 			}
 
 			const commandText = log.text.trim();
+			// Remove by id against the CURRENT tab: output may have streamed in
+			// while the provider edit was awaited, and a snapshot would drop it.
 			const deletedLogIds = new Set(logs.slice(logIndex, endIndex).map((entry) => entry.id));
 
 			setSessions((prev: Session[]) =>

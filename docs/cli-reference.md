@@ -535,19 +535,19 @@ maestro-cli playbook <playbook-id> --wait --json
 
 Launch a Goal-Driven Auto Run: pursue a free-text goal until done
 
-| Option                      | Description                                                                                           | Default |
-| --------------------------- | ----------------------------------------------------------------------------------------------------- | ------- |
-| `--exit-criteria <text>`    | What "done" looks like and when to declare a deadlock                                                 | -       |
-| `--max-iterations <n>`      | Cap iterations (default: infinite)                                                                    | -       |
-| `--no-history`              | Do not write history entries                                                                          | -       |
-| `--json`                    | Output as JSON lines (for scripting)                                                                  | -       |
-| `--verbose`                 | Show full prompt sent to agent on each iteration                                                      | -       |
-| `--visible`                 | Run inside the Maestro desktop app (visible Auto Run) instead of headlessly                           | -       |
-| `--wait`                    | With --visible, wait for the agent to become available if busy                                        | -       |
-| `--model <model>`           | Model to use for this run only, overriding the agent's configured default                             | -       |
-| `--effort <effort>`         | Reasoning effort for this run only, overriding the agent's configured default                         | -       |
-| `--run-on <target>`         | Where this run's model runs, overriding the agent's Run on target: <source id>:<model>, or "provider" | -       |
-| `--run-on-context <tokens>` | Context size for the --run-on source                                                                  | -       |
+| Option                            | Description                                                                                          | Default |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------- | ------- |
+| `--exit-criteria <text>`          | What "done" looks like and when to declare a deadlock                                                | -       |
+| `--max-iterations <n>`            | Cap iterations (default: infinite)                                                                   | -       |
+| `--no-history`                    | Do not write history entries                                                                         | -       |
+| `--json`                          | Output as JSON lines (for scripting)                                                                 | -       |
+| `--verbose`                       | Show full prompt sent to agent on each iteration                                                     | -       |
+| `--visible`                       | Run inside the Maestro desktop app (visible Auto Run) instead of headlessly                          | -       |
+| `--wait`                          | With --visible, wait for the agent to become available if busy                                       | -       |
+| `--model <model>`                 | Model to use for this run only, overriding the agent's configured default                            | -       |
+| `--effort <effort>`               | Reasoning effort for this run only, overriding the agent's configured default                        | -       |
+| `--model-source <target>`         | Where this run's model runs, overriding the agent's model source: <source id>:<model>, or "provider" | -       |
+| `--model-source-context <tokens>` | Context size for the model named by --model-source                                                   | -       |
 
 ```bash
 maestro-cli goal-run <agent-id> "Make the build pass" --exit-criteria "npm test exits 0" --max-iterations 5
@@ -1286,6 +1286,19 @@ Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)
 maestro-cli close-browser <tab-id>
 ```
 
+## `maestro-cli browser-pick <tab>`
+
+Add an element of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)
+
+| Option                 | Description                                             | Default |
+| ---------------------- | ------------------------------------------------------- | ------- |
+| `-s, --selector <css>` | CSS selector of the element (the first match is used)   | -       |
+| `--note <text>`        | Note added under the element, as typed in the pick card | -       |
+| `-a, --agent <id>`     | Agent that owns the tab (defaults to active)            | -       |
+| `--background`         | Add it without switching the view to the AI tab         | -       |
+| `--focus`              | Switch to the AI tab the element lands in (default)     | -       |
+| `--json`               | Output as JSON (for scripting)                          | -       |
+
 ## `maestro-cli open-terminal`
 
 Open a new terminal tab in the Maestro desktop app
@@ -1371,27 +1384,27 @@ maestro-cli refresh-auto-run --agent <agent-id>
 
 Configure and optionally launch an auto-run with documents
 
-| Option                        | Description                                                                                                                                                 | Default |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `-a, --agent <id>`            | Target agent by ID (use "maestro-cli list agents" to find IDs)                                                                                              | -       |
-| `-p, --prompt <text>`         | Custom prompt for the auto-run                                                                                                                              | -       |
-| `--loop`                      | Enable looping                                                                                                                                              | -       |
-| `--max-loops <n>`             | Maximum loop count (implies --loop)                                                                                                                         | -       |
-| `--save-as <name>`            | Save as a playbook with this name (don't launch)                                                                                                            | -       |
-| `--launch`                    | Start the auto-run immediately (default: just configure)                                                                                                    | -       |
-| `--reset-on-completion`       | Enable reset-on-completion for all documents                                                                                                                | -       |
-| `--worktree`                  | Run the auto-run inside a git worktree (requires --launch, --branch, --worktree-path)                                                                       | -       |
-| `--branch <name>`             | Branch name for the worktree (created if it does not exist)                                                                                                 | -       |
-| `--base-branch <name>`        | Ref the new branch should be based on when it does not yet exist (e.g. "rc" or "main"). Defaults to the main repo HEAD.                                     | -       |
-| `--worktree-path <path>`      | Filesystem path for the worktree (must be a sibling of the repo)                                                                                            | -       |
-| `--create-pr`                 | Open a GitHub PR when the auto-run completes successfully                                                                                                   | -       |
-| `--pr-target-branch <branch>` | Target branch for the PR (defaults to the repo default branch)                                                                                              | -       |
-| `--model <model>`             | Model to use for this run only, overriding the agent's configured default                                                                                   | -       |
-| `--effort <effort>`           | Reasoning effort for this run only, overriding the agent's configured default                                                                               | -       |
-| `--ignore-model-hints`        | Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)                                                 | -       |
-| `--run-on <target>`           | Where this run's model runs, overriding the agent's Run on target: <source id>:<model> (a Local Models source), or "provider" for the provider's own models | -       |
-| `--run-on-context <tokens>`   | Context size for the --run-on source (default: what the source reports, or the agent's own when it is the same source and model)                            | -       |
-| `--json`                      | Output as JSON (for scripting)                                                                                                                              | -       |
+| Option                            | Description                                                                                                                                                | Default |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`                | Target agent by ID (use "maestro-cli list agents" to find IDs)                                                                                             | -       |
+| `-p, --prompt <text>`             | Custom prompt for the auto-run                                                                                                                             | -       |
+| `--loop`                          | Enable looping                                                                                                                                             | -       |
+| `--max-loops <n>`                 | Maximum loop count (implies --loop)                                                                                                                        | -       |
+| `--save-as <name>`                | Save as a playbook with this name (don't launch)                                                                                                           | -       |
+| `--launch`                        | Start the auto-run immediately (default: just configure)                                                                                                   | -       |
+| `--reset-on-completion`           | Enable reset-on-completion for all documents                                                                                                               | -       |
+| `--worktree`                      | Run the auto-run inside a git worktree (requires --launch, --branch, --worktree-path)                                                                      | -       |
+| `--branch <name>`                 | Branch name for the worktree (created if it does not exist)                                                                                                | -       |
+| `--base-branch <name>`            | Ref the new branch should be based on when it does not yet exist (e.g. "rc" or "main"). Defaults to the main repo HEAD.                                    | -       |
+| `--worktree-path <path>`          | Filesystem path for the worktree (must be a sibling of the repo)                                                                                           | -       |
+| `--create-pr`                     | Open a GitHub PR when the auto-run completes successfully                                                                                                  | -       |
+| `--pr-target-branch <branch>`     | Target branch for the PR (defaults to the repo default branch)                                                                                             | -       |
+| `--model <model>`                 | Model to use for this run only, overriding the agent's configured default                                                                                  | -       |
+| `--effort <effort>`               | Reasoning effort for this run only, overriding the agent's configured default                                                                              | -       |
+| `--ignore-model-hints`            | Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)                                                | -       |
+| `--model-source <target>`         | Where this run's model runs, overriding the agent's model source: <source id>:<model> (a Local Models source), or "provider" for the provider's own models | -       |
+| `--model-source-context <tokens>` | Context size for the model named by --model-source (default: what the source reports, or the agent's own when it is the same source and model)             | -       |
+| `--json`                          | Output as JSON (for scripting)                                                                                                                             | -       |
 
 ```bash
 maestro-cli auto-run ./phase-01.md ./phase-02.md --agent <agent-id> --launch
@@ -1537,6 +1550,78 @@ Take back a note no task has read yet (accepts a unique id prefix)
 ```bash
 maestro-cli steer-auto-run cancel <note-id> --agent <agent-id>
 ```
+
+## `maestro-cli diff-review`
+
+Pin review comments to lines of an agent's git diff and send them as one review
+
+## `maestro-cli diff-review list`
+
+Show the pending comments, flagging any whose lines changed since
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                               | -       |
+| `--background`     | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--json`           | Output as JSON                                                   | -       |
+
+## `maestro-cli diff-review add <path> <lines> <comment>`
+
+Pin a comment to path:lines of the current diff (lines: 12 or 12-14)
+
+| Option             | Description                                                 | Default |
+| ------------------ | ----------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                          | -       |
+| `--side <side>`    | Which version the line numbers are in: new (default) or old | `"new"` |
+| `--background`     | Accepted and ignored: adding a comment raises no notice     | -       |
+| `--focus`          | Accepted and ignored: adding a comment raises no notice     | -       |
+| `--json`           | Output the new comment as JSON                              | -       |
+
+## `maestro-cli diff-review edit <comment-id> <comment>`
+
+Reword a pending comment, keeping its id and lines (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                       | -       |
+| `--background`     | Accepted and ignored: editing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: editing a comment raises no notice | -       |
+| `--json`           | Output the updated comment as JSON                       | -       |
+
+## `maestro-cli diff-review remove <comment-id>`
+
+Drop one pending comment (accepts a unique id prefix)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                        | -       |
+| `--background`     | Accepted and ignored: removing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: removing a comment raises no notice | -       |
+| `--json`           | Output the removed comment as JSON                        | -       |
+
+## `maestro-cli diff-review clear`
+
+Discard every pending comment
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                | -       |
+| `--background`     | Accepted and ignored: discarding raises no notice | -       |
+| `--focus`          | Accepted and ignored: discarding raises no notice | -       |
+| `--json`           | Output as JSON                                    | -       |
+
+## `maestro-cli diff-review send`
+
+Send every current comment to the agent as one queued prompt
+
+| Option             | Description                                                        | Default |
+| ------------------ | ------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent to send the review to                                        | -       |
+| `--compose`        | Put the review in the agent's message box instead of sending it    | -       |
+| `--background`     | Deliver without switching the view (the default)                   | -       |
+| `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
+| `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
 
 ## `maestro-cli marketplace`
 
@@ -1726,53 +1811,53 @@ maestro-cli cue activity --agent <agent-id> --limit 20
 
 Create a scheduled task (or --list / --cancel / --reschedule / --pause)
 
-| Option                           | Description                                                                                                                                                                  | Default |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--in <duration>`                | One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                                                                                                | -       |
-| `--at <timestamp>`               | One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)                                                                                                           | -       |
-| `--daily-at <times>`             | Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)                                                                                                                    | -       |
-| `--days <days>`                  | Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)                                                                                                                    | -       |
-| `--every <duration>`             | Repeating: fire on an interval (e.g. 30m, 2h, 1d)                                                                                                                            | -       |
-| `--list`                         | List scheduled tasks across agents                                                                                                                                           | -       |
-| `--kind <kind>`                  | Filter --list by kind: once, daily, interval, all (default: all)                                                                                                             | -       |
-| `--cancel <name>`                | Cancel a scheduled task by name                                                                                                                                              | -       |
-| `--reschedule <name>`            | Change when an existing task fires (pass the timing flag too)                                                                                                                | -       |
-| `--pause <name>`                 | Disable a task without deleting it                                                                                                                                           | -       |
-| `--resume <name>`                | Re-enable a paused task                                                                                                                                                      | -       |
-| `-a, --agent <id-or-name>`       | Target agent (required when creating; scopes other modes)                                                                                                                    | -       |
-| `-p, --prompt <text>`            | Prompt to send when the task fires. With --auto-run: extra instructions for the run                                                                                          | -       |
-| `--auto-run <documents...>`      | Launch an Auto Run of these .md documents (inside the agent's Auto Run folder) instead of sending a prompt. Kept on a failed launch                                          | -       |
-| `--reset-on-completion`          | With --auto-run: uncheck every task when the run finishes                                                                                                                    | -       |
-| `--loop`                         | With --auto-run: re-run the documents once every task is checked off                                                                                                         | -       |
-| `--max-loops <n>`                | With --auto-run: loop ceiling (implies --loop)                                                                                                                               | -       |
-| `--per-document`                 | With --auto-run: one agent turn per document instead of one per task                                                                                                         | -       |
-| `--ignore-model-hints`           | With --auto-run: ignore the documents' MAESTRO:MODEL hints                                                                                                                   | -       |
-| `--run-on <target>`              | With --auto-run: where the run's model runs, <source id>:<model> or "provider" (as auto-run --run-on)                                                                        | -       |
-| `--run-on-context <tokens>`      | With --auto-run: context size for the --run-on source                                                                                                                        | -       |
-| `--no-auto-resume`               | With --auto-run: stay paused after an agent error                                                                                                                            | -       |
-| `--auto-resume-after <minutes>`  | With --auto-run: minutes between auto-resume attempts                                                                                                                        | -       |
-| `--max-auto-resumes <n>`         | With --auto-run: auto-resume attempt ceiling                                                                                                                                 | -       |
-| `--worktree-branch <name>`       | With --auto-run: create a worktree on this branch when the run fires, and run there                                                                                          | -       |
-| `--worktree-agent <id-or-name>`  | With --auto-run: run in this already-open worktree agent                                                                                                                     | -       |
-| `--worktree-path <path>`         | With --auto-run: run in the worktree already on disk at this path                                                                                                            | -       |
-| `--base-branch <ref>`            | With a worktree flag: ref a new branch is cut from, and the pull request target                                                                                              | -       |
-| `--create-pr`                    | With a worktree flag: open a pull request when the run finishes                                                                                                              | -       |
-| `--tab <tab-id>`                 | Deliver the prompt into this existing AI tab of --agent (waits behind a busy turn, marks the tab unread, never moves the view; a closed tab falls back to a new tab + toast) | -       |
-| `--here`                         | Like --tab, for the AI tab this command runs from (an agent scheduling its own follow-up); --agent defaults to that agent                                                    | -       |
-| `--notify`                       | Show a toast notification when the task fires                                                                                                                                | -       |
-| `--sticky`                       | Make the notify toast sticky (requires --notify)                                                                                                                             | -       |
-| `-m, --message <text>`           | Body for the notify toast (defaults to label/prompt)                                                                                                                         | -       |
-| `-n, --name <name>`              | Custom subscription name (auto-generated when omitted)                                                                                                                       | -       |
-| `-l, --label <text>`             | Human-readable label (defaults to truncated prompt)                                                                                                                          | -       |
-| `--pipeline <name>`              | Pipeline name (default: Tasks)                                                                                                                                               | -       |
-| `--grace-minutes <n>`            | Override the default 360-minute grace window                                                                                                                                 | -       |
-| `--tier <level>`                 | Model tier for the prompt run: low, medium, high (mapped per provider)                                                                                                       | -       |
-| `--model <id>`                   | Exact model id for the prompt run (instead of --tier). With --auto-run: model for this run only                                                                              | -       |
-| `--effort <level>`               | Effort for the prompt run: low, medium, high (mapped per provider). With --auto-run: reasoning effort for this run only                                                      | -       |
-| `--keep-on-failure`              | Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)                                                                        | -       |
-| `--gate <condition>`             | Only run when a local model says the fire meets this condition (edit later with `cue gate`)                                                                                  | -       |
-| `--gate-on-unavailable <policy>` | With --gate, when no model can answer: run (default) or skip                                                                                                                 | -       |
-| `--json`                         | Output as JSON (for scripting)                                                                                                                                               | -       |
+| Option                            | Description                                                                                                                                                                  | Default |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--in <duration>`                 | One-shot: fire after a relative delay (e.g. 30s, 20m, 2h, 1d)                                                                                                                | -       |
+| `--at <timestamp>`                | One-shot: fire at ISO-8601 timestamp or "YYYY-MM-DD HH:MM" (local)                                                                                                           | -       |
+| `--daily-at <times>`              | Repeating: comma-separated HH:MM times (e.g. 09:00,17:30)                                                                                                                    | -       |
+| `--days <days>`                   | Limit --daily-at to these days (e.g. mon,tue,wed,thu,fri)                                                                                                                    | -       |
+| `--every <duration>`              | Repeating: fire on an interval (e.g. 30m, 2h, 1d)                                                                                                                            | -       |
+| `--list`                          | List scheduled tasks across agents                                                                                                                                           | -       |
+| `--kind <kind>`                   | Filter --list by kind: once, daily, interval, all (default: all)                                                                                                             | -       |
+| `--cancel <name>`                 | Cancel a scheduled task by name                                                                                                                                              | -       |
+| `--reschedule <name>`             | Change when an existing task fires (pass the timing flag too)                                                                                                                | -       |
+| `--pause <name>`                  | Disable a task without deleting it                                                                                                                                           | -       |
+| `--resume <name>`                 | Re-enable a paused task                                                                                                                                                      | -       |
+| `-a, --agent <id-or-name>`        | Target agent (required when creating; scopes other modes)                                                                                                                    | -       |
+| `-p, --prompt <text>`             | Prompt to send when the task fires. With --auto-run: extra instructions for the run                                                                                          | -       |
+| `--auto-run <documents...>`       | Launch an Auto Run of these .md documents (inside the agent's Auto Run folder) instead of sending a prompt. Kept on a failed launch                                          | -       |
+| `--reset-on-completion`           | With --auto-run: uncheck every task when the run finishes                                                                                                                    | -       |
+| `--loop`                          | With --auto-run: re-run the documents once every task is checked off                                                                                                         | -       |
+| `--max-loops <n>`                 | With --auto-run: loop ceiling (implies --loop)                                                                                                                               | -       |
+| `--per-document`                  | With --auto-run: one agent turn per document instead of one per task                                                                                                         | -       |
+| `--ignore-model-hints`            | With --auto-run: ignore the documents' MAESTRO:MODEL hints                                                                                                                   | -       |
+| `--model-source <target>`         | With --auto-run: where the run's model runs, <source id>:<model> or "provider" (as auto-run --model-source)                                                                  | -       |
+| `--model-source-context <tokens>` | With --auto-run: context size for the model named by --model-source                                                                                                          | -       |
+| `--no-auto-resume`                | With --auto-run: stay paused after an agent error                                                                                                                            | -       |
+| `--auto-resume-after <minutes>`   | With --auto-run: minutes between auto-resume attempts                                                                                                                        | -       |
+| `--max-auto-resumes <n>`          | With --auto-run: auto-resume attempt ceiling                                                                                                                                 | -       |
+| `--worktree-branch <name>`        | With --auto-run: create a worktree on this branch when the run fires, and run there                                                                                          | -       |
+| `--worktree-agent <id-or-name>`   | With --auto-run: run in this already-open worktree agent                                                                                                                     | -       |
+| `--worktree-path <path>`          | With --auto-run: run in the worktree already on disk at this path                                                                                                            | -       |
+| `--base-branch <ref>`             | With a worktree flag: ref a new branch is cut from, and the pull request target                                                                                              | -       |
+| `--create-pr`                     | With a worktree flag: open a pull request when the run finishes                                                                                                              | -       |
+| `--tab <tab-id>`                  | Deliver the prompt into this existing AI tab of --agent (waits behind a busy turn, marks the tab unread, never moves the view; a closed tab falls back to a new tab + toast) | -       |
+| `--here`                          | Like --tab, for the AI tab this command runs from (an agent scheduling its own follow-up); --agent defaults to that agent                                                    | -       |
+| `--notify`                        | Show a toast notification when the task fires                                                                                                                                | -       |
+| `--sticky`                        | Make the notify toast sticky (requires --notify)                                                                                                                             | -       |
+| `-m, --message <text>`            | Body for the notify toast (defaults to label/prompt)                                                                                                                         | -       |
+| `-n, --name <name>`               | Custom subscription name (auto-generated when omitted)                                                                                                                       | -       |
+| `-l, --label <text>`              | Human-readable label (defaults to truncated prompt)                                                                                                                          | -       |
+| `--pipeline <name>`               | Pipeline name (default: Tasks)                                                                                                                                               | -       |
+| `--grace-minutes <n>`             | Override the default 360-minute grace window                                                                                                                                 | -       |
+| `--tier <level>`                  | Model tier for the prompt run: low, medium, high (mapped per provider)                                                                                                       | -       |
+| `--model <id>`                    | Exact model id for the prompt run (instead of --tier). With --auto-run: model for this run only                                                                              | -       |
+| `--effort <level>`                | Effort for the prompt run: low, medium, high (mapped per provider). With --auto-run: reasoning effort for this run only                                                      | -       |
+| `--keep-on-failure`               | Keep the subscription on a failed/timed-out run (default: self-destructs on both success and failure)                                                                        | -       |
+| `--gate <condition>`              | Only run when a local model says the fire meets this condition (edit later with `cue gate`)                                                                                  | -       |
+| `--gate-on-unavailable <policy>`  | With --gate, when no model can answer: run (default) or skip                                                                                                                 | -       |
+| `--json`                          | Output as JSON (for scripting)                                                                                                                                               | -       |
 
 ```bash
 maestro-cli cue schedule --in 20m --agent <agent-id> --prompt "Check the deploy status"
@@ -2302,8 +2387,8 @@ Create a new agent in the Maestro desktop app. With --group, the agent starts fr
 | `--sync-history-to-remote <bool>`  | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)                                                                                                                                           | -               |
 | `--auto-run-folder <path>`         | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)                                                                                                                                          | -               |
 | `--gateway-url <url\|none>`        | Local Models gateway: an HTTP proxy this agent's provider traffic goes through, set as its base-URL variable at launch. Set the Maestro token proxy mode afterwards with update-agent --proxy-mode                                         | -               |
-| `--run-on <target>`                | Where this agent's model runs: provider (the default), or &lt;source id>:&lt;model> for a model on a Local Models source (maestro-server for the Maestro model server; ids from models endpoints list). The agent keeps its provider's CLI | -               |
-| `--run-on-context <tokens>`        | Context size the harness is told a --run-on source has (at least 40960; default: the model's catalog context on the Maestro model server, elsewhere the context the source reports for the model, else 40960)                              | -               |
+| `--model-source <target>`          | Where this agent's model runs: provider (the default), or &lt;source id>:&lt;model> for a model on a Local Models source (maestro-server for the Maestro model server; ids from models endpoints list). The agent keeps its provider's CLI | -               |
+| `--model-source-context <tokens>`  | Context size the harness is told a --model-source source has (at least 40960; default: the model's catalog context on the Maestro model server, elsewhere the context the source reports for the model, else 40960)                        | -               |
 | `--peer <agent:access>`            | Set one explicit peer row (repeatable): &lt;agent>:r (consult), :w (delegate), :rw, or :none (exclude the peer from a group or worktree grant)                                                                                             | `[]`            |
 | `--peer-note <agent:text>`         | Set the note on a peer row, the hint the agent reads for when to reach it (repeatable; needs a row)                                                                                                                                        | `[]`            |
 | `--group-peers <r\|w\|rw\|off>`    | Grant access to every other agent in the same group, resolved live                                                                                                                                                                         | -               |
@@ -2314,7 +2399,7 @@ Create a new agent in the Maestro desktop app. With --group, the agent starts fr
 
 ```bash
 maestro-cli create-agent "API Worker" --cwd ~/code/api --type claude-code --group <group-id>
-maestro-cli create-agent "Local Coder" --cwd . --run-on maestro-server:<model-id>
+maestro-cli create-agent "Local Coder" --cwd . --model-source maestro-server:<model-id>
 ```
 
 ## `maestro-cli duplicate-agent <agent>`
@@ -2434,46 +2519,74 @@ maestro-cli group-settings <group-id> --json
 
 Set a group's defaults for new agents and its pill label (requires the desktop app). Existing agents change only with --publish
 
-| Option                             | Description                                                                                                                                                                                                      | Default |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--provider <type>`                | Default provider for new agents (use "none" for no default; switching resets the profile's provider-bound values)                                                                                                | -       |
-| `-d, --cwd <path>`                 | Default working directory (empty string clears)                                                                                                                                                                  | -       |
-| `--nudge <message>`                | Nudge message appended to every message (empty string clears)                                                                                                                                                    | -       |
-| `--new-session-message <message>`  | Message prefixed to the first message of new sessions (empty string clears)                                                                                                                                      | -       |
-| `--custom-path <path>`             | Override the agent binary path (empty string clears)                                                                                                                                                             | -       |
-| `--custom-args <args>`             | Custom CLI arguments for the agent (empty string clears)                                                                                                                                                         | -       |
-| `--env <KEY=VALUE>`                | Set an environment variable (repeatable; replaces the env map)                                                                                                                                                   | `[]`    |
-| `--clear-env`                      | Clear all environment variable defaults                                                                                                                                                                          | -       |
-| `--gateway-url <url\|none>`        | Local Models gateway URL ("none" clears). Not combinable with --proxy-mode                                                                                                                                       | -       |
-| `--run-on <target>`                | Where new agents run their model: provider, or &lt;source id>:&lt;model> on a Local Models source                                                                                                                | -       |
-| `--run-on-context <tokens>`        | Context size the harness is told the Run on source has (at least 40960)                                                                                                                                          | -       |
-| `--proxy-mode <mode>`              | Maestro token proxy for new agents: off \| passthrough \| compress \| compress-early                                                                                                                             | -       |
-| `--tier <tier=target>`             | Where a low, medium or high task launches (repeatable): low=&lt;source id>:&lt;model>, high=provider:&lt;model>, medium=provider, or low=default                                                                 | `[]`    |
-| `--background-requests <target>`   | Where the token proxy sends side requests: &lt;source id>:&lt;model>, or none                                                                                                                                    | -       |
-| `--system-one <on\|off>`           | Whether new agents may ask System One: off switches it off for them                                                                                                                                              | -       |
-| `--peer <agent:access>`            | Set one explicit peer row (repeatable): &lt;agent>:r, :w, :rw, or :none                                                                                                                                          | `[]`    |
-| `--peer-note <agent:text>`         | Set the note on a peer row (repeatable; needs a row, empty text clears)                                                                                                                                          | `[]`    |
-| `--remove-peer <agent>`            | Delete a peer row (repeatable). Not the same as :none                                                                                                                                                            | `[]`    |
-| `--group-peers <r\|w\|rw\|off>`    | Grant access to every other agent in the same group                                                                                                                                                              | -       |
-| `--worktree-peers <r\|w\|rw\|off>` | Grant access to the agent's worktree family                                                                                                                                                                      | -       |
-| `--model <model>`                  | Default model ("auto" lets the model router pick; empty string clears)                                                                                                                                           | -       |
-| `--effort <level>`                 | Default effort/reasoning level (empty string clears)                                                                                                                                                             | -       |
-| `--context-window <size>`          | Default context window in tokens (0 or "none" clears)                                                                                                                                                            | -       |
-| `--token-source <mode>`            | Claude token source: api \| tui \| dynamic (needs the Claude Code provider)                                                                                                                                      | -       |
-| `--maestro-p-path <path>`          | Override the maestro-p binary path (empty string clears)                                                                                                                                                         | -       |
-| `--codex-transport <transport>`    | Codex transport: exec \| app-server (needs the Codex provider)                                                                                                                                                   | -       |
-| `--ssh-remote <id>`                | Default SSH remote for new agents, by id or name (use "none" for local execution)                                                                                                                                | -       |
-| `--ssh-cwd <path>`                 | Working directory override on the SSH remote                                                                                                                                                                     | -       |
-| `--sync-history-to-remote <bool>`  | Sync history entries to .maestro/history/ on the remote host (true/false)                                                                                                                                        | -       |
-| `--short-label <text>`             | Text for the pill drawn beside the group's bookmarked agents, at most 12 characters (empty string returns to the automatic abbreviation). Display only: never copied or published                                | -       |
-| `--clear`                          | Remove the defaults entirely. Does not touch --short-label, which is group display state and not an agent default. Cannot be combined with other defaults or --publish                                           | -       |
-| `--publish`                        | Also write this call's changes into the agents already in the group (provider, working directory and SSH remote are never written; env vars merge by key, lists replace). Needs --yes unless you answer a prompt | -       |
-| `--yes`                            | Confirm a --publish without asking                                                                                                                                                                               | -       |
-| `--json`                           | Output as JSON (for scripting)                                                                                                                                                                                   | -       |
+| Option                                            | Description                                                                                                                                                                                                      | Default |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--provider <type>`                               | Default provider for new agents (use "none" for no default; switching resets the profile's provider-bound values)                                                                                                | -       |
+| `-d, --cwd <path>`                                | Default working directory (empty string clears)                                                                                                                                                                  | -       |
+| `--nudge <message>`                               | Nudge message appended to every message (empty string clears)                                                                                                                                                    | -       |
+| `--new-session-message <message>`                 | Message prefixed to the first message of new sessions (empty string clears)                                                                                                                                      | -       |
+| `--custom-path <path>`                            | Override the agent binary path (empty string clears)                                                                                                                                                             | -       |
+| `--custom-args <args>`                            | Custom CLI arguments for the agent (empty string clears)                                                                                                                                                         | -       |
+| `--env <KEY=VALUE>`                               | Set an environment variable (repeatable; replaces the env map)                                                                                                                                                   | `[]`    |
+| `--clear-env`                                     | Clear all environment variable defaults                                                                                                                                                                          | -       |
+| `--gateway-url <url\|none>`                       | Local Models gateway URL ("none" clears). Not combinable with --proxy-mode                                                                                                                                       | -       |
+| `--model-source <target>`                         | Where new agents run their model: provider, or &lt;source id>:&lt;model> on a Local Models source                                                                                                                | -       |
+| `--model-source-context <tokens>`                 | Context size the harness is told the model source has (at least 40960)                                                                                                                                           | -       |
+| `--proxy-mode <mode>`                             | Maestro token proxy for new agents: off \| passthrough \| compress \| compress-early                                                                                                                             | -       |
+| `--tier <tier=target>`                            | Where a low, medium or high task launches (repeatable): low=&lt;source id>:&lt;model>, high=provider:&lt;model>, medium=provider, or low=default                                                                 | `[]`    |
+| `--background-requests <target>`                  | Where the token proxy sends side requests: &lt;source id>:&lt;model>, or none                                                                                                                                    | -       |
+| `--system-one <on\|off>`                          | Whether new agents may ask System One: off switches it off for them                                                                                                                                              | -       |
+| `--peer <agent:access>`                           | Set one explicit peer row (repeatable): &lt;agent>:r, :w, :rw, or :none                                                                                                                                          | `[]`    |
+| `--peer-note <agent:text>`                        | Set the note on a peer row (repeatable; needs a row, empty text clears)                                                                                                                                          | `[]`    |
+| `--remove-peer <agent>`                           | Delete a peer row (repeatable). Not the same as :none                                                                                                                                                            | `[]`    |
+| `--group-peers <r\|w\|rw\|off>`                   | Grant access to every other agent in the same group                                                                                                                                                              | -       |
+| `--worktree-peers <r\|w\|rw\|off>`                | Grant access to the agent's worktree family                                                                                                                                                                      | -       |
+| `--model <model>`                                 | Default model ("auto" lets the model router pick; empty string clears)                                                                                                                                           | -       |
+| `--effort <level>`                                | Default effort/reasoning level (empty string clears)                                                                                                                                                             | -       |
+| `--context-window <size>`                         | Default context window in tokens (0 or "none" clears)                                                                                                                                                            | -       |
+| `--token-source <mode>`                           | Claude token source: api \| tui \| dynamic (needs the Claude Code provider)                                                                                                                                      | -       |
+| `--maestro-p-path <path>`                         | Override the maestro-p binary path (empty string clears)                                                                                                                                                         | -       |
+| `--codex-transport <transport>`                   | Codex transport: exec \| app-server (needs the Codex provider)                                                                                                                                                   | -       |
+| `--ssh-remote <id>`                               | Default SSH remote for new agents, by id or name (use "none" for local execution)                                                                                                                                | -       |
+| `--ssh-cwd <path>`                                | Working directory override on the SSH remote                                                                                                                                                                     | -       |
+| `--sync-history-to-remote <bool>`                 | Sync history entries to .maestro/history/ on the remote host (true/false)                                                                                                                                        | -       |
+| `--short-label <text>`                            | Text for the pill drawn beside the group's bookmarked agents, at most 12 characters (empty string returns to the automatic abbreviation). Display only: never copied or published                                | -       |
+| `--clear`                                         | Remove the defaults entirely. Does not touch --short-label, which is group display state and not an agent default. Cannot be combined with other defaults or --publish                                           | -       |
+| `--publish`                                       | Also write this call's changes into the agents already in the group (provider, working directory and SSH remote are never written; env vars merge by key, lists replace). Needs --yes unless you answer a prompt | -       |
+| `--yes`                                           | Confirm a --publish without asking                                                                                                                                                                               | -       |
+| `--onboarding <on\|off\|clear>`                   | Onboarding: the prompt the group runs when an agent joins it. on/off keeps the prompt; clear removes the hook                                                                                                    | -       |
+| `--onboarding-prompt <text\|@file>`               | The Onboarding prompt (\{\{VARIABLES\}\} allowed). @path reads it from a file                                                                                                                                    | -       |
+| `--onboarding-events <list>`                      | Which agents fire Onboarding, comma separated: agent, worktree                                                                                                                                                   | -       |
+| `--onboarding-runs-in <self\|agent>`              | The agent that runs the Onboarding prompt: self (the agent itself) or another agent by id or name                                                                                                                | -       |
+| `--onboarding-tab <name>`                         | Tab name the Onboarding prompt runs in (empty string resets)                                                                                                                                                     | -       |
+| `--onboarding-tier <default\|low\|medium\|high>`  | Model tier the Onboarding turn runs at                                                                                                                                                                           | -       |
+| `--offboarding <on\|off\|clear>`                  | Offboarding: the prompt the group runs when an agent leaves it. on/off keeps the prompt; clear removes the hook                                                                                                  | -       |
+| `--offboarding-prompt <text\|@file>`              | The Offboarding prompt (\{\{VARIABLES\}\} allowed). @path reads it from a file                                                                                                                                   | -       |
+| `--offboarding-events <list>`                     | Which agents fire Offboarding, comma separated: agent, worktree                                                                                                                                                  | -       |
+| `--offboarding-runs-in <self\|agent>`             | The agent that runs the Offboarding prompt: self (the agent itself) or another agent by id or name                                                                                                               | -       |
+| `--offboarding-tab <name>`                        | Tab name the Offboarding prompt runs in (empty string resets)                                                                                                                                                    | -       |
+| `--offboarding-tier <default\|low\|medium\|high>` | Model tier the Offboarding turn runs at                                                                                                                                                                          | -       |
+| `--offboarding-timeout <minutes>`                 | Minutes removal waits for the Offboarding turn before it goes ahead (1-60, empty string resets to 5)                                                                                                             | -       |
+| `--json`                                          | Output as JSON (for scripting)                                                                                                                                                                                   | -       |
 
 ```bash
 maestro-cli update-group-settings <group-id> --provider claude-code --model opus
 maestro-cli update-group-settings <group-id> --short-label "API" --publish --yes
+maestro-cli update-group-settings <group-id> --onboarding on --onboarding-prompt @onboard.md --onboarding-tier low
+maestro-cli update-group-settings <group-id> --offboarding on --offboarding-prompt "Stop the servers you started" --offboarding-timeout 10
+```
+
+## `maestro-cli run-group-lifecycle <group-id> <stage>`
+
+Run a group's Onboarding or Offboarding prompt now on one of its agents (requires the desktop app). Removes nothing
+
+| Option             | Description                                             | Default |
+| ------------------ | ------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | The agent the prompt is about (it must be in the group) | -       |
+| `--json`           | Output as JSON (for scripting)                          | -       |
+
+```bash
+maestro-cli run-group-lifecycle <group-id> onboarding --agent <agent-id>
 ```
 
 ## `maestro-cli create-worktree`
@@ -2525,8 +2638,8 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--env <KEY=VALUE>`                     | Set an environment variable (repeatable; replaces the env map)                                                                                                                                                                                                                                                                                              | `[]`    |
 | `--clear-env`                           | Clear all per-agent environment variables                                                                                                                                                                                                                                                                                                                   | -       |
 | `--gateway-url <url\|none>`             | Local Models gateway: an HTTP proxy this agent's provider traffic goes through, set as its base-URL variable at launch ("none" clears)                                                                                                                                                                                                                      | -       |
-| `--run-on <target>`                     | Where this agent's model runs: provider (its provider's own model; clears a target), or &lt;source id>:&lt;model> for a model on a Local Models source (maestro-server for the Maestro model server; ids from models endpoints list). Check it with agent test-run-on                                                                                       | -       |
-| `--run-on-context <tokens>`             | Context size the harness is told the Run on source has (at least 40960). Alone, it changes the context of the agent's current target                                                                                                                                                                                                                        | -       |
+| `--model-source <target>`               | Where this agent's model runs: provider (its provider's own model; clears a target), or &lt;source id>:&lt;model> for a model on a Local Models source (maestro-server for the Maestro model server; ids from models endpoints list). Check it with agent test-run-on                                                                                       | -       |
+| `--model-source-context <tokens>`       | Context size the harness is told the model source has (at least 40960). Alone, it changes the context of the agent's current model source                                                                                                                                                                                                                   | -       |
 | `--proxy-mode <mode>`                   | Maestro token proxy for this agent: off \| passthrough \| compress \| compress-early. Any mode but off points the gateway at the proxy; off clears it. compress shortens a tool result after the model has read it once; compress-early shortens it before, which is cheaper and means the model works from the shortened output (requires the desktop app) | -       |
 | `--proxy-retrieval <on\|off>`           | Whether the model of this agent may ask the Maestro token proxy for the original lines of a tool result it shortened (the retrieve_compressed_original tool). Only while the proxy mode is compress or compress-early; turned off with the proxy. Read it with show agent (requires the desktop app)                                                        | -       |
 | `--tier <tier=target>`                  | Where a low, medium or high task of this agent launches (repeatable): low=&lt;source id>:&lt;model>, high=provider:&lt;model>, medium=provider (the provider, on the agent's own model), or low=default to follow the harness default again. Read them with show agent                                                                                      | `[]`    |
@@ -2566,7 +2679,7 @@ Update an existing agent's group, working directory, and per-agent settings
 ```bash
 maestro-cli update-agent <agent-id> --model opus --effort high
 maestro-cli update-agent <agent-id> --provider codex --convert --accept-translation-limitations
-maestro-cli update-agent <agent-id> --run-on maestro-server:<model-id> --run-on-context 65536
+maestro-cli update-agent <agent-id> --model-source maestro-server:<model-id> --model-source-context 65536
 maestro-cli update-agent <agent-id> --peer docs-agent:r --remove-peer legacy-agent
 ```
 
@@ -2576,7 +2689,7 @@ Act on one agent
 
 ## `maestro-cli agent test-run-on <agent-id>`
 
-Send one short read-only turn through the agent's harness on its Run on target and report the reply (requires the desktop app)
+Send one short read-only turn through the agent's harness on its model source and report the reply (requires the desktop app)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -5277,7 +5390,7 @@ maestro-cli models verify <model-id>
 
 ## `maestro-cli models assign <task-id> <assignment>`
 
-Choose what a task runs on: off | utility-agent | system-one | local:&lt;model-id> | endpoint:&lt;endpoint>:&lt;model>
+Choose what a task runs on: off | agent-model | housekeeping-model | system-one | local:&lt;model-id> | endpoint:&lt;endpoint>:&lt;model>
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -5286,7 +5399,22 @@ Choose what a task runs on: off | utility-agent | system-one | local:&lt;model-i
 ```bash
 maestro-cli models assign tab-naming local:<model-id>
 maestro-cli models assign model-routing endpoint:<endpoint>:<model>
+maestro-cli models assign git-drafts agent-model
 maestro-cli models assign cue-gate off
+```
+
+## `maestro-cli models map [slot] [source]`
+
+Show the Model Map, or set a slot (agent | housekeeping) to: provider | provider:&lt;agent-id>[:&lt;model>] | local:&lt;model-id> | endpoint:&lt;endpoint>:&lt;model>
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli models map
+maestro-cli models map housekeeping local:<model-id>
+maestro-cli models map agent provider:claude-code:sonnet
 ```
 
 ## `maestro-cli models tasks`
@@ -5448,16 +5576,18 @@ maestro-cli models server stop
 
 Change who can reach it, how many models stay loaded, the key, or the engine build; a running server restarts (requires the desktop app)
 
-| Option             | Description                                                                                             | Default |
-| ------------------ | ------------------------------------------------------------------------------------------------------- | ------- |
-| `--bind <mode>`    | local (127.0.0.1, this machine) \| network (0.0.0.0, needs the key)                                     | -       |
-| `--max-models <n>` | Models loaded at the same time (1 to 16, default 1)                                                     | -       |
-| `--rotate-key`     | Replace the API key; whatever used the old key needs the new one                                        | -       |
-| `--build <choice>` | Install this engine build: default \| cpu \| cuda \| rocm (cuda and rocm on Windows and Linux x64 only) | -       |
-| `--json`           | Output as JSON (for scripting)                                                                          | -       |
+| Option                        | Description                                                                                             | Default |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------- | ------- |
+| `--bind <mode>`               | local (127.0.0.1, this machine) \| network (0.0.0.0, needs the key)                                     | -       |
+| `--max-models <n>`            | Models loaded at the same time (1 to 16, default 1)                                                     | -       |
+| `--rotate-key`                | Replace the API key; whatever used the old key needs the new one                                        | -       |
+| `--start-on-launch <on\|off>` | Whether it starts when Maestro starts (start turns this on, stop turns it off)                          | -       |
+| `--build <choice>`            | Install this engine build: default \| cpu \| cuda \| rocm (cuda and rocm on Windows and Linux x64 only) | -       |
+| `--json`                      | Output as JSON (for scripting)                                                                          | -       |
 
 ```bash
 maestro-cli models server set --bind local --max-models 2
+maestro-cli models server set --start-on-launch off
 ```
 
 ## `maestro-cli models server key`
@@ -5491,7 +5621,7 @@ maestro-cli models tiers list --harness claude-code
 
 ## `maestro-cli models tiers options <harness>`
 
-What a harness can launch a tier on: its own catalogue and the Run on targets, each in the spelling "tiers set" takes (requires the desktop app)
+What a harness can launch a tier on: its own catalogue and the model sources, each in the spelling "tiers set" takes (requires the desktop app)
 
 | Option      | Description                                                  | Default |
 | ----------- | ------------------------------------------------------------ | ------- |
@@ -6813,7 +6943,7 @@ maestro-cli stats --range month --json
 
 ## `maestro-cli stats models`
 
-Show what every model other than a provider's own did: sources, tasks, Run on agents, System One and the token proxy (the Usage Dashboard's Models tab)
+Show what every model other than a provider's own did: sources, tasks, agents on a model source, System One and the token proxy (the Usage Dashboard's Models tab)
 
 | Option                | Description                                                      | Default |
 | --------------------- | ---------------------------------------------------------------- | ------- |
@@ -6865,6 +6995,63 @@ Run a read-only SQL query against the stats database (SELECT / read PRAGMA only)
 ```bash
 maestro-cli stats-query "SELECT agent_id, COUNT(*) FROM query_events WHERE start_time > ? GROUP BY agent_id" --param 1760000000000
 ```
+
+## `maestro-cli stats-delegation`
+
+Show the delegation split (interactive turns vs Auto Run tasks vs Cue runs) for a range and per day
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output totals, delegated share, and the per-day split as JSON    | -       |
+
+## `maestro-cli stats-cue`
+
+Show the Usage Dashboard Cue tab: run totals, durations, and per-pipeline breakdowns
+
+| Option                     | Description                                                          | Default |
+| -------------------------- | -------------------------------------------------------------------- | ------- |
+| `-r, --range <range>`      | Time range: day, week, month, quarter, year, all (default: week)     | -       |
+| `--exclude-trigger <type>` | Leave out a trigger type, like the Cue tab filter chips (repeatable) | `[]`    |
+| `--json`                   | Output the full Cue statistics object as JSON                        | -       |
+
+## `maestro-cli stats-plan-usage`
+
+Show the last sampled plan usage per Anthropic (Claude) and OpenAI (Codex) account
+
+| Option                  | Description                        | Default |
+| ----------------------- | ---------------------------------- | ------- |
+| `--provider <provider>` | Only one provider: claude or codex | -       |
+| `--json`                | Output the accounts as JSON        | -       |
+
+## `maestro-cli stats-agents`
+
+Show Agents Over Time: agents that existed each day, plus created and deleted
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output the daily series as JSON                                  | -       |
+
+## `maestro-cli stats-activity`
+
+Show Auto Run runs, wizard runs, resilience outages, and shortcut presses for a range and per day
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output totals and the daily counts as JSON                       | -       |
+
+## `maestro-cli stats-export`
+
+Export everything the Usage Dashboard reads for a range (the Export button)
+
+| Option                  | Description                                                      | Default |
+| ----------------------- | ---------------------------------------------------------------- | ------- |
+| `-o, --output <path>`   | File to write (a .zip of CSVs, or a .json file)                  | -       |
+| `-f, --format <format>` | csv (a zip of CSV files) or json (default: csv)                  | -       |
+| `-r, --range <range>`   | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`                | Output the result (path, row counts, notes) as JSON              | -       |
 
 ## `maestro-cli plugin`
 

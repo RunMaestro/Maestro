@@ -1356,9 +1356,8 @@ describe('useTabHandlers', () => {
 				] as any,
 			});
 			const { result } = renderWithSession([tab]);
-			let nextIndex: number | null;
 			await act(async () => {
-				nextIndex = await result.current.handleDeleteLog('log-1');
+				await result.current.handleDeleteLog('log-1');
 			});
 
 			const session = getSession();
@@ -2040,7 +2039,7 @@ describe('useTabHandlers', () => {
 			expect((updated as any).shellCommandHistory).not.toContain('ls');
 		});
 
-		it('calls IPC deleteMessagePair for AI tab logs', async () => {
+		it("deletes from the agent's own provider transcript for AI tab logs", async () => {
 			const tab = createMockAITab({
 				id: 'tab-1',
 				agentSessionId: 'agent-1',
@@ -2061,25 +2060,25 @@ describe('useTabHandlers', () => {
 				activeSessionId: 'test-session',
 			});
 
-			// Mock the IPC call
-			(window.maestro.agentSessions as any).deleteMessagePair = vi
-				.fn()
-				.mockResolvedValue({ success: true });
+			vi.mocked(window.maestro.agentSessions.deleteMessagePair).mockResolvedValue({
+				success: true,
+			});
 
 			const { result } = renderHook(() => useTabHandlers());
 			await act(async () => {
 				await result.current.handleDeleteLog('log-1');
 			});
 
-			expect((window.maestro.agentSessions as any).deleteMessagePair).toHaveBeenCalledWith(
-				'claude-code',
+			expect(window.maestro.agentSessions.deleteMessagePair).toHaveBeenCalledWith(
+				session.toolType,
 				'/project',
 				'agent-1',
 				'log-1',
 				'test command',
-				// A local agent: no SSH remote id rides along.
-				undefined
+				undefined,
+				'test-session'
 			);
+			expect(getSession().aiTabs[0].logs).toEqual([]);
 		});
 
 		it('removes command from aiCommandHistory', async () => {

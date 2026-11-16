@@ -24,10 +24,12 @@ import {
 	getCueEventGroupCounts,
 	getCueEventHistoryStamp,
 	getCueEventsForHistory,
-	getRecentCueEvents,
+	getCueEventsForStats,
 } from '../cue-db';
-import type { CueEventRecord } from '../cue-db';
+import type { CueEventRecord, CueStatsEventRecord } from '../cue-db';
+import { ORPHANED_RUN_MESSAGE } from '../cue-recovery-service';
 import { getTimeRangeStart } from '../../stats/utils';
+import { addLocalDays, parseLocalYmd, toLocalYmd } from '../../../shared/localDay';
 import { computePercentiles } from '../../../shared/percentiles';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { buildCueRunSummary, parseSubscriptionName } from '../../../shared/cue/cue-summary';
@@ -40,16 +42,19 @@ import {
 	sessionTokenLookupKey,
 	type SessionTokenSummary,
 } from './cue-token-accessor';
-import type {
-	CueChain,
-	CueChainNode,
-	CueHourBucket,
-	CueStatsAggregation,
-	CueStatsByGroup,
-	CueStatsTimeRange,
-	CueStatsTotals,
-	CueTimeBucket,
-	CueTriggerTypeOption,
+import {
+	CUE_SLOWEST_RUNS_LIMIT,
+	type CueChain,
+	type CueChainNode,
+	type CueHourBucket,
+	type CueSlowRun,
+	type CueStatsAggregation,
+	type CueStatsByGroup,
+	type CueStatsSourceTotals,
+	type CueStatsTimeRange,
+	type CueStatsTotals,
+	type CueTimeBucket,
+	type CueTriggerTypeOption,
 } from '../../../shared/cue-stats-types';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -73,6 +78,7 @@ interface MutableTotals {
 	successCount: number;
 	failureCount: number;
 	totalDurationMs: number;
+	timedRunCount: number;
 	totalInputTokens: number;
 	totalOutputTokens: number;
 	totalCacheReadTokens: number;
@@ -88,6 +94,7 @@ function emptyMutableTotals(): MutableTotals {
 		successCount: 0,
 		failureCount: 0,
 		totalDurationMs: 0,
+		timedRunCount: 0,
 		totalInputTokens: 0,
 		totalOutputTokens: 0,
 		totalCacheReadTokens: 0,
@@ -104,6 +111,7 @@ function freezeTotals(t: MutableTotals): CueStatsTotals {
 		successCount: t.successCount,
 		failureCount: t.failureCount,
 		totalDurationMs: t.totalDurationMs,
+		timedRunCount: t.timedRunCount,
 		totalInputTokens: t.totalInputTokens,
 		totalOutputTokens: t.totalOutputTokens,
 		totalCacheReadTokens: t.totalCacheReadTokens,
@@ -133,7 +141,7 @@ function classifyStatus(status: string): { isSuccess: boolean; isFailure: boolea
  * (or legacy figures from an identified non-Grok provider).
  */
 function streamUsageFallback(
-	event: CueEventRecord,
+	event: CueStatsEventRecord,
 	usage: Partial<UsageStats>,
 	agentType = 'unknown'
 ): SessionTokenSummary | null {
@@ -186,7 +194,7 @@ function streamUsageFallback(
 
 /** Use event usage for Grok, never a native lifetime snapshot or another owner. */
 function tokensForEvent(
-	event: CueEventRecord,
+	event: CueStatsEventRecord,
 	tokensByProvider: Map<string, SessionTokenSummary>,
 	agentType: string | null,
 	usage: Partial<UsageStats>,
@@ -217,17 +225,36 @@ function tokensForEvent(
 	);
 }
 
-function computeDuration(event: CueEventRecord): number | null {
-	if (event.completedAt == null) return null;
+/**
+ * Wall time from creation to completion, or null when unknown. Used as-is for
+ * the Slowest Runs ranking, which shows every terminal status.
+ */
+function finishedSpan(event: CueStatsEventRecord): number | null {
+	if (event.completedAt == null || event.orphaned) return null;
 	const dur = event.completedAt - event.createdAt;
 	return dur >= 0 ? dur : null;
+}
+
+/**
+ * Run time that counts toward duration totals, averages and percentiles:
+ * COMPLETED runs only. A failed or stopped run's span is real but is not the
+ * time the job takes, and a run the engine-start sweep settled ends when the
+ * next engine started (hours of downtime), so neither belongs in "how long do
+ * runs take".
+ */
+function computeDuration(event: CueStatsEventRecord): number | null {
+	if (!SUCCESS_STATUSES.has(event.status)) return null;
+	return finishedSpan(event);
 }
 
 function applyEvent(target: MutableTotals, contrib: EventContribution): void {
 	target.occurrences += 1;
 	if (contrib.isSuccess) target.successCount += 1;
 	if (contrib.isFailure) target.failureCount += 1;
-	if (contrib.durationMs != null) target.totalDurationMs += contrib.durationMs;
+	if (contrib.durationMs != null) {
+		target.totalDurationMs += contrib.durationMs;
+		target.timedRunCount += 1;
+	}
 	if (contrib.tokens) {
 		target.totalInputTokens += contrib.tokens.inputTokens;
 		target.totalOutputTokens += contrib.tokens.outputTokens;
@@ -276,7 +303,7 @@ function bucketSizeFor(timeRange: CueStatsTimeRange): number {
  *   3. The synthetic "Unattributed" bucket as a last resort.
  */
 function pipelineGroupKey(
-	event: CueEventRecord,
+	event: CueStatsEventRecord,
 	subscriptionToPipeline?: Map<string, string>
 ): { key: string; label: string } {
 	if (event.pipelineId) return { key: event.pipelineId, label: event.pipelineId };
@@ -322,7 +349,7 @@ function triggerTypeGroupKey(eventType: string): { key: string; label: string } 
  * been filtered out still needs a chip, and a count on that chip, or the user
  * has no way to bring it back.
  */
-function buildTriggerTypeOptions(events: CueEventRecord[]): CueTriggerTypeOption[] {
+function buildTriggerTypeOptions(events: CueStatsEventRecord[]): CueTriggerTypeOption[] {
 	const counts = new Map<string, number>();
 	for (const event of events) {
 		counts.set(event.type, (counts.get(event.type) ?? 0) + 1);
@@ -382,16 +409,65 @@ function ensureGroup(
 	return g;
 }
 
-function buildTimeSeries(
-	events: CueEventRecord[],
-	tokensByEvent: Map<string, SessionTokenSummary>,
+/** The bucket after `bucketStartMs`, stepping by local calendar hour or day (DST-safe). */
+function nextBucketStart(bucketStartMs: number, bucketSizeMs: number): number {
+	if (bucketSizeMs === DAY_MS) {
+		return (
+			parseLocalYmd(addLocalDays(toLocalYmd(bucketStartMs), 1))?.getTime() ?? bucketStartMs + DAY_MS
+		);
+	}
+	return bucketStartMs + HOUR_MS;
+}
+
+/**
+ * Every bucket from the first to the last, zero-filled, so idle hours and
+ * days take their place on the time axis instead of being squeezed out.
+ * `windowStartMs` is 0 for `all`, in which case the series starts at the
+ * first run's bucket (and is empty when there are no runs).
+ */
+function emptyBuckets(
+	events: CueStatsEventRecord[],
+	windowStartMs: number,
+	windowEndMs: number,
 	bucketSizeMs: number
-): CueTimeBucket[] {
+): Map<number, CueTimeBucket> {
 	const buckets = new Map<number, CueTimeBucket>();
+	let firstMs = windowStartMs;
+	if (firstMs <= 0) {
+		if (events.length === 0) return buckets;
+		firstMs = Math.min(...events.map((e) => e.createdAt));
+	}
+	const last = bucketStartFor(windowEndMs, bucketSizeMs);
+	for (
+		let start = bucketStartFor(firstMs, bucketSizeMs);
+		start <= last;
+		start = nextBucketStart(start, bucketSizeMs)
+	) {
+		buckets.set(start, {
+			bucketStartMs: start,
+			occurrences: 0,
+			successCount: 0,
+			failureCount: 0,
+			inputTokens: 0,
+			outputTokens: 0,
+		});
+	}
+	return buckets;
+}
+
+function buildTimeSeries(
+	events: CueStatsEventRecord[],
+	tokensByEvent: Map<string, SessionTokenSummary>,
+	bucketSizeMs: number,
+	windowStartMs: number,
+	windowEndMs: number
+): CueTimeBucket[] {
+	const buckets = emptyBuckets(events, windowStartMs, windowEndMs, bucketSizeMs);
 	for (const event of events) {
 		const bucketStartMs = bucketStartFor(event.createdAt, bucketSizeMs);
 		let bucket = buckets.get(bucketStartMs);
 		if (!bucket) {
+			// A run outside the filled window (a clock change) still counts.
 			bucket = {
 				bucketStartMs,
 				occurrences: 0,
@@ -416,11 +492,11 @@ function buildTimeSeries(
 }
 
 function buildChains(
-	events: CueEventRecord[],
+	events: CueStatsEventRecord[],
 	tokensByEvent: Map<string, SessionTokenSummary>,
 	agentTypeByEvent: Map<string, string | null>
 ): CueChain[] {
-	const byRoot = new Map<string, CueEventRecord[]>();
+	const byRoot = new Map<string, CueStatsEventRecord[]>();
 	for (const event of events) {
 		if (!event.chainRootId) continue;
 		let bucket = byRoot.get(event.chainRootId);
@@ -501,7 +577,7 @@ function buildChains(
  * boundaries). Always returns 24 entries - hours with zero occurrences
  * keep their slot so the renderer can draw a continuous 24-bar strip.
  */
-function buildHourOfDay(events: CueEventRecord[]): CueHourBucket[] {
+function buildHourOfDay(events: CueStatsEventRecord[]): CueHourBucket[] {
 	const buckets: CueHourBucket[] = Array.from({ length: 24 }, (_, hour) => ({
 		hour,
 		occurrences: 0,
@@ -518,6 +594,40 @@ function buildHourOfDay(events: CueEventRecord[]): CueHourBucket[] {
 		if (isFailure) bucket.failureCount += 1;
 	}
 	return buckets;
+}
+
+/**
+ * The slowest finished runs, slowest first. Every terminal status is ranked
+ * (a run that timed out after 20 minutes IS slow); runs the engine-start sweep
+ * settled are not, because their span is downtime.
+ */
+function buildSlowestRuns(
+	events: CueStatsEventRecord[],
+	tokensByEvent: Map<string, SessionTokenSummary>,
+	agentTypeByEvent: Map<string, string | null>,
+	limit: number
+): CueSlowRun[] {
+	const ranked: Array<{ event: CueStatsEventRecord; durationMs: number }> = [];
+	for (const event of events) {
+		if (event.status === 'running') continue;
+		const durationMs = finishedSpan(event);
+		if (durationMs == null) continue;
+		ranked.push({ event, durationMs });
+	}
+	ranked.sort((a, b) => b.durationMs - a.durationMs);
+	return ranked.slice(0, limit).map(({ event, durationMs }) => {
+		const tokens = tokensByEvent.get(event.id);
+		return {
+			eventId: event.id,
+			subscriptionName: event.subscriptionName,
+			pipelineId: event.pipelineId ?? null,
+			agentType: agentTypeByEvent.get(event.id) ?? null,
+			status: event.status,
+			startedAtMs: event.createdAt,
+			durationMs,
+			tokens: tokens ? tokens.inputTokens + tokens.outputTokens : 0,
+		};
+	});
 }
 
 function buildCoverageWarnings(summaries: Map<string, SessionTokenSummary>): string[] {
@@ -555,35 +665,18 @@ export interface CueStatsAggregationOptions {
 }
 
 /**
- * Compute the full Cue stats payload for the given time range.
- *
- * Reads `cue_events` for the window, resolves token summaries per unique
- * session via the Phase 02 accessor, then assembles totals + per-pipeline +
- * per-agent + per-subscription rollups, the chain forest, and the time
- * series. Caller (the IPC handler) is responsible for gating on Encore flags.
+ * Each run's agent type and token totals. A provider the run's own stream
+ * usage names wins over the lifecycle table; Grok and every run that carries
+ * that identity are credited from its own stream usage only, and the native
+ * transcript lookup stays the fallback for identified non-Grok runs.
  */
-export async function getCueStatsAggregation(
-	timeRange: CueStatsTimeRange,
-	options: CueStatsAggregationOptions = {}
-): Promise<CueStatsAggregation> {
-	const windowEndMs = Date.now();
-	const windowStartMs = getTimeRangeStart(timeRange);
-	const bucketSizeMs = bucketSizeFor(timeRange);
-
-	// A `gated` row is an event a subscription's gate skipped, not a run: it
-	// spent no agent time and no tokens. Counting it as an occurrence would
-	// bury the real runs under the events the gate exists to filter out. A
-	// run the injection screen blocked spent none either, and its duration is
-	// the classifier's, so it stays out of these run statistics too.
-	const allEvents = getRecentCueEvents(windowStartMs).filter(
-		(event) => !isCueRunSkipped(event.status)
-	);
-	const excluded = new Set(options.excludeTriggerTypes ?? []);
-	// Options are counted from the unfiltered set - see buildTriggerTypeOptions.
-	const triggerTypeOptions = buildTriggerTypeOptions(allEvents);
-	const events =
-		excluded.size === 0 ? allEvents : allEvents.filter((event) => !excluded.has(event.type));
-
+async function resolveEventTokens(
+	events: CueStatsEventRecord[],
+	windowStartMs: number
+): Promise<{
+	tokensByEvent: Map<string, SessionTokenSummary>;
+	agentTypeByEvent: Map<string, string | null>;
+}> {
 	const uniqueSessionIds = Array.from(new Set(events.map((e) => e.sessionId)));
 	const agentTypeByLifecycle = getAgentTypesForSessions(uniqueSessionIds);
 	const agentTypeByEvent = new Map<string, string | null>();
@@ -623,6 +716,40 @@ export async function getCueStatsAggregation(
 			)
 		);
 	}
+	return { tokensByEvent, agentTypeByEvent };
+}
+
+/**
+ * Compute the full Cue stats payload for the given time range.
+ *
+ * Reads `cue_events` for the window, resolves token summaries per unique
+ * session via the Phase 02 accessor, then assembles totals + per-pipeline +
+ * per-agent + per-subscription rollups, the chain forest, and the time
+ * series. Caller (the IPC handler) is responsible for gating on Encore flags.
+ */
+export async function getCueStatsAggregation(
+	timeRange: CueStatsTimeRange,
+	options: CueStatsAggregationOptions = {}
+): Promise<CueStatsAggregation> {
+	const windowEndMs = Date.now();
+	const windowStartMs = getTimeRangeStart(timeRange);
+	const bucketSizeMs = bucketSizeFor(timeRange);
+
+	// A `gated` row is an event a subscription's gate skipped, not a run: it
+	// spent no agent time and no tokens. Counting it as an occurrence would
+	// bury the real runs under the events the gate exists to filter out. A
+	// run the injection screen blocked spent none either, and its duration is
+	// the classifier's, so it stays out of these run statistics too.
+	const allEvents = getCueEventsForStats(windowStartMs, ORPHANED_RUN_MESSAGE).filter(
+		(event) => !isCueRunSkipped(event.status)
+	);
+	const excluded = new Set(options.excludeTriggerTypes ?? []);
+	// Options are counted from the unfiltered set - see buildTriggerTypeOptions.
+	const triggerTypeOptions = buildTriggerTypeOptions(allEvents);
+	const events =
+		excluded.size === 0 ? allEvents : allEvents.filter((event) => !excluded.has(event.type));
+
+	const { tokensByEvent, agentTypeByEvent } = await resolveEventTokens(events, windowStartMs);
 
 	const totals = emptyMutableTotals();
 	const byPipeline = new Map<string, GroupAccumulator>();
@@ -666,7 +793,19 @@ export async function getCueStatsAggregation(
 	}
 
 	const chains = buildChains(events, tokensByEvent, agentTypeByEvent);
-	const timeSeries = buildTimeSeries(events, tokensByEvent, bucketSizeMs);
+	const timeSeries = buildTimeSeries(
+		events,
+		tokensByEvent,
+		bucketSizeMs,
+		windowStartMs,
+		windowEndMs
+	);
+	const slowestRuns = buildSlowestRuns(
+		events,
+		tokensByEvent,
+		agentTypeByEvent,
+		CUE_SLOWEST_RUNS_LIMIT
+	);
 	const byHourOfDay = buildHourOfDay(events);
 	const coverageWarnings = buildCoverageWarnings(tokensByEvent);
 
@@ -676,6 +815,7 @@ export async function getCueStatsAggregation(
 		windowEndMs,
 		totals: freezeTotals(totals),
 		durationPercentiles: computePercentiles(runDurations),
+		slowestRuns,
 		byPipeline: freezeGroups(byPipeline),
 		byAgent: freezeGroups(byAgent),
 		bySubscription: freezeGroups(bySubscription),
@@ -688,6 +828,30 @@ export async function getCueStatsAggregation(
 		bucketSizeMs,
 		coverageWarnings,
 	};
+}
+
+/**
+ * Just the three figures the Overview's source chart shows for Cue: runs, run
+ * time (completed runs, as in the full aggregation) and tokens, credited the
+ * same way as the full aggregation. Skips every rollup and the chain forest.
+ */
+export async function getCueStatsSourceTotals(
+	timeRange: CueStatsTimeRange
+): Promise<CueStatsSourceTotals> {
+	const windowStartMs = getTimeRangeStart(timeRange);
+	// Skipped events are not runs, exactly as in the full aggregation.
+	const events = getCueEventsForStats(windowStartMs, ORPHANED_RUN_MESSAGE).filter(
+		(event) => !isCueRunSkipped(event.status)
+	);
+	const { tokensByEvent } = await resolveEventTokens(events, windowStartMs);
+	let totalDurationMs = 0;
+	let tokens = 0;
+	for (const event of events) {
+		totalDurationMs += computeDuration(event) ?? 0;
+		const summary = tokensByEvent.get(event.id);
+		if (summary) tokens += summary.inputTokens + summary.outputTokens;
+	}
+	return { occurrences: events.length, totalDurationMs, tokens };
 }
 
 /**

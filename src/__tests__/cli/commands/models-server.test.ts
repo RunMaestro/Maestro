@@ -55,6 +55,7 @@ const RUNNING: ModelServerReport = {
 		models: ['qwen3-1.7b-instruct-q4km'],
 		loadedModels: ['qwen3-1.7b-instruct-q4km'],
 		keyStorage: 'os',
+		startOnLaunch: true,
 		logPath: '/data/logs/model-server.log',
 	},
 	engine: {
@@ -273,10 +274,22 @@ describe('models server set', () => {
 	});
 
 	it.each([
+		['on', true],
+		['off', false],
+	])('sends --start-on-launch %s as %s', async (word, value) => {
+		const captured = mockSend({ success: true, report: RUNNING });
+
+		await modelsServerSet({ startOnLaunch: word });
+
+		expect(captured.payload).toEqual({ type: 'local_models_server_set', startOnLaunch: value });
+	});
+
+	it.each([
 		[{ bind: 'everywhere' }, /not a bind mode/],
 		[{ maxModels: '0' }, /--max-models must be a whole number from 1 to 16/],
 		[{ maxModels: 'two' }, /--max-models must be a whole number/],
 		[{ build: 'metal' }, /not a build\. Use default, cpu, cuda, rocm/],
+		[{ startOnLaunch: 'maybe' }, /--start-on-launch expects true or false/],
 		[{}, /Nothing to change/],
 	])('refuses %o before sending anything', async (options, message) => {
 		mockSend({ success: true, report: RUNNING });

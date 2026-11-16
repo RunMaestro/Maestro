@@ -3,7 +3,7 @@
  *
  * How an agent command reaches `child_process.spawn`, with the platform stood
  * in. The arguments used are the ones a Codex agent gets when it runs on
- * another model server (Run on): they are the only ones Maestro builds that
+ * another model server (model source): they are the only ones Maestro builds that
  * once held double quotes and spaces, which Windows PowerShell does not pass to
  * a program whole. None of this ran on Windows; these cases pin what each shell
  * is handed, so the argument that reaches Codex is the one that was written.

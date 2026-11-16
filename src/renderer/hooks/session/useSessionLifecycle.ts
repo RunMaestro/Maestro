@@ -33,6 +33,7 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { offboardBeforeRemoval } from '../../services/groupLifecycle';
 import { collectNamingPrompt, requestTabAutoName } from '../../services/tabAutoNaming';
 import {
 	renameTerminalTab as renameTerminalTabHelper,
@@ -116,7 +117,7 @@ export interface SessionLifecycleReturn {
 		codexTransport?: CodexTransport,
 		/** Local Models gateway URL, already validated; `undefined` clears it. */
 		gatewayUrl?: string,
-		/** Run on target, already validated; `undefined` means the provider's model. */
+		/** model source, already validated; `undefined` means the provider's model. */
 		runOn?: RunOnSourceTarget,
 		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
 		tierTargets?: TierTargets,
@@ -224,7 +225,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			codexTransport?: CodexTransport,
 			/** Local Models gateway URL, already validated; `undefined` clears it. */
 			gatewayUrl?: string,
-			/** Run on target, already validated; `undefined` means the provider's model. */
+			/** model source, already validated; `undefined` means the provider's model. */
 			runOn?: RunOnSourceTarget,
 			/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
 			tierTargets?: TierTargets,
@@ -358,7 +359,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			// the debounced persistence would not reach for two seconds. Flush now
 			// so a message sent straight after this save goes where the user just
 			// said it should.
-			// The same holds for the Run on target, and a miss there sends a turn to
+			// The same holds for the model source, and a miss there sends a turn to
 			// the provider's cloud model the user just turned away from.
 			// And for the tier targets: the CLI's Auto Run reads them from the store.
 			if (
@@ -550,6 +551,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const performDeleteSession = useCallback(
 		async (session: Session, eraseWorkingDirectory: boolean) => {
 			const id = session.id;
+
+			// The group's Offboarding prompt runs before anything is torn down, and
+			// removal waits for it (or for its time limit, or for "Remove now").
+			await offboardBeforeRemoval(id);
 
 			// Record session closure for Usage Dashboard (before cleanup)
 			window.maestro.stats.recordSessionClosed(id, Date.now());

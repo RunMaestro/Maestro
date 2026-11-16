@@ -703,7 +703,7 @@ export function applyAgentConfigOverrides(
  * puts a model, after any subcommand, which is where Codex reads `-m`.
  *
  * For a launch whose model is decided after its arguments were built (an agent's
- * Run on target). Replacing matters: a second flag beside the agent's stored
+ * model source). Replacing matters: a second flag beside the agent's stored
  * model leaves the CLI to pick one, and the stored model names something the
  * target's server does not serve.
  *

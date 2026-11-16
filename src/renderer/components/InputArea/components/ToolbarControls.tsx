@@ -112,7 +112,7 @@ export interface ToolbarControlsProps {
 	tabShowThinking?: ThinkingMode;
 	onToggleTabShowThinking?: () => void;
 	currentModel?: string;
-	/** Where the model runs when the agent has a Run on target: the model pill shows it instead. */
+	/** Where the model runs when the agent has a model source: the model pill shows it instead. */
 	runOn?: string;
 	/** Tooltip for the Auto model choice, when `availableModels` offers it. */
 	autoModelTitle?: string;

@@ -125,7 +125,7 @@ describe('LocalModelsGatewaySection', () => {
 		expect(useSessionStore.getState().sessions[0].runOn).toEqual({ type: 'provider' });
 	});
 
-	it('disables proxy and gateway edits for an agent on a Run on source', () => {
+	it('disables proxy and gateway edits for an agent on a model source', () => {
 		seed(
 			agent({
 				id: 'a',
@@ -378,7 +378,7 @@ describe('LocalModelsGatewaySection', () => {
 		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
 	});
 
-	it('keeps an existing Run on target when the default changes', async () => {
+	it('keeps an existing model source when the default changes', async () => {
 		const routed = agent({
 			id: 'routed',
 			runOn: { type: 'source', endpointId: 'local', model: 'model' },

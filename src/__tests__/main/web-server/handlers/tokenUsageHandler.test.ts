@@ -33,6 +33,7 @@ vi.mock('../../../../main/stores', () => ({
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
+import { getTimeRangeStart } from '../../../../shared/statsTimeRange';
 
 function createMockClient(): WebClient {
 	return {
@@ -68,8 +69,10 @@ describe('get_token_usage handler', () => {
 		await flush();
 
 		const [query, force] = mockGetTokenUsageAggregate.mock.calls[0];
-		expect(query.granularity).toBe('day');
-		expect(Date.now() - query.sinceMs).toBeGreaterThanOrEqual(7 * 24 * 60 * 60 * 1000);
+		// The same calendar-aligned window as the dashboard: local midnight six
+		// days before today. The granularity is left to the accessor, which picks
+		// it from the window's span.
+		expect(query).toEqual({ sinceMs: getTimeRangeStart('week') });
 		expect(force).toBe(false);
 		expect(lastResponse(client)).toMatchObject({
 			type: 'token_usage',
@@ -82,7 +85,7 @@ describe('get_token_usage handler', () => {
 		handler.handleMessage(client, { type: 'get_token_usage', range: 'all', force: true });
 		await flush();
 
-		expect(mockGetTokenUsageAggregate).toHaveBeenCalledWith({ granularity: 'month' }, true);
+		expect(mockGetTokenUsageAggregate).toHaveBeenCalledWith({}, true);
 	});
 
 	it('rejects an unknown range without reading transcripts', async () => {
