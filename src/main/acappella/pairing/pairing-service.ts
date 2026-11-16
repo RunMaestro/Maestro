@@ -262,7 +262,7 @@ export class PairingService {
 		if (!constantTimeEquals(input.code.trim().toUpperCase(), offer.code)) {
 			this.offer.failedAttempts += 1;
 			if (this.offer.failedAttempts >= CLAIM_ATTEMPT_LIMIT) {
-				this.offer = null;
+				this.cancelPairing();
 			}
 			return { status: 'rejected', reason: 'unknown-code' };
 		}

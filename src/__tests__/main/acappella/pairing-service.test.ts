@@ -142,6 +142,56 @@ describe('pairing codes', () => {
 		});
 	});
 
+	it('notifies onPairingRequest listeners with null when the guess limit is reached', () => {
+		const service = createService();
+		const offer = service.startPairing();
+		const wrong = offer.code === 'ZZZZZZ' ? '222222' : 'ZZZZZZ';
+		const seen: Array<string | null> = [];
+		service.onPairingRequest((request) => seen.push(request?.requestId ?? null));
+
+		for (let i = 0; i < 4; i += 1) {
+			service.claim({ code: wrong, name: 'Guess', platform: 'ios' });
+		}
+		expect(seen).toEqual([]);
+
+		service.claim({ code: wrong, name: 'Guess', platform: 'ios' });
+		expect(service.currentOffer()).toBeNull();
+		expect(seen).toEqual([null]);
+	});
+
+	it('notifies onPairingRequest listeners with null when cancelPairing is called without a pending request', () => {
+		const service = createService();
+		service.startPairing();
+		const seen: Array<string | null> = [];
+		service.onPairingRequest((request) => seen.push(request?.requestId ?? null));
+
+		service.cancelPairing();
+		expect(service.currentOffer()).toBeNull();
+		expect(seen).toEqual([null]);
+	});
+
+	it('does not cancel a pending request or emit null when wrong guesses arrive after a valid claim', () => {
+		const service = createService();
+		const offer = service.startPairing();
+		const seen: Array<string | null> = [];
+		service.onPairingRequest((request) => seen.push(request?.requestId ?? null));
+
+		const legit = service.claim({ code: offer.code, name: 'Legit Phone', platform: 'ios' });
+		expect(legit.status).toBe('pending');
+		if (legit.status !== 'pending') return;
+
+		const wrong = offer.code === 'ZZZZZZ' ? '222222' : 'ZZZZZZ';
+		for (let i = 0; i < 5; i += 1) {
+			expect(service.claim({ code: wrong, name: 'Guess', platform: 'ios' })).toMatchObject({
+				status: 'rejected',
+				reason: 'already-used',
+			});
+		}
+
+		expect(service.pendingRequest()?.requestId).toBe(legit.requestId);
+		expect(seen).toEqual([legit.requestId]);
+	});
+
 	it('shows the same fingerprint for the same host secret and a different one otherwise', () => {
 		expect(createService({ hostSecret: 'a' }).fingerprint()).toBe(
 			createService({ hostSecret: 'a' }).fingerprint()
