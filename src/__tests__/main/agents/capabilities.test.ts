@@ -55,9 +55,10 @@ describe('agent-capabilities', () => {
 			expect(DEFAULT_CAPABILITIES.usesCombinedContextWindow).toBe(false);
 		});
 
-		it('should be a conservative default (all false)', () => {
-			const allFalse = Object.values(DEFAULT_CAPABILITIES).every((v) => v === false);
-			expect(allFalse).toBe(true);
+		it('should be a conservative default (all false, no token speed)', () => {
+			const { tokenSpeedMeasurement, ...flags } = DEFAULT_CAPABILITIES;
+			expect(Object.values(flags).every((v) => v === false)).toBe(true);
+			expect(tokenSpeedMeasurement).toBe('none');
 		});
 	});
 
@@ -359,6 +360,7 @@ describe('agent-capabilities', () => {
 				'supportsAppendSystemPrompt',
 				'supportsProjectMemory',
 				'supportsAdditionalDirectories',
+				'tokenSpeedMeasurement',
 			];
 
 			const defaultKeys = Object.keys(DEFAULT_CAPABILITIES);

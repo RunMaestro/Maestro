@@ -520,6 +520,11 @@ export class ExitHandler {
 		if (this.processes.get(sessionId) === managedProcess) {
 			this.processes.delete(sessionId);
 		}
+		// A call still open when the process exits (Claude's last assistant
+		// message is closed only by the next mark) is finished here.
+		for (const sample of managedProcess.callTimer?.finish() ?? []) {
+			this.emitter.emit('token-speed', sessionId, managedProcess.toolType, sample);
+		}
 		this.emitter.emit('exit', sessionId, code);
 	}
 

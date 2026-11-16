@@ -18,6 +18,8 @@
 
 import type { AgentError, ToolType } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
+import type { CallTimingSignal } from '../../shared/tokenSpeed';
+import { piFamilyCallTiming } from './pi-output-parser';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 
@@ -260,6 +262,11 @@ export class OmpOutputParser implements AgentOutputParser {
 
 	extractSessionId(event: ParsedEvent): string | null {
 		return event.sessionId || null;
+	}
+
+	/** Same event protocol as Pi; see `piFamilyCallTiming`. */
+	extractCallTiming(raw: unknown): CallTimingSignal | null {
+		return piFamilyCallTiming(raw);
 	}
 
 	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null {

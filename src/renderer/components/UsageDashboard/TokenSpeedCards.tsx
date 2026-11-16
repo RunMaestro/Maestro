@@ -19,7 +19,6 @@ import { ArrowDownToLine, ArrowUpFromLine, Gauge, Zap } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../../shared/stats-types';
 import {
-	TOKEN_SPEED_AGENTS,
 	TOKEN_SPEED_PEAK_MIN_BUCKET_MS,
 	type TokenSpeedStats,
 	type TokenSpeedSummary,
@@ -54,9 +53,9 @@ function peakContext(stats: TokenSpeedStats): string | null {
 /** Sub-line for a peak card: what a peak is, in the user's terms. */
 const PEAK_NOTE = `fastest model-hour (${TOKEN_SPEED_PEAK_MIN_BUCKET_MS / 60_000}+ min of calls)`;
 
-/** "Claude Code and Codex": the providers whose transcripts time their calls. */
-function measurableAgentsText(): string {
-	const names = TOKEN_SPEED_AGENTS.map(getAgentDisplayName);
+/** "Claude Code, Codex and OpenCode": the providers whose speed can be measured. */
+function measurableAgentsText(agentIds: readonly string[]): string {
+	const names = agentIds.map(getAgentDisplayName);
 	return names.length <= 1
 		? (names[0] ?? '')
 		: `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
@@ -81,8 +80,9 @@ export const TokenSpeedCards = memo(function TokenSpeedCards({
 				style={{ color: theme.colors.textDim }}
 				data-testid="token-speed-empty"
 			>
-				No timed API calls in this range. Speed is measured from {measurableAgentsText()}{' '}
-				transcripts.
+				No timed API calls in this range.
+				{speed.measurableAgents.length > 0 &&
+					` Speed is measured for ${measurableAgentsText(speed.measurableAgents)}.`}
 			</p>
 		);
 	}

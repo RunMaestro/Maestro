@@ -293,18 +293,19 @@ describe('StatsDB class (mocked)', () => {
 			const db = new StatsDB();
 			db.initialize();
 
-			// Migrations v1-v14: initial schema, is_remote column, session_lifecycle
+			// Migrations v1-v15: initial schema, is_remote column, session_lifecycle
 			// table, compound indexes, is_worktree column, image_annotations table,
 			// shortcut_usage_daily table, multi_window_usage_daily table,
 			// query_events token/cost columns, resilience_events table,
 			// wizard_runs table, query_events user_name column, wizard_runs.active_ms,
-			// shortcut_usage_by_id table + idx_query_start_session (v14).
-			expect(db.getTargetVersion()).toBe(14);
+			// shortcut_usage_by_id table + idx_query_start_session (v14),
+			// token_speed_hourly table (v15).
+			expect(db.getTargetVersion()).toBe(15);
 		});
 
 		it('should return false from hasPendingMigrations() when up to date', async () => {
 			mockDb.pragma.mockImplementation((sql: string) => {
-				if (sql === 'user_version') return [{ user_version: 14 }];
+				if (sql === 'user_version') return [{ user_version: 15 }];
 				return undefined;
 			});
 
@@ -320,7 +321,7 @@ describe('StatsDB class (mocked)', () => {
 			// by checking current version < target version
 
 			// Simulate a database that's already at the target version
-			let currentVersion = 14;
+			let currentVersion = 15;
 			mockDb.pragma.mockImplementation((sql: string) => {
 				if (sql === 'user_version') return [{ user_version: currentVersion }];
 				// Handle version updates from migration
@@ -335,8 +336,8 @@ describe('StatsDB class (mocked)', () => {
 			db.initialize();
 
 			// At target version, no pending migrations
-			expect(db.getCurrentVersion()).toBe(14);
-			expect(db.getTargetVersion()).toBe(14);
+			expect(db.getCurrentVersion()).toBe(15);
+			expect(db.getTargetVersion()).toBe(15);
 			expect(db.hasPendingMigrations()).toBe(false);
 		});
 

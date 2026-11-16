@@ -363,4 +363,4 @@ export interface UsageExportResult {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 14;
+export const STATS_DB_VERSION = 15;

@@ -64,6 +64,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: true, // --append-system-prompt flag
 		supportsProjectMemory: true, // $CLAUDE_CONFIG_DIR/projects/<path>/memory/
 		supportsAdditionalDirectories: true, // --add-dir <directories...> (verified against the installed CLI)
+		tokenSpeedMeasurement: 'transcript', // per-call timing in ~/.claude transcripts; live stream (assistant message.usage) when on an SSH host
 	},
 
 	/**
@@ -98,6 +99,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false,
+		tokenSpeedMeasurement: 'none', // not a model
 	},
 
 	/**
@@ -140,6 +142,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: true, // $CODEX_HOME/memories/ (account-wide, written by Codex memories)
 		supportsAdditionalDirectories: true, // --add-dir <DIR>, repeatable. Codex scopes it to WRITABLE roots.
+		tokenSpeedMeasurement: 'transcript', // token_count per call in the rollout JSONL; the live stream reports it only after tools run, so no stream timing
 		imageResumeMode: 'prompt-embed', // codex exec resume doesn't support -i; embed file paths in prompt text
 	},
 
@@ -177,6 +180,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // Unverified - no Gemini CLI available to probe
+		tokenSpeedMeasurement: 'none', // hidden; superseded by Antigravity
 	},
 
 	/**
@@ -216,6 +220,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsProjectMemory: false,
 		supportsPromptViaStdin: false, // Docs give the prompt as `-p "<text>"`; stdin delivery is unstated
 		supportsAdditionalDirectories: false, // No documented flag for extra workspace roots
+		tokenSpeedMeasurement: 'none', // step_update usage: per-step vs running total unverified against a live run
 	},
 
 	/**
@@ -254,6 +259,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
+		tokenSpeedMeasurement: 'stream', // Claude-format stream-json: assistant message.usage per call
 	},
 
 	/**
@@ -289,6 +295,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
+		tokenSpeedMeasurement: 'none', // plain-text output, no usage at all
 	},
 
 	/**
@@ -324,6 +331,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
+		tokenSpeedMeasurement: 'stream', // turn_start / tool_execution_end -> assistant message_end.usage
 	},
 
 	/**
@@ -364,6 +372,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // PLACEHOLDER - unverified
+		tokenSpeedMeasurement: 'stream', // same protocol as pi
 	},
 
 	/**
@@ -401,6 +410,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // No directory-grant flag (--dir only relocates the cwd)
+		tokenSpeedMeasurement: 'stream', // step_start -> step_finish.part.tokens; steps that ran a tool are skipped
 	},
 
 	/**
@@ -437,6 +447,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // Unverified - no Droid CLI available to probe
+		tokenSpeedMeasurement: 'none', // usage only once per turn (completion), and turn time includes tool runs
 	},
 
 	/**
@@ -472,6 +483,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false, // No --append-system-prompt equivalent
 		supportsProjectMemory: false, // No project memory mechanism
 		supportsAdditionalDirectories: true, // --add-dir <directory>, repeatable (verified against the installed CLI)
+		tokenSpeedMeasurement: 'stream', // assistant.turn_start -> assistant.message.outputTokens (output only; no input tokens reported)
 		usesJsonLineOutput: true, // --output-format json produces JSONL
 		usesCombinedContextWindow: true, // Copilot's own usage layer reports cumulative input (includes cache) regardless of underlying model, so the gauge math must follow the combined formula
 	},
@@ -516,6 +528,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false, // Verified absent: no --append-system-prompt equivalent in grok --help
 		supportsProjectMemory: false, // Conservative default: no project memory mechanism observed
 		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
+		tokenSpeedMeasurement: 'none', // no usage in the stream; counts live only in signals.json / updates.jsonl
 	},
 };
 

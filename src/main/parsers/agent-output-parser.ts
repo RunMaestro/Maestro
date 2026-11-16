@@ -29,6 +29,7 @@
 import type { ToolType, AgentError } from '../../shared/types';
 import { isValidAgentId } from '../../shared/agentIds';
 import type { ClaudeCostState } from '../../shared/claudeCostTracker';
+import type { CallTimingSignal } from '../../shared/tokenSpeed';
 
 // Re-export error types for convenience
 export type { AgentError, AgentErrorType } from '../../shared/types';
@@ -251,6 +252,23 @@ export interface AgentOutputParser {
 	 * @returns Usage stats or null if not present
 	 */
 	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null;
+
+	/**
+	 * Read one per-call timing mark off a raw stream event, for providers whose
+	 * `AgentCapabilities.tokenSpeedMeasurement` is `'stream'` (and transcript
+	 * providers running on an SSH host). The main process stamps each mark with
+	 * its arrival time and turns them into timed calls with `StreamCallTimer`
+	 * (`src/shared/tokenSpeed.ts`).
+	 *
+	 * Optional: a parser without it reports no token speed from the stream.
+	 * Return `null` for every event that is not a call boundary. An `end` must
+	 * carry THAT call's usage (never a running session total), with input
+	 * counting every prompt token the call processed (fresh, cache writes and
+	 * cache reads) and output including reasoning.
+	 *
+	 * @param raw - The raw JSON object as the provider emitted it
+	 */
+	extractCallTiming?(raw: unknown): CallTimingSignal | null;
 
 	/**
 	 * Extract slash commands from an event (if present)

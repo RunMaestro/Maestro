@@ -41,6 +41,7 @@ To add support for a new agent, follow this checklist. The agent completeness te
 12. **If `supportsSessionStorage: true`**: Create session storage extending `BaseSessionStorage` at `src/main/storage/{agent}-session-storage.ts`, register in `src/main/storage/index.ts`
 13. **If `supportsAdditionalDirectories: true`**: Add `additionalDirArgs` to the agent's definition in `src/main/agents/definitions.ts` - see [Step 3.5](#step-35-additional-directories)
 14. **If the agent needs binary probing beyond `$PATH`**: Add install locations to `src/main/agents/path-prober.ts` (both the Windows and the POSIX tables)
+15. **Always**: Declare `tokenSpeedMeasurement` in `capabilities.ts`. If `'stream'`, implement `extractCallTiming` on the output parser - see [Step 3.6](#step-36-token-speed)
 
 #### CI Enforcement
 
@@ -52,6 +53,7 @@ The `agent-completeness.test.ts` test validates:
 - Every agent with `supportsSessionStorage` has a registered session storage
 - Every agent with an output parser has error patterns registered
 - Every agent declares `additionalDirArgs` **iff** `supportsAdditionalDirectories` is true
+- Every agent declares `tokenSpeedMeasurement`; `'stream'` requires a parser with `extractCallTiming`, `'transcript'` requires a session storage
 - Every ID in `AGENT_IDS` has a picker decision in `AGENT_PICKER_META` (compile-time: the record is keyed by `AgentId`)
 - Every pickable agent has a real, non-hidden definition and a usable re-auth command
 - Every pickable agent draws a real logo rather than the blank fallback ring (`AgentSelectionScreen/components.test.tsx`)
@@ -175,14 +177,17 @@ interface AgentCapabilities {
 	// Filesystem scope
 	supportsAdditionalDirectories: boolean; // CLI can grant dirs outside the cwd (e.g. --add-dir)
 
+	// Token speed (required, non-boolean)
+	tokenSpeedMeasurement: 'transcript' | 'stream' | 'none'; // Where per-call tokens/sec comes from
+
 	// Optional non-boolean
 	imageResumeMode?: 'prompt-embed'; // How to handle images on resume when -i unavailable
 }
 ```
 
-> **Note:** This interface is duplicated in 4 places that must stay in sync:
-> `src/main/agents/capabilities.ts`, `src/renderer/hooks/agent/useAgentCapabilities.ts`,
-> `src/renderer/types/index.ts`, `src/renderer/global.d.ts`
+> **Note:** The interface and `DEFAULT_CAPABILITIES` are defined once, in
+> `src/shared/types.ts`; `src/main/agents/capabilities.ts` re-exports them and
+> holds the per-agent values.
 
 ### Capability-to-UI Feature Mapping
 
@@ -213,6 +218,7 @@ interface AgentCapabilities {
 | `supportsGroupChatModeration`   | Moderator dropdown                                | Agent excluded                                                   |
 | `usesJsonLineOutput`            | CLI batch parsing strategy                        | Uses JSON fallback                                               |
 | `usesCombinedContextWindow`     | Context bar display                               | Separate bars                                                    |
+| `tokenSpeedMeasurement`         | Tokens tab: Token Speed (and Overview speed row)  | `'none'`: the provider is absent from speed charts               |
 
 ### Context Window Configuration
 
@@ -462,6 +468,7 @@ const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false, // true if batch output is JSONL (not JSON)
 		usesCombinedContextWindow: false, // true if context = input + output combined
 		supportsAdditionalDirectories: false, // true if the CLI can grant dirs outside the cwd
+		tokenSpeedMeasurement: 'none', // 'stream' once the parser implements extractCallTiming
 	},
 };
 ```
@@ -517,6 +524,61 @@ Current support:
 Emit the flag **once per directory** (`repeatDirFlag`) rather than as a single
 variadic list. A variadic option swallows the positional that follows it, and the
 prompt is passed positionally on several spawn paths.
+
+### Step 3.6: Token Speed
+
+The Usage Dashboard shows input and output tokens per second **per model API
+call**. Every agent declares where that comes from in `tokenSpeedMeasurement`;
+the type makes the field required, so a new harness cannot skip the decision.
+
+| Value          | Meaning                                                                                                                                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `'transcript'` | The on-disk transcript times each call (session storage puts hourly buckets on `AgentSessionInfo.speed`). On an SSH host, where the transcript is out of reach, the live stream is used instead. |
+| `'stream'`     | The live JSON stream marks each call. The parser implements `extractCallTiming(raw)`; the main process times calls as events arrive and stores them in `token_speed_hourly` (stats v15).         |
+| `'none'`       | The provider reports no per-call usage. Say why in the comment next to the value.                                                                                                                |
+
+**Implementing `extractCallTiming`.** Return one `CallTimingSignal` per raw
+event that marks a call boundary, and `null` for every other event:
+
+- `{ kind: 'start' }` when a request goes out: a turn starts, a tool result is
+  handed back, the session initializes. The call is timed from the LATEST start,
+  so the window includes the wait for the first token (the same rule the
+  transcript path uses).
+- `{ kind: 'end', inputTokens, outputTokens, model?, key? }` when a call
+  finishes, with THAT call's usage - never a running session total. Input counts
+  every prompt token the call processed (fresh, cache writes, cache reads);
+  output includes reasoning. Pass a `key` (the message id) when the provider
+  repeats one call's message, so the repeats fold into one call.
+- `{ kind: 'discard' }` when the call in flight cannot be timed honestly, for
+  example a step that ran a tool before reporting its tokens. Reporting it would
+  put tool time into the model's speed.
+
+Skip subagent events: their calls run alongside the parent's and would
+interleave the clock. Never measure a turn as one call: a turn includes tool
+runs, so its rate measures how busy the agent was, not how fast the model was.
+
+`StreamCallTimer` (`src/shared/tokenSpeed.ts`) turns the signals into timed
+calls and drops calls shorter than 1 second or longer than 15 minutes.
+`call-timing.test.ts` shows the expected marks for every provider that has them.
+
+Current support:
+
+| Agent           | Measurement  | Source                                                                                 |
+| --------------- | ------------ | -------------------------------------------------------------------------------------- |
+| `claude-code`   | `transcript` | Transcript lines; stream (`assistant` `message.usage`) when on an SSH host             |
+| `codex`         | `transcript` | Rollout `token_count`; the stream reports it only after tools run, so no stream timing |
+| `opencode`      | `stream`     | `step_start` to `step_finish` tokens; steps that ran a tool are discarded              |
+| `pi`, `omp`     | `stream`     | `turn_start` / `tool_execution_end` to the assistant `message_end` usage               |
+| `qwen3-coder`   | `stream`     | Claude-format stream-json (`assistant` `message.usage`)                                |
+| `copilot-cli`   | `stream`     | `assistant.turn_start` to `assistant.message` `outputTokens`. Output speed only        |
+| `antigravity`   | `none`       | `step_update` usage not yet verified as per-step against a live run                    |
+| `factory-droid` | `none`       | Usage only once per turn, and the turn includes tool time                              |
+| `grok`          | `none`       | No usage in the stream                                                                 |
+| `hermes`        | `none`       | Plain-text output, no usage                                                            |
+
+Stream timing starts the day a provider gains it and covers runs that go through
+the desktop app's process manager (interactive turns, Auto Run, Cue, group chat).
+Agents that `maestro-cli` spawns in its own process are not timed from the stream.
 
 ### Step 4: Create Output Parser
 

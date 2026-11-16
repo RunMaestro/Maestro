@@ -19,6 +19,7 @@
 
 import { getStatsDB } from '../singleton';
 import { getSessionStorage } from '../../agents';
+import { AGENT_CAPABILITIES } from '../../agents/capabilities';
 import type { AgentSessionInfo } from '../../agents/session-storage';
 import { getProviderAccountDirs } from '../../agents/provider-account-dirs';
 import { logger } from '../../utils/logger';
@@ -424,7 +425,8 @@ function aggregate(
 	all: SessionTokenBreakdown[],
 	query: TokenUsageQuery,
 	excluded: TokenUsageExclusions = noExclusions(),
-	nowMs: number = Date.now()
+	nowMs: number = Date.now(),
+	streamSpeed: readonly TokenSpeedSource[] = []
 ): TokenUsageAggregate {
 	const window = resolveWindow(all, query, nowMs);
 	const granularity = window.granularity;
@@ -503,7 +505,7 @@ function aggregate(
 		byAccount: toGroups(byAccount),
 		timeline: timelineArr,
 		series: buildSeries(all, sinceMs, untilMs),
-		speed: buildSpeed(all, query, window),
+		speed: buildSpeed(all, query, window, streamSpeed),
 		coverageByAgent,
 		excluded,
 		granularity,
@@ -584,7 +586,8 @@ function buildSeries(all: SessionTokenBreakdown[], sinceMs: number, untilMs: num
 function buildSpeed(
 	all: SessionTokenBreakdown[],
 	query: TokenUsageQuery,
-	window: { startMs: number; endMs: number; granularity: TokenTimelineGranularity }
+	window: { startMs: number; endMs: number; granularity: TokenTimelineGranularity },
+	streamSpeed: readonly TokenSpeedSource[] = []
 ) {
 	const sinceMs = query.sinceMs ?? -Infinity;
 	const sources: TokenSpeedSource[] = [];
@@ -593,7 +596,12 @@ function buildSpeed(
 		if (s.timestampMs > 0 && s.timestampMs < sinceMs) continue;
 		sources.push({ agentType: s.agentType, buckets: s.speed });
 	}
+	// Calls timed off the live stream (providers with no timed transcript, and
+	// transcript providers on an SSH host). They never overlap the transcript
+	// buckets above: the stream sampler skips agents whose transcript it can read.
+	sources.push(...streamSpeed);
 	return summarizeTokenSpeed(sources, {
+		measurableAgents: measurableTokenSpeedAgents(),
 		sinceMs: query.sinceMs,
 		untilMs: query.untilMs,
 		// Same slices as the consumption timeline, so the two charts line up.
@@ -604,6 +612,29 @@ function buildSpeed(
 		modelKey: (model) => (model ? normalizeModelId(model) : 'unknown'),
 		modelLabel: (key) => (key === 'unknown' ? modelLabel('') : key),
 	});
+}
+
+/** Provider ids whose capabilities say their token speed can be measured. */
+function measurableTokenSpeedAgents(): string[] {
+	return Object.entries(AGENT_CAPABILITIES)
+		.filter(([, caps]) => caps.tokenSpeedMeasurement !== 'none')
+		.map(([agentId]) => agentId)
+		.sort();
+}
+
+/**
+ * The stream-timed speed buckets for a window, or none when the stats database
+ * is unavailable (the transcript figures still stand on their own).
+ */
+function loadStreamSpeed(query: TokenUsageQuery): TokenSpeedSource[] {
+	const db = getStatsDB();
+	if (!db.isReady()) return [];
+	try {
+		return db.getTokenSpeedSources(query.sinceMs);
+	} catch (error) {
+		void captureException(error, { operation: 'loadStreamSpeed' });
+		return [];
+	}
 }
 
 /** Human label for a model bucket. */
@@ -661,7 +692,8 @@ export async function getTokenUsageAggregate(
 	force = false
 ): Promise<TokenUsageAggregate> {
 	const { breakdowns, excluded } = await loadBreakdowns(force);
-	const result = aggregate(breakdowns, query, excluded);
+	// Read fresh on every call, outside the memo: stream samples land live.
+	const result = aggregate(breakdowns, query, excluded, Date.now(), loadStreamSpeed(query));
 	logger.debug(
 		`Computed token usage: ${result.totals.sessionCount} sessions, $${result.totals.costUsd.toFixed(2)}`,
 		LOG_CONTEXT

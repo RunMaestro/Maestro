@@ -255,7 +255,8 @@ How fast tokens moved, in tokens per second. The **Output / Input / Total** togg
 
 How the numbers are calculated:
 
-- **Per API call.** Each call is timed from the line that sent its request (your prompt, or the tool result before it) to the last line of its response. A whole turn is not used, because it includes tool runs and subagents. That measures how busy the agent was, not how fast the model was.
+- **Per API call.** Each call is timed from the moment its request went out (your prompt, or the tool result before it) to the end of its response. A whole turn is not used, because it includes tool runs and subagents. That measures how busy the agent was, not how fast the model was.
+- **Which providers.** Claude Code and Codex are timed from their transcripts, so their history goes back to the first transcript. OpenCode, Pi, Oh My Pi, Qwen3 Coder and Copilot-CLI are timed from their live output as the calls happen, so their speed starts on the day you update to a version that measures it. Claude Code agents on an SSH host are timed the same live way. Copilot-CLI reports no input tokens, so only its output speed is measured. Antigravity, Factory Droid, Grok and Hermes do not report per-call usage, so they have no speed figures.
 - **Averages are token-weighted.** All tokens divided by all measured call time, so a 2-minute call counts for more than a 2-second call.
 - **A peak is the fastest model-hour.** That is one model's calls in one clock hour, across all agents, with at least 5 minutes of call time. A single call is not used: transcript lines are written per block, so a short call can seem to finish thousands of tokens in two seconds.
 - **Input includes cache reads here.** Speed counts every prompt token a call processed, which is why input speed is hundreds of times higher than output speed.
@@ -509,6 +510,7 @@ Usage & Stats records this data in a local stats database:
 - **Agent lifecycle** - When each agent was created and deleted.
 - **Image annotations** - When you annotate an image.
 - **Shortcut presses** - Presses per day, and presses per shortcut per day.
+- **Token speed** - For providers timed from their live output, the calls, tokens and call time per provider, model and clock hour.
 - **Multi-window use** - For each day, how many windows you opened and the most that were open at the same time.
 - **Resilience outages** - Each Agent Resilience outage, recorded when it ends.
 - **Wizard runs** - Each Auto Run wizard conversation, with its counts of messages, documents, and tasks.

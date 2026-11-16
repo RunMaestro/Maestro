@@ -68,6 +68,24 @@ class NodeSqliteDatabaseShim {
 		return this.db.prepare(sql);
 	}
 
+	exec(sql: string): void {
+		this.db.exec(sql);
+	}
+
+	/** better-sqlite3's `transaction(fn)` returns a function that runs `fn` in one transaction. */
+	transaction<T extends unknown[]>(fn: (...args: T) => void): (...args: T) => void {
+		return (...args: T) => {
+			this.db.exec('BEGIN');
+			try {
+				fn(...args);
+				this.db.exec('COMMIT');
+			} catch (error) {
+				this.db.exec('ROLLBACK');
+				throw error;
+			}
+		};
+	}
+
 	close(): void {
 		this.db.close();
 	}
@@ -78,4 +96,12 @@ class NodeSqliteDatabaseShim {
  */
 export function nodeSqliteBetterSqlite3Mock(): { default: typeof NodeSqliteDatabaseShim } {
 	return { default: NodeSqliteDatabaseShim };
+}
+
+/**
+ * An in-memory database for code that takes a better-sqlite3 handle as an
+ * argument (the stats modules), e.g. `runMigrations(openNodeSqliteDb())`.
+ */
+export function openNodeSqliteDb<T = unknown>(filename = ':memory:'): T {
+	return new NodeSqliteDatabaseShim(filename) as unknown as T;
 }

@@ -136,18 +136,16 @@ export interface TokenSpeedSummary {
 	busiestHour: TokenSpeedBusiestHour | null;
 	/** Provider ids with at least one timed call in the window. */
 	measuredAgents: string[];
+	/**
+	 * Provider ids whose token speed CAN be measured (their
+	 * `AgentCapabilities.tokenSpeedMeasurement` is not `'none'`), so an empty
+	 * window can still say which providers it would have counted.
+	 */
+	measurableAgents: string[];
 }
 
 /** How many models get their own speed-over-time series. */
 export const TOKEN_SPEED_TIMELINE_MODELS = 6;
-
-/**
- * Provider ids whose transcripts time each API call (see
- * `createClaudeSpeedSampler` and `CodexTokenSpeedTracker`). The empty state
- * names these, so it can say which providers speed is measured for even when
- * the window has no calls.
- */
-export const TOKEN_SPEED_AGENTS: readonly string[] = ['claude-code', 'codex'];
 
 // ---------------------------------------------------------------------------
 // Bucketing
@@ -403,6 +401,106 @@ export class CodexTokenSpeedTracker {
 }
 
 // ---------------------------------------------------------------------------
+// Live stream (every provider whose JSON stream marks its API calls)
+// ---------------------------------------------------------------------------
+
+/**
+ * One timing mark a provider's output parser reads off its live JSON stream
+ * (`AgentOutputParser.extractCallTiming`). The main process stamps each with
+ * the time it arrived, which is how a provider with no timestamped transcript
+ * (or one on an SSH host) still gets per-call speed.
+ *
+ * - `start`: a request just went out (turn start, a tool result handed back,
+ *   session init). The next call is timed from the LATEST start, so the window
+ *   includes the wait for the first token, the same as the transcript path.
+ * - `end`: a model call finished, with that call's own usage. Ends sharing a
+ *   `key` are one call reported more than once (Claude repeats an assistant
+ *   message per content block): the call's end moves out and its output count
+ *   keeps the largest value seen.
+ * - `discard`: what is in flight cannot be timed honestly (a step that ran a
+ *   tool before reporting its usage), so drop it and wait for the next start.
+ */
+export type CallTimingSignal =
+	| { kind: 'start' }
+	| {
+			kind: 'end';
+			key?: string;
+			model?: string;
+			inputTokens: number;
+			outputTokens: number;
+	  }
+	| { kind: 'discard' };
+
+/**
+ * Turns a stream of {@link CallTimingSignal}s into timed calls. Pure: the
+ * caller supplies the arrival time of each signal and receives finished
+ * samples, so it can be driven from a test with fake clocks.
+ */
+export class StreamCallTimer {
+	private startMs: number | null = null;
+	private open: (TokenSpeedSample & { key: string; startMs: number }) | null = null;
+
+	constructor(private readonly fallbackModel = '') {}
+
+	/** Feed one signal; returns the calls it finished (zero or one). */
+	signal(sig: CallTimingSignal, nowMs: number): TokenSpeedSample[] {
+		if (sig.kind === 'discard') {
+			this.open = null;
+			this.startMs = null;
+			return [];
+		}
+		if (sig.kind === 'start') {
+			const done = this.flush();
+			this.startMs = nowMs;
+			return done;
+		}
+		// An end repeating the open call only moves its end and output count out.
+		if (this.open && sig.key && this.open.key === sig.key) {
+			this.open.endMs = nowMs;
+			this.open.outputTokens = Math.max(this.open.outputTokens, toCount(sig.outputTokens));
+			this.startMs = nowMs;
+			return [];
+		}
+		const done = this.flush();
+		if (this.startMs !== null) {
+			this.open = {
+				key: sig.key ?? '',
+				startMs: this.startMs,
+				endMs: nowMs,
+				durationMs: 0,
+				model: sig.model || this.fallbackModel,
+				inputTokens: toCount(sig.inputTokens),
+				outputTokens: toCount(sig.outputTokens),
+			};
+			// An unkeyed end can never be repeated, so it is finished now.
+			if (!sig.key) done.push(...this.flush());
+		}
+		// The next call is timed from this one's end until a newer start arrives.
+		this.startMs = nowMs;
+		return done;
+	}
+
+	/** Finish the call still open (the process exited). */
+	finish(): TokenSpeedSample[] {
+		return this.flush();
+	}
+
+	private flush(): TokenSpeedSample[] {
+		const cur = this.open;
+		this.open = null;
+		if (!cur) return [];
+		const sample: TokenSpeedSample = {
+			endMs: cur.endMs,
+			durationMs: cur.endMs - cur.startMs,
+			model: cur.model,
+			inputTokens: cur.inputTokens,
+			outputTokens: cur.outputTokens,
+		};
+		return isUsableSample(sample) ? [sample] : [];
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Aggregation
 // ---------------------------------------------------------------------------
 
@@ -549,6 +647,8 @@ export interface TokenSpeedSummaryOptions {
 	 * accessor passes the earliest activity it saw; omitted, the earliest bucket.
 	 */
 	windowStartMs?: number;
+	/** Provider ids whose speed can be measured; copied to the summary as is. */
+	measurableAgents?: readonly string[];
 }
 
 function toGroups(map: Map<string, TokenSpeedAccumulator>, label: (key: string) => string) {
@@ -597,6 +697,7 @@ export function emptyTokenSpeedSummary(): TokenSpeedSummary {
 		timelineByModel: {},
 		busiestHour: null,
 		measuredAgents: [],
+		measurableAgents: [],
 	};
 }
 
@@ -712,5 +813,6 @@ export function summarizeTokenSpeed(
 		),
 		busiestHour,
 		measuredAgents: [...byAgent.keys()].sort(),
+		measurableAgents: [...(options.measurableAgents ?? [])],
 	};
 }

@@ -30,6 +30,7 @@ import {
 	CREATE_SHORTCUT_USAGE_DAILY_SQL,
 	CREATE_SHORTCUT_USAGE_BY_ID_SQL,
 	CREATE_QUERY_START_SESSION_INDEX_SQL,
+	CREATE_TOKEN_SPEED_HOURLY_SQL,
 	CREATE_MULTI_WINDOW_USAGE_DAILY_SQL,
 	ADD_QUERY_EVENT_TOKEN_COLUMNS,
 	CREATE_RESILIENCE_EVENTS_SQL,
@@ -141,6 +142,12 @@ function getMigrations(): Migration[] {
 				'Add shortcut_usage_by_id table and the (start_time, session_id) index on query_events',
 			up: (db) => migrateV14(db),
 			isApplied: (db) => hasTable(db, 'shortcut_usage_by_id'),
+		},
+		{
+			version: 15,
+			description: 'Add token_speed_hourly table (token speed timed off the live stream)',
+			up: (db) => migrateV15(db),
+			isApplied: (db) => hasTable(db, 'token_speed_hourly'),
 		},
 	];
 }
@@ -514,6 +521,11 @@ function migrateV14(db: Database.Database): void {
 	db.prepare(CREATE_SHORTCUT_USAGE_BY_ID_SQL).run();
 	db.prepare(CREATE_QUERY_START_SESSION_INDEX_SQL).run();
 	logger.debug('Created shortcut_usage_by_id table and idx_query_start_session', LOG_CONTEXT);
+}
+
+function migrateV15(db: Database.Database): void {
+	db.prepare(CREATE_TOKEN_SPEED_HOURLY_SQL).run();
+	logger.debug('Created token_speed_hourly table', LOG_CONTEXT);
 }
 
 /**
