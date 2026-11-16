@@ -1092,6 +1092,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					contextMenuRef={contextMenuRef}
 					contextMenuPos={contextMenuPos}
 					sshRemoteId={sshRemoteId}
+					rootPath={session.projectRoot}
 					onFocusFileInGraph={onFocusFileInGraph}
 					onGraphFolder={handleGraphFolder}
 					onGraphSelection={handleGraphSelection}

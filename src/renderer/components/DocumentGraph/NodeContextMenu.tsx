@@ -8,12 +8,13 @@
  */
 
 import { useEffect, useRef, useCallback } from 'react';
-import { FileText, ExternalLink, Copy, Focus } from 'lucide-react';
+import { File, FileText, ExternalLink, Copy, Focus, Globe } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { GraphNodeData } from './graphDataBuilder';
 import { useClickOutside, useContextMenuPosition } from '../../hooks/ui';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { ContextMenuHeader } from '../ui/ContextMenuHeader';
 
 /**
  * Props for the NodeContextMenu component
@@ -116,7 +117,7 @@ export function NodeContextMenu({
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-[10000] py-1 rounded-md whitespace-nowrap"
+			className="fixed z-[10000] pb-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
@@ -130,6 +131,13 @@ export function NodeContextMenu({
 				minWidth: '10rem',
 			}}
 		>
+			<ContextMenuHeader
+				theme={theme}
+				label={isDocument ? nodeData.title : nodeData.domain}
+				icon={isDocument ? File : Globe}
+				title={isDocument ? nodeData.filePath : nodeData.urls.join('\n')}
+			/>
+
 			{/* Open */}
 			<button
 				onClick={handleOpen}

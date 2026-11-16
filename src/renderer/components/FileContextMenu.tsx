@@ -8,13 +8,14 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, Target, ExternalLink, FolderOpen, Copy } from 'lucide-react';
+import { File, FileText, Target, ExternalLink, FolderOpen, Copy } from 'lucide-react';
 import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { getRevealLabel } from '../utils/platformUtils';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
+import { ContextMenuHeader } from './ui/ContextMenuHeader';
 import { canRevealOnHost, openFileForUser, openFileForUserLabel } from '../services/hostShell';
 
 export interface FileContextMenuState {
@@ -130,7 +131,8 @@ export function FileContextMenu({
 			}}
 			onMouseDown={(e) => e.stopPropagation()}
 		>
-			<div className="p-1">
+			<ContextMenuHeader theme={theme} label={menu.fileName} icon={File} title={menu.filePath} />
+			<div className="px-1 pb-1">
 				{/* Preview */}
 				{onPreview && (
 					<button

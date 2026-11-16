@@ -36,6 +36,7 @@ vi.mock('lucide-react', () => ({
 	FolderOpen: () => <span data-testid="folder-open-icon">FolderOpen</span>,
 	Globe: () => <span data-testid="globe-icon">Globe</span>,
 	FileText: () => <span data-testid="file-text-icon">FileText</span>,
+	File: () => <span data-testid="file-icon" />,
 	Target: () => <span data-testid="target-icon">Target</span>,
 	ChevronDown: () => <span data-testid="chevron-down-icon">ChevronDown</span>,
 	Search: () => <span data-testid="search-icon">Search</span>,
@@ -1226,6 +1227,8 @@ describe('MarkdownRenderer', () => {
 
 			fireEvent.contextMenu(link!, { clientX: 150, clientY: 250 });
 
+			// The accent band names the file the menu acts on.
+			expect(screen.getByTestId('context-menu-header').textContent).toBe('report.csv');
 			expect(screen.getByText('Preview')).toBeInTheDocument();
 			expect(screen.getByText('Copy Path')).toBeInTheDocument();
 			expect(screen.getByText('Copy File Name')).toBeInTheDocument();

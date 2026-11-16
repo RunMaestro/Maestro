@@ -20,6 +20,8 @@ import {
 	Play,
 	PlayCircle,
 	FileArchive,
+	File,
+	Folder,
 } from 'lucide-react';
 import { getRevealLabel } from '../../../utils/platformUtils';
 import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
@@ -31,6 +33,8 @@ import { canRevealOnHost } from '../../../services/hostShell';
 import type { Theme } from '../../../types';
 import type { ContextMenuState } from '../types';
 import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
+import { getBasename } from '../../../../shared/formatters';
+import { ContextMenuHeader } from '../../ui/ContextMenuHeader';
 
 interface FileTreeContextMenuProps {
 	theme: Theme;
@@ -38,6 +42,11 @@ interface FileTreeContextMenuProps {
 	contextMenuRef: React.RefObject<HTMLDivElement>;
 	contextMenuPos: { top: number; left: number; maxHeight: number; ready?: boolean };
 	sshRemoteId: string | undefined;
+	/**
+	 * Absolute path of the tree's root folder. Names the empty-space menu, whose
+	 * actions target that root.
+	 */
+	rootPath?: string;
 	onFocusFileInGraph?: (relativePath: string) => void;
 	/** Graph every markdown file under the right-clicked folder. */
 	onGraphFolder?: () => void;
@@ -90,6 +99,7 @@ export function FileTreeContextMenu({
 	contextMenuRef,
 	contextMenuPos,
 	sshRemoteId,
+	rootPath,
 	onFocusFileInGraph,
 	onGraphFolder,
 	onGraphSelection,
@@ -172,6 +182,15 @@ export function FileTreeContextMenu({
 			</button>
 		) : null;
 
+	// The band names what the menu acts on: the selection, the right-clicked
+	// row, or (empty space) the tree root.
+	const isMultiSelectionMenu = !isRoot && isMultiSelectionContext && selectedCount > 1;
+	const header = !node
+		? { label: (rootPath && getBasename(rootPath)) || 'Workspace', icon: Folder, title: rootPath }
+		: isMultiSelectionMenu
+			? { label: `${selectedCount} items selected`, icon: Files }
+			: { label: node.name, icon: isFolder ? Folder : File, title: contextMenu.path };
+
 	return createPortal(
 		<div
 			ref={contextMenuRef}
@@ -191,7 +210,13 @@ export function FileTreeContextMenu({
 				opacity: contextMenuPos.ready ? 1 : 0,
 			}}
 		>
-			<div className="p-1">
+			<ContextMenuHeader
+				theme={theme}
+				label={header.label}
+				icon={header.icon}
+				title={header.title}
+			/>
+			<div className="px-1 pb-1">
 				{isRoot ? (
 					<>
 						<button
@@ -211,7 +236,7 @@ export function FileTreeContextMenu({
 							<span>New Folder</span>
 						</button>
 					</>
-				) : isMultiSelectionContext && selectedCount > 1 ? (
+				) : isMultiSelectionMenu ? (
 					<>
 						<button
 							onClick={onPreviewMulti}

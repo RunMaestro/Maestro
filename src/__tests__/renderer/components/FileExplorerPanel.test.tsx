@@ -13,6 +13,10 @@ import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listene
 import { getElevatedSurfaceColors } from '../../../renderer/utils/elevatedSurface';
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
+	// The context menu's header band draws a file or folder icon.
+	File: ({ className }: { className?: string }) => (
+		<span data-testid="file-icon" className={className} />
+	),
 	ChevronRight: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="chevron-right" className={className} style={style}>
 			▶

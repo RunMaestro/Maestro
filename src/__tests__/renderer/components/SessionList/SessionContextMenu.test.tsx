@@ -124,6 +124,13 @@ describe('SessionContextMenu', () => {
 		mockGetFileCount.mockReturnValue(5);
 	});
 
+	it('names the agent in the accent header band', () => {
+		renderMenu();
+		const header = screen.getByTestId('context-menu-header');
+		expect(header.textContent).toBe('Test Agent');
+		expect(header.style.backgroundColor).toBeTruthy();
+	});
+
 	it.each(['incoming', 'outgoing'] as const)(
 		'opens the clicked agent cluster for %s delegations',
 		(direction) => {
