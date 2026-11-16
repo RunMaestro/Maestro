@@ -27,15 +27,6 @@
  * mid-session can still release the floor.
  */
 
-import { readVoiceUiPrefs } from '../../../shared/acappella/ui-prefs';
-import { getGroupChatState } from '../../group-chat/emitters';
-import { isAgentBusy, isAiTabProcessActive } from '../../utils/agent-busy';
-import { voiceScopeAgentId } from '../../../shared/acappella/document-scope';
-import { VoiceStudioClient } from '../../acappella/providers/local/voice-studio-tts';
-import {
-	readVoiceStudioConfig,
-	voiceStudioConfigProblem,
-} from '../../../shared/acappella/voice-studio';
 import { app, ipcMain } from 'electron';
 import { hostname } from 'os';
 
@@ -45,26 +36,11 @@ import type { SafeSendFn } from '../../utils/safe-send';
 import type {
 	InterruptSource,
 	RosterAgent,
-	VoiceEvent,
 	VoiceScope,
 	VoiceWindowId,
 } from '../../../shared/acappella/protocol';
-import { getSessionsStore } from '../../stores/getters';
-import { correctSpeechVocabulary } from '../../local-models/speech-vocabulary';
 import { buildSpeechVocabulary } from '../../../shared/acappella/speech-vocabulary';
-import { withSystemOneRouting } from '../../acappella/providers/system-one-brain';
-import { createConductorRouter } from '../../acappella/router/conductor-router';
-import { invalidateRoutingContext } from '../../acappella/router/routing-context';
-import {
-	flushRoutingLog,
-	lastRoutingTurn,
-	loadRoutingLog,
-	noteRoutingOutcome,
-	readRoutingLog,
-	routingQuality,
-	type RoutingLogEntry,
-	type RoutingQuality,
-} from '../../acappella/router/routing-log';
+import { flushRoutingLog } from '../../acappella/router/routing-log';
 import {
 	getMicPermission,
 	noteCaptureFailure,
@@ -83,14 +59,11 @@ import {
 } from '../../../shared/acappella/audio-host';
 import {
 	closeAcappellaAudioHostWindow,
-	createRendererVoiceBridge,
 	createVoiceAudioBridge,
-	createVoiceRouteExecutor,
 	disposeVoiceSessionService,
 	ensureAcappellaAudioHostWindow,
 	getAcappellaAudioHostWindow,
 	getVoiceSessionService,
-	initVoiceSessionService,
 	isAcappellaAudioHostContents,
 	isAcappellaAudioHostReady,
 	markAcappellaAudioHostReady,
@@ -98,7 +71,6 @@ import {
 	type VoiceSessionService,
 	type VoiceSessionSnapshot,
 } from '../../acappella';
-import { createAgentOutputTap, type AgentOutputTap } from '../../acappella/speech';
 import { readVoiceReadiness } from './acappella-models';
 import {
 	DEFAULT_SEND_PHRASES,
@@ -114,31 +86,20 @@ import {
 import { isACappellaEnabled } from '../../../shared/acappella/feature-flag';
 import {
 	ACAPPELLA_SETTINGS_KEY,
-	buildProviderState,
 	createNoticeTtsProvider,
 	migrateLegacyVoiceProviders,
 	noticeTtsProviderId,
-	pipelineKey,
 	readVoiceProviderSettings,
-	resolveVoicePipeline,
-	swapVoicePipeline,
-	type VoiceProviderResolution,
 	type VoiceProviderSettings,
-	type VoiceProviderSubstitution,
 } from '../../acappella/providers/provider-registry';
-import type { TtsProvider, TtsVoice } from '../../../shared/acappella/providers';
+import type { TtsProvider } from '../../../shared/acappella/providers';
 import {
 	clearCredential,
 	listCredentialStates,
 	setCredential,
 	validateCredential,
-	type CredentialState,
-	type CredentialValidation,
 } from '../../acappella/providers/credentials';
-import {
-	VOICE_CREDENTIAL_SERVICES,
-	type VoiceCredentialService,
-} from '../../../shared/acappella/provider-catalog';
+import { type VoiceCredentialService } from '../../../shared/acappella/provider-catalog';
 import {
 	formatTurnBreakdown,
 	lastTurn,
@@ -155,8 +116,7 @@ import { enrolledWakeRevision } from '../../acappella/wake/wake-enrollment-store
 import { ClipCapture } from '../../../shared/local-models/clip-capture';
 import { NoticeSpeech } from '../../acappella/audio/notice-speech';
 import { registerDictationMicrophone } from '../../local-models/dictation';
-import { cancelSpokenNotices, registerNoticeSpeaker } from '../../local-models/spoken-notices';
-import { isScopeRouterId } from '../../../shared/acappella/voice-mode';
+import { registerNoticeSpeaker } from '../../local-models/spoken-notices';
 import {
 	QUICK_CHAT_VOICE_SCOPE,
 	isQuickChatScope,
@@ -221,6 +181,17 @@ import {
 	type WakeTestStartResult,
 } from './acappella/shared';
 import { resetSharedACappellaState, sharedState } from './acappella/state';
+import { createRoutingHandlers, resetRoutingState, watchRosterChanges } from './acappella/routing';
+import {
+	applyACappellaProvidersWithCallbacks,
+	clearActiveSubstitutions,
+	createProviderHandlers,
+	ensureService as ensureProviderService,
+	listVoiceOptions,
+	previewVoiceLine,
+	resetProvidersState,
+	VOICE_SESSION_NOTICE_REFUSAL,
+} from './acappella/providers';
 
 export {
 	ACAPPELLA_EVENT_CHANNEL,
@@ -232,8 +203,6 @@ export {
 	type WakeTestEvent,
 	type WakeTestStartResult,
 };
-
-let activeSubstitutions: VoiceProviderSubstitution[] = [];
 
 /**
  * The live pipeline.
@@ -337,10 +306,6 @@ let releaseNoticeSpeaker: (() => void) | null = null;
 let noticeTts: { id: string; provider: TtsProvider } | null = null;
 
 /** Why a notice may not be spoken over a live voice session. */
-const VOICE_SESSION_NOTICE_REFUSAL = Object.freeze({
-	code: 'voice-session-active' as const,
-	message: 'A voice session is live, so the notice was not spoken.',
-});
 
 /**
  * The voice provider a notice speaks with, kept between notices so the system
@@ -371,7 +336,6 @@ function disposeNoticeTts(): void {
  * filtering output for a session that no longer exists, and a second one built
  * over it would speak every chunk twice.
  */
-let agentOutputTap: AgentOutputTap | null = null;
 
 /**
  * The paired-device transport. Module state alongside the hotkeys and for the
@@ -473,17 +437,6 @@ function parseInterruptSource(raw: unknown): InterruptSource {
  * would let a caller write entries into the user's credential store under any
  * name it liked.
  */
-function parseCredentialPayload(raw: unknown): { service: VoiceCredentialService; key: string } {
-	if (!isRecord(raw)) throw new Error('InvalidCredential');
-	const service = raw.service;
-	if (typeof service !== 'string' || !VOICE_CREDENTIAL_SERVICES.includes(service as never)) {
-		throw new Error('InvalidCredential');
-	}
-	return {
-		service: service as VoiceCredentialService,
-		key: typeof raw.key === 'string' ? raw.key : '',
-	};
-}
 
 /**
  * Attach audio wiring to a service that has none.
@@ -528,181 +481,6 @@ function ensureAudioBridge(service: VoiceSessionService, deps: ACappellaHandlerD
  * subscribers, so the fan-out is re-registered here rather than accumulating a
  * second copy.
  */
-async function ensureService(deps: ACappellaHandlerDependencies): Promise<{
-	service: VoiceSessionService;
-	substitutions: VoiceProviderSubstitution[];
-}> {
-	const settings = readVoiceProviderSettings(deps.settingsStore);
-	const key = pipelineKey(settings);
-
-	const existing = getVoiceSessionService();
-	if (existing && key === sharedState.activeProviderKey) {
-		// The service survives an Encore toggle but the bridge does not, so a reused
-		// service can arrive here with no audio wiring at all.
-		ensureAudioBridge(existing, deps);
-		return { service: existing, substitutions: activeSubstitutions };
-	}
-
-	// The old pipeline is torn down BEFORE the new one is built, so two loaded
-	// models are never resident at once.
-	await sharedState.activePipeline?.pipeline.dispose();
-	const resolution = resolveVoicePipeline({ settings });
-	sharedState.audioBridge?.dispose();
-	sharedState.audioBridge = null;
-
-	const service = await buildService(resolution, deps);
-
-	sharedState.activePipeline = resolution;
-	sharedState.activeProviderKey = key;
-	activeSubstitutions = resolution.substitutions;
-	return { service, substitutions: resolution.substitutions };
-}
-
-/**
- * Build the tap for a fresh service, or null when there is no process manager to
- * listen to.
- *
- * The sink reads the service through the module getter rather than closing over
- * the instance: the tap outlives no service, but a chunk can be in flight while
- * one is being replaced, and delivering it into the old instance would speak
- * into a session nobody is subscribed to.
- */
-function buildAgentOutputTap(deps: ACappellaHandlerDependencies): AgentOutputTap | null {
-	agentOutputTap?.dispose();
-	agentOutputTap = null;
-
-	const source = deps.getProcessManager?.();
-	if (!source) return null;
-
-	agentOutputTap = createAgentOutputTap({
-		source,
-		getAgentType: deps.getAgentType,
-		onChunk: (chunk) => getVoiceSessionService()?.pushAgentOutput(chunk),
-	});
-	return agentOutputTap;
-}
-
-/** Construct the session service around a resolved pipeline and wire its fan-out. */
-async function buildService(
-	resolution: VoiceProviderResolution,
-	deps: ACappellaHandlerDependencies
-): Promise<VoiceSessionService> {
-	const tap = buildAgentOutputTap(deps);
-	const service = await initVoiceSessionService({
-		providers: {
-			...resolution.providers,
-			// The Conductor router wraps whichever Brain the registry resolved. It
-			// keeps that provider's id and tier, so `provider-state` still names the
-			// engine that is really running; what it adds is the bounded context, the
-			// recall shortlist, roster validation, one constrained retry, and the
-			// refusal to guess below the confidence threshold. Inside it, the
-			// `voice-routing` task assigned to System One hands the routing decision
-			// to that engine; on any other assignment the Brain routes untouched.
-			brain: createConductorRouter({ brain: withSystemOneRouting(resolution.providers.brain) }),
-		},
-		pipelineShape: resolution.shape,
-		getRoster: readAgentRoster,
-		getHoldWhileBusy: () =>
-			readVoiceUiPrefs(
-				(deps.settingsStore.get('acappella', {}) as { ui?: Record<string, unknown> }).ui
-			).holdWhileBusy,
-		isScopeBusy: (scope) => {
-			if (scope.kind === 'group-chat') return getGroupChatState(scope.groupChatId) !== 'idle';
-			const id = voiceScopeAgentId(scope);
-			const manager = deps.getProcessManager?.();
-			if (!id || !manager?.get) return false;
-			const probe = { get: manager.get.bind(manager) };
-			const session = getSessionsStore()
-				.get('sessions', [])
-				.find((entry) => entry.id === id);
-			if (!session) return false;
-			return scope.kind === 'agent' && scope.tabId
-				? isAiTabProcessActive(probe, id, scope.tabId, session.activeTabId === scope.tabId)
-				: isAgentBusy(session, probe);
-		},
-		getVocabulary: () => readVoiceProviderSettings(deps.settingsStore).vocabulary ?? [],
-		refineTranscript: correctSpeechVocabulary,
-		getForceSendAllowed: () => deps.settingsStore.get('forcedParallelExecution', false) === true,
-		// The capability gate. The service refuses to start when a required slot is
-		// unsatisfied and names the missing piece; it never asks for, and cannot be
-		// handed, a replacement provider.
-		checkReadiness: () => readVoiceReadiness(deps.settingsStore),
-		// What is actually running, including any slot that could not be built. The
-		// service cannot derive this: it is handed a trio and never learns what was
-		// requested.
-		getProviderState: () => buildProviderState(resolution),
-		// How long a sentence is held before it counts as a finished thought. Read
-		// through the getter so tuning it lands on the next thought rather than the
-		// next session. `resolveSendWait` is the one place the stored default
-		// (settle, or the long hold-until-send backstop) meets the HUD's override,
-		// so the wait the HUD shows is the wait the composer runs.
-		getUtteranceComposerConfig: () => {
-			const settings = readVoiceProviderSettings(deps.settingsStore);
-			return {
-				settleMs: readSendWait(deps).waitMs,
-				sendPhrases: settings.sendPhrases,
-			};
-		},
-		// Read per turn, so switching modes applies to the next thing said rather
-		// than to the next session.
-		getConversationalMode: () =>
-			readVoiceProviderSettings(deps.settingsStore).conversationalMode === true,
-		executeRoute: createVoiceRouteExecutor({
-			bridge: createRendererVoiceBridge(deps.getMainWindow, deps.getWindowForSession),
-			getQuickChat: deps.getQuickChat,
-			getProcessManager: () => {
-				const manager = deps.getProcessManager?.();
-				return manager?.get ? { get: manager.get.bind(manager) } : null;
-			},
-		}),
-		// Read through the module variable rather than captured: the bridge cannot
-		// exist yet (it takes the service), and the two are replaced together.
-		onSpeechChunk: (chunk) => sharedState.audioBridge?.handleSpeechChunk(chunk),
-		// The live tap. With it, a reply is spoken as the agent writes it; without
-		// it (no process manager yet, and in tests) the session waits for a whole
-		// reply through `submitAgentReply`.
-		agentReplyStream: tap ?? undefined,
-		// The pipeline ducks on a candidate frame long before this fires. These are
-		// the other door: a client button, and the Phase 10 phone.
-		duckPlayback: (gain, ms) => sharedState.audioBridge?.duckPlayback(gain, ms),
-		flushPlayback: () => sharedState.audioBridge?.flushPlayback(),
-		// Read per call rather than captured, so switching it in Settings takes
-		// effect on the next completion instead of on the next app start. Through
-		// the one settings reader, which already knows where the key lives.
-		getBackgroundAnnouncementSetting: () =>
-			readVoiceProviderSettings(deps.settingsStore).speakBackgroundCompletions,
-		// Same reasoning, one turn finer: read per SENTENCE, so a speed slider
-		// dragged mid-reply is heard on the next sentence rather than the next
-		// session. This is the seam that makes "applies live" true.
-		getSpeechOptions: () => {
-			const current = readVoiceProviderSettings(deps.settingsStore);
-			return { voiceId: current.voiceId, rate: current.rate };
-		},
-	});
-	service.subscribe((event) => deps.safeSend(ACAPPELLA_EVENT_CHANNEL, event));
-	service.subscribe(recordRoutingOutcome);
-	// The wake word re-arms when a session ends and stands down when one starts.
-	// Deferred a tick: `listen-stop` is emitted just BEFORE the state reaches
-	// `idle`, so a synchronous re-check would still see a live session and the
-	// listener would stay deaf after every conversation.
-	service.subscribe((event) => {
-		if (event.type === 'wake' || event.type === 'listen-stop' || event.type === 'session-error') {
-			setTimeout(() => void sharedState.handsFree?.sync(), 0);
-		}
-	});
-	// From the moment the floor opens the session owns the speakers: a notice
-	// being spoken is cut off and the ones waiting behind it are dropped.
-	service.subscribe((event) => {
-		if (event.type === 'listen-start') {
-			cancelSpokenNotices(
-				VOICE_SESSION_NOTICE_REFUSAL.code,
-				'A voice session started, so the notice was cut off.'
-			);
-		}
-	});
-	ensureAudioBridge(service, deps);
-	return service;
-}
 
 /**
  * The send wait the HUD picked, or null to use the stored default.
@@ -724,49 +502,6 @@ function readSendWait(deps: ACappellaHandlerDependencies): VoiceSendWait {
 }
 
 /** Whether the latest `route-decision` came from a Brain (false in Tab mode). */
-let lastDecisionWasRouted = true;
-
-/**
- * Close the routing log's loop from the event stream.
- *
- * The router records what it DECIDED; only the session knows what became of it,
- * and the difference between those two is the entire value of the log. Doing it
- * here rather than inside the service keeps the service free of the router's
- * storage, and doing it from events rather than from call sites means a new
- * failure path cannot forget to report itself.
- */
-function recordRoutingOutcome(event: VoiceEvent): void {
-	// Tab mode and a Quick Chat session route nothing, so their dispatch is not an
-	// outcome of any logged turn; recording it would overwrite the verdict of the
-	// last real one.
-	if (event.type === 'route-decision') {
-		lastDecisionWasRouted = !isScopeRouterId(event.brainProviderId);
-		return;
-	}
-	if (!lastDecisionWasRouted) return;
-
-	const turnId = lastRoutingTurn()?.id;
-	if (!turnId) return;
-
-	if (event.type === 'dispatch') {
-		noteRoutingOutcome(turnId, 'dispatched', `${event.agentName} / ${event.action}`);
-		return;
-	}
-	if (event.type === 'route-correction') {
-		// The turn being corrected is the one BEFORE this correction's own entry,
-		// which is why the correction is matched on the dispatch it replaced.
-		const corrected = readRoutingLog()
-			.reverse()
-			.find((entry) => entry.outcome === 'dispatched');
-		if (corrected) {
-			noteRoutingOutcome(corrected.id, 'corrected', `moved to ${event.agentName}`);
-		}
-		return;
-	}
-	if (event.type === 'session-error' && event.code === 'dispatch-failed') {
-		noteRoutingOutcome(turnId, 'failed', event.message);
-	}
-}
 
 /**
  * Apply a provider change to the running app.
@@ -776,112 +511,14 @@ function recordRoutingOutcome(event: VoiceEvent): void {
  * exchange would transcribe with one model, route with another, and answer in a
  * third voice, and the user would have no idea why.
  */
+function ensureService(deps: ACappellaHandlerDependencies) {
+	return ensureProviderService(deps, { ensureAudioBridge, readSendWait });
+}
+
 export async function applyACappellaProviders(
 	deps: ACappellaHandlerDependencies
 ): Promise<{ status: 'swapped' | 'unchanged' | 'refused'; reason?: string }> {
-	const settings = readVoiceProviderSettings(deps.settingsStore);
-	const service = getVoiceSessionService();
-
-	const result = await swapVoicePipeline({
-		settings,
-		current: sharedState.activePipeline
-			? { pipeline: sharedState.activePipeline.pipeline, key: sharedState.activeProviderKey ?? '' }
-			: null,
-		isBusy: isTurnInFlight(service),
-	});
-
-	if (result.status !== 'swapped' || !result.resolution) {
-		return { status: result.status, reason: result.reason };
-	}
-
-	sharedState.audioBridge?.dispose();
-	sharedState.audioBridge = null;
-
-	const rebuilt = await buildService(result.resolution, deps);
-	sharedState.activePipeline = result.resolution;
-	sharedState.activeProviderKey = pipelineKey(settings);
-	activeSubstitutions = result.resolution.substitutions;
-	// Announce the new engines even though no session is open: a client showing
-	// "you are on Whisper" has to stop saying so the moment that stops being true.
-	rebuilt.publishProviderState();
-
-	return { status: 'swapped' };
-}
-
-/** A provider that can enumerate its voices. Duck-typed: not every one can. */
-interface VoiceListingProvider {
-	listVoices?: () => Promise<TtsVoice[]> | TtsVoice[];
-}
-
-/**
- * The voices the current TTS provider offers.
- *
- * Empty for a provider with one voice or none, which the picker renders as
- * "Provider default" rather than as an error: a mock has no voices and that is
- * not a failure.
- */
-async function listVoiceOptions(deps: ACappellaHandlerDependencies): Promise<TtsVoice[]> {
-	const resolution =
-		sharedState.activePipeline ??
-		resolveVoicePipeline({
-			settings: readVoiceProviderSettings(deps.settingsStore),
-		});
-	// Not cached into `activePipeline`: this can run before any session has ever
-	// been started, and building the live pipeline as a side effect of drawing a
-	// settings panel would load models nobody asked for.
-	const provider = resolution.providers.tts as VoiceListingProvider;
-	if (typeof provider.listVoices !== 'function') return [];
-	return provider.listVoices();
-}
-
-/**
- * Speak one fixed line through the configured voice.
- *
- * Refused while a session is live: the preview and the assistant would be
- * talking over each other through the same output device, and the user would
- * have no way to tell which voice they were hearing.
- *
- * @returns false when nothing could be spoken (no audio host, or a provider with
- *          no audio behind it).
- */
-async function previewVoiceLine(
-	deps: ACappellaHandlerDependencies,
-	text: string,
-	voiceId?: string
-): Promise<boolean> {
-	const live = getVoiceSessionService();
-	if (live && live.getState() !== 'idle') return false;
-
-	if (deps.audioHostDeps) ensureAcappellaAudioHostWindow(deps.audioHostDeps);
-	await ensureService(deps);
-	if (!sharedState.activePipeline || !sharedState.audioBridge) return false;
-
-	const settings = readVoiceProviderSettings(deps.settingsStore);
-	let spoke = false;
-	for await (const chunk of sharedState.activePipeline.providers.tts.speak(text, {
-		utteranceId: `preview-${Date.now()}`,
-		// The caller may name a voice it has NOT selected. That is the point of a
-		// per-voice preview: hearing a voice before committing to it beats
-		// selecting each one in turn and undoing the ones you did not want.
-		voiceId: voiceId ?? settings.voiceId,
-		rate: settings.rate,
-	})) {
-		sharedState.audioBridge.handleSpeechChunk(chunk);
-		spoke = spoke || Boolean(chunk.audio?.byteLength);
-	}
-	return spoke;
-}
-
-/**
- * Whether a turn is mid-flight.
- *
- * `idle` and `listening` are the two safe moments: nothing has been said yet, or
- * everything said has been answered. Every other state has a turn in it.
- */
-function isTurnInFlight(service: VoiceSessionService | null): boolean {
-	if (!service) return false;
-	const state = service.getState();
-	return state !== 'idle' && state !== 'listening' && state !== 'error';
+	return applyACappellaProvidersWithCallbacks(deps, { ensureAudioBridge, readSendWait });
 }
 
 /**
@@ -1042,62 +679,15 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		async (): Promise<MicPermissionInfo> => getMicPermission()
 	);
 
-	const wrappedGetRoster = withIpcErrorLogging(
-		handlerOpts('getRoster'),
-		async (): Promise<RosterAgent[]> => readAgentRoster()
-	);
-
-	const wrappedListCredentials = withIpcErrorLogging(
-		handlerOpts('listCredentials'),
-		// Configured-or-not, never the key. Nothing in the renderer needs to read a
-		// credential back, and a channel that returned one would put it in a
-		// renderer heap and in every crash dump taken afterwards.
-		async (): Promise<CredentialState[]> => listCredentialStates()
-	);
-
-	const wrappedSetCredential = withIpcErrorLogging(
-		handlerOpts('setCredential'),
-		async (payload: unknown) => {
-			const { service, key } = parseCredentialPayload(payload);
-			return key ? setCredential(service, key) : clearCredential(service);
-		}
-	);
-
-	const wrappedValidateCredential = withIpcErrorLogging(
-		handlerOpts('validateCredential'),
-		// An optional key so Test works before Save: a user should be able to find
-		// out a key is wrong without storing it first.
-		async (payload: unknown): Promise<CredentialValidation> => {
-			const { service, key } = parseCredentialPayload(payload);
-			return validateCredential(service, key || undefined);
-		}
-	);
-
-	const wrappedApplyProviders = withIpcErrorLogging(handlerOpts('applyProviders'), async () =>
-		applyACappellaProviders(deps)
-	);
-
-	const wrappedListVoices = withIpcErrorLogging(handlerOpts('listVoices'), async () =>
-		listVoiceOptions(deps)
-	);
-	const wrappedVoiceStudioStatus = withIpcErrorLogging(
-		handlerOpts('voiceStudioStatus'),
-		async (value: unknown) => {
-			const config = readVoiceStudioConfig(value);
-			const problem = voiceStudioConfigProblem(config);
-			if (problem) return { connected: false, message: problem };
-			return new VoiceStudioClient(config).status();
-		}
-	);
-
-	const wrappedPreviewVoice = withIpcErrorLogging(
-		handlerOpts('previewVoice'),
-		async (text: unknown, voiceId: unknown): Promise<boolean> => {
-			if (typeof text !== 'string' || !text.trim()) throw new Error('InvalidPreviewText');
-			if (voiceId !== undefined && typeof voiceId !== 'string') throw new Error('InvalidVoiceId');
-			return previewVoiceLine(deps, text, voiceId || undefined);
-		}
-	);
+	const {
+		wrappedListCredentials,
+		wrappedSetCredential,
+		wrappedValidateCredential,
+		wrappedApplyProviders,
+		wrappedListVoices,
+		wrappedVoiceStudioStatus,
+		wrappedPreviewVoice,
+	} = createProviderHandlers(deps, { ensureAudioBridge, readSendWait });
 
 	/**
 	 * Apply an output volume to whatever is playing RIGHT NOW.
@@ -1443,28 +1033,7 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		async (request: unknown): Promise<WakeEnrollmentReply> => runWakeEnrollmentRequest(request)
 	);
 
-	const wrappedCorrectRoute = withIpcErrorLogging(
-		handlerOpts('correctRoute'),
-		// The HUD's "wrong tab" control. Returns false when there is nothing to
-		// move, so a stray click is a no-op rather than an error.
-		async (agentSessionId: unknown): Promise<boolean> => {
-			if (typeof agentSessionId !== 'string' || !agentSessionId) {
-				throw new Error('InvalidCorrectionTarget');
-			}
-			return (
-				(await getVoiceSessionService()?.correctLastDispatch(agentSessionId, 'client-button')) ??
-				false
-			);
-		}
-	);
-
-	const wrappedRoutingLog = withIpcErrorLogging(
-		handlerOpts('routingLog'),
-		async (): Promise<{ entries: RoutingLogEntry[]; quality: RoutingQuality }> => {
-			await loadRoutingLog();
-			return { entries: readRoutingLog(), quality: routingQuality() };
-		}
-	);
+	const { wrappedGetRoster, wrappedCorrectRoute, wrappedRoutingLog } = createRoutingHandlers();
 
 	const wrappedGetState = withIpcErrorLogging(
 		handlerOpts('getState'),
@@ -1818,7 +1387,12 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
 		'apply-providers': async () => applyACappellaProviders(deps),
 		voices: async () => ({ voices: await listVoiceOptions(deps) }),
 		preview: async ({ text, voiceId }) => ({
-			spoke: await previewVoiceLine(deps, text ?? VOICE_PREVIEW_LINE, voiceId),
+			spoke: await previewVoiceLine(
+				deps,
+				{ ensureAudioBridge, readSendWait },
+				text ?? VOICE_PREVIEW_LINE,
+				voiceId
+			),
 		}),
 		credentials: async () => ({ credentials: listCredentialStates() }),
 		'set-credential': async ({ service, key }) => {
@@ -1927,16 +1501,6 @@ export function registerACappellaHandlers(deps: ACappellaHandlerDependencies): v
  * Best-effort by design. A store with no change feed (tests, an older
  * electron-store) simply falls back to the TTL rather than failing registration.
  */
-function watchRosterChanges(): void {
-	try {
-		const store = getSessionsStore() as unknown as {
-			onDidChange?: (key: string, callback: () => void) => void;
-		};
-		store.onDidChange?.('sessions', invalidateRoutingContext);
-	} catch {
-		/* no store to watch: the context cache falls back to its TTL */
-	}
-}
 
 /**
  * Stop capture and drop the audio wiring, leaving the session service alone.
@@ -2014,7 +1578,7 @@ export async function shutdownACappellaForDisable(): Promise<void> {
 	// was built from, so leaving it set would make the next start believe a
 	// disposed pipeline still matches settings and reuse it.
 	sharedState.activeProviderKey = null;
-	activeSubstitutions = [];
+	clearActiveSubstitutions();
 	// A "just for now" wait does not outlive the feature being switched off.
 	sendWaitOverrideMs = null;
 }
@@ -2167,10 +1731,9 @@ async function stopWakeTest(): Promise<void> {
  * was built from has to be cleared alongside it.
  */
 export function resetACappellaHandlerState(): void {
-	activeSubstitutions = [];
 	sendWaitOverrideMs = null;
-	agentOutputTap?.dispose();
-	agentOutputTap = null;
+	resetProvidersState();
+	resetRoutingState();
 	voiceHotkeys?.dispose();
 	voiceHotkeys = null;
 	disposeACappellaTransport();
