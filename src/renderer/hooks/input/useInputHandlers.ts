@@ -795,26 +795,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const items = e.clipboardData.items;
 			const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
 
-			// Handle text paste with whitespace trimming
-			if (!hasImage && !isGroupChatActive) {
-				const text = e.clipboardData.getData('text/plain');
-				if (text) {
-					const trimmedText = text.trim();
-					if (trimmedText !== text) {
-						e.preventDefault();
-						const target = e.target as HTMLTextAreaElement;
-						const start = target.selectionStart ?? 0;
-						const end = target.selectionEnd ?? 0;
-						const currentValue = target.value;
-						const newValue = currentValue.slice(0, start) + trimmedText + currentValue.slice(end);
-						setInputValue(newValue);
-						requestAnimationFrame(() => {
-							target.selectionStart = target.selectionEnd = start + trimmedText.length;
-						});
-					}
-				}
-				return;
-			}
+			// Text paste lands verbatim (native paste). No trimming: dictation tools
+			// such as Scribe append a trailing space on purpose.
+			if (!hasImage && !isGroupChatActive) return;
 
 			// Image handling requires AI mode or group chat
 			if (!isGroupChatActive && !isDirectAIMode) return;
@@ -868,7 +851,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				}
 			}
 		},
-		[setInputValue, setStagedImages, getCommandMode]
+		[setStagedImages, getCommandMode]
 	);
 
 	/**

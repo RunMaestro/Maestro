@@ -1103,39 +1103,28 @@ describe('useInputHandlers', () => {
 	// ========================================================================
 
 	describe('handlePaste', () => {
-		it('trims whitespace from pasted text', () => {
+		it('leaves surrounding whitespace on pasted text (dictation trailing space)', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			const mockPreventDefault = vi.fn();
-			const mockTarget = {
-				selectionStart: 0,
-				selectionEnd: 0,
-				value: '',
-			};
-
 			const pasteEvent = {
 				preventDefault: mockPreventDefault,
 				clipboardData: {
-					items: [],
-					getData: vi.fn().mockReturnValue('  trimmed text  '),
+					items: { length: 0, [Symbol.iterator]: function* () {} },
+					getData: vi.fn().mockReturnValue('dictated text '),
 				},
-				target: mockTarget,
+				target: { selectionStart: 0, selectionEnd: 0, value: '' },
 			} as unknown as React.ClipboardEvent;
-
-			// Patch items to be iterable
-			Object.defineProperty(pasteEvent.clipboardData, 'items', {
-				value: { length: 0, [Symbol.iterator]: function* () {} },
-			});
 
 			act(() => {
 				result.current.handlePaste(pasteEvent);
 			});
 
-			expect(mockPreventDefault).toHaveBeenCalled();
-			expect(inputVal()).toBe('trimmed text');
+			// Native paste runs untouched, so the trailing space survives
+			expect(mockPreventDefault).not.toHaveBeenCalled();
 		});
 
-		it('does not intercept text paste when no trimming needed', () => {
+		it('does not intercept a plain text paste', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			const mockPreventDefault = vi.fn();
@@ -1152,7 +1141,6 @@ describe('useInputHandlers', () => {
 				result.current.handlePaste(pasteEvent);
 			});
 
-			// Should NOT call preventDefault since no trimming was needed
 			expect(mockPreventDefault).not.toHaveBeenCalled();
 		});
 
@@ -1871,7 +1859,7 @@ describe('useInputHandlers', () => {
 			}
 		});
 
-		it('does not call preventDefault for text paste with no whitespace to trim', () => {
+		it('does not call preventDefault for a single-word text paste', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			const mockPreventDefault = vi.fn();
