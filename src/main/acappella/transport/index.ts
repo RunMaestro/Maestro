@@ -113,6 +113,7 @@ export class ACappellaTransport {
 	private readonly quality = new Map<string, PeerQualityStats>();
 	private readonly probes = new Map<string, (result: IceProbeResult) => void>();
 	private readonly names = new Map<string, string>();
+	private namesLoadPromise: Promise<void> | null = null;
 
 	constructor(deps: ACappellaTransportDeps) {
 		this.deps = deps;
@@ -136,7 +137,9 @@ export class ACappellaTransport {
 			},
 			getIceSettings: () => this.iceSettings(),
 			getAudioConfig: () => this.audioConfig(),
+			featureEnabled: () => this.featureEnabled(),
 			onDeviceOnline: (deviceId) => {
+				void this.ensureNamesLoaded();
 				deps.onDevicesChanged?.();
 				logger.debug(`Device ${deviceId} online`, LOG_CONTEXT);
 			},
@@ -173,7 +176,9 @@ export class ACappellaTransport {
 			getFingerprint: () => this.pairing.fingerprint(),
 		});
 
-		void this.refreshNames();
+		if (this.featureEnabled()) {
+			void this.ensureNamesLoaded();
+		}
 	}
 
 	dispose(): void {
@@ -202,6 +207,15 @@ export class ACappellaTransport {
 		this.disconnectAll('A Cappella was switched off on the desktop');
 	}
 
+	/** Reconcile transport state when the Encore Feature flag changes at runtime. */
+	syncFeatureEnabled(): void {
+		if (this.featureEnabled()) {
+			void this.ensureNamesLoaded();
+		} else {
+			this.standDown();
+		}
+	}
+
 	/**
 	 * Whether the Encore Feature is on right now.
 	 *
@@ -217,6 +231,7 @@ export class ACappellaTransport {
 
 	/** Open a pairing window and build the payload the QR code encodes. */
 	startPairing(): PairingPayload | null {
+		void this.ensureNamesLoaded();
 		const token = this.deps.getServerToken();
 		const port = this.deps.getServerPort();
 		if (!token || !port) return null;
@@ -376,10 +391,12 @@ export class ACappellaTransport {
 		send: (message: SignalingServerMessage) => void;
 		remoteAddress?: string;
 	}): void {
+		void this.ensureNamesLoaded();
 		this.signaling.register(params);
 	}
 
 	handleSignalMessage(clientId: string, payload: unknown): Promise<void> {
+		void this.ensureNamesLoaded();
 		return this.signaling.handleMessage(clientId, payload);
 	}
 
@@ -405,6 +422,14 @@ export class ACappellaTransport {
 
 	private send(command: WebRtcHostCommand): void {
 		this.deps.sendToAudioHost(command);
+	}
+
+	private ensureNamesLoaded(): Promise<void> {
+		if (!this.featureEnabled()) return Promise.resolve();
+		return (this.namesLoadPromise ??= this.refreshNames().catch((error) => {
+			this.namesLoadPromise = null;
+			throw error;
+		}));
 	}
 
 	private async refreshNames(): Promise<void> {
