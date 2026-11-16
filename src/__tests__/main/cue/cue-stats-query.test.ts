@@ -21,7 +21,7 @@
  * remain event-scoped even across resumed turns and colliding account/host IDs.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { CueEventRecord } from '../../../main/cue/cue-db';
 import {
 	getSessionTokenSummaries,
@@ -129,10 +129,20 @@ function makeSummary(overrides: Partial<SessionTokenSummary> = {}): SessionToken
 
 describe('cue-stats-query - getCueStatsAggregation', () => {
 	beforeEach(() => {
+		// The 'day' range starts at local midnight, and fixtures sit up to 2.5h
+		// before "now". Pin the clock to local noon so a run in the first hours
+		// after midnight (CI runs in UTC) does not push them into yesterday. Only
+		// Date is faked: timers and promises stay real.
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date(2026, 10, 16, 12, 0, 0));
 		vi.clearAllMocks();
 		mockEvents = [];
 		mockSummaries = new Map();
 		mockAgentTypes = new Map();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
 	});
 
 	describe('totals', () => {
