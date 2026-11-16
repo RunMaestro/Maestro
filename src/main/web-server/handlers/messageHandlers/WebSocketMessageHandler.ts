@@ -91,6 +91,7 @@ import {
 	handleInteractMovementDesigner,
 } from './movement';
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
+import { handleAppStats } from './appStats';
 import { handleQuickChat } from './quickChat';
 import { handleSshReachabilityCheck, handleSshReachabilityStatus } from './sshReachability';
 import {
@@ -949,6 +950,10 @@ export class WebSocketMessageHandler {
 
 			case 'profiling_status':
 				handleProfilingStatus(this.ctx, client, message);
+				break;
+
+			case 'app_stats':
+				void handleAppStats(this.ctx, client, message);
 				break;
 
 			case 'quick_chat':

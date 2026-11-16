@@ -31,6 +31,7 @@ import {
 	nativeRuntimeArtifact,
 	type NativeRuntimeArtifact,
 } from '../../../shared/local-models/runtime-artifacts';
+import { directoryBytes } from '../../utils/directory-size';
 import { LOCAL_RUNTIMES_DIRNAME, localModelsDataDir } from '../paths';
 
 /** Written last, on success only, so its presence means the install finished. */
@@ -212,38 +213,14 @@ function manifestMatchesArtifact(
 	);
 }
 
-/** Recursive size of a directory in bytes. Missing directories count as zero. */
-async function directorySize(target: string): Promise<number> {
-	let total = 0;
-	// A missing directory is zero, not an error: the footprint of something that
-	// was never installed is a legitimate question with an obvious answer.
-	const entries = await fs.readdir(target, { withFileTypes: true }).catch(() => []);
-
-	for (const entry of entries) {
-		const child = path.join(target, entry.name);
-		if (entry.isDirectory()) {
-			total += await directorySize(child);
-			continue;
-		}
-		try {
-			const stat = await fs.stat(child);
-			total += stat.size;
-		} catch {
-			// A file that vanished between readdir and stat contributes nothing.
-			// A footprint report is not worth failing over a race with a delete.
-		}
-	}
-	return total;
-}
-
 /** Disk a single installed runtime occupies. Zero when it is not installed. */
 export async function runtimeFootprint(id: NativeRuntimeId): Promise<number> {
-	return directorySize(runtimeDir(id));
+	return directoryBytes(runtimeDir(id));
 }
 
 /** Disk every downloaded runtime occupies, including any abandoned staging. */
 export async function runtimesFootprint(): Promise<number> {
-	return directorySize(runtimesRoot());
+	return directoryBytes(runtimesRoot());
 }
 
 /**

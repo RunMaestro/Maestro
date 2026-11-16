@@ -14,6 +14,7 @@ import {
 } from '../../../../main/ipc/handlers/debug';
 import * as debugPackage from '../../../../main/debug-package';
 import * as profiling from '../../../../main/profiling';
+import * as appStats from '../../../../main/app-stats';
 import fs from 'fs';
 import { AgentDetector } from '../../../../main/agents';
 import { ProcessManager } from '../../../../main/process-manager';
@@ -55,6 +56,12 @@ vi.mock('../../../../main/profiling', () => ({
 	getProfilingStatus: vi.fn(),
 	setProfilingAutoStopHandler: vi.fn(),
 	finalizeCapture: vi.fn(),
+}));
+
+// The snapshot itself is built by `collectAppStats()` (tested on its own); the
+// handler only hands it the process manager.
+vi.mock('../../../../main/app-stats', () => ({
+	collectAppStats: vi.fn(),
 }));
 
 // Mock fs so temp-file cleanup (fs.promises.unlink) is observable
@@ -396,6 +403,19 @@ describe('debug IPC handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Unexpected error during package generation');
+		});
+	});
+
+	describe('debug:getAppStats', () => {
+		it('returns the collectAppStats snapshot, built over the process manager', async () => {
+			const snapshot = { timestamp: 1, totals: { processCount: 3 } };
+			vi.mocked(appStats.collectAppStats).mockResolvedValue(snapshot as any);
+
+			const result = await handlers.get('debug:getAppStats')!({} as any);
+
+			expect(result).toEqual({ success: true, ...snapshot });
+			const deps = vi.mocked(appStats.collectAppStats).mock.calls[0][0];
+			expect(deps.getProcessManager()).toBe(mockProcessManager);
 		});
 	});
 

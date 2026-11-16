@@ -6806,6 +6806,19 @@ Interact with a live HTML Movement by CSS selector
 maestro-cli movement interact mockup --click "#save"
 ```
 
+## `maestro-cli app-stats`
+
+Show what Maestro costs this computer, as Debug: View Application Stats does: memory, CPU and processes for Electron, agent trees and the model server, resident local models, and Local Models disk
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli app-stats
+maestro-cli app-stats --json
+```
+
 ## `maestro-cli support-package`
 
 Write a sanitized support (debug) package zip, as Create Debug Package does, without a save dialog

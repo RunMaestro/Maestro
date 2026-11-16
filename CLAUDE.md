@@ -105,6 +105,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
 - **Whether text content looks binary (a NUL, or many control characters):** `isBinaryContent()` in `src/shared/fileKinds.ts`, beside `isBinaryExtension()`
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
+- **How many bytes a directory occupies:** `directoryBytes(target)` in `src/main/utils/directory-size.ts`
 - **Parsing a base64 data URL (an image payload):** `parseBase64DataUrl()`, `mediaSubtype()` in `src/shared/dataUrl.ts` (never a `base64,(.+)$` capture)
 - **Guarding a serialized JSON payload before it overwrites a file:** `assertSerializedJsonIsSafe(serialized, target)` in `src/shared/jsonUtils.ts`
 - **Writing a JSON file atomically from synchronous code:** `atomicWriteJsonSync(filePath, value, opts?)` in `src/shared/atomicJsonSync.ts` (the async twin is `atomicWriteJson()` in `src/main/utils/atomic-json-store.ts`)
@@ -145,6 +146,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Rewriting a large `{ key: [...] }` JSON store file:** `serializeWithMemoizedArray(data, memoKey)`, `encodeWithMemoizedArray(data, memoKey)` in `src/shared/memoizedJsonSerialize.ts`
 - **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()` in `src/main/stores/corrupt-store-recovery.ts` (never `clearInvalidConfig`)
 - **Whether a SQLite error means the database file is damaged:** `isSqliteCorruptionError()` in `src/shared/sqliteErrors.ts`
+- **Memory and CPU of a process tree:** `readProcessTreeUsage(roots)`, `summarizeProcessTrees()` in `src/main/utils/process-usage.ts`, over `descendantsOf()` in `src/shared/maestro-lib/control/process-tree.ts`
+- **What Maestro costs this computer (Application Stats):** `collectAppStats()` in `src/main/app-stats.ts`, `collectLocalModelResources()` in `src/main/local-models/resource-report.ts`; `AppStatsSnapshot` in `src/shared/appStats.ts`
 - **Parsing a session transcript in the main process:** `runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`, task bodies in `transcript-parse-tasks.ts`
 - **Reading a page of a transcript's messages:** `forEachJsonlLine()`, `readFirstJsonlLine()` in `src/main/utils/jsonl-stream.ts`, feeding `MessagePageCollector` in `src/main/storage/base-session-storage.ts`
 - **A cache derivation upgrade that survives being killed:** `isDerivationStale()`, `accumulateUpgradeBaseline()`, `finishDerivationUpgrade()` in `src/main/utils/statsCache.ts`; `createCacheCheckpointer()` in `src/main/utils/cache-checkpointer.ts`

@@ -147,6 +147,7 @@ import { notifyFlash } from './commands/notify-flash';
 import { notifySpeak } from './commands/notify-speak';
 import { notificationInbox } from './commands/notification-inbox';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
+import { appStats } from './commands/app-stats';
 import {
 	modelsEndpointsAdd,
 	modelsEndpointsDetect,
@@ -5640,6 +5641,14 @@ movement
 	.option('--value <text>', 'Text used with --type')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(movementInteract);
+program
+	.command('app-stats')
+	.description(
+		'Show what Maestro costs this computer, as Debug: View Application Stats does: memory, CPU and processes for Electron, agent trees and the model server, resident local models, and Local Models disk'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(appStats);
+
 program
 	.command('support-package')
 	.description(

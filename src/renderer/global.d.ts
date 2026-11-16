@@ -3514,35 +3514,7 @@ interface MaestroAPI {
 			}>;
 			error?: string;
 		}>;
-		getAppStats: () => Promise<{
-			timestamp: number;
-			platform: NodeJS.Platform;
-			main: {
-				rss: number;
-				heapTotal: number;
-				heapUsed: number;
-				external: number;
-				arrayBuffers: number;
-			};
-			electronProcesses: Array<{
-				pid: number;
-				type: string;
-				name?: string;
-				serviceName?: string;
-				cpuPercent?: number;
-				workingSetBytes?: number;
-				peakWorkingSetBytes?: number;
-			}>;
-			managedProcesses: Array<{
-				sessionId: string;
-				toolType: string;
-				pid?: number;
-				isTerminal?: boolean;
-				isBatchMode: boolean;
-				startTime?: number;
-				rssBytes?: number;
-			}>;
-		}>;
+		getAppStats: () => Promise<import('../main/preload/debug').AppStatsResponse>;
 		// Performance profiling (Chromium contentTracing)
 		getProfilingStatus: () => Promise<{
 			success: boolean;

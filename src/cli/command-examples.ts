@@ -649,6 +649,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'profiling start': ['maestro-cli profiling start'],
 	'profiling stop': ['maestro-cli profiling stop --output ./trace.json'],
 	'profiling status': ['maestro-cli profiling status'],
+	'app-stats': ['maestro-cli app-stats', 'maestro-cli app-stats --json'],
 	'maestro-run status': ['maestro-cli maestro-run status --check-latest'],
 	'maestro-run install': ['maestro-cli maestro-run install'],
 	'maestro-run grant': ['maestro-cli maestro-run grant --reveal'],

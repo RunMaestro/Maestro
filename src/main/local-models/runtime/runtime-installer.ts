@@ -46,6 +46,7 @@ import {
 	type NativeRuntimeArtifact,
 	type NativeRuntimeDependency,
 } from '../../../shared/local-models/runtime-artifacts';
+import { directoryBytes } from '../../utils/directory-size';
 import { logger } from '../../utils/logger';
 import {
 	artifactForThisPlatform,
@@ -433,22 +434,4 @@ async function pathExists(target: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
-}
-
-export async function directoryBytes(target: string): Promise<number> {
-	let total = 0;
-	const entries = await fs.readdir(target, { withFileTypes: true }).catch(() => []);
-	for (const entry of entries) {
-		const child = path.join(target, entry.name);
-		if (entry.isDirectory()) {
-			total += await directoryBytes(child);
-			continue;
-		}
-		try {
-			total += (await fs.stat(child)).size;
-		} catch {
-			// Raced with a delete. A size report is not worth failing over.
-		}
-	}
-	return total;
 }

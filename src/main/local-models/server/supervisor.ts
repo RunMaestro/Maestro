@@ -252,16 +252,17 @@ function dataDir(): string {
 	return (deps.dataDir ?? localModelsDataDir)();
 }
 
-function serverDir(): string {
+/** Where the server keeps its presets, key and prompt cache. */
+export function modelServerDir(): string {
 	return path.join(dataDir(), MODEL_SERVER_DIRNAME);
 }
 
 function keyFilePath(): string {
-	return path.join(serverDir(), MODEL_SERVER_KEY_FILE);
+	return path.join(modelServerDir(), MODEL_SERVER_KEY_FILE);
 }
 
 function presetsPath(): string {
-	return path.join(serverDir(), MODEL_SERVER_PRESETS_FILE);
+	return path.join(modelServerDir(), MODEL_SERVER_PRESETS_FILE);
 }
 
 /** The server's log file. Its output is appended there across restarts. */
@@ -479,7 +480,7 @@ async function launchLocked(knownModels?: ServerModelPreset[]): Promise<void> {
 				);
 	}
 
-	const cacheDir = path.join(serverDir(), MODEL_SERVER_CACHE_DIRNAME);
+	const cacheDir = path.join(modelServerDir(), MODEL_SERVER_CACHE_DIRNAME);
 	await fs.mkdir(cacheDir, { recursive: true });
 	await atomicWriteFile(presetsPath(), presets);
 	const keyFile = keyFilePath();

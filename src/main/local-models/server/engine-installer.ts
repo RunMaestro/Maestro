@@ -24,10 +24,10 @@ import {
 	type ServerBuildChoice,
 	type ServerEngineAsset,
 } from '../../../shared/local-models/server-engine';
+import { directoryBytes } from '../../utils/directory-size';
 import { logger } from '../../utils/logger';
 import { extractZipTo } from '../../utils/zip-archive';
 import {
-	directoryBytes,
 	downloadVerified,
 	RUNTIME_PROGRESS_INTERVAL_MS,
 	type FetchLike,

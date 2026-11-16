@@ -29,6 +29,7 @@ import {
 	formatDirectorNotesHistory,
 	formatDelegationGraph,
 	formatTextTable,
+	formatAppStats,
 	type GroupDisplay,
 	type AgentDisplay,
 	type PlaybookDisplay,
@@ -46,6 +47,7 @@ import {
 	type DelegationGraphScope,
 } from '../../../shared/delegationGraph';
 import type { PeerRosterInput } from '../../../shared/peerAgents';
+import { createAppStatsSnapshot, createLocalModelResources } from '../../helpers/appStatsSnapshot';
 
 // Store original process.stdout.isTTY
 const originalIsTTY = process.stdout.isTTY;
@@ -1839,6 +1841,45 @@ describe('formatter', () => {
 			expect(formatTextTable(['A', 'B'], [['one\ntwo', 'x\ty'], ['z']])).toBe(
 				['A        B', 'one two  x y', 'z'].join('\n')
 			);
+		});
+	});
+
+	describe('formatAppStats', () => {
+		it('reports totals, the model server, in-process models and disk per model', () => {
+			const out = formatAppStats(createAppStatsSnapshot());
+			expect(out).toContain('APPLICATION STATS');
+			expect(out).toMatch(/Maestro\s+6\.\d+ GB/);
+			expect(out).toContain('7 processes');
+			expect(out).toContain('18.5% CPU');
+			expect(out).toContain('pid 7000, 1 of 1 loaded');
+			// A resident model is named from the disk list, with where it lives.
+			expect(out).toContain('Parakeet TDT (speech)');
+			expect(out).toContain('LOCAL MODELS DISK');
+			expect(out).toMatch(/Qwen3 4B\s+text-gen\s+3\.0 GB/);
+		});
+
+		it('says when nothing is loaded and the server is stopped', () => {
+			const resources = createLocalModelResources();
+			const out = formatAppStats(
+				createAppStatsSnapshot({
+					localModels: {
+						...resources,
+						inProcess: { textModel: null, encoders: [], speechToText: [] },
+						modelServer: { ...resources.modelServer, state: 'stopped', pid: null, usage: null },
+					},
+				})
+			);
+			expect(out).toContain('no models loaded');
+			expect(out).toMatch(/Model server\s+stopped/);
+		});
+
+		it('warns when the process trees could not be measured', () => {
+			const snapshot = createAppStatsSnapshot();
+			const out = formatAppStats({
+				...snapshot,
+				totals: { ...snapshot.totals, processTreesMeasured: false },
+			});
+			expect(out).toContain('could not be measured');
 		});
 	});
 });
