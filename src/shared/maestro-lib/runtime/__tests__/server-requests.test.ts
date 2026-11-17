@@ -126,6 +126,11 @@ describe('update_session_config', () => {
 		codexTransport: 'app-server',
 		harnessControlMode: 'native',
 		bookmarked: true,
+		// The peer grants, as the Peers tab saves them (read back in that shape).
+		peerAgents: [{ sessionId: 'peer-1', read: true, write: false }],
+		groupPeerAccess: { read: true, write: true },
+		worktreePeerAccess: { read: true, write: false },
+		peerDescription: 'builds the release',
 	};
 
 	it('applies every allowlisted key it is sent on its own, or says why not', async () => {

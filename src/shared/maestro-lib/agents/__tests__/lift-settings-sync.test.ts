@@ -605,7 +605,14 @@ describe('peer grants across machines', () => {
 
 	it("writes a host change onto the pointer in local ids and keeps this machine's rows", () => {
 		const before = local({ peerAgents: [{ sessionId: 'laptop-only', read: true, write: false }] });
-		const baseline = agreed(before, host());
+		// Agreed under the same id map a real sync plans with: a row the host cannot
+		// honor (`laptop-only`) is this machine's own, never part of the baseline.
+		const baseline = planLiftedSettingsSync({
+			local: before,
+			host: host(),
+			peerIds,
+			now: 0,
+		}).baseline;
 		const plan = planLiftedSettingsSync({
 			local: before,
 			host: host({

@@ -113,6 +113,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { AITab, BatchRunState, Session } from '../../../renderer/types';
 import { assembleTurn } from '../../../shared/maestro-lib/turns/assemble';
+import { HOSTED_TURN_ENV_VAR } from '../../../shared/maestro-lib/agents/lift-pointer';
 import { loadTurnContext } from '../../../shared/maestro-lib/turns/context';
 import { historyFilePath } from '../../../shared/maestro-lib/store/read-history';
 import { journeyFilePath } from '../../../shared/maestro-lib/store/read-journey';
@@ -455,6 +456,10 @@ describe('assembleTurn parity with the desktop', () => {
 				if (!plan.ok) throw new Error(plan.error);
 				const stated = { ...plan.plan.envVars };
 				delete stated.MAESTRO_USER_DATA;
+				// Only a runtime with no desktop assembles turns, so the library marks every one a
+				// hosted turn. The desktop stamps it only for a hosted agent, in the spawn handler.
+				expect(stated[HOSTED_TURN_ENV_VAR]).toBe('1');
+				delete stated[HOSTED_TURN_ENV_VAR];
 				// The desktop host explicitly clears inherited caller proof when this
 				// fixture has no native run. Assembly cannot mint that authority.
 				expect(recorded.customEnvVars?.MAESTRO_CALLER_RUN_PROOF_FILE).toBe('');

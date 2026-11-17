@@ -76,8 +76,9 @@ function showPointer(overrides: Parameters<typeof createMockSession>[0] = {}) {
 }
 
 function editPointer(patch: Parameters<typeof createMockSession>[0]) {
-	const [session] = useSessionStore.getState().sessions;
-	useSessionStore.setState({ sessions: [{ ...session, ...patch }] });
+	// Edits the pointer (always first) and keeps every other agent in the store.
+	const [session, ...rest] = useSessionStore.getState().sessions;
+	useSessionStore.setState({ sessions: [{ ...session, ...patch }, ...rest] });
 }
 
 function pointer() {

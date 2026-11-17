@@ -869,7 +869,8 @@ describe('remoteUpdateSessionConfig - Peers tab from a Federation conductor', ()
 		const reply = await refusePatch(makeSession(), { peerDescription: 42 });
 		expect(reply).toMatchObject({
 			success: false,
-			error: "Invalid value for field 'peerDescription'",
+			// `applyAgentConfigExtras()` owns the field, and its message.
+			error: 'peerDescription must be text or null.',
 		});
 	});
 });

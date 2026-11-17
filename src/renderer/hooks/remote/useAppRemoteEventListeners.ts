@@ -2487,17 +2487,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 			updated.peerAgents = rows.peerAgents ?? undefined;
 		}
-		if ('peerDescription' in patch) {
-			const text = patch.peerDescription;
-			if (text !== null && typeof text !== 'string') {
-				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
-					success: false,
-					error: "Invalid value for field 'peerDescription'",
-				});
-				return;
-			}
-			updated.peerDescription = typeof text === 'string' ? text.trim() || undefined : undefined;
-		}
+		// The advertised specialty (`peerDescription`) is read by
+		// `applyAgentConfigExtras()` below, the one function that owns it.
 
 		// Explicit peer rows (`update-agent --peer`, `--peer-note`, `--remove-peer`)
 		// arrive as a patch and are applied to the rows this agent holds, with the
