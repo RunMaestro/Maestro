@@ -27,11 +27,13 @@ function makeItem(overrides: Partial<PendingSendItem> = {}): PendingSendItem {
 
 describe('PendingSendQueue', () => {
 	beforeEach(() => {
+		vi.clearAllMocks();
 		vi.useFakeTimers();
 	});
 
 	afterEach(() => {
 		vi.useRealTimers();
+		vi.restoreAllMocks();
 	});
 
 	function createHarness(overrides: Partial<PendingSendQueueDeps> = {}) {

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TtsChunk, TtsProvider, BrainProvider } from '../../../../shared/acappella/providers';
 import { VoiceProviderError } from '../../../../shared/acappella/provider-errors';
 import type { VoiceSessionState } from '../../../../shared/acappella/session-state';
@@ -35,6 +35,14 @@ function makeBrain(): BrainProvider {
 }
 
 describe('SpeechOutputCoordinator', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	function createHarness(overrides: Partial<SpeechOutputCoordinatorDeps> = {}) {
 		let state: VoiceSessionState = 'dispatching';
 		let turn = 1;
