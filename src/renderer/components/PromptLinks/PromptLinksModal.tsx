@@ -28,14 +28,20 @@ export function PromptLinksModal({ theme, data, onClose }: PromptLinksModalProps
 			subtitle="maestro://run links that send a prompt to an agent"
 			priority={MODAL_PRIORITIES.PROMPT_LINKS}
 			onClose={onClose}
-			width={680}
+			width={880}
 			resizeKey="modal-prompt-links"
-			defaultSize={{ width: 680, height: 720 }}
-			minSize={{ width: 460, height: 360 }}
+			defaultSize={{ width: 880, height: 600 }}
+			minSize={{ width: 640, height: 420 }}
 			testId="prompt-links-modal"
-			contentClassName="flex-1 min-h-0 overflow-y-auto p-4"
+			// Flush: the split pane draws its own column divider and scrolls each side.
+			contentClassName="flex-1 min-h-0 overflow-hidden"
 		>
-			<PromptLinksPanel theme={theme} initialAgentId={data?.agentId} initialPrompt={data?.prompt} />
+			<PromptLinksPanel
+				theme={theme}
+				initialAgentId={data?.agentId}
+				initialPrompt={data?.prompt}
+				compose={data?.compose}
+			/>
 		</Modal>
 	);
 }

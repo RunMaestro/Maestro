@@ -353,7 +353,7 @@ export const AITab = memo(function AITab({
 				normalizeComposerCommandMode(tab.commandMode) === 'off'
 					? (tab.inputValue ?? '').trim()
 					: '';
-			openPromptLinks({ agentId: sessionId, ...(draft ? { prompt: draft } : {}) });
+			openPromptLinks({ agentId: sessionId, compose: true, ...(draft ? { prompt: draft } : {}) });
 		},
 		[sessionId, tab.commandMode, tab.inputValue, setOverlayOpen]
 	);

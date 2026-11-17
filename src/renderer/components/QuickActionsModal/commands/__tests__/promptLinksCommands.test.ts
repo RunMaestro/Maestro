@@ -31,12 +31,16 @@ describe('buildPromptLinksCommands', () => {
 		const [, create] = build({ openPromptLinks, setQuickActionOpen, activeDraft: 'Ship it' });
 		create.action();
 		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
-		expect(openPromptLinks).toHaveBeenCalledWith({ agentId: 'agent-1', prompt: 'Ship it' });
+		expect(openPromptLinks).toHaveBeenCalledWith({
+			agentId: 'agent-1',
+			compose: true,
+			prompt: 'Ship it',
+		});
 
 		openPromptLinks.mockClear();
 		const [, blank] = build({ openPromptLinks, activeDraft: '   ' });
 		blank.action();
-		expect(openPromptLinks).toHaveBeenCalledWith({ agentId: 'agent-1' });
+		expect(openPromptLinks).toHaveBeenCalledWith({ agentId: 'agent-1', compose: true });
 	});
 
 	it('opens the window with no prefill from the plain entry', () => {

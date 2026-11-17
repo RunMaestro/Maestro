@@ -2,17 +2,18 @@
  * Prompt Links panel (the Prompt Links window and the Prompt Links tile).
  *
  * What these defend:
+ * - the window opens on the newest active link, or on the form when asked to
+ *   compose (or when there is nothing to show),
  * - the create form sends exactly what the user chose: agent, prompt, use
  *   budget, expiry, open mode,
  * - a bad input is refused CLIENT-side, so the store is never asked,
- * - the new URL is shown once with a copy button, because only its hash is kept,
- * - the list shows active links by default and revoke is two-step,
+ * - the new URL is shown once on its own screen, because only its hash is kept,
+ * - inactive links are collapsed, revoke is two-step, Duplicate prefills the form,
  * - with the flag OFF the tile says so instead of offering links that cannot run.
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import React from 'react';
 
 const { notifyToast, clipboardWrite } = vi.hoisted(() => ({
 	notifyToast: vi.fn(),
@@ -81,6 +82,12 @@ function type(testId: string, value: string): void {
 	fireEvent.change(screen.getByTestId(testId), { target: { value } });
 }
 
+/** Pick an option in a ThemedSelect by its trigger's aria-label. */
+function choose(label: string, option: string): void {
+	fireEvent.click(screen.getByLabelText(label));
+	fireEvent.click(screen.getByRole('option', { name: option }));
+}
+
 describe('PromptLinksPanel', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -96,17 +103,44 @@ describe('PromptLinksPanel', () => {
 
 	afterEach(() => cleanup());
 
-	it('offers only AI agents, alphabetically, starting on the prefilled one', async () => {
-		render(<PromptLinksPanel theme={theme} initialAgentId="agent-b" initialPrompt="Draft" />);
-		const select = screen.getByTestId('prompt-link-agent') as HTMLSelectElement;
-		expect([...select.options].map((o) => o.textContent)).toEqual(['Alpha', 'Beta']);
-		expect(select.value).toBe('agent-b');
+	it('opens on the newest active link, with inactive ones collapsed', async () => {
+		render(<PromptLinksPanel theme={theme} />);
+		expect(await screen.findByTestId('prompt-link-detail')).toHaveTextContent('Morning PRs');
+		expect(screen.getByTestId('prompt-link-detail')).toHaveTextContent('Summarize overnight PRs');
+		expect(screen.getAllByTestId('prompt-link-row')).toHaveLength(1);
+
+		fireEvent.click(screen.getByTestId('prompt-links-toggle-inactive'));
+		expect(screen.getAllByTestId('prompt-link-row')).toHaveLength(2);
+	});
+
+	it('opens on the form when composing, starting on the prefilled agent and prompt', async () => {
+		render(
+			<PromptLinksPanel theme={theme} initialAgentId="agent-b" initialPrompt="Draft" compose />
+		);
+		expect(screen.getByTestId('prompt-link-form')).toBeInTheDocument();
+		expect(screen.getByLabelText('Agent')).toHaveTextContent('Beta');
 		expect((screen.getByTestId('prompt-link-prompt') as HTMLTextAreaElement).value).toBe('Draft');
+		await waitFor(() => expect(promptLinks.list).toHaveBeenCalled());
+		// A load that finds links must not pull the user off the form.
+		expect(screen.getByTestId('prompt-link-form')).toBeInTheDocument();
+	});
+
+	it('opens on the form when there are no links yet', async () => {
+		promptLinks.list.mockResolvedValue([]);
+		render(<PromptLinksPanel theme={theme} />);
+		expect(await screen.findByTestId('prompt-link-form')).toBeInTheDocument();
+		expect(screen.getByTestId('prompt-links-empty')).toHaveTextContent('No prompt links yet.');
+	});
+
+	it('offers only AI agents, alphabetically', async () => {
+		render(<PromptLinksPanel theme={theme} compose />);
+		fireEvent.click(screen.getByLabelText('Agent'));
+		expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Alpha', 'Beta']);
 		await waitFor(() => expect(promptLinks.list).toHaveBeenCalled());
 	});
 
 	it('creates a one-shot background link by default and shows its URL once', async () => {
-		render(<PromptLinksPanel theme={theme} initialAgentId="agent-a" />);
+		render(<PromptLinksPanel theme={theme} initialAgentId="agent-a" compose />);
 		type('prompt-link-prompt', 'Prep me for standup');
 		fireEvent.click(screen.getByTestId('prompt-link-create'));
 
@@ -124,15 +158,16 @@ describe('PromptLinksPanel', () => {
 
 		fireEvent.click(screen.getByTestId('prompt-link-copy'));
 		await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith('maestro://run/NEWTOKEN'));
+		expect(await screen.findByText('Copied')).toBeInTheDocument();
 	});
 
 	it('sends the chosen uses, expiry, label, and open mode', async () => {
-		render(<PromptLinksPanel theme={theme} initialAgentId="agent-a" />);
+		render(<PromptLinksPanel theme={theme} initialAgentId="agent-a" compose />);
 		type('prompt-link-prompt', 'p');
 		type('prompt-link-label', 'Standup');
-		fireEvent.click(screen.getByTestId('prompt-link-uses-unlimited'));
-		type('prompt-link-expiry', '7d');
-		fireEvent.click(screen.getByTestId('prompt-link-open-foreground'));
+		choose('Uses', 'Runs every time');
+		choose('Expires', 'Expires in 7 days');
+		choose('Opens in', 'Opens in the foreground');
 		const before = Date.now();
 		fireEvent.click(screen.getByTestId('prompt-link-create'));
 
@@ -148,9 +183,9 @@ describe('PromptLinksPanel', () => {
 	});
 
 	it('sends a limited use count', async () => {
-		render(<PromptLinksPanel theme={theme} initialAgentId="agent-a" />);
+		render(<PromptLinksPanel theme={theme} initialAgentId="agent-a" compose />);
 		type('prompt-link-prompt', 'p');
-		fireEvent.click(screen.getByTestId('prompt-link-uses-count'));
+		choose('Uses', 'Runs a set number of times');
 		type('prompt-link-uses-count-input', '3');
 		fireEvent.click(screen.getByTestId('prompt-link-create'));
 		await waitFor(() => expect(promptLinks.create).toHaveBeenCalled());
@@ -158,7 +193,7 @@ describe('PromptLinksPanel', () => {
 	});
 
 	it('refuses a blank prompt without calling the store', async () => {
-		render(<PromptLinksPanel theme={theme} initialAgentId="agent-a" />);
+		render(<PromptLinksPanel theme={theme} initialAgentId="agent-a" compose />);
 		fireEvent.click(screen.getByTestId('prompt-link-create'));
 		expect(await screen.findByTestId('prompt-link-create-error')).toHaveTextContent(/prompt/i);
 		expect(promptLinks.create).not.toHaveBeenCalled();
@@ -166,24 +201,41 @@ describe('PromptLinksPanel', () => {
 
 	it("shows the store's refusal in its own words", async () => {
 		promptLinks.create.mockRejectedValueOnce(new Error('Prompt Links is turned off.'));
-		render(<PromptLinksPanel theme={theme} initialAgentId="agent-a" />);
+		render(<PromptLinksPanel theme={theme} initialAgentId="agent-a" compose />);
 		type('prompt-link-prompt', 'p');
 		fireEvent.click(screen.getByTestId('prompt-link-create'));
 		expect(await screen.findByTestId('prompt-link-create-error')).toHaveTextContent('turned off');
 	});
 
-	it('lists active links by default and reveals the rest on request', async () => {
+	it('switches between links and the form from the list', async () => {
 		render(<PromptLinksPanel theme={theme} />);
-		await waitFor(() => expect(screen.getAllByTestId('prompt-link-row')).toHaveLength(1));
-		expect(screen.getByText('Morning PRs')).toBeInTheDocument();
+		await screen.findByTestId('prompt-link-detail');
+		fireEvent.click(screen.getByTestId('prompt-links-new'));
+		expect(screen.getByTestId('prompt-link-form')).toBeInTheDocument();
+		fireEvent.click(screen.getByTestId('prompt-link-row'));
+		expect(screen.getByTestId('prompt-link-detail')).toBeInTheDocument();
+	});
 
-		fireEvent.click(screen.getByTestId('prompt-links-toggle-inactive'));
-		expect(screen.getAllByTestId('prompt-link-row')).toHaveLength(2);
+	it('duplicates a link into the form with its prompt and settings', async () => {
+		promptLinks.list.mockResolvedValue([
+			{ ...ACTIVE, maxUses: null, open: 'foreground', label: 'Weekly' },
+		]);
+		render(<PromptLinksPanel theme={theme} />);
+		await screen.findByTestId('prompt-link-detail');
+		fireEvent.click(screen.getByTestId('prompt-link-duplicate'));
+
+		expect((screen.getByTestId('prompt-link-prompt') as HTMLTextAreaElement).value).toBe(
+			'Summarize overnight PRs'
+		);
+		expect((screen.getByTestId('prompt-link-label') as HTMLInputElement).value).toBe('Weekly');
+		expect(screen.getByLabelText('Uses')).toHaveTextContent('Runs every time');
+		expect(screen.getByLabelText('Opens in')).toHaveTextContent('foreground');
+		expect(screen.getByLabelText('Agent')).toHaveTextContent('Beta');
 	});
 
 	it('revokes in two steps', async () => {
 		render(<PromptLinksPanel theme={theme} />);
-		await waitFor(() => expect(screen.getAllByTestId('prompt-link-row')).toHaveLength(1));
+		await screen.findByTestId('prompt-link-detail');
 
 		fireEvent.click(screen.getByTestId('prompt-link-revoke'));
 		expect(promptLinks.revoke).not.toHaveBeenCalled();
@@ -193,12 +245,24 @@ describe('PromptLinksPanel', () => {
 		expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'green' }));
 	});
 
-	it('says when there are no links yet', async () => {
-		promptLinks.list.mockResolvedValue([]);
+	it('keeps a link that went inactive visible while it is selected', async () => {
 		render(<PromptLinksPanel theme={theme} />);
-		expect(await screen.findByTestId('prompt-links-empty')).toHaveTextContent(
-			'No prompt links yet.'
+		await screen.findByTestId('prompt-link-detail');
+		promptLinks.list.mockResolvedValue([{ ...ACTIVE, revokedAt: Date.now() }, SPENT]);
+		fireEvent.click(screen.getByTestId('prompt-link-revoke'));
+		fireEvent.click(screen.getByTestId('prompt-link-revoke-confirm'));
+
+		await waitFor(() =>
+			expect(screen.getByTestId('prompt-link-status')).toHaveTextContent(/revoked/i)
 		);
+		expect(screen.getAllByTestId('prompt-link-row')).toHaveLength(2);
+		expect(screen.queryByTestId('prompt-link-revoke')).not.toBeInTheDocument();
+	});
+
+	it('keeps the security note in view', async () => {
+		render(<PromptLinksPanel theme={theme} />);
+		expect(screen.getByTestId('prompt-links-warning')).toHaveTextContent('A link is a key');
+		await waitFor(() => expect(promptLinks.list).toHaveBeenCalled());
 	});
 });
 

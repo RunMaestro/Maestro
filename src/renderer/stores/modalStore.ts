@@ -145,6 +145,8 @@ export interface SnoozeTabModalData {
 export interface PromptLinksModalData {
 	agentId?: string;
 	prompt?: string;
+	/** Open on the create form. Without it the window opens on the newest link. */
+	compose?: boolean;
 }
 
 /**

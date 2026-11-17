@@ -594,7 +594,12 @@ export function ExtensionDetails({
 								Prompt links are managed in the desktop app only.
 							</div>
 						) : ext.state === 'enabled' ? (
-							<PromptLinksPanel theme={theme} />
+							<div
+								className="rounded-lg border overflow-hidden"
+								style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+							>
+								<PromptLinksPanel theme={theme} />
+							</div>
 						) : (
 							<div
 								data-testid="extension-settings-disabled-hint"

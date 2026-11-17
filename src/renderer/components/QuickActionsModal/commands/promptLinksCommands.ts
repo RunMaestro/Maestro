@@ -52,7 +52,11 @@ export function buildPromptLinksCommands({
 				: `A maestro://run link that sends a prompt to ${activeAgent.name}`,
 			action: () => {
 				setQuickActionOpen(false);
-				openPromptLinks({ agentId: activeAgent.id, ...(draft ? { prompt: draft } : {}) });
+				openPromptLinks({
+					agentId: activeAgent.id,
+					compose: true,
+					...(draft ? { prompt: draft } : {}),
+				});
 			},
 		});
 	}
