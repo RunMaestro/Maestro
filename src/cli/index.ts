@@ -161,6 +161,7 @@ import {
 	diffReviewRemove,
 	diffReviewSend,
 } from './commands/diff-review';
+import { promptLinkCreate, promptLinkList, promptLinkRevoke } from './commands/prompt-link';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import {
@@ -1175,6 +1176,49 @@ diffReview
 	.option('--focus', 'Take the user to the agent, as the Send Review button does')
 	.option('--json', 'Output what was sent, what was left behind, and the prompt as JSON')
 	.action(diffReviewSend);
+
+// Prompt Links - `maestro://run/<token>` URLs that open a new tab in one agent
+// and send one stored prompt. The URL carries only a random token; creating a
+// link needs the Prompt Links Encore Feature. Same service as the Prompt Links
+// window (Opt+Cmd+Shift+L).
+const promptLink = program
+	.command('prompt-link')
+	.description(
+		'Create, list, and revoke one-shot maestro://run links (the window: `open prompt-links`)'
+	);
+
+promptLink
+	.command('create <agent> [prompt]')
+	.description('Create a link that runs PROMPT in a new tab of AGENT; prints the URL once')
+	.option('--prompt-file <path>', 'Read the prompt from a file instead of the argument')
+	.option('--uses <n>', 'How many times the link may run: a number, or "unlimited" (default: 1)')
+	.option('--expires <duration>', 'Expire after 12h, 7d, 30d, ... or "never" (default: never)')
+	.option('--label <text>', 'A name to recognize the link by in lists and toasts')
+	.option(
+		'--open <mode>',
+		'Where the tab opens when the link fires: background (default) or foreground'
+	)
+	.option('--background', 'Accepted and ignored: creating a link changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: creating a link changes nothing on screen')
+	.option('--json', 'Output the URL and link as JSON')
+	.action(promptLinkCreate);
+
+promptLink
+	.command('list')
+	.description('List active prompt links (never their URLs: only a hash is stored)')
+	.option('--all', 'Include used, expired, and revoked links')
+	.option('--background', 'Accepted and ignored: listing changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(promptLinkList);
+
+promptLink
+	.command('revoke <id>')
+	.description('Revoke a prompt link so it never runs again (accepts a unique id prefix)')
+	.option('--background', 'Accepted and ignored: revoking changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: revoking changes nothing on screen')
+	.option('--json', 'Output the revoked link as JSON')
+	.action(promptLinkRevoke);
 
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program

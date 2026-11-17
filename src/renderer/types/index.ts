@@ -1832,6 +1832,10 @@ export interface EncoreFeatureFlags {
 	// per-account attribution on History and stats. Off by default. Optional so
 	// older fixtures and persisted settings remain valid.
 	webLogin?: boolean;
+	// Prompt Links - maestro://run/<token> URLs that open a new tab in an agent
+	// and send a stored prompt. Off by default. Optional so older fixtures and
+	// persisted settings remain valid.
+	promptLinks?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

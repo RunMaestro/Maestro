@@ -117,6 +117,7 @@ import {
 import { handleSnoozeCommand } from './snooze';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleDiffReviewCommand } from './diffReview';
+import { handlePromptLinkCommand } from './promptLinks';
 import { handleWindowCommand } from './windows';
 import {
 	handleSelectTab,
@@ -345,6 +346,10 @@ export class WebSocketMessageHandler {
 
 			case 'diff_review_command':
 				handleDiffReviewCommand(this.ctx, client, message);
+				break;
+
+			case 'prompt_link_command':
+				void handlePromptLinkCommand(this.ctx, client, message);
 				break;
 
 			case 'window_command':

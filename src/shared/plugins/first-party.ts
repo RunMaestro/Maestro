@@ -40,7 +40,8 @@ export type FirstPartyEncoreFlag =
 	| 'opencodeServer'
 	| 'concerto'
 	| 'groupsPlus'
-	| 'webLogin';
+	| 'webLogin'
+	| 'promptLinks';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -832,6 +833,73 @@ export const WEB_LOGIN_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	},
 };
 
+/** Prompt Links is host-owned like Web Login: the token store, the
+ * `maestro://run` handler and the `promptLinks:*` channels (refused over the
+ * bridge) all live in the main process, and the only thing the tile does is
+ * manage links. Disabling it stops every link from firing at once; the links
+ * themselves are kept so re-enabling restores them, and they can still be
+ * revoked while the feature is off. */
+export const PROMPT_LINKS_FIRST_PARTY_PLUGIN_ID = 'com.maestro.prompt-links';
+
+export const PROMPT_LINKS_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: PROMPT_LINKS_FIRST_PARTY_PLUGIN_ID,
+	name: 'Prompt Links',
+	description:
+		'Make maestro://run links that open a new tab in an agent and send a prompt you wrote. Paste one into a calendar event, a note, or a script. One-shot by default.',
+	firstParty: true,
+	category: 'automation',
+	permissions: [
+		{
+			capability: 'settings:read',
+			reason: 'Re-read the Prompt Links Encore flag before a link may run.',
+		},
+	],
+	settingsNamespace: 'promptLinks',
+	encoreFlag: 'promptLinks',
+	releaseDate: '2026-11-17',
+	// No service: a link is checked and spent when its URL arrives. Disable =
+	// flag off, and the next click is refused with a toast.
+	backgroundServices: [],
+	usage: {
+		overview: [
+			'A prompt link is a maestro://run URL. Clicking it, from a calendar event, a browser, a note, or `open` in a script, opens a new tab in the agent you chose and sends the prompt you wrote.',
+			'The URL carries only a random token. The agent and the prompt stay in Maestro, so a forged link does nothing and a leaked link can only run the prompt you wrote. Maestro stores a hash of the token, which is why the URL is shown once, when you create it.',
+			'Links are one-shot by default: after one run they stop working. Raise the use count, or choose unlimited, for a link you mean to reuse, such as a recurring calendar event. Any link can expire on a date and can be revoked on its own.',
+			'Each link opens its tab in the background (your view stays put and a toast reports the run) or in the foreground (Maestro comes forward on the new tab).',
+			'Links run only on this computer, and only when Prompt Links is on. A browser on the web interface cannot create, list, or revoke them.',
+		],
+		access: [
+			{
+				label: 'Open Prompt Links (create, copy, revoke)',
+				shortcutId: 'openPromptLinks',
+				commandPalette: 'Prompt Links',
+				menu: 'Prompt Links in the Left Bar hamburger menu',
+			},
+			{
+				label: 'Create a link for the agent you are in',
+				commandPalette: 'Create Prompt Link',
+				menu: 'Create Prompt Link in any AI tab menu',
+			},
+		],
+		agentCommands: [
+			{
+				label: 'Create a one-shot link and print its URL',
+				command: 'maestro-cli prompt-link create <agent> "<prompt>"',
+			},
+			{
+				label: 'A reusable link that expires',
+				command: 'maestro-cli prompt-link create <agent> "<prompt>" --uses unlimited --expires 30d',
+			},
+			{ label: 'List and revoke', command: 'maestro-cli prompt-link list / revoke <id>' },
+		],
+		notes: [
+			'Turning Prompt Links off stops every link at once. The links are kept, and can still be revoked.',
+			'A link clicked inside Maestro does nothing: links run from outside the app, so a link in an agent reply cannot run by accident.',
+		],
+		docsSlug: 'deep-links',
+	},
+};
+
 /**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
@@ -847,6 +915,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	CONCERTO_FIRST_PARTY_PLUGIN,
 	GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 	WEB_LOGIN_FIRST_PARTY_PLUGIN,
+	PROMPT_LINKS_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -868,4 +937,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	concerto: CONCERTO_FIRST_PARTY_PLUGIN,
 	groupsPlus: GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 	webLogin: WEB_LOGIN_FIRST_PARTY_PLUGIN,
+	promptLinks: PROMPT_LINKS_FIRST_PARTY_PLUGIN,
 };

@@ -18,6 +18,8 @@ import { PermissionList, RISK_COLOR } from './PermissionList';
 import { UsageGuide } from './UsageGuide';
 import { AgentDispatchAllowlist } from './AgentDispatchAllowlist';
 import { WebLoginUsers } from './WebLoginUsers';
+import { PromptLinksPanel } from '../../PromptLinks/PromptLinksPanel';
+import { isWebDesktop } from '../../../utils/runtimeContext';
 import type { PluginGrantsSnapshot } from '../../../../main/ipc/handlers/plugins';
 import type {
 	AggregatedContributions,
@@ -124,6 +126,9 @@ export function ExtensionDetails({
 	// Web Login manages its accounts in its own tile: the channels behind that
 	// pane are desktop-only, so there is nowhere else they could be offered.
 	const isWebLogin = !isPlugin && ext.flag === 'webLogin';
+	// Prompt Links manages its links here too, through the same panel as its
+	// window. Desktop-only for the same reason as Web Login.
+	const isPromptLinks = !isPlugin && ext.flag === 'promptLinks';
 
 	const pluginSettings: SettingContribution[] = contributions
 		? contributions.settings.filter((s) => s.pluginId === ext.id)
@@ -132,7 +137,8 @@ export function ExtensionDetails({
 
 	// The Settings sub-tab exists when there's something to configure: a
 	// first-party config body, a configurable plugin, or Pianola's modal entry.
-	const hasSettingsTab = Boolean(settingsBody) || canConfigurePlugin || isPianola || isWebLogin;
+	const hasSettingsTab =
+		Boolean(settingsBody) || canConfigurePlugin || isPianola || isWebLogin || isPromptLinks;
 
 	// Reset transient editor + sub-tab when switching extensions. Default to
 	// Settings when it exists, else Permissions.
@@ -573,6 +579,29 @@ export function ExtensionDetails({
 								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 							>
 								Enable Web Login to manage accounts.
+							</div>
+						))}
+
+					{/* Prompt Links: the links are the configuration. With the flag off no
+					    link can run, so making one there would be a link that does nothing. */}
+					{isPromptLinks &&
+						(isWebDesktop() ? (
+							<div
+								data-testid="extension-settings-disabled-hint"
+								className="text-xs rounded-lg border p-3"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								Prompt links are managed in the desktop app only.
+							</div>
+						) : ext.state === 'enabled' ? (
+							<PromptLinksPanel theme={theme} />
+						) : (
+							<div
+								data-testid="extension-settings-disabled-hint"
+								className="text-xs rounded-lg border p-3"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								Enable Prompt Links to create and manage links.
 							</div>
 						))}
 

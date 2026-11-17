@@ -67,6 +67,7 @@ Tips and gotchas:
 | Maestro Cue                   | `Opt+Q`                 | `Alt+Q`                   |
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
 | Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
+| Prompt Links                  | `Opt+Cmd+Shift+L`       | `Alt+Ctrl+Shift+L`        |
 | Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
 | Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
 | Cycle Focus Areas             | `Tab`                   | `Tab`                     |

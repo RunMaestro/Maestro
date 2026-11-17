@@ -12,6 +12,7 @@ import {
 } from '../../utils/panelLayout';
 import { DESTINATION_SHORTCUT_IDS, getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
+import { isPromptLinksEnabled, openPromptLinks } from '../../services/promptLinks';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
@@ -1066,6 +1067,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				toggleAllCadenzas();
 				trackShortcut('toggleCadenzas');
+			} else if (ctx.isShortcut(e, 'openPromptLinks') && isPromptLinksEnabled()) {
+				e.preventDefault();
+				openPromptLinks();
+				trackShortcut('openPromptLinks');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();

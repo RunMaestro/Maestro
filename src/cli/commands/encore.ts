@@ -18,6 +18,7 @@ const FEATURES: Record<string, string> = {
 	symphony: 'Maestro Symphony',
 	maestroCue: 'Maestro Cue',
 	pianola: 'Pianola (Manager Agent)',
+	promptLinks: 'Prompt Links',
 };
 
 const ALIASES: Record<string, string> = {
@@ -37,6 +38,9 @@ const ALIASES: Record<string, string> = {
 	pilot: 'pianola',
 	manager: 'pianola',
 	'manager-agent': 'pianola',
+	'prompt-links': 'promptLinks',
+	promptlinks: 'promptLinks',
+	'prompt-link': 'promptLinks',
 };
 
 interface EncoreOptions {
@@ -92,7 +96,12 @@ export async function encoreSet(
 		);
 	}
 
-	const flags = readFlags();
+	// Write EVERY flag back, not just the ones this command lists: `set_setting`
+	// replaces the whole `encoreFeatures` object, so a partial write silently
+	// reset each unlisted feature (Web Login, Concerto, ...) to its default.
+	const flags: Record<string, boolean> = {
+		...resolveEncoreFeatures(readSettingValue('encoreFeatures')),
+	};
 	flags[key] = enabled;
 
 	try {

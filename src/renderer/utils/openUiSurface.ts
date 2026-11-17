@@ -15,6 +15,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 import { notifyToast, useNotificationStore } from '../stores/notificationStore';
 import { resolveUiSurface, resolveUiSurfaceTab } from '../../shared/uiSurfaces';
+import { isPromptLinksEnabled, openPromptLinks } from '../services/promptLinks';
 import type { SettingsTab, UsageDashboardViewMode } from '../types';
 
 export interface OpenUiSurfaceResult {
@@ -66,6 +67,14 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 				useUIStore.getState().setUsageDashboardViewMode(tab.id as UsageDashboardViewMode);
 			}
 			actions.setUsageDashboardOpen(true);
+			return { ok: true };
+		case 'prompt-links':
+			// Desktop only: the bridge refuses every promptLinks:* channel.
+			if (!isPromptLinksEnabled()) {
+				return { ok: false, error: 'Prompt Links is available only in the desktop app' };
+			}
+			// Same entry point as the hotkey: the create form starts on the active agent.
+			openPromptLinks();
 			return { ok: true };
 		case 'quick-actions':
 			actions.setQuickActionOpen(true, 'main');

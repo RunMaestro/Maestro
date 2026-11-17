@@ -229,6 +229,11 @@ import type {
 } from '../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../shared/windowCommands';
 import type { WebUserPublic } from '../shared/webLogin';
+import type {
+	PromptLinkCreateInput,
+	PromptLinkCreated,
+	PromptLinkPublic,
+} from '../shared/promptLinks';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -1816,6 +1821,17 @@ interface MaestroAPI {
 		setDisplayName: (id: string, displayName: string) => Promise<WebUserPublic>;
 		setDisabled: (id: string, disabled: boolean) => Promise<WebUserPublic>;
 		deleteUser: (id: string) => Promise<void>;
+	};
+	/**
+	 * Prompt Links (`maestro://run/<token>`). Desktop-only: the web-desktop
+	 * bridge refuses every `promptLinks:*` channel. `create` returns the URL
+	 * once; only a hash of its token is stored.
+	 */
+	promptLinks: {
+		list: () => Promise<PromptLinkPublic[]>;
+		create: (input: PromptLinkCreateInput) => Promise<PromptLinkCreated>;
+		revoke: (id: string) => Promise<PromptLinkPublic>;
+		rendererReady: () => Promise<void>;
 	};
 	agents: {
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;

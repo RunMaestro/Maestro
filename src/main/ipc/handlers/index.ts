@@ -60,6 +60,7 @@ import {
 	WebHandlerDependencies,
 } from './web';
 import { registerWebLoginHandlers } from './webLogin';
+import { registerPromptLinkHandlers } from './promptLinks';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
 import { registerNotificationHistoryHandlers } from './notification-history';
 import { registerNotificationsHandlers } from './notifications';
@@ -141,6 +142,7 @@ export {
 };
 export type { WebHandlerDependencies };
 export { registerWebLoginHandlers };
+export { registerPromptLinkHandlers };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
 export { registerNotificationsHandlers, registerNotificationHistoryHandlers };

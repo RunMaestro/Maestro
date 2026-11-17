@@ -7,12 +7,12 @@ import { isWebContentsAvailable } from '../../utils/safe-send';
 import type {
 	TerminalTabInfo,
 	ReadTerminalTabResult,
-	NewAITabWithPromptResult,
 	PickBrowserElementRequest,
 	PickBrowserElementResult,
 } from '../types';
 import { coworkingRegistry, type CoworkingRegistry } from '../../coworking/coworking-registry';
 import { runHostBrowserOp } from '../../coworking/coworking-tools';
+import { requestNewAITabWithPrompt } from '../../utils/new-ai-tab-request';
 import type { BrowserOp, BrowserOpResult } from '../../../shared/coworkingBrowser';
 
 /** A Coworking public id (`browser:3`), as opposed to a renderer tab id. */
@@ -388,70 +388,10 @@ export function registerBrowserTabCallbacks(
 		});
 	});
 
+	// One implementation, shared with a fired Prompt Link: see
+	// utils/new-ai-tab-request.ts.
 	server.setNewAITabWithPromptCallback(
-		async (sessionId: string, prompt: string, background?: boolean) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
-				return { success: false, error: 'Maestro desktop window is not available' };
-			}
-
-			return new Promise<NewAITabWithPromptResult>((resolve) => {
-				const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					// Renderer was updated to ack with
-					// `{ success, tabId?, queued?, error? }`. Older renderers that
-					// still send a bare boolean stay supported via the
-					// `result === true` fallback.
-					if (typeof result === 'object' && result !== null) {
-						const r = result as {
-							success?: unknown;
-							tabId?: unknown;
-							queued?: unknown;
-							error?: unknown;
-						};
-						resolve({
-							success: r.success === true,
-							tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
-							...(r.queued === true ? { queued: true } : {}),
-							...(typeof r.error === 'string' && r.error ? { error: r.error } : {}),
-						});
-					} else {
-						resolve({ success: result === true });
-					}
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve({ success: false, error: 'Maestro desktop window is not available' });
-					return;
-				}
-				mainWindow.webContents.send(
-					'remote:newAITabWithPrompt',
-					sessionId,
-					prompt,
-					responseChannel,
-					background
-				);
-
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(
-						`newAITabWithPrompt callback timed out for session ${sessionId}`,
-						'WebServer'
-					);
-					resolve({ success: false, error: 'Maestro desktop did not answer in time' });
-				}, 5000);
-			});
-		}
+		async (sessionId: string, prompt: string, background?: boolean) =>
+			requestNewAITabWithPrompt(getMainWindow, sessionId, prompt, background)
 	);
 }

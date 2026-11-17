@@ -19,6 +19,7 @@ import {
 import { createContextApi } from './context';
 import { createWebApi, createWebserverApi, createLiveApi } from './web';
 import { createWebLoginApi } from './webLogin';
+import { createPromptLinksApi } from './promptLinks';
 import {
 	createDialogApi,
 	createFontsApi,
@@ -125,6 +126,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Web Login API (accounts for the web interface - desktop-only)
 	webLogin: createWebLoginApi(),
+
+	// Prompt Links API (maestro://run/<token> - desktop-only)
+	promptLinks: createPromptLinksApi(),
 
 	// Agent API
 	agents: createAgentsApi(),
@@ -301,6 +305,8 @@ export {
 	createLiveApi,
 	// Web Login accounts
 	createWebLoginApi,
+	// Prompt Links
+	createPromptLinksApi,
 	// System utilities
 	createDialogApi,
 	createFontsApi,

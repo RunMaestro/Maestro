@@ -1061,7 +1061,7 @@ export interface AgentSshRemoteConfig {
  */
 export interface ParsedDeepLink {
 	/** The type of navigation action */
-	action: 'focus' | 'session' | 'group' | 'file';
+	action: 'focus' | 'session' | 'group' | 'file' | 'run';
 	/** Maestro session ID (for action: 'session' and 'file') */
 	sessionId?: string;
 	/** Tab ID within the session (for action: 'session') */
@@ -1072,6 +1072,11 @@ export interface ParsedDeepLink {
 	filePath?: string;
 	/** 1-based line number within the file (for action: 'file', optional) */
 	line?: number;
+	/**
+	 * Prompt Link token (for action: 'run'). Handled entirely in the main
+	 * process; a 'run' link is never forwarded to the renderer.
+	 */
+	token?: string;
 }
 
 // ============================================================================

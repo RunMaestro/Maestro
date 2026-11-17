@@ -39,6 +39,7 @@ import {
 	registerAttachmentsHandlers,
 	registerWebHandlers,
 	registerWebLoginHandlers,
+	registerPromptLinkHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerNotificationHistoryHandlers,
@@ -108,6 +109,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Web Login account management - desktop-only, the bridge refuses every
 	// `webLogin:*` channel. See src/main/ipc/handlers/webLogin.ts.
 	registerWebLoginHandlers();
+
+	// Prompt Links (`maestro://run/<token>`) - desktop-only, the bridge refuses
+	// every `promptLinks:*` channel. See src/main/ipc/handlers/promptLinks.ts.
+	registerPromptLinkHandlers();
 
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({
