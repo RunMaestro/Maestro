@@ -28,6 +28,7 @@ import type {
 } from '../../../main/local-models/service';
 import type { DownloadProgress, DownloadResult } from '../../../main/local-models/model-downloader';
 import type { ModelFootprint, VerifyResult } from '../../../main/local-models/model-store';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 import { useThrottledProgressMap } from './useThrottledProgressMap';
 
 /**
@@ -89,10 +90,6 @@ export interface LocalModelsState<L extends LocalModelListing = LocalModelListin
 	removeAll: () => Promise<void>;
 }
 
-function errorMessage(err: unknown): string {
-	return err instanceof Error ? err.message : String(err);
-}
-
 export function useLocalModels<L extends LocalModelListing = LocalModelListing, X = never>(
 	options: UseLocalModelsOptions<L, X> = {}
 ): LocalModelsState<L, X> {
@@ -138,7 +135,7 @@ export function useLocalModels<L extends LocalModelListing = LocalModelListing, 
 			setListError(null);
 		} catch (err) {
 			if (!mounted.current) return;
-			const message = errorMessage(err);
+			const message = ipcErrorMessage(err);
 			setListError(isQuietError?.(message) ? null : message);
 		} finally {
 			if (mounted.current) setLoading(false);
@@ -170,7 +167,7 @@ export function useLocalModels<L extends LocalModelListing = LocalModelListing, 
 				setActionError(null);
 			} catch (err) {
 				if (!mounted.current) return;
-				setActionError(errorMessage(err));
+				setActionError(ipcErrorMessage(err));
 			} finally {
 				await refresh();
 			}

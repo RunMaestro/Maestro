@@ -30,6 +30,7 @@ import { useCallback, useId, useMemo, useState, type ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
 
 import { formatCount, formatRelativeTime } from '../../../../../shared/formatters';
+import { ipcErrorMessage } from '../../../../../shared/serializeError';
 import {
 	describeAddedLatency,
 	describeTokensSaved,
@@ -459,7 +460,7 @@ function CompressionRow({ theme, entry, agentName }: CompressionRowProps) {
 				setState((current) =>
 					current.status !== 'loading'
 						? current
-						: { status: 'error', message: err instanceof Error ? err.message : String(err) }
+						: { status: 'error', message: ipcErrorMessage(err) }
 				);
 			});
 	}, [open, entry.hash]);
