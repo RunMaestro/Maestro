@@ -38,6 +38,7 @@ import {
 } from '../../../../shared/acappella/provider-catalog';
 import type { VoiceProviderRole } from '../../../../shared/acappella/providers';
 import { VOICE_SLOT_LABELS, type VoiceSlotReadiness } from '../../../../shared/acappella/readiness';
+import { ipcErrorMessage } from '../../../../shared/serializeError';
 import { VOICE_ROUTING_TASK_ID } from '../../../../shared/acappella/voice-routing';
 import { taskAssignmentLocation } from '../../../../shared/local-models/settings-location';
 import type {
@@ -157,7 +158,7 @@ export function VoiceProvidersPanel({
 			onSelectionChanged?.();
 			await models.refresh();
 		} catch (error) {
-			setSetupProblem(error instanceof Error ? error.message : 'Could not save the voice setup.');
+			setSetupProblem(ipcErrorMessage(error, 'Could not save the voice setup.'));
 		} finally {
 			setSaving(false);
 		}

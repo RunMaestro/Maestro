@@ -16,6 +16,7 @@ import { useCallback, useState } from 'react';
 import { Timer } from 'lucide-react';
 
 import type { TurnBreakdown } from '../../../../main/acappella/telemetry/turn-metrics';
+import { ipcErrorMessage } from '../../../../shared/serializeError';
 import type { Theme } from '../../../types';
 import { flashCopiedToClipboard } from '../../../utils/flashCopiedToClipboard';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
@@ -38,7 +39,7 @@ export function VoiceLatencyCard({ theme }: VoiceLatencyCardProps) {
 			// stated rather than rendered as an empty panel that looks broken.
 			if (!result) setMessage('No turn has completed yet. Speak once, then read this again.');
 		} catch (error) {
-			setMessage(error instanceof Error ? error.message : String(error));
+			setMessage(ipcErrorMessage(error));
 		}
 	}, []);
 

@@ -16,6 +16,7 @@
  */
 
 import * as fs from 'fs/promises';
+import { parseJsonWithBom } from '../../../../../shared/jsonUtils';
 
 /** Ids the model takes between its two pad tokens. 511 fails in ONNX Runtime. */
 export const KOKORO_MAX_TOKENS = 510;
@@ -48,9 +49,9 @@ export function kokoroVocabFrom(table: Record<string, unknown>): KokoroVocab {
 
 /** Read the vocabulary out of the model's installed `tokenizer.json`. */
 export async function loadKokoroVocab(tokenizerPath: string): Promise<KokoroVocab> {
-	const parsed = JSON.parse(await fs.readFile(tokenizerPath, 'utf8')) as {
+	const parsed = parseJsonWithBom<{
 		model?: { vocab?: Record<string, unknown> };
-	};
+	}>(await fs.readFile(tokenizerPath, 'utf8'));
 	const table = parsed.model?.vocab;
 	if (!table || typeof table !== 'object') {
 		throw new Error('The Kokoro tokenizer file has no vocabulary.');

@@ -1,6 +1,7 @@
 /** Install only the missing files behind a refused voice start, in the HUD. */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { formatSize } from '../../../shared/formatters';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 import { readinessErrorMessage } from '../../../shared/acappella/readiness';
 import { useLocalModels, useLocalRuntimes } from '../../hooks/localModels';
 import type { Theme } from '../../types';
@@ -115,7 +116,7 @@ export function VoiceSetupRecovery({
 			if (!readiness.canStartSession) throw new Error(readinessErrorMessage(readiness));
 			await onReady();
 		} catch (error) {
-			if (mounted.current) setFailure(error instanceof Error ? error.message : String(error));
+			if (mounted.current) setFailure(ipcErrorMessage(error));
 		} finally {
 			running.current = false;
 			if (mounted.current) {
