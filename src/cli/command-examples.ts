@@ -62,6 +62,22 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 		'maestro-cli federation resolve <peer>:<agent> nudgeMessage --take host',
 		'maestro-cli federation resolve <peer>:<agent> nudgeMessage --value "<merged text>"',
 	],
+	'federation agents': [
+		'maestro-cli federation agents --not-added',
+		'maestro-cli federation agents --peer <peer> --json',
+	],
+	'federation add': [
+		'maestro-cli federation add <peer>:<agent>',
+		'maestro-cli federation add <peer>:<agent> --group <group> --background --json',
+	],
+	// Prompt Links and the Claude TUI canary, also introduced by RC.
+	'prompt-link create': [
+		'maestro-cli prompt-link create <agent-id> "Summarize what changed today"',
+		'maestro-cli prompt-link create <agent-id> --prompt-file prompt.md --uses 3 --expires 7d --label "Daily summary"',
+	],
+	'prompt-link list': ['maestro-cli prompt-link list', 'maestro-cli prompt-link list --all --json'],
+	'prompt-link revoke': ['maestro-cli prompt-link revoke <id>'],
+	'claude-canary': ['maestro-cli claude-canary', 'maestro-cli claude-canary --run --json'],
 	// Dataview commands introduced by RC also participate in the CLI help audit.
 	'dataview query': ['maestro-cli dataview query <file> --agent <agent-id> --json'],
 	'dataview eval': ['maestro-cli dataview eval <file> "LIST FROM #meeting" --json'],

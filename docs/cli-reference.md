@@ -1648,6 +1648,11 @@ Create a link that runs PROMPT in a new tab of AGENT; prints the URL once
 | `--focus`              | Accepted and ignored: creating a link changes nothing on screen             | -       |
 | `--json`               | Output the URL and link as JSON                                             | -       |
 
+```bash
+maestro-cli prompt-link create <agent-id> "Summarize what changed today"
+maestro-cli prompt-link create <agent-id> --prompt-file prompt.md --uses 3 --expires 7d --label "Daily summary"
+```
+
 ## `maestro-cli prompt-link list`
 
 List active prompt links (never their URLs: only a hash is stored)
@@ -1659,6 +1664,11 @@ List active prompt links (never their URLs: only a hash is stored)
 | `--focus`      | Accepted and ignored: listing changes nothing on screen | -       |
 | `--json`       | Output as JSON                                          | -       |
 
+```bash
+maestro-cli prompt-link list
+maestro-cli prompt-link list --all --json
+```
+
 ## `maestro-cli prompt-link revoke <id>`
 
 Revoke a prompt link so it never runs again (accepts a unique id prefix)
@@ -1668,6 +1678,10 @@ Revoke a prompt link so it never runs again (accepts a unique id prefix)
 | `--background` | Accepted and ignored: revoking changes nothing on screen | -       |
 | `--focus`      | Accepted and ignored: revoking changes nothing on screen | -       |
 | `--json`       | Output the revoked link as JSON                          | -       |
+
+```bash
+maestro-cli prompt-link revoke <id>
+```
 
 ## `maestro-cli marketplace`
 
@@ -2386,6 +2400,11 @@ List every agent the mirrored hosts run, and which ones the Left Bar shows (a ho
 | `--not-added`   | Only the agents the Left Bar does not show yet | -       |
 | `--json`        | Output as JSON (for scripting)                 | -       |
 
+```bash
+maestro-cli federation agents --not-added
+maestro-cli federation agents --peer <peer> --json
+```
+
 ## `maestro-cli federation add <agent>`
 
 Add a host's agent (peer:agent) to the Left Bar, the same as Add Hosted Agent. Remove it with remove-agent; the host keeps it
@@ -2395,6 +2414,11 @@ Add a host's agent (peer:agent) to the Left Bar, the same as Add Hosted Agent. R
 | `-g, --group <group>` | Local group id or name for the row (default: ungrouped)    | -       |
 | `--background`        | Add it without selecting it (Left Bar selection stays put) | -       |
 | `--json`              | Output as JSON (for scripting)                             | -       |
+
+```bash
+maestro-cli federation add <peer>:<agent>
+maestro-cli federation add <peer>:<agent> --group <group> --background --json
+```
 
 ## `maestro-cli federation reconnect <peer>`
 
@@ -3413,6 +3437,11 @@ result is a failure. Needs the desktop running.
 | -------- | --------------------------------------------------- | ------- |
 | `--run`  | Run the canary now; exits 2 if Claude Code fails it | -       |
 | `--json` | Output as JSON (for scripting)                      | -       |
+
+```bash
+maestro-cli claude-canary
+maestro-cli claude-canary --run --json
+```
 
 ## `maestro-cli display`
 
