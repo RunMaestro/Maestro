@@ -37,6 +37,7 @@ import {
 	DEFAULT_WAKE_SENSITIVITY,
 	MIN_WAKE_THRESHOLD,
 } from '../../../shared/acappella/voice-controls';
+import { ALWAYS_ON_ONNX_SESSION_OPTIONS } from '../../local-models/runtime/onnx-types';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { AudioFrameRing } from '../audio/audio-pipeline';
@@ -576,7 +577,7 @@ export async function createOnnxWakeScorer(): Promise<WakePhraseScorer | null> {
 		if (cached !== undefined) return cached;
 		let classifier: WakeClassifier | null = null;
 		try {
-			const session = await ort.InferenceSession.create(path);
+			const session = await ort.InferenceSession.create(path, ALWAYS_ON_ONNX_SESSION_OPTIONS);
 			classifier = {
 				async score(window, width) {
 					const out = await session.run({

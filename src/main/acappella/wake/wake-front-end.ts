@@ -23,6 +23,10 @@
 
 import { OPENWAKEWORD_BASE_ID } from '../../../shared/local-models/model-catalog';
 import { modelFilePath } from '../../local-models/model-store';
+import {
+	ALWAYS_ON_ONNX_SESSION_OPTIONS,
+	type OnnxSessionOptions,
+} from '../../local-models/runtime/onnx-types';
 import { logger } from '../../utils/logger';
 import { WAKE_WORD_PROVIDER_ID } from '../models/capability-gate';
 import { loadVoiceRuntime } from '../providers/local/runtime';
@@ -80,7 +84,9 @@ export interface OnnxSession {
 }
 
 export interface OnnxRuntime {
-	InferenceSession: { create(path: string): Promise<OnnxSession> };
+	InferenceSession: {
+		create(path: string, options?: OnnxSessionOptions): Promise<OnnxSession>;
+	};
 	Tensor: new (type: string, data: Float32Array, dims: number[]) => OnnxTensor;
 }
 
@@ -108,10 +114,12 @@ export async function loadWakeFrontEndModels(): Promise<WakeFrontEndModels | nul
 	}
 	try {
 		const mel = await ort.InferenceSession.create(
-			modelFilePath(OPENWAKEWORD_BASE_ID, 'melspectrogram.onnx')
+			modelFilePath(OPENWAKEWORD_BASE_ID, 'melspectrogram.onnx'),
+			ALWAYS_ON_ONNX_SESSION_OPTIONS
 		);
 		const embedding = await ort.InferenceSession.create(
-			modelFilePath(OPENWAKEWORD_BASE_ID, 'embedding_model.onnx')
+			modelFilePath(OPENWAKEWORD_BASE_ID, 'embedding_model.onnx'),
+			ALWAYS_ON_ONNX_SESSION_OPTIONS
 		);
 		return { ort, mel, embedding };
 	} catch (err) {
