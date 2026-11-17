@@ -17,7 +17,19 @@ beforeEach(() => {
 	dir = mkdtempSync(path.join(tmpdir(), 'prompt-links-'));
 	file = path.join(dir, 'prompt-links.json');
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+// commit() persists without awaiting, so a test can end with a write still in
+// flight. Wait for every store's queued writes before removing the directory.
+const stores: PromptLinkStore[] = [];
+afterEach(async () => {
+	await Promise.all(stores.splice(0).map((s) => s.flushForTests()));
+	rmSync(dir, { recursive: true, force: true });
+});
+
+function makeStore(): PromptLinkStore {
+	const store = new PromptLinkStore(file);
+	stores.push(store);
+	return store;
+}
 
 /** The token inside a created URL. */
 function tokenOf(url: string): string {
@@ -30,11 +42,11 @@ const INPUT = { agentId: 'agent-1', prompt: 'Prep me for standup' };
 
 describe('PromptLinkStore', () => {
 	it('starts empty when the file is missing', () => {
-		expect(new PromptLinkStore(file).list()).toEqual([]);
+		expect(makeStore().list()).toEqual([]);
 	});
 
 	it('creates a one-shot background link by default and returns its URL once', async () => {
-		const store = new PromptLinkStore(file);
+		const store = makeStore();
 		const { link, url } = await store.create(INPUT);
 		expect(url).toMatch(/^maestro:\/\/run\/[A-Za-z0-9_-]{43}$/);
 		expect(link).toMatchObject({
@@ -48,7 +60,7 @@ describe('PromptLinkStore', () => {
 	});
 
 	it('stores only a hash of the token, never the token or the URL', async () => {
-		const store = new PromptLinkStore(file);
+		const store = makeStore();
 		const { url } = await store.create(INPUT);
 		await store.flushForTests();
 		const raw = readFileSync(file, 'utf8');
@@ -58,39 +70,41 @@ describe('PromptLinkStore', () => {
 	});
 
 	it('mints a different token for every link', async () => {
-		const store = new PromptLinkStore(file);
+		const store = makeStore();
 		const a = await store.create(INPUT);
 		const b = await store.create(INPUT);
 		expect(a.url).not.toBe(b.url);
 	});
 
 	it('rejects invalid input with the shared sentence', async () => {
-		const store = new PromptLinkStore(file);
+		const store = makeStore();
 		await expect(store.create({ agentId: 'a', prompt: ' ' })).rejects.toThrow(/prompt/i);
 	});
 
 	it('persists and reloads, newest first', async () => {
-		const store = new PromptLinkStore(file);
+		const store = makeStore();
 		await store.create({ ...INPUT, label: 'first' }, 1000);
 		await store.create({ ...INPUT, label: 'second' }, 2000);
 		await store.flushForTests();
-		const labels = new PromptLinkStore(file).list().map((l) => l.label);
+		const labels = makeStore()
+			.list()
+			.map((l) => l.label);
 		expect(labels).toEqual(['second', 'first']);
 	});
 
 	it('drops records it cannot trust instead of failing to load', () => {
 		writeFileSync(file, JSON.stringify({ version: 1, links: [{ id: 'x' }, 'junk', null] }), 'utf8');
-		expect(new PromptLinkStore(file).list()).toEqual([]);
+		expect(makeStore().list()).toEqual([]);
 	});
 
 	describe('reserve / commit / release', () => {
 		it('refuses an unknown token', () => {
-			const store = new PromptLinkStore(file);
+			const store = makeStore();
 			expect(store.reserve('no-such-token')).toEqual({ ok: false, reason: 'not-found' });
 		});
 
 		it('spends a one-shot link on commit', async () => {
-			const store = new PromptLinkStore(file);
+			const store = makeStore();
 			const token = tokenOf((await store.create(INPUT)).url);
 			const first = store.reserve(token);
 			expect(first.ok).toBe(true);
@@ -101,7 +115,7 @@ describe('PromptLinkStore', () => {
 		});
 
 		it('refuses a second delivery while the first is in flight', async () => {
-			const store = new PromptLinkStore(file);
+			const store = makeStore();
 			const token = tokenOf((await store.create({ ...INPUT, maxUses: null })).url);
 			const first = store.reserve(token);
 			expect(first.ok).toBe(true);
@@ -109,7 +123,7 @@ describe('PromptLinkStore', () => {
 		});
 
 		it('keeps the use when the delivery is released', async () => {
-			const store = new PromptLinkStore(file);
+			const store = makeStore();
 			const token = tokenOf((await store.create(INPUT)).url);
 			const first = store.reserve(token);
 			if (first.ok) first.release();
@@ -118,7 +132,7 @@ describe('PromptLinkStore', () => {
 		});
 
 		it('settles once: a release after a commit does not refund the use', async () => {
-			const store = new PromptLinkStore(file);
+			const store = makeStore();
 			const token = tokenOf((await store.create({ ...INPUT, maxUses: 2 })).url);
 			const r = store.reserve(token);
 			if (!r.ok) throw new Error('expected a reservation');
@@ -129,7 +143,7 @@ describe('PromptLinkStore', () => {
 		});
 
 		it('runs a limited link exactly its number of times', async () => {
-			const store = new PromptLinkStore(file);
+			const store = makeStore();
 			const token = tokenOf((await store.create({ ...INPUT, maxUses: 3 })).url);
 			for (let i = 0; i < 3; i++) {
 				const r = store.reserve(token);
@@ -140,10 +154,10 @@ describe('PromptLinkStore', () => {
 		});
 
 		it('refuses an expired link', async () => {
-			const store = new PromptLinkStore(file);
+			const store = makeStore();
 			const token = tokenOf((await store.create({ ...INPUT, expiresAt: 5000 }, 1000)).url);
 			expect(store.reserve(token, 4999).ok).toBe(true);
-			const late = new PromptLinkStore(file);
+			const late = makeStore();
 			await store.flushForTests();
 			expect(late.reserve(token, 5000)).toMatchObject({ ok: false, reason: 'expired' });
 		});
@@ -151,7 +165,7 @@ describe('PromptLinkStore', () => {
 
 	describe('revoke', () => {
 		it('revokes by unique id prefix, and the link never runs again', async () => {
-			const store = new PromptLinkStore(file);
+			const store = makeStore();
 			const { link, url } = await store.create({ ...INPUT, maxUses: null });
 			const revoked = await store.revoke(link.id.slice(0, 8));
 			expect(revoked.revokedAt).toEqual(expect.any(Number));
@@ -159,7 +173,7 @@ describe('PromptLinkStore', () => {
 		});
 
 		it('is idempotent', async () => {
-			const store = new PromptLinkStore(file);
+			const store = makeStore();
 			const { link } = await store.create(INPUT);
 			const first = await store.revoke(link.id, 100);
 			const second = await store.revoke(link.id, 200);
@@ -167,7 +181,7 @@ describe('PromptLinkStore', () => {
 		});
 
 		it('refuses an id that matches nothing', async () => {
-			const store = new PromptLinkStore(file);
+			const store = makeStore();
 			await expect(store.revoke('nope')).rejects.toThrow(/No prompt link/);
 		});
 	});

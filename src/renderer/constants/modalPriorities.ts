@@ -190,7 +190,7 @@ export const MODAL_PRIORITIES = {
 	SNOOZE_HISTORY: 704,
 
 	/** Prompt Links window (Opt+Cmd+Shift+L): create, copy, and revoke maestro://run links */
-	PROMPT_LINKS: 706,
+	PROMPT_LINKS: 713,
 
 	/** Prompt composer modal for long prompts */
 	PROMPT_COMPOSER: 725,

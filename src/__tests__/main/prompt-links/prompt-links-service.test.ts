@@ -62,9 +62,12 @@ function lastToast(): Record<string, unknown> {
 	return call?.[1] as Record<string, unknown>;
 }
 
+let store: PromptLinkStore;
+
 beforeEach(() => {
 	dir = mkdtempSync(path.join(tmpdir(), 'prompt-links-svc-'));
-	setPromptLinkStoreForTests(new PromptLinkStore(path.join(dir, 'prompt-links.json')));
+	store = new PromptLinkStore(path.join(dir, 'prompt-links.json'));
+	setPromptLinkStoreForTests(store);
 	settings.encoreFeatures = { promptLinks: true };
 	sessions.list = [{ id: 'agent-1', name: 'Research' }];
 	requestNewTab.mockReset();
@@ -75,7 +78,9 @@ beforeEach(() => {
 	markPromptLinksRendererReady();
 });
 
-afterEach(() => {
+afterEach(async () => {
+	// A fired link persists its use count without awaiting; let it land first.
+	await store.flushForTests();
 	setPromptLinkStoreForTests(null);
 	rmSync(dir, { recursive: true, force: true });
 });
