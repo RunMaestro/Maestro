@@ -31,6 +31,13 @@
  * client exit at once, leaving nothing to supervise. `ClearAllForwardings=no`
  * undoes Maestro's default, which would otherwise drop the `-L` itself.
  *
+ * That also keeps any `LocalForward` the user's ssh config sets for the host,
+ * and ssh offers no way to drop those but keep ours. So the forward runs with
+ * `ExitOnForwardFailure=no`: a config forward whose port is already taken (a
+ * VNC forward held by another ssh to the same host) is only a warning, and the
+ * forward fails only when ssh reports that ITS OWN port could not bind
+ * (`ownForwardBindFailed()`), or that port never starts listening.
+ *
  * Nothing here runs until a caller acquires a lease, so a remote that opted
  * out of Federation never gets a process. The caller checks the remote's own
  * `federation` flag (`isFederationRemote()`) before acquiring.
@@ -145,6 +152,20 @@ const STDERR_TAIL_BYTES = 8192;
 /** What ssh logs when a forwarded connection finds nothing listening on the remote port. */
 const HOST_GONE_PATTERN = /open failed: connect failed/i;
 
+/** The ports ssh names when a local forward cannot bind: `bind [addr]:port` and `cannot listen to port: port`. */
+const BIND_FAILURE_PATTERN = /\bbind \[[^\]]*\]:(\d+)|cannot listen to port: (\d+)/gi;
+
+/**
+ * Whether ssh's stderr says the forward's own local port could not bind. A bind failure on any
+ * other port belongs to a `LocalForward` in the user's ssh config and does not stop the forward.
+ */
+export function ownForwardBindFailed(stderr: string, localPort: number): boolean {
+	for (const match of stderr.matchAll(BIND_FAILURE_PATTERN)) {
+		if (Number(match[1] ?? match[2]) === localPort) return true;
+	}
+	return false;
+}
+
 /**
  * The `ssh` argv (after the binary) that forwards 127.0.0.1:`localPort` to the
  * remote's 127.0.0.1:`remotePort`. The forward's own options come first:
@@ -167,8 +188,9 @@ export function buildSshForwardArgs(
 		: ['-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3'];
 	return [
 		'-N',
+		// A config `LocalForward` that cannot bind must not kill the forward (see the header).
 		'-o',
-		'ExitOnForwardFailure=yes',
+		'ExitOnForwardFailure=no',
 		'-o',
 		'ClearAllForwardings=no',
 		'-o',
@@ -386,9 +408,13 @@ class RemoteForward {
 			});
 			this.child = child;
 			let stderr = '';
+			// Set when ssh says the forward's own port could not bind; with
+			// ExitOnForwardFailure=no, ssh stays up without the forward.
+			let ownPortRefused = false;
 			child.stderr?.on('data', (data: Buffer) => {
 				const text = data.toString();
 				stderr = (stderr + text).slice(-STDERR_TAIL_BYTES);
+				if (ownForwardBindFailed(stderr, localPort)) ownPortRefused = true;
 				if (this.child === child && this.current.status === 'up' && HOST_GONE_PATTERN.test(text)) {
 					this.fail(
 						generation,
@@ -417,14 +443,15 @@ class RemoteForward {
 
 			const listening = await this.options.waitForPort(localPort, {
 				timeoutMs: this.options.readyTimeoutMs,
-				shouldStop: () => !isCurrent() || !isRunning(child) || spawnError !== undefined,
+				shouldStop: () =>
+					!isCurrent() || !isRunning(child) || spawnError !== undefined || ownPortRefused,
 			});
 			if (!isCurrent()) return;
-			if (!listening) {
+			if (!listening || ownPortRefused) {
 				const detail = spawnError ? spawnError.message : describeStderr(stderr);
 				throw new SshForwardError(
 					'forward-failed',
-					isRunning(child) && !spawnError
+					isRunning(child) && !spawnError && !ownPortRefused
 						? `The SSH forward to ${label} did not start listening within ${Math.round(this.options.readyTimeoutMs / 1000)}s.`
 						: `The SSH forward to ${label} failed${detail ? `: ${detail}` : '.'}`
 				);

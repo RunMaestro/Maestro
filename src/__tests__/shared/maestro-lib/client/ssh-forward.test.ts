@@ -10,6 +10,7 @@ import {
 	SshForwardError,
 	SshForwardManager,
 	buildSshForwardArgs,
+	ownForwardBindFailed,
 	type SshForwardManagerOptions,
 	type SshForwardSpawn,
 	type SshForwardState,
@@ -132,7 +133,7 @@ describe('buildSshForwardArgs', () => {
 		expect(args[0]).toBe('-N');
 		expect(args).toEqual(
 			expect.arrayContaining([
-				'ExitOnForwardFailure=yes',
+				'ExitOnForwardFailure=no',
 				'ClearAllForwardings=no',
 				'ControlMaster=no',
 				'ControlPath=none',
@@ -161,6 +162,27 @@ describe('buildSshForwardArgs', () => {
 	it('refuses a port outside 1-65535', () => {
 		expect(() => buildSshForwardArgs(remote, 0, 4001)).toThrow(/Invalid forward port/);
 		expect(() => buildSshForwardArgs(remote, 50000, 70000)).toThrow(/Invalid forward port/);
+	});
+});
+
+describe('ownForwardBindFailed', () => {
+	it("names only the forward's own port, in either of ssh's spellings", () => {
+		expect(ownForwardBindFailed('bind [127.0.0.1]:50000: Address already in use\n', 50000)).toBe(
+			true
+		);
+		expect(
+			ownForwardBindFailed('channel_setup_fwd_listener_tcpip: cannot listen to port: 50000', 50000)
+		).toBe(true);
+	});
+
+	it("ignores a LocalForward from the user's ssh config", () => {
+		const configForward =
+			'bind [127.0.0.1]:5901: Address already in use\n' +
+			'channel_setup_fwd_listener_tcpip: cannot listen to port: 5901\n' +
+			'Could not request local forwarding.\n';
+		expect(ownForwardBindFailed(configForward, 50000)).toBe(false);
+		// A port that merely starts with the same digits is a different port.
+		expect(ownForwardBindFailed('cannot listen to port: 500001', 50000)).toBe(false);
 	});
 });
 
@@ -272,6 +294,35 @@ describe('SshForwardManager', () => {
 			code: 'not-installed',
 			message: 'Install Maestro on the remote.',
 		});
+		await lease.release();
+	});
+
+	it("stays up when a LocalForward from the user's ssh config cannot bind", async () => {
+		const h = harness([running(4001)]);
+		h.waitForPort.mockImplementation(async () => {
+			h.children[0].writeStderr(
+				'bind [127.0.0.1]:5901: Address already in use\n' +
+					'channel_setup_fwd_listener_tcpip: cannot listen to port: 5901\n' +
+					'Could not request local forwarding.\n'
+			);
+			return true;
+		});
+		const lease = h.manager.acquire(remote);
+		expect(await lease.ready()).toMatchObject({ port: 50000, remotePort: 4001 });
+		expect(lease.state()).toMatchObject({ status: 'up' });
+		await lease.release();
+	});
+
+	it('fails an attempt whose own port cannot bind, even while ssh stays running', async () => {
+		const h = harness([running(4001)]);
+		h.waitForPort.mockImplementation(async (_port, { shouldStop }) => {
+			h.children[0].writeStderr('bind [127.0.0.1]:50000: Address already in use\n');
+			return !shouldStop?.();
+		});
+		const lease = h.manager.acquire(remote);
+		const error = (await lease.ready().catch((e: unknown) => e)) as SshForwardError;
+		expect(error.code).toBe('forward-failed');
+		expect(error.message).toContain('50000');
 		await lease.release();
 	});
 
