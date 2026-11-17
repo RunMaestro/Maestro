@@ -4,12 +4,7 @@
  * teardown of in-flight speech.
  */
 
-import type {
-	SpeakEndReason,
-	VoiceEvent,
-	VoiceEventBase,
-	VoiceEventType,
-} from '../../../shared/acappella/protocol';
+import type { SpeakEndReason } from '../../../shared/acappella/protocol';
 import type { TtsChunk, TtsProvider } from '../../../shared/acappella/providers';
 import {
 	isVoiceProviderError,
@@ -23,14 +18,13 @@ import type { BargeInController } from '../speech/barge-in';
 import type { ConversationalTranslator } from '../speech/conversational-translator';
 import type { DetailBuffer } from '../speech/drill-down';
 import { SpeechScheduler, type SpeechRunResult } from '../speech/speech-scheduler';
-import type { AgentReplyStream, VoiceDispatchResult } from '../voice-session-service';
+import type {
+	AgentReplyStream,
+	VoiceDispatchResult,
+	VoiceEventBody,
+} from '../voice-session-service';
 
 const LOG_CONTEXT = 'ACappella';
-
-type VoiceEventBody<T extends VoiceEventType> = Omit<
-	Extract<VoiceEvent, { type: T }>,
-	keyof VoiceEventBase | 'type'
->;
 
 export interface SpeechOutputCoordinatorDeps {
 	tts: TtsProvider;

@@ -361,7 +361,7 @@ export interface VoiceSessionSnapshot {
 }
 
 /** The body of an event before the service stamps `sessionId`, `seq`, and `ts`. */
-type VoiceEventBody<T extends VoiceEventType> = Omit<
+export type VoiceEventBody<T extends VoiceEventType> = Omit<
 	Extract<VoiceEvent, { type: T }>,
 	keyof VoiceEventBase | 'type'
 >;
