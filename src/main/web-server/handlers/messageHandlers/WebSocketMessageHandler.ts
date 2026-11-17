@@ -61,6 +61,7 @@ import {
 import {
 	handleGetSessions,
 	handleCreateSession,
+	handleImportAgent,
 	handleCreateWorktreeSession,
 	handleDeleteSession,
 	handleRenameSession,
@@ -620,6 +621,10 @@ export class WebSocketMessageHandler {
 
 			case 'create_session':
 				handleCreateSession(this.ctx, client, message);
+				break;
+
+			case 'import_agent':
+				handleImportAgent(this.ctx, client, message);
 				break;
 
 			case 'delete_session':

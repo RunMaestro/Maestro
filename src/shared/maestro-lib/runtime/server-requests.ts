@@ -18,6 +18,7 @@ import { parseProcessId } from '../client/bridge-frames';
 import type { ThinkingMode, UsageStats } from '../../types';
 import type {
 	AgentCreateInput,
+	AgentImportInput,
 	AgentImportQueuedMessage,
 	AgentImportTab,
 	AgentPatch,
@@ -389,6 +390,40 @@ function importQueueItemFromWire(entry: unknown): AgentImportQueuedMessage | und
 	};
 }
 
+/**
+ * An `import_agent` message back to the client's import input, or why it cannot be read. Every
+ * host that answers `import_agent` reads it here: the headless host below and the desktop app's
+ * bridge (`handleImportAgent`). The import rule (`planAgentImport`) checks the rest.
+ */
+export function importInputFromMessage(
+	message: Request
+): { ok: true; input: AgentImportInput } | { ok: false; error: string } {
+	// `sessionSshRemoteConfig` is passed through so the rule that refuses it can say why.
+	const agent = obj(message.agent) ?? {};
+	const tabs = Array.isArray(message.tabs) ? message.tabs.map(importTabFromWire) : [];
+	if (tabs.some((tab) => tab === undefined)) {
+		return { ok: false, error: 'Every imported tab needs an id.' };
+	}
+	const queue = Array.isArray(message.queue) ? message.queue.map(importQueueItemFromWire) : [];
+	if (queue.some((item) => item === undefined)) {
+		return { ok: false, error: 'Every queued message needs the tab it is for.' };
+	}
+	return {
+		ok: true,
+		input: {
+			agent: {
+				...agentInputFromMessage(agent),
+				...(obj(agent.sessionSshRemoteConfig)
+					? { ssh: obj(agent.sessionSshRemoteConfig) as never }
+					: {}),
+			},
+			tabs: tabs as AgentImportTab[],
+			...(str(message.activeTabId) ? { activeTabId: str(message.activeTabId) } : {}),
+			...(queue.length > 0 ? { queue: queue as AgentImportQueuedMessage[] } : {}),
+		},
+	};
+}
+
 // ---------------------------------------------------------------------------
 // The handler
 // ---------------------------------------------------------------------------
@@ -499,29 +534,9 @@ export function createRequestHandler(
 			}
 			case 'import_agent': {
 				const type = 'import_agent_result';
-				// `sessionSshRemoteConfig` is passed through so the rule that refuses it can say why.
-				const agent = obj(message.agent) ?? {};
-				const tabs = Array.isArray(message.tabs) ? message.tabs.map(importTabFromWire) : [];
-				if (tabs.some((tab) => tab === undefined)) {
-					return refusal(type, 'Every imported tab needs an id.');
-				}
-				const queue = Array.isArray(message.queue)
-					? message.queue.map(importQueueItemFromWire)
-					: [];
-				if (queue.some((item) => item === undefined)) {
-					return refusal(type, 'Every queued message needs the tab it is for.');
-				}
-				const result = await client.agents.import({
-					agent: {
-						...agentInputFromMessage(agent),
-						...(obj(agent.sessionSshRemoteConfig)
-							? { ssh: obj(agent.sessionSshRemoteConfig) as never }
-							: {}),
-					},
-					tabs: tabs as AgentImportTab[],
-					...(str(message.activeTabId) ? { activeTabId: str(message.activeTabId) } : {}),
-					...(queue.length > 0 ? { queue: queue as AgentImportQueuedMessage[] } : {}),
-				});
+				const parsed = importInputFromMessage(message);
+				if (!parsed.ok) return refusal(type, parsed.error);
+				const result = await client.agents.import(parsed.input);
 				return outcome(type, result, (value) => ({
 					sessionId: value.agentId,
 					queued: value.queued,
