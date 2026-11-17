@@ -18,15 +18,22 @@
  * screen, with a banner and a Reconnect button. While the Right Bar toggle is on, the agent's
  * History sits beside it (`PeerHistoryColumn`): the host's entries and the shared History of its
  * project, read-only.
+ *
+ * One strip, every conversation: after the host's tabs come the tabs the agent's own Left Bar
+ * record keeps on this machine from before it moved (`hostedLocalTabs()`). Each tab carries a pill
+ * that says where it lives. A local tab shows its transcript read only, from this machine's copy;
+ * it takes no input, because a send there would resume the provider session the host now owns.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Copy, Pencil, Plus, RefreshCw, Settings, Star } from 'lucide-react';
-import type { Theme } from '../../types';
+import type { Session, Theme } from '../../types';
 import { liveTurnKey } from '../../../shared/maestro-lib/client/live-turn';
 import { mirrorKey } from '../../../shared/maestro-lib/client/peer-mirror';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { findLiftedAgent } from '../../../shared/maestro-lib/agents/lift-pointer';
 import { useHostedAgentSettingsStore } from '../../stores/hostedAgentSettingsStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -43,6 +50,7 @@ import {
 } from '../../services/peerMirror';
 import {
 	buildMirrorViewSession,
+	hostedLocalTabs,
 	isPeerDisconnected,
 	mirroredAgentState,
 	mirrorTabEntries,
@@ -69,6 +77,21 @@ export interface PeerAgentPanelProps {
 
 const noop = () => {};
 
+/** The view a kept local tab renders through: this machine's copy, read only, no queue. */
+function localTabViewSession(local: Session, tabId: string): TerminalOutputProps['session'] {
+	return {
+		id: local.id,
+		activeTabId: tabId,
+		aiTabs: local.aiTabs,
+		inputMode: 'ai',
+		toolType: local.toolType,
+		cwd: local.cwd,
+		executionQueue: [],
+		deferredContent: local.deferredContent,
+		sessionSshRemoteConfig: local.sessionSshRemoteConfig,
+	};
+}
+
 export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps) {
 	const selection = usePeerMirrorStore((s) => s.activeMirror);
 	const peer = usePeerMirrorStore((s) => (selection ? s.peers[selection.peerId] : undefined));
@@ -79,7 +102,14 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 		() => peer?.agents.find((candidate) => candidate.id === selection?.agentId),
 		[peer, selection?.agentId]
 	);
-	const tabId = agent ? resolveMirrorTabId(agent, preferredTabId) : undefined;
+	// The agent's own Left Bar record, and the conversations it kept here from before it moved.
+	const local = useSessionStore((s) =>
+		selection ? findLiftedAgent(s.sessions, selection.peerId, selection.agentId) : undefined
+	);
+	const localTabs = useMemo(() => hostedLocalTabs(local), [local]);
+	const localTabId = localTabs.find((tab) => tab.id === preferredTabId)?.id;
+	// The host tab shown, or none while a kept local tab is.
+	const tabId = agent && !localTabId ? resolveMirrorTabId(agent, preferredTabId) : undefined;
 	const slotKey = agent && tabId ? liveTurnKey(agent.id, tabId) : undefined;
 	const slot = usePeerMirrorStore((s) =>
 		selection && slotKey ? s.transcripts[selection.peerId]?.[slotKey] : undefined
@@ -128,7 +158,25 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 				: null,
 		[selection, agent, tabId, entries, queue]
 	);
-	const tabs = useMemo(() => (agent ? mirrorTabs(agent) : []), [agent]);
+	const hostTabs = useMemo(() => (agent ? mirrorTabs(agent) : []), [agent]);
+	const tabs = useMemo(() => [...hostTabs, ...localTabs], [hostTabs, localTabs]);
+	const tabLocations = useMemo(() => {
+		if (localTabs.length === 0 || !peer) return undefined;
+		const locations: Record<string, { label: string; title: string }> = {};
+		const host = { label: peer.name, title: `Lives on ${peer.name}, which runs this agent` };
+		const here = {
+			label: 'Local',
+			title: 'Kept on this machine from before the agent moved. Read only.',
+		};
+		for (const tab of hostTabs) locations[tab.id] = host;
+		for (const tab of localTabs) locations[tab.id] = here;
+		return locations;
+	}, [hostTabs, localTabs, peer]);
+	const shownTabId = localTabId ?? tabId;
+	const localView = useMemo(
+		() => (local && localTabId ? localTabViewSession(local, localTabId) : null),
+		[local, localTabId]
+	);
 
 	const handleTabSelect = useCallback(
 		(nextTabId: string) => {
@@ -201,9 +249,9 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 						{agent.name}
 					</span>
 					<MiniBadge
-						label="Peer"
+						label="Hosted"
 						theme={theme}
-						title={`Runs on ${peer.name}`}
+						title={`Hosted on ${peer.name}: its host runs it`}
 						testId="peer-agent-panel-badge"
 					/>
 					<span className="text-xs truncate" style={{ color: theme.colors.textDim }}>
@@ -274,15 +322,16 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 
 				<div className="flex items-stretch shrink-0 min-w-0">
 					<div className="flex-1 min-w-0">
-						{tabs.length > 0 && tabId && (
+						{tabs.length > 0 && shownTabId && (
 							<TabBar
 								tabs={tabs}
-								activeTabId={tabId}
+								activeTabId={shownTabId}
 								theme={theme}
 								onTabSelect={handleTabSelect}
 								onTabClose={noop}
 								onNewTab={noop}
 								readOnly
+								tabLocations={tabLocations}
 							/>
 						)}
 					</div>
@@ -339,7 +388,30 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 				</div>
 
 				<div className="flex-1 min-h-0 flex flex-col relative">
-					{!tabId ? (
+					{localView ? (
+						<TerminalOutput
+							key={`${local?.id}-${localTabId}`}
+							session={localView}
+							readOnly
+							theme={theme}
+							fontFamily={chat.fontFamily}
+							activeFocus={activeFocus}
+							outputSearchOpen={outputSearchOpen}
+							outputSearchQuery={outputSearchQuery}
+							outputSearchRegex={outputSearchRegex}
+							setOutputSearchOpen={setOutputSearchOpen}
+							setOutputSearchQuery={setOutputSearchQuery}
+							setOutputSearchRegex={setOutputSearchRegex}
+							setActiveFocus={useUIStore.getState().setActiveFocus}
+							setLightboxImage={setLightboxImage}
+							inputRef={inputRef}
+							logsEndRef={logsEndRef}
+							maxOutputLines={maxOutputLines}
+							markdownEditMode={chatRawTextMode}
+							setMarkdownEditMode={useSettingsStore.getState().setChatRawTextMode}
+							userMessageAlignment={userMessageAlignment}
+						/>
+					) : !tabId ? (
 						<div
 							className="flex-1 flex items-center justify-center text-sm"
 							style={{ color: theme.colors.textDim }}
@@ -398,6 +470,17 @@ export function PeerAgentPanel({ theme, setLightboxImage }: PeerAgentPanelProps)
 						)
 					)}
 				</div>
+
+				{localView && (
+					<div
+						className="px-4 py-3 text-xs border-t shrink-0 select-none"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+						data-testid="peer-agent-local-tab-notice"
+					>
+						This conversation is the copy this machine kept from before the agent moved to{' '}
+						{peer.name}. It is read only: continue in a tab on {peer.name}.
+					</div>
+				)}
 
 				{tabRecord && (
 					<PeerAgentComposer

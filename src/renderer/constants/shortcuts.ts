@@ -239,6 +239,14 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Show/Hide Throughput Gauge',
 		keys: ['Alt', 'Meta', 'Shift', 't'],
 	},
+	// L for Link. Opt+Cmd+L is System Logs and Cmd+Shift+L is taken, so the
+	// four-key chord is the free one in the L family. Inert unless the Prompt
+	// Links Encore Feature is on.
+	openPromptLinks: {
+		id: 'openPromptLinks',
+		label: 'Prompt Links',
+		keys: ['Alt', 'Meta', 'Shift', 'l'],
+	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
 		label: 'Filter Unread Agents',

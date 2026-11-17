@@ -1629,6 +1629,46 @@ Send every current comment to the agent as one queued prompt
 | `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
 | `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
 
+## `maestro-cli prompt-link`
+
+Create, list, and revoke one-shot maestro://run links (the window: `open prompt-links`)
+
+## `maestro-cli prompt-link create <agent> [prompt]`
+
+Create a link that runs PROMPT in a new tab of AGENT; prints the URL once
+
+| Option                 | Description                                                                 | Default |
+| ---------------------- | --------------------------------------------------------------------------- | ------- |
+| `--prompt-file <path>` | Read the prompt from a file instead of the argument                         | -       |
+| `--uses <n>`           | How many times the link may run: a number, or "unlimited" (default: 1)      | -       |
+| `--expires <duration>` | Expire after 12h, 7d, 30d, ... or "never" (default: never)                  | -       |
+| `--label <text>`       | A name to recognize the link by in lists and toasts                         | -       |
+| `--open <mode>`        | Where the tab opens when the link fires: background (default) or foreground | -       |
+| `--background`         | Accepted and ignored: creating a link changes nothing on screen             | -       |
+| `--focus`              | Accepted and ignored: creating a link changes nothing on screen             | -       |
+| `--json`               | Output the URL and link as JSON                                             | -       |
+
+## `maestro-cli prompt-link list`
+
+List active prompt links (never their URLs: only a hash is stored)
+
+| Option         | Description                                             | Default |
+| -------------- | ------------------------------------------------------- | ------- |
+| `--all`        | Include used, expired, and revoked links                | -       |
+| `--background` | Accepted and ignored: listing changes nothing on screen | -       |
+| `--focus`      | Accepted and ignored: listing changes nothing on screen | -       |
+| `--json`       | Output as JSON                                          | -       |
+
+## `maestro-cli prompt-link revoke <id>`
+
+Revoke a prompt link so it never runs again (accepts a unique id prefix)
+
+| Option         | Description                                              | Default |
+| -------------- | -------------------------------------------------------- | ------- |
+| `--background` | Accepted and ignored: revoking changes nothing on screen | -       |
+| `--focus`      | Accepted and ignored: revoking changes nothing on screen | -       |
+| `--json`       | Output the revoked link as JSON                          | -       |
+
 ## `maestro-cli marketplace`
 
 Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)
@@ -2335,6 +2375,26 @@ Run an automatic Federation pass now: start stopped hosts, install where SSH age
 ```bash
 maestro-cli federation auto run --json
 ```
+
+## `maestro-cli federation agents`
+
+List every agent the mirrored hosts run, and which ones the Left Bar shows (a host agent shows only once added)
+
+| Option          | Description                                    | Default |
+| --------------- | ---------------------------------------------- | ------- |
+| `--peer <peer>` | Only this peer                                 | -       |
+| `--not-added`   | Only the agents the Left Bar does not show yet | -       |
+| `--json`        | Output as JSON (for scripting)                 | -       |
+
+## `maestro-cli federation add <agent>`
+
+Add a host's agent (peer:agent) to the Left Bar, the same as Add Hosted Agent. Remove it with remove-agent; the host keeps it
+
+| Option                | Description                                                | Default |
+| --------------------- | ---------------------------------------------------------- | ------- |
+| `-g, --group <group>` | Local group id or name for the row (default: ungrouped)    | -       |
+| `--background`        | Add it without selecting it (Left Bar selection stays put) | -       |
+| `--json`              | Output as JSON (for scripting)                             | -       |
 
 ## `maestro-cli federation reconnect <peer>`
 
@@ -3337,6 +3397,22 @@ not.
 | --------------------- | --------------------------------------------------------- | ------- |
 | `--check <remote-id>` | Probe this remote now; exits 2 if it is still unreachable | -       |
 | `--json`              | Output as JSON (for scripting)                            | -       |
+
+## `maestro-cli claude-canary`
+
+Show whether the installed Claude Code passed the TUI canary (one real maestro-p turn the app runs after every Claude Code update); --run runs it now
+
+Claude Code updates itself while Maestro runs, and a release can change the
+TUI that agents on the interactive token source drive. After every Claude Code
+(or Maestro) version change, the running app runs one small maestro-p turn with
+the flags real agents use and raises a toast when it fails. This reads the last
+result, including what Claude Code showed on a failure. Exits 2 when the last
+result is a failure. Needs the desktop running.
+
+| Option   | Description                                         | Default |
+| -------- | --------------------------------------------------- | ------- |
+| `--run`  | Run the canary now; exits 2 if Claude Code fails it | -       |
+| `--json` | Output as JSON (for scripting)                      | -       |
 
 ## `maestro-cli display`
 

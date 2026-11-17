@@ -24,8 +24,9 @@
  *   then again only after a wake, a change to the stored remotes, a reconnect, a host setup
  *   (`setupHostFromDesktop`), or the slow re-probe (`MIRROR_REPROBE_INTERVAL_MS`).
  *
- * Federation is opportunistic: every enabled SSH remote that has not opted out is probed, and the
- * Left Bar shows only the ones that run a host (`isPeerFederated()`). Constructed once at boot
+ * Federation is opportunistic: every enabled SSH remote that has not opted out is probed, and only
+ * the ones that run a host count as peers (`isPeerFederated()`). The mirror holds each host's whole
+ * roster; the Left Bar shows only the agents a local record points at (`liftedAgentKeys()`). Constructed once at boot
  * (`createFederationRuntime`).
  */
 

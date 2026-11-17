@@ -6,6 +6,8 @@
 
 import { useMemo } from 'react';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { buildHostedAgentListings } from '../../services/hostedAgents';
 import {
 	agentFederationStatus,
 	liftedMirrorTarget,
@@ -44,4 +46,19 @@ export function useAgentFederationStatus(
 			order.flatMap((peerId) => (peers[peerId] ? [peers[peerId]] : []))
 		);
 	}, [liftedTo, sshEnabled, remoteId, order, peers]);
+}
+
+/**
+ * How many agents the mirrored hosts run that the Left Bar does not show yet: the Add Hosted Agent
+ * entries (palette, hamburger menu) appear only while this is above zero.
+ */
+export function useAddableHostedAgentCount(): number {
+	const order = usePeerMirrorStore((s) => s.order);
+	const peers = usePeerMirrorStore((s) => s.peers);
+	const sessions = useSessionStore((s) => s.sessions);
+	return useMemo(
+		() =>
+			buildHostedAgentListings(peers, order, sessions).filter((listing) => !listing.addedAs).length,
+		[peers, order, sessions]
+	);
 }

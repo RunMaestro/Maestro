@@ -45,9 +45,9 @@ import { readLiftedTo, type LiftedToPointer } from '../../shared/maestro-lib/age
 import { mirrorKey, type MirroredPeer } from '../../shared/maestro-lib/client/peer-mirror';
 import type { ClientErrorCode } from '../../shared/maestro-lib/client/types';
 import type {
+	FederationWindowReply,
+	FederationWindowRequest,
 	HostedSettingsConflictSummary,
-	HostedSettingsReply,
-	HostedSettingsRequest,
 } from '../../shared/federationCommands';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { Session } from '../types';
@@ -285,7 +285,9 @@ function parseMirrorKey(key: string): { peerId: string; agentId: string } | unde
  * (asked by main through the window). A
  * resolution is the one the modal's buttons record, so the next sync pass carries it out.
  */
-export function answerHostedSettingsRequest(request: HostedSettingsRequest): HostedSettingsReply {
+export function answerHostedSettingsRequest(
+	request: Extract<FederationWindowRequest, { action: 'list' | 'resolve' | 'fields' }>
+): FederationWindowReply {
 	if (request.action === 'fields') {
 		const target = parseMirrorKey(request.agent);
 		if (!target) {

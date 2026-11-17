@@ -134,3 +134,30 @@ export function liftBusyReason(agent: {
 	}
 	return null;
 }
+
+/**
+ * The `peer:agentId` of every hosted agent the person keeps in their Left Bar: one per local record
+ * with a pointer, whether it moved from here (a lift) or was added from the host's roster. A
+ * peer's other agents belong to whoever runs that host, so the Left Bar, the Thinking pill, and
+ * the command palette leave them out.
+ */
+export function liftedAgentKeys(agents: readonly { liftedTo?: unknown }[]): Set<string> {
+	const keys = new Set<string>();
+	for (const agent of agents) {
+		const pointer = readLiftedTo(agent?.liftedTo);
+		if (pointer) keys.add(peerAgentRef(pointer.peer, pointer.agentId));
+	}
+	return keys;
+}
+
+/** The local record that points at `peer:agentId`, or undefined when none does. */
+export function findLiftedAgent<T extends { liftedTo?: unknown }>(
+	agents: readonly T[],
+	peer: string,
+	agentId: string
+): T | undefined {
+	return agents.find((agent) => {
+		const pointer = readLiftedTo(agent?.liftedTo);
+		return pointer !== undefined && pointer.peer === peer && pointer.agentId === agentId;
+	});
+}

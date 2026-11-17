@@ -54,7 +54,7 @@ import {
 	type DesktopLiftRuntime,
 } from '../../federation/lift';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
-import { setHostedSettingsWindow } from '../../federation/hosted-settings';
+import { setFederationWindow } from '../../federation/federation-window';
 import { isHistoryEntryType, type PaginatedResult } from '../../../shared/history';
 import type { HistoryEntry, HistoryEntryType } from '../../../shared/types';
 import {
@@ -145,7 +145,7 @@ function readLiftOptions(options: unknown): DesktopLiftOptions {
 export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 	const liftDeps = buildDesktopLiftDeps({ ...deps, service: getPeerMirrorService });
 	// `maestro-cli federation conflicts|resolve` reach the settings sync through this window.
-	setHostedSettingsWindow(deps.getMainWindow);
+	setFederationWindow(deps.getMainWindow);
 	ipcMain.handle(
 		'federation:status',
 		withIpcErrorLogging(

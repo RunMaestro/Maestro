@@ -409,4 +409,61 @@ describe('PeerAgentPanel', () => {
 			expect(useSessionStore.getState().sessions).toEqual([]);
 		});
 	});
+
+	describe('one strip with the tabs this machine kept', () => {
+		const keptLogs = [{ id: 'k1', timestamp: 1, source: 'user', text: 'before the move' }];
+		function withLocalRow() {
+			useSessionStore.setState({
+				sessions: [
+					{
+						id: 'row-1',
+						name: 'Builder',
+						toolType: 'claude-code',
+						cwd: '/srv/builder',
+						liftedTo: { peer: 'build', agentId: 'a1', at: 1 },
+						aiTabs: [
+							{ id: 'blank', agentSessionId: null, logs: [] },
+							{ id: 'kept', agentSessionId: 'sess-old', name: 'Old work', logs: keptLogs },
+						],
+					},
+				] as never,
+			});
+		}
+
+		it("lists the host's tabs, then the kept local ones, each with where it lives", () => {
+			withLocalRow();
+			show();
+			renderPanel();
+			const props = tabBarProps.current as {
+				tabs: { id: string }[];
+				tabLocations: Record<string, { label: string }>;
+			};
+			expect(props.tabs.map((tab) => tab.id)).toEqual(['t1', 't2', 'kept']);
+			expect(props.tabLocations.t1.label).toBe('Build Box');
+			expect(props.tabLocations.kept.label).toBe('Local');
+		});
+
+		it('shows a kept tab read only from the local copy, with no composer and no host read', () => {
+			withLocalRow();
+			show();
+			usePeerMirrorStore.getState().selectMirrorTab('build', 'a1', 'kept');
+			vi.mocked(readMirrorTranscript).mockClear();
+			renderPanel();
+			const session = (terminalProps.current as { session: { id: string; activeTabId: string } })
+				.session;
+			expect(session).toMatchObject({ id: 'row-1', activeTabId: 'kept' });
+			expect((terminalProps.current as { readOnly: boolean }).readOnly).toBe(true);
+			expect(screen.getByTestId('peer-agent-local-tab-notice')).toHaveTextContent(
+				'continue in a tab on Build Box'
+			);
+			expect(readMirrorTranscript).not.toHaveBeenCalled();
+			expect((tabBarProps.current as { activeTabId: string }).activeTabId).toBe('kept');
+		});
+
+		it('draws no location pills while the agent kept nothing here', () => {
+			show();
+			renderPanel();
+			expect((tabBarProps.current as { tabLocations?: unknown }).tabLocations).toBeUndefined();
+		});
+	});
 });

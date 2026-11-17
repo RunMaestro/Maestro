@@ -20,9 +20,6 @@ import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { AgentVoiceIndicator } from './SessionList/AgentVoiceIndicator';
 import { WindowBadge } from './SessionList/WindowBadge';
-import { LiftedPointerChip } from './SessionList/LiftedPointerChip';
-import { useLiftedMirrorTarget } from '../hooks/federation/useAgentLift';
-import { openLiftedAgent } from '../services/agentLift';
 import { SessionFederationBadge } from './SessionList/SessionFederationBadge';
 import { AutoRunErrorBadge } from './SessionList/AutoRunErrorBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
@@ -245,14 +242,6 @@ export const SessionItem = memo(function SessionItem({
 	onToggleBookmark,
 	onToggleWorktrees,
 }: SessionItemProps) {
-	// A lifted agent runs on its host now: its row opens the hosted agent, the copy every
-	// conductor shares, while the mirror shows it. Otherwise (peer down) it selects the pointer.
-	const liftedTarget = useLiftedMirrorTarget(session.liftedTo);
-	const handleSelect = liftedTarget?.mirrored
-		? () => {
-				openLiftedAgent(session);
-			}
-		: onSelect;
 	const showWorktreePill = useSettingsStore((s) => s.showWorktreePill);
 	const showWorktreeBranchName = useSettingsStore((s) => s.showWorktreeBranchName);
 	const showWorktreeProvider = useSettingsStore((s) => s.showWorktreeProvider);
@@ -372,7 +361,7 @@ export const SessionItem = memo(function SessionItem({
 			onDragStart={dragDisabled ? undefined : onDragStart}
 			onDragOver={dragDisabled ? undefined : onDragOver}
 			onDrop={dragDisabled ? undefined : onDrop}
-			onClick={handleSelect}
+			onClick={onSelect}
 			onContextMenu={onContextMenu}
 			// Touch: a long-press opens the same context menu right-click opens.
 			onLongPress={(rect) => onContextMenu(longPressMouseEvent(rect))}
@@ -551,7 +540,6 @@ export const SessionItem = memo(function SessionItem({
 						<Activity className="row-provider-icon w-3 h-3" />{' '}
 						<span className="row-provider">{getAgentDisplayName(session.toolType)}</span>
 						<SessionFederationBadge theme={theme} session={session} />
-						<LiftedPointerChip theme={theme} liftedTo={session.liftedTo} />
 					</div>
 				)}
 				{/* Host-owned secondary actions stay outside session identity and SSH/status indicators. */}

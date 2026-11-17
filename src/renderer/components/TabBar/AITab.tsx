@@ -17,6 +17,8 @@ import { TabVoiceIndicator } from './TabVoiceIndicator';
 import { useTabHasActiveOutage } from '../../stores/retryStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { shortcutSuffix } from '../ui/ShortcutHint';
+import { openPromptLinks, promptLinksAvailable } from '../../services/promptLinks';
+import { normalizeComposerCommandMode } from '../../utils/shellCommandInput';
 
 export interface AITabProps {
 	tab: AITabType;
@@ -30,6 +32,8 @@ export interface AITabProps {
 	canClose: boolean;
 	/** Select only: no drag and no hover menu (see `TabBarProps.readOnly`). */
 	readOnly?: boolean;
+	/** Where this tab lives, drawn as a pill after its name (see `TabBarProps.tabLocations`). */
+	location?: { label: string; title: string };
 	/** Stable callback - receives tabId as first argument */
 	onSelect: (tabId: string) => void;
 	/** Stable callback - receives tabId as first argument */
@@ -116,6 +120,7 @@ export const AITab = memo(function AITab({
 	sessionAgentSessionId,
 	canClose,
 	readOnly = false,
+	location,
 	onSelect,
 	onClose,
 	onDragStart,
@@ -354,6 +359,25 @@ export const AITab = memo(function AITab({
 			onSnooze?.(tabId);
 		},
 		[onSnooze, tabId, setOverlayOpen]
+	);
+
+	// Prompt Links: open the window on this tab's agent, with the tab's unsent
+	// draft as the prompt (a shell command line is not a prompt, so it is left out).
+	const promptLinksEnabled = useSettingsStore((s) =>
+		promptLinksAvailable(s.encoreFeatures.promptLinks)
+	);
+	const handleCreatePromptLinkClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			setOverlayOpen(false);
+			if (!sessionId) return;
+			const draft =
+				normalizeComposerCommandMode(tab.commandMode) === 'off'
+					? (tab.inputValue ?? '').trim()
+					: '';
+			openPromptLinks({ agentId: sessionId, compose: true, ...(draft ? { prompt: draft } : {}) });
+		},
+		[sessionId, tab.commandMode, tab.inputValue, setOverlayOpen]
 	);
 
 	const handlePublishGistClick = useCallback(
@@ -636,6 +660,17 @@ export const AITab = memo(function AITab({
 				{displayName}
 			</span>
 
+			{location && (
+				<span
+					className="text-3xs px-1 py-0.5 rounded shrink-0"
+					style={{ color: theme.colors.accent, backgroundColor: `${theme.colors.accent}20` }}
+					title={location.title}
+					data-testid="ai-tab-location"
+				>
+					{location.label}
+				</span>
+			)}
+
 			{tab.origin === 'relay' && (
 				<span
 					className="text-3xs px-1 py-0.5 rounded shrink-0"
@@ -681,6 +716,7 @@ export const AITab = memo(function AITab({
 					tabIndex={tabIndex}
 					onCopySessionId={handleCopySessionId}
 					onCopyDeepLink={handleCopyDeepLink}
+					onCreatePromptLinkClick={promptLinksEnabled ? handleCreatePromptLinkClick : undefined}
 					onStarClick={handleStarClick}
 					onRenameClick={handleRenameClick}
 					onMarkUnreadClick={handleMarkUnreadClick}

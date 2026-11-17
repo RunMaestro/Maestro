@@ -1,15 +1,26 @@
 /**
  * Tests for src/shared/maestro-lib/client/ssh-forward.ts: one refcounted SSH forward per
- * Federation remote, restarted with backoff and a fresh discovery, never two ssh at once.
+ * Federation remote, restarted with backoff and a fresh discovery, never two ssh at once. The
+ * forward is a private ControlMaster that gets its port through `ssh -O forward`; Windows keeps
+ * the single-process `-L` forward.
  */
 
 import { EventEmitter } from 'events';
 import type { ChildProcess } from 'child_process';
+import { existsSync, statSync } from 'fs';
+import os from 'os';
+import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	SshForwardError,
 	SshForwardManager,
 	buildSshForwardArgs,
+	buildSshForwardMasterArgs,
+	buildSshMuxArgs,
+	createForwardControlSocket,
+	ownForwardBindFailed,
+	type ForwardControlSocket,
+	type SshForwardControl,
 	type SshForwardManagerOptions,
 	type SshForwardSpawn,
 	type SshForwardState,
@@ -68,12 +79,19 @@ function running(port: number): RemoteHostDiscovery {
 	};
 }
 
+interface FakeSocket extends ForwardControlSocket {
+	dispose: ReturnType<typeof vi.fn<() => Promise<void>>>;
+}
+
 interface Harness {
 	manager: SshForwardManager;
 	discover: ReturnType<typeof vi.fn<(remote: SshRemoteConfig) => Promise<RemoteHostDiscovery>>>;
 	spawn: ReturnType<typeof vi.fn<SshForwardSpawn>>;
 	children: FakeChild[];
 	waitForPort: ReturnType<typeof vi.fn<NonNullable<SshForwardManagerOptions['waitForPort']>>>;
+	/** `ssh -O` requests; every one succeeds unless a test says otherwise. */
+	control: ReturnType<typeof vi.fn<SshForwardControl>>;
+	sockets: FakeSocket[];
 }
 
 function harness(
@@ -93,10 +111,23 @@ function harness(
 		return child as unknown as ChildProcess;
 	});
 	const waitForPort = vi.fn<NonNullable<SshForwardManagerOptions['waitForPort']>>(async () => true);
+	const control = vi.fn<SshForwardControl>(async () => ({ exitCode: 0, stderr: '' }));
+	const sockets: FakeSocket[] = [];
+	const controlSocket = async () => {
+		const socket: FakeSocket = {
+			path: `/tmp/mfwd-${sockets.length}/ssh`,
+			dispose: vi.fn(async () => {}),
+		};
+		sockets.push(socket);
+		return socket;
+	};
 	const manager = new SshForwardManager({
 		discover,
 		spawn,
 		waitForPort,
+		control,
+		controlSocket,
+		useControlMaster: true,
 		sshPath: '/usr/bin/ssh',
 		allocatePort: async () => nextPort++,
 		backoffInitialMs: 1000,
@@ -104,15 +135,23 @@ function harness(
 		stopGraceMs: 100,
 		...overrides,
 	});
-	return { manager, discover, spawn, children, waitForPort };
+	return { manager, discover, spawn, children, waitForPort, control, sockets };
 }
 
 /** Let pending promise chains run without moving the clock. */
 const settle = () => vi.advanceTimersByTimeAsync(0);
 
-function forwardSpec(h: Harness, call: number): string {
-	const args = h.spawn.mock.calls[call][1];
-	return args[args.indexOf('-L') + 1];
+/** The `-L` spec of every `ssh -O forward` request, in order. */
+function forwardSpecs(h: Harness): string[] {
+	return h.control.mock.calls
+		.map(([, args]) => args)
+		.filter((args) => args[args.indexOf('-O') + 1] === 'forward')
+		.map((args) => args[args.indexOf('-L') + 1]);
+}
+
+/** The `-O` operation of every request, in order. */
+function controlOps(h: Harness): string[] {
+	return h.control.mock.calls.map(([, args]) => args[args.indexOf('-O') + 1]);
 }
 
 beforeEach(() => {
@@ -126,13 +165,125 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-describe('buildSshForwardArgs', () => {
+describe('buildSshForwardMasterArgs', () => {
+	it('opens the connection with no forwards, on a private ControlMaster socket', () => {
+		const args = buildSshForwardMasterArgs(remote, '/tmp/mfwd-abc/ssh');
+		expect(args[0]).toBe('-N');
+		expect(args).not.toContain('-L');
+		expect(args).toEqual(
+			expect.arrayContaining([
+				'ClearAllForwardings=yes',
+				'ControlMaster=yes',
+				'ControlPersist=no',
+				'LogLevel=INFO',
+				'ServerAliveInterval=15',
+			])
+		);
+		expect(args[args.indexOf('-S') + 1]).toBe('/tmp/mfwd-abc/ssh');
+		expect(args).not.toContain('ClearAllForwardings=no');
+		const connection = buildSshConnectionArgs(remote);
+		expect(args.slice(-connection.length)).toEqual(connection);
+	});
+
+	it("holds ClearAllForwardings and the master against the remote's own options", () => {
+		const args = buildSshForwardMasterArgs(
+			{
+				...remote,
+				sshOptions: { ClearAllForwardings: 'no', ControlMaster: 'auto', ControlPath: '~/.ssh/cm' },
+			},
+			'/tmp/mfwd-abc/ssh'
+		);
+		// First-wins: the forward's options precede the remote's.
+		expect(args.indexOf('ClearAllForwardings=yes')).toBeLessThan(
+			args.indexOf('ClearAllForwardings=no')
+		);
+		expect(args.indexOf('ControlMaster=yes')).toBeLessThan(args.indexOf('ControlMaster=auto'));
+	});
+
+	it('doubles a % in the socket path, which ssh would expand as a token', () => {
+		const args = buildSshForwardMasterArgs(remote, '/tmp/50%/ssh');
+		expect(args[args.indexOf('-S') + 1]).toBe('/tmp/50%%/ssh');
+	});
+});
+
+describe('buildSshMuxArgs', () => {
+	it('checks the master without reading any ssh config', () => {
+		expect(buildSshMuxArgs(remote, '/tmp/mfwd-abc/ssh', { op: 'check' })).toEqual([
+			'-F',
+			'none',
+			'-S',
+			'/tmp/mfwd-abc/ssh',
+			'-O',
+			'check',
+			'build.example.com',
+		]);
+	});
+
+	it("asks the master for the forward's own port only", () => {
+		expect(
+			buildSshMuxArgs(remote, '/tmp/mfwd-abc/ssh', {
+				op: 'forward',
+				localPort: 50000,
+				remotePort: 4001,
+			})
+		).toEqual([
+			'-F',
+			'none',
+			'-S',
+			'/tmp/mfwd-abc/ssh',
+			'-O',
+			'forward',
+			'-L',
+			'127.0.0.1:50000:127.0.0.1:4001',
+			'build.example.com',
+		]);
+	});
+
+	it('refuses a port outside 1-65535', () => {
+		expect(() =>
+			buildSshMuxArgs(remote, '/tmp/s', { op: 'forward', localPort: 50000, remotePort: 0 })
+		).toThrow(/Invalid forward port/);
+	});
+});
+
+describe('createForwardControlSocket', () => {
+	it('makes a private directory per forward and removes it on dispose', async () => {
+		const first = await createForwardControlSocket();
+		const second = await createForwardControlSocket();
+		try {
+			const dir = path.dirname(first.path);
+			expect(path.basename(first.path)).toBe('ssh');
+			expect(dir.startsWith(path.join(os.tmpdir(), 'mfwd-'))).toBe(true);
+			expect(path.dirname(second.path)).not.toBe(dir);
+			if (process.platform !== 'win32') expect(statSync(dir).mode & 0o777).toBe(0o700);
+			await first.dispose();
+			expect(existsSync(dir)).toBe(false);
+		} finally {
+			await first.dispose();
+			await second.dispose();
+		}
+	});
+
+	it.skipIf(process.platform === 'win32')(
+		'falls back to /tmp when the temp folder would make the socket path too long',
+		async () => {
+			const socket = await createForwardControlSocket(`/var/${'x'.repeat(90)}`);
+			try {
+				expect(path.dirname(path.dirname(socket.path))).toBe('/tmp');
+			} finally {
+				await socket.dispose();
+			}
+		}
+	);
+});
+
+describe('buildSshForwardArgs (Windows, no ControlMaster)', () => {
 	it('puts the forward options before the remote connection args', () => {
 		const args = buildSshForwardArgs(remote, 50000, 4001);
 		expect(args[0]).toBe('-N');
 		expect(args).toEqual(
 			expect.arrayContaining([
-				'ExitOnForwardFailure=yes',
+				'ExitOnForwardFailure=no',
 				'ClearAllForwardings=no',
 				'ControlMaster=no',
 				'ControlPath=none',
@@ -164,6 +315,27 @@ describe('buildSshForwardArgs', () => {
 	});
 });
 
+describe('ownForwardBindFailed', () => {
+	it("names only the forward's own port, in either of ssh's spellings", () => {
+		expect(ownForwardBindFailed('bind [127.0.0.1]:50000: Address already in use\n', 50000)).toBe(
+			true
+		);
+		expect(
+			ownForwardBindFailed('channel_setup_fwd_listener_tcpip: cannot listen to port: 50000', 50000)
+		).toBe(true);
+	});
+
+	it("ignores a LocalForward from the user's ssh config", () => {
+		const configForward =
+			'bind [127.0.0.1]:5901: Address already in use\n' +
+			'channel_setup_fwd_listener_tcpip: cannot listen to port: 5901\n' +
+			'Could not request local forwarding.\n';
+		expect(ownForwardBindFailed(configForward, 50000)).toBe(false);
+		// A port that merely starts with the same digits is a different port.
+		expect(ownForwardBindFailed('cannot listen to port: 500001', 50000)).toBe(false);
+	});
+});
+
 describe('SshForwardManager', () => {
 	it('discovers, forwards, and hands back the local end with the host credentials', async () => {
 		const h = harness([running(4001)]);
@@ -173,7 +345,17 @@ describe('SshForwardManager', () => {
 		expect(h.discover).toHaveBeenCalledOnce();
 		expect(h.spawn).toHaveBeenCalledOnce();
 		expect(h.spawn.mock.calls[0][0]).toBe('/usr/bin/ssh');
-		expect(forwardSpec(h, 0)).toBe('127.0.0.1:50000:127.0.0.1:4001');
+		expect(h.spawn.mock.calls[0][1]).toEqual(buildSshForwardMasterArgs(remote, h.sockets[0].path));
+		expect(controlOps(h)).toEqual(['check', 'forward']);
+		expect(h.control.mock.calls[1]).toEqual([
+			'/usr/bin/ssh',
+			buildSshMuxArgs(remote, h.sockets[0].path, {
+				op: 'forward',
+				localPort: 50000,
+				remotePort: 4001,
+			}),
+		]);
+		expect(forwardSpecs(h)).toEqual(['127.0.0.1:50000:127.0.0.1:4001']);
 		expect(endpoint).toEqual({
 			port: 50000,
 			remotePort: 4001,
@@ -205,6 +387,98 @@ describe('SshForwardManager', () => {
 		expect(h.manager.activeRemoteIds()).toEqual([]);
 	});
 
+	it('adds the forward only once the master answers -O check', async () => {
+		const h = harness([running(4001)]);
+		h.control
+			.mockResolvedValueOnce({ exitCode: 255, stderr: 'Control socket connect: No such file\n' })
+			.mockResolvedValueOnce({ exitCode: 255, stderr: 'Control socket connect: No such file\n' });
+		const lease = h.manager.acquire(remote);
+		await settle();
+		expect(controlOps(h)).toEqual(['check']);
+		expect(h.waitForPort).not.toHaveBeenCalled();
+
+		await vi.advanceTimersByTimeAsync(250);
+		expect(controlOps(h)).toEqual(['check', 'check']);
+		await vi.advanceTimersByTimeAsync(250);
+		expect(controlOps(h)).toEqual(['check', 'check', 'check', 'forward']);
+		expect(await lease.ready()).toMatchObject({ port: 50000, remotePort: 4001 });
+		await lease.release();
+	});
+
+	it('reports a refused -O forward as a forward failure and takes the master down', async () => {
+		const h = harness([running(4001)]);
+		h.control.mockImplementation(async (_command, args) =>
+			args.includes('forward')
+				? {
+						exitCode: 255,
+						stderr: 'mux_client_forward: forwarding request failed: Port forwarding failed\n',
+					}
+				: { exitCode: 0, stderr: '' }
+		);
+		const lease = h.manager.acquire(remote);
+		const error = (await lease.ready().catch((e: unknown) => e)) as SshForwardError;
+		expect(error).toBeInstanceOf(SshForwardError);
+		expect(error.code).toBe('forward-failed');
+		expect(error.message).toContain('50000');
+		expect(error.message).toContain('Port forwarding failed');
+		expect(h.waitForPort).not.toHaveBeenCalled();
+		expect(h.children[0].signals).toEqual(['SIGTERM']);
+		await settle();
+		expect(h.sockets[0].dispose).toHaveBeenCalledOnce();
+		await lease.release();
+	});
+
+	it('fails an attempt whose master exits before it answers', async () => {
+		const h = harness([running(4001)]);
+		h.control.mockResolvedValue({
+			exitCode: 255,
+			stderr: 'Control socket connect: No such file\n',
+		});
+		const lease = h.manager.acquire(remote);
+		await settle();
+		h.children[0].writeStderr(
+			'ssh: connect to host build.example.com port 22: Operation timed out\n'
+		);
+		h.children[0].exit(255);
+		await vi.advanceTimersByTimeAsync(250);
+
+		const error = (await lease.ready().catch((e: unknown) => e)) as SshForwardError;
+		expect(error.code).toBe('forward-failed');
+		expect(controlOps(h)).not.toContain('forward');
+		await lease.release();
+	});
+
+	it('removes the control socket only after the master has exited', async () => {
+		const h = harness([running(4001)]);
+		const lease = h.manager.acquire(remote);
+		await lease.ready();
+		h.children[0].holdOnKill = true;
+
+		const releasing = lease.release();
+		await settle();
+		expect(h.children[0].signals).toEqual(['SIGTERM']);
+		expect(h.sockets[0].dispose).not.toHaveBeenCalled();
+
+		h.children[0].exit(null, 'SIGTERM');
+		await releasing;
+		expect(h.sockets[0].dispose).toHaveBeenCalledOnce();
+	});
+
+	it('gives every restart its own control socket', async () => {
+		const h = harness([running(4001), running(4002)]);
+		const lease = h.manager.acquire(remote);
+		await lease.ready();
+		lease.restart();
+		await settle();
+		await lease.ready();
+
+		expect(h.sockets.map((socket) => socket.path)).toEqual(['/tmp/mfwd-0/ssh', '/tmp/mfwd-1/ssh']);
+		expect(h.sockets[0].dispose).toHaveBeenCalledOnce();
+		expect(h.sockets[1].dispose).not.toHaveBeenCalled();
+		await lease.release();
+		expect(h.sockets[1].dispose).toHaveBeenCalledOnce();
+	});
+
 	it('restarts a dropped forward with backoff and rediscovers the moved host port', async () => {
 		const h = harness([running(4001), running(4002)]);
 		const lease = h.manager.acquire(remote);
@@ -222,7 +496,7 @@ describe('SshForwardManager', () => {
 		await vi.advanceTimersByTimeAsync(1000);
 		expect(h.discover).toHaveBeenCalledTimes(2);
 		expect(h.spawn).toHaveBeenCalledTimes(2);
-		expect(forwardSpec(h, 1)).toBe('127.0.0.1:50001:127.0.0.1:4002');
+		expect(forwardSpecs(h)[1]).toBe('127.0.0.1:50001:127.0.0.1:4002');
 		expect(await lease.ready()).toMatchObject({ port: 50001, remotePort: 4002 });
 		expect(states.map((state) => state.status)).toEqual(['down', 'starting', 'up']);
 		await lease.release();
@@ -350,5 +624,47 @@ describe('SshForwardManager', () => {
 		expect(h.children.map((child) => child.signals)).toEqual([['SIGTERM'], ['SIGTERM']]);
 		expect(lease.state()).toEqual({ status: 'stopped' });
 		expect(() => h.manager.acquire(remote)).toThrow(/disposed/);
+	});
+});
+
+describe('SshForwardManager on Windows (no ControlMaster)', () => {
+	it('forwards in one ssh with -L and sends no -O requests', async () => {
+		const h = harness([running(4001)], { useControlMaster: false });
+		const lease = h.manager.acquire(remote);
+		expect(await lease.ready()).toMatchObject({ port: 50000, remotePort: 4001 });
+		expect(h.spawn.mock.calls[0][1]).toEqual(buildSshForwardArgs(remote, 50000, 4001));
+		expect(h.control).not.toHaveBeenCalled();
+		expect(h.sockets).toEqual([]);
+		await lease.release();
+		expect(h.children[0].signals).toEqual(['SIGTERM']);
+	});
+
+	it("stays up when a LocalForward from the user's ssh config cannot bind", async () => {
+		const h = harness([running(4001)], { useControlMaster: false });
+		h.waitForPort.mockImplementation(async () => {
+			h.children[0].writeStderr(
+				'bind [127.0.0.1]:5901: Address already in use\n' +
+					'channel_setup_fwd_listener_tcpip: cannot listen to port: 5901\n' +
+					'Could not request local forwarding.\n'
+			);
+			return true;
+		});
+		const lease = h.manager.acquire(remote);
+		expect(await lease.ready()).toMatchObject({ port: 50000, remotePort: 4001 });
+		expect(lease.state()).toMatchObject({ status: 'up' });
+		await lease.release();
+	});
+
+	it('fails an attempt whose own port cannot bind, even while ssh stays running', async () => {
+		const h = harness([running(4001)], { useControlMaster: false });
+		h.waitForPort.mockImplementation(async (_port, { shouldStop }) => {
+			h.children[0].writeStderr('bind [127.0.0.1]:50000: Address already in use\n');
+			return !shouldStop?.();
+		});
+		const lease = h.manager.acquire(remote);
+		const error = (await lease.ready().catch((e: unknown) => e)) as SshForwardError;
+		expect(error.code).toBe('forward-failed');
+		expect(error.message).toContain('50000');
+		await lease.release();
 	});
 });

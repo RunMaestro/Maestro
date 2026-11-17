@@ -67,6 +67,7 @@ import { VOICE_CONTROL_MESSAGE, handleVoiceControl } from './voiceControl';
 import {
 	handleGetSessions,
 	handleCreateSession,
+	handleImportAgent,
 	handleCreateWorktreeSession,
 	handleDeleteSession,
 	handleRenameSession,
@@ -95,6 +96,7 @@ import { handleAppStats } from './appStats';
 import { handleSystemLogs, handleSystemLogsClear } from './systemLogs';
 import { handleQuickChat } from './quickChat';
 import { handleSshReachabilityCheck, handleSshReachabilityStatus } from './sshReachability';
+import { handleClaudeCanaryRun, handleClaudeCanaryStatus } from './claudeCanary';
 import {
 	handleSupportPackageCreate,
 	handleFeedbackCheckAuth,
@@ -183,6 +185,7 @@ import { handleMaestroRunCommand } from './maestroRun';
 import { handleDataviewCommand } from './dataview';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleDiffReviewCommand } from './diffReview';
+import { handlePromptLinkCommand } from './promptLinks';
 import { handleWindowCommand } from './windows';
 import { handleThroughputGaugeCommand } from './throughputGauge';
 import {
@@ -505,6 +508,10 @@ export class WebSocketMessageHandler {
 				handleDiffReviewCommand(this.ctx, client, message);
 				break;
 
+			case 'prompt_link_command':
+				void handlePromptLinkCommand(this.ctx, client, message);
+				break;
+
 			case 'window_command':
 				handleWindowCommand(this.ctx, client, message);
 				break;
@@ -679,6 +686,10 @@ export class WebSocketMessageHandler {
 
 			case 'create_session':
 				handleCreateSession(this.ctx, client, message);
+				break;
+
+			case 'import_agent':
+				handleImportAgent(this.ctx, client, message);
 				break;
 
 			case 'delete_session':
@@ -975,6 +986,14 @@ export class WebSocketMessageHandler {
 
 			case 'ssh_reachability_check':
 				void handleSshReachabilityCheck(this.ctx, client, message);
+				break;
+
+			case 'claude_canary_status':
+				handleClaudeCanaryStatus(this.ctx, client, message);
+				break;
+
+			case 'claude_canary_run':
+				void handleClaudeCanaryRun(this.ctx, client, message);
 				break;
 
 			case 'support_package_create':

@@ -44,6 +44,7 @@ import {
 	registerFederationHandlers,
 	registerMaestroRunHandlers,
 	registerDataviewHandlers,
+	registerPromptLinkHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerNotificationHistoryHandlers,
@@ -158,6 +159,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Dataview - DQL queries, index status and rebuild, and the `dataview:changed`
 	// push to every window. See src/main/ipc/handlers/dataview.ts.
 	registerDataviewHandlers({ safeSend: deps.safeSend });
+
+	// Prompt Links (`maestro://run/<token>`) - desktop-only, the bridge refuses
+	// every `promptLinks:*` channel. See src/main/ipc/handlers/promptLinks.ts.
+	registerPromptLinkHandlers();
 
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({

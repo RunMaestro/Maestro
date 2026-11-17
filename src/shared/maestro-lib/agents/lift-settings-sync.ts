@@ -772,6 +772,18 @@ export function liftSyncAgentValues(
 }
 
 /**
+ * A pull that writes every shared setting of `host` onto a local copy. A Left Bar row added from a
+ * host's roster starts from it, so the first sync finds both sides equal instead of a conflict on
+ * every field the new row left at its default.
+ */
+export function hostSettingsPull(host: AgentRecord): LiftSyncPull {
+	const pull: LiftSyncPull = { agent: {}, env: {}, tabs: {} };
+	for (const spec of AGENT_FIELDS) pull.agent[spec.key] = spec.read(host);
+	for (const [key, value] of Object.entries(envOf(host))) pull.env[key] = value;
+	return pull;
+}
+
+/**
  * The host's record with some field values replaced: the local copy a set of pending edits on a
  * mirrored agent stands for. Unset values remove the field.
  */

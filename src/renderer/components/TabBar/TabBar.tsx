@@ -106,6 +106,7 @@ function TabBarInner({
 	sshRemote,
 	leadingSlot,
 	readOnly = false,
+	tabLocations,
 }: TabBarProps) {
 	// Dev-time warnings for missing handlers when unified tabs are provided
 	if (process.env.NODE_ENV !== 'production' && unifiedTabs) {
@@ -636,6 +637,7 @@ function TabBarInner({
 		sessionAgentSessionId,
 		canClose: !readOnly,
 		readOnly,
+		location: tabLocations?.[tab.id],
 		onSelect: onTabSelect,
 		onClose: onTabClose,
 		onDragStart: handleDragStart,

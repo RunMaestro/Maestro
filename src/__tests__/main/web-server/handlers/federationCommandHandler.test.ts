@@ -56,8 +56,8 @@ const auto = vi.hoisted(() => ({
 const hosted = vi.hoisted(() => ({
 	request: vi.fn(async (_request: unknown) => ({ success: true, conflicts: [] })),
 }));
-vi.mock('../../../../main/federation/hosted-settings', () => ({
-	requestHostedSettings: hosted.request,
+vi.mock('../../../../main/federation/federation-window', () => ({
+	requestFederationWindow: hosted.request,
 }));
 vi.mock('../../../../main/federation', () => ({
 	getPeerMirrorService: () => (running.on ? service : null),
@@ -202,6 +202,34 @@ describe('federation_command handler', () => {
 		expect(
 			await send(client(true), { action: 'resolve-conflict', agent: 'a', field: 'x', take: 'both' })
 		).toMatchObject({ success: false });
+		expect(hosted.request).not.toHaveBeenCalled();
+	});
+
+	it('asks the window for the host agents the Left Bar can show', async () => {
+		await send(client(true), { action: 'hosted-agents' });
+		expect(hosted.request).toHaveBeenCalledWith({ action: 'hosted-agents' });
+	});
+
+	it('adds a host agent through the window, passing only the fields given', async () => {
+		hosted.request.mockClear();
+		await send(client(true), {
+			action: 'add-agent',
+			agent: ' buildbox:a1 ',
+			group: ' Work ',
+			name: '',
+			background: true,
+		});
+		expect(hosted.request).toHaveBeenCalledWith({
+			action: 'add-agent',
+			agent: 'buildbox:a1',
+			group: 'Work',
+			background: true,
+		});
+		hosted.request.mockClear();
+		expect(await send(client(true), { action: 'add-agent' })).toMatchObject({
+			success: false,
+			error: 'Name the host agent to add (peer:agent)',
+		});
 		expect(hosted.request).not.toHaveBeenCalled();
 	});
 });

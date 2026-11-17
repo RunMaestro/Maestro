@@ -4,14 +4,15 @@
  *
  * - `ssh`: an SSH agent. This Maestro starts each turn over SSH, so the work stops when this
  *   machine sleeps or loses the connection.
- * - `hosted`: an agent owned by the Maestro host on the remote (a mirrored peer row). Turns, the
- *   queue, Auto Run, and Cue keep running there while this machine is off.
+ * - `hosted`: an agent owned by the Maestro host on the remote (a local row that points at it).
+ *   Turns, the queue, Auto Run, and Cue keep running there while this machine is off. The badge
+ *   also carries the host's connection: accent while connected, warning while (re)connecting, error
+ *   while the host is out of reach (the hover card says why).
  *
  * Users see "Hosted", not "Federated": the word names what they get (the agent keeps working while
  * this machine sleeps), where "federation" names the mechanism. Federation is opportunistic, so the
  * card on an SSH agent also says what the next step is (Move to Host, which sets a host up first
- * when the remote has none). A local agent gets no badge, and an agent that moved already shows
- * `LiftedPointerChip` instead.
+ * when the remote has none). A local agent gets no badge.
  *
  * An SSH agent whose remote is down (the main process confirmed it with a probe) keeps the same
  * chip in the same place, in the error color with the label struck through. That is the whole
@@ -24,6 +25,7 @@ import type { Theme } from '../../types';
 import { HoverTooltip } from '../ui/HoverTooltip';
 import { MiniBadge } from '../ui/MiniBadge';
 import type { AutoFederationAgentState } from '../../../shared/federationAuto';
+import type { PeerMirrorConnection } from '../../../shared/maestro-lib/client/peer-mirror';
 import { formatTimestamp } from '../../../shared/formatters';
 
 /** An SSH agent's remote that the reachability probe says is down (`SshReachabilityEvent`). */
@@ -51,7 +53,25 @@ export type FederationBadgeMode =
 			auto?: FederationBadgeAuto;
 			unreachable?: FederationBadgeUnreachable;
 	  }
-	| { kind: 'hosted'; peerName: string };
+	| {
+			kind: 'hosted';
+			peerName: string;
+			/** The host's connection. Absent: the mirror has not loaded this peer yet. */
+			connection?: PeerMirrorConnection;
+			/** Why the host is out of reach, when it is. */
+			error?: string;
+	  };
+
+/** How a hosted agent's host connection reads on its badge. */
+export type HostedConnectionTone = 'live' | 'pending' | 'down';
+
+export function hostedConnectionTone(connection?: PeerMirrorConnection): HostedConnectionTone {
+	if (connection === 'connected') return 'live';
+	if (connection === undefined || connection === 'connecting' || connection === 'reconnecting') {
+		return 'pending';
+	}
+	return 'down';
+}
 
 /** The hover card's lines, exported so tests and docs read the same words. */
 export function federationBadgeCopy(mode: FederationBadgeMode): {
@@ -64,12 +84,23 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 	unreachable?: string;
 } {
 	if (mode.kind === 'hosted') {
+		const tone = hostedConnectionTone(mode.connection);
+		const status =
+			tone === 'live'
+				? []
+				: tone === 'pending'
+					? [`Connecting to ${mode.peerName}.`]
+					: [
+							`Not connected to ${mode.peerName}. Showing the last known state. Right-click > Reconnect.`,
+							...(mode.error ? [mode.error] : []),
+						];
 		return {
 			label: 'Hosted',
 			title: `Hosted on ${mode.peerName}`,
 			lines: [
 				'Keeps running while this machine sleeps or is off.',
 				`The Maestro host on ${mode.peerName} owns this agent and runs its turns, queue, Auto Run, and Cue. This window is a live view of it.`,
+				...status,
 			],
 		};
 	}
@@ -113,9 +144,14 @@ export const FederationBadge = memo(function FederationBadge({
 	mode: FederationBadgeMode;
 }) {
 	const copy = federationBadgeCopy(mode);
+	const tone = mode.kind === 'hosted' ? hostedConnectionTone(mode.connection) : undefined;
 	const color =
-		mode.kind === 'hosted'
-			? theme.colors.accent
+		tone !== undefined
+			? tone === 'live'
+				? theme.colors.accent
+				: tone === 'pending'
+					? theme.colors.warning
+					: theme.colors.error
 			: copy.blocked || copy.unreachable
 				? theme.colors.error
 				: theme.colors.warning;

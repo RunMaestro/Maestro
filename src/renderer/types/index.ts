@@ -2139,6 +2139,10 @@ export interface EncoreFeatureFlags {
 	// Run preview. Off by default. Optional so older fixtures and persisted
 	// settings remain valid.
 	dataview?: boolean;
+	// Prompt Links - maestro://run/<token> URLs that open a new tab in an agent
+	// and send a stored prompt. Off by default. Optional so older fixtures and
+	// persisted settings remain valid.
+	promptLinks?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

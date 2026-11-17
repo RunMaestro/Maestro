@@ -31,6 +31,8 @@ import {
 	PackageOpen,
 	ServerCog,
 	Wrench,
+	RefreshCw,
+	Play,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -49,12 +51,11 @@ import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { useDelegationGraphModel } from '../DelegationGraph/useDelegationGraphModel';
 import { useModalStore } from '../../stores/modalStore';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
-import {
-	useAgentFederationStatus,
-	useLiftedMirrorTarget,
-} from '../../hooks/federation/useAgentLift';
-import { canMoveToHost } from '../../utils/peerMirrorView';
-import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
+import { useAgentFederationStatus } from '../../hooks/federation/useAgentLift';
+import { canMoveToHost, isPeerDisconnected } from '../../utils/peerMirrorView';
+import { requestMoveToHost, startPeerHost } from '../../services/agentLift';
+import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
+import { peerAgentRef } from '../../../shared/maestro-lib/agents/lift-pointer';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -333,9 +334,10 @@ export function SessionContextMenu({
 	const menuRef = useRef<HTMLDivElement>(null);
 	const delegationGraph = useDelegationGraphModel({ kind: 'agent', sessionId: session.id });
 	// Federation (FED-SSH-06): Move to Host for an SSH agent whose remote takes part (it sets a host
-	// up first when there is none); a lifted agent offers the jump to where it moved instead.
+	// up first when there is none). A hosted agent's row opens it on its host already, so its menu
+	// offers the host's connection instead: copy the address, reconnect, start a host that is down.
 	const federationStatus = useAgentFederationStatus(session);
-	const liftedTarget = useLiftedMirrorTarget(session.liftedTo);
+	const hosted = federationStatus.kind === 'moved' ? federationStatus : undefined;
 
 	// Inline window-rename state. While a row is being renamed, the Move to Window
 	// flyout must NOT auto-close on mouse-leave (it would unmount the input
@@ -530,6 +532,54 @@ export function SessionContextMenu({
 							</span>
 						)}
 					</button>
+				</>
+			)}
+
+			{hosted && (
+				<>
+					<button
+						type="button"
+						onClick={() => {
+							void copyPeerAgentRef(hosted.peerId, hosted.agentId);
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+						title="The peer:agent address maestro-cli takes"
+						data-testid="session-menu-copy-hosted-ref"
+					>
+						<Copy className="w-3.5 h-3.5" style={iconStyle} />
+						Copy {peerAgentRef(hosted.peerId, hosted.agentId)}
+					</button>
+					<button
+						type="button"
+						onClick={() => {
+							void reconnectPeer(hosted.peerId);
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+						data-testid="session-menu-reconnect-host"
+					>
+						<RefreshCw className="w-3.5 h-3.5" style={iconStyle} />
+						Reconnect {hosted.peer?.name ?? hosted.peerId}
+					</button>
+					{hosted.peer && isPeerDisconnected(hosted.peer) && (
+						<button
+							type="button"
+							onClick={() => {
+								if (hosted.peer) void startPeerHost(hosted.peer.remoteId, hosted.peer.name);
+								onDismiss();
+							}}
+							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+							style={{ color: theme.colors.textMain }}
+							title="Install or upgrade maestro-cli on the remote if needed, then start its host (maestro-cli remote-host install --start)"
+							data-testid="session-menu-start-host"
+						>
+							<Play className="w-3.5 h-3.5" style={iconStyle} />
+							Start Host on {hosted.peer.name}
+						</button>
+					)}
 				</>
 			)}
 
@@ -1134,22 +1184,6 @@ export function SessionContextMenu({
 					>
 						<ServerCog className="w-3.5 h-3.5" style={iconStyle} />
 						Move to Host ({federationStatus.peer.name})...
-					</button>
-				)}
-
-				{liftedTarget && (
-					<button
-						type="button"
-						onClick={() => {
-							openLiftedAgent(session);
-							onDismiss();
-						}}
-						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-						style={{ color: theme.colors.textMain }}
-						title={`This agent moved to ${liftedTarget.ref}`}
-					>
-						<ServerCog className="w-3.5 h-3.5" style={iconStyle} />
-						Open on Host ({liftedTarget.ref})
 					</button>
 				)}
 

@@ -32,7 +32,7 @@ import {
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import { generateId } from '../utils/ids';
-import { resolveMirrorTabId } from '../utils/peerMirrorView';
+import { hostedViewTabIds, liftedMirrorTarget, resolveMirrorTabId } from '../utils/peerMirrorView';
 import { useGroupChatStore } from './groupChatStore';
 
 /** The mirrored agent the Main Window shows. */
@@ -73,8 +73,6 @@ export interface PeerMirrorData {
 	activeMirror: MirrorSelection | null;
 	/** View state: the tab shown per mirrored agent, by peer id then agent id. */
 	activeTabIds: Record<string, Record<string, string>>;
-	/** View state: Left Bar peer groups the user collapsed. */
-	collapsedPeerIds: Record<string, true>;
 	/** Unsent composer text per mirrored tab, by `mirrorDraftKey()`. Memory only. */
 	drafts: Record<string, string>;
 	/**
@@ -93,10 +91,17 @@ export interface PeerMirrorActions {
 	applyPush(push: MirrorPush): void;
 	selectMirroredAgent(peerId: string, agentId: string): void;
 	clearMirrorSelection(): void;
+	/**
+	 * Follow a local agent that was just chosen: show the hosted agent its pointer names when the
+	 * mirror holds it, else leave any mirror shown so the local agent is what the Main Window shows.
+	 */
+	followLiftedPointer(agent: { liftedTo?: unknown } | undefined): void;
 	selectMirrorTab(peerId: string, agentId: string, tabId: string): void;
-	/** Step the shown mirrored agent's tab, wrapping (the tab-cycling shortcut). */
-	cycleMirrorTab(direction: 1 | -1): void;
-	togglePeerCollapsed(peerId: string): void;
+	/**
+	 * Step the shown mirrored agent's tab, wrapping (the tab-cycling shortcut). `localTabIds` are
+	 * the tabs its Left Bar record keeps on this machine (`hostedLocalTabs()`), after the host's.
+	 */
+	cycleMirrorTab(direction: 1 | -1, localTabIds?: readonly string[]): void;
 	/** Keep (or, with an empty text, drop) the composer draft of one mirrored tab. */
 	setMirrorDraft(peerId: string, agentId: string, tabId: string, text: string): void;
 	/** Mark a tab's read in flight. Returns the stale version the read must report back. */
@@ -120,7 +125,6 @@ const EMPTY: PeerMirrorData = {
 	transcripts: {},
 	activeMirror: null,
 	activeTabIds: {},
-	collapsedPeerIds: {},
 	drafts: {},
 	historyVersions: {},
 };
@@ -353,7 +357,6 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 				order: state.order.filter((id) => id !== peerId),
 				transcripts: withoutKey(state.transcripts, peerId),
 				activeTabIds: withoutKey(state.activeTabIds, peerId),
-				collapsedPeerIds: withoutKey(state.collapsedPeerIds, peerId),
 				drafts: withoutPeerDrafts(state.drafts, peerId),
 				historyVersions: withoutPeerVersions(state.historyVersions, peerId),
 				activeMirror: state.activeMirror?.peerId === peerId ? null : state.activeMirror,
@@ -375,10 +378,6 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 			const keep =
 				selection &&
 				record[selection.peerId]?.agents.some((agent) => agent.id === selection.agentId);
-			const collapsedPeerIds: Record<string, true> = {};
-			for (const id of Object.keys(state.collapsedPeerIds)) {
-				if (record[id]) collapsedPeerIds[id] = true;
-			}
 			return {
 				enabled: true,
 				order: peers.map((peer) => peer.peerId),
@@ -387,7 +386,6 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 				transcripts: {},
 				activeMirror: keep ? selection : null,
 				activeTabIds: {},
-				collapsedPeerIds,
 				drafts: state.drafts,
 				// A fresh snapshot may be ahead of any History a panel read before it.
 				historyVersions: bumpAll(state.historyVersions, peers),
@@ -411,6 +409,12 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 		if (get().activeMirror) set({ activeMirror: null });
 	},
 
+	followLiftedPointer: (agent) => {
+		const target = agent ? liftedMirrorTarget(agent, get().peers) : undefined;
+		if (target?.mirrored) get().selectMirroredAgent(target.peerId, target.agentId);
+		else get().clearMirrorSelection();
+	},
+
 	selectMirrorTab: (peerId, agentId, tabId) =>
 		set((state) => ({
 			activeTabIds: {
@@ -419,31 +423,23 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 			},
 		})),
 
-	cycleMirrorTab: (direction) => {
+	cycleMirrorTab: (direction, localTabIds = []) => {
 		const state = get();
 		const selection = state.activeMirror;
 		if (!selection) return;
 		const agent = state.peers[selection.peerId]?.agents.find((a) => a.id === selection.agentId);
-		const tabs = (agent?.aiTabs ?? []).filter((tab) => !tab.hidden);
-		if (!agent || tabs.length < 2) return;
-		const current = resolveMirrorTabId(
-			agent,
-			state.activeTabIds[selection.peerId]?.[selection.agentId]
-		);
-		const index = Math.max(
-			0,
-			tabs.findIndex((tab) => tab.id === current)
-		);
-		const next = tabs[(index + direction + tabs.length) % tabs.length];
-		get().selectMirrorTab(selection.peerId, selection.agentId, next.id);
+		if (!agent) return;
+		const ids = hostedViewTabIds(agent, localTabIds);
+		if (ids.length < 2) return;
+		const preferred = state.activeTabIds[selection.peerId]?.[selection.agentId];
+		const current =
+			preferred && localTabIds.includes(preferred)
+				? preferred
+				: resolveMirrorTabId(agent, preferred);
+		const index = Math.max(0, ids.indexOf(current ?? ''));
+		const next = ids[(index + direction + ids.length) % ids.length];
+		get().selectMirrorTab(selection.peerId, selection.agentId, next);
 	},
-
-	togglePeerCollapsed: (peerId) =>
-		set((state) => ({
-			collapsedPeerIds: state.collapsedPeerIds[peerId]
-				? withoutKey(state.collapsedPeerIds, peerId)
-				: { ...state.collapsedPeerIds, [peerId]: true },
-		})),
 
 	setMirrorDraft: (peerId, agentId, tabId, text) =>
 		set((state) => {

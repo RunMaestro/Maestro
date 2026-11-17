@@ -21,6 +21,8 @@ import { buildConcertoCommands } from './commands/concertoCommands';
 import { buildThroughputGaugeCommands } from './commands/throughputGaugeCommands';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { applyThroughputGaugeSettingsPatch } from '../../../shared/throughputGauge';
+import { buildPromptLinksCommands } from './commands/promptLinksCommands';
+import { openPromptLinks, promptLinksAvailable } from '../../services/promptLinks';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
@@ -105,6 +107,7 @@ import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
 import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
 import {
 	useAgentFederationStatus,
+	useAddableHostedAgentCount,
 	useLiftedMirrorTarget,
 } from '../../hooks/federation/useAgentLift';
 import { buildSupportCommands } from './commands/supportCommands';
@@ -307,6 +310,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		useSettingsStore((s) => s.encoreFeatures.quickChat !== false) && !isWebDesktop();
 	const quickChatHotkey =
 		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
+	const promptLinksEnabled = useSettingsStore((s) =>
+		promptLinksAvailable(s.encoreFeatures.promptLinks)
+	);
 	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
 	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
 	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
@@ -606,6 +612,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const activeMirror = usePeerMirrorStore((s) => s.activeMirror);
 	const federationStatus = useAgentFederationStatus(activeSession);
 	const liftedTarget = useLiftedMirrorTarget(activeSession?.liftedTo);
+	const addableHostedAgentCount = useAddableHostedAgentCount();
 	const settingsConflictCount = useHostedAgentSettingsStore(selectHostedConflictCount);
 	const federationActions = buildFederationCommands({
 		// Only remotes that run a host: every other SSH remote was probed and is plain SSH.
@@ -613,7 +620,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			mirrorPeers[peerId] && isPeerFederated(mirrorPeers[peerId]) ? [mirrorPeers[peerId]] : []
 		),
 		activeMirror,
-		selectMirroredAgent: usePeerMirrorStore.getState().selectMirroredAgent,
 		reconnectPeer,
 		copyPeerAgentRef,
 		// The active LOCAL agent's entries; hidden while the Main Window shows a mirrored one.
@@ -635,6 +641,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			useHostedAgentSettingsStore.getState().openEditor({ peerId, agentId }),
 		settingsConflictCount,
 		openSettingsConflicts: () => useHostedAgentSettingsStore.getState().setConflictsOpen(true),
+		addableHostedAgentCount,
+		openAddHostedAgent: () => openModal('addHostedAgent'),
 		setQuickActionOpen,
 	});
 
@@ -670,6 +678,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			scanActive: statsIndexingActive,
 			showScanProgress: showStatsIndexingProgress,
 			setQuickActionOpen,
+		}),
+		...buildPromptLinksCommands({
+			promptLinksEnabled,
+			activeAgent:
+				activeSession && activeSession.toolType !== 'terminal'
+					? { id: activeSession.id, name: activeSession.name }
+					: undefined,
+			activeDraft:
+				activeTabType === 'ai'
+					? activeSession?.aiTabs?.find((t) => t.id === activeSession.activeTabId)?.inputValue
+					: undefined,
+			openPromptLinks,
+			setQuickActionOpen,
+			shortcuts: { openPromptLinks: shortcuts.openPromptLinks },
 		}),
 		...buildConcertoCommands({
 			concertoEnabled,

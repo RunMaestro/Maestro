@@ -22,6 +22,7 @@ import {
 	rememberedClaudeSessionCost,
 	type ClaudeCostState,
 } from '../../claudeCostTracker';
+import { appendFailureScreen } from '../../failureScreen';
 import {
 	getErrorPatterns,
 	isClaudeLimitNotice,
@@ -170,7 +171,7 @@ export const STOP_HOOK_ANSWER_SEPARATOR = '\n\n---\n\n';
  */
 const MAESTRO_P_FAILURE_TEXT: Record<string, string> = {
 	// 1
-	tui_exited: 'Claude Code quit before the turn finished. Nothing it printed explains why.',
+	tui_exited: 'Claude Code quit before the turn finished.',
 	// 3
 	timeout: 'Claude Code stopped producing output for too long, so Maestro ended the turn.',
 	// 4
@@ -185,7 +186,25 @@ const MAESTRO_P_FAILURE_TEXT: Record<string, string> = {
 	// 7
 	workspace_untrusted:
 		'Claude Code has not been trusted to work in this folder. Open claude in it once and choose "Yes, I trust this folder".',
+	// 10
+	add_dir_untrusted:
+		"Claude Code asked to add a directory this agent does not grant, and stopped. Add the directory to the agent, or remove it from Claude Code's additionalDirectories settings.",
+	// 11
+	startup_dialog_blocked:
+		'Claude Code showed a startup prompt Maestro does not know how to answer, and its highlighted option would quit, so nothing was sent. Run claude once in this folder with the same settings and answer it.',
 };
+
+/**
+ * A failure message with the screen maestro-p left behind (`last_screen` on
+ * its result) appended, so the reason is visible where the failure is shown.
+ * Classified before this runs: the screen never picks the error type.
+ */
+function withLastScreen(message: string, obj: Record<string, unknown>): string {
+	return appendFailureScreen(
+		message,
+		typeof obj.last_screen === 'string' ? obj.last_screen : undefined
+	);
+}
 
 /**
  * maestro-p failure codes that a plain resend fixes: the turn stalled on the
@@ -988,7 +1007,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				typeof obj.error === 'string' && MAESTRO_P_TRANSIENT_FAILURES.has(obj.error.trim());
 			return {
 				type: match?.type ?? (transient ? 'network_error' : 'unknown'),
-				message: match?.message ?? failureText,
+				message: withLastScreen(match?.message ?? failureText, obj),
 				recoverable: match?.recoverable ?? true,
 				agentId: this.agentId,
 				timestamp: Date.now(),

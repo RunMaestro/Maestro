@@ -166,4 +166,9 @@ export interface TabBarProps {
 	 * on another Maestro. `onTabClose` and `onNewTab` are never called.
 	 */
 	readOnly?: boolean;
+	/**
+	 * Where each AI tab lives, by tab id, drawn as a small pill after its name. Set by a hosted
+	 * agent's view, which lists the host's tabs and the ones this machine kept in one strip.
+	 */
+	tabLocations?: Readonly<Record<string, { label: string; title: string }>>;
 }

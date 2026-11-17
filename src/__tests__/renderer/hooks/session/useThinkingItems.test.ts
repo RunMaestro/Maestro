@@ -33,6 +33,10 @@ function hydrateBusyPeer() {
 	usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
 }
 
+/** The Left Bar row that shows host agent box:a1 (idle locally: its turns run on the host). */
+const hostedRow = () =>
+	createMockSession({ id: 'row-a1', liftedTo: { peer: 'box', agentId: 'a1', at: 1 } });
+
 describe('useThinkingItems', () => {
 	beforeEach(() => {
 		resetStores(usePeerMirrorStore, useSessionStore);
@@ -58,20 +62,30 @@ describe('useThinkingItems', () => {
 			busySource: 'ai',
 			aiTabs: [createMockAITab({ id: 't1', state: 'busy' })],
 		});
-		useSessionStore.setState({ sessions: [session] });
+		useSessionStore.setState({ sessions: [session, hostedRow()] });
 		hydrateBusyPeer();
 		const { result } = renderHook(() => useThinkingItems());
 		expect(result.current.map((item) => item.session.id)).toEqual(['local-1', 'box:a1']);
 		expect(result.current[1].mirror).toEqual({ peerId: 'box', agentId: 'a1' });
 	});
 
+	it("leaves out a host's busy agent the Left Bar does not show", () => {
+		hydrateBusyPeer();
+		const { result } = renderHook(() => useThinkingItems());
+		expect(result.current).toEqual([]);
+		act(() => useSessionStore.setState({ sessions: [hostedRow()] }));
+		expect(result.current.map((item) => item.session.id)).toEqual(['box:a1']);
+	});
+
 	it('does not scope mirrored items by window ownership', () => {
+		useSessionStore.setState({ sessions: [hostedRow()] });
 		hydrateBusyPeer();
 		const { result } = renderHook(() => useThinkingItems(() => false));
 		expect(result.current.map((item) => item.session.id)).toEqual(['box:a1']);
 	});
 
 	it('picks up a mirrored tab that goes busy', () => {
+		useSessionStore.setState({ sessions: [hostedRow()] });
 		const { result } = renderHook(() => useThinkingItems());
 		expect(result.current).toEqual([]);
 		act(() => hydrateBusyPeer());

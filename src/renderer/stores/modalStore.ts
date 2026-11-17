@@ -158,6 +158,19 @@ export interface SnoozeTabModalData {
 }
 
 /**
+ * Prompt Links modal data. Every field is a prefill for the create form: the
+ * hotkey and the palette open it on the active agent, an AI tab's menu on that
+ * tab's agent with its unsent draft as the prompt. Absent = the form starts
+ * empty on the active agent.
+ */
+export interface PromptLinksModalData {
+	agentId?: string;
+	prompt?: string;
+	/** Open on the create form. Without it the window opens on the newest link. */
+	compose?: boolean;
+}
+
+/**
  * Model & effort modal data. Only the tab id travels: the modal resolves the
  * agent, the option lists, and the tab > session > agent-default ladder from
  * the stores itself, so an opener can't hand it a stale snapshot.
@@ -433,6 +446,7 @@ export type ModalId =
 	| 'agentExport'
 	| 'agentImport'
 	| 'moveToHost'
+	| 'addHostedAgent'
 	| 'renameInstance'
 	| 'agentError'
 	| 'reauth'
@@ -450,6 +464,7 @@ export type ModalId =
 	| 'continuityPreview'
 	| 'snoozedTabs'
 	| 'tabCleanup'
+	| 'promptLinks'
 	// Group Management
 	| 'renameGroup'
 	| 'groupSettings'
@@ -642,6 +657,7 @@ export interface ModalDataMap {
 	renameInstance: RenameInstanceModalData;
 	renameTab: RenameTabModalData;
 	snoozeTab: SnoozeTabModalData;
+	promptLinks: PromptLinksModalData;
 	modelEffort: ModelEffortModalData;
 	continuityPreview: ContinuityPreviewModalData;
 	terminalStartupCommand: TerminalStartupCommandModalData;

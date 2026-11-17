@@ -37,6 +37,8 @@ import { ModelEffortModal } from '../ModelEffortModal';
 import { ContinuityPreviewModal } from '../ContinuityPreviewModal';
 import { SnoozedTabsModal } from '../SnoozedTabsModal';
 import { TabCleanupModal } from '../TabCleanupModal';
+import { PromptLinksModal } from '../PromptLinks/PromptLinksModal';
+import { promptLinksAvailable } from '../../services/promptLinks';
 import { snoozeTabWithMirror } from '../../services/snoozeActions';
 import { canReceiveDiffReview } from '../../services/diffReview';
 import { PromptComposerModal } from '../PromptComposerModal';
@@ -595,6 +597,17 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 		[]
 	);
 	const closeSnoozeTab = useCallback(() => useModalStore.getState().closeModal('snoozeTab'), []);
+	// Prompt Links window. Rendered only while its Encore Feature is on, so
+	// turning the feature off with the window open also closes it.
+	const promptLinksOpen = useModalStore(selectModalOpen('promptLinks'));
+	const promptLinksData = useModalStore(selectModalData('promptLinks'));
+	const promptLinksEnabled = useSettingsStore((s) =>
+		promptLinksAvailable(s.encoreFeatures.promptLinks)
+	);
+	const closePromptLinks = useCallback(
+		() => useModalStore.getState().closeModal('promptLinks'),
+		[]
+	);
 	const closeSnoozedTabs = useCallback(
 		() => useModalStore.getState().closeModal('snoozedTabs'),
 		[]
@@ -939,6 +952,11 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 						closeSnoozeTab();
 					}}
 				/>
+			)}
+
+			{/* --- PROMPT LINKS (create, copy, revoke maestro://run links) --- */}
+			{promptLinksOpen && promptLinksEnabled && (
+				<PromptLinksModal theme={theme} data={promptLinksData} onClose={closePromptLinks} />
 			)}
 
 			{/* --- MODEL & EFFORT (keyboard-only per-tab tuning) --- */}

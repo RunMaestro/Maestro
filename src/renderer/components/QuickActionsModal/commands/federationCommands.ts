@@ -1,5 +1,4 @@
 import type { MirroredPeer } from '../../../../shared/maestro-lib/client/peer-mirror';
-import { mirrorKey } from '../../../../shared/maestro-lib/client/peer-mirror';
 import type { MirrorSelection } from '../../../stores/peerMirrorStore';
 import type { QuickAction } from '../types';
 
@@ -8,7 +7,6 @@ interface BuildFederationCommandsArgs {
 	peers: MirroredPeer[];
 	/** The mirrored agent the Main Window shows, if any. */
 	activeMirror: MirrorSelection | null;
-	selectMirroredAgent: (peerId: string, agentId: string) => void;
 	reconnectPeer: (peerId: string) => void | Promise<void>;
 	copyPeerAgentRef: (peerId: string, agentId: string) => void | Promise<void>;
 	/**
@@ -27,19 +25,23 @@ interface BuildFederationCommandsArgs {
 	/** Fields of hosted agents waiting for the person (`hostedAgentSettingsStore`). */
 	settingsConflictCount?: number;
 	openSettingsConflicts?: () => void;
+	/** Host agents that are not in the Left Bar yet (`listHostedAgents()`), and the picker. */
+	addableHostedAgentCount?: number;
+	openAddHostedAgent?: () => void;
 	setQuickActionOpen: (open: boolean) => void;
 }
 
 /**
- * The Federation entries: open any mirrored agent (the Left Bar row), reconnect a peer (the Left
- * Bar menu and `maestro-cli federation reconnect`), and, while a mirror is shown, copy its
- * `peer:agent` address. For the active local agent: Move to Host (`maestro-cli lift`) while its
- * remote is a connected peer, or, once it moved, open it on the host.
+ * The Federation entries: add a host's agent to the Left Bar (`maestro-cli federation add`),
+ * reconnect a peer (a hosted row's menu and `maestro-cli federation reconnect`), and, while a
+ * hosted agent is shown, copy its `peer:agent` address. For the active local agent: Move to Host
+ * (`maestro-cli lift`) while its remote is a connected peer, or, once it moved, open it on the
+ * host. Hosted agents are opened like any agent: they are Left Bar rows, so the agent switcher
+ * lists them.
  */
 export function buildFederationCommands({
 	peers,
 	activeMirror,
-	selectMirroredAgent,
 	reconnectPeer,
 	copyPeerAgentRef,
 	moveToHost,
@@ -49,9 +51,22 @@ export function buildFederationCommands({
 	editHostedAgent,
 	settingsConflictCount = 0,
 	openSettingsConflicts,
+	addableHostedAgentCount = 0,
+	openAddHostedAgent,
 	setQuickActionOpen,
 }: BuildFederationCommandsArgs): QuickAction[] {
 	const actions: QuickAction[] = [];
+	if (addableHostedAgentCount > 0 && openAddHostedAgent) {
+		actions.push({
+			id: 'federation-add-hosted-agent',
+			label: 'Add Hosted Agent...',
+			subtext: `Show an agent a Maestro host runs in your Left Bar (${addableHostedAgentCount} not added)`,
+			action: () => {
+				openAddHostedAgent();
+				setQuickActionOpen(false);
+			},
+		});
+	}
 	if (settingsConflictCount > 0 && openSettingsConflicts) {
 		actions.push({
 			id: 'federation-settings-conflicts',
@@ -121,17 +136,6 @@ export function buildFederationCommands({
 				setQuickActionOpen(false);
 			},
 		});
-		for (const agent of peer.agents) {
-			actions.push({
-				id: `federation-open-${mirrorKey(peer.peerId, agent.id)}`,
-				label: `Peer: ${agent.name} (${peer.name})`,
-				subtext: 'Read-only mirror',
-				action: () => {
-					selectMirroredAgent(peer.peerId, agent.id);
-					setQuickActionOpen(false);
-				},
-			});
-		}
 	}
 	return actions;
 }

@@ -24,9 +24,12 @@ import {
 	Waypoints,
 	Gauge,
 	GitMerge,
+	Network,
+	Link2,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { useAddableHostedAgentCount } from '../../hooks/federation/useAgentLift';
 import { ShortcutHint } from '../ui/ShortcutHint';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
@@ -41,6 +44,7 @@ import { openUrl } from '../../utils/openUrl';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { currentWebLoginUser, signOutWebLogin } from '../../services/webLoginSession';
+import { openPromptLinks, promptLinksAvailable } from '../../services/promptLinks';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 
 /** Stable fallback so the selector never hands React a fresh array. */
@@ -64,6 +68,7 @@ export function HamburgerMenuContent({
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 	const settingsConflictCount = useHostedAgentSettingsStore(selectHostedConflictCount);
+	const addableHostedAgentCount = useAddableHostedAgentCount();
 	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	const quickChatHotkey =
 		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
@@ -427,6 +432,26 @@ export function HamburgerMenuContent({
 					{shortcuts.openCue && <ShortcutHint theme={theme} keys={shortcuts.openCue?.keys ?? []} />}
 				</button>
 			)}
+			{promptLinksAvailable(encoreFeatures.promptLinks) && (
+				<button
+					onClick={() => {
+						openPromptLinks();
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Link2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Prompt Links
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Links that send a prompt to an agent
+						</div>
+					</div>
+					<ShortcutHint theme={theme} keys={shortcuts.openPromptLinks?.keys ?? []} />
+				</button>
+			)}
 			{encoreFeatures.concerto && (
 				<button
 					onClick={() => {
@@ -488,6 +513,28 @@ export function HamburgerMenuContent({
 						<div className="text-xs" style={{ color: theme.colors.textDim }}>
 							{settingsConflictCount} setting{settingsConflictCount === 1 ? '' : 's'} to settle with
 							a host
+						</div>
+					</div>
+				</button>
+			)}
+			{/* Federation: shown only while a host runs an agent the Left Bar does not show yet. */}
+			{addableHostedAgentCount > 0 && (
+				<button
+					onClick={() => {
+						openUiSurface({ surface: 'add-hosted-agent' });
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+					data-testid="hamburger-add-hosted-agent"
+				>
+					<Network className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Add Hosted Agent
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							{addableHostedAgentCount} agent{addableHostedAgentCount === 1 ? '' : 's'} on your
+							hosts not in the Left Bar
 						</div>
 					</div>
 				</button>

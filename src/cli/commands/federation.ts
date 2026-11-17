@@ -9,6 +9,10 @@
 // `auto` prints what automatic Federation did, waits on, or could not do (with the fix), and
 // `auto run` runs a pass now, the same as Run Now in Settings > SSH Hosts.
 //
+// `agents` lists every agent the peers' hosts run and which ones the Left Bar shows; `add
+// <peer:agent>` adds one to the Left Bar, the same as the Add Hosted Agent modal. A host's agents
+// stay out of the Left Bar until someone adds them.
+//
 // A headless host (`maestro-cli host`) mirrors no peers, so it does not serve this message.
 
 import {
@@ -17,6 +21,7 @@ import {
 	type FederationCommandAction,
 	type FederationCommandRequest,
 	type FederationCommandResult,
+	type HostedAgentListing,
 	type HostedSettingsConflictSummary,
 } from '../../shared/federationCommands';
 import type {
@@ -42,7 +47,10 @@ export const FEDERATION_HEADLESS_MESSAGE =
 export const FEDERATION_RECONNECT_TIMEOUT_MS = 120_000;
 
 type FederationCommandExtra = Partial<
-	Pick<FederationCommandRequest, 'peer' | 'agent' | 'field' | 'take' | 'value'>
+	Pick<
+		FederationCommandRequest,
+		'peer' | 'agent' | 'field' | 'take' | 'value' | 'group' | 'background'
+	>
 >;
 
 async function sendFederationCommand(
@@ -313,4 +321,82 @@ export async function federationResolve(
 	if (!options.json)
 		console.log(formatSuccess(`Settled ${field} on ${agent}; the host follows shortly.`));
 	printConflicts(reply, options);
+}
+
+// ---------------------------------------------------------------------------
+// Hosted agents in the Left Bar
+// ---------------------------------------------------------------------------
+
+export interface FederationAgentsOptions extends FederationOptions {
+	/** Only this peer's agents (a peer id). */
+	peer?: string;
+	/** Only the agents the Left Bar does not show yet. */
+	notAdded?: boolean;
+}
+
+/** The text `federation agents` prints: per peer, each host agent and whether the Left Bar shows it. */
+export function formatHostedAgents(listings: readonly HostedAgentListing[]): string {
+	if (listings.length === 0) {
+		return 'No host agents. `maestro-cli federation peers` shows which remotes run a Maestro host.';
+	}
+	const lines: string[] = [];
+	let peerId: string | undefined;
+	for (const listing of listings) {
+		if (listing.peerId !== peerId) {
+			peerId = listing.peerId;
+			if (lines.length > 0) lines.push('');
+			const remote = listing.peerId === listing.peerName ? '' : ` (${listing.peerName})`;
+			lines.push(`${colorize('cyan', listing.peerId)}${remote}`);
+		}
+		const mark = listing.addedAs
+			? colorize('green', 'in Left Bar')
+			: colorize('yellow', 'not added');
+		const group = listing.hostGroupName ? `  [${listing.hostGroupName}]` : '';
+		lines.push(`  ${listing.name}  ${listing.ref}  ${mark}${group}`);
+	}
+	if (listings.some((listing) => !listing.addedAs)) {
+		lines.push('');
+		lines.push('Add one with: maestro-cli federation add <peer:agent> [--group <group>]');
+	}
+	return lines.join('\n');
+}
+
+/** `maestro-cli federation agents` */
+export async function federationAgents(options: FederationAgentsOptions): Promise<void> {
+	const reply = await request('hosted-agents', options);
+	if (!reply.success)
+		failCommand(reply.error || 'The desktop did not list the host agents', options.json);
+	const listings = (reply.hostedAgents ?? []).filter(
+		(listing) =>
+			(!options.peer || listing.peerId === options.peer) && (!options.notAdded || !listing.addedAs)
+	);
+	console.log(
+		options.json
+			? JSON.stringify({ success: true, agents: listings }, null, 2)
+			: formatHostedAgents(listings)
+	);
+}
+
+export interface FederationAddOptions extends FederationOptions {
+	group?: string;
+	background?: boolean;
+}
+
+/** `maestro-cli federation add <peer:agent>` */
+export async function federationAdd(agent: string, options: FederationAddOptions): Promise<void> {
+	const reply = await request('add-agent', options, {
+		agent,
+		...(options.group ? { group: options.group } : {}),
+		...(options.background ? { background: true } : {}),
+	});
+	if (!reply.success || !reply.added) {
+		failCommand(reply.error || `Could not add ${agent}`, options.json);
+	}
+	const added = reply.added;
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, agent: added }, null, 2));
+		return;
+	}
+	console.log(formatSuccess(`Added "${added.name}" (${added.ref}) to the Left Bar`));
+	console.log(`  Local agent id: ${added.id}`);
 }

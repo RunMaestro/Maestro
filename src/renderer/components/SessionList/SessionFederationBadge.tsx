@@ -8,8 +8,9 @@ import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
 
 /**
  * A local Left Bar row's Federation badge: `SSH` for an SSH agent, with the hover card that says
- * how a hosted agent differs and what to do next. Nothing for a local agent, and nothing for one
- * that moved already (its `LiftedPointerChip` says where).
+ * how a hosted agent differs and what to do next; `Hosted` for an agent its host runs (moved from
+ * here, or added from the host's roster), tinted by the host's connection. Nothing for a local
+ * agent.
  *
  * Reads the SSH outage store passively: a down remote turns the chip red and struck through, and
  * nothing else. It never surfaces the outage dialog (`surface()` belongs to the agent-error
@@ -28,6 +29,19 @@ export const SessionFederationBadge = memo(function SessionFederationBadge({
 	// under useSyncExternalStore.
 	const remoteId = getSessionSshRemoteId(session);
 	const outage = useSshOutageStore((s) => (remoteId ? s.outages[remoteId] : undefined));
+	if (status.kind === 'moved') {
+		return (
+			<FederationBadge
+				theme={theme}
+				mode={{
+					kind: 'hosted',
+					peerName: status.peer?.name ?? status.peerId,
+					...(status.peer ? { connection: status.peer.connection } : {}),
+					...(status.peer?.error ? { error: status.peer.error } : {}),
+				}}
+			/>
+		);
+	}
 	if (status.kind !== 'ssh') return null;
 	return (
 		<FederationBadge

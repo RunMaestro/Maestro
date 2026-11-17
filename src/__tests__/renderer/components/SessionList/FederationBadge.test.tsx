@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	FederationBadge,
 	federationBadgeCopy,
+	hostedConnectionTone,
 } from '../../../../renderer/components/SessionList/FederationBadge';
 import { formatTimestamp } from '../../../../shared/formatters';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -19,6 +20,29 @@ describe('federationBadgeCopy', () => {
 		expect(copy.title).toBe('Hosted on build');
 		expect(copy.lines[0]).toBe('Keeps running while this machine sleeps or is off.');
 		expect(copy.lines[1]).toMatch(/Maestro host on build owns this agent/);
+		// Connected: no status line.
+		expect(
+			federationBadgeCopy({ kind: 'hosted', peerName: 'build', connection: 'connected' }).lines
+		).toHaveLength(2);
+	});
+
+	it("says when a hosted agent's host is out of reach, and why", () => {
+		const down = federationBadgeCopy({
+			kind: 'hosted',
+			peerName: 'build',
+			connection: 'lost',
+			error: 'ssh timed out',
+		});
+		expect(down.lines.slice(2)).toEqual([
+			'Not connected to build. Showing the last known state. Right-click > Reconnect.',
+			'ssh timed out',
+		]);
+		const pending = federationBadgeCopy({
+			kind: 'hosted',
+			peerName: 'build',
+			connection: 'reconnecting',
+		});
+		expect(pending.lines.at(-1)).toBe('Connecting to build.');
 	});
 
 	it('explains an SSH agent and names the next step', () => {
@@ -34,6 +58,17 @@ describe('federationBadgeCopy', () => {
 
 		const off = federationBadgeCopy({ ...base, hostReady: false, canFederate: false });
 		expect(off.lines.at(-1)).toMatch(/does not reach this remote right now/);
+	});
+});
+
+describe('hostedConnectionTone', () => {
+	it('reads connected as live, (re)connecting or unknown as pending, anything else as down', () => {
+		expect(hostedConnectionTone('connected')).toBe('live');
+		expect(hostedConnectionTone('reconnecting')).toBe('pending');
+		expect(hostedConnectionTone('connecting')).toBe('pending');
+		expect(hostedConnectionTone(undefined)).toBe('pending');
+		expect(hostedConnectionTone('lost')).toBe('down');
+		expect(hostedConnectionTone('host-down')).toBe('down');
 	});
 });
 

@@ -14,6 +14,7 @@ import { DESTINATION_SHORTCUT_IDS, getModalActions, useModalStore } from '../../
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { reopenDesktopTabIfNeeded } from '../../services/desktopTabClose';
+import { isPromptLinksEnabled, openPromptLinks } from '../../services/promptLinks';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
@@ -1152,6 +1153,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				useThroughputGaugeStore.getState().toggle();
 				trackShortcut('toggleThroughputGauge');
+			} else if (ctx.isShortcut(e, 'openPromptLinks') && isPromptLinksEnabled()) {
+				e.preventDefault();
+				openPromptLinks();
+				trackShortcut('openPromptLinks');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();

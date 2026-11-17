@@ -784,6 +784,28 @@ describe('handleBridgeInvoke denied channels', () => {
 		}
 	);
 
+	it('refuses every promptLinks channel: a browser may not mint, list, or revoke a link', async () => {
+		// A link would let a browser keep the power to prompt an agent after it
+		// disconnects or its account is disabled, and listing hands it every prompt.
+		for (const channel of [
+			'promptLinks:create',
+			'promptLinks:list',
+			'promptLinks:revoke',
+			'promptLinks:rendererReady',
+		]) {
+			const handler = vi.fn(async () => 'leaked');
+			invokeHandlers.set(channel, handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: channel, channel },
+				send
+			);
+			expect(handler).not.toHaveBeenCalled();
+			expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(false);
+		}
+	});
+
 	it('refuses a denied send-style channel too', async () => {
 		const listener = vi.fn();
 		sendListeners.set('webLogin:notify', listener);

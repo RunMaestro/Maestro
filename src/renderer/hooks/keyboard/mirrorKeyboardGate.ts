@@ -18,7 +18,9 @@ import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { openMirrorTab, starMirrorTab } from '../../services/peerMirror';
-import { resolveMirrorTabId } from '../../utils/peerMirrorView';
+import { hostedLocalTabs, resolveMirrorTabId } from '../../utils/peerMirrorView';
+import { useSessionStore } from '../../stores/sessionStore';
+import { findLiftedAgent } from '../../../shared/maestro-lib/agents/lift-pointer';
 
 /**
  * Shortcuts that never read or write the active agent: they open a global surface, move between
@@ -103,7 +105,11 @@ function toggleShownMirrorTabStar(peerId: string, agentId: string): void {
 	const state = usePeerMirrorStore.getState();
 	const agent = state.peers[peerId]?.agents.find((candidate) => candidate.id === agentId);
 	if (!agent) return;
-	const tabId = resolveMirrorTabId(agent, state.activeTabIds[peerId]?.[agentId]);
+	const preferred = state.activeTabIds[peerId]?.[agentId];
+	// A tab this machine kept from before the move is read only: there is nothing to star on the host.
+	const local = findLiftedAgent(useSessionStore.getState().sessions, peerId, agentId);
+	if (preferred && hostedLocalTabs(local).some((tab) => tab.id === preferred)) return;
+	const tabId = resolveMirrorTabId(agent, preferred);
 	const tab = agent.aiTabs?.find((candidate) => candidate.id === tabId);
 	if (tab) void starMirrorTab(peerId, agentId, tab.id, !tab.starred);
 }
@@ -122,7 +128,14 @@ export function gateKeyForMirror(
 		if (matchers.isTabShortcut(e, id)) {
 			e.preventDefault();
 			if (!matchers.hasOpenLayers?.()) {
-				usePeerMirrorStore.getState().cycleMirrorTab(id === 'nextTab' ? 1 : -1);
+				const shown = usePeerMirrorStore.getState().activeMirror;
+				const local = shown
+					? findLiftedAgent(useSessionStore.getState().sessions, shown.peerId, shown.agentId)
+					: undefined;
+				usePeerMirrorStore.getState().cycleMirrorTab(
+					id === 'nextTab' ? 1 : -1,
+					hostedLocalTabs(local).map((tab) => tab.id)
+				);
 			}
 			return 'handled';
 		}

@@ -6,10 +6,10 @@
  * re-rendered on log streaming; only the leaf that paints the pill updates
  * when busy/orphan/token fields that the pill displays actually change.
  *
- * The local agents' items come first, then the busy tabs of every connected
- * Federation peer (`buildMirrorThinkingItems`), so work running on a host is on
- * the pill the same way local work is. With Federation off the mirror store is
- * empty and adds nothing.
+ * The local agents' items come first, then the busy tabs of the hosted agents
+ * the person keeps in the Left Bar (`buildMirrorThinkingItems`), so work running
+ * on a host is on the pill the same way local work is. A host's other agents
+ * never show. With Federation off the mirror store is empty and adds nothing.
  */
 
 import { useMemo } from 'react';
@@ -19,6 +19,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { buildThinkingItems } from '../../utils/thinkingItems';
 import { buildMirrorThinkingItems } from '../../utils/peerMirrorView';
+import { liftedAgentKeys } from '../../../shared/maestro-lib/agents/lift-pointer';
 
 function thinkingSessionEqual(a: Session, b: Session): boolean {
 	if (a === b) return true;
@@ -125,11 +126,14 @@ export function useThinkingItems(ownsSession?: (sessionId: string) => boolean): 
 		(s) => s.sessions,
 		thinkingSessionsEquality
 	);
+	// The hosted agents in the Left Bar, as one string so a log append does not change it.
+	const shownKey = useSessionStore((s) => [...liftedAgentKeys(s.sessions)].sort().join('\n'));
+	const shown = useMemo(() => new Set(shownKey ? shownKey.split('\n') : []), [shownKey]);
 	// Rebuilt on every mirror push (a streamed turn pushes often), but compared by what the pill
 	// paints, so a chunk of streamed text does not re-render it.
 	const mirrorItems = useStoreWithEqualityFn(
 		usePeerMirrorStore,
-		(s) => buildMirrorThinkingItems(s.peers, s.order),
+		(s) => buildMirrorThinkingItems(s.peers, s.order, shown),
 		mirrorItemsEqual
 	);
 	const localItems = useMemo(

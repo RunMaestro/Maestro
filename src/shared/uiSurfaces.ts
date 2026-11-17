@@ -68,7 +68,8 @@ export type UiSurfaceEncoreFlag =
 	| 'aCappella'
 	| 'computerHistory'
 	| 'quickChat'
-	| 'throughputGauge';
+	| 'throughputGauge'
+	| 'promptLinks';
 
 export interface UiSurface {
 	/** CLI name (kebab-case), and the wire value on the `open_modal` message. */
@@ -144,6 +145,17 @@ export const UI_SURFACES: UiSurface[] = [
 		description: 'Persistent notification history and unread entries.',
 		commandPalette: 'Open Notification Center',
 		click: 'the bell in the Left Bar header (Settings → Notifications → Notification center)',
+	},
+	{
+		id: 'prompt-links',
+		label: 'Prompt Links',
+		aliases: ['prompt-link', 'run-links'],
+		modal: 'promptLinks',
+		description: 'Create, copy, and revoke maestro://run links that send a prompt to an agent.',
+		shortcutId: 'openPromptLinks',
+		commandPalette: 'Prompt Links',
+		click: 'Prompt Links in the Left Bar hamburger menu, or Create Prompt Link in an AI tab menu',
+		encore: 'promptLinks',
 	},
 	{
 		id: 'concerto',
@@ -457,6 +469,16 @@ export const UI_SURFACES: UiSurface[] = [
 			"Settings a hosted agent's host and this machine both changed: take the host, keep yours, or merge.",
 		commandPalette: 'Review Federation Settings Conflicts',
 		click: 'the conflict toast, or Federation Settings Conflicts in the Left Bar hamburger menu',
+	},
+	{
+		id: 'add-hosted-agent',
+		label: 'Add Hosted Agent',
+		aliases: ['hosted-agents'],
+		modal: 'addHostedAgent',
+		description:
+			'Show an agent a Federation host runs in your Left Bar. A host agent stays out of the Left Bar until you add it.',
+		commandPalette: 'Add Hosted Agent...',
+		click: 'Add Hosted Agent in the Left Bar hamburger menu',
 	},
 ];
 
