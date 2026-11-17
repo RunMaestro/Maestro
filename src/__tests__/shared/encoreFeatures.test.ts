@@ -33,6 +33,10 @@ describe('ENCORE_FEATURE_DEFAULTS', () => {
 	it('has no Federation flag: Federation is built in and opportunistic', () => {
 		expect(ENCORE_FEATURE_DEFAULTS).not.toHaveProperty('federation');
 	});
+
+	it('ships Prompt Links off: a link that runs a prompt must be asked for', () => {
+		expect(ENCORE_FEATURE_DEFAULTS.promptLinks).toBe(false);
+	});
 });
 
 describe('resolveEncoreFeatures', () => {

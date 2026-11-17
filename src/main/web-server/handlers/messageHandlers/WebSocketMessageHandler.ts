@@ -132,6 +132,7 @@ import { handleMaestroRunCommand } from './maestroRun';
 import { handleDataviewCommand } from './dataview';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleDiffReviewCommand } from './diffReview';
+import { handlePromptLinkCommand } from './promptLinks';
 import { handleWindowCommand } from './windows';
 import { handleThroughputGaugeCommand } from './throughputGauge';
 import {
@@ -446,6 +447,10 @@ export class WebSocketMessageHandler {
 
 			case 'diff_review_command':
 				handleDiffReviewCommand(this.ctx, client, message);
+				break;
+
+			case 'prompt_link_command':
+				void handlePromptLinkCommand(this.ctx, client, message);
 				break;
 
 			case 'window_command':

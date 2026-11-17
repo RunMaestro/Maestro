@@ -154,6 +154,7 @@ import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator
 import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
+import { usePromptLinksRendererReady } from './hooks/session/usePromptLinksRendererReady';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
 import { useCueBundleAgentSync } from './hooks/cue/useCueBundleAgentSync';
 
@@ -1103,6 +1104,13 @@ function MaestroConsoleInner() {
 	// mirror must not rescan every project root or toggle that shared engine on
 	// mount; doing so floods the WebSocket bridge and starves interactive calls.
 	useCueAutoDiscovery(encoreFeatures, !isWebDesktop());
+
+	// --- PROMPT LINKS (gated by Encore Feature) ---
+	// A maestro://run link clicked while Maestro was closed waits in main until
+	// the agents are restored. Only the desktop renderer can open its tab.
+	usePromptLinksRendererReady(
+		initialLoadComplete && encoreFeatures.promptLinks === true && !isWebDesktop()
+	);
 
 	// --- PIANOLA AGENT (pinned manager agent, gated by Encore Feature) ---
 	// Ensures the single pinned Pianola agent exists once sessions are loaded and

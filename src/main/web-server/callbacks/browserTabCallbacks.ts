@@ -7,13 +7,13 @@ import { isWebContentsAvailable } from '../../utils/safe-send';
 import type {
 	TerminalTabInfo,
 	ReadTerminalTabResult,
-	NewAITabWithPromptResult,
 	PickBrowserElementRequest,
 	PickBrowserElementResult,
 } from '../types';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 import { coworkingRegistry, type CoworkingRegistry } from '../../coworking/coworking-registry';
 import { runHostBrowserOp } from '../../coworking/coworking-tools';
+import { requestNewAITabWithPrompt } from '../../utils/new-ai-tab-request';
 import type { BrowserOp, BrowserOpResult } from '../../../shared/coworkingBrowser';
 
 /** A Coworking public id (`browser:3`), as opposed to a renderer tab id. */
@@ -395,6 +395,8 @@ export function registerBrowserTabCallbacks(
 		});
 	});
 
+	// One implementation, shared with a fired Prompt Link: see
+	// utils/new-ai-tab-request.ts.
 	server.setNewAITabWithPromptCallback(
 		async (
 			sessionId: string,
@@ -403,90 +405,11 @@ export function registerBrowserTabCallbacks(
 			hidden?: boolean,
 			mentionRouting?: MentionRouting,
 			control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
-		) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
-				return { success: false, error: 'Maestro desktop window is not available' };
-			}
-
-			return new Promise<NewAITabWithPromptResult>((resolve) => {
-				const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
-				let resolved = false;
-
-				/**
-				 * Resolve the new-tab response once, accepting only the owning window's sender. Clean up its
-				 * timeout/listener and normalize structured acknowledgements or the legacy boolean result.
-				 */
-				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
-					if (_event.sender !== mainWindow.webContents) return;
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					ipcMain.removeListener(responseChannel, handleResponse);
-					// Renderer was updated to ack with
-					// `{ success, tabId?, queued?, error? }`. Older renderers that
-					// still send a bare boolean stay supported via the
-					// `result === true` fallback.
-					if (typeof result === 'object' && result !== null) {
-						const r = result as {
-							success?: unknown;
-							tabId?: unknown;
-							queued?: unknown;
-							error?: unknown;
-						};
-						resolve({
-							success: r.success === true,
-							tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
-							...(r.queued === true ? { queued: true } : {}),
-							...(typeof r.error === 'string' && r.error ? { error: r.error } : {}),
-						});
-					} else {
-						resolve({ success: result === true });
-					}
-				};
-
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(
-						`newAITabWithPrompt callback timed out for session ${sessionId}`,
-						'WebServer'
-					);
-					resolve({
-						success: false,
-						unknown: true,
-						error: 'Maestro desktop did not answer in time',
-					});
-				}, 5000);
-
-				ipcMain.on(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					clearTimeout(timeoutId);
-					logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve({ success: false, error: 'Maestro desktop window is not available' });
-					return;
-				}
-				try {
-					mainWindow.webContents.send(
-						'remote:newAITabWithPrompt',
-						sessionId,
-						prompt,
-						responseChannel,
-						background,
-						hidden,
-						mentionRouting,
-						control
-					);
-				} catch {
-					clearTimeout(timeoutId);
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolved = true;
-					resolve({ success: false, unknown: true });
-				}
-			});
-		}
+		) =>
+			requestNewAITabWithPrompt(getMainWindow, sessionId, prompt, background, {
+				hidden,
+				mentionRouting,
+				control,
+			})
 	);
 }

@@ -21,6 +21,8 @@ import { buildConcertoCommands } from './commands/concertoCommands';
 import { buildThroughputGaugeCommands } from './commands/throughputGaugeCommands';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { applyThroughputGaugeSettingsPatch } from '../../../shared/throughputGauge';
+import { buildPromptLinksCommands } from './commands/promptLinksCommands';
+import { openPromptLinks, promptLinksAvailable } from '../../services/promptLinks';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
@@ -303,6 +305,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		useSettingsStore((s) => s.encoreFeatures.quickChat !== false) && !isWebDesktop();
 	const quickChatHotkey =
 		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
+	const promptLinksEnabled = useSettingsStore((s) =>
+		promptLinksAvailable(s.encoreFeatures.promptLinks)
+	);
 	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
 	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
 	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
@@ -659,6 +664,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			scanActive: statsIndexingActive,
 			showScanProgress: showStatsIndexingProgress,
 			setQuickActionOpen,
+		}),
+		...buildPromptLinksCommands({
+			promptLinksEnabled,
+			activeAgent:
+				activeSession && activeSession.toolType !== 'terminal'
+					? { id: activeSession.id, name: activeSession.name }
+					: undefined,
+			activeDraft:
+				activeTabType === 'ai'
+					? activeSession?.aiTabs?.find((t) => t.id === activeSession.activeTabId)?.inputValue
+					: undefined,
+			openPromptLinks,
+			setQuickActionOpen,
+			shortcuts: { openPromptLinks: shortcuts.openPromptLinks },
 		}),
 		...buildConcertoCommands({
 			concertoEnabled,

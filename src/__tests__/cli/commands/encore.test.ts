@@ -143,6 +143,7 @@ describe('encore commands', () => {
 		['computerHistory', true],
 		['quickChat', false],
 		['maestroRun', false],
+		['promptLinks', true],
 	] as const)('changing %s preserves other saved Encore flags', async (feature, enabled) => {
 		vi.mocked(readSettingValue).mockReturnValue(
 			Object.freeze({
@@ -165,6 +166,11 @@ describe('encore commands', () => {
 		});
 	});
 
+	it('enables Prompt Links through its aliases', async () => {
+		const getPayload = mockSend({ success: true });
+		await encoreSet('prompt-links', true, {});
+		expect((getPayload().value as Record<string, boolean>).promptLinks).toBe(true);
+	});
 	it('disable flips a flag off', async () => {
 		const getPayload = mockSend({ success: true });
 		await encoreSet('symphony', false, {});

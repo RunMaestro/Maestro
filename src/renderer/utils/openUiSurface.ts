@@ -18,6 +18,7 @@ import { useThroughputGaugeStore } from '../stores/throughputGaugeStore';
 import { notifyToast, useNotificationStore } from '../stores/notificationStore';
 import { resolveUiSurface, resolveUiSurfaceTab, uiSurfaceRefusal } from '../../shared/uiSurfaces';
 import { isWebDesktop } from './runtimeContext';
+import { isPromptLinksEnabled, openPromptLinks } from '../services/promptLinks';
 import type { SettingsTab, UsageDashboardViewMode } from '../types';
 
 export interface OpenUiSurfaceResult {
@@ -93,6 +94,14 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 		case 'federation-conflicts':
 			// Not a modalStore modal: the conflicts live with the settings sync's own store.
 			useHostedAgentSettingsStore.getState().setConflictsOpen(true);
+			return { ok: true };
+		case 'prompt-links':
+			// Desktop only: the bridge refuses every promptLinks:* channel.
+			if (!isPromptLinksEnabled()) {
+				return { ok: false, error: 'Prompt Links is available only in the desktop app' };
+			}
+			// Same entry point as the hotkey: the create form starts on the active agent.
+			openPromptLinks();
 			return { ok: true };
 		case 'quick-actions':
 			actions.setQuickActionOpen(true, 'main');

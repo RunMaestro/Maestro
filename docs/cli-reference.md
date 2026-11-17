@@ -1163,6 +1163,46 @@ Send every current comment to the agent as one queued prompt
 | `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
 | `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
 
+## `maestro-cli prompt-link`
+
+Create, list, and revoke one-shot maestro://run links (the window: `open prompt-links`)
+
+## `maestro-cli prompt-link create <agent> [prompt]`
+
+Create a link that runs PROMPT in a new tab of AGENT; prints the URL once
+
+| Option                 | Description                                                                 | Default |
+| ---------------------- | --------------------------------------------------------------------------- | ------- |
+| `--prompt-file <path>` | Read the prompt from a file instead of the argument                         | -       |
+| `--uses <n>`           | How many times the link may run: a number, or "unlimited" (default: 1)      | -       |
+| `--expires <duration>` | Expire after 12h, 7d, 30d, ... or "never" (default: never)                  | -       |
+| `--label <text>`       | A name to recognize the link by in lists and toasts                         | -       |
+| `--open <mode>`        | Where the tab opens when the link fires: background (default) or foreground | -       |
+| `--background`         | Accepted and ignored: creating a link changes nothing on screen             | -       |
+| `--focus`              | Accepted and ignored: creating a link changes nothing on screen             | -       |
+| `--json`               | Output the URL and link as JSON                                             | -       |
+
+## `maestro-cli prompt-link list`
+
+List active prompt links (never their URLs: only a hash is stored)
+
+| Option         | Description                                             | Default |
+| -------------- | ------------------------------------------------------- | ------- |
+| `--all`        | Include used, expired, and revoked links                | -       |
+| `--background` | Accepted and ignored: listing changes nothing on screen | -       |
+| `--focus`      | Accepted and ignored: listing changes nothing on screen | -       |
+| `--json`       | Output as JSON                                          | -       |
+
+## `maestro-cli prompt-link revoke <id>`
+
+Revoke a prompt link so it never runs again (accepts a unique id prefix)
+
+| Option         | Description                                              | Default |
+| -------------- | -------------------------------------------------------- | ------- |
+| `--background` | Accepted and ignored: revoking changes nothing on screen | -       |
+| `--focus`      | Accepted and ignored: revoking changes nothing on screen | -       |
+| `--json`       | Output the revoked link as JSON                          | -       |
+
 ## `maestro-cli marketplace`
 
 Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)

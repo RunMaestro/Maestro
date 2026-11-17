@@ -16,6 +16,8 @@ import { WizardIndicator } from '../SessionList/WizardIndicator';
 import { useTabHasActiveOutage } from '../../stores/retryStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { shortcutSuffix } from '../ui/ShortcutHint';
+import { openPromptLinks, promptLinksAvailable } from '../../services/promptLinks';
+import { normalizeComposerCommandMode } from '../../utils/shellCommandInput';
 
 export interface AITabProps {
 	tab: AITabType;
@@ -344,6 +346,25 @@ export const AITab = memo(function AITab({
 			onSnooze?.(tabId);
 		},
 		[onSnooze, tabId, setOverlayOpen]
+	);
+
+	// Prompt Links: open the window on this tab's agent, with the tab's unsent
+	// draft as the prompt (a shell command line is not a prompt, so it is left out).
+	const promptLinksEnabled = useSettingsStore((s) =>
+		promptLinksAvailable(s.encoreFeatures.promptLinks)
+	);
+	const handleCreatePromptLinkClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			setOverlayOpen(false);
+			if (!sessionId) return;
+			const draft =
+				normalizeComposerCommandMode(tab.commandMode) === 'off'
+					? (tab.inputValue ?? '').trim()
+					: '';
+			openPromptLinks({ agentId: sessionId, compose: true, ...(draft ? { prompt: draft } : {}) });
+		},
+		[sessionId, tab.commandMode, tab.inputValue, setOverlayOpen]
 	);
 
 	const handlePublishGistClick = useCallback(
@@ -677,6 +698,7 @@ export const AITab = memo(function AITab({
 					tabIndex={tabIndex}
 					onCopySessionId={handleCopySessionId}
 					onCopyDeepLink={handleCopyDeepLink}
+					onCreatePromptLinkClick={promptLinksEnabled ? handleCreatePromptLinkClick : undefined}
 					onStarClick={handleStarClick}
 					onRenameClick={handleRenameClick}
 					onMarkUnreadClick={handleMarkUnreadClick}

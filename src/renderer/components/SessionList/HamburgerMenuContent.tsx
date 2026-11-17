@@ -23,6 +23,7 @@ import {
 	Gauge,
 	GitMerge,
 	Network,
+	Link2,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useAddableHostedAgentCount } from '../../hooks/federation/useAgentLift';
@@ -40,6 +41,7 @@ import { openUrl } from '../../utils/openUrl';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { currentWebLoginUser, signOutWebLogin } from '../../services/webLoginSession';
+import { openPromptLinks, promptLinksAvailable } from '../../services/promptLinks';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 
 /** Stable fallback so the selector never hands React a fresh array. */
@@ -371,6 +373,26 @@ export function HamburgerMenuContent({
 						</div>
 					</div>
 					{shortcuts.openCue && <ShortcutHint theme={theme} keys={shortcuts.openCue?.keys ?? []} />}
+				</button>
+			)}
+			{promptLinksAvailable(encoreFeatures.promptLinks) && (
+				<button
+					onClick={() => {
+						openPromptLinks();
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Link2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Prompt Links
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Links that send a prompt to an agent
+						</div>
+					</div>
+					<ShortcutHint theme={theme} keys={shortcuts.openPromptLinks?.keys ?? []} />
 				</button>
 			)}
 			{encoreFeatures.concerto && (

@@ -7,7 +7,9 @@ import {
 	buildSessionDeepLink,
 	buildGroupDeepLink,
 	buildFileDeepLink,
+	buildPromptLinkUrl,
 	parseMaestroDeepLink,
+	redactDeepLinkUrl,
 } from '../../shared/deep-link-urls';
 
 describe('buildSessionDeepLink', () => {
@@ -183,5 +185,55 @@ describe('parseMaestroDeepLink with malformed percent encoding', () => {
 			sessionId: 'my sess',
 			filePath: 'bad%',
 		});
+	});
+});
+
+describe('Prompt Link URLs (maestro://run/<token>)', () => {
+	it('builds a run URL that carries only the token', () => {
+		expect(buildPromptLinkUrl('abcDEF123_-')).toBe('maestro://run/abcDEF123_-');
+	});
+
+	it('parses a run URL into a run action with its token', () => {
+		expect(parseMaestroDeepLink('maestro://run/abcDEF123_-')).toEqual({
+			action: 'run',
+			token: 'abcDEF123_-',
+		});
+	});
+
+	it('round-trips through the builder', () => {
+		expect(parseMaestroDeepLink(buildPromptLinkUrl('tok'))).toEqual({
+			action: 'run',
+			token: 'tok',
+		});
+	});
+
+	it('refuses a run URL with extra path segments rather than ignoring them', () => {
+		expect(parseMaestroDeepLink('maestro://run/tok/agent/abc')).toBeNull();
+	});
+
+	it('refuses a run URL with no token', () => {
+		expect(parseMaestroDeepLink('maestro://run')).toBeNull();
+		expect(parseMaestroDeepLink('maestro://run/')).toBeNull();
+	});
+
+	it('handles the Windows maestro: form', () => {
+		expect(parseMaestroDeepLink('maestro:run/tok')).toEqual({ action: 'run', token: 'tok' });
+	});
+});
+
+describe('redactDeepLinkUrl', () => {
+	it('cuts a Prompt Link token to its first four characters', () => {
+		expect(redactDeepLinkUrl('maestro://run/abcdefghijklmnop')).toBe('maestro://run/abcd...');
+	});
+
+	it('redacts the Windows form too', () => {
+		expect(redactDeepLinkUrl('maestro:run/abcdefghijklmnop')).toBe('maestro:run/abcd...');
+	});
+
+	it('leaves every other maestro:// URL unchanged', () => {
+		expect(redactDeepLinkUrl('maestro://session/abc/tab/def')).toBe(
+			'maestro://session/abc/tab/def'
+		);
+		expect(redactDeepLinkUrl('maestro://focus')).toBe('maestro://focus');
 	});
 });

@@ -292,6 +292,11 @@ import type { FederationApi } from '../main/preload/federation';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
 import type { JourneyApi } from '../main/preload/journey';
 import type { DataviewApi } from '../main/preload/dataview';
+import type {
+	PromptLinkCreateInput,
+	PromptLinkCreated,
+	PromptLinkPublic,
+} from '../shared/promptLinks';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -2135,6 +2140,17 @@ interface MaestroAPI {
 	 * rebuild, and the `dataview:changed` push). The web-desktop bridge forwards it.
 	 */
 	dataview: DataviewApi;
+	/**
+	 * Prompt Links (`maestro://run/<token>`). Desktop-only: the web-desktop
+	 * bridge refuses every `promptLinks:*` channel. `create` returns the URL
+	 * once; only a hash of its token is stored.
+	 */
+	promptLinks: {
+		list: () => Promise<PromptLinkPublic[]>;
+		create: (input: PromptLinkCreateInput) => Promise<PromptLinkCreated>;
+		revoke: (id: string) => Promise<PromptLinkPublic>;
+		rendererReady: () => Promise<void>;
+	};
 	agents: {
 		translateProvider: (request: TranslationRequest) => Promise<TranslationReport>;
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;

@@ -305,6 +305,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Agent state from tab states another client reported:** `syncAgentStateToTabs(session)` in `src/renderer/utils/tabHelpers` (the web-desktop inventory sync)
 - **A tab's own process produced output:** `markTabBusyFromOutput(session, tabId)` in `src/renderer/utils/tabHelpers`, via `noteLiveTabOutput()` in `src/renderer/hooks/agent/internal/helpers/liveTabOutput.ts` (check the tab first; write only when it is not already busy)
 - **Stopping a running turn (Stop pill, REST, `maestro-cli interrupt`):** `interruptTurn(sessionId, { tabId? })` in `src/renderer/services/turnInterrupt.ts`, wire types in `src/shared/turnInterrupt.ts`
+- **Opening a new AI tab with a prompt from the main process:** `requestNewAITabWithPrompt()` in `src/main/utils/new-ai-tab-request.ts`
 - **Stop and a pending auto-retry:** `stopRetriesForAgent(sessionId, tabId?)` in `src/renderer/stores/retryStore.ts` (not `cancelRetry`, which raises the blocking error state)
 - **Killing every AI process an agent owns:** `killAgentAiProcesses(agentId)` in `src/renderer/services/process.ts` (never kill the bare `{id}-ai`, which no per-tab turn uses)
 - **Toggling the unread filters:** `toggleTabUnreadFilter()`, `toggleAllUnreadFilters()`, and `areUnreadFiltersActive()` in `src/renderer/services/unreadFilters.ts`
@@ -404,6 +405,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Which agent a persisted group chat participant came from:** `findSessionForParticipantName(participantName, sessions)` in `src/shared/group-chat-types.ts`
 - **Running an Auto Run with no desktop (launch, progress, pause, stop):** `createRuntimeAutoRun()` in `src/shared/maestro-lib/runtime/autorun.ts`
 - **Running a group chat or a consult with no desktop (rounds, `@participant`, `ask`):** `createRuntimeGroupChats()` in `src/shared/maestro-lib/runtime/group-chats.ts`, `createRuntimeConsults()` in `src/shared/maestro-lib/runtime/consults.ts`
+- **Prompt Links (`maestro://run/<token>`):** rules in `src/shared/promptLinks.ts`, service in `src/main/prompt-links/index.ts`, renderer gate `openPromptLinks()` / `promptLinksAvailable()` in `src/renderer/services/promptLinks.ts`, log redaction `redactDeepLinkUrl()` in `src/shared/deep-link-urls.ts`
 
 #### Notifications, modals, and surfaces
 

@@ -11,6 +11,7 @@
 
 import { parseMaestroDeepLink } from '../../shared/deep-link-urls';
 import type { ParsedDeepLink } from '../../shared/types';
+import { explainInAppPromptLinkClick } from '../services/promptLinks';
 
 export const MAESTRO_LINK_EVENT = 'maestro:in-app-deep-link';
 
@@ -21,6 +22,11 @@ export const MAESTRO_LINK_EVENT = 'maestro:in-app-deep-link';
 export function openMaestroLink(url: string): boolean {
 	const parsed = parseMaestroDeepLink(url);
 	if (!parsed) return false;
+	// Handled (by refusing): a Prompt Link only runs when the OS delivers it.
+	if (parsed.action === 'run') {
+		explainInAppPromptLinkClick();
+		return true;
+	}
 	window.dispatchEvent(new CustomEvent<ParsedDeepLink>(MAESTRO_LINK_EVENT, { detail: parsed }));
 	return true;
 }
