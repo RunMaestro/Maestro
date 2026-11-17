@@ -3,6 +3,7 @@ import type { AgentDelegationNotice } from '../../../shared/agentDelegation';
 import type { ConsultChain } from '../../../shared/consultBudget';
 import type { InterruptTurnResult } from '../../../shared/turnInterrupt';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
+import { REMOTE_COMMAND_CLAIM_CHANNEL } from '../../../shared/remoteCommandReceipt';
 
 /**
  * Helper to log via the main process logger.
@@ -19,10 +20,12 @@ export function createCommandRemoteApi() {
 		 * This allows web commands to go through the same code path as desktop commands
 		 * inputMode is optional - if provided, renderer should use it instead of session state
 		 *
-		 * `receiptChannel` is the reply channel the web server mints per command;
-		 * the renderer MUST answer it via `sendRemoteCommandReceipt` so the CLI's
-		 * `success` reflects delivery rather than "an IPC send was issued". It is
-		 * undefined for senders that do not wait for a receipt (main's own
+		 * `receiptChannel` is the reply channel main mints per command; the
+		 * renderer MUST answer it via `sendRemoteCommandReceipt` so the sender's
+		 * `success` reflects delivery rather than "an IPC send was issued". A
+		 * command with one is claimed from main before the callback runs, and
+		 * dropped when main has stopped waiting for it. It is undefined for
+		 * senders that do not wait for a receipt (main's own
 		 * `remote:executeCommand` sends), so the renderer must tolerate that.
 		 *
 		 * `consultChain` is the place in a consult chain the turn this command
@@ -77,37 +80,61 @@ export function createCommandRemoteApi() {
 					mentionRouting,
 					receiptChannel,
 				});
-				try {
-					callback(
-						sessionId,
-						command,
-						inputMode,
-						tabId,
-						force,
-						images,
-						background,
-						consultChain,
-						mentionRouting,
-						receiptChannel,
-						...(pianolaDispatchId ? [pianolaDispatchId] : [])
-					);
-				} catch (error) {
-					ipcRenderer.invoke(
-						'logger:log',
-						'error',
-						'Error invoking remote command callback',
-						'Preload',
-						{ error: String(error) }
-					);
+				const run = () => {
+					try {
+						callback(
+							sessionId,
+							command,
+							inputMode,
+							tabId,
+							force,
+							images,
+							background,
+							consultChain,
+							mentionRouting,
+							receiptChannel,
+							...(pianolaDispatchId ? [pianolaDispatchId] : [])
+						);
+					} catch (error) {
+						ipcRenderer.invoke(
+							'logger:log',
+							'error',
+							'Error invoking remote command callback',
+							'Preload',
+							{ error: String(error) }
+						);
+					}
+				};
+				// A sender that does not wait for a receipt has nothing to claim.
+				if (!receiptChannel) {
+					run();
+					return;
 				}
+				// Claim the command before running any of it. Main refuses a claim
+				// it has stopped waiting for, so a command this renderer picks up
+				// late (it was frozen past the claim window) is dropped here
+				// instead of running after its sender was told it failed. The
+				// contract is in `src/shared/remoteCommandReceipt.ts`.
+				ipcRenderer.invoke(REMOTE_COMMAND_CLAIM_CHANNEL, receiptChannel).then(
+					(claimed) => {
+						if (claimed === true) run();
+						else log('Dropping remote command its sender stopped waiting for', { sessionId });
+					},
+					(error) => {
+						ipcRenderer.invoke('logger:log', 'error', 'Could not claim remote command', 'Preload', {
+							error: String(error),
+						});
+					}
+				);
 			};
 			ipcRenderer.on('remote:executeCommand', handler);
 			return () => ipcRenderer.removeListener('remote:executeCommand', handler);
 		},
 
 		/**
-		 * Answer a `remote:executeCommand` receipt channel. `accepted: true` means
-		 * the command was handed to the spawn/queue logic - NOT that it finished.
+		 * Answer a `remote:executeCommand` receipt channel with the command's
+		 * outcome. `accepted: true` means the turn started or the prompt was
+		 * queued - NOT that it finished.
 		 * `reason` names the branch that dropped it (session-not-found,
 		 * tab-not-found, session-busy, unsupported-agent, ...) so the CLI can say
 		 * why instead of reporting a meaningless `success: true`.

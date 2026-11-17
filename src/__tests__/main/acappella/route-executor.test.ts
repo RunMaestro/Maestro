@@ -24,11 +24,15 @@ vi.mock('../../../main/utils/safe-send', () => ({
 vi.mock('../../../main/web-server/callbacks/remoteRequest', () => ({
 	requestFromRenderer: vi.fn(),
 }));
+vi.mock('../../../main/web-server/callbacks/remoteCommandReceipt', () => ({
+	requestRemoteCommandReceipt: vi.fn(),
+}));
 vi.mock('../../../main/stores/getters', () => ({
 	getSessionsStore: vi.fn(),
 }));
 
 import { requestFromRenderer } from '../../../main/web-server/callbacks/remoteRequest';
+import { requestRemoteCommandReceipt } from '../../../main/web-server/callbacks/remoteCommandReceipt';
 import {
 	buildAgentRoster,
 	createRendererVoiceBridge,
@@ -348,6 +352,20 @@ describe('executeRouteDecision - busy and force', () => {
 		await expect(
 			makeExecutor({ bridge })(makeDecision(), { roster: [], scope: CONDUCTOR_SCOPE })
 		).rejects.toThrow(VoiceDispatchError);
+	});
+
+	// The renderer claimed the prompt and is still starting the turn: it owns
+	// the prompt, so the session follows the tab for the reply.
+	it('treats a claimed prompt that is still starting as sent', async () => {
+		const bridge = makeBridge();
+		bridge.executeCommand.mockResolvedValue({ accepted: true, pending: true });
+
+		const result = await makeExecutor({ bridge })(makeDecision(), {
+			roster: [],
+			scope: CONDUCTOR_SCOPE,
+		});
+
+		expect(result.promptSent).toBe(true);
 	});
 });
 
@@ -1090,6 +1108,7 @@ describe('createRendererVoiceBridge', () => {
 	beforeEach(() => {
 		send.mockClear();
 		vi.mocked(requestFromRenderer).mockReset();
+		vi.mocked(requestRemoteCommandReceipt).mockReset();
 	});
 
 	it('focuses and renames over the existing remote channels', () => {
@@ -1123,14 +1142,14 @@ describe('createRendererVoiceBridge', () => {
 	});
 
 	it('keeps the absent consult chain slot before the prompt delivery receipt', async () => {
-		vi.mocked(requestFromRenderer).mockResolvedValue({ accepted: true });
+		vi.mocked(requestRemoteCommandReceipt).mockResolvedValue({ accepted: true });
 		const bridge = createRendererVoiceBridge(() => win);
 
 		await bridge.executeCommand('agent-1', 'tab-1', 'do the thing');
 
-		const [, channel, options] = vi.mocked(requestFromRenderer).mock.calls[0];
-		expect(channel).toBe('remote:executeCommand');
-		expect(options.args).toEqual([
+		const [target, args] = vi.mocked(requestRemoteCommandReceipt).mock.calls[0];
+		expect(target).toBe(win);
+		expect(args).toEqual([
 			'agent-1',
 			'do the thing',
 			'ai',
@@ -1140,6 +1159,20 @@ describe('createRendererVoiceBridge', () => {
 			false,
 			undefined,
 		]);
+	});
+
+	// A voice session holds the turn open for the reply, so it waits for the
+	// real outcome of a claimed prompt instead of stopping at a handover. The
+	// 3s wait this replaced ended the session on a prompt that went on to run.
+	it('waits out a slow turn start for the real outcome', async () => {
+		vi.mocked(requestRemoteCommandReceipt).mockResolvedValue({ accepted: true });
+		const bridge = createRendererVoiceBridge(() => win);
+
+		await bridge.executeCommand('agent-1', 'tab-1', 'do the thing');
+
+		const [, , options] = vi.mocked(requestRemoteCommandReceipt).mock.calls[0];
+		// Longer than a spawn held behind a synopsis writer (60s wait + 5s kill).
+		expect(options.outcomeTimeoutMs).toBeGreaterThan(65_000);
 	});
 
 	it('reads the tab id out of a new-tab reply', async () => {

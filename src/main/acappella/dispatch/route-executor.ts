@@ -38,6 +38,12 @@ import { getSessionsStore } from '../../stores/getters';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { logger } from '../../utils/logger';
 import { requestFromRenderer } from '../../web-server/callbacks/remoteRequest';
+import { requestRemoteCommandReceipt } from '../../web-server/callbacks/remoteCommandReceipt';
+import type { RemoteCommandReceipt } from '../../../shared/remoteCommandReceipt';
+import {
+	SYNOPSIS_WRITER_KILL_GRACE_MS,
+	SYNOPSIS_WRITER_WAIT_MS,
+} from '../../process-manager/utils/synopsisWriterGate';
 import { buildRoutingRoster } from '../router/routing-context';
 import { resolveRecall } from '../router/tab-recall';
 import { VoiceDispatchBusyError, VoiceDispatchError } from '../voice-session-service';
@@ -49,8 +55,16 @@ const LOG_CONTEXT = 'ACappella';
 /** Tab creation is a renderer round trip; 5s matches `tabCallbacks.ts`. */
 const NEW_TAB_TIMEOUT_MS = 5000;
 
-/** Delivery receipt window, matching `REMOTE_COMMAND_RECEIPT_TIMEOUT_MS`. */
-const COMMAND_RECEIPT_TIMEOUT_MS = 3000;
+/**
+ * How long a claimed prompt may take to start its turn before the session
+ * follows the tab anyway.
+ *
+ * A voice session holds the turn open for the reply, so unlike the CLI it has
+ * no reason to stop at a handover: it waits for the real outcome. The longest
+ * honest wait is a spawn held behind a synopsis writer, which `process:spawn`
+ * waits out and then kills; the margin covers the prompt build in front of it.
+ */
+const COMMAND_OUTCOME_TIMEOUT_MS = SYNOPSIS_WRITER_WAIT_MS + SYNOPSIS_WRITER_KILL_GRACE_MS + 25_000;
 
 // ---------------------------------------------------------------------------
 // Roster
@@ -92,10 +106,7 @@ export interface NewTabWithPromptResult {
 }
 
 /** The renderer's delivery receipt for `remote:executeCommand`. */
-export interface CommandReceipt {
-	accepted: boolean;
-	reason?: string;
-}
+export type CommandReceipt = RemoteCommandReceipt;
 
 /**
  * What the renderer did to land on a tab.
@@ -237,19 +248,14 @@ export function createRendererVoiceBridge(
 		},
 
 		async executeCommand(agentSessionId, tabId, prompt, force) {
-			return requestFromRenderer<CommandReceipt>(
+			return requestRemoteCommandReceipt(
 				requireWindow('send a prompt', agentSessionId),
-				'remote:executeCommand',
-				{
-					fallback: { accepted: false, reason: 'renderer-timeout' },
-					timeoutMs: COMMAND_RECEIPT_TIMEOUT_MS,
-					parse: parseCommandReceipt,
-					// Positional: (sessionId, command, inputMode, tabId, force, images,
-					// background, consultChain) before the receipt channel. The absent
-					// consult chain must keep its slot or the receipt becomes the chain.
-					// Only the HUD's explicit opt-in bypasses the busy guard.
-					args: [agentSessionId, prompt, 'ai', tabId, force === true, undefined, false, undefined],
-				}
+				// Positional: (sessionId, command, inputMode, tabId, force, images,
+				// background, consultChain) before the receipt channel. The absent
+				// consult chain must keep its slot or the receipt becomes the chain.
+				// Only the HUD's explicit opt-in bypasses the busy guard.
+				[agentSessionId, prompt, 'ai', tabId, force === true, undefined, false, undefined],
+				{ outcomeTimeoutMs: COMMAND_OUTCOME_TIMEOUT_MS }
 			);
 		},
 	};
@@ -279,17 +285,6 @@ function parseFocusTabResult(raw: unknown): FocusTabResult {
 				: undefined,
 		reason: typeof result.reason === 'string' ? result.reason : undefined,
 	};
-}
-
-function parseCommandReceipt(raw: unknown): CommandReceipt {
-	if (typeof raw === 'object' && raw !== null && 'accepted' in raw) {
-		const receipt = raw as { accepted?: unknown; reason?: unknown };
-		return {
-			accepted: receipt.accepted === true,
-			reason: typeof receipt.reason === 'string' ? receipt.reason : undefined,
-		};
-	}
-	return { accepted: false, reason: 'malformed-receipt' };
 }
 
 // ---------------------------------------------------------------------------

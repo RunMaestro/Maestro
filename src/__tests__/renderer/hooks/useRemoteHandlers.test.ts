@@ -2647,10 +2647,10 @@ describe('useRemoteHandlers', () => {
 			expect(String(receipts()[0][2])).toContain('remote-spawn-error');
 		});
 
-		// The other half of the same fix: the grace timer must still ack a spawn
-		// that is merely SLOW, or the caller times out and a real dispatch is
-		// reported as a failure.
-		it('acks a slow spawn before the caller can time out', async () => {
+		// The receipt is the command's outcome, and no timer answers for a slow
+		// step. Main knows this renderer has the command (it claimed it), so how
+		// long to wait is the sender's decision, not a guess made here.
+		it('reports a slow spawn when it settles, not on a timer', async () => {
 			vi.useFakeTimers();
 			try {
 				let releaseSpawn: (() => void) | undefined;
@@ -2679,22 +2679,115 @@ describe('useRemoteHandlers', () => {
 					})
 				);
 
-				// Nothing acked yet: the spawn has not settled and the grace timer
-				// has not fired.
-				await act(async () => {});
+				// However long the spawn takes, nothing is reported until it settles.
+				await act(async () => {
+					vi.advanceTimersByTime(60_000);
+				});
 				expect(receipts()).toHaveLength(0);
 
-				await act(async () => {
-					vi.advanceTimersByTime(1500);
-				});
-				expect(receipts()).toEqual([[RECEIPT_CHANNEL, true, undefined]]);
-
-				// The later success must not double-send.
 				releaseSpawn?.();
 				await act(async () => {
 					await pending;
 				});
+				expect(receipts()).toEqual([[RECEIPT_CHANNEL, true, undefined]]);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		// A spawn that is slow and THEN fails used to be acked as accepted by the
+		// grace timer before the failure was known.
+		it('reports a slow spawn that then rejects as a rejection', async () => {
+			vi.useFakeTimers();
+			try {
+				let failSpawn: ((error: Error) => void) | undefined;
+				(window.maestro.process.spawn as any).mockReturnValueOnce(
+					new Promise<void>((_resolve, reject) => {
+						failSpawn = reject;
+					})
+				);
+
+				const deps = createMockDeps({
+					sessionsRef: { current: [createMockSession({ inputMode: 'ai' })] },
+				});
+				renderHook(() => useRemoteHandlers(deps));
+				const handler = (window.addEventListener as any).mock.calls.find(
+					(call: any[]) => call[0] === 'maestro:remoteCommand'
+				)[1];
+
+				const pending = handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							receiptChannel: RECEIPT_CHANNEL,
+							sessionId: 'session-1',
+							command: 'explain this code',
+							inputMode: 'ai',
+						},
+					})
+				);
+
+				await act(async () => {
+					vi.advanceTimersByTime(60_000);
+				});
+				failSpawn?.(new Error('spawn ENOENT: claude'));
+				await act(async () => {
+					await pending;
+				});
+
 				expect(receipts()).toHaveLength(1);
+				expect(receipts()[0][1]).toBe(false);
+				expect(String(receipts()[0][2])).toContain('remote-spawn-error');
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		// The steps before the spawn are slow too. Building the system prompt
+		// runs `git status` on the agent's checkout; on a large worktree that
+		// outlasted the sender's 3s window, and a voice dispatch whose prompt
+		// went on to run normally failed as "not delivered (renderer-timeout)".
+		it('reports a slow pre-spawn step once the turn starts', async () => {
+			vi.useFakeTimers();
+			try {
+				let releasePrompt: (() => void) | undefined;
+				(window.maestro.prompts.get as any).mockReturnValueOnce(
+					new Promise((resolve) => {
+						releasePrompt = () =>
+							resolve({ success: true, content: 'Maestro System Context: {{AGENT_NAME}}' });
+					})
+				);
+
+				const deps = createMockDeps({
+					sessionsRef: { current: [createMockSession({ inputMode: 'ai' })] },
+				});
+				renderHook(() => useRemoteHandlers(deps));
+				const handler = (window.addEventListener as any).mock.calls.find(
+					(call: any[]) => call[0] === 'maestro:remoteCommand'
+				)[1];
+
+				const pending = handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							receiptChannel: RECEIPT_CHANNEL,
+							sessionId: 'session-1',
+							command: 'explain this code',
+							inputMode: 'ai',
+						},
+					})
+				);
+
+				await act(async () => {
+					vi.advanceTimersByTime(60_000);
+				});
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(receipts()).toHaveLength(0);
+
+				releasePrompt?.();
+				await act(async () => {
+					await pending;
+				});
+				expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+				expect(receipts()).toEqual([[RECEIPT_CHANNEL, true, undefined]]);
 			} finally {
 				vi.useRealTimers();
 			}

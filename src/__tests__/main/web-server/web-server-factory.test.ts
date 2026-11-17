@@ -7,6 +7,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain, type BrowserWindow, type WebContents } from 'electron';
 import { nativeCurrentTurns } from '../../../main/pianola/current-turn';
 import { AgentRunCaptureService } from '../../../main/agent-run/capture-service';
+import { REMOTE_COMMAND_CLAIM_CHANNEL } from '../../../shared/remoteCommandReceipt';
+
+// `ipcMain.handle` handlers by channel. Kept outside the mock's call log
+// because the remote command claim handler registers once per module, and
+// `clearAllMocks` would forget it after the first test.
+const ipcHandlers = vi.hoisted(
+	() => new Map<string, (event: unknown, ...args: unknown[]) => unknown>()
+);
 
 // Mock electron
 vi.mock('electron', () => ({
@@ -14,6 +22,9 @@ vi.mock('electron', () => ({
 		once: vi.fn(),
 		removeListener: vi.fn(),
 		on: vi.fn(),
+		handle: (channel: string, handler: (event: unknown, ...args: unknown[]) => unknown) => {
+			ipcHandlers.set(channel, handler);
+		},
 	},
 	app: {
 		getPath: vi.fn().mockReturnValue('/tmp/userData'),
@@ -1407,7 +1418,7 @@ describe('web-server/web-server-factory', () => {
 			);
 		});
 
-		it('resolves false when no receipt arrives within the window', async () => {
+		it('resolves false when no renderer claims the command within the window', async () => {
 			vi.useFakeTimers();
 			try {
 				const createWebServer = createWebServerFactory(deps);
@@ -1417,13 +1428,50 @@ describe('web-server/web-server-factory', () => {
 				const callback = setExecuteCallback.mock.calls[0][0];
 
 				const resultPromise = callback('session-1', 'test command', 'ai');
-				// No renderer answer at all - an old build that ignores the receipt
-				// channel, or a wedged one. Must not hang the CLI, must not lie.
+				// No renderer claim at all - a wedged renderer. Must not hang the
+				// CLI, must not lie: an unclaimed command is never run.
 				await vi.advanceTimersByTimeAsync(3000);
 
 				await expect(resultPromise).resolves.toBe(false);
 				expect(logger.warn).toHaveBeenCalledWith(
-					expect.stringContaining('No delivery receipt'),
+					expect.stringContaining('No renderer claimed the command'),
+					'WebServer'
+				);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		// The renderer has the command and is still starting the turn (a slow
+		// `git status`, a spawn held behind a synopsis writer). The CLI has its
+		// own 10s reply deadline, so main reports the handover instead of the
+		// failure a single reply timer used to report for a prompt that ran.
+		it('reports a claimed command that is slow to start as delivered', async () => {
+			vi.useFakeTimers();
+			try {
+				const server = createWebServerFactory(deps)();
+				const callback = (server.setExecuteCommandCallback as ReturnType<typeof vi.fn>).mock
+					.calls[0][0];
+
+				const resultPromise = callback('session-1', 'test command', 'ai');
+				const send = mockWebContents.send as ReturnType<typeof vi.fn>;
+				const call = [...send.mock.calls]
+					.reverse()
+					.find((c: unknown[]) => c[0] === 'remote:executeCommand');
+				const receiptChannel = call?.[call.length - 1] as string;
+				expect(
+					ipcHandlers.get(REMOTE_COMMAND_CLAIM_CHANNEL)?.(
+						{ sender: mockWebContents },
+						receiptChannel
+					)
+				).toBe(true);
+
+				// Past the claim window, and past the outcome window after it.
+				await vi.advanceTimersByTimeAsync(3000 + 4000);
+
+				await expect(resultPromise).resolves.toBe(true);
+				expect(logger.warn).not.toHaveBeenCalledWith(
+					expect.stringContaining('No renderer claimed the command'),
 					'WebServer'
 				);
 			} finally {

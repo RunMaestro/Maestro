@@ -161,6 +161,12 @@ Four rules the executor holds to, all of them about refusing to guess:
   listening with no speech or composition in flight. Force Send bypasses other tabs' activity
   only with the global opt-in; the target tab's live process still blocks delivery. Other rejected
   receipts remain dispatch failures, never a `promptSent: false` footnote.
+- **A delivery failure is true, and a slow start is not a failure.** The prompt goes through
+  `requestRemoteCommandReceipt()` (`src/main/web-server/callbacks/remoteCommandReceipt.ts`): the
+  renderer claims the prompt before running it, then reports the outcome. A session waits for
+  that outcome for as long as a turn can honestly take to start, so a slow `git status` in the
+  prompt build no longer ends the session on a prompt that then runs. A prompt no renderer
+  claimed is never run, so "not delivered" cannot sit beside its own reply.
 
 The renderer round trip sits behind a `VoiceRendererBridge` interface, for the same reason the
 session service takes its providers injected: the routing rules are testable without an Electron

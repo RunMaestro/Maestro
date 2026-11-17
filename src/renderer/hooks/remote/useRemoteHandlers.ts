@@ -79,17 +79,6 @@ export interface UseRemoteHandlersDeps {
 	sshRemoteConfigs: Array<{ id: string; name: string }>;
 }
 
-/**
- * How long the remote AI spawn may run before delivery is acked anyway.
- *
- * Kept comfortably inside the main side's `REMOTE_COMMAND_RECEIPT_TIMEOUT_MS`
- * (3000ms, `src/main/web-server/callbacks/commandCallbacks.ts`) so a slow spawn
- * is acked as handover rather than timing the caller out, while a spawn that
- * rejects quickly - a missing or misconfigured agent binary, typically inside a
- * few milliseconds - still reports the failure honestly.
- */
-const REMOTE_SPAWN_ACK_GRACE_MS = 1500;
-
 // ============================================================================
 // Return type
 // ============================================================================
@@ -208,11 +197,18 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				pianolaDispatchId,
 			} = customEvent.detail;
 
-			// The CLI's `dispatch` success flag is this ack, not the fact that an
-			// IPC send happened. `accepted: true` means the command reached the
-			// spawn/queue logic - delivery, not execution - so it is sent as the
-			// prompt is handed over, never after the agent replies. Every drop
-			// branch below answers `false` with the reason it dropped.
+			// The sender's success flag is this receipt, not the fact that an IPC
+			// send happened. It is the command's OUTCOME: `accepted: true` once the
+			// turn started or the prompt was queued (never after the agent
+			// replies), `false` with the reason on every drop branch below.
+			//
+			// No timer answers for a slow step. This command was claimed from main
+			// before it got here, so main knows this renderer has it and how long
+			// to wait is the sender's decision (`src/shared/remoteCommandReceipt.ts`).
+			// A grace timer used to ack a slow spawn from here, and missed the
+			// slow steps before the spawn: on a large worktree the system prompt's
+			// `git status` outlasted the sender, which reported a prompt that then
+			// ran normally as "not delivered (renderer-timeout)".
 			let receiptSent = false;
 			const reportDelivery = (accepted: boolean, reason?: string) => {
 				if (!receiptChannel || receiptSent) return;
@@ -783,73 +779,50 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					? await settleAutoTurn({ sessionId, tabId: targetTab.id, prompt: promptToSend })
 					: null;
 
-				// Ack delivery on whichever comes first: the spawn settling, or a
-				// timer set inside the main-side receipt timeout.
-				//
-				// Acking unconditionally before the await (the first cut of this
-				// fix) made the catch below dead code - `receiptSent` was already
-				// true - so a spawn that rejected immediately, the usual shape of a
-				// missing or misconfigured agent binary, still reported
-				// `accepted: true`. That is the very "accepted but never runs"
-				// failure this PR exists to remove, reintroduced one layer down
-				// (review of PR #1357).
-				//
-				// Awaiting the spawn outright is not the answer either: the caller
-				// gives up after REMOTE_COMMAND_RECEIPT_TIMEOUT_MS and would turn a
-				// merely slow dispatch into a reported failure. So the timer keeps
-				// the handover contract for slow spawns while fast failures - which
-				// settle in milliseconds, far inside the window - report honestly.
-				const ackTimer = setTimeout(() => reportDelivery(true), REMOTE_SPAWN_ACK_GRACE_MS);
-
-				try {
-					// Spawn agent with the prompt
-					await window.maestro.process.spawn({
-						sessionId: targetSessionId,
-						transcriptBoundaryId: userLogEntry.id,
-						pianolaDispatchId,
-						toolType: session.toolType,
-						cwd: session.cwd,
-						command: commandToUse,
-						args: spawnArgs,
-						// A trailing mention is answered by the consulted agent in parallel,
-						// or handed this turn's answer when it ends (dispatched below); tell
-						// this turn which, so it waits for the reply or writes an answer
-						// that stands alone. Agent-only: the user bubble above keeps the
-						// plain `promptToSend`.
-						prompt:
-							mentionPlan && writeTabId
-								? withMentionTurnNotes(agentPrompt, previewMentionDispatch(mentionPlan))
-								: agentPrompt,
-						images: remoteImages,
-						appendSystemPrompt,
-						agentSessionId: tabAgentSessionId ?? undefined,
-						readOnlyMode: isReadOnly,
-						permissionMode: effectivePermissionMode,
-						sessionCustomPath: session.customPath,
-						sessionCustomArgs: session.customArgs,
-						sessionAdditionalDirectories: session.additionalDirectories,
-						sessionCustomEnvVars: session.customEnvVars,
-						...(autoLaunch
-							? {
-									sessionCustomModel: autoLaunch.model,
-									sessionCustomEffort: autoLaunch.effort,
-									...(autoLaunch.runOn ? { runOnOverride: autoLaunch.runOn } : {}),
-								}
-							: {
-									sessionCustomModel: submittedSettings.model,
-									sessionCustomEffort: submittedSettings.effort,
-									runOnOverride: submittedSettings.runOn,
-								}),
-						sessionCustomContextWindow: session.customContextWindow,
-						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-						...(consultChain ? { consultChain } : {}),
-					});
-				} finally {
-					clearTimeout(ackTimer);
-				}
+				// Spawn agent with the prompt
+				await window.maestro.process.spawn({
+					sessionId: targetSessionId,
+					transcriptBoundaryId: userLogEntry.id,
+					pianolaDispatchId,
+					toolType: session.toolType,
+					cwd: session.cwd,
+					command: commandToUse,
+					args: spawnArgs,
+					// A trailing mention is answered by the consulted agent in parallel,
+					// or handed this turn's answer when it ends (dispatched below); tell
+					// this turn which, so it waits for the reply or writes an answer
+					// that stands alone. Agent-only: the user bubble above keeps the
+					// plain `promptToSend`.
+					prompt:
+						mentionPlan && writeTabId
+							? withMentionTurnNotes(agentPrompt, previewMentionDispatch(mentionPlan))
+							: agentPrompt,
+					images: remoteImages,
+					appendSystemPrompt,
+					agentSessionId: tabAgentSessionId ?? undefined,
+					readOnlyMode: isReadOnly,
+					permissionMode: effectivePermissionMode,
+					sessionCustomPath: session.customPath,
+					sessionCustomArgs: session.customArgs,
+					sessionAdditionalDirectories: session.additionalDirectories,
+					sessionCustomEnvVars: session.customEnvVars,
+					...(autoLaunch
+						? {
+								sessionCustomModel: autoLaunch.model,
+								sessionCustomEffort: autoLaunch.effort,
+								...(autoLaunch.runOn ? { runOnOverride: autoLaunch.runOn } : {}),
+							}
+						: {
+								sessionCustomModel: submittedSettings.model,
+								sessionCustomEffort: submittedSettings.effort,
+								runOnOverride: submittedSettings.runOn,
+							}),
+					sessionCustomContextWindow: session.customContextWindow,
+					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					...(consultChain ? { consultChain } : {}),
+				});
 
 				// Reached only when the spawn resolved, so this is a real accept.
-				// A no-op if the grace timer already acked.
 				reportDelivery(true);
 				logger.info(`[Remote] ${session.toolType} spawn initiated successfully`);
 				// Trailing mention: this agent answers AND the mentioned agent is
@@ -883,11 +856,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					});
 				}
 				const errorMessage = error instanceof Error ? error.message : String(error);
-				// Reports the failure honestly for everything that fails before the
-				// grace timer fires - the pre-handover failures (agent config
-				// lookup, prompt preparation) and now also a spawn that rejects
-				// fast, which is the common missing-binary case. Still a no-op if a
-				// slow spawn already acked; nothing can un-say a sent receipt.
+				// Reports every failure honestly, however late it comes: the steps
+				// before the spawn (agent config lookup, prompt preparation) and a
+				// spawn that rejects, which is the common missing-binary case.
 				reportDelivery(false, `remote-spawn-error:${errorMessage}`);
 				const errorLogEntry: LogEntry = {
 					id: generateId(),

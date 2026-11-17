@@ -173,6 +173,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Merging browser-deferred conversations:** `projectWebSession()`, `readDeferredContent()`, `mergeDeferredSessionContent()` in `src/main/stores/deferred-session-content.ts`, over `mergeDeferredItems()` in `src/shared/deferredSessionContent.ts`
 - **Turning Live mode (the web interface) or Remote Control (its tunnel) on or off:** `getLiveModeController()`, `createLiveModeController()` in `src/main/web-server/live-mode.ts`; wire types in `src/shared/liveMode.ts`
 - **Asking a renderer window a question from main (request, reply, timeout):** `requestFromRenderer(win, channel, { fallback, parse, timeoutMs, args })` in `src/main/web-server/callbacks/remoteRequest.ts`
+- **The delivery receipt of a remote command (claim, outcome, handover):** `requestRemoteCommandReceipt(win, args, { outcomeTimeoutMs })` in `src/main/web-server/callbacks/remoteCommandReceipt.ts`; `RemoteCommandReceipt`, `parseRemoteCommandReceipt()` in `src/shared/remoteCommandReceipt.ts`
 - **HTTP request from the main process:** `fetchWithTimeout()`, `isFetchTimeoutError()` in `src/main/utils/fetchWithTimeout.ts` (never a bare `fetch()`)
 - **Choosing a port for a local server:** `pickFreePort(host)`, `probePort(port, host)`, `isTcpPort()` in `src/main/utils/tcp-port.ts` (choose once and persist; never move a persisted port)
 - **A size-capped log file for a supervised process:** `openCappedLogFile(path, { maxBytes?, onError? })`, `readCappedLogTail()` in `src/main/utils/capped-log-file.ts`
