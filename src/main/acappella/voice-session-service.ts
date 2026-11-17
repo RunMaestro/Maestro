@@ -14,7 +14,6 @@
  *     Phase 05 can swap Whisper/Kokoro/OpenAI in without touching this file.
  */
 
-import { canonicalJson } from '../../shared/canonicalJson';
 import { buildSpeechVocabulary } from '../../shared/acappella/speech-vocabulary';
 import type {
 	VoiceSendState,
@@ -93,6 +92,7 @@ import { DetailBuffer, detectDrillDownIntent } from './speech/drill-down';
 import { UtteranceComposer, type UtteranceComposerConfig } from './speech/utterance-composer';
 import { ConversationBuffer } from './router/conversation-buffer';
 import { SpeechScheduler, type SpeechRunResult } from './speech/speech-scheduler';
+import { PendingSendQueue } from './session/pending-send-queue';
 
 const LOG_CONTEXT = 'ACappella';
 
@@ -373,14 +373,7 @@ type VoiceEventBody<T extends VoiceEventType> = Omit<
 
 export class VoiceSessionService {
 	private readonly getForceSendAllowed: () => boolean;
-	private forceSend = false;
-	private pendingSends: {
-		decision: RouteDecision;
-		scope: VoiceScope;
-		agentSessionId: string;
-		tabId: string;
-	}[] = [];
-	private pendingSendTimer: ReturnType<typeof setTimeout> | null = null;
+	private readonly pendingSendQueue: PendingSendQueue;
 	private partialInFlight = false;
 	private speechActive = false;
 	private dispatchReadyForInput = false;
@@ -597,6 +590,45 @@ export class VoiceSessionService {
 			toListening: () => this.finishBargeIn(),
 			guardMs: options.bargeInGuardMs,
 		});
+		this.pendingSendQueue = new PendingSendQueue({
+			getForceSendAllowed: () => this.getForceSendAllowed(),
+			getSessionId: () => this.sessionId,
+			canSchedule: () => this.state !== 'idle' && this.state !== 'error' && !this.stopping,
+			canSetForceSend: (enabled) =>
+				Boolean(
+					this.sessionId &&
+					this.state !== 'idle' &&
+					this.state !== 'error' &&
+					(!enabled || this.getForceSendAllowed())
+				),
+			isSessionOpen: () => this.state !== 'idle' && this.state !== 'error',
+			isReadyToRetry: () =>
+				this.state === 'listening' &&
+				!this.composer.composing &&
+				!this.partialInFlight &&
+				!this.speechActive,
+			hasExecutor: () => Boolean(this.executeRoute),
+			getRoster: () => this.getRoster(),
+			executeRoute: (decision, context) => this.executeRoute!(decision, context),
+			beginRetryTurn: () => {
+				const turn = ++this.turn;
+				this.dispatchReadyForInput = false;
+				this.walkTo(['transcribing', 'routing', 'dispatching']);
+				return turn;
+			},
+			isCurrentTurn: (turn) => this.isCurrentTurn(turn),
+			finishDispatch: (decision, result, turn) => this.finishDispatch(decision, result, turn),
+			isBusyError: (error) => error instanceof VoiceDispatchBusyError,
+			onRetryBusy: () => {
+				this.transition('listening');
+				this.emitListenStart();
+			},
+			onRetryError: (error) => {
+				if (error instanceof VoiceDispatchError) this.fail('dispatch-failed', error.message);
+				else this.closeFloorOnUnexpectedError(error, 'acappella.pendingSend');
+			},
+			onSendStateChange: (sendState) => this.emit('send-state', sendState),
+		});
 	}
 
 	// -- Subscription --------------------------------------------------------
@@ -788,8 +820,7 @@ export class VoiceSessionService {
 		this.routeAbort?.abort();
 		this.routeAbort = null;
 		this.turn += 1;
-		this.clearPendingSends();
-		this.forceSend = false;
+		this.pendingSendQueue.clear({ resetForceSend: true });
 		this.partialInFlight = false;
 		this.speechActive = false;
 		this.dispatchReadyForInput = false;
@@ -1250,15 +1281,10 @@ export class VoiceSessionService {
 
 			// Keep adding to the collected request in this scope. Its target was
 			// resolved by the first delivery attempt and cannot drift with focus.
-			const pending = this.pendingSends.find(
-				(item) => canonicalJson(item.scope) === canonicalJson(this.scope)
-			);
-			if (pending && this.providers.stt.transcribesSpeech !== false) {
-				pending.decision = {
-					...pending.decision,
-					prompt: `${pending.decision.prompt}\n\n${utterance}`,
-				};
-				this.publishSendState();
+			if (
+				this.providers.stt.transcribesSpeech !== false &&
+				this.pendingSendQueue.appendIfPending(this.scope, utterance)
+			) {
 				this.transition('listening');
 				this.emitListenStart();
 				return;
@@ -1567,14 +1593,16 @@ export class VoiceSessionService {
 				},
 				roster,
 				scope,
-				...(this.forceSend && this.getForceSendAllowed() ? { force: true } : {}),
+				...(this.pendingSendQueue.isForceSendRequested() && this.getForceSendAllowed()
+					? { force: true }
+					: {}),
 			});
 		} catch (error) {
 			if (!this.isCurrentTurn(turn) || routeAbort.signal.aborted) return;
 			// Only the executor's own classified failure is an event. Anything else
 			// is a bug and belongs in Sentry.
 			if (error instanceof VoiceDispatchBusyError) {
-				this.pendingSends.push({
+				this.pendingSendQueue.enqueue({
 					decision: {
 						...bound,
 						target: { sessionId: error.agentSessionId },
@@ -1585,10 +1613,9 @@ export class VoiceSessionService {
 					agentSessionId: error.agentSessionId,
 					tabId: error.tabId,
 				});
-				this.publishSendState();
 				this.transition('listening');
 				this.emitListenStart();
-				this.schedulePendingSend();
+				this.pendingSendQueue.schedule();
 				return;
 			}
 			if (!(error instanceof VoiceDispatchError)) throw error;
@@ -1626,105 +1653,11 @@ export class VoiceSessionService {
 	}
 
 	getSendState(): VoiceSendState {
-		return {
-			forceSend: this.forceSend && this.getForceSendAllowed(),
-			pending: this.pendingSends.map(({ agentSessionId, tabId, decision }) => ({
-				agentSessionId,
-				tabId,
-				text: decision.prompt,
-			})),
-		};
+		return this.pendingSendQueue.getSendState();
 	}
 
 	setForceSend(enabled: boolean): boolean {
-		if (
-			!this.sessionId ||
-			this.state === 'idle' ||
-			this.state === 'error' ||
-			(enabled && !this.getForceSendAllowed())
-		)
-			return false;
-		this.forceSend = enabled;
-		this.publishSendState();
-		this.schedulePendingSend(0);
-		return true;
-	}
-
-	private publishSendState(): void {
-		this.emit('send-state', this.getSendState());
-	}
-
-	private clearPendingSends(): void {
-		if (this.pendingSendTimer !== null) clearTimeout(this.pendingSendTimer);
-		this.pendingSendTimer = null;
-		this.pendingSends = [];
-	}
-
-	private schedulePendingSend(delayMs = 750): void {
-		if (
-			!this.pendingSends.length ||
-			this.state === 'idle' ||
-			this.state === 'error' ||
-			this.stopping
-		)
-			return;
-		if (this.pendingSendTimer !== null) clearTimeout(this.pendingSendTimer);
-		this.pendingSendTimer = setTimeout(() => {
-			this.pendingSendTimer = null;
-			void this.retryPendingSend();
-		}, delayMs);
-	}
-
-	private async retryPendingSend(): Promise<void> {
-		const pending = this.pendingSends[0];
-		if (!pending || !this.executeRoute) return;
-		if (
-			this.state !== 'listening' ||
-			this.composer.composing ||
-			this.partialInFlight ||
-			this.speechActive
-		) {
-			this.schedulePendingSend();
-			return;
-		}
-		const sessionId = this.sessionId;
-		try {
-			const roster = await this.getRoster();
-			if (
-				this.sessionId !== sessionId ||
-				this.state !== 'listening' ||
-				this.composer.composing ||
-				this.partialInFlight ||
-				this.speechActive
-			)
-				return;
-			const turn = ++this.turn;
-			this.dispatchReadyForInput = false;
-			this.walkTo(['transcribing', 'routing', 'dispatching']);
-			try {
-				const result = await this.executeRoute(pending.decision, {
-					roster,
-					scope: pending.scope,
-					...(this.getSendState().forceSend ? { force: true } : {}),
-				});
-				if (!this.isCurrentTurn(turn)) return;
-				this.pendingSends.shift();
-				this.publishSendState();
-				this.finishDispatch(pending.decision, result, turn);
-			} catch (error) {
-				if (!this.isCurrentTurn(turn)) return;
-				if (!(error instanceof VoiceDispatchBusyError)) throw error;
-				this.transition('listening');
-				this.emitListenStart();
-			}
-		} catch (error) {
-			if (this.sessionId !== sessionId) return;
-			if (error instanceof VoiceDispatchError) this.fail('dispatch-failed', error.message);
-			else this.closeFloorOnUnexpectedError(error as Error, 'acappella.pendingSend');
-		} finally {
-			if (this.sessionId === sessionId && this.getState() !== 'idle' && this.getState() !== 'error')
-				this.schedulePendingSend();
-		}
+		return this.pendingSendQueue.setForceSend(enabled);
 	}
 
 	/**
