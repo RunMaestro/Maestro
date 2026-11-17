@@ -149,7 +149,7 @@ interface PeerTabRow {
 function peerAgentOutput(
 	agent: AgentRecord,
 	peer: string,
-	groupName: string | undefined,
+	groupName: string | null | undefined,
 	groupHidden: boolean | null,
 	history: HistoryEntry[] | null
 ) {
@@ -186,8 +186,8 @@ async function showPeerAgent(target: PeerTarget, options: ShowAgentOptions): Pro
 	try {
 		const output = await withPeerAgent(target, async ({ agent, client, peer }) => {
 			// The group is a label only: a host that cannot list its groups still shows the agent,
-			// with `groupHidden` null (unknown).
-			let groupName: string | undefined;
+			// with `groupName` and `groupHidden` null (unknown). An ungrouped agent omits `groupName`.
+			let groupName: string | null | undefined;
 			let groupHidden: boolean | null = false;
 			if (agent.groupId) {
 				const groups = await client.groups.list();
@@ -196,6 +196,7 @@ async function showPeerAgent(target: PeerTarget, options: ShowAgentOptions): Pro
 					groupName = info.groupName ?? undefined;
 					groupHidden = info.groupHidden;
 				} else {
+					groupName = null;
 					groupHidden = null;
 				}
 			}

@@ -530,7 +530,8 @@ export interface AgentDetailDisplay {
 	cwd: string;
 	projectRoot: string;
 	groupId?: string;
-	groupName?: string;
+	/** Null when a peer could not list its groups; omitted for an ungrouped agent. */
+	groupName?: string | null;
 	/** The group (or its parent) is hidden from the Left Bar; null when a peer could not say. */
 	groupHidden?: boolean | null;
 	autoRunFolderPath?: string;
