@@ -312,6 +312,7 @@ import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore
 import { rememberQuotaAccounts } from './stores/quotaAccountsStore';
 import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
 import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
+import { ClaudeTuiCanary, setClaudeTuiCanary } from './agents/claude-tui-canary';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
 
 // ============================================================================
@@ -655,6 +656,7 @@ let confirmQueueItemInPersistence: ConfirmQueueItem | null = null;
 // the two emit paths never desync. Null before IPC setup / when unavailable.
 let noteSessionActivatedInPersistence: ((sessionId: string) => void) | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
+let claudeTuiCanary: ClaudeTuiCanary | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring).
@@ -1554,6 +1556,18 @@ app
 		if (isEncoreFeatureEnabled(store, 'usageStats')) {
 			usageRefreshScheduler.start();
 		}
+
+		// One real maestro-p turn after every Claude Code (or Maestro) update, so a
+		// release that breaks TUI-mode agents is known the morning it lands. See
+		// claude-tui-canary.ts. It runs only on an account with an authenticated
+		// usage snapshot, so it stays idle for anyone not on the TUI token source.
+		claudeTuiCanary = new ClaudeTuiCanary({
+			agentDetector,
+			maestroVersion: app.getVersion(),
+			notifyToast: (toast) => safeSend('remote:notifyToast', toast),
+		});
+		setClaudeTuiCanary(claudeTuiCanary);
+		claudeTuiCanary.start();
 
 		// Warm any provider the strict startup pass left cold (no auto-refresh
 		// interval picked, no eligible recent maestro-p session, Codex not sampled
@@ -4163,6 +4177,7 @@ quitHandler = createQuitHandler({
 		});
 		// Tear down the background quota refresh timers.
 		usageRefreshScheduler?.stop();
+		claudeTuiCanary?.stop();
 	},
 	stopSettingsWatcher: () => {
 		settingsWatcher.stop();

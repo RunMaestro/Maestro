@@ -2306,6 +2306,18 @@ maestro-cli doctor --json
 
 The version and "App handles commands" checks catch the most common gotcha: a freshly-built CLI talking to an older desktop app that's still running. When the app is behind, new commands fail because their handlers don't exist in the running build - rebuild and restart the desktop app. The CLI surfaces this directly: a command the running app doesn't recognize fails fast with "The running Maestro app does not support the '...' command" instead of a generic timeout.
 
+### Checking a Claude Code Update (`claude-canary`)
+
+Claude Code updates itself while Maestro runs, and a new release can change the TUI that interactive-mode Claude agents run through. After every Claude Code (or Maestro) update, the desktop app runs one cheap test turn through maestro-p and raises a sticky toast if it fails. `claude-canary` reads the last result, including what Claude Code showed on screen when it failed:
+
+```bash
+maestro-cli claude-canary          # last result
+maestro-cli claude-canary --run    # run the test turn now; exits 2 if Claude Code fails it
+maestro-cli claude-canary --json
+```
+
+The canary runs only on an account that already has an authenticated usage snapshot, and needs the desktop app.
+
 ### Shell Completions
 
 Generate a completion script for your shell and source it:
@@ -2555,6 +2567,19 @@ maestro-cli settings set federationAutoMove false   # turn automatic moves off
 ```
 
 Both print each remote's state (`ready`, `setting-up`, `waiting`, `blocked`) with its service, and each SSH agent's state (`moved`, `pending`, `waiting`, `blocked`, `manual`) with its reason. Anything `blocked` carries a `To fix:` line. Both exit `1` when something needs a person: a `blocked` remote or agent, or a running host whose service still needs one step (lingering off, or a service that failed to register). A remote that can never have a service (Windows, Linux without a user session, a Mac with Maestro.app) shows its workaround as a note and does not make them exit `1`. `--json` prints the same snapshot. They need the desktop app: a headless host mirrors no peers.
+
+### Hosted agents in the Left Bar
+
+Your Left Bar shows the hosted agents you moved from this machine and the ones you added. A host's other agents stay out of it until you add them, the same as **Add Hosted Agent** in the desktop app:
+
+```bash
+maestro-cli federation agents                                # every agent your hosts run, and which ones you added
+maestro-cli federation agents --peer build-box --not-added   # one host, only the ones not in the Left Bar
+maestro-cli federation add build-box:docs --group Research   # add one: agent id, id prefix, or name
+maestro-cli remove-agent <local-agent-id>                    # remove the row; the host keeps its agent
+```
+
+`add` refuses an agent the Left Bar shows already, and `--background` leaves the selection where it is. The row takes the host agent's name and settings; renaming it later renames the agent on the host, as for any hosted agent. Both verbs need the desktop app.
 
 ### Settings of hosted agents
 

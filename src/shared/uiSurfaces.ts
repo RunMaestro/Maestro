@@ -325,6 +325,16 @@ export const UI_SURFACES: UiSurface[] = [
 		commandPalette: 'Review Federation Settings Conflicts',
 		click: 'the conflict toast, or Federation Settings Conflicts in the Left Bar hamburger menu',
 	},
+	{
+		id: 'add-hosted-agent',
+		label: 'Add Hosted Agent',
+		aliases: ['hosted-agents'],
+		modal: 'addHostedAgent',
+		description:
+			'Show an agent a Federation host runs in your Left Bar. A host agent stays out of the Left Bar until you add it.',
+		commandPalette: 'Add Hosted Agent...',
+		click: 'Add Hosted Agent in the Left Bar hamburger menu',
+	},
 ];
 
 /** Every valid `--tab` value for a surface, or an empty array when it has none. */

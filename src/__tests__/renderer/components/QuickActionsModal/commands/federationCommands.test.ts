@@ -17,7 +17,6 @@ function build(overrides: Partial<Parameters<typeof buildFederationCommands>[0]>
 	const deps = {
 		peers: [peer],
 		activeMirror: null,
-		selectMirroredAgent: vi.fn(),
 		reconnectPeer: vi.fn(),
 		copyPeerAgentRef: vi.fn(),
 		requestMoveToHost: vi.fn(),
@@ -33,12 +32,23 @@ describe('buildFederationCommands', () => {
 		expect(build({ peers: [] }).commands).toEqual([]);
 	});
 
-	it('opens a mirrored agent and closes the palette', () => {
-		const { deps, commands } = build();
-		const open = commands.find((c) => c.id === 'federation-open-buildbox:a1');
-		expect(open?.label).toBe('Peer: Builder (Build Box)');
-		open?.action();
-		expect(deps.selectMirroredAgent).toHaveBeenCalledWith('buildbox', 'a1');
+	it("never lists a host's agents: hosted agents are Left Bar rows the agent switcher lists", () => {
+		expect(build().commands.some((c) => c.id.startsWith('federation-open-buildbox'))).toBe(false);
+	});
+
+	it('offers Add Hosted Agent only while a host runs an agent the Left Bar does not show', () => {
+		const openAddHostedAgent = vi.fn();
+		expect(
+			build({ openAddHostedAgent, addableHostedAgentCount: 0 }).commands.some(
+				(c) => c.id === 'federation-add-hosted-agent'
+			)
+		).toBe(false);
+		const { deps, commands } = build({ openAddHostedAgent, addableHostedAgentCount: 3 });
+		const add = commands.find((c) => c.id === 'federation-add-hosted-agent');
+		expect(add?.label).toBe('Add Hosted Agent...');
+		expect(add?.subtext).toContain('3 not added');
+		add?.action();
+		expect(openAddHostedAgent).toHaveBeenCalled();
 		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
 	});
 

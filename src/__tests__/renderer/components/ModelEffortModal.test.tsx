@@ -682,11 +682,13 @@ describe('ModelEffortModal', () => {
 			expect(window.maestro.agents.getModels).not.toHaveBeenCalled();
 		});
 
-		it('refreshes from the icon beside MODEL', async () => {
+		it('refreshes from the Refresh button beside MODEL', async () => {
 			renderModal();
 			await screen.findByText('claude-sonnet-4.5');
 
-			fireEvent.click(screen.getByTestId('model-effort-refresh'));
+			const refresh = screen.getByTestId('model-effort-refresh');
+			expect(refresh).toHaveTextContent('Refresh');
+			fireEvent.click(refresh);
 
 			expect(window.maestro.agents.getModels).toHaveBeenLastCalledWith('claude-code', true);
 		});

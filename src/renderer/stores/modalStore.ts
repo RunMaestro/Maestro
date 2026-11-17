@@ -390,6 +390,7 @@ export type ModalId =
 	| 'agentExport'
 	| 'agentImport'
 	| 'moveToHost'
+	| 'addHostedAgent'
 	| 'renameInstance'
 	| 'agentError'
 	| 'reauth'

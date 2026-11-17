@@ -53,7 +53,12 @@ import {
 } from '../shared/chatSteering';
 import { startSteeringServer, type SteeringServer } from './steering-server';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
-import { formatScreenTailReport, idleTimeoutMessage, readyTimeoutMessage } from './timeout-report';
+import {
+	formatScreenTailReport,
+	idleTimeoutMessage,
+	readyTimeoutMessage,
+	startupDialogBlockedMessage,
+} from './timeout-report';
 import { PROMPT_TAB_SPACES, TuiDriver } from './tui-driver';
 import { OpenToolCalls, skipsPermissionPrompts, withPermissionBypass } from './open-tool-calls';
 import { parseStreamTokenCount, StreamProgress } from './stream-progress';
@@ -227,6 +232,13 @@ function acceptsWorkspaceTrust(): boolean {
 // the TUI quit on the blind Enter and the only signal was `tui_exited`.
 function workspaceUntrustedHint(cwd: string): string {
 	return `maestro-p: claude has not been trusted to work in ${cwd}, and its folder-trust prompt defaults to "No, exit" there. Open claude in that folder once and choose "Yes, I trust this folder", or set MAESTRO_P_ACCEPT_WORKSPACE_TRUST=1 to have maestro-p accept it. Failing with workspace_untrusted.\n`;
+}
+
+// What to tell the caller when claude asked to add a directory maestro-p was
+// not given with --add-dir (see add-dir-prompt.ts). maestro-p answers that
+// dialog only for directories on its own command line.
+function addDirUntrustedHint(dir: string): string {
+	return `maestro-p: claude asked to add the directory ${dir}, which was not passed with --add-dir, and its prompt defaults to "No, exit". Pass it with --add-dir, or remove it from claude's additionalDirectories settings. Failing with add_dir_untrusted.\n`;
 }
 
 function waitForEvent(emitter: EventEmitter, event: string): Promise<void> {
@@ -602,6 +614,9 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// the desktop replay the prompt through the API, which is the opposite of
 		// what the user just asked for.
 		stopped?: boolean;
+		// The screen that explains a failure, read BEFORE finalize() quits the TUI
+		// (`/quit` repaints it). Carried on the result as `last_screen`.
+		screen?: string;
 	};
 
 	const finalize = (options: FinalizeOptions): void => {
@@ -681,6 +696,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				isError: finalIsError,
 			};
 			if (finalError !== undefined) resultOpts.error = finalError;
+			if (options.isError && options.screen) resultOpts.lastScreen = options.screen;
 			// Carry aggregated text/usage on success and on the limit-drain path
 			// (assistant emitted text BEFORE the limit was hit). Pure error paths
 			// (timeout, tui_exited) omit them.
@@ -1177,12 +1193,28 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				driver.getScreenTail()
 			)
 		);
-		finalize({ isError: true, error: 'tui_exited', exitCode: 1 });
+		finalize({
+			isError: true,
+			error: 'tui_exited',
+			exitCode: 1,
+			screen: driver.getFailureScreen(),
+		});
 	});
 	driver.on('workspace-untrusted', () => {
 		if (finalized) return;
 		process.stderr.write(workspaceUntrustedHint(cwd));
 		finalize({ isError: true, error: 'workspace_untrusted', exitCode: 7 });
+	});
+	driver.on('add-dir-untrusted', (dir: string) => {
+		if (finalized) return;
+		process.stderr.write(addDirUntrustedHint(dir));
+		finalize({ isError: true, error: 'add_dir_untrusted', exitCode: 10 });
+	});
+	driver.on('startup-dialog-blocked', (option: string) => {
+		if (finalized) return;
+		const screen = driver.getFailureScreen();
+		process.stderr.write(formatScreenTailReport(startupDialogBlockedMessage(option), screen));
+		finalize({ isError: true, error: 'startup_dialog_blocked', exitCode: 11, screen });
 	});
 	driver.on('ready-timeout', () => {
 		if (finalized) return;
@@ -1195,7 +1227,12 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		process.stderr.write(
 			formatScreenTailReport(readyTimeoutMessage(args.readyTimeoutSeconds), driver.getScreenTail())
 		);
-		finalize({ isError: true, error: 'ready_timeout', exitCode: 4 });
+		finalize({
+			isError: true,
+			error: 'ready_timeout',
+			exitCode: 4,
+			screen: driver.getFailureScreen(),
+		});
 	});
 
 	// A Stop (SIGINT from the desktop's interrupt, or SIGTERM) ends the turn like
@@ -1249,7 +1286,12 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				driver.getScreenTail()
 			)
 		);
-		finalize({ isError: true, error: 'first_byte_timeout', exitCode: 5 });
+		finalize({
+			isError: true,
+			error: 'first_byte_timeout',
+			exitCode: 5,
+			screen: driver.getFailureScreen(),
+		});
 	}, firstByteTimeoutMs);
 
 	if (resumeSessionId) {
@@ -1313,7 +1355,12 @@ async function runMode(args: ParsedArgs): Promise<never> {
 						driver.getScreenTail()
 					)
 				);
-				finalize({ isError: true, error: 'first_byte_timeout', exitCode: 5 });
+				finalize({
+					isError: true,
+					error: 'first_byte_timeout',
+					exitCode: 5,
+					screen: driver.getFailureScreen(),
+				});
 			}
 			return new Promise<never>(() => undefined);
 		}
@@ -1370,7 +1417,12 @@ async function runMode(args: ParsedArgs): Promise<never> {
 					driver.getScreenTail()
 				)
 			);
-			finalize({ isError: true, error: 'timeout', exitCode: 3 });
+			finalize({
+				isError: true,
+				error: 'timeout',
+				exitCode: 3,
+				screen: driver.getFailureScreen(),
+			});
 		}
 	}, WATCHDOG_INTERVAL_MS);
 
@@ -1424,6 +1476,22 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		if (statusFinalized) return;
 		statusFinalized = true;
 		process.stderr.write(workspaceUntrustedHint(cwd));
+		driver.kill('SIGTERM');
+		process.exit(1);
+	});
+	driver.on('add-dir-untrusted', (dir: string) => {
+		if (statusFinalized) return;
+		statusFinalized = true;
+		process.stderr.write(addDirUntrustedHint(dir));
+		driver.kill('SIGTERM');
+		process.exit(1);
+	});
+	driver.on('startup-dialog-blocked', (option: string) => {
+		if (statusFinalized) return;
+		statusFinalized = true;
+		process.stderr.write(
+			formatScreenTailReport(startupDialogBlockedMessage(option), driver.getFailureScreen())
+		);
 		driver.kill('SIGTERM');
 		process.exit(1);
 	});

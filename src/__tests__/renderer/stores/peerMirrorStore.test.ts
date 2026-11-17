@@ -187,12 +187,10 @@ describe('peerMirrorStore', () => {
 			const store = usePeerMirrorStore.getState();
 			store.hydrate([peerWith('buildbox', [agent('a1')]), peerWith('gpu', [agent('b1')])]);
 			store.selectMirroredAgent('buildbox', 'a1');
-			store.togglePeerCollapsed('buildbox');
 			usePeerMirrorStore.getState().applyPush(push('buildbox', { type: 'peer.removed' }));
 			const state = usePeerMirrorStore.getState();
 			expect(state.order).toEqual(['gpu']);
 			expect(state.peers.buildbox).toBeUndefined();
-			expect(state.collapsedPeerIds.buildbox).toBeUndefined();
 			expect(state.activeMirror).toBeNull();
 		});
 
@@ -393,6 +391,30 @@ describe('peerMirrorStore', () => {
 			expect(isMirrorShown()).toBe(false);
 		});
 
+		it("selecting a hosted agent's Left Bar row shows the agent its host runs", () => {
+			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1')])]);
+			useSessionStore.setState({
+				sessions: [
+					{ id: 'row-1', liftedTo: { peer: 'buildbox', agentId: 'a1', at: 1 } },
+					{ id: 'row-2', liftedTo: { peer: 'buildbox', agentId: 'gone', at: 1 } },
+					{ id: 'local-1' },
+				] as never,
+			});
+			useSessionStore.getState().setActiveSessionId('row-1');
+			expect(usePeerMirrorStore.getState().activeMirror?.key).toBe('buildbox:a1');
+
+			// Cycling onto a local agent leaves the mirror; back onto the row shows it again.
+			useSessionStore.getState().setActiveSessionIdInternal('local-1');
+			expect(isMirrorShown()).toBe(false);
+			useSessionStore.getState().setActiveSessionIdInternal('row-1');
+			expect(usePeerMirrorStore.getState().activeMirror?.key).toBe('buildbox:a1');
+
+			// The host does not show the agent its pointer names: the local copy shows instead.
+			useSessionStore.getState().setActiveSessionId('row-2');
+			expect(isMirrorShown()).toBe(false);
+			useSessionStore.setState({ sessions: [] });
+		});
+
 		it('never puts a mirrored agent into sessionStore', () => {
 			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1')])]);
 			usePeerMirrorStore.getState().selectMirroredAgent('buildbox', 'a1');
@@ -417,6 +439,21 @@ describe('peerMirrorStore', () => {
 			expect(usePeerMirrorStore.getState().activeTabIds.buildbox.a1).toBe('t1');
 			usePeerMirrorStore.getState().cycleMirrorTab(-1);
 			expect(usePeerMirrorStore.getState().activeTabIds.buildbox.a1).toBe('t3');
+		});
+
+		it("cycles through the tabs this machine kept after the host's", () => {
+			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1', ['t1', 't2'])])]);
+			usePeerMirrorStore.getState().selectMirroredAgent('buildbox', 'a1');
+			const cycle = (direction: 1 | -1) =>
+				usePeerMirrorStore.getState().cycleMirrorTab(direction, ['local-1']);
+			cycle(1);
+			expect(usePeerMirrorStore.getState().activeTabIds.buildbox.a1).toBe('t2');
+			cycle(1);
+			expect(usePeerMirrorStore.getState().activeTabIds.buildbox.a1).toBe('local-1');
+			cycle(1);
+			expect(usePeerMirrorStore.getState().activeTabIds.buildbox.a1).toBe('t1');
+			cycle(-1);
+			expect(usePeerMirrorStore.getState().activeTabIds.buildbox.a1).toBe('local-1');
 		});
 	});
 

@@ -29,7 +29,7 @@ import {
 	setPeerConnection,
 } from '../../../../shared/maestro-lib/client/peer-mirror';
 import type { AITabRecord } from '../../../../shared/maestro-lib/store/records';
-import { resetStores } from '../../../helpers';
+import { createMockSession, resetStores } from '../../../helpers';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 const maestro = window.maestro as unknown as Record<string, unknown>;
@@ -53,8 +53,16 @@ const textbox = () => screen.getByLabelText('Message Builder on Build Box') as H
 const draft = () => usePeerMirrorStore.getState().drafts[mirrorDraftKey('build', 'a1', 't1')];
 const flush = () => act(async () => undefined);
 
-/** The host's copy of the agent in the mirror store, connected, so the Thinking pill reads it. */
+/**
+ * The host's copy of the agent in the mirror store, connected, plus its Left Bar row: the
+ * Thinking pill lists a hosted agent only when the Left Bar shows it.
+ */
 function hydrateHost(tab: AITabRecord) {
+	useSessionStore.setState({
+		sessions: [
+			createMockSession({ id: 'row-a1', liftedTo: { peer: 'build', agentId: 'a1', at: 1 } }),
+		],
+	});
 	const peer = setPeerConnection(
 		replacePeerAgents(
 			createMirroredPeer({ peerId: 'build', remoteId: 'r-build', name: 'Build Box' }),

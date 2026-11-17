@@ -18,6 +18,8 @@ import type {
 	PeerAgentActionResult,
 } from '../../shared/maestro-lib/client/peer-actions';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { findLiftedAgent } from '../../shared/maestro-lib/agents/lift-pointer';
 import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
@@ -229,7 +231,8 @@ export async function setMirrorQueuedItemPaused(
 
 /**
  * Show the mirrored agent `key` (`peerId:agentId`) names, on `tabId` when given. False when no
- * mirrored agent has that key, so a caller can treat the id as a local agent's instead.
+ * mirrored agent has that key, so a caller can treat the id as a local agent's instead. When a
+ * Left Bar row points at the agent, the row is selected too, so the Left Bar shows where it is.
  */
 export function openMirroredAgentByKey(key: string, tabId?: string): boolean {
 	const store = usePeerMirrorStore.getState();
@@ -238,7 +241,10 @@ export function openMirroredAgentByKey(key: string, tabId?: string): boolean {
 			(candidate) => mirrorKey(peerId, candidate.id) === key
 		);
 		if (!agent) continue;
-		store.selectMirroredAgent(peerId, agent.id);
+		const row = findLiftedAgent(useSessionStore.getState().sessions, peerId, agent.id);
+		// Selecting the row follows its pointer to the hosted agent (`followLiftedPointer`).
+		if (row) useSessionStore.getState().setActiveSessionId(row.id);
+		else store.selectMirroredAgent(peerId, agent.id);
 		if (tabId) store.selectMirrorTab(peerId, agent.id, tabId);
 		return true;
 	}

@@ -17,7 +17,8 @@ import {
 import { usePRCreationStore, prRunKey } from '../../../../renderer/stores/prCreationStore';
 import type { Session } from '../../../../renderer/types';
 import { mockTheme } from '../../../helpers/mockTheme';
-import { openLiftedAgent, requestMoveToHost } from '../../../../renderer/services/agentLift';
+import { requestMoveToHost, startPeerHost } from '../../../../renderer/services/agentLift';
+import { copyPeerAgentRef, reconnectPeer } from '../../../../renderer/services/peerMirror';
 import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
 import {
 	createMirroredPeer,
@@ -70,7 +71,12 @@ vi.mock('../../../../renderer/stores/modalStore', async (importOriginal) => ({
 
 vi.mock('../../../../renderer/services/agentLift', () => ({
 	requestMoveToHost: vi.fn(),
-	openLiftedAgent: vi.fn(),
+	startPeerHost: vi.fn(),
+}));
+
+vi.mock('../../../../renderer/services/peerMirror', () => ({
+	copyPeerAgentRef: vi.fn(),
+	reconnectPeer: vi.fn(),
 }));
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -533,13 +539,27 @@ describe('SessionContextMenu', () => {
 			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
 		});
 
-		it('offers Open on Host instead once the agent moved', () => {
+		it("offers the host's connection instead once the agent is hosted", () => {
 			mirror();
 			const session = sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } });
 			renderMenu({ session });
 			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
-			fireEvent.click(screen.getByText('Open on Host (box:h1)'));
-			expect(openLiftedAgent).toHaveBeenCalledWith(session);
+			expect(screen.queryByTestId('session-menu-start-host')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('session-menu-copy-hosted-ref'));
+			expect(copyPeerAgentRef).toHaveBeenCalledWith('box', 'h1');
+			cleanup();
+			renderMenu({ session });
+			const reconnect = screen.getByTestId('session-menu-reconnect-host');
+			expect(reconnect).toHaveTextContent('Reconnect Build Box');
+			fireEvent.click(reconnect);
+			expect(reconnectPeer).toHaveBeenCalledWith('box');
+		});
+
+		it('offers Start Host while a hosted agent cannot reach its host', () => {
+			mirror('lost');
+			renderMenu({ session: sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }) });
+			fireEvent.click(screen.getByTestId('session-menu-start-host'));
+			expect(startPeerHost).toHaveBeenCalledWith('r1', 'Build Box');
 		});
 	});
 });

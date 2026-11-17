@@ -21,6 +21,8 @@ import {
 	canMoveToHost,
 	isPeerFederated,
 	buildMirrorViewSession,
+	hostedLocalTabs,
+	hostedViewTabIds,
 	isPeerDisconnected,
 	liftedMirrorTarget,
 	MIRROR_COMPOSER_UNAVAILABLE,
@@ -219,7 +221,7 @@ describe('buildMirrorThinkingItems', () => {
 
 	it('lists each visible busy tab of a connected peer, keyed and named for the mirror', () => {
 		const peer = peerOf('box', [hostAgent]);
-		const items = buildMirrorThinkingItems({ box: peer }, ['box']);
+		const items = buildMirrorThinkingItems({ box: peer }, ['box'], new Set(['box:a1']));
 		expect(items.map((item) => item.tab?.id)).toEqual(['t1', 't2']);
 		expect(items[0].session).toEqual({ id: 'box:a1', name: 'Builder on Peer box', state: 'busy' });
 		expect(items[0].mirror).toEqual({ peerId: 'box', agentId: 'a1' });
@@ -232,14 +234,20 @@ describe('buildMirrorThinkingItems', () => {
 			...peerOf('box', [hostAgent]),
 			liveTurns: { [liveTurnKey('a1', 't2')]: { startedAt: 77, entries: [], busy: true } },
 		};
-		const items = buildMirrorThinkingItems({ box: peer }, ['box']);
+		const items = buildMirrorThinkingItems({ box: peer }, ['box'], new Set(['box:a1']));
 		expect(items.find((item) => item.tab?.id === 't2')?.tab?.thinkingStartTime).toBe(77);
 	});
 
 	it('shows nothing for a peer that is not connected, or one missing from the map', () => {
 		const lost = peerOf('box', [hostAgent], 'lost');
-		expect(buildMirrorThinkingItems({ box: lost }, ['box'])).toEqual([]);
-		expect(buildMirrorThinkingItems({}, ['gone'])).toEqual([]);
+		expect(buildMirrorThinkingItems({ box: lost }, ['box'], new Set(['box:a1']))).toEqual([]);
+		expect(buildMirrorThinkingItems({}, ['gone'], new Set(['gone:a1']))).toEqual([]);
+	});
+
+	it('leaves out a host agent the Left Bar does not show', () => {
+		const peer = peerOf('box', [hostAgent]);
+		expect(buildMirrorThinkingItems({ box: peer }, ['box'], new Set())).toEqual([]);
+		expect(buildMirrorThinkingItems({ box: peer }, ['box'], new Set(['box:other']))).toEqual([]);
 	});
 
 	it('follows the peer order and skips an agent with no busy tab', () => {
@@ -248,7 +256,10 @@ describe('buildMirrorThinkingItems', () => {
 			box: peerOf('box', [hostAgent, idle]),
 			gpu: peerOf('gpu', [{ ...hostAgent, id: 'g1', aiTabs: [{ id: 'gt', state: 'busy' }] }]),
 		};
-		const ids = buildMirrorThinkingItems(peers, ['gpu', 'box']).map((item) => item.session.id);
+		const shown = new Set(['box:a1', 'box:a2', 'gpu:g1']);
+		const ids = buildMirrorThinkingItems(peers, ['gpu', 'box'], shown).map(
+			(item) => item.session.id
+		);
 		expect(ids).toEqual(['gpu:g1', 'box:a1', 'box:a1']);
 	});
 });
@@ -348,7 +359,13 @@ describe('Federation status of a local agent', () => {
 		).toEqual({ kind: 'local' });
 		expect(
 			agentFederationStatus({ liftedTo: { peer: 'build', agentId: 'a1', at: 1 } }, [])
-		).toEqual({ kind: 'moved' });
+		).toEqual({ kind: 'moved', peerId: 'build', agentId: 'a1' });
+		// A hosted agent carries its peer, so the badge can show the host's connection.
+		expect(
+			agentFederationStatus({ liftedTo: { peer: 'build', agentId: 'a1', at: 1 } }, [
+				peer('lost', true),
+			])
+		).toMatchObject({ kind: 'moved', peerId: 'build', peer: { connection: 'lost' } });
 		expect(agentFederationStatus(ssh, [peer('connected')])).toMatchObject({
 			kind: 'ssh',
 			remoteId: 'r1',
@@ -364,6 +381,34 @@ describe('Federation status of a local agent', () => {
 		// The remote opted out (no mirror entry): it stays an SSH agent.
 		expect(canMoveToHost(agentFederationStatus(ssh, []))).toBe(false);
 		expect(canMoveToHost({ kind: 'local' })).toBe(false);
-		expect(canMoveToHost({ kind: 'moved' })).toBe(false);
+		expect(canMoveToHost({ kind: 'moved', peerId: 'build', agentId: 'a1' })).toBe(false);
+	});
+});
+
+describe('one tab strip for a hosted agent', () => {
+	const tab = (id: string, extra: Record<string, unknown> = {}) =>
+		({ id, agentSessionId: null, logs: [], ...extra }) as never;
+
+	it('keeps the local tabs that hold a conversation, never a blank or hidden one', () => {
+		const local = {
+			aiTabs: [
+				tab('blank'),
+				tab('talked', { logs: [{ id: 'l1', timestamp: 1, source: 'user', text: 'hi' }] }),
+				tab('resumed', { agentSessionId: 'sess-1' }),
+				tab('consult', { agentSessionId: 'sess-2', hidden: true }),
+			],
+		};
+		expect(hostedLocalTabs(local).map((entry) => entry.id)).toEqual(['talked', 'resumed']);
+		expect(hostedLocalTabs(undefined)).toEqual([]);
+	});
+
+	it('orders the host tabs first, then the local ones, skipping hidden host tabs', () => {
+		const host: AgentRecord = {
+			id: 'a1',
+			name: 'Builder',
+			toolType: 'codex',
+			aiTabs: [{ id: 'h1' }, { id: 'h2', hidden: true }, { id: 'h3' }],
+		};
+		expect(hostedViewTabIds(host, ['l1', 'l2'])).toEqual(['h1', 'h3', 'l1', 'l2']);
 	});
 });

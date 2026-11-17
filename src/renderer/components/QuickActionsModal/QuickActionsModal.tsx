@@ -101,6 +101,7 @@ import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
 import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
 import {
 	useAgentFederationStatus,
+	useAddableHostedAgentCount,
 	useLiftedMirrorTarget,
 } from '../../hooks/federation/useAgentLift';
 import { buildSupportCommands } from './commands/supportCommands';
@@ -597,6 +598,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const activeMirror = usePeerMirrorStore((s) => s.activeMirror);
 	const federationStatus = useAgentFederationStatus(activeSession);
 	const liftedTarget = useLiftedMirrorTarget(activeSession?.liftedTo);
+	const addableHostedAgentCount = useAddableHostedAgentCount();
 	const settingsConflictCount = useHostedAgentSettingsStore(selectHostedConflictCount);
 	const federationActions = buildFederationCommands({
 		// Only remotes that run a host: every other SSH remote was probed and is plain SSH.
@@ -604,7 +606,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			mirrorPeers[peerId] && isPeerFederated(mirrorPeers[peerId]) ? [mirrorPeers[peerId]] : []
 		),
 		activeMirror,
-		selectMirroredAgent: usePeerMirrorStore.getState().selectMirroredAgent,
 		reconnectPeer,
 		copyPeerAgentRef,
 		// The active LOCAL agent's entries; hidden while the Main Window shows a mirrored one.
@@ -626,6 +627,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			useHostedAgentSettingsStore.getState().openEditor({ peerId, agentId }),
 		settingsConflictCount,
 		openSettingsConflicts: () => useHostedAgentSettingsStore.getState().setConflictsOpen(true),
+		addableHostedAgentCount,
+		openAddHostedAgent: () => openModal('addHostedAgent'),
 		setQuickActionOpen,
 	});
 

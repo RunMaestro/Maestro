@@ -16,6 +16,7 @@ import {
 	type ClassifiableError,
 } from '../../shared/retryClassification';
 import type { AgentErrorType } from '../../shared/types';
+import { appendFailureScreen } from '../../shared/failureScreen';
 
 function err(partial: Partial<ClassifiableError> & { message: string }): ClassifiableError {
 	return {
@@ -189,6 +190,32 @@ describe('classifyRetryableError', () => {
 
 	it('returns null for unrecognized messages', () => {
 		expect(classifyRetryableError(err({ type: 'unknown', message: 'something weird' }))).toBeNull();
+	});
+
+	it('never lets a failure screen under the message choose the retry', () => {
+		// The screen is evidence for a person: an agent's own output on it can say
+		// "rate limit" or "overloaded" without the provider having refused anything.
+		const message = appendFailureScreen(
+			'claude exited before the turn started',
+			'> checking the rate limit docs\n  API overloaded handling: done'
+		);
+		expect(classifyRetryableError(err({ type: 'unknown', message }))).toBeNull();
+		const grokMessage = appendFailureScreen('grok exited', 'Too many requests in the log');
+		expect(
+			classifyRetryableError(
+				err({
+					type: 'unknown',
+					agentId: 'grok',
+					message: grokMessage,
+					terminal: { status: 'failed', kind: 'provider', dispatchState: 'not-dispatched' },
+				})
+			)
+		).toBeNull();
+	});
+
+	it('still classifies the message above a failure screen', () => {
+		const message = appendFailureScreen('API Error: 529 Overloaded', 'some screen text');
+		expect(classifyRetryableError(err({ message }))).toBe('availability');
 	});
 });
 

@@ -286,6 +286,22 @@ describe('JsonEmitter', () => {
 			expect(resultEvent).not.toHaveProperty('modelUsage');
 			expect(resultEvent).not.toHaveProperty('total_cost_usd');
 			expect(resultEvent).not.toHaveProperty('error');
+			expect(resultEvent).not.toHaveProperty('last_screen');
+		});
+
+		it('carries the failure screen as last_screen', () => {
+			const emitter = new JsonEmitter();
+			emitter.emitInit({ sessionId: 'abc', model: null, cwd: '/cwd' });
+			emitter.emitResult({
+				sessionId: 'abc',
+				durationMs: 100,
+				isError: true,
+				error: 'tui_exited',
+				lastScreen: '❯ No, exit',
+			});
+
+			const events = parseEmissions() as Array<Record<string, unknown>>;
+			expect(events[1]).toMatchObject({ error: 'tui_exited', last_screen: '❯ No, exit' });
 		});
 
 		it('includes optional fields when supplied', () => {

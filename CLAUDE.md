@@ -105,6 +105,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **UTF-8 size of a JSON payload (a message size cap):** `serializedJsonByteLength(value)` in `src/shared/jsonUtils.ts`
 - **Deterministic JSON (same value, same text):** `canonicalJson(value)` in `src/shared/canonicalJson.ts` (never hash or compare `JSON.stringify` output)
 - **Redacting secrets from text you persist or show:** `redactSecrets(text, opts?)`, `passesLuhn()` in `src/shared/redactSecrets.ts`
+- **A terminal screen shown under a failure message:** `appendFailureScreen()`, `withoutFailureScreen()` in `src/shared/failureScreen.ts`
 - **An Error in a log entry or JSON payload:** `serializeError()`, `toLoggableData()` in `src/shared/serializeError.ts`
 - **An ssh run that never reached the host (exit 255):** `isSshConnectionFailure()`, `describeSshUnreachable()` in `src/shared/sshConnection.ts`
 - **Telling the user an SSH remote went down:** `noteSshExit()`, `checkSshRemote()` in `src/main/ssh-reachability.ts`; run one-shot remote commands with `execSshCommand()` in `src/main/utils/ssh-command-builder.ts`
@@ -206,6 +207,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Automatic Federation (keep hosts, install, move SSH agents):** `AutoFederationCoordinator` in `src/main/federation/auto-federation.ts`; `useFederationAutoStore` in `src/renderer/stores/federationAutoStore.ts`; types in `src/shared/federationAuto.ts`
 - **Whether an SSH remote takes part in Federation:** `isFederationRemote()`, `federationFieldFor()` in `src/shared/federationRemote.ts`
 - **How a local agent stands with Federation (badge, Move to Host):** `agentFederationStatus()`, `canMoveToHost()`, `isPeerFederated()` in `src/renderer/utils/peerMirrorView.ts`; `<FederationBadge>` in `src/renderer/components/SessionList/FederationBadge.tsx`
+- **Which hosted agents the Left Bar shows, and adding one:** `liftedAgentKeys()`, `findLiftedAgent()` in `src/shared/maestro-lib/agents/lift-pointer.ts`; `listHostedAgents()`, `addHostedAgent()`, `resolveHostAgentRef()` in `src/renderer/services/hostedAgents.ts`
 - **Showing a Federation peer's mirrored agent (renderer):** `usePeerMirrorStore`, `isMirrorShown()` in `src/renderer/stores/peerMirrorStore.ts`; `buildMirrorViewSession()` in `src/renderer/utils/peerMirrorView.ts`; `gateKeyForMirror()` in `src/renderer/hooks/keyboard/mirrorKeyboardGate.ts`
 - **A loopback port for an SSH local forward:** `availableLocalPort()`, `waitForLocalPort()` in `src/shared/maestro-lib/client/local-port.ts`
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`

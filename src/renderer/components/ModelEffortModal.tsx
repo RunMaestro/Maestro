@@ -705,7 +705,7 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 										onMouseDown={(e) => e.preventDefault()}
 										tabIndex={-1}
 										disabled={refreshingModels}
-										className="ml-1 flex items-center gap-1 rounded px-1 py-0.5 normal-case tracking-normal font-mono transition-opacity opacity-70 hover:opacity-100 disabled:cursor-default"
+										className="ml-1 flex items-center gap-1 rounded px-1 py-0.5 normal-case tracking-normal transition-opacity opacity-70 hover:opacity-100 disabled:cursor-default"
 										style={{
 											color: theme.colors.accent,
 											backgroundColor: `${theme.colors.accent}14`,
@@ -717,7 +717,10 @@ export function ModelEffortModal({ theme, tabId, onClose }: ModelEffortModalProp
 										data-testid="model-effort-refresh"
 									>
 										<RefreshCw className={`w-3 h-3 ${refreshingModels ? 'animate-spin' : ''}`} />
-										<span data-shortcut-hint="">{formatShortcutKeys(REFRESH_KEYS)}</span>
+										<span>Refresh</span>
+										<span data-shortcut-hint="" className="font-mono opacity-70">
+											{formatShortcutKeys(REFRESH_KEYS)}
+										</span>
 									</button>
 								</div>
 

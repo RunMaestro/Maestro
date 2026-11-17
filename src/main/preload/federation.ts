@@ -16,9 +16,9 @@ import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { DesktopLiftAnswer, DesktopLiftOptions } from '../federation/lift';
 import type { DesktopSetupHostAnswer, DesktopSetupHostOptions } from '../federation/setup-host';
 import {
-	HOSTED_SETTINGS_REQUEST_CHANNEL,
-	type HostedSettingsReply,
-	type HostedSettingsRequest,
+	FEDERATION_WINDOW_REQUEST_CHANNEL,
+	type FederationWindowReply,
+	type FederationWindowRequest,
 } from '../../shared/federationCommands';
 import type { AutoFederationSnapshot } from '../../shared/federationAuto';
 import type { PeerHistoryPageQuery } from '../federation/peer-history';
@@ -99,29 +99,32 @@ export function createFederationApi() {
 		lift: (agentId: string, options?: DesktopLiftOptions): Promise<DesktopLiftAnswer> =>
 			ipcRenderer.invoke('federation:lift', agentId, options ?? {}),
 		/**
-		 * Answer main's questions about the hosted agents' settings conflicts (`maestro-cli federation
-		 * conflicts|resolve`). Only the window that runs the settings sync registers. Returns the
+		 * Answer main's Federation questions for the CLI: the hosted agents' settings conflicts
+		 * (`maestro-cli federation conflicts|resolve`) and the host agents the Left Bar shows or adds
+		 * (`maestro-cli federation agents|add`). Only the main window registers. Returns the
 		 * unsubscribe.
 		 */
-		onHostedSettingsRequest: (
-			handler: (request: HostedSettingsRequest) => HostedSettingsReply
+		onFederationWindowRequest: (
+			handler: (
+				request: FederationWindowRequest
+			) => FederationWindowReply | Promise<FederationWindowReply>
 		): (() => void) => {
-			const listener = (
+			const listener = async (
 				_event: Electron.IpcRendererEvent,
-				request: HostedSettingsRequest,
+				request: FederationWindowRequest,
 				responseChannel: string
 			) => {
-				if (!responseChannel.startsWith(`${HOSTED_SETTINGS_REQUEST_CHANNEL}:response:`)) return;
-				let reply: HostedSettingsReply;
+				if (!responseChannel.startsWith(`${FEDERATION_WINDOW_REQUEST_CHANNEL}:response:`)) return;
+				let reply: FederationWindowReply;
 				try {
-					reply = handler(request);
+					reply = await handler(request);
 				} catch (error) {
 					reply = { success: false, error: error instanceof Error ? error.message : String(error) };
 				}
 				ipcRenderer.send(responseChannel, reply);
 			};
-			ipcRenderer.on(HOSTED_SETTINGS_REQUEST_CHANNEL, listener);
-			return () => ipcRenderer.removeListener(HOSTED_SETTINGS_REQUEST_CHANNEL, listener);
+			ipcRenderer.on(FEDERATION_WINDOW_REQUEST_CHANNEL, listener);
+			return () => ipcRenderer.removeListener(FEDERATION_WINDOW_REQUEST_CHANNEL, listener);
 		},
 		/**
 		 * Install this app's maestro-cli on an SSH remote (or upgrade an older one), start the host

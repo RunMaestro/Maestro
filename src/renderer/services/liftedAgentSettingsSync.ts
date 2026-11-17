@@ -41,9 +41,9 @@ import { readLiftedTo, type LiftedToPointer } from '../../shared/maestro-lib/age
 import { mirrorKey, type MirroredPeer } from '../../shared/maestro-lib/client/peer-mirror';
 import type { ClientErrorCode } from '../../shared/maestro-lib/client/types';
 import type {
+	FederationWindowReply,
+	FederationWindowRequest,
 	HostedSettingsConflictSummary,
-	HostedSettingsReply,
-	HostedSettingsRequest,
 } from '../../shared/federationCommands';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { Session } from '../types';
@@ -223,7 +223,9 @@ export function listHostedSettingsConflicts(): HostedSettingsConflictSummary[] {
  * Answer `maestro-cli federation conflicts|resolve` (asked by main through the window). A
  * resolution is the one the modal's buttons record, so the next sync pass carries it out.
  */
-export function answerHostedSettingsRequest(request: HostedSettingsRequest): HostedSettingsReply {
+export function answerHostedSettingsRequest(
+	request: Extract<FederationWindowRequest, { action: 'list' | 'resolve' }>
+): FederationWindowReply {
 	if (request.action === 'resolve') {
 		const store = useHostedAgentSettingsStore.getState();
 		const set = store.conflicts[request.agent];

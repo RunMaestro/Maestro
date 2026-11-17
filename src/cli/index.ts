@@ -94,6 +94,8 @@ import { hostEndpoint, hostStart, hostStatus, hostStop } from './commands/host';
 import { remoteHostInstall, remoteHostStart, remoteHostStatus } from './commands/remote-host';
 import { lift } from './commands/lift';
 import {
+	federationAdd,
+	federationAgents,
 	federationAuto,
 	federationAutoRun,
 	federationConflicts,
@@ -118,6 +120,7 @@ import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
 import { testSshRemote } from './commands/test-ssh-remote';
 import { sshRemoteStatus } from './commands/ssh-remote-status';
+import { claudeCanary } from './commands/claude-canary';
 import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
 import { directorNotesSynopsis } from './commands/director-notes-synopsis';
@@ -2105,6 +2108,26 @@ federationAutoCommand
 	.action((options) => federationAutoRun(options));
 
 federation
+	.command('agents')
+	.description(
+		'List every agent the mirrored hosts run, and which ones the Left Bar shows (a host agent shows only once added)'
+	)
+	.option('--peer <peer>', 'Only this peer')
+	.option('--not-added', 'Only the agents the Left Bar does not show yet')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationAgents(options));
+
+federation
+	.command('add <agent>')
+	.description(
+		"Add a host's agent (peer:agent) to the Left Bar, the same as Add Hosted Agent. Remove it with remove-agent; the host keeps it"
+	)
+	.option('-g, --group <group>', 'Local group id or name for the row (default: ungrouped)')
+	.option('--background', 'Add it without selecting it (Left Bar selection stays put)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, options) => federationAdd(agent, options));
+
+federation
 	.command('reconnect <peer>')
 	.description('Force the desktop to reconnect to a peer and reload its agent list')
 	.option('--json', 'Output as JSON (for scripting)')
@@ -2794,6 +2817,16 @@ program
 	.option('--check <remote-id>', 'Probe this remote now; exits 2 if it is still unreachable')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sshRemoteStatus);
+
+// Claude TUI canary - did the installed Claude Code pass a maestro-p turn?
+program
+	.command('claude-canary')
+	.description(
+		'Show whether the installed Claude Code passed the TUI canary (one real maestro-p turn the app runs after every Claude Code update); --run runs it now'
+	)
+	.option('--run', 'Run the canary now; exits 2 if Claude Code fails it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(claudeCanary);
 
 // Display / typography commands
 //

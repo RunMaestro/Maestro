@@ -1658,6 +1658,26 @@ Run an automatic Federation pass now: start stopped hosts, install where SSH age
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli federation agents`
+
+List every agent the mirrored hosts run, and which ones the Left Bar shows (a host agent shows only once added)
+
+| Option          | Description                                    | Default |
+| --------------- | ---------------------------------------------- | ------- |
+| `--peer <peer>` | Only this peer                                 | -       |
+| `--not-added`   | Only the agents the Left Bar does not show yet | -       |
+| `--json`        | Output as JSON (for scripting)                 | -       |
+
+## `maestro-cli federation add <agent>`
+
+Add a host's agent (peer:agent) to the Left Bar, the same as Add Hosted Agent. Remove it with remove-agent; the host keeps it
+
+| Option                | Description                                                | Default |
+| --------------------- | ---------------------------------------------------------- | ------- |
+| `-g, --group <group>` | Local group id or name for the row (default: ungrouped)    | -       |
+| `--background`        | Add it without selecting it (Left Bar selection stays put) | -       |
+| `--json`              | Output as JSON (for scripting)                             | -       |
+
 ## `maestro-cli federation reconnect <peer>`
 
 Force the desktop to reconnect to a peer and reload its agent list
@@ -2262,6 +2282,22 @@ not.
 | --------------------- | --------------------------------------------------------- | ------- |
 | `--check <remote-id>` | Probe this remote now; exits 2 if it is still unreachable | -       |
 | `--json`              | Output as JSON (for scripting)                            | -       |
+
+## `maestro-cli claude-canary`
+
+Show whether the installed Claude Code passed the TUI canary (one real maestro-p turn the app runs after every Claude Code update); --run runs it now
+
+Claude Code updates itself while Maestro runs, and a release can change the
+TUI that agents on the interactive token source drive. After every Claude Code
+(or Maestro) version change, the running app runs one small maestro-p turn with
+the flags real agents use and raises a toast when it fails. This reads the last
+result, including what Claude Code showed on a failure. Exits 2 when the last
+result is a failure. Needs the desktop running.
+
+| Option   | Description                                         | Default |
+| -------- | --------------------------------------------------- | ------- |
+| `--run`  | Run the canary now; exits 2 if Claude Code fails it | -       |
+| `--json` | Output as JSON (for scripting)                      | -       |
 
 ## `maestro-cli display`
 

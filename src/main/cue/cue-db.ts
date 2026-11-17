@@ -61,7 +61,7 @@ export interface CueEventRecord {
 	 * maestro-p this is the distinguishing signal (3 = idle timeout, 4 =
 	 * ready_timeout, 5 = first_byte_timeout, 6 = prompt_truncated, 7 =
 	 * workspace_untrusted, 8 = terminal API error such as an unknown model, 9 =
-	 * resumed session has no transcript on this host, 1 =
+	 * resumed session has no transcript on this host, 10 = add_dir_untrusted, 11 = startup_dialog_blocked, 1 =
 	 * tui_exited, 2 = limit, 0 = success). NULL when the run never produced an exit code (spawn error,
 	 * still running) or for status flips that aren't run completions.
 	 */

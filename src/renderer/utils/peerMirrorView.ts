@@ -18,6 +18,7 @@ import type {
 } from '../../shared/maestro-lib/client/peer-mirror';
 import { mirrorKey } from '../../shared/maestro-lib/client/peer-mirror';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
+import { visibleAiTabs } from './unifiedTabOrderUtils';
 import type { AgentRecord, AITabRecord } from '../../shared/maestro-lib/store/records';
 import {
 	LOG_ENTRY_SOURCES,
@@ -111,6 +112,26 @@ export function mirrorTabs(agent: AgentRecord): AITab[] {
 }
 
 /**
+ * The tabs a hosted agent's own Left Bar record still holds on this machine: the conversations it
+ * had before it moved (a lift keeps every tab). The hosted view lists them after the host's tabs,
+ * read only, so one list holds everything the agent ever said. Blank tabs (an added agent's
+ * starting tab) and hidden consult tabs are left out.
+ */
+export function hostedLocalTabs(local: { aiTabs?: AITab[] } | undefined): AITab[] {
+	return visibleAiTabs(local?.aiTabs).filter(
+		(tab) => (tab.logs?.length ?? 0) > 0 || !!tab.agentSessionId
+	);
+}
+
+/** The hosted view's tab ids in strip order: the host's visible tabs, then this machine's. */
+export function hostedViewTabIds(agent: AgentRecord, localTabIds: readonly string[]): string[] {
+	return [
+		...(agent.aiTabs ?? []).filter((tab) => !tab.hidden).map((tab) => tab.id),
+		...localTabIds,
+	];
+}
+
+/**
  * The tab to show: the one the user picked in this window, else the host's active tab, else the
  * first. Undefined when the agent has no visible tab.
  */
@@ -166,20 +187,25 @@ export function buildMirrorViewSession(input: {
 }
 
 /**
- * The Thinking pill's entries for every connected peer: one per visible tab the host reports busy,
- * the same rule `buildThinkingItems()` applies to a local agent. Each carries `mirror`, so a click
- * opens the mirrored agent and Stop reaches its host. A peer that is not connected shows nothing:
- * its last known state may be long over, and a Stop there could not reach it.
+ * The Thinking pill's entries for the hosted agents the person keeps in the Left Bar: one per
+ * visible tab the host reports busy, the same rule `buildThinkingItems()` applies to a local agent.
+ * `shown` is `liftedAgentKeys()` of the local records: a host's other agents belong to whoever runs
+ * that host and never show here. Each item carries `mirror`, so a click opens the hosted agent and
+ * Stop reaches its host. A peer that is not connected shows nothing: its last known state may be
+ * long over, and a Stop there could not reach it.
  */
 export function buildMirrorThinkingItems(
 	peers: Readonly<Record<string, MirroredPeer>>,
-	order: readonly string[]
+	order: readonly string[],
+	shown: ReadonlySet<string>
 ): ThinkingItem[] {
 	const items: ThinkingItem[] = [];
+	if (shown.size === 0) return items;
 	for (const peerId of order) {
 		const peer = peers[peerId];
 		if (!peer || peer.connection !== 'connected') continue;
 		for (const agent of peer.agents) {
+			if (!shown.has(mirrorKey(peerId, agent.id))) continue;
 			const busyTabs = (agent.aiTabs ?? []).filter((tab) => !tab.hidden && tab.state === 'busy');
 			if (busyTabs.length === 0) continue;
 			const session: ThinkingItemAgent = {
@@ -229,8 +255,8 @@ export function isPeerDisconnected(peer: Pick<MirroredPeer, 'connection'>): bool
 /**
  * Whether a peer has a Maestro host to show. Federation probes every SSH remote that has not opted
  * out, so most probes find no host (`not-installed`, `host-down`): those remotes stay plain SSH
- * remotes and out of the Left Bar. A peer that is connected, reconnecting, or was synced once
- * (shown dimmed while it is away) counts.
+ * remotes, out of the palette's Reconnect entries and Add Hosted Agent. A peer that is connected,
+ * reconnecting, or was synced once (its last known state, while it is away) counts.
  */
 export function isPeerFederated(
 	peer: Pick<MirroredPeer, 'connection' | 'agents' | 'lastSyncAt'>
@@ -295,21 +321,31 @@ export interface LiftableAgent {
 /**
  * How a local agent stands with Federation, for its Left Bar badge and its Move to Host action:
  * - `local`: not an SSH agent.
- * - `moved`: lifted onto a host already; the row is a pointer.
+ * - `moved`: a hosted agent (lifted from here, or added from the host's roster); the row is a
+ *   pointer. `peerId` and `agentId` name it; `peer` is its mirror entry while the mirror has one.
  * - `ssh`: an SSH agent this Maestro drives over SSH. `peer` is its remote's mirror entry (absent
  *   when the remote opted out or is disabled, so it cannot move); `hostReady` when that peer is
  *   connected right now, so Move to Host moves it without setting a host up first.
  */
 export type AgentFederationStatus =
 	| { kind: 'local' }
-	| { kind: 'moved' }
+	| { kind: 'moved'; peerId: string; agentId: string; peer?: MirroredPeer }
 	| { kind: 'ssh'; remoteId: string; peer?: MirroredPeer; hostReady: boolean };
 
 export function agentFederationStatus(
 	agent: LiftableAgent,
 	peers: readonly MirroredPeer[]
 ): AgentFederationStatus {
-	if (readLiftedTo(agent.liftedTo)) return { kind: 'moved' };
+	const pointer = readLiftedTo(agent.liftedTo);
+	if (pointer) {
+		const peer = peers.find((candidate) => candidate.peerId === pointer.peer);
+		return {
+			kind: 'moved',
+			peerId: pointer.peer,
+			agentId: pointer.agentId,
+			...(peer ? { peer } : {}),
+		};
+	}
 	const ssh = agent.sessionSshRemoteConfig;
 	if (!ssh?.enabled || !ssh.remoteId) return { kind: 'local' };
 	const peer = peers.find((candidate) => candidate.remoteId === ssh.remoteId);
