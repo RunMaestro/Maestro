@@ -1,8 +1,9 @@
 /**
  * The Federation SSH path through its real default seams: `SshForwardManager` with no injected
- * `discover` or `spawn`, so discovery runs `discoverRemoteHost()` over the shared exec helper and
- * the forward runs on `child_process.spawn`. Only those two process boundaries (and the ssh binary
- * lookup) are mocked; everything between them is production code.
+ * `discover`, `control` or `spawn`, so discovery and the master's `ssh -O` requests run over the
+ * shared exec helper and the ControlMaster runs on `child_process.spawn`. Only those two process
+ * boundaries (and the ssh binary lookup) are mocked; everything between them is production code.
+ * The control socket directory is injected so the fake clock never races real file I/O.
  */
 
 import { EventEmitter } from 'events';
@@ -30,7 +31,11 @@ vi.mock('../../../../shared/maestro-lib/launch/ssh-path', () => ({
 	detectSshPath: vi.fn(async () => '/usr/bin/ssh'),
 }));
 
-import { SshForwardManager } from '../../../../shared/maestro-lib/client/ssh-forward';
+import {
+	SshForwardManager,
+	buildSshForwardArgs,
+	buildSshForwardMasterArgs,
+} from '../../../../shared/maestro-lib/client/ssh-forward';
 import { buildSshConnectionArgs } from '../../../../shared/sshConnection';
 
 const remote: SshRemoteConfig = {
@@ -85,15 +90,32 @@ function hostRunningOn(port: number) {
 }
 
 let children: FakeChild[];
+/** What discovery answers next; `ssh -O` requests always succeed. */
+let discovery: Array<ReturnType<typeof hostRunningOn>>;
 
-function forwardSpec(call: number): string {
-	const args = spawnMock.mock.calls[call][1] as string[];
-	return args[args.indexOf('-L') + 1];
+function isControlRequest(args: readonly string[]): boolean {
+	return args.includes('-O');
 }
 
-function manager(): SshForwardManager {
+/** The exec calls that were discovery, not requests to a master. */
+function discoveryCalls(): unknown[][] {
+	return execMock.mock.calls.filter(([, args]) => !isControlRequest(args as string[]));
+}
+
+/** The `-L` spec of every `ssh -O forward` request, in order. */
+function forwardSpecs(): string[] {
+	return execMock.mock.calls
+		.map(([, args]) => args as string[])
+		.filter((args) => args[args.indexOf('-O') + 1] === 'forward')
+		.map((args) => args[args.indexOf('-L') + 1]);
+}
+
+function manager(options: { useControlMaster?: boolean } = {}): SshForwardManager {
 	let nextPort = 51000;
+	let nextSocket = 0;
 	return new SshForwardManager({
+		useControlMaster: options.useControlMaster ?? true,
+		controlSocket: async () => ({ path: `/tmp/mfwd-${nextSocket++}/ssh`, dispose: async () => {} }),
 		allocatePort: async () => nextPort++,
 		waitForPort: async () => true,
 		backoffInitialMs: 1000,
@@ -111,7 +133,11 @@ beforeEach(() => {
 		children.push(child);
 		return child as unknown as ChildProcess;
 	});
-	execMock.mockReset();
+	discovery = [];
+	execMock.mockReset().mockImplementation(async (_command: string, args: string[]) => {
+		if (isControlRequest(args)) return { stdout: '', stderr: '', exitCode: 0 };
+		return discovery.length > 1 ? discovery.shift() : discovery[0];
+	});
 });
 
 afterEach(() => {
@@ -120,13 +146,13 @@ afterEach(() => {
 });
 
 describe('SshForwardManager on the default seams', () => {
-	it('discovers over one ssh exec, then forwards on child_process.spawn', async () => {
-		execMock.mockResolvedValue(hostRunningOn(4001));
+	it('discovers over one ssh exec, starts the master on spawn, then adds the forward', async () => {
+		discovery = [hostRunningOn(4001)];
 		const forwards = manager();
 		const lease = forwards.acquire(remote);
 		const endpoint = await lease.ready();
 
-		expect(execMock).toHaveBeenCalledOnce();
+		expect(discoveryCalls()).toHaveLength(1);
 		const [execCommand, execArgs, , execOptions] = execMock.mock.calls[0];
 		expect(execCommand).toBe('/usr/bin/ssh');
 		expect(execArgs.slice(0, -1)).toEqual(buildSshConnectionArgs(remote));
@@ -136,24 +162,40 @@ describe('SshForwardManager on the default seams', () => {
 		expect(spawnMock).toHaveBeenCalledOnce();
 		const [spawnCommand, spawnArgs, spawnOptions] = spawnMock.mock.calls[0];
 		expect(spawnCommand).toBe('/usr/bin/ssh');
-		expect(spawnArgs[0]).toBe('-N');
+		expect(spawnArgs).toEqual(buildSshForwardMasterArgs(remote, '/tmp/mfwd-0/ssh'));
 		expect(spawnOptions).toEqual({
 			stdio: ['ignore', 'ignore', 'pipe'],
 			windowsHide: true,
 			shell: false,
 		});
-		expect(forwardSpec(0)).toBe('127.0.0.1:51000:127.0.0.1:4001');
+
+		// The master's requests ride the same exec helper, with a timeout of their own.
+		const requests = execMock.mock.calls.slice(1);
+		expect(requests.map(([, args]) => args[args.indexOf('-O') + 1])).toEqual(['check', 'forward']);
+		expect(requests[0][3]).toMatchObject({ timeout: expect.any(Number) });
+		expect(forwardSpecs()).toEqual(['127.0.0.1:51000:127.0.0.1:4001']);
 		expect(endpoint).toMatchObject({ port: 51000, remotePort: 4001, token: TOKEN });
 		await forwards.dispose();
 	});
 
+	it('runs one ssh with -L and no master requests where there is no ControlMaster', async () => {
+		discovery = [hostRunningOn(4001)];
+		const forwards = manager({ useControlMaster: false });
+		const lease = forwards.acquire(remote);
+		expect(await lease.ready()).toMatchObject({ port: 51000, remotePort: 4001 });
+
+		expect(execMock).toHaveBeenCalledOnce();
+		expect(spawnMock.mock.calls[0][1]).toEqual(buildSshForwardArgs(remote, 51000, 4001));
+		await forwards.dispose();
+	});
+
 	it('shares one spawned forward between leases and kills it with the last release', async () => {
-		execMock.mockResolvedValue(hostRunningOn(4001));
+		discovery = [hostRunningOn(4001)];
 		const forwards = manager();
 		const first = forwards.acquire(remote);
 		const second = forwards.acquire(remote);
 		await Promise.all([first.ready(), second.ready()]);
-		expect(execMock).toHaveBeenCalledOnce();
+		expect(discoveryCalls()).toHaveLength(1);
 		expect(spawnMock).toHaveBeenCalledOnce();
 
 		await first.release();
@@ -164,7 +206,7 @@ describe('SshForwardManager on the default seams', () => {
 	});
 
 	it('re-runs discovery on restart and forwards to the port the host moved to', async () => {
-		execMock.mockResolvedValueOnce(hostRunningOn(4001)).mockResolvedValueOnce(hostRunningOn(4777));
+		discovery = [hostRunningOn(4001), hostRunningOn(4777)];
 		const forwards = manager();
 		const lease = forwards.acquire(remote);
 		await lease.ready();
@@ -173,15 +215,15 @@ describe('SshForwardManager on the default seams', () => {
 		expect(lease.state()).toMatchObject({ status: 'down', retryInMs: 1000 });
 		await vi.advanceTimersByTimeAsync(1000);
 
-		expect(execMock).toHaveBeenCalledTimes(2);
+		expect(discoveryCalls()).toHaveLength(2);
 		expect(spawnMock).toHaveBeenCalledTimes(2);
-		expect(forwardSpec(1)).toBe('127.0.0.1:51001:127.0.0.1:4777');
+		expect(forwardSpecs()[1]).toBe('127.0.0.1:51001:127.0.0.1:4777');
 		expect(await lease.ready()).toMatchObject({ port: 51001, remotePort: 4777 });
 		await forwards.dispose();
 	});
 
 	it('dispose kills the spawned ssh and refuses later acquires', async () => {
-		execMock.mockResolvedValue(hostRunningOn(4001));
+		discovery = [hostRunningOn(4001)];
 		const forwards = manager();
 		const lease = forwards.acquire(remote);
 		await lease.ready();

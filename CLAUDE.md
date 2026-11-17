@@ -190,7 +190,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **SSH connection options (`ssh -o`):** `resolveSshOptions()`, `buildSshOptionArgs()`, `validateSshOption()` in `src/shared/sshOptions.ts`
 - **A one-shot SSH command that must find a binary the user installed:** `wrapRemoteCommandWithPath()` in `src/shared/maestro-lib/launch/ssh-command-builder.ts`
 - **Finding the `maestro-cli host` on an SSH remote (Federation):** `discoverRemoteHost()`, `startRemoteHost()`, `remoteVersionSkew()`, `buildRemoteMaestroCliScript()`, `buildRemoteScriptArgs()` in `src/shared/maestro-lib/client/remote-discovery.ts`
-- **Forwarding a Federation remote's host to the laptop:** `getSshForwardManager().acquire(remote)`, `buildSshForwardArgs()` in `src/shared/maestro-lib/client/ssh-forward.ts`
+- **Forwarding a Federation remote's host to the laptop:** `getSshForwardManager().acquire(remote)`, `buildSshForwardMasterArgs()`, `buildSshMuxArgs()`, `buildSshForwardArgs()` in `src/shared/maestro-lib/client/ssh-forward.ts`
 - **Which env vars a Federation lift sends:** `planLiftEnv()`, `providerSessionDirSelector()`, `liftSessionDirProblem()` in `src/shared/maestro-lib/agents/lift-env.ts`
 - **A lifted agent's pointer and send refusal (Federation):** `readLiftedTo()`, `liftedSendRefusal()`, `liftedAgentRef()`, `liftedOwnerOfProcess()`, `peerAgentRef()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
 - **Planning a Federation lift (refusals, payload, plan):** `liftRefusal()`, `planAgentLift()`, `liftRemoteCwd()`, `liftedAutoRunFolder()`, `liftSshRemoteId()` in `src/shared/maestro-lib/agents/lift-plan.ts`; `liftBusyReason()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
