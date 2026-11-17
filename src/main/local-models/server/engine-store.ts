@@ -22,6 +22,7 @@ import {
 	type ServerBuildKind,
 } from '../../../shared/local-models/server-engine';
 import type { ServerAcceleratorReport } from '../../../shared/local-models/server-accelerator';
+import { atomicWriteJson } from '../../utils/atomic-json-store';
 import { exists, runtimesRoot } from '../runtime/runtime-store';
 
 /** Directory name under `runtimes/`. Not a `NativeRuntimeId`: see `server-engine.ts`. */
@@ -121,7 +122,7 @@ export async function isServerEngineStale(
 
 export async function writeServerEngineManifest(manifest: ServerEngineManifest): Promise<void> {
 	await fs.mkdir(serverEngineDir(), { recursive: true });
-	await fs.writeFile(manifestPath(), JSON.stringify(manifest, null, 2), 'utf8');
+	await atomicWriteJson(manifestPath(), manifest);
 }
 
 /** Delete the engine and any staging wreckage. Safe on an engine that was never installed. */

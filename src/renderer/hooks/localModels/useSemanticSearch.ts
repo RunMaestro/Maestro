@@ -25,6 +25,7 @@ import {
 	WORK_SEARCH_OFF_REASON,
 	type WorkSearchHit,
 } from '../../../shared/local-models/work-search';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useDebouncedValue } from '../utils/useThrottle';
 import { useLocalModelTaskReadiness } from './useLocalModelTaskReadiness';
@@ -131,7 +132,7 @@ export function useSemanticSearch(options: UseSemanticSearchOptions): SemanticSe
 				else if (result.status === 'cancelled') refused('The search was cancelled.');
 				else refused(result.reason);
 			})
-			.catch((error: unknown) => refused(error instanceof Error ? error.message : String(error)));
+			.catch((error: unknown) => refused(ipcErrorMessage(error)));
 
 		return () => {
 			// Unmounting, or a newer query: this answer is no longer wanted.

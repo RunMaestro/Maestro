@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LocalModelsApi } from '../../../main/preload/localModels';
 import type { LocalRuntimeListing } from '../../../main/local-models/service';
 import type { RuntimeInstallProgress } from '../../../main/local-models/runtime/runtime-installer';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 import { useThrottledProgressMap } from './useThrottledProgressMap';
 
 /** The calls this hook makes against a runtime namespace. */
@@ -49,10 +50,6 @@ export interface LocalRuntimesState<L extends LocalRuntimeListing = LocalRuntime
 	error: string | null;
 	refresh: () => Promise<void>;
 	install: (runtimeId: string) => Promise<void>;
-}
-
-function errorMessage(err: unknown): string {
-	return err instanceof Error ? err.message : String(err);
 }
 
 export function useLocalRuntimes<L extends LocalRuntimeListing = LocalRuntimeListing>(
@@ -91,7 +88,7 @@ export function useLocalRuntimes<L extends LocalRuntimeListing = LocalRuntimeLis
 			setListError(null);
 		} catch (err) {
 			if (!mounted.current) return;
-			const message = errorMessage(err);
+			const message = ipcErrorMessage(err);
 			setListError(isQuietError?.(message) ? null : message);
 		} finally {
 			if (mounted.current) setLoading(false);
@@ -121,7 +118,7 @@ export function useLocalRuntimes<L extends LocalRuntimeListing = LocalRuntimeLis
 				setActionError(null);
 			} catch (err) {
 				if (!mounted.current) return;
-				setActionError(errorMessage(err));
+				setActionError(ipcErrorMessage(err));
 			} finally {
 				// Cleared whatever happened: a failed install leaves a stale bar at
 				// whatever percentage it died on, which reads as a download that is

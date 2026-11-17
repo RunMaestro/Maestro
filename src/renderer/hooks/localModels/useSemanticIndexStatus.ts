@@ -16,6 +16,7 @@ import type {
 	SemanticIndexProgress,
 	SemanticIndexStorage,
 } from '../../../shared/local-models/embedding-index';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 
 export interface SemanticIndexStatusState {
 	/** `null` until the first read answers. */
@@ -50,7 +51,7 @@ export function useSemanticIndexStatus(): SemanticIndexStatusState {
 			}
 		} catch (caught) {
 			if (mounted.current && request === latestStorage.current)
-				setStorageError(caught instanceof Error ? caught.message : String(caught));
+				setStorageError(ipcErrorMessage(caught));
 		}
 	}, []);
 
@@ -67,8 +68,7 @@ export function useSemanticIndexStatus(): SemanticIndexStatusState {
 			}
 			return true;
 		} catch (caught) {
-			if (mounted.current)
-				setStorageError(caught instanceof Error ? caught.message : String(caught));
+			if (mounted.current) setStorageError(ipcErrorMessage(caught));
 			return false;
 		} finally {
 			clearingRef.current = false;
@@ -96,7 +96,7 @@ export function useSemanticIndexStatus(): SemanticIndexStatusState {
 				if (!cancelled && !pushed) setProgress(current);
 			})
 			.catch((caught: unknown) => {
-				if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught));
+				if (!cancelled) setError(ipcErrorMessage(caught));
 			});
 
 		return () => {

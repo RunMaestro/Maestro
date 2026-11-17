@@ -29,6 +29,7 @@ import {
 	type LocalModelEndpoint,
 	type LocalModelEndpointListChange,
 } from '../../../shared/local-models/endpoints';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 import { useSettingsStore } from '../../stores/settingsStore';
 
 /**
@@ -83,7 +84,7 @@ function listingKey(endpoint: LocalModelEndpoint): string {
 function failureFrom(error: unknown): EndpointCallFailure {
 	return {
 		ok: false,
-		error: { kind: 'ipc', message: error instanceof Error ? error.message : String(error) },
+		error: { kind: 'ipc', message: ipcErrorMessage(error) },
 	};
 }
 

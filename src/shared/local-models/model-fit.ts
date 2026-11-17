@@ -18,7 +18,7 @@
  * Pure: the hardware is probed in `src/main/local-models/hardware.ts`.
  */
 
-import { formatSize } from '../formatters';
+import { formatCount, formatSize } from '../formatters';
 import { kvBytesPer1kTokens } from './model-catalog';
 import type { LocalModelEntry, LocalModelKvLayout } from './types';
 
@@ -158,7 +158,7 @@ function needPhrase(need: ModelMemoryNeed): string {
 	// context share is the typical one for its size. The sentence says so.
 	const kv = need.kvEstimated ? `about ${formatSize(need.kvBytes)}` : formatSize(need.kvBytes);
 	return need.kvBytes > 0
-		? `${formatSize(need.weightsBytes + need.kvBytes)} (${formatSize(need.weightsBytes)} model, ${kv} for ${need.context.toLocaleString('en-US')} tokens of context)`
+		? `${formatSize(need.weightsBytes + need.kvBytes)} (${formatSize(need.weightsBytes)} model, ${kv} for ${formatCount(need.context)} tokens of context)`
 		: formatSize(need.weightsBytes);
 }
 

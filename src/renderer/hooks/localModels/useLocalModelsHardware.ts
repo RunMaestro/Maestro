@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { HardwareProfile } from '../../../shared/local-models/model-fit';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 
 export interface LocalModelsHardwareState {
 	/** Null until the first read lands, or when it failed. */
@@ -43,7 +44,7 @@ export function useLocalModelsHardware(): LocalModelsHardwareState {
 			setError(null);
 		} catch (err) {
 			if (!mounted.current) return;
-			setError(err instanceof Error ? err.message : String(err));
+			setError(ipcErrorMessage(err));
 		}
 	}, []);
 

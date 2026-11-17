@@ -21,6 +21,7 @@ import { ChevronRight, RefreshCw, ScrollText } from 'lucide-react';
 import {
 	formatCount,
 	formatRelativeTime,
+	formatTimestamp,
 	truncateAtWordBoundary,
 } from '../../../../../shared/formatters';
 import {
@@ -250,7 +251,7 @@ function LedgerRow({ theme, entry, agentName }: LedgerRowProps) {
 	const detailId = useId();
 	const context = useMemo(() => systemOneLedgerContext(entry), [entry]);
 	const detail: Array<[string, string]> = [
-		['When', new Date(entry.startedAt).toLocaleString()],
+		['When', formatTimestamp(entry.startedAt, 'full')],
 		...(entry.model !== undefined ? [['Model', entry.model] as [string, string]] : []),
 		['Questions', entry.questionIds.join(', ') || 'none'],
 		...(entry.code !== undefined ? [['Why no answer', entry.code] as [string, string]] : []),

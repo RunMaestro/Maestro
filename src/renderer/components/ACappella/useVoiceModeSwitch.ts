@@ -24,7 +24,7 @@ import {
 	type SwitchableVoiceMode,
 } from '../../../shared/acappella/voice-mode';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
-import { useSessionStore } from '../../stores/sessionStore';
+import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
 import { useVoiceSessionStore } from '../../stores/voiceSessionStore';
 import { resolveFocusedAiTabId } from '../../utils/panelLayout';
 import { readVoiceFocus } from './useVoiceScopeFollow';
@@ -55,15 +55,14 @@ export function useVoiceModeSwitch(): VoiceModeSwitch {
 	const targetFor = useCallback(
 		(next: SwitchableVoiceMode) => {
 			if (scope?.kind === 'group-chat') return null;
-			const { sessions } = useSessionStore.getState();
+			const state = useSessionStore.getState();
 			return scopeForMode(next, {
 				scope,
 				lastDispatch,
 				focusedAgentId: readVoiceFocus().agentSessionId,
 				// The same answer the follow rule uses (`useVoiceScopeFollow`), so
 				// picking Tab mode and then moving tabs agree about "this tab".
-				activeTabOf: (agentId) =>
-					resolveFocusedAiTabId(sessions.find((session) => session.id === agentId)),
+				activeTabOf: (agentId) => resolveFocusedAiTabId(selectSessionById(agentId)(state)),
 			});
 		},
 		[lastDispatch, scope]

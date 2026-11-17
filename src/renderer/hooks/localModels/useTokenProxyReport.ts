@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { TokenProxyReport } from '../../../shared/local-models/token-proxy';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 
 export interface TokenProxyReportState {
 	/** Null until the first read answers. */
@@ -40,7 +41,7 @@ export function useTokenProxyReport(): TokenProxyReportState {
 			setError(null);
 		} catch (err) {
 			if (!mountedRef.current || request !== latestRef.current) return;
-			setError(err instanceof Error ? err.message : String(err));
+			setError(ipcErrorMessage(err));
 		} finally {
 			if (mountedRef.current && request === latestRef.current) setLoading(false);
 		}

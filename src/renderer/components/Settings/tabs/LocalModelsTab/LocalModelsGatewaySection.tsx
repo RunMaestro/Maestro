@@ -35,6 +35,7 @@ import { Power, Router, X } from 'lucide-react';
 
 import { resolveAgentEnvironment } from '../../../../../shared/agentEnvironment';
 import { getAgentDisplayName } from '../../../../../shared/agentMetadata';
+import { ipcErrorMessage } from '../../../../../shared/serializeError';
 import { gatewayEnvVarsFor } from '../../../../../shared/local-models/gateway';
 import {
 	followsTokenProxyDefault,
@@ -138,9 +139,7 @@ export function LocalModelsGatewaySection({ theme }: LocalModelsGatewaySectionPr
 				// other window's choice reaches it as a settings change.
 				setDefaultResult(await chooseTokenProxyDefault(mode, { sync: isLifecycleOwner }));
 			} catch (err: unknown) {
-				setDefaultError(
-					`Could not save proxy default: ${err instanceof Error ? err.message : String(err)}`
-				);
+				setDefaultError(`Could not save proxy default: ${ipcErrorMessage(err)}`);
 			} finally {
 				setDefaultBusy(false);
 				proxy.refresh();
@@ -472,7 +471,7 @@ function GatewayRow({
 								onRemove();
 								onProxyModeChanged();
 							})
-							.catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+							.catch((err: unknown) => setError(ipcErrorMessage(err)))
 							.finally(() => setRemoving(false));
 					}}
 				>
