@@ -10,6 +10,7 @@
 import { useCallback, useState } from 'react';
 
 import type { TokenProxyMode } from '../../../shared/local-models/token-proxy';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 import { setAgentTokenProxyMode } from '../../services/agentGateway';
 
 export interface UseTokenProxyModeChoiceOptions {
@@ -46,7 +47,7 @@ export function useTokenProxyModeChoice(
 					onChosen?.(result.mode, result.gatewayUrl);
 				})
 				.catch((err: unknown) => {
-					setError(err instanceof Error ? err.message : String(err));
+					setError(ipcErrorMessage(err));
 				})
 				.finally(() => {
 					setBusy(false);

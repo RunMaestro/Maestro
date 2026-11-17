@@ -23,6 +23,7 @@ import {
 	toRunOnPickerSource,
 	type RunOnPickerSource,
 } from '../../../shared/local-models/run-on-picker';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 import { useLocalModelEndpoints, type EndpointModelsState } from './useLocalModelEndpoints';
 
 export interface RunOnSourceProblem {
@@ -67,7 +68,7 @@ export function useRunOnSources(): RunOnSourcesState {
 				if (!mounted.current) return;
 				setServer({
 					ok: false,
-					error: { kind: 'ipc', message: error instanceof Error ? error.message : String(error) },
+					error: { kind: 'ipc', message: ipcErrorMessage(error) },
 				});
 			});
 		return () => {

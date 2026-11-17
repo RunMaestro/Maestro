@@ -39,7 +39,7 @@ export function semanticIndexSummary(progress: SemanticIndexProgress): string {
 			? 'The first pass starts about a minute after launch.'
 			: 'Nothing to index yet.';
 	}
-	return `${progress.indexed.toLocaleString()} of ${progress.total.toLocaleString()} items indexed`;
+	return `${formatCount(progress.indexed)} of ${formatCount(progress.total)} items indexed`;
 }
 
 /**

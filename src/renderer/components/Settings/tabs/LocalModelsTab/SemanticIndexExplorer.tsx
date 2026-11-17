@@ -9,6 +9,7 @@ import {
 import { getLocalModel } from '../../../../../shared/local-models/model-catalog';
 import { WORK_SEARCH_SOURCE_LABELS } from '../../../../../shared/local-models/work-search';
 import { formatCount, formatRelativeTime } from '../../../../../shared/formatters';
+import { ipcErrorMessage } from '../../../../../shared/serializeError';
 import type { Theme } from '../../../../types';
 import { CardButton } from './CardButton';
 
@@ -54,7 +55,7 @@ export const SemanticIndexExplorer = memo(function SemanticIndexExplorer({
 				if (!cancelled) setPage(next);
 			})
 			.catch((caught: unknown) => {
-				if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught));
+				if (!cancelled) setError(ipcErrorMessage(caught));
 			})
 			.finally(() => {
 				if (!cancelled) setLoading(false);

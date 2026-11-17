@@ -25,6 +25,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { LocalModelTaskId } from '../../../shared/local-models/tasks';
 import type { LocalModelTaskReadiness } from '../../../shared/local-models/task-readiness';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 
 export interface LocalModelTaskReadinessState {
 	/** Per task id. Absent until the first answer lands. */
@@ -66,7 +67,7 @@ export function useLocalModelTaskReadiness(
 			setError(null);
 		} catch (caught) {
 			if (!mounted.current || request !== latestRequest.current) return;
-			setError(caught instanceof Error ? caught.message : String(caught));
+			setError(ipcErrorMessage(caught));
 		} finally {
 			if (mounted.current && request === latestRequest.current) setLoading(false);
 		}
