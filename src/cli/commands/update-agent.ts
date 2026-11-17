@@ -20,6 +20,13 @@ import { formatTranslationRecordCounts } from '../../shared/maestro-lib/translat
 // onto the agent's existing `sessionSshRemoteConfig` and flushes it to disk.
 // Use `--ssh-remote none` to revert the agent to local execution. All of these
 // (like `--cwd`) are refused by the renderer while the agent process is alive.
+//
+// A `peer:agent` target (Federation) edits the agent on the peer's host instead,
+// through the shared `runPeerAgentAction()` (`update-agent`, one `agents.update`
+// call) the desktop's peer mirror also uses. The settings flags map onto the
+// host's `AgentPatch`; the flags that name this machine's state (`--group`, the
+// SSH flags, `--maestro-p-path`) or a local conversion are refused before the
+// peer is dialed.
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId, resolveGroupId, getSessionById } from '../services/storage';
@@ -65,8 +72,23 @@ import {
 	type SshFlagOptions,
 } from '../services/agent-setting-flags';
 import { failCommand, failFromError } from '../services/session-command';
-import { errorFrameMessage } from '../services/session-command';
 import { resolveAgentCwdArg, resolveCliPath } from '../utils/parse';
+import { errorFrameMessage } from '../services/session-command';
+import {
+	PeerResolveError,
+	hostCallError,
+	peerAgentRef,
+	peerErrorCode,
+	routeAgentTarget,
+	withPeerAgent,
+	type PeerTarget,
+} from '../services/peer-resolver';
+import {
+	runPeerAgentAction,
+	type PeerAgentActionResult,
+} from '../../shared/maestro-lib/client/peer-actions';
+import type { AgentPatch, AgentPatchField } from '../../shared/maestro-lib/client/types';
+import { isAbsolutePath } from '../../shared/formatters';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -103,7 +125,301 @@ function describePeerAgentEdits(edits: PeerAgentEdits): string[] {
 	];
 }
 
+/**
+ * The flags a host agent cannot take, with why, in the order they are reported. Groups belong
+ * to each machine's own Left Bar, an agent on a host runs there (so it has no SSH remote of its
+ * own), the maestro-p path is a path on this machine, and converting memory and history is a
+ * local operation the host does not offer over Federation.
+ */
+function peerRefusals(options: UpdateAgentOptions): string[] {
+	const refused: string[] = [];
+	if (options.group !== undefined) refused.push('--group (groups belong to each machine)');
+	if (options.sshRemote !== undefined) refused.push('--ssh-remote (the agent runs on its host)');
+	if (options.sshCwd !== undefined) refused.push('--ssh-cwd (the agent runs on its host)');
+	if (options.syncHistoryToRemote !== undefined) {
+		refused.push('--sync-history-to-remote (the agent runs on its host)');
+	}
+	if (options.maestroPPath !== undefined) {
+		refused.push('--maestro-p-path (a path on this machine)');
+	}
+	const conversion: Array<[boolean, string]> = [
+		[options.convert === true, '--convert'],
+		[options.force === true, '--force'],
+		[options.dryRun === true, '--dry-run'],
+		[options.acceptTranslationLimitations === true, '--accept-translation-limitations'],
+		[options.migration !== undefined, '--migration'],
+		[options.migrationPlan !== undefined, '--migration-plan'],
+		[(options.translationResource?.length ?? 0) > 0, '--translation-resource'],
+	];
+	for (const [present, flag] of conversion) {
+		if (present) {
+			refused.push(
+				`${flag} (conversion is not offered for a peer agent; switch with --provider alone)`
+			);
+		}
+	}
+	return refused;
+}
+
+/** The host's `AgentPatch` field for each key `buildConfigPatch()` writes. */
+const CONFIG_TO_AGENT_PATCH: Record<string, AgentPatchField> = {
+	nudgeMessage: 'nudgeMessage',
+	newSessionMessage: 'newSessionMessage',
+	customPath: 'customPath',
+	customArgs: 'customArgs',
+	customModel: 'model',
+	customEffort: 'effort',
+	customEnvVars: 'env',
+	customContextWindow: 'contextWindow',
+	enableMaestroP: 'enableMaestroP',
+	maestroPMode: 'maestroPMode',
+	codexTransport: 'codexTransport',
+	bookmarked: 'bookmarked',
+};
+
+/**
+ * The local config patch as the host's `AgentPatch`. `contextWindowSource` is left out: the host
+ * marks a window it is given as user-edited, and clears the mark with the window.
+ */
+function toAgentPatch(
+	config: Record<string, unknown> | undefined,
+	cwd: string | undefined,
+	provider: string | undefined
+): AgentPatch {
+	const patch: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(config ?? {})) {
+		const field = CONFIG_TO_AGENT_PATCH[key];
+		if (field) patch[field] = value;
+	}
+	if (cwd !== undefined) patch.cwd = cwd;
+	if (provider !== undefined) patch.provider = provider;
+	return patch as AgentPatch;
+}
+
+/**
+ * `update-agent peer:agent`: change the agent's settings on the peer's host. Everything that can
+ * be checked here is checked before the peer is dialed; the provider-specific flags are checked
+ * against the host's record of the agent.
+ */
+async function updatePeerAgent(target: PeerTarget, options: UpdateAgentOptions): Promise<void> {
+	const ref = `${target.peer}:${target.agent}`;
+	const refused = peerRefusals(options);
+	if (refused.length > 0) {
+		failCommand(`Cannot use ${refused.join(', ')} with the peer agent ${ref}.`, options.json);
+	}
+
+	let configPatch: Record<string, unknown> | undefined;
+	try {
+		configPatch = buildConfigPatch(options);
+	} catch (error) {
+		failCommand(error instanceof Error ? error.message : String(error), options.json);
+	}
+
+	let cwd: string | undefined;
+	if (options.cwd !== undefined) {
+		cwd = options.cwd.trim();
+		// The path is on the host, so nothing on this machine can resolve a relative one or `~`.
+		if (!isAbsolutePath(cwd)) {
+			failCommand(
+				`--cwd for the peer agent ${ref} is a directory on the host: pass an absolute path, not "${options.cwd}".`,
+				options.json
+			);
+		}
+	}
+
+	let provider: string | undefined;
+	if (options.provider !== undefined) {
+		const requested = options.provider.trim().toLowerCase();
+		if (!VALID_PROVIDER_TYPES.has(requested))
+			failCommand(
+				`Invalid provider "${options.provider}". Must be one of: ${[...VALID_PROVIDER_TYPES].join(', ')}`,
+				options.json
+			);
+		provider = requested;
+	}
+
+	if (configPatch === undefined && cwd === undefined && provider === undefined) {
+		failCommand(
+			'Specify at least one field to update (e.g. --cwd, --nudge, --model, --effort, --token-source, --codex-transport, --bookmark, --provider, --env). Run "maestro-cli update-agent --help" for the full list.',
+			options.json
+		);
+	}
+	if (provider !== undefined && (configPatch !== undefined || cwd !== undefined)) {
+		failCommand(
+			'A provider switch must be a separate operation from settings or directory edits.',
+			options.json
+		);
+	}
+
+	const patch = toAgentPatch(configPatch, cwd, provider);
+	let done: { peer: string; agentId: string; applied: AgentPatchField[]; notices: string[] };
+	try {
+		done = await withPeerAgent(target, async ({ agent, client, peer }) => {
+			const wrongProvider = (flag: string, label: string) =>
+				new PeerResolveError(
+					'host-failed',
+					`${flag} only applies to ${label} agents; ${peerAgentRef(peer, agent.id)} is a ${agent.toolType} agent.`,
+					ExitCode.GeneralError,
+					peer
+				);
+			if (options.tokenSource !== undefined && agent.toolType !== 'claude-code') {
+				throw wrongProvider('--token-source', 'Claude Code');
+			}
+			if (options.codexTransport !== undefined && agent.toolType !== 'codex') {
+				throw wrongProvider('--codex-transport', 'Codex');
+			}
+			const ran = await runPeerAgentAction(client, agent, { kind: 'update-agent', patch });
+			if (!ran.ok) throw hostCallError(peer, ran.error);
+			const result = ran.value as Extract<PeerAgentActionResult, { kind: 'update-agent' }>;
+			return {
+				peer,
+				agentId: agent.id,
+				applied: result.applied,
+				notices: result.notices ?? [],
+			};
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const peerError = error instanceof PeerResolveError ? error : undefined;
+		if (options.json) {
+			console.log(
+				JSON.stringify({
+					success: false,
+					error: message,
+					...(peerError ? { code: peerErrorCode(peerError.code), peer: peerError.peer } : {}),
+				})
+			);
+		} else {
+			console.error(formatError(message));
+		}
+		return exitWith(peerError?.exitCode ?? ExitCode.GeneralError);
+	}
+
+	const { contextWindowSource: _derived, ...config } = configPatch ?? {};
+	const hasConfig = Object.keys(config).length > 0;
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				agentId: done.agentId,
+				peer: done.peer,
+				...(cwd !== undefined ? { cwd } : {}),
+				...(provider !== undefined ? { provider } : {}),
+				...(hasConfig ? { config } : {}),
+				applied: done.applied,
+				notices: done.notices,
+			})
+		);
+		return;
+	}
+	console.log(formatSuccess(`Updated agent ${peerAgentRef(done.peer, done.agentId)}`));
+	if (provider !== undefined) console.log(`  Provider: ${provider}`);
+	if (cwd !== undefined) console.log(`  CWD: ${cwd}`);
+	if (hasConfig) printConfigLines(config);
+	for (const notice of done.notices) console.log(`  ${notice}`);
+}
+
+/** The editable config keys, one line each, with friendly labels; `null` means "cleared". */
+function printConfigLines(config: Record<string, unknown>): void {
+	// Friendly labels for the editable config keys; `null` means "cleared".
+	const labels: Record<string, string> = {
+		nudgeMessage: 'Nudge message',
+		peerDescription: 'Peer description',
+		newSessionMessage: 'New session message',
+		customPath: 'Binary path',
+		customArgs: 'Custom args',
+		customEnvVars: 'Env vars',
+		gatewayUrl: 'Gateway URL',
+		tokenProxyMode: 'Token proxy mode',
+		tokenProxyRetrieval: 'Retrieval',
+		runOn: 'Model source',
+		tierTargets: 'Tiers',
+		backgroundRequests: 'Background requests',
+		systemOneOptOut: 'System One',
+		groupPeerAccess: 'Peers in my group',
+		worktreePeerAccess: 'Worktree family peers',
+		customModel: 'Model',
+		customEffort: 'Effort',
+		customContextWindow: 'Context window',
+		enableMaestroP: 'Claude token source',
+		maestroPMode: 'Token mode',
+		maestroPPath: 'maestro-p path',
+		codexTransport: 'Codex transport',
+		retryOnAvailabilityErrors: 'Retry on availability errors',
+		retryOnTokenExhaustion: 'Retry on token exhaustion',
+		codexAutoResetOnExhaustion: 'Codex auto reset',
+		additionalDirectories: 'Additional directories',
+	};
+	for (const [key, value] of Object.entries(config)) {
+		// Derived marker, not something the caller typed - it is implied by
+		// `--context-window` and printing it just adds noise (finding AD1).
+		if (key === 'contextWindowSource') continue;
+		const label = labels[key] ?? key;
+		// A cleared transport is not "unset", it is the default transport.
+		if (key === 'codexTransport') {
+			console.log(`  ${label}: ${value ?? 'exec'}`);
+		} else if (key === 'runOn') {
+			// A cleared target is not "unset", it is the provider's own model.
+			const target = value as RunOnSourceTarget | null;
+			console.log(
+				`  ${label}: ${
+					target
+						? `${formatRunOnSpec(target)} (context ${target.contextTokens} tokens)`
+						: RUN_ON_PROVIDER_SPEC
+				}`
+			);
+		} else if (key === 'tierTargets') {
+			// One line per tier named, in the spelling `--tier` takes.
+			const tiers = value as Record<string, TierTarget | null>;
+			for (const tier of TIER_LEVELS) {
+				if (tier in tiers) console.log(`  Tier ${tier}: ${formatTierTargetSpec(tiers[tier])}`);
+			}
+		} else if (key === 'backgroundRequests') {
+			// Off is not "unset", it is every request going to the provider.
+			console.log(
+				`  ${label}: ${formatBackgroundRequestsSpec(value as BackgroundRequests | null)}`
+			);
+		} else if (key === 'tokenProxyRetrieval') {
+			// Off is not "cleared", it is the model without the retrieve tool.
+			const stored = value === true ? 'on' : 'off';
+			console.log(`  ${label}: ${stored}. ${TOKEN_PROXY_RETRIEVAL_DESCRIPTIONS[stored]}`);
+		} else if (key === 'systemOneOptOut') {
+			// On is not "cleared", it is the agent following the switch for all agents.
+			const stored = value === true ? 'off' : 'on';
+			console.log(`  ${label}: ${stored}. ${SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS[stored]}`);
+		} else if (key === 'peerAgentEdits') {
+			for (const line of describePeerAgentEdits(value as PeerAgentEdits)) {
+				console.log(`  ${line}`);
+			}
+		} else if (key === 'groupPeerAccess' || key === 'worktreePeerAccess') {
+			// Off is not "unset" for a grant, it is the checkbox switched off.
+			console.log(`  ${label}: ${value ? peerAccessLabel(value as PeerAccess) : 'off'}`);
+		} else if (key === 'envParkEdits') {
+			const edits = value as EnvParkEdits;
+			if (edits.park?.length) console.log(`  Env vars parked: ${edits.park.join(', ')}`);
+			if (edits.unpark?.length) console.log(`  Env vars switched on: ${edits.unpark.join(', ')}`);
+		} else if (key === 'additionalDirectories' && Array.isArray(value)) {
+			const dirs = value as AdditionalDirectory[];
+			console.log(
+				`  ${label}: ${dirs.map((dir) => `${dir.path} (${dir.write ? 'read and write' : 'read'})`).join(', ')}`
+			);
+		} else if (value === null) {
+			console.log(`  ${label}: (cleared)`);
+		} else if (key === 'customEnvVars' && value && typeof value === 'object') {
+			const pairs = Object.keys(value as Record<string, string>);
+			console.log(`  ${label}: ${pairs.length === 0 ? '(cleared)' : pairs.join(', ')}`);
+		} else {
+			console.log(`  ${label}: ${value}`);
+		}
+	}
+}
+
 export async function updateAgent(agentId: string, options: UpdateAgentOptions): Promise<void> {
+	// A `peer:agent` target is an agent on a Federation peer's host (a local agent whose name has
+	// a colon stays local).
+	const route = routeAgentTarget(agentId);
+	if (route.kind === 'peer') return updatePeerAgent(route.target, options);
+
 	const sshFlagsPresent = hasSshFlags(options);
 
 	// Build the editable config patch up front so a malformed flag fails before
@@ -609,97 +925,5 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			console.log(`  Share history to project dir: ${applied.ssh.shareHistoryToProjectDir}`);
 		}
 	}
-	if (applied.config !== undefined) {
-		// Friendly labels for the editable config keys; `null` means "cleared".
-		const labels: Record<string, string> = {
-			nudgeMessage: 'Nudge message',
-			peerDescription: 'Peer description',
-			newSessionMessage: 'New session message',
-			customPath: 'Binary path',
-			customArgs: 'Custom args',
-			customEnvVars: 'Env vars',
-			gatewayUrl: 'Gateway URL',
-			tokenProxyMode: 'Token proxy mode',
-			tokenProxyRetrieval: 'Retrieval',
-			runOn: 'Model source',
-			tierTargets: 'Tiers',
-			backgroundRequests: 'Background requests',
-			systemOneOptOut: 'System One',
-			groupPeerAccess: 'Peers in my group',
-			worktreePeerAccess: 'Worktree family peers',
-			customModel: 'Model',
-			customEffort: 'Effort',
-			customContextWindow: 'Context window',
-			enableMaestroP: 'Claude token source',
-			maestroPMode: 'Token mode',
-			maestroPPath: 'maestro-p path',
-			codexTransport: 'Codex transport',
-			retryOnAvailabilityErrors: 'Retry on availability errors',
-			retryOnTokenExhaustion: 'Retry on token exhaustion',
-			codexAutoResetOnExhaustion: 'Codex auto reset',
-			additionalDirectories: 'Additional directories',
-		};
-		for (const [key, value] of Object.entries(applied.config)) {
-			// Derived marker, not something the caller typed - it is implied by
-			// `--context-window` and printing it just adds noise (finding AD1).
-			if (key === 'contextWindowSource') continue;
-			const label = labels[key] ?? key;
-			// A cleared transport is not "unset", it is the default transport.
-			if (key === 'codexTransport') {
-				console.log(`  ${label}: ${value ?? 'exec'}`);
-			} else if (key === 'runOn') {
-				// A cleared target is not "unset", it is the provider's own model.
-				const target = value as RunOnSourceTarget | null;
-				console.log(
-					`  ${label}: ${
-						target
-							? `${formatRunOnSpec(target)} (context ${target.contextTokens} tokens)`
-							: RUN_ON_PROVIDER_SPEC
-					}`
-				);
-			} else if (key === 'tierTargets') {
-				// One line per tier named, in the spelling `--tier` takes.
-				const tiers = value as Record<string, TierTarget | null>;
-				for (const tier of TIER_LEVELS) {
-					if (tier in tiers) console.log(`  Tier ${tier}: ${formatTierTargetSpec(tiers[tier])}`);
-				}
-			} else if (key === 'backgroundRequests') {
-				// Off is not "unset", it is every request going to the provider.
-				console.log(
-					`  ${label}: ${formatBackgroundRequestsSpec(value as BackgroundRequests | null)}`
-				);
-			} else if (key === 'tokenProxyRetrieval') {
-				// Off is not "cleared", it is the model without the retrieve tool.
-				const stored = value === true ? 'on' : 'off';
-				console.log(`  ${label}: ${stored}. ${TOKEN_PROXY_RETRIEVAL_DESCRIPTIONS[stored]}`);
-			} else if (key === 'systemOneOptOut') {
-				// On is not "cleared", it is the agent following the switch for all agents.
-				const stored = value === true ? 'off' : 'on';
-				console.log(`  ${label}: ${stored}. ${SYSTEM_ONE_AGENT_SWITCH_DESCRIPTIONS[stored]}`);
-			} else if (key === 'peerAgentEdits') {
-				for (const line of describePeerAgentEdits(value as PeerAgentEdits)) {
-					console.log(`  ${line}`);
-				}
-			} else if (key === 'groupPeerAccess' || key === 'worktreePeerAccess') {
-				// Off is not "unset" for a grant, it is the checkbox switched off.
-				console.log(`  ${label}: ${value ? peerAccessLabel(value as PeerAccess) : 'off'}`);
-			} else if (key === 'envParkEdits') {
-				const edits = value as EnvParkEdits;
-				if (edits.park?.length) console.log(`  Env vars parked: ${edits.park.join(', ')}`);
-				if (edits.unpark?.length) console.log(`  Env vars switched on: ${edits.unpark.join(', ')}`);
-			} else if (key === 'additionalDirectories' && Array.isArray(value)) {
-				const dirs = value as AdditionalDirectory[];
-				console.log(
-					`  ${label}: ${dirs.map((dir) => `${dir.path} (${dir.write ? 'read and write' : 'read'})`).join(', ')}`
-				);
-			} else if (value === null) {
-				console.log(`  ${label}: (cleared)`);
-			} else if (key === 'customEnvVars' && value && typeof value === 'object') {
-				const pairs = Object.keys(value as Record<string, string>);
-				console.log(`  ${label}: ${pairs.length === 0 ? '(cleared)' : pairs.join(', ')}`);
-			} else {
-				console.log(`  ${label}: ${value}`);
-			}
-		}
-	}
+	if (applied.config !== undefined) printConfigLines(applied.config);
 }

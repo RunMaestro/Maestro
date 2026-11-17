@@ -21,6 +21,7 @@ vi.mock('../../../cli/services/storage', async (importOriginal) => ({
 	getSessionById: vi.fn((id: string) => (id === 'agent-scout' ? { name: 'Scout' } : undefined)),
 	readSettingValue: vi.fn(),
 	writeSettingValue: vi.fn(() => true),
+	deleteSettingValue: vi.fn(() => true),
 	readLocalModelAssignments: vi.fn(() => ({})),
 	readLocalModelEndpoints: vi.fn(() => []),
 	writeLocalModelAssignments: vi.fn(),
@@ -36,6 +37,9 @@ import {
 	voiceCredentialsList,
 	voiceCredentialsSet,
 	voiceCredentialsTest,
+	voiceDefaultAgentClear,
+	voiceDefaultAgentSet,
+	voiceDefaultAgentShow,
 	voiceProvidersList,
 	voiceProvidersSet,
 	voiceVoicesList,
@@ -47,6 +51,7 @@ import {
 } from '../../../cli/commands/voice-providers';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import {
+	deleteSettingValue,
 	readLocalModelAssignments,
 	readSettingValue,
 	writeLocalModelAssignments,
@@ -442,6 +447,51 @@ describe('voice provider, voice, credential and wake phrase commands', () => {
 			expect(() => voiceWakePhraseSet('scout', '  ', {})).toThrow(`exit:${ExitCode.InvalidUsage}`);
 			expect(errors()).toContain('wake-phrase clear');
 			expect(writeSettingValue).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('default-agent', () => {
+		it('sets the default agent by name', () => {
+			voiceDefaultAgentSet('scout', { json: true });
+
+			expect(writeSettingValue).toHaveBeenCalledWith(
+				'acappella.controls.defaultAgentSessionId',
+				'agent-scout'
+			);
+			expect(json()).toEqual({ success: true, agentId: 'agent-scout', name: 'Scout' });
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('shows the stored default and that it is in use', () => {
+			mockSettings({ acappella: { controls: { defaultAgentSessionId: 'agent-scout' } } });
+			voiceDefaultAgentShow({ json: true });
+
+			expect(json()).toEqual({
+				success: true,
+				agentId: 'agent-scout',
+				name: 'Scout',
+				inUse: true,
+			});
+		});
+
+		it('says a default whose agent is gone is not in use', () => {
+			mockSettings({ acappella: { controls: { defaultAgentSessionId: 'agent-gone' } } });
+			voiceDefaultAgentShow({});
+
+			expect(printed()).toContain('no longer exists');
+		});
+
+		it('reports no default when none is stored', () => {
+			voiceDefaultAgentShow({ json: true });
+
+			expect(json()).toEqual({ success: true, agentId: null, name: null, inUse: false });
+		});
+
+		it('clears the default by removing the key', () => {
+			voiceDefaultAgentClear({ json: true });
+
+			expect(deleteSettingValue).toHaveBeenCalledWith('acappella.controls.defaultAgentSessionId');
+			expect(json()).toEqual({ success: true, agentId: null });
 		});
 	});
 });

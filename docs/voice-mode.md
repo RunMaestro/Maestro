@@ -299,6 +299,14 @@ There is no fixed command list: the Conductor reads what you said. Some phrasing
 
 When the Conductor is unsure it asks, for example _Which agent or tab should take that?_ or names two choices. If you name a tab you closed, it asks whether to reopen it. The prompt the Conductor follows can be edited in **Settings -> Maestro Prompts**.
 
+### The default agent
+
+In Conductor mode, a request that names no agent ("check the build", "what's on my plate") has to land somewhere. Without a default it goes to the agent on screen, and if no agent is on screen and several are open, the Conductor asks _Which agent or tab should take that?_
+
+Pick a **Default agent** in **Settings -> Plugins -> A Cappella -> Voice Controls** to send those requests to one agent instead, whatever is on screen. The Conductor then stops asking which agent. It still asks when it has two real candidates in mind (_Backend or Docs?_), and Agent mode, Tab mode, and a document conversation keep their own agent. If the default agent is deleted, the setting is ignored and the agent on screen takes those requests again.
+
+From the command line: `maestro-cli voice default-agent set <agent>`, `voice default-agent show`, and `voice default-agent clear`.
+
 ## The two hotkeys
 
 Both are system-wide, both ship bound, and both only register while A Cappella is on.

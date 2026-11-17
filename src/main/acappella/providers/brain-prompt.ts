@@ -146,6 +146,15 @@ export function buildRouteUserPrompt(input: string, context: VoiceRouteContext):
 		lines.push('', `The user is looking at agent ${context.activeAgentSessionId}.`);
 	}
 
+	// Only outside a bound scope: a bound session already has its agent, and the
+	// line would read as a second, competing answer.
+	if (!boundAgentId && context.defaultAgentSessionId) {
+		lines.push(
+			'',
+			`Agent ${context.defaultAgentSessionId} is the default: a "conductor" request goes there, so use "conductor" rather than guessing when no agent is clearly meant.`
+		);
+	}
+
 	if (context.document) {
 		// The subject of the conversation, not a routing hint: the target and the
 		// tab are pinned by the session service whatever the model answers. What

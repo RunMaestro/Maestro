@@ -49,6 +49,13 @@ export const DEFAULT_TRACE_CATEGORIES: string[] = [
 	// was responsible for either. Without this category those two questions are
 	// unanswerable from a trace, which makes the trace unable to close them.
 	'disabled-by-default-devtools.timeline.invalidationTracking',
+	// One async `Animation` span per CSS/Web animation, carrying `compositeFailed`
+	// (why the compositor refused it) and `unsupportedProperties`. Added after a
+	// Nov 2026 trace showed an idle renderer restyling looping-animation nodes on
+	// all 4,977 frames of a 45s capture, but could not show WHICH animation ran on
+	// the main thread instead of the compositor: without this category that is
+	// unanswerable. scripts/analyze-perf-trace.mjs reports it.
+	'blink.animations',
 	// Sampling CPU profiler. This is the ONLY usable JS attribution in an
 	// Electron trace: the devtools timeline FunctionCall / EvaluateScript events
 	// the analysis script originally looked for are not emitted here, so its

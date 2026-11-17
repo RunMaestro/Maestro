@@ -18,6 +18,7 @@ vi.mock('../../../../renderer/services/agentLift', () => ({
 import { PeerMirrorSection } from '../../../../renderer/components/SessionList/PeerMirrorSection';
 import { copyPeerAgentRef, reconnectPeer } from '../../../../renderer/services/peerMirror';
 import { startPeerHost } from '../../../../renderer/services/agentLift';
+import { useHostedAgentSettingsStore } from '../../../../renderer/stores/hostedAgentSettingsStore';
 import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
@@ -208,7 +209,7 @@ describe('PeerMirrorSection', () => {
 		expect(screen.getByTestId('peer-mirror-agent-row')).toBeInTheDocument();
 	});
 
-	it('opens the mirror menu on an agent: Copy peer:agent and Reconnect, nothing local', () => {
+	it('opens the mirror menu on an agent: Copy peer:agent, Edit Agent, and Reconnect, nothing local', () => {
 		usePeerMirrorStore.getState().hydrate([peerWith('build', [agent('a1')])]);
 		renderSection();
 		fireEvent.contextMenu(screen.getByTestId('peer-mirror-agent-row'), {
@@ -220,11 +221,28 @@ describe('PeerMirrorSection', () => {
 			within(menu)
 				.getAllByRole('button')
 				.map((b) => b.textContent)
-		).toEqual(['Copy build:a1', 'Reconnect build']);
+		).toEqual(['Copy build:a1', 'Edit Agent...', 'Reconnect build']);
 
 		fireEvent.click(within(menu).getByText('Copy build:a1'));
 		expect(copyPeerAgentRef).toHaveBeenCalledWith('build', 'a1');
 		expect(screen.queryByTestId('peer-mirror-menu')).not.toBeInTheDocument();
+	});
+
+	it('opens the hosted-agent settings editor from Edit Agent on a mirrored agent', () => {
+		useHostedAgentSettingsStore.getState().closeEditor();
+		usePeerMirrorStore.getState().hydrate([peerWith('build', [agent('a1')])]);
+		renderSection();
+		fireEvent.contextMenu(screen.getByTestId('peer-mirror-agent-row'), {
+			clientX: 10,
+			clientY: 20,
+		});
+		fireEvent.click(within(screen.getByTestId('peer-mirror-menu')).getByText('Edit Agent...'));
+		expect(useHostedAgentSettingsStore.getState().editing).toEqual({
+			peerId: 'build',
+			agentId: 'a1',
+		});
+		expect(screen.queryByTestId('peer-mirror-menu')).not.toBeInTheDocument();
+		useHostedAgentSettingsStore.getState().closeEditor();
 	});
 
 	it('opens a Reconnect-only menu on a peer header, and Escape closes it', () => {

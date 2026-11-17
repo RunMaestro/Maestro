@@ -53,6 +53,7 @@ import { mergeUsagePeaks, type UsagePeaks } from '../../../shared/usagePeaks';
 import { mergeAutoRunStats } from '../../../shared/autoRunStatsMerge';
 import { dropOrphanedTabs } from '../../../shared/tabStripMembership';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
+import { holdsFileTreeCache, withoutFileTreeCache } from '../../../shared/fileTreeCache';
 import { normalizeStoredClosedTabs } from '../../../shared/closedTabHistory';
 import {
 	mergeDeferredSessionContent,
@@ -155,6 +156,26 @@ export const SESSION_LIFECYCLE_SYNC_CHANNEL = 'sessions:lifecycleSync';
 const REMOVED_SESSION_TOMBSTONE_LIMIT = 1000;
 
 /**
+ * Which BrowserWindows hear agent lifecycle deltas. Defaults to all of them;
+ * main narrows it to app windows at startup with
+ * {@link setSessionLifecycleRecipientFilter}.
+ */
+let isSessionLifecycleRecipient: (win: BrowserWindow) => boolean = () => true;
+
+/**
+ * Restrict lifecycle deltas to the windows that consume them. Only app windows
+ * mount `App`, and with it `useSessionLifecycleSync`. Quick Chat, the Cadenza
+ * HUD, floating widgets and offscreen browser pages never listen, yet each
+ * `webContents.send` structured-clones the whole payload (full copies of every
+ * updated agent and its baseline). A Nov 2026 field trace put 291 of the 370
+ * samples under this broadcast in those sends, and the sender window is already
+ * skipped, so all of them went to windows that drop the message.
+ */
+export function setSessionLifecycleRecipientFilter(filter: (win: BrowserWindow) => boolean): void {
+	isSessionLifecycleRecipient = filter;
+}
+
+/**
  * Send an agent lifecycle delta to every client except the one that wrote it.
  *
  * Electron windows are addressed individually so the sender can be skipped by
@@ -172,6 +193,7 @@ export function broadcastSessionLifecycle(
 	for (const win of BrowserWindow.getAllWindows()) {
 		if (!isWebContentsAvailable(win)) continue;
 		if (win.webContents.id === senderWebContentsId) continue;
+		if (!isSessionLifecycleRecipient(win)) continue;
 		win.webContents.send(SESSION_LIFECYCLE_SYNC_CHANNEL, payload);
 	}
 	broadcastBridgeEvent(SESSION_LIFECYCLE_SYNC_CHANNEL, [
@@ -714,6 +736,9 @@ export function registerPersistenceHandlers(
 			// (#2008). Restore would put each one back as a chip, so finish the
 			// close here. Their transcripts stay in their provider sessions.
 			let orphanedTabCount = 0;
+			// Agents written by a path that skipped the renderer's persistence prep
+			// carry their whole file-tree scan (45 MB across one user's agents).
+			let fileTreeCount = 0;
 			const repairOrphans = !orphanRepairDone;
 			orphanRepairDone = true;
 			const compacted = relocated.map((session) => {
@@ -725,9 +750,16 @@ export function registerPersistenceHandlers(
 				if (normalized !== repaired) closedTabCount++;
 				const result = compactSessionToolOutputs(normalized);
 				toolOutputCount += result.compacted;
-				return result.session;
+				if (holdsFileTreeCache(result.session)) fileTreeCount++;
+				return withoutFileTreeCache(result.session);
 			});
-			if (imageCount > 0 || toolOutputCount > 0 || closedTabCount > 0 || orphanedTabCount > 0) {
+			if (
+				imageCount > 0 ||
+				toolOutputCount > 0 ||
+				closedTabCount > 0 ||
+				orphanedTabCount > 0 ||
+				fileTreeCount > 0
+			) {
 				sessionsStore.set('sessions', compacted);
 				if (imageCount > 0) {
 					logger.info(
@@ -750,6 +782,12 @@ export function registerPersistenceHandlers(
 				if (orphanedTabCount > 0) {
 					logger.info(
 						`Removed ${orphanedTabCount} closed tab(s) left without a tab-strip slot in maestro-sessions.json`,
+						'Sessions'
+					);
+				}
+				if (fileTreeCount > 0) {
+					logger.info(
+						`Dropped the stored file-tree scan of ${fileTreeCount} agent(s) from maestro-sessions.json`,
 						'Sessions'
 					);
 				}
@@ -1042,7 +1080,9 @@ export function registerPersistenceHandlers(
 				// side would turn that into a conflict.
 				const sessionsToPersist = merged.map((session) =>
 					touchedIds.has(session.id)
-						? compactSessionToolOutputs(normalizeStoredClosedTabs(session)).session
+						? withoutFileTreeCache(
+								compactSessionToolOutputs(normalizeStoredClosedTabs(session)).session
+							)
 						: session
 				);
 
@@ -1224,18 +1264,20 @@ export function registerPersistenceHandlers(
 			}
 			const sessionsToPersist = sessions.map((session) =>
 				incomingIds.has(session.id)
-					? compactSessionToolOutputs(
-							normalizeStoredClosedTabs(
-								mergeSessionPersistenceChanges(
-									mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
-									previousSessionMap.get(session.id),
-									baselineMap.get(session.id),
-									remote,
-									false,
-									remote
+					? withoutFileTreeCache(
+							compactSessionToolOutputs(
+								normalizeStoredClosedTabs(
+									mergeSessionPersistenceChanges(
+										mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
+										previousSessionMap.get(session.id),
+										baselineMap.get(session.id),
+										remote,
+										false,
+										remote
+									)
 								)
-							)
-						).session
+							).session
+						)
 					: session
 			);
 

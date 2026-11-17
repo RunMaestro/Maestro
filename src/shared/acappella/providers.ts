@@ -138,6 +138,14 @@ export interface VoiceRouteContext {
 	/** Agent the user is looking at, when a client reported one. */
 	activeAgentSessionId?: string | null;
 	/**
+	 * The agent a `conductor`-targeted request lands on, when the user named one
+	 * in Voice Controls and it is still running. With it, "no agent is clearly
+	 * meant" is an answer rather than a question: the router dispatches there
+	 * instead of asking which agent, and the executor picks it ahead of the agent
+	 * on screen.
+	 */
+	defaultAgentSessionId?: string | null;
+	/**
 	 * The file a document-scoped session is talking about.
 	 *
 	 * Carried separately from the scope so the prompt builder does not have to

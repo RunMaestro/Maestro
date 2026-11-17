@@ -57,7 +57,7 @@ function telemetryOf(db: Database.Database, id: string): Record<string, unknown>
 
 const ALL_UNKNOWN = Object.fromEntries(TELEMETRY_NAMES.map((name) => [name, null]));
 
-describe.skipIf(!canLoadNodeSqlite())('the proxy request writer on the real v22 table', () => {
+describe.skipIf(!canLoadNodeSqlite())('the proxy request writer on the real v23 table', () => {
 	beforeEach(() => {
 		clearProxyRequestsCache();
 	});

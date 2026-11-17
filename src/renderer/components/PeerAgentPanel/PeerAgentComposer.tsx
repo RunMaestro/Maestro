@@ -12,13 +12,26 @@
  * queue. A send while the peer is disconnected fails at once with a toast and keeps the draft:
  * it is never queued. Slash commands, shell command mode, and image attach are drawn but greyed
  * out, with a tooltip that says why, because the host serves none of them.
+ *
+ * The model, effort, read-only, and save to History chips are THIS conductor's own choice for
+ * the tab (`hostedAgentSettingsStore.tabChoices`). They ride along on each message sent from here
+ * (`TurnOverrides`) and are never written to the host tab, so another conductor on the same tab
+ * keeps theirs. The agent's own defaults, which every conductor shares, are in Edit Agent.
  */
 
 import { useCallback, useRef, useState } from 'react';
-import { Image as ImageIcon, Slash, Terminal } from 'lucide-react';
+import { Eye, History, Image as ImageIcon, Slash, Terminal } from 'lucide-react';
 import type { Theme } from '../../types';
-import type { AITabRecord } from '../../../shared/maestro-lib/store/records';
-import { ComposerSendColumn, applyTrimmedTextPaste, clipboardHasImage } from '../ChatComposer';
+import type { AgentRecord, AITabRecord } from '../../../shared/maestro-lib/store/records';
+import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
+import { useHostedAgentSettingsStore } from '../../stores/hostedAgentSettingsStore';
+import {
+	resolveModelEffort,
+	useAgentModelEffortOptions,
+} from '../../hooks/agent/useAgentModelEffortOptions';
+import { ModelEffortPills } from '../InputArea/components/ModelEffortPills';
+import { useModelEffortMenus } from '../InputArea/hooks/useModelEffortMenus';
+import { ComposerSendColumn, clipboardHasImage } from '../ChatComposer';
 import { ThinkingStatusPill } from '../ThinkingStatusPill';
 import { useAutosizeTextarea } from '../../hooks/ui/useAutosizeTextarea';
 import { handleComposerSendKey } from '../../hooks/input/composerKeyDown';
@@ -39,8 +52,46 @@ export interface PeerAgentComposerProps {
 	peerName: string;
 	agentId: string;
 	agentName: string;
+	/** The host's record of the agent: its provider and shared defaults. */
+	agent: AgentRecord;
 	/** The host's record of the tab the composer sends to. */
 	tab: AITabRecord;
+}
+
+/** A composer chip this conductor toggles for their own messages. */
+function ChoiceChip({
+	theme,
+	active,
+	tone,
+	onClick,
+	title,
+	children,
+}: {
+	theme: Theme;
+	active: boolean;
+	tone: string;
+	onClick: () => void;
+	title: string;
+	children: React.ReactNode;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			aria-pressed={active}
+			className={`flex items-center gap-1.5 text-2xs px-2 py-1 rounded-full cursor-pointer transition-all whitespace-nowrap ${
+				active ? '' : 'opacity-40 hover:opacity-70'
+			}`}
+			style={{
+				backgroundColor: active ? `${tone}25` : 'transparent',
+				color: active ? tone : theme.colors.textDim,
+				border: active ? `1px solid ${tone}50` : '1px solid transparent',
+			}}
+			title={title}
+		>
+			{children}
+		</button>
+	);
 }
 
 /** A control the host does not serve: drawn, never clickable, with the reason as its tooltip. */
@@ -77,10 +128,31 @@ export function PeerAgentComposer({
 	peerName,
 	agentId,
 	agentName,
+	agent,
 	tab,
 }: PeerAgentComposerProps) {
 	const tabId = tab.id;
 	const draftKey = mirrorDraftKey(peerId, agentId, tabId);
+	const choice = useHostedAgentSettingsStore((s) => s.tabChoices[draftKey]);
+	const modelOptions = useAgentModelEffortOptions(agent.toolType);
+	const menus = useModelEffortMenus();
+	const resolved = resolveModelEffort(
+		{
+			customModel: choice?.model ?? tab.customModel,
+			customEffort: choice?.effort ?? tab.customEffort,
+		},
+		agent,
+		modelOptions
+	);
+	const readOnly = choice?.readOnly ?? tab.readOnlyMode === true;
+	const saveToHistory = choice?.saveToHistory ?? tab.saveToHistory === true;
+	const setChoice = useCallback(
+		(patch: Partial<TurnOverrides>) => {
+			const store = useHostedAgentSettingsStore.getState();
+			store.setTabChoice(draftKey, { ...(store.tabChoices[draftKey] ?? {}), ...patch });
+		},
+		[draftKey]
+	);
 	const value = usePeerMirrorStore((s) => s.drafts[draftKey] ?? '');
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const spellCheck = useSettingsStore((s) => s.spellCheck);
@@ -114,13 +186,13 @@ export function PeerAgentComposer({
 		try {
 			// The draft is cleared only once the host took the message, so a refusal (a peer that
 			// is down) leaves the text in place for the person to send again.
-			if (await sendToMirroredTab(peerId, agentId, tabId, text)) {
+			if (await sendToMirroredTab(peerId, agentId, tabId, text, choice)) {
 				usePeerMirrorStore.getState().setMirrorDraft(peerId, agentId, tabId, '');
 			}
 		} finally {
 			setSending(false);
 		}
-	}, [value, sending, peerId, agentId, tabId]);
+	}, [value, sending, peerId, agentId, tabId, choice]);
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -134,21 +206,18 @@ export function PeerAgentComposer({
 		[enterToSend, handleSend]
 	);
 
-	const handlePaste = useCallback(
-		(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-			if (clipboardHasImage(e.clipboardData)) {
-				e.preventDefault();
-				notifyToast({
-					color: 'yellow',
-					title: 'Image not attached',
-					message: MIRROR_COMPOSER_UNAVAILABLE.images,
-				});
-				return;
-			}
-			applyTrimmedTextPaste(e, value, setValue);
-		},
-		[value, setValue]
-	);
+	const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+		if (clipboardHasImage(e.clipboardData)) {
+			e.preventDefault();
+			notifyToast({
+				color: 'yellow',
+				title: 'Image not attached',
+				message: MIRROR_COMPOSER_UNAVAILABLE.images,
+			});
+			return;
+		}
+		// A text paste lands verbatim (native paste, no trimming).
+	}, []);
 
 	const sendTitle = busy
 		? `Queue on ${peerName}: the agent is busy, so the host runs it next`
@@ -220,6 +289,40 @@ export function PeerAgentComposer({
 						>
 							<ImageIcon className="w-4 h-4" />
 						</UnavailableControl>
+						<span className="flex-1" />
+						<ChoiceChip
+							theme={theme}
+							active={readOnly}
+							tone={theme.colors.warning}
+							onClick={() => setChoice({ readOnly: !readOnly })}
+							title="Read-only for your messages on this tab. Yours only: other conductors keep their own."
+						>
+							<Eye className="w-3 h-3" />
+							<span>Read-only</span>
+						</ChoiceChip>
+						<ChoiceChip
+							theme={theme}
+							active={saveToHistory}
+							tone={theme.colors.accent}
+							onClick={() => setChoice({ saveToHistory: !saveToHistory })}
+							title="Save your messages' turns to History on the host. Yours only."
+						>
+							<History className="w-3 h-3" />
+							<span>History</span>
+						</ChoiceChip>
+						<ModelEffortPills
+							isVisible
+							theme={theme}
+							currentModel={resolved.model}
+							currentEffort={resolved.effort}
+							availableModels={modelOptions.models}
+							availableEfforts={modelOptions.efforts}
+							onModelChange={(model) => setChoice({ model })}
+							onEffortChange={(effort) => setChoice({ effort })}
+							onRefreshModels={() => void modelOptions.refreshModels()}
+							refreshingModels={modelOptions.refreshingModels}
+							{...menus}
+						/>
 					</div>
 				</div>
 				<ComposerSendColumn

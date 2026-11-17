@@ -29,6 +29,11 @@ function setup(overrides: Record<string, unknown> = {}) {
 }
 
 describe('GroupContextMenu', () => {
+	it('names the group in the accent header band', () => {
+		setup();
+		expect(screen.getByTestId('context-menu-header').textContent).toBe('🎹Maestro');
+	});
+
 	it('does not render a Change Emoji option (emoji is changed via Rename)', () => {
 		setup();
 		expect(screen.queryByText('Change Emoji...')).toBeNull();

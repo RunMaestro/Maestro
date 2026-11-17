@@ -142,6 +142,7 @@ function makeExecutor(options: {
 	bridge: VoiceRendererBridge;
 	sessions?: StoredSession[];
 	activeSessionId?: string | null;
+	defaultSessionId?: string | null;
 	getProcessManager?: () => { get: (id: string) => unknown };
 }) {
 	return createVoiceRouteExecutor({
@@ -149,6 +150,7 @@ function makeExecutor(options: {
 		getProcessManager: options.getProcessManager,
 		getSessions: () => options.sessions ?? makeSessions(),
 		getActiveSessionId: () => options.activeSessionId ?? null,
+		getDefaultAgentSessionId: () => options.defaultSessionId ?? null,
 	});
 }
 
@@ -965,6 +967,71 @@ describe('executeRouteDecision - target resolution', () => {
 	it('falls back to the active desktop agent for an unscoped conductor decision', async () => {
 		const bridge = makeBridge();
 		const execute = makeExecutor({ bridge, activeSessionId: 'agent-frontend' });
+
+		const result = await execute(makeDecision({ target: 'conductor' }), {
+			roster: [],
+			scope: CONDUCTOR_SCOPE,
+		});
+
+		expect(result.agentSessionId).toBe('agent-frontend');
+	});
+
+	it('prefers the default agent over the agent on screen for an unscoped conductor decision', async () => {
+		const bridge = makeBridge();
+		const execute = makeExecutor({
+			bridge,
+			activeSessionId: 'agent-frontend',
+			defaultSessionId: 'agent-backend',
+		});
+
+		const result = await execute(makeDecision({ target: 'conductor' }), {
+			roster: [],
+			scope: CONDUCTOR_SCOPE,
+		});
+
+		expect(result.agentSessionId).toBe('agent-backend');
+	});
+
+	it('uses the default agent when several are open and none is on screen', async () => {
+		const bridge = makeBridge();
+		const execute = makeExecutor({ bridge, defaultSessionId: 'agent-frontend' });
+
+		const result = await execute(makeDecision({ target: 'conductor' }), {
+			roster: [],
+			scope: CONDUCTOR_SCOPE,
+		});
+
+		expect(result.agentSessionId).toBe('agent-frontend');
+	});
+
+	it('keeps the bound scope agent ahead of the default agent', async () => {
+		const bridge = makeBridge();
+		const execute = makeExecutor({ bridge, defaultSessionId: 'agent-backend' });
+
+		const result = await execute(makeDecision({ target: 'conductor' }), {
+			roster: [],
+			scope: { kind: 'agent', sessionId: 'agent-frontend' },
+		});
+
+		expect(result.agentSessionId).toBe('agent-frontend');
+	});
+
+	it('never lets the default agent override an agent the Brain named', async () => {
+		const bridge = makeBridge();
+		const execute = makeExecutor({ bridge, defaultSessionId: 'agent-frontend' });
+
+		const result = await execute(makeDecision(), { roster: [], scope: CONDUCTOR_SCOPE });
+
+		expect(result.agentSessionId).toBe('agent-backend');
+	});
+
+	it('ignores a default agent that no longer exists and falls back to the agent on screen', async () => {
+		const bridge = makeBridge();
+		const execute = makeExecutor({
+			bridge,
+			activeSessionId: 'agent-frontend',
+			defaultSessionId: 'agent-deleted',
+		});
 
 		const result = await execute(makeDecision({ target: 'conductor' }), {
 			roster: [],

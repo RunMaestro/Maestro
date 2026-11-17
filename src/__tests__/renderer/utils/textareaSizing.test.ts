@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	clampTextareaHeight,
 	normalizeTextareaHeight,
@@ -122,6 +122,57 @@ describe('resizeTextareaToContent', () => {
 		resizeTextareaToContent(textarea, 176);
 
 		expect(textarea.scrollTop).toBe(120);
+	});
+
+	// Reading scrollHeight forces a synchronous layout of everything the page has
+	// dirtied, so an unchanged composer must not be measured again.
+	describe('skipping an unchanged textarea', () => {
+		function measuredTextarea(height: number) {
+			const textarea = document.createElement('textarea');
+			const reads = vi.fn(() => height);
+			Object.defineProperty(textarea, 'scrollHeight', { get: reads, configurable: true });
+			return { textarea, reads };
+		}
+
+		it('does not re-measure when value, cap and height are unchanged', () => {
+			const { textarea, reads } = measuredTextarea(80);
+			textarea.value = 'draft';
+			expect(resizeTextareaToContent(textarea, 176)).toBe(true);
+			expect(resizeTextareaToContent(textarea, 176)).toBe(false);
+			expect(reads).toHaveBeenCalledTimes(1);
+			expect(textarea.style.height).toBe('80px');
+		});
+
+		it('re-measures when the value changes', () => {
+			const { textarea, reads } = measuredTextarea(80);
+			textarea.value = 'draft';
+			resizeTextareaToContent(textarea, 176);
+			textarea.value = 'draft!';
+			expect(resizeTextareaToContent(textarea, 176)).toBe(true);
+			expect(reads).toHaveBeenCalledTimes(2);
+		});
+
+		it('re-measures when the cap changes', () => {
+			const { textarea } = measuredTextarea(150);
+			resizeTextareaToContent(textarea, 176);
+			expect(resizeTextareaToContent(textarea, 112)).toBe(true);
+			expect(textarea.style.height).toBe('112px');
+		});
+
+		it('re-measures when something else changed the height', () => {
+			const { textarea } = measuredTextarea(80);
+			resizeTextareaToContent(textarea, 176);
+			textarea.style.height = '300px';
+			expect(resizeTextareaToContent(textarea, 176)).toBe(true);
+			expect(textarea.style.height).toBe('80px');
+		});
+
+		it('re-measures after a measure taken while hidden (scrollHeight 0)', () => {
+			const { textarea, reads } = measuredTextarea(0);
+			resizeTextareaToContent(textarea, 176);
+			expect(resizeTextareaToContent(textarea, 176)).toBe(true);
+			expect(reads).toHaveBeenCalledTimes(2);
+		});
 	});
 });
 

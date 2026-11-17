@@ -6,20 +6,22 @@ Essential guidance for working with this codebase. This file is loaded into ever
 
 None of these load automatically. Read the one that matches the task before you start; do not read them all.
 
-| Document                                   | Read it before...                                                                                                                                                   |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [[CLAUDE-PATTERNS.md]]                     | Touching process management, modals, themes, tabs, the execution queue, Auto Run, SSH spawns, error handling, or Encore gating. Also holds the debugging checklists |
-| [[CLAUDE-IPC.md]]                          | Adding or calling a `window.maestro.*` API                                                                                                                          |
-| [[CLAUDE-PERFORMANCE.md]]                  | Performance-sensitive renderer work (React optimization, debouncing, batching) or capturing a perf trace                                                            |
-| [[CLAUDE-WIZARD.md]]                       | Editing the Onboarding Wizard, Inline Wizard, or Tour System                                                                                                        |
-| [[CLAUDE-FEATURES.md]]                     | Editing the Usage Dashboard, Document Graph, or Delegation Graph                                                                                                    |
-| [[CLAUDE-AGENTS.md]]                       | Adding or changing a provider, or looking up what a provider supports                                                                                               |
-| [[CLAUDE-SESSION.md]]                      | Touching the `Session` interface (the agent data model)                                                                                                             |
-| [[CLAUDE-PLATFORM.md]]                     | Anything path-, shell-, or OS-specific (Windows, Linux, macOS, SSH remote)                                                                                          |
-| [[CLAUDE-CUE.md]]                          | Editing `src/main/cue/` (architecture, dispatch flow, lifecycle, gotchas)                                                                                           |
-| [[CLAUDE-PLUGINS.md]]                      | Editing `src/main/plugins/` or `src/shared/plugins/` (tiers, sandbox, broker, capabilities, signing, trust model)                                                   |
-| [[CLAUDE-SETTINGS.md]]                     | Editing `src/renderer/components/Settings/` or adding a setting (style guide plus the registration checklist)                                                       |
-| [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) | Integrating a new agent end to end                                                                                                                                  |
+| Document                                         | Read it before...                                                                                                                                                   |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [[CLAUDE-PATTERNS.md]]                           | Touching process management, modals, themes, tabs, the execution queue, Auto Run, SSH spawns, error handling, or Encore gating. Also holds the debugging checklists |
+| [[CLAUDE-IPC.md]]                                | Adding or calling a `window.maestro.*` API                                                                                                                          |
+| [[CLAUDE-PERFORMANCE.md]]                        | Performance-sensitive renderer work (React optimization, debouncing, batching) or capturing a perf trace                                                            |
+| [[CLAUDE-WIZARD.md]]                             | Editing the Onboarding Wizard, Inline Wizard, or Tour System                                                                                                        |
+| [[CLAUDE-FEATURES.md]]                           | Editing the Usage Dashboard, Document Graph, or Delegation Graph                                                                                                    |
+| [[CLAUDE-AGENTS.md]]                             | Adding or changing a provider, or looking up what a provider supports                                                                                               |
+| [[CLAUDE-SESSION.md]]                            | Touching the `Session` interface (the agent data model)                                                                                                             |
+| [[CLAUDE-PLATFORM.md]]                           | Anything path-, shell-, or OS-specific (Windows, Linux, macOS, SSH remote)                                                                                          |
+| [[CLAUDE-CUE.md]]                                | Editing `src/main/cue/` (architecture, dispatch flow, lifecycle, gotchas)                                                                                           |
+| [[CLAUDE-PLUGINS.md]]                            | Editing `src/main/plugins/` or `src/shared/plugins/` (tiers, sandbox, broker, capabilities, signing, trust model)                                                   |
+| [[CLAUDE-SETTINGS.md]]                           | Editing `src/renderer/components/Settings/` or adding a setting (style guide plus the registration checklist)                                                       |
+| [FEDERATION.md](docs/agent-guides/FEDERATION.md) | Adding or changing any agent or tab setting, or a feature that acts on an agent: every one needs a Federation decision (shared, personal, machine)                  |
+| [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md)       | Integrating a new agent end to end                                                                                                                                  |
+| [SMOKE-TEST.md](docs/agent-guides/SMOKE-TEST.md) | Any "smoke test" request, or verifying a build or branch on a running app: the whole checklist, every time                                                          |
 
 ---
 
@@ -53,6 +55,7 @@ None of these load automatically. Read the one that matches the task before you 
 | Plugin media isolation or a bounded native tool    | [PLUGIN-MEDIA-TOOLS.md](docs/agent-guides/PLUGIN-MEDIA-TOOLS.md) |
 | Docs or site screenshot                            | [SCREENSHOT-CAPTURE.md](docs/agent-guides/SCREENSHOT-CAPTURE.md) |
 | Dataview query, vault index, or DataviewJS sandbox | [DATAVIEW.md](docs/agent-guides/DATAVIEW.md)                     |
+| Agent or tab setting, or an action on an agent     | [FEDERATION.md](docs/agent-guides/FEDERATION.md)                 |
 
 ### Commonly-reimplemented functions (do NOT add new copies)
 
@@ -83,7 +86,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Summing a Codex session's tokens:** `CodexTokenCounts` in `src/shared/codexTokenUsage.ts`
 - **Claude's cost and per-model usage for one turn:** `claudeTurnCost()`, `readClaudeTurnBaseline()`, `parseCostStateRow()` in `src/shared/claudeCostTracker.ts`
 - **Live tokens-per-second rate:** `createThroughputTracker()`, `THROUGHPUT_WINDOWS_MS` in `src/shared/throughputRate.ts`
-- **Tokens per second:** `extractClaudeSpeedSamples()`, `computeClaudeTokenSpeed()`, `CodexTokenSpeedTracker`, `summarizeTokenSpeed()` in `src/shared/tokenSpeed.ts`; `formatTokensPerSecond()` in `src/shared/formatters.ts`
+- **Tokens per second:** `extractClaudeSpeedSamples()`, `computeClaudeTokenSpeed()`, `CodexTokenSpeedTracker`, `StreamCallTimer`, `summarizeTokenSpeed()` in `src/shared/tokenSpeed.ts`; `formatTokensPerSecond()` in `src/shared/formatters.ts`
 - **Usage, cost and message count of a Claude transcript:** `computeClaudeSessionUsage()`, `computeClaudeUsageWithSubagents()`, `readClaudeSubagentTranscripts()` in `src/shared/claudeSessionUsage.ts`; `countClaudeTranscriptMessages()` in `src/shared/claudeTranscriptMessages.ts`
 
 #### Paths, files, and strings
@@ -105,6 +108,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
 - **Whether text content looks binary (a NUL, or many control characters):** `isBinaryContent()` in `src/shared/fileKinds.ts`, beside `isBinaryExtension()`
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
+- **How many bytes a directory occupies:** `directoryBytes(target)` in `src/main/utils/directory-size.ts`
 - **Parsing a base64 data URL (an image payload):** `parseBase64DataUrl()`, `mediaSubtype()` in `src/shared/dataUrl.ts` (never a `base64,(.+)$` capture)
 - **Guarding a serialized JSON payload before it overwrites a file:** `assertSerializedJsonIsSafe(serialized, target)` in `src/shared/jsonUtils.ts`
 - **Writing a JSON file atomically from synchronous code:** `atomicWriteJsonSync(filePath, value, opts?)` in `src/shared/atomicJsonSync.ts` (the async twin is `atomicWriteJson()` in `src/main/utils/atomic-json-store.ts`)
@@ -142,9 +146,13 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Electron's userData directory from main code a worker thread also loads:** `getAppUserDataDir()` in `src/main/utils/app-user-data.ts`
 - **Where the synced stores live (custom Storage Location):** `resolveSyncDir(userDataDir)`, `isValidSyncPath()`, `BOOTSTRAP_STORE_FILE` in `src/shared/syncPath.ts`; the CLI's `getSyncDir()` in `src/cli/services/storage.ts`
 - **Deferred main-process store persistence:** `deferStoreWrites()` in `src/main/stores/deferred-writes.ts`, `flushPendingSessionWrites()` in `src/main/stores/instances.ts`
+- **Serving conf `get()` without re-reading the file:** `cacheStoreReads()`, `readDotPath()` in `src/main/stores/cached-reads.ts`
 - **Rewriting a large `{ key: [...] }` JSON store file:** `serializeWithMemoizedArray(data, memoKey)`, `encodeWithMemoizedArray(data, memoKey)` in `src/shared/memoizedJsonSerialize.ts`
+- **Keeping an agent's file-tree scan out of storage and off the wire:** `withoutFileTreeCache()`, `holdsFileTreeCache()`, `unloadedFileTreeState()` in `src/shared/fileTreeCache.ts`
 - **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()` in `src/main/stores/corrupt-store-recovery.ts` (never `clearInvalidConfig`)
 - **Whether a SQLite error means the database file is damaged:** `isSqliteCorruptionError()` in `src/shared/sqliteErrors.ts`
+- **Memory and CPU of a process tree:** `readProcessTreeUsage(roots)`, `summarizeProcessTrees()` in `src/main/utils/process-usage.ts`, over `descendantsOf()` in `src/shared/maestro-lib/control/process-tree.ts`
+- **What Maestro costs this computer (Application Stats):** `collectAppStats()` in `src/main/app-stats.ts`, `collectLocalModelResources()` in `src/main/local-models/resource-report.ts`; `AppStatsSnapshot` in `src/shared/appStats.ts`
 - **Parsing a session transcript in the main process:** `runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`, task bodies in `transcript-parse-tasks.ts`
 - **Reading a page of a transcript's messages:** `forEachJsonlLine()`, `readFirstJsonlLine()` in `src/main/utils/jsonl-stream.ts`, feeding `MessagePageCollector` in `src/main/storage/base-session-storage.ts`
 - **A cache derivation upgrade that survives being killed:** `isDerivationStale()`, `accumulateUpgradeBaseline()`, `finishDerivationUpgrade()` in `src/main/utils/statsCache.ts`; `createCacheCheckpointer()` in `src/main/utils/cache-checkpointer.ts`
@@ -168,7 +176,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **HTTP request from the main process:** `fetchWithTimeout()`, `isFetchTimeoutError()` in `src/main/utils/fetchWithTimeout.ts` (never a bare `fetch()`)
 - **Choosing a port for a local server:** `pickFreePort(host)`, `probePort(port, host)`, `isTcpPort()` in `src/main/utils/tcp-port.ts` (choose once and persist; never move a persisted port)
 - **A size-capped log file for a supervised process:** `openCappedLogFile(path, { maxBytes?, onError? })`, `readCappedLogTail()` in `src/main/utils/capped-log-file.ts`
-- **Showing a process log in the System Log Viewer (a source pill):** `LOG_SOURCES`, `parseLogLines()` in `src/shared/logSources.ts`; `readLogSource()` in `src/main/log-sources.ts`; `useLogFileSource()` in `src/renderer/hooks/utils/useLogFileSource.ts`; `openLogViewer()` in `src/renderer/stores/modalStore.ts`
+- **Showing a process log in the System Log Viewer (a source pill):** `LOG_SOURCES`, `parseLogSourceEntries()` in `src/shared/logSources.ts`; `readLogSource()` in `src/main/log-sources.ts`; `useLogFileSources()` in `src/renderer/hooks/utils/useLogFileSources.ts`; `openLogViewer()` in `src/renderer/stores/modalStore.ts`
 - **Running and reaching the Maestro model server (`llama-server`):** `startModelServer()`, `stopModelServer()`, `getModelServerStatus()`, `ensureModelServerFor(modelId)` in `src/main/local-models/server/supervisor.ts`; `getModelServerReport()`, `installModelServerEngine()` in `server/service.ts`
 - **Which `llama-server` build a platform gets:** `selectServerBuild(platform, arch, choice)`, `availableServerBuildChoices()`, `LLAMA_SERVER_RELEASE` in `src/shared/local-models/server-engine.ts` (never a second platform table)
 - **What the model server keeps between launches (port, bind, key):** `readModelServerConfig()`, `ensureModelServerPort()`, `writeModelServerSettings()`, `ensureModelServerKey()`, `rotateModelServerKey()` in `src/main/local-models/server/config-store.ts`
@@ -187,6 +195,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
 - **Yielding to the event loop during long main-process work:** `yieldToEventLoop()` in `src/main/utils/concurrency.ts`
 - **Platform detection:** `isWindows()`, `isMacOS()`, `isLinux()` in `src/shared/platformDetection.ts`; renderer-only `isWindowsPlatform()` and siblings in `src/renderer/utils/platformUtils.ts` (never `process.platform` in the renderer)
+- **A chokidar watcher that only needs the top of a big tree:** `SHALLOW_WATCH_OPTIONS` in `src/main/utils/watcher-ignore.ts`
 - **Encore Feature flags and their defaults:** `ENCORE_FEATURE_DEFAULTS`, `resolveEncoreFeatures(raw)`, `isEncoreFeatureEnabled()`, `requireEncoreFeature()` in `src/shared/encoreFeatureDefaults.ts`; background services follow the flag via `createEncoreFeatureLifecycle()` in `src/main/encore-feature-lifecycle.ts`
 - **Whether a stored agent is live (a switched-off Pianola is dormant):** `filterLiveAgents()`, `isAgentDormant()` in `src/shared/agentVisibility.ts`; per process `getLiveSessions()` (main getters), `readLiveSessions()` (CLI storage), `useLiveSessions()` in `src/renderer/hooks/session/useLiveSessions.ts`
 - **A maestro-cli verb that belongs to an Encore Feature:** `encoreCommand()`, `requireEncore()`, `requireEncoreForOptions()` in `src/cli/utils/encore-gate.ts`
@@ -223,7 +232,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A lifted agent's pointer and send refusal (Federation):** `readLiftedTo()`, `liftedSendRefusal()`, `liftedAgentRef()`, `liftedOwnerOfProcess()`, `peerAgentRef()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
 - **Planning a Federation lift (refusals, payload, plan):** `liftRefusal()`, `planAgentLift()`, `liftRemoteCwd()`, `liftedAutoRunFolder()`, `liftSshRemoteId()` in `src/shared/maestro-lib/agents/lift-plan.ts`; `liftBusyReason()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
 - **Running a Federation lift (CLI and desktop Move to Host):** `runLift()`, `formatLiftPlan()`, `LiftRunError`, `providerEnvVarsOf()` in `src/shared/maestro-lib/agents/lift-run.ts`; `liftAgentFromDesktop()` in `src/main/federation/lift.ts`
-- **Keeping a lifted agent's settings in step with its host (Federation):** `planLiftedSettingsSync()`, `applyLiftSyncPull()`, `settleLiftSyncBaseline()` in `src/shared/maestro-lib/agents/lift-settings-sync.ts`; `startLiftedAgentSettingsSync()` in `src/renderer/services/liftedAgentSettingsSync.ts`
+- **Keeping a hosted agent's settings on its host (Federation):** `planLiftedSettingsSync()`, `liftFollowUpPatch()` in `src/shared/maestro-lib/agents/lift-settings-sync.ts`; `saveHostedAgentSettings()` in `src/renderer/services/liftedAgentSettingsSync.ts`
 - **A `peer:agent` target on the CLI (Federation):** `routeAgentTarget()`, `resolvePeerAgent()`, `withPeerAgent()`, `connectPeer()`, `listHostAgents()`, `listFederationPeers()`, `findPeerRemote()`, `peerIdFor()`, `watchPeerConnection()`, `hostCallError()`, `peerErrorCode()` in `src/cli/services/peer-resolver.ts`
 - **Connecting to a Federation peer's host (CLI and desktop):** `connectPeerClient()`, `federationPeersOf()`, `peerIdFor()`, `peerForwardError()`, `watchPeerConnection()`, `PeerConnectError` in `src/shared/maestro-lib/client/peer-connection.ts`
 - **Driving a Federation peer's agent (CLI and desktop):** `runPeerAgentAction()`, `parsePeerAgentAction()` in `src/shared/maestro-lib/client/peer-actions.ts`; `PeerMirrorService.act()` in `src/main/federation/`
@@ -375,7 +384,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer()`, `insertIntoAgentComposer()`, `resolveComposerTarget()` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()`, `appendBlockToDraft()` in `src/renderer/utils/quoteSelection.ts`
 - **Picking an element in a browser tab (Design Mode):** `captureDesignPick()`, `designModeGuestCall()` in `src/renderer/utils/designModePicker.ts`; `deliverDesignPick()` in `src/renderer/services/designModePick.ts`
 - **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx`
-- **Trimming a text paste in a composer:** `applyTrimmedTextPaste(e, currentValue, setValue)` / `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
+- **Whether a composer paste carries an image (text pastes are never rewritten):** `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
 - **Composer keys both chat composers share (Cmd+F, `@` picker, Tab, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerAgentTabKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`
 - **Which optional controls a composer toolbar offers:** `deriveAiComposerCapabilities()`, `deriveGroupChatComposerCapabilities()`, `aiCanAttachImages()`, `canModeratorReadImages()`, `flashModeratorCannotReadImages()`, `GROUP_CHAT_COMPOSER_CAPABILITIES` in `src/renderer/components/ChatComposer/capabilities.ts`
 - **A chat composer's textarea with live `@mention` chips:** `<ComposerTextarea>` in `src/renderer/components/ChatComposer/ComposerTextarea.tsx`
@@ -528,6 +537,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A spinning loading icon:** `<Spinner>` in `src/renderer/components/ui/Spinner.tsx` (never `animate-spin` on an `<svg>`)
 - **A pulsing placeholder bar while content loads:** `<SkeletonBox>` in `src/renderer/components/ui/SkeletonBox.tsx`
 - **Tiny uppercase state chip:** `<MiniBadge>` in `src/renderer/components/ui/MiniBadge.tsx`
+- **The title band at the top of a right-click menu:** `<ContextMenuHeader>`, `contextMenuHeaderForeground()` in `src/renderer/components/ui/ContextMenuHeader.tsx`
+- **A status dot that shows live activity (busy, connecting, retrying):** `activeStatusHalo()` in `src/renderer/utils/theme.tsx`
 - **A labeled action button in a panel header:** `<HeaderActionButton>` in `src/renderer/components/ui/HeaderActionButton.tsx`
 - **A text box that narrows a list:** `<FilterInput>` in `src/renderer/components/ui/FilterInput.tsx`
 - **Segmented toolbar (sort/filter pill bar):** `<SegmentedControl>` in `src/renderer/components/ui/SegmentedControl.tsx`
@@ -702,6 +713,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Layout, scroll, sizing, and hook utilities
 
 - **Following streaming output in a capped box:** `useStickToBottom(contentKey)` in `src/renderer/hooks/ui/useStickToBottom.ts`
+- **Pausing looping animations while the window is unfocused:** `installMotionPause()`, `MOTION_PAUSED_CLASS` in `src/renderer/utils/motionPause.ts`
 - **Keeping a scrolling strip's active item on screen:** `useRevealActiveItem()`, `revealActiveProps()`, `computeRevealScroll()` in `src/renderer/hooks/ui/useRevealActiveItem.ts`
 - **Reaching an off-screen item while dragging:** `useDragAutoScroll(ref, { active })` in `src/renderer/hooks/ui/useDragAutoScroll.ts`
 - **Keeping a virtualized list on its selection:** the virtualizer's own `scrollToIndex` from an effect, never a `ref` on the row; a plain list uses `useScrollIntoView` in `src/renderer/hooks/ui/useScrollIntoView.ts`

@@ -97,8 +97,10 @@ import { lift } from './commands/lift';
 import {
 	federationAuto,
 	federationAutoRun,
+	federationConflicts,
 	federationPeers,
 	federationReconnect,
+	federationResolve,
 } from './commands/federation';
 import { createAgent } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
@@ -147,6 +149,8 @@ import { notifyFlash } from './commands/notify-flash';
 import { notifySpeak } from './commands/notify-speak';
 import { notificationInbox } from './commands/notification-inbox';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
+import { appStats } from './commands/app-stats';
+import { logs, logsClear, LOGS_LEVEL_HELP, LOGS_SOURCE_HELP } from './commands/logs';
 import {
 	modelsEndpointsAdd,
 	modelsEndpointsDetect,
@@ -243,6 +247,9 @@ import {
 	voiceVoicesList,
 	voiceVoicesPreview,
 	voiceVoicesSet,
+	voiceDefaultAgentClear,
+	voiceDefaultAgentSet,
+	voiceDefaultAgentShow,
 	voiceWakePhraseClear,
 	voiceWakePhraseList,
 	voiceWakePhraseSet,
@@ -556,8 +563,18 @@ list
 
 list
 	.command('agents')
-	.description('List all agents')
+	.description("List all agents, with each one's group and what it is for")
 	.option('-g, --group <id>', 'Filter by group ID')
+	.option('-d, --descriptions', "Print each agent's peer description under it (JSON always has it)")
+	.option('--visible-only', 'Leave out agents in hidden groups')
+	.option(
+		'--reachable',
+		'Only the agents the caller may reach right now, with the access (Consult / Delegate)'
+	)
+	.option(
+		'--from <agent>',
+		"The caller for --reachable (default: this shell's agent, MAESTRO_CALLER_AGENT_ID)"
+	)
 	.option('--peer <name>', "List the agents on one Federation peer (an SSH remote's name)")
 	.option(
 		'--all-peers',
@@ -745,7 +762,7 @@ program
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
 	.option(
 		'--model <model>',
-		'Run this one turn on a model other than the agent\'s own. "auto" asks the model router for the tier and effort this message needs (see: s1 route)'
+		'Run this one turn on a model other than the agent\'s own. "auto" asks the model router for the tier and effort this message needs (see: s1 route). On a peer:agent it is your own choice for this turn ("auto" is refused there)'
 	)
 	.option('--require-plugin-tools', 'Fail if a desktop-backed run with plugin tools is unavailable')
 	.option(
@@ -762,6 +779,7 @@ program
 	)
 	.option('--no-synopsis', 'Skip the synopsis turn; the History entry carries the response instead')
 	.option('--json', 'Output as JSON (this verb always does; accepted so every verb takes --json)')
+	.option('--effort <level>', 'peer:agent only: the effort for this one turn, your own choice')
 	.action(send);
 
 // Dispatch command - hand a prompt to the desktop and return tab/session ID.
@@ -2317,6 +2335,24 @@ federation
 	.description('Force the desktop to reconnect to a peer and reload its agent list')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((peer: string, options) => federationReconnect(peer, options));
+
+federation
+	.command('conflicts')
+	.description(
+		"List hosted agents' settings that this machine and the host both changed (exit 1 while any wait)"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationConflicts(options));
+
+federation
+	.command('resolve <agent> <field>')
+	.description(
+		"Settle one settings conflict of a hosted agent (peer:agent): take the host's value, keep this machine's, or send a merged text"
+	)
+	.option('--take <side>', 'host or local')
+	.option('--value <text>', 'A merged text to use instead (free-text fields only)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, field: string, options) => federationResolve(agent, field, options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program
@@ -4579,6 +4615,30 @@ voiceWakePhrase
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(voiceWakePhraseClear);
 
+const voiceDefaultAgent = voice
+	.command('default-agent')
+	.description(
+		'The agent a Conductor request goes to when no agent is clearly meant (instead of the agent on screen)'
+	);
+
+voiceDefaultAgent
+	.command('show')
+	.description('Show the default agent, and whether it is still in use')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDefaultAgentShow);
+
+voiceDefaultAgent
+	.command('set <agent>')
+	.description('Send voice requests no agent is clearly meant for to this agent')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDefaultAgentSet);
+
+voiceDefaultAgent
+	.command('clear')
+	.description('Remove the default agent, so the agent on screen takes unclear requests again')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(voiceDefaultAgentClear);
+
 const voiceWake = voice
 	.command('wake')
 	.description(
@@ -5640,6 +5700,38 @@ movement
 	.option('--value <text>', 'Text used with --type')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(movementInteract);
+program
+	.command('app-stats')
+	.description(
+		'Show what Maestro costs this computer, as Debug: View Application Stats does: memory, CPU and processes for Electron, agent trees and the model server, resident local models, and Local Models disk'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(appStats);
+
+// The System Log Viewer: read (its pills, search and Export) and Clear.
+const logsCommand = program
+	.command('logs')
+	.description(
+		"Read or clear the System Log Viewer's logs: Maestro's own log and the model server's, interleaved newest first (default: show)"
+	);
+
+logsCommand
+	.command('show', { isDefault: true })
+	.description('Print the logs the viewer shows, in its Export format')
+	.option('--source <ids>', `Sources to read, comma-separated (default: all): ${LOGS_SOURCE_HELP}`)
+	.option('--level <levels>', `Levels to keep, comma-separated (default: all): ${LOGS_LEVEL_HELP}`)
+	.option('--search <text>', 'Keep entries whose message, context or data contain this text')
+	.option('--limit <n>', 'Keep only the newest n matching entries')
+	.option('-o, --output <file>', 'Write the entries to a file instead, as Export does')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => logs(options));
+
+logsCommand
+	.command('clear')
+	.description("Clear Maestro's own log, as the viewer's Clear button does (file logs are kept)")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => logsClear(options));
+
 program
 	.command('support-package')
 	.description(

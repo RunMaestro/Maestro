@@ -111,10 +111,15 @@ describe('TokenSpeedCards', () => {
 	});
 
 	it('explains an empty range instead of showing zero rates', () => {
-		render(<TokenSpeedCards speed={emptyTokenSpeedSummary()} theme={theme} />);
+		render(
+			<TokenSpeedCards
+				speed={{ ...emptyTokenSpeedSummary(), measurableAgents: ['claude-code', 'codex', 'pi'] }}
+				theme={theme}
+			/>
+		);
 		expect(screen.getByTestId('token-speed-empty')).toHaveTextContent('No timed API calls');
-		// The providers come from TOKEN_SPEED_AGENTS, not hard-coded copy.
-		expect(screen.getByTestId('token-speed-empty')).toHaveTextContent('Claude Code and Codex');
+		// The providers come from the capability list main sends, not hard-coded copy.
+		expect(screen.getByTestId('token-speed-empty')).toHaveTextContent('Claude Code, Codex and Pi');
 		expect(screen.queryByTestId('token-speed-cards')).not.toBeInTheDocument();
 	});
 

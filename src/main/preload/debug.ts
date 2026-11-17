@@ -13,6 +13,7 @@ import {
 	type DebugPackageOptions,
 } from '../../shared/debugPackage';
 
+import type { AppStatsSnapshot } from '../../shared/appStats';
 import type { VoiceSelfTestReport } from '../acappella/voice-self-test';
 
 // Re-exported rather than re-declared: rc moved the canonical definition to
@@ -43,38 +44,13 @@ export interface DocumentGraphChange {
 }
 
 /**
- * Runtime snapshot returned by debug:getAppStats.
- * See src/main/ipc/handlers/debug.ts for field population details.
+ * What debug:getAppStats answers: the snapshot inside the IPC envelope, or the
+ * reason it could not be built. The shape lives in `shared/appStats` so the
+ * modal and `maestro-cli app-stats` read one definition.
  */
-export interface AppStatsSnapshot {
-	timestamp: number;
-	platform: NodeJS.Platform;
-	main: {
-		rss: number;
-		heapTotal: number;
-		heapUsed: number;
-		external: number;
-		arrayBuffers: number;
-	};
-	electronProcesses: Array<{
-		pid: number;
-		type: string;
-		name?: string;
-		serviceName?: string;
-		cpuPercent?: number;
-		workingSetBytes?: number;
-		peakWorkingSetBytes?: number;
-	}>;
-	managedProcesses: Array<{
-		sessionId: string;
-		toolType: string;
-		pid?: number;
-		isTerminal?: boolean;
-		isBatchMode: boolean;
-		startTime?: number;
-		rssBytes?: number;
-	}>;
-}
+export type AppStatsResponse =
+	| ({ success: true } & AppStatsSnapshot)
+	| { success: false; error: string };
 
 /**
  * Live performance-profiling status (debug:getProfilingStatus / startProfiling).
@@ -168,7 +144,7 @@ export function createDebugApi() {
 
 		previewPackage: () => ipcRenderer.invoke('debug:previewPackage'),
 
-		getAppStats: (): Promise<AppStatsSnapshot> => ipcRenderer.invoke('debug:getAppStats'),
+		getAppStats: (): Promise<AppStatsResponse> => ipcRenderer.invoke('debug:getAppStats'),
 
 		// A Cappella voice self-test: loads each native runtime, runs a trivial
 		// operation, and reports per-runtime pass/fail with timings. Loads no model,

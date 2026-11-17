@@ -64,7 +64,7 @@ import { formatFileMention, stripMentionQuotes } from '../../../shared/mentionPa
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
 import { screenshotReferenceLabel } from '../../utils/stagedImageOrder';
 import { STAGED_IMAGE_MIME } from '../../components/InputArea/components/stagedImageDrag';
-import { applyTrimmedTextPaste, clipboardHasImage } from '../../components/ChatComposer/pasteTrim';
+import { clipboardHasImage } from '../../components/ChatComposer/pasteTrim';
 import {
 	normalizeComposerCommandMode,
 	type ComposerCommandMode,
@@ -804,12 +804,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const items = e.clipboardData.items;
 			const hasImage = clipboardHasImage(e.clipboardData);
 
-			// Handle text paste with whitespace trimming. A room's composer trims its
-			// own text pastes (GroupChatInput's wrapper) and only hands images here.
-			if (!hasImage && !isGroupChatActive) {
-				applyTrimmedTextPaste(e, (e.target as HTMLTextAreaElement).value, setInputValue);
-				return;
-			}
+			// Text paste lands verbatim (native paste). No trimming: dictation tools
+			// such as Scribe append a trailing space on purpose.
+			if (!hasImage && !isGroupChatActive) return;
 
 			// Image handling requires AI mode or group chat
 			if (!isGroupChatActive && !isDirectAIMode) return;
@@ -872,7 +869,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				}
 			}
 		},
-		[setInputValue, setStagedImages, getCommandMode]
+		[setStagedImages, getCommandMode]
 	);
 
 	/**

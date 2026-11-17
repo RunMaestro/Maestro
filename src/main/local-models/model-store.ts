@@ -36,6 +36,7 @@ import { allLocalModels, getLocalModel } from '../../shared/local-models/model-c
 import type { LocalModelEntry, LocalModelFile } from '../../shared/local-models/types';
 import { normalizeRootRelativePath } from '../../shared/pathContainment';
 import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
+import { directoryBytes } from '../utils/directory-size';
 import { LOCAL_MODELS_DIRNAME, localModelsDataDir } from './paths';
 
 export const MODEL_MANIFEST_FILENAME = 'manifest.json';
@@ -231,28 +232,6 @@ async function fileSize(filePath: string): Promise<number | null> {
 	}
 }
 
-/** Recursive byte total for a directory. Missing directory reads as zero. */
-async function dirBytes(dir: string): Promise<number> {
-	let total = 0;
-	let entries: Dirent[];
-	try {
-		entries = await fs.readdir(dir, { withFileTypes: true });
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
-		throw error;
-	}
-
-	for (const entry of entries) {
-		const full = path.join(dir, entry.name);
-		if (entry.isDirectory()) {
-			total += await dirBytes(full);
-		} else if (entry.isFile()) {
-			total += (await fileSize(full)) ?? 0;
-		}
-	}
-	return total;
-}
-
 /**
  * Full status of one model: manifest present, hashes matching the catalog, and
  * every file the right length.
@@ -267,7 +246,7 @@ export async function getStatus(id: string): Promise<ModelStatus> {
 		return { id, status: 'not-installed', manifest: null, detail: 'Unknown model', bytesOnDisk: 0 };
 	}
 
-	const bytesOnDisk = await dirBytes(modelDir(id));
+	const bytesOnDisk = await directoryBytes(modelDir(id));
 	const manifest = await readManifest(id);
 
 	if (!manifest) {
@@ -420,7 +399,7 @@ export async function markInstalled(entry: LocalModelEntry): Promise<ModelManife
  */
 export async function remove(id: string): Promise<number> {
 	const dir = modelDir(id);
-	const bytes = await dirBytes(dir);
+	const bytes = await directoryBytes(dir);
 	await fs.rm(dir, { recursive: true, force: true });
 	return bytes;
 }
@@ -448,7 +427,7 @@ export async function totalFootprint(include?: ModelDirFilter): Promise<ModelFoo
 	const models: Array<{ id: string; bytes: number }> = [];
 	for (const entry of entries) {
 		if (!entry.isDirectory() || (include && !include(entry.name))) continue;
-		models.push({ id: entry.name, bytes: await dirBytes(path.join(root, entry.name)) });
+		models.push({ id: entry.name, bytes: await directoryBytes(path.join(root, entry.name)) });
 	}
 
 	return { bytes: models.reduce((total, model) => total + model.bytes, 0), models };

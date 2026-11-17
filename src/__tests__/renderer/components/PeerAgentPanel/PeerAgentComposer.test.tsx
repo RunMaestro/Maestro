@@ -21,6 +21,7 @@ import { notifyToast } from '../../../../renderer/stores/notificationStore';
 import { mirrorDraftKey, usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { useHostedAgentSettingsStore } from '../../../../renderer/stores/hostedAgentSettingsStore';
 import { MIRROR_COMPOSER_UNAVAILABLE } from '../../../../renderer/utils/peerMirrorView';
 import {
 	createMirroredPeer,
@@ -42,6 +43,7 @@ function renderComposer(tab: AITabRecord = { id: 't1', name: 'First' }) {
 			peerName="Build Box"
 			agentId="a1"
 			agentName="Builder"
+			agent={{ id: 'a1', name: 'Builder', toolType: 'claude-code', aiTabs: [tab] }}
 			tab={tab}
 		/>
 	);
@@ -68,6 +70,7 @@ function hydrateHost(tab: AITabRecord) {
 describe('PeerAgentComposer', () => {
 	beforeEach(() => {
 		resetStores(usePeerMirrorStore, useSessionStore, useSettingsStore);
+		useHostedAgentSettingsStore.setState({ tabChoices: {} });
 		act$.mockReset();
 		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'started' } } });
 		maestro.federation = { act: act$ };
@@ -292,5 +295,27 @@ describe('PeerAgentComposer', () => {
 	it('disables Send while the draft is empty', () => {
 		renderComposer();
 		expect(screen.getByTitle('Send to Builder on Build Box')).toBeDisabled();
+	});
+
+	it("sends this conductor's own tab choices with the message, and keeps them off the host tab", async () => {
+		renderComposer({ id: 't1', name: 'First' });
+		fireEvent.click(screen.getByRole('button', { name: /Read-only/ }));
+		fireEvent.click(screen.getByRole('button', { name: /History/ }));
+		expect(
+			useHostedAgentSettingsStore.getState().tabChoices[mirrorDraftKey('build', 'a1', 't1')]
+		).toEqual({
+			readOnly: true,
+			saveToHistory: true,
+		});
+		fireEvent.change(textbox(), { target: { value: 'plan only' } });
+		fireEvent.keyDown(textbox(), { key: 'Enter' });
+		await flush();
+		expect(act$).toHaveBeenCalledTimes(1);
+		expect(act$).toHaveBeenCalledWith('build', 'a1', {
+			kind: 'send',
+			tabId: 't1',
+			text: 'plan only',
+			overrides: { readOnly: true, saveToHistory: true },
+		});
 	});
 });

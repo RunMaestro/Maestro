@@ -9,7 +9,8 @@
  * - Visual timeline
  * - Layer stack integration
  * - Keyboard navigation
- * - Source pills (Maestro's log, the model server's log file)
+ * - Source pills (Maestro's log, the model server's log file), all on by
+ *   default, their entries interleaved by time
  */
 
 import React from 'react';
@@ -17,6 +18,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { LogViewer } from '../../../renderer/components/LogViewer';
+import { MAX_TIMELINE_SEGMENTS } from '../../../renderer/utils/systemLogView';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 
 import { createMockTheme, mockTheme } from '../../helpers/mockTheme';
@@ -46,14 +48,20 @@ const createMockLog = (
 	...overrides,
 });
 
-// A read of the model server's log file
+// A read of the model server's log file: a stamped start, two older unstamped
+// llama.cpp lines placed from it, and a stamped line two seconds later.
+const MODEL_SERVER_START = Date.parse('2026-11-13T04:24:10.000Z');
 const createMockFileRead = (
 	overrides: Partial<{ text: string; exists: boolean; truncated: boolean }> = {}
 ) => ({
 	source: 'model-server' as const,
 	path: '/data/logs/model-server.log',
 	exists: true,
-	text: 'main: server is listening\nsrv load_model: failed to load model\nwarning: slow\n',
+	text:
+		'[2026-11-13T04:24:10.000Z] Starting llama-server\n' +
+		'0.00.041.400 I srv  main: server is listening\n' +
+		'0.00.050.000 E srv  load_model: failed to load model\n' +
+		'[2026-11-13T04:24:12.000Z] 0.02.000.000 I srv  warming up\n',
 	truncated: false,
 	size: 100,
 	mtimeMs: 1,
@@ -119,6 +127,29 @@ vi.mock('../../../renderer/components/ConfirmModal', () => ({
 	),
 }));
 
+// jsdom has no layout, so the real virtualizer would draw almost nothing. This
+// one draws every row and captures its options and scroll calls.
+const mockScrollToIndex = vi.fn();
+const capturedVirtualizerOpts: Array<{ count: number; getItemKey?: (index: number) => unknown }> =
+	[];
+vi.mock('@tanstack/react-virtual', () => ({
+	useVirtualizer: (opts: { count: number; getItemKey?: (index: number) => unknown }) => {
+		capturedVirtualizerOpts.push(opts);
+		return {
+			getVirtualItems: () =>
+				Array.from({ length: opts.count }, (_, i) => ({
+					index: i,
+					start: i * 80,
+					size: 80,
+					key: opts.getItemKey?.(i) ?? i,
+				})),
+			getTotalSize: () => opts.count * 80,
+			scrollToIndex: mockScrollToIndex,
+			measureElement: vi.fn(),
+		};
+	},
+}));
+
 // Mock sessionStore for agent name → session ID resolution
 const mockSessions = [
 	{ id: 'session-1', name: 'MyAgent', aiTabs: [{ id: 'tab-1' }] },
@@ -143,9 +174,11 @@ beforeEach(() => {
 		.fn()
 		.mockResolvedValue(undefined);
 	(window.maestro.logger as Record<string, unknown>).onNewLog = vi.fn().mockReturnValue(() => {});
+	// Every source is on by default; an absent model server log keeps the
+	// Maestro-only tests below to Maestro's entries.
 	(window.maestro.logger as Record<string, unknown>).readLogSource = vi
 		.fn()
-		.mockResolvedValue(createMockFileRead());
+		.mockResolvedValue(createMockFileRead({ exists: false, text: '' }));
 	(window.maestro.logger as Record<string, unknown>).getMaxLogBuffer = vi.fn(() => ({
 		then: (cb: (value: number) => void) => {
 			cb(1000);
@@ -723,7 +756,7 @@ describe('LogViewer', () => {
 
 			expect(mockDownloadBlobToClient).toHaveBeenCalledTimes(1);
 			const [blob, filename] = mockDownloadBlobToClient.mock.calls[0] as [Blob, string];
-			expect(filename).toMatch(/^maestro-logs-\d+\.txt$/);
+			expect(filename).toMatch(/^maestro-logs-\d{8}-\d{6}\.txt$/);
 			const text = await readBlobText(blob);
 			expect(text).toContain('[INFO] [TestModule] Test message');
 			expect(text).toContain('"key": "value"');
@@ -974,21 +1007,58 @@ describe('LogViewer', () => {
 				expect(screen.getByText('Log 1')).toBeInTheDocument();
 			});
 
-			const scrollToSpy = vi.fn();
-			const container = screen.getByRole('dialog').querySelector('.overflow-y-auto');
-			if (container) {
-				container.scrollTo = scrollToSpy;
-				Object.defineProperty(container, 'scrollHeight', { value: 1000, configurable: true });
-				Object.defineProperty(container, 'clientHeight', { value: 500, configurable: true });
-			}
-
 			const timeline = screen.getByRole('dialog').querySelector('.h-2.w-full');
 			const secondSegment = timeline?.children[1] as HTMLElement;
-			if (secondSegment) {
-				fireEvent.click(secondSegment);
-			}
+			fireEvent.click(secondSegment);
 
-			expect(scrollToSpy).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }));
+			// The list is virtualized, so the strip scrolls to the entry, not to a
+			// proportion of a height that only exists for the cards on screen.
+			expect(mockScrollToIndex).toHaveBeenCalledWith(1, { align: 'start' });
+		});
+
+		it('groups a long list into a bounded number of stripes', async () => {
+			getMockGetLogs().mockResolvedValue(
+				Array.from({ length: MAX_TIMELINE_SEGMENTS + 60 }, (_, i) =>
+					createMockLog({ timestamp: 1_000_000 + i, message: `Line ${i}` })
+				)
+			);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				const timeline = screen.getByRole('dialog').querySelector('.h-2.w-full');
+				expect(timeline?.children).toHaveLength(MAX_TIMELINE_SEGMENTS);
+			});
+		});
+	});
+
+	describe('Virtualized list', () => {
+		it('keys rows by entry, so a new line does not shift the rows below it', async () => {
+			let pushLog: ((log: ReturnType<typeof createMockLog>) => void) | undefined;
+			(window.maestro.logger as Record<string, unknown>).onNewLog = vi.fn((cb) => {
+				pushLog = cb;
+				return () => {};
+			});
+			getMockGetLogs().mockResolvedValue([
+				createMockLog({ timestamp: 1000, message: 'Older' }),
+				createMockLog({ timestamp: 2000, message: 'Newer' }),
+			]);
+
+			render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+			await screen.findByText('Older');
+			const keyOf = (message: string) => {
+				const opts = capturedVirtualizerOpts[capturedVirtualizerOpts.length - 1];
+				const index = Array.from({ length: opts.count }, (_, i) => i).find((i) =>
+					String(opts.getItemKey?.(i)).includes(message)
+				);
+				return index === undefined ? undefined : opts.getItemKey?.(index);
+			};
+			const before = keyOf('Older');
+
+			act(() => pushLog?.(createMockLog({ timestamp: 3000, message: 'Newest' })));
+			await screen.findByText('Newest');
+
+			expect(keyOf('Older')).toBe(before);
 		});
 	});
 
@@ -1343,7 +1413,8 @@ describe('LogViewer', () => {
 				fireEvent.click(pill);
 			});
 
-			expect(onSessionClick).toHaveBeenCalledWith('session-1');
+			// The pill hands over the entry's tab too; these entries name none.
+			expect(onSessionClick).toHaveBeenCalledWith('session-1', undefined);
 		});
 
 		it('should navigate to agent when clicking cue agent pill', async () => {
@@ -1364,7 +1435,8 @@ describe('LogViewer', () => {
 				fireEvent.click(pill);
 			});
 
-			expect(onSessionClick).toHaveBeenCalledWith('session-2');
+			// The pill hands over the entry's tab too; these entries name none.
+			expect(onSessionClick).toHaveBeenCalledWith('session-2', undefined);
 		});
 
 		it('should render the cue level pill in the theme success color', async () => {
@@ -1804,83 +1876,143 @@ describe('LogViewer log sources', () => {
 	const getMockReadLogSource = () =>
 		window.maestro.logger.readLogSource as ReturnType<typeof vi.fn>;
 
-	it('draws a pill per source and opens on Maestro by default', async () => {
+	beforeEach(() => {
+		getMockReadLogSource().mockResolvedValue(createMockFileRead());
+		// A Maestro entry between the server's start and its last line.
+		getMockGetLogs().mockResolvedValue([
+			createMockLog({ timestamp: MODEL_SERVER_START + 1000, message: 'maestro between' }),
+		]);
+	});
+
+	/** True when `a` is drawn above `b`. */
+	const isAbove = (a: HTMLElement, b: HTMLElement) =>
+		(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+
+	it('turns every source on by default and reads the file', async () => {
 		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		expect(screen.getByTestId('log-source-maestro')).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.getByTestId('log-source-model-server')).toHaveAttribute('aria-pressed', 'true');
 		await waitFor(() => {
-			expect(screen.getByTestId('log-source-maestro')).toHaveAttribute('aria-pressed', 'true');
+			expect(getMockReadLogSource()).toHaveBeenCalledWith('model-server', { known: undefined });
 		});
-		expect(screen.getByTestId('log-source-model-server')).toHaveAttribute('aria-pressed', 'false');
-		expect(getMockReadLogSource()).not.toHaveBeenCalled();
 	});
 
-	it('opens on the source it is given and shows the file lines', async () => {
-		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
-		await waitFor(() => {
-			expect(screen.getByText('main: server is listening')).toBeInTheDocument();
-		});
-		expect(getMockReadLogSource()).toHaveBeenCalledWith('model-server', { known: undefined });
-		expect(screen.getByTestId('log-source-path')).toHaveTextContent('/data/logs/model-server.log');
-		expect(screen.getByText('3 lines')).toBeInTheDocument();
-		// Maestro-only controls: level filters and Clear.
-		expect(screen.queryByText('Filter:')).not.toBeInTheDocument();
+	it('interleaves both logs newest first, as one kind of entry', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		const warming = await screen.findByText('srv warming up');
+		const maestro = await screen.findByText('maestro between');
+		const failed = screen.getByText('srv load_model: failed to load model');
+		const listening = screen.getByText('srv main: server is listening');
+		const starting = screen.getByText('Starting llama-server');
+
+		expect(isAbove(warming, maestro)).toBe(true);
+		expect(isAbove(maestro, failed)).toBe(true);
+		expect(isAbove(failed, listening)).toBe(true);
+		expect(isAbove(listening, starting)).toBe(true);
+		expect(screen.getByText('5 entries')).toBeInTheDocument();
+		// A file line wears the source as its context pill and its own level.
+		expect(screen.getAllByText('model-server')).toHaveLength(4);
+		expect(screen.getByText('error')).toBeInTheDocument();
+		// The level filters and Clear apply while Maestro's log is on.
+		expect(screen.getByText('Filter:')).toBeInTheDocument();
+		expect(screen.getByTitle('Clear logs')).toBeInTheDocument();
+	});
+
+	it('filters file lines by level like any entry', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByText('srv warming up');
+		fireEvent.click(screen.getByRole('button', { name: 'INFO' }));
+		expect(screen.queryByText('srv warming up')).not.toBeInTheDocument();
+		expect(screen.getByText('srv load_model: failed to load model')).toBeInTheDocument();
+	});
+
+	it('turns a source off and back on with its pill', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByText('maestro between');
+		await screen.findByText('srv warming up');
+
+		fireEvent.click(screen.getByTestId('log-source-maestro'));
+		expect(screen.getByTestId('log-source-maestro')).toHaveAttribute('aria-pressed', 'false');
+		expect(screen.queryByText('maestro between')).not.toBeInTheDocument();
+		expect(screen.getByText('srv warming up')).toBeInTheDocument();
 		expect(screen.queryByTitle('Clear logs')).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId('log-source-maestro'));
+		fireEvent.click(screen.getByTestId('log-source-model-server'));
+		expect(screen.queryByText('srv warming up')).not.toBeInTheDocument();
+		expect(screen.getByText('maestro between')).toBeInTheDocument();
 	});
 
-	it('colors a line by the level its words read as', async () => {
-		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
-		const failed = await screen.findByText('srv load_model: failed to load model');
-		expect(failed).toHaveStyle({ color: mockTheme.colors.error });
-		expect(screen.getByText('warning: slow')).toHaveStyle({ color: mockTheme.colors.warning });
-	});
-
-	it('switches source when a pill is clicked', async () => {
+	it('keeps the last source on', async () => {
 		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
 		fireEvent.click(screen.getByTestId('log-source-model-server'));
-		await waitFor(() => {
-			expect(screen.getByText('main: server is listening')).toBeInTheDocument();
-		});
 		fireEvent.click(screen.getByTestId('log-source-maestro'));
-		expect(screen.queryByText('main: server is listening')).not.toBeInTheDocument();
-		expect(screen.getByText('Filter:')).toBeInTheDocument();
+		expect(screen.getByTestId('log-source-maestro')).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.getByTestId('log-source-maestro')).toHaveAttribute(
+			'title',
+			expect.stringContaining('At least one source stays on.')
+		);
 	});
 
-	it('searches the file lines', async () => {
-		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
-		await screen.findByText('main: server is listening');
+	it('turns its source back on when opened on it', async () => {
+		const { rerender } = render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(screen.getByTestId('log-source-model-server'));
+		expect(screen.getByTestId('log-source-model-server')).toHaveAttribute('aria-pressed', 'false');
+		rerender(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
+		expect(screen.getByTestId('log-source-model-server')).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.getByTestId('log-source-maestro')).toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it('names the file path in the pill tooltip', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByText('srv warming up');
+		expect(screen.getByTestId('log-source-model-server')).toHaveAttribute(
+			'title',
+			expect.stringContaining('/data/logs/model-server.log')
+		);
+	});
+
+	it('searches the file lines with the rest', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByText('srv warming up');
 		fireEvent.click(screen.getByRole('button', { name: 'Search logs' }));
 		fireEvent.change(screen.getByPlaceholderText('Search logs...'), {
 			target: { value: 'load_model' },
 		});
-		expect(screen.queryByText('main: server is listening')).not.toBeInTheDocument();
-		expect(screen.getByText('1 line')).toBeInTheDocument();
-	});
-
-	it('says when the file does not exist yet', async () => {
-		getMockReadLogSource().mockResolvedValue(createMockFileRead({ exists: false, text: '' }));
-		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
-		expect(await screen.findByText('Nothing has been logged yet')).toBeInTheDocument();
+		// The filter waits for a pause in typing.
+		await waitFor(() => expect(screen.getByText('1 entry')).toBeInTheDocument());
+		expect(screen.queryByText('srv warming up')).not.toBeInTheDocument();
+		expect(screen.queryByText('maestro between')).not.toBeInTheDocument();
 	});
 
 	it('says when older lines were left out', async () => {
 		getMockReadLogSource().mockResolvedValue(createMockFileRead({ truncated: true }));
-		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
-		expect(await screen.findByText('Older lines are not shown.')).toBeInTheDocument();
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		expect(await screen.findByTestId('log-source-truncated-model-server')).toHaveTextContent(
+			'Older model-server lines are not shown.'
+		);
 	});
 
-	it('names a failed read', async () => {
+	it('names a failed read and still shows Maestro', async () => {
 		getMockReadLogSource().mockRejectedValue(new Error('EACCES'));
-		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
-		expect(await screen.findByText(/The log could not be read/)).toBeInTheDocument();
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		expect(await screen.findByTestId('log-source-error-model-server')).toHaveTextContent(
+			/The model-server log could not be read/
+		);
+		expect(await screen.findByText('maestro between')).toBeInTheDocument();
 	});
 
-	it('exports the shown file lines', async () => {
-		render(<LogViewer theme={mockTheme} onClose={vi.fn()} initialSource="model-server" />);
-		await screen.findByText('main: server is listening');
+	it('exports the interleaved entries in one format', async () => {
+		render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByText('srv warming up');
+		await screen.findByText('maestro between');
 		fireEvent.click(screen.getByTitle('Export logs'));
-		const [blob, filename] = mockDownloadBlobToClient.mock.calls[0] as [Blob, string];
-		expect(filename).toMatch(/^model-server-log-.+\.txt$/);
-		expect(await readBlobText(blob)).toBe(
-			'main: server is listening\nsrv load_model: failed to load model\nwarning: slow'
+		const [blob] = mockDownloadBlobToClient.mock.calls[0] as [Blob, string];
+		const lines = (await readBlobText(blob)).split('\n\n');
+		expect(lines[0]).toBe('[2026-11-13T04:24:12.000Z] [INFO] [model-server] srv  warming up');
+		expect(lines[1]).toMatch(/^\[2026-11-13T04:24:11\.000Z\] \[INFO\] +maestro between$/);
+		expect(lines[2]).toBe(
+			'[2026-11-13T04:24:10.050Z] [ERROR] [model-server] srv  load_model: failed to load model'
 		);
 	});
 });

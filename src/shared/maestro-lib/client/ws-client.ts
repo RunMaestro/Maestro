@@ -113,7 +113,7 @@ import type {
 	Unsubscribe,
 	WsMaestroClientOptions,
 } from './types';
-import { normalizeOriginHost } from './types';
+import { normalizeOriginHost, normalizeTurnOverrides } from './types';
 
 const LOG_CONTEXT = '[WsMaestroClient]';
 
@@ -1047,10 +1047,18 @@ class WsMaestroClient implements MaestroClient {
 			case 'sessions:lifecycleSync': {
 				const payload = isObject(args[0]) ? args[0] : undefined;
 				if (!payload) return;
-				const added = Array.isArray(payload.added)
-					? agentsOf({ sessions: payload.added as unknown[] })
-					: [];
-				for (const agent of added) this.emitAll(this.mirror.upsert(agent));
+				// A headless host announces every changed agent in `added`. A desktop host lists the
+				// agents that entered its store in `added` and the ones a write changed (an Edit
+				// Agent save, a CLI update-agent) in `updated`; both are whole stored records without
+				// transcripts, so both fold in the same way, and the mirror's diff drops a no-op.
+				// `baselines` is the desktop windows' merge input and means nothing here.
+				const records = [
+					...(Array.isArray(payload.added) ? (payload.added as unknown[]) : []),
+					...(Array.isArray(payload.updated) ? (payload.updated as unknown[]) : []),
+				];
+				for (const agent of agentsOf({ sessions: records })) {
+					this.emitAll(this.mirror.upsert(agent));
+				}
 				if (Array.isArray(payload.removedIds)) {
 					for (const id of payload.removedIds) {
 						if (typeof id === 'string') this.emitAll(this.mirror.remove(id));
@@ -1829,6 +1837,8 @@ class WsMaestroClient implements MaestroClient {
 		if (hasImages) message.images = input.images;
 		const originHost = normalizeOriginHost(input.originHost);
 		if (originHost) message.originHost = originHost;
+		const turnOverrides = normalizeTurnOverrides(input.overrides);
+		if (turnOverrides) message.turnOverrides = turnOverrides;
 
 		const sent = await this.send('turns.send', message, 'enqueue_command_result');
 		if (!sent.ok)

@@ -15,6 +15,11 @@ import type { PeerAgentAction } from '../../shared/maestro-lib/client/peer-actio
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { DesktopLiftAnswer, DesktopLiftOptions } from '../federation/lift';
 import type { DesktopSetupHostAnswer, DesktopSetupHostOptions } from '../federation/setup-host';
+import {
+	HOSTED_SETTINGS_REQUEST_CHANNEL,
+	type HostedSettingsReply,
+	type HostedSettingsRequest,
+} from '../../shared/federationCommands';
 import type { AutoFederationSnapshot } from '../../shared/federationAuto';
 import type { PeerHistoryPageQuery } from '../federation/peer-history';
 import type { PaginatedResult } from '../../shared/history';
@@ -93,6 +98,31 @@ export function createFederationApi() {
 		 */
 		lift: (agentId: string, options?: DesktopLiftOptions): Promise<DesktopLiftAnswer> =>
 			ipcRenderer.invoke('federation:lift', agentId, options ?? {}),
+		/**
+		 * Answer main's questions about the hosted agents' settings conflicts (`maestro-cli federation
+		 * conflicts|resolve`). Only the window that runs the settings sync registers. Returns the
+		 * unsubscribe.
+		 */
+		onHostedSettingsRequest: (
+			handler: (request: HostedSettingsRequest) => HostedSettingsReply
+		): (() => void) => {
+			const listener = (
+				_event: Electron.IpcRendererEvent,
+				request: HostedSettingsRequest,
+				responseChannel: string
+			) => {
+				if (!responseChannel.startsWith(`${HOSTED_SETTINGS_REQUEST_CHANNEL}:response:`)) return;
+				let reply: HostedSettingsReply;
+				try {
+					reply = handler(request);
+				} catch (error) {
+					reply = { success: false, error: error instanceof Error ? error.message : String(error) };
+				}
+				ipcRenderer.send(responseChannel, reply);
+			};
+			ipcRenderer.on(HOSTED_SETTINGS_REQUEST_CHANNEL, listener);
+			return () => ipcRenderer.removeListener(HOSTED_SETTINGS_REQUEST_CHANNEL, listener);
+		},
 		/**
 		 * Install this app's maestro-cli on an SSH remote (or upgrade an older one), start the host
 		 * there, and reload the peer: Move to Host's setup step and Start Host. Takes minutes on a first install.

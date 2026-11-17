@@ -641,6 +641,22 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'encore-a-cappella-default-agent',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Default agent',
+		description:
+			'Where a voice request goes when you talk to Maestro as a whole and no agent is clearly meant, instead of the Conductor asking which agent',
+		keywords: [
+			'default agent',
+			'voice default',
+			'conductor default',
+			'fallback agent',
+			'home agent',
+			'routing',
+		],
+	},
+	{
 		id: 'encore-a-cappella-agent-wake-phrases',
 		tab: 'encore',
 		tabLabel: 'Plugins',

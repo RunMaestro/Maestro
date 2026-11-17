@@ -399,17 +399,23 @@ maestro-cli list groups --json
 
 ## `maestro-cli list agents`
 
-List all agents
+List all agents, with each one's group and what it is for
 
-| Option             | Description                                                                        | Default |
-| ------------------ | ---------------------------------------------------------------------------------- | ------- |
-| `-g, --group <id>` | Filter by group ID                                                                 | -       |
-| `--peer <name>`    | List the agents on one Federation peer (an SSH remote's name)                      | -       |
-| `--all-peers`      | List local agents, then the agents on every SSH remote that runs a Federation host | -       |
-| `--json`           | Output as JSON lines (for scripting)                                               | -       |
+| Option               | Description                                                                          | Default |
+| -------------------- | ------------------------------------------------------------------------------------ | ------- |
+| `-g, --group <id>`   | Filter by group ID                                                                   | -       |
+| `-d, --descriptions` | Print each agent's peer description under it (JSON always has it)                    | -       |
+| `--visible-only`     | Leave out agents in hidden groups                                                    | -       |
+| `--reachable`        | Only the agents the caller may reach right now, with the access (Consult / Delegate) | -       |
+| `--from <agent>`     | The caller for --reachable (default: this shell's agent, MAESTRO_CALLER_AGENT_ID)    | -       |
+| `--peer <name>`      | List the agents on one Federation peer (an SSH remote's name)                        | -       |
+| `--all-peers`        | List local agents, then the agents on every SSH remote that runs a Federation host   | -       |
+| `--json`             | Output as JSON lines (for scripting)                                                 | -       |
 
 ```bash
 maestro-cli list agents --group <group-id> --json
+maestro-cli list agents --visible-only -d
+maestro-cli list agents --reachable -d
 ```
 
 ## `maestro-cli list playbooks`
@@ -5122,6 +5128,46 @@ Remove one agent's wake phrase
 maestro-cli voice wake-phrase clear <agent-id>
 ```
 
+## `maestro-cli voice default-agent`
+
+The agent a Conductor request goes to when no agent is clearly meant (instead of the agent on screen)
+
+## `maestro-cli voice default-agent show`
+
+Show the default agent, and whether it is still in use
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli voice default-agent show --json
+```
+
+## `maestro-cli voice default-agent set <agent>`
+
+Send voice requests no agent is clearly meant for to this agent
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli voice default-agent set <agent-id>
+```
+
+## `maestro-cli voice default-agent clear`
+
+Remove the default agent, so the agent on screen takes unclear requests again
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli voice default-agent clear
+```
+
 ## `maestro-cli voice wake`
 
 Teach the wake word a phrase from your own recordings: record or add WAV files, then train (requires the desktop app)
@@ -6804,6 +6850,55 @@ Interact with a live HTML Movement by CSS selector
 
 ```bash
 maestro-cli movement interact mockup --click "#save"
+```
+
+## `maestro-cli app-stats`
+
+Show what Maestro costs this computer, as Debug: View Application Stats does: memory, CPU and processes for Electron, agent trees and the model server, resident local models, and Local Models disk
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli app-stats
+maestro-cli app-stats --json
+```
+
+## `maestro-cli logs`
+
+Read or clear the System Log Viewer's logs: Maestro's own log and the model server's, interleaved newest first (default: show)
+
+## `maestro-cli logs show`
+
+Print the logs the viewer shows, in its Export format
+
+| Option                | Description                                                                                   | Default |
+| --------------------- | --------------------------------------------------------------------------------------------- | ------- |
+| `--source <ids>`      | Sources to read, comma-separated (default: all): maestro, model-server                        | -       |
+| `--level <levels>`    | Levels to keep, comma-separated (default: all): debug, info, warn, error, toast, autorun, cue | -       |
+| `--search <text>`     | Keep entries whose message, context or data contain this text                                 | -       |
+| `--limit <n>`         | Keep only the newest n matching entries                                                       | -       |
+| `-o, --output <file>` | Write the entries to a file instead, as Export does                                           | -       |
+| `--json`              | Output as JSON (for scripting)                                                                | -       |
+
+```bash
+maestro-cli logs show --source model-server --level warn,error
+maestro-cli logs show --search load_model --limit 50
+maestro-cli logs show --output ~/Desktop/maestro-logs.txt
+```
+
+## `maestro-cli logs clear`
+
+Clear Maestro's own log, as the viewer's Clear button does (file logs are kept)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+```bash
+maestro-cli logs clear
+maestro-cli logs clear --json
 ```
 
 ## `maestro-cli support-package`

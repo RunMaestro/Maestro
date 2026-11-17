@@ -1,5 +1,6 @@
 import type { TabConfigResult } from '../../../shared/desktopTabs';
 import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
+import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
 /**
  * CallbackRegistry - Manages callback functions for the WebServer
  *
@@ -791,10 +792,11 @@ export class CallbackRegistry {
 		consultChain?: ConsultChain,
 		mentionRouting?: MentionRouting,
 		dispatchCallback?: boolean,
-		control?: PianolaQueueControl
+		control?: PianolaQueueControl,
+		turnOverrides?: TurnOverrides
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
-		return this.callbacks.enqueueCommand(
+		const args: Parameters<EnqueueCommandCallback> = [
 			sessionId,
 			command,
 			inputMode,
@@ -805,8 +807,10 @@ export class CallbackRegistry {
 			consultChain,
 			mentionRouting,
 			dispatchCallback,
-			control
-		);
+			control,
+		];
+		if (turnOverrides) args.push(turnOverrides);
+		return this.callbacks.enqueueCommand(...args);
 	}
 
 	async listQueue(sessionId?: string): Promise<ListQueueResult> {

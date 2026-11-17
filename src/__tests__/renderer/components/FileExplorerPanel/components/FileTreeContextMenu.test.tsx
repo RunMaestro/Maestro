@@ -448,6 +448,48 @@ describe('FileTreeContextMenu', () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// Header band names what the menu acts on
+	// -----------------------------------------------------------------------
+	describe('header', () => {
+		const header = () => screen.getByTestId('context-menu-header');
+
+		it('names a right-clicked file, with its path as the tooltip', () => {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+			expect(header().textContent).toBe('App.tsx');
+			expect(header().getAttribute('title')).toBe('App.tsx');
+		});
+
+		it('names a right-clicked folder', () => {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />);
+			expect(header().textContent).toBe('src');
+		});
+
+		it('names the tree root on the empty-space menu', () => {
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					rootPath="/Users/me/Projects/Maestro"
+					contextMenu={{ x: 1, y: 1, node: null, path: '' }}
+				/>
+			);
+			expect(header().textContent).toBe('Maestro');
+			expect(header().getAttribute('title')).toBe('/Users/me/Projects/Maestro');
+		});
+
+		it('counts a multi-selection instead of naming one row', () => {
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					isMultiSelectionContext
+					selectedCount={3}
+					contextMenu={makeContextMenu(fileNode)}
+				/>
+			);
+			expect(header().textContent).toBe('3 items selected');
+		});
+	});
+
+	// -----------------------------------------------------------------------
 	// Document Graph is hidden on a phone
 	// -----------------------------------------------------------------------
 	describe('Document Graph on a phone', () => {

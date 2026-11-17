@@ -18,6 +18,7 @@
  * there, not here.
  */
 
+import { collectHiddenGroupIds } from '../../shared/hiddenGroups';
 import type { Group, Session } from '../types';
 import { sessionOrChildrenNeedAttention, type AttentionContext } from './sessionAttention';
 // Imported from the leaf module rather than `tabHelpers` so a Left Bar predicate
@@ -89,30 +90,9 @@ export function passesUnreadFilter(session: Session, ctx: UnreadFilterContext): 
 	return sessionOrChildrenNeedAttention(session, children, attentionCtx);
 }
 
-/**
- * Which groups are parked out of the Left Bar right now.
- *
- * `hidden` is authored on ONE group, but suppression is inherited: the
- * hierarchy allows a single parent -> child edge and a child renders as its own
- * row indented under its parent, so hiding a parent without its children leaves
- * the children indented under nothing.
- *
- * Deliberately a set of group ids rather than a per-group predicate, because
- * both consumers - the render path and the Cmd+[ / Cmd+] cycle - ask the
- * question once per SESSION, and re-walking the parent chain for each agent
- * turns a one-off O(groups) pass into O(sessions x depth) on every keystroke.
- */
-export function collectHiddenGroupIds(groups: Group[]): ReadonlySet<string> {
-	const hidden = new Set<string>();
-	for (const group of groups) {
-		if (group.hidden) hidden.add(group.id);
-	}
-	if (hidden.size === 0) return hidden;
-	for (const group of groups) {
-		if (group.parentGroupId && hidden.has(group.parentGroupId)) hidden.add(group.id);
-	}
-	return hidden;
-}
+// Which groups are flagged hidden (inherited down a parent's children). It lives
+// in `src/shared` so `maestro-cli list agents` reads the flag the same way.
+export { collectHiddenGroupIds };
 
 /**
  * How many groups carry their own `hidden` flag: the number the "Show Hidden"

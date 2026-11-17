@@ -26,7 +26,7 @@ import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { ComposerTextarea } from './ComposerTextarea';
 import { ChatComposerFrame, useChatComposerFold } from './ChatComposerFrame';
 import { AtMentionPopover } from '../InputArea/overlays/AtMentionPopover';
-import { applyTrimmedTextPaste, clipboardHasImage } from './pasteTrim';
+import { clipboardHasImage } from './pasteTrim';
 import { getAtMentionTrigger } from '../InputArea/utils/inputTriggers';
 import {
 	useMentionPicker,
@@ -373,15 +373,13 @@ export const ChatComposer = React.memo(function ChatComposer({
 		[onChange]
 	);
 
+	// A text paste lands verbatim (native paste, no trimming): dictation tools
+	// such as Scribe append a trailing space on purpose. Images go to the host.
 	const handlePasteWrapped = useCallback(
 		(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-			if (clipboardHasImage(e.clipboardData)) {
-				onPaste?.(e);
-				return;
-			}
-			applyTrimmedTextPaste(e, value, onChange);
+			if (clipboardHasImage(e.clipboardData)) onPaste?.(e);
 		},
-		[value, onChange, onPaste]
+		[onPaste]
 	);
 
 	const handleFocus = useCallback(() => {

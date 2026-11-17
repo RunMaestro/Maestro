@@ -369,6 +369,21 @@ describe('createWsMaestroClient', () => {
 			expect(list.ok && list.value.map((a) => a.id)).toEqual([A1, 'a3']);
 		});
 
+		it('folds the agents a desktop host lists as updated, so a settings change made there arrives', async () => {
+			bridge.pushBridgeEvent('sessions:lifecycleSync', {
+				added: [],
+				removedIds: [],
+				updated: [agentRecord(A1, { customModel: 'opus', nudgeMessage: 'be brief' })],
+				baselines: [agentRecord(A1)],
+			});
+			await vi.waitFor(() => expect(types()).toContain('agent.updated'));
+			const read = await client.agents.list();
+			const updated = read.ok ? read.value.find((agent) => agent.id === A1) : undefined;
+			expect(updated).toMatchObject({ customModel: 'opus', nudgeMessage: 'be brief' });
+			// The baseline is the desktop windows' merge input, never a record to fold in.
+			expect(read.ok && read.value.map((a) => a.id)).toEqual([A1, 'a2']);
+		});
+
 		it('reads one agent fresh from the host and folds the read into the mirror', async () => {
 			agents = [agentRecord(A1, { name: 'Renamed on the desktop' }), agentRecord('a2')];
 			const result = await client.agents.get(A1);
@@ -864,6 +879,29 @@ describe('createWsMaestroClient', () => {
 			expect(sent[0]).toMatchObject({ command: 'one', originHost: 'laptop.local' });
 			expect(sent[1]).not.toHaveProperty('originHost');
 			expect(sent[2]).not.toHaveProperty('originHost');
+		});
+
+		it("sends the sender's own tab choices as turnOverrides, cleaned, and only when there are some", async () => {
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', { tabId: A1_TAB, queued: false })
+			);
+			await client.turns.send(A1, A1_TAB, {
+				text: 'one',
+				overrides: { model: ' opus ', effort: 'high', readOnly: true, saveToHistory: false },
+			});
+			await client.turns.send(A1, A1_TAB, { text: 'two', overrides: {} });
+			await client.turns.send(A1, A1_TAB, {
+				text: 'three',
+				overrides: { model: '  ', readOnly: 'yes' } as never,
+			});
+			await client.turns.send(A1, A1_TAB, { text: 'four' });
+			const sent = bridge.sent('enqueue_command');
+			expect(sent[0]).toMatchObject({
+				command: 'one',
+				turnOverrides: { model: 'opus', effort: 'high', readOnly: true, saveToHistory: false },
+			});
+			for (const message of sent.slice(1)) expect(message).not.toHaveProperty('turnOverrides');
 		});
 
 		it('preserves managed unknown queue receipts and never emits a native start', async () => {

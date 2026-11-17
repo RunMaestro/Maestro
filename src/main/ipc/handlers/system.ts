@@ -23,6 +23,7 @@ import { peekShellPath } from '../../runtime/getShellPath';
 import { fallbackFontResult, type FontDetectionResult } from '../../../shared/fontDetection';
 import { logger } from '../../utils/logger';
 import { readLogSource } from '../../log-sources';
+import { clearSystemLogs } from '../../system-logs';
 import type { LogSourceReadOptions } from '../../../shared/logSources';
 import { detectShells } from '../../utils/shellDetector';
 import { isCloudflaredInstalled } from '../../utils/cliDetection';
@@ -635,7 +636,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	);
 
 	ipcMain.handle('logger:clearLogs', async () => {
-		logger.clearLogs();
+		clearSystemLogs();
 	});
 
 	ipcMain.handle('logger:setLogLevel', async (_event, level: string) => {

@@ -34,7 +34,7 @@ The current CLI/PTY transport remains the default. Qualified providers can opt i
 
 ## Agent Capabilities
 
-Each agent declares capabilities that control UI feature availability. The `AgentCapabilities` interface lives in `src/shared/types.ts` (27 required booleans + 2 optional: `supportsStandardPermissionMode?`, `imageResumeMode?`); `src/main/agents/capabilities.ts` re-exports it alongside the per-agent `AGENT_CAPABILITIES` record. The table below shows key capabilities; see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) for the complete list.
+Each agent declares capabilities that control UI feature availability. The `AgentCapabilities` interface lives in `src/shared/types.ts` (27 required booleans, the required `tokenSpeedMeasurement`, and 2 optional: `supportsStandardPermissionMode?`, `imageResumeMode?`); `src/main/agents/capabilities.ts` re-exports it alongside the per-agent `AGENT_CAPABILITIES` record. The table below shows key capabilities; see [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) for the complete list.
 
 | Capability                        | Description                                          | UI Feature Controlled                                |
 | --------------------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
@@ -66,6 +66,7 @@ Each agent declares capabilities that control UI feature availability. The `Agen
 | `supportsAppendSystemPrompt`      | Has `--append-system-prompt`                         | System prompt delivery (else embedded in first turn) |
 | `supportsProjectMemory`           | Keeps a browsable memory store on disk               | Memory Viewer                                        |
 | `supportsAdditionalDirectories`   | CLI can grant extra dirs (needs `additionalDirArgs`) | Enforced vs advisory Additional Directories          |
+| `tokenSpeedMeasurement`           | `'transcript'`, `'stream'` or `'none'` (required)    | Token Speed on the Usage Dashboard                   |
 | `imageResumeMode?`                | Image handling on resume (optional)                  | Resume image strategy                                |
 
 ### Accessing Capabilities

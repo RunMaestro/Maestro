@@ -44,6 +44,20 @@ const CONNECTING_ERROR_MIX = 0.35;
 export const getConnectingColor = (theme: Theme): string =>
 	blendColors(theme.colors.warning, theme.colors.error, CONNECTING_ERROR_MIX);
 
+/**
+ * The `box-shadow` that marks a status dot as live (busy, connecting, retrying):
+ * a faint ring plus a soft glow in the dot's own color. `color` is a 6-digit hex.
+ *
+ * This is a STATIC signal on purpose. Live dots used to loop `animate-ping` or
+ * `animate-pulse`, one infinite animation per busy agent, tab, and pill, and
+ * any running animation keeps the renderer producing a frame every vsync. A Nov
+ * 2026 field trace of an idle window with six busy agents measured 4,977 frames
+ * in 45 seconds and ~2.5s of renderer main thread spent restyling those dots.
+ * The header wand's breathing is the one shared motion that says "working".
+ */
+export const activeStatusHalo = (color: string): string =>
+	`0 0 0 2px ${color}33, 0 0 6px ${color}99`;
+
 // Get color based on session state
 // Status indicator colors:
 // - Green: ready and waiting (idle)

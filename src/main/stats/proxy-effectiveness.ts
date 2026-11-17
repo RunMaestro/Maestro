@@ -13,7 +13,7 @@
  * shared/stats-types.ts):
  *
  *   - Unknown is not zero. A fact the rows do not state stays unknown: block
- *     counts exist only on rows written since migration v22 that the compressor
+ *     counts exist only on rows written since migration v23 that the compressor
  *     ran on, a provider class is measured only where the answer named it, and a
  *     missing processing time is left out of the distribution.
  *   - Kinds do not mix. Counts, estimates (characters / 4) and the provider's own

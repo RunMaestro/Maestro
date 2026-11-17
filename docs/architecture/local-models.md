@@ -924,7 +924,7 @@ sampleRate })` runs `needs: 'stt'` tasks (`dictation`) through `transcribeSpeech
 (`ok` carries `text` and `audioMs`).
 
 Every call that reaches a model is recorded in the stats database as a `local_model_runs` row (stats
-migration v16, rebuilt in v21: task, source type, model, endpoint id, agent id, start, sleep-aware
+migration v17, rebuilt in v22: task, source type, model, endpoint id, agent id, start, sleep-aware
 duration, `ok` / `error` / `cancelled`, error code, tokens), honoring `statsCollectionEnabled`. A
 stats write that fails is reported to Sentry and never fails the task. `off` and `use-provider`
 record nothing.
@@ -950,11 +950,11 @@ The source type is where the model was, one of `LOCAL_MODEL_RUN_SOURCE_TYPES`:
   routing passes the agent whose turn is routed, the Cue gate and the Cue injection screen pass the
   subscription's agent, and the local judge passes the agent of the System One request it answers.
   A caller that knows no agent leaves it out, and the column is NULL.
-- **v21 rebuilt the table.** SQLite cannot alter a CHECK constraint, and until v21 the CHECK allowed
+- **v22 rebuilt the table.** SQLite cannot alter a CHECK constraint, and until v22 the CHECK allowed
   `local` and `endpoint` only. `rebuildLocalModelRuns()` creates the table again beside the old one,
   copies every row by named column, compares the two row counts, drops the old table, renames the
   new one into place and puts the indexes back, all inside the migration runner's one transaction.
-  A failure at any step leaves the old table as it was (`migration-v21.test.ts` proves it on real
+  A failure at any step leaves the old table as it was (`migration-v22.test.ts` proves it on real
   SQLite, with a failure injected after the old table is dropped).
 
 Transports: `localModels:runTask` (IPC, `window.maestro.localModels.runTask`) and
@@ -1614,7 +1614,7 @@ of the subscription's owner goes into the record.
 
 Every run that reached System One is handed to `recordSystemOneDecision()`, which writes one line to
 the system log (debug for `ok`, info otherwise, never text) and one row to `s1_decisions` in
-`stats.db` (migration v19 through `runSqliteMigrations`, with `isApplied` so a database another
+`stats.db` (migration v20 through `runSqliteMigrations`, with `isApplied` so a database another
 branch stamped 18 still gets the table).
 
 | Column                                              | Holds                                                                                                                                                                                                                                                         |
@@ -2127,7 +2127,7 @@ when a router was asked and gave none.
 #### The stats row
 
 A turn's `query_events` row says where its model ran and what the router chose (stats migration
-v21). All three columns are NULL for a turn on a named model on the provider.
+v22). All three columns are NULL for a turn on a named model on the provider.
 
 | Column                            | Holds                                                                                                                            |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -3155,7 +3155,7 @@ flowchart TD
 
 ### Measurement: `proxy_requests`
 
-Stats migration v17 adds one table. `proxyRequestFromLog()` in
+Stats migration v18 adds one table. `proxyRequestFromLog()` in
 `src/main/local-models/proxy/request-stats.ts` maps a request log entry to a row, and
 `recordTokenProxyRequest()` writes it on the same contract as `local_model_runs`: it honors
 `statsCollectionEnabled`, and a failed write is reported and swallowed.
@@ -3171,14 +3171,14 @@ Stats migration v17 adds one table. `proxyRequestFromLog()` in
 | `blocks_compressed`, `cache_hits`, `compressor_counts`  | Blocks sent shortened, verdicts from the cache, per compressor  |
 | `new_blocks`                                            | JSON: the blocks shortened for the FIRST time in this request   |
 | `skip_reason`                                           | Why a compress mode request went out unread                     |
-| `provider_input_tokens`, `provider_cache_read_tokens`   | What the provider counted (v22): uncached input, cache reads    |
+| `provider_input_tokens`, `provider_cache_read_tokens`   | What the provider counted (v23): uncached input, cache reads    |
 | `provider_cache_write_tokens`, `provider_output_tokens` | Cache writes and output, from the `usage` in its answer         |
-| `effective_mode`                                        | The mode in force, `compress-early` included (v23)              |
-| `blocks_protected`, `blocks_vetoed_*`                   | Blocks left out of compression, and why (v23)                   |
-| `blocks_candidates`, `blocks_below_threshold`           | Blocks eligible, and those under the size threshold (v23)       |
-| `blocks_kept`, `blocks_store_failed`                    | Eligible blocks kept whole; cache could not be used (v23)       |
-| `blocks_model_failed`                                   | Blocks whose model summary failed (v23)                         |
-| `provider_*_reportedness`                               | How each provider count got its number (v23)                    |
+| `effective_mode`                                        | The mode in force, `compress-early` included (v24)              |
+| `blocks_protected`, `blocks_vetoed_*`                   | Blocks left out of compression, and why (v24)                   |
+| `blocks_candidates`, `blocks_below_threshold`           | Blocks eligible, and those under the size threshold (v24)       |
+| `blocks_kept`, `blocks_store_failed`                    | Eligible blocks kept whole; cache could not be used (v24)       |
+| `blocks_model_failed`                                   | Blocks whose model summary failed (v24)                         |
+| `provider_*_reportedness`                               | How each provider count got its number (v24)                    |
 
 1. **Only requests that hold a message list are recorded.** Token counting and model lists are
    forwarded and logged, not recorded: they have no tokens to save and would dilute the averages.
@@ -3210,7 +3210,7 @@ Stats migration v17 adds one table. `proxyRequestFromLog()` in
    own figures are characters / 4, and they cover passthrough requests the proxy never reads, so a
    passthrough week is the baseline a compress week is compared against. A cache write that grows
    on a request where nothing new arrived is the mark of a broken cached prefix.
-6. **Migration v23 adds fourteen columns that are unknown, not zero, for every older row.** They
+6. **Migration v24 adds fourteen columns that are unknown, not zero, for every older row.** They
    are `effective_mode`, the nine `blocks_*` counts and the four `provider_*_reportedness`
    columns, added bare: no default, no CHECK, no index and no backfill. `mode` and its CHECK are
    untouched, so `compress-early` is stored as `compress` there and in `effective_mode` as itself.
@@ -3232,7 +3232,7 @@ Stats migration v17 adds one table. `proxyRequestFromLog()` in
    Gateway section, the Models tab (`ModelUsage.proxy`) and the CLI all read that answer. Its figures
    keep the rules of the row: block counts are summed over the requests that carry them and come with
    their coverage (none counted is unknown, not zero); a provider class is summed only over the
-   requests where it was reported or derived; the mode of a row from before v23 is unknown, a stored
+   requests where it was reported or derived; the mode of a row from before v24 is unknown, a stored
    passthrough row included; the algorithms overlap and do not add up to the blocks shortened; the
    compression cache's verdict reuse is not the provider's cache read; a latency distribution is
    withheld below `PROXY_LATENCY_MIN_SAMPLES` timed requests, a display policy; and each mean added

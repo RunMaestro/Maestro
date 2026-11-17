@@ -88,7 +88,7 @@ function sourceRef(kind: ModelUsageSourceKind, id: string | null): ModelUsageSou
  * The source a `local_model_runs` row belongs to, read from its `source_type`
  * and `endpoint_id`.
  *
- * A run the Maestro model server answered before stats migration v20 was filed
+ * A run the Maestro model server answered before stats migration v21 was filed
  * as `endpoint` with the server's id, because `server` was not a source type
  * yet. It is read as the server here, so one source is never drawn as two.
  */

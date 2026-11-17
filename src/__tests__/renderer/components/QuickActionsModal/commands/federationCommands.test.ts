@@ -94,4 +94,34 @@ describe('buildFederationCommands', () => {
 		expect(deps.requestMoveToHost).toHaveBeenCalledWith('s1');
 		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
 	});
+
+	it('offers Edit Agent on Host only while a mirror is shown', () => {
+		const editHostedAgent = vi.fn();
+		expect(
+			build({ editHostedAgent }).commands.some((c) => c.id === 'federation-edit-hosted-agent')
+		).toBe(false);
+		const { deps, commands } = build({
+			editHostedAgent,
+			activeMirror: { key: 'buildbox:a1', peerId: 'buildbox', agentId: 'a1' },
+		});
+		const edit = commands.find((c) => c.id === 'federation-edit-hosted-agent');
+		expect(edit?.label).toBe('Edit Agent on Host (buildbox:a1)');
+		edit?.action();
+		expect(editHostedAgent).toHaveBeenCalledWith('buildbox', 'a1');
+		expect(deps.setQuickActionOpen).toHaveBeenCalledWith(false);
+	});
+
+	it('offers the settings conflicts review only while some wait', () => {
+		const openSettingsConflicts = vi.fn();
+		expect(
+			build({ openSettingsConflicts, settingsConflictCount: 0 }).commands.some(
+				(c) => c.id === 'federation-settings-conflicts'
+			)
+		).toBe(false);
+		const { commands } = build({ openSettingsConflicts, settingsConflictCount: 2 });
+		const review = commands.find((c) => c.id === 'federation-settings-conflicts');
+		expect(review?.label).toBe('Review Federation Settings Conflicts (2)');
+		review?.action();
+		expect(openSettingsConflicts).toHaveBeenCalled();
+	});
 });

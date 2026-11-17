@@ -21,6 +21,8 @@ import { WizardIndicator } from './SessionList/WizardIndicator';
 import { AgentVoiceIndicator } from './SessionList/AgentVoiceIndicator';
 import { WindowBadge } from './SessionList/WindowBadge';
 import { LiftedPointerChip } from './SessionList/LiftedPointerChip';
+import { useLiftedMirrorTarget } from '../hooks/federation/useAgentLift';
+import { openLiftedAgent } from '../services/agentLift';
 import { SessionFederationBadge } from './SessionList/SessionFederationBadge';
 import { AutoRunErrorBadge } from './SessionList/AutoRunErrorBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
@@ -31,7 +33,7 @@ import { useAutoResumeEntry } from '../stores/autoRunResumeStore';
 import { useSessionIsBeingConsulted } from '../stores/crossAgentInFlightStore';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
-import { getConnectingColor } from '../utils/theme';
+import { activeStatusHalo, getConnectingColor } from '../utils/theme';
 import { isImeComposing } from '../utils/ime';
 import { hasUnreadVisibleTab } from '../utils/tabHelpers';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
@@ -57,10 +59,11 @@ export function hasNoClaudeProviderSession(session: Session): boolean {
 
 /**
  * Maps session state (plus batch / disconnected overrides) to a status color,
- * an animation flag, and a human-readable label used for the status dot tooltip.
+ * an `active` flag (draws the static busy glow), and a human-readable label
+ * used for the status dot tooltip.
  *
  * Special cases:
- * - `isInBatch`: always warning + pulse (Auto Run takes precedence over agent state)
+ * - `isInBatch`: always warning + busy halo (Auto Run takes precedence over agent state)
  * - `isBeingConsulted`: a cross-agent `@mention` runs under a synthetic process
  *   id and a hidden tab, so it never reaches `session.state` - without this the
  *   agent draws a green "Ready" dot for the whole time it is working
@@ -74,7 +77,7 @@ export function getEnhancedStatusColor(
 	hasActiveOutage: boolean = false,
 	isBeingConsulted: boolean = false,
 	hasHeadlessActivity: boolean = false
-): { color: string; animate: boolean; label: string } {
+): { color: string; active: boolean; label: string } {
 	const success = colorBlindMode ? COLORBLIND_STATUS_COLORS.success : theme.colors.success;
 	const warning = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
 	const error = colorBlindMode ? COLORBLIND_STATUS_COLORS.error : theme.colors.error;
@@ -83,14 +86,14 @@ export function getEnhancedStatusColor(
 		: getConnectingColor(theme);
 
 	// Agent Resilience: an active outage (auto-retry backing off) is a "stuck,
-	// needs attention" state. Pulsing orange, ranked above batch/agent state so a
+	// needs attention" state. Orange with the busy halo, ranked above batch/agent state so a
 	// stalled agent is unmistakable in the Left Bar.
 	if (hasActiveOutage) {
-		return { color: connecting, animate: true, label: 'Auto-retrying (stuck)' };
+		return { color: connecting, active: true, label: 'Auto-retrying (stuck)' };
 	}
 
 	if (isInBatch) {
-		return { color: warning, animate: true, label: 'Auto Run active' };
+		return { color: warning, active: true, label: 'Auto Run active' };
 	}
 
 	// Ranked ABOVE the hollow-dot signal on purpose. A consult spawns into a tab
@@ -100,20 +103,20 @@ export function getEnhancedStatusColor(
 	// exists to show. Ranked BELOW the agent's own `busy`, which keeps its more
 	// specific "Thinking" / "Running command" label; both draw the same dot.
 	if (isBeingConsulted && session.state !== 'busy') {
-		return { color: warning, animate: true, label: 'Answering a consult' };
+		return { color: warning, active: true, label: 'Answering a consult' };
 	}
 
 	if (hasHeadlessActivity) {
-		return { color: warning, animate: true, label: 'Running headless turn' };
+		return { color: warning, active: true, label: 'Running headless turn' };
 	}
 
 	if (hasNoClaudeProviderSession(session)) {
-		return { color: theme.colors.textDim, animate: false, label: 'No active Claude session' };
+		return { color: theme.colors.textDim, active: false, label: 'No active Claude session' };
 	}
 
 	switch (session.state) {
 		case 'idle':
-			return { color: success, animate: false, label: 'Ready' };
+			return { color: success, active: false, label: 'Ready' };
 		case 'busy':
 			// `busySource` separates an agent turn from a shell command run in the
 			// same row. Both are legitimately busy, but only the AI one is counted
@@ -121,17 +124,17 @@ export function getEnhancedStatusColor(
 			// Left Bar look like it is lying when the pill lists no such agent.
 			return {
 				color: warning,
-				animate: true,
+				active: true,
 				label: session.busySource === 'terminal' ? 'Running command' : 'Thinking',
 			};
 		case 'error':
-			return { color: error, animate: false, label: 'Error' };
+			return { color: error, active: false, label: 'Error' };
 		case 'connecting':
-			return { color: connecting, animate: true, label: 'Connecting' };
+			return { color: connecting, active: true, label: 'Connecting' };
 		case 'waiting_input':
-			return { color: theme.colors.accent, animate: true, label: 'Waiting for input' };
+			return { color: theme.colors.accent, active: true, label: 'Waiting for input' };
 		default:
-			return { color: theme.colors.textDim, animate: false, label: 'Unknown' };
+			return { color: theme.colors.textDim, active: false, label: 'Unknown' };
 	}
 }
 
@@ -242,6 +245,14 @@ export const SessionItem = memo(function SessionItem({
 	onToggleBookmark,
 	onToggleWorktrees,
 }: SessionItemProps) {
+	// A lifted agent runs on its host now: its row opens the hosted agent, the copy every
+	// conductor shares, while the mirror shows it. Otherwise (peer down) it selects the pointer.
+	const liftedTarget = useLiftedMirrorTarget(session.liftedTo);
+	const handleSelect = liftedTarget?.mirrored
+		? () => {
+				openLiftedAgent(session);
+			}
+		: onSelect;
 	const showWorktreePill = useSettingsStore((s) => s.showWorktreePill);
 	const showWorktreeBranchName = useSettingsStore((s) => s.showWorktreeBranchName);
 	const showWorktreeProvider = useSettingsStore((s) => s.showWorktreeProvider);
@@ -302,7 +313,7 @@ export const SessionItem = memo(function SessionItem({
 
 	// Status indicator: enhanced color/animation/label, plus hollow signal for
 	// Claude Code agents that haven't bound to a provider session yet. A stuck
-	// Agent Resilience outage overrides to pulsing orange (needs attention).
+	// Agent Resilience outage overrides to orange (needs attention).
 	const hasActiveOutage = useSessionHasActiveOutage(session.id);
 	// Auto Run stopped on an error. Read straight from the stores rather than
 	// threaded down as props: SessionList renders this row from two call sites
@@ -361,7 +372,7 @@ export const SessionItem = memo(function SessionItem({
 			onDragStart={dragDisabled ? undefined : onDragStart}
 			onDragOver={dragDisabled ? undefined : onDragOver}
 			onDrop={dragDisabled ? undefined : onDrop}
-			onClick={onSelect}
+			onClick={handleSelect}
 			onContextMenu={onContextMenu}
 			// Touch: a long-press opens the same context menu right-click opens.
 			onLongPress={(rect) => onContextMenu(longPressMouseEvent(rect))}
@@ -464,7 +475,7 @@ export const SessionItem = memo(function SessionItem({
 						>
 							{session.name}
 						</span>
-						{/* Maestro Cue indicator: subscriptions registered (and pulsing when running).
+						{/* Maestro Cue indicator: subscriptions registered (and glowing when running).
 						    Hidden when the Cue Encore Feature is off, or when the user has hidden it. */}
 						{cueIndicatorVisible && (
 							<CueIndicator
@@ -700,14 +711,6 @@ export const SessionItem = memo(function SessionItem({
 
 				{/* AI Status Indicator with Unread Badge */}
 				<div className="relative w-2 h-2 ml-auto">
-					{/* Pulse ring: only renders for animated states, sits behind the dot */}
-					{statusInfo.animate && (
-						<span
-							className="absolute inset-0 rounded-full animate-ping"
-							style={{ backgroundColor: statusInfo.color, opacity: 0.3 }}
-							aria-hidden="true"
-						/>
-					)}
 					{/* Core status dot: filled by default, hollow when Claude has no provider session.
 					    Busy CLI activity overrides the generic "Thinking" tooltip with the playbook name. */}
 					<div
@@ -720,7 +723,9 @@ export const SessionItem = memo(function SessionItem({
 									}
 								: {
 										backgroundColor: statusInfo.color,
-										boxShadow: statusInfo.animate ? `0 0 6px ${statusInfo.color}60` : undefined,
+										// Static, never a looping ring: one `animate-ping` per busy
+										// row was 30,102 style recalcs in a 45s idle trace.
+										boxShadow: statusInfo.active ? activeStatusHalo(statusInfo.color) : undefined,
 									}
 						}
 						title={

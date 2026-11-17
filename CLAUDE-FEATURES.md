@@ -103,6 +103,7 @@ src/main/
 │   ├── usage-dashboard-reads.ts # Reads shared by IPC and the CLI (delegation, Cue, quota)
 │   └── tables: query_events, auto_run_sessions, auto_run_tasks, session_lifecycle, image_annotations,
 │       shortcut_usage_daily, shortcut_usage_by_id, multi_window_usage_daily, resilience_events, wizard_runs,
+│       token_speed_hourly,
 │       _meta, _migrations
 └── ipc/handlers/stats.ts        # IPC handlers for stats operations
 ```

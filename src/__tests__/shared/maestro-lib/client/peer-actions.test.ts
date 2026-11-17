@@ -102,6 +102,17 @@ describe('runPeerAgentAction', () => {
 		expect(client.tabs.rename).toHaveBeenLastCalledWith('a1', 't2', 'Plan');
 	});
 
+	it("passes the sender's own tab choices with the send, and leaves them off when there are none", async () => {
+		const { client, asClient } = fakeClient();
+		const overrides = { model: 'opus', effort: 'high', readOnly: true, saveToHistory: false };
+		await runPeerAgentAction(asClient, agent, { kind: 'send', tabId: 't2', text: 'hi', overrides });
+		expect(client.turns.send).toHaveBeenLastCalledWith('a1', 't2', { text: 'hi', overrides });
+		await runPeerAgentAction(asClient, agent, { kind: 'send', tabId: 't2', text: 'again' });
+		expect(client.turns.send).toHaveBeenLastCalledWith('a1', 't2', { text: 'again' });
+		// The overrides ride on the message only: nothing touches the host tab.
+		expect(client.tabs.update).not.toHaveBeenCalled();
+	});
+
 	it('stops every busy tab without a tab, and reports which ones stopped', async () => {
 		const { client, asClient } = fakeClient();
 		expect(await runPeerAgentAction(asClient, agent, { kind: 'interrupt' })).toEqual(
@@ -357,6 +368,44 @@ describe('parsePeerAgentAction', () => {
 		expect(() =>
 			parsePeerAgentAction({ kind: 'update-tab', tabId: 't1', patch: { name: 'x' } })
 		).toThrow('Unknown tab settings field: name');
+	});
+
+	it('reads a send with turn overrides: checked fields kept, an empty set dropped', () => {
+		expect(
+			parsePeerAgentAction({
+				kind: 'send',
+				tabId: 't1',
+				text: 'hi',
+				overrides: { model: 'opus', effort: 'high', readOnly: false, saveToHistory: true },
+			})
+		).toEqual({
+			kind: 'send',
+			tabId: 't1',
+			text: 'hi',
+			overrides: { model: 'opus', effort: 'high', readOnly: false, saveToHistory: true },
+		});
+		expect(
+			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', overrides: { readOnly: true } })
+		).toEqual({ kind: 'send', tabId: 't1', text: 'hi', overrides: { readOnly: true } });
+		for (const empty of [{}, { model: undefined }, null]) {
+			expect(
+				parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', overrides: empty })
+			).toEqual({ kind: 'send', tabId: 't1', text: 'hi' });
+		}
+	});
+
+	it('refuses turn overrides with an unknown field or a bad value', () => {
+		const send = (overrides: unknown) => () =>
+			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', overrides });
+		expect(send({ thinking: 'on' })).toThrow('Unknown turn overrides field: thinking');
+		expect(send({ model: '  ' })).toThrow("Invalid value for turn overrides field 'model'");
+		expect(send({ effort: 3 })).toThrow("Invalid value for turn overrides field 'effort'");
+		expect(send({ readOnly: 'yes' })).toThrow("Invalid value for turn overrides field 'readOnly'");
+		expect(send({ saveToHistory: 1 })).toThrow(
+			"Invalid value for turn overrides field 'saveToHistory'"
+		);
+		expect(send('opus')).toThrow('Invalid turn overrides');
+		expect(send(['opus'])).toThrow('Invalid turn overrides');
 	});
 
 	it('refuses what no host call can take', () => {

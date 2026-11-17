@@ -12,6 +12,7 @@
 
 import type { MirrorPeerSummary } from './maestro-lib/client/peer-mirror';
 import type { AutoFederationSnapshot } from './federationAuto';
+import type { LiftSyncConflict, LiftSyncResolution } from './maestro-lib/agents/lift-settings-sync';
 
 /**
  * The answer while the main-process peer mirror is not running: before boot started it, or after
@@ -26,21 +27,63 @@ export const FEDERATION_COMMAND_RESULT = 'federation_command_result';
 /**
  * `peers` lists what the desktop mirrors; `reconnect` forces one peer's reload; `auto-status`
  * reads automatic Federation's snapshot; `auto-run` runs a pass now and answers what it left.
+ * `conflicts` lists the hosted agents' settings waiting for a person (the Federation Settings
+ * Conflicts modal); `resolve-conflict` settles one the way its buttons do.
  */
-export type FederationCommandAction = 'peers' | 'reconnect' | 'auto-status' | 'auto-run';
+export type FederationCommandAction =
+	| 'peers'
+	| 'reconnect'
+	| 'auto-status'
+	| 'auto-run'
+	| 'conflicts'
+	| 'resolve-conflict';
 
 export const FEDERATION_COMMAND_ACTIONS: readonly FederationCommandAction[] = [
 	'peers',
 	'reconnect',
 	'auto-status',
 	'auto-run',
+	'conflicts',
+	'resolve-conflict',
 ];
+
+/** The conflicts of one hosted agent, as the modal lists them. */
+export interface HostedSettingsConflictSummary {
+	/** `peer:agentId`, the address `resolve-conflict` takes. */
+	agent: string;
+	peerId: string;
+	agentId: string;
+	agentName: string;
+	conflicts: LiftSyncConflict[];
+}
+
+/** What main asks the window that runs the settings sync, and what it answers. */
+export type HostedSettingsRequest =
+	| { action: 'list' }
+	| { action: 'resolve'; agent: string; field: string; resolution: LiftSyncResolution };
+
+export interface HostedSettingsReply {
+	success: boolean;
+	error?: string;
+	conflicts?: HostedSettingsConflictSummary[];
+}
+
+/** The renderer channel main asks on (`requestFromRenderer`). */
+export const HOSTED_SETTINGS_REQUEST_CHANNEL = 'federation:hostedSettings';
 
 export interface FederationCommandRequest {
 	type: typeof FEDERATION_COMMAND;
 	action: FederationCommandAction;
 	/** `reconnect` only: a peer id, remote name, or remote id (prefix), as `findMirrorPeer()` reads it. */
 	peer?: string;
+	/** `resolve-conflict` only: the hosted agent (`peer:agentId`). */
+	agent?: string;
+	/** `resolve-conflict` only: the field id the conflict list names. */
+	field?: string;
+	/** `resolve-conflict` only: which value wins; `value` takes `value` below. */
+	take?: 'host' | 'local' | 'value';
+	/** `resolve-conflict` with `take: 'value'`: the merged text. */
+	value?: string;
 }
 
 export interface FederationCommandResult {
@@ -52,4 +95,6 @@ export interface FederationCommandResult {
 	peer?: MirrorPeerSummary;
 	/** `auto-status` / `auto-run`: automatic Federation, per remote and per SSH agent. */
 	auto?: AutoFederationSnapshot;
+	/** `conflicts` / `resolve-conflict`: what still waits for a person, after the change. */
+	conflicts?: HostedSettingsConflictSummary[];
 }

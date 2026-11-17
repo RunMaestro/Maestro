@@ -8,6 +8,14 @@ import {
 	formatSize,
 	truncateAtWordBoundary,
 } from '../../shared/formatters';
+import { stripControlCharacters } from '../../shared/stringUtils';
+import {
+	formatCpuPercent,
+	inProcessModels,
+	memoryShareOfSystem,
+	type AppStatsSnapshot,
+	type ProcessTreeUsage,
+} from '../../shared/appStats';
 import {
 	MODEL_SERVER_NAME,
 	modelServerBindLabel,
@@ -228,6 +236,24 @@ export interface AgentDisplay {
 	peer?: string;
 	/** Set on a local agent that was lifted onto its host: `peer:agentId`, where it runs now. */
 	liftedTo?: string;
+	/** The name of the agent's group, when it has one. */
+	groupName?: string;
+	/** The agent's group is parked out of the Left Bar (hidden, or under a hidden parent). */
+	groupHidden?: boolean;
+	/** The agent's own advertised specialty (Edit Agent > Peers > "How peers see this agent"). */
+	peerDescription?: string;
+	/** Set by `--reachable`: what the caller may do with this agent (`peerAccessLabel`). */
+	access?: string;
+}
+
+/** Options for {@link formatAgents}. */
+export interface FormatAgentsScope {
+	/** Titles a list read from one Federation peer. */
+	peer?: string;
+	/** Print each agent's `peerDescription` under it (`--descriptions`). */
+	descriptions?: boolean;
+	/** Titles a list filtered to the agents the caller may reach (`--reachable`). */
+	reachableFrom?: string;
 }
 
 /**
@@ -238,15 +264,17 @@ export interface AgentDisplay {
 export function formatAgents(
 	agents: AgentDisplay[],
 	groupName?: string,
-	scope: { peer?: string } = {}
+	scope: FormatAgentsScope = {}
 ): string {
 	if (agents.length === 0) {
+		if (scope.reachableFrom) return dim(`No agents reachable from ${scope.reachableFrom}.`);
 		return dim(scope.peer ? `No agents found on peer ${scope.peer}.` : 'No agents found.');
 	}
 
 	const lines: string[] = [];
 	const where = groupName ? ` in ${groupName}` : scope.peer ? ` on peer ${scope.peer}` : '';
-	const title = bold(c('cyan', 'AGENTS')) + dim(`${where} (${agents.length})`);
+	const reach = scope.reachableFrom ? ` reachable from ${scope.reachableFrom}` : '';
+	const title = bold(c('cyan', 'AGENTS')) + dim(`${reach}${where} (${agents.length})`);
 	lines.push(title);
 	lines.push('');
 
@@ -258,11 +286,20 @@ export function formatAgents(
 		const autoRun = agent.autoRunFolderPath ? c('yellow', ' [Auto Run]') : '';
 		const bookmark = agent.bookmarked ? c('yellow', ' \u2605') : '';
 		const peer = agent.peer ? c('magenta', ` @${agent.peer}`) : '';
+		// The group is named on every row, unless the whole list is one group's.
+		const group = agent.groupName && !groupName ? dim(` [${agent.groupName}]`) : '';
+		const hidden = agent.groupHidden ? c('yellow', ' [hidden group]') : '';
+		const access = agent.access ? c('cyan', ` (${agent.access})`) : '';
 
-		lines.push(`  ${name}${bookmark} ${toolType}${autoRun}${peer}`);
+		lines.push(`  ${name}${bookmark} ${toolType}${autoRun}${peer}${group}${hidden}${access}`);
 		lines.push(`      ${cwd}`);
 		lines.push(`      ${id}`);
 		if (agent.liftedTo) lines.push(`      ${c('magenta', `moved to ${agent.liftedTo}`)}`);
+		if (scope.descriptions && agent.peerDescription) {
+			// One line, with nothing in it that could drive the terminal.
+			const description = stripControlCharacters(agent.peerDescription).replace(/\s+/g, ' ');
+			lines.push(`      ${dim(description.trim())}`);
+		}
 	}
 
 	return lines.join('\n');
@@ -2696,5 +2733,116 @@ export function formatDelegationGraph(view: DelegationGraphView): string {
 				: `    ${dim('reached by:')} ${reachedBy.map((link) => link.peer.name).join(', ')}`
 		);
 	}
+	return lines.join('\n');
+}
+
+/** One process tree in a line: `6.1 GB · 3 processes · 0.4% CPU`. */
+function describeTreeUsage(usage: ProcessTreeUsage): string {
+	return `${formatSize(usage.rssBytes)} · ${formatCountNoun(usage.processCount, 'process', 'processes')} · ${formatCpuPercent(usage.cpuPercent)} CPU`;
+}
+
+/**
+ * `maestro-cli app-stats`: what Maestro costs this computer. The same snapshot
+ * the Debug: View Application Stats modal draws, minus the per-agent data
+ * footprint, which only the renderer holds.
+ */
+export function formatAppStats(snapshot: AppStatsSnapshot): string {
+	const { system, totals, localModels } = snapshot;
+	const row = (label: string, value: string) => `  ${c('white', label.padEnd(14))}  ${value}`;
+	const lines: string[] = [];
+
+	const load = system.loadAverage
+		? `, load ${system.loadAverage.map((n) => n.toFixed(2)).join(' ')}`
+		: '';
+	lines.push(bold(c('cyan', 'APPLICATION STATS')));
+	lines.push(
+		dim(
+			`${snapshot.platform}, ${formatCountNoun(system.cpuCount, 'core')}, ${formatSize(system.totalMemoryBytes)} memory (${formatSize(system.freeMemoryBytes)} free)${load}`
+		)
+	);
+	lines.push('');
+
+	lines.push(
+		row(
+			'Maestro',
+			`${formatSize(totals.memoryBytes)} (${memoryShareOfSystem(snapshot).toFixed(1)}% of memory) · ${formatCountNoun(totals.processCount, 'process', 'processes')} · ${formatCpuPercent(totals.cpuPercent)} CPU`
+		)
+	);
+	if (!totals.processTreesMeasured) {
+		lines.push(`  ${c('yellow', 'Agent and model server trees could not be measured here.')}`);
+	}
+
+	const electronMemory = snapshot.electronProcesses.reduce(
+		(sum, p) => sum + (p.workingSetBytes ?? 0),
+		0
+	);
+	const electronCpu = snapshot.electronProcesses.reduce((sum, p) => sum + (p.cpuPercent ?? 0), 0);
+	lines.push(
+		row(
+			'Electron',
+			`${formatSize(electronMemory)} · ${formatCountNoun(snapshot.electronProcesses.length, 'process', 'processes')} · ${formatCpuPercent(electronCpu)} CPU  ${dim(`main heap ${formatSize(snapshot.main.heapUsed)} / ${formatSize(snapshot.main.heapTotal)}`)}`
+		)
+	);
+
+	const agents = snapshot.managedProcesses.filter((p) => p.processCount !== undefined);
+	const agentUsage = agents.reduce(
+		(sum, p) => ({
+			processCount: sum.processCount + (p.processCount ?? 0),
+			rssBytes: sum.rssBytes + (p.rssBytes ?? 0),
+			cpuPercent: sum.cpuPercent + (p.cpuPercent ?? 0),
+		}),
+		{ processCount: 0, rssBytes: 0, cpuPercent: 0 }
+	);
+	lines.push(
+		row(
+			'Agents',
+			`${describeTreeUsage(agentUsage)}  ${dim(`${formatCountNoun(snapshot.managedProcesses.length, 'spawned process', 'spawned processes')}`)}`
+		)
+	);
+
+	const server = localModels.modelServer;
+	lines.push(
+		row(
+			'Model server',
+			server.usage
+				? `${describeTreeUsage(server.usage)}  ${dim(`pid ${server.pid}, ${server.loadedModels.length} of ${server.models.length} loaded`)}`
+				: dim(server.state)
+		)
+	);
+
+	const nameOf = (id: string) => localModels.disk.models.find((m) => m.id === id)?.name ?? id;
+	const resident = inProcessModels(localModels);
+	lines.push(
+		row(
+			'In-process',
+			resident.length > 0
+				? `${resident.map((m) => `${nameOf(m.id)} ${dim(`(${m.role})`)}`).join(', ')}  ${dim('counted in the main process')}`
+				: dim('no models loaded')
+		)
+	);
+
+	const { disk } = localModels;
+	lines.push('');
+	lines.push(`  ${bold('LOCAL MODELS DISK')}  ${formatSize(disk.totalBytes)}`);
+	lines.push(row('Models', `${formatSize(disk.modelsBytes)}  ${dim(`(${disk.models.length})`)}`));
+	lines.push(
+		row(
+			'Runtimes',
+			`${formatSize(disk.runtimesBytes)}  ${dim(`model server engine ${formatSize(disk.serverEngineBytes)}`)}`
+		)
+	);
+	lines.push(row('Server data', formatSize(disk.serverDataBytes)));
+	lines.push(row('Search index', formatSize(disk.semanticIndexBytes)));
+	if (disk.models.length > 0) {
+		lines.push('');
+		const nameWidth = Math.max(...disk.models.map((m) => m.name.length));
+		for (const model of disk.models) {
+			const kind = model.kind ?? 'unknown';
+			lines.push(
+				`    ${model.name.padEnd(nameWidth)}  ${dim(kind.padEnd(10))}  ${formatSize(model.bytes).padStart(9)}`
+			);
+		}
+	}
+
 	return lines.join('\n');
 }

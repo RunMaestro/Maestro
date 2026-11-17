@@ -26,6 +26,7 @@
 
 import type { ToolType, AgentError } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
+import type { CallTimingSignal } from '../../tokenSpeed';
 import { getErrorPatterns, matchErrorPattern, stripJsonEventLines } from './error-patterns';
 
 interface CopilotToolRequest {
@@ -491,6 +492,26 @@ export class CopilotOutputParser implements AgentOutputParser {
 
 		const raw = event.raw as CopilotRawMessage | undefined;
 		return raw?.sessionId || raw?.data?.sessionId || null;
+	}
+
+	/**
+	 * Per-call timing for token speed. A call starts at `assistant.turn_start`
+	 * (or when a tool result is handed back) and ends at the `assistant.message`
+	 * carrying that call's `outputTokens`. Copilot CLI reports no input tokens
+	 * from 1.0.39 on, so only OUTPUT speed is measured. Subagent messages are
+	 * skipped: they run alongside the parent and would interleave the clock.
+	 */
+	extractCallTiming(raw: unknown): CallTimingSignal | null {
+		if (!raw || typeof raw !== 'object') return null;
+		const msg = raw as CopilotRawMessage;
+		if (msg.data?.parentToolCallId) return null;
+		if (msg.type === 'assistant.turn_start' || msg.type === 'tool.execution_complete') {
+			return { kind: 'start' };
+		}
+		if (msg.type !== 'assistant.message') return null;
+		const outputTokens = msg.data?.outputTokens;
+		if (typeof outputTokens !== 'number' || outputTokens <= 0) return null;
+		return { kind: 'end', inputTokens: 0, outputTokens };
 	}
 
 	/** Extract usage/token statistics from a parsed event. */

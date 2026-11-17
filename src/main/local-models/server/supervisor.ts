@@ -61,6 +61,7 @@ import {
 import { stripAnsiCodes } from '../../../shared/stringUtils';
 import { atomicWriteFile, createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { openCappedLogFile, type CappedLogFile } from '../../utils/capped-log-file';
+import { logLineStamp } from '../../../shared/logSources';
 import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
 import { logger } from '../../utils/logger';
 import type { SafeSendFn } from '../../utils/safe-send';
@@ -251,16 +252,17 @@ function dataDir(): string {
 	return (deps.dataDir ?? localModelsDataDir)();
 }
 
-function serverDir(): string {
+/** Where the server keeps its presets, key and prompt cache. */
+export function modelServerDir(): string {
 	return path.join(dataDir(), MODEL_SERVER_DIRNAME);
 }
 
 function keyFilePath(): string {
-	return path.join(serverDir(), MODEL_SERVER_KEY_FILE);
+	return path.join(modelServerDir(), MODEL_SERVER_KEY_FILE);
 }
 
 function presetsPath(): string {
-	return path.join(serverDir(), MODEL_SERVER_PRESETS_FILE);
+	return path.join(modelServerDir(), MODEL_SERVER_PRESETS_FILE);
 }
 
 /** The server's log file. Its output is appended there across restarts. */
@@ -478,7 +480,7 @@ async function launchLocked(knownModels?: ServerModelPreset[]): Promise<void> {
 				);
 	}
 
-	const cacheDir = path.join(serverDir(), MODEL_SERVER_CACHE_DIRNAME);
+	const cacheDir = path.join(modelServerDir(), MODEL_SERVER_CACHE_DIRNAME);
 	await fs.mkdir(cacheDir, { recursive: true });
 	await atomicWriteFile(presetsPath(), presets);
 	const keyFile = keyFilePath();
@@ -493,13 +495,16 @@ async function launchLocked(knownModels?: ServerModelPreset[]): Promise<void> {
 			apiKeyFile: keyFile,
 		});
 		const log = openCappedLogFile(modelServerLogPath(), {
+			// Each line carries its wall-clock time, so the System Log Viewer can
+			// place it among Maestro's own entries.
+			linePrefix: () => logLineStamp(),
 			onError: (error) =>
 				logger.warn(
 					`The ${MODEL_SERVER_NAME} log could not be written: ${errorMessage(error)}`,
 					LOG_CONTEXT
 				),
 		});
-		log.write(`\n[${new Date().toISOString()}] Starting ${binary} ${args.join(' ')}\n`);
+		log.writeLine(`Starting ${binary} ${args.join(' ')}`);
 
 		let child: ChildProcess;
 		try {
@@ -548,7 +553,7 @@ async function launchLocked(knownModels?: ServerModelPreset[]): Promise<void> {
 		child.stderr?.on('data', (chunk: Buffer) => onOutput(current, chunk));
 		child.once('exit', (code, signal) => onExit(current, code, signal));
 		child.once('close', () => {
-			current.log.write(`[${new Date().toISOString()}] Exited\n`);
+			current.log.writeLine('Exited');
 			current.log.close();
 			current.markClosed();
 		});

@@ -28,6 +28,7 @@ import type { CotResolverDeps } from '../cot-export/resolve-agent';
 import { getCotWriter } from '../cot-export/runtime';
 import { getCrossAgentConsultParties } from '../cross-agent/cross-agent-router';
 import { getSessionsStore } from '../stores/getters';
+import { setupTokenSpeedListener } from '../process-listeners/token-speed-listener';
 import { powerManager } from '../power-manager';
 import { groupChatEmitters } from '../group-chat/emitters';
 import { desktopGroupChatEngine, desktopLauncherFor } from '../group-chat/desktop-engine';
@@ -139,6 +140,8 @@ export function wireProcessListeners(deps: ProcessListenersWiringDependencies): 
 
 	// WakaTime heartbeat listener (query-complete -> heartbeat, exit -> cleanup)
 	setupWakaTimeListener(processManager, deps.wakatimeManager, deps.settingsStore);
+
+	setupTokenSpeedListener(processManager, deps.settingsStore);
 
 	wireCotExportListener(processManager);
 }

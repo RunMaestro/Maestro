@@ -77,7 +77,7 @@ describe.skipIf(!canLoadNodeSqlite())('s1_decisions', () => {
 		runMigrations(db);
 	});
 
-	describe('migrations v19 and v20', () => {
+	describe('migrations v20 and v21', () => {
 		it('creates the table with the ledger columns and brings the database to the target version', () => {
 			expect(columnNames(db, 's1_decisions')).toEqual([
 				'id',
@@ -98,9 +98,9 @@ describe.skipIf(!canLoadNodeSqlite())('s1_decisions', () => {
 				'tab_id',
 				'cached',
 			]);
-			expect(getCurrentVersion(db)).toBe(23);
-			expect(getTargetVersion()).toBe(23);
-			expect(STATS_DB_VERSION).toBe(23);
+			expect(getCurrentVersion(db)).toBe(24);
+			expect(getTargetVersion()).toBe(24);
+			expect(STATS_DB_VERSION).toBe(24);
 		});
 
 		it('indexes the two columns a read filters on', () => {
@@ -119,7 +119,7 @@ describe.skipIf(!canLoadNodeSqlite())('s1_decisions', () => {
 			const older = openDb();
 			runMigrations(older);
 			older.prepare('DROP TABLE s1_decisions').run();
-			older.pragma('user_version = 18');
+			older.pragma('user_version = 19');
 			older
 				.prepare(
 					`INSERT INTO local_model_runs
@@ -130,7 +130,7 @@ describe.skipIf(!canLoadNodeSqlite())('s1_decisions', () => {
 
 			runMigrations(older);
 
-			expect(getCurrentVersion(older)).toBe(23);
+			expect(getCurrentVersion(older)).toBe(24);
 			expect(columnNames(older, 's1_decisions')).toContain('outcome');
 			expect(older.prepare('SELECT COUNT(*) AS n FROM local_model_runs').get()).toEqual({ n: 1 });
 		});

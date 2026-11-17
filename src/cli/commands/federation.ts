@@ -15,7 +15,9 @@ import {
 	FEDERATION_COMMAND,
 	FEDERATION_COMMAND_RESULT,
 	type FederationCommandAction,
+	type FederationCommandRequest,
 	type FederationCommandResult,
+	type HostedSettingsConflictSummary,
 } from '../../shared/federationCommands';
 import type {
 	MirrorPeerSummary,
@@ -39,9 +41,13 @@ export const FEDERATION_HEADLESS_MESSAGE =
 /** A reload dials SSH and re-reads the host's agent list, one peer after another. */
 export const FEDERATION_RECONNECT_TIMEOUT_MS = 120_000;
 
+type FederationCommandExtra = Partial<
+	Pick<FederationCommandRequest, 'peer' | 'agent' | 'field' | 'take' | 'value'>
+>;
+
 async function sendFederationCommand(
 	action: FederationCommandAction,
-	extra: { peer?: string } = {},
+	extra: FederationCommandExtra = {},
 	timeoutMs?: number
 ): Promise<FederationCommandResult> {
 	return withMaestroClient((client) =>
@@ -56,7 +62,7 @@ async function sendFederationCommand(
 async function request(
 	action: FederationCommandAction,
 	options: FederationOptions,
-	extra?: { peer?: string },
+	extra?: FederationCommandExtra,
 	timeoutMs?: number
 ): Promise<FederationCommandResult> {
 	try {
@@ -224,4 +230,87 @@ export async function federationAuto(options: FederationOptions): Promise<void> 
 /** `maestro-cli federation auto run`: run a pass now (Run Now in Settings > SSH Hosts). */
 export async function federationAutoRun(options: FederationOptions): Promise<void> {
 	await printAuto('auto-run', options);
+}
+
+// ---------------------------------------------------------------------------
+// Settings conflicts of hosted agents
+// ---------------------------------------------------------------------------
+
+function shownValue(value: unknown): string {
+	if (value === undefined || value === null) return '(not set)';
+	if (typeof value === 'boolean') return value ? 'on' : 'off';
+	const text = String(value);
+	return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
+/** The text `federation conflicts` prints: each hosted agent, its fields, and both values. */
+export function formatSettingsConflicts(sets: HostedSettingsConflictSummary[]): string {
+	const waiting = sets.filter((set) => set.conflicts.length > 0);
+	if (waiting.length === 0) return 'Every hosted agent matches its host.';
+	const lines: string[] = [];
+	for (const set of waiting) {
+		lines.push(`${set.agentName}  (${set.agent})`);
+		for (const conflict of set.conflicts) {
+			const extras = [conflict.firstSync ? 'first sync' : '', conflict.mergeable ? 'mergeable' : '']
+				.filter(Boolean)
+				.join(', ');
+			lines.push(`  ${conflict.id}: ${conflict.label}${extras ? `  [${extras}]` : ''}`);
+			lines.push(`    host:  ${shownValue(conflict.host)}`);
+			lines.push(`    local: ${shownValue(conflict.local)}`);
+		}
+	}
+	lines.push('');
+	lines.push(
+		'Settle one with: maestro-cli federation resolve <peer:agent> <field> --take host|local (or --value <merged text>)'
+	);
+	return lines.join('\n');
+}
+
+function printConflicts(reply: FederationCommandResult, options: FederationOptions): void {
+	const sets = reply.conflicts ?? [];
+	console.log(options.json ? JSON.stringify(sets, null, 2) : formatSettingsConflicts(sets));
+	if (sets.some((set) => set.conflicts.length > 0)) process.exitCode = 1;
+}
+
+/**
+ * `maestro-cli federation conflicts`: the settings of hosted agents that this machine and the host
+ * both changed, the same list the Federation Settings Conflicts modal shows. Exit 1 while any wait.
+ */
+export async function federationConflicts(options: FederationOptions): Promise<void> {
+	const reply = await request('conflicts', options);
+	if (!reply.success)
+		failCommand(reply.error || 'The desktop did not list the conflicts', options.json);
+	printConflicts(reply, options);
+}
+
+export interface FederationResolveOptions extends FederationOptions {
+	take?: string;
+	value?: string;
+}
+
+/**
+ * `maestro-cli federation resolve <peer:agent> <field>`: settle one conflict the way the modal's
+ * buttons do. `--take host` keeps the host's value, `--take local` sends this machine's, and
+ * `--value <text>` sends a merged text (free-text fields only).
+ */
+export async function federationResolve(
+	agent: string,
+	field: string,
+	options: FederationResolveOptions
+): Promise<void> {
+	const take = options.value !== undefined ? 'value' : options.take;
+	if (take !== 'host' && take !== 'local' && take !== 'value') {
+		failCommand('Pass --take host, --take local, or --value <merged text>.', options.json);
+	}
+	const reply = await request('resolve-conflict', options, {
+		agent,
+		field,
+		take,
+		...(options.value !== undefined ? { value: options.value } : {}),
+	});
+	if (!reply.success)
+		failCommand(reply.error || 'The desktop did not settle the conflict', options.json);
+	if (!options.json)
+		console.log(formatSuccess(`Settled ${field} on ${agent}; the host follows shortly.`));
+	printConflicts(reply, options);
 }

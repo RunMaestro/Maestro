@@ -37,6 +37,7 @@ import {
 	VOICE_PROVIDER_SLOTS,
 	isVoiceProviderSlot,
 	readAgentWakePhrases,
+	readDefaultVoiceAgentId,
 	voiceSettingProblem,
 	withAgentWakePhrase,
 	type VoiceProviderSlot,
@@ -48,6 +49,7 @@ import { formatSuccess, formatWarning } from '../output/formatter';
 import { failCommand, resolveAgentOrFail } from '../services/session-command';
 import { isStdinTerminal, readStdinText } from '../services/stdin';
 import {
+	deleteSettingValue,
 	getSessionById,
 	readLocalModelAssignments,
 	readLocalModelEndpoints,
@@ -467,4 +469,55 @@ export function voiceWakePhraseClear(agent: string, options: JsonOption): void {
 	writeAgentPhrase(agentId, '');
 	if (options.json) printJson({ agentId, phrase: null });
 	else console.log(formatSuccess(`${agentName(agentId)} has no wake phrase of its own.`));
+}
+
+/** Where the default agent is stored, under the `acappella` settings blob. */
+const DEFAULT_AGENT_SETTING = 'acappella.controls.defaultAgentSessionId';
+
+/** `voice default-agent show` - the agent a Conductor request goes to when none is clearly meant. */
+export function voiceDefaultAgentShow(options: JsonOption): void {
+	const agentId = readDefaultVoiceAgentId(readSettingValue(DEFAULT_AGENT_SETTING));
+	// Main ignores a default whose agent is gone, so saying "set" would be a lie.
+	const running = agentId ? getSessionById(agentId) !== undefined : false;
+	if (options.json) {
+		printJson({
+			agentId,
+			name: agentId && running ? agentName(agentId) : null,
+			inUse: running,
+		});
+		return;
+	}
+	if (!agentId) {
+		console.log(
+			'No default agent. A request no agent is clearly meant for goes to the agent on screen.'
+		);
+		return;
+	}
+	if (!running) {
+		console.log(
+			formatWarning(
+				`The default agent (${agentId}) no longer exists, so the agent on screen takes those requests.`
+			)
+		);
+		return;
+	}
+	console.log(`${agentName(agentId)} (${agentId})`);
+}
+
+/** `voice default-agent set <agent>` - send unclear Conductor requests to this agent. */
+export function voiceDefaultAgentSet(agent: string, options: JsonOption): void {
+	const agentId = resolveAgentOrFail(agent, options.json);
+	writeSettingValue(DEFAULT_AGENT_SETTING, agentId);
+	if (options.json) printJson({ agentId, name: agentName(agentId) });
+	else
+		console.log(
+			formatSuccess(`${agentName(agentId)} now takes voice requests no agent is clearly meant for.`)
+		);
+}
+
+/** `voice default-agent clear` - fall back to the agent on screen again. */
+export function voiceDefaultAgentClear(options: JsonOption): void {
+	deleteSettingValue(DEFAULT_AGENT_SETTING);
+	if (options.json) printJson({ agentId: null });
+	else console.log(formatSuccess('No default agent. The agent on screen takes unclear requests.'));
 }

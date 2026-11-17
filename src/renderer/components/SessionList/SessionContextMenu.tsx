@@ -6,6 +6,7 @@ import {
 	ArrowDownToLine,
 	ArrowUp,
 	ArrowUpFromLine,
+	Bot,
 	ChevronRight,
 	Settings,
 	Copy,
@@ -36,6 +37,7 @@ import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { useVoiceAgentActions } from '../../hooks/voice/useVoiceAgentActions';
+import { ContextMenuHeader } from '../ui/ContextMenuHeader';
 import { GitChangeCounts } from '../ui/GitChangeCounts';
 import { GitRunningBadge, PR_RUNNING_TITLE } from '../ui/GitRunningBadge';
 import { formatGitChangeSummary } from '../../../shared/gitUtils';
@@ -431,7 +433,7 @@ export function SessionContextMenu({
 		<div
 			ref={menuRef}
 			data-testid="session-context-menu"
-			className="fixed z-50 py-1 rounded-md whitespace-nowrap"
+			className="fixed z-50 pb-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
@@ -448,14 +450,7 @@ export function SessionContextMenu({
 			{/* Names the agent this menu acts on. Right-clicking a row in a long
 			    Left Bar pops the menu away from that row, so without it the
 			    destructive items at the bottom are unattributed. */}
-			<div
-				className="px-3 py-1 text-2xs uppercase tracking-wider opacity-60"
-				style={{ color: theme.colors.textDim }}
-				title={session.name}
-			>
-				<span className="block truncate max-w-[12rem]">{session.name}</span>
-			</div>
-			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+			<ContextMenuHeader theme={theme} label={session.name} icon={Bot} />
 
 			{!session.isPianola && (
 				<button

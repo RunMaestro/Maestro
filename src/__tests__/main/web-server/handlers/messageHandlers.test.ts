@@ -194,6 +194,8 @@ vi.mock('../../../../main/local-models/server/supervisor', () => ({
 	startModelServer: vi.fn(async () => ({ state: 'running' })),
 	stopModelServer: vi.fn(async () => ({ state: 'stopped' })),
 	getModelServerKey: vi.fn(async () => 'sk-maestro-key'),
+	// Read at import by log-sources.ts (the System Log Viewer's model server source).
+	modelServerLogPath: vi.fn(() => '/tmp/model-server.log'),
 }));
 import {
 	getModelServerKey,
@@ -3921,6 +3923,35 @@ describe('WebSocketMessageHandler', () => {
 			const calls = vi.mocked(client.socket.send).mock.calls;
 			return JSON.parse(String(calls[calls.length - 1][0]));
 		};
+
+		it("forwards a Federation sender's turnOverrides after the empty callback and admission slots", async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'Mine',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+				background: true,
+				turnOverrides: { model: ' opus ', readOnly: true, saveToHistory: false, junk: 1 },
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Mine',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					false,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					{ model: 'opus', readOnly: true, saveToHistory: false }
+				);
+			});
+		});
 
 		it('forwards sessionId/command/tab/background to the callback and replies with queue info', async () => {
 			handler.handleMessage(client, {

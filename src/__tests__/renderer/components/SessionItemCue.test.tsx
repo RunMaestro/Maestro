@@ -145,7 +145,9 @@ describe('SessionItem Cue Indicator', () => {
 		expect(zapIcon.style.color).toBe('rgb(45, 212, 191)');
 	});
 
-	it('applies animate-pulse animation class when cueActiveRun is true', () => {
+	// A running Cue glows instead of pulsing: one infinite pulse per row kept the
+	// renderer drawing a frame every vsync while the user was idle.
+	it('glows the Zap without a looping animation when cueActiveRun is true', () => {
 		render(
 			<SessionItem
 				{...defaultProps}
@@ -157,10 +159,11 @@ describe('SessionItem Cue Indicator', () => {
 
 		const zapIcon = screen.getByTestId('icon-zap');
 		const wrapper = zapIcon.closest('span[title]');
-		expect(wrapper).toHaveClass('animate-pulse');
+		expect(wrapper).not.toHaveClass('animate-pulse');
+		expect(zapIcon.style.filter).toContain('drop-shadow');
 	});
 
-	it('does not apply animate-pulse class when cueActiveRun is false', () => {
+	it('neither glows nor animates when cueActiveRun is false', () => {
 		render(
 			<SessionItem
 				{...defaultProps}
@@ -173,9 +176,10 @@ describe('SessionItem Cue Indicator', () => {
 		const zapIcon = screen.getByTestId('icon-zap');
 		const wrapper = zapIcon.closest('span[title]');
 		expect(wrapper).not.toHaveClass('animate-pulse');
+		expect(zapIcon.style.filter).toBe('');
 	});
 
-	it('does not apply animate-pulse class when cueActiveRun is undefined', () => {
+	it('neither glows nor animates when cueActiveRun is undefined', () => {
 		render(
 			<SessionItem {...defaultProps} session={createMockSession()} cueSubscriptionCount={2} />
 		);

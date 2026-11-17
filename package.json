@@ -34,6 +34,7 @@
 		"build:provenance": "node scripts/write-build-provenance.mjs",
 		"verify:provenance": "node scripts/write-build-provenance.mjs --verify",
 		"smoke:packaged": "node scripts/smoke-launch-packaged.mjs",
+		"smoke:remote": "node scripts/smoke-remote-interface.mjs",
 		"build:main": "node scripts/clean-tsc-output.mjs && tsc -p tsconfig.main.json && node scripts/gen-build-info.mjs && npm run build:preload",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",

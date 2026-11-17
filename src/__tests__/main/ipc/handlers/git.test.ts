@@ -6446,6 +6446,10 @@ branch refs/heads/bugfix-123
 				persistent: true,
 				ignoreInitial: true,
 				depth: 1,
+				// Never FSEvents: its stream is recursive, and this directory holds
+				// every worktree's builds and node_modules.
+				useFsEvents: false,
+				usePolling: false,
 			});
 			expect(mockWatcher.on).toHaveBeenCalledWith('addDir', expect.any(Function));
 			expect(mockWatcher.on).toHaveBeenCalledWith('error', expect.any(Function));

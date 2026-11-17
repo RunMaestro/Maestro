@@ -57,6 +57,11 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'federation reconnect': ['maestro-cli federation reconnect <peer>'],
 	'federation auto': ['maestro-cli federation auto --json'],
 	'federation auto run': ['maestro-cli federation auto run --json'],
+	'federation conflicts': ['maestro-cli federation conflicts --json'],
+	'federation resolve': [
+		'maestro-cli federation resolve <peer>:<agent> nudgeMessage --take host',
+		'maestro-cli federation resolve <peer>:<agent> nudgeMessage --value "<merged text>"',
+	],
 	// Dataview commands introduced by RC also participate in the CLI help audit.
 	'dataview query': ['maestro-cli dataview query <file> --agent <agent-id> --json'],
 	'dataview eval': ['maestro-cli dataview eval <file> "LIST FROM #meeting" --json'],
@@ -109,7 +114,11 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 
 	// Read agents, groups, playbooks, sessions
 	'list groups': ['maestro-cli list groups --json'],
-	'list agents': ['maestro-cli list agents --group <group-id> --json'],
+	'list agents': [
+		'maestro-cli list agents --group <group-id> --json',
+		'maestro-cli list agents --visible-only -d',
+		'maestro-cli list agents --reachable -d',
+	],
 	'list playbooks': ['maestro-cli list playbooks --agent <agent-id>'],
 	'list sessions': ['maestro-cli list sessions <agent-id> --limit 10 --search "auth"'],
 	'list ssh-remotes': ['maestro-cli list ssh-remotes --json'],
@@ -514,6 +523,9 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'voice wake-phrase list': ['maestro-cli voice wake-phrase list'],
 	'voice wake-phrase set': ['maestro-cli voice wake-phrase set <agent-id> "hey scout"'],
 	'voice wake-phrase clear': ['maestro-cli voice wake-phrase clear <agent-id>'],
+	'voice default-agent show': ['maestro-cli voice default-agent show --json'],
+	'voice default-agent set': ['maestro-cli voice default-agent set <agent-id>'],
+	'voice default-agent clear': ['maestro-cli voice default-agent clear'],
 	'voice wake test': ['maestro-cli voice wake test "hey scout" --seconds 10 --sensitivity 0.6'],
 	'voice wake list': ['maestro-cli voice wake list'],
 	'voice wake status': ['maestro-cli voice wake status "hey scout"'],
@@ -649,6 +661,13 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 	'profiling start': ['maestro-cli profiling start'],
 	'profiling stop': ['maestro-cli profiling stop --output ./trace.json'],
 	'profiling status': ['maestro-cli profiling status'],
+	'app-stats': ['maestro-cli app-stats', 'maestro-cli app-stats --json'],
+	'logs show': [
+		'maestro-cli logs show --source model-server --level warn,error',
+		'maestro-cli logs show --search load_model --limit 50',
+		'maestro-cli logs show --output ~/Desktop/maestro-logs.txt',
+	],
+	'logs clear': ['maestro-cli logs clear', 'maestro-cli logs clear --json'],
 	'maestro-run status': ['maestro-cli maestro-run status --check-latest'],
 	'maestro-run install': ['maestro-cli maestro-run install'],
 	'maestro-run grant': ['maestro-cli maestro-run grant --reveal'],

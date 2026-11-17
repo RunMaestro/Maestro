@@ -89,6 +89,7 @@ describe('Debug Preload API', () => {
 		describe('getAppStats', () => {
 			it('should invoke debug:getAppStats and pass through the snapshot', async () => {
 				const snapshot = {
+					success: true,
 					timestamp: 1234,
 					platform: 'darwin' as NodeJS.Platform,
 					main: { rss: 1, heapTotal: 2, heapUsed: 3, external: 4, arrayBuffers: 5 },

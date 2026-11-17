@@ -148,6 +148,9 @@ async function buildService(
 	callbacks: ProviderServiceCallbacks
 ): Promise<VoiceSessionService> {
 	const tap = buildAgentOutputTap(deps);
+	// Read per call, so a default chosen in Voice Controls applies to the next turn.
+	const readDefaultAgentSessionId = () =>
+		readVoiceProviderSettings(deps.settingsStore).defaultAgentSessionId ?? null;
 	const service = await initVoiceSessionService({
 		providers: {
 			...resolution.providers,
@@ -207,8 +210,12 @@ async function buildService(
 		// than to the next session.
 		getConversationalMode: () =>
 			readVoiceProviderSettings(deps.settingsStore).conversationalMode === true,
+		// The same reader for both halves: the router decides not to ask because a
+		// default exists, and the executor must then land on that same agent.
+		getDefaultAgentSessionId: readDefaultAgentSessionId,
 		executeRoute: createVoiceRouteExecutor({
 			bridge: createRendererVoiceBridge(deps.getMainWindow, deps.getWindowForSession),
+			getDefaultAgentSessionId: readDefaultAgentSessionId,
 			getQuickChat: deps.getQuickChat,
 			getProcessManager: () => {
 				const manager = deps.getProcessManager?.();

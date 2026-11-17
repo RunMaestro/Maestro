@@ -18,6 +18,7 @@ import { isWorktreeGroup } from '../../../shared/types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { ContextMenuHeader } from '../ui/ContextMenuHeader';
 
 interface GroupContextMenuProps {
 	x: number;
@@ -113,7 +114,7 @@ export function GroupContextMenu({
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-50 py-1 rounded-md whitespace-nowrap"
+			className="fixed z-50 pb-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
@@ -127,14 +128,7 @@ export function GroupContextMenu({
 				overflowY: 'auto',
 			}}
 		>
-			<div
-				className="px-3 py-1 text-2xs uppercase tracking-wider opacity-60 flex items-center gap-2"
-				style={{ color: theme.colors.textDim }}
-			>
-				<span>{group.emoji}</span>
-				<span className="truncate max-w-[12rem]">{group.name}</span>
-			</div>
-			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+			<ContextMenuHeader theme={theme} label={group.name} emoji={group.emoji} />
 
 			{/* First on purpose: adding an agent is the most common reason to open this menu. */}
 			<button
