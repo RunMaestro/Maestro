@@ -22,7 +22,6 @@
  * The local judge does not come through here: it is not HTTP and it is not Jev.
  */
 
-import { formatCount } from '../../../shared/formatters';
 import { endpointBaseUrlProblem } from '../../../shared/local-models/endpoints';
 import { modelsSettingsLocation } from '../../../shared/local-models/settings-location';
 import {
@@ -306,8 +305,8 @@ function tooLargeMessage(
 	questions: SystemOneQuestions
 ): string {
 	const estimate = estimateSystemOneRequest(engine.id, state, questions);
-	const sent = formatCount(estimate.stateTokens + estimate.largestQuestionTokens);
-	const budget = formatCount(JEV_MAX_STATE_AND_QUESTION_TOKENS);
+	const sent = (estimate.stateTokens + estimate.largestQuestionTokens).toLocaleString('en-US');
+	const budget = JEV_MAX_STATE_AND_QUESTION_TOKENS.toLocaleString('en-US');
 	return `The request is too large for ${describeEngine(engine)}: the state and its longest question must fit in about ${budget} tokens, and this one is about ${sent}. Send less state.`;
 }
 

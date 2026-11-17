@@ -36,7 +36,6 @@
  *      Nothing here asks Jev, or a different model, instead.
  */
 
-import { formatCount } from '../../../shared/formatters';
 import { taskAssignmentLocation } from '../../../shared/local-models/settings-location';
 import {
 	LOCAL_JUDGE_DEFAULT_TIMEOUT_MS,
@@ -370,8 +369,8 @@ function refuseIfTooLarge(label: string, system: string, prompt: string, maxToke
 	const overhead = CHAT_TEMPLATE_TOKENS + maxTokens;
 	const needed = Math.ceil((system.length + prompt.length) / JUDGE_CHARS_PER_TOKEN) + overhead;
 	if (needed <= LOCAL_TEXT_CONTEXT_TOKENS) return;
-	const room = formatCount(LOCAL_TEXT_CONTEXT_TOKENS - overhead);
-	const sent = formatCount(needed - overhead);
+	const room = (LOCAL_TEXT_CONTEXT_TOKENS - overhead).toLocaleString('en-US');
+	const sent = (needed - overhead).toLocaleString('en-US');
 	throw judgeError(
 		'too-large',
 		`${label}: the request is too large. The state and one question must fit in about ${room} tokens, and this is about ${sent}. Send less state.`

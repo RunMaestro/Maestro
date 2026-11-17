@@ -10,7 +10,7 @@
  * Everything here is pure and bundle-safe.
  */
 
-import { formatCost, formatCount } from '../formatters';
+import { formatCost } from '../formatters';
 import {
 	JEV_CHARS_PER_TOKEN,
 	JEV_MAX_REQUEST_TOKENS,
@@ -216,7 +216,7 @@ export function systemOneJobShapeProblem(
 		return 'The characters in a question are a whole number, 1 or more.';
 	}
 	if (!whole(shape.items, 1) || (shape.items ?? 1) > SYSTEM_ONE_AGENT_MAX_ITEMS) {
-		return `The number of items is a whole number from 1 to ${formatCount(SYSTEM_ONE_AGENT_MAX_ITEMS)}: one call takes no more.`;
+		return `The number of items is a whole number from 1 to ${SYSTEM_ONE_AGENT_MAX_ITEMS.toLocaleString('en-US')}: one call takes no more.`;
 	}
 	if (shape.perItem && shape.items === undefined) {
 		return 'A job with one request per item needs the number of items.';
