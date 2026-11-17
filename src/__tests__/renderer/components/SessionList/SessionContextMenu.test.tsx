@@ -124,6 +124,16 @@ describe('SessionContextMenu', () => {
 		mockGetFileCount.mockReturnValue(5);
 	});
 
+	it('draws every icon in the accent except Remove Agent', () => {
+		renderMenu({ theme: { ...mockTheme, colors: { ...mockTheme.colors, accent: '#9146ff' } } });
+		const iconColor = (label: string) =>
+			screen.getByText(label).closest('button')!.querySelector('svg')!.style.color;
+		expect(iconColor('Rename')).toBe('rgb(145, 70, 255)');
+		expect(iconColor('Edit Agent...')).toBe('rgb(145, 70, 255)');
+		// The destructive row keeps an unstyled icon, so it takes the row's error color.
+		expect(iconColor('Remove Agent')).toBe('');
+	});
+
 	it('names the agent in the accent header band', () => {
 		renderMenu();
 		const header = screen.getByTestId('context-menu-header');

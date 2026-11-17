@@ -3,6 +3,7 @@ export * from './AgentSettingsPanel';
 export * from './AgentProviderSelect';
 export * from './BrowseFolderButton';
 export * from './GeneralTab';
+export * from './RunsOnChip';
 export * from './ProviderTab';
 export * from './ModelsTab';
 export * from './AgentModelSection';

@@ -34,6 +34,23 @@ describe('GroupContextMenu', () => {
 		expect(screen.getByTestId('context-menu-header').textContent).toBe('🎹Maestro');
 	});
 
+	it('draws every label in the main text color and every icon in the accent, Delete aside', () => {
+		const theme = {
+			...mockTheme,
+			colors: { ...mockTheme.colors, accent: '#9146ff', textMain: '#eeeeee', error: '#ff0000' },
+		};
+		setup({ theme });
+		// New Agent in Group used to be the one accent-colored label; it now reads like the rest.
+		const newAgent = screen.getByText('New Agent in Group...').closest('button')!;
+		expect(newAgent.style.color).toBe('rgb(238, 238, 238)');
+		expect(newAgent.querySelector('svg')!.style.color).toBe('rgb(145, 70, 255)');
+		const rename = screen.getByText('Rename Group...').closest('button')!;
+		expect(rename.querySelector('svg')!.style.color).toBe('rgb(145, 70, 255)');
+		const remove = screen.getByText('Delete Group').closest('button')!;
+		expect(remove.style.color).toBe('rgb(255, 0, 0)');
+		expect(remove.querySelector('svg')!.style.color).toBe('');
+	});
+
 	it('does not render a Change Emoji option (emoji is changed via Rename)', () => {
 		setup();
 		expect(screen.queryByText('Change Emoji...')).toBeNull();

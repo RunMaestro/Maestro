@@ -8,6 +8,7 @@ import { File } from 'lucide-react';
 import {
 	ContextMenuHeader,
 	contextMenuHeaderForeground,
+	contextMenuIconStyle,
 } from '../../../../renderer/components/ui/ContextMenuHeader';
 import { contrastRatio } from '../../../../shared/colorContrast';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -66,5 +67,10 @@ describe('ContextMenuHeader', () => {
 			colors: { ...mockTheme.colors, accent: '#9146ff', accentForeground: '#ffffff' },
 		};
 		expect(contextMenuHeaderForeground(theme)).toBe('#ffffff');
+	});
+
+	it('colors menu row icons with the theme accent', () => {
+		const theme = { ...mockTheme, colors: { ...mockTheme.colors, accent: '#9146ff' } };
+		expect(contextMenuIconStyle(theme)).toEqual({ color: '#9146ff' });
 	});
 });

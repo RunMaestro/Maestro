@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import {
 	GeneralTab,
 	type GeneralTabProps,
@@ -76,18 +76,6 @@ describe('GeneralTab', () => {
 		expect(onNudgeMessageChange).toHaveBeenCalledWith('be brief');
 	});
 
-	it('says the agent runs locally when no SSH remote is set', () => {
-		render(<GeneralTab {...createProps()} />);
-		expect(within(screen.getByTestId('edit-agent-runs-on')).getByText('Local')).toBeInTheDocument();
-	});
-
-	it('names the SSH remote the agent runs on', () => {
-		render(<GeneralTab {...createProps({ sshRemoteHost: 'build-box' })} />);
-		const chip = screen.getByTestId('edit-agent-runs-on');
-		expect(within(chip).getByText('build-box')).toBeInTheDocument();
-		expect(within(chip).queryByText('Local')).not.toBeInTheDocument();
-	});
-
 	it('draws no name field for a form that names no agent', () => {
 		const {
 			name: _name,
@@ -99,10 +87,10 @@ describe('GeneralTab', () => {
 
 		expect(screen.queryByText('Agent Name')).not.toBeInTheDocument();
 		expect(screen.queryByDisplayValue('Builder')).not.toBeInTheDocument();
-		// The rest of the tab is still there, with the lead slot where the name was.
-		expect(screen.getByTestId('edit-agent-runs-on').nextElementSibling).toBe(
-			screen.getByTestId('lead-slot')
-		);
+		// The rest of the tab is still there, with the lead slot first, where the
+		// name was. The "Runs on" chip lives in the modal title bar, not here.
+		expect(screen.getByRole('tabpanel').firstElementChild).toBe(screen.getByTestId('lead-slot'));
+		expect(screen.queryByTestId('edit-agent-runs-on')).not.toBeInTheDocument();
 		expect(screen.getByTestId('working-dir-slot')).toBeInTheDocument();
 		expect(screen.getByText('Nudge Message')).toBeInTheDocument();
 	});

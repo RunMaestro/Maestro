@@ -5272,13 +5272,14 @@ describe('NewInstanceModal', () => {
 			expect(onCreate.mock.calls[0][7]).toEqual({ API_KEY: 'new-key' });
 		});
 
-		it('shows the Runs on chip on General and Agent Resilience on Provider', async () => {
+		it('shows the Runs on chip in the title bar on every tab, Agent Resilience on Provider', async () => {
 			renderModal();
 			expect(screen.getByTestId('new-agent-runs-on')).toHaveTextContent('Local');
 			expect(screen.queryByText('Agent Resilience')).not.toBeInTheDocument();
 
 			openTab('Provider');
 			await waitFor(() => expect(screen.getByText('Agent Resilience')).toBeInTheDocument());
+			expect(screen.getByTestId('new-agent-runs-on')).toHaveTextContent('Local');
 		});
 	});
 

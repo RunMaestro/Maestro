@@ -450,6 +450,17 @@ describe('FileTreeContextMenu', () => {
 	// -----------------------------------------------------------------------
 	// Header band names what the menu acts on
 	// -----------------------------------------------------------------------
+	it('draws every icon in the accent except Delete', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+		const iconColor = (label: string) =>
+			screen.getByText(label).closest('button')!.querySelector('svg')!.style.color;
+		const accent = 'rgb(124, 58, 237)';
+		for (const label of ['New File', 'Preview', 'Copy Path', 'Copy File Name', 'Rename']) {
+			expect(iconColor(label)).toBe(accent);
+		}
+		expect(iconColor('Delete')).not.toBe(accent);
+	});
+
 	describe('header', () => {
 		const header = () => screen.getByTestId('context-menu-header');
 

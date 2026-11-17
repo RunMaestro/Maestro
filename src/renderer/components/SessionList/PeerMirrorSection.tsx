@@ -26,6 +26,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
 import { startPeerHost } from '../../services/agentLift';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { contextMenuIconStyle } from '../ui/ContextMenuHeader';
 import {
 	isPeerDisconnected,
 	isPeerFederated,
@@ -68,6 +69,10 @@ function PeerMenu({
 	const canStartHost = peer !== undefined && isPeerDisconnected(peer);
 	const itemClass =
 		'w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2';
+	// Icons in the accent, labels in the main text color: the shared
+	// right-click menu look (see ContextMenuHeader).
+	const iconStyle = contextMenuIconStyle(theme);
+
 	return (
 		<div
 			ref={menuRef}
@@ -93,7 +98,7 @@ function PeerMenu({
 						onDismiss();
 					}}
 				>
-					<Copy className="w-3.5 h-3.5" />
+					<Copy className="w-3.5 h-3.5" style={iconStyle} />
 					Copy {mirrorKey(peerId, agentId)}
 				</button>
 			)}
@@ -107,7 +112,7 @@ function PeerMenu({
 						onDismiss();
 					}}
 				>
-					<Settings className="w-3.5 h-3.5" />
+					<Settings className="w-3.5 h-3.5" style={iconStyle} />
 					Edit Agent...
 				</button>
 			)}
@@ -120,7 +125,7 @@ function PeerMenu({
 					onDismiss();
 				}}
 			>
-				<RefreshCw className="w-3.5 h-3.5" />
+				<RefreshCw className="w-3.5 h-3.5" style={iconStyle} />
 				Reconnect {peerId}
 			</button>
 			{canStartHost && (
@@ -134,7 +139,7 @@ function PeerMenu({
 						onDismiss();
 					}}
 				>
-					<Play className="w-3.5 h-3.5" />
+					<Play className="w-3.5 h-3.5" style={iconStyle} />
 					Start Host on {peerId}
 				</button>
 			)}

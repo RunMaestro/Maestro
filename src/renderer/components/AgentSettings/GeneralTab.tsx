@@ -4,8 +4,8 @@
  *
  * The working directory is a slot because the two modals differ there: New
  * Agent adds the git-repo hint and the directory warning, Edit Agent adds the
- * running-agent blocker. The "Runs on" chip keeps the SSH state visible
- * without a visit to the SSH tab.
+ * running-agent blocker. The "Runs on" chip lives in the modal title bar
+ * (`RunsOnChip`), not here.
  *
  * A form with no agent to name (Group Settings) passes no name props, and the
  * name field is not drawn. `lead` is what such a form shows in its place.
@@ -13,7 +13,6 @@
 
 import type { ReactNode, Ref } from 'react';
 import { FormInput } from '../ui/FormInput';
-import { SshRemotePill } from '../ui/SshRemotePill';
 import {
 	AdditionalDirectoriesSection,
 	type AdditionalDirectoriesSectionProps,
@@ -38,7 +37,7 @@ type GeneralTabOptionalNameProps =
 	| { [Key in keyof GeneralTabNameProps]?: undefined };
 
 interface GeneralTabBodyProps extends AgentSettingsPanelBaseProps {
-	/** Drawn first under the "Runs on" chip, where the name field goes. */
+	/** Drawn first, where the name field goes. */
 	lead?: ReactNode;
 	/** Create mode: the Agent Group `<select>`. */
 	groupPicker?: ReactNode;
@@ -51,8 +50,6 @@ interface GeneralTabBodyProps extends AgentSettingsPanelBaseProps {
 	onNewSessionMessageChange: (value: string) => void;
 	nudgeMessage: string;
 	onNudgeMessageChange: (value: string) => void;
-	/** SSH remote name when the agent runs remote; omitted means local. */
-	sshRemoteHost?: string;
 	/** Sections after the nudge message, such as the voice wake phrase. */
 	extra?: ReactNode;
 }
@@ -76,24 +73,10 @@ export function GeneralTab({
 	onNewSessionMessageChange,
 	nudgeMessage,
 	onNudgeMessageChange,
-	sshRemoteHost,
 	extra,
 }: GeneralTabProps) {
 	return (
 		<AgentSettingsPanel theme={theme} idPrefix={idPrefix} tab="general">
-			<div
-				className="flex items-center justify-end gap-2 text-xs"
-				style={{ color: theme.colors.textDim }}
-				data-testid={`${idPrefix}-runs-on`}
-			>
-				<span>Runs on</span>
-				{sshRemoteHost ? (
-					<SshRemotePill remoteName={sshRemoteHost} size="sm" />
-				) : (
-					<span style={{ color: theme.colors.textMain }}>Local</span>
-				)}
-			</div>
-
 			{lead}
 
 			{onNameChange && (

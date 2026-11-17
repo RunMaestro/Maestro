@@ -37,7 +37,7 @@ import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { useVoiceAgentActions } from '../../hooks/voice/useVoiceAgentActions';
-import { ContextMenuHeader } from '../ui/ContextMenuHeader';
+import { ContextMenuHeader, contextMenuIconStyle } from '../ui/ContextMenuHeader';
 import { GitChangeCounts } from '../ui/GitChangeCounts';
 import { GitRunningBadge, PR_RUNNING_TITLE } from '../ui/GitRunningBadge';
 import { formatGitChangeSummary } from '../../../shared/gitUtils';
@@ -429,6 +429,11 @@ export function SessionContextMenu({
 		session.parentSessionId && session.worktreeBranch && onDeleteWorktree
 	);
 
+	// Every row reads the same: label in the main text color, icon in the
+	// accent. Only the destructive rows (Remove Worktree, Remove Agent) break
+	// the pattern, in the error color.
+	const iconStyle = contextMenuIconStyle(theme);
+
 	return (
 		<div
 			ref={menuRef}
@@ -462,7 +467,7 @@ export function SessionContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<Edit3 className="w-3.5 h-3.5" />
+					<Edit3 className="w-3.5 h-3.5" style={iconStyle} />
 					Rename
 				</button>
 			)}
@@ -476,7 +481,7 @@ export function SessionContextMenu({
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
 			>
-				<Settings className="w-3.5 h-3.5" />
+				<Settings className="w-3.5 h-3.5" style={iconStyle} />
 				Edit Agent...
 			</button>
 
@@ -490,7 +495,11 @@ export function SessionContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<Bookmark className="w-3.5 h-3.5" fill={session.bookmarked ? 'currentColor' : 'none'} />
+					<Bookmark
+						className="w-3.5 h-3.5"
+						style={iconStyle}
+						fill={session.bookmarked ? 'currentColor' : 'none'}
+					/>
 					{session.bookmarked ? 'Remove Bookmark' : 'Add Bookmark'}
 				</button>
 			)}
@@ -513,7 +522,7 @@ export function SessionContextMenu({
 						style={{ color: theme.colors.textMain }}
 						data-testid="session-context-talk-to-agent"
 					>
-						<Mic className="w-3.5 h-3.5" />
+						<Mic className="w-3.5 h-3.5" style={iconStyle} />
 						{voiceActions.hasVoiceFloor ? 'End voice session' : 'Talk to this agent'}
 						{voiceActions.wakePhrase && (
 							<span className="ml-auto text-2xs opacity-60 truncate max-w-[120px]">
@@ -561,7 +570,7 @@ export function SessionContextMenu({
 						style={{ color: theme.colors.textMain }}
 					>
 						<span className="flex items-center gap-2">
-							<FolderInput className="w-3.5 h-3.5" />
+							<FolderInput className="w-3.5 h-3.5" style={iconStyle} />
 							Move to Group
 						</span>
 						<ChevronRight className="w-3 h-3" />
@@ -585,7 +594,7 @@ export function SessionContextMenu({
 								style={{ color: theme.colors.textMain }}
 								disabled={!session.groupId}
 							>
-								<Folder className="w-3.5 h-3.5" />
+								<Folder className="w-3.5 h-3.5" style={iconStyle} />
 								Ungrouped
 								{!session.groupId && <span className="text-2xs opacity-50">(current)</span>}
 							</button>
@@ -628,7 +637,7 @@ export function SessionContextMenu({
 									className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 									style={{ color: theme.colors.textMain }}
 								>
-									<FolderPlus className="w-3.5 h-3.5" />
+									<FolderPlus className="w-3.5 h-3.5" style={iconStyle} />
 									Create New Group
 								</button>
 							)}
@@ -677,7 +686,7 @@ export function SessionContextMenu({
 						style={{ color: theme.colors.textMain }}
 					>
 						<span className="flex items-center gap-2">
-							<AppWindow className="w-3.5 h-3.5" />
+							<AppWindow className="w-3.5 h-3.5" style={iconStyle} />
 							Move to Window
 						</span>
 						<ChevronRight className="w-3 h-3" />
@@ -704,7 +713,7 @@ export function SessionContextMenu({
 								className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 								style={{ color: theme.colors.textMain }}
 							>
-								<Plus className="w-3.5 h-3.5" />
+								<Plus className="w-3.5 h-3.5" style={iconStyle} />
 								New Window
 							</button>
 
@@ -773,7 +782,7 @@ export function SessionContextMenu({
 											style={{ color: theme.colors.textMain }}
 											disabled={target.isCurrentOwner}
 										>
-											<AppWindow className="w-3.5 h-3.5 shrink-0" />
+											<AppWindow className="w-3.5 h-3.5 shrink-0" style={iconStyle} />
 											<span className="truncate">{target.label}</span>
 											{target.isCurrentOwner && (
 												<span className="text-2xs opacity-50 shrink-0">(current)</span>
@@ -807,7 +816,7 @@ export function SessionContextMenu({
 				<>
 					<ContextMenuSubmenu
 						label="Repository"
-						icon={<GitBranch className="w-3.5 h-3.5" />}
+						icon={<GitBranch className="w-3.5 h-3.5" style={iconStyle} />}
 						submenu={repository}
 						theme={theme}
 						onOpen={() => {
@@ -861,7 +870,7 @@ export function SessionContextMenu({
 									style={{ color: theme.colors.textMain }}
 									data-testid="session-context-git-log"
 								>
-									<History className="w-3.5 h-3.5" />
+									<History className="w-3.5 h-3.5" style={iconStyle} />
 									View Git Log
 								</button>
 								<button
@@ -878,7 +887,7 @@ export function SessionContextMenu({
 									title={formatGitChangeSummary(gitActions.changes)}
 								>
 									<span className="flex items-center gap-2">
-										<FileDiff className="w-3.5 h-3.5" />
+										<FileDiff className="w-3.5 h-3.5" style={iconStyle} />
 										View Git Diff
 									</span>
 									{/* Same badge language as the ahead/behind counts below: the row
@@ -900,7 +909,7 @@ export function SessionContextMenu({
 									data-testid="session-context-git-pull"
 								>
 									<span className="flex items-center gap-2">
-										<ArrowDownToLine className="w-3.5 h-3.5" />
+										<ArrowDownToLine className="w-3.5 h-3.5" style={iconStyle} />
 										Git Pull
 									</span>
 									{/* A backgrounded pull outranks the behind count, which is stale
@@ -931,7 +940,7 @@ export function SessionContextMenu({
 									data-testid="session-context-git-push"
 								>
 									<span className="flex items-center gap-2">
-										<ArrowUpFromLine className="w-3.5 h-3.5" />
+										<ArrowUpFromLine className="w-3.5 h-3.5" style={iconStyle} />
 										Git Push
 									</span>
 									{gitActions.pushRunning ? (
@@ -959,7 +968,7 @@ export function SessionContextMenu({
 									style={{ color: theme.colors.textMain }}
 									data-testid="session-context-change-branch"
 								>
-									<GitBranch className="w-3.5 h-3.5" />
+									<GitBranch className="w-3.5 h-3.5" style={iconStyle} />
 									Change Branch
 								</button>
 								{createPR && (
@@ -974,7 +983,7 @@ export function SessionContextMenu({
 										data-testid="session-context-create-pr"
 									>
 										<span className="flex items-center gap-2">
-											<GitPullRequest className="w-3.5 h-3.5" />
+											<GitPullRequest className="w-3.5 h-3.5" style={iconStyle} />
 											Create Pull Request
 										</span>
 										{gitActions.prRunning && (
@@ -1006,7 +1015,7 @@ export function SessionContextMenu({
 										className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 										style={{ color: theme.colors.textMain }}
 									>
-										<GitBranch className="w-3.5 h-3.5" />
+										<GitBranch className="w-3.5 h-3.5" style={iconStyle} />
 										Create Worktree
 									</button>
 								)}
@@ -1020,7 +1029,7 @@ export function SessionContextMenu({
 										className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 										style={{ color: theme.colors.textMain }}
 									>
-										<Settings className="w-3.5 h-3.5" />
+										<Settings className="w-3.5 h-3.5" style={iconStyle} />
 										Configure Worktrees
 									</button>
 								)}
@@ -1031,7 +1040,7 @@ export function SessionContextMenu({
 			)}
 			<ContextMenuSubmenu
 				label="Agent Tools"
-				icon={<Wrench className="w-3.5 h-3.5" />}
+				icon={<Wrench className="w-3.5 h-3.5" style={iconStyle} />}
 				submenu={agentTools}
 				theme={theme}
 				onOpen={() => {
@@ -1052,7 +1061,7 @@ export function SessionContextMenu({
 							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 							style={{ color: theme.colors.textMain }}
 						>
-							<Zap className="w-3.5 h-3.5" />
+							<Zap className="w-3.5 h-3.5" style={iconStyle} />
 							Configure Maestro Cue
 						</button>
 					</>
@@ -1070,7 +1079,7 @@ export function SessionContextMenu({
 						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 						style={{ color: theme.colors.textMain }}
 					>
-						<Waypoints className="w-3.5 h-3.5" />
+						<Waypoints className="w-3.5 h-3.5" style={iconStyle} />
 						View Delegation Graph
 					</button>
 				)}
@@ -1087,7 +1096,7 @@ export function SessionContextMenu({
 						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 						style={{ color: theme.colors.textMain }}
 					>
-						<Copy className="w-3.5 h-3.5" />
+						<Copy className="w-3.5 h-3.5" style={iconStyle} />
 						Duplicate...
 					</button>
 				)}
@@ -1102,7 +1111,7 @@ export function SessionContextMenu({
 						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 						style={{ color: theme.colors.textMain }}
 					>
-						<PackageOpen className="w-3.5 h-3.5" />
+						<PackageOpen className="w-3.5 h-3.5" style={iconStyle} />
 						Export Agent...
 					</button>
 				)}
@@ -1123,7 +1132,7 @@ export function SessionContextMenu({
 						}
 						data-testid="session-menu-move-to-host"
 					>
-						<ServerCog className="w-3.5 h-3.5" />
+						<ServerCog className="w-3.5 h-3.5" style={iconStyle} />
 						Move to Host ({federationStatus.peer.name})...
 					</button>
 				)}
@@ -1139,7 +1148,7 @@ export function SessionContextMenu({
 						style={{ color: theme.colors.textMain }}
 						title={`This agent moved to ${liftedTarget.ref}`}
 					>
-						<ServerCog className="w-3.5 h-3.5" />
+						<ServerCog className="w-3.5 h-3.5" style={iconStyle} />
 						Open on Host ({liftedTarget.ref})
 					</button>
 				)}
@@ -1155,7 +1164,7 @@ export function SessionContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<Fingerprint className="w-3.5 h-3.5" />
+					<Fingerprint className="w-3.5 h-3.5" style={iconStyle} />
 					Copy Agent GUID
 				</button>
 				<PluginUiItemsSlot surface="contextMenuItem" presentation="menu" onActivate={onDismiss} />

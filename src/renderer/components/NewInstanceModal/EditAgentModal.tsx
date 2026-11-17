@@ -63,6 +63,7 @@ import {
 	ModelsTab,
 	PeersTab,
 	ProviderTab,
+	RunsOnChip,
 	sshFolderPickerUnavailableTitle,
 	SshTab,
 } from '../AgentSettings';
@@ -1414,6 +1415,7 @@ export function EditAgentModal({
 							Edit Agent: {session.name}
 						</h2>
 						<div className="flex items-center gap-2">
+							<RunsOnChip theme={theme} sshRemoteHost={sshRemoteName} idPrefix="edit-agent" />
 							<button
 								type="button"
 								onClick={handleCopySessionId}
@@ -1551,7 +1553,6 @@ export function EditAgentModal({
 							onNewSessionMessageChange={setNewSessionMessage}
 							nudgeMessage={nudgeMessage}
 							onNudgeMessageChange={setNudgeMessage}
-							sshRemoteHost={sshRemoteName}
 							extra={
 								// Voice wake phrase. Renders nothing unless A Cappella is switched on,
 								// and then neither does its badge.

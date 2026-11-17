@@ -43,6 +43,7 @@ import {
 	ModelsTab,
 	PeersTab,
 	ProviderTab,
+	RunsOnChip,
 	SshTab,
 } from '../AgentSettings';
 import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
@@ -1643,6 +1644,9 @@ export function NewInstanceModal({
 			minSize={{ width: 560, height: 420 }}
 			contentClassName="flex flex-col flex-1 min-h-0"
 			initialFocusRef={nameInputRef}
+			headerActions={
+				<RunsOnChip theme={theme} sshRemoteHost={sshRemoteName} idPrefix="new-agent" />
+			}
 			footer={
 				<ModalFooter
 					theme={theme}
@@ -1849,7 +1853,6 @@ export function NewInstanceModal({
 						onNewSessionMessageChange={setNewSessionMessage}
 						nudgeMessage={nudgeMessage}
 						onNudgeMessageChange={setNudgeMessage}
-						sshRemoteHost={sshRemoteName}
 					/>
 				)}
 

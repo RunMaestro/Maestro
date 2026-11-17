@@ -18,7 +18,7 @@ import { isWorktreeGroup } from '../../../shared/types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
-import { ContextMenuHeader } from '../ui/ContextMenuHeader';
+import { ContextMenuHeader, contextMenuIconStyle } from '../ui/ContextMenuHeader';
 
 interface GroupContextMenuProps {
 	x: number;
@@ -111,6 +111,10 @@ export function GroupContextMenu({
 		moveSubmenuOpen || windowSubmenuOpen
 	);
 
+	// Every row reads the same: label in the main text color, icon in the
+	// accent. Only Delete Group breaks the pattern, in the error color.
+	const iconStyle = contextMenuIconStyle(theme);
+
 	return (
 		<div
 			ref={menuRef}
@@ -138,9 +142,9 @@ export function GroupContextMenu({
 					onDismiss();
 				}}
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.accent }}
+				style={{ color: theme.colors.textMain }}
 			>
-				<Plus className="w-3.5 h-3.5" />
+				<Plus className="w-3.5 h-3.5" style={iconStyle} />
 				New Agent in Group...
 			</button>
 
@@ -155,7 +159,7 @@ export function GroupContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<PackagePlus className="w-3.5 h-3.5" />
+					<PackagePlus className="w-3.5 h-3.5" style={iconStyle} />
 					Import Agent...
 				</button>
 			)}
@@ -169,7 +173,7 @@ export function GroupContextMenu({
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
 			>
-				<Edit3 className="w-3.5 h-3.5" />
+				<Edit3 className="w-3.5 h-3.5" style={iconStyle} />
 				Rename Group...
 			</button>
 
@@ -186,7 +190,7 @@ export function GroupContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<Settings className="w-3.5 h-3.5" />
+					<Settings className="w-3.5 h-3.5" style={iconStyle} />
 					Group Settings...
 				</button>
 			)}
@@ -203,7 +207,7 @@ export function GroupContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<Waypoints className="w-3.5 h-3.5" />
+					<Waypoints className="w-3.5 h-3.5" style={iconStyle} />
 					Delegation Graph
 				</button>
 			)}
@@ -218,7 +222,7 @@ export function GroupContextMenu({
 						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 						style={{ color: theme.colors.textMain }}
 					>
-						<AppWindow className="w-3.5 h-3.5" />
+						<AppWindow className="w-3.5 h-3.5" style={iconStyle} />
 						Move Group to Window...
 					</button>
 					{windowSubmenuOpen && (
@@ -230,9 +234,9 @@ export function GroupContextMenu({
 									onDismiss();
 								}}
 								className="w-full text-left pl-8 pr-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-								style={{ color: theme.colors.accent }}
+								style={{ color: theme.colors.textMain }}
 							>
-								<Plus className="w-3.5 h-3.5" />
+								<Plus className="w-3.5 h-3.5" style={iconStyle} />
 								New Window
 							</button>
 							{windowTargets.map((target) => (
@@ -248,7 +252,7 @@ export function GroupContextMenu({
 									className="w-full text-left pl-8 pr-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2 disabled:opacity-40 disabled:cursor-default disabled:hover:bg-transparent"
 									style={{ color: theme.colors.textMain }}
 								>
-									<AppWindow className="w-3.5 h-3.5 shrink-0" />
+									<AppWindow className="w-3.5 h-3.5 shrink-0" style={iconStyle} />
 									<span className="truncate">{target.label}</span>
 								</button>
 							))}
@@ -267,7 +271,7 @@ export function GroupContextMenu({
 						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 						style={{ color: theme.colors.textMain }}
 					>
-						<FolderInput className="w-3.5 h-3.5" />
+						<FolderInput className="w-3.5 h-3.5" style={iconStyle} />
 						Move into...
 					</button>
 					{moveSubmenuOpen &&
@@ -299,7 +303,7 @@ export function GroupContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<FolderUp className="w-3.5 h-3.5" />
+					<FolderUp className="w-3.5 h-3.5" style={iconStyle} />
 					Move to top level
 				</button>
 			)}
@@ -312,9 +316,9 @@ export function GroupContextMenu({
 						onDismiss();
 					}}
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-					style={{ color: theme.colors.accent }}
+					style={{ color: theme.colors.textMain }}
 				>
-					<FolderPlus className="w-3.5 h-3.5" />
+					<FolderPlus className="w-3.5 h-3.5" style={iconStyle} />
 					New group inside...
 				</button>
 			)}
@@ -329,7 +333,11 @@ export function GroupContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					{group.hidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+					{group.hidden ? (
+						<Eye className="w-3.5 h-3.5" style={iconStyle} />
+					) : (
+						<EyeOff className="w-3.5 h-3.5" style={iconStyle} />
+					)}
 					{group.hidden ? 'Unhide Group' : 'Hide Group'}
 				</button>
 			)}

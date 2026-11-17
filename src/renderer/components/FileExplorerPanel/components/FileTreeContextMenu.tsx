@@ -34,7 +34,7 @@ import type { Theme } from '../../../types';
 import type { ContextMenuState } from '../types';
 import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 import { getBasename } from '../../../../shared/formatters';
-import { ContextMenuHeader } from '../../ui/ContextMenuHeader';
+import { ContextMenuHeader, contextMenuIconStyle } from '../../ui/ContextMenuHeader';
 
 interface FileTreeContextMenuProps {
 	theme: Theme;
@@ -132,6 +132,8 @@ export function FileTreeContextMenu({
 	onOpenRename,
 	onOpenDelete,
 }: FileTreeContextMenuProps) {
+	// Row icons in the accent; destructive rows keep their error color.
+	const iconStyle = contextMenuIconStyle(theme);
 	// node === null is the empty-space / workspace-root menu (no row under the
 	// cursor). It only offers "New Folder", targeting the workspace root.
 	const node = contextMenu.node;
@@ -173,7 +175,7 @@ export function FileTreeContextMenu({
 				className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 				style={{ color: theme.colors.textMain }}
 			>
-				<PlayCircle className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+				<PlayCircle className="w-3.5 h-3.5" style={iconStyle} />
 				<span>
 					{autoRunStagedCount === 1
 						? 'Stage Document for Auto Run'
@@ -224,7 +226,7 @@ export function FileTreeContextMenu({
 							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textMain }}
 						>
-							<FilePlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+							<FilePlus className="w-3.5 h-3.5" style={iconStyle} />
 							<span>New File</span>
 						</button>
 						<button
@@ -232,7 +234,7 @@ export function FileTreeContextMenu({
 							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textMain }}
 						>
-							<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+							<FolderPlus className="w-3.5 h-3.5" style={iconStyle} />
 							<span>New Folder</span>
 						</button>
 					</>
@@ -243,7 +245,7 @@ export function FileTreeContextMenu({
 							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textMain }}
 						>
-							<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+							<FileText className="w-3.5 h-3.5" style={iconStyle} />
 							<span>Preview {selectedCount} items</span>
 						</button>
 						{/* Opening the selection already plays the first media file and
@@ -255,7 +257,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<ListPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<ListPlus className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Add {queueableCount} to Play Queue</span>
 							</button>
 						)}
@@ -266,7 +268,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<ExternalLink className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Open {selectedCount} in Default App</span>
 							</button>
 						)}
@@ -276,7 +278,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<Network className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<Network className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Open {selectedMarkdownCount} in Document Graph</span>
 							</button>
 						)}
@@ -301,7 +303,7 @@ export function FileTreeContextMenu({
 									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 									style={{ color: theme.colors.textMain }}
 								>
-									<FilePlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<FilePlus className="w-3.5 h-3.5" style={iconStyle} />
 									<span>New File</span>
 								</button>
 								<button
@@ -309,7 +311,7 @@ export function FileTreeContextMenu({
 									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 									style={{ color: theme.colors.textMain }}
 								>
-									<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<FolderPlus className="w-3.5 h-3.5" style={iconStyle} />
 									<span>New Folder</span>
 								</button>
 								{/* New Agent Here - opens the New Agent modal with this folder
@@ -323,7 +325,7 @@ export function FileTreeContextMenu({
 										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 										style={{ color: theme.colors.textMain }}
 									>
-										<Bot className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<Bot className="w-3.5 h-3.5" style={iconStyle} />
 										<span>New Agent Here</span>
 									</button>
 								)}
@@ -333,7 +335,7 @@ export function FileTreeContextMenu({
 										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 										style={{ color: theme.colors.textMain }}
 									>
-										<Network className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<Network className="w-3.5 h-3.5" style={iconStyle} />
 										<span>Open in Document Graph</span>
 									</button>
 								)}
@@ -343,7 +345,7 @@ export function FileTreeContextMenu({
 										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 										style={{ color: theme.colors.textMain }}
 									>
-										<Files className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<Files className="w-3.5 h-3.5" style={iconStyle} />
 										<span>
 											Preview All {previewableCount} {previewableCount === 1 ? 'File' : 'Files'} in
 											Folder
@@ -356,7 +358,7 @@ export function FileTreeContextMenu({
 									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 									style={{ color: theme.colors.textMain }}
 								>
-									<FileArchive className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<FileArchive className="w-3.5 h-3.5" style={iconStyle} />
 									<span>Compress</span>
 								</button>
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
@@ -375,7 +377,7 @@ export function FileTreeContextMenu({
 									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 									style={{ color: theme.colors.textMain }}
 								>
-									<FilePlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<FilePlus className="w-3.5 h-3.5" style={iconStyle} />
 									<span>New File</span>
 								</button>
 								<button
@@ -383,7 +385,7 @@ export function FileTreeContextMenu({
 									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 									style={{ color: theme.colors.textMain }}
 								>
-									<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<FolderPlus className="w-3.5 h-3.5" style={iconStyle} />
 									<span>New Folder</span>
 								</button>
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
@@ -400,9 +402,9 @@ export function FileTreeContextMenu({
 								style={{ color: theme.colors.textMain }}
 							>
 								{isMedia ? (
-									<Play className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<Play className="w-3.5 h-3.5" style={iconStyle} />
 								) : (
-									<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<FileText className="w-3.5 h-3.5" style={iconStyle} />
 								)}
 								<span>{isMedia ? 'Play' : 'Preview'}</span>
 							</button>
@@ -419,7 +421,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<Mic className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<Mic className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Talk with Document</span>
 							</button>
 						)}
@@ -430,7 +432,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<ListPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<ListPlus className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Add to Play Queue</span>
 							</button>
 						)}
@@ -444,7 +446,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<Target className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<Target className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Document Graph</span>
 							</button>
 						)}
@@ -456,7 +458,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<Globe className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<Globe className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Open in Maestro Browser</span>
 							</button>
 						)}
@@ -469,7 +471,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<ExternalLink className="w-3.5 h-3.5" style={iconStyle} />
 								<span>Open in Default App</span>
 							</button>
 						)}
@@ -481,7 +483,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<Download className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<Download className="w-3.5 h-3.5" style={iconStyle} />
 								<span>{isWebDesktop() ? 'Download to This Client' : 'Download File'}</span>
 							</button>
 						)}
@@ -497,7 +499,7 @@ export function FileTreeContextMenu({
 							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textMain }}
 						>
-							<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							<Copy className="w-3.5 h-3.5" style={iconStyle} />
 							<span>Copy Path</span>
 						</button>
 
@@ -507,7 +509,7 @@ export function FileTreeContextMenu({
 							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textMain }}
 						>
-							<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							<FileText className="w-3.5 h-3.5" style={iconStyle} />
 							<span>Copy File Name</span>
 						</button>
 
@@ -518,7 +520,7 @@ export function FileTreeContextMenu({
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<FolderOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								<FolderOpen className="w-3.5 h-3.5" style={iconStyle} />
 								<span>{getRevealLabel(platform)}</span>
 							</button>
 						)}
@@ -532,7 +534,7 @@ export function FileTreeContextMenu({
 							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 							style={{ color: theme.colors.textMain }}
 						>
-							<Edit2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+							<Edit2 className="w-3.5 h-3.5" style={iconStyle} />
 							<span>Rename</span>
 						</button>
 

@@ -15,7 +15,7 @@
  * gets dark text instead of white-on-yellow.
  */
 
-import { memo } from 'react';
+import { memo, type CSSProperties } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import type { Theme } from '../../types';
 import { readableTextOn } from '../../../shared/colorContrast';
@@ -30,6 +30,15 @@ export interface ContextMenuHeaderProps {
 	emoji?: string;
 	/** Hover text. Defaults to `label`, so a truncated name can still be read. */
 	title?: string;
+}
+
+/**
+ * Style for the icon of a right-click menu row: the theme accent, beside a
+ * label in the main text color. A destructive row (Delete, Remove) does NOT
+ * use it: its icon stays unstyled and takes the row's error color.
+ */
+export function contextMenuIconStyle(theme: Theme): CSSProperties {
+	return { color: theme.colors.accent };
 }
 
 /** Foreground for text on the theme accent, guaranteed readable. */

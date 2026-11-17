@@ -15,7 +15,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { getRevealLabel } from '../utils/platformUtils';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
-import { ContextMenuHeader } from './ui/ContextMenuHeader';
+import { ContextMenuHeader, contextMenuIconStyle } from './ui/ContextMenuHeader';
 import { canRevealOnHost, openFileForUser, openFileForUserLabel } from '../services/hostShell';
 
 export interface FileContextMenuState {
@@ -51,6 +51,8 @@ export function FileContextMenu({
 	projectRoot,
 	sshRemote,
 }: FileContextMenuProps) {
+	// Row icons in the accent; destructive rows keep their error color.
+	const iconStyle = contextMenuIconStyle(theme);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
@@ -140,7 +142,7 @@ export function FileContextMenu({
 						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 						style={{ color: theme.colors.textMain }}
 					>
-						<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+						<FileText className="w-3.5 h-3.5" style={iconStyle} />
 						<span>Preview</span>
 					</button>
 				)}
@@ -152,7 +154,7 @@ export function FileContextMenu({
 						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 						style={{ color: theme.colors.textMain }}
 					>
-						<Target className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+						<Target className="w-3.5 h-3.5" style={iconStyle} />
 						<span>Document Graph</span>
 					</button>
 				)}
@@ -164,7 +166,7 @@ export function FileContextMenu({
 						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 						style={{ color: theme.colors.textMain }}
 					>
-						<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+						<ExternalLink className="w-3.5 h-3.5" style={iconStyle} />
 						<span>{openFileForUserLabel()}</span>
 					</button>
 				)}
@@ -180,7 +182,7 @@ export function FileContextMenu({
 					className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 					style={{ color: theme.colors.textMain }}
 				>
-					<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+					<Copy className="w-3.5 h-3.5" style={iconStyle} />
 					<span>Copy Path</span>
 				</button>
 
@@ -190,7 +192,7 @@ export function FileContextMenu({
 					className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 					style={{ color: theme.colors.textMain }}
 				>
-					<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+					<Copy className="w-3.5 h-3.5" style={iconStyle} />
 					<span>Copy File Name</span>
 				</button>
 
@@ -201,7 +203,7 @@ export function FileContextMenu({
 						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 						style={{ color: theme.colors.textMain }}
 					>
-						<FolderOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						<FolderOpen className="w-3.5 h-3.5" style={iconStyle} />
 						<span>{getRevealLabel(window.maestro?.platform ?? '')}</span>
 					</button>
 				)}

@@ -3278,12 +3278,13 @@ describe('EditAgentModal', () => {
 			expect(onClose).not.toHaveBeenCalled();
 		});
 
-		it('shows the Runs on chip on General and Agent Resilience on Provider', async () => {
+		it('shows the Runs on chip in the title bar on every tab, Agent Resilience on Provider', async () => {
 			renderModal();
 			expect(screen.getByTestId('edit-agent-runs-on')).toHaveTextContent('Local');
 
 			openTab('Provider');
 			expect(screen.getByText('Agent Resilience')).toBeInTheDocument();
+			expect(screen.getByTestId('edit-agent-runs-on')).toHaveTextContent('Local');
 		});
 
 		describe('Peers tab', () => {

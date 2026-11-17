@@ -50,6 +50,7 @@ import {
 	ModelsTab,
 	PeersTab,
 	ProviderTab,
+	RunsOnChip,
 	sshFolderPickerUnavailableTitle,
 	SshTab,
 	type AgentSettingsTabId,
@@ -539,6 +540,9 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 				minSize={{ width: 560, height: 420 }}
 				contentClassName="flex flex-col flex-1 min-h-0"
 				testId="group-settings-modal"
+				headerActions={
+					<RunsOnChip theme={theme} sshRemoteHost={sshRemoteName} idPrefix={TAB_ID_PREFIX} />
+				}
 				footer={
 					<>
 						<button
@@ -666,7 +670,6 @@ export function GroupSettingsModal({ theme, group, setGroups, onClose }: GroupSe
 							onNewSessionMessageChange={(value) => setField('newSessionMessage', value)}
 							nudgeMessage={own.nudgeMessage}
 							onNudgeMessageChange={(value) => setField('nudgeMessage', value)}
-							sshRemoteHost={sshRemoteName}
 						/>
 					)}
 
