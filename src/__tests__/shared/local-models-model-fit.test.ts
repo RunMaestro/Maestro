@@ -8,6 +8,9 @@
 
 import { describe, it, expect } from 'vitest';
 
+import { formatCount } from '../../shared/formatters';
+import { escapeRegExp } from '../../shared/stringUtils';
+
 import {
 	BGE_SMALL_EN_ID,
 	defineModel,
@@ -339,7 +342,7 @@ describe('modelFit', () => {
 		expect(modelMemoryNeed(estimated).kvEstimated).toBe(true);
 		expect(kvBytesPer1kTokens(estimateKvLayout(4))).toBe(estimateKvBytesPer1kTokens(4));
 		expect(modelFit(estimated, MAC_128GB).reason).toMatch(
-			/model, about [\d.]+ GB for 32,768 tokens/
+			new RegExp(`model, about [\\d.]+ GB for ${escapeRegExp(formatCount(32768))} tokens`)
 		);
 	});
 
