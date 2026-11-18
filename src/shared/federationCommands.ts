@@ -35,7 +35,7 @@ export const FEDERATION_COMMAND_RESULT = 'federation_command_result';
  * Conflicts modal); `resolve-conflict` settles one the way its buttons do. `settings-fields`
  * answers where each setting of one hosted agent lives and what waits on it (the badges Edit
  * Agent draws), for `show agent --json`. `hosted-agents` lists every agent the peers' hosts run
- * and which of them the Left Bar shows; `add-agent` adds one (the Add Hosted Agent modal).
+ * and which of them the Left Bar shows; `add-agent` adds one (New Agent's host list).
  */
 export type FederationCommandAction =
 	| 'peers'
@@ -61,12 +61,14 @@ export const FEDERATION_COMMAND_ACTIONS: readonly FederationCommandAction[] = [
 ];
 
 /**
- * One agent a peer's host runs, as the Add Hosted Agent modal and `maestro-cli federation agents`
+ * One agent a peer's host runs, as New Agent's host list and `maestro-cli federation agents`
  * list it. `addedAs` is the local agent (Left Bar row) that points at it, when one does.
  */
 export interface HostedAgentListing {
 	peerId: string;
 	peerName: string;
+	/** The SSH remote the host is reached over (the New Agent "Runs on" choice). */
+	remoteId: string;
 	agentId: string;
 	/** `peer:agentId`, the address maestro-cli takes. */
 	ref: string;

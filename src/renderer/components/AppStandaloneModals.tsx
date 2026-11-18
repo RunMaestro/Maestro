@@ -37,7 +37,6 @@ import { HostFolderPicker } from './HostFolderPicker';
 import { AgentBundleModals } from './Bundles/AgentBundleModals';
 import type { UnifiedHistoryTabProps } from './DirectorNotes/UnifiedHistoryTab';
 import { MoveToHostModalHost } from './MoveToHostModal';
-import { AddHostedAgentModalHost } from './AddHostedAgentModal';
 
 import type {
 	Theme,
@@ -331,7 +330,6 @@ function AppStandaloneModalsInner({
 			<AgentBundleModals theme={theme} />
 			<MoveToHostModalHost theme={theme} />
 			<OffboardingProgressHost theme={theme} />
-			<AddHostedAgentModalHost theme={theme} />
 			{notificationCenterEnabled && <NotificationCenterHost theme={theme} />}
 			{/* --- DEBUG PACKAGE MODAL --- */}
 			<DebugPackageModal

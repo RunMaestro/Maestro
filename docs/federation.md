@@ -169,7 +169,9 @@ maestro-cli remote-host start build-box
 
 The Left Bar shows only the hosted agents you keep there: the ones you moved from this machine, and the ones you added. A host's other agents belong to whoever runs that host, so they stay out of your Left Bar, the Thinking pill, and the command palette until you add them.
 
-To add one, open **Add Hosted Agent** from the command palette or the Left Bar hamburger menu. It lists every agent your hosts run that your Left Bar does not show yet, per host. Pick a group and click **Add**. The new row opens the agent on its host. **Remove Agent** on that row later removes only your row; the host keeps its agent.
+To add one, open **New Agent** and choose the host in **Runs on** at the top right. A host with agents to add shows how many. New Agent then lists the agents that host runs and your Left Bar does not show yet, with each one's provider, host group, and folder. Pick one and a group, and click **Add Agent** (or press <kbd>Enter</kbd>). To create a new agent on that host instead, choose **New agent** above the list. **Add Hosted Agent** in the command palette or the Left Bar hamburger menu opens New Agent on the first host with agents to add.
+
+The new row opens the agent on its host. It takes the host agent's name and shared settings, so the settings sync starts in step. **Remove Agent** on that row later removes only your row; the host keeps its agent.
 
 Right-click a hosted row to copy its `peer:agent` target or to reconnect its host, and to start the host while it is down. When the connection drops, the rows stay where they are with their last known state, and Maestro reconnects on its own. After the laptop wakes, it reconnects every peer and reloads its agents.
 

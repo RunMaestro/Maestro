@@ -8,6 +8,7 @@ import { useMemo } from 'react';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { buildHostedAgentListings } from '../../services/hostedAgents';
+import type { HostedAgentListing } from '../../../shared/federationCommands';
 import {
 	agentFederationStatus,
 	liftedMirrorTarget,
@@ -49,16 +50,23 @@ export function useAgentFederationStatus(
 }
 
 /**
- * How many agents the mirrored hosts run that the Left Bar does not show yet: the Add Hosted Agent
- * entries (palette, hamburger menu) appear only while this is above zero.
+ * The agents the mirrored hosts run that the Left Bar does not show yet, in peer order then host
+ * order. New Agent lists a host's share of them when that host is its "Runs on" choice.
  */
-export function useAddableHostedAgentCount(): number {
+export function useAddableHostedAgents(): HostedAgentListing[] {
 	const order = usePeerMirrorStore((s) => s.order);
 	const peers = usePeerMirrorStore((s) => s.peers);
 	const sessions = useSessionStore((s) => s.sessions);
 	return useMemo(
-		() =>
-			buildHostedAgentListings(peers, order, sessions).filter((listing) => !listing.addedAs).length,
+		() => buildHostedAgentListings(peers, order, sessions).filter((listing) => !listing.addedAs),
 		[peers, order, sessions]
 	);
+}
+
+/**
+ * How many of those there are: the Add Hosted Agent entries (palette, hamburger menu) appear only
+ * while this is above zero.
+ */
+export function useAddableHostedAgentCount(): number {
+	return useAddableHostedAgents().length;
 }

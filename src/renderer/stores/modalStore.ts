@@ -104,6 +104,11 @@ export interface NewInstanceModalData {
 	presetGroupId?: string | null;
 	/** When set, seeds the working directory (and a default name from its basename). Ignored if duplicatingSessionId is set - duplicates inherit the source's cwd. */
 	presetWorkingDir?: string | null;
+	/**
+	 * `'host'`: open on the first Federation host that runs agents the Left Bar does not show yet,
+	 * with its list (Add Hosted Agent in the palette and the hamburger menu, `open add-hosted-agent`).
+	 */
+	presetSource?: 'host';
 }
 
 /** Edit agent modal data */
@@ -446,7 +451,6 @@ export type ModalId =
 	| 'agentExport'
 	| 'agentImport'
 	| 'moveToHost'
-	| 'addHostedAgent'
 	| 'renameInstance'
 	| 'agentError'
 	| 'reauth'

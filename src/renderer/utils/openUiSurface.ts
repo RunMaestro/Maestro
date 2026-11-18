@@ -107,6 +107,11 @@ export function openUiSurface(request: OpenUiSurfaceRequest): OpenUiSurfaceResul
 			// never moves focus, so the user keeps typing where they were.
 			useThroughputGaugeStore.getState().show();
 			return { ok: true };
+		case 'add-hosted-agent':
+			useModalStore
+				.getState()
+				.openModal('newInstance', { duplicatingSessionId: null, presetSource: 'host' });
+			return { ok: true };
 		case 'federation-conflicts':
 			// Not a modalStore modal: the conflicts live with the settings sync's own store.
 			useHostedAgentSettingsStore.getState().setConflictsOpen(true);

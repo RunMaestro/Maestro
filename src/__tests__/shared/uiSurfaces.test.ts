@@ -103,6 +103,11 @@ describe('resolveUiSurface', () => {
 		).toEqual(['delegation-graph', 'group-settings']);
 	});
 
+	it('resolves Add Hosted Agent to New Agent, which lists a host agents to add', () => {
+		expect(resolveUiSurface('add-hosted-agent')?.modal).toBe('newInstance');
+		expect(resolveUiSurface('hosted-agents')?.id).toBe('add-hosted-agent');
+	});
+
 	it('resolves Group Settings so `open group-settings --group` works', () => {
 		const surface = resolveUiSurface('group-settings');
 		expect(surface?.modal).toBe('groupSettings');

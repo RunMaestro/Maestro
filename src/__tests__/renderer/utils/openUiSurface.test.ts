@@ -179,6 +179,21 @@ describe('openUiSurface - group settings', () => {
 	});
 });
 
+describe('openUiSurface - add hosted agent', () => {
+	beforeEach(() => {
+		useModalStore.getState().closeModal('newInstance');
+	});
+
+	it('opens New Agent on the host source (`open add-hosted-agent`)', () => {
+		expect(openUiSurface({ surface: 'add-hosted-agent' })).toEqual({ ok: true });
+		expect(selectModalOpen('newInstance')(useModalStore.getState())).toBe(true);
+		expect(selectModalData('newInstance')(useModalStore.getState())).toEqual({
+			duplicatingSessionId: null,
+			presetSource: 'host',
+		});
+	});
+});
+
 describe('openUiSurface - agent settings', () => {
 	const session = createMockSession({ id: 'agent-1', name: 'Builder' });
 

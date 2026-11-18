@@ -16,6 +16,32 @@ import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/type
 import { formatSshTarget } from '../../../shared/formatters';
 import { isWebDesktop } from '../../utils/runtimeContext';
 
+/**
+ * The config after the user picks where the agent runs: `remoteId`, or null for local. The sibling
+ * fields (working directory override, history sync, shared history) are independent of the choice,
+ * so switching never wipes them. Shared by this selector and the New Agent "Runs on" dropdown.
+ */
+export function withSshRemoteChoice(
+	current: AgentSshRemoteConfig | undefined,
+	remoteId: string | null
+): AgentSshRemoteConfig {
+	// Only null is local: an id that names no remote (even an empty one) stays a remote choice and
+	// never quietly turns into running on this machine.
+	const onRemote = remoteId !== null;
+	return {
+		enabled: onRemote,
+		remoteId,
+		workingDirOverride: current?.workingDirOverride,
+		syncHistory: onRemote ? (current?.syncHistory ?? false) : current?.syncHistory,
+		shareHistoryToProjectDir: current?.shareHistoryToProjectDir,
+	};
+}
+
+/** What "no SSH remote" is called: this machine, or the host a browser client is connected to. */
+export function localExecutionLabel(): string {
+	return isWebDesktop() ? 'Connected Maestro host' : 'Local';
+}
+
 export interface SshRemoteSelectorProps {
 	theme: Theme;
 	sshRemotes: SshRemoteConfig[];
@@ -106,27 +132,9 @@ function SshRemoteDropdown({
 					value={selectedRemoteId || 'local'}
 					onChange={(e) => {
 						const value = e.target.value;
-						if (value === 'local') {
-							// Run locally. Preserve workingDirOverride and shareHistoryToProjectDir
-							// so toggling the dropdown doesn't silently wipe the
-							// "remote-controlled" flag (which is independent of SSH enablement).
-							onSshRemoteConfigChange({
-								enabled: false,
-								remoteId: null,
-								workingDirOverride: sshRemoteConfig?.workingDirOverride,
-								syncHistory: sshRemoteConfig?.syncHistory,
-								shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
-							});
-						} else {
-							// Use specific remote. Preserve sibling fields for the same reason.
-							onSshRemoteConfigChange({
-								enabled: true,
-								remoteId: value,
-								workingDirOverride: sshRemoteConfig?.workingDirOverride,
-								syncHistory: sshRemoteConfig?.syncHistory ?? false,
-								shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
-							});
-						}
+						onSshRemoteConfigChange(
+							withSshRemoteChoice(sshRemoteConfig, value === 'local' ? null : value)
+						);
 					}}
 					onClick={(e) => e.stopPropagation()}
 					className="w-full p-2 rounded border bg-transparent outline-none text-sm appearance-none cursor-pointer pr-8"

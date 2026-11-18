@@ -143,9 +143,6 @@ export const MODAL_PRIORITIES = {
 	/** Federation settings conflicts: fields a hosted agent's host and this machine both changed */
 	FEDERATION_SETTINGS_CONFLICTS: 827,
 
-	/** Add Hosted Agent: show an agent a Federation host runs in the Left Bar */
-	ADD_HOSTED_AGENT: 826,
-
 	/** Create new group modal */
 	CREATE_GROUP: 800,
 

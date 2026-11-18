@@ -474,11 +474,13 @@ export const UI_SURFACES: UiSurface[] = [
 		id: 'add-hosted-agent',
 		label: 'Add Hosted Agent',
 		aliases: ['hosted-agents'],
-		modal: 'addHostedAgent',
+		// New Agent, opened on the first host with agents to add and its list.
+		modal: 'newInstance',
 		description:
-			'Show an agent a Federation host runs in your Left Bar. A host agent stays out of the Left Bar until you add it.',
+			'Show an agent a Federation host runs in your Left Bar: New Agent, with "Runs on" set to the host. A host agent stays out of the Left Bar until you add it.',
 		commandPalette: 'Add Hosted Agent...',
-		click: 'Add Hosted Agent in the Left Bar hamburger menu',
+		click:
+			'Add Hosted Agent in the Left Bar hamburger menu, or a host in the "Runs on" menu of New Agent',
 	},
 ];
 

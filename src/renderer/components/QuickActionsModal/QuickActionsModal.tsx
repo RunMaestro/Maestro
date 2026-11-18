@@ -15,6 +15,7 @@ import {
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
+import { openUiSurface } from '../../utils/openUiSurface';
 import { getModalActions, selectModalOpen, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas, useCadenzaStore } from '../../stores/cadenzaStore';
 import { buildConcertoCommands } from './commands/concertoCommands';
@@ -642,7 +643,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		settingsConflictCount,
 		openSettingsConflicts: () => useHostedAgentSettingsStore.getState().setConflictsOpen(true),
 		addableHostedAgentCount,
-		openAddHostedAgent: () => openModal('addHostedAgent'),
+		openAddHostedAgent: () => openUiSurface({ surface: 'add-hosted-agent' }),
 		setQuickActionOpen,
 	});
 

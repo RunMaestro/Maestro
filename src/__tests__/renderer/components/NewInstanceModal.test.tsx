@@ -20,6 +20,22 @@ import { buildDuplicateAgentInput } from '../../../shared/newAgentRecord';
 import { getAgentDefinition } from '../../../shared/maestro-lib/providers/definitions';
 import { getAgentCapabilities } from '../../../shared/maestro-lib/providers/capabilities';
 import { createMockAITab, createMockSession } from '../../helpers';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+	type MirroredPeer,
+} from '../../../shared/maestro-lib/client/peer-mirror';
+import { addHostedAgent } from '../../../renderer/services/hostedAgents';
+
+// New Agent adds a host's agent through the one add path; the rest of the service stays real.
+vi.mock('../../../renderer/services/hostedAgents', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/hostedAgents')>()),
+	addHostedAgent: vi.fn(async (request: { agent: string }) => ({
+		ok: true,
+		added: { id: 'local-1', name: 'Kensho', ref: request.agent },
+	})),
+}));
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
 
@@ -5672,6 +5688,150 @@ describe('NewInstanceModal', () => {
 				);
 				expect(screen.queryByTestId('new-agent-group-seed-extras')).not.toBeInTheDocument();
 			});
+		});
+	});
+	// Federation: "Runs on" a host that runs agents the Left Bar does not show yet
+	// lists them, and adding one is `addHostedAgent()`.
+	describe('Add from a host', () => {
+		const REMOTES = [
+			{
+				id: 'remote-tome',
+				name: 'PedTome',
+				host: 'tome.example.com',
+				port: 22,
+				username: 'pedram',
+				privateKeyPath: '/path/to/key',
+				enabled: true,
+			},
+			{
+				id: 'remote-plain',
+				name: 'Plain Box',
+				host: 'plain.example.com',
+				port: 22,
+				username: 'pedram',
+				privateKeyPath: '/path/to/key',
+				enabled: true,
+			},
+		];
+
+		const tomePeer = (): MirroredPeer => ({
+			...replacePeerAgents(
+				createMirroredPeer({ peerId: 'PedTome', remoteId: 'remote-tome', name: 'PedTome' }),
+				[
+					{ id: 'k1', name: 'Kensho', toolType: 'claude-code', cwd: '/srv/kensho', aiTabs: [] },
+					{ id: 'd1', name: 'Docs', toolType: 'codex', cwd: '/srv/docs', aiTabs: [] },
+				],
+				[],
+				1
+			).peer,
+			connection: 'connected',
+		});
+
+		const renderModal = () =>
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+		const chooseRunsOn = async (name: string) => {
+			fireEvent.click(await screen.findByRole('button', { name: 'Runs on' }));
+			fireEvent.click(screen.getByRole('option', { name: new RegExp(`^${name}`) }));
+		};
+
+		beforeEach(() => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: REMOTES,
+			});
+			vi.mocked(addHostedAgent).mockClear();
+			usePeerMirrorStore.setState({
+				enabled: true,
+				peers: { PedTome: tomePeer() },
+				order: ['PedTome'],
+			});
+			useModalStore.getState().closeModal('newInstance');
+		});
+
+		afterEach(() => {
+			usePeerMirrorStore.setState({ peers: {}, order: [] });
+		});
+
+		it('offers Local and every remote in the title bar, and counts what a host can hand over', async () => {
+			renderModal();
+			fireEvent.click(await screen.findByRole('button', { name: 'Runs on' }));
+			expect(screen.getByRole('option', { name: /^Local/ })).toBeInTheDocument();
+			expect(screen.getByRole('option', { name: /^Plain Box/ })).toBeInTheDocument();
+			expect(screen.getByRole('option', { name: /^PedTome/ })).toHaveTextContent('2 to add');
+		});
+
+		it('lists the host agents once the host is chosen, and adds the picked one to the chosen group', async () => {
+			useSessionStore.setState({
+				groups: [{ id: 'g-infra', name: 'Infra', emoji: '🛠', collapsed: false }],
+			});
+			renderModal();
+			await chooseRunsOn('PedTome');
+
+			expect(await screen.findByTestId('host-agent-picker')).toBeInTheDocument();
+			expect(screen.queryByRole('tab', { name: /^General/ })).not.toBeInTheDocument();
+			const rows = screen.getAllByTestId('host-agent-row');
+			expect(rows.map((row) => row.textContent)).toEqual([
+				expect.stringContaining('Kensho'),
+				expect.stringContaining('Docs'),
+			]);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Agent Group' }));
+			fireEvent.click(screen.getByRole('option', { name: /Infra/ }));
+			fireEvent.click(rows[1]);
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Add Agent' }));
+			});
+
+			expect(addHostedAgent).toHaveBeenCalledWith({ agent: 'PedTome:d1', group: 'g-infra' });
+			expect(onCreate).not.toHaveBeenCalled();
+			expect(onClose).toHaveBeenCalled();
+		});
+
+		it('creates a new agent on the host instead when asked', async () => {
+			renderModal();
+			await chooseRunsOn('PedTome');
+			fireEvent.click(await screen.findByRole('radio', { name: /^New agent/ }));
+
+			expect(screen.queryByTestId('host-agent-picker')).not.toBeInTheDocument();
+			expect(screen.getByRole('tab', { name: /^General/ })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Runs on' })).toHaveTextContent('PedTome');
+		});
+
+		it('keeps the form for a remote that runs no host agents to add', async () => {
+			renderModal();
+			await chooseRunsOn('Plain Box');
+
+			expect(screen.queryByTestId('new-agent-host-source')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('host-agent-picker')).not.toBeInTheDocument();
+		});
+
+		it('leaves no trace with Federation off', async () => {
+			usePeerMirrorStore.setState({ peers: {}, order: [] });
+			renderModal();
+			await chooseRunsOn('PedTome');
+
+			expect(screen.queryByTestId('new-agent-host-source')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: 'Runs on' }));
+			expect(screen.getByRole('option', { name: /^PedTome/ })).not.toHaveTextContent('to add');
+		});
+
+		it('opens on the first host with agents to add (`open add-hosted-agent`)', async () => {
+			useModalStore
+				.getState()
+				.openModal('newInstance', { duplicatingSessionId: null, presetSource: 'host' });
+			renderModal();
+
+			expect(await screen.findByTestId('host-agent-picker')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Runs on' })).toHaveTextContent('PedTome');
 		});
 	});
 });
