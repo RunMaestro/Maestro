@@ -281,7 +281,12 @@ export function ensureCadenzaHudWindow(
 
 	// Float above other applications, not merely above the parent window.
 	win.setAlwaysOnTop(true, 'screen-saver');
-	win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+	// skipTransformProcessType: without it Electron 41 turns the whole app into a UIElement
+	// process (no Dock icon, no menu bar, no main window) the moment this runs.
+	win.setVisibleOnAllWorkspaces(true, {
+		visibleOnFullScreen: true,
+		skipTransformProcessType: true,
+	});
 
 	// Click-through by default (see file header). The main-process hover poll
 	// flips this off while the cursor is over a card.
