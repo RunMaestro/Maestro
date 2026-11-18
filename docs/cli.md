@@ -2509,6 +2509,8 @@ Before it acts, `lift` prints what moves and what stays. `--json` gives the same
 | No host is running on the remote                      | `PEER_HOST_DOWN` (exit 3) |
 | A local `maestro-cli host` owns this machine's agents | `LIFT_LOCAL_HOST`         |
 
+When the host's Maestro is an older build that cannot accept a moved agent, `lift` fails with `LIFT_HOST_TOO_OLD` and nothing moves. Update Maestro.app on the remote and relaunch it (or, with no desktop app there, run `maestro-cli remote-host install <remote> --restart --force`), then lift again.
+
 The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. Hidden consult tabs, queued slash commands, and images in this machine's image store stay here.
 
 ```bash
@@ -2517,7 +2519,7 @@ maestro-cli lift docs --with-env --json
 maestro-cli send build-box:<new-agent-id> "Carry on"
 ```
 
-The desktop app runs the same lift. Right-click the agent in the Left Bar and choose **Move to Host**, or run **Move to Host** from the command palette. The action shows while the agent's remote takes part in Federation. When the remote runs no host yet, the same action first runs `remote-host install --start` and then shows the lift plan. Either way the plan `--dry-run` prints, with a choice to send secret env vars, shows before anything moves. Afterwards the agent's row shows `on <peer>`: click it to open the agent on its host.
+The desktop app runs the same lift. Right-click the agent in the Left Bar and choose **Move to Host**, or run **Move to Host** from the command palette. The action shows while the agent's remote takes part in Federation. When the remote runs no host yet, the same action first runs `remote-host install --start` and then shows the lift plan. Either way the plan `--dry-run` prints shows before anything moves, drawn as a summary with a choice to send secret env vars, and **Copy Plan as Text** copies the CLI text. Afterwards the agent's row shows `on <peer>`: click it to open the agent on its host.
 
 ### One Host Per Data Directory
 

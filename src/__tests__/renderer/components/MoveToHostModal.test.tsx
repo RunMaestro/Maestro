@@ -1,7 +1,8 @@
 /**
- * The Move to Host modal (FED-SSH-06). With a connected host it shows the
+ * The Move to Host modal (FED-SSH-06). With a connected host it draws the
  * `maestro-cli lift --dry-run` plan, rebuilds it when secret env vars are included, refuses to
- * move without a plan, and closes only once the lift landed. With no host yet it is Make
+ * move without a plan, and closes only once the lift landed. A failure is pinned above the plan;
+ * a host too old to accept the agent gets the steps that fix it. With no host yet it is Make
  * Federated: it sets the host up first (`remote-host install --start`) and offers the one retry
  * option a refusal names.
  */
@@ -14,6 +15,9 @@ vi.mock('../../../renderer/services/agentLift', () => ({
 	moveAgentToHost: vi.fn(),
 	setupRemoteHostFromWindow: vi.fn(),
 }));
+vi.mock('../../../renderer/utils/clipboard', () => ({
+	safeClipboardWrite: vi.fn().mockResolvedValue(true),
+}));
 
 import { MoveToHostModal } from '../../../renderer/components/MoveToHostModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
@@ -25,11 +29,32 @@ import {
 } from '../../../renderer/services/agentLift';
 import { createMirroredPeer } from '../../../shared/maestro-lib/client/peer-mirror';
 import type { AgentFederationStatus } from '../../../renderer/utils/peerMirrorView';
+import type { LiftPlanSummary } from '../../../shared/maestro-lib/agents/lift-plan';
+import { LIFT_HOST_TOO_OLD } from '../../../shared/federationCommands';
+import { safeClipboardWrite } from '../../../renderer/utils/clipboard';
 
 const theme = THEMES['dracula'];
 
-const planAnswer = (text: string) =>
-	({ ok: true, planText: text, result: { dryRun: true } }) as never;
+function summaryWith(overrides: Partial<LiftPlanSummary> = {}): LiftPlanSummary {
+	return {
+		agent: { id: 's1', name: 'Docs', provider: 'claude-code' },
+		peer: 'build',
+		remote: { id: 'r1', name: 'build' },
+		cwd: '/home/me/docs',
+		env: { sent: [], secretsSent: [], withheld: [] },
+		tabs: [
+			{ id: 't1', name: 'Main', agentSessionId: 'sess-1', entries: 4 },
+			{ id: 't2', name: 'Notes', agentSessionId: null, entries: 0 },
+		],
+		activeTabId: 't1',
+		queued: [],
+		stays: [],
+		...overrides,
+	};
+}
+
+const planAnswer = (text: string, summary: LiftPlanSummary = summaryWith()) =>
+	({ ok: true, planText: text, result: { dryRun: true, plan: summary } }) as never;
 
 const peer = createMirroredPeer({ peerId: 'build', remoteId: 'r1', name: 'build' });
 const READY: AgentFederationStatus = {
@@ -72,7 +97,7 @@ function renderModal(onClose = vi.fn(), status: AgentFederationStatus = READY) {
 	return Object.assign(onClose, { rerenderWith });
 }
 
-const moveButton = () => screen.getByRole('button', { name: /Move to Host/ });
+const moveButton = () => screen.getByRole('button', { name: /^(Move to Host|Retry Move)$/ });
 
 beforeEach(() => {
 	vi.mocked(planMoveToHost).mockReset();
@@ -81,20 +106,39 @@ beforeEach(() => {
 });
 
 describe('MoveToHostModal', () => {
-	it('shows the dry-run plan, and rebuilds it with secret env vars', async () => {
+	it('draws the dry-run plan, and rebuilds it with secret env vars', async () => {
 		vi.mocked(planMoveToHost).mockImplementation(async (_id, withEnv) =>
-			planAnswer(withEnv ? 'Would lift (with secrets)' : 'Would lift "Docs"')
+			planAnswer(
+				'Would lift "Docs"',
+				summaryWith(
+					withEnv
+						? { env: { sent: ['TOKEN'], secretsSent: ['TOKEN'], withheld: [] } }
+						: {
+								env: { sent: [], secretsSent: [], withheld: ['TOKEN'] },
+								stays: [{ kind: 'secret-env', ref: 'TOKEN', reason: 'Secret.' }],
+							}
+				)
+			)
 		);
 		renderModal();
 		expect(screen.getByTestId('move-to-host-plan-loading')).toBeTruthy();
 		expect(moveButton()).toBeDisabled();
-		expect(await screen.findByTestId('move-to-host-plan')).toHaveTextContent('Would lift "Docs"');
+		const plan = await screen.findByTestId('move-to-host-plan');
+		expect(plan).toHaveTextContent('2 conversations continue on build');
+		expect(plan).toHaveTextContent('1 secret env var');
 		expect(planMoveToHost).toHaveBeenCalledWith('s1', false);
 		expect(moveButton()).not.toBeDisabled();
 
 		fireEvent.click(screen.getByRole('checkbox', { name: /Send secret env vars too/ }));
 		await waitFor(() => expect(planMoveToHost).toHaveBeenLastCalledWith('s1', true));
-		expect(await screen.findByText('Would lift (with secrets)')).toBeTruthy();
+		expect(await screen.findByText('Secret env vars that move: TOKEN')).toBeTruthy();
+	});
+
+	it('copies the plan as the CLI prints it', async () => {
+		vi.mocked(planMoveToHost).mockResolvedValue(planAnswer('Would lift "Docs"'));
+		renderModal();
+		fireEvent.click(await screen.findByTestId('move-to-host-copy-plan'));
+		await waitFor(() => expect(safeClipboardWrite).toHaveBeenCalledWith('Would lift "Docs"'));
 	});
 
 	it('shows a refusal and keeps Move disabled', async () => {
@@ -104,7 +148,9 @@ describe('MoveToHostModal', () => {
 			error: '"Docs" is busy: a turn is running.',
 		});
 		renderModal();
-		expect(await screen.findByText(/is busy: a turn is running/)).toBeTruthy();
+		expect(await screen.findByTestId('move-to-host-pinned-error')).toHaveTextContent(
+			/is busy: a turn is running/
+		);
 		expect(moveButton()).toBeDisabled();
 	});
 
@@ -128,8 +174,33 @@ describe('MoveToHostModal', () => {
 		const onClose = renderModal();
 		await screen.findByTestId('move-to-host-plan');
 		fireEvent.click(moveButton());
-		expect(await screen.findByText(/The host's copy was removed again/)).toBeTruthy();
+		expect(await screen.findByTestId('move-to-host-pinned-error')).toHaveTextContent(
+			/The host's copy was removed again/
+		);
+		expect(moveButton()).toHaveTextContent('Retry Move');
 		expect(onClose).not.toHaveBeenCalled();
+	});
+
+	it('takes the body over with the fix when the host is too old, and folds the plan', async () => {
+		vi.mocked(planMoveToHost).mockResolvedValue(planAnswer('Would lift'));
+		vi.mocked(moveAgentToHost).mockResolvedValue({
+			ok: false,
+			code: LIFT_HOST_TOO_OLD,
+			error: 'Peer "build": the Maestro running there is an older build.',
+		});
+		renderModal();
+		await screen.findByTestId('move-to-host-plan');
+		fireEvent.click(moveButton());
+		const card = await screen.findByTestId('move-to-host-too-old');
+		expect(card).toHaveTextContent("build can't accept this agent yet");
+		expect(card).toHaveTextContent('Update Maestro.app on build');
+		expect(card).toHaveTextContent('maestro-cli remote-host install build --restart --force');
+		expect(screen.queryByTestId('move-to-host-pinned-error')).toBeNull();
+		expect(screen.queryByTestId('move-to-host-plan')).toBeNull();
+
+		fireEvent.click(screen.getByTestId('move-to-host-plan-fold'));
+		expect(screen.getByTestId('move-to-host-plan')).toBeTruthy();
+		expect(moveButton()).toHaveTextContent('Retry Move');
 	});
 
 	describe('Move to Host with no host yet (sets one up first)', () => {
@@ -153,7 +224,9 @@ describe('MoveToHostModal', () => {
 
 			// The mirror reports the host connected: the modal becomes Move to Host with its plan.
 			handle.rerenderWith(READY);
-			expect(await screen.findByTestId('move-to-host-plan')).toHaveTextContent('Would lift "Docs"');
+			expect(await screen.findByTestId('move-to-host-plan')).toHaveTextContent(
+				'2 conversations continue on build'
+			);
 		});
 
 		it('names the refusal and offers the one option that fixes it', async () => {

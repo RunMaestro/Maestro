@@ -21,6 +21,7 @@
 import type { SshRemoteConfig } from '../../types';
 import { federationOffMessage, peerIdFor } from '../client/peer-connection';
 import { isFederationRemote } from '../../federationRemote';
+import { LIFT_HOST_TOO_OLD } from '../../federationCommands';
 import type { ClientError, MaestroClient } from '../client/types';
 import type { AgentRecord } from '../store/records';
 import { liftRefusal, liftSshRemoteId, planAgentLift } from './lift-plan';
@@ -153,8 +154,24 @@ export function formatLiftPlan(summary: LiftPlanSummary, dryRun: boolean): strin
 	return lines.join('\n');
 }
 
-function defaultHostCallError(peer: string, error: Pick<ClientError, 'message'>): Error {
-	return new LiftRunError('LIFT_HOST_FAILED', `Peer "${peer}": ${error.message}`);
+/**
+ * The host on `peer` does not know `import_agent`. A newer maestro-cli cannot fix this when the
+ * remote's desktop app is the host: the handler lives in that app's main process. And the version
+ * string cannot predict it, because builds inside one RC share a version.
+ */
+function importUnsupportedMessage(peer: string): string {
+	return (
+		`the Maestro running there is an older build that cannot accept a moved agent. ` +
+		`Update Maestro.app on ${peer} and relaunch it (or, when no desktop app runs there, ` +
+		`run \`maestro-cli remote-host install ${peer} --restart --force\`), then move again.`
+	);
+}
+
+function defaultHostCallError(peer: string, error: Pick<ClientError, 'code' | 'message'>): Error {
+	return new LiftRunError(
+		error.code === 'unsupported' ? LIFT_HOST_TOO_OLD : 'LIFT_HOST_FAILED',
+		`Peer "${peer}": ${error.message}`
+	);
 }
 
 /** Remove the host's copy after the pointer could not be set. Returns a line for the error. */
@@ -228,7 +245,11 @@ export async function runLift(
 
 		const imported = await connection.client.agents.import(plan.input);
 		if (!imported.ok) {
-			throw (deps.hostCallError ?? defaultHostCallError)(connection.peer, imported.error);
+			const error =
+				imported.error.code === 'unsupported'
+					? { ...imported.error, message: importUnsupportedMessage(connection.peer) }
+					: imported.error;
+			throw (deps.hostCallError ?? defaultHostCallError)(connection.peer, error);
 		}
 		const { agentId: hostAgentId, queued } = imported.value;
 		const notices = [...(imported.value.notices ?? [])];
