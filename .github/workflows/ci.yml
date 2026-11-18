@@ -14,6 +14,10 @@ on:
   push:
     branches: [main, rc]
 
+# These jobs use the bundled CPU runtime, not the optional CUDA download.
+env:
+  ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+
 jobs:
   lint-and-format:
     runs-on: ubuntu-latest

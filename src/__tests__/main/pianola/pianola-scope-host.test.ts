@@ -1673,9 +1673,10 @@ describe('L02 main decision claims', () => {
 				await once(child.stdout, 'data');
 				const wait = vi.spyOn(Atomics, 'wait');
 				const before = store.readDecisions();
-				const started = performance.now();
-				await expect(resolve()).rejects.toThrow('lock busy');
-				expect(performance.now() - started).toBeLessThan(250);
+				// The claim must reject while the child holds the lock, without an async retry.
+				await expect(Promise.race([resolve(), Promise.resolve('pending')])).rejects.toThrow(
+					'lock busy'
+				);
 				expect(wait).not.toHaveBeenCalled();
 				expect(callbacks.executeCommand).not.toHaveBeenCalled();
 				if (lockedFile === 'decisions') expect(store.readDecisions()).toEqual(before);
