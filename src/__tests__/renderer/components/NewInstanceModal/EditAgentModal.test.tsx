@@ -9,6 +9,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
+import { resetStore } from '../../../helpers/resetStores';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
 
@@ -83,7 +84,7 @@ describe('EditAgentModal', () => {
 		onSave = vi.fn();
 		// The modal seeds its form from the store's copy of the agent, so a
 		// session left in the store by one case must not feed the next.
-		useSessionStore.setState({ sessions: [] } as never);
+		resetStore(useSessionStore);
 
 		mockRegisterLayer.mockClear().mockReturnValue('layer-edit-agent-123');
 		mockUnregisterLayer.mockClear();
