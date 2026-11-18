@@ -107,6 +107,21 @@ describe('dispatch callback service', () => {
 		expect(enqueue.mock.calls[0][1]).toContain('the review verdict');
 	});
 
+	it('prefers the output the dispatched process emitted over the history reader (#2066)', async () => {
+		disposeDispatchCallbacks();
+		const getTargetOutput = vi.fn(async () => 'stale history entry');
+		initDispatchCallbacks({ enqueue, getTargetOutput });
+		armOne();
+		getDispatchCallbackRegistry()!.noteSpawn(KEY);
+		getDispatchCallbackRegistry()!.noteData(KEY, 'the live final reply');
+		getDispatchCallbackRegistry()!.noteExit(KEY, 0);
+		await vi.advanceTimersByTimeAsync(5000);
+		await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1));
+		expect(enqueue.mock.calls[0][1]).toContain('the live final reply');
+		expect(enqueue.mock.calls[0][1]).not.toContain('no output captured');
+		expect(getTargetOutput).not.toHaveBeenCalled();
+	});
+
 	it('still delivers when reading the target output throws', async () => {
 		disposeDispatchCallbacks();
 		initDispatchCallbacks({

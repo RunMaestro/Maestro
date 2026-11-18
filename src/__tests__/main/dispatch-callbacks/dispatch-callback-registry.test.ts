@@ -10,6 +10,7 @@ import {
 	DispatchCallbackRegistry,
 	buildProcessSessionId,
 	MAX_ARMED_CALLBACKS,
+	CAPTURED_OUTPUT_MAX_CHARS,
 } from '../../../main/dispatch-callbacks/dispatch-callback-registry';
 import type {
 	DispatchCallbackFire,
@@ -143,6 +144,78 @@ describe('DispatchCallbackRegistry', () => {
 		h.registry.noteExit(otherTab, 0);
 		h.runTimers();
 		expect(h.fires).toHaveLength(0);
+	});
+
+	describe('output capture (#2066)', () => {
+		it("hands the dispatched turn's output to the fire", () => {
+			register(h.registry);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteData(KEY, 'Working on it. ');
+			h.registry.noteData(KEY, 'Final answer: 42');
+			h.registry.noteExit(KEY, 0);
+			h.runTimers();
+			expect(h.fires[0].output).toBe('Working on it. Final answer: 42');
+		});
+
+		it('ignores output a predecessor turn emits while the entry is pending', () => {
+			register(h.registry);
+			h.registry.noteData(KEY, 'predecessor reply');
+			h.registry.noteSpawn(KEY);
+			h.registry.noteData(KEY, 'our reply');
+			h.registry.noteExit(KEY, 0);
+			h.runTimers();
+			expect(h.fires[0].output).toBe('our reply');
+		});
+
+		it('ignores output from another tab of the same agent', () => {
+			register(h.registry);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteData(buildProcessSessionId(TARGET, 'tab-2'), 'not ours');
+			h.registry.noteExit(KEY, 0);
+			h.runTimers();
+			expect(h.fires[0].output).toBeUndefined();
+		});
+
+		it('keeps only the tail of a long reply, enough to report truncation', () => {
+			register(h.registry);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteData(KEY, 'x'.repeat(CAPTURED_OUTPUT_MAX_CHARS));
+			h.registry.noteData(KEY, 'the end');
+			h.registry.noteExit(KEY, 0);
+			h.runTimers();
+			const output = h.fires[0].output ?? '';
+			expect(output).toHaveLength(CAPTURED_OUTPUT_MAX_CHARS);
+			expect(output.endsWith('the end')).toBe(true);
+		});
+
+		it('adopts output a --new-tab process emitted before registration', () => {
+			h.registry.noteSpawn(KEY);
+			h.registry.noteData(KEY, 'early ');
+			register(h.registry, { armFromRecentSpawn: true });
+			h.registry.noteData(KEY, 'late');
+			h.registry.noteExit(KEY, 0);
+			h.runTimers();
+			expect(h.fires[0].output).toBe('early late');
+		});
+
+		it('adopts output of a --new-tab turn that finished before registration', () => {
+			h.registry.noteSpawn(KEY);
+			h.registry.noteData(KEY, 'quick reply');
+			h.registry.noteExit(KEY, 0);
+			register(h.registry, { armFromRecentSpawn: true });
+			h.runTimers();
+			expect(h.fires[0].output).toBe('quick reply');
+		});
+
+		it("does not carry a previous turn's output into a new spawn", () => {
+			h.registry.noteSpawn(KEY);
+			h.registry.noteData(KEY, 'old turn');
+			h.registry.noteSpawn(KEY);
+			register(h.registry, { armFromRecentSpawn: true });
+			h.registry.noteExit(KEY, 0);
+			h.runTimers();
+			expect(h.fires[0].output).toBeUndefined();
+		});
 	});
 
 	describe('Auto Run finality', () => {
