@@ -3464,11 +3464,7 @@ describe('plugin settings destinations', () => {
 		);
 		expect(await screen.findByTestId('plugin-settings-frame')).toHaveTextContent(panel.id);
 		view.rerender(
-			<SettingsModal
-				{...props}
-				initialTab="environment"
-				initialSettingId="environment-host-media"
-			/>
+			<SettingsModal {...props} initialTab="models" initialSettingId="local-models-host-media" />
 		);
 		expect(screen.queryByTestId('plugin-settings-frame')).not.toBeInTheDocument();
 	});
@@ -3495,10 +3491,11 @@ describe('plugin settings destinations', () => {
 		fireEvent.change(screen.getByRole('textbox', { name: 'Search settings' }), {
 			target: { value: '' },
 		});
-		fireEvent.click(screen.getByRole('button', { name: 'Host media tools' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Whisper models' }));
 		expect(useModalStore.getState().getData('settings')).toMatchObject({
-			tab: 'environment',
-			settingId: 'environment-host-media',
+			tab: 'models',
+			subTab: 'sources',
+			settingId: 'local-models-host-media',
 		});
 		settingsPanels = [];
 		view.rerender(<SettingsModal {...props} initialSettingId={undefined} />);

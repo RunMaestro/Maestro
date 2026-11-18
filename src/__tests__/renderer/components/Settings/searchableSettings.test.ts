@@ -186,7 +186,7 @@ describe('searchableSettings', () => {
 			'Available models',
 			'Check status',
 		])('finds host media settings for %s', (query) => {
-			expect(searchSettings(query).some((s) => s.id === 'environment-host-media')).toBe(true);
+			expect(searchSettings(query).some((s) => s.id === 'local-models-host-media')).toBe(true);
 		});
 
 		it.each(['short label', 'pill label', 'abbreviation', 'badge'])(
@@ -600,6 +600,7 @@ describe('searchableSettings', () => {
 				'local-models-model-server': 'sources',
 				'local-models-endpoints': 'sources',
 				'local-models-voice-studio': 'sources',
+				'local-models-host-media': 'sources',
 				'local-models-system-one-engine': 'system-one',
 				'local-models-system-one-fail-policy': 'system-one',
 				'local-models-system-one-agents': 'system-one',

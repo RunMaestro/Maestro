@@ -60,7 +60,7 @@ export const MODELS_SETTINGS_PANEL_SUMMARIES: Readonly<
 	library:
 		'Models Maestro downloads and runs on this computer, and the engines that run them. Nothing downloads until you press Download.',
 	sources:
-		"Where models come from besides the Library: model servers you run (Ollama, LM Studio, any OpenAI-compatible URL), Maestro's own model server, VoiceStudio's cloned voices, and where model files download from.",
+		"Where models come from besides the Library: model servers you run (Ollama, LM Studio, any OpenAI-compatible URL), Maestro's own model server, VoiceStudio's cloned voices, the Whisper model folder plugins transcribe with, and where model files download from.",
 	'system-one':
 		'Fast judgments: a yes or no, a label, a score, a vector, or a transcript. The Cue gate, prompt-injection and secret screens, voice routing, dictation, semantic search.',
 	'system-two':

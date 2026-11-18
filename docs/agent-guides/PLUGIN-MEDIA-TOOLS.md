@@ -210,7 +210,7 @@ binary discovery at call time. Optional **host-owned** absolute executable overr
 are `MAESTRO_MEDIA_FFPROBE`, `MAESTRO_MEDIA_FFMPEG`, `MAESTRO_MEDIA_WHISPER_CLI`.
 Windows must resolve native `.exe` files; scripts/interpreters are not profiles.
 
-In Settings > Environment > Host media tools, enter the existing absolute directory
+In Settings > Models > Sources > Whisper models, enter the existing absolute directory
 containing `ggml-<model-id>.bin` and choose **Save directory**. The host verifies that
 it is a directory and saves its canonical realpath as `mediaModelDirectory` using the
 existing settings store. The broker re-reads the setting at call time, so no host or

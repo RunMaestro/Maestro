@@ -1,13 +1,22 @@
+/**
+ * HostMediaSourceSection - the Whisper model folder that plugins using the
+ * legacy `media.run` interface (Relay) transcribe with, drawn under Models >
+ * Sources. It is a model source the Library does not manage: Maestro neither
+ * downloads these files nor runs them through the Local Models pool, it only
+ * points `whisper-cli` at the folder and reports what it finds there.
+ */
 import { useEffect, useState } from 'react';
-import { AudioLines } from 'lucide-react';
-import type { MediaToolStatus } from '../../../shared/plugins/media-tools';
-import { useSettingsStore } from '../../stores/settingsStore';
-import type { Theme } from '../../types';
-import { FormInput } from '../ui/FormInput';
-import { SettingsSectionHeading } from './SettingsSectionHeading';
-import { SectionCard } from './tabs/DisplayTab/components/SectionCard';
+import { AudioLines, Check, RefreshCw } from 'lucide-react';
+import type { MediaToolStatus } from '../../../../../shared/plugins/media-tools';
+import { useSettingsStore } from '../../../../stores/settingsStore';
+import type { Theme } from '../../../../types';
+import { FormInput } from '../../../ui/FormInput';
+import { SettingsSectionHeading } from '../../SettingsSectionHeading';
+import { SectionCard } from '../DisplayTab/components/SectionCard';
+import { CardButton } from './CardButton';
+import { CardWarning } from './CardParts';
 
-export function HostMediaSection({ theme }: { theme: Theme }) {
+export function HostMediaSourceSection({ theme }: { theme: Theme }) {
 	const directory = useSettingsStore((s) => s.mediaModelDirectory);
 	const setDirectory = useSettingsStore((s) => s.setMediaModelDirectory);
 	const [draft, setDraft] = useState(directory);
@@ -58,49 +67,53 @@ export function HostMediaSection({ theme }: { theme: Theme }) {
 	};
 
 	return (
-		<div data-setting-id="environment-host-media">
+		<div data-setting-id="local-models-host-media">
 			<SettingsSectionHeading
 				icon={AudioLines}
-				description="Local speech recognition tools used by plugins such as Relay. Changes apply without restarting Maestro."
+				description="A folder of whisper.cpp models that plugins such as Relay transcribe audio with. Maestro does not download these files. Changes apply without restarting Maestro."
 			>
-				Host media tools
+				Whisper models
 			</SettingsSectionHeading>
 			<SectionCard theme={theme}>
-				<div>
-					<label htmlFor="host-media-directory" className="font-medium">
-						Whisper model directory
-					</label>
-					<p className="text-xs opacity-70 mt-0.5 mb-2">
-						Choose the local folder containing multilingual ggml-&lt;model&gt;.bin files, such as
-						ggml-base.bin. This host setting takes precedence over MAESTRO_MEDIA_MODEL_DIR. Leave it
-						empty to use that environment fallback.
-					</p>
-					<FormInput
-						id="host-media-directory"
+				<FormInput
+					id="host-media-directory"
+					theme={theme}
+					label="Whisper model directory"
+					helperText="The local folder that holds multilingual ggml-<model>.bin files, such as ggml-base.bin. This setting takes precedence over MAESTRO_MEDIA_MODEL_DIR. Leave it empty to use that variable."
+					value={draft}
+					onChange={setDraft}
+					onSubmit={() => void save()}
+					submitEnabled={!saving && supported}
+					disabled={saving || !supported}
+					error={error}
+					monospace
+					placeholder="Absolute path to local Whisper models"
+					testId="host-media-directory"
+				/>
+				<div className="flex flex-wrap gap-2">
+					<CardButton
 						theme={theme}
-						value={draft}
-						onChange={setDraft}
-						onSubmit={() => void save()}
-						submitEnabled={!saving && supported}
+						icon={Check}
+						label={saving ? 'Saving...' : 'Save directory'}
+						onClick={() => void save()}
 						disabled={saving || !supported}
-						error={error}
-						placeholder="Absolute path to local Whisper models"
+						primary
+						testId="host-media-save"
+					/>
+					<CardButton
+						theme={theme}
+						icon={RefreshCw}
+						label="Check status"
+						onClick={() => setRefresh((n) => n + 1)}
+						disabled={saving || !supported}
+						testId="host-media-check"
 					/>
 				</div>
-				<button
-					type="button"
-					disabled={saving || !supported}
-					onClick={() => void save()}
-					className="w-full px-3 py-2 rounded border text-sm disabled:opacity-55"
-					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
-				>
-					{saving ? 'Saving...' : 'Save directory'}
-				</button>
-				<div role="status" aria-live="polite" className="text-xs space-y-1">
+				<div role="status" aria-live="polite" className="text-xs space-y-1 select-text">
 					{!supported ? (
 						<p>Host media status is available in the desktop app.</p>
 					) : statusError ? (
-						<p style={{ color: theme.colors.error }}>{statusError}</p>
+						<CardWarning theme={theme}>{statusError}</CardWarning>
 					) : status ? (
 						<>
 							<p className="font-medium">
@@ -117,17 +130,8 @@ export function HostMediaSection({ theme }: { theme: Theme }) {
 				<p className="text-xs opacity-70">
 					The plugin must select an available model. If only base is listed, select base in Relay;
 					small requires ggml-small.bin in this folder. Model-directory means no allowed, readable
-					model file was found. Tools and models are not downloaded by this setting.
+					model file was found.
 				</p>
-				<button
-					type="button"
-					disabled={!supported || saving}
-					onClick={() => setRefresh((n) => n + 1)}
-					className="w-full px-3 py-2 rounded border text-sm disabled:opacity-55"
-					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
-				>
-					Check status
-				</button>
 			</SectionCard>
 		</div>
 	);

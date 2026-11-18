@@ -273,9 +273,9 @@ changed with this: no row in Covered or Open gaps moved.
 
 ## Covered: Host media tools
 
-| Point-and-click action                 | CLI                                                                                             |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Host media: Whisper models / readiness | `settings set mediaModelDirectory <path>`, `settings media-status` (shared validation/resolver) |
+| Point-and-click action                                | CLI                                                                                             |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Models > Sources > Whisper models: folder / readiness | `settings set mediaModelDirectory <path>`, `settings media-status` (shared validation/resolver) |
 
 ## Covered
 

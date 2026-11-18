@@ -9,7 +9,8 @@
  *   (Engines, Agent Models, Housekeeping, Speech, Search & Safety, Custom).
  * - Sources: where models come from besides the Library: model servers and
  *   user endpoints, Maestro's own model server that serves the Library's text
- *   models over HTTP, and the local VoiceStudio speech service.
+ *   models over HTTP, the local VoiceStudio speech service, and the whisper.cpp
+ *   model folder plugins such as Relay transcribe with.
  * - System One: the engine that answers typed questions (Jev, OpenJev, or a
  *   local judge) with its key and Test, then the tasks whose output is a
  *   judgment (a decision, label, score, vector or transcript), with their
@@ -58,6 +59,7 @@ import { LocalModelsGatewaySection } from './LocalModelsGatewaySection';
 import { LocalModelsModelsSection } from './LocalModelsModelsSection';
 import { LocalModelsServerSection } from './LocalModelsServerSection';
 import { VoiceStudioSourceSection } from './VoiceStudioSourceSection';
+import { HostMediaSourceSection } from './HostMediaSourceSection';
 import { MODELS_SETTINGS_PANEL_ICONS, ModelsOverview } from './ModelsOverview';
 import { SystemOneAgentsSection } from './SystemOneAgentsSection';
 import { SystemOneEngineSection } from './SystemOneEngineCard';
@@ -133,6 +135,7 @@ export function ModelsSettingsTab({ theme, nav }: ModelsSettingsTabProps) {
 
 			{panel === 'sources' && <LocalModelsServerSection theme={theme} />}
 			{panel === 'sources' && <VoiceStudioSourceSection theme={theme} />}
+			{panel === 'sources' && <HostMediaSourceSection theme={theme} />}
 
 			{panel === 'system-one' && <SystemOneEngineSection theme={theme} systemOne={systemOne} />}
 

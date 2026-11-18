@@ -22,13 +22,13 @@ Clicking **Models** in the Settings sidebar opens the **Overview**. A row of til
 
 The five panels are listed under **Models** in the sidebar; click one to open it. The list stays expanded while the sidebar has room for every row, and collapses to show only under an open **Models** when it would make the sidebar scroll. **Cmd+Shift+[** and **]** walk the Overview and the panels too. Maestro remembers the panel you used last, separately on the desktop and in each browser.
 
-| Panel          | What lives there                                                                                                                                    |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Library**    | The [models](#models) Maestro downloads, in sections, and the [engines](#engines) that run them.                                                    |
-| **Sources**    | The [endpoints](#endpoints) you have added, the [Maestro model server](#model-server), and the local [VoiceStudio](#voicestudio) speech service.    |
-| **System One** | The tasks whose answer is a judgment: a decision, label, score, vector, or transcript. See [System One and System Two](#system-one-and-system-two). |
-| **System Two** | The tasks that write text for someone to read or run, plus the [Model Map](#model-map): the Agent model and the Housekeeping model.                 |
-| **Gateway**    | Per-agent gateway URLs, the token proxy mode for each agent, and what the token proxy carried and saved. See [Gateway](#gateway).                   |
+| Panel          | What lives there                                                                                                                                                                                                       |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Library**    | The [models](#models) Maestro downloads, in sections, and the [engines](#engines) that run them.                                                                                                                       |
+| **Sources**    | The [endpoints](#endpoints) you have added, the [Maestro model server](#model-server), the local [VoiceStudio](#voicestudio) speech service, and the [Whisper models](#whisper-models) folder plugins transcribe with. |
+| **System One** | The tasks whose answer is a judgment: a decision, label, score, vector, or transcript. See [System One and System Two](#system-one-and-system-two).                                                                    |
+| **System Two** | The tasks that write text for someone to read or run, plus the [Model Map](#model-map): the Agent model and the Housekeeping model.                                                                                    |
+| **Gateway**    | Per-agent gateway URLs, the token proxy mode for each agent, and what the token proxy carried and saved. See [Gateway](#gateway).                                                                                      |
 
 ### System One and System Two
 
@@ -987,7 +987,7 @@ Everything on **Models -> Sources** runs on the computer running Maestro, whiche
 
 ## VoiceStudio
 
-The last section of **Models -> Sources** points Maestro at VoiceStudio, a speech service you run on this computer that speaks with cloned voices. Maestro connects to it and never starts it. Choose VoiceStudio as the A Cappella Text-to-Speech provider to use its voices; [VoiceStudio voices](./voice-mode#voicestudio-voices) covers that part. The section is not behind an Encore Feature, and Settings search finds **VoiceStudio**.
+A section of **Models -> Sources** points Maestro at VoiceStudio, a speech service you run on this computer that speaks with cloned voices. Maestro connects to it and never starts it. Choose VoiceStudio as the A Cappella Text-to-Speech provider to use its voices; [VoiceStudio voices](./voice-mode#voicestudio-voices) covers that part. The section is not behind an Encore Feature, and Settings search finds **VoiceStudio**.
 
 | Field                 | Default                 | What it is                                                                     |
 | --------------------- | ----------------------- | ------------------------------------------------------------------------------ |
@@ -999,6 +999,15 @@ The last section of **Models -> Sources** points Maestro at VoiceStudio, a speec
 - **Save source** stores the fields. With A Cappella on, a change made during a voice session applies after the session ends, and the card says "Saved. End the current voice session to apply these settings."
 
 From a terminal, set the same fields with `maestro-cli settings set acappella.voiceStudio.baseUrl <url>`, `acappella.voiceStudio.engine <id>`, and `acappella.voiceStudio.seed <n>`. They are checked by the same rules as the card.
+
+## Whisper models
+
+The last section of **Models -> Sources** is the folder of whisper.cpp models that plugins such as Relay use to transcribe audio on this computer. It is not part of the Library: Maestro does not download these files, and the Library's own speech models do not live here. Changes apply without a restart, and Settings search finds **Whisper models**.
+
+- **Whisper model directory** - the local folder that holds multilingual `ggml-<model>.bin` files, such as `ggml-base.bin`. This setting takes precedence over the `MAESTRO_MEDIA_MODEL_DIR` environment variable. Leave it empty to use that variable. Click **Save directory** to store it.
+- **Check status** - shows whether host media is ready, the available profiles and models, and any missing prerequisites (for example `ffmpeg`, `ffprobe`, or `whisper-cli`). **Model-directory** in the missing list means Maestro found no readable model file in the folder.
+
+A plugin must select a model that is listed. For example, `small` needs `ggml-small.bin` in the folder. The status is available in the desktop app only. From a terminal, `maestro-cli settings set mediaModelDirectory <path>` sets the folder and `maestro-cli settings media-status` reads the status.
 
 ## Model source
 

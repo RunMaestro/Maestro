@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { HostMediaSection } from '../../../../renderer/components/Settings/HostMediaSection';
-import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
-import { mockTheme } from '../../../helpers/mockTheme';
-import { THEMES } from '../../../../shared/themes';
+import { HostMediaSourceSection } from '../../../../../renderer/components/Settings/tabs/LocalModelsTab/HostMediaSourceSection';
+import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
+import { mockTheme } from '../../../../helpers/mockTheme';
+import { THEMES } from '../../../../../shared/themes';
 
 const getMediaStatus = vi.fn();
 const setDirectory = vi.fn();
@@ -17,11 +17,11 @@ beforeEach(() => {
 	useSettingsStore.setState({ mediaModelDirectory: '', setMediaModelDirectory: setDirectory });
 });
 
-describe('HostMediaSection', () => {
+describe('HostMediaSourceSection', () => {
 	it.each(['ayu-light', 'solarized-dark'])(
 		'shows actual missing prerequisites using %s',
 		async (themeId) => {
-			render(<HostMediaSection theme={THEMES[themeId]} />);
+			render(<HostMediaSourceSection theme={THEMES[themeId]} />);
 			expect(await screen.findByText('Missing prerequisites: model-directory')).toBeInTheDocument();
 			expect(screen.getByText('Host media status: Unavailable')).toBeInTheDocument();
 			expect(screen.getByText(/small requires ggml-small.bin/)).toBeInTheDocument();
@@ -29,7 +29,7 @@ describe('HostMediaSection', () => {
 	);
 
 	it('reports save failure while keeping the draft and previous status', async () => {
-		render(<HostMediaSection theme={mockTheme} />);
+		render(<HostMediaSourceSection theme={mockTheme} />);
 		await screen.findByText('Missing prerequisites: model-directory');
 		fireEvent.change(screen.getByLabelText('Whisper model directory'), {
 			target: { value: '~/models' },
@@ -50,7 +50,7 @@ describe('HostMediaSection', () => {
 			useSettingsStore.setState({ mediaModelDirectory: '/canonical/models' });
 			return true;
 		});
-		render(<HostMediaSection theme={mockTheme} />);
+		render(<HostMediaSourceSection theme={mockTheme} />);
 		await screen.findByText('Missing prerequisites: model-directory');
 		fireEvent.change(screen.getByLabelText('Whisper model directory'), {
 			target: { value: '/alias/models' },
@@ -64,7 +64,7 @@ describe('HostMediaSection', () => {
 
 	it('allows retrying a failed status read', async () => {
 		getMediaStatus.mockRejectedValueOnce(new Error('private host diagnostic'));
-		render(<HostMediaSection theme={mockTheme} />);
+		render(<HostMediaSourceSection theme={mockTheme} />);
 		expect(await screen.findByText(/Could not read host media status/)).toBeInTheDocument();
 		expect(screen.queryByText('private host diagnostic')).not.toBeInTheDocument();
 		fireEvent.click(screen.getByText('Check status'));

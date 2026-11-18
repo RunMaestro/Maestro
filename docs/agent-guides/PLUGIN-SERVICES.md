@@ -134,7 +134,7 @@ both `services:provide` and `media:tools=service-transcription`.
 re-resolves the requirement and opens that provider's declared settings card.
 It cannot open a different panel, grant permissions, enable a plugin or write
 settings. The provider card's `hostSettings: ["media"]` button navigates to the
-existing host-controlled `environment-host-media` section. Ordinary
+existing host-controlled `local-models-host-media` section (Models > Sources). Ordinary
 `ui.openPanel` remains own-panel only.
 
 Request:

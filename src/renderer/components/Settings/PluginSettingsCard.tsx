@@ -1,5 +1,8 @@
 import { Puzzle } from 'lucide-react';
-import { taskAssignmentPanel } from '../../../shared/local-models/settings-location';
+import {
+	modelsSettingsSubTab,
+	taskAssignmentPanel,
+} from '../../../shared/local-models/settings-location';
 import type { PanelContribution } from '../../../shared/plugins/contributions';
 import { pluginSettingsId } from '../../../shared/plugins/panel-host';
 import type { Theme } from '../../types';
@@ -46,12 +49,14 @@ export function PluginSettingsCard({ panel, theme }: { panel: PanelContribution;
 						className="w-full shrink-0 px-3 py-2 rounded border text-sm"
 						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
 						onClick={() =>
-							useModalStore
-								.getState()
-								.openModal('settings', { tab: 'environment', settingId: 'environment-host-media' })
+							useModalStore.getState().openModal('settings', {
+								tab: 'models',
+								subTab: modelsSettingsSubTab('sources'),
+								settingId: 'local-models-host-media',
+							})
 						}
 					>
-						Host media tools
+						Whisper models
 					</button>
 				)}
 			</SectionCard>
