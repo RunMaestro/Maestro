@@ -105,7 +105,7 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libarchive-tools rpm build-essential
+          sudo apt-get install -y libarchive-tools rpm build-essential xvfb
 
       # Linux ARM64: Install build dependencies for native modules and electron-builder
       # Requires build-essential for compiling node-pty native module
@@ -114,7 +114,7 @@ jobs:
         if: matrix.platform == 'linux-arm64'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libarchive-tools rpm build-essential ruby ruby-dev rubygems
+          sudo apt-get install -y libarchive-tools rpm build-essential ruby ruby-dev rubygems xvfb
           sudo gem install --no-document fpm
 
       # Linux x64: Setup Python 3.11 for node-gyp (Python 3.12+ removed distutils)
@@ -372,6 +372,17 @@ jobs:
         timeout-minutes: 5
         run: npm run smoke:packaged -- --app release/mac-arm64/Maestro.app/Contents/MacOS/Maestro
 
+      # The x64 package runs under Rosetta 2 on this arm64 runner. Install Rosetta
+      # only when the image lacks it.
+      - name: Smoke test packaged app (macOS x64)
+        if: matrix.platform == 'mac'
+        timeout-minutes: 10
+        run: |
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          npm run smoke:packaged -- --app release/mac/Maestro.app/Contents/MacOS/Maestro
+
       - name: Package for Windows
         if: matrix.platform == 'win'
         shell: bash
@@ -505,6 +516,12 @@ jobs:
         if: matrix.platform == 'linux'
         run: .github/scripts/verify-glibc-floor.sh 2.35 release/linux-unpacked/resources/app.asar.unpacked
 
+      # Electron needs a display; xvfb-run gives it a virtual one.
+      - name: Smoke test packaged app (Linux x64)
+        if: matrix.platform == 'linux'
+        timeout-minutes: 5
+        run: xvfb-run -a npm run smoke:packaged -- --app release/linux-unpacked/maestro
+
       # Verify native modules are correctly included in unpacked resources (Linux ARM64)
       - name: Verify native modules in package (Linux ARM64)
         if: matrix.platform == 'linux-arm64'
@@ -550,6 +567,11 @@ jobs:
       - name: Verify GLIBC floor (Linux ARM64)
         if: matrix.platform == 'linux-arm64'
         run: .github/scripts/verify-glibc-floor.sh 2.35 release/linux-arm64-unpacked/resources/app.asar.unpacked arm64
+
+      - name: Smoke test packaged app (Linux ARM64)
+        if: matrix.platform == 'linux-arm64'
+        timeout-minutes: 5
+        run: xvfb-run -a npm run smoke:packaged -- --app release/linux-arm64-unpacked/maestro
 
       # List what was built for debugging
       - name: List release artifacts

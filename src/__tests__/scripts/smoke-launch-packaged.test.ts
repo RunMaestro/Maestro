@@ -1,7 +1,8 @@
 /**
  * The packaged-app smoke test gates releases on the app actually starting.
  * These tests pin its pure parts: where it looks for each platform's
- * executable, how it reads flags, and what counts as a healthy renderer.
+ * executable, how it reads flags, what counts as a healthy renderer, and
+ * the stats-database line it requires from the app's output.
  * Release CI runs the launch itself against the real package.
  */
 import { describe, expect, it } from 'vitest';
@@ -10,6 +11,7 @@ import path from 'node:path';
 import yaml from 'js-yaml';
 import {
 	DEFAULTS,
+	assessAppOutput,
 	assessProbe,
 	defaultAppPath,
 	parseArgs,
@@ -73,6 +75,34 @@ describe('smoke-launch-packaged: assessProbe', () => {
 	});
 });
 
+describe('smoke-launch-packaged: assessAppOutput', () => {
+	it('passes when the main process logged that the stats database opened', () => {
+		expect(
+			assessAppOutput(
+				'[2026-11-17T12:00:00.000Z] [INFO] [Startup] Initializing stats database\n' +
+					'[2026-11-17T12:00:00.050Z] [INFO] [Startup] Stats database initialized\n'
+			)
+		).toEqual([]);
+	});
+
+	it('fails when the stats database never opened, whatever the error text says', () => {
+		const failure = [
+			'the stats database (better-sqlite3) did not initialize: the app never logged "Stats database initialized"',
+		];
+		// A wrong-ABI addon: startup catches the error and keeps going.
+		expect(
+			assessAppOutput(
+				'[ERROR] [Startup] Failed to initialize stats database: Error: The module ' +
+					"'better_sqlite3.node' was compiled against a different Node.js version using " +
+					'NODE_MODULE_VERSION 147. This version of Node.js requires NODE_MODULE_VERSION 145.\n' +
+					'[WARN] [Startup] Continuing without stats - usage tracking will be unavailable\n'
+			)
+		).toEqual(failure);
+		// No output at all (stdout lost, or the line was never reached).
+		expect(assessAppOutput('')).toEqual(failure);
+	});
+});
+
 describe('release workflow: packaged-app smoke test', () => {
 	interface Step {
 		name?: string;
@@ -89,10 +119,26 @@ describe('release workflow: packaged-app smoke test', () => {
 	it.each([
 		['Smoke test packaged app (Windows)', 'Package for Windows', 'Upload Windows artifacts'],
 		['Smoke test packaged app (macOS arm64)', 'Package for macOS arm64', 'Upload macOS artifacts'],
+		['Smoke test packaged app (macOS x64)', 'Package for macOS arm64', 'Upload macOS artifacts'],
+		['Smoke test packaged app (Linux x64)', 'Package for Linux x64', 'Upload Linux x64 artifacts'],
+		[
+			'Smoke test packaged app (Linux ARM64)',
+			'Package for Linux ARM64',
+			'Upload Linux ARM64 artifacts',
+		],
 	])('runs %s after packaging and before the upload', (smoke, packageStep, upload) => {
 		const at = index(smoke);
 		expect(at, smoke).toBeGreaterThan(index(packageStep));
 		expect(at).toBeLessThan(index(upload));
 		expect(steps[at].run).toContain('npm run smoke:packaged');
+	});
+
+	it('gives the Linux smoke tests a virtual display', () => {
+		for (const name of [
+			'Smoke test packaged app (Linux x64)',
+			'Smoke test packaged app (Linux ARM64)',
+		]) {
+			expect(steps[index(name)].run, name).toMatch(/^xvfb-run -a npm run smoke:packaged/);
+		}
 	});
 });
