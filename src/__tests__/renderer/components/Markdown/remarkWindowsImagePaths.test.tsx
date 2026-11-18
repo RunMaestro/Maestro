@@ -33,6 +33,29 @@ describe('remarkWindowsImagePaths', () => {
 		).toEqual(['/Users/me/a.png', 'file:///D:/a.png', 'https://example.com/c.png']);
 	});
 
+	it('turns a reference image with a drive path into an inline image', () => {
+		expect(imageUrls('![p][shot]\n\n[shot]: D:/work/a.png "Shot"')).toEqual([
+			'file:///D:/work/a.png',
+		]);
+	});
+
+	it('keeps the shared definition for a link that uses it', () => {
+		const processor = unified().use(remarkParse).use(remarkWindowsImagePaths);
+		const tree = processor.runSync(
+			processor.parse('![p][shot] [l][shot]\n\n[shot]: D:/work/a.png')
+		) as Root;
+		const definitionUrls: string[] = [];
+		visit(tree, 'definition', (node: { url: string }) => {
+			definitionUrls.push(node.url);
+		});
+		const linkRefs: string[] = [];
+		visit(tree, 'linkReference', (node: { identifier: string }) => {
+			linkRefs.push(node.identifier);
+		});
+		expect(definitionUrls).toEqual(['D:/work/a.png']);
+		expect(linkRefs).toEqual(['shot']);
+	});
+
 	it('does not touch link destinations', () => {
 		const processor = unified().use(remarkParse).use(remarkWindowsImagePaths);
 		const tree = processor.runSync(processor.parse('[a](D:/work/a.png)')) as Root;
@@ -59,6 +82,7 @@ describe('chat preset with a Windows image path (#2067)', () => {
 		// Distinct files: LocalImage caches by path, so a shared one would skip the read.
 		['a bare drive path', '![preview](D:/work/project/screenshots/a.png)', 'a.png'],
 		['a file:/// URL', '![preview](file:///D:/work/project/screenshots/b.png)', 'b.png'],
+		['a reference image', '![preview][shot]\n\n[shot]: D:/work/project/screenshots/c.png', 'c.png'],
 	])('loads the image for %s', async (_label, content, file) => {
 		const { container } = render(<Markdown preset="chat" content={content} theme={mockTheme} />);
 		await waitFor(() =>

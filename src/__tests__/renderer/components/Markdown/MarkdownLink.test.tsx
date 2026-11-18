@@ -231,6 +231,17 @@ describe('createMarkdownLink - chat behavior (directExternal, accentText, contex
 		expect(onFileContextMenu.mock.calls[0][2]).toBe('Ritto-DNA-Report.pdf');
 	});
 
+	it('keeps a Windows drive path from a file:/// link absolute (#2067)', () => {
+		const onFileContextMenu = vi.fn();
+		const el = renderLink(chat({ projectRoot: 'C:/repo', onFileContextMenu }), {
+			href: 'file:///D:/shots/a.png',
+			children: 'x',
+		});
+		el.props.onContextMenu(makeEvent());
+		expect(onFileContextMenu.mock.calls[0][1]).toBe('D:/shots/a.png');
+		expect(onFileContextMenu.mock.calls[0][2]).toBe('a.png');
+	});
+
 	it('still opens the LINK context menu for a file:// link when no file handler is wired', () => {
 		const onLinkContextMenu = vi.fn();
 		const el = renderLink(chat({ onLinkContextMenu }), {
