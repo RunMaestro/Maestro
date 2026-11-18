@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { SshRemoteConfig } from '../../../types';
 import type { AgentRecord } from '../../store/records';
+import { LIFT_HOST_TOO_OLD } from '../../../federationCommands';
 import {
 	LiftRunError,
 	formatLiftPlan,
@@ -210,6 +211,36 @@ describe('runLift', () => {
 		});
 		expect(deps.setPointer).not.toHaveBeenCalled();
 		expect(conn.release).toHaveBeenCalled();
+	});
+
+	it('names the update to make when the host predates import_agent', async () => {
+		const conn = connectionWith({
+			ok: false,
+			error: { code: 'unsupported', message: 'too old', method: 'agents.import' },
+		});
+		const hostCallError = vi.fn(() => new Error('mapped'));
+		const { deps } = depsWith(sshAgent(), { hostCallError }, conn);
+		await expect(runLift('agent-1', {}, deps)).rejects.toThrow('mapped');
+		const [peer, error] = hostCallError.mock.calls[0] as unknown as [
+			string,
+			{ code: string; message: string },
+		];
+		expect(peer).toBe('build-box');
+		expect(error.code).toBe('unsupported');
+		expect(error.message).toContain('Update Maestro.app on build-box');
+		expect(error.message).toContain('maestro-cli remote-host install build-box --restart --force');
+		expect(deps.setPointer).not.toHaveBeenCalled();
+	});
+
+	it('reports a host that predates import_agent with its own code by default', async () => {
+		const conn = connectionWith({
+			ok: false,
+			error: { code: 'unsupported', message: 'too old', method: 'agents.import' },
+		});
+		const { deps } = depsWith(sshAgent(), {}, conn);
+		const error = await refusalOf(runLift('agent-1', {}, deps));
+		expect(error.code).toBe(LIFT_HOST_TOO_OLD);
+		expect(error.message).toContain('Update Maestro.app on build-box');
 	});
 
 	it("uses the caller's host error when given", async () => {

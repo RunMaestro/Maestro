@@ -135,7 +135,7 @@ const POST_OUTCOME_REFRESH_MS = 2_500;
 /** The longest group chat name. Agent names have their own limit (`MAX_AGENT_NAME_LENGTH`). */
 const MAX_CHAT_NAME_LENGTH = 100;
 
-const TOO_OLD_MESSAGE = 'The running Maestro is too old for the TUI; update the desktop app.';
+const TOO_OLD_MESSAGE = 'The running Maestro is too old for this request; update the desktop app.';
 
 /** The least time an `import_agent` gets: it carries every transcript the agent has. */
 const IMPORT_TIMEOUT_MS = 60_000;

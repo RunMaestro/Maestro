@@ -25,6 +25,12 @@ import type {
 export const FEDERATION_NOT_RUNNING_MESSAGE =
 	'Federation is not running yet. Wait for Maestro to finish starting, then try again.';
 
+/**
+ * The code a lift (Move to Host, `maestro-cli lift`) fails with when the host's Maestro predates
+ * `import_agent`: the remote needs a newer Maestro, which only the person there can install.
+ */
+export const LIFT_HOST_TOO_OLD = 'LIFT_HOST_TOO_OLD';
+
 export const FEDERATION_COMMAND = 'federation_command';
 export const FEDERATION_COMMAND_RESULT = 'federation_command_result';
 
