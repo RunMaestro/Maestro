@@ -240,7 +240,12 @@ export function createMarkdownLink(config: MarkdownLinkConfig) {
 						e.stopPropagation();
 						// Resolve to absolute path for file operations. A Windows drive
 						// path (`D:/a.png`, from `file:///D:/a.png`) is already absolute.
-						const absPath = isAbsolutePath(targetPath)
+						// Under a POSIX project root a leading `\` is part of a file name,
+						// not a root, so only `/` and a drive letter count as absolute.
+						const isAbsolute = projectRoot?.startsWith('/')
+							? targetPath.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(targetPath)
+							: isAbsolutePath(targetPath);
+						const absPath = isAbsolute
 							? targetPath
 							: projectRoot
 								? `${projectRoot}/${targetPath}`

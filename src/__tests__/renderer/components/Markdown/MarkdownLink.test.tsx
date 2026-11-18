@@ -242,6 +242,28 @@ describe('createMarkdownLink - chat behavior (directExternal, accentText, contex
 		expect(onFileContextMenu.mock.calls[0][2]).toBe('a.png');
 	});
 
+	it('resolves a backslash-leading file name against a POSIX project root', () => {
+		const onFileContextMenu = vi.fn();
+		const el = renderLink(chat({ projectRoot: '/Users/me/proj', onFileContextMenu }), {
+			href: '#',
+			'data-maestro-file': '\\notes.md',
+			children: 'x',
+		});
+		el.props.onContextMenu(makeEvent());
+		expect(onFileContextMenu.mock.calls[0][1]).toBe('/Users/me/proj/\\notes.md');
+	});
+
+	it('keeps a leading-backslash path absolute under a Windows project root', () => {
+		const onFileContextMenu = vi.fn();
+		const el = renderLink(chat({ projectRoot: 'C:\\repo', onFileContextMenu }), {
+			href: '#',
+			'data-maestro-file': '\\shared\\a.md',
+			children: 'x',
+		});
+		el.props.onContextMenu(makeEvent());
+		expect(onFileContextMenu.mock.calls[0][1]).toBe('\\shared\\a.md');
+	});
+
 	it('still opens the LINK context menu for a file:// link when no file handler is wired', () => {
 		const onLinkContextMenu = vi.fn();
 		const el = renderLink(chat({ onLinkContextMenu }), {
