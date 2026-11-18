@@ -236,6 +236,16 @@ describe('DispatchCallbackRegistry', () => {
 			expect(h.fires).toHaveLength(1);
 			expect(h.fires[0].tasksCompleted).toBe(3);
 			expect(h.fires[0].tasksTotal).toBe(3);
+			expect(h.fires[0].awaitedAutoRun).toBe(true);
+		});
+
+		it('does not mark a plain exit as having awaited Auto Run', () => {
+			register(h.registry);
+			h.registry.noteSpawn(KEY);
+			h.registry.noteExit(KEY, 0);
+			h.runTimers();
+			expect(h.fires).toHaveLength(1);
+			expect(h.fires[0].awaitedAutoRun).toBeUndefined();
 		});
 
 		it('parks when an Auto Run starts during the grace window', () => {

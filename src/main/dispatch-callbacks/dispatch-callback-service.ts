@@ -104,8 +104,11 @@ async function deliverCallback(
 	const { entry } = fire;
 	// Prefer the text the dispatched process itself emitted. The History
 	// fallback rarely has an entry yet: an interactive turn writes one only after
-	// its opt-in synopsis, which lands well after the callback fires.
-	let output: string | undefined = fire.output?.trim() ? fire.output : undefined;
+	// its opt-in synopsis, which lands well after the callback fires. An Auto Run
+	// callback is the reverse: the captured text is the turn's launch reply, and
+	// the batch summary is already in History when the batch reports done.
+	const captured = fire.output?.trim() ? fire.output : undefined;
+	let output: string | undefined = fire.awaitedAutoRun ? undefined : captured;
 	if (output === undefined) {
 		try {
 			output = await deps.getTargetOutput?.(entry.targetAgentId, entry.createdAt);
@@ -115,6 +118,7 @@ async function deliverCallback(
 				LOG_CONTEXT
 			);
 		}
+		if (!output) output = captured;
 	}
 
 	const prompt = renderCallbackPrompt({ fire, output });

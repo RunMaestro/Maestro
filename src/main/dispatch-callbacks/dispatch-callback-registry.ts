@@ -294,7 +294,7 @@ export class DispatchCallbackRegistry {
 		for (const entry of [...this.entries.values()]) {
 			if (entry.targetAgentId !== agentId) continue;
 			if (entry.state !== 'awaiting-autorun') continue;
-			this.fire(entry, entry.exitCode === 0 ? 'completed' : 'failed', progress);
+			this.fire(entry, entry.exitCode === 0 ? 'completed' : 'failed', progress, true);
 		}
 	}
 
@@ -392,7 +392,8 @@ export class DispatchCallbackRegistry {
 	private fire(
 		entry: DispatchCallbackEntry,
 		status: DispatchCallbackStatus,
-		progress?: { tasksCompleted?: number; tasksTotal?: number }
+		progress?: { tasksCompleted?: number; tasksTotal?: number },
+		awaitedAutoRun = false
 	): void {
 		if (this.isTerminal(entry)) return;
 		this.clearGraceTimer(entry.callbackId);
@@ -404,6 +405,7 @@ export class DispatchCallbackRegistry {
 			exitCode: entry.exitCode ?? null,
 			durationMs: entry.durationMs ?? this.now() - entry.createdAt,
 			...(entry.output ? { output: entry.output } : {}),
+			...(awaitedAutoRun ? { awaitedAutoRun: true } : {}),
 			...(progress?.tasksCompleted !== undefined
 				? { tasksCompleted: progress.tasksCompleted }
 				: {}),

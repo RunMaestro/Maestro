@@ -122,6 +122,41 @@ describe('dispatch callback service', () => {
 		expect(getTargetOutput).not.toHaveBeenCalled();
 	});
 
+	it('uses the Auto Run batch summary over the launch reply it captured', async () => {
+		disposeDispatchCallbacks();
+		const getTargetOutput = vi.fn(async () => 'batch summary: 3 tasks done');
+		initDispatchCallbacks({ enqueue, getTargetOutput });
+		armOne();
+		const tracker = getAutoRunStateTracker();
+		getDispatchCallbackRegistry()!.noteSpawn(KEY);
+		getDispatchCallbackRegistry()!.noteData(KEY, 'Starting Auto Run now.');
+		tracker.update('target', { isRunning: true, completedTasks: 0, totalTasks: 3 });
+		getDispatchCallbackRegistry()!.noteExit(KEY, 0);
+		await vi.advanceTimersByTimeAsync(5000);
+		expect(enqueue).not.toHaveBeenCalled();
+
+		tracker.update('target', null);
+		await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1));
+		expect(enqueue.mock.calls[0][1]).toContain('batch summary: 3 tasks done');
+		expect(enqueue.mock.calls[0][1]).not.toContain('Starting Auto Run now.');
+	});
+
+	it('falls back to the launch reply when an Auto Run left no History entry', async () => {
+		disposeDispatchCallbacks();
+		initDispatchCallbacks({ enqueue, getTargetOutput: async () => undefined });
+		armOne();
+		const tracker = getAutoRunStateTracker();
+		getDispatchCallbackRegistry()!.noteSpawn(KEY);
+		getDispatchCallbackRegistry()!.noteData(KEY, 'Starting Auto Run now.');
+		tracker.update('target', { isRunning: true, completedTasks: 0, totalTasks: 1 });
+		getDispatchCallbackRegistry()!.noteExit(KEY, 0);
+		await vi.advanceTimersByTimeAsync(5000);
+
+		tracker.update('target', null);
+		await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1));
+		expect(enqueue.mock.calls[0][1]).toContain('Starting Auto Run now.');
+	});
+
 	it('still delivers when reading the target output throws', async () => {
 		disposeDispatchCallbacks();
 		initDispatchCallbacks({
