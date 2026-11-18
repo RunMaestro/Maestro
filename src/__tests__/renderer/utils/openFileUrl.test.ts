@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { openFileUrl } from '../../../renderer/utils/openFileUrl';
+import {
+	fileUrlToPath,
+	openFileUrl,
+	windowsDrivePathToFileUrl,
+} from '../../../renderer/utils/openFileUrl';
 
 const openPath = vi.fn();
 
@@ -104,5 +108,39 @@ describe('openFileUrl', () => {
 	it('reports handled so callers can stop, even for the OS branch', () => {
 		// The return value is the "I took this" signal, not "I played it".
 		expect(openFileUrl('file:///tmp/report.pdf')).toBe(true);
+	});
+});
+
+describe('fileUrlToPath', () => {
+	it('drops the slash before a Windows drive letter (#2067)', () => {
+		expect(fileUrlToPath('file:///D:/work/a.png')).toBe('D:/work/a.png');
+		expect(fileUrlToPath('file:///c:/Users/me/My%20Shots/a.png')).toBe(
+			'c:/Users/me/My Shots/a.png'
+		);
+	});
+
+	it('keeps the leading slash of a POSIX path', () => {
+		expect(fileUrlToPath('file:///Users/me/a.png')).toBe('/Users/me/a.png');
+	});
+
+	it('returns null for anything that is not a file URL', () => {
+		expect(fileUrlToPath('D:/work/a.png')).toBeNull();
+	});
+});
+
+describe('windowsDrivePathToFileUrl', () => {
+	it('turns a drive path into a file:/// URL with forward slashes', () => {
+		expect(windowsDrivePathToFileUrl('D:/work/a.png')).toBe('file:///D:/work/a.png');
+		expect(windowsDrivePathToFileUrl('C:\\Users\\me\\a.png')).toBe('file:///C:/Users/me/a.png');
+	});
+
+	it('round-trips through fileUrlToPath', () => {
+		expect(fileUrlToPath(windowsDrivePathToFileUrl('D:/work/a.png')!)).toBe('D:/work/a.png');
+	});
+
+	it('returns null for a path without a drive letter', () => {
+		expect(windowsDrivePathToFileUrl('/Users/me/a.png')).toBeNull();
+		expect(windowsDrivePathToFileUrl('https://example.com/a.png')).toBeNull();
+		expect(windowsDrivePathToFileUrl('D:relative.png')).toBeNull();
 	});
 });
