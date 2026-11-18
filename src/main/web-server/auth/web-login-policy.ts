@@ -80,13 +80,21 @@ export interface WebRequestAuth {
 	method?: 'device-pairing';
 }
 
+/** Shared only by one synchronous broadcast delivery, never across requests or yields. */
+export interface WebLoginPolicyContext {
+	webLoginRequired?: boolean;
+}
+
 /**
  * One answer per request. `user` is set whenever a valid session cookie is
  * present, even when login is not required, so attribution keeps working for
  * a browser that signed in before the gate was switched off. A request is
  * AUTHORIZED when `!required || cli || user`.
  */
-export function resolveWebRequestAuth(request: Pick<FastifyRequest, 'headers'>): WebRequestAuth {
+export function resolveWebRequestAuth(
+	request: Pick<FastifyRequest, 'headers'>,
+	context?: WebLoginPolicyContext
+): WebRequestAuth {
 	const device = deviceAuthorizers.get(request);
 	if (device)
 		return {
@@ -99,7 +107,7 @@ export function resolveWebRequestAuth(request: Pick<FastifyRequest, 'headers'>):
 	const sessionId = readSessionCookie(request);
 	const user = getWebUserStore().resolveSession(sessionId);
 	return {
-		required: isWebLoginEnabled(),
+		required: context ? (context.webLoginRequired ??= isWebLoginEnabled()) : isWebLoginEnabled(),
 		user,
 		sessionId: user ? sessionId : undefined,
 		cli: isCliRequest(request),

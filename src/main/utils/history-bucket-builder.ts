@@ -17,8 +17,10 @@
 import type { HistoryEntry } from '../../shared/types';
 import type { CachedGraphBucket } from './history-bucket-cache';
 
-/** Synthetic key for entries that have no `hostname` field (i.e. local). */
-export const LOCAL_HOST_AGG_KEY = '__local__';
+import { LOCAL_HOST_AGG_KEY } from '../../shared/history';
+
+/** Synthetic key for entries that have no `hostname` field (i.e. local). Defined with the list filter. */
+export { LOCAL_HOST_AGG_KEY };
 
 export interface BucketAggregateResult {
 	buckets: CachedGraphBucket[];
@@ -231,5 +233,54 @@ export function buildBucketAggregate(
 		cueCount,
 		agentCount,
 		hostCounts,
+	};
+}
+
+/**
+ * Aggregated graph data returned by `history:getGraphData` and
+ * `director-notes:getGraphData`. Buckets are computed over the full source
+ * history (not the renderer's lookback window) so the graph view stays
+ * "all-encompassing" while the entry list paginates beneath it.
+ */
+export interface HistoryGraphData {
+	buckets: CachedGraphBucket[];
+	bucketCount: number;
+	earliestTimestamp: number;
+	latestTimestamp: number;
+	totalCount: number;
+	autoCount: number;
+	userCount: number;
+	cueCount: number;
+	agentCount: number;
+	/**
+	 * Per-host entry counts in the same window the buckets cover. Key is
+	 * the entry's `hostname`, or `"__local__"` for entries with no
+	 * hostname. Lookback-aware via the same `lookbackMs` that bucketing
+	 * uses, so flipping the renderer's lookback selector updates these
+	 * numbers too.
+	 */
+	hostCounts: Record<string, number>;
+	/** True when served from the disk cache (diagnostics only). */
+	cached: boolean;
+}
+
+/** The graph data a renderer draws from one aggregate. */
+export function aggregateToGraphData(
+	agg: BucketAggregateResult,
+	bucketCount: number,
+	cached: boolean
+): HistoryGraphData {
+	return {
+		buckets: agg.buckets,
+		bucketCount,
+		earliestTimestamp: agg.earliestTimestamp,
+		latestTimestamp: agg.latestTimestamp,
+		totalCount: agg.totalCount,
+		autoCount: agg.autoCount,
+		userCount: agg.userCount,
+		cueCount: agg.cueCount,
+		agentCount: agg.agentCount,
+		hostCounts: agg.hostCounts,
+		cached,
 	};
 }

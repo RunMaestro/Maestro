@@ -36,6 +36,7 @@ import {
 } from '../../../shared/maestro-lib/harness/acp/interactions';
 import { harnessInteractionBroker } from '../../harness-control/integration';
 import type { HarnessControlCapabilities } from '../../../shared/harness-control/types';
+import { parseBase64DataUrl } from '../../../shared/dataUrl';
 
 const LOG_CONTEXT = 'AcpServer';
 
@@ -312,11 +313,11 @@ class AcpTurn {
 	private promptContent(): acp.ContentBlock[] {
 		const content: acp.ContentBlock[] = [{ type: 'text', text: this.config.prompt ?? '' }];
 		for (const image of this.config.images ?? []) {
-			const match = /^data:([^;]+);base64,(.+)$/.exec(image);
-			if (!match || !this.capabilities.imagePrompts) {
+			const parsed = parseBase64DataUrl(image);
+			if (!parsed || !this.capabilities.imagePrompts) {
 				throw new Error('ACP agent does not advertise image prompt support');
 			}
-			content.push({ type: 'image', data: match[2], mimeType: match[1] });
+			content.push({ type: 'image', data: parsed.base64, mimeType: parsed.mediaType });
 		}
 		return content;
 	}

@@ -11,23 +11,29 @@ The wizard (`src/renderer/components/Wizard/`) guides new users through first-ru
 ```
 src/renderer/components/Wizard/
 ├── MaestroWizard.tsx           # Main orchestrator, screen transitions
-├── WizardContext.tsx           # State management (useReducer pattern)
+├── WizardContext.tsx           # Provider + hook; re-exports the constants below
+├── WizardContext/              # reducer.ts, types.ts, constants.ts (WIZARD_TOTAL_STEPS, STEP_INDEX), persistence.ts, navigation.ts, messageIds.ts
 ├── WizardResumeModal.tsx       # Resume incomplete wizard dialog
 ├── WizardExitConfirmModal.tsx  # Exit confirmation dialog
+├── ExistingDocsModal.tsx       # Existing playbook choice (ExistingAutoRunDocsModal.tsx beside it)
 ├── ScreenReaderAnnouncement.tsx # Accessibility announcements
-├── screens/                    # Individual wizard steps
-│   ├── AgentSelectionScreen.tsx    # Step 1: Choose AI agent
-│   ├── DirectorySelectionScreen.tsx # Step 2: Select project folder
-│   ├── ConversationScreen.tsx      # Step 3: AI project discovery
-│   └── PhaseReviewScreen.tsx       # Step 4: Review generated plan
+├── screens/                    # One folder per step: <Name>Screen.tsx + components/, hooks/, utils/, types.ts
+│   ├── AgentSelectionScreen/       # Step 1: Choose AI agent
+│   ├── DirectorySelectionScreen/   # Step 2: Select project folder
+│   ├── ConversationScreen/         # Step 3: AI project discovery
+│   ├── PreparingPlanScreen/        # Step 4: Document generation (hooks/usePreparingPlanGeneration.ts)
+│   └── PhaseReviewScreen/          # Step 5: Review generated plan (DocumentReview.tsx)
+├── shared/                     # PlannerModelBar.tsx + usePlannerModel.ts, projectIdentity.ts, wizardHelpers.ts, DocumentEditor/, DocumentSelector.tsx, WizardMarkdown.tsx, TypingIndicator.tsx
 ├── services/                   # Business logic
 │   ├── wizardPrompts.ts           # System prompts, response parser
 │   ├── conversationManager.ts     # AI conversation handling
-│   └── phaseGenerator.ts          # Document generation
+│   ├── phaseGenerator.ts          # Document generation
+│   └── austinFacts.ts, fillerPhrases.ts, shuffle.ts, wizardErrorDetection.ts
 └── tour/                       # Post-setup walkthrough
     ├── TourOverlay.tsx            # Spotlight overlay
     ├── TourStep.tsx               # Step tooltip
-    ├── tourSteps.ts               # Step definitions
+    ├── TourWelcome.tsx            # Welcome card
+    ├── tourSteps.tsx              # Step definitions
     └── useTour.tsx                # Tour state management
 ```
 
@@ -36,9 +42,10 @@ src/renderer/components/Wizard/
 1. **Agent Selection** → Select available AI (Claude Code, etc.). The name is OPTIONAL
 2. **Directory Selection** → Choose project folder, validates Git repo status. Also fills the agent name and offers "skip the playbook"
 3. **Conversation** → With files in the folder the AGENT opens; otherwise it asks a clarifying question. Builds a confidence score (0-100)
-4. **Phase Review** → View/edit generated Phase 1 document, choose to start tour
+4. **Preparing Plan** → Generates the Auto Run documents (`usePreparingPlanGeneration`)
+5. **Phase Review** → View/edit generated Phase 1 document, choose to start tour
 
-When confidence reaches 80+ and agent signals "ready", user proceeds to Phase Review where Auto Run documents are generated and saved to `.maestro/playbooks/initiation/`. The `initiation/` subfolder keeps wizard-generated documents separate from user-created playbooks.
+When confidence reaches 80+ and agent signals "ready", user proceeds to Preparing Plan, where Auto Run documents are generated and saved to `.maestro/playbooks/Initiation/`. The `Initiation/` subfolder keeps wizard-generated documents separate from user-created playbooks.
 
 #### Agent name vs project name (issue #1225)
 
@@ -113,7 +120,7 @@ const hasState = await hasResumeState();
 const savedState = await loadResumeState();
 
 // Clear saved state
-clearResumeState();
+await clearResumeState();
 ```
 
 #### State Lifecycle
@@ -134,14 +141,14 @@ The Wizard maintains two types of state:
 
 **State Save Triggers:**
 
-- Auto-save: When `currentStep` changes (step > 1) - `WizardContext.tsx` useEffect with `saveResumeState()`
-- Manual save: User clicks "Save & Exit" - `MaestroWizard.tsx` `handleConfirmExit()`
+- Auto-save: When `currentStep` changes (step > 1) - `WizardContext.tsx` useEffect calling `setWizardResumeStateAsync(...)`
+- Manual save: User clicks "Exit & Save Progress" - `saveStateForResume()` via `MaestroWizard.tsx` `handleConfirmExit()`
 
 **State Clear Triggers:**
 
-- Wizard completion: `App.tsx` wizard completion handler + `WizardContext.tsx` `COMPLETE_WIZARD` action
-- User quits: "Quit without saving" button - `MaestroWizard.tsx` `handleQuitWithoutSaving()`
-- User starts fresh: "Start Fresh" in resume modal - `App.tsx` resume handlers
+- Wizard completion: `completeWizard()` in `WizardContext.tsx` clears the resume state, then dispatches `SET_COMPLETE` (the reducer never touches persistence). The completion handler is `handleWizardComplete` in `hooks/wizard/useWizardHandlers.ts`
+- User quits: "Just Quit" button - `MaestroWizard.tsx` `handleQuitWithoutSaving()`
+- User starts fresh: "Start Fresh" in resume modal - `handleWizardStartFresh` in `useWizardHandlers.ts` (only `openWizardModal` lives in `App.tsx`)
 
 **Opening Wizard Logic:**
 The `openWizard()` function in `WizardContext.tsx` handles state initialization:
@@ -168,37 +175,38 @@ The tour highlights UI elements with spotlight cutouts:
 
 ```typescript
 // Add data-tour attribute to spotlight elements
-<div data-tour="autorun-panel">...</div>
+<div data-tour="autorun-tab">...</div>
 
-// Tour steps defined in tourSteps.ts
+// Tour steps defined in tourSteps.tsx
 {
   id: 'autorun-panel',
-  title: 'Auto Run in Action',
-  description: '...',
-  selector: '[data-tour="autorun-panel"]',
+  title: 'Auto Run Panel',
+  description: '...',          // post-wizard wording
+  descriptionGeneric: '...',   // wording when launched from the hamburger menu
+  selector: '[data-tour="autorun-tab"]',
   position: 'left',  // tooltip position
   uiActions: [       // UI state changes before spotlight
     { type: 'setRightTab', value: 'autorun' },
+    { type: 'openRightPanel' },
   ],
 }
 ```
 
 ### Customization Points
 
-| What                            | Where                                                                    |
-| ------------------------------- | ------------------------------------------------------------------------ |
-| Add wizard step                 | `WizardContext.tsx` (WIZARD_TOTAL_STEPS, WizardStep type, STEP_INDEX)    |
-| Modify wizard prompts           | `src/prompts/wizard-*.md` (content), `services/wizardPrompts.ts` (logic) |
-| Change confidence threshold     | `READY_CONFIDENCE_THRESHOLD` in wizardPrompts.ts (default: 80)           |
-| Add tour step                   | `tour/tourSteps.ts` array                                                |
-| Modify Auto Run document format | `src/prompts/wizard-document-generation.md`                              |
-| Change wizard keyboard shortcut | `shortcuts.ts` → `openWizard`                                            |
+| What                            | Where                                                                                                    |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Add wizard step                 | `WizardContext/constants.ts` (WIZARD_TOTAL_STEPS = 5, STEP_INDEX), `WizardContext/types.ts` (WizardStep) |
+| Modify wizard prompts           | `src/prompts/wizard-*.md` (content), `services/wizardPrompts.ts` (logic)                                 |
+| Change confidence threshold     | `READY_CONFIDENCE_THRESHOLD` in wizardPrompts.ts (default: 80)                                           |
+| Add tour step                   | `tour/tourSteps.tsx` array                                                                               |
+| Modify Auto Run document format | `src/prompts/wizard-document-generation.md`                                                              |
+| Change wizard keyboard shortcut | `shortcuts.ts` → `openWizard`                                                                            |
 
 ### Related Settings
 
 ```typescript
-// In useSettings.ts
-wizardCompleted: boolean; // First wizard completion
+// In settingsStore.ts
 tourCompleted: boolean; // First tour completion
 firstAutoRunCompleted: boolean; // Triggers celebration modal
 ```
@@ -211,8 +219,8 @@ The Inline Wizard creates Auto Run Playbook documents from within an existing ag
 
 ### Prerequisites
 
-- Auto Run document folder must be configured for the agent
-- If not set, `/wizard` errors with instructions to configure it
+- An active agent with an active AI tab (`handleWizardCommand` checks nothing else)
+- An Auto Run folder is not required: when none is configured it falls back to `<project>/.maestro/playbooks` (`resolveAutoRunFolderPath` in `hooks/batch/inlineWizard/documents.ts`)
 
 ### User Flow
 
@@ -256,13 +264,14 @@ Every exit therefore goes through `flattenWizardIntoTab(tab, { summary? })` in
 `src/renderer/utils/tabHelpers/index.ts`, which appends the transcript to `tab.logs`,
 promotes `wizardState.agentSessionId` onto `tab.agentSessionId` so the plain tab
 can keep talking to the same provider context, and only then drops the wizard.
-**Never write `wizardState: undefined` by hand.** The three exits:
+**Never write `wizardState: undefined` by hand.** The four exits:
 
-| Exit                                       | Handler                              | Closing entry                     |
-| ------------------------------------------ | ------------------------------------ | --------------------------------- |
-| Wizard completes                           | `completeWizardImpl`                 | "Wizard Complete" + next steps    |
-| Exit Wizard button / cancel doc generation | `handleExitWizard`                   | one-line "conversation preserved" |
-| App restart                                | restart sweep in `useWizardHandlers` | one-line "did not survive"        |
+| Exit                                       | Handler                                                    | Closing entry                     |
+| ------------------------------------------ | ---------------------------------------------------------- | --------------------------------- |
+| Wizard completes                           | `completeWizardImpl`                                       | "Wizard Complete" + next steps    |
+| Exit Wizard button / cancel doc generation | `handleExitWizard`                                         | one-line "conversation preserved" |
+| App restart                                | restart sweep in `useWizardHandlers`                       | one-line "did not survive"        |
+| Any exit that dropped the hook state       | active-tab sync effect in `useWizardHandlers` (safety net) | one-line "Wizard mode ended..."   |
 
 The restart case exists because `tab.wizardState` persists to disk but
 `useInlineWizard`'s `tabStates` map does not, so every wizard tab present at load
@@ -305,20 +314,23 @@ Two rules follow:
 
 ```
 src/renderer/components/InlineWizard/
-├── WizardConversationView.tsx  # Conversation phase UI
+├── WizardConversationView.tsx  # Conversation phase UI (WizardMessageBubble, WizardConfidenceGauge, WizardModePrompt, WizardPill)
 ├── WizardInputPanel.tsx        # Input with confidence gauge
-├── DocumentGenerationView.tsx  # Generation phase with Austin Facts
-└── ... (see index.ts for full documentation)
+├── WizardExitConfirmDialog.tsx # Exit confirmation (takes willCloseTab)
+├── DocumentGenerationView/     # Generation phase: DocumentGenerationView.tsx + components/, hooks/, utils/
+├── AustinFactsDisplay.tsx      # Austin Facts shown while generating; StreamingDocumentPreview, GenerationCompleteOverlay beside it
+└── index.ts
 
-src/renderer/hooks/batch/useInlineWizard.ts    # Main hook
+src/renderer/hooks/batch/useInlineWizard.ts    # Thin composer over hooks/batch/inlineWizard/
+src/renderer/hooks/batch/inlineWizard/         # conversationActions, generationActions, lifecycleActions, simpleActions, documents, useInlineWizardTabState (owns the tabStates map)
 src/renderer/contexts/InlineWizardContext.tsx  # State provider
 src/renderer/utils/wizardActivity.ts           # Live per-tab activity + agent roll-up
 ```
 
 ### Customization Points
 
-| What                         | Where                                                  |
-| ---------------------------- | ------------------------------------------------------ |
-| Modify inline wizard prompts | `src/prompts/wizard-*.md`                              |
-| Change confidence threshold  | `READY_CONFIDENCE_THRESHOLD` in wizardPrompts.ts       |
-| Modify generation UI         | `DocumentGenerationView.tsx`, `AustinFactsDisplay.tsx` |
+| What                         | Where                                                                                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Modify inline wizard prompts | `src/prompts/wizard-*.md`                                                                                                                                    |
+| Change confidence threshold  | `READY_CONFIDENCE_THRESHOLD` in `src/renderer/services/inlineWizardConversation.ts` (a duplicate copy sits in `WizardConversationView.tsx`; keep them equal) |
+| Modify generation UI         | `DocumentGenerationView/`, `AustinFactsDisplay.tsx`                                                                                                          |

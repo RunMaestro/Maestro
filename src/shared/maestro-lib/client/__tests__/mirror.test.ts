@@ -146,6 +146,14 @@ describe('ClientMirror', () => {
 			});
 		});
 
+		it("carries a headless host's turn start time onto a known tab", () => {
+			mirror.mergeTabs('a', [{ id: 'a-t1', state: 'busy', thinkingStartTime: 1234 }], 'a-t1');
+			expect(mirror.visibleTabs('a')?.[0]).toMatchObject({
+				state: 'busy',
+				thinkingStartTime: 1234,
+			});
+		});
+
 		it('reports an unknown tab instead of inventing a record', () => {
 			const { unknownTab } = mirror.mergeTabs('a', [{ id: 'a-t1' }, { id: 'new-tab' }]);
 			expect(unknownTab).toBe(true);

@@ -20,6 +20,7 @@ import {
 } from '../../../shared/envVarCatalog';
 import type { Theme } from '../../types';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { isImeComposing } from '../../utils/ime';
 
 export interface EnvVarKeyInputProps {
 	theme: Theme;
@@ -117,7 +118,7 @@ export function EnvVarKeyInput({
 	};
 
 	const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-		if (event.key === 'Escape' && open) {
+		if (event.key === 'Escape' && open && !isImeComposing(event)) {
 			// Swallowed on purpose: closing the list must not also close the modal
 			// the row lives in.
 			event.preventDefault();
@@ -135,7 +136,7 @@ export function EnvVarKeyInput({
 		} else if (event.key === 'ArrowUp') {
 			event.preventDefault();
 			setActiveIndex((index) => (index - 1 + suggestions.length) % suggestions.length);
-		} else if (event.key === 'Enter') {
+		} else if (event.key === 'Enter' && !isImeComposing(event)) {
 			event.preventDefault();
 			commitSuggestion(suggestions[activeIndex].key);
 		} else if (event.key === 'Tab') {

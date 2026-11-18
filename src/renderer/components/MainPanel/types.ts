@@ -38,6 +38,8 @@ export interface MainPanelHandle {
 	focusBrowserAddressBar: () => void;
 	/** Open the in-page find bar in the active browser tab */
 	openBrowserFind: () => void;
+	/** Turn Design Mode on or off in the active browser tab */
+	toggleBrowserDesignMode: () => void;
 	/** Navigate back in the active browser tab's history */
 	browserBack: () => void;
 	/** Navigate forward in the active browser tab's history */
@@ -147,7 +149,7 @@ export interface MainPanelProps {
 	onUploadFiles?: (files: File[]) => void;
 	getContextColor: (usage: number, theme: Theme) => string;
 	setActiveSessionId: (id: string) => void;
-	onDeleteLog?: (logId: string) => number | null;
+	onDeleteLog?: (logId: string) => number | null | Promise<number | null>;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
 	onMergeQueuedItem?: (itemId: string) => void;

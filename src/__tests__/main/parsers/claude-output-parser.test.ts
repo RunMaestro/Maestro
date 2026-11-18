@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ClaudeOutputParser } from '../../../main/parsers/claude-output-parser';
 import { clearRememberedClaudeSessionCosts } from '../../../shared/claudeCostTracker';
+import { classifyRetryableError } from '../../../shared/retryClassification';
 
 describe('ClaudeOutputParser', () => {
 	const parser = new ClaudeOutputParser();
@@ -1750,6 +1751,107 @@ describe('ClaudeOutputParser failed results (is_error: true)', () => {
 			message: 'Claude Code stopped after reaching its maximum number of turns.',
 			recoverable: true,
 		});
+	});
+
+	it.each([
+		['tui_exited', /quit before the turn finished/, 'unknown'],
+		['timeout', /stopped producing output for too long/, 'network_error'],
+		['ready_timeout', /did not finish starting up in time/, 'network_error'],
+		['first_byte_timeout', /never began the turn/, 'network_error'],
+		['prompt_truncated', /dropped part of the prompt/, 'unknown'],
+		['workspace_untrusted', /not been trusted to work in this folder/, 'unknown'],
+		['add_dir_untrusted', /asked to add a directory this agent does not grant/, 'unknown'],
+		['startup_dialog_blocked', /startup prompt Maestro does not know how to answer/, 'unknown'],
+	])(
+		'names the maestro-p failure %s instead of the generic subtype text (#1860)',
+		(code, text, type) => {
+			const error = parser.detectErrorFromParsed({
+				type: 'result',
+				subtype: 'error_during_execution',
+				session_id: 'sess-1',
+				duration_ms: 40_000,
+				is_error: true,
+				error: code,
+			});
+
+			expect(error).toMatchObject({ type, recoverable: true });
+			expect(error?.message).toMatch(text);
+		}
+	);
+
+	it.each([
+		['timeout', 'availability'],
+		['ready_timeout', 'availability'],
+		['first_byte_timeout', 'availability'],
+		['prompt_truncated', null],
+		['tui_exited', null],
+	])('hands maestro-p failure %s to Agent Resilience as %s', (code, strategy) => {
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_during_execution',
+			session_id: 'sess-1',
+			is_error: true,
+			error: code,
+		});
+
+		expect(error).not.toBeNull();
+		expect(classifyRetryableError(error!)).toBe(strategy);
+	});
+
+	it('shows the screen maestro-p attached under the failure message', () => {
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_during_execution',
+			session_id: 'sess-1',
+			is_error: true,
+			error: 'tui_exited',
+			last_screen: 'Adding a new directory:\n\n/work/shared\n\n❯ No, exit\n  Yes, add it',
+		});
+
+		expect(error?.message).toMatch(/^Claude Code quit before the turn finished\./);
+		expect(error?.message).toContain('What Claude Code last showed:');
+		expect(error?.message).toContain('❯ No, exit');
+		expect(error?.message).not.toContain('Nothing it printed');
+	});
+
+	it('never lets the attached screen pick the error type or a retry', () => {
+		// A screen can show any text an agent printed, including retry words.
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_during_execution',
+			session_id: 'sess-1',
+			is_error: true,
+			error: 'tui_exited',
+			last_screen: 'API Error: 529 Overloaded. Rate limit reached, try again later.',
+		});
+
+		expect(error?.type).toBe('unknown');
+		expect(classifyRetryableError(error!)).toBeNull();
+	});
+
+	it("classifies maestro-p's missing-transcript failure as session_not_found", () => {
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_during_execution',
+			session_id: 'sess-1',
+			is_error: true,
+			error: 'No conversation found with session ID: sess-1',
+		});
+
+		expect(error?.type).toBe('session_not_found');
+	});
+
+	it('shows an unlisted error code beside the subtype text', () => {
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_during_execution',
+			is_error: true,
+			error: 'interrupted',
+		});
+
+		expect(error?.message).toBe(
+			'Claude Code stopped with an error before finishing the turn. (interrupted)'
+		);
 	});
 
 	it('does not show the internal diagnostics array as the message', () => {

@@ -71,7 +71,7 @@ describe('deriveWatchState', () => {
 		expect(deriveWatchState([], targets, []).watched).toHaveLength(0);
 	});
 
-	it('offers top-level agents with an AI tab, excluding Pianola, children, and already-watched', () => {
+	it('offers top-level agents including legacy watches and agents without a chat', () => {
 		const sessions = [
 			session({
 				id: 'a',
@@ -101,33 +101,33 @@ describe('deriveWatchState', () => {
 		];
 		const targets = [target({ id: 't1', agentId: 'watched', tabId: 'w1' })];
 		const { watchable } = deriveWatchState(sessions, targets, []);
-		expect(watchable.map((w) => w.agentId)).toEqual(['a']);
-		expect(watchable[0]).toMatchObject({ agentId: 'a', tabId: 'a1', agentName: 'A' });
+		expect(watchable.map((w) => w.agentId)).toEqual(['a', 'watched', 'notab']);
+		expect(watchable[0]).toEqual({ agentId: 'a', agentName: 'A' });
 	});
 
-	it('targets the active AI tab when set, else the first AI tab', () => {
-		const withActive = [
-			session({
-				id: 'a',
-				aiTabs: [
-					{ id: 'a1', name: 'x' },
-					{ id: 'a2', name: 'y' },
-				] as Session['aiTabs'],
-				activeTabId: 'a2',
+	it('does not offer selected, excluded, or group-covered agents even when the scope is paused', () => {
+		const sessions = [
+			session({ id: 'a' }),
+			session({ id: 'b', groupId: 'group' }),
+			session({ id: 'c' }),
+			session({ id: 'other' }),
+		];
+		const targets = [
+			target({
+				id: 'scope',
+				kind: 'watch-scope',
+				enabled: false,
+				selection: {
+					mode: 'agents-and-groups',
+					label: 'Paused',
+					agentIds: ['a'],
+					groupIds: ['group'],
+					excludedAgentIds: ['c'],
+				},
 			}),
 		];
-		expect(deriveWatchState(withActive, [], []).watchable[0].tabId).toBe('a2');
-		// activeTabId points at a non-AI (file/terminal) tab: fall back to the first AI tab.
-		const nonAiActive = [
-			session({
-				id: 'b',
-				aiTabs: [
-					{ id: 'b1', name: 'x' },
-					{ id: 'b2', name: 'y' },
-				] as Session['aiTabs'],
-				activeTabId: 'file-xyz',
-			}),
-		];
-		expect(deriveWatchState(nonAiActive, [], []).watchable[0].tabId).toBe('b1');
+		expect(deriveWatchState(sessions, targets, []).watchable).toEqual([
+			{ agentId: 'other', agentName: 'other' },
+		]);
 	});
 });

@@ -12,6 +12,7 @@ import {
 import { upsertAgentRun, appendAgentRunEvent } from '../../../cli/services/agent-run-store';
 import { SIGINT_EXIT_CODE } from '../../../cli/utils/interrupt';
 import type { AgentRun } from '../../../shared/agent-run';
+import { AGENT_IDS } from '../../../shared/agentIds';
 
 vi.mock('../../../cli/services/agent-run-store', () => ({
 	upsertAgentRun: vi.fn(),
@@ -278,4 +279,95 @@ describe('captureCliRun agent id', () => {
 			expect(run).not.toHaveProperty('agentId');
 		}
 	});
+});
+
+/**
+ * Grok capture metadata on the CLI seam (`send`, Auto Run, goal
+ * runs). Completeness is generated from `AGENT_IDS`, not from the resolver's
+ * allowlist; both snapshots of a run carry the same provider.
+ */
+describe('captureCliRun Grok capture metadata', () => {
+	beforeEach(() => {
+		vi.mocked(upsertAgentRun).mockReset();
+		vi.mocked(appendAgentRunEvent).mockReset();
+	});
+
+	const providersOf = () =>
+		vi.mocked(upsertAgentRun).mock.calls.map(([run]) => (run as AgentRun).provider);
+
+	it('opens and settles a Grok send as grok, with its agent, session, source and usage', async () => {
+		const usageStats = {
+			inputTokens: 40,
+			outputTokens: 12,
+			cacheReadInputTokens: 8,
+			cacheCreationInputTokens: 0,
+			totalCostUsd: 0,
+			contextWindow: 256000,
+		};
+		await captureCliRun(
+			{
+				agentId: 'agent-g',
+				sessionId: 'grok-native-1',
+				toolType: 'grok',
+				cwd: '/w',
+				source: 'cli:send',
+			},
+			async () => ({ success: true, outcome: 'completed' as const, usageStats }),
+			settlementFromAgentResult
+		);
+
+		const runs = vi.mocked(upsertAgentRun).mock.calls.map(([run]) => run as AgentRun);
+		expect(runs.map((run) => [run.status, run.provider])).toEqual([
+			['running', 'grok'],
+			['completed', 'grok'],
+		]);
+		for (const run of runs) {
+			expect(run).toMatchObject({
+				agentId: 'agent-g',
+				sessionId: 'grok-native-1',
+				source: 'cli:send',
+			});
+		}
+		expect(runs[1].usage).toEqual(usageStats);
+	});
+
+	it.each(AGENT_IDS.filter((id) => id !== 'terminal'))(
+		'records a %s run as its registered ID on both snapshots',
+		async (id) => {
+			await captureCliRun(
+				{ toolType: id, cwd: '/w', source: 'cli:autorun' },
+				async () => ({ success: true }),
+				settlementFromAgentResult
+			);
+			expect(providersOf()).toEqual([id, id]);
+		}
+	);
+
+	it.each([
+		['interrupted', 'cancelled'],
+		['crashed', 'failed'],
+	] as const)('a Grok turn that ends %s settles %s and stays grok', async (outcome, status) => {
+		await captureCliRun(
+			{ toolType: ' Grok ', cwd: '/w', source: 'cli:goal' },
+			async () => ({ success: false, outcome }),
+			settlementFromAgentResult
+		);
+		const runs = vi.mocked(upsertAgentRun).mock.calls.map(([run]) => run as AgentRun);
+		expect(runs.map((run) => [run.status, run.provider])).toEqual([
+			['running', 'grok'],
+			[status, 'grok'],
+		]);
+	});
+
+	it.each(['terminal', 'grok-cli', 'future-agent'])(
+		'records %s, which is not a registered provider, as unknown',
+		async (toolType) => {
+			await captureCliRun(
+				{ toolType, cwd: '/w', source: 'cli:send' },
+				async () => ({ success: true }),
+				settlementFromAgentResult
+			);
+			expect(providersOf()).toEqual(['unknown', 'unknown']);
+		}
+	);
 });

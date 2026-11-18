@@ -29,8 +29,8 @@ import { getBusyTabs } from './tabHelpers';
 export function buildThinkingItems(
 	sessions: Session[],
 	ownsSession?: (sessionId: string) => boolean
-): ThinkingItem[] {
-	const items: ThinkingItem[] = [];
+): ThinkingItem<Session>[] {
+	const items: ThinkingItem<Session>[] = [];
 	for (const session of sessions) {
 		// Multi-window: skip agents whose tab strip lives in another window so this
 		// window's pill never surfaces an agent it does not own.

@@ -11,7 +11,12 @@ import {
 // The roster rules (who is mentionable, what a name resolves to, how a filter
 // ranks) moved to maestro-lib so the TUI composer reads the same ones. They are
 // re-exported here so renderer import sites keep working.
-export { buildAgentMentionSuggestions, buildKnownMentionNameSet, resolveMentionedTargetSessionIds };
+export {
+	buildAgentMentionSuggestions,
+	buildKnownMentionNameSet,
+	filterAgentMentionSuggestions,
+	resolveMentionedTargetSessionIds,
+};
 
 /** A picker row for a renderer agent: the library's row, typed with the renderer's provider union. */
 export type AgentMentionSuggestion = LibAgentMentionSuggestion<ToolType>;

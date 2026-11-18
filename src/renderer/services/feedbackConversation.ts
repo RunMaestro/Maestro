@@ -9,7 +9,12 @@
 
 import type { ToolType } from '../types';
 import { stripAnsiCodes } from '../../shared/stringUtils';
-import type { FeedbackAccount } from '../../shared/feedbackAccounts';
+import {
+	feedbackInterviewRouteProblem,
+	isFeedbackProvider,
+	type FeedbackAccount,
+} from '../../shared/feedbackAccounts';
+import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import { redactSecrets } from '../../shared/redactSecrets';
 import { MAX_FEEDBACK_FIELD_LENGTH } from '../../shared/feedback';
 
@@ -63,8 +68,23 @@ export interface FeedbackConversationConfig {
 	 * provider-level set, the way an agent's own env does, so the chat signs in
 	 * as that account rather than the provider's default login.
 	 */
-	account?: Pick<FeedbackAccount, 'env' | 'customPath' | 'sshRemoteId' | 'remoteCwd'>;
+	account?: FeedbackConversationAccount;
 }
+
+/**
+ * The account a turn runs as. The picker hands its whole `FeedbackAccount`, so
+ * the checked status rides along: an account main found `unsupported` (no
+ * qualified read-only interview route) is refused here, never run as something
+ * else. `model` is the selected model, passed through unchanged; absent, the
+ * provider's configured model applies as it does for every other spawn.
+ */
+export type FeedbackConversationAccount = Pick<
+	FeedbackAccount,
+	'env' | 'customPath' | 'sshRemoteId' | 'remoteCwd'
+> &
+	Partial<Pick<FeedbackAccount, 'key' | 'label' | 'status' | 'statusDetail'>> & {
+		model?: string;
+	};
 
 /** A diagnostic command the feedback agent ran while investigating. */
 export interface FeedbackDiagnostic {
@@ -93,6 +113,13 @@ export interface FeedbackTurnResult {
 	failed: boolean;
 	/** Why it failed, with the tail of the agent's output when there was any. */
 	error?: string;
+	/**
+	 * The turn was refused before any process started: the selected provider
+	 * has no qualified read-only interview route, or main marked the account
+	 * unsupported. Nothing ran and no other provider or account was put in its
+	 * place; whether to offer another one is the caller's decision.
+	 */
+	refused?: boolean;
 }
 
 // ============================================================================
@@ -113,7 +140,39 @@ const PERMISSION_BYPASS_FLAGS = new Set([
 	'--dangerously-skip-permissions',
 	'--dangerously-bypass-approvals-and-sandbox',
 	'--yolo',
+	'--always-approve',
 ]);
+
+/**
+ * Drop every permission-bypass argument from a provider's base args. The fixed
+ * set covers the providers this surface has always driven; a route-qualified
+ * provider (Grok) also loses its definition's own yolo and batch grants (Grok's
+ * batch args ARE its yolo args) and any `--permission-mode` pair, because the
+ * read-only args main appends carry `--permission-mode plan` and Grok refuses
+ * the flag twice, while a base `bypassPermissions` value would grant writes.
+ */
+function stripPermissionBypassArgs(args: string[], agentId: string): string[] {
+	const bypass = new Set(PERMISSION_BYPASS_FLAGS);
+	const routeQualified = agentId === 'grok';
+	if (routeQualified) {
+		const definition = getAgentDefinition(agentId);
+		for (const arg of [...(definition?.yoloModeArgs ?? []), ...(definition?.batchModeArgs ?? [])]) {
+			if (arg.startsWith('-')) bypass.add(arg);
+		}
+	}
+	const kept: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (bypass.has(arg)) continue;
+		if (routeQualified && arg.startsWith('--permission-mode=')) continue;
+		if (routeQualified && arg === '--permission-mode') {
+			i++; // its value
+			continue;
+		}
+		kept.push(arg);
+	}
+	return kept;
+}
 const DEFAULT_FEEDBACK_RESPONSE: FeedbackParsedResponse = {
 	confidence: 20,
 	ready: false,
@@ -410,6 +469,25 @@ export class FeedbackConversationManager {
 		const currentSystemPrompt = this.systemPrompt;
 		const account = this.account;
 
+		// Refuse before detection or spawn when the interview cannot run read-only
+		// on this provider: the shared route rule (definition + capabilities) and
+		// the status main checked for this account. The selection is reported as
+		// refused, never swapped for another provider or account here.
+		const routeProblem =
+			(isFeedbackProvider(currentAgentType)
+				? feedbackInterviewRouteProblem(currentAgentType)
+				: null) ??
+			(account?.status === 'unsupported'
+				? account.statusDetail || `${account.label || currentAgentType} is not supported here`
+				: null);
+		if (routeProblem) {
+			const error = `The feedback interview did not start: ${routeProblem}. Pick another account to continue.`;
+			callbacks?.onError?.(error);
+			const response = { ...DEFAULT_FEEDBACK_RESPONSE, message: error };
+			callbacks?.onComplete?.(response);
+			return { response, failed: true, error, refused: true };
+		}
+
 		const agent = await window.maestro.agents.get(currentAgentType);
 		if (!agent) {
 			throw new Error(`The ${currentAgentType} provider could not be found.`);
@@ -452,6 +530,15 @@ export class FeedbackConversationManager {
 			const resetTimeout = () => {
 				if (this.timeoutId) clearTimeout(this.timeoutId);
 				this.timeoutId = setTimeout(() => {
+					// Bounded: a turn that timed out does not keep its process running
+					// diagnostics behind the user's back.
+					if (this.sessionId === currentSessionId) {
+						try {
+							window.maestro.process.kill(currentSessionId);
+						} catch {
+							// Process may already be dead
+						}
+					}
 					resolveOnce({
 						response: {
 							...DEFAULT_FEEDBACK_RESPONSE,
@@ -499,7 +586,7 @@ export class FeedbackConversationManager {
 							toolCallId?: string;
 						}
 					) => {
-						if (sid !== this.sessionId || !toolEvent.toolName) return;
+						if (sid !== currentSessionId || !toolEvent.toolName) return;
 						// A single call can be reported more than once as it moves from
 						// running to completed; report each command to the user only once.
 						if (toolEvent.toolCallId) {
@@ -574,6 +661,9 @@ export class FeedbackConversationManager {
 						// the agent it came from is spawned.
 						sessionCustomEnvVars: account?.env,
 						sessionCustomPath: account?.customPath,
+						// The selected model, unchanged. Absent, main applies the
+						// provider's configured model as for any other spawn.
+						sessionCustomModel: account?.model?.trim() || undefined,
 						sessionSshRemoteConfig: account?.sshRemoteId
 							? { enabled: true, remoteId: account.sshRemoteId }
 							: undefined,
@@ -634,7 +724,7 @@ export class FeedbackConversationManager {
 	 */
 	private buildArgsForAgent(agent: any): string[] {
 		const agentId = agent.id || this.agentType;
-		const baseArgs = (agent.args || []).filter((arg: string) => !PERMISSION_BYPASS_FLAGS.has(arg));
+		const baseArgs = stripPermissionBypassArgs(agent.args || [], agentId);
 
 		switch (agentId) {
 			case 'claude-code': {
@@ -659,6 +749,20 @@ export class FeedbackConversationManager {
 			case 'opencode': {
 				const args = [...baseArgs];
 				if (agent.jsonOutputArgs) args.push(...agent.jsonOutputArgs);
+				return args;
+			}
+			case 'grok': {
+				// The structured stream comes from the definition's JSON args, added
+				// once. batchModeArgs is omitted (it is --always-approve, pure
+				// bypass). Main appends the CLI-enforced read-only args
+				// (`--permission-mode plan --deny Bash(*)`) and delivers the prompt,
+				// which already carries the system instructions, through the shared
+				// prompt-file planner; nothing here embeds them a second time.
+				const args = [...baseArgs];
+				const jsonArgs: string[] = agent.jsonOutputArgs?.length
+					? agent.jsonOutputArgs
+					: (getAgentDefinition('grok')?.jsonOutputArgs ?? []);
+				if (jsonArgs.length && !args.includes(jsonArgs[0])) args.push(...jsonArgs);
 				return args;
 			}
 			default:

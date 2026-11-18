@@ -244,9 +244,14 @@ export function createBrowserTabRemoteApi() {
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) => void
 		): (() => void) => {
+			/**
+			 * Forward the new-tab IPC request including admission control to the renderer callback. A
+			 * synchronous callback failure sends a negative response and rethrows the error.
+			 */
 			const handler = (
 				_: unknown,
 				sessionId: string,
@@ -254,10 +259,11 @@ export function createBrowserTabRemoteApi() {
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
-				mentionRouting?: MentionRouting
+				mentionRouting?: MentionRouting,
+				control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) => {
 				try {
-					callback(sessionId, prompt, responseChannel, background, hidden, mentionRouting);
+					callback(sessionId, prompt, responseChannel, background, hidden, mentionRouting, control);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;

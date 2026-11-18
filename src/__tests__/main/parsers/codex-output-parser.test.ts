@@ -1,12 +1,191 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// Hoisted before imports and collection-time construction; never read operator files.
+const codexStorage = vi.hoisted(() => ({
+	files: new Map<string, string | Error>(),
+	probes: [] as string[],
+}));
+vi.mock('fs', async () => {
+	const { basename } = await import('node:path');
+	return {
+		existsSync: (file: unknown) => {
+			const name = basename(String(file));
+			codexStorage.probes.push(`existsSync:${name}`);
+			return codexStorage.files.has(name);
+		},
+		readFileSync: (file: unknown) => {
+			const name = basename(String(file));
+			codexStorage.probes.push(`readFileSync:${name}`);
+			const content = codexStorage.files.get(name);
+			if (content instanceof Error) throw content;
+			if (content === undefined) throw new Error('Missing synthetic parser fixture');
+			return content;
+		},
+	};
+});
 import { CodexOutputParser, unwrapShellCommand } from '../../../main/parsers/codex-output-parser';
 import {
 	classifyRetryableError,
 	tokenExhaustionResetAt,
 } from '../../../shared/retryClassification';
 
+const importStorageProbes = [...codexStorage.probes];
+beforeEach(() => {
+	codexStorage.files.clear();
+	codexStorage.probes.length = 0;
+});
+
 describe('CodexOutputParser', () => {
 	const parser = new CodexOutputParser();
+	const constructionStorageProbes = [...codexStorage.probes];
+
+	describe('deferred configuration', () => {
+		it('does not probe storage on import, construction or invalid input', () => {
+			expect(importStorageProbes).toEqual([]);
+			expect(constructionStorageProbes).toEqual([]);
+			const fresh = new CodexOutputParser();
+			for (const value of [null, undefined, false, 42, 'text']) {
+				expect(fresh.parseJsonObject(value)).toBeNull();
+			}
+			for (const line of ['', '  ', 'null', 'false', '42', '"text"']) {
+				expect(fresh.parseJsonLine(line)).toBeNull();
+			}
+			expect(fresh.parseJsonLine('{invalid')).toMatchObject({ type: 'text', text: '{invalid' });
+			expect(codexStorage.probes).toEqual([]);
+		});
+
+		describe.each(['object', 'line'] as const)('%s entry point', (entry) => {
+			const parse = (p: CodexOutputParser, value: unknown) =>
+				entry === 'object' ? p.parseJsonObject(value) : p.parseJsonLine(JSON.stringify(value));
+			const completed = { type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 2 } };
+
+			it.each([
+				[
+					'explicit override',
+					'model = "gpt-4o"\nmodel_context_window = 777777',
+					'{"models":[{"slug":"gpt-4o","context_window":654321}]}',
+					777777,
+				],
+				[
+					'dynamic exact match',
+					'model = "gpt-4o"',
+					'{"models":[{"slug":"gpt-4o","context_window":654321}]}',
+					654321,
+				],
+				['static exact match', 'model = "gpt-4-32k"', undefined, 32768],
+				['static prefix match', 'model = "o3-preview-synthetic"', undefined, 200000],
+				['default for unknown model', 'model = "synthetic-unknown"', undefined, 400000],
+				['missing configuration and cache', undefined, undefined, 400000],
+				[
+					'malformed configuration and cache',
+					'model = [\nmodel_context_window = nope',
+					'{invalid',
+					400000,
+				],
+				[
+					'unreadable configuration and cache',
+					new Error('Synthetic config refusal'),
+					new Error('Synthetic cache refusal'),
+					400000,
+				],
+				['malformed cache uses static table', 'model = "gpt-4-32k"', '{invalid', 32768],
+				['invalid cache schema uses static table', 'model = "gpt-4-32k"', '{"models":{}}', 32768],
+				[
+					'invalid cached window uses static table',
+					'model = "gpt-4-32k"',
+					'{"models":[{"slug":"gpt-4-32k","context_window":"900000"}]}',
+					32768,
+				],
+				[
+					'dynamic cache requires exact slug',
+					'model = "o3-preview-synthetic"',
+					'{"models":[{"slug":"o3","context_window":654321}]}',
+					200000,
+				],
+			] as const)('resolves %s only on parsing', (_name, config, cache, expected) => {
+				const fresh = new CodexOutputParser();
+				expect(codexStorage.probes).toEqual([]);
+				// Populate after construction to detect eager reads and cached defaults.
+				if (config !== undefined) codexStorage.files.set('config.toml', config);
+				if (cache !== undefined) codexStorage.files.set('models_cache.json', cache);
+				expect(parse(fresh, completed)?.usage).toMatchObject({
+					inputTokens: 10,
+					outputTokens: 2,
+					contextWindow: expected,
+					contextWindowReported: false,
+				});
+				expect(codexStorage.probes).toEqual([
+					'existsSync:config.toml',
+					...(config !== undefined ? ['readFileSync:config.toml'] : []),
+					...(expected === 777777 ? [] : ['readFileSync:models_cache.json']),
+				]);
+				const probes = [...codexStorage.probes];
+				codexStorage.files.clear();
+				expect(parse(fresh, completed)?.usage?.contextWindow).toBe(expected);
+				expect(codexStorage.probes).toEqual(probes);
+			});
+
+			it('samples configuration separately and retains native state per parser', () => {
+				const first = new CodexOutputParser();
+				const second = new CodexOutputParser();
+				codexStorage.files.set('config.toml', 'model = "gpt-4-32k"');
+				expect(parse(first, completed)?.usage?.contextWindow).toBe(32768);
+				codexStorage.files.set('config.toml', 'model = "o3"\nmodel_context_window = 765432');
+				expect(parse(second, completed)?.usage?.contextWindow).toBe(765432);
+				const probes = [...codexStorage.probes];
+				// A model-only update preserves the resolved window without reloading config.
+				parse(first, { type: 'turn_context', payload: { model: 'o3' } });
+				expect(parse(first, completed)?.usage).toMatchObject({
+					contextWindow: 32768,
+					contextWindowReported: false,
+				});
+				parse(first, {
+					type: 'turn_context',
+					payload: { model: 'o3', model_context_window: 98000 },
+				});
+				expect(parse(first, completed)?.usage).toMatchObject({
+					contextWindow: 98000,
+					contextWindowReported: true,
+				});
+				expect(parse(second, completed)?.usage).toMatchObject({
+					contextWindow: 765432,
+					contextWindowReported: false,
+				});
+				expect(codexStorage.probes).toEqual(probes);
+			});
+
+			it.each(['turn_context', 'token_count'])(
+				'keeps a first-event native window from %s through completion',
+				(source) => {
+					const fresh = new CodexOutputParser();
+					codexStorage.files.set('config.toml', 'model_context_window = 777777');
+					const event =
+						source === 'turn_context'
+							? { type: source, payload: { model: 'native-model', model_context_window: 272000 } }
+							: {
+									type: 'event_msg',
+									payload: {
+										type: source,
+										info: { model_context_window: 272000, total_token_usage: completed.usage },
+									},
+								};
+					const initial = parse(fresh, event);
+					if (source === 'token_count')
+						expect(initial?.usage).toMatchObject({
+							contextWindow: 272000,
+							contextWindowReported: true,
+						});
+					const probes = [...codexStorage.probes];
+					codexStorage.files.set('config.toml', 'model_context_window = 888888');
+					expect(parse(fresh, completed)?.usage).toMatchObject({
+						contextWindow: 272000,
+						contextWindowReported: true,
+					});
+					expect(codexStorage.probes).toEqual(probes);
+				}
+			);
+		});
+	});
 
 	describe('agentId', () => {
 		it('should be codex', () => {
@@ -1039,7 +1218,7 @@ describe('CodexOutputParser', () => {
 			const p = new CodexOutputParser();
 
 			// No turn_context and no model_context_window anywhere: the window can
-			// only be the constructor's config / lookup-table seed.
+			// only be the first parse's config / lookup-table seed.
 			const usageEvent = p.parseJsonLine(
 				JSON.stringify({
 					type: 'turn.completed',

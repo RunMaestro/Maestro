@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { AgentConfig } from '../../../../../types';
-import type { AgentSelectionRefs, AgentTile } from '../types';
+import type { AgentSelectionRefs, AgentSelectionViewMode, AgentTile } from '../types';
 import {
 	countSelectableAgentTiles,
 	findFirstSelectableTileIndex,
@@ -9,6 +9,7 @@ import {
 interface UseAgentSelectionFocusArgs {
 	/** The tiles the strip renders right now - what the focus index refers to. */
 	tiles: AgentTile[];
+	viewMode?: AgentSelectionViewMode;
 	isDetecting: boolean;
 	selectedAgent: string | null;
 	detectedAgents: AgentConfig[];
@@ -19,24 +20,44 @@ interface UseAgentSelectionFocusArgs {
 
 export function useAgentSelectionFocus({
 	tiles,
+	viewMode = 'grid',
 	isDetecting,
 	selectedAgent,
 	detectedAgents,
 	refs,
 	setFocusedTileIndex,
 	setIsNameFieldFocused,
-}: UseAgentSelectionFocusArgs): void {
+}: UseAgentSelectionFocusArgs): (agentId: string | null) => void {
 	// Read through a ref, and deliberately keep `tiles` out of the dependency
 	// list below. This effect MOVES FOCUS, and the tile list changes when the
 	// user flips "Show unavailable" - depending on it would rip focus out of the
 	// toggle they just clicked and drop it on a tile, mid-interaction.
 	const tilesRef = useRef(tiles);
 	tilesRef.current = tiles;
+	const pendingTileFocusRef = useRef<string | null>(null);
+	// Queue before switching back to the grid; its commit consumes this once.
+	const requestTileFocus = useCallback((agentId: string | null) => {
+		pendingTileFocusRef.current = agentId;
+	}, []);
 
 	useEffect(() => {
-		if (isDetecting) return;
+		if (viewMode !== 'grid' || isDetecting) return;
 
 		const currentTiles = tilesRef.current;
+		// Configuration unmounts the tile refs. Restore only after the grid commits,
+		// resolving the provider against the current list instead of a stale index.
+		const pendingAgentId = pendingTileFocusRef.current;
+		pendingTileFocusRef.current = null;
+		if (pendingAgentId) {
+			const index = currentTiles.findIndex((tile) => tile.id === pendingAgentId);
+			if (index !== -1) {
+				setFocusedTileIndex(index);
+				setIsNameFieldFocused(false);
+				refs.tileRefs.current?.[index]?.focus({ preventScroll: true });
+				return;
+			}
+		}
+
 		const supportedAndDetectedCount = countSelectableAgentTiles(currentTiles, detectedAgents);
 
 		if (supportedAndDetectedCount <= 1) {
@@ -64,6 +85,7 @@ export function useAgentSelectionFocus({
 		// of the edge fades that float over its ends.
 		refs.tileRefs.current?.[focusIndex]?.focus({ preventScroll: true });
 	}, [
+		viewMode,
 		isDetecting,
 		selectedAgent,
 		detectedAgents,
@@ -72,4 +94,6 @@ export function useAgentSelectionFocus({
 		setFocusedTileIndex,
 		setIsNameFieldFocused,
 	]);
+
+	return requestTileFocus;
 }

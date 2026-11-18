@@ -3,6 +3,7 @@ import {
 	useCrossAgentInFlightStore,
 	selectInFlightForTab,
 	selectConsultedSessionIds,
+	isAgentAwaitingConsult,
 	type InFlightCrossAgentRequest,
 } from '../../../renderer/stores/crossAgentInFlightStore';
 
@@ -98,5 +99,14 @@ describe('selectConsultedSessionIds', () => {
 
 	it('is empty when nothing is in flight', () => {
 		expect(selectConsultedSessionIds({}).size).toBe(0);
+	});
+});
+
+describe('isAgentAwaitingConsult', () => {
+	it('is true only for the agent that asked, not the one answering', () => {
+		const requests = { r1: req({ sourceSessionId: 'manager', targetSessionId: 'worker' }) };
+		expect(isAgentAwaitingConsult(requests, 'manager')).toBe(true);
+		expect(isAgentAwaitingConsult(requests, 'worker')).toBe(false);
+		expect(isAgentAwaitingConsult({}, 'manager')).toBe(false);
 	});
 });

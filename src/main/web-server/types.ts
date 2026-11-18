@@ -1,4 +1,6 @@
+import type { PianolaQueueControl } from '../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
+import type { TurnOverrides } from '../../shared/maestro-lib/client/types';
 /**
  * Shared type definitions for the web server module.
  * All web server components should import types from this file to avoid duplication.
@@ -14,11 +16,19 @@ import type {
 	ClosedTabCommandRequest,
 	ClosedTabCommandResult,
 } from '../../shared/closedTabCommands';
+import type {
+	MessagePinCommandRequest,
+	MessagePinCommandResult,
+} from '../../shared/messagePinCommands';
 import type { TabContextOpRequest, TabContextOpResult } from '../../shared/tabContextOps';
 import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../../shared/autoRunSteeringCommands';
+import type {
+	DiffReviewCommandRequest,
+	DiffReviewCommandResult,
+} from '../../shared/diffReviewCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 import type {
 	ThroughputGaugeCommandRequest,
@@ -245,7 +255,7 @@ export interface WebClient {
 	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
 	cliAuthenticated?: boolean;
 	/** Revalidate the upgrade session/current login policy before commands and delivery. */
-	isAuthorized?: () => boolean;
+	isAuthorized?: (context?: import('./auth/web-login-policy').WebLoginPolicyContext) => boolean;
 	/**
 	 * The Web Login account behind this socket, resolved once at the upgrade
 	 * from the session cookie. Undefined when the gate is off and for
@@ -356,7 +366,8 @@ export type ExecuteCommandCallback = (
 	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
 	mentionRouting?: MentionRouting,
 	/** Throw on a missing/malformed receipt instead of reporting a rejection. */
-	requireDeliveryReceipt?: boolean
+	requireDeliveryReceipt?: boolean,
+	pianolaDispatchId?: string
 ) => Promise<boolean>;
 
 /**
@@ -448,6 +459,14 @@ export type ClosedTabCommandCallback = (
 	request: ClosedTabCommandRequest
 ) => Promise<ClosedTabCommandResult>;
 /**
+ * One message-pin verb (`maestro-cli tab pins ...`), forwarded to the renderer
+ * that owns the agent - pins live on its tab - and answered with the tab's
+ * pins after the verb ran. Resolves rather than rejects on a miss.
+ */
+export type MessagePinCommandCallback = (
+	request: MessagePinCommandRequest
+) => Promise<MessagePinCommandResult>;
+/**
  * One Auto Run steering verb, forwarded to the renderer - which holds the notes
  * its run loop reads - and answered with whatever it did. Resolves rather than
  * rejects on a miss, for the same reason `SnoozeCommandCallback` does.
@@ -455,6 +474,15 @@ export type ClosedTabCommandCallback = (
 export type AutoRunSteeringCommandCallback = (
 	request: SteeringCommandRequest
 ) => Promise<SteeringCommandResult>;
+
+/**
+ * One Git Diff review verb, forwarded to the renderer - which holds the pending
+ * comments the viewer draws - and answered with whatever it did. Resolves
+ * rather than rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type DiffReviewCommandCallback = (
+	request: DiffReviewCommandRequest
+) => Promise<DiffReviewCommandResult>;
 /**
  * `maestro-cli window` - list windows, or move an agent or a whole group
  * between them. Answered by the primary window through the same WindowContext
@@ -566,21 +594,10 @@ export type NoteAgentDelegationCallback = (notice: AgentDelegationNotice) => voi
  * a refusal, so the CLI can report what actually happened instead of inferring
  * one from a missing tab id.
  */
-export type NewAITabWithPromptResult = {
-	success: boolean;
-	tabId?: string;
-	queued?: boolean;
-	error?: string;
-};
-export type NewAITabWithPromptCallback = (
-	sessionId: string,
-	prompt: string,
-	background?: boolean,
-	/** Create the tab with no chip in the strip (see `AITab.hidden`). */
-	hidden?: boolean,
-	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
-	mentionRouting?: MentionRouting
-) => Promise<NewAITabWithPromptResult>;
+export type {
+	NewAITabWithPromptResult,
+	NewAITabWithPromptCallback,
+} from '../../shared/pianola/pianola-dispatch';
 /**
  * Result of enqueuing (or immediately dispatching) a CLI prompt into the
  * renderer's authoritative execution queue. When the target session is busy the
@@ -624,7 +641,13 @@ export type EnqueueCommandCallback = (
 	 * The prompt is a `dispatch --notify-on-complete` wake, sent by main. The
 	 * queued item is marked so it can never be steered into a running turn.
 	 */
-	dispatchCallback?: boolean
+	dispatchCallback?: boolean,
+	control?: PianolaQueueControl,
+	/**
+	 * The sender's own tab chips for this one message (`TurnInput.overrides`, Federation): the
+	 * queued item runs under them. Never written to the tab.
+	 */
+	turnOverrides?: TurnOverrides
 ) => Promise<EnqueueCommandResult>;
 /**
  * A single queued item, mirrored from the renderer's executionQueue for CLI
@@ -720,6 +743,37 @@ export type OpenBrowserTabCallback = (
  * callers only need the tab id returned by `OpenBrowserTabCallback`.
  */
 export type CloseBrowserTabCallback = (tabId: string) => Promise<boolean>;
+
+/**
+ * Design Mode by selector (`maestro-cli browser-pick`). `tab` is either the
+ * tab id `open-browser` returned or the tab's Coworking id (`browser:N`),
+ * resolved against `sessionId`. The pick runs through the Coworking browser
+ * resolver, so it reaches the same renderer code a click in Design Mode does.
+ */
+export interface PickBrowserElementRequest {
+	sessionId: string;
+	tab: string;
+	selector: string;
+	note?: string;
+	background?: boolean;
+}
+export interface PickBrowserElementResult {
+	success: boolean;
+	error?: string;
+	/** Renderer browser tab id the element was picked from. */
+	tabId?: string;
+	/** Coworking id of that tab, when Coworking knows it and the tab is visible to agents. */
+	browserId?: string;
+	/** The text added to the composer draft. */
+	text?: string;
+	/** Whether a cropped screenshot was staged with it. */
+	screenshot: boolean;
+	/** The AI tab the element was added to. */
+	aiTabId?: string;
+}
+export type PickBrowserElementCallback = (
+	request: PickBrowserElementRequest
+) => Promise<PickBrowserElementResult>;
 export interface OpenTerminalTabConfig {
 	/** Explicit signal that the agent is waiting for a person at this terminal. */
 	inputRequired?: boolean;
@@ -1052,6 +1106,7 @@ export interface SessionHistoryMessage {
 }
 
 export interface SessionHistoryResult {
+	currentTurn?: import('../../shared/currentTurn').CurrentTurnRead;
 	tabId: string;
 	sessionId: string;
 	agentId: string;
@@ -1062,6 +1117,14 @@ export interface SessionHistoryResult {
 }
 
 export interface GetSessionHistoryOptions {
+	/** Explicit full native current-turn observation; legacy filters do not apply. */
+	currentTurn?: boolean;
+	/** Internal reads do not establish generic capture interest. Grants no send authority. */
+	currentTurnInterest?: 'pianola';
+	/** Host-only socket identity; never populated from a payload. */
+	observationClient?: { once(event: 'close', listener: () => void): unknown };
+	expectedCursor?: import('../../shared/currentTurn').CurrentTurnCursor;
+	deltaBase?: import('../../shared/currentTurn').CurrentTurnCursor;
 	/** Drop messages with timestamp ≤ this epoch ms. Use for poll-friendly cursoring. */
 	sinceMs?: number;
 	/** After other filters, keep only the last N messages. */
@@ -1487,6 +1550,19 @@ export type StartGroupChatCallback = (
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
 export type ArchiveGroupChatCallback = (chatId: string, archived: boolean) => Promise<boolean>;
+export interface AddGroupChatParticipantResult {
+	success: boolean;
+	/** The participant's name in the chat. */
+	participantName?: string;
+	/** True when the agent was already a participant; nothing changed. */
+	alreadyMember?: boolean;
+	error?: string;
+}
+/** Add the agent with this exact GUID to a group chat. */
+export type AddGroupChatParticipantCallback = (
+	chatId: string,
+	agentId: string
+) => Promise<AddGroupChatParticipantResult>;
 export type SendGroupChatMessageCallback = (chatId: string, message: string) => Promise<boolean>;
 /** What to steer into a chat's running round: a queued message by id, or new text. */
 export interface SteerGroupChatRequest {
@@ -1580,26 +1656,6 @@ export type TriggerCueSubscriptionCallback = (
 // Usage Dashboard Types
 // =============================================================================
 
-/** Usage dashboard aggregate data for web interface */
-export interface UsageDashboardData {
-	totalTokensIn: number;
-	totalTokensOut: number;
-	totalCost: number;
-	sessionBreakdown: Array<{
-		sessionId: string;
-		sessionName: string;
-		tokensIn: number;
-		tokensOut: number;
-		cost: number;
-	}>;
-	dailyUsage: Array<{
-		date: string;
-		tokensIn: number;
-		tokensOut: number;
-		cost: number;
-	}>;
-}
-
 /** Achievement data for web interface */
 export interface AchievementData {
 	id: string;
@@ -1615,9 +1671,6 @@ export interface AchievementData {
 // Usage Dashboard Callback Types
 // =============================================================================
 
-export type GetUsageDashboardCallback = (
-	timeRange: 'day' | 'week' | 'month' | 'all'
-) => Promise<UsageDashboardData>;
 export type GetAchievementsCallback = () => Promise<AchievementData[]>;
 
 // =============================================================================

@@ -414,7 +414,10 @@ describe('HistoryEntryItem', () => {
 		const sessionButton = screen.getByTitle('session-abc-123');
 		fireEvent.click(sessionButton);
 
-		expect(onOpenSessionAsTab).toHaveBeenCalledWith('session-abc-123', '/test/project', undefined);
+		expect(onOpenSessionAsTab).toHaveBeenCalledWith('session-abc-123', '/test/project', undefined, {
+			targetSessionId: undefined,
+			nativeSessionBinding: undefined,
+		});
 	});
 
 	// The pill is the only place the closed session's name still exists: the tab
@@ -443,9 +446,94 @@ describe('HistoryEntryItem', () => {
 		expect(onOpenSessionAsTab).toHaveBeenCalledWith(
 			'session-abc-123',
 			'/test/project',
-			'PP Farm Meta Data'
+			'PP Farm Meta Data',
+			{ targetSessionId: undefined, nativeSessionBinding: undefined }
 		);
 	});
+
+	it('forwards the clicked owner and a detached binding for colliding native IDs', () => {
+		const onOpenSessionAsTab = vi.fn().mockReturnValue(false);
+		const onOpenDetailModal = vi.fn();
+		const entries = ['a', 'b'].map((suffix) =>
+			createMockEntry({
+				id: `entry-${suffix}`,
+				sessionId: `owner-${suffix}`,
+				agentSessionId: 'native-collision',
+				sessionName: `Account ${suffix}`,
+				nativeSessionBinding: Object.freeze({
+					version: 1,
+					state: 'bound',
+					provider: 'grok',
+					nativeSessionId: 'native-collision',
+					accountRef: `grok-account-${suffix}`,
+					host: Object.freeze({ kind: 'ssh', identity: `endpoint-${suffix}` }),
+					cwd: '/test/project',
+				}),
+			})
+		);
+		render(
+			<>
+				{entries.map((entry, index) => (
+					<HistoryEntryItem
+						key={entry.id}
+						entry={entry}
+						index={index}
+						isSelected={index === 1}
+						theme={mockTheme}
+						onOpenDetailModal={onOpenDetailModal}
+						onOpenSessionAsTab={onOpenSessionAsTab}
+					/>
+				))}
+			</>
+		);
+		for (const [index, entry] of entries.entries()) {
+			fireEvent.click(screen.getByRole('button', { name: entry.sessionName }));
+			expect(onOpenSessionAsTab).toHaveBeenNthCalledWith(
+				index + 1,
+				'native-collision',
+				'/test/project',
+				entry.sessionName,
+				{ targetSessionId: entry.sessionId, nativeSessionBinding: entry.nativeSessionBinding }
+			);
+			const forwarded = onOpenSessionAsTab.mock.calls[index][3].nativeSessionBinding;
+			expect(forwarded).not.toBe(entry.nativeSessionBinding);
+			if (entry.nativeSessionBinding?.state === 'bound') {
+				expect(forwarded.host).not.toBe(entry.nativeSessionBinding.host);
+			}
+			expect(screen.getByRole('button', { name: entry.sessionName })).toBeInTheDocument();
+		}
+		expect(onOpenSessionAsTab).toHaveBeenCalledTimes(2);
+		expect(onOpenDetailModal).not.toHaveBeenCalled();
+	});
+
+	it.each([undefined, 'legacy', 'unobserved'] as const)(
+		'forwards unknown %s scope without inferring ownership from the native ID',
+		(reason) => {
+			const onOpenSessionAsTab = vi.fn();
+			const entry = createMockEntry({
+				agentSessionId: 'native-collision',
+				sessionId: reason ? 'recorded-owner' : undefined,
+				nativeSessionBinding: reason ? { version: 1, state: 'unknown', reason } : undefined,
+			});
+			render(
+				<HistoryEntryItem
+					entry={entry}
+					index={0}
+					isSelected={true}
+					theme={mockTheme}
+					onOpenDetailModal={vi.fn()}
+					onOpenSessionAsTab={onOpenSessionAsTab}
+				/>
+			);
+			fireEvent.click(screen.getByTitle('native-collision'));
+			expect(onOpenSessionAsTab).toHaveBeenCalledExactlyOnceWith(
+				'native-collision',
+				'/test/project',
+				undefined,
+				{ targetSessionId: entry.sessionId, nativeSessionBinding: entry.nativeSessionBinding }
+			);
+		}
+	);
 
 	it('shows elapsed time when present', () => {
 		const entry = createMockEntry({ elapsedTimeMs: 45000 });

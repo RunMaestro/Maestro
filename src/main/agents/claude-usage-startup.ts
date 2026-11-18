@@ -477,7 +477,7 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 				setSnapshot(snapshot);
 				logger.info('Stored Claude usage snapshot', LOG_CONTEXT, {
 					configDirKey: snapshot.configDirKey,
-					sessionPercent: snapshot.session.percent,
+					sessionPercent: snapshot.session?.percent,
 					weekAllPercent: snapshot.weekAllModels.percent,
 				});
 			} catch (err) {

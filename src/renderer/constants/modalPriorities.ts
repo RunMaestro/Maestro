@@ -45,6 +45,12 @@ export const MODAL_PRIORITIES = {
 	/** Provider re-authentication terminal - above the agent error modal it replaces */
 	REAUTH: 1015,
 
+	/**
+	 * An SSH remote stopped answering. Above the per-agent error modal, whose
+	 * failures on that remote it reports in one place.
+	 */
+	SSH_UNREACHABLE: 1012,
+
 	/** Agent error modal - critical, shows recovery options */
 	AGENT_ERROR: 1010,
 
@@ -112,6 +118,15 @@ export const MODAL_PRIORITIES = {
 
 	/** Import Agent modal (Left Bar right-click on a group) */
 	AGENT_IMPORT: 829,
+
+	/** Move to Host modal (Federation lift: Left Bar right-click or palette on an SSH agent) */
+	MOVE_TO_HOST: 828,
+
+	/** Federation settings conflicts: fields a hosted agent's host and this machine both changed */
+	FEDERATION_SETTINGS_CONFLICTS: 827,
+
+	/** Add Hosted Agent: show an agent a Federation host runs in the Left Bar */
+	ADD_HOSTED_AGENT: 826,
 
 	/** Create new group modal */
 	CREATE_GROUP: 800,
@@ -188,6 +203,9 @@ export const MODAL_PRIORITIES = {
 	 * closed the list instead, which unmounted the history with it.
 	 */
 	SNOOZE_HISTORY: 704,
+
+	/** Prompt Links window (Opt+Cmd+Shift+L): create, copy, and revoke maestro://run links */
+	PROMPT_LINKS: 713,
 
 	/** Prompt composer modal for long prompts */
 	PROMPT_COMPOSER: 725,

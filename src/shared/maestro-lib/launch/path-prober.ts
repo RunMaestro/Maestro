@@ -432,6 +432,11 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			...npmGlobal('omp'),
 			...localBin('omp'),
 		],
+		grok: [
+			// npm global installation of @xai-official/grok (binary `grok`). The
+			// vendor installer's Windows location is not documented, so it is not listed.
+			...npmGlobal('grok'),
+		],
 		agy: [
 			// Official install.ps1 / install.cmd target
 			path.join(localAppData, 'agy', 'bin', 'agy.exe'),
@@ -602,6 +607,16 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			...npmGlobal('omp'),
 			path.join(home, 'bin', 'omp'),
 			...nodeVersionManagers('omp'),
+		],
+		grok: [
+			// Vendor installer target (the launcher it links into ~/.grok/bin)
+			path.join(home, '.grok', 'bin', 'grok'),
+			// npm global installation of @xai-official/grok: Homebrew Node and
+			// /usr/local prefixes, then a custom prefix
+			...homebrew('grok'),
+			...npmGlobal('grok'),
+			// Node version managers (nvm, fnm, volta, etc.)
+			...nodeVersionManagers('grok'),
 		],
 		agy: [
 			// Official install.sh target on macOS/Linux

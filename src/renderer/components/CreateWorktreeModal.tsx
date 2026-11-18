@@ -8,6 +8,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { openUrl } from '../utils/openUrl';
 import { sanitizeGitBranchName } from '../../shared/gitUtils';
+import { isImeComposing } from '../utils/ime';
 import { gitService } from '../services/git';
 import { captureException } from '../utils/sentry';
 
@@ -140,7 +141,7 @@ export function CreateWorktreeModal({
 	};
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Enter' && branchName.trim() && !isCreating) {
+		if (e.key === 'Enter' && branchName.trim() && !isCreating && !isImeComposing(e)) {
 			handleCreate();
 		}
 	};

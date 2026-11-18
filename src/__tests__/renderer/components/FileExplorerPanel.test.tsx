@@ -3,10 +3,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { FileExplorerPanel } from '../../../renderer/components/FileExplorerPanel';
+import { TRUNCATION_BANNER_DISMISSED_KEY } from '../../../renderer/components/FileExplorerPanel/FileExplorerPanel';
 import type { Session, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 import { mockTheme } from '../../helpers/mockTheme';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 import { getElevatedSurfaceColors } from '../../../renderer/utils/elevatedSurface';
 // Mock lucide-react
@@ -349,6 +351,24 @@ const mockFileTree = [
 	},
 ];
 
+// `utils` has a sibling below it, so the line joining `src`'s children passes
+// through every row of the `utils` subtree. (In `mockFileTree` `utils` is the
+// last child, so its subtree draws no column-0 line.)
+const nestedGuideTree = [
+	{
+		name: 'src',
+		type: 'folder' as const,
+		children: [
+			{
+				name: 'utils',
+				type: 'folder' as const,
+				children: [{ name: 'helpers.ts', type: 'file' as const }],
+			},
+			{ name: 'index.ts', type: 'file' as const },
+		],
+	},
+];
+
 describe('FileExplorerPanel', () => {
 	let defaultProps: React.ComponentProps<typeof FileExplorerPanel>;
 
@@ -419,6 +439,53 @@ describe('FileExplorerPanel', () => {
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 			const header = container.querySelector('.sticky');
 			expect(header).toHaveStyle({ backgroundColor: mockTheme.colors.bgSidebar });
+		});
+	});
+
+	describe('Truncated tree banner', () => {
+		const truncatedSession = () =>
+			createMockSession({ fileTreeTruncated: true, fileTreeLoadedCap: 100_000 });
+
+		beforeEach(() => {
+			// jsdom here ships no working Storage; the shared stand-in also resets
+			// the store between tests.
+			installLocalStorageMock();
+		});
+
+		it('shows the banner until it is dismissed', () => {
+			render(<FileExplorerPanel {...defaultProps} session={truncatedSession()} />);
+			expect(screen.getByText('Unable to load all files into the file panel.')).toBeInTheDocument();
+			expect(screen.queryByLabelText('Show file scan warning')).not.toBeInTheDocument();
+		});
+
+		it('stays dismissed across remounts and other agents once dismissed', () => {
+			const { unmount } = render(
+				<FileExplorerPanel {...defaultProps} session={truncatedSession()} />
+			);
+			fireEvent.click(screen.getByLabelText('Minimize file scan warning'));
+			expect(
+				screen.queryByText('Unable to load all files into the file panel.')
+			).not.toBeInTheDocument();
+			expect(screen.getByLabelText('Show file scan warning')).toBeInTheDocument();
+			unmount();
+
+			render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={{ ...truncatedSession(), id: 'another-agent' }}
+				/>
+			);
+			expect(
+				screen.queryByText('Unable to load all files into the file panel.')
+			).not.toBeInTheDocument();
+			expect(screen.getByLabelText('Show file scan warning')).toBeInTheDocument();
+		});
+
+		it('reopens the banner from the hazard icon', () => {
+			window.localStorage.setItem(TRUNCATION_BANNER_DISMISSED_KEY, 'true');
+			render(<FileExplorerPanel {...defaultProps} session={truncatedSession()} />);
+			fireEvent.click(screen.getByLabelText('Show file scan warning'));
+			expect(screen.getByText('Unable to load all files into the file panel.')).toBeInTheDocument();
 		});
 	});
 
@@ -1801,8 +1868,13 @@ describe('FileExplorerPanel', () => {
 		});
 
 		it('renders one indent guide per depth level, spaced by INDENT_STEP', () => {
-			const session = createMockSession({ fileExplorerExpanded: ['src', 'src/utils'] });
-			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			const session = createMockSession({
+				fileTree: nestedGuideTree,
+				fileExplorerExpanded: ['src', 'src/utils'],
+			});
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={nestedGuideTree} />
+			);
 
 			// helpers.ts at depth 2 should have 2 guides at left = 12 and 12 + 20 = 32
 			const row = getRowByText(container, 'helpers.ts');
@@ -2024,14 +2096,31 @@ describe('FileExplorerPanel', () => {
 		});
 
 		it('renders multiple indent guides for deeply nested items', () => {
-			const session = createMockSession({ fileExplorerExpanded: ['src', 'src/utils'] });
-			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			const session = createMockSession({
+				fileTree: nestedGuideTree,
+				fileExplorerExpanded: ['src', 'src/utils'],
+			});
+			const { container } = render(
+				<FileExplorerPanel {...defaultProps} session={session} filteredFileTree={nestedGuideTree} />
+			);
 			// helpers.ts is at depth 2, should have 2 indent guides
 			const deepItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
 				el.textContent?.includes('helpers.ts')
 			);
 			const indentGuides = deepItem?.querySelectorAll('.w-px');
 			expect(indentGuides?.length).toBe(2);
+		});
+
+		it('draws no ancestor guide through the subtree of a last child', () => {
+			const session = createMockSession({ fileExplorerExpanded: ['src', 'src/utils'] });
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			// `utils` is the last child of `src`, so helpers.ts draws only its own elbow.
+			const deepItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes('helpers.ts')
+			);
+			const indentGuides = deepItem?.querySelectorAll<HTMLElement>('.w-px');
+			expect(indentGuides?.length).toBe(1);
+			expect(indentGuides?.[0]).toHaveStyle({ left: '32px' });
 		});
 
 		it('uses fixed row height of 28px', () => {

@@ -1,0 +1,36 @@
+   Settings  Status   Config   Usage   Stats
+
+   Session
+
+   Total cost:            $0.0000
+   Total duration (API):  0s
+   Total duration (wall): 0s
+   Total code changes:    0 lines added, 0 lines removed
+   Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+
+
+   Plugin skill-listing footprint
+   What each plugin's skill descriptions add to the system prompt (cached input after the first turn). Agents and MCP tools not yet counted.
+
+   feature-dev                 1 skill · ~35 tok/turn
+
+   Total                       ~35 tok/turn
+
+   Current week (all models)
+   ██████████▌                                        21% used
+   Resets Nov 5 at 10am (America/New_York)
+
+   Current week (Fable)
+                                                      0% used
+   Resets Nov 5 at 10am (America/New_York)
+
+   What's contributing to your usage?
+   Approximate · sessions on this machine only
+
+   Last 24h · shares overlap
+
+   69%  Run fewer sessions at once · up to 21 at once
+   13%  Compact before you step away · run /compact
+
+   Usage credits
+   Usage credits are off · /usage-credits to turn them on

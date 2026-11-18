@@ -1,6 +1,7 @@
-/** Unwired, host-private delivery resources. Registry authority never comes from disk. */
+/** Host-private delivery resources. Registry authority never comes from disk. */
 import * as fs from 'fs';
 import * as path from 'path';
+import type { CallerRunIdentity } from '../../shared/agentDelegation';
 import { PluginAuthorityError } from './plugin-authority';
 import {
 	PLUGIN_TOOL_RUN_LIMITS,
@@ -271,11 +272,13 @@ export class PluginToolRunProofFiles {
 		this.cleanup(resource);
 	}
 
-	/** Only host lifecycle callers may issue; no token input or serialized authority. */
+	/** Only host lifecycle callers may issue; no token input or serialized authority.
+	 * A host spawn binding uses null TTL and lives until its host authority ends. */
 	create(
 		agentId: unknown,
 		authority: PluginToolRunAuthority,
-		ttlMs = PLUGIN_TOOL_RUN_LIMITS.defaultTtlMs
+		ttlMs: number | null = PLUGIN_TOOL_RUN_LIMITS.defaultTtlMs,
+		binding?: CallerRunIdentity
 	): PluginToolRunProofFile {
 		if (this.stopped) throw new PluginAuthorityError('PLUGIN_DENIED');
 		if (this.resources.size >= PLUGIN_TOOL_RUN_LIMITS.runs)
@@ -285,7 +288,11 @@ export class PluginToolRunProofFiles {
 		const bytes = Buffer.alloc(64);
 		const readback = Buffer.alloc(65);
 		try {
-			const token = this.identities.issue(agentId, authority, ttlMs);
+			if (binding ? ttlMs !== null || binding.agentId !== agentId : ttlMs === null)
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+			const token = binding
+				? this.identities.issueBoundRun(binding, authority)
+				: this.identities.issue(agentId, authority, ttlMs!);
 			resource.token = token;
 			resource.context = this.identities.resolveVerified(resource.token);
 			resource.onAbort = () => {

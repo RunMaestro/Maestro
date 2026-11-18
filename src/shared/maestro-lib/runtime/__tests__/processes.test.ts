@@ -124,4 +124,26 @@ describe('process registry', () => {
 		expect(() => registry.terminateAllNow()).not.toThrow();
 		expect(fine.terminateNow).toHaveBeenCalled();
 	});
+
+	it('runningTabs reports each tab of one agent with its earliest registration', async () => {
+		let clock = 100;
+		const registry = createProcessRegistry({ now: () => clock });
+		const first = fakeTurn();
+		registry.register('a1', 't1', first);
+		clock = 200;
+		registry.register('a1', 't1', fakeTurn());
+		registry.register('a1', 't2', fakeTurn());
+		registry.register('a2', 't1', fakeTurn());
+
+		expect([...registry.runningTabs('a1')]).toEqual([
+			['t1', 100],
+			['t2', 200],
+		]);
+		expect(registry.runningTabs('none').size).toBe(0);
+
+		// The earliest turn ends: the tab still runs, from the next one's start.
+		first.finish();
+		await flush();
+		expect(registry.runningTabs('a1').get('t1')).toBe(200);
+	});
 });

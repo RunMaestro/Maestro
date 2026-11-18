@@ -1,14 +1,9 @@
 import type { ToolType } from '../../../../../types';
+import { getAgentDisplayName } from '../../../../../../shared/agentMetadata';
 
 export function getConversationProviderName(selectedAgent: ToolType | null): string | undefined {
 	if (selectedAgent === 'claude-code') {
 		return 'Claude';
 	}
-	if (selectedAgent === 'opencode') {
-		return 'OpenCode';
-	}
-	if (selectedAgent === 'codex') {
-		return 'Codex';
-	}
-	return selectedAgent || undefined;
+	return selectedAgent ? getAgentDisplayName(selectedAgent) : undefined;
 }

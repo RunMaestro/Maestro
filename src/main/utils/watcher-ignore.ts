@@ -13,6 +13,32 @@
 
 import path from 'path';
 
+/**
+ * chokidar options for a watcher that only needs the top level or two of a
+ * LARGE tree (`depth: 0` / `depth: 1`). Spread them into the watch options.
+ *
+ * On macOS chokidar defaults to FSEvents, and an FSEvents stream is recursive
+ * by nature: `depth` and `ignored` are applied in JavaScript AFTER every event
+ * anywhere below the root has been delivered. chokidar also shares one stream
+ * per root and adds every later watcher under it as another listener, so each
+ * event runs through every listener's prefix filter. A shallow watch on a
+ * project root (or on the Worktree Directory, which holds every worktree's
+ * builds and node_modules) therefore paid for the whole subtree: a Nov 2026
+ * field trace measured 219ms of main-process self-time in that filter
+ * (`fsevents-handler.js` filteredListener) in 45 seconds of an idle UI.
+ *
+ * With FSEvents off chokidar uses one non-recursive `fs.watch` per watched
+ * directory, which libuv filters natively, so events deeper than `depth`
+ * never reach JavaScript. `usePolling: false` must be explicit: with FSEvents
+ * off, chokidar switches macOS to polling unless told otherwise. A caller's
+ * own polling fallback spread after this still wins. Other platforms already
+ * use `fs.watch`, so this changes nothing there.
+ *
+ * Not for a watcher that genuinely needs the whole tree: there FSEvents is
+ * the cheaper mechanism.
+ */
+export const SHALLOW_WATCH_OPTIONS = { useFsEvents: false, usePolling: false } as const;
+
 /** Windows drive-root system files that always fail lstat with EBUSY. */
 export const WINDOWS_LOCKED_SYSTEM_FILES: RegExp = new RegExp(
 	'(^|[/\\\\])(pagefile\\.sys|hiberfil\\.sys|swapfile\\.sys|DumpStack\\.log(\\.tmp)?|System Volume Information)$',

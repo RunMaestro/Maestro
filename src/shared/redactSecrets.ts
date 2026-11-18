@@ -11,7 +11,7 @@
  * Output shape: each match becomes a typed placeholder so a reader can tell
  * WHAT was removed without seeing it:
  *
- * - `[REDACTED_API_KEY]`        provider keys and tokens (sk-, ghp_, github_pat_, xox*-;
+ * - `[REDACTED_API_KEY]`        provider keys and tokens (sk-, xai-, ghp_, github_pat_, xox*-;
  *                               GitHub tokens are their own kind so a caller can relabel them)
  * - `[REDACTED_AWS_ACCESS_KEY]` AWS access key ids (AKIA..., ASIA...)
  * - `[REDACTED_BEARER_TOKEN]`   the token after `Bearer `
@@ -156,6 +156,10 @@ const RULES: readonly Rule[] = [
 	},
 	// Provider key prefixes.
 	{ kind: 'api_key', pattern: /\b(?:sk|rk)-[A-Za-z0-9][A-Za-z0-9_-]{15,}/g },
+	// xAI (Grok) keys: `xai-` and an alphanumeric run of 20 or more.
+	// Alphanumeric only, so a kebab word such as `xai-sdk` or `xai-grok-cli`
+	// stays readable.
+	{ kind: 'api_key', pattern: /\bxai-[A-Za-z0-9]{20,}\b/g },
 	{ kind: 'github_token', pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b/g },
 	{ kind: 'github_token', pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g },
 	{ kind: 'api_key', pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
@@ -217,8 +221,8 @@ const ONE_TIME_CODE_RULES: readonly Rule[] = [
 
 // ReDoS audit (every rule is exercised on 64 KB adversarial inputs in
 // redactSecrets.test.ts): the remaining unbounded quantifiers either start at
-// a fixed literal and succeed by consuming their run (`sk-`, `ghp_`, `xox*-`,
-// `Bearer`, hex), or are bounded (`{12,18}` card digits, PEM name parts).
+// a fixed literal and succeed by consuming their run (`sk-`, `xai-`, `ghp_`,
+// `xox*-`, `Bearer`, hex), or are bounded (`{12,18}` card digits, PEM name parts).
 
 /**
  * Replace secret-shaped spans in `text`. Pure; never throws on any string.

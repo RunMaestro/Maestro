@@ -25,6 +25,7 @@
 
 import type { ToolType, AgentError } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
+import type { CallTimingSignal } from '../../tokenSpeed';
 import { getErrorPatterns, matchErrorPattern, stripJsonEventLines } from './error-patterns';
 import { stripAllAnsiCodes } from './terminal-filter';
 
@@ -293,6 +294,27 @@ export class OpenCodeOutputParser implements AgentOutputParser {
 			cacheCreationTokens: tokens.cache?.write || 0,
 			// OpenCode provides cost per step in part.cost (in dollars)
 			costUsd: msg.part.cost || 0,
+		};
+	}
+
+	/**
+	 * Per-call timing for token speed. One OpenCode step is one model call:
+	 * `step_start` opens it and `step_finish` carries its tokens. A step that
+	 * ran a tool reports its tokens only after the tool finished, so its window
+	 * includes tool time; such a step is discarded rather than reported slow.
+	 */
+	extractCallTiming(raw: unknown): CallTimingSignal | null {
+		if (!raw || typeof raw !== 'object') return null;
+		const msg = raw as OpenCodeRawMessage;
+		if (msg.type === 'step_start') return { kind: 'start' };
+		if (msg.type === 'tool_use') return { kind: 'discard' };
+		if (msg.type !== 'step_finish' || msg.part?.reason === 'error') return null;
+		const tokens = msg.part?.tokens;
+		if (!tokens) return null;
+		return {
+			kind: 'end',
+			inputTokens: (tokens.input || 0) + (tokens.cache?.read || 0) + (tokens.cache?.write || 0),
+			outputTokens: (tokens.output || 0) + (tokens.reasoning || 0),
 		};
 	}
 

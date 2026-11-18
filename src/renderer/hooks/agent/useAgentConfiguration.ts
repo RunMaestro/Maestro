@@ -10,27 +10,18 @@
  * Multi-agent mode (Record-based state) will be added in a later phase.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { AgentConfig } from '../../types';
-import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
+import type {
+	SshRemoteConfig,
+	AgentSshRemoteConfig,
+	AgentDiscoveryRequest,
+	AgentDiscoveryResult,
+} from '../../../shared/types';
 import { logger } from '../../utils/logger';
-
-declare const window: Window & {
-	maestro: {
-		agents: {
-			detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
-			getConfig: (agentId: string) => Promise<Record<string, any> | null>;
-			setConfig: (agentId: string, config: Record<string, any>) => Promise<boolean>;
-			getModels: (agentId: string, force?: boolean) => Promise<string[]>;
-			getConfigOptions: (agentId: string, optionKey: string, force?: boolean) => Promise<string[]>;
-			refresh: (agentId: string) => Promise<void>;
-		};
-		sshRemote: {
-			getConfigs: () => Promise<{ success: boolean; configs?: SshRemoteConfig[] }>;
-		};
-	};
-};
+import { getEffortConfigKey, readEffortFromConfig } from '../../utils/agentEffort';
+import { useDebouncedValue } from '../utils/useThrottle';
 
 export interface UseAgentConfigurationOptions {
 	/** Whether the hook should be active (e.g., modal is open) */
@@ -41,6 +32,8 @@ export interface UseAgentConfigurationOptions {
 	autoSelect?: boolean;
 	/** Whether to load SSH remotes (default: false) */
 	loadSshRemotes?: boolean;
+	/** Host-owned discovery needs the selected workspace; omission stays unavailable. */
+	discoveryContext?: Exclude<AgentDiscoveryRequest['context'], { kind: 'agent' }>;
 	/** Initial values for edit mode or pre-populated state */
 	initialValues?: {
 		selectedAgent?: string;
@@ -103,11 +96,13 @@ export interface UseAgentConfigurationReturn {
 	// Models
 	availableModels: string[];
 	loadingModels: boolean;
+	modelDiscoveryStatus: AgentDiscoveryResult['status'];
 	refreshModels: () => Promise<void>;
 
 	// Dynamic config options (for select fields with dynamic: true)
 	dynamicOptions: Record<string, string[]>;
 	loadingDynamicOptions: boolean;
+	dynamicOptionStatuses: Record<string, AgentDiscoveryResult['status']>;
 
 	// Refresh
 	refreshingAgent: boolean;
@@ -134,6 +129,7 @@ export function useAgentConfiguration(
 		autoSelect = true,
 		loadSshRemotes: shouldLoadSshRemotes = false,
 		initialValues,
+		discoveryContext,
 	} = options;
 
 	// Detection state
@@ -151,11 +147,25 @@ export function useAgentConfiguration(
 	const [isConfigExpanded, setIsConfigExpanded] = useState(false);
 
 	// Custom config
-	const [customPath, setCustomPath] = useState(initialValues?.customPath ?? '');
+	const [customPath, setCustomPathState] = useState(initialValues?.customPath ?? '');
+	const [hasCustomPathOverride, setHasCustomPathOverride] = useState(
+		initialValues?.customPath !== undefined
+	);
+	const setCustomPath = useCallback((value: string) => {
+		setHasCustomPathOverride(true);
+		setCustomPathState(value);
+	}, []);
 	const [customArgs, setCustomArgs] = useState(initialValues?.customArgs ?? '');
-	const [customEnvVars, setCustomEnvVars] = useState<Record<string, string>>(
+	const [customEnvVars, setCustomEnvVarsState] = useState<Record<string, string>>(
 		initialValues?.customEnvVars ?? {}
 	);
+	const [hasCustomEnvOverride, setHasCustomEnvOverride] = useState(
+		initialValues?.customEnvVars !== undefined
+	);
+	const setCustomEnvVars = useCallback((vars: Record<string, string>) => {
+		setHasCustomEnvOverride(true);
+		setCustomEnvVarsState(vars);
+	}, []);
 	const [customEnvVarsDisabled, setCustomEnvVarsDisabled] = useState<Record<string, string>>(
 		initialValues?.customEnvVarsDisabled ?? {}
 	);
@@ -174,10 +184,16 @@ export function useAgentConfiguration(
 	// Models
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [loadingModels, setLoadingModels] = useState(false);
+	const [modelDiscoveryStatus, setModelDiscoveryStatus] =
+		useState<AgentDiscoveryResult['status']>('unavailable');
 
 	// Dynamic config options (for select fields with dynamic: true)
 	const [dynamicOptions, setDynamicOptions] = useState<Record<string, string[]>>({});
 	const [loadingDynamicOptions, setLoadingDynamicOptions] = useState(false);
+	const [dynamicOptionStatuses, setDynamicOptionStatuses] = useState<
+		Record<string, AgentDiscoveryResult['status']>
+	>({});
+	const latestDiscoveryRequestRef = useRef(0);
 
 	// Guard against stale async results when switching agents rapidly
 	const latestLoadRequestRef = useRef(0);
@@ -193,13 +209,19 @@ export function useAgentConfiguration(
 
 	// Reset all state
 	const resetState = useCallback(() => {
+		latestLoadRequestRef.current++;
+		latestDiscoveryRequestRef.current++;
+		setModelDiscoveryStatus('unavailable');
+		setDynamicOptionStatuses({});
 		setDetectedAgents([]);
 		setIsDetecting(true);
 		setSelectedAgent(null);
 		setIsConfigExpanded(false);
-		setCustomPath('');
+		setCustomPathState('');
+		setHasCustomPathOverride(false);
 		setCustomArgs('');
-		setCustomEnvVars({});
+		setCustomEnvVarsState({});
+		setHasCustomEnvOverride(false);
 		setEnableMaestroP(false);
 		setMaestroPMode('dynamic');
 		setMaestroPPath('');
@@ -238,11 +260,17 @@ export function useAgentConfiguration(
 	const loadAgentConfig = useCallback(
 		async (agentId: string) => {
 			const requestId = ++latestLoadRequestRef.current;
+			const selectedAtRequest = selectedAgentRef.current;
+			const current = () =>
+				latestLoadRequestRef.current === requestId &&
+				selectedAgentRef.current === selectedAtRequest;
 
 			const config = await window.maestro.agents.getConfig(agentId);
-			if (latestLoadRequestRef.current !== requestId) return; // stale
+			if (!current()) return; // stale
 			setAgentConfig(config || {});
 			agentConfigRef.current = config || {};
+			// Grok discovery follows the current draft in its own effect below.
+			if (agentId === 'grok') return;
 
 			// Load models if agent supports it
 			const agent = detectedAgents.find((a) => a.id === agentId);
@@ -250,12 +278,12 @@ export function useAgentConfiguration(
 				setLoadingModels(true);
 				try {
 					const models = await window.maestro.agents.getModels(agentId);
-					if (latestLoadRequestRef.current !== requestId) return; // stale
+					if (!current()) return; // stale
 					setAvailableModels(models);
 				} catch (err) {
 					logger.error('Failed to load models:', undefined, err);
 				} finally {
-					if (latestLoadRequestRef.current === requestId) {
+					if (current()) {
 						setLoadingModels(false);
 					}
 				}
@@ -280,10 +308,10 @@ export function useAgentConfiguration(
 								}
 							})
 						);
-						if (latestLoadRequestRef.current !== requestId) return;
+						if (!current()) return;
 						setDynamicOptions(results);
 					} finally {
-						if (latestLoadRequestRef.current === requestId) {
+						if (current()) {
 							setLoadingDynamicOptions(false);
 						}
 					}
@@ -293,6 +321,115 @@ export function useAgentConfiguration(
 		[detectedAgents]
 	);
 
+	const selectedEffort =
+		readEffortFromConfig(agentConfig) ??
+		(typeof agentConfig.reasoningEffort === 'string' || typeof agentConfig.effort === 'string'
+			? ''
+			: undefined);
+	const grokRequest = useMemo<AgentDiscoveryRequest | undefined>(
+		() =>
+			selectedAgent === 'grok'
+				? {
+						providerId: selectedAgent,
+						context: {
+							kind: discoveryContext?.kind ?? 'draft',
+							cwd: discoveryContext?.cwd,
+							sshRemoteId: discoveryContext?.sshRemoteId,
+							customPath: hasCustomPathOverride ? customPath : discoveryContext?.customPath,
+							customEnvVars: hasCustomEnvOverride ? customEnvVars : discoveryContext?.customEnvVars,
+							model: agentConfig.model ?? discoveryContext?.model,
+							effort: selectedEffort ?? discoveryContext?.effort,
+							sessionSshRemoteConfig: sshRemoteConfig ?? discoveryContext?.sessionSshRemoteConfig,
+						},
+					}
+				: undefined,
+		[
+			selectedAgent,
+			discoveryContext?.kind,
+			discoveryContext?.cwd,
+			discoveryContext?.customPath,
+			discoveryContext?.sshRemoteId,
+			discoveryContext?.customEnvVars,
+			discoveryContext?.model,
+			discoveryContext?.effort,
+			discoveryContext?.sessionSshRemoteConfig,
+			customPath,
+			hasCustomPathOverride,
+			customEnvVars,
+			hasCustomEnvOverride,
+			agentConfig.model,
+			selectedEffort,
+			sshRemoteConfig,
+		]
+	);
+	const debouncedGrokRequest = useDebouncedValue(grokRequest, 300);
+	const [resolvedGrokRequest, setResolvedGrokRequest] = useState<AgentDiscoveryRequest>();
+	const currentGrokRequest = useRef(grokRequest);
+	currentGrokRequest.current = grokRequest;
+	const loadGrokOptions = useCallback(
+		async (forceRefresh = false) => {
+			if (!enabled || !grokRequest) return;
+			const requestId = ++latestDiscoveryRequestRef.current;
+			const current = () =>
+				latestDiscoveryRequestRef.current === requestId &&
+				currentGrokRequest.current === grokRequest;
+			const effortKey = getEffortConfigKey(detectedAgents.find((a) => a.id === 'grok'));
+			setAvailableModels([]);
+			setDynamicOptions({});
+			setModelDiscoveryStatus('unavailable');
+			setDynamicOptionStatuses({});
+			setLoadingModels(true);
+			setLoadingDynamicOptions(true);
+			const request = { ...grokRequest, forceRefresh };
+			// The shared result carries configured fallbacks, not a validated catalog.
+			await Promise.all([
+				window.maestro.agents
+					.getModels(request)
+					.then((result) => {
+						if (!current()) return;
+						setAvailableModels(result.options);
+						setModelDiscoveryStatus(result.status);
+					})
+					.catch(() => {
+						if (current()) setModelDiscoveryStatus('unavailable');
+					})
+					.finally(() => {
+						if (current()) setLoadingModels(false);
+					}),
+				window.maestro.agents
+					.getConfigOptions(request, effortKey)
+					.then((result) => {
+						if (!current()) return;
+						setDynamicOptions({ [effortKey]: result.options });
+						setDynamicOptionStatuses({ [effortKey]: result.status });
+					})
+					.catch(() => {
+						if (current()) setDynamicOptionStatuses({ [effortKey]: 'unavailable' });
+					})
+					.finally(() => {
+						if (current()) setLoadingDynamicOptions(false);
+					}),
+			]);
+			if (current()) setResolvedGrokRequest(grokRequest);
+		},
+		[enabled, grokRequest, detectedAgents]
+	);
+
+	useEffect(() => {
+		if (grokRequest) {
+			setAvailableModels([]);
+			setDynamicOptions({});
+			setModelDiscoveryStatus('unavailable');
+			setDynamicOptionStatuses({});
+			setLoadingModels(false);
+			setLoadingDynamicOptions(false);
+			if (isConfigExpanded && grokRequest === debouncedGrokRequest) void loadGrokOptions();
+		}
+		return () => {
+			latestDiscoveryRequestRef.current++;
+		};
+	}, [grokRequest, debouncedGrokRequest, isConfigExpanded, loadGrokOptions]);
+
 	// Save agent config via IPC
 	const saveAgentConfig = useCallback(async (agentId: string): Promise<boolean> => {
 		return await window.maestro.agents.setConfig(agentId, agentConfigRef.current);
@@ -301,16 +438,21 @@ export function useAgentConfiguration(
 	// Refresh models
 	const refreshModels = useCallback(async () => {
 		if (!selectedAgent) return;
+		if (grokRequest) return loadGrokOptions(true);
+		const requestId = ++latestDiscoveryRequestRef.current;
+		const current = () =>
+			latestDiscoveryRequestRef.current === requestId && selectedAgentRef.current === selectedAgent;
 		setLoadingModels(true);
 		try {
 			const models = await window.maestro.agents.getModels(selectedAgent, true);
+			if (!current()) return;
 			setAvailableModels(models);
 		} catch (err) {
 			logger.error('Failed to refresh models:', undefined, err);
 		} finally {
-			setLoadingModels(false);
+			if (current()) setLoadingModels(false);
 		}
-	}, [selectedAgent]);
+	}, [selectedAgent, grokRequest, loadGrokOptions]);
 
 	// Refresh agent detection
 	const refreshAgent = useCallback(async () => {
@@ -335,9 +477,11 @@ export function useAgentConfiguration(
 			latestLoadRequestRef.current++;
 
 			setSelectedAgent(agentId);
-			setCustomPath('');
+			setCustomPathState('');
+			setHasCustomPathOverride(false);
 			setCustomArgs('');
-			setCustomEnvVars({});
+			setCustomEnvVarsState({});
+			setHasCustomEnvOverride(false);
 			setEnableMaestroP(false);
 			setMaestroPMode('dynamic');
 			setMaestroPPath('');
@@ -382,6 +526,13 @@ export function useAgentConfiguration(
 		}
 	}, [enabled, detectAgents, resetState, shouldLoadSshRemotes]);
 
+	useEffect(
+		() => () => {
+			latestLoadRequestRef.current++;
+		},
+		[selectedAgent, enabled]
+	);
+
 	// Load config when expanding
 	useEffect(() => {
 		if (isConfigExpanded && selectedAgent) {
@@ -389,6 +540,7 @@ export function useAgentConfiguration(
 		}
 	}, [isConfigExpanded, selectedAgent, loadAgentConfig]);
 
+	const staleGrokOptions = !!grokRequest && grokRequest !== resolvedGrokRequest;
 	const hasCustomization = !!customPath || !!customArgs || Object.keys(customEnvVars).length > 0;
 
 	return {
@@ -430,13 +582,15 @@ export function useAgentConfiguration(
 		agentConfigRef,
 
 		// Models
-		availableModels,
+		availableModels: staleGrokOptions ? [] : availableModels,
 		loadingModels,
+		modelDiscoveryStatus: staleGrokOptions ? 'unavailable' : modelDiscoveryStatus,
 		refreshModels,
 
 		// Dynamic config options
-		dynamicOptions,
+		dynamicOptions: staleGrokOptions ? {} : dynamicOptions,
 		loadingDynamicOptions,
+		dynamicOptionStatuses: staleGrokOptions ? {} : dynamicOptionStatuses,
 
 		// Refresh
 		refreshingAgent,

@@ -13,6 +13,9 @@ import { isRemoteSettingWritable } from '../bridgeDenyList';
  */
 const ALLOWED_SETTING_KEYS: Record<string, true> = {
 	activeThemeId: true,
+	themeFollowSystem: true,
+	lightThemeId: true,
+	darkThemeId: true,
 	customThemeColors: true,
 	customThemeBaseId: true,
 	themeGloss: true,

@@ -2,6 +2,7 @@ import { Lock, Plus, X } from 'lucide-react';
 import { SYMPHONY_REGISTRY_URL } from '../../../../../../shared/symphony-constants';
 import type { Theme } from '../../../../../types';
 import type { SymphonyRegistryState } from '../types';
+import { isImeComposing } from '../../../../../utils/ime';
 
 interface SymphonyRegistrySectionProps {
 	theme: Theme;
@@ -82,7 +83,7 @@ export function SymphonyRegistrySection({
 						value={registryState.newRegistryUrl}
 						onChange={(event) => registryState.setNewRegistryUrl(event.target.value)}
 						onKeyDown={(event) => {
-							if (event.key === 'Enter') {
+							if (event.key === 'Enter' && !isImeComposing(event)) {
 								event.preventDefault();
 								registryState.addRegistryUrl();
 							}

@@ -1,8 +1,10 @@
 /**
  * Tests for ClaudePlanUsage
  *
+ * The panel is the shared `PlanUsagePanel` configured for Claude; it always
+ * lists every account (the old one-account-at-a-time tab view is gone).
+ *
  * Covers:
- *   - empty state when no snapshots are cached
  *   - multi-row rendering with the same account-short-name derivation as the badge
  *     (incl. the `.claude` → `default` fallback)
  *   - bars render with progressbar role + accessible percentage
@@ -22,6 +24,7 @@ import { useUIStore } from '../../../../renderer/stores/uiStore';
 import { selectModalData, useModalStore } from '../../../../renderer/stores/modalStore';
 import { useAuthOutageStore } from '../../../../renderer/stores/authOutageStore';
 import { THEMES } from '../../../../shared/themes';
+import { useFooterSummaryStore } from '../../../../renderer/components/UsageDashboard/useFooterSummary';
 
 const theme = THEMES['dracula'];
 
@@ -50,6 +53,14 @@ beforeEach(() => {
 	useSessionStore.setState({ sessions: [] } as any);
 	useUIStore.setState({ hiddenQuotaAccounts: {} });
 	cleanup();
+	// The fixtures' reset times are in May 2026; pin "now" before them so a
+	// window is not read as already reset (which draws it at 0%).
+	vi.useFakeTimers({ toFake: ['Date'] });
+	vi.setSystemTime(new Date('2026-05-15T01:00:00.000Z'));
+});
+
+afterEach(() => {
+	vi.useRealTimers();
 });
 
 function seedSnapshots(snapshots: Record<string, any>) {
@@ -70,18 +81,10 @@ function seedSessions(configDirs: string[]) {
 	useSessionStore.setState({ sessions } as any);
 }
 
-describe('ClaudePlanUsage - empty state', () => {
-	it('renders the empty message when no accounts are configured and no snapshots cached', () => {
-		render(<ClaudePlanUsage theme={theme} />);
-		expect(screen.getByTestId('claude-plan-empty')).toBeInTheDocument();
-		expect(screen.queryByTestId('claude-plan-row-default')).toBeNull();
-	});
-});
-
 describe('ClaudePlanUsage - configured account without snapshot', () => {
 	it('renders a "hit Refresh" CTA for a session-configured account that has no snapshot yet', () => {
 		// Session declares CLAUDE_CONFIG_DIR but the snapshot store is empty -
-		// the tab list should still surface the account, and the per-tab body
+		// the list should still surface the account, and its row body
 		// should guide the user to hit Refresh instead of showing nothing.
 		seedSessions(['/Users/me/.claude-pending']);
 
@@ -91,7 +94,7 @@ describe('ClaudePlanUsage - configured account without snapshot', () => {
 		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
 	});
 
-	it('mixes a configured-but-empty tab with an authenticated one', () => {
+	it('lists a configured-but-empty account beside an authenticated one', () => {
 		seedSnapshots({
 			'/Users/me/.claude': {
 				sampledAt: '2026-05-15T00:00:00.000Z',
@@ -106,19 +109,14 @@ describe('ClaudePlanUsage - configured account without snapshot', () => {
 
 		render(<ClaudePlanUsage theme={theme} />);
 
-		// Both tabs render.
-		expect(screen.getByTestId('claude-plan-tab-default')).toBeInTheDocument();
-		expect(screen.getByTestId('claude-plan-tab-pending')).toBeInTheDocument();
-
-		// Switch to the pending tab - CTA visible, no bars.
-		fireEvent.click(screen.getByTestId('claude-plan-tab-pending'));
+		expect(screen.getByTestId('claude-plan-row-default')).toBeInTheDocument();
 		expect(screen.getByTestId('claude-plan-row-pending-pending')).toBeInTheDocument();
-		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
+		expect(screen.getAllByRole('progressbar')).toHaveLength(3);
 	});
 });
 
-describe('ClaudePlanUsage - multi-account tabs', () => {
-	it('renders a tab per account but only one row at a time (selected tab)', () => {
+describe('ClaudePlanUsage - multi-account list', () => {
+	it('lists every account, sorted by short name, with no tab bar', () => {
 		seedSnapshots({
 			'/Users/me/.claude': {
 				sampledAt: '2026-05-15T00:00:00.000Z',
@@ -138,65 +136,11 @@ describe('ClaudePlanUsage - multi-account tabs', () => {
 
 		render(<ClaudePlanUsage theme={theme} />);
 
-		// Both account tabs render.
-		expect(screen.getByTestId('claude-plan-account-tabs')).toBeInTheDocument();
-		expect(screen.getByTestId('claude-plan-tab-default')).toBeInTheDocument();
-		expect(screen.getByTestId('claude-plan-tab-gmail')).toBeInTheDocument();
-
-		// Only the first tab's row is visible (entries sort by short name; "default" wins).
+		expect(screen.queryByTestId('claude-plan-account-tabs')).toBeNull();
 		expect(screen.getByTestId('claude-plan-row-default')).toBeInTheDocument();
-		expect(screen.queryByTestId('claude-plan-row-gmail')).toBeNull();
-		expect(screen.getAllByRole('progressbar')).toHaveLength(3);
-	});
-
-	it('switches the visible row when a different tab is clicked', () => {
-		seedSnapshots({
-			'/Users/me/.claude': {
-				sampledAt: '2026-05-15T00:00:00.000Z',
-				configDirKey: '/Users/me/.claude',
-				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
-				weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
-				weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
-			},
-			'/Users/me/.claude-gmail': {
-				sampledAt: '2026-05-15T00:00:00.000Z',
-				configDirKey: '/Users/me/.claude-gmail',
-				session: { percent: 97, resetsAt: '2026-05-15T05:00:00.000Z' },
-				weekAllModels: { percent: 80, resetsAt: '2026-05-22T00:00:00.000Z' },
-				weekSonnetOnly: { percent: 5, resetsAt: '2026-05-22T00:00:00.000Z' },
-			},
-		});
-
-		render(<ClaudePlanUsage theme={theme} />);
-
-		fireEvent.click(screen.getByTestId('claude-plan-tab-gmail'));
-
-		expect(screen.queryByTestId('claude-plan-row-default')).toBeNull();
 		expect(screen.getByTestId('claude-plan-row-gmail')).toBeInTheDocument();
+		expect(screen.getAllByRole('progressbar')).toHaveLength(6);
 	});
-
-	it('renders the tab bar even when only one account exists', () => {
-		// Tab bar stays visible for single-account configurations so the user
-		// always sees the account picker structure (they explicitly want to
-		// enumerate accounts even when there's just one today, in case they
-		// add more later).
-		seedSnapshots({
-			'/Users/me/.claude': {
-				sampledAt: '2026-05-15T00:00:00.000Z',
-				configDirKey: '/Users/me/.claude',
-				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
-				weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
-				weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
-			},
-		});
-
-		render(<ClaudePlanUsage theme={theme} />);
-
-		expect(screen.getByTestId('claude-plan-account-tabs')).toBeInTheDocument();
-		expect(screen.getByTestId('claude-plan-tab-default')).toBeInTheDocument();
-		expect(screen.getByTestId('claude-plan-row-default')).toBeInTheDocument();
-	});
-
 	it('exposes percent values via aria-valuenow on each bar', () => {
 		seedSnapshots({
 			'/Users/me/.claude-work': {
@@ -234,7 +178,7 @@ describe('ClaudePlanUsage - case-variant dedup', () => {
 		});
 		seedSessions(['/users/me/.claude-opswat']);
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		// Exactly one opswat account row, and it's the canonical-cased one that
 		// carries the snapshot (three bars render, not a pending CTA).
@@ -314,6 +258,25 @@ describe('ClaudePlanUsage - exhausted account', () => {
 
 		expect(screen.getByText('Week (Sonnet only)')).toBeInTheDocument();
 	});
+
+	// claude 2.1.317 paints no 5-hour window on /usage, so the snapshot has no
+	// `session`. The row must draw the two weekly bars, not a fake 0% session.
+	it('draws no session row when the snapshot carries no session window', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				weekAllModels: { percent: 18, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 0, resetsAt: '2026-05-22T00:00:00.000Z', label: 'Fable' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.queryByText('Session window')).toBeNull();
+		const values = screen.getAllByRole('progressbar').map((b) => b.getAttribute('aria-valuenow'));
+		expect(values).toEqual(['18', '0']);
+	});
 });
 
 describe('ClaudePlanUsage - unauthenticated row', () => {
@@ -350,7 +313,7 @@ describe('ClaudePlanUsage - unauthenticated row', () => {
 			},
 		});
 
-		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 		fireEvent.click(screen.getByTestId('claude-plan-row-0din-unauthenticated-login'));
 
 		await waitFor(() => expect(selectModalData('reauth')(useModalStore.getState())).toBeDefined());
@@ -359,7 +322,7 @@ describe('ClaudePlanUsage - unauthenticated row', () => {
 		expect(data.host?.customEnvVars).toEqual({ CLAUDE_CONFIG_DIR: '/Users/me/.claude-0din' });
 	});
 
-	it('renders the unauthenticated CTA when its tab is selected', () => {
+	it('shows the CTA on the logged-out row and bars on the logged-in one', () => {
 		seedSnapshots({
 			'/Users/me/.claude': {
 				sampledAt: '2026-05-15T00:00:00.000Z',
@@ -381,20 +344,9 @@ describe('ClaudePlanUsage - unauthenticated row', () => {
 
 		render(<ClaudePlanUsage theme={theme} />);
 
-		// Both tabs render. Entries sort by deriveAccountShortName; "0din" (digit '0',
-		// charcode 48) sorts before "default" (letter 'd'), so the unauthenticated
-		// tab is the initial selection.
-		expect(screen.getByTestId('claude-plan-tab-default')).toBeInTheDocument();
-		expect(screen.getByTestId('claude-plan-tab-0din')).toBeInTheDocument();
 		expect(screen.getByTestId('claude-plan-row-0din-unauthenticated')).toBeInTheDocument();
-		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
-
-		// Switch to the authenticated tab - CTA disappears, three bars appear.
-		fireEvent.click(screen.getByTestId('claude-plan-tab-default'));
-		expect(screen.queryByTestId('claude-plan-row-0din-unauthenticated')).toBeNull();
 		expect(screen.getAllByRole('progressbar')).toHaveLength(3);
 	});
-
 	it('treats missing authState as authenticated for back-compat', () => {
 		// Snapshots persisted before authState existed must continue to
 		// render as bars, not as the unauthenticated CTA.
@@ -463,6 +415,46 @@ describe('ClaudePlanUsage - refresh wiring', () => {
 		expect(refreshClaudeUsageSnapshotsMock).not.toHaveBeenCalled();
 	});
 
+	it('keeps sampling after the panel unmounts and fills the store in when done', async () => {
+		let finishSample!: (value: unknown) => void;
+		refreshClaudeUsageSnapshotsMock.mockReturnValue(
+			new Promise((resolve) => {
+				finishSample = resolve;
+			})
+		);
+		getClaudeUsageSnapshotsMock.mockResolvedValue({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T01:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				session: { percent: 11, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 2, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 1, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		const { unmount } = render(<ClaudePlanUsage theme={theme} />);
+		fireEvent.click(screen.getByTestId('claude-plan-refresh'));
+		await waitFor(() => expect(refreshClaudeUsageSnapshotsMock).toHaveBeenCalledTimes(1));
+
+		// Switching dashboard tabs unmounts the panel mid-sample.
+		unmount();
+
+		// Coming back while main is still sampling shows the run as busy, and a
+		// click joins it instead of starting a second sample.
+		render(<ClaudePlanUsage theme={theme} />);
+		const button = screen.getByTestId('claude-plan-refresh') as HTMLButtonElement;
+		expect(button.disabled).toBe(true);
+		expect(button.textContent).toContain('Sampling');
+		fireEvent.click(button);
+		expect(refreshClaudeUsageSnapshotsMock).toHaveBeenCalledTimes(1);
+
+		finishSample({ refreshed: 1 });
+		await waitFor(() => {
+			expect(screen.getByTestId('claude-plan-row-default')).toBeInTheDocument();
+		});
+		await waitFor(() => expect(button.disabled).toBe(false));
+	});
+
 	it('disables the refresh button while a refresh is in flight', () => {
 		useClaudeUsageStore.setState({
 			snapshots: {},
@@ -477,7 +469,7 @@ describe('ClaudePlanUsage - refresh wiring', () => {
 	});
 });
 
-describe('ClaudePlanUsage - hide/show accounts (list view)', () => {
+describe('ClaudePlanUsage - hide/show accounts', () => {
 	function seedTwoAccounts() {
 		seedSnapshots({
 			'/Users/me/.claude': {
@@ -501,7 +493,7 @@ describe('ClaudePlanUsage - hide/show accounts (list view)', () => {
 
 	it('hides a row, surfaces Show all, and brings it back when unhidden', () => {
 		seedTwoAccounts();
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('claude-plan-account-default')).toBeInTheDocument();
 		expect(screen.getByTestId('claude-plan-account-work')).toBeInTheDocument();
@@ -525,9 +517,7 @@ describe('ClaudePlanUsage - hide/show accounts (list view)', () => {
 
 	it('persists the hidden set through uiStore so it survives a remount', () => {
 		seedTwoAccounts();
-		const { unmount } = render(
-			<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />
-		);
+		const { unmount } = render(<ClaudePlanUsage theme={theme} />);
 
 		fireEvent.click(screen.getByTestId('claude-plan-visibility-work'));
 		expect(useUIStore.getState().hiddenQuotaAccounts['claude-code']).toEqual([
@@ -535,17 +525,9 @@ describe('ClaudePlanUsage - hide/show accounts (list view)', () => {
 		]);
 
 		unmount();
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 		expect(screen.queryByTestId('claude-plan-account-work')).toBeNull();
 		expect(screen.getByTestId('claude-plan-show-all')).toHaveTextContent('Show all (1)');
-	});
-
-	it('does not render per-row hide toggles in tab (single-account) view', () => {
-		seedTwoAccounts();
-		render(<ClaudePlanUsage theme={theme} />);
-
-		expect(screen.queryByTestId('claude-plan-visibility-default')).toBeNull();
-		expect(screen.queryByTestId('claude-plan-show-all')).toBeNull();
 	});
 });
 
@@ -577,7 +559,7 @@ describe('ClaudePlanUsage - stale row chip', () => {
 			'/Users/me/.claude-near': snapshotAt('/Users/me/.claude-near', '2026-05-15T01:57:00.000Z'),
 		});
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('claude-plan-stale-side')).toHaveTextContent('stale, read');
 		expect(screen.queryByTestId('claude-plan-stale-work')).toBeNull();
@@ -593,7 +575,7 @@ describe('ClaudePlanUsage - stale row chip', () => {
 			'/Users/me/.claude-side': snapshotAt('/Users/me/.claude-side', '2026-05-13T02:01:00.000Z'),
 		});
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('claude-plan-stale-work')).toHaveTextContent('stale, read');
 		expect(screen.getByTestId('claude-plan-stale-side')).toHaveTextContent('stale, read');
@@ -622,7 +604,7 @@ describe('ClaudePlanUsage - agent count badge', () => {
 			'/Users/me/.claude-side',
 		]);
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('3 agents');
 		// Singular when exactly one agent uses the account.
@@ -650,7 +632,7 @@ describe('ClaudePlanUsage - agent count badge', () => {
 			],
 		} as any);
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
 	});
@@ -680,7 +662,7 @@ describe('ClaudePlanUsage - agent count badge', () => {
 			],
 		} as any);
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
 	});
@@ -688,7 +670,7 @@ describe('ClaudePlanUsage - agent count badge', () => {
 	it('shows zero for a cached account no agent uses any more', () => {
 		seedSnapshots({ '/Users/me/.claude-stale': snapshotFor('/Users/me/.claude-stale') });
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('claude-plan-agents-stale')).toHaveTextContent('0 agents');
 	});
@@ -696,7 +678,7 @@ describe('ClaudePlanUsage - agent count badge', () => {
 	it('shows the count on an account that has no snapshot yet', () => {
 		seedSessions(['/Users/me/.claude-pending', '/Users/me/.claude-pending']);
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('claude-plan-row-pending-pending')).toBeInTheDocument();
 		expect(screen.getByTestId('claude-plan-agents-pending')).toHaveTextContent('2 agents');
@@ -728,7 +710,7 @@ describe('ClaudePlanUsage - agent count badge', () => {
 			],
 		} as any);
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
 	});
@@ -748,7 +730,7 @@ describe('ClaudePlanUsage - agent count badge', () => {
 			],
 		} as any);
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('0 agents');
 	});
@@ -758,14 +740,7 @@ describe('ClaudePlanUsage - agent count badge', () => {
 		seedSessions(['/Users/me/.claude-work']);
 		const onShowAccountAgents = vi.fn();
 
-		render(
-			<ClaudePlanUsage
-				theme={theme}
-				showAllAccounts
-				autoRefresh={false}
-				onShowAccountAgents={onShowAccountAgents}
-			/>
-		);
+		render(<ClaudePlanUsage theme={theme} onShowAccountAgents={onShowAccountAgents} />);
 
 		fireEvent.click(screen.getByTestId('claude-plan-agents-work'));
 
@@ -776,14 +751,7 @@ describe('ClaudePlanUsage - agent count badge', () => {
 		// A button that lands on an empty grid answers nothing.
 		seedSnapshots({ '/Users/me/.claude-stale': snapshotFor('/Users/me/.claude-stale') });
 
-		render(
-			<ClaudePlanUsage
-				theme={theme}
-				showAllAccounts
-				autoRefresh={false}
-				onShowAccountAgents={vi.fn()}
-			/>
-		);
+		render(<ClaudePlanUsage theme={theme} onShowAccountAgents={vi.fn()} />);
 
 		expect(screen.getByTestId('claude-plan-agents-stale').tagName).toBe('SPAN');
 	});
@@ -792,13 +760,13 @@ describe('ClaudePlanUsage - agent count badge', () => {
 		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
 		seedSessions(['/Users/me/.claude-work']);
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('claude-plan-agents-work').tagName).toBe('SPAN');
 	});
 });
 
-describe('ClaudePlanUsage — account identity', () => {
+describe('ClaudePlanUsage - account identity', () => {
 	const identifiedSnapshot = (key: string, identity: Record<string, string>) => ({
 		sampledAt: '2026-05-15T00:00:00.000Z',
 		configDirKey: key,
@@ -818,7 +786,7 @@ describe('ClaudePlanUsage — account identity', () => {
 			}),
 		});
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('claude-plan-email-gmail')).toHaveTextContent(
 			'someone@smashlabs.com'
@@ -830,7 +798,7 @@ describe('ClaudePlanUsage — account identity', () => {
 			'/Users/me/.claude-legacy': identifiedSnapshot('/Users/me/.claude-legacy', {}),
 		});
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.queryByTestId('claude-plan-email-legacy')).toBeNull();
 	});
@@ -850,7 +818,7 @@ describe('ClaudePlanUsage — account identity', () => {
 			}),
 		});
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.getByTestId('claude-plan-shared-gmail')).toHaveTextContent('shared with smash');
 		expect(screen.getByTestId('claude-plan-shared-smash')).toHaveTextContent('shared with gmail');
@@ -868,50 +836,10 @@ describe('ClaudePlanUsage — account identity', () => {
 			}),
 		});
 
-		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 
 		expect(screen.queryByTestId('claude-plan-shared-gmail')).toBeNull();
 		expect(screen.queryByTestId('claude-plan-shared-banaco')).toBeNull();
-	});
-
-	it('flags the shared account in the single-account tab view too', () => {
-		// The tab view renders one row at a time, so the badge has to come
-		// from the full snapshot map rather than from the visible row.
-		seedSnapshots({
-			'/Users/me/.claude-gmail': identifiedSnapshot('/Users/me/.claude-gmail', {
-				accountEmail: 'p@smashlabs.com',
-				accountUuid: 'shared-uuid',
-			}),
-			'/Users/me/.claude-smash': identifiedSnapshot('/Users/me/.claude-smash', {
-				accountEmail: 'p@smashlabs.com',
-				accountUuid: 'shared-uuid',
-			}),
-		});
-
-		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
-
-		expect(screen.getByTestId('claude-plan-shared-gmail')).toBeInTheDocument();
-		expect(screen.queryByTestId('claude-plan-shared-smash')).toBeNull();
-	});
-
-	it('names the account and its quota siblings in the tab hover text', () => {
-		seedSnapshots({
-			'/Users/me/.claude-gmail': identifiedSnapshot('/Users/me/.claude-gmail', {
-				accountEmail: 'p@smashlabs.com',
-				accountUuid: 'shared-uuid',
-			}),
-			'/Users/me/.claude-smash': identifiedSnapshot('/Users/me/.claude-smash', {
-				accountEmail: 'p@smashlabs.com',
-				accountUuid: 'shared-uuid',
-			}),
-		});
-
-		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
-
-		const title = screen.getByTestId('claude-plan-tab-gmail').getAttribute('title') ?? '';
-		expect(title).toContain('/Users/me/.claude-gmail');
-		expect(title).toContain('Logged in as p@smashlabs.com');
-		expect(title).toContain('Shares one quota with smash');
 	});
 });
 
@@ -930,7 +858,7 @@ describe('ClaudePlanUsage - sample age', () => {
 			},
 		});
 
-		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
+		render(<ClaudePlanUsage theme={theme} />);
 		expect(screen.queryByTestId('claude-plan-last-refreshed')).toBeNull();
 		expect(screen.queryByText(/Last refreshed/)).toBeNull();
 	});
@@ -960,5 +888,30 @@ describe('ClaudePlanUsage - narrow rows', () => {
 		// ...and goes back to sharing the row from `sm` up.
 		expect(bar).toHaveClass('sm:w-auto', 'sm:flex-1', 'sm:order-none');
 		expect(bar.parentElement).toHaveClass('flex-wrap', 'sm:flex-nowrap');
+	});
+});
+
+describe('ClaudePlanUsage - window whose reset has passed', () => {
+	it('draws the window at 0% awaiting a sample, and the footer peak ignores it', () => {
+		// "now" is 2026-05-15T01:00Z; the session window reset at 00:30Z.
+		seedSnapshots({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-14T20:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				authState: 'authenticated',
+				session: { percent: 96, resetsAt: '2026-05-15T00:30:00.000Z' },
+				weekAllModels: { percent: 40, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 12, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		const values = screen.getAllByRole('progressbar').map((b) => b.getAttribute('aria-valuenow'));
+		expect(values).toEqual(['0', '40', '12']);
+		expect(screen.getByText('reset, awaiting sample')).toBeInTheDocument();
+		expect(useFooterSummaryStore.getState().summaries['anthropic-usage']).toContain(
+			'peak window 40%'
+		);
 	});
 });

@@ -13,7 +13,10 @@ interface FileTreeTruncatedBannerProps {
 	 * clicked button has to show it is working or the click reads as dead.
 	 */
 	pendingLoad?: 'more' | 'all' | null;
-	/** Collapses the banner down to the hazard icon next to the path row. */
+	/**
+	 * Collapses the banner down to the hazard icon next to the path row. The
+	 * panel remembers this for good, so the banner does not come back.
+	 */
 	onCollapse: () => void;
 }
 
@@ -90,7 +93,7 @@ export function FileTreeTruncatedBanner({
 				type="button"
 				onClick={onCollapse}
 				aria-label="Minimize file scan warning"
-				title="Minimize (click the warning icon next to the path to reopen)"
+				title="Dismiss (the warning icon next to the path stays; click it to reopen)"
 				className="flex-shrink-0 p-0.5 rounded opacity-50 hover:opacity-100 transition-opacity"
 				style={{ color: theme.colors.textMain }}
 			>

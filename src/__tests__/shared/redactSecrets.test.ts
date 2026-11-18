@@ -9,6 +9,21 @@ describe('redactSecrets - typed placeholders', () => {
 			'k sk-proj-abcDEF1234567890xyz end',
 			'k [REDACTED_API_KEY] end',
 		],
+		[
+			'xai- key after GROK_AUTH',
+			'GROK_AUTH=xai-Q9zR4tKp7LmN2vXcQ9zR4tKp',
+			'GROK_AUTH=[REDACTED_API_KEY]',
+		],
+		[
+			'bare xai- key in an error line',
+			'grok refused key xai-Q9zR4tKp7LmN2vXcQ9zR4tKp (401)',
+			'grok refused key [REDACTED_API_KEY] (401)',
+		],
+		[
+			'xai- key as a JSON value',
+			'{"key":"xai-Q9zR4tKp7LmN2vXcQ9zR4tKp"}',
+			'{"key":"[REDACTED_API_KEY]"}',
+		],
 		['ghp_ token', 'tok ghp_wxyzWXYZ0123456789abcd x', 'tok [REDACTED_API_KEY] x'],
 		['github_pat_ token', 'a github_pat_11ABCDEFGHIJ0123456789KL b', 'a [REDACTED_API_KEY] b'],
 		['slack token', 'xoxb-1234567890-abcdefghij here', '[REDACTED_API_KEY] here'],
@@ -114,6 +129,17 @@ describe('redactSecrets - typed placeholders', () => {
 		expect(redactSecrets(clean)).toEqual({ text: clean, redacted: false });
 		expect(redactSecrets('')).toEqual({ text: '', redacted: false });
 	});
+
+	it('leaves xai- words that are not keys untouched', () => {
+		for (const clean of [
+			'pip install xai-sdk',
+			'the xai-grok-cli-integration-tests branch',
+			'an xai-key placeholder',
+			'xai-Q9zR4tKp7LmN2vXc is short',
+		]) {
+			expect(redactSecrets(clean)).toEqual({ text: clean, redacted: false });
+		}
+	});
 });
 
 describe('redactSecrets - options', () => {
@@ -152,6 +178,8 @@ describe('redactSecrets - adversarial input stays linear (ReDoS)', () => {
 		'JWT-like dotted runs': 'eyJaaaaaaaaaa.'.repeat(Math.floor(K / 14)),
 		'repeated sk-': 'sk-'.repeat(Math.floor(K / 3)),
 		'repeated xoxb-': 'xoxb-'.repeat(Math.floor(K / 5)),
+		'repeated xai-': 'xai-'.repeat(K / 4),
+		'xai- before one long word': `xai-${'a'.repeat(K)}-`,
 		'repeated Bearer': 'Bearer '.repeat(Math.floor(K / 7)),
 		'PEM header parts': '-----BEGIN A '.repeat(Math.floor(K / 13)),
 		'unterminated PEM headers': '-----BEGIN PRIVATE KEY-----'.repeat(Math.floor(K / 27)),

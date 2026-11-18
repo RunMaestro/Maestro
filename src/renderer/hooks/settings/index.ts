@@ -5,5 +5,5 @@
  * settings with persistence to the main process settings store.
  */
 
-export { useSettings } from './useSettings';
+export { useSettings, useSettingsValues } from './useSettings';
 export type { UseSettingsReturn } from './useSettings';

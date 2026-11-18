@@ -48,6 +48,10 @@ import { useMentionPicker, type MentionPickerItem, type MentionCategory } from '
 import { useInputProcessing, type ProcessInputOptions } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
 import {
+	canModeratorReadImages,
+	flashModeratorCannotReadImages,
+} from '../../components/ChatComposer';
+import {
 	useCrossAgentDispatch,
 	type SpawnBackgroundSynopsisFn,
 } from '../agent/useCrossAgentDispatch';
@@ -60,7 +64,7 @@ import { formatFileMention, stripMentionQuotes } from '../../../shared/mentionPa
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
 import { screenshotReferenceLabel } from '../../utils/stagedImageOrder';
 import { STAGED_IMAGE_MIME } from '../../components/InputArea/components/stagedImageDrag';
-import { applyTrimmedTextPaste, clipboardHasImage } from '../../components/ChatComposer/pasteTrim';
+import { clipboardHasImage } from '../../components/ChatComposer/pasteTrim';
 import {
 	normalizeComposerCommandMode,
 	type ComposerCommandMode,
@@ -85,7 +89,8 @@ const EMPTY_STAGED_IMAGES: string[] = [];
  * Convert an absolute filesystem path into the form used inside an `@` mention:
  * if it sits inside `projectRoot`, return the relative path; otherwise return
  * the absolute path unchanged. Forward-slash normalised so Windows drops still
- * produce a clean mention.
+ * produce a clean mention. Group chat rooms omit `projectRoot` on external
+ * drops so every dropped path remains absolute.
  */
 function toMentionPath(absolutePath: string, projectRoot?: string): string {
 	const norm = absolutePath.replace(/\\/g, '/');
@@ -772,43 +777,18 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		}
 	}, [syncAiInputToSession, syncTerminalInputToSession]);
 
-	const handleReplayMessage = useCallback(
-		(text: string, images?: string[]) => {
-			// Preserve draft input so replay doesn't clobber what the user was typing
-			const draftInput = useComposerInputStore.getState().aiValue;
-			const activeSession = selectActiveSession(useSessionStore.getState());
-			const activeTab = activeSession ? getActiveTab(activeSession) : null;
-			const draftImages = activeTab?.stagedImages ? [...activeTab.stagedImages] : [];
-			// The restore below runs a tick later - pin it to the tab that OWNS the
-			// draft so it can't be written onto whatever tab is active by then.
-			const draftTabId = useComposerInputStore.getState().aiValueTabId ?? activeTabIdRef.current;
-			const pin = activeSession
-				? { sessionId: activeSession.id, tabId: draftTabId ?? activeTab?.id }
-				: undefined;
-
-			if (images && images.length > 0) {
-				setStagedImages(images);
-			}
-			setTimeout(() => {
-				// Pin the agent/tab from click time so a focus change before the
-				// timeout cannot retarget the replay. Images were staged above.
-				processInputRef.current(text, pin);
-				// Restore draft input after processInput clears it
-				if (draftInput) {
-					setInputValue(draftInput);
-					if (pin) {
-						syncAiInputToSession(draftInput, pin);
-					} else {
-						syncAiInputToSession(draftInput);
-					}
-				}
-				if (draftImages.length > 0) {
-					setStagedImages(draftImages);
-				}
-			}, 0);
-		},
-		[setStagedImages, setInputValue, syncAiInputToSession]
-	);
+	const handleReplayMessage = useCallback((text: string, images?: string[]) => {
+		// The replayed text and images go straight to processInput, which leaves
+		// the composer alone for a send it did not read from it. The user's draft
+		// (text, staged images, command mode) survives the replay untouched.
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		const activeTab = activeSession ? getActiveTab(activeSession) : null;
+		processInputRef.current(text, {
+			// Pin the agent/tab from click time so the send cannot be retargeted.
+			...(activeSession && { sessionId: activeSession.id, tabId: activeTab?.id }),
+			images: images ?? [],
+		});
+	}, []);
 
 	const handlePaste = useCallback(
 		(e: React.ClipboardEvent) => {
@@ -824,12 +804,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const items = e.clipboardData.items;
 			const hasImage = clipboardHasImage(e.clipboardData);
 
-			// Handle text paste with whitespace trimming. A room's composer trims its
-			// own text pastes (GroupChatInput's wrapper) and only hands images here.
-			if (!hasImage && !isGroupChatActive) {
-				applyTrimmedTextPaste(e, (e.target as HTMLTextAreaElement).value, setInputValue);
-				return;
-			}
+			// Text paste lands verbatim (native paste). No trimming: dictation tools
+			// such as Scribe append a trailing space on purpose.
+			if (!hasImage && !isGroupChatActive) return;
 
 			// Image handling requires AI mode or group chat
 			if (!isGroupChatActive && !isDirectAIMode) return;
@@ -846,6 +823,15 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 					detail: 'Press Esc to step back toward the agent',
 				});
 				return;
+			}
+
+			if (isGroupChatActive) {
+				const chat = useGroupChatStore.getState().groupChats.find((c) => c.id === groupChatId);
+				if (!canModeratorReadImages(chat?.moderatorAgentId)) {
+					e.preventDefault();
+					flashModeratorCannotReadImages();
+					return;
+				}
 			}
 
 			for (let i = 0; i < items.length; i++) {
@@ -883,7 +869,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				}
 			}
 		},
-		[setInputValue, setStagedImages, getCommandMode]
+		[setStagedImages, getCommandMode]
 	);
 
 	/**
@@ -958,19 +944,14 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		[setInputValue]
 	);
 
-	const appendMentionsToGroupChatDraft = useCallback((paths: string[], pinnedChatId?: string) => {
-		if (paths.length === 0) return;
-		const joined = paths.map((p) => formatFileMention(p)).join(' ');
-		// Reading the store via getState() (instead of subscribing) is intentional:
-		// this callback only runs on user drop events, so we always want the latest
-		// chatId / setter at fire time and don't want stale-closure invalidation to
-		// re-create the callback (and bust handleDrop's useCallback deps) on every
-		// store update.
-		//
-		// `pinnedChatId` is the chat the drop happened in. An upload resolves
-		// asynchronously, so without the pin a mention would land in whichever chat
-		// is open when it finishes - or vanish entirely once the user has left
-		// group chat.
+	/**
+	 * Append free text to the room draft on screen, or to `pinnedChatId` when the
+	 * write can land after the user has moved rooms. Reads the store through
+	 * `getState()` so a user drop always sees the live chat and setter without
+	 * re-creating the callback (and busting `handleDrop`'s deps) on every update.
+	 */
+	const appendTextToGroupChatDraft = useCallback((text: string, pinnedChatId?: string) => {
+		if (!text) return;
 		const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
 		const chatId = pinnedChatId ?? activeGroupChatId;
 		if (!chatId) return;
@@ -979,11 +960,19 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				if (c.id !== chatId) return c;
 				const current = c.draftMessage ?? '';
 				const sep = current && !/\s$/.test(current) ? ' ' : '';
-				const next = current ? current + sep + joined + ' ' : joined + ' ';
+				const next = current ? current + sep + text + ' ' : text + ' ';
 				return { ...c, draftMessage: next };
 			})
 		);
 	}, []);
+
+	const appendMentionsToGroupChatDraft = useCallback(
+		(paths: string[], pinnedChatId?: string) => {
+			if (paths.length === 0) return;
+			appendTextToGroupChatDraft(paths.map((p) => formatFileMention(p)).join(' '), pinnedChatId);
+		},
+		[appendTextToGroupChatDraft]
+	);
 
 	/**
 	 * Attach dropped files that carry no filesystem path (the web-desktop build
@@ -1096,10 +1085,20 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			// somewhere else.
 			const stagedImageIndex = e.dataTransfer.getData(STAGED_IMAGE_MIME);
 			if (stagedImageIndex !== '') {
-				if (isGroupChatActive || !isDirectAIMode) return;
 				const index = Number(stagedImageIndex);
 				if (!Number.isInteger(index) || index < 0) return;
-				appendToAiInput(screenshotReferenceLabel(index));
+				const label = screenshotReferenceLabel(index);
+				if (isGroupChatActive) {
+					// A room gets the same end-of-draft append AI chat has. The
+					// top-level preventDefault keeps the browser from also inserting
+					// the drag's text/plain flavour at the pointer, so the reference
+					// lands once. This is text only: the image was already staged, and
+					// the room's send gate still decides whether it may be attached.
+					appendTextToGroupChatDraft(label, groupChatId);
+					return;
+				}
+				if (!isDirectAIMode) return;
+				appendToAiInput(label);
 				inputRef.current?.focus();
 				return;
 			}
@@ -1181,11 +1180,31 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const externalPaths: string[] = [];
 			// Files with no resolvable path (browser drops) get uploaded instead.
 			const pathlessFiles: File[] = [];
-			const projectRoot = activeSession?.projectRoot ?? activeSession?.fullPath;
+			// In a room, dropped paths must be absolute: a room has no single project
+			// root, and the moderator's working directory is arbitrary. Only an
+			// absolute path resolves for every participant.
+			const projectRoot = isGroupChatActive
+				? undefined
+				: (activeSession?.projectRoot ?? activeSession?.fullPath);
+
+			let roomModeratorRefusedImages = false;
+			if (isGroupChatActive) {
+				const chat = useGroupChatStore.getState().groupChats.find((c) => c.id === groupChatId);
+				if (!canModeratorReadImages(chat?.moderatorAgentId)) {
+					const hasAnyImage = Array.from(files).some((file) => file.type.startsWith('image/'));
+					if (hasAnyImage) {
+						roomModeratorRefusedImages = true;
+						flashModeratorCannotReadImages();
+					}
+				}
+			}
 
 			for (let i = 0; i < files.length; i++) {
 				const file = files[i];
 				if (file.type.startsWith('image/')) {
+					if (roomModeratorRefusedImages) {
+						continue;
+					}
 					const reader = new FileReader();
 					reader.onload = (event) => {
 						if (event.target?.result) {
@@ -1264,6 +1283,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			setStagedImages,
 			appendToAiInput,
 			appendMentionsToAiInput,
+			appendTextToGroupChatDraft,
 			appendMentionsToGroupChatDraft,
 			uploadAndMentionPathlessFiles,
 			getCommandMode,

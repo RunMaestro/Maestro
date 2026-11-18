@@ -18,6 +18,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Filter, HelpCircle, X, Zap } from 'lucide-react';
+import { isImeComposing } from '../../utils/ime';
 
 import type {
 	ParquetColumnInfo,
@@ -135,13 +136,16 @@ export const ParquetFilterBar = forwardRef<ParquetFilterBarHandle, ParquetFilter
 					setSuggestionIndex((index) => (index - 1 + suggestions.length) % suggestions.length);
 					return;
 				}
-				if (event.key === 'Tab' || (event.key === 'Enter' && suggestionIndex >= 0)) {
+				if (
+					event.key === 'Tab' ||
+					(event.key === 'Enter' && suggestionIndex >= 0 && !isImeComposing(event))
+				) {
 					event.preventDefault();
 					applySuggestion(suggestions[suggestionIndex]);
 					return;
 				}
 			}
-			if (event.key === 'Escape' && value) {
+			if (event.key === 'Escape' && value && !isImeComposing(event)) {
 				// Only reaches here when nothing above has claimed Escape. Inside a
 				// registered modal the layer stack takes it at capture on `window`
 				// and closes the surface first, which is the app-wide contract; in a

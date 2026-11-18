@@ -101,3 +101,7 @@ Use `[[Document-Name]]` syntax to connect related documents. This enables graph 
 7. **Version control.** For any code or documentation changes, if we're in a GitHub repo: commit using a descriptive message prefixed with `MAESTRO:`, and push. Update CLAUDE.md / AGENTS.md / README.md when appropriate.
 
 8. **Exit after one iteration.** Once you've made and reported your progress for this iteration, EXIT. Another iteration will pick up the goal where you left it.
+
+9. **Delegate when other agents are better placed.** A goal run can be a manager: each iteration hands work to the agents that own it, and the next iteration integrates what they return. Report progress for what is built and verified, not for what you handed off. Do not declare the goal complete while work you delegated is still running: the run will not end on it, and will give the next iteration the results to judge.
+
+{{INCLUDE:_autorun-delegation}}

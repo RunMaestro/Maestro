@@ -240,10 +240,27 @@ describe('Git Preload API', () => {
 				'main',
 				'Feature Title',
 				'PR body',
+				undefined,
 				undefined
 			);
 			expect(result.success).toBe(true);
 			expect(result.prUrl).toBe('https://github.com/user/repo/pull/123');
+		});
+
+		it('should forward the SSH remote to git:createPR', async () => {
+			mockInvoke.mockResolvedValue({ success: true, prUrl: 'https://github.com/user/repo/pull/7' });
+
+			await api.createPR('/home/user/worktree', 'main', 'Title', 'Body', undefined, 'ssh-remote-1');
+
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'git:createPR',
+				'/home/user/worktree',
+				'main',
+				'Title',
+				'Body',
+				undefined,
+				'ssh-remote-1'
+			);
 		});
 	});
 

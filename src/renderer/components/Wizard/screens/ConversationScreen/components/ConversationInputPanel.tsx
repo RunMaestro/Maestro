@@ -10,6 +10,7 @@ import type { Theme } from '../../../../../types';
 import { READY_CONFIDENCE_THRESHOLD } from '../../../services/wizardPrompts';
 import type { WizardMessage } from '../../../WizardContext';
 import { formatShortcutKeys } from '../../../../../utils/shortcutFormatter';
+import { isImeComposing } from '../../../../../utils/ime';
 import { useAutosizeTextarea } from '../../../../../hooks/ui/useAutosizeTextarea';
 
 const MAX_TEXTAREA_HEIGHT = 120;
@@ -55,7 +56,7 @@ export function ConversationInputPanel({
 		confidenceLevel < READY_CONFIDENCE_THRESHOLD;
 
 	const handleTextareaKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !isImeComposing(e)) {
 			e.preventDefault();
 			onSendMessage();
 		}

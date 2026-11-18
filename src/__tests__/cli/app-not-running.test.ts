@@ -23,6 +23,13 @@ const { dataDir, notRunning } = vi.hoisted(() => {
 	return { dataDir: dir, notRunning: { reason: 'no-discovery-file' as const } };
 });
 
+// An absent host must fail before any provider SDK is loaded or spawned.
+vi.mock('../../cli/services/native-sdk-agent', () => ({
+	spawnNativeSdkAgent: () => {
+		throw new Error('Unexpected SDK spawn without a host');
+	},
+}));
+
 vi.mock('../../cli/services/maestro-client', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../cli/services/maestro-client')>();
 	const fail = () => Promise.reject(new actual.MaestroNotRunningError(notRunning.reason));
@@ -124,6 +131,7 @@ import { openFile } from '../../cli/commands/open-file';
 import { openGraph } from '../../cli/commands/open-graph';
 import { openModal } from '../../cli/commands/open-modal';
 import { openTerminal } from '../../cli/commands/open-terminal';
+import { pianolaSuperviseScope } from '../../cli/commands/pianola-supervise';
 import { pianolaWatch } from '../../cli/commands/pianola';
 import { pianolaOrchestrate } from '../../cli/commands/pianola-orchestrate';
 import { profilingStart, profilingStatus, profilingStop } from '../../cli/commands/profiling';
@@ -350,6 +358,12 @@ const rows: Row[] = [
 		jsonlMessage: true,
 	},
 	{ name: 'status', run: () => status(), humanOnly: true, humanOnStdout: true },
+	{
+		name: 'pianola supervise scope',
+		run: () =>
+			pianolaSuperviseScope({ manager: 'manager', label: 'Agents', agents: 'agent-1', json: true }),
+		jsonOnly: true,
+	},
 	{ name: 'pianola watch', run: () => pianolaWatch('tab-1', { once: true }), humanOnly: true },
 	{
 		name: 'pianola orchestrate',

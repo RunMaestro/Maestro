@@ -38,6 +38,8 @@ Seventeen tools, and they fall into two very different groups.
 
 Reading is the half most people want. An agent that can read the terminal it just told you to run something in stops asking you to paste.
 
+When you hand an agent an element with [Browser Design Mode](./browser-design-mode), the message names the tab by the same `browser:N` id these tools take, so the agent can re-read that element with `read_browser` or take a fresh `browser_screenshot` after it changes the code.
+
 ### Driving (opt in, per agent)
 
 - `browser_navigate`, `browser_back`, `browser_forward`, `browser_reload`, `browser_stop`

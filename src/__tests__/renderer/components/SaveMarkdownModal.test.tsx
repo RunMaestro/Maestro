@@ -493,6 +493,19 @@ describe('SaveMarkdownModal', () => {
 			});
 		});
 
+		it('leaves Enter to the input method during an IME composition', () => {
+			mockWriteFile.mockResolvedValue({ success: true });
+			render(<SaveMarkdownModal {...defaultProps} />);
+
+			const filenameInput = screen.getByPlaceholderText('document.md');
+			fireEvent.change(filenameInput, { target: { value: 'test.md' } });
+			for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+				expect(fireEvent.keyDown(filenameInput, { key: 'Enter', ...ime })).toBe(true);
+			}
+
+			expect(mockWriteFile).not.toHaveBeenCalled();
+		});
+
 		it('does not save when Enter is pressed with empty filename', async () => {
 			render(<SaveMarkdownModal {...defaultProps} />);
 

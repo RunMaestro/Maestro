@@ -127,8 +127,56 @@ function activeEncoreKeywords(
 }
 
 /**
+ * A query shorter than this matches whole words in a setting's label, tab, or
+ * keywords only. Substring matching starts at this length: one or two letters
+ * occur in nearly every description, and every match opens its section.
+ */
+export const MIN_SUBSTRING_QUERY_LENGTH = 3;
+
+function words(text: string): string[] {
+	return text.split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+/**
+ * The settings a short query names outright ("gh", "ai", "ui"): every term must
+ * be a whole word of the label, tab label, or keywords.
+ */
+function searchShortQuery(
+	terms: string[],
+	candidates: SearchableSetting[],
+	encoreFeatures: Partial<EncoreFeatureFlags> | undefined
+): SearchableSetting[] {
+	return candidates
+		.map((setting) => {
+			const label = new Set(words(setting.label.toLowerCase()));
+			const other = new Set(
+				words(
+					[
+						setting.tabLabel,
+						...(setting.keywords || []),
+						...activeEncoreKeywords(setting, encoreFeatures),
+					]
+						.join(' ')
+						.toLowerCase()
+				)
+			);
+			let score = 0;
+			for (const term of terms) {
+				if (label.has(term)) score += 3;
+				else if (other.has(term)) score += 1;
+				else return null;
+			}
+			return { setting, score };
+		})
+		.filter((entry): entry is { setting: SearchableSetting; score: number } => entry !== null)
+		.sort((a, b) => b.score - a.score)
+		.map((entry) => entry.setting);
+}
+
+/**
  * Search settings by query string. Matches against label, description, tab label, and keywords.
  * Returns matching settings sorted by relevance (label match first, then description, then keywords).
+ * A query under `MIN_SUBSTRING_QUERY_LENGTH` characters matches whole words only.
  */
 export function searchSettings(
 	query: string,
@@ -139,13 +187,15 @@ export function searchSettings(
 	const q = query.toLowerCase().trim();
 	const terms = q.split(/\s+/);
 
-	return [...ALL_SEARCHABLE_SETTINGS, ...additional]
-		.filter(
-			(setting) =>
-				!encoreFeatures ||
-				!setting.requiresEncore ||
-				encoreFeatures[setting.requiresEncore] === true
-		)
+	const candidates = [...ALL_SEARCHABLE_SETTINGS, ...additional].filter(
+		(setting) =>
+			!encoreFeatures || !setting.requiresEncore || encoreFeatures[setting.requiresEncore] === true
+	);
+	if (q.length < MIN_SUBSTRING_QUERY_LENGTH) {
+		return searchShortQuery(terms, candidates, encoreFeatures);
+	}
+
+	return candidates
 		.map((setting) => {
 			const label = setting.label.toLowerCase();
 			const desc = (setting.description || '').toLowerCase();

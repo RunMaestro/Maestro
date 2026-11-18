@@ -19,6 +19,11 @@ import {
 	getActiveTab,
 	toggleReadOnlyModeFields,
 } from '../../utils/tabHelpers';
+import {
+	REMOVE_ATTACHED_IMAGES_TO_SEND_DETAIL,
+	canModeratorReadImages,
+	flashModeratorCannotReadImages,
+} from '../../components/ChatComposer/capabilities';
 
 // ============================================================================
 // Dependencies interface
@@ -111,6 +116,17 @@ export function usePromptComposerHandlers(
 	const handlePromptComposerSend = useCallback(
 		(value: string) => {
 			if (activeGroupChatId) {
+				// Re-read the moderator at send time: it can change while the modal is
+				// open, and this is the same rule the room composer enforces inline.
+				if (groupChatStagedImages.length > 0) {
+					const chat = useGroupChatStore
+						.getState()
+						.groupChats.find((c) => c.id === activeGroupChatId);
+					if (!canModeratorReadImages(chat?.moderatorAgentId)) {
+						flashModeratorCannotReadImages(REMOVE_ATTACHED_IMAGES_TO_SEND_DETAIL);
+						return;
+					}
+				}
 				// Send to group chat
 				handleSendGroupChatMessage(
 					value,
@@ -123,10 +139,11 @@ export function usePromptComposerHandlers(
 					prev.map((c) => (c.id === activeGroupChatId ? { ...c, draftMessage: '' } : c))
 				);
 			} else {
-				// Set the input value and trigger send
+				// Put the text in the composer, then send it AS a composer submit (no
+				// override) so processInput consumes the composer, staged images included.
 				setInputValue(value);
 				// Use setTimeout to ensure state updates before processing
-				setTimeout(() => processInput(value), 0);
+				setTimeout(() => processInput(), 0);
 			}
 		},
 		[

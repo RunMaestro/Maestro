@@ -376,5 +376,19 @@ describe('Debug Package Packager', () => {
 
 			await expect(createZipPackage(invalidPath, contents)).rejects.toThrow();
 		});
+
+		it('should reject when the output file cannot be opened (MAESTRO-18B)', async () => {
+			// The directory exists when the packager checks it, so it is not created,
+			// but the zip cannot be opened inside it. Before the fix the write
+			// stream's ENOENT had no listener: it escaped as an uncaught exception
+			// and the promise never settled.
+			const outputDir = path.join(TEST_OUTPUT_DIR, 'not-a-dir');
+			fs.writeFileSync(outputDir, 'a file where the directory should be');
+			const contents: Partial<PackageContents> = {
+				'system-info.json': {},
+			};
+
+			await expect(createZipPackage(outputDir, contents)).rejects.toThrow(/ENOTDIR|ENOENT/);
+		});
 	});
 });

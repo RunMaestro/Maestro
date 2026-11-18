@@ -61,24 +61,52 @@ describe('annotateTreeLines', () => {
 	});
 
 	it('keeps an ancestor guide alive only while that ancestor has more to come', () => {
-		//   a/          <- has a following sibling (d), so column 0 stays lit
-		//     b/
+		//   a/
+		//     b/        <- has a following sibling (c), so column 0 stays lit
 		//       x.md
-		//     c/
+		//     c/        <- last child of a, so column 0 ends at c's elbow
 		//       y.md
-		//   d/
+		//   d/          <- root rows own no guide column
 		const tree = rows(['0:a', '1:b', '2:x.md', '1:c', '2:y.md', '0:d']);
 		annotateTreeLines(tree);
 		const [a, b, x, c, y, d] = tree;
 		expect(a.ancestorGuideMask).toBe(0);
 		expect(b.ancestorGuideMask).toBe(0);
-		// x sits under b, which still has sibling c, but column 1 is x's own elbow
-		// column, so only column 0 (kept alive by d) is a pass-through guide.
+		// x's own elbow is column 1; column 0 joins b to c and passes through x.
 		expect(x.ancestorGuideMask).toBe(0b1);
 		expect(c.ancestorGuideMask).toBe(0);
-		// y sits under c, the last child of a, so column 0 is still alive via d.
-		expect(y.ancestorGuideMask).toBe(0b1);
+		// c closed column 0 with its elbow, so nothing passes through y.
+		expect(y.ancestorGuideMask).toBe(0);
 		expect(d.ancestorGuideMask).toBe(0);
+	});
+
+	it('runs a folder guide past an expanded sibling subtree', () => {
+		//   .maestro/
+		//     history/
+		//     playbooks/      <- has siblings below, so column 0 passes through
+		//       2026-a/          every row of its subtree
+		//         Phase-01.md
+		//       Working/
+		//     tools/
+		//     cue.yaml
+		const tree = rows([
+			'0:.maestro',
+			'1:history',
+			'1:playbooks',
+			'2:2026-a',
+			'3:Phase-01.md',
+			'2:Working',
+			'1:tools',
+			'1:cue.yaml',
+		]);
+		annotateTreeLines(tree);
+		const [, , , dated, phase, working, tools, cue] = tree;
+		expect(dated.ancestorGuideMask).toBe(0b1);
+		// Column 0 for playbooks' siblings, column 1 for 2026-a's sibling Working.
+		expect(phase.ancestorGuideMask).toBe(0b11);
+		expect(working.ancestorGuideMask).toBe(0b1);
+		expect(tools.ancestorGuideMask).toBe(0);
+		expect(cue.isLastChild).toBe(true);
 	});
 
 	it('drops an ancestor guide once that ancestor is the last child', () => {

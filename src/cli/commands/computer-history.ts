@@ -16,6 +16,7 @@ import { isEncoreEnabled, requireEncore } from '../utils/encore-gate';
 import { computerHistoryDir, resolveStorePath } from '../../shared/computer-history/paths';
 import {
 	compileGrep,
+	digestMatches,
 	listDigests,
 	readDigest,
 	type DigestInfo,
@@ -311,10 +312,11 @@ function describeDigest(d: DigestInfo) {
 /**
  * List digest files (15-minute digests and 6-hour roll-ups) in a range. Text
  * output prints each body inside the untrusted fence: digests were written by
- * an agent that read captured screen text.
+ * an agent that read captured screen text. `--grep` keeps digests whose
+ * summary matches, the same rule the viewer's Digests search applies.
  */
 export async function computerHistoryDigests(
-	options: RangeOptions & { kind?: string }
+	options: RangeOptions & { kind?: string; grep?: string }
 ): Promise<void> {
 	ensureComputerHistoryEnabled(options.json);
 	const range = parseRange(options, '1d');
@@ -326,9 +328,15 @@ export async function computerHistoryDigests(
 		kind = k;
 	}
 	const digests = await listDigests(storeDir(), { ...range, kind });
-	const withBodies = await Promise.all(
-		digests.map(async (d) => ({ ...describeDigest(d), text: await readDigest(storeDir(), d.file) }))
-	);
+	const grep = compileGrep(options.grep?.trim() || undefined);
+	const withBodies = (
+		await Promise.all(
+			digests.map(async (d) => ({
+				...describeDigest(d),
+				text: await readDigest(storeDir(), d.file),
+			}))
+		)
+	).filter((d) => !grep || (d.text !== null && digestMatches(d.text, grep)));
 	if (options.json) {
 		console.log(
 			JSON.stringify({
@@ -342,7 +350,7 @@ export async function computerHistoryDigests(
 		return;
 	}
 	if (withBodies.length === 0) {
-		console.log('No digests in that range.');
+		console.log(grep ? 'No digests in that range match.' : 'No digests in that range.');
 		return;
 	}
 	for (const d of withBodies) {

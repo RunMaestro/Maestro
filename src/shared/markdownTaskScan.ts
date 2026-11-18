@@ -92,3 +92,100 @@ export function countMarkdownTasks(content: string): MarkdownTaskCounts {
 
 	return { checked, unchecked, total: checked + unchecked };
 }
+
+const UNCHECKED_TASK_PARTS = /^(\s*[-*+]\s*)\[\s*\](\s*)(.+)$/;
+// Same markers as CHECKED_TASK_COUNT_REGEX above (x, X, U+2713, U+2714).
+const CHECKED_TASK_PARTS = /^(\s*[-*+]\s*)\[[xX\u2713\u2714]\](\s*)(.*)$/;
+
+export interface FailedTurnCheckboxRestore {
+	/** The document with the boxes this turn ticked unticked again. */
+	content: string;
+	/** Boxes put back to unchecked. */
+	restored: number;
+	/** Boxes ticked during the turn that no task at dispatch could be matched to. */
+	unmatched: number;
+}
+
+/**
+ * Untick the boxes a FAILED or cancelled turn ticked before it ended.
+ *
+ * A Grok turn can tick a box and then end on a rate limit, an auth refusal, a
+ * stop or a watchdog kill; the tick is the agent's preamble, not a finished
+ * task. Only the boxes that were unchecked at dispatch and are checked now are
+ * touched: everything else in `after` (the agent's notes, edits the operator
+ * made during the turn) stays as it is. A checked line matches its dispatch
+ * task exactly or by prefix, since agents append a note when they tick a box.
+ *
+ * Shared because both Auto Run engines call it on a failed Grok task turn: the
+ * desktop engine (`useDocumentProcessor`) and the shared task/document engine
+ * (`maestro-lib/autorun/run-playbook.ts`, behind `maestro-cli playbook`, the
+ * library runtime and `maestro-cli host`).
+ */
+export function restoreTasksCheckedByFailedTurn(
+	before: string,
+	after: string
+): FailedTurnCheckboxRestore {
+	const take = (pool: Map<string, number>, body: string): boolean => {
+		const left = pool.get(body) ?? 0;
+		if (left <= 0) return false;
+		pool.set(body, left - 1);
+		return true;
+	};
+	const add = (pool: Map<string, number>, body: string) =>
+		pool.set(body, (pool.get(body) ?? 0) + 1);
+	const longestPrefixKey = (pool: Map<string, number>, body: string): string | undefined => {
+		let best: string | undefined;
+		for (const [key, left] of pool) {
+			if (left > 0 && body.startsWith(key) && (best === undefined || key.length > best.length)) {
+				best = key;
+			}
+		}
+		return best;
+	};
+
+	const uncheckedAtDispatch = new Map<string, number>();
+	const checkedAtDispatch = new Map<string, number>();
+	forEachMarkdownLine(before, (line) => {
+		const unchecked = UNCHECKED_TASK_PARTS.exec(line);
+		if (unchecked) add(uncheckedAtDispatch, unchecked[3].trim());
+		const checked = CHECKED_TASK_PARTS.exec(line);
+		if (checked) add(checkedAtDispatch, checked[3].trim());
+	});
+
+	// Pass 1: lines checked at dispatch and still identical are not this turn's.
+	const ticked: Array<{ index: number; prefix: string; gap: string; rest: string }> = [];
+	forEachMarkdownLine(after, (line, index) => {
+		const checked = CHECKED_TASK_PARTS.exec(line);
+		if (!checked) return;
+		if (take(checkedAtDispatch, checked[3].trim())) return;
+		ticked.push({ index, prefix: checked[1], gap: checked[2], rest: checked[3] });
+	});
+
+	const lines = after.replace(/\r\n?/g, '\n').split('\n');
+	let restored = 0;
+	let unmatched = 0;
+	for (const entry of ticked) {
+		const body = entry.rest.trim();
+		let isTurnTick = take(uncheckedAtDispatch, body);
+		if (!isTurnTick) {
+			// An already-checked line the agent annotated is not a new tick.
+			const annotatedKey = longestPrefixKey(checkedAtDispatch, body);
+			if (annotatedKey !== undefined) {
+				take(checkedAtDispatch, annotatedKey);
+				continue;
+			}
+			const key = longestPrefixKey(uncheckedAtDispatch, body);
+			isTurnTick = key !== undefined && take(uncheckedAtDispatch, key);
+		}
+		if (isTurnTick) {
+			lines[entry.index] = `${entry.prefix}[ ]${entry.gap}${entry.rest}`;
+			restored++;
+		} else {
+			unmatched++;
+		}
+	}
+
+	if (restored === 0) return { content: after, restored, unmatched };
+	const newline = after.includes('\r\n') ? '\r\n' : '\n';
+	return { content: lines.join(newline), restored, unmatched };
+}

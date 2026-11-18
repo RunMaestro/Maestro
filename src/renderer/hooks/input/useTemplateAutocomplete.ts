@@ -4,6 +4,7 @@ import {
 	useTemplateAutocompleteEngine,
 	type AutocompleteState,
 } from './useTemplateAutocompleteEngine';
+import { isImeComposing } from '../../utils/ime';
 
 export type { AutocompleteState };
 
@@ -118,7 +119,7 @@ export function useTemplateAutocomplete({
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>): boolean =>
-			handleKey(e.key, () => e.preventDefault()),
+			!(e.key === 'Enter' && isImeComposing(e)) && handleKey(e.key, () => e.preventDefault()),
 		[handleKey]
 	);
 

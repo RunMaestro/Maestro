@@ -68,6 +68,7 @@ import {
 	type StandaloneCueAutoRun,
 	type StandaloneCueAutoRunEnd,
 } from '../../../cli/services/cue-standalone-engine';
+import { detectCueAuthFailure } from '../../../main/cue/cue-auth-detector';
 
 const event: CueEvent = {
 	id: 'evt-1',
@@ -211,6 +212,157 @@ describe('buildStandaloneCueEngineDeps', () => {
 				expect.objectContaining({ id: 'agent-1', toolType: 'claude-code' })
 			);
 			expect(config.appendSystemPrompt).toBe('MAESTRO SYSTEM PROMPT');
+		});
+	});
+
+	// The standalone runner hands a Grok agent to the same router and executor
+	// contract the desktop does: the stored agent's model, account env and SSH
+	// target, the event payload a chain or fan-in carries, and the executor's
+	// result (status, usage, provider session) unchanged.
+	describe('a Grok agent', () => {
+		const grokAgent = {
+			toolType: 'grok',
+			customModel: 'grok-fixture-model',
+			customEnvVars: { GROK_HOME: '/fixture/grok-account-b' },
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+		};
+		const grokResult = {
+			status: 'completed',
+			stdout: 'pong',
+			stderr: '',
+			providerSessionId: 'grok-native-session',
+			usage: { inputTokens: 12, outputTokens: 3, accounting: { providerId: 'grok' } },
+		} as unknown as CueRunResult;
+		const request = (overrides: Partial<CueRunRequest> = {}) =>
+			({
+				runId: 'run-grok',
+				sessionId: 'agent-1',
+				prompt: 'Say pong',
+				subscriptionName: 'ask',
+				event,
+				timeoutMs: 1000,
+				...overrides,
+			}) as CueRunRequest;
+
+		beforeEach(() => {
+			Object.assign(agent, grokAgent);
+			vi.mocked(detectCueAuthFailure).mockClear();
+		});
+
+		it.each([
+			['prompt', request()],
+			[
+				'output-prompt',
+				request({
+					runId: 'run-grok-output',
+					subscriptionName: 'ask:output',
+					prompt: 'Summarize\n\n---\n\nContext from completed task:\npong',
+					event: { ...event, payload: { sourceOutput: 'pong', outputPromptPhase: true } },
+				}),
+			],
+			[
+				'fan-in',
+				request({
+					runId: 'run-grok-fan-in',
+					subscriptionName: 'merge',
+					event: {
+						...event,
+						type: 'agent.completed',
+						payload: {
+							completedSessions: ['agent-2', 'agent-3'],
+							sourceSession: 'beta, gamma',
+							sourceOutput: 'left\n---\nright',
+							outputTruncated: false,
+						},
+					},
+				}),
+			],
+		] as const)(
+			'runs the %s turn on the stored model, account and SSH target',
+			async (_label, run) => {
+				executeCuePrompt.mockResolvedValue(grokResult);
+				const deps = buildStandaloneCueEngineDeps({ onLog: vi.fn() });
+
+				const result = await deps.onCueRun(run);
+
+				expect(result).toBe(grokResult);
+				expect(executeCuePrompt).toHaveBeenCalledTimes(1);
+				const config = executeCuePrompt.mock.calls[0][0];
+				expect(config).toMatchObject({
+					runId: run.runId,
+					toolType: 'grok',
+					promptPath: run.prompt,
+					subscription: { name: run.subscriptionName, event: run.event.type },
+					event: run.event,
+					customModel: 'grok-fixture-model',
+					customEnvVars: { GROK_HOME: '/fixture/grok-account-b' },
+					sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+					appendSystemPrompt: 'MAESTRO SYSTEM PROMPT',
+				});
+				expect(config.session).toMatchObject({ id: 'agent-1', toolType: 'grok' });
+				// No binding file here: an unmanaged run carries no admission.
+				expect(config.admission).toBeUndefined();
+				expect(prepareMaestroSystemPromptCli).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'agent-1', toolType: 'grok' })
+				);
+			}
+		);
+
+		it('reports a Grok run that failed on expired credentials as a Grok auth notice', async () => {
+			const failed = {
+				...grokResult,
+				status: 'failed',
+				stdout: '',
+				stderr: 'Unauthorized',
+				runId: 'run-grok',
+				sessionId: 'agent-1',
+				sessionName: 'alpha',
+				subscriptionName: 'ask',
+			} as unknown as CueRunResult;
+			executeCuePrompt.mockResolvedValue(failed);
+			vi.mocked(detectCueAuthFailure).mockReturnValueOnce('Grok credentials were rejected.');
+			const onLog = vi.fn();
+			const onExternalNotification = vi.fn();
+			const deps = buildStandaloneCueEngineDeps({ onLog, onExternalNotification });
+
+			const result = await deps.onCueRun(request());
+
+			expect(result).toBe(failed);
+			expect(detectCueAuthFailure).toHaveBeenCalledWith(failed, 'grok');
+			expect(onExternalNotification).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'agent.auth_expired',
+					agent: { id: 'agent-1', name: 'alpha', toolType: 'grok' },
+					runId: 'run-grok',
+					message: 'Grok credentials were rejected.',
+				})
+			);
+			expect(onLog).toHaveBeenCalledWith(
+				'error',
+				expect.stringContaining('failed on expired grok credentials')
+			);
+		});
+
+		it('passes a failed, stopped or timed-out Grok result through with no auth notice', async () => {
+			const onExternalNotification = vi.fn();
+			const deps = buildStandaloneCueEngineDeps({ onLog: vi.fn(), onExternalNotification });
+			for (const status of ['failed', 'stopped', 'timeout'] as const) {
+				const ended = { ...grokResult, status, stderr: 'no answer' } as CueRunResult;
+				executeCuePrompt.mockResolvedValueOnce(ended);
+				expect(await deps.onCueRun(request())).toBe(ended);
+			}
+			expect(onExternalNotification).not.toHaveBeenCalled();
+		});
+
+		it('starts no Grok process for a run stopped before launch', async () => {
+			const controller = new AbortController();
+			controller.abort();
+			const deps = buildStandaloneCueEngineDeps({ onLog: vi.fn() });
+
+			const result = await deps.onCueRun(request({ signal: controller.signal }));
+
+			expect(result.status).toBe('stopped');
+			expect(executeCuePrompt).not.toHaveBeenCalled();
 		});
 	});
 

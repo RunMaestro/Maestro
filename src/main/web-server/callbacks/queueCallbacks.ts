@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 import type { WebServer } from '../WebServer';
@@ -15,6 +16,7 @@ import type {
 	EnqueueCommandFailureReason,
 } from '../types';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
+import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
 
 /** Known machine-readable enqueue failure causes, in the order the renderer's
  *  `remote:enqueueCommand` handler can produce them. */
@@ -34,11 +36,25 @@ function parseEnqueueFailureReason(raw: unknown): EnqueueCommandFailureReason | 
 	return ENQUEUE_FAILURE_REASONS.find((reason) => reason === raw);
 }
 
+/**
+ * Wire renderer queue operations to the window owning each session. Keep native release and
+ * durability confirmation callbacks on the main-process path; renderer replies describe
+ * queue outcomes rather than native spawn proof.
+ */
 export function registerQueueCallbacks(
 	server: WebServer,
-	deps: Pick<WebServerFactoryDependencies, 'getMainWindow' | 'getWindowForSession'>
+	deps: Pick<
+		WebServerFactoryDependencies,
+		'getMainWindow' | 'getWindowForSession' | 'confirmQueueItem' | 'releaseQueueItem'
+	>
 ): void {
 	const { getMainWindow, getWindowForSession } = deps;
+	// Only callable from main; this is not registered in CallbackRegistry or a
+	// network message handler. Admission integration will consume it separately.
+	server.setReleaseQueueItemCallback(deps.releaseQueueItem);
+	server.setConfirmQueueItemCallback(
+		deps.confirmQueueItem ?? (async () => ({ durable: false, reason: 'store-unavailable' }))
+	);
 	// Each window owns its own agents' queues, so a request about ONE agent has to
 	// reach the window that owns it. The primary would answer from a queue that
 	// does not hold the item.
@@ -60,7 +76,9 @@ export function registerQueueCallbacks(
 			background?: boolean,
 			held?: boolean,
 			mentionRouting?: MentionRouting,
-			dispatchCallback?: boolean
+			dispatchCallback?: boolean,
+			control?: PianolaQueueControl,
+			turnOverrides?: TurnOverrides
 		) => {
 			const mainWindow = resolveSessionWindow(sessionId);
 			if (!mainWindow) {
@@ -111,7 +129,10 @@ export function registerQueueCallbacks(
 					background,
 					held,
 					mentionRouting,
-					dispatchCallback
+					dispatchCallback,
+					// Positional: the overrides follow `control`, which is then sent as undefined.
+					...(control || turnOverrides ? [control] : []),
+					...(turnOverrides ? [turnOverrides] : [])
 				);
 
 				const timeoutId = setTimeout(() => {

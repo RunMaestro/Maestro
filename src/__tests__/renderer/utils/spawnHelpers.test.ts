@@ -4,6 +4,8 @@ import {
 	prepareMaestroSystemPrompt,
 } from '../../../renderer/utils/spawnHelpers';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { gitService } from '../../../renderer/services/git';
+import { resetStore } from '../../helpers/resetStores';
 
 vi.mock('../../../renderer/utils/templateVariables', () => ({
 	substituteTemplateVariables: vi.fn((content: string, vars: Record<string, any>) => {
@@ -109,11 +111,11 @@ describe('prepareMaestroSystemPrompt', () => {
 		expect((window as any).maestro.history.getFilePath).toHaveBeenCalledWith('session-1');
 	});
 
-	it('skips history file path for SSH sessions (sshRemoteId)', async () => {
+	it('fetches local history when only an observed SSH remote remains', async () => {
 		await prepareMaestroSystemPrompt({
 			session: { ...baseSession, sshRemoteId: 'remote-1' },
 		});
-		expect((window as any).maestro.history.getFilePath).not.toHaveBeenCalled();
+		expect((window as any).maestro.history.getFilePath).toHaveBeenCalledWith('session-1');
 	});
 
 	it('skips history file path for SSH sessions (sessionSshRemoteConfig)', async () => {
@@ -146,6 +148,133 @@ describe('prepareMaestroSystemPrompt', () => {
 		// The base prompt each time, plus the Maestro Cue section (Cue ships on).
 		const ids = (window as any).maestro.prompts.get.mock.calls.map((call: unknown[]) => call[0]);
 		expect(ids.filter((id: string) => id === 'maestro-system-prompt')).toHaveLength(2);
+	});
+
+	describe('Grok selected launch context', () => {
+		let savedSettings: ReturnType<typeof useSettingsStore.getState>;
+		const session = {
+			...baseSession,
+			name: 'Selected Grok',
+			toolType: 'grok',
+			isGitRepo: true,
+			fullPath: '/selected/root',
+			projectRoot: '/different/project',
+			cwd: '/selected/root/subdir',
+			remoteCwd: '/stale/terminal',
+			sshRemoteId: 'stale-host',
+			agentSessionId: 'legacy-native',
+			activeTabId: 'other-tab',
+			aiTabs: [
+				{ id: 'other-tab', agentSessionId: 'other-native' },
+				{ id: 'resumed-tab', agentSessionId: 'selected-native' },
+				{ id: 'fresh-tab', agentSessionId: null },
+			],
+			orphanedThinkingTabs: [{ id: 'orphan-tab', agentSessionId: 'orphan-native' }],
+		};
+
+		beforeEach(() => {
+			savedSettings = useSettingsStore.getState();
+			resetStore(useSettingsStore);
+			useSettingsStore.setState({ conductorProfile: 'Selected conductor' });
+			vi.mocked(gitService.getStatus)
+				.mockReset()
+				.mockResolvedValue({ branch: 'selected-branch', files: [] });
+			vi.mocked(window.maestro.prompts.get).mockImplementation(async (id) =>
+				id === 'maestro-system-prompt'
+					? {
+							success: true,
+							content: [
+								'{{AGENT_ID}}|{{TOOL_TYPE}}|{{AGENT_PATH}}|{{PROJECT_PATH}}|{{CWD}}',
+								'git={{GIT_BRANCH}}|{{IS_GIT_REPO}}|history={{AGENT_HISTORY_PATH}}',
+								'tab={{TAB_ID}}|native={{AGENT_SESSION_ID}}|{{TAB_NAME}}|{{SESSION_NAME}}',
+								'{{CONDUCTOR_PROFILE}}',
+							].join('\n'),
+						}
+					: { success: false }
+			);
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState(savedSettings, true);
+			vi.mocked(gitService.getStatus).mockReset().mockResolvedValue({ branch: 'main', files: [] });
+		});
+
+		it.each([undefined, { enabled: false, remoteId: 'disabled-host' }])(
+			'uses the local launch cwd despite stale observed SSH fields (%j)',
+			async (sessionSshRemoteConfig) => {
+				const selected = { ...session, sessionSshRemoteConfig };
+				const before = structuredClone(selected);
+				const result = await prepareMaestroSystemPrompt({
+					session: selected,
+					activeTabId: 'resumed-tab',
+				});
+				expect(gitService.getStatus).toHaveBeenCalledExactlyOnceWith('/selected/root/subdir');
+				expect(window.maestro.history.getFilePath).toHaveBeenCalledExactlyOnceWith(session.id);
+				expect(result).toBe(
+					[
+						'session-1|grok|/selected/root|/selected/root|/selected/root/subdir',
+						'git=selected-branch|true|history=/mock/history/path.jsonl',
+						'tab=resumed-tab|native=selected-native|Selected Grok|Selected Grok',
+						'Selected conductor',
+					].join('\n')
+				);
+				expect(selected).toEqual(before);
+			}
+		);
+
+		it.each(['selected-host', null, undefined])(
+			'keeps configured SSH context remote when the selected ID is %s',
+			async (remoteId) => {
+				const result = await prepareMaestroSystemPrompt({
+					session: { ...session, sessionSshRemoteConfig: { enabled: true, remoteId } },
+					activeTabId: 'resumed-tab',
+				});
+				if (remoteId) {
+					expect(gitService.getStatus).toHaveBeenCalledExactlyOnceWith(
+						'/selected/root/subdir',
+						'selected-host'
+					);
+				} else {
+					expect(gitService.getStatus).not.toHaveBeenCalled();
+				}
+				expect(window.maestro.history.getFilePath).not.toHaveBeenCalled();
+				expect(result).toBe(
+					[
+						'session-1|grok|/selected/root|/selected/root|/selected/root/subdir',
+						`git=${remoteId ? 'selected-branch' : ''}|true|history=`,
+						'tab=resumed-tab|native=selected-native|Selected Grok|Selected Grok',
+						'Selected conductor',
+					].join('\n')
+				);
+			}
+		);
+
+		it.each([
+			['resumed-tab', 'selected-native'],
+			['fresh-tab', ''],
+			['not-created-tab', ''],
+			['orphan-tab', 'orphan-native'],
+			[undefined, 'legacy-native'],
+		])(
+			'projects native identity for target %s without borrowing the active tab',
+			async (tab, id) => {
+				const before = structuredClone(session);
+				const result = await prepareMaestroSystemPrompt({ session, activeTabId: tab });
+				expect(result).toContain(`tab=${tab ?? ''}|native=${id}|Selected Grok|Selected Grok`);
+				expect(result).not.toContain('other-native');
+				expect(session).toEqual(before);
+			}
+		);
+
+		it('keeps legacy project/name aliases and omits native identity for headless callers without one', async () => {
+			const result = await prepareMaestroSystemPrompt({
+				session: { ...session, fullPath: undefined, agentSessionId: undefined },
+			});
+			expect(result).toContain(
+				'session-1|grok|/different/project|/different/project|/selected/root/subdir'
+			);
+			expect(result).toContain('tab=|native=|Selected Grok|Selected Grok');
+		});
 	});
 
 	describe('role and plugin sections (shared assembler)', () => {
@@ -210,16 +339,41 @@ describe('prepareMaestroSystemPrompt', () => {
 			expect((window as any).maestro.prompts.get).toHaveBeenCalledWith('computer-history-system');
 		});
 
-		it('skips the localOnly section and the store path for SSH agents', async () => {
-			enableComputerHistory();
-			const result = await prepareMaestroSystemPrompt({
-				session: { ...baseSession, sessionSshRemoteConfig: { enabled: true } },
-			});
-			expect(result).toBe('BASE');
-			expect((window as any).maestro.prompts.get).not.toHaveBeenCalledWith(
-				'computer-history-system'
-			);
-		});
+		it.each([undefined, { enabled: false, remoteId: 'disabled-host' }])(
+			'keeps local plugin context after an observed SSH connection (%j)',
+			async (sessionSshRemoteConfig) => {
+				enableComputerHistory();
+				const result = await prepareMaestroSystemPrompt({
+					session: {
+						...baseSession,
+						toolType: 'grok',
+						sshRemoteId: 'stale-host',
+						sessionSshRemoteConfig,
+					},
+				});
+				expect(result).toBe('BASE\n\n---\n\nHISTORY /ud/computer-history');
+			}
+		);
+
+		it.each([undefined, 'selected-host'])(
+			'skips local plugin paths for SSH target %s',
+			async (remoteId) => {
+				enableComputerHistory();
+				const result = await prepareMaestroSystemPrompt({
+					session: {
+						...baseSession,
+						toolType: 'grok',
+						sshRemoteId: 'stale-host',
+						sessionSshRemoteConfig: { enabled: true, remoteId },
+					},
+				});
+				expect(result).toBe('BASE');
+				expect((window as any).maestro.prompts.get).not.toHaveBeenCalledWith(
+					'computer-history-system'
+				);
+				expect(window.maestro.prompts.getSystemPromptPaths).not.toHaveBeenCalled();
+			}
+		);
 
 		describe('MaestroRun', () => {
 			const LAUNCHER = '/Users/me/Applications/MaestroRun.app/Contents/MacOS/maestro-run';

@@ -10,10 +10,16 @@
 import React from 'react';
 import type { ExtraProps } from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { refractor } from 'refractor/all';
 import type { Theme } from '../../../types';
 import { getSyntaxStyle } from '../../../utils/syntaxTheme';
+import { registerDataviewPrismLanguages } from '../../../utils/dataviewSyntax';
 import { SyntaxHighlightBoundary } from '../../SyntaxHighlightBoundary';
 import { CodeCopyButton } from '../../CodeFence/CodeCopyButton';
+
+// The full Prism build highlights through the shared `refractor/all` instance, so a fence tagged
+// `dataview` or `dataviewjs` (a Dataview block shown as source) gets colored like any other language.
+registerDataviewPrismLanguages(refractor);
 
 export interface PrismCodeBlockOptions {
 	theme: Theme;

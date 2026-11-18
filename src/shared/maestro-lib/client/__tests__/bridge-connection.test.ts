@@ -43,7 +43,8 @@ vi.mock('ws', async () => {
 	return { default: MockWebSocket };
 });
 
-vi.mock('../discovery', () => ({
+vi.mock('../discovery', async (importOriginal) => ({
+	isDialableEndpoint: (await importOriginal<typeof import('../discovery')>()).isDialableEndpoint,
 	readCliServerInfo: vi.fn(),
 	readCliServerInfoFrom: vi.fn(),
 	isCliServerRunning: vi.fn(),
@@ -66,6 +67,13 @@ import {
 } from '../discovery';
 import { HEADLESS_RUN_COMPLETION_TIMEOUT_MS } from '../../../plugins/headless-agent-timeouts';
 import { CLI_SECRET_HEADER } from '../../../webLogin';
+import { readFileSync } from 'fs';
+import { CALLER_RUN_PROOF_FILE_ENV_VAR, CALLER_RUN_PROOF_HEADER } from '../../../agentDelegation';
+
+vi.mock('fs', async (importOriginal) => ({
+	...(await importOriginal<typeof import('fs')>()),
+	readFileSync: vi.fn(),
+}));
 
 const RUNNING_SERVER: CliServerInfo = {
 	port: 3000,
@@ -100,6 +108,7 @@ describe('BridgeConnection', () => {
 		mockWsUrl = undefined;
 		mockWsOptions = undefined;
 		vi.stubEnv('MAESTRO_CLI_HOST', undefined);
+		vi.stubEnv(CALLER_RUN_PROOF_FILE_ENV_VAR, undefined);
 	});
 
 	afterEach(() => {
@@ -143,6 +152,37 @@ describe('BridgeConnection', () => {
 	});
 
 	describe('connect()', () => {
+		it('delivers run proof only in the authenticated local upgrade, never in command payloads', async () => {
+			mockRunningServer({ ...RUNNING_SERVER, cliSecret: 'host-secret' });
+			vi.stubEnv(CALLER_RUN_PROOF_FILE_ENV_VAR, '/private/proof');
+			vi.mocked(readFileSync).mockReturnValue('a'.repeat(64));
+			const client = new BridgeConnection();
+			const connected = client.connect();
+			expect(mockWsOptions?.headers).toEqual({
+				[CLI_SECRET_HEADER]: 'host-secret',
+				[CALLER_RUN_PROOF_HEADER]: 'a'.repeat(64),
+			});
+			expect(mockWsUrl).not.toContain('a'.repeat(64));
+			mockWsInstance.emit('open');
+			await connected;
+			client.send({ type: 'ping' });
+			expect(lastSentPayload()).toEqual({ type: 'ping' });
+			client.disconnect();
+		});
+
+		it('sanitizes a missing or malformed proof file without leaking contents or path', async () => {
+			mockRunningServer({ ...RUNNING_SERVER, cliSecret: 'host-secret' });
+			vi.stubEnv(CALLER_RUN_PROOF_FILE_ENV_VAR, '/private/proof');
+			for (const read of [
+				() => {
+					throw new Error('/private/proof secret');
+				},
+				() => 'secret-invalid',
+			]) {
+				vi.mocked(readFileSync).mockImplementation(read as never);
+				await expect(new BridgeConnection().connect()).rejects.toThrow(/^CallerRunUnavailable$/);
+			}
+		});
 		it('should throw when no discovery file exists', async () => {
 			vi.mocked(readCliServerInfo).mockReturnValue(null);
 
@@ -334,6 +374,76 @@ describe('BridgeConnection', () => {
 			const error = await connectPromise.catch((e: unknown) => e);
 			expect(error).toBeInstanceOf(MaestroNotRunningError);
 			expect(error).toMatchObject({ reason: 'connect-timeout' });
+		});
+	});
+
+	describe('connect() with an explicit endpoint', () => {
+		const ENDPOINT = { port: 41234, token: 'remote-token', cliSecret: 'remote-secret', pid: 99 };
+
+		it('dials 127.0.0.1 with the endpoint token and secret, reading no discovery file', async () => {
+			const client = new BridgeConnection({ endpoint: ENDPOINT, userDataDir: '/ignored' });
+			const connected = client.connect();
+			expect(mockWsUrl).toBe('ws://127.0.0.1:41234/remote-token/ws');
+			expect(mockWsOptions).toEqual({ headers: { [CLI_SECRET_HEADER]: 'remote-secret' } });
+			mockWsInstance.emit('open');
+			await connected;
+			expect(readCliServerInfo).not.toHaveBeenCalled();
+			expect(readCliServerInfoFrom).not.toHaveBeenCalled();
+			// The pid can name a process on the remote: it is never probed here.
+			expect(isPidAlive).not.toHaveBeenCalled();
+			expect(isCliServerRunning).not.toHaveBeenCalled();
+			client.disconnect();
+		});
+
+		it('ignores MAESTRO_CLI_HOST and sends no caller-run proof', async () => {
+			vi.stubEnv('MAESTRO_CLI_HOST', 'elsewhere.example');
+			vi.stubEnv(CALLER_RUN_PROOF_FILE_ENV_VAR, '/private/proof');
+			vi.mocked(readFileSync).mockReturnValue('a'.repeat(64));
+			const client = new BridgeConnection({ endpoint: ENDPOINT });
+			const connected = client.connect();
+			expect(mockWsUrl).toBe('ws://127.0.0.1:41234/remote-token/ws');
+			expect(mockWsOptions?.headers).toEqual({ [CLI_SECRET_HEADER]: 'remote-secret' });
+			expect(readFileSync).not.toHaveBeenCalled();
+			mockWsInstance.emit('open');
+			await connected;
+			client.disconnect();
+		});
+
+		it('names the headless host when it echoes an unsupported command', async () => {
+			const client = new BridgeConnection({ endpoint: { ...ENDPOINT, hostKind: 'headless' } });
+			const connected = client.connect();
+			mockWsInstance.emit('open');
+			await connected;
+			const reply = client.sendCommand({ type: 'open_modal' }, 'open_modal_result');
+			const sent = lastSentPayload();
+			mockWsInstance.emit(
+				'message',
+				JSON.stringify({
+					type: 'echo',
+					originalType: 'open_modal',
+					data: { type: 'open_modal', requestId: sent.requestId },
+				})
+			);
+			await expect(reply).rejects.toMatchObject({ hostKind: 'headless' });
+			client.disconnect();
+		});
+
+		it('refuses an endpoint that cannot be dialed, without echoing it', async () => {
+			for (const endpoint of [
+				{ ...ENDPOINT, port: 0 },
+				{ ...ENDPOINT, port: 1.5 },
+				{ ...ENDPOINT, token: '' },
+				{ ...ENDPOINT, token: 'a/b?c' },
+			]) {
+				const message = await new BridgeConnection({ endpoint }).connect().then(
+					() => 'connected',
+					(e: unknown) => (e as Error).message
+				);
+				expect(message).toMatch(/^Invalid host endpoint/);
+				expect(message).not.toContain('remote-secret');
+				expect(message).not.toContain('a/b?c');
+			}
+			expect(mockWsUrl).toBeUndefined();
 		});
 	});
 

@@ -13,6 +13,7 @@
 
 import type { ToolType, AgentError, CallUsage } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
+import type { CallTimingSignal } from '../../tokenSpeed';
 import { aggregateModelUsage, type ModelStats } from './usage-aggregator';
 import {
 	claudeTurnCost,
@@ -21,6 +22,7 @@ import {
 	rememberedClaudeSessionCost,
 	type ClaudeCostState,
 } from '../../claudeCostTracker';
+import { appendFailureScreen } from '../../failureScreen';
 import {
 	getErrorPatterns,
 	isClaudeLimitNotice,
@@ -161,6 +163,65 @@ const STOP_HOOK_FEEDBACK_PREFIX = 'Stop hook feedback:';
 
 /** Between a reply a Stop hook held back and the text the hook made the model write next. */
 export const STOP_HOOK_ANSWER_SEPARATOR = '\n\n---\n\n';
+
+/**
+ * What each maestro-p failure code (the `error` of its failed result, see
+ * `finalize()` in src/maestro-p/index.ts) means to a person. Exit codes in
+ * parentheses. A code not listed here is shown raw beside the subtype text.
+ */
+const MAESTRO_P_FAILURE_TEXT: Record<string, string> = {
+	// 1
+	tui_exited: 'Claude Code quit before the turn finished.',
+	// 3
+	timeout: 'Claude Code stopped producing output for too long, so Maestro ended the turn.',
+	// 4
+	ready_timeout:
+		'Claude Code did not finish starting up in time, so the prompt was never sent. This usually means the machine was busy (many agents, slow MCP servers or plugins). Send the message again.',
+	// 5
+	first_byte_timeout:
+		'Claude Code started but never began the turn after the prompt was sent. A startup prompt may have swallowed it. Send the message again.',
+	// 6
+	prompt_truncated:
+		'The terminal dropped part of the prompt on its way into Claude Code, so Maestro stopped the turn before Claude acted on it. Send the message again.',
+	// 7
+	workspace_untrusted:
+		'Claude Code has not been trusted to work in this folder. Open claude in it once and choose "Yes, I trust this folder".',
+	// 10
+	add_dir_untrusted:
+		"Claude Code asked to add a directory this agent does not grant, and stopped. Add the directory to the agent, or remove it from Claude Code's additionalDirectories settings.",
+	// 11
+	startup_dialog_blocked:
+		'Claude Code showed a startup prompt Maestro does not know how to answer, and its highlighted option would quit, so nothing was sent. Run claude once in this folder with the same settings and answer it.',
+};
+
+/**
+ * A failure message with the screen maestro-p left behind (`last_screen` on
+ * its result) appended, so the reason is visible where the failure is shown.
+ * Classified before this runs: the screen never picks the error type.
+ */
+function withLastScreen(message: string, obj: Record<string, unknown>): string {
+	return appendFailureScreen(
+		message,
+		typeof obj.last_screen === 'string' ? obj.last_screen : undefined
+	);
+}
+
+/**
+ * maestro-p failure codes that a plain resend fixes: the turn stalled on the
+ * wire (`timeout`) or never got going on a busy host (`ready_timeout`,
+ * `first_byte_timeout`). Typed `network_error`, which Agent Resilience resends
+ * on its availability backoff, so the user is not left to press Send again
+ * themselves. The resend resumes the same provider session, so work the stalled
+ * turn already finished is in the transcript the model reads.
+ *
+ * `prompt_truncated` is deliberately absent: it repeats for the same prompt on
+ * the same host, so a resend loop would never clear it.
+ */
+const MAESTRO_P_TRANSIENT_FAILURES: ReadonlySet<string> = new Set([
+	'timeout',
+	'ready_timeout',
+	'first_byte_timeout',
+]);
 
 /** True when a message came from a Task subagent rather than the main transcript. */
 function isSubagentMessage(msg: ClaudeRawMessage): boolean {
@@ -795,6 +856,40 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	}
 
 	/**
+	 * Per-call timing for token speed off the live stream (used when the agent
+	 * runs on an SSH host, whose transcript Maestro cannot read; qwen3-coder
+	 * inherits this). A call starts at session init or at the latest tool result
+	 * handed back (`user`), and ends at the `assistant` message carrying that
+	 * call's usage. stream-json repeats an assistant message per content block,
+	 * so the message id keys the end. Subagent messages are skipped: a Task
+	 * subagent's calls run alongside the main transcript's and would interleave
+	 * the clock.
+	 */
+	extractCallTiming(raw: unknown): CallTimingSignal | null {
+		if (!raw || typeof raw !== 'object') return null;
+		const msg = raw as ClaudeRawMessage;
+		if (normalizeParentToolUseId(msg)) return null;
+		if (msg.type === 'user') return { kind: 'start' };
+		if (msg.type === 'system' && (msg.subtype === 'init' || msg.subtype === 'session_start')) {
+			return { kind: 'start' };
+		}
+		if (msg.type !== 'assistant') return null;
+		const usage = msg.message?.usage;
+		const model = msg.message?.model;
+		if (!usage || model === '<synthetic>') return null;
+		return {
+			kind: 'end',
+			key: msg.message?.id || undefined,
+			model: model || undefined,
+			inputTokens:
+				(usage.input_tokens || 0) +
+				(usage.cache_creation_input_tokens || 0) +
+				(usage.cache_read_input_tokens || 0),
+			outputTokens: usage.output_tokens || 0,
+		};
+	}
+
+	/**
 	 * Extract usage statistics from an event
 	 */
 	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null {
@@ -908,9 +1003,11 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		if (obj.type === 'result' && obj.is_error === true) {
 			const failureText = this.failedResultText(obj);
 			const match = matchErrorPattern(getErrorPatterns(this.agentId), failureText);
+			const transient =
+				typeof obj.error === 'string' && MAESTRO_P_TRANSIENT_FAILURES.has(obj.error.trim());
 			return {
-				type: match?.type ?? 'unknown',
-				message: match?.message ?? failureText,
+				type: match?.type ?? (transient ? 'network_error' : 'unknown'),
+				message: withLastScreen(match?.message ?? failureText, obj),
 				recoverable: match?.recoverable ?? true,
 				agentId: this.agentId,
 				timestamp: Date.now(),
@@ -993,12 +1090,28 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	 * `subtype` names the cause. The `errors` array is not used: it carries
 	 * internal diagnostics (`[ede_diagnostic] result_type=user ...`), not text
 	 * meant for a person.
+	 *
+	 * maestro-p (interactive mode) ends every failed run with a result that has
+	 * no `result` string and names its cause in `error` instead: a code
+	 * (`ready_timeout`, exit 4) or claude's own words ("No conversation found
+	 * with session ID: ...", exit 9). Without reading it, each of those surfaced
+	 * as the generic subtype text with no reason (#1860), and the exit-9 text
+	 * never reached the session_not_found pattern that recovers it.
 	 */
 	private failedResultText(obj: Record<string, unknown>): string {
 		if (typeof obj.result === 'string' && obj.result.trim()) {
 			return obj.result;
 		}
-		switch (obj.subtype) {
+		const error = typeof obj.error === 'string' ? obj.error.trim() : '';
+		if (error && MAESTRO_P_FAILURE_TEXT[error]) {
+			return MAESTRO_P_FAILURE_TEXT[error];
+		}
+		const subtypeText = this.failedSubtypeText(obj.subtype);
+		return error ? `${subtypeText} (${error})` : subtypeText;
+	}
+
+	private failedSubtypeText(subtype: unknown): string {
+		switch (subtype) {
 			case 'error_max_turns':
 				return 'Claude Code stopped after reaching its maximum number of turns.';
 			case 'error_max_budget_usd':

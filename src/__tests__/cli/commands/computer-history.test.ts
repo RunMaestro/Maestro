@@ -463,4 +463,17 @@ describe('digests (read from disk)', () => {
 		expect(Date.parse(d.windowEnd) - Date.parse(d.windowStart)).toBe(6 * 3_600_000);
 		await expect(computerHistoryDigests({ kind: '1h', json: true })).rejects.toThrow('__exit__');
 	});
+
+	it('--grep keeps digests whose summary matches, never matching the header', async () => {
+		const header =
+			'# 15-minute digest\n\nSegment: `s.jsonl` (2 events). Written by agent `writer`.\n\n';
+		writeDigestFile('0000Z.md', `${header}- Set up Gmail forwarding`);
+		writeDigestFile('0015Z.md', `${header}- Opened Obsidian`);
+		await computerHistoryDigests({ since: '2d', grep: 'GMAIL', json: true });
+		const json = lastJson();
+		expect(json).toMatchObject({ count: 1 });
+		expect((json.digests as Array<Record<string, string>>)[0].path).toContain('0000Z.md');
+		await computerHistoryDigests({ since: '2d', grep: 'writer', json: true });
+		expect(lastJson()).toMatchObject({ count: 0 });
+	});
 });

@@ -8,14 +8,11 @@
  */
 
 import { useMemo } from 'react';
+import type { Session, Theme, RightPanelTab, BatchRunState } from '../../types';
 import type {
-	Session,
-	Theme,
-	RightPanelTab,
-	BatchRunState,
-	LogEntry,
-	UsageStats,
-} from '../../types';
+	ResumeSessionOptions,
+	UseAgentSessionManagementReturn,
+} from '../agent/useAgentSessionManagement';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 import type { FileNode } from '../../types/fileTree';
 import type { FileClickOptions } from '../ui/useAppHandlers';
@@ -88,14 +85,7 @@ export interface UseRightPanelPropsDeps {
 	handleAbortBatchOnError: () => void;
 	handleResumeAfterError: () => void;
 	handleJumpToAgentSession: (agentSessionId: string) => void;
-	handleResumeSession: (
-		agentSessionId: string,
-		providedMessages?: LogEntry[],
-		sessionName?: string,
-		starred?: boolean,
-		usageStats?: UsageStats,
-		projectPath?: string
-	) => void;
+	handleResumeSession: UseAgentSessionManagementReturn['handleResumeSession'];
 
 	// Modal handlers
 	handleOpenAboutModal: () => void;
@@ -165,14 +155,20 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			// which is Claude-only and only ever written by a synopsis, so for every
 			// other provider (and for any session that never produced one) the history
 			// record is the ONLY surviving copy of that name.
-			onOpenSessionAsTab: (agentSessionId: string, projectPath?: string, sessionName?: string) =>
+			onOpenSessionAsTab: (
+				agentSessionId: string,
+				projectPath?: string,
+				sessionName?: string,
+				opts?: ResumeSessionOptions
+			) =>
 				deps.handleResumeSession(
 					agentSessionId,
 					undefined,
 					sessionName,
 					undefined,
 					undefined,
-					projectPath
+					projectPath,
+					opts
 				),
 
 			// Modal handlers

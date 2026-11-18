@@ -77,7 +77,9 @@ export function createMcpBridge(deps: McpBridgeDeps): McpBridge {
 		let entries: AppToolEntry[] = [];
 		try {
 			const res = await deps.request<{ tools?: AppToolEntry[] }>(
-				{ type: 'plugins_list_tools' },
+				// The run proof lets the host record what THIS run was
+				// shown, so listing is evidence the host observed itself.
+				{ type: 'plugins_list_tools', ...(deps.runToken ? { runToken: deps.runToken } : {}) },
 				'plugins_list_tools_result'
 			);
 			entries = Array.isArray(res.tools) ? res.tools : [];

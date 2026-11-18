@@ -126,4 +126,17 @@ describe('Process BrowserTabRemote Preload API', () => {
 			});
 		});
 	});
+	describe('new-tab admission phases', () => {
+		it('forwards the host-bound phase and exact tab through the preload bridge', () => {
+			const api = createBrowserTabRemoteApi();
+			const callback = vi.fn();
+			api.onRemoteNewAITabWithPrompt(callback);
+			const handler = mockOn.mock.calls.find(
+				([channel]) => channel === 'remote:newAITabWithPrompt'
+			)![1];
+			const control = { phase: 'prepare', dispatchId: 'dispatch', tabId: 'exact-tab' };
+			handler(null, 'worker', '', 'reply', true, false, undefined, control);
+			expect(callback).toHaveBeenCalledWith('worker', '', 'reply', true, false, undefined, control);
+		});
+	});
 });

@@ -137,6 +137,19 @@ export interface SnoozeTabModalData {
 }
 
 /**
+ * Prompt Links modal data. Every field is a prefill for the create form: the
+ * hotkey and the palette open it on the active agent, an AI tab's menu on that
+ * tab's agent with its unsent draft as the prompt. Absent = the form starts
+ * empty on the active agent.
+ */
+export interface PromptLinksModalData {
+	agentId?: string;
+	prompt?: string;
+	/** Open on the create form. Without it the window opens on the newest link. */
+	compose?: boolean;
+}
+
+/**
  * Model & effort modal data. Only the tab id travels: the modal resolves the
  * agent, the option lists, and the tab > session > agent-default ladder from
  * the stores itself, so an opener can't hand it a stale snapshot.
@@ -230,6 +243,11 @@ export interface AgentExportModalData {
 	sessionId: string;
 }
 
+/** Move to Host modal (Federation lift): the SSH agent to lift onto its remote's host. */
+export interface MoveToHostModalData {
+	sessionId: string;
+}
+
 /** Import Agent modal: the Left Bar group the imported agents go in. */
 export interface AgentImportModalData {
 	groupId?: string;
@@ -304,9 +322,10 @@ export interface GitDiffModalData {
 	 */
 	cwd?: string;
 	/**
-	 * Agent the diff was taken for, used to name it in the header. Optional for
-	 * the same reason as `cwd`: the keyboard shortcut and command palette follow
-	 * the active agent, so there is nothing to disambiguate.
+	 * Agent the diff was taken for: names it in the header and receives a review
+	 * annotated in the viewer. Optional for the same reason as `cwd`: the
+	 * keyboard shortcut and command palette follow the active agent, so there is
+	 * nothing to disambiguate, and the review goes to the active agent.
 	 */
 	sessionId?: string;
 }
@@ -383,6 +402,8 @@ export type ModalId =
 	| 'deleteAgent'
 	| 'agentExport'
 	| 'agentImport'
+	| 'moveToHost'
+	| 'addHostedAgent'
 	| 'renameInstance'
 	| 'agentError'
 	| 'reauth'
@@ -398,6 +419,7 @@ export type ModalId =
 	| 'snoozeTab'
 	| 'modelEffort'
 	| 'snoozedTabs'
+	| 'promptLinks'
 	// Group Management
 	| 'renameGroup'
 	// Session Operations
@@ -584,6 +606,7 @@ export interface ModalDataMap {
 	renameInstance: RenameInstanceModalData;
 	renameTab: RenameTabModalData;
 	snoozeTab: SnoozeTabModalData;
+	promptLinks: PromptLinksModalData;
 	modelEffort: ModelEffortModalData;
 	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
@@ -595,6 +618,7 @@ export interface ModalDataMap {
 	deleteAgent: DeleteAgentModalData;
 	agentExport: AgentExportModalData;
 	agentImport: AgentImportModalData;
+	moveToHost: MoveToHostModalData;
 	/**
 	 * Present when opened from the Left Bar's right-click menu, naming the agent
 	 * to configure. Absent when opened from the header or Settings, where the

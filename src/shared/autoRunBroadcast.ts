@@ -1,3 +1,5 @@
+import type { AutoRunPendingDelegation } from './autoRunDelegation';
+
 /**
  * The Auto Run state that crosses a process boundary.
  *
@@ -59,6 +61,10 @@ export interface AutoRunBroadcastState {
 	goalRationale?: string;
 	/** 1-based iteration number the goal loop is on */
 	goalIteration?: number;
+
+	// --- Delegation (both modes) ---
+	/** Work the run handed to other agents and is waiting on before its next turn */
+	pendingDelegations?: AutoRunPendingDelegation[];
 
 	// --- Fields a full mirror of the desktop Auto Run card needs ---
 	// The mobile web app draws a progress bar and needs none of these. A

@@ -22,6 +22,8 @@ export interface ProjectedTab {
 	name?: string | null;
 	starred?: boolean;
 	state?: 'idle' | 'busy';
+	/** A headless host's live turn start (`withLiveTabState`). */
+	thinkingStartTime?: number;
 	hasUnread?: boolean;
 	usageStats?: unknown;
 	createdAt?: number;
@@ -73,6 +75,7 @@ const TAB_FIELDS: ReadonlyArray<keyof ProjectedTab> = [
 	'name',
 	'starred',
 	'state',
+	'thinkingStartTime',
 	'hasUnread',
 	'usageStats',
 	'createdAt',

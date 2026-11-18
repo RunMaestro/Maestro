@@ -20,8 +20,11 @@
  *     Theme.mode.
  */
 
+import type { LanguageRegistration } from 'shiki';
 import type { ThemeMode } from '../../../shared/theme-types';
+import { DATAVIEW_JS_LANGUAGE_IDS } from '../../../shared/dataview/syntax';
 import { captureException } from '../sentry';
+import { DATAVIEW_SHIKI_GRAMMAR } from '../dataviewSyntax';
 
 type ShikiModule = typeof import('shiki');
 type Highlighter = Awaited<ReturnType<ShikiModule['createHighlighter']>>;
@@ -91,11 +94,20 @@ export const PRELOADED_LANGUAGES = [
 export const LANGUAGE_ALIASES: Record<string, string> = {
 	ts: 'typescript',
 	js: 'javascript',
+	...Object.fromEntries(DATAVIEW_JS_LANGUAGE_IDS.map((id) => [id, 'javascript'])),
 	py: 'python',
 	zsh: 'bash',
 	dockerfile: 'docker',
 	plaintext: 'text',
 	'': 'text',
+};
+
+/**
+ * Grammars Shiki does not ship, loaded as registration objects by `ensureLanguage()`. Keyed by the
+ * fence tag, which is also the grammar's `name`.
+ */
+export const CUSTOM_LANGUAGES: Record<string, LanguageRegistration> = {
+	[DATAVIEW_SHIKI_GRAMMAR.name]: DATAVIEW_SHIKI_GRAMMAR,
 };
 
 export const LIGHT_THEME = 'github-light';
@@ -207,6 +219,7 @@ export function resolveLanguageSync(input: string | null | undefined): string | 
 	// Hit the alias table even for empty strings - `LANGUAGE_ALIASES['']` maps
 	// the no-fence-tag case to `'text'`.
 	if (lower in LANGUAGE_ALIASES) return LANGUAGE_ALIASES[lower];
+	if (lower in CUSTOM_LANGUAGES) return lower;
 	return null;
 }
 
@@ -244,6 +257,11 @@ export async function ensureLanguage(
 		return resolved;
 	}
 	try {
+		const custom = CUSTOM_LANGUAGES[resolved];
+		if (custom) {
+			await highlighter.loadLanguage(custom);
+			return resolved;
+		}
 		// Shiki's `loadLanguage` accepts a `BundledLangKeys` string union or a
 		// registration object. The runtime check above already proved `resolved`
 		// is a bundled id, but TS can't narrow string → union, so cast.

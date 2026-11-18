@@ -114,6 +114,15 @@ describe('parseUsage / fixtures', () => {
 	it('parses a real alternate-screen capture whose repaint skipped unchanged cells', () => {
 		runFixture('usage-alt-screen-repaint-2026-09-11');
 	});
+
+	// Shape of the claude 2.1.317 panel (2026-11-03, trimmed): no "Current
+	// session" block at all, only the two weekly bars, under a "Session" cost
+	// summary that must not be mistaken for the 5-hour window. Requiring the
+	// session block made every account fail to parse, so every dashboard row
+	// froze on its last good sample and read "stale" after each Refresh.
+	it('parses a panel that paints no session window, omitting `session`', () => {
+		runFixture('usage-no-session-window-2026-11-03');
+	});
 });
 
 describe('parseUsage / behavioral guards', () => {
@@ -226,8 +235,8 @@ describe('parseUsage / behavioral guards', () => {
 			'12% used\n' +
 			'Resets May 22 at 6pm (America/Chicago)\n';
 		const result = parseUsage(raw, nowIso, configDir);
-		expect(result?.session.percent).toBe(23);
-		expect(result?.session.resets_at).toBe('2026-05-15T23:00:00.000Z');
+		expect(result?.session?.percent).toBe(23);
+		expect(result?.session?.resets_at).toBe('2026-05-15T23:00:00.000Z');
 	});
 
 	it('reads an alternate-screen repaint off the replayed screen, not the stripped bytes', () => {
@@ -266,7 +275,7 @@ describe('parseUsage / behavioral guards', () => {
 		const result = parseUsage(raw, nowIso, configDir);
 		// 1:40am Chicago on 2026-05-15 = 06:40 UTC, which is before
 		// nowIso (20:00 UTC). Rolled +24h to 2026-05-16T06:40:00Z.
-		expect(result?.session.resets_at).toBe('2026-05-16T06:40:00.000Z');
+		expect(result?.session?.resets_at).toBe('2026-05-16T06:40:00.000Z');
 	});
 
 	it('uses the provided configDir verbatim in the snapshot', () => {
@@ -446,7 +455,7 @@ describe('parseUsage / not-logged-in detection', () => {
 		].join('\n');
 		const result = parseUsage(raw, nowIso, configDir);
 		expect(result?.auth_state).toBe('unauthenticated');
-		expect(result?.session.percent).toBe(0);
+		expect(result?.session?.percent).toBe(0);
 	});
 });
 
@@ -471,7 +480,7 @@ describe('parseUsage / stacked /usage panels (what the retry leans on)', () => {
 		const fresh = stale.replace('23% used', '91% used').replace('58% used', '99% used');
 
 		const stacked = parseUsage(stale + fresh, NOW, CONFIG_DIR);
-		expect(stacked?.session.percent).toBe(91);
+		expect(stacked?.session?.percent).toBe(91);
 		expect(stacked?.week_all_models.percent).toBe(99);
 		expect(stacked).toEqual(parseUsage(fresh, NOW, CONFIG_DIR));
 	});
@@ -488,6 +497,18 @@ describe('parseUsage / stacked /usage panels (what the retry leans on)', () => {
 
 		expect(parseUsage(complete, NOW, CONFIG_DIR)).not.toBeNull();
 		expect(parseUsage(complete + halfPainted, NOW, CONFIG_DIR)).toBeNull();
+	});
+
+	it('reads the LAST panel when the panels carry no session window', () => {
+		// claude 2.1.317 paints no "Current session" block, so the final-paint
+		// anchor falls back to the all-models header. Without that fallback the
+		// first sighting wins and a retry would re-emit the stale panel's numbers.
+		const stale = loadFixture('usage-no-session-window-2026-11-03').raw;
+		const fresh = stale.replace('21% used', '64% used');
+
+		const stacked = parseUsage(stale + fresh, '2026-11-03T13:15:00Z', CONFIG_DIR);
+		expect(stacked?.session).toBeUndefined();
+		expect(stacked?.week_all_models.percent).toBe(64);
 	});
 
 	it('keeps reading a differential repaint that carries no fresh section header', () => {

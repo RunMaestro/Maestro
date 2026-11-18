@@ -23,7 +23,7 @@
  *    would mean either duplicating a chunk of the desktop's Electron
  *    bootstrap or half-initializing it - both worse than the gap. Resolution
  *    instead runs the first two rungs of the desktop's own precedence
- *    (`resolveCueAgentBinary`): the agent's own custom path, then the
+ *    (`resolveAgentBinary`): the agent's own custom path, then the
  *    provider-level one (`getAgentCustomPath()`, read straight from the
  *    settings JSON file). Past those it leaves the bare command name for
  *    `spawn()`'s own PATH search, which is correct for the common case (the
@@ -105,7 +105,7 @@ function loadExecutorsUncached() {
 		// kills through it (see CueEngineDeps.countLiveCueProcesses).
 		import('../../main/cue/cue-process-lifecycle'),
 		import('../../main/cue/cue-autorun-executor'),
-		import('../../main/cue/cue-agent-binary'),
+		import('../../shared/maestro-lib/launch/agent-binary'),
 	]).then(([, executor, shell, cli, notify, authDetector, lifecycle, autoRun, agentBinary]) => ({
 		countLiveCueProcesses: () => lifecycle.getActiveProcessMap().size,
 		killAllCueProcessesNow: lifecycle.stopAllProcesses,
@@ -113,7 +113,7 @@ function loadExecutorsUncached() {
 		stopCueRun: executor.stopCueRun,
 		getActiveProcesses: executor.getActiveProcesses,
 		executeCueAutoRun: autoRun.executeCueAutoRun,
-		resolveCueAgentBinary: agentBinary.resolveCueAgentBinary,
+		resolveAgentBinary: agentBinary.resolveAgentBinary,
 		executeCueShell: shell.executeCueShell,
 		executeCueCli: cli.executeCueCli,
 		executeCueNotify: notify.executeCueNotify,
@@ -327,7 +327,7 @@ function buildOnCueRun(
 			// Point 1 (module doc): the agent's own binary first, then the
 			// provider's, else spawn()'s own PATH search.
 			resolveAgentBinary: ({ session }) =>
-				executors.resolveCueAgentBinary({
+				executors.resolveAgentBinary({
 					sessionCustomPath: session.customPath,
 					providerCustomPath: getAgentCustomPath(session.toolType),
 					sshEnabled: session.sessionSshRemoteConfig?.enabled === true,
@@ -412,6 +412,10 @@ export interface StandaloneCueEngineOptions {
 	onLockLost?: () => void;
 	/** See `CueEngineDeps.onDrainPhase`. */
 	onDrainPhase?: CueEngineDeps['onDrainPhase'];
+	/** See `CueEngineDeps.onPreventSleep`: a run (`cue:run:<id>`) or a schedule began. */
+	onPreventSleep?: CueEngineDeps['onPreventSleep'];
+	/** See `CueEngineDeps.onAllowSleep`: a run or a schedule ended. */
+	onAllowSleep?: CueEngineDeps['onAllowSleep'];
 	/**
 	 * Told every `action: notify` run and every run that failed on an expired
 	 * agent login (`--notify-webhook`). Must not throw or block; it is called
@@ -453,6 +457,8 @@ export function buildStandaloneCueEngineDeps(
 		runnerMode: 'standalone',
 		...(options.onLockLost ? { onLockLost: options.onLockLost } : {}),
 		...(options.onDrainPhase ? { onDrainPhase: options.onDrainPhase } : {}),
+		...(options.onPreventSleep ? { onPreventSleep: options.onPreventSleep } : {}),
+		...(options.onAllowSleep ? { onAllowSleep: options.onAllowSleep } : {}),
 		// The drain's process accounting. Before the first run fires the
 		// executors are not loaded, so there is nothing alive to count or kill.
 		countLiveCueProcesses: () => settledExecutors?.countLiveCueProcesses() ?? 0,

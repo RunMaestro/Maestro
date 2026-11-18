@@ -437,11 +437,13 @@ describe('EncoreTab hooks', () => {
 					customEnvVars: { NODE_ENV: 'test' },
 				})
 			);
+			// The env draft is the saved record (seeded on open), not a stale closure
+			// over the shared hook's state, so an explicit {} survives a blur.
 			const { result } = renderHook(() =>
 				useDirectorNotesAgentState({
 					isOpen: true,
 					directorNotesEnabled: true,
-					directorNotesSettings,
+					directorNotesSettings: { ...directorNotesSettings, customEnvVars: { NODE_ENV: 'test' } },
 					setDirectorNotesSettings,
 				})
 			);
@@ -493,6 +495,7 @@ describe('EncoreTab hooks', () => {
 			const setAgentConfig = vi.fn();
 			const saveAgentConfig = vi.fn().mockResolvedValue(true);
 			const agentConfigRef = { current: {} };
+			const setDirectorNotesSettings = vi.fn();
 			vi.mocked(useAgentConfiguration).mockReturnValue(
 				makeAgentConfiguration({
 					customEnvVars: { OLD_KEY: 'old' },
@@ -507,10 +510,11 @@ describe('EncoreTab hooks', () => {
 				useDirectorNotesAgentState({
 					isOpen: true,
 					directorNotesEnabled: true,
-					directorNotesSettings,
-					setDirectorNotesSettings: vi.fn(),
+					directorNotesSettings: { ...directorNotesSettings, customEnvVars: { OLD_KEY: 'old' } },
+					setDirectorNotesSettings,
 				})
 			);
+			setCustomEnvVars.mockClear();
 
 			act(() => {
 				result.current.handleEnvVarKeyChange('OLD_KEY', 'NEW_KEY', 'value');
@@ -523,10 +527,17 @@ describe('EncoreTab hooks', () => {
 				await result.current.handleConfigBlur();
 			});
 
-			expect(setCustomEnvVars).toHaveBeenCalledWith({ NEW_KEY: 'value' });
-			expect(setCustomEnvVars).toHaveBeenCalledWith({ OLD_KEY: 'old', FOO: 'bar' });
-			expect(setCustomEnvVars).toHaveBeenCalledWith({});
-			expect(setCustomEnvVars).toHaveBeenCalledWith({ OLD_KEY: 'old', '': '' });
+			// Each edit builds on the previous one within the same event (no stale closure).
+			expect(setCustomEnvVars.mock.calls.map(([vars]) => vars)).toEqual([
+				{ NEW_KEY: 'value' },
+				{ NEW_KEY: 'value', FOO: 'bar' },
+				{ NEW_KEY: 'value', FOO: 'bar' },
+				{ NEW_KEY: 'value', FOO: 'bar', '': '' },
+			]);
+			// Removing a row persists at once.
+			expect(setDirectorNotesSettings).toHaveBeenCalledWith(
+				expect.objectContaining({ customEnvVars: { NEW_KEY: 'value', FOO: 'bar' } })
+			);
 			expect(setAgentConfig).toHaveBeenCalledWith({ model: 'new-model' });
 			expect(agentConfigRef.current).toEqual({ model: 'new-model' });
 			expect(saveAgentConfig).toHaveBeenCalledWith('claude-code');
@@ -544,10 +555,14 @@ describe('EncoreTab hooks', () => {
 				useDirectorNotesAgentState({
 					isOpen: true,
 					directorNotesEnabled: true,
-					directorNotesSettings,
+					directorNotesSettings: {
+						...directorNotesSettings,
+						customEnvVars: { FOO: 'bar', '': '' },
+					},
 					setDirectorNotesSettings: vi.fn(),
 				})
 			);
+			setCustomEnvVars.mockClear();
 
 			act(() => {
 				result.current.handleEnvVarAdd();

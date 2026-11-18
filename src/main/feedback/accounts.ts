@@ -31,6 +31,7 @@ import { logger } from '../utils/logger';
 import { resolveAgentBillingCredential } from '../../shared/providerProfiles';
 import {
 	buildFeedbackAccountCandidates,
+	feedbackInterviewRouteProblem,
 	orderFeedbackAccounts,
 	type FeedbackAccount,
 	type FeedbackAccountCandidate,
@@ -97,6 +98,18 @@ async function checkLogin(
 		return { status: 'not-logged-in', statusDetail: `No Codex login in ${codexHome}` };
 	}
 
+	if (candidate.toolType === 'grok') {
+		// Grok can sign in from its state root, an auth file, OIDC, a helper or
+		// the keychain, and none of them is qualified as the active credential.
+		// Reading or even probing for `auth.json` would turn a file's presence
+		// into a signed-in claim, so the status stays unknown and the first turn
+		// decides. Credential bodies are never read.
+		return {
+			status: 'unknown',
+			statusDetail: 'Grok sign-in is not checked; the first turn shows whether it works',
+		};
+	}
+
 	// OpenCode keeps no per-account dir Maestro can read.
 	return { status: 'unknown' };
 }
@@ -106,6 +119,12 @@ async function checkCandidate(
 	availableToolTypes: ReadonlySet<string>,
 	homeDir: string
 ): Promise<FeedbackAccount> {
+	// A provider with no qualified read-only interview route is unavailable on
+	// every host, whatever its account or binary looks like.
+	const routeProblem = feedbackInterviewRouteProblem(candidate.toolType);
+	if (routeProblem) {
+		return { ...candidate, status: 'unsupported', statusDetail: routeProblem };
+	}
 	// A remote account is checked by running it: nothing on this disk describes it.
 	if (candidate.sshRemoteId) {
 		return { ...candidate, status: 'unknown', statusDetail: 'Runs on an SSH remote' };

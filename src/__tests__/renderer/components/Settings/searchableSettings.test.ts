@@ -11,6 +11,7 @@ import {
 	searchSettings,
 	ALL_SEARCHABLE_SETTINGS,
 	encoreTileForSetting,
+	MIN_SUBSTRING_QUERY_LENGTH,
 } from '../../../../renderer/components/Settings/searchableSettings';
 
 const RENDERER_ROOT = resolve(__dirname, '../../../../renderer');
@@ -114,6 +115,29 @@ describe('searchableSettings', () => {
 		it('should return empty array for empty query', () => {
 			expect(searchSettings('')).toEqual([]);
 			expect(searchSettings('   ')).toEqual([]);
+		});
+
+		describe('queries under MIN_SUBSTRING_QUERY_LENGTH', () => {
+			it('does not match a fragment of a word', () => {
+				expect(MIN_SUBSTRING_QUERY_LENGTH).toBe(3);
+				expect(searchSettings('qu')).toEqual([]);
+				expect(searchSettings('a')).toEqual([]);
+			});
+
+			it('matches a whole word in a label or keyword', () => {
+				expect(searchSettings('gh').some((s) => s.id === 'general-gh-path')).toBe(true);
+			});
+
+			it('ignores descriptions, where short words are everywhere', () => {
+				const named = (s: (typeof ALL_SEARCHABLE_SETTINGS)[number]) =>
+					/\bto\b/i.test([s.label, s.tabLabel, ...(s.keywords ?? [])].join(' '));
+				expect(ALL_SEARCHABLE_SETTINGS.some((s) => / to /.test(s.description ?? ''))).toBe(true);
+				expect(searchSettings('to').every(named)).toBe(true);
+			});
+
+			it('switches to substring matching at three characters', () => {
+				expect(searchSettings('qui').some((s) => s.id === 'encore-quick-chat')).toBe(true);
+			});
 		});
 
 		it('should match by label', () => {
@@ -243,6 +267,7 @@ describe('searchableSettings', () => {
 				'encore-quick-chat',
 				'encore-throughput-gauge',
 				'encore-dataview',
+				'encore-federation',
 				'encore-plugins',
 			]);
 			for (const entry of tiles) expect(tileIds.has(entry.id), entry.id).toBe(false);
@@ -334,6 +359,9 @@ describe('searchableSettings', () => {
 			['typo', 'general-spell-check'],
 			['user journey', 'general-user-journey'],
 			['record the files', 'general-user-journey'],
+			// Theme tab
+			['follow system', 'theme-follow-system'],
+			['prefers-color-scheme', 'theme-follow-system'],
 			['group cue', 'general-group-cue-entries'],
 			['collapse cue runs', 'general-group-cue-entries'],
 			['repeated', 'general-group-cue-entries'],

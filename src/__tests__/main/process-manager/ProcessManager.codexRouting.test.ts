@@ -16,6 +16,7 @@
  * The spawners are capture-only stubs, so nothing is launched.
  */
 
+import * as os from 'os';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ProcessConfig, SpawnResult } from '../../../main/process-manager';
 
@@ -103,7 +104,9 @@ function codexTurn(overrides: Partial<ProcessConfig> = {}): ProcessConfig {
 	return {
 		sessionId: `codex-agent-ai-tab-${nextId}`,
 		toolType: 'codex',
-		cwd: '/tmp',
+		// A directory that exists on every platform: spawn() refuses a missing cwd, and
+		// a drive-relative `/tmp` only exists on Windows when something created it.
+		cwd: os.tmpdir(),
 		command: 'codex',
 		args: ['exec', '--json', '--dangerously-bypass-approvals-and-sandbox'],
 		prompt: 'fix the bug',

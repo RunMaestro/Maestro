@@ -140,7 +140,8 @@ describe('executeCueRunAction', () => {
 		const call = deps.executeCuePrompt.mock.calls[0][0] as Record<string, any>;
 		expect(call.promptPath).toBe('do the thing');
 		expect(call.toolType).toBe('claude-code');
-		expect(call.customPath).toBe('/detected/claude');
+		expect(call.customPath).toBeUndefined();
+		expect(deps.resolveAgentPath).not.toHaveBeenCalled();
 		expect(call.customModel).toBe('opus');
 		expect(call.templateContext.session.fullPath).toBe('/work/full');
 		expect(deps.reportAuthFailure).toHaveBeenCalledWith(result, 'claude-code', 'remote-7');
@@ -159,7 +160,11 @@ describe('executeCueRunAction', () => {
 	});
 
 	it('prefers the configured customPath over the detector', async () => {
+		// A local agent: the provider-level path names a file on this machine, so
+		// over SSH it never reaches the remote (covered by the SSH cases below).
+		const localSession = { ...SESSION, sessionSshRemoteConfig: { enabled: false, remoteId: null } };
 		const deps = makeDeps({
+			findSession: vi.fn(() => localSession),
 			getAgentConfigValues: vi.fn(() => ({ customPath: '/custom/claude' })),
 		});
 		await executeCueRunAction(deps, params());
@@ -208,6 +213,112 @@ describe('executeCueRunAction', () => {
 	});
 });
 
+describe.each(['injected resolver', 'legacy detector'] as const)(
+	'executeCueRunAction SSH paths with %s',
+	(callbackMode) => {
+		it.each([
+			[
+				'session precedence',
+				' ~/Session Tools/grok ',
+				'/remote/Provider Tools/grok',
+				' ~/Session Tools/grok ',
+			],
+			// The provider path names a LOCAL file, so it never reaches the remote.
+			['provider path stays local', undefined, '/local/Provider Tools/grok', undefined],
+			['no overrides', undefined, undefined, undefined],
+			['empty overrides', '', '', undefined],
+		] as const)(
+			'%s bypasses local callbacks at the executor handoff',
+			async (_label, sessionPath, providerPath, expectedPath) => {
+				const session: CueRunSessionRecord = {
+					...SESSION,
+					toolType: 'grok',
+					customPath: sessionPath,
+					customModel: 'grok-4.3',
+					customArgs: '--fixture-route selected',
+					customEnvVars: { GROK_HOME: '/remote/Account One', FIXTURE_SCOPE: 'session' },
+				};
+				const agentConfigValues = {
+					customPath: providerPath,
+					customEnvVars: { GROK_HOME: '/remote/Provider Account' },
+				};
+				const resolveAgentBinary = vi.fn(async () => '/local/resolver/grok');
+				const resolveAgentPath = vi.fn(async () => '/local/detector/grok');
+				const deps = makeDeps({
+					findSession: vi.fn(() => session),
+					getAgentConfigValues: vi.fn(() => agentConfigValues),
+					...(callbackMode === 'injected resolver' ? { resolveAgentBinary } : {}),
+					resolveAgentPath,
+				});
+				const { signal } = new AbortController();
+				const result = await executeCueRunAction(deps, params({ signal }));
+
+				expect(result.runId).toBe('run-1');
+				expect(resolveAgentBinary).not.toHaveBeenCalled();
+				expect(resolveAgentPath).not.toHaveBeenCalled();
+				expect(deps.executeCuePrompt).toHaveBeenCalledExactlyOnceWith(
+					expect.objectContaining({
+						toolType: 'grok',
+						customPath: expectedPath,
+						customModel: session.customModel,
+						customArgs: session.customArgs,
+						customEnvVars: session.customEnvVars,
+						agentConfigValues,
+						projectRoot: session.projectRoot,
+						sshRemoteConfig: session.sessionSshRemoteConfig,
+						sshStore: deps.sshStore,
+						signal,
+						session: expect.objectContaining({ id: session.id, cwd: session.projectRoot }),
+					})
+				);
+				expect(deps.reportAuthFailure).toHaveBeenCalledWith(result, 'grok', 'remote-7');
+			}
+		);
+	}
+);
+
+describe('executeCueRunAction local executable callbacks', () => {
+	it.each([undefined, { enabled: false, remoteId: 'remote-7' }])(
+		'keeps the injected resolver authoritative with SSH config %j',
+		async (sessionSshRemoteConfig) => {
+			const session = { ...SESSION, sessionSshRemoteConfig, customPath: '~/Session Tools/claude' };
+			const agentConfigValues = { customPath: '/local/Provider Tools/claude' };
+			const resolveAgentBinary = vi.fn(async () => '/local/Resolved Tools/claude');
+			const deps = makeDeps({
+				findSession: vi.fn(() => session),
+				getAgentConfigValues: vi.fn(() => agentConfigValues),
+				resolveAgentBinary,
+			});
+
+			await executeCueRunAction(deps, params());
+
+			expect(resolveAgentBinary).toHaveBeenCalledExactlyOnceWith({ session, agentConfigValues });
+			expect(deps.resolveAgentPath).not.toHaveBeenCalled();
+			expect(deps.executeCuePrompt).toHaveBeenCalledExactlyOnceWith(
+				expect.objectContaining({ customPath: '/local/Resolved Tools/claude' })
+			);
+		}
+	);
+
+	it.each([undefined, '/local/Provider Tools/claude'])(
+		'preserves legacy local provider override and detector fallback for %s',
+		async (customPath) => {
+			const deps = makeDeps({
+				findSession: vi.fn(() => ({ ...SESSION, sessionSshRemoteConfig: undefined })),
+				getAgentConfigValues: vi.fn(() => ({ customPath })),
+			});
+
+			await executeCueRunAction(deps, params());
+
+			if (customPath) expect(deps.resolveAgentPath).not.toHaveBeenCalled();
+			else expect(deps.resolveAgentPath).toHaveBeenCalledExactlyOnceWith('claude-code');
+			expect(deps.executeCuePrompt).toHaveBeenCalledExactlyOnceWith(
+				expect.objectContaining({ customPath: customPath ?? '/detected/claude' })
+			);
+		}
+	);
+});
+
 describe('executeCueRunAction with a stopped run', () => {
 	it.each([
 		['prompt', {}],
@@ -238,6 +349,7 @@ describe('executeCueRunAction with a stopped run', () => {
 	it('stops a prompt run whose agent path probe was still pending', async () => {
 		let finishProbe!: (path: string) => void;
 		const deps = makeDeps({
+			findSession: vi.fn(() => ({ ...SESSION, sessionSshRemoteConfig: undefined })),
 			resolveAgentPath: vi.fn(
 				() =>
 					new Promise<string>((resolve) => {
@@ -252,6 +364,21 @@ describe('executeCueRunAction with a stopped run', () => {
 		finishProbe('/detected/claude');
 		expect((await pending).status).toBe('stopped');
 		expect(deps.executeCuePrompt).not.toHaveBeenCalled();
+	});
+
+	it('stops an SSH run cancelled during canonical executable resolution', async () => {
+		const resolveAgentBinary = vi.fn(async () => '/local/resolver/claude');
+		const deps = makeDeps({ resolveAgentBinary });
+		const controller = new AbortController();
+		const pending = executeCueRunAction(deps, params({ signal: controller.signal }));
+		// The canonical SSH resolver yields before handing the run to its executor.
+		controller.abort();
+
+		expect((await pending).status).toBe('stopped');
+		expect(resolveAgentBinary).not.toHaveBeenCalled();
+		expect(deps.resolveAgentPath).not.toHaveBeenCalled();
+		expect(deps.executeCuePrompt).not.toHaveBeenCalled();
+		expect(deps.reportAuthFailure).not.toHaveBeenCalled();
 	});
 
 	it('passes the signal on to every executor', async () => {

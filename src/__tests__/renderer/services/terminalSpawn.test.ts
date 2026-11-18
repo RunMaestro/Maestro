@@ -106,6 +106,17 @@ describe('spawnPtyForTab', () => {
 		expect(onSpawnFailure).not.toHaveBeenCalled();
 	});
 
+	it("names the owning agent in the shell's env, on top of the user's shell env", async () => {
+		useSettingsStore.setState({ shellEnvVars: { FOO: 'bar' } });
+		await spawnPtyForTab({ session: session(), tab: tab(), onPid, onSpawnFailure });
+
+		// `maestro-cli open-file` typed in this tab reads it to default `--agent`.
+		expect(spawnTerminalTab.mock.calls[0][0].shellEnvVars).toEqual({
+			FOO: 'bar',
+			MAESTRO_TERMINAL_AGENT_ID: 'sess-1',
+		});
+	});
+
 	it('runs a startup command once the shell is up', async () => {
 		await spawnPtyForTab({
 			session: session(),

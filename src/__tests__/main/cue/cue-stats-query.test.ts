@@ -3,7 +3,7 @@
  *
  * The aggregation function reads from two upstream subsystems we'd rather
  * keep out of the test runtime:
- *   1. `getRecentCueEvents()` from `cue-db` - backed by `better-sqlite3`,
+ *   1. `getCueEventsForStats()` from `cue-db` - backed by `better-sqlite3`,
  *      whose native binding is built for Electron's NODE_MODULE_VERSION and
  *      fails to load under vitest (every other Cue test works around this
  *      the same way; see `cue-db.test.ts` and `cue-chain-lineage.test.ts`).
@@ -17,53 +17,76 @@
  * builder, time-series bucketing, and coverage-warning logic - none of which
  * touch SQL.
  *
- * Token attribution joins on the provider session id; these fixtures set each
- * event's `providerSessionId` equal to its `sessionId` for brevity (the
- * id-space split is exercised in `cue-token-accessor.test.ts`), and key
- * `mockSummaries` by that shared id.
+ * Native summaries use the canonical Maestro/provider pair key. Grok receipts
+ * remain event-scoped even across resumed turns and colliding account/host IDs.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { CueEventRecord } from '../../../main/cue/cue-db';
-import type { SessionTokenSummary } from '../../../main/cue/stats/cue-token-accessor';
+import {
+	getSessionTokenSummaries,
+	sessionTokenLookupKey,
+	type SessionTokenSummary,
+} from '../../../main/cue/stats/cue-token-accessor';
+import type { UsageAccounting, UsageCost } from '../../../shared/types';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
-let mockEvents: CueEventRecord[] = [];
+let mockEvents: Array<CueEventRecord & { orphaned?: boolean }> = [];
 let mockSummaries = new Map<string, SessionTokenSummary>();
+let mockAgentTypes = new Map<string, string>();
 
 vi.mock('../../../main/cue/cue-db', () => ({
-	getRecentCueEvents: vi.fn((sinceMs: number) => mockEvents.filter((e) => e.createdAt >= sinceMs)),
+	getCueEventsForStats: vi.fn((sinceMs: number) =>
+		mockEvents.filter((e) => e.createdAt >= sinceMs)
+	),
 }));
 
-vi.mock('../../../main/cue/stats/cue-token-accessor', () => ({
+vi.mock('../../../main/cue/cue-recovery-service', () => ({
+	ORPHANED_RUN_MESSAGE: 'orphaned-run',
+}));
+
+// Isolate native pools while retaining the real join-key implementation.
+vi.mock('../../../main/agents', () => ({ getSessionStorage: vi.fn() }));
+vi.mock('../../../main/stats', () => ({ getStatsDB: vi.fn() }));
+vi.mock('../../../main/utils/logger', () => ({ logger: { warn: vi.fn() } }));
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
+
+vi.mock('../../../main/cue/stats/cue-token-accessor', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/cue/stats/cue-token-accessor')>()),
 	getSessionTokenSummaries: vi.fn(
 		async (lookups: Array<{ maestroSessionId: string; providerSessionId: string }>) => {
 			const result = new Map<string, SessionTokenSummary>();
-			for (const { providerSessionId } of lookups) {
-				const summary = mockSummaries.get(providerSessionId);
-				if (summary) result.set(providerSessionId, summary);
+			for (const { maestroSessionId, providerSessionId } of lookups) {
+				const key = sessionTokenLookupKey(maestroSessionId, providerSessionId);
+				const summary = mockSummaries.get(key);
+				if (summary) result.set(key, summary);
 			}
 			return result;
 		}
 	),
-	// Agent type is keyed by the Maestro agent id; in these fixtures that equals
-	// the (shared) summary key, so derive the label from the seeded summaries.
+	// Legacy fixtures use equal IDs; explicit lifecycle labels cover swaps/collisions.
 	getAgentTypesForSessions: vi.fn((maestroSessionIds: string[]) => {
 		const result = new Map<string, string>();
 		for (const id of maestroSessionIds) {
-			const agentType = mockSummaries.get(id)?.agentType;
+			const agentType =
+				mockAgentTypes.get(id) ?? mockSummaries.get(sessionTokenLookupKey(id, id))?.agentType;
 			if (agentType) result.set(id, agentType);
 		}
 		return result;
 	}),
 }));
 
-import { getCueStatsAggregation } from '../../../main/cue/stats/cue-stats-query';
+import {
+	getCueStatsAggregation,
+	getCueStatsSourceTotals,
+} from '../../../main/cue/stats/cue-stats-query';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function makeEvent(overrides: Partial<CueEventRecord> = {}): CueEventRecord {
+function makeEvent(
+	overrides: Partial<CueEventRecord & { orphaned: boolean }> = {}
+): CueEventRecord & { orphaned?: boolean } {
 	const id = overrides.id ?? 'evt-1';
 	const sessionId = overrides.sessionId ?? 'session-1';
 	return {
@@ -106,9 +129,20 @@ function makeSummary(overrides: Partial<SessionTokenSummary> = {}): SessionToken
 
 describe('cue-stats-query - getCueStatsAggregation', () => {
 	beforeEach(() => {
+		// The 'day' range starts at local midnight, and fixtures sit up to 2.5h
+		// before "now". Pin the clock to local noon so a run in the first hours
+		// after midnight (CI runs in UTC) does not push them into yesterday. Only
+		// Date is faked: timers and promises stay real.
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date(2026, 10, 16, 12, 0, 0));
 		vi.clearAllMocks();
 		mockEvents = [];
 		mockSummaries = new Map();
+		mockAgentTypes = new Map();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
 	});
 
 	describe('totals', () => {
@@ -138,7 +172,7 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				}),
 			];
 			mockSummaries.set(
-				's1',
+				sessionTokenLookupKey('s1', 's1'),
 				makeSummary({
 					sessionId: 's1',
 					inputTokens: 100,
@@ -149,7 +183,7 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				})
 			);
 			mockSummaries.set(
-				's2',
+				sessionTokenLookupKey('s2', 's2'),
 				makeSummary({
 					sessionId: 's2',
 					inputTokens: 200,
@@ -160,7 +194,7 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				})
 			);
 			mockSummaries.set(
-				's3',
+				sessionTokenLookupKey('s3', 's3'),
 				makeSummary({
 					sessionId: 's3',
 					inputTokens: 300,
@@ -176,20 +210,22 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 			expect(result.totals.occurrences).toBe(3);
 			expect(result.totals.successCount).toBe(1);
 			expect(result.totals.failureCount).toBe(1);
-			// e1: 30s, e2: 25s, e3: null → 55s = 55_000ms
-			expect(result.totals.totalDurationMs).toBe(55_000);
+			// Only COMPLETED runs count toward run time: e1 30s. e2 failed (its span
+			// is not run time) and e3 is still running.
+			expect(result.totals.totalDurationMs).toBe(30_000);
+			expect(result.totals.timedRunCount).toBe(1);
 			expect(result.totals.totalInputTokens).toBe(600);
 			expect(result.totals.totalOutputTokens).toBe(240);
 			expect(result.totals.totalCacheReadTokens).toBe(60);
 			expect(result.totals.totalCacheCreationTokens).toBe(30);
-			// 0.01 + 0.02 = 0.03 (s3 contributes nothing - costUsd null)
-			expect(result.totals.totalCostUsd).toBeCloseTo(0.03, 5);
+			// Known spend cannot make a mixed known/unknown total complete.
+			expect(result.totals.totalCostUsd).toBeNull();
 		});
 
 		it('reports totalCostUsd as null when no event in the window has cost data', async () => {
 			mockEvents = [makeEvent({ id: 'e1', sessionId: 's1', status: 'completed' })];
 			mockSummaries.set(
-				's1',
+				sessionTokenLookupKey('s1', 's1'),
 				makeSummary({ sessionId: 's1', costUsd: null, agentType: 'codex', coverage: 'partial' })
 			);
 
@@ -205,9 +241,18 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				makeEvent({ id: 'e2', sessionId: 's2', pipelineId: 'pipe-a', status: 'completed' }),
 				makeEvent({ id: 'e3', sessionId: 's3', pipelineId: 'pipe-b', status: 'failed' }),
 			];
-			mockSummaries.set('s1', makeSummary({ sessionId: 's1', inputTokens: 100 }));
-			mockSummaries.set('s2', makeSummary({ sessionId: 's2', inputTokens: 200 }));
-			mockSummaries.set('s3', makeSummary({ sessionId: 's3', inputTokens: 50 }));
+			mockSummaries.set(
+				sessionTokenLookupKey('s1', 's1'),
+				makeSummary({ sessionId: 's1', inputTokens: 100 })
+			);
+			mockSummaries.set(
+				sessionTokenLookupKey('s2', 's2'),
+				makeSummary({ sessionId: 's2', inputTokens: 200 })
+			);
+			mockSummaries.set(
+				sessionTokenLookupKey('s3', 's3'),
+				makeSummary({ sessionId: 's3', inputTokens: 50 })
+			);
 
 			const result = await getCueStatsAggregation('day');
 
@@ -230,9 +275,9 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				makeEvent({ id: 'e2', sessionId: 's2', pipelineId: null, status: 'completed' }),
 				makeEvent({ id: 'e3', sessionId: 's3', pipelineId: null, status: 'failed' }),
 			];
-			mockSummaries.set('s1', makeSummary({ sessionId: 's1' }));
-			mockSummaries.set('s2', makeSummary({ sessionId: 's2' }));
-			mockSummaries.set('s3', makeSummary({ sessionId: 's3' }));
+			mockSummaries.set(sessionTokenLookupKey('s1', 's1'), makeSummary({ sessionId: 's1' }));
+			mockSummaries.set(sessionTokenLookupKey('s2', 's2'), makeSummary({ sessionId: 's2' }));
+			mockSummaries.set(sessionTokenLookupKey('s3', 's3'), makeSummary({ sessionId: 's3' }));
 
 			const result = await getCueStatsAggregation('day');
 
@@ -276,9 +321,9 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 					createdAt: baseTime + 2_000,
 				}),
 			];
-			mockSummaries.set('s1', makeSummary({ sessionId: 's1' }));
-			mockSummaries.set('s2', makeSummary({ sessionId: 's2' }));
-			mockSummaries.set('s3', makeSummary({ sessionId: 's3' }));
+			mockSummaries.set(sessionTokenLookupKey('s1', 's1'), makeSummary({ sessionId: 's1' }));
+			mockSummaries.set(sessionTokenLookupKey('s2', 's2'), makeSummary({ sessionId: 's2' }));
+			mockSummaries.set(sessionTokenLookupKey('s3', 's3'), makeSummary({ sessionId: 's3' }));
 
 			const result = await getCueStatsAggregation('day');
 
@@ -328,8 +373,8 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 					createdAt: now - 30_000,
 				}),
 			];
-			mockSummaries.set('s2', makeSummary({ sessionId: 's2' }));
-			mockSummaries.set('s3', makeSummary({ sessionId: 's3' }));
+			mockSummaries.set(sessionTokenLookupKey('s2', 's2'), makeSummary({ sessionId: 's2' }));
+			mockSummaries.set(sessionTokenLookupKey('s3', 's3'), makeSummary({ sessionId: 's3' }));
 
 			const result = await getCueStatsAggregation('day');
 
@@ -358,11 +403,11 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				makeEvent({ id: 'e2', sessionId: 's-unknown' }),
 			];
 			mockSummaries.set(
-				's-claude',
+				sessionTokenLookupKey('s-claude', 's-claude'),
 				makeSummary({ sessionId: 's-claude', agentType: 'claude-code', coverage: 'full' })
 			);
 			mockSummaries.set(
-				's-unknown',
+				sessionTokenLookupKey('s-unknown', 's-unknown'),
 				makeSummary({
 					sessionId: 's-unknown',
 					agentType: 'made-up-agent',
@@ -391,11 +436,11 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				makeEvent({ id: 'e2', sessionId: 's-claude' }),
 			];
 			mockSummaries.set(
-				's-codex',
+				sessionTokenLookupKey('s-codex', 's-codex'),
 				makeSummary({ sessionId: 's-codex', agentType: 'codex', coverage: 'partial' })
 			);
 			mockSummaries.set(
-				's-claude',
+				sessionTokenLookupKey('s-claude', 's-claude'),
 				makeSummary({ sessionId: 's-claude', agentType: 'claude-code', coverage: 'full' })
 			);
 
@@ -411,7 +456,7 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 		it('returns no warnings when every session reports full coverage', async () => {
 			mockEvents = [makeEvent({ id: 'e1', sessionId: 's-claude' })];
 			mockSummaries.set(
-				's-claude',
+				sessionTokenLookupKey('s-claude', 's-claude'),
 				makeSummary({ sessionId: 's-claude', agentType: 'claude-code', coverage: 'full' })
 			);
 
@@ -445,7 +490,7 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 			// Mirrors what cue-token-accessor.ts actually returns for a remote
 			// session: zeroed totals, coverage 'partial'.
 			mockSummaries.set(
-				's-remote',
+				sessionTokenLookupKey('s-remote', 's-remote'),
 				makeSummary({
 					sessionId: 's-remote',
 					agentType: 'claude-code',
@@ -475,7 +520,7 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 				}),
 			];
 			mockSummaries.set(
-				's-local',
+				sessionTokenLookupKey('s-local', 's-local'),
 				makeSummary({
 					sessionId: 's-local',
 					agentType: 'claude-code',
@@ -499,6 +544,241 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 
 			expect(result.totals.totalInputTokens).toBe(0);
 			expect(result.totals.totalOutputTokens).toBe(0);
+		});
+	});
+
+	describe('Grok event accounting', () => {
+		const accounting: UsageAccounting = {
+			source: 'runtime-stream',
+			providerId: 'grok',
+			scope: 'turn',
+			reporting: 'snapshot',
+			cacheReadCounting: 'beside-input',
+			cacheCreationCounting: 'beside-input',
+			completeness: 'complete',
+			cost: { status: 'exact', costUsdTicks: '0' },
+			childInclusion: 'completed',
+			childCompleteness: 'complete',
+		};
+
+		it.each<UsageCost>([
+			{ status: 'exact', costUsdTicks: '200000000' },
+			{ status: 'partial', costUsdTicks: '200000000' },
+			{ status: 'unknown' },
+		])('reconciles new/resumed turns and account collisions with $status spend', async (cost) => {
+			const now = Date.now();
+			mockAgentTypes.set('owner-a', 'claude-code'); // Creation-time provider before a swap.
+			mockEvents = [
+				{ id: 'new', sessionId: 'owner-a', input: 70, output: 30, read: 25, write: 10 },
+				{ id: 'resume', sessionId: 'owner-a', input: 35, output: 20, read: 15, write: 5 },
+				{ id: 'other', sessionId: 'owner-b', input: 7, output: 3, read: 2, write: 1 },
+			].map((turn) =>
+				makeEvent({
+					id: turn.id,
+					sessionId: turn.sessionId,
+					providerSessionId: 'shared-native',
+					createdAt: now,
+					completedAt: now + 1,
+					pipelineId: 'pipeline',
+					subscriptionName: turn.sessionId,
+					chainRootId: 'new',
+					parentEventId: turn.id === 'new' ? null : 'new',
+					streamUsageJson: JSON.stringify({
+						inputTokens: turn.input,
+						outputTokens: turn.output,
+						cacheReadInputTokens: turn.read,
+						cacheCreationInputTokens: turn.write,
+						totalCostUsd: 0,
+						accounting: {
+							...accounting,
+							cost: turn.id === 'resume' ? cost : accounting.cost,
+							scopeId: `${turn.sessionId}/account/host`,
+							processGeneration: turn.id,
+						},
+					}),
+				})
+			);
+			for (const owner of ['owner-a', 'owner-b']) {
+				mockSummaries.set(
+					sessionTokenLookupKey(owner, 'shared-native'),
+					makeSummary({
+						agentType: 'grok',
+						inputTokens: 999_999,
+						outputTokens: 888_888,
+						costUsd: 100,
+					})
+				);
+			}
+			const result = await getCueStatsAggregation('day');
+			expect(getSessionTokenSummaries).toHaveBeenCalledWith([], expect.anything());
+			const totals = {
+				totalInputTokens: 112,
+				totalOutputTokens: 53,
+				totalCacheReadTokens: 42,
+				totalCacheCreationTokens: 16,
+				totalCostUsd: cost.status === 'exact' ? 0.02 : null,
+			};
+			for (const rollup of [
+				result.totals,
+				result.byPipeline[0].totals,
+				result.byAgent[0].totals,
+				result.chains[0].totals,
+			])
+				expect(rollup).toMatchObject(totals);
+			expect(result.byAgent.map((g) => g.key)).toEqual(['grok']);
+			expect(result.bySubscription.find((g) => g.key === 'owner-a')?.totals.totalInputTokens).toBe(
+				105
+			);
+			expect(result.bySubscription.find((g) => g.key === 'owner-b')?.totals.totalInputTokens).toBe(
+				7
+			);
+			// The series is zero-filled over the window; only the run's bucket carries data.
+			expect(result.timeSeries.filter((b) => b.occurrences > 0)).toEqual([
+				expect.objectContaining({ inputTokens: 112, outputTokens: 53 }),
+			]);
+			expect(result.chains[0].nodes.map((n) => n.inputTokens)).toEqual([70, 35, 7]);
+			expect(result.chains[0].nodes.map((n) => n.costUsd)).toEqual([
+				0,
+				cost.status === 'exact' ? 0.02 : null,
+				0,
+			]);
+		});
+
+		it.each([
+			['missing', null, 'grok'],
+			['corrupt', '{', 'grok'],
+			['legacy-zero', '{"inputTokens":0,"totalCostUsd":0}', 'claude-code'],
+			['unidentified-zero', '{"totalCostUsd":0}', null],
+			['invalid-count', JSON.stringify({ inputTokens: -1, accounting }), 'claude-code'],
+			[
+				'native-lifetime',
+				JSON.stringify({
+					inputTokens: 999999,
+					accounting: { ...accounting, scope: 'native-session' },
+				}),
+				'claude-code',
+			],
+			[
+				'child-lifetime',
+				JSON.stringify({ inputTokens: 999999, accounting: { ...accounting, scope: 'child' } }),
+				'claude-code',
+			],
+			['missing-cost', JSON.stringify({ accounting: { providerId: 'grok' } }), 'codex'],
+		])(
+			'keeps %s receipt unknown without inferring native scope',
+			async (_name, streamUsageJson, lifecycle) => {
+				if (lifecycle) mockAgentTypes.set('owner', lifecycle);
+				mockEvents = [
+					makeEvent({
+						sessionId: 'owner',
+						providerSessionId:
+							lifecycle === 'claude-code' && !streamUsageJson?.includes('providerId')
+								? null
+								: 'shared-native',
+						status: 'stopped',
+						streamUsageJson,
+					}),
+				];
+				const result = await getCueStatsAggregation('day');
+				expect(getSessionTokenSummaries).toHaveBeenCalledWith([], expect.anything());
+				expect(result.totals).toMatchObject({
+					totalInputTokens: 0,
+					totalCostUsd: null,
+					failureCount: 1,
+				});
+				expect(result.chains[0].nodes[0]).toMatchObject({ inputTokens: 0, costUsd: null });
+				expect(result.byAgent[0].key).toBe(
+					streamUsageJson?.includes('providerId') ? 'grok' : (lifecycle ?? '__unknown__')
+				);
+			}
+		);
+
+		it.each(['failed', 'timeout', 'stopped', 'running'])(
+			'keeps observed Codex after a Grok swap for %s without a native ID',
+			async (status) => {
+				mockAgentTypes.set('owner', 'grok');
+				mockEvents = [
+					makeEvent({
+						sessionId: 'owner',
+						providerSessionId: null,
+						status,
+						streamUsageJson: JSON.stringify({
+							inputTokens: 8,
+							accounting: { ...accounting, providerId: 'codex' },
+						}),
+					}),
+				];
+				const result = await getCueStatsAggregation('day');
+				expect(getSessionTokenSummaries).toHaveBeenCalledWith([], expect.anything());
+				expect(result.byAgent[0].key).toBe('codex');
+				expect(result.totals).toMatchObject({
+					totalInputTokens: 8,
+					totalCostUsd: 0,
+					failureCount: status === 'running' ? 0 : 1,
+				});
+			}
+		);
+
+		it.each(['claude-code', 'opencode'])(
+			'admits a %s stream fallback cost stamped partial by the default accounting',
+			async (lifecycle) => {
+				mockAgentTypes.set('owner', lifecycle);
+				mockEvents = [
+					makeEvent({
+						sessionId: 'owner',
+						providerSessionId: null,
+						streamUsageJson: JSON.stringify({
+							inputTokens: 8,
+							totalCostUsd: 0.25,
+							// The default stamp carries no providerId; the lifecycle names the provider.
+							accounting: {
+								...accounting,
+								providerId: undefined,
+								cost: { status: 'partial', costUsd: 0.25 },
+							},
+						}),
+					}),
+				];
+				const result = await getCueStatsAggregation('day');
+				expect(result.byAgent[0].key).toBe(lifecycle);
+				expect(result.totals).toMatchObject({ totalInputTokens: 8, totalCostUsd: 0.25 });
+			}
+		);
+
+		it('keeps non-Grok native lookups separate for colliding provider IDs', async () => {
+			for (const [owner, input] of [
+				['owner-a', 11],
+				['owner-b', 22],
+			] as const) {
+				mockAgentTypes.set(owner, 'claude-code');
+				mockEvents.push(
+					makeEvent({ id: owner, sessionId: owner, providerSessionId: 'shared-native' })
+				);
+				mockSummaries.set(
+					sessionTokenLookupKey(owner, 'shared-native'),
+					makeSummary({ inputTokens: input })
+				);
+			}
+			mockEvents.push(
+				makeEvent({
+					id: 'swapped',
+					sessionId: 'owner-a',
+					providerSessionId: 'shared-native',
+					streamUsageJson: JSON.stringify({ inputTokens: 7, accounting }),
+				})
+			);
+			const result = await getCueStatsAggregation('day');
+			expect(getSessionTokenSummaries).toHaveBeenCalledWith(
+				[
+					{ maestroSessionId: 'owner-a', providerSessionId: 'shared-native' },
+					{ maestroSessionId: 'owner-b', providerSessionId: 'shared-native' },
+				],
+				expect.anything()
+			);
+			expect(result.totals.totalInputTokens).toBe(40);
+			expect(
+				Object.fromEntries(result.chains.map((c) => [c.rootId, c.totals.totalInputTokens]))
+			).toEqual({ 'owner-a': 11, 'owner-b': 22, swapped: 7 });
 		});
 	});
 
@@ -636,6 +916,145 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 			// Hours with no events stay at zero.
 			expect(result.byHourOfDay[0].occurrences).toBe(0);
 			expect(result.byHourOfDay[23].occurrences).toBe(0);
+		});
+	});
+
+	describe('completed-only durations', () => {
+		it('leaves failed, timed-out, stopped and swept runs out of run time and percentiles', async () => {
+			const now = Date.now();
+			mockEvents = [
+				makeEvent({
+					id: 'ok',
+					status: 'completed',
+					createdAt: now - 10_000,
+					completedAt: now - 5_000,
+				}),
+				makeEvent({ id: 'f', status: 'failed', createdAt: now - 60_000, completedAt: now - 1_000 }),
+				makeEvent({
+					id: 't',
+					status: 'timeout',
+					createdAt: now - 60_000,
+					completedAt: now - 1_000,
+				}),
+				makeEvent({
+					id: 'swept',
+					status: 'failed',
+					orphaned: true,
+					createdAt: now - 9_000_000,
+					completedAt: now,
+				}),
+			];
+
+			const result = await getCueStatsAggregation('day');
+
+			expect(result.totals.occurrences).toBe(4);
+			expect(result.totals.totalDurationMs).toBe(5_000);
+			expect(result.totals.timedRunCount).toBe(1);
+			expect(result.durationPercentiles.count).toBe(1);
+			expect(result.durationPercentiles.max).toBe(5_000);
+		});
+	});
+
+	describe('slowestRuns', () => {
+		it('ranks finished runs of every status by span, skips running and swept runs', async () => {
+			const now = Date.now();
+			mockEvents = [
+				makeEvent({
+					id: 'ok',
+					status: 'completed',
+					createdAt: now - 10_000,
+					completedAt: now - 5_000,
+				}),
+				makeEvent({ id: 'slow-fail', status: 'failed', createdAt: now - 60_000, completedAt: now }),
+				makeEvent({ id: 'running', status: 'running', createdAt: now - 99_000, completedAt: null }),
+				makeEvent({
+					id: 'swept',
+					status: 'failed',
+					orphaned: true,
+					createdAt: now - 9_000_000,
+					completedAt: now,
+				}),
+			];
+			mockSummaries.set(
+				sessionTokenLookupKey('session-1', 'session-1'),
+				makeSummary({ inputTokens: 7, outputTokens: 3 })
+			);
+
+			const result = await getCueStatsAggregation('day');
+
+			expect(result.slowestRuns.map((r) => r.eventId)).toEqual(['slow-fail', 'ok']);
+			expect(result.slowestRuns[0]).toMatchObject({
+				status: 'failed',
+				durationMs: 60_000,
+				agentType: 'claude-code',
+				tokens: 10,
+			});
+		});
+	});
+
+	describe('zero-filled time series', () => {
+		it('has one bucket per hour of the day range even when only one hour saw runs', async () => {
+			const now = Date.now();
+			mockEvents = [makeEvent({ id: 'e1', createdAt: now - 1_000 })];
+
+			const result = await getCueStatsAggregation('day');
+
+			const startOfToday = new Date(now);
+			startOfToday.setHours(0, 0, 0, 0);
+			expect(result.timeSeries[0].bucketStartMs).toBe(startOfToday.getTime());
+			expect(result.timeSeries.length).toBe(new Date(now).getHours() + 1);
+			expect(result.timeSeries.reduce((sum, b) => sum + b.occurrences, 0)).toBe(1);
+			expect(result.timeSeries.filter((b) => b.occurrences === 0).length).toBe(
+				result.timeSeries.length - 1
+			);
+		});
+
+		it('starts an all-time series at the first run and is empty with no runs', async () => {
+			expect((await getCueStatsAggregation('all')).timeSeries).toEqual([]);
+
+			const now = Date.now();
+			mockEvents = [makeEvent({ id: 'old', createdAt: now - 3 * 86_400_000 })];
+			const result = await getCueStatsAggregation('all');
+			// Three days ago, two days ago, yesterday, today (a DST change cannot
+			// add or drop a calendar day).
+			expect(result.timeSeries.length).toBe(4);
+			expect(result.timeSeries[0].occurrences).toBe(1);
+		});
+	});
+
+	describe('getCueStatsSourceTotals', () => {
+		it('returns runs, completed run time and input+output tokens', async () => {
+			const now = Date.now();
+			mockEvents = [
+				makeEvent({
+					id: 'a',
+					sessionId: 's1',
+					status: 'completed',
+					createdAt: now - 4_000,
+					completedAt: now - 1_000,
+				}),
+				makeEvent({
+					id: 'b',
+					sessionId: 's2',
+					status: 'failed',
+					createdAt: now - 4_000,
+					completedAt: now,
+				}),
+			];
+			mockSummaries.set(
+				sessionTokenLookupKey('s1', 's1'),
+				makeSummary({ sessionId: 's1', inputTokens: 10, outputTokens: 5 })
+			);
+			mockSummaries.set(
+				sessionTokenLookupKey('s2', 's2'),
+				makeSummary({ sessionId: 's2', inputTokens: 1, outputTokens: 1 })
+			);
+
+			expect(await getCueStatsSourceTotals('day')).toEqual({
+				occurrences: 2,
+				totalDurationMs: 3_000,
+				tokens: 17,
+			});
 		});
 	});
 

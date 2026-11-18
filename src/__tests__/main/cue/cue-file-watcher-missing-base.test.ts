@@ -45,6 +45,21 @@ async function waitFor(predicate: () => boolean, timeoutMs = WAIT_TIMEOUT_MS): P
 	}
 }
 
+/**
+ * Asserts the events one new file produced: exactly one `add`, first, for one
+ * path, followed by nothing but `change`. A second `add` would mean two
+ * watchers fired for the same file. One writeFileSync can still surface as
+ * add + change when FSEvents delivers its flags in two batches more than the
+ * debounce apart, which loaded full-suite runs hit; a trailing `change` is the OS.
+ */
+function expectSingleAdd(fileEvents: CueEvent[]): CueEvent {
+	expect(fileEvents.filter((e) => e.payload.changeType === 'add')).toHaveLength(1);
+	expect(fileEvents[0].payload.changeType).toBe('add');
+	expect(fileEvents.slice(1).every((e) => e.payload.changeType === 'change')).toBe(true);
+	expect(new Set(fileEvents.map((e) => e.payload.path)).size).toBe(1);
+	return fileEvents[0];
+}
+
 /** mkdir that tolerates a folder Windows still holds pending-delete. */
 async function mkdirWithRetry(dir: string): Promise<void> {
 	for (let attempt = 0; ; attempt++) {
@@ -103,9 +118,9 @@ describe('cue-file-watcher with a missing static folder', { timeout: TEST_TIMEOU
 
 		await waitFor(() => events.length >= 1);
 		await delay(SETTLE_MS);
-		expect(events).toHaveLength(1);
-		expect(events[0].type).toBe('file.changed');
-		expect(events[0].payload).toMatchObject({
+		const event = expectSingleAdd(events);
+		expect(event.type).toBe('file.changed');
+		expect(event.payload).toMatchObject({
 			path: path.join(root, 'inbox', 'a.txt'),
 			filename: 'a.txt',
 			directory: path.join(root, 'inbox'),
@@ -123,8 +138,7 @@ describe('cue-file-watcher with a missing static folder', { timeout: TEST_TIMEOU
 
 		await waitFor(() => events.length >= 1);
 		await delay(SETTLE_MS);
-		expect(events).toHaveLength(1);
-		expect(events[0].payload).toMatchObject({ filename: 'fast.txt', changeType: 'add' });
+		expect(expectSingleAdd(events).payload).toMatchObject({ filename: 'fast.txt' });
 	});
 
 	it('fires for nested missing folders created one level at a time', async () => {
@@ -139,10 +153,8 @@ describe('cue-file-watcher with a missing static folder', { timeout: TEST_TIMEOU
 
 		await waitFor(() => events.length >= 1);
 		await delay(SETTLE_MS);
-		expect(events).toHaveLength(1);
-		expect(events[0].payload).toMatchObject({
+		expect(expectSingleAdd(events).payload).toMatchObject({
 			path: path.join(root, 'a', 'b', 'note.md'),
-			changeType: 'add',
 		});
 	});
 
@@ -163,14 +175,7 @@ describe('cue-file-watcher with a missing static folder', { timeout: TEST_TIMEOU
 
 		await waitFor(() => events.some((e) => e.payload.filename === 'second.txt'));
 		await delay(SETTLE_MS);
-		const after = events.slice(before).filter((e) => e.payload.filename === 'second.txt');
-		// Exactly one `add`: a second one would mean two watchers fired for the same
-		// file. One writeFileSync can still surface as add + change when FSEvents
-		// delivers its flags in two batches more than the 50 ms debounce apart, which
-		// a loaded full-suite run hit once here; a trailing `change` is the OS.
-		expect(after.filter((e) => e.payload.changeType === 'add')).toHaveLength(1);
-		expect(after[0].payload.changeType).toBe('add');
-		expect(after.every((e) => e.payload.changeType !== 'unlink')).toBe(true);
+		expectSingleAdd(events.slice(before).filter((e) => e.payload.filename === 'second.txt'));
 	});
 
 	it('keeps firing after a parent of the folder is deleted and the chain recreated', async () => {
@@ -186,8 +191,7 @@ describe('cue-file-watcher with a missing static folder', { timeout: TEST_TIMEOU
 
 		await waitFor(() => events.length >= 1);
 		await delay(SETTLE_MS);
-		expect(events).toHaveLength(1);
-		expect(events[0].payload).toMatchObject({ filename: 'back.md', changeType: 'add' });
+		expect(expectSingleAdd(events).payload).toMatchObject({ filename: 'back.md' });
 	});
 
 	it.runIf(CASE_INSENSITIVE_FS)(
@@ -202,8 +206,7 @@ describe('cue-file-watcher with a missing static folder', { timeout: TEST_TIMEOU
 
 			await waitFor(() => events.length >= 1);
 			await delay(SETTLE_MS);
-			expect(events).toHaveLength(1);
-			expect(events[0].payload).toMatchObject({ filename: 'cased.txt', changeType: 'add' });
+			expect(expectSingleAdd(events).payload).toMatchObject({ filename: 'cased.txt' });
 		}
 	);
 

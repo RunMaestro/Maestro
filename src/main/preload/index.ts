@@ -20,8 +20,10 @@ import { createContextApi } from './context';
 import { createWebApi, createWebserverApi, createLiveApi } from './web';
 import { createWebLoginApi } from './webLogin';
 import { createComputerHistoryApi } from './computerHistory';
+import { createFederationApi } from './federation';
 import { createMaestroRunApi } from './maestroRun';
 import { createDataviewApi } from './dataview';
+import { createPromptLinksApi } from './promptLinks';
 import {
 	createDialogApi,
 	createFontsApi,
@@ -137,11 +139,17 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Computer History API (desktop-only; the web bridge refuses these channels)
 	computerHistory: createComputerHistoryApi(),
 
+	// Federation peer mirror API (desktop-only; read-only mirror of Federation peers)
+	federation: createFederationApi(),
+
 	// MaestroRun API (macOS launcher install + Full Disk Access walkthrough)
 	maestroRun: createMaestroRunApi(),
 
 	// Dataview API (DQL queries, index status and rebuild, change push)
 	dataview: createDataviewApi(),
+
+	// Prompt Links API (maestro://run/<token> - desktop-only)
+	promptLinks: createPromptLinksApi(),
 
 	// Agent API
 	agents: createAgentsApi(),
@@ -331,9 +339,13 @@ export {
 	createWebLoginApi,
 	// Computer History
 	createComputerHistoryApi,
+	// Federation peer mirror
+	createFederationApi,
 	createMaestroRunApi,
 	// Dataview
 	createDataviewApi,
+	// Prompt Links
+	createPromptLinksApi,
 	// System utilities
 	createDialogApi,
 	createFontsApi,

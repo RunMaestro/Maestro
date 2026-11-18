@@ -11,6 +11,9 @@ import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import type { MergeOptions } from '../../../renderer/components/MergeSessionModal';
 import * as contextGroomer from '../../../renderer/services/contextGroomer';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import type { SetStateAction } from 'react';
+import type { MergeRequest } from '../../../renderer/types/contextMerge';
 
 // Mock the context grooming service
 vi.mock('../../../renderer/services/contextGroomer', async () => {
@@ -25,8 +28,12 @@ vi.mock('../../../renderer/services/contextGroomer', async () => {
 	};
 });
 
-// Mock extractTabContext
-vi.mock('../../../renderer/utils/contextExtractor', () => ({
+// Mock extractTabContext; the injection formatter stays real so the merge-into-tab
+// cases below exercise what actually reaches the target agent.
+vi.mock('../../../renderer/utils/contextExtractor', async () => ({
+	...(await vi.importActual<typeof import('../../../renderer/utils/contextExtractor')>(
+		'../../../renderer/utils/contextExtractor'
+	)),
 	extractTabContext: vi.fn((tab, name, session) => ({
 		type: 'tab',
 		sessionId: session.id,
@@ -695,14 +702,450 @@ describe('useMergeSession', () => {
 	});
 });
 
-// Note: useMergeSessionWithSessions tests are skipped because:
-// 1. The base useMergeSession hook tests cover all core functionality
-// 2. useMergeSessionWithSessions is a thin wrapper that adds session state management
-// 3. Integration tests in the app provide full coverage of the session management flow
-// 4. The concurrent render issues with renderHook cleanup cause flaky tests
-describe.skip('useMergeSessionWithSessions', () => {
-	it('placeholder for wrapper hook tests', () => {
-		// These tests are covered by integration tests
-		expect(true).toBe(true);
+// useMergeSessionWithSessions is where merged context reaches another agent:
+// the merge-into-tab injection and the new merged agent. These cases cover it
+// for Grok sources with the REAL injection formatter (only extractTabContext
+// is mocked above), so content loss, duplicate context, account confusion and
+// window overflow are visible here rather than only in the formatter's suite.
+describe('useMergeSessionWithSessions: Grok carry-over', () => {
+	let sessions: Session[];
+	const setSessions = vi.fn((update: SetStateAction<Session[]>) => {
+		sessions = typeof update === 'function' ? update(sessions) : update;
+	});
+
+	function grokSource(logs: LogEntry[]): Session {
+		const tab = createMockTab('grok-tab', logs, 'Grok work');
+		return {
+			...createMockSession('grok-source', 'grok', 'idle', [tab]),
+			name: 'Grok Source',
+			cwd: '/work/source',
+			projectRoot: '/work/source',
+			customEnvVars: { GROK_HOME: '/accounts/source-home' },
+			customModel: 'grok-source-model',
+			sshRemoteId: 'remote-source',
+		};
+	}
+
+	function target(
+		toolType: ToolType,
+		tab: Partial<AITab> = {},
+		session: Partial<Session> = {}
+	): Session {
+		const targetTab = {
+			...createMockTab('target-tab', [
+				{ id: 't-1', timestamp: 1, source: 'user', text: 'TARGET_OWN_HISTORY' },
+			]),
+			...tab,
+		};
+		return {
+			...createMockSession('target', toolType, 'idle', [targetTab]),
+			name: 'Target',
+			cwd: '/work/target',
+			projectRoot: '/work/target',
+			...session,
+		};
+	}
+
+	function render() {
+		return renderHook(() => useMergeSessionWithSessions({ setSessions, activeTabId: 'grok-tab' }));
+	}
+
+	function injectedTab(): AITab {
+		return sessions.find((s) => s.id === 'target')!.aiTabs.find((t) => t.id === 'target-tab')!;
+	}
+
+	const intoTab: MergeOptions = {
+		groomContext: false,
+		createNewSession: false,
+		preserveTimestamps: false,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		sessions = [];
+	});
+
+	afterEach(() => {
+		cleanup();
+		__resetMergeInProgress?.();
+		useSessionStore.setState({ sessions: [] });
+	});
+
+	function seed(...all: Session[]) {
+		sessions = all;
+		useSessionStore.setState({ sessions: all });
+	}
+
+	it('injects only the ordered Grok source, labelled by provider and cwd, without account identity', async () => {
+		const source = grokSource([
+			{ id: 's-1', timestamp: Number.NaN, source: 'user', text: 'SOURCE_QUESTION' },
+			{ id: 's-2', timestamp: Number.NaN, source: 'system', text: 'MAESTRO_NOTICE resumed' },
+			{ id: 's-3', timestamp: Number.NaN, source: 'thinking', text: 'HIDDEN_REASONING' },
+			{
+				id: 's-4',
+				timestamp: Number.NaN,
+				source: 'tool',
+				text: 'read_file a.ts',
+				metadata: { toolState: { status: 'completed', output: 'TOOL_EVIDENCE' } },
+			},
+			{ id: 's-5', timestamp: Number.NaN, source: 'ai', text: 'SOURCE_ANSWER' },
+		]);
+		seed(source, target('claude-code'));
+		const { result } = render();
+		let merge;
+		await act(async () => {
+			merge = await result.current.executeMerge(
+				source,
+				'grok-tab',
+				'target',
+				'target-tab',
+				intoTab
+			);
+		});
+		expect(merge).toMatchObject({ success: true });
+		const pending = injectedTab().pendingMergedContext!;
+		expect(pending.split('\n\n')[0]).toBe(
+			'Additional context from another agent (Grok Source; Grok CLI; working directory /work/source):'
+		);
+		// Order and roles survive; tools stay tool evidence.
+		const order = [
+			'User: SOURCE_QUESTION',
+			'Tool call, completed',
+			'Result: TOOL_EVIDENCE',
+			'Assistant: SOURCE_ANSWER',
+		];
+		const positions = order.map((needle) => pending.indexOf(needle));
+		expect(positions.every((p) => p >= 0)).toBe(true);
+		expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+		// No duplicate context: the target's own history is not pasted back into it.
+		expect(pending).not.toContain('TARGET_OWN_HISTORY');
+		expect(pending.split('SOURCE_QUESTION')).toHaveLength(2);
+		// Notices and hidden reasoning stay out; so does the source account.
+		for (const leaked of [
+			'MAESTRO_NOTICE',
+			'HIDDEN_REASONING',
+			'/accounts/source-home',
+			'GROK_HOME',
+			'remote-source',
+		])
+			expect(pending).not.toContain(leaked);
+		// The target keeps its own history and gets one visible merge note.
+		expect(injectedTab().logs.map((log) => log.text)).toEqual([
+			'TARGET_OWN_HISTORY',
+			'Context merged from "Grok Source".',
+		]);
+	});
+
+	describe('bounds the injection by the target model window', () => {
+		// ~150k tokens of Grok history (600 entries of 1,000 characters).
+		const longHistory = Array.from({ length: 600 }, (_, i) => ({
+			id: `long-${i}`,
+			timestamp: Number.NaN,
+			source: (i % 2 ? 'ai' : 'user') as LogEntry['source'],
+			text: `entry-${String(i).padStart(3, '0')} ${'h'.repeat(990)}`,
+		}));
+
+		it.each([
+			{
+				label: 'Claude with a provider-reported 200k window',
+				target: () =>
+					target('claude-code', {
+						usageStats: {
+							contextWindow: 200_000,
+							contextWindowResolved: true,
+						} as AITab['usageStats'],
+					}),
+				budget: 100_000,
+				disclosure: "Earlier entries were left out to fit this agent's context window.",
+			},
+			{
+				label: 'Grok with a user-edited 16k window',
+				target: () =>
+					target('grok', {}, { customContextWindow: 16_000, contextWindowSource: 'user-edited' }),
+				budget: 8_000,
+				disclosure: "Earlier entries were left out to fit this agent's context window.",
+			},
+			{
+				label: 'Grok with no known window',
+				target: () => target('grok'),
+				budget: 100_000,
+				disclosure:
+					"Earlier entries were left out to fit a conservative bound; this agent's context window is unknown.",
+			},
+		])('$label', async ({ target: makeTarget, budget, disclosure }) => {
+			const source = grokSource(longHistory);
+			seed(source, makeTarget());
+			const { result } = render();
+			await act(async () => {
+				await result.current.executeMerge(source, 'grok-tab', 'target', 'target-tab', intoTab);
+			});
+			const pending = injectedTab().pendingMergedContext!;
+			expect(pending).toContain(disclosure);
+			// Within the budget plus the fixed header, never the whole 150k history.
+			expect(Math.ceil(pending.length / 4)).toBeLessThanOrEqual(budget + 200);
+			// The newest entry always survives; the oldest is the one dropped.
+			expect(pending).toContain('entry-599');
+			expect(pending).not.toContain('entry-000 ');
+		});
+	});
+
+	it('gives a new merged agent the source account, host and model, not the target', async () => {
+		const source = grokSource([{ id: 's-1', timestamp: 10, source: 'user', text: 'From Grok' }]);
+		seed(
+			source,
+			target(
+				'grok',
+				{},
+				{ customEnvVars: { GROK_HOME: '/accounts/target-home' }, sshRemoteId: 'remote-target' }
+			)
+		);
+		const { result } = render();
+		await act(async () => {
+			await result.current.executeMerge(source, 'grok-tab', 'target', 'target-tab', {
+				groomContext: false,
+				createNewSession: true,
+				preserveTimestamps: false,
+			});
+		});
+		const created = sessions.find((s) => s.id === 'new-merged-session-id')!;
+		expect(created).toMatchObject({
+			toolType: 'grok',
+			cwd: '/work/source',
+			customEnvVars: { GROK_HOME: '/accounts/source-home' },
+			customModel: 'grok-source-model',
+			sshRemoteId: 'remote-source',
+		});
+		expect(JSON.stringify(created)).not.toContain('/accounts/target-home');
+		expect(JSON.stringify(created)).not.toContain('remote-target');
+	});
+
+	it.each([
+		{
+			timestamps: 'unknown (NaN) on the Grok side',
+			sourceTs: Number.NaN,
+			expected: ['g-1', 'g-2', 't-1'],
+		},
+		{ timestamps: 'all known', sourceTs: 2, expected: ['t-1', 'g-1', 'g-2'] },
+	])(
+		'orders merged logs safely when timestamps are $timestamps',
+		async ({ sourceTs, expected }) => {
+			const source = grokSource([
+				{ id: 'g-1', timestamp: sourceTs, source: 'user', text: 'grok first' },
+				{ id: 'g-2', timestamp: sourceTs, source: 'ai', text: 'grok second' },
+			]);
+			seed(source, target('claude-code'));
+			const { result } = render();
+			await act(async () => {
+				await result.current.executeMerge(source, 'grok-tab', 'target', 'target-tab', {
+					groomContext: false,
+					createNewSession: true,
+					preserveTimestamps: true,
+				});
+			});
+			const created = sessions.find((s) => s.id === 'new-merged-session-id')!;
+			expect(created.aiTabs[0].logs.map((log) => log.id)).toEqual(expected);
+		}
+	);
+
+	it('cancels a Grok merge during grooming without touching either agent', async () => {
+		let finishGrooming!: (
+			value: Awaited<ReturnType<typeof contextGroomer.contextGroomingService.groomContexts>>
+		) => void;
+		vi.mocked(contextGroomer.contextGroomingService.groomContexts).mockImplementation(
+			() => new Promise((resolve) => (finishGrooming = resolve))
+		);
+		const source = grokSource([{ id: 's-1', timestamp: 1, source: 'user', text: 'cancel me' }]);
+		seed(source, target('claude-code'));
+		const before = sessions;
+		const { result } = render();
+		let pending!: Promise<unknown>;
+		act(() => {
+			pending = result.current.executeMerge(source, 'grok-tab', 'target', 'target-tab', {
+				...intoTab,
+				groomContext: true,
+			});
+		});
+		await waitFor(() =>
+			expect(contextGroomer.contextGroomingService.groomContexts).toHaveBeenCalledTimes(1)
+		);
+		act(() => result.current.cancelMerge());
+		expect(contextGroomer.contextGroomingService.cancelGrooming).toHaveBeenCalled();
+		// A late grooming answer after the cancel must not be applied.
+		finishGrooming({
+			groomedLogs: [{ id: 'late', timestamp: 2, source: 'ai', text: 'LATE_GROOMED' }],
+			tokensSaved: 1,
+			success: true,
+		});
+		await act(async () => {
+			expect(await pending).toEqual({ success: false, error: 'Merge cancelled' });
+		});
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(sessions).toBe(before);
+	});
+
+	// The groomed output is
+	// what a merge carries, and only groomed context is called cleaned.
+	describe('grooming results', () => {
+		const groomed = [
+			{ id: 'groomed-1', timestamp: 5, source: 'ai' as const, text: 'GROOMED_SUMMARY' },
+		];
+
+		beforeEach(() => {
+			vi.mocked(contextGroomer.contextGroomingService.groomContexts).mockResolvedValue({
+				groomedLogs: groomed,
+				tokensSaved: 10,
+				success: true,
+			});
+		});
+
+		it('a groomed new merged agent carries the groomed logs, not both raw sides', async () => {
+			const source = grokSource([{ id: 's-1', timestamp: 1, source: 'user', text: 'RAW_SOURCE' }]);
+			seed(source, target('claude-code'));
+			const { result } = render();
+			await act(async () => {
+				await result.current.executeMerge(source, 'grok-tab', 'target', 'target-tab', {
+					groomContext: true,
+					createNewSession: true,
+					preserveTimestamps: false,
+				});
+			});
+			const created = sessions.find((s) => s.id === 'new-merged-session-id')!;
+			expect(created.aiTabs[0].logs.map((log) => log.text)).toEqual(['GROOMED_SUMMARY']);
+		});
+
+		it('a merge into a tab never labels raw injected context as cleaned', async () => {
+			const source = grokSource([{ id: 's-1', timestamp: 1, source: 'user', text: 'RAW_SOURCE' }]);
+			seed(source, target('claude-code'));
+			const { result } = render();
+			await act(async () => {
+				await result.current.executeMerge(source, 'grok-tab', 'target', 'target-tab', {
+					...intoTab,
+					groomContext: true,
+				});
+			});
+			const tab = injectedTab();
+			const claimsCleaned = tab.logs.some((log) => log.text.includes('cleaned to reduce size'));
+			const injectedRaw = tab.pendingMergedContext?.includes('RAW_SOURCE') ?? false;
+			expect(claimsCleaned && injectedRaw).toBe(false);
+		});
+
+		// The grooming turn is the source agent's own turn (its
+		// account, binary and host), and a merge into a tab grooms the source
+		// alone so the target's history is never pasted back.
+		function groomedSource(): Session {
+			return {
+				...grokSource([{ id: 's-1', timestamp: 1, source: 'user', text: 'RAW_SOURCE' }]),
+				customPath: '/bin/grok-source',
+				customArgs: '--source-arg',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-source',
+					workingDirOverride: '/remote/source',
+				},
+			};
+		}
+
+		function otherAccountTarget(): Session {
+			return target(
+				'grok',
+				{},
+				{
+					customEnvVars: { GROK_HOME: '/accounts/target-home' },
+					customPath: '/bin/grok-target',
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-target' },
+				}
+			);
+		}
+
+		function groomingRequest(): MergeRequest {
+			const groom = vi.mocked(contextGroomer.contextGroomingService.groomContexts);
+			expect(groom).toHaveBeenCalledTimes(1);
+			return groom.mock.calls[0][0];
+		}
+
+		it('grooms on the source agent identity, never the target account or host', async () => {
+			const source = groomedSource();
+			seed(source, otherAccountTarget());
+			const { result } = render();
+			await act(async () => {
+				await result.current.executeMerge(source, 'grok-tab', 'target', 'target-tab', {
+					groomContext: true,
+					createNewSession: true,
+					preserveTimestamps: false,
+				});
+			});
+			const request = groomingRequest();
+			expect(request.targetAgent).toBe('grok');
+			expect(request.targetProjectRoot).toBe('/work/source');
+			expect(request.customEnvVars).toEqual({ GROK_HOME: '/accounts/source-home' });
+			expect(request.customPath).toBe('/bin/grok-source');
+			expect(request.customArgs).toBe('--source-arg');
+			expect(request.sshRemoteConfig).toEqual({
+				enabled: true,
+				remoteId: 'remote-source',
+				workingDirOverride: '/remote/source',
+			});
+			expect(JSON.stringify(request)).not.toContain('target-home');
+			expect(JSON.stringify(request)).not.toContain('remote-target');
+		});
+
+		it('a merge into a tab grooms the source alone and injects only the groomed result as cleaned', async () => {
+			const source = groomedSource();
+			seed(source, otherAccountTarget());
+			const { result } = render();
+			await act(async () => {
+				await result.current.executeMerge(source, 'grok-tab', 'target', 'target-tab', {
+					...intoTab,
+					groomContext: true,
+				});
+			});
+			const request = groomingRequest();
+			expect(request.sources.map((s) => s.sessionId)).toEqual(['grok-source']);
+			expect(JSON.stringify(request.sources)).not.toContain('TARGET_OWN_HISTORY');
+			expect(request.customEnvVars).toEqual({ GROK_HOME: '/accounts/source-home' });
+
+			const tab = injectedTab();
+			expect(tab.pendingMergedContext).toContain('GROOMED_SUMMARY');
+			expect(tab.pendingMergedContext).not.toContain('RAW_SOURCE');
+			expect(tab.pendingMergedContext).not.toContain('TARGET_OWN_HISTORY');
+			expect(tab.logs.some((log) => log.text.includes('cleaned to reduce size'))).toBe(true);
+		});
+
+		it('a new merged agent grooms both sides once, source first', async () => {
+			const source = groomedSource();
+			seed(source, otherAccountTarget());
+			const { result } = render();
+			await act(async () => {
+				await result.current.executeMerge(source, 'grok-tab', 'target', 'target-tab', {
+					groomContext: true,
+					createNewSession: true,
+					preserveTimestamps: false,
+				});
+			});
+			expect(groomingRequest().sources.map((s) => s.sessionId)).toEqual(['grok-source', 'target']);
+		});
+
+		it('a refused grooming turn fails the merge instead of falling back to raw context', async () => {
+			vi.mocked(contextGroomer.contextGroomingService.groomContexts).mockResolvedValue({
+				groomedLogs: [],
+				tokensSaved: 0,
+				success: false,
+				error: 'grok cannot enforce read-only for this route',
+			});
+			const source = groomedSource();
+			seed(source, otherAccountTarget());
+			const { result } = render();
+			let merge: Awaited<ReturnType<typeof result.current.executeMerge>> | undefined;
+			await act(async () => {
+				merge = await result.current.executeMerge(source, 'grok-tab', 'target', 'target-tab', {
+					...intoTab,
+					groomContext: true,
+				});
+			});
+			expect(merge?.success).toBe(false);
+			const tab = injectedTab();
+			expect(tab.pendingMergedContext ?? '').not.toContain('RAW_SOURCE');
+			expect(sessions.some((s) => s.id === 'new-merged-session-id')).toBe(false);
+		});
 	});
 });

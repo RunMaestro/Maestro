@@ -14,6 +14,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { isDeepStrictEqual } from 'node:util';
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import { reconcileSuggestionEvidence } from './pianola-synthesis';
 import { settledDecisionPairs } from './transcript-mining';
 import { createHash } from 'crypto';
@@ -57,12 +59,18 @@ import {
 } from './pianola-scope-checkpoint';
 import { isPianolaScopeId } from './pianola-scope';
 import { canonicalJson } from '../canonicalJson';
+import { isWindows } from '../platformDetection';
 import type { PianolaProgram, PianolaAsk } from './pianola-programs';
 import {
 	validateProgramLoopMemo,
 	type ProgramLoopMemo,
 	type ProgramLoopMemoEntry,
 } from './pianola-program-loop';
+
+import {
+	validatePianolaDispatchAdmission,
+	type PianolaDispatchAdmission,
+} from './pianola-dispatch';
 
 const ASKS_LOCK_TIMEOUT_MS = 5_000;
 const ASKS_LOCK_STALE_MS = 30_000;
@@ -74,6 +82,14 @@ export interface PianolaFsStoreConfig {
 	indent: string | number;
 	/** Append a trailing newline to object files (CLI does; main does not). */
 	trailingNewline: boolean;
+	/** Main must refuse all contended synchronous mutations without waiting. */
+	decisionLockMode?: 'try';
+}
+
+/** Exact content around a successful mutation while its file lock is held. */
+export interface PianolaFileMutationReceipt {
+	before: string | null;
+	after: string | null;
 }
 
 /** The store surface shared by the desktop and CLI Pianola stores. */
@@ -81,7 +97,14 @@ export interface PianolaFsStore {
 	readRulesResult(): RulesLoadResult;
 	readRules(): PianolaRule[];
 	writeRules(rules: unknown): PianolaRule[];
-	appendDecision(record: PianolaDecisionRecord): void;
+	/** Compare-and-append under the decision lock; updates the supplied revision on success.
+	 * Conflicts throw before a caller may send; reread rather than retrying stale state. */
+	appendDecision(
+		record: PianolaDecisionRecord,
+		receipt?: (value: PianolaFileMutationReceipt) => void
+	): void;
+	/** Yields while waiting; holds the same CAS/append/compaction lock only for synchronous IO. */
+	appendDecisionAsync(record: PianolaDecisionRecord): Promise<void>;
 	readDecisions(limit?: number): PianolaDecisionRecord[];
 	readPlans(): PianolaPlan[];
 	writePlans(plans: PianolaPlan[]): PianolaPlan[];
@@ -129,15 +152,35 @@ export interface PianolaFsStore {
 	};
 	setProfile(entry: PianolaProfileEntry, projectPath?: string): PianolaProfiles;
 	readSupervisorTargets(): PianolaSupervisedTarget[];
+	/** Revalidate the on-disk revision synchronously at the final host send boundary. */
+	readSupervisorTarget(id: string): PianolaSupervisedTarget | undefined;
 	writeSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[];
 	updateSupervisorTargets(
 		update: (targets: PianolaSupervisedTarget[]) => PianolaSupervisedTarget[]
 	): PianolaSupervisedTarget[];
 	upsertSupervisorTarget(target: PianolaSupervisedTarget): PianolaSupervisedTarget[];
 	removeSupervisorTarget(id: string): PianolaSupervisedTarget[];
+	/** Corrupt admission records must never be treated as a new dispatch. */
+	readDispatchAdmission(dispatchId: string): PianolaDispatchAdmission | null;
+	writeDispatchAdmission(admission: PianolaDispatchAdmission): void;
+	/** Async housekeeping; retains 32 completed payload sets and all unresolved evidence. */
+	compactDispatchArtifacts(): Promise<void>;
+	confirmDispatchCallback(dispatchId: string, callbackId: string): void;
 	/** A missing checkpoint is a first enrollment; a corrupt one throws. */
 	readScopeCheckpoint(scopeId: string): PianolaScopeCheckpoint | null;
-	writeScopeCheckpoint(checkpoint: PianolaScopeCheckpoint): void;
+	writeScopeCheckpoint(
+		checkpoint: PianolaScopeCheckpoint,
+		durable?: boolean,
+		receipt?: (value: PianolaFileMutationReceipt) => void
+	): void;
+	/** Desktop preflight: acquire the same checkpoint lock while yielding, then
+	 * reread native authority and mutate through the scoped, already-locked writer.
+	 * The writer is valid only during this operation. Final sync fences use try-lock.
+	 */
+	withScopeCheckpointLockAsync<T>(
+		scopeId: string,
+		operation: (write: PianolaFsStore['writeScopeCheckpoint']) => T | Promise<T>
+	): Promise<T>;
 	writeSupervisorTargetsAsync(
 		targets: PianolaSupervisedTarget[]
 	): Promise<PianolaSupervisedTarget[]>;
@@ -154,9 +197,21 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 	const { resolveDir, indent, trailingNewline } = config;
 
 	const filePath = (name: string): string => path.join(resolveDir(), name);
+	/**
+	 * Read the canonical file contents used in a mutation receipt. Only absence maps to null;
+	 * other filesystem errors must abort the mutation path.
+	 */
+	function readMutationContent(name: string): string | null {
+		try {
+			return fs.readFileSync(filePath(name), 'utf8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+			throw error;
+		}
+	}
 
 	/** Atomically persist a JSON value (temp file + rename) so a reader never sees a partial file. */
-	function writeJsonAtomic(name: string, value: unknown): void {
+	function writeJsonAtomic(name: string, value: unknown, durable = false): void {
 		const dir = resolveDir();
 		if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 		const target = path.join(dir, name);
@@ -176,7 +231,24 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 				encoding: 'utf-8',
 				flag: 'wx',
 			});
+			if (durable) {
+				const fd = fs.openSync(tmp, 'r+');
+				try {
+					fs.fsyncSync(fd);
+				} finally {
+					fs.closeSync(fd);
+				}
+			}
 			fs.renameSync(tmp, target);
+			// Windows has no directory fsync via Node; host caller proofs remain unavailable there.
+			if (durable && !isWindows()) {
+				const fd = fs.openSync(dir, 'r');
+				try {
+					fs.fsyncSync(fd);
+				} finally {
+					fs.closeSync(fd);
+				}
+			}
 		} finally {
 			fs.rmSync(tmp, { force: true });
 		}
@@ -249,21 +321,94 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		return records;
 	}
 
-	function appendDecision(record: PianolaDecisionRecord): void {
-		const line = `${JSON.stringify(record)}\n`;
-		// Scope audit-before-send must fail closed rather than silently dropping
-		// an oversized or unreadable lifecycle and then losing its durable claim.
+	function appendDecision(
+		record: PianolaDecisionRecord,
+		receipt?: (value: PianolaFileMutationReceipt) => void
+	): void {
+		// All lifecycle writers (CLI, native admission, receipts and resolutions)
+		// compare their source row and append/compact under this same short lock.
+		// Throwing on conflict also prevents a stale native claim from sending.
+		withFileLock(
+			PIANOLA_DECISIONS_FILENAME,
+			'decisions',
+			() => persistDecision(record, receipt),
+			config.decisionLockMode === 'try'
+		);
+	}
+
+	function appendDecisionAsync(record: PianolaDecisionRecord): Promise<void> {
+		return withFileLockAsync(PIANOLA_DECISIONS_FILENAME, 'decisions', () =>
+			persistDecision(record)
+		);
+	}
+
+	/**
+	 * Append a decision under the caller's lock with lifecycle revision and duplicate-delivery
+	 * checks. Preserve completed decisions, update the caller's persisted mutation revision, and
+	 * emit a file receipt only after append and compaction succeed.
+	 */
+	function persistDecision(
+		record: PianolaDecisionRecord,
+		receipt?: (value: PianolaFileMutationReceipt) => void
+	): void {
+		const before = receipt ? readMutationContent(PIANOLA_DECISIONS_FILENAME) : null;
+		const records = readDecisions();
+		const current = records.find((candidate) => candidate.id === record.id);
+		if (current?.lifecycle || record.lifecycle) {
+			if (
+				current?.mutationRevision !== record.mutationRevision ||
+				(current && !record.lifecycle) ||
+				(!current && record.mutationRevision) ||
+				(current &&
+					(current.agentId !== record.agentId ||
+						current.tabId !== record.tabId ||
+						current.classification.evidence.messageId !== record.classification.evidence.messageId))
+			)
+				throw new Error('Pianola decision mutation conflict; reread the current decision');
+			if (current?.lifecycle?.status === 'done' && record.lifecycle?.status !== 'done')
+				throw new Error('Pianola decision mutation conflict; decision already done');
+			if (
+				!record.dryRun &&
+				record.lifecycle &&
+				(!current ||
+					record.deliveryStatus === 'admitted' ||
+					record.lifecycle.delivery === 'intent') &&
+				records.some(
+					(candidate) =>
+						candidate.id !== record.id &&
+						!candidate.dryRun &&
+						candidate.agentId === record.agentId &&
+						candidate.tabId === record.tabId &&
+						candidate.lifecycle?.guard.scopeId === record.lifecycle!.guard.scopeId &&
+						candidate.lifecycle.guard.messageId === record.lifecycle!.guard.messageId &&
+						candidate.lifecycle.delivery !== 'rejected' &&
+						(candidate.lifecycle.delivery === 'intent' ||
+							candidate.lifecycle.delivery === 'unknown' ||
+							candidate.deliveryStatus === 'admitted' ||
+							candidate.dispatched)
+				)
+			)
+				throw new Error('Pianola decision already claimed this ask');
+		}
+		const next = record.lifecycle
+			? {
+					...record,
+					mutationRevision: createHash('sha256').update(canonicalJson(record)).digest('hex'),
+				}
+			: record;
+		const line = `${JSON.stringify(next)}\n`;
 		if (
 			record.lifecycle &&
-			(!validatePianolaDecisionRecord(record) ||
+			(!validatePianolaDecisionRecord(next) ||
 				Buffer.byteLength(line, 'utf-8') > PIANOLA_DECISION_RECORD_MAX_BYTES)
 		)
 			throw new Error('Invalid or oversized Pianola decision lifecycle');
-		const dir = resolveDir();
-		if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-		const file = path.join(dir, PIANOLA_DECISIONS_FILENAME);
+		const file = filePath(PIANOLA_DECISIONS_FILENAME);
 		appendDecisionLine(file, line);
-		compactDecisionLog(file, PIANOLA_DECISIONS_MAX_RECORDS, PIANOLA_DECISIONS_COMPACT_BYTES);
+		compactDecisionLog(file, PIANOLA_DECISIONS_MAX_RECORDS, PIANOLA_DECISIONS_COMPACT_BYTES, true);
+		// Let the caller continue from precisely the successfully persisted row.
+		if (next.mutationRevision) record.mutationRevision = next.mutationRevision;
+		receipt?.({ before, after: readMutationContent(PIANOLA_DECISIONS_FILENAME) });
 	}
 
 	function readPlans(): PianolaPlan[] {
@@ -372,7 +517,8 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 	function* acquireFileLock(
 		name: string,
 		label: string,
-		waitForTurn = false
+		waitForTurn = false,
+		immediate = false
 	): Generator<void, (renew?: boolean) => void> {
 		const lock = filePath(name) + '.lock';
 		fs.mkdirSync(path.dirname(lock), { recursive: true });
@@ -387,6 +533,10 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 				break;
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+			}
+			if (immediate) {
+				yield;
+				return () => {};
 			}
 			try {
 				const mtime = fs.statSync(lock).mtimeMs;
@@ -447,10 +597,24 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			} else fs.rmSync(lock, { force: true });
 		};
 	}
-	function withFileLock<T>(name: string, label: string, operation: () => T): T {
-		const acquisition = acquireFileLock(name, label);
+	/**
+	 * Run a synchronous mutation while holding the canonical file lock and release it in
+	 * finally. Immediate mode rejects contention without admitting a mutation; blocking mode
+	 * waits between acquisition attempts.
+	 */
+	function withFileLock<T>(
+		name: string,
+		label: string,
+		operation: () => T,
+		immediate = config.decisionLockMode === 'try'
+	): T {
+		const acquisition = acquireFileLock(name, label, false, immediate);
 		let attempt = acquisition.next();
 		while (!attempt.done) {
+			if (immediate) {
+				acquisition.return(() => {});
+				throw new Error(`Pianola ${label} lock busy; no mutation admitted, reread before retrying`);
+			}
 			Atomics.wait(lockWait, 0, 0, 10);
 			attempt = acquisition.next();
 		}
@@ -460,6 +624,11 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			attempt.value();
 		}
 	}
+	/**
+	 * Acquire a canonical file lock without blocking the event loop, optionally renewing
+	 * ownership. Hold it through asynchronous work, propagate renewal failure, and always stop
+	 * the heartbeat and release ownership.
+	 */
 	async function withFileLockAsync<T>(
 		name: string,
 		label: string,
@@ -487,7 +656,10 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			: undefined;
 		heartbeat?.unref();
 		try {
-			const result = await operation();
+			const pending = operation();
+			// Synchronous mutations (including decision CAS + append + compaction)
+			// release ownership in this turn, without holding it over an await.
+			const result = pending instanceof Promise ? await pending : pending;
 			if (renewalError) throw renewalError.error;
 			return result;
 		} finally {
@@ -678,8 +850,77 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		);
 	}
 
+	let supervisorRevision: string | undefined;
+	let supervisorIndex = new Map<string, PianolaSupervisedTarget>();
+	/**
+	 * Read one cloned supervisor target from a stat-validated index. A pending writer, unstable
+	 * read or expected filesystem failure invalidates the cache and returns undefined rather
+	 * than stale authority.
+	 */
+	function readSupervisorTarget(id: string): PianolaSupervisedTarget | undefined {
+		const file = supervisorFilePath();
+		// A pending canonical writer is indeterminate, even before its rename.
+		// No watcher delivery or timer participates in this authority check.
+		/**
+		 * Return the supervisor file's stat identity only when no canonical writer lock exists.
+		 * Undefined marks indeterminate authority, including the interval before a writer renames
+		 * its file.
+		 */
+		const revision = (): string | undefined => {
+			if (fs.existsSync(file + '.lock')) return undefined;
+			const stat = fs.statSync(file, { bigint: true });
+			return [file, stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':');
+		};
+		try {
+			const before = revision();
+			if (!before) {
+				supervisorRevision = undefined;
+				supervisorIndex.clear();
+				return undefined;
+			}
+			if (before !== supervisorRevision) {
+				const targets = readSupervisorTargets();
+				if (revision() !== before) {
+					supervisorRevision = undefined;
+					supervisorIndex.clear();
+					return undefined;
+				}
+				supervisorIndex = new Map(targets.map((target) => [target.id, target]));
+				supervisorRevision = before;
+			}
+			const target = supervisorIndex.get(id);
+			return target ? structuredClone(target) : undefined;
+		} catch (error) {
+			supervisorRevision = undefined;
+			supervisorIndex.clear();
+			if (
+				['ENOENT', 'EACCES', 'EPERM', 'EIO', 'ENOTDIR'].includes(
+					(error as NodeJS.ErrnoException).code ?? ''
+				)
+			)
+				return undefined;
+			throw error;
+		}
+	}
+
+	/**
+	 * Validate and atomically replace supervisor targets while retaining migration tombstones. A
+	 * stale writer cannot re-enable or delete a legacy owner already handed over to a scope.
+	 */
 	function persistSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[] {
-		const validated = validatePianolaSupervisorFile({ targets }).targets;
+		// A stale writer cannot resurrect an owner after an atomic handover.
+		const fences = new Map(
+			readSupervisorTargets()
+				.filter((target) => target.migratedToScopeId)
+				.map((target) => [target.id, target])
+		);
+		const ids = new Set(targets.map((target) => target.id));
+		const merged = targets.map((target) => {
+			const fence = fences.get(target.id);
+			return fence ? { ...fence, enabled: false } : target;
+		});
+		for (const fence of fences.values()) if (!ids.has(fence.id)) merged.push(fence);
+		const validated = validatePianolaSupervisorFile({ targets: merged }).targets;
 		writeJsonAtomic(PIANOLA_SUPERVISOR_FILENAME, { targets: validated });
 		return validated;
 	}
@@ -701,6 +942,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			return next === current ? current : persistSupervisorTargets(next);
 		});
 	}
+
 	function writeSupervisorTargetsAsync(
 		targets: PianolaSupervisedTarget[]
 	): Promise<PianolaSupervisedTarget[]> {
@@ -732,6 +974,449 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		return updateSupervisorTargets((current) => current.filter((target) => target.id !== id));
 	}
 
+	/**
+	 * Derive a dispatch journal basename only from a valid scope-style UUID. Invalid IDs throw
+	 * before they can influence filesystem paths.
+	 */
+	function admissionName(dispatchId: string): string {
+		if (!isPianolaScopeId(dispatchId)) throw new Error('Invalid Pianola dispatch ID');
+		return `maestro-pianola-dispatch-${dispatchId}.json`;
+	}
+	// Payloads remain host-only. No wire path or renderer-supplied reference is accepted.
+	type AdmissionArtifactRef = { version: 1; sha256: string; bytes: number };
+	type StoredAdmission = PianolaDispatchAdmission & {
+		storageVersion?: 1;
+		payloads?: { prepare?: AdmissionArtifactRef; terminals: Record<string, AdmissionArtifactRef> };
+	};
+	const artifactMaxBytes = 8 * 1024 * 1024;
+	/**
+	 * Derive a content-addressed artifact basename from a validated dispatch ID and SHA-256
+	 * digest. Reject malformed hashes before accessing the store.
+	 */
+	function artifactName(dispatchId: string, hash: string): string {
+		admissionName(dispatchId);
+		if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error('Invalid Pianola artifact hash');
+		return `maestro-pianola-dispatch-${dispatchId}-${hash}.artifact.json`;
+	}
+	/**
+	 * Bind an artifact to the dispatch intent and, for terminal output, its exact routing step
+	 * and native run. Reject unknown request IDs instead of authenticating payloads under an
+	 * unrelated slot.
+	 */
+	function artifactBinding(record: PianolaDispatchAdmission, requestId?: string): string {
+		const step = requestId && record.queueRouting?.steps.find((s) => s.requestId === requestId);
+		if (requestId && !step) throw new Error('Invalid Pianola artifact request');
+		return canonicalJson({
+			dispatchId: record.dispatchId,
+			scopeId: record.scopeId,
+			caller: record.caller,
+			intent: record.intentFingerprint,
+			targetAgentId: record.targetAgentId,
+			targetTabId: record.targetTabId,
+			...(step
+				? {
+						generation: record.queueRelease?.generation,
+						requestId,
+						kind: step.kind,
+						stage: step.stage,
+						target: step.targetAgentId,
+						runId: step.runId,
+						processId: step.processId,
+					}
+				: { slot: 'prepare' }),
+		});
+	}
+	/**
+	 * Read a bounded regular artifact file with the referenced byte length. Missing or invalid
+	 * payloads throw as corruption and cannot be interpreted as a new admission.
+	 */
+	function readAdmissionArtifact(
+		record: PianolaDispatchAdmission,
+		ref: AdmissionArtifactRef,
+		requestId?: string
+	): unknown {
+		if (
+			!ref ||
+			ref.version !== 1 ||
+			!Number.isSafeInteger(ref.bytes) ||
+			ref.bytes < 1 ||
+			ref.bytes > artifactMaxBytes
+		)
+			throw new Error('Invalid Pianola artifact reference');
+		const file = filePath(artifactName(record.dispatchId, ref.sha256));
+		// Missing payload is corruption, never a missing/new admission.
+		const stat = fs.lstatSync(file);
+		if (!stat.isFile() || stat.size !== ref.bytes) throw new Error('Invalid Pianola artifact size');
+		return decodeAdmissionArtifact(record, ref, fs.readFileSync(file, 'utf8'), requestId);
+	}
+	/**
+	 * Authenticate serialized artifact bytes, digest and admission binding before returning the
+	 * payload. A valid hash from another dispatch or routing generation is insufficient.
+	 */
+	function decodeAdmissionArtifact(
+		record: PianolaDispatchAdmission,
+		ref: AdmissionArtifactRef,
+		body: string,
+		requestId?: string
+	): unknown {
+		if (
+			Buffer.byteLength(body, 'utf8') !== ref.bytes ||
+			createHash('sha256').update(body).digest('hex') !== ref.sha256
+		)
+			throw new Error('Invalid Pianola artifact content');
+		const envelope = JSON.parse(body);
+		if (envelope.version !== 1 || envelope.binding !== artifactBinding(record, requestId))
+			throw new Error('Invalid Pianola artifact binding');
+		return envelope.value;
+	}
+	/**
+	 * Persist a bounded, bound artifact durably before returning its content-addressed
+	 * reference. Reused files must authenticate against that reference; oversize payloads throw
+	 * before a journal can reference them.
+	 */
+	function writeAdmissionArtifact(
+		record: PianolaDispatchAdmission,
+		value: unknown,
+		requestId?: string
+	): AdmissionArtifactRef {
+		const envelope = { version: 1, binding: artifactBinding(record, requestId), value };
+		const body = JSON.stringify(envelope, null, indent) + (trailingNewline ? '\n' : '');
+		const bytes = Buffer.byteLength(body, 'utf8');
+		if (bytes > artifactMaxBytes) throw new Error('Pianola admission payload too large');
+		const ref: AdmissionArtifactRef = {
+			version: 1,
+			sha256: createHash('sha256').update(body).digest('hex'),
+			bytes,
+		};
+		const name = artifactName(record.dispatchId, ref.sha256);
+		if (fs.existsSync(filePath(name))) readAdmissionArtifact(record, ref, requestId);
+		else writeJsonAtomic(name, envelope, true);
+		return ref;
+	}
+	/**
+	 * Read and decode a bounded dispatch journal, returning null only for an absent journal.
+	 * Referenced-payload corruption propagates so callers cannot mistake lost evidence for
+	 * permission to retry.
+	 */
+	function readDispatchAdmission(dispatchId: string): PianolaDispatchAdmission | null {
+		let body: string;
+		try {
+			const file = filePath(admissionName(dispatchId));
+			if (fs.statSync(file).size > 16384) throw new Error('Pianola admission too large');
+			body = fs.readFileSync(file, 'utf8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+			throw error;
+		}
+		return decodeDispatchAdmission(dispatchId, body, readAdmissionArtifact);
+	}
+	/**
+	 * Hydrate versioned prepare and terminal references, then validate the complete admission.
+	 * Reject mixed inline/reference payloads, unknown storage versions and mismatched dispatch
+	 * IDs.
+	 */
+	function decodeDispatchAdmission(
+		dispatchId: string,
+		body: string,
+		readArtifact: typeof readAdmissionArtifact
+	): PianolaDispatchAdmission {
+		const stored = JSON.parse(body) as StoredAdmission;
+		if (stored.storageVersion !== undefined) {
+			if (
+				stored.storageVersion !== 1 ||
+				!stored.payloads ||
+				!stored.payloads.terminals ||
+				stored.dispatchId !== dispatchId
+			)
+				throw new Error('Invalid Pianola admission storage');
+			if (stored.payloads.prepare) {
+				if (stored.queuePrepare) throw new Error('Ambiguous Pianola prepare');
+				stored.queuePrepare = readArtifact(
+					stored,
+					stored.payloads.prepare
+				) as PianolaDispatchAdmission['queuePrepare'];
+			}
+			for (const [requestId, ref] of Object.entries(stored.payloads.terminals)) {
+				const step = stored.queueRouting?.steps.find((s) => s.requestId === requestId);
+				if (!step || step.terminal) throw new Error('Invalid Pianola terminal reference');
+				step.terminal = readArtifact(stored, ref, requestId) as typeof step.terminal;
+			}
+			delete stored.storageVersion;
+			delete stored.payloads;
+		} else if (stored.payloads) throw new Error('Invalid Pianola admission storage');
+		const value = validatePianolaDispatchAdmission(stored);
+		if (!value || value.dispatchId !== dispatchId) throw new Error('Invalid Pianola admission');
+		return value;
+	}
+	/**
+	 * Persist authenticated payloads before fsyncing the compact admission journal. Preserve
+	 * callback delivery evidence and reject mutation of retired payloads; acknowledgement
+	 * failures remain uncertain at the host.
+	 */
+	function persistDispatchAdmission(admission: PianolaDispatchAdmission): void {
+		if (!validatePianolaDispatchAdmission(admission)) throw new Error('Invalid Pianola admission');
+		const previousBody = readMutationContent(admissionName(admission.dispatchId));
+		const previous = previousBody ? (JSON.parse(previousBody) as StoredAdmission) : null;
+		if (
+			previous?.payloadRetiredAt &&
+			canonicalJson(readDispatchAdmission(admission.dispatchId)) !== canonicalJson(admission)
+		)
+			throw new Error('Pianola dispatch payload retired; no mutation admitted');
+		if (
+			previous?.callbackDeliveredAt &&
+			previous.callbackDeliveredAt !== admission.callbackDeliveredAt
+		)
+			admission = {
+				...admission,
+				callbackDeliveredAt: readDispatchAdmission(admission.dispatchId)!.callbackDeliveredAt,
+			};
+		const stored: StoredAdmission = JSON.parse(canonicalJson(admission));
+		stored.storageVersion = 1;
+		stored.payloads = { terminals: {} };
+		if (stored.queuePrepare) {
+			stored.payloads.prepare = writeAdmissionArtifact(admission, stored.queuePrepare);
+			delete stored.queuePrepare;
+		}
+		for (const step of stored.queueRouting?.steps ?? []) {
+			if (!step.terminal) continue;
+			stored.payloads.terminals[step.requestId] = writeAdmissionArtifact(
+				admission,
+				step.terminal,
+				step.requestId
+			);
+			delete step.terminal;
+		}
+		if (Buffer.byteLength(JSON.stringify(stored, null, indent), 'utf8') + 1 > 16384)
+			throw new Error('Pianola admission too large');
+		// Every payload is fsynced before the journal can reference it. Read/ack
+		// failures retain the existing unknown/no-resend handling at the host.
+		writeJsonAtomic(admissionName(admission.dispatchId), stored, true);
+	}
+
+	function writeDispatchAdmission(admission: PianolaDispatchAdmission): void {
+		withFileLock(
+			admissionName(admission.dispatchId),
+			'dispatch admission',
+			() => persistDispatchAdmission(admission),
+			true
+		);
+	}
+
+	function confirmDispatchCallback(dispatchId: string, callbackId: string): void {
+		withFileLock(
+			admissionName(dispatchId),
+			'dispatch admission',
+			() => {
+				const record = readDispatchAdmission(dispatchId);
+				if (!record || record.payloadRetiredAt || record.queuePrepare?.callbackId !== callbackId)
+					throw new Error('Pianola callback admission mismatch');
+				persistDispatchAdmission({ ...record, callbackDeliveredAt: Date.now() });
+			},
+			true
+		);
+	}
+	let compaction: Promise<void> | undefined;
+	/**
+	 * Coalesce asynchronous artifact-compaction requests into one pass over a captured
+	 * directory. Clear the shared promise on completion or failure so a later request can start
+	 * a new pass.
+	 */
+	function compactDispatchArtifacts(): Promise<void> {
+		// Coalesce callers, including failure cleanup and startup. Never run a directory
+		// scan in the synchronous journal commit. Capture one directory for this pass.
+		if (compaction) return compaction;
+		const dir = resolveDir();
+		compaction = compactArtifactsInDirectory(dir).finally(() => {
+			compaction = undefined;
+		});
+		return compaction;
+	}
+	/**
+	 * Compact eligible dispatch artifacts using authenticated snapshots and guarded, bounded
+	 * lock turns. Active or unknown admissions retain their evidence; retired journals preserve
+	 * deduplication while old unreferenced payloads become collectible.
+	 */
+	async function compactArtifactsInDirectory(dir: string): Promise<void> {
+		const groups = new Map<string, string[]>();
+		try {
+			const entries = await fs.promises.opendir(dir);
+			for await (const entry of entries) {
+				const match =
+					/^maestro-pianola-dispatch-([a-f0-9-]{36})(?:-([a-f0-9]{64})\.artifact)?\.json$/.exec(
+						entry.name
+					);
+				if (!match?.[2] || !isPianolaScopeId(match[1])) continue;
+				const names = groups.get(match[1]) ?? [];
+				names.push(entry.name);
+				groups.set(match[1], names);
+			}
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+			throw error;
+		}
+		const eligible: { id: string; mtime: number }[] = [];
+		const snapshots = new Map<string, { body: string; record: PianolaDispatchAdmission }>();
+		// Payloads are immutable, content-addressed files. Validate them asynchronously
+		// before taking a lock; exact journal bytes bind that evidence to the mutation.
+		for (const id of groups.keys()) {
+			try {
+				const file = path.join(dir, admissionName(id));
+				const stat = await fs.promises.stat(file);
+				if (stat.size > 16384) continue;
+				const body = await fs.promises.readFile(file, 'utf8');
+				const raw = JSON.parse(body) as StoredAdmission;
+				// Active, unknown and unreconciled admissions retain even obsolete
+				// artifacts. Housekeeping must never compete with their native finishes.
+				if (
+					!raw.payloadRetiredAt &&
+					(raw.phase !== 'settled' ||
+						raw.outcome !== 'accepted' ||
+						!raw.queueRouting?.completed ||
+						raw.queueRouting.steps.some((s) => s.status !== 'settled' || !!s.startError))
+				)
+					continue;
+				const values = new Map<AdmissionArtifactRef, unknown>();
+				const refs: [AdmissionArtifactRef, string?][] = [
+					...(raw.payloads?.prepare ? [[raw.payloads.prepare] as [AdmissionArtifactRef]] : []),
+					...Object.entries(raw.payloads?.terminals ?? {}).map(
+						([requestId, ref]) => [ref, requestId] as [AdmissionArtifactRef, string]
+					),
+				];
+				for (const [ref, requestId] of refs) {
+					if (
+						ref.version !== 1 ||
+						!Number.isSafeInteger(ref.bytes) ||
+						ref.bytes < 1 ||
+						ref.bytes > artifactMaxBytes
+					)
+						throw new Error('Invalid Pianola artifact reference');
+					const artifact = path.join(dir, artifactName(id, ref.sha256));
+					const stat = await fs.promises.lstat(artifact);
+					if (!stat.isFile() || stat.size !== ref.bytes)
+						throw new Error('Invalid Pianola artifact size');
+					values.set(
+						ref,
+						decodeAdmissionArtifact(
+							raw,
+							ref,
+							await fs.promises.readFile(artifact, 'utf8'),
+							requestId
+						)
+					);
+				}
+				// Hydrate using only the payloads validated for this exact journal.
+				const record = decodeDispatchAdmission(id, body, (_record, ref) => {
+					const match = refs.find(([candidate]) => candidate.sha256 === ref.sha256);
+					if (!match) throw new Error('Invalid Pianola artifact reference');
+					return values.get(match[0]);
+				});
+				if (
+					!record.payloadRetiredAt &&
+					(!record.queueRouting?.steps.every((s) => !!s.terminal) ||
+						((record.queuePrepare?.callbackId || record.queuePrepare?.callbackProof) &&
+							!record.callbackDeliveredAt))
+				)
+					continue;
+				if (!record.payloadRetiredAt) eligible.push({ id, mtime: stat.mtimeMs });
+				// Keep only the validated receipt, not every historical output, in memory.
+				delete record.queuePrepare;
+				delete record.queueRouting;
+				delete record.queueRelease;
+				delete record.queueAuthority;
+				snapshots.set(id, { body, record });
+			} catch (error) {
+				if (
+					(error as NodeJS.ErrnoException).code === 'ENOENT' ||
+					error instanceof SyntaxError ||
+					error instanceof TypeError ||
+					(error instanceof Error &&
+						/^(Invalid Pianola|Pianola admission too large)/.test(error.message))
+				)
+					continue;
+				throw error;
+			}
+		}
+		eligible.sort((a, b) => b.mtime - a.mtime || a.id.localeCompare(b.id));
+		const retire = new Set(eligible.slice(32).map((r) => r.id));
+		for (const [id, names] of groups) {
+			if (resolveDir() !== dir) return;
+			const candidate = snapshots.get(id);
+			// Only a missing journal or a fully validated completed lifecycle can
+			// authorize collection. Invalid/unconfirmed records preserve all evidence.
+			if (!candidate) {
+				try {
+					await fs.promises.lstat(path.join(dir, admissionName(id)));
+					continue;
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+				}
+			}
+			if (candidate && !retire.has(id) && !candidate.record.payloadRetiredAt) {
+				const stored = JSON.parse(candidate.body) as StoredAdmission;
+				const hashes = new Set([
+					...(stored.payloads?.prepare ? [stored.payloads.prepare.sha256] : []),
+					...Object.values(stored.payloads?.terminals ?? {}).map((ref) => ref.sha256),
+				]);
+				if (names.every((name) => hashes.has(/-([a-f0-9]{64})\.artifact\.json$/.exec(name)![1])))
+					continue;
+			}
+			const metadataBatchSize = 16;
+			let expectedBody = candidate?.body ?? null;
+			let retirementConfirmed = false;
+			for (let offset = 0; offset < names.length; offset += metadataBatchSize) {
+				if (offset > 0) await yieldToEventLoop();
+				const collected = await withFileLockAsync(admissionName(id), 'dispatch admission', () => {
+					if (resolveDir() !== dir) return false;
+					const journal = path.join(dir, admissionName(id));
+					try {
+						if (fs.statSync(journal).size > 16384) return false;
+					} catch (error) {
+						if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+					}
+					const current = readMutationContent(admissionName(id));
+					if (current !== expectedBody) return false;
+					let record = candidate?.record;
+					if (!retirementConfirmed && record && (record.payloadRetiredAt || retire.has(id))) {
+						record = { ...record, payloadRetiredAt: record.payloadRetiredAt ?? Date.now() };
+						delete record.queuePrepare;
+						delete record.queueRouting;
+						delete record.queueRelease;
+						delete record.queueAuthority;
+						// Re-establish durability even after a prior lost retirement ack.
+						persistDispatchAdmission(record);
+						expectedBody = readMutationContent(admissionName(id));
+						retirementConfirmed = true;
+					}
+					const stored = current ? (JSON.parse(current) as StoredAdmission) : null;
+					const refs = new Set(
+						retirementConfirmed || record?.payloadRetiredAt
+							? []
+							: [
+									...(stored?.payloads?.prepare ? [stored.payloads.prepare.sha256] : []),
+									...Object.values(stored?.payloads?.terminals ?? {}).map((ref) => ref.sha256),
+								]
+					);
+					for (const name of names.slice(offset, offset + metadataBatchSize)) {
+						const hash = /-([a-f0-9]{64})\.artifact\.json$/.exec(name)?.[1];
+						if (!hash || refs.has(hash)) continue;
+						try {
+							const file = path.join(dir, name);
+							if (!stored && Date.now() - fs.lstatSync(file).mtimeMs < 86400000) continue;
+							// At most 16 names (32 lstat/unlink operations for orphans)
+							// per lock turn, plus fixed journal/durability work. This bounds
+							// operation count, not filesystem latency. Yield only after unlock.
+							fs.unlinkSync(file);
+						} catch (error) {
+							if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+						}
+					}
+					return true;
+				});
+				if (!collected) break;
+			}
+		}
+	}
+
 	function checkpointName(scopeId: string): string {
 		if (!isPianolaScopeId(scopeId)) throw new Error('Invalid Pianola scope ID');
 		return `maestro-pianola-scope-${scopeId}.json`;
@@ -759,18 +1444,113 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		return checkpoint;
 	}
 
-	function writeScopeCheckpoint(checkpoint: PianolaScopeCheckpoint): void {
+	/**
+	 * Validate and write a scope checkpoint under its canonical file lock. Forward durability
+	 * and mutation-receipt options to the persistence policy.
+	 */
+	function writeScopeCheckpoint(
+		checkpoint: PianolaScopeCheckpoint,
+		durable = false,
+		receipt?: (value: PianolaFileMutationReceipt) => void
+	): void {
 		const name = checkpointName(checkpoint.scopeId);
 		if (!validatePianolaScopeCheckpoint(checkpoint, checkpoint.scopeId)) {
 			throw new Error('Invalid Pianola scope checkpoint');
 		}
-		if (
-			Buffer.byteLength(JSON.stringify(checkpoint, null, indent), 'utf-8') + 1 >
-			20 * 1024 * 1024
-		) {
-			throw new Error('Pianola checkpoint too large');
+		withFileLock(name, 'scope checkpoint', () =>
+			persistScopeCheckpoint(checkpoint, durable, receipt)
+		);
+	}
+
+	/**
+	 * Persist a checkpoint without overwriting newer enrollment or losing unseen host-enrolled
+	 * tabs. Coalesce observation-only updates within 20 seconds; changed authority and cursor
+	 * state is always written durably.
+	 */
+	function persistScopeCheckpoint(
+		checkpoint: PianolaScopeCheckpoint,
+		durable = false,
+		receipt?: (value: PianolaFileMutationReceipt) => void
+	): void {
+		const name = checkpointName(checkpoint.scopeId);
+		const before = receipt ? readMutationContent(name) : null;
+		const current = readScopeCheckpoint(checkpoint.scopeId);
+		if ((current?.enrollmentRevision ?? 0) > (checkpoint.enrollmentRevision ?? 0))
+			throw new Error('Scope enrollment changed; discard the old cycle and reload');
+		// A CLI cycle may have captured its census before host admission. Preserve
+		// only newly enrolled tabs it never saw, under the same configuration.
+		if (current?.configurationFingerprint === checkpoint.configurationFingerprint) {
+			const members = new Set(
+				checkpoint.tabs.map((tab) => canonicalJson([tab.agentId, tab.tabId]))
+			);
+			for (const tab of current.tabs) {
+				if (tab.dispatchEnrollmentId && !members.has(canonicalJson([tab.agentId, tab.tabId])))
+					checkpoint.tabs.push(tab);
+			}
 		}
-		writeJsonAtomic(name, checkpoint);
+		if (!validatePianolaScopeCheckpoint(checkpoint, checkpoint.scopeId))
+			throw new Error('Invalid Pianola scope checkpoint');
+		if (Buffer.byteLength(JSON.stringify(checkpoint, null, indent), 'utf8') + 1 > 20 * 1024 * 1024)
+			throw new Error('Pianola checkpoint too large');
+		// Observation clocks and the sweep position alone do not justify rewriting
+		// the whole fleet. Refresh their durable projection at most every 20s.
+		const observationState = (value: PianolaScopeCheckpoint): unknown => ({
+			...value,
+			lastSnapshotAt: undefined,
+			nextTabIndex: undefined,
+			tabs: value.tabs.map((tab) => ({
+				...tab,
+				// The cycle may set these optional fields to undefined. JSON
+				// omits object members with that value on the next disk read.
+				nextWatchAt: tab.nextWatchAt,
+				emptyEnrollment: tab.emptyEnrollment,
+				coverage: tab.coverage ? { ...tab.coverage, observedAt: undefined } : undefined,
+			})),
+		});
+		if (current && isDeepStrictEqual(current, checkpoint)) {
+			receipt?.({ before, after: before });
+			return;
+		}
+		if (
+			!durable &&
+			current &&
+			(checkpoint.lastSnapshotAt ?? 0) >= (current.lastSnapshotAt ?? 0) &&
+			(checkpoint.lastSnapshotAt ?? 0) - (current.lastSnapshotAt ?? 0) < 20_000 &&
+			isDeepStrictEqual(observationState(current), observationState(checkpoint))
+		) {
+			receipt?.({ before, after: before });
+			return;
+		}
+		// All changed authority/cursor/enrollment states survive a crash, even
+		// when the caller is flushing a batch of passive observations.
+		writeJsonAtomic(name, checkpoint, true);
+		receipt?.({ before, after: readMutationContent(name) });
+	}
+
+	function withScopeCheckpointLockAsync<T>(
+		scopeId: string,
+		operation: (write: PianolaFsStore['writeScopeCheckpoint']) => T | Promise<T>
+	): Promise<T> {
+		return withFileLockAsync(
+			checkpointName(scopeId),
+			'scope checkpoint',
+			async () => {
+				let active = true;
+				try {
+					return await operation((checkpoint, durable, receipt) => {
+						if (!active || checkpoint.scopeId !== scopeId)
+							throw new Error('Scope checkpoint lock unavailable');
+						if (!validatePianolaScopeCheckpoint(checkpoint, scopeId))
+							throw new Error('Invalid Pianola scope checkpoint');
+						persistScopeCheckpoint(checkpoint, durable, receipt);
+					});
+				} finally {
+					active = false;
+				}
+			},
+			false,
+			true
+		);
 	}
 
 	function readProgramLoopMemo(): ProgramLoopMemo {
@@ -824,6 +1604,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			return validated;
 		},
 		appendDecision,
+		appendDecisionAsync,
 		readDecisions,
 		readPlans,
 		writePlans,
@@ -859,12 +1640,18 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		getProfile,
 		setProfile,
 		readSupervisorTargets,
+		readSupervisorTarget,
 		writeSupervisorTargets,
 		updateSupervisorTargets,
 		upsertSupervisorTarget,
 		removeSupervisorTarget,
+		compactDispatchArtifacts,
+		confirmDispatchCallback,
+		readDispatchAdmission,
+		writeDispatchAdmission,
 		readScopeCheckpoint,
 		writeScopeCheckpoint,
+		withScopeCheckpointLockAsync,
 		writeSupervisorTargetsAsync,
 		updateSupervisorTargetsAsync,
 		upsertSupervisorTargetAsync,

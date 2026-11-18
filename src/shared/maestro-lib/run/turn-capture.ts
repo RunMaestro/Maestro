@@ -2,7 +2,7 @@
 
 import type { AgentError, UsageStats } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from '../parsers/agent-output-parser';
-import { UsageAccumulator } from '../streaming/usage-accumulator';
+import { UsageAccumulator, type UsageAccumulatorOptions } from '../streaming/usage-accumulator';
 import { addUsageStats, parsedUsageToStats, replaceUsageStats } from '../streaming/usage-totals';
 
 /**
@@ -34,6 +34,10 @@ export interface TurnCaptureOptions {
 	 * off, so its outcomes stay exactly what they were.
 	 */
 	classifyInBandErrors?: boolean;
+	/** One turn's known transport identity; missing event IDs bind only to this capture. */
+	usageIdentity?: UsageAccumulatorOptions['identity'];
+	/** Normalized, explicitly observed pre-dispatch baseline under exclusive turn ownership. */
+	processSessionBaseline?: UsageStats;
 }
 
 /**
@@ -63,6 +67,12 @@ export class TurnCapture {
 	private streamedText = '';
 	private readonly usageReporting: UsageReporting;
 	private readonly usageAccumulator: UsageAccumulator | undefined;
+	private readonly scopedUsage: UsageAccumulator;
+
+	/** Retained session/child observations for consumers that reconcile those scopes. */
+	get usageReports(): readonly UsageStats[] {
+		return this.scopedUsage.scopedReports;
+	}
 
 	private readonly classifiesInBandErrors: boolean;
 
@@ -72,6 +82,11 @@ export class TurnCapture {
 		options: TurnCaptureOptions = {}
 	) {
 		this.classifiesInBandErrors = options.classifyInBandErrors !== false;
+		this.scopedUsage = new UsageAccumulator({
+			attachesAbsoluteUsage: false,
+			identity: options.usageIdentity,
+			processSessionBaseline: options.processSessionBaseline,
+		});
 		this.usageReporting = usageReportingFor(agentId);
 		this.usageAccumulator =
 			this.usageReporting === 'running-total'
@@ -115,7 +130,19 @@ export class TurnCapture {
 		}
 
 		const usage = this.parser.extractUsage(event);
-		if (usage) this.addUsage(parsedUsageToStats(usage));
+		if (usage) {
+			const reported = parsedUsageToStats(usage);
+			if (usage.accounting) this.usage = this.scopedUsage.accumulate(reported) ?? this.usage;
+			else this.addUsage(reported);
+		}
+		if (
+			event.terminal &&
+			event.terminal.status !== 'success' &&
+			this.usage?.accounting &&
+			!this.usage.accounting.final
+		) {
+			this.usage.accounting.completeness = 'partial';
+		}
 	}
 
 	/** The answer: the result event's text, else what was streamed. */

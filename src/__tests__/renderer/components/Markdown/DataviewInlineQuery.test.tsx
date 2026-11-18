@@ -16,6 +16,7 @@ import {
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { clearCachedResources } from '../../../../renderer/hooks/utils/useCachedResource';
 import { DATAVIEW_REFRESH_DEBOUNCE_MS } from '../../../../renderer/hooks/file/useLiveDataviewResult';
+import { DATAVIEW_REFRESH_DIM_OPACITY } from '../../../../renderer/components/Markdown/components/DataviewLoading';
 import {
 	Link,
 	toWireValue,
@@ -157,6 +158,42 @@ describe('DataviewInlineQuery', () => {
 		emit({ root: '/vault', sshRemoteId: null, revision: 2, changedPaths: ['People/Ada.md'] });
 		await screen.findByText('after', undefined, { timeout: DATAVIEW_REFRESH_DEBOUNCE_MS * 4 });
 		expect(window.maestro.dataview.queryInline).toHaveBeenCalledTimes(2);
+	});
+
+	it('keeps the old value in place, dimmed, while a slow refresh is out', async () => {
+		const emit = captureChanges();
+		respond({ kind: 'value', value: toWireValue('before') });
+		const { container } = renderNote('`= this.status`');
+		await screen.findByText('before');
+		expect(container.querySelector('[data-dataview-refreshing]')).toBeNull();
+
+		let answer: (value: unknown) => void = () => {};
+		vi.mocked(window.maestro.dataview.queryInline).mockImplementation(
+			() => new Promise((resolve) => (answer = resolve as (value: unknown) => void))
+		);
+		emit({ root: '/vault', sshRemoteId: null, revision: 2, changedPaths: ['People/Ada.md'] });
+		const dimmed = await waitFor(
+			() => {
+				const element = container.querySelector('[data-dataview-refreshing]') as HTMLElement;
+				expect(element).not.toBeNull();
+				return element;
+			},
+			{ timeout: DATAVIEW_REFRESH_DEBOUNCE_MS * 4 }
+		);
+		expect(dimmed.textContent).toBe('before');
+		expect(dimmed.style.opacity).toBe(String(DATAVIEW_REFRESH_DIM_OPACITY));
+		// Inline values never draw the block pill over the sentence.
+		expect(container.querySelector('[data-dataview-pill]')).toBeNull();
+
+		answer({
+			root: '/vault',
+			sshRemoteId: null,
+			revision: 2,
+			path: 'People/Ada.md',
+			result: { kind: 'value', value: toWireValue('after') },
+		});
+		await screen.findByText('after');
+		expect(container.querySelector('[data-dataview-refreshing]')).toBeNull();
 	});
 
 	it('keeps the span as code outside a Dataview surface or with the Encore Feature off', () => {

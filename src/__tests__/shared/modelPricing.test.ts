@@ -287,6 +287,18 @@ describe('createClaudeUsageAccumulator', () => {
 	it('reports zeros when nothing was added', () => {
 		expect(createClaudeUsageAccumulator().finish()).toEqual(computeClaudeUsageCost(''));
 	});
+
+	it('prices a document fed line by line the same as the document', () => {
+		const doc = [
+			line('msg_a', 'claude-opus-4-8', 1_000_000),
+			line('msg_a', 'claude-opus-4-8', 1_000_000),
+			'not json',
+			line('msg_b', 'claude-haiku-4-5', 2_000_000),
+		].join('\n');
+		const usage = createClaudeUsageAccumulator();
+		for (const docLine of doc.split('\n')) usage.addLine(docLine);
+		expect(usage.finish()).toEqual(computeClaudeUsageCost(doc));
+	});
 });
 
 describe('OpenAI (Codex) pricing', () => {

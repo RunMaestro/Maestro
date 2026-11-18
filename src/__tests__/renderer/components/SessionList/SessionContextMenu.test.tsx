@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SessionContextMenu } from '../../../../renderer/components/SessionList/SessionContextMenu';
 import {
 	gitRunKey,
@@ -17,6 +17,16 @@ import {
 import { usePRCreationStore, prRunKey } from '../../../../renderer/stores/prCreationStore';
 import type { Session } from '../../../../renderer/types';
 import { mockTheme } from '../../../helpers/mockTheme';
+import { requestMoveToHost, startPeerHost } from '../../../../renderer/services/agentLift';
+import { copyPeerAgentRef, reconnectPeer } from '../../../../renderer/services/peerMirror';
+import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+	setPeerConnection,
+	type PeerMirrorConnection,
+} from '../../../../shared/maestro-lib/client/peer-mirror';
+import { resetStores } from '../../../helpers';
 
 const DEFAULT_BRANCH_INFO = { branch: 'feature/login', remote: '', ahead: 2, behind: 3 };
 const mockGetBranchInfo = vi.fn(() => DEFAULT_BRANCH_INFO);
@@ -40,7 +50,10 @@ vi.mock('../../../../renderer/services/git', () => ({
 	gitService: { getDiff: vi.fn().mockResolvedValue({ diff: 'diff --git a/x b/x' }) },
 }));
 
-vi.mock('../../../../renderer/stores/centerFlashStore', () => ({
+// Spread the real module: `resetStores` (from the helpers) imports the store
+// itself, so a factory that only returns `notifyCenterFlash` throws at import.
+vi.mock('../../../../renderer/stores/centerFlashStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/stores/centerFlashStore')>()),
 	notifyCenterFlash: vi.fn(),
 }));
 
@@ -54,6 +67,16 @@ vi.mock('../../../../renderer/stores/modalStore', async (importOriginal) => ({
 		vi.fn((selector) => selector({ openModal: mockOpenModal })),
 		{ getState: () => ({ openModal: mockOpenModal }) }
 	),
+}));
+
+vi.mock('../../../../renderer/services/agentLift', () => ({
+	requestMoveToHost: vi.fn(),
+	startPeerHost: vi.fn(),
+}));
+
+vi.mock('../../../../renderer/services/peerMirror', () => ({
+	copyPeerAgentRef: vi.fn(),
+	reconnectPeer: vi.fn(),
 }));
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -454,6 +477,89 @@ describe('SessionContextMenu', () => {
 			fireEvent.mouseDown(document.body);
 
 			expect(props.onDismiss).toHaveBeenCalled();
+		});
+	});
+
+	describe('Federation (Move to Host)', () => {
+		const sshSession = (overrides: Partial<Session> = {}) =>
+			makeSession({
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				...overrides,
+			});
+
+		function mirror(connection: PeerMirrorConnection = 'connected') {
+			const { peer } = replacePeerAgents(
+				createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Build Box' }),
+				[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [] }],
+				[],
+				1
+			);
+			usePeerMirrorStore.getState().hydrate([setPeerConnection(peer, connection).peer]);
+		}
+
+		beforeEach(() => {
+			resetStores(usePeerMirrorStore);
+		});
+
+		it('offers nothing before the mirror knows the remote (opted out, or not loaded yet)', () => {
+			renderMenu({ session: sshSession() });
+			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
+		});
+
+		it('offers Move to Host for an SSH agent whose remote runs no host (it sets one up first)', () => {
+			mirror('not-installed');
+			const props = renderMenu({ session: sshSession() });
+			const item = screen.getByTestId('session-menu-move-to-host');
+			expect(item).toHaveTextContent('Move to Host (Build Box)...');
+			expect(item.getAttribute('title')).toMatch(/^Set up a Maestro host on Build Box/);
+			fireEvent.click(item);
+			expect(requestMoveToHost).toHaveBeenCalledWith('session-1');
+			expect(props.onDismiss).toHaveBeenCalled();
+		});
+
+		it('offers Move to Host for an SSH agent whose remote is a connected peer', () => {
+			mirror();
+			const props = renderMenu({ session: sshSession() });
+			const item = screen.getByTestId('session-menu-move-to-host');
+			expect(item.getAttribute('title')).toMatch(
+				/^Run this agent on the Maestro host on Build Box/
+			);
+			fireEvent.click(item);
+			expect(requestMoveToHost).toHaveBeenCalledWith('session-1');
+			expect(props.onDismiss).toHaveBeenCalled();
+		});
+
+		it('offers one Move to Host when the peer is not connected, and none for a local agent', () => {
+			mirror('lost');
+			renderMenu({ session: sshSession() });
+			// A host that went away is set up again through the same action.
+			expect(screen.getAllByText(/Move to Host/)).toHaveLength(1);
+			cleanup();
+			renderMenu({ session: makeSession() });
+			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
+		});
+
+		it("offers the host's connection instead once the agent is hosted", () => {
+			mirror();
+			const session = sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } });
+			renderMenu({ session });
+			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
+			expect(screen.queryByTestId('session-menu-start-host')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('session-menu-copy-hosted-ref'));
+			expect(copyPeerAgentRef).toHaveBeenCalledWith('box', 'h1');
+			cleanup();
+			renderMenu({ session });
+			const reconnect = screen.getByTestId('session-menu-reconnect-host');
+			expect(reconnect).toHaveTextContent('Reconnect Build Box');
+			fireEvent.click(reconnect);
+			expect(reconnectPeer).toHaveBeenCalledWith('box');
+		});
+
+		it('offers Start Host while a hosted agent cannot reach its host', () => {
+			mirror('lost');
+			renderMenu({ session: sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }) });
+			fireEvent.click(screen.getByTestId('session-menu-start-host'));
+			expect(startPeerHost).toHaveBeenCalledWith('r1', 'Build Box');
 		});
 	});
 });

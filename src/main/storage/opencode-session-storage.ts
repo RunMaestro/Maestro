@@ -33,6 +33,7 @@ import type {
 	SessionMessage,
 } from '../agents';
 import { BaseSessionStorage, type SearchableMessage } from './base-session-storage';
+import { MESSAGE_NOT_IN_TRANSCRIPT, type DeleteMessagePairResult } from '../agents/session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { isWindows } from '../../shared/platformDetection';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
@@ -84,6 +85,7 @@ function getOpenCodeDataDir(): string {
 
 /**
  * Get OpenCode JSON storage directory (pre-v1.2)
+ * Resolve only during local storage operations, never at import or construction.
  */
 function getOpenCodeStorageDir(): string {
 	return path.join(getOpenCodeDataDir(), 'storage');
@@ -91,6 +93,7 @@ function getOpenCodeStorageDir(): string {
 
 /**
  * Get OpenCode SQLite database path (v1.2+).
+ * Resolve only during local storage operations, never at import or construction.
  *
  * Checks each candidate data dir for an existing `opencode.db` and returns
  * the first hit. Falls back to the preferred candidate's path when none exist,
@@ -105,9 +108,6 @@ function getOpenCodeDbPath(): string {
 	}
 	return path.join(getOpenCodeDataDirCandidates()[0], 'opencode.db');
 }
-
-const OPENCODE_STORAGE_DIR = getOpenCodeStorageDir();
-const OPENCODE_DB_PATH = getOpenCodeDbPath();
 
 /**
  * OpenCode project metadata structure
@@ -260,7 +260,7 @@ interface SqlitePartData {
  * Open the OpenCode SQLite database in read-only mode.
  * Returns null if the database file doesn't exist.
  */
-function openOpenCodeDb(dbPath: string = OPENCODE_DB_PATH): Database.Database | null {
+function openOpenCodeDb(dbPath: string = getOpenCodeDbPath()): Database.Database | null {
 	if (!fsSync.existsSync(dbPath)) {
 		return null;
 	}
@@ -417,7 +417,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 */
 	private getSessionDir(projectId: string): string {
 		return path.join(
-			this.historyRoot ? path.join(this.historyRoot, 'storage') : OPENCODE_STORAGE_DIR,
+			this.historyRoot ? path.join(this.historyRoot, 'storage') : getOpenCodeStorageDir(),
 			'session',
 			projectId
 		);
@@ -428,7 +428,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 */
 	private getMessageDir(sessionId: string): string {
 		return path.join(
-			this.historyRoot ? path.join(this.historyRoot, 'storage') : OPENCODE_STORAGE_DIR,
+			this.historyRoot ? path.join(this.historyRoot, 'storage') : getOpenCodeStorageDir(),
 			'message',
 			sessionId
 		);
@@ -439,7 +439,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 */
 	private getPartDir(messageId: string): string {
 		return path.join(
-			this.historyRoot ? path.join(this.historyRoot, 'storage') : OPENCODE_STORAGE_DIR,
+			this.historyRoot ? path.join(this.historyRoot, 'storage') : getOpenCodeStorageDir(),
 			'part',
 			messageId
 		);
@@ -479,7 +479,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 	 */
 	private async findProjectId(projectPath: string): Promise<string | null> {
 		const projectDir = path.join(
-			this.historyRoot ? path.join(this.historyRoot, 'storage') : OPENCODE_STORAGE_DIR,
+			this.historyRoot ? path.join(this.historyRoot, 'storage') : getOpenCodeStorageDir(),
 			'project'
 		);
 
@@ -1729,7 +1729,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 			return this.getRemoteMessageDir(sessionId);
 		}
 		if (sessionExistsInSqlite(sessionId)) {
-			return OPENCODE_DB_PATH;
+			return getOpenCodeDbPath();
 		}
 		return this.getMessageDir(sessionId);
 	}
@@ -1740,7 +1740,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 		userMessageUuid: string,
 		fallbackContent?: string,
 		sshConfig?: SshRemoteConfig
-	): Promise<{ success: boolean; error?: string; linesRemoved?: number }> {
+	): Promise<DeleteMessagePairResult> {
 		// Delete operations on remote sessions are not supported
 		if (sshConfig) {
 			logger.warn('Delete message pair not supported for SSH remote sessions', LOG_CONTEXT);
@@ -1808,7 +1808,7 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 					userMessageUuid,
 					hasFallback: !!fallbackContent,
 				});
-				return { success: false, error: 'User message not found' };
+				return MESSAGE_NOT_IN_TRANSCRIPT;
 			}
 
 			// Find all messages to delete (user message + following assistant messages until next user)

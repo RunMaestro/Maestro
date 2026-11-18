@@ -47,6 +47,17 @@ export interface MergeRequest {
 	targetProjectRoot: string;
 	/** Optional custom prompt for the grooming agent */
 	groomingPrompt?: string;
+	/**
+	 * Identity of the agent whose provider runs the grooming turn, taken from
+	 * that agent's own session so the turn uses its account (custom env such as
+	 * GROK_HOME), binary, arguments, SSH host and Claude token source rather
+	 * than the process-global defaults. Same fields as {@link SummarizeRequest}.
+	 */
+	sshRemoteConfig?: SummarizeRequestSshConfig;
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	claudeTokenSource?: ClaudeTokenSourceFields;
 }
 
 /**
@@ -63,8 +74,14 @@ export interface MergeResult {
 	error?: string;
 	/** Estimated tokens saved by grooming/deduplication */
 	tokensSaved?: number;
-	/** Merged logs when merging into existing tab (createNewSession=false) */
+	/**
+	 * The logs the merge produced: the groomed output when grooming ran, else
+	 * the combined raw logs (new agent) or both sides (into a tab, where only
+	 * the source side is injected).
+	 */
 	mergedLogs?: LogEntry[];
+	/** True only when `mergedLogs` is the output of a grooming turn */
+	groomed?: boolean;
 	/** Target session ID when merging into existing tab */
 	targetSessionId?: string;
 	/** Target tab ID when merging into existing tab */

@@ -2,12 +2,13 @@
  * MentionChipOverlay - the live `@mention` pill decoration drawn behind a
  * composer `<textarea>`.
  *
- * Shared by the AI composer (InputTextarea) and the Group Chat composer so a
- * mention lights up the same way on both surfaces. The textarea stays the sole
- * source of visible glyphs, caret, and selection; this layer paints only the
- * chip fill and border behind the raw `@token`.
+ * Rendered by `ChatComposer/ComposerTextarea`, which both the AI composer and
+ * the Group Chat composer use, so a mention lights up the same way on both
+ * surfaces. The textarea stays the sole source of visible glyphs, caret, and
+ * selection; this layer paints only the chip fill and border behind the raw
+ * `@token`.
  *
- * Wiring: call {@link useMentionChipOverlay} in the composer, render
+ * Wiring (done once, in ComposerTextarea): call {@link useMentionChipOverlay} in the composer, render
  * `<MentionChipOverlay overlay={...} />` as a sibling BEFORE the textarea inside
  * a `relative` container, spread {@link MENTION_OVERLAY_TYPOGRAPHY} into the
  * textarea style, and route the textarea's select / scroll / blur / change

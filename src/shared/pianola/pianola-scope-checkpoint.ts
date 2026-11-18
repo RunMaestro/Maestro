@@ -1,5 +1,6 @@
 /** Durable cursors for a single scope worker. An invalid checkpoint is never a
  * fresh enrollment: callers must suspend and surface the error instead. */
+import { isCurrentTurnCursor } from '../currentTurn';
 import { isValidClassification } from './storage';
 import { isPianolaScopeId } from './pianola-scope';
 import type { WatchState } from './pianola-watcher';
@@ -8,6 +9,12 @@ export interface PianolaScopeCursor {
 	id: string;
 	count: number;
 	textLength: number;
+	contentRevision?: number;
+	contentSignature?: string;
+	/** Native question cores at this exact cursor, independent of surrounding prose. */
+	questionSignatures?: string[] | null;
+	orderMutationRevision?: number;
+	native?: import('../currentTurn').CurrentTurnCursor;
 }
 
 /** Metadata coverage is an observation, never a delivery/acknowledgment receipt. */
@@ -51,12 +58,19 @@ export interface PianolaScopeCheckpointTab {
 	tabId: string;
 	/** Effective owner/root binding. Missing on an older checkpoint forces a baseline. */
 	bindingFingerprint?: string;
+	/** Pre-start admission survives a concurrent worker census missing this tab. */
+	dispatchEnrollmentId?: string;
 	coverage?: PianolaScopeTabCoverage;
+	emptyEnrollment?: import('../currentTurn').CurrentTurnCursor;
 	baseline: PianolaScopeCursor | null;
 	/** Only a live stream at enrollment may complete within the baseline entry. */
 	baselineBusy?: boolean;
+	/** Native busy enrollment permits only a host-proven prose change. */
+	nativeStreamingBaseline?: boolean;
 	lastSeen: PianolaScopeCursor | null;
 	state: WatchState;
+	/** Earliest retry iteration; event volume must not spend retry budgets. */
+	nextWatchAt?: number;
 	status: 'active' | 'suspended' | 'closed';
 	/** An intent persisted before delivery; an unknown outcome is never retried blindly. */
 	unresolvedIntent: { decisionId: string; messageId: string; admitted?: boolean } | null;
@@ -64,6 +78,8 @@ export interface PianolaScopeCheckpointTab {
 
 export interface PianolaScopeCheckpoint {
 	version: 1;
+	/** Host enrollment epoch. Older workers must never overwrite a newer barrier. */
+	enrollmentRevision?: number;
 	scopeId: string;
 	configurationFingerprint: string;
 	activatedAt: number;
@@ -92,6 +108,11 @@ function nonnegativeInteger(value: unknown): value is number {
 	return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
+/**
+ * Validate a nullable scope cursor and its bounded optional content/question evidence.
+ * Native cursor validation checks shape; callers still have to compare it with current host
+ * state.
+ */
 export function isPianolaScopeCursor(value: unknown): value is PianolaScopeCursor | null {
 	return (
 		value === null ||
@@ -99,7 +120,20 @@ export function isPianolaScopeCursor(value: unknown): value is PianolaScopeCurso
 			id(value.id) &&
 			nonnegativeInteger(value.count) &&
 			value.count > 0 &&
-			nonnegativeInteger(value.textLength))
+			nonnegativeInteger(value.textLength) &&
+			(value.contentRevision === undefined || nonnegativeInteger(value.contentRevision)) &&
+			(value.contentSignature === undefined ||
+				(typeof value.contentSignature === 'string' && FINGERPRINT.test(value.contentSignature))) &&
+			(value.questionSignatures === undefined ||
+				value.questionSignatures === null ||
+				(Array.isArray(value.questionSignatures) &&
+					value.questionSignatures.length <= 32 &&
+					value.questionSignatures.every(
+						(item) => typeof item === 'string' && FINGERPRINT.test(item)
+					))) &&
+			(value.orderMutationRevision === undefined ||
+				nonnegativeInteger(value.orderMutationRevision)) &&
+			(value.native === undefined || isCurrentTurnCursor(value.native)))
 	);
 }
 
@@ -134,6 +168,7 @@ export function validatePianolaScopeCheckpoint(
 		!record(raw) ||
 		raw.version !== 1 ||
 		raw.scopeId !== expectedId ||
+		(raw.enrollmentRevision !== undefined && !nonnegativeInteger(raw.enrollmentRevision)) ||
 		typeof raw.configurationFingerprint !== 'string' ||
 		!FINGERPRINT.test(raw.configurationFingerprint) ||
 		!nonnegativeInteger(raw.activatedAt) ||
@@ -165,10 +200,17 @@ export function validatePianolaScopeCheckpoint(
 			(tab.bindingFingerprint !== undefined &&
 				(typeof tab.bindingFingerprint !== 'string' ||
 					!FINGERPRINT.test(tab.bindingFingerprint))) ||
+			(tab.dispatchEnrollmentId !== undefined &&
+				(typeof tab.dispatchEnrollmentId !== 'string' ||
+					!isPianolaScopeId(tab.dispatchEnrollmentId))) ||
+			(tab.emptyEnrollment !== undefined && !isCurrentTurnCursor(tab.emptyEnrollment)) ||
 			!isPianolaScopeCursor(tab.baseline) ||
 			(tab.baselineBusy !== undefined && typeof tab.baselineBusy !== 'boolean') ||
+			(tab.nativeStreamingBaseline !== undefined &&
+				typeof tab.nativeStreamingBaseline !== 'boolean') ||
 			!isPianolaScopeCursor(tab.lastSeen) ||
 			!state(tab.state) ||
+			(tab.nextWatchAt !== undefined && !nonnegativeInteger(tab.nextWatchAt)) ||
 			(tab.status !== 'active' && tab.status !== 'suspended' && tab.status !== 'closed')
 		)
 			return null;

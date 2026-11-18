@@ -51,7 +51,11 @@ export interface TurnAgent {
 	worktreeConfig?: { basePath?: string };
 	isGitRepo?: boolean;
 	contextUsage?: number;
-	/** Deprecated agent-level id. Read for `{{AGENT_SESSION_ID}}` only, as the desktop does (F6). */
+	/**
+	 * Deprecated agent-level id. A chat turn names its tab's provider session in
+	 * `{{AGENT_SESSION_ID}}` instead (`prepareMaestroSystemPrompt`); this is read only by a
+	 * caller with no tab.
+	 */
 	agentSessionId?: string;
 	isPianola?: boolean;
 	nudgeMessage?: string;
@@ -87,6 +91,13 @@ export interface TurnMessage {
 	turnSettings?: { model?: string; effort?: string };
 	/** The queue item was read-only when it was queued. */
 	readOnly?: boolean;
+	/**
+	 * The sender's own read-only chip for this turn (`TurnOverrides.readOnly`), read in place of
+	 * the tab's `readOnlyMode`, so `false` lifts the host tab's chip for this one turn. Absent: the
+	 * tab's chip decides. An explicit `permissionMode: 'readonly'`, a read-only queue item and an
+	 * Auto Run holding the tree still make the turn read-only.
+	 */
+	tabReadOnly?: boolean;
 }
 
 export interface TurnContext {
@@ -225,13 +236,16 @@ export function assembleTurn(
 
 	const sshEnabled = agent.sessionSshRemoteConfig?.enabled === true;
 
-	// Read-only: the message, the tab, or an Auto Run holding the working tree.
+	// Read-only: the message, the tab (or the sender's own chip in its place), or an Auto Run
+	// holding the working tree.
+	const chipTab =
+		message.tabReadOnly === undefined ? tab : { ...tab, readOnlyMode: message.tabReadOnly };
 	const readOnly =
 		message.readOnly === true ||
-		tab.readOnlyMode === true ||
-		tab.permissionMode === 'readonly' ||
+		chipTab.readOnlyMode === true ||
+		chipTab.permissionMode === 'readonly' ||
 		(context.autoRunHoldsTree === true && context.forceParallel !== true);
-	const permissionMode = readOnly ? 'readonly' : resolveTabPermissionMode(tab);
+	const permissionMode = readOnly ? 'readonly' : resolveTabPermissionMode(chipTab);
 
 	// Model and effort: frozen at queue time when the message carries them, even where a field
 	// inside is undefined (the agent default was chosen then); else the live tab, then the agent.
@@ -295,7 +309,14 @@ export function assembleTurn(
 	if (readOnly) entry.readOnly = true;
 
 	// The system prompt. The template not loading means the turn goes without one.
-	const systemPrompt = buildAgentSystemPrompt(agent, tab.id, context);
+	// `{{AGENT_SESSION_ID}}` is this tab's provider session, as the desktop's
+	// `prepareMaestroSystemPrompt` reads it: a new tab never inherits another tab's
+	// (or the deprecated agent-level) identity.
+	const systemPrompt = buildAgentSystemPrompt(
+		{ ...agent, agentSessionId: tab.agentSessionId ?? undefined },
+		tab.id,
+		context
+	);
 
 	// Arguments: the provider's own, minus bypass flags when read-only, then the system prompt.
 	const providerArgs = provider.args ?? [];
@@ -365,6 +386,8 @@ export function assembleTurn(
 				remoteCommand: agent.customPath || provider.binaryName,
 				args: placement.args,
 				cwd: agent.cwd,
+				// Keep the selected grants with this turn even if the session is edited later.
+				additionalDirectories: agent.additionalDirectories?.map((directory) => ({ ...directory })),
 				prompt: finalPrompt,
 				hasImages,
 				globalShellEnvVars: context.globalEnvVars ? { ...context.globalEnvVars } : undefined,

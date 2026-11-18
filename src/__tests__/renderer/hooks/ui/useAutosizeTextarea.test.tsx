@@ -1,6 +1,6 @@
 import { render, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { useAutosizeTextarea } from '../../../../renderer/hooks/ui/useAutosizeTextarea';
 
 function Harness({
@@ -58,6 +58,31 @@ describe('useAutosizeTextarea', () => {
 			// which is what used to clip the line being typed.
 			expect((getByLabelText('input') as HTMLTextAreaElement).scrollTop).toBe(200);
 		});
+	});
+
+	it('does not re-measure or re-scroll when only the reset key changes and nothing else did', () => {
+		const reads = vi.fn(() => 80);
+		function KeyedHarness({ resetKey }: { resetKey: string }) {
+			const ref = useRef<HTMLTextAreaElement | null>(null);
+			useAutosizeTextarea({ textareaRef: ref, value: 'same', maxHeight: 112, resetKey });
+			return (
+				<textarea
+					ref={(el) => {
+						if (!el || ref.current === el) return;
+						el.value = 'same';
+						Object.defineProperty(el, 'scrollHeight', { get: reads, configurable: true });
+						ref.current = el;
+					}}
+					aria-label="keyed"
+				/>
+			);
+		}
+		const { rerender } = render(<KeyedHarness resetKey="tab-1" />);
+		const afterMount = reads.mock.calls.length;
+		expect(afterMount).toBeGreaterThan(0);
+		// Switching between two tabs with the same draft: a forced layout for nothing.
+		rerender(<KeyedHarness resetKey="tab-2" />);
+		expect(reads).toHaveBeenCalledTimes(afterMount);
 	});
 
 	it('leaves the scroll position alone when editing mid-text', async () => {

@@ -98,6 +98,18 @@ describe('useMarketplaceListKeyboardNav', () => {
 		expect(onSelectPlaybook.mock.calls[0][0].id).toBe('playbook-4');
 	});
 
+	it('leaves Enter to the input method during active IME composition', () => {
+		const { onSelectPlaybook } = setup({ selectedTileIndex: 4 });
+
+		for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+			fireKey('Enter', ime);
+			expect(onSelectPlaybook).not.toHaveBeenCalled();
+		}
+
+		fireKey('Enter');
+		expect(onSelectPlaybook).toHaveBeenCalledTimes(1);
+	});
+
 	it('lets left and right move the cursor when search input has text', () => {
 		const { searchInput, setSelectedTileIndex } = setup();
 		searchInput.value = 'query';

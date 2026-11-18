@@ -34,6 +34,7 @@ Run `<group> --help` for the exact subcommands and flags. This list covers the c
 - **open-file / open-browser / close-browser / refresh-files / refresh-auto-run** - desktop integration after filesystem changes so the user sees updates immediately. `open-file` is also how you PLAY audio and video: it recognizes playable media and hands it to Maestro's floating player instead of making a tab, so never shell out to `open`/`afplay`/`xdg-open` for a media file.
 - **open-terminal / send-terminal / list terminals** - open a native terminal tab (optionally starting a command in it), type into one that already exists, and see what is open. Judgment note below.
 - **notify toast|flash** - surface in-app notifications (see the judgment below).
+- **diff-review add / edit / list / remove / clear / send** - review another agent's uncommitted changes the way the user does in the Git Diff viewer: `diff-review add <path> <lines> "<comment>" -a <agent>` pins a comment to lines of that agent's current diff (`--side old` for removed lines), and `diff-review send -a <agent>` queues every current comment to it as one prompt with each `path:lines` and hunk. Comments added here appear in the user's Review tray.
 - **image list / image save** - reach the screenshots the user pasted into the chat. You can SEE a pasted image but you have no path to it, so writing one into the repo (a doc screenshot, an asset, a bug repro) means `image save` - `image save` alone takes the newest, `image save <index|handle>` takes a specific one, `--all -o <dir>` takes a set. Pass `-a <your agent id>`: without it the scope is the whole fleet, so "the newest image" can be one another agent's user pasted seconds ago. Reads from disk, so it works with the app closed, but an image pasted this instant may trail the renderer's two-second write.
 - **create-agent / update-agent / create-worktree / tab / group / set-theme / theme / encore / ssh-remote** - agent lifecycle, tabs, groups, appearance, remotes. `tab` also owns the per-tab settings the composer chips toggle (see below). For `tab close|rename|star`, your own tab is the `Tab ID` in your system prompt's Session Information - never guess one out of `session list`, since every other row there is a different live conversation.
 - **gist / prompts / status / doctor** - transcript export, prompt self-reference, diagnostics.
@@ -128,7 +129,7 @@ Targeting: with no `--tab`, `send-terminal` hits the agent's **active** terminal
 - `tab read-only <tab-id> true|false` - read-only / plan mode, the access switch. The agent in that tab cannot modify files.
 - `tab model <tab-id> <model>` and `tab effort <tab-id> <level>` - per-tab overrides. Agent-wide defaults still live on `update-agent --model` / `--effort`; reach for the tab form when only this conversation should differ.
 - `tab enter-to-send <tab-id> true|false` - the send key for that tab.
-- `tab save-to-history <tab-id> true|false`, `tab star`/`unstar`, `tab read`/`unread`, `tab rename`, `tab move`, `tab close`.
+- `tab save-to-history <tab-id> true|false`, `tab star`/`unstar`, `tab read`/`unread`, `tab rename`, `tab move`, `tab close`, `tab reopen -a <agent-id>` (restore the last closed tab).
 
 Two conventions that are easy to get wrong:
 

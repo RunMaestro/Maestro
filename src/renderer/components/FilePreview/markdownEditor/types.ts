@@ -1,4 +1,21 @@
 import type { Theme } from '../../../constants/themes';
+import type { CompletionActivation, CodeEditorShortcutId } from './codeEditing';
+
+/** The main selection, with its 1-based line span. */
+export interface EditorSelectionDetails {
+	text: string;
+	from: number;
+	to: number;
+	startLine: number;
+	endLine: number;
+}
+
+/** One replacement, in document offsets of the text BEFORE any of them apply. */
+export interface EditorTextChange {
+	from: number;
+	to: number;
+	insert: string;
+}
 
 /**
  * Imperative handle exposed by `MarkdownEditor`.
@@ -48,6 +65,15 @@ export interface MarkdownEditorHandle {
 	/** Replace [from, to) with `text` and leave the cursor after the insert. */
 	replaceRange(from: number, to: number, text: string): void;
 	/**
+	 * Apply several replacements as ONE transaction, so a single undo reverts
+	 * them all (find-and-replace "Replace All"). Offsets refer to the document
+	 * before the change; they must not overlap. The selection maps through the
+	 * change instead of jumping, and focus does not move.
+	 */
+	replaceRanges(changes: EditorTextChange[]): void;
+	/** The main selection, or null when there is only a caret. */
+	getSelectionDetails(): EditorSelectionDetails | null;
+	/**
 	 * Replace the painted search-match decorations. `currentIndex` paints the
 	 * one "active" match in a stronger color. Pass an empty array to clear.
 	 */
@@ -95,5 +121,19 @@ export interface MarkdownEditorProps {
 	fontFamily?: string;
 	/** File Editor size setting in px, before the pane's own zoom. */
 	baseFontPx?: number;
+	/**
+	 * Code-editor mode: completion, auto-closing brackets, quotes and tags,
+	 * multiple cursors, and the editing chords (see `./codeEditing`). Off by
+	 * default so prose editors (Auto Run, Memory, prompts) are unchanged.
+	 */
+	codeEditing?: boolean;
+	/** When the completion popup opens, in code-editor mode. Defaults to `typing`. */
+	completion?: CompletionActivation;
+	/** Vim keybindings, in code-editor mode. Loaded on first use. */
+	vimMode?: boolean;
+	/** Reports a tracked editing chord (keyboard mastery). */
+	onShortcutUsed?: (id: CodeEditorShortcutId) => void;
+	/** Right-click on selected text (see `BuildEditorExtensionsOptions`). */
+	onSelectionContextMenu?: (selection: EditorSelectionDetails, event: MouseEvent) => void;
 	className?: string;
 }

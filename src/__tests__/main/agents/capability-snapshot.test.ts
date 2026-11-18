@@ -63,6 +63,105 @@ describe('CapabilitySnapshotManager', () => {
 		expect(manager.get('claude-code')?.path).toBe('/usr/local/bin/claude');
 	});
 
+	it('withholds persisted Grok catalogs on both hosts while preserving binary readiness', () => {
+		const stale = {
+			status: 'ok' as const,
+			version: '1.0.70',
+			models: ['stale-account-model'],
+			contextWindow: 500_000,
+			lastProbedAt: 1000,
+		};
+		const seeded = makeFakeStore({
+			grok: { ...stale, path: '/synthetic/local/grok' },
+			'grok:remote-1': { ...stale, path: '/synthetic/remote/grok', remoteId: 'remote-1' },
+			codex: { ...stale, path: '/synthetic/local/codex', models: ['configured-codex'] },
+		});
+		manager.init(seeded, broadcast);
+
+		for (const remoteId of [undefined, 'remote-1']) {
+			const key = remoteId ? `grok:${remoteId}` : 'grok';
+			expect(manager.get('grok', remoteId)).toEqual({
+				...seeded.raw.snapshots[key],
+				models: undefined,
+				contextWindow: undefined,
+			});
+			expect(manager.getAll()[key]).toEqual(manager.get('grok', remoteId));
+		}
+		expect(manager.get('codex')).toEqual(seeded.raw.snapshots.codex);
+		expect(seeded.set).not.toHaveBeenCalled();
+		expect(broadcast).not.toHaveBeenCalled();
+	});
+
+	it.each([undefined, 'remote-1'])(
+		'withholds Grok model metadata from persisted and broadcast updates on host %s',
+		(remoteId) => {
+			manager.init(store, broadcast);
+			const key = remoteId ? `grok:${remoteId}` : 'grok';
+			const result = manager.markOk(
+				'grok',
+				{
+					path: '/synthetic/custom grok/grok',
+					version: '1.0.70',
+					models: ['selected-account-model'],
+					contextWindow: 200_000,
+				},
+				remoteId
+			);
+			expect(result).toMatchObject({
+				status: 'ok',
+				path: '/synthetic/custom grok/grok',
+				version: '1.0.70',
+				remoteId,
+			});
+			expect(result.models).toBeUndefined();
+			expect(result.contextWindow).toBeUndefined();
+			expect(store.raw.snapshots[key]).toEqual(result);
+			expect(broadcast).toHaveBeenLastCalledWith({
+				key,
+				agentId: 'grok',
+				remoteId,
+				snapshot: result,
+			});
+
+			manager.markProbing('grok', remoteId);
+			manager.markAuthRequired('grok', 'Synthetic authentication failure', remoteId);
+			manager.markFailed('grok', 'ssh: connect to host synthetic: Connection refused', remoteId);
+			manager.markOk('grok', {}, remoteId);
+			for (const [payload] of broadcast.mock.calls as [SnapshotUpdatedPayload][]) {
+				expect(payload.snapshot?.models).toBeUndefined();
+				expect(payload.snapshot?.contextWindow).toBeUndefined();
+				expect(payload.snapshot?.path).toBe('/synthetic/custom grok/grok');
+				expect(payload.remoteId).toBe(remoteId);
+			}
+			expect(manager.get('grok', remoteId)?.status).toBe('ok');
+			expect(store.raw.snapshots[key]).toEqual(manager.get('grok', remoteId));
+			expect(manager.get('grok', remoteId ? undefined : 'remote-1')).toBeUndefined();
+			expect(captureMessageMock).not.toHaveBeenCalled();
+		}
+	);
+
+	it('does not revive Grok catalogs after replacing a binary and rehydrating', () => {
+		manager.init(store, broadcast);
+		for (const version of ['1.0.70', '1.0.71']) {
+			manager.markOk('grok', {
+				path: `/synthetic/${version}/grok`,
+				version,
+				models: [`account-${version}`],
+				contextWindow: 500_000,
+			});
+		}
+		const reloaded = new CapabilitySnapshotManager();
+		reloaded.init(store);
+		expect(reloaded.get('grok')).toMatchObject({
+			status: 'ok',
+			version: '1.0.71',
+			path: '/synthetic/1.0.71/grok',
+		});
+		expect(reloaded.get('grok')?.models).toBeUndefined();
+		expect(reloaded.get('grok')?.contextWindow).toBeUndefined();
+		expect(reloaded.getAll()).toEqual(store.raw.snapshots);
+	});
+
 	it('markOk persists and broadcasts an update', () => {
 		manager.init(store, broadcast);
 		const result = manager.markOk('claude-code', { path: '/usr/bin/claude' });

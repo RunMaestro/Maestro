@@ -617,4 +617,63 @@ describe('LiveOverlayPanel', () => {
 			expect(setLiveOverlayOpen).toHaveBeenCalledWith(false);
 		});
 	});
+
+	// -----------------------------------------------------------------------
+	// Custom Port IME Handling
+	// -----------------------------------------------------------------------
+	describe('custom port input IME composition', () => {
+		it('ignores Enter when IME is actively composing (isComposing: true)', () => {
+			const restartWebServer = vi.fn();
+			render(
+				<LiveOverlayPanel
+					{...createDefaultProps({
+						webInterfaceUseCustomPort: true,
+						webInterfaceCustomPort: 9090,
+						isLiveMode: true,
+						restartWebServer,
+					})}
+				/>
+			);
+
+			const portInput = screen.getByPlaceholderText('8080');
+			fireEvent.keyDown(portInput, { key: 'Enter', isComposing: true });
+			expect(restartWebServer).not.toHaveBeenCalled();
+		});
+
+		it('ignores Enter when IME confirms candidate via Safari keyCode 229', () => {
+			const restartWebServer = vi.fn();
+			render(
+				<LiveOverlayPanel
+					{...createDefaultProps({
+						webInterfaceUseCustomPort: true,
+						webInterfaceCustomPort: 9090,
+						isLiveMode: true,
+						restartWebServer,
+					})}
+				/>
+			);
+
+			const portInput = screen.getByPlaceholderText('8080');
+			fireEvent.keyDown(portInput, { key: 'Enter', keyCode: 229 });
+			expect(restartWebServer).not.toHaveBeenCalled();
+		});
+
+		it('applies port and restarts server on normal Enter when not composing', () => {
+			const restartWebServer = vi.fn();
+			render(
+				<LiveOverlayPanel
+					{...createDefaultProps({
+						webInterfaceUseCustomPort: true,
+						webInterfaceCustomPort: 9090,
+						isLiveMode: true,
+						restartWebServer,
+					})}
+				/>
+			);
+
+			const portInput = screen.getByPlaceholderText('8080');
+			fireEvent.keyDown(portInput, { key: 'Enter' });
+			expect(restartWebServer).toHaveBeenCalledOnce();
+		});
+	});
 });

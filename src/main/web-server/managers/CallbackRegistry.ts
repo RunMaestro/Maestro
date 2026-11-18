@@ -1,4 +1,6 @@
+import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
+import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
 /**
  * CallbackRegistry - Manages callback functions for the WebServer
  *
@@ -32,7 +34,9 @@ import type {
 	StarTabCallback,
 	SnoozeCommandCallback,
 	ClosedTabCommandCallback,
+	MessagePinCommandCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	ReorderTabCallback,
@@ -48,6 +52,9 @@ import type {
 	OpenBrowserTabOptions,
 	OpenBrowserTabResult,
 	CloseBrowserTabCallback,
+	PickBrowserElementCallback,
+	PickBrowserElementRequest,
+	PickBrowserElementResult,
 	OpenTerminalTabCallback,
 	OpenTerminalTabConfig,
 	OpenTerminalTabResult,
@@ -132,6 +139,8 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	ArchiveGroupChatCallback,
+	AddGroupChatParticipantCallback,
+	AddGroupChatParticipantResult,
 	SendGroupChatMessageCallback,
 	SteerGroupChatCallback,
 	SteerGroupChatRequest,
@@ -144,9 +153,7 @@ import type {
 	TriggerCueSubscriptionCallback,
 	CueSubscriptionInfo,
 	CueActivityEntry,
-	GetUsageDashboardCallback,
 	GetAchievementsCallback,
-	UsageDashboardData,
 	AchievementData,
 	GenerateDirectorNotesSynopsisCallback,
 	DirectorNotesSynopsisResult,
@@ -176,11 +183,19 @@ import type {
 	ClosedTabCommandRequest,
 	ClosedTabCommandResult,
 } from '../../../shared/closedTabCommands';
+import type {
+	MessagePinCommandRequest,
+	MessagePinCommandResult,
+} from '../../../shared/messagePinCommands';
 import type { TabContextOpRequest, TabContextOpResult } from '../../../shared/tabContextOps';
 import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../../../shared/autoRunSteeringCommands';
+import type {
+	DiffReviewCommandRequest,
+	DiffReviewCommandResult,
+} from '../../../shared/diffReviewCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
 import type {
 	ThroughputGaugeCommandRequest,
@@ -221,7 +236,9 @@ export interface WebServerCallbacks {
 	starTab: StarTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
 	closedTabCommand: ClosedTabCommandCallback | null;
+	messagePinCommand: MessagePinCommandCallback | null;
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
+	diffReviewCommand: DiffReviewCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
 	throughputGaugeCommand: ThroughputGaugeCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
@@ -235,6 +252,7 @@ export interface WebServerCallbacks {
 	refreshFileTree: RefreshFileTreeCallback | null;
 	openBrowserTab: OpenBrowserTabCallback | null;
 	closeBrowserTab: CloseBrowserTabCallback | null;
+	pickBrowserElement: PickBrowserElementCallback | null;
 	openTerminalTab: OpenTerminalTabCallback | null;
 	writeTerminalTab: WriteTerminalTabCallback | null;
 	listTerminalTabs: ListTerminalTabsCallback | null;
@@ -291,6 +309,7 @@ export interface WebServerCallbacks {
 	getGroupChatState: GetGroupChatStateCallback | null;
 	stopGroupChat: StopGroupChatCallback | null;
 	archiveGroupChat: ArchiveGroupChatCallback | null;
+	addGroupChatParticipant: AddGroupChatParticipantCallback | null;
 	sendGroupChatMessage: SendGroupChatMessageCallback | null;
 	steerGroupChat: SteerGroupChatCallback | null;
 	tabContextOp: TabContextOpCallback | null;
@@ -299,7 +318,6 @@ export interface WebServerCallbacks {
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
 	triggerCueSubscription: TriggerCueSubscriptionCallback | null;
-	getUsageDashboard: GetUsageDashboardCallback | null;
 	getAchievements: GetAchievementsCallback | null;
 	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
 	notifyToast: NotifyToastCallback | null;
@@ -338,7 +356,9 @@ export class CallbackRegistry {
 		starTab: null,
 		snoozeCommand: null,
 		closedTabCommand: null,
+		messagePinCommand: null,
 		autoRunSteeringCommand: null,
+		diffReviewCommand: null,
 		windowCommand: null,
 		throughputGaugeCommand: null,
 		reorderTab: null,
@@ -350,6 +370,7 @@ export class CallbackRegistry {
 		refreshFileTree: null,
 		openBrowserTab: null,
 		closeBrowserTab: null,
+		pickBrowserElement: null,
 		openTerminalTab: null,
 		writeTerminalTab: null,
 		listTerminalTabs: null,
@@ -406,6 +427,7 @@ export class CallbackRegistry {
 		getGroupChatState: null,
 		stopGroupChat: null,
 		archiveGroupChat: null,
+		addGroupChatParticipant: null,
 		sendGroupChatMessage: null,
 		steerGroupChat: null,
 		tabContextOp: null,
@@ -414,7 +436,6 @@ export class CallbackRegistry {
 		toggleCueSubscription: null,
 		getCueActivity: null,
 		triggerCueSubscription: null,
-		getUsageDashboard: null,
 		getAchievements: null,
 		generateDirectorNotesSynopsis: null,
 		notifyToast: null,
@@ -468,7 +489,8 @@ export class CallbackRegistry {
 		images?: string[],
 		background?: boolean,
 		mentionRouting?: MentionRouting,
-		requireDeliveryReceipt?: boolean
+		requireDeliveryReceipt?: boolean,
+		pianolaDispatchId?: string
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
@@ -480,7 +502,11 @@ export class CallbackRegistry {
 			images,
 			background,
 			mentionRouting,
-			...(requireDeliveryReceipt ? [true] : [])
+			...((pianolaDispatchId
+				? [requireDeliveryReceipt, pianolaDispatchId]
+				: requireDeliveryReceipt
+					? [true]
+					: []) as [boolean?, string?])
 		);
 	}
 
@@ -558,11 +584,25 @@ export class CallbackRegistry {
 		return this.callbacks.closedTabCommand(request);
 	}
 
+	async messagePinCommand(request: MessagePinCommandRequest): Promise<MessagePinCommandResult> {
+		if (!this.callbacks.messagePinCommand) {
+			return { success: false, error: 'Message pins are not configured' };
+		}
+		return this.callbacks.messagePinCommand(request);
+	}
+
 	async autoRunSteeringCommand(request: SteeringCommandRequest): Promise<SteeringCommandResult> {
 		if (!this.callbacks.autoRunSteeringCommand) {
 			return { success: false, error: 'Auto Run steering is not configured' };
 		}
 		return this.callbacks.autoRunSteeringCommand(request);
+	}
+
+	async diffReviewCommand(request: DiffReviewCommandRequest): Promise<DiffReviewCommandResult> {
+		if (!this.callbacks.diffReviewCommand) {
+			return { success: false, error: 'Diff review is not configured' };
+		}
+		return this.callbacks.diffReviewCommand(request);
 	}
 
 	async windowCommand(request: WindowCommandRequest): Promise<WindowCommandResult> {
@@ -644,6 +684,13 @@ export class CallbackRegistry {
 		return this.callbacks.closeBrowserTab(tabId);
 	}
 
+	async pickBrowserElement(request: PickBrowserElementRequest): Promise<PickBrowserElementResult> {
+		if (!this.callbacks.pickBrowserElement) {
+			return { success: false, error: 'Browser Design Mode not configured', screenshot: false };
+		}
+		return this.callbacks.pickBrowserElement(request);
+	}
+
 	async openTerminalTab(
 		sessionId: string,
 		config: OpenTerminalTabConfig,
@@ -683,10 +730,18 @@ export class CallbackRegistry {
 		prompt: string,
 		background?: boolean,
 		hidden?: boolean,
-		mentionRouting?: MentionRouting
-	): Promise<{ success: boolean; tabId?: string }> {
+		mentionRouting?: MentionRouting,
+		control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
+	): Promise<import('../types').NewAITabWithPromptResult> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
-		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background, hidden, mentionRouting);
+		return this.callbacks.newAITabWithPrompt(
+			sessionId,
+			prompt,
+			background,
+			hidden,
+			mentionRouting,
+			control
+		);
 	}
 
 	async consultAgent(params: ConsultAgentParams): Promise<ConsultAgentResult> {
@@ -710,10 +765,12 @@ export class CallbackRegistry {
 		background?: boolean,
 		held?: boolean,
 		mentionRouting?: MentionRouting,
-		dispatchCallback?: boolean
+		dispatchCallback?: boolean,
+		control?: PianolaQueueControl,
+		turnOverrides?: TurnOverrides
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
-		return this.callbacks.enqueueCommand(
+		const args: Parameters<EnqueueCommandCallback> = [
 			sessionId,
 			command,
 			inputMode,
@@ -722,8 +779,11 @@ export class CallbackRegistry {
 			background,
 			held,
 			mentionRouting,
-			dispatchCallback
-		);
+			dispatchCallback,
+			control,
+		];
+		if (turnOverrides) args.push(turnOverrides);
+		return this.callbacks.enqueueCommand(...args);
 	}
 
 	async listQueue(sessionId?: string): Promise<ListQueueResult> {
@@ -1083,6 +1143,16 @@ export class CallbackRegistry {
 		return this.callbacks.archiveGroupChat(chatId, archived);
 	}
 
+	async addGroupChatParticipant(
+		chatId: string,
+		agentId: string
+	): Promise<AddGroupChatParticipantResult> {
+		if (!this.callbacks.addGroupChatParticipant) {
+			return { success: false, error: 'Group chat not configured' };
+		}
+		return this.callbacks.addGroupChatParticipant(chatId, agentId);
+	}
+
 	async sendGroupChatMessage(chatId: string, message: string): Promise<boolean> {
 		if (!this.callbacks.sendGroupChatMessage) return false;
 		return this.callbacks.sendGroupChatMessage(chatId, message);
@@ -1139,21 +1209,6 @@ export class CallbackRegistry {
 	): Promise<boolean> {
 		if (!this.callbacks.triggerCueSubscription) return false;
 		return this.callbacks.triggerCueSubscription(subscriptionName, prompt, sourceAgentId);
-	}
-
-	async getUsageDashboard(
-		timeRange: 'day' | 'week' | 'month' | 'all'
-	): Promise<UsageDashboardData> {
-		if (!this.callbacks.getUsageDashboard) {
-			return {
-				totalTokensIn: 0,
-				totalTokensOut: 0,
-				totalCost: 0,
-				sessionBreakdown: [],
-				dailyUsage: [],
-			};
-		}
-		return this.callbacks.getUsageDashboard(timeRange);
 	}
 
 	async getAchievements(): Promise<AchievementData[]> {
@@ -1343,8 +1398,16 @@ export class CallbackRegistry {
 		this.callbacks.closedTabCommand = callback;
 	}
 
+	setMessagePinCommandCallback(callback: MessagePinCommandCallback): void {
+		this.callbacks.messagePinCommand = callback;
+	}
+
 	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
 		this.callbacks.autoRunSteeringCommand = callback;
+	}
+
+	setDiffReviewCommandCallback(callback: DiffReviewCommandCallback): void {
+		this.callbacks.diffReviewCommand = callback;
 	}
 
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
@@ -1385,6 +1448,10 @@ export class CallbackRegistry {
 
 	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
 		this.callbacks.closeBrowserTab = callback;
+	}
+
+	setPickBrowserElementCallback(callback: PickBrowserElementCallback): void {
+		this.callbacks.pickBrowserElement = callback;
 	}
 
 	setWriteTerminalTabCallback(callback: WriteTerminalTabCallback): void {
@@ -1611,6 +1678,10 @@ export class CallbackRegistry {
 		this.callbacks.archiveGroupChat = callback;
 	}
 
+	setAddGroupChatParticipantCallback(callback: AddGroupChatParticipantCallback): void {
+		this.callbacks.addGroupChatParticipant = callback;
+	}
+
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
 		this.callbacks.sendGroupChatMessage = callback;
 	}
@@ -1641,10 +1712,6 @@ export class CallbackRegistry {
 
 	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
 		this.callbacks.triggerCueSubscription = callback;
-	}
-
-	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
-		this.callbacks.getUsageDashboard = callback;
 	}
 
 	setGetAchievementsCallback(callback: GetAchievementsCallback): void {

@@ -20,16 +20,16 @@
  * and the file-preview actions sheet cannot drift on tap-target heights.
  */
 
-import { memo, useState } from 'react';
+import { memo, useState, type ReactNode } from 'react';
 import { Brain, Eye, Gauge, History, Sparkles } from 'lucide-react';
 import type { Theme, ThinkingMode } from '../../../types';
 import { getPermissionModeLabel } from '../../../../shared/agentMetadata';
 import { THINKING_MODES } from '../../../../shared/types';
 import { PhoneBottomSheet } from '../../ui/PhoneBottomSheet';
 import {
-	PHONE_SHEET_ROW_HEIGHT,
 	PhoneSheetOptionRow,
 	PhoneSheetSection,
+	PhoneSheetSwitchRow,
 } from '../../ui/PhoneSheetRows';
 
 export type PermissionMode = 'full' | 'standard' | 'readonly';
@@ -56,6 +56,12 @@ interface ComposerOptionsSheetProps {
 	currentEffort?: string;
 	availableEfforts: string[];
 	onEffortChange?: (effort: string) => void;
+	/**
+	 * Surface-specific rows, drawn after the built-in sections with the
+	 * PhoneSheetRows primitives (the phone counterpart of the toolbar's
+	 * `toolbarExtras`).
+	 */
+	extraRows?: ReactNode;
 }
 
 const THINKING_LABELS: Record<ThinkingMode, string> = {
@@ -84,6 +90,7 @@ export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 	currentEffort,
 	availableEfforts,
 	onEffortChange,
+	extraRows,
 }: ComposerOptionsSheetProps) {
 	const [expanded, setExpanded] = useState<string | null>(null);
 	const toggle = (key: string) => setExpanded((prev) => (prev === key ? null : key));
@@ -112,31 +119,15 @@ export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 			testId="composer-options-sheet"
 		>
 			{onToggleTabSaveToHistory && (
-				<button
-					type="button"
-					onClick={onToggleTabSaveToHistory}
-					className="flex w-full items-center gap-3 px-4 text-left border-b"
-					style={{
-						minHeight: PHONE_SHEET_ROW_HEIGHT,
-						borderColor: theme.colors.border,
-						color: theme.colors.textMain,
-					}}
-					role="switch"
-					aria-checked={tabSaveToHistory}
-					data-testid="composer-options-history"
-				>
-					<History
-						className="w-4 h-4 shrink-0"
-						style={{ color: tabSaveToHistory ? theme.colors.accent : theme.colors.textDim }}
-					/>
-					<span className="text-sm flex-1 min-w-0">History</span>
-					<span
-						className="text-xs font-mono"
-						style={{ color: tabSaveToHistory ? theme.colors.accent : theme.colors.textDim }}
-					>
-						{tabSaveToHistory ? 'On' : 'Off'}
-					</span>
-				</button>
+				<PhoneSheetSwitchRow
+					icon={History}
+					label="History"
+					checked={tabSaveToHistory}
+					onToggle={onToggleTabSaveToHistory}
+					accent={theme.colors.accent}
+					theme={theme}
+					testId="composer-options-history"
+				/>
 			)}
 
 			{hasReadOnlyCapability && (
@@ -234,6 +225,8 @@ export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 					))}
 				</PhoneSheetSection>
 			)}
+
+			{extraRows}
 		</PhoneBottomSheet>
 	);
 });

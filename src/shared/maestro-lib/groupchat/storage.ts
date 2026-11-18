@@ -19,7 +19,11 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import type { GroupChatHistoryEntry, ModeratorConfig } from '../../group-chat-types';
+import {
+	groupChatModeratorRefusal,
+	type GroupChatHistoryEntry,
+	type ModeratorConfig,
+} from '../../group-chat-types';
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 import { logger } from '../host';
 import { hasCapability } from '../providers/capabilities';
@@ -138,11 +142,11 @@ export function createGroupChatStore(options: GroupChatStoreOptions) {
 		beforeWrite();
 
 		// Validate agent ID supports group chat moderation
-		if (!hasCapability(moderatorAgentId, 'supportsGroupChatModeration')) {
-			throw new Error(
-				`Invalid moderator agent ID: ${moderatorAgentId}. Agent does not support group chat moderation.`
-			);
-		}
+		const refusal = groupChatModeratorRefusal(
+			moderatorAgentId,
+			hasCapability(moderatorAgentId, 'supportsGroupChatModeration')
+		);
+		if (refusal) throw new Error(refusal);
 
 		// Sanitize the chat name
 		const sanitizedName = sanitizeChatName(name);

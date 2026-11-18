@@ -13,10 +13,15 @@
  * the per-account agent-count badges on the quota panels, and anything added
  * later cannot disagree about the attribution.
  *
+ * Grok profiles group selected state roots only; its model, auth-file and
+ * managed credentials need a host-owned observation before billing identity
+ * can be attributed. Known independent credential overrides are left unattributed.
+ *
  * Pure and dependency-light on purpose: it is imported from the renderer today
  * and is safe to import from main.
  */
 
+import { isBlankEnvValue } from './agentEnvironment';
 import { getAgentDisplayName } from './agentMetadata';
 import { classifyCredentialKind, type CredentialKind } from './providerAuthIdentity';
 
@@ -68,6 +73,9 @@ export const PROVIDER_PROFILE_CONFIGS: Readonly<Record<string, ProviderProfileCo
 		defaultSubdir: '.copilot',
 		sessionsSubdir: 'session-state',
 	},
+	// Grok's state/transcript root. GROK_AUTH_PATH and GROK_AUTH can select
+	// credentials independently; this directory alone is not a billing identity.
+	grok: { envVar: 'GROK_HOME', defaultSubdir: '.grok', sessionsSubdir: 'sessions' },
 };
 
 /**
@@ -152,11 +160,12 @@ export function getAccountKeyHelpers(toolType: string): QuotaAccountKeyHelpers |
 }
 
 /**
- * Resolve which account directory an agent runs against.
+ * Resolve which account directory an agent runs against. For Grok this is the
+ * selected state/transcript root, independent of where credentials come from.
  *
- * `env` must already be the effective environment for the agent, lowest layer
- * first (agent-level `customEnvVars` merged under the session's own), matching
- * what the spawner assembles.
+ * `env` must already be the effective environment for the agent, matching the
+ * spawner: the session's own vars replace the provider set, with global/host
+ * layers underneath. A blank value cancels the lower layers, as at spawn.
  *
  * Returns `null` when the provider has no account concept, or when the env var
  * is unset and `homeDir` has not resolved yet - in that second case there is no
@@ -172,7 +181,7 @@ export function resolveAgentAccountKey(
 	if (!config) return null;
 	const helpers = getAccountKeyHelpers(toolType)!;
 	const configured = env?.[config.envVar];
-	if (typeof configured === 'string' && configured.length > 0) {
+	if (typeof configured === 'string' && !isBlankEnvValue(configured)) {
 		return helpers.normalizeKey(configured);
 	}
 	return homeDir ? helpers.normalizeKey(`${homeDir}/${config.defaultSubdir}`) : null;
@@ -262,9 +271,10 @@ export interface AgentBillingCredential {
 }
 
 /**
- * The API key, gateway, or cloud provider an agent bills, or null when it runs
- * on its config dir's login. A set credential outranks the login, so an agent
- * holding one draws nothing from that account's plan quota.
+ * The API key, gateway, or cloud provider known to replace an account's login,
+ * or null when no such attribution is established. Null does not prove OAuth
+ * or quota participation. A non-null result is used to exclude the agent from
+ * the config directory's plan quota, so a mere login-recovery hint is not enough.
  *
  * Only providers with an account split are considered: for the rest there is
  * no login bucket for a credential to be pulled out of.
@@ -274,6 +284,11 @@ export function resolveAgentBillingCredential(
 	env: Record<string, string>
 ): AgentBillingCredential | null {
 	if (!getProviderProfileConfig(toolType)) return null;
+	// Grok's environment classifier gates login recovery, not billing. A fallback
+	// key may be inactive, inline bundles are opaque, and gateway/deployment hints
+	// do not identify the selected model's billed account. None proves quota
+	// exclusion without a host-owned observation of the active credential.
+	if (toolType === 'grok') return null;
 	const classification = classifyCredentialKind(toolType, env);
 	if (classification.kind === 'oauth') return null;
 	if (classification.kind === 'api-key') {
@@ -304,7 +319,8 @@ export interface AgentProfileRemote {
 /**
  * The profile an agent belongs to, from the env its process receives (see
  * {@link effectiveAgentCustomEnvVars}). Null when the agent needs a config-dir
- * account and $HOME has not resolved yet.
+ * account and $HOME has not resolved yet, or when its credential configuration
+ * cannot establish an account identity.
  *
  * An SSH-remote agent's config dir is a path on THAT host and holds the host's
  * own login, so it is a separate profile per host (`banaco @ pedtome`), never
@@ -318,6 +334,18 @@ export function resolveAgentProfile(
 	homeDir: string | undefined,
 	remote?: AgentProfileRemote | null
 ): ResolvedAgentProfile | null {
+	if (toolType === 'grok') {
+		const classification = classifyCredentialKind(toolType, env);
+		// Neither a generic inline label nor an inactive fallback key identifies
+		// an account. An independent auth file can be login-capable without belonging
+		// to GROK_HOME. Withhold these profiles instead of merging unrelated accounts
+		// or hosts, and never inspect, hash or display inline credential contents.
+		if (classification.kind !== 'oauth' || classification.envVarName === 'GROK_AUTH_PATH') {
+			return null;
+		}
+		// The remaining profile is only a selected state root on its owning host.
+		// Model/file/managed auth is still unqualified; this is not billing evidence.
+	}
 	const credential = resolveAgentBillingCredential(toolType, env);
 	if (credential) {
 		return {

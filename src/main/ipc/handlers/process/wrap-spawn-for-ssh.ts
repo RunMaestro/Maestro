@@ -20,6 +20,7 @@ import {
 import { MaestroSettings } from '../persistence';
 import type { ClaudeSpawnContext } from './resolve-claude-spawn-context';
 import type { SpawnProcessConfig } from './spawn-types';
+import type { ProcessConfig } from '../../../process-manager/types';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -34,6 +35,10 @@ export interface SshSpawnWrapInput {
 	customEnvVarsToPass: Record<string, string> | undefined;
 	effectiveCustomEnvVars: Record<string, string> | undefined;
 	effectivePrompt: string | undefined;
+	/** Private host-planned artifact; the remote script is its only materializer. */
+	promptArtifact?: ProcessConfig['promptArtifact'];
+	/** Snapshot selected by the file plan, so async preparation cannot change hosts. */
+	resolvedRemote?: SshRemoteConfig;
 	globalShellEnvVars: Record<string, string>;
 	useShell: boolean;
 	shellToUse: string | undefined;
@@ -65,7 +70,7 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 		claudeContext,
 		commandToSpawn: initialCommand,
 		argsToSpawn: initialArgs,
-		headlessArgs,
+		headlessArgs: inputHeadlessArgs,
 		customEnvVarsToPass: initialCustomEnvVars,
 		effectiveCustomEnvVars,
 		effectivePrompt,
@@ -76,6 +81,8 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 		codexTransport,
 	} = input;
 
+	const promptArtifact = input.promptArtifact ? { ...input.promptArtifact } : undefined;
+	const headlessArgs = [...inputHeadlessArgs];
 	let commandToSpawn = initialCommand;
 	let argsToSpawn = initialArgs;
 	let useShell = initialUseShell;
@@ -121,9 +128,11 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 
 		// Resolve effective SSH remote configuration
 		const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
-		const sshResult = getSshRemoteConfig(sshStoreAdapter, {
-			sessionSshConfig: config.sessionSshRemoteConfig,
-		});
+		const sshResult = input.resolvedRemote
+			? { config: input.resolvedRemote }
+			: getSshRemoteConfig(sshStoreAdapter, {
+					sessionSshConfig: config.sessionSshRemoteConfig,
+				});
 
 		if (sshResult.config) {
 			// SSH remote is configured - use stdin-based execution
@@ -181,14 +190,14 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 			// - File-based agents (Codex, OpenCode): Images are decoded from base64 into
 			//   temp files on the remote host via the SSH script, then passed as CLI args
 			//   (e.g., -i /tmp/image.png for Codex, -f /tmp/image.png for OpenCode).
-			const hasImages = config.images && config.images.length > 0;
+			const hasImages = !promptArtifact && config.images && config.images.length > 0;
 			// Prepend the interactive flags ahead of the headless arg list when
 			// running maestro-p on the remote (it forwards the interactive flags
 			// to the TUI and strips the headless ones). No-op for the API path.
 			let sshArgs = remoteInteractive
 				? [...remoteInteractive.prependArgs, ...headlessArgs]
 				: headlessArgs;
-			let stdinInput: string | undefined = effectivePrompt;
+			let stdinInput: string | undefined = promptArtifact ? undefined : effectivePrompt;
 
 			if (hasImages && effectivePrompt && agent?.capabilities?.supportsStreamJsonInput) {
 				// Stream-json agent (Claude Code): embed images in the stdin message
@@ -223,6 +232,18 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 				[QUERY_SOURCE_ENV_VAR]: config.querySource ?? DEFAULT_QUERY_SOURCE,
 			};
 
+			if (
+				promptArtifact &&
+				wantsCodexAppServer({
+					toolType: config.toolType,
+					codexTransport,
+					querySource: config.querySource,
+				})
+			) {
+				throw new Error(
+					'Prompt-file delivery is unavailable on this transport. Nothing was started.'
+				);
+			}
 			const sshCommand = await buildSshCommandWithStdin(sshResult.config, {
 				command: remoteCommand,
 				args: sshArgs,
@@ -230,6 +251,7 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 				env: mergedSshEnvVars,
 				// prompt is not passed as CLI arg - it goes via stdinInput
 				stdinInput,
+				promptArtifact,
 				// File-based image agents (Codex, OpenCode): pass images for remote temp file creation
 				// Also needed for resume-with-prompt-embed (still creates temp files, just no -i args)
 				images:
@@ -248,6 +270,10 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 						: undefined,
 				// Signal resume mode for prompt embedding instead of -i CLI args
 				imageResumeMode: isResumeWithImages ? 'prompt-embed' : undefined,
+			}).catch((error: unknown) => {
+				if (promptArtifact)
+					throw new Error('Could not prepare private prompt-file delivery. Nothing was started.');
+				throw error;
 			});
 
 			commandToSpawn = sshCommand.command;

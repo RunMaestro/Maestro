@@ -17,6 +17,11 @@ import {
 	type ClosedTabCommandRequest,
 	type ClosedTabCommandResult,
 } from '../../../shared/closedTabCommands';
+import {
+	normalizeMessagePinCommandResult,
+	type MessagePinCommandRequest,
+	type MessagePinCommandResult,
+} from '../../../shared/messagePinCommands';
 
 /**
  * How long main waits for the renderer to answer a `tab reopen`. Past the
@@ -308,6 +313,21 @@ export function registerTabCallbacks(
 			fallback: { success: false, error: 'Maestro did not answer the closed-tab request' },
 			parse: normalizeClosedTabCommandResult,
 			timeoutMs: request.action === 'reopen' ? CLOSED_TAB_REOPEN_REPLY_MS : undefined,
+			args: [request],
+		});
+	});
+
+	// `maestro-cli tab pins`. Answered by the agent's owning window: the pins
+	// live on its tab, and the pin button and panel change them there too.
+	server.setMessagePinCommandCallback(async (request: MessagePinCommandRequest) => {
+		const targetWindow = resolveSessionWindow(request.sessionId);
+		if (!targetWindow || !isWebContentsAvailable(targetWindow)) {
+			logger.warn('No owning window is available for messagePinCommand', 'WebServer');
+			return { success: false, error: 'Maestro window is not available' };
+		}
+		return requestFromRenderer<MessagePinCommandResult>(targetWindow, 'remote:messagePinCommand', {
+			fallback: { success: false, error: 'Maestro did not answer the pin request' },
+			parse: normalizeMessagePinCommandResult,
 			args: [request],
 		});
 	});

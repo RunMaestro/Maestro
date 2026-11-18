@@ -4,6 +4,8 @@ import type { TranslationDirection } from './types';
 export const TRANSLATION_PROVIDER_VERSIONS = {
 	'claude-code': ['2.1.296', '2.1.302'],
 	codex: ['0.162.1', '0.163.0'],
+	/** Schema pinned at public source 2bdd1d6. */
+	grok: ['1.0.70'],
 } as const;
 
 export const TRANSLATION_DIRECTIONS: readonly TranslationDirection[] = [
@@ -19,6 +21,36 @@ export const TRANSLATION_DIRECTIONS: readonly TranslationDirection[] = [
 		destination: 'claude-code',
 		sourceVersions: TRANSLATION_PROVIDER_VERSIONS.codex,
 		destinationVersions: TRANSLATION_PROVIDER_VERSIONS['claude-code'],
+		verification: 'unverified',
+	},
+	// Grok: declared with the host seams that read a Grok source and
+	// bind a Grok destination to GROK_HOME. Fixture-tested only, never certified.
+	{
+		source: 'grok',
+		destination: 'claude-code',
+		sourceVersions: TRANSLATION_PROVIDER_VERSIONS.grok,
+		destinationVersions: TRANSLATION_PROVIDER_VERSIONS['claude-code'],
+		verification: 'unverified',
+	},
+	{
+		source: 'grok',
+		destination: 'codex',
+		sourceVersions: TRANSLATION_PROVIDER_VERSIONS.grok,
+		destinationVersions: TRANSLATION_PROVIDER_VERSIONS.codex,
+		verification: 'unverified',
+	},
+	{
+		source: 'claude-code',
+		destination: 'grok',
+		sourceVersions: TRANSLATION_PROVIDER_VERSIONS['claude-code'],
+		destinationVersions: TRANSLATION_PROVIDER_VERSIONS.grok,
+		verification: 'unverified',
+	},
+	{
+		source: 'codex',
+		destination: 'grok',
+		sourceVersions: TRANSLATION_PROVIDER_VERSIONS.codex,
+		destinationVersions: TRANSLATION_PROVIDER_VERSIONS.grok,
 		verification: 'unverified',
 	},
 ];

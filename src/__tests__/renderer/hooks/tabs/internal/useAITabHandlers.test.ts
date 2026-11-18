@@ -7,6 +7,7 @@ import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { getLiveDraft, setLiveDraft } from '../../../../../renderer/utils/liveDraftStore';
 import {
 	clearDesktopAiTabSelections,
+	startDesktopAiTabSelectionSync,
 	consumeDesktopAiTabSelection,
 } from '../../../../../renderer/utils/desktopTabSelectionSync';
 import { createMockAITab, getSession, resetTabHandlerStores, setupSession } from './testUtils';
@@ -28,14 +29,18 @@ vi.mock('../../../../../renderer/contexts/InlineWizardContext', () => ({
 vi.mock('../../../../../renderer/utils/runtimeContext', () => runtimeMocks);
 
 describe('useAITabHandlers', () => {
+	let stopSelectionSync: () => void;
+
 	beforeEach(() => {
 		resetTabHandlerStores();
 		clearDesktopAiTabSelections();
+		stopSelectionSync = startDesktopAiTabSelectionSync();
 		inlineWizardMocks.endWizard.mockClear();
 		runtimeMocks.isWebDesktop.mockReturnValue(false);
 	});
 
 	afterEach(() => {
+		stopSelectionSync();
 		cleanup();
 	});
 

@@ -1,3 +1,4 @@
+import { newEmptyTranscript } from '../../shared/sessionTranscript';
 // Shared helpers for the per-session `unifiedTabOrder` array.
 //
 // Lives in its own file (rather than tabHelpers or terminalTabHelpers.ts)
@@ -66,7 +67,7 @@ export function createBlankAiTab(): AITab {
 		agentSessionId: null,
 		name: null,
 		starred: false,
-		logs: [],
+		logs: newEmptyTranscript(),
 		inputValue: '',
 		stagedImages: [],
 		createdAt: Date.now(),

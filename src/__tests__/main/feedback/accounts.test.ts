@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const files = new Set<string>();
+/** Every path the login check probed, POSIX-separated. */
+const accessed: string[] = [];
 const settings = new Map<string, unknown>();
 let sessions: unknown[] = [];
 let agentConfigs: Record<string, Record<string, unknown>> = {};
@@ -18,6 +20,7 @@ vi.mock('fs/promises', () => ({
 	default: {
 		// path.join speaks backslashes on Windows; the fixtures are POSIX.
 		access: vi.fn(async (p: string) => {
+			accessed.push(p.replace(/\\/g, '/'));
 			if (!files.has(p.replace(/\\/g, '/'))) {
 				throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 			}
@@ -48,6 +51,11 @@ vi.mock('../../../main/utils/logger', () => ({
 }));
 
 import { listFeedbackAccounts, rememberFeedbackAccount } from '../../../main/feedback/accounts';
+import {
+	describeFeedbackAccountStatus,
+	isFeedbackAccountUsable,
+} from '../../../shared/feedbackAccounts';
+import { getAgentDefinition } from '../../../shared/maestro-lib/providers/definitions';
 
 const detector = (installed: string[]) =>
 	({
@@ -133,5 +141,204 @@ describe('listFeedbackAccounts', () => {
 		rememberFeedbackAccount('claude-code::/nowhere');
 		const stale = await listFeedbackAccounts(() => detector(['claude-code', 'codex']));
 		expect(stale.lastWorkingKey).toBeNull();
+	});
+});
+
+describe('listFeedbackAccounts for Grok', () => {
+	const definition = getAgentDefinition('grok')!;
+	const enforced = definition.readOnlyCliEnforced;
+	const GROK_UNKNOWN = 'Grok sign-in is not checked; the first turn shows whether it works';
+
+	beforeEach(() => {
+		files.clear();
+		accessed.length = 0;
+		settings.clear();
+		sessions = [];
+		agentConfigs = {};
+	});
+	afterEach(() => {
+		definition.readOnlyCliEnforced = enforced;
+	});
+
+	it('lists two selected Grok roots and the default, unknown with a reason, and reads no credential', async () => {
+		sessions = [
+			{
+				id: 'a',
+				name: 'A',
+				toolType: 'grok',
+				cwd: '/p',
+				customEnvVars: { GROK_HOME: '/home/me/.grok-work' },
+			},
+			{
+				id: 'b',
+				name: 'B',
+				toolType: 'grok',
+				cwd: '/p',
+				customEnvVars: { GROK_HOME: '/home/me/.grok-work' },
+			},
+			{
+				id: 'c',
+				name: 'C',
+				toolType: 'grok',
+				cwd: '/p',
+				customEnvVars: { GROK_HOME: '/home/me/.grok-play' },
+			},
+			{
+				id: 'd',
+				name: 'Inline',
+				toolType: 'grok',
+				cwd: '/p',
+				customEnvVars: { GROK_AUTH: '{"t":"secret-body"}' },
+			},
+		];
+		// An auth file that exists must not turn into a signed-in claim.
+		files.add('/home/me/.grok-work/auth.json');
+		files.add('/home/me/.grok/auth.json');
+
+		const { accounts } = await listFeedbackAccounts(() => detector(['grok']));
+		const grok = accounts.filter((a) => a.toolType === 'grok');
+		expect(grok.map((a) => [a.key, a.source, a.agentNames])).toEqual([
+			['grok::/home/me/.grok-work', 'agent', ['A', 'B']],
+			['grok::/home/me/.grok-play', 'agent', ['C']],
+			['grok::/home/me/.grok', 'provider-default', []],
+		]);
+		for (const account of grok) {
+			expect(account.status).toBe('unknown');
+			expect(account.statusDetail).toBe(GROK_UNKNOWN);
+			expect(isFeedbackAccountUsable(account)).toBe(true);
+		}
+		expect(accessed.filter((p) => p.includes('.grok'))).toEqual([]);
+		expect(JSON.stringify(accounts)).not.toContain('secret-body');
+	});
+
+	it('marks Grok not installed when the provider is missing, and never relabels it as another provider', async () => {
+		sessions = [
+			{
+				id: 'g',
+				name: 'Grok agent',
+				toolType: 'grok',
+				cwd: '/p',
+				customEnvVars: { GROK_HOME: '/home/me/.grok-x' },
+			},
+		];
+		files.add('/home/me/.codex/auth.json');
+		rememberFeedbackAccount('grok::/home/me/.grok-x');
+
+		const { accounts, lastWorkingKey } = await listFeedbackAccounts(() => detector(['codex']));
+		const grokAgent = accounts.find((a) => a.agentNames.includes('Grok agent'))!;
+		expect(grokAgent).toMatchObject({
+			toolType: 'grok',
+			key: 'grok::/home/me/.grok-x',
+			status: 'not-installed',
+		});
+		expect(isFeedbackAccountUsable(grokAgent)).toBe(false);
+		// The remembered key is still named, but the automatic pick is the installed Codex login.
+		expect(lastWorkingKey).toBe('grok::/home/me/.grok-x');
+		expect(accounts[0]).toMatchObject({ toolType: 'codex', status: 'ready' });
+		expect(
+			accounts.filter((a) => a.key.startsWith('grok::')).every((a) => a.toolType === 'grok')
+		).toBe(true);
+	});
+
+	it("checks a Grok agent's own binary instead of detection", async () => {
+		sessions = [
+			{
+				id: 'x',
+				name: 'Custom',
+				toolType: 'grok',
+				cwd: '/p',
+				customPath: '/opt/grok',
+				customEnvVars: { GROK_HOME: '/home/me/.grok-x' },
+			},
+			{
+				id: 'y',
+				name: 'Gone',
+				toolType: 'grok',
+				cwd: '/p',
+				customPath: '/opt/missing-grok',
+				customEnvVars: { GROK_HOME: '/home/me/.grok-y' },
+			},
+		];
+		files.add('/opt/grok');
+
+		const { accounts } = await listFeedbackAccounts(() => detector([]));
+		expect(accounts.find((a) => a.agentNames.includes('Custom'))).toMatchObject({
+			customPath: '/opt/grok',
+			status: 'unknown',
+			statusDetail: GROK_UNKNOWN,
+		});
+		expect(accounts.find((a) => a.agentNames.includes('Gone'))).toMatchObject({
+			customPath: '/opt/missing-grok',
+			status: 'not-installed',
+		});
+		expect(accounts.find((a) => a.key === 'grok::/home/me/.grok')!.status).toBe('not-installed');
+	});
+
+	it('keeps an SSH Grok account on its host identity, apart from the local default', async () => {
+		sessions = [
+			{
+				id: 'r',
+				name: 'Remote',
+				toolType: 'grok',
+				cwd: '/p',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'h1', workingDirOverride: '/srv' },
+			},
+		];
+		const { accounts } = await listFeedbackAccounts(() => detector(['grok']));
+		expect(accounts.find((a) => a.agentNames.includes('Remote'))).toMatchObject({
+			key: 'grok::/home/me/.grok@ssh:h1',
+			toolType: 'grok',
+			sshRemoteId: 'h1',
+			remoteCwd: '/srv',
+			status: 'unknown',
+		});
+		expect(accounts.find((a) => a.key === 'grok::/home/me/.grok')).toMatchObject({
+			sshRemoteId: null,
+			status: 'unknown',
+			statusDetail: GROK_UNKNOWN,
+		});
+	});
+
+	it('tries a remembered Grok choice first', async () => {
+		files.add('/home/me/.claude.json');
+		rememberFeedbackAccount('grok::/home/me/.grok');
+		const { accounts, lastWorkingKey } = await listFeedbackAccounts(() =>
+			detector(['claude-code', 'grok'])
+		);
+		expect(lastWorkingKey).toBe('grok::/home/me/.grok');
+		expect(accounts[0]).toMatchObject({ key: 'grok::/home/me/.grok', status: 'unknown' });
+	});
+
+	it('makes every Grok account unsupported when the read-only route is not qualified, remembered or remote', async () => {
+		definition.readOnlyCliEnforced = false;
+		sessions = [
+			{
+				id: 'r',
+				name: 'Remote',
+				toolType: 'grok',
+				cwd: '/p',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'h1' },
+			},
+		];
+		files.add('/home/me/.codex/auth.json');
+		rememberFeedbackAccount('grok::/home/me/.grok');
+
+		const { accounts, lastWorkingKey } = await listFeedbackAccounts(() =>
+			detector(['grok', 'codex'])
+		);
+		const grok = accounts.filter((a) => a.toolType === 'grok');
+		expect(grok).toHaveLength(2);
+		for (const account of grok) {
+			expect(account.status).toBe('unsupported');
+			expect(account.statusDetail).toBe(
+				'Grok CLI has no CLI-enforced read-only mode, so the feedback interview does not run on it'
+			);
+			expect(isFeedbackAccountUsable(account)).toBe(false);
+			expect(describeFeedbackAccountStatus(account)).toBe('not supported');
+		}
+		expect(lastWorkingKey).toBe('grok::/home/me/.grok');
+		// The pick moves to a provider the user can see is a different one; Grok is never relabeled.
+		expect(accounts[0]).toMatchObject({ toolType: 'codex', status: 'ready' });
+		expect(accounts.slice(-2).map((a) => a.toolType)).toEqual(['grok', 'grok']);
 	});
 });

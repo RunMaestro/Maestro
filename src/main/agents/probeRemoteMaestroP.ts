@@ -23,8 +23,11 @@
  * probe or config modal ran first (the cold-cache first-spawn case).
  */
 
-import { buildSshCommand, RemoteCommandOptions } from '../utils/ssh-command-builder';
-import { execFileNoThrow } from '../utils/execFile';
+import {
+	buildSshCommand,
+	execSshCommand,
+	RemoteCommandOptions,
+} from '../utils/ssh-command-builder';
 import { stripAnsi } from '../utils/stripAnsi';
 import { logger } from '../utils/logger';
 import type { SshRemoteConfig } from '../../shared/types';
@@ -60,7 +63,7 @@ export async function probeRemoteMaestroP(sshRemote: SshRemoteConfig): Promise<b
 
 	try {
 		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
+		const resultPromise = execSshCommand(sshRemote, sshCommand);
 		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
 			(_, reject) => {
 				setTimeout(

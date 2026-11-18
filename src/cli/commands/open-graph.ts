@@ -15,8 +15,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
-import { getSessionById } from '../services/storage';
-import { resolveOwningAgent } from '../utils/owning-agent';
+import { resolveTargetAgent } from '../utils/owning-agent';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface OpenGraphOptions {
@@ -182,35 +181,20 @@ function resolveScope(paths: string[], options: OpenGraphOptions): ResolvedScope
 }
 
 /**
- * Pick the agent whose working directory owns the scope, or honor `--agent`.
- *
- * Same rule as `open-file`: an explicit flag is the user asserting which agent
- * they mean, otherwise the longest cwd-prefix match wins and ties go to the
- * most recently active.
+ * Pick the agent for the graph: `--agent`, else the agent that owns this shell,
+ * else the agent whose workspace holds the scope. Same rule as `open-file`.
  */
 function resolveSessionId(anchorPath: string, options: OpenGraphOptions): string {
-	if (options.agent) {
-		const session = getSessionById(options.agent);
-		if (!session) {
-			console.error(`Error: Agent not found: ${options.agent}`);
-			process.exit(1);
-		}
-		return session.id;
-	}
-
-	const owned = resolveOwningAgent(anchorPath);
-	if (!owned) {
-		console.error(
-			`Error: ${anchorPath} is not inside any agent's working directory. Pick an agent with --agent <id>.`
-		);
+	const resolved = resolveTargetAgent(anchorPath, options.agent);
+	if ('error' in resolved) {
+		console.error(`Error: ${resolved.error}`);
 		process.exit(1);
 	}
-
-	if (owned.others.length > 0) {
-		const others = owned.others.map((s) => s.name);
+	if (resolved.others.length > 0) {
+		const others = resolved.others.map((s) => s.name);
 		console.error(
-			`Note: ${owned.others.length + 1} agents own this path; graphed in ${owned.agent.name}. Other candidates: ${others.join(', ')}. Use --agent to override.`
+			`Note: ${resolved.others.length + 1} agents own this path; graphed in ${resolved.agent.name}. Other candidates: ${others.join(', ')}. Use --agent to override.`
 		);
 	}
-	return owned.agent.id;
+	return resolved.agent.id;
 }

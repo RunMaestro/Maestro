@@ -289,7 +289,7 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 ### panels (tier 1)
 
-`{ id, title, entry, placement, size?, hostSettings? }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). The `settings` placement renders in its own searchable Settings card, never inside plugin management, consent, uninstall, or grant/revoke UI. From Host API 1.23.0, `hostSettings: ["media"]` adds a host-owned navigation link without granting access to host settings. See [the settings-card contract](../plugin-settings-cards.md).
+`{ id, title, entry, placement, size?, hostSettings? }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). The `settings` placement renders in its own searchable Settings card, never inside plugin management, consent, uninstall, or grant/revoke UI. From Host API 1.23.0, `hostSettings: ["media"]` adds a host-owned navigation link without granting access to host settings. See [the settings-card contract](PLUGIN-SETTINGS-CARDS.md).
 
 `size` is `'default' | 'full'` and applies to `modal` panels only (defaults to `default`). As an explicit exception to the general contribution policy above (where a bad item is dropped), an unknown `size` reports a manifest error but keeps the panel, falling back to `default` rather than dropping the contribution. `default` renders the fixed modal chrome; `full` renders an edge-to-edge overlay inset a few pixels from the window edge, for mission-control-style surfaces you summon rather than browse. Requires `minHostApi: '1.16.0'`.
 
@@ -383,7 +383,7 @@ host controls the frame, icon mapping, tooltip, and non-suppressible plugin prov
 
 ### tools (tier 1)
 
-`{ id, name, description, inputSchema? }` - a named operation an agent can call. Register a handler with `maestro.tools.register(localId, fn)`; the host invokes it via a brokered request/response and returns the handler's result. The handler receives `(args, context)`, where `context.callerAgentId` is a host-verified agent ID or `null`. Never use `args.agentId` as caller identity. When the `plugins` feature is on, registered tools are also exposed to a spawned agent's model over MCP: the host points local Claude and Codex runs at `maestro-cli mcp serve`, and model-initiated calls are risk-gated except the exact declared `sh.maestro.relay/send` reply tool with a valid host-issued caller proof and live trusted Relay identity. See [Relay host contract](../relay-host-contract.md).
+`{ id, name, description, inputSchema? }` - a named operation an agent can call. Register a handler with `maestro.tools.register(localId, fn)`; the host invokes it via a brokered request/response and returns the handler's result. The handler receives `(args, context)`, where `context.callerAgentId` is a host-verified agent ID or `null`. Never use `args.agentId` as caller identity. When the `plugins` feature is on, registered tools are also exposed to a spawned agent's model over MCP: the host points local Claude and Codex runs at `maestro-cli mcp serve`, and model-initiated calls are risk-gated except the exact declared `sh.maestro.relay/send` reply tool with a valid host-issued caller proof and live trusted Relay identity. See [Relay host contract](RELAY-HOST-CONTRACT.md).
 
 ### keybindings (tier 1)
 
@@ -800,15 +800,22 @@ adding an adapter; it defines opaque jobs, ceilings, cancellation, errors and pr
 
 Host API 1.23.0 promotes existing `placement: "settings"` panels into independent
 Settings destinations. Use stable local IDs; request `ui:panel` and obtain trust
-and consent. See [plugin-settings-cards.md](../plugin-settings-cards.md) for search,
+and consent. See [PLUGIN-SETTINGS-CARDS.md](PLUGIN-SETTINGS-CARDS.md) for search,
 deep links, own-panel navigation and the closed `hostSettings: ["media"]` link.
 
 ## Host-mediated plugin services
 
 Host API 1.24.0 adds code-tier `provides`/`requires`, `services:provide` and
 `services:call` with exact scopes, and `maestro.services`. Read the concrete
-[service SDK/manifest contract](../plugin-services.md) before implementing a
+[service SDK/manifest contract](PLUGIN-SERVICES.md) before implementing a
 provider/consumer. The first example is
 [Local transcription](../../examples/plugins/transcription-service/README.md),
 using only opaque, call-bound delegated media handles. Reuse the host broker;
 do not add a peer IPC bridge, raw media transfer or generic settings writer.
+
+## Generic platform primitives
+
+Host API 1.29 adds verified invocations, bounded TLS bytes, native secret
+references, confirmed opaque records and authenticated durable Cue admission.
+The plugin owns protocol and permission decisions. Read
+[PLUGIN-PRIMITIVES.md](PLUGIN-PRIMITIVES.md) before using them.

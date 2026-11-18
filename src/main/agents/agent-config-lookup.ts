@@ -27,3 +27,21 @@ export function createAgentConfigLookup(
 
 	return { getAgentConfigForAgent, getCustomEnvVarsForAgent };
 }
+
+/**
+ * Every provider's custom binary path from the agent configs store, the map
+ * `AgentDetector.setCustomPaths` takes. Startup, the Settings setter, and an
+ * outside write (maestro-cli `settings agent set`) all apply it through here.
+ */
+export function customPathsFromAgentConfigs(
+	configs: Record<string, unknown>
+): Record<string, string> {
+	const customPaths: Record<string, string> = {};
+	for (const [agentId, config] of Object.entries(configs)) {
+		if (config && typeof config === 'object' && 'customPath' in config) {
+			const customPath = (config as { customPath?: unknown }).customPath;
+			if (typeof customPath === 'string' && customPath) customPaths[agentId] = customPath;
+		}
+	}
+	return customPaths;
+}

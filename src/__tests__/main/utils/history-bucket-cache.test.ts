@@ -43,9 +43,11 @@ import {
 	multiFileFingerprint,
 } from '../../../main/utils/history-bucket-cache';
 import {
+	aggregateToGraphData,
 	buildBucketAggregate,
 	LOCAL_HOST_AGG_KEY,
 } from '../../../main/utils/history-bucket-builder';
+import { LOCAL_HOST_AGG_KEY as SHARED_LOCAL_HOST_AGG_KEY } from '../../../shared/history';
 
 function makeEntry(overrides: Partial<HistoryEntry>): HistoryEntry {
 	return {
@@ -474,5 +476,36 @@ describe('HistoryBucketCache', () => {
 		const b = getHistoryBucketCache();
 		expect(a).toBe(b);
 		setHistoryBucketCacheForTest(null);
+	});
+});
+
+describe('aggregateToGraphData', () => {
+	it('copies the aggregate into the graph data a renderer draws, with the bucket count and cache flag', () => {
+		const agg = buildBucketAggregate(
+			[
+				makeEntry({ id: 'u', type: 'USER', timestamp: 1000, hostname: 'laptop' }),
+				makeEntry({ id: 'a', type: 'AUTO', timestamp: 2000 }),
+			],
+			4
+		);
+		const graph = aggregateToGraphData(agg, 4, true);
+		expect(graph).toEqual({
+			buckets: agg.buckets,
+			bucketCount: 4,
+			earliestTimestamp: agg.earliestTimestamp,
+			latestTimestamp: agg.latestTimestamp,
+			totalCount: 2,
+			autoCount: 1,
+			userCount: 1,
+			cueCount: agg.cueCount,
+			agentCount: agg.agentCount,
+			hostCounts: { laptop: 1, [LOCAL_HOST_AGG_KEY]: 1 },
+			cached: true,
+		});
+		expect(aggregateToGraphData(agg, 4, false).cached).toBe(false);
+	});
+
+	it('re-exports the shared LOCAL_HOST_AGG_KEY', () => {
+		expect(LOCAL_HOST_AGG_KEY).toBe(SHARED_LOCAL_HOST_AGG_KEY);
 	});
 });

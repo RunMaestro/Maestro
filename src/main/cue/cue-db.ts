@@ -13,6 +13,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { createHash } from 'node:crypto';
 import { canonicalJson } from '../../shared/canonicalJson';
+import { fileTimestampSlug } from '../../shared/formatters';
 import { captureException } from '../utils/sentry';
 import { resolveUserDataDir } from '../../shared/userDataDir';
 import { buildCuePersistedOutput } from './cue-text-utils';
@@ -60,7 +61,7 @@ export interface CueEventRecord {
 	 * maestro-p this is the distinguishing signal (3 = idle timeout, 4 =
 	 * ready_timeout, 5 = first_byte_timeout, 6 = prompt_truncated, 7 =
 	 * workspace_untrusted, 8 = terminal API error such as an unknown model, 9 =
-	 * resumed session has no transcript on this host, 1 =
+	 * resumed session has no transcript on this host, 10 = add_dir_untrusted, 11 = startup_dialog_blocked, 1 =
 	 * tui_exited, 2 = limit, 0 = success). NULL when the run never produced an exit code (spawn error,
 	 * still running) or for status flips that aren't run completions.
 	 */
@@ -361,15 +362,37 @@ export function initCueDb(
 
 	if (onLog) logFn = onLog;
 
-	const dbPath = dbPathOverride ?? path.join(resolveUserDataDir(), 'cue.db');
+	const dbPath = resolveCueDbPath(dbPathOverride);
 	const dir = path.dirname(dbPath);
 	if (!fs.existsSync(dir)) {
 		fs.mkdirSync(dir, { recursive: true });
 	}
 
-	db = new Database(dbPath);
-	registerCueReceiptReader(db);
+	const opened = new Database(dbPath);
+	try {
+		registerCueReceiptReader(opened);
+		prepareCueDb(opened, dbPath);
+	} catch (err) {
+		// A half-prepared handle must not stay live. Left in place, `isCueDbReady()`
+		// reports true and every later caller (telemetry flush, GitHub poller) hits
+		// the same broken file, and a retry of initCueDb() returns early on it.
+		try {
+			opened.close();
+		} catch {
+			// The handle is already unusable; the original error is the one to report.
+		}
+		throw err;
+	}
+	db = opened;
 
+	log('info', `Cue database initialized at ${dbPath}`);
+}
+
+function resolveCueDbPath(dbPathOverride?: string): string {
+	return dbPathOverride ?? path.join(resolveUserDataDir(), 'cue.db');
+}
+
+function prepareCueDb(database: Database.Database, dbPath: string): void {
 	// Tighten permissions so only the current user can read/write the DB. On
 	// NTFS/Windows POSIX modes are largely ignored (near no-op); on network
 	// mounts without POSIX support chmod can throw EPERM/ENOTSUP. Either way
@@ -383,17 +406,17 @@ export function initCueDb(
 		);
 	}
 
-	db.pragma('journal_mode = WAL');
+	database.pragma('journal_mode = WAL');
 
 	// Create tables
-	db.prepare(CREATE_CUE_EVENTS_SQL).run();
-	migrateCueEventsAdditiveColumns(db);
+	database.prepare(CREATE_CUE_EVENTS_SQL).run();
+	migrateCueEventsAdditiveColumns(database);
 	for (const sql of CREATE_CUE_EVENTS_INDEXES_SQL.split(';').filter((s) => s.trim())) {
-		db.prepare(sql).run();
+		database.prepare(sql).run();
 	}
-	db.prepare(CREATE_CUE_EVENTS_UNEXCERPTED_INDEX_SQL).run();
+	database.prepare(CREATE_CUE_EVENTS_UNEXCERPTED_INDEX_SQL).run();
 	try {
-		backfillOutputExcerpts(db);
+		backfillOutputExcerpts(database);
 	} catch (err) {
 		// A repair that cannot run must not take the journal down with it. It
 		// runs on every launch, so the next one tries again.
@@ -403,28 +426,33 @@ export function initCueDb(
 		);
 		captureException(err, { operation: 'cue:backfillOutputExcerpts' });
 	}
-	db.prepare(CREATE_CUE_HEARTBEAT_SQL).run();
-	db.prepare(CREATE_CUE_GITHUB_SEEN_SQL).run();
-	migrateCueGitHubSeenAdditiveColumns(db);
-	db.prepare(CREATE_CUE_GITHUB_SEEN_INDEX_SQL).run();
-	db.prepare(
-		CREATE_CUE_EVENT_QUEUE_SQL.replace(/cue_event_queue/g, cuePhysicalTable(db, 'cue_event_queue'))
-	).run();
-	migrateCueEventQueueAdditiveColumns(db);
+	database.prepare(CREATE_CUE_HEARTBEAT_SQL).run();
+	database.prepare(CREATE_CUE_GITHUB_SEEN_SQL).run();
+	migrateCueGitHubSeenAdditiveColumns(database);
+	database.prepare(CREATE_CUE_GITHUB_SEEN_INDEX_SQL).run();
+	database
+		.prepare(
+			CREATE_CUE_EVENT_QUEUE_SQL.replace(
+				/cue_event_queue/g,
+				cuePhysicalTable(database, 'cue_event_queue')
+			)
+		)
+		.run();
+	migrateCueEventQueueAdditiveColumns(database);
 	for (const sql of CREATE_CUE_EVENT_QUEUE_INDEXES_SQL.split(';').filter((s) => s.trim())) {
-		db.prepare(
-			sql.replace('ON cue_event_queue(', `ON ${cuePhysicalTable(db, 'cue_event_queue')}(`)
-		).run();
+		database
+			.prepare(
+				sql.replace('ON cue_event_queue(', `ON ${cuePhysicalTable(database, 'cue_event_queue')}(`)
+			)
+			.run();
 	}
-	db.prepare(CREATE_CUE_FAN_IN_STATE_SQL).run();
-	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_SQL).run();
-	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL).run();
-	db.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_SQL).run();
-	db.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_INDEX_SQL).run();
-	db.prepare(CREATE_CUE_WEBHOOK_DELIVERIES_SQL).run();
-	db.prepare(CREATE_CUE_WEBHOOK_DELIVERIES_INDEX_SQL).run();
-
-	log('info', `Cue database initialized at ${dbPath}`);
+	database.prepare(CREATE_CUE_FAN_IN_STATE_SQL).run();
+	database.prepare(CREATE_CUE_TELEMETRY_OUTBOX_SQL).run();
+	database.prepare(CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL).run();
+	database.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_SQL).run();
+	database.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_INDEX_SQL).run();
+	database.prepare(CREATE_CUE_WEBHOOK_DELIVERIES_SQL).run();
+	database.prepare(CREATE_CUE_WEBHOOK_DELIVERIES_INDEX_SQL).run();
 }
 
 /**
@@ -443,6 +471,97 @@ export function closeCueDb(): void {
  */
 export function isCueDbReady(): boolean {
 	return db !== null;
+}
+
+/**
+ * Move a damaged Cue database aside so the next initCueDb() starts clean.
+ *
+ * Closes the live handle first, then renames `cue.db` and its `-wal` / `-shm`
+ * companions to `cue.corrupt-<stamp>.db[-wal|-shm]`. The WAL has to move with
+ * the main file: SQLite would replay a stale WAL into the new database. Renamed,
+ * not deleted, so the event history is still on disk for anyone who wants it.
+ * The stamp keeps a second incident from overwriting the first.
+ *
+ * What a fresh database loses is recoverable by design: event history and the
+ * heartbeat are bookkeeping, the GitHub pollers re-seed an empty seen table
+ * without firing, and the telemetry outbox and persisted queue are best-effort.
+ *
+ * @returns the quarantined main-file path, or null when it could not be moved
+ *   or a `-wal` / `-shm` beside it could be neither moved nor removed (the main
+ *   file is then put back, because a fresh database would replay that WAL)
+ */
+export function quarantineCorruptCueDb(dbPathOverride?: string): string | null {
+	if (db) {
+		try {
+			db.close();
+		} catch {
+			// A corrupt handle may refuse to close cleanly; it is discarded either way.
+		}
+		db = null;
+	}
+
+	const dbPath = resolveCueDbPath(dbPathOverride);
+	const quarantinedPath = unusedQuarantinePath(dbPath);
+
+	try {
+		fs.renameSync(dbPath, quarantinedPath);
+	} catch (err) {
+		log('error', `Could not move corrupt database ${dbPath} aside: ${errorMessage(err)}`);
+		return null;
+	}
+
+	for (const suffix of CUE_DB_SIDECARS) {
+		const sidecar = `${dbPath}${suffix}`;
+		try {
+			fs.renameSync(sidecar, `${quarantinedPath}${suffix}`);
+			continue;
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+		}
+		// A WAL left beside a fresh cue.db would be replayed into it, so remove it.
+		try {
+			fs.rmSync(sidecar, { force: true });
+		} catch {
+			// Checked below.
+		}
+		if (fs.existsSync(sidecar)) {
+			// Starting fresh beside this file would defeat the quarantine. Put the
+			// main file back so the next boot meets the same, honest failure.
+			log('error', `Could not clear ${sidecar}; leaving the corrupt database in place`);
+			try {
+				fs.renameSync(quarantinedPath, dbPath);
+			} catch (err) {
+				log('error', `Could not restore ${dbPath}: ${errorMessage(err)}`);
+			}
+			return null;
+		}
+	}
+
+	log('warn', `Corrupt database moved to ${path.basename(quarantinedPath)}; starting a new one`);
+	return quarantinedPath;
+}
+
+const CUE_DB_SIDECARS = ['-wal', '-shm'] as const;
+
+function errorMessage(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * `cue.corrupt-<stamp>.db`, plus `-2`, `-3`, ... when that name (or one of its
+ * sidecars) is already taken. The stamp has whole-second resolution, so two
+ * quarantines in one second would otherwise rename onto the earlier copy.
+ */
+function unusedQuarantinePath(dbPath: string): string {
+	const dir = path.dirname(dbPath);
+	const stem = `${path.basename(dbPath, '.db')}.corrupt-${fileTimestampSlug()}`;
+	const taken = (candidate: string) =>
+		fs.existsSync(candidate) || CUE_DB_SIDECARS.some((s) => fs.existsSync(`${candidate}${s}`));
+	let candidate = path.join(dir, `${stem}.db`);
+	for (let n = 2; taken(candidate); n++) {
+		candidate = path.join(dir, `${stem}-${n}.db`);
+	}
+	return candidate;
 }
 
 // ============================================================================
@@ -1331,6 +1450,91 @@ function recentCueEventsIn(
 	) as CueEventRow[];
 
 	return rows.map(rowToCueEventRecord);
+}
+
+/**
+ * The columns the Usage Dashboard's Cue aggregation reads, one row per run.
+ * Leaves out the payload and the stored output (`full_output` can be tens of
+ * KB per run), which the aggregation never looks at.
+ */
+export type CueStatsEventRecord = Pick<
+	CueEventRecord,
+	| 'id'
+	| 'type'
+	| 'sessionId'
+	| 'subscriptionName'
+	| 'status'
+	| 'createdAt'
+	| 'completedAt'
+	| 'pipelineId'
+	| 'chainRootId'
+	| 'parentEventId'
+	| 'providerSessionId'
+	| 'streamUsageJson'
+> & {
+	/**
+	 * True when the engine-start sweep settled this run (`failOrphanedRunningEvents`):
+	 * its `completed_at` is when the NEXT engine started, so its "duration" is
+	 * downtime, not run time.
+	 */
+	orphaned?: boolean;
+};
+
+/**
+ * Cue runs created at or after `since`, newest first, with only the columns
+ * the stats aggregation needs. `orphanedMessage` is the error message the
+ * engine-start sweep stamps on runs it settled; rows carrying it come back
+ * flagged `orphaned`.
+ *
+ * Returns `[]` when the DB is not initialized, like {@link getRecentCueEvents}.
+ */
+export function getCueEventsForStats(
+	since: number,
+	orphanedMessage: string
+): CueStatsEventRecord[] {
+	if (!db) return [];
+	const rows = db
+		.prepare(
+			`SELECT id, type, session_id, subscription_name, status, created_at, completed_at,
+			        pipeline_id, chain_root_id, parent_event_id, provider_session_id,
+			        stream_usage_json,
+			        CASE WHEN error_message = ? THEN 1 ELSE 0 END AS orphaned
+			 FROM cue_events
+			 WHERE created_at >= ?
+			 ORDER BY created_at DESC`
+		)
+		.all(orphanedMessage, since) as Array<
+		Pick<
+			CueEventRow,
+			| 'id'
+			| 'type'
+			| 'session_id'
+			| 'subscription_name'
+			| 'status'
+			| 'created_at'
+			| 'completed_at'
+			| 'pipeline_id'
+			| 'chain_root_id'
+			| 'parent_event_id'
+			| 'provider_session_id'
+			| 'stream_usage_json'
+		> & { orphaned: number }
+	>;
+	return rows.map((row) => ({
+		id: row.id,
+		type: row.type,
+		sessionId: row.session_id,
+		subscriptionName: row.subscription_name,
+		status: row.status,
+		createdAt: row.created_at,
+		completedAt: row.completed_at,
+		pipelineId: row.pipeline_id,
+		chainRootId: row.chain_root_id,
+		parentEventId: row.parent_event_id,
+		providerSessionId: row.provider_session_id,
+		streamUsageJson: row.stream_usage_json,
+		orphaned: row.orphaned === 1,
+	}));
 }
 
 /**

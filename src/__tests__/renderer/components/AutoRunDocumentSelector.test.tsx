@@ -1236,6 +1236,32 @@ describe('AutoRunDocumentSelector', () => {
 			expect(folderRow('inner')).toHaveTextContent('0% (2)');
 		});
 
+		it('sizes every badge to the longest label so they line up', () => {
+			render(
+				<AutoRunDocumentSelector
+					{...defaultProps}
+					documents={docs}
+					documentTree={tree}
+					documentTaskCounts={taskCounts}
+				/>
+			);
+			openDropdown();
+			// Expansion persists across mounts, so an earlier test may have left
+			// phase-1 open already; only toggle it when it is collapsed.
+			if (!screen.queryByText('inner')) fireEvent.click(screen.getByText('phase-1'));
+
+			// Each badge carries an invisible copy of the longest label (7 characters,
+			// e.g. "50% (4)") that sets its width, the short "0% (2)" badge included.
+			const sizers = Array.from(document.querySelectorAll('[data-badge-sizer]'));
+			expect(sizers).toHaveLength(4);
+			for (const sizer of sizers) {
+				expect(sizer.textContent).toBe('50% (4)');
+				expect(sizer).toHaveAttribute('aria-hidden', 'true');
+				expect(sizer.parentElement).toHaveTextContent(/^\d+% \(\d+\)50% \(4\)$/);
+			}
+			expect(folderRow('inner')).toHaveTextContent('0% (2)');
+		});
+
 		it('omits the badge for a folder whose documents have no tasks', () => {
 			render(
 				<AutoRunDocumentSelector

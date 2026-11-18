@@ -85,3 +85,85 @@ describe('resolveSynopsisProvider', () => {
 		expect(result).toMatchObject({ error: expect.stringContaining('"codex" is not available') });
 	});
 });
+
+// Grok as a Director's Notes synopsis provider. Auto-selection
+// reaches it only when nothing ahead of it in the preference is installed, an
+// explicit Grok pick runs on Grok alone, and an unavailable Grok pick is
+// refused without detection or a provider from the preference list.
+describe('Grok synopsis provider', () => {
+	it('is a synopsis provider, ranked behind every other installed one', () => {
+		expect(pickFirstAvailableProvider(['grok'])).toBe('grok');
+		expect(pickFirstAvailableProvider(['grok', 'opencode'])).toBe('opencode');
+		expect(pickFirstAvailableProvider(['grok', 'claude-code'])).toBe('claude-code');
+	});
+
+	it('sends an explicit Grok pick only when auto-selection is off', () => {
+		expect(synopsisProviderChoice({ provider: 'grok' })).toBe('auto');
+		expect(synopsisProviderChoice({ provider: 'grok', autoSelectProvider: false })).toBe('grok');
+	});
+
+	it('auto-selects Grok when it is the only installed synopsis provider', async () => {
+		const detector = detectorWith([
+			{ id: 'claude-code', available: false },
+			{ id: 'codex', available: false },
+			{ id: 'terminal', available: true },
+			{ id: 'grok', available: true },
+		]);
+
+		expect(await resolveSynopsisProvider('auto', detector)).toEqual({
+			provider: 'grok',
+			auto: true,
+		});
+		expect(detector.getAgent).not.toHaveBeenCalled();
+	});
+
+	it('names Grok in the install hint when no synopsis provider is installed', async () => {
+		const result = await resolveSynopsisProvider(
+			'auto',
+			detectorWith([{ id: 'grok', available: false }])
+		);
+
+		expect(result).toMatchObject({ error: expect.stringContaining('grok') });
+		expect(result).not.toHaveProperty('provider');
+	});
+
+	it('runs an explicit Grok pick on Grok while a preferred provider is installed', async () => {
+		const detector = detectorWith([
+			{ id: 'claude-code', available: true },
+			{ id: 'codex', available: true },
+			{ id: 'grok', available: true },
+		]);
+
+		expect(await resolveSynopsisProvider('grok', detector)).toEqual({
+			provider: 'grok',
+			auto: false,
+		});
+		expect(detector.getAgent).toHaveBeenCalledExactlyOnceWith('grok');
+		expect(detector.detectAgents).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['installed but unavailable', [{ id: 'grok', available: false }]],
+		['not detected at all', []],
+	])(
+		'refuses an explicit Grok pick that is %s without switching provider',
+		async (_label, grokRows) => {
+			const detector = detectorWith([
+				{ id: 'claude-code', available: true },
+				{ id: 'codex', available: true },
+				...grokRows,
+			]);
+
+			const result = await resolveSynopsisProvider('grok', detector);
+
+			expect(result).not.toHaveProperty('provider');
+			const { error } = result as { error: string };
+			expect(error).toContain('Agent "grok" is not available.');
+			expect(error).toContain('did not run on Grok CLI and used no other provider');
+			expect(error).toContain('Install Grok CLI or set its binary path');
+			expect(error).not.toMatch(/claude|codex/i);
+			expect(detector.getAgent).toHaveBeenCalledExactlyOnceWith('grok');
+			expect(detector.detectAgents).not.toHaveBeenCalled();
+		}
+	);
+});

@@ -69,8 +69,9 @@ const mockSetCrashReportingEnabled = vi.fn();
 
 // Allow per-test overrides of settings
 let mockUseSettingsOverrides: Record<string, any> = {};
-vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
-	useSettings: () => ({
+vi.mock('../../../../../renderer/hooks/settings/useSettings', () => {
+	// Sections read settings through useSettingsValues; both return the same mock.
+	const useSettings = () => ({
 		// Conductor Profile
 		conductorProfile: '',
 		setConductorProfile: mockSetConductorProfile,
@@ -131,8 +132,9 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		crashReportingEnabled: true,
 		setCrashReportingEnabled: mockSetCrashReportingEnabled,
 		...mockUseSettingsOverrides,
-	}),
-}));
+	});
+	return { useSettings, useSettingsValues: useSettings };
+});
 
 const mockShells: ShellInfo[] = [
 	{ id: 'zsh', name: 'Zsh', path: '/bin/zsh', available: true },

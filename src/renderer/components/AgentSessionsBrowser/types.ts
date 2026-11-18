@@ -1,4 +1,5 @@
 import type { Theme, Session, LogEntry, UsageStats } from '../../types';
+import type { ResumeSessionOptions } from '../../hooks/agent/useAgentSessionManagement';
 
 export type SearchMode = 'title' | 'user' | 'assistant' | 'all';
 
@@ -39,8 +40,10 @@ export interface AgentSessionsBrowserProps {
 		messages: LogEntry[],
 		sessionName?: string,
 		starred?: boolean,
-		usageStats?: UsageStats
-	) => void;
+		usageStats?: UsageStats,
+		projectPath?: string,
+		opts?: ResumeSessionOptions
+	) => boolean | void | Promise<boolean | void>;
 	onNewSession: () => void;
 	onUpdateTab?: (
 		agentSessionId: string,

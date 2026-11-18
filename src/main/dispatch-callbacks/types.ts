@@ -70,10 +70,21 @@ export interface DispatchCallbackRegistration {
 	 * arm (and then fire) the callback.
 	 */
 	armFromRecentSpawn?: boolean;
+	/** Held queue admission; unrelated spawns cannot arm this callback. */
+	pendingAdmissionId?: string;
+	/**
+	 * Deliver to this Auto Run instead of waking a tab. Set when the dispatch ran
+	 * inside an Auto Run task (`MAESTRO_CALLER_AUTORUN_ID`): the run waits for the
+	 * result before its next turn, so there is no caller tab to wake and
+	 * `callerTabId` / `callbackPrompt` are unused.
+	 */
+	autoRunId?: string;
 }
 
 export interface DispatchCallbackEntry extends DispatchCallbackRegistration {
 	callbackId: string;
+	/** Immutable queue identity survives release of the pending spawn fence. */
+	admissionId?: string;
 	/**
 	 * Composite process session id the exit listener sees for this tab:
 	 * `{agentId}-ai-{tabId}`. This is the correlation key - completions from

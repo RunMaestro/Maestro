@@ -1,10 +1,47 @@
 import { processCarriageReturns, stripAnsiCodes } from './stringUtils';
+import { MAX_PERSISTED_SESSION_LOGS } from './deferredSessionContent';
 
 /** Maximum tool result kept in Maestro's session cache. */
 export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 4000;
 
+/**
+ * Maximum length of any one string inside a stored tool input. A single input
+ * can carry a whole file (Write `content`, Edit `old_string`/`new_string`), up
+ * to 198 KB each in one 141 MB sessions file that is rewritten on every save.
+ */
+export const MAX_PERSISTED_TOOL_INPUT_STRING_CHARS = 4000;
+
 const truncationNote = (length: number): string =>
 	`\n... [tool output truncated, ${length} chars total]`;
+
+const inputTruncationNote = (length: number): string =>
+	`\n... [tool input truncated, ${length} chars total]`;
+
+/**
+ * Cap every long string inside a tool input, keeping its keys, types and short
+ * fields (file path, command, todo items) so the tool badge still reads it.
+ */
+export function compactToolInput(input: unknown): { input: unknown; truncated: boolean } {
+	if (typeof input === 'string') {
+		if (input.length <= MAX_PERSISTED_TOOL_INPUT_STRING_CHARS) return { input, truncated: false };
+		const note = inputTruncationNote(input.length);
+		return {
+			input: `${input.slice(0, MAX_PERSISTED_TOOL_INPUT_STRING_CHARS - note.length)}${note}`,
+			truncated: true,
+		};
+	}
+	if (!input || typeof input !== 'object') return { input, truncated: false };
+	let truncated = false;
+	const capChild = (value: unknown) => {
+		const result = compactToolInput(value);
+		truncated ||= result.truncated;
+		return result.input;
+	};
+	const next = Array.isArray(input)
+		? input.map(capChild)
+		: Object.fromEntries(Object.entries(input).map(([key, value]) => [key, capChild(value)]));
+	return truncated ? { input: next, truncated } : { input, truncated: false };
+}
 
 /**
  * Keep a tool result small enough for session persistence and browser bootstrap.
@@ -65,34 +102,48 @@ function compactLogs(value: unknown): CompactedValue<unknown> {
 		const toolState = (metadata as Record<string, unknown>).toolState;
 		if (!toolState || typeof toolState !== 'object') return entry;
 		const state = toolState as Record<string, unknown>;
-		if (!Object.prototype.hasOwnProperty.call(state, 'output')) return entry;
-
-		const compacted = compactToolOutput(state.output);
-		if (!compacted.truncated) return entry;
+		const output = Object.prototype.hasOwnProperty.call(state, 'output')
+			? compactToolOutput(state.output)
+			: null;
+		const input = state.input === undefined ? null : compactToolInput(state.input);
+		if (!output?.truncated && !input?.truncated) return entry;
 		count += 1;
 		return {
 			...log,
 			metadata: {
 				...(metadata as Record<string, unknown>),
-				toolState: { ...state, output: compacted.output },
+				toolState: {
+					...state,
+					...(output?.truncated && { output: output.output }),
+					...(input?.truncated && { input: input.input }),
+				},
 			},
 		};
 	});
 	return { value: count > 0 ? logs : value, count };
 }
 
+/**
+ * Compact one AI tab: its tool results and inputs, and its transcript tail to
+ * the newest {@link MAX_PERSISTED_SESSION_LOGS} entries. The renderer trims the
+ * tail before it saves, but rows written by any other path (or before the cap
+ * existed) kept every entry.
+ */
 function compactTab(value: unknown): CompactedValue<unknown> {
 	if (!value || typeof value !== 'object') return { value, count: 0 };
 	const tab = value as Record<string, unknown>;
-	const compacted = compactLogs(tab.logs);
-	return compacted.count > 0
-		? { value: { ...tab, logs: compacted.value }, count: compacted.count }
-		: { value, count: 0 };
+	const overCap = Array.isArray(tab.logs) && tab.logs.length > MAX_PERSISTED_SESSION_LOGS;
+	const tail = overCap ? (tab.logs as unknown[]).slice(-MAX_PERSISTED_SESSION_LOGS) : tab.logs;
+	const compacted = compactLogs(tail);
+	const count = compacted.count + (overCap ? 1 : 0);
+	return count > 0 ? { value: { ...tab, logs: compacted.value }, count } : { value, count: 0 };
 }
 
 /**
- * Compact tool results in live, snoozed, and closed AI tabs without changing the input.
- * The generic return keeps the caller's full session shape intact.
+ * Compact tool results and inputs, and trim each transcript to its stored tail,
+ * in live, snoozed, and closed AI tabs without changing the input. `compacted`
+ * counts the entries and tabs changed. The generic return keeps the caller's
+ * full session shape intact.
  */
 export function compactSessionToolOutputs<T>(session: T): { session: T; compacted: number } {
 	if (!session || typeof session !== 'object') return { session, compacted: 0 };

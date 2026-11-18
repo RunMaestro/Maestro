@@ -104,6 +104,37 @@ describe('the document in the prompt', () => {
 		expect(runtime.requests[0].prompt).not.toContain('# Current Document');
 		expect(runtime.requests[0].prompt).not.toContain('unique-task-text');
 	});
+
+	// An Exchange manifest's `prompt` replaces the default whole. Under the runtime policy the
+	// document is not pasted in, so a prompt that never names it must still get the default's
+	// selection and document blocks, or the agent has no task to work.
+	it('gives a custom prompt that never names the document its task plumbing under each policy', async () => {
+		const custom = { ...playbook('a'), prompt: 'You curate agent memory.' };
+
+		const runtime = createFakeDeps({ a: '- [ ] curate' });
+		await collect(runPlaybook(session(), custom, '/docs', {}, withPolicy(runtime, runtimePolicy)));
+		expect(runtime.requests[0].prompt).toBe(
+			'You curate agent memory.\n\n---\n\nSELECTION\n\nprompt:autorun-document'
+		);
+
+		// The CLI pastes the document in itself, so only the document block is left out. The
+		// selection block, which carries the mode and the model-hint boundary, still goes in.
+		const cli = createFakeDeps({ a: '- [ ] curate' });
+		await collect(runPlaybook(session(), custom, '/docs', { skipSynopsis: true }, cli.deps));
+		expect(cli.requests[0].prompt).not.toContain('prompt:autorun-document');
+		expect(
+			cli.requests[0].prompt.startsWith(
+				'You curate agent memory.\n\n---\n\nSELECTION\n\n---\n\n# Current Document'
+			)
+		).toBe(true);
+	});
+
+	it('leaves a custom prompt that names the document as written', async () => {
+		const custom = { ...playbook('a'), prompt: 'Work {{DOCUMENT_PATH}} only.' };
+		const runtime = createFakeDeps({ a: '- [ ] curate' });
+		await collect(runPlaybook(session(), custom, '/docs', {}, withPolicy(runtime, runtimePolicy)));
+		expect(runtime.requests[0].prompt).toBe('Work /docs/a.md only.');
+	});
 });
 
 describe('completed tasks per dispatch', () => {

@@ -17,7 +17,7 @@ import { openUrl } from '../utils/openUrl';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { toControlChar } from '../utils/terminalKeys';
 import { isTapGesture, type TouchPoint } from '../utils/touch';
-import { readLogicalLine } from '../utils/terminalBuffer';
+import { findLogicalLineMatches, readLogicalLine } from '../utils/terminalBuffer';
 import { parseOsc52 } from '../utils/terminalClipboard';
 import { copyTextWithFlash } from '../utils/inlineCodeCopy';
 import { logger } from '../utils/logger';
@@ -617,38 +617,33 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			return true;
 		});
 
-		// Custom link provider: detects URLs, tracks hover for right-click context menu
+		// Custom link provider: detects URLs, tracks hover for right-click context menu.
+		// Scans the whole logical line, so a URL that soft-wraps across rows is one
+		// link from any of its rows instead of being cut at the right edge.
 		const linkProviderDisposable = term.registerLinkProvider({
 			provideLinks(lineNumber, callback) {
-				const line = term.buffer.active.getLine(lineNumber - 1);
-				if (!line) {
-					callback(undefined);
-					return;
-				}
-				const text = line.translateToString();
-				const links: ILink[] = [];
-				let match: RegExpExecArray | null;
-				const re = new RegExp(TERMINAL_URL_PATTERN.source, 'g');
-				while ((match = re.exec(text)) !== null) {
-					const url = match[0];
-					const startCol = match.index + 1; // 1-based
-					links.push({
-						range: {
-							start: { x: startCol, y: lineNumber },
-							end: { x: startCol + url.length - 1, y: lineNumber },
-						},
-						text: url,
-						activate(event, linkText) {
-							activateTerminalLink(event, linkText);
-						},
-						hover(_event, linkText) {
-							hoveredLinkRef.current = linkText;
-						},
-						leave() {
-							hoveredLinkRef.current = null;
-						},
-					});
-				}
+				const matches = findLogicalLineMatches(
+					term.buffer.active,
+					lineNumber - 1,
+					TERMINAL_URL_PATTERN
+				);
+				const links: ILink[] = matches.map(({ text: url, start, end }) => ({
+					// xterm link ranges are 1-based and inclusive
+					range: {
+						start: { x: start.col + 1, y: start.row + 1 },
+						end: { x: end.col + 1, y: end.row + 1 },
+					},
+					text: url,
+					activate(event, linkText) {
+						activateTerminalLink(event, linkText);
+					},
+					hover(_event, linkText) {
+						hoveredLinkRef.current = linkText;
+					},
+					leave() {
+						hoveredLinkRef.current = null;
+					},
+				}));
 				callback(links.length > 0 ? links : undefined);
 			},
 		});

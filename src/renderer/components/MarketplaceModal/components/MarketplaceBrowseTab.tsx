@@ -1,5 +1,6 @@
 import { Package, Search } from 'lucide-react';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { isImeComposing } from '../../../utils/ime';
 import type { MarketplaceBrowseTabProps } from '../types';
 import { getCategoryCount, LOADING_TILE_IDS } from '../helpers';
 import { PlaybookTile } from './PlaybookTile';
@@ -71,7 +72,7 @@ export function MarketplaceBrowseTab({
 						value={searchQuery}
 						onChange={(e) => onSearchChange(e.target.value)}
 						onKeyDown={(e) => {
-							if (e.key === 'Escape') {
+							if (e.key === 'Escape' && !isImeComposing(e)) {
 								e.preventDefault();
 								e.stopPropagation();
 								gridContainerRef.current?.focus();

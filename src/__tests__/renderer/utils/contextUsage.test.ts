@@ -2,7 +2,7 @@
  * Tests for context usage estimation utilities
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	estimateContextUsage,
 	calculateContextTokens,
@@ -12,8 +12,13 @@ import {
 	estimateAccumulatedGrowth,
 	resolveGaugeTokenStats,
 	DEFAULT_CONTEXT_WINDOWS,
+	resolveGrokContextSelection,
+	__resetGrokContextSelectionForTests,
 } from '../../../renderer/utils/contextUsage';
 import type { UsageStats } from '../../../shared/types';
+import { useAgentStore } from '../../../renderer/stores/agentStore';
+import { resolveAgentAccountKey } from '../../../shared/providerProfiles';
+import { getHomeDirAsync } from '../../../renderer/utils/homeDir';
 
 describe('estimateContextUsage', () => {
 	const createStats = (overrides: Partial<UsageStats> = {}): UsageStats => ({
@@ -845,5 +850,68 @@ describe('resolveGaugeTokenStats (issue #1782)', () => {
 
 		expect(resolveGaugeTokenStats(stats, 'codex')).toBe(stats);
 		expect(resolveGaugeTokenStats(stats, 'copilot-cli')).toBe(stats);
+	});
+});
+
+// A Grok gauge divides by the window its account cache recorded
+// for the tab's model, and stays unknown until model and account can be named.
+describe('Grok context percentage from an account-scoped snapshot', () => {
+	const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+	const stats = {
+		inputTokens: 51200,
+		outputTokens: 0,
+		cacheReadInputTokens: 0,
+		cacheCreationInputTokens: 0,
+		contextWindow: 0,
+	};
+	const session = { toolType: 'grok' as const, customModel: 'grok-4.5' };
+	let accountKey: string;
+
+	beforeEach(async () => {
+		// $HOME resolves once per module, as in the app; the account key needs it.
+		await getHomeDirAsync();
+		__resetGrokContextSelectionForTests();
+		vi.mocked(window.maestro.agents.getCustomEnvVars).mockResolvedValue(null);
+		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+		accountKey = resolveAgentAccountKey('grok', undefined, '/home/testuser')!;
+		useAgentStore.setState({
+			capabilitySnapshots: {
+				grok: {
+					status: 'ok',
+					accountModelContextWindows: { [accountKey]: { windows: { 'grok-4.5': 256000 } } },
+					lastProbedAt: 1,
+				},
+			},
+		});
+	});
+
+	afterEach(() => {
+		__resetGrokContextSelectionForTests();
+		useAgentStore.setState({ capabilitySnapshots: {} });
+	});
+
+	it('computes a percentage once the selection names the cached model and account', async () => {
+		expect(resolveGrokContextSelection(session)).toBeUndefined();
+		expect(estimateContextUsage(stats, 'grok')).toBeNull();
+		await flush();
+		const selection = resolveGrokContextSelection(session);
+		expect(selection).toEqual({ model: 'grok-4.5', accountKey });
+		expect(estimateContextUsage(stats, 'grok', undefined, selection)).toBe(20);
+		// The provider-wide lookup with no selection never guesses the window.
+		expect(estimateContextUsage(stats, 'grok')).toBeNull();
+	});
+
+	it('stays unknown for an uncached model or another account', async () => {
+		resolveGrokContextSelection(session);
+		await flush();
+		const uncached = resolveGrokContextSelection(session, { customModel: 'grok-4.6' });
+		expect(estimateContextUsage(stats, 'grok', undefined, uncached)).toBeNull();
+		const other = resolveGrokContextSelection({
+			...session,
+			customEnvVars: { GROK_HOME: '/synthetic/other-account' },
+		});
+		expect(other?.accountKey).toBeTruthy();
+		expect(other?.accountKey).not.toBe(accountKey);
+		expect(estimateContextUsage(stats, 'grok', undefined, other)).toBeNull();
 	});
 });

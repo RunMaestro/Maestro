@@ -3,6 +3,8 @@ import type { ActiveTabInfo, QuickAction } from '../types';
 import { formatMetaKey } from '../../../utils/shortcutFormatter';
 import { resolveSnoozeTarget } from '../../../utils/snoozeHelpers';
 import { useModalStore } from '../../../stores/modalStore';
+import { useUIStore } from '../../../stores/uiStore';
+import { useTabStore } from '../../../stores/tabStore';
 import { resolveModelEffortTabId } from '../../../utils/panelLayout';
 import { visibleAiTabs } from '../../../utils/tabHelpers';
 
@@ -53,6 +55,7 @@ interface BuildTabCommandsArgs {
 		focusActiveTab?: QuickAction['shortcut'];
 		clearTerminal?: QuickAction['shortcut'];
 		openModelEffort?: QuickAction['shortcut'];
+		toggleMessagePins?: QuickAction['shortcut'];
 	};
 	tabShortcuts?: Record<string, QuickAction['shortcut']>;
 	toggleInputMode: () => void;
@@ -334,6 +337,25 @@ export function buildTabCommands({
 		});
 	}
 
+	// Same store action the Cmd+Shift+T chord reaches (tiling-aware). Listed only
+	// while there is something to reopen; the legacy AI-only stack still counts
+	// because the restore falls back to it when the unified history is empty.
+	if (
+		activeSession &&
+		(activeSession.unifiedClosedTabHistory?.length || activeSession.closedTabHistory?.length)
+	) {
+		commands.push({
+			id: 'reopenClosedTab',
+			label: 'Reopen Closed Tab',
+			subtext: 'Restore the most recently closed tab',
+			shortcut: tabShortcuts?.reopenClosedTab,
+			action: () => {
+				useTabStore.getState().reopenClosedTab();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
 	// Retune the active AI tab's model and reasoning effort. AI-only, and absent
 	// while a group chat owns the view: the palette is reachable from a room, and
 	// `activeSession` still points at the agent selected before the room opened,
@@ -362,6 +384,22 @@ export function buildTabCommands({
 	if (activeSession && activeTabType === 'ai') {
 		const activeTab = activeSession.aiTabs?.find((t) => t.id === activeSession.activeTabId);
 		const snoozeTarget = activeTab ? resolveSnoozeTarget(activeSession, activeTab.id) : null;
+		// Pinned messages: offered once the tab has a pin, since the panel has
+		// nothing to show before that.
+		const pinCount = activeTab?.pinnedMessages?.length ?? 0;
+		if (activeTab && pinCount > 0 && !activeGroupChatId) {
+			const pinTabId = activeTab.id;
+			commands.push({
+				id: 'showMessagePins',
+				label: 'Show Pinned Messages',
+				subtext: `${pinCount} pinned in this tab - filter, jump to, rename, or unpin`,
+				shortcut: shortcuts.toggleMessagePins,
+				action: () => {
+					setQuickActionOpen(false);
+					useUIStore.getState().setMessagePinsTabId(pinTabId);
+				},
+			});
+		}
 		if (snoozeTarget) {
 			commands.push({
 				id: 'snoozeTab',
@@ -416,7 +454,7 @@ export function buildTabCommands({
 		});
 	}
 
-	if (activeSession && isTerminalMode && onClearActiveTerminal) {
+	if (activeSession && isTerminalMode && onClearActiveTerminal && !activeGroupChatId) {
 		commands.push({
 			id: 'clearTerminal',
 			label: 'Clear Terminal History',

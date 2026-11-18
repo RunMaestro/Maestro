@@ -11,6 +11,7 @@ import { killProcessTreeNow } from '../utils/commandKill';
 import type { CommandResult } from '../types';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { buildSshOptionArgs } from '../../../shared/sshOptions';
+import { noteSshExit } from '../../ssh-reachability';
 
 /** Exit code for a command we SIGKILLed. 128+9, the shell convention. */
 const SIGKILL_EXIT_CODE = 137;
@@ -195,6 +196,8 @@ export class SshCommandRunner {
 					sessionId,
 					exitCode: code,
 				});
+				// null means the user stopped it; that says nothing about the host.
+				noteSshExit(sshConfig, code);
 				settle(code || 0);
 			});
 

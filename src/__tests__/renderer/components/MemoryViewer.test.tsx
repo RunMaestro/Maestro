@@ -704,6 +704,11 @@ describe('MemoryViewer', () => {
 			await waitFor(() =>
 				expect(screen.getByTestId('memory-preview').querySelector('h1')).toBeTruthy()
 			);
+			// The scoped prose styles match `.memory-preview .prose`; a heading
+			// outside that wrapper renders as plain body text.
+			expect(
+				screen.getByTestId('memory-preview').querySelector('h1')?.closest('.memory-preview .prose')
+			).toBeTruthy();
 		});
 	});
 

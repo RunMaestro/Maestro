@@ -1354,3 +1354,341 @@ describe('useSymphony', () => {
 		});
 	});
 });
+
+// ============================================================================
+// Grok participation
+// ============================================================================
+
+describe('useSymphony with a Grok agent', () => {
+	// The hook takes the agent type and does not read it: a Grok contribution
+	// reaches the main process as the Grok agent's session id and worktree only.
+	// These cases prove the worktree and task handoff, success, failure and
+	// cancellation propagation (a managed refusal included), and that no IPC
+	// payload names a provider or substitutes Claude for Grok.
+	const grokWorktree = '/Users/ada/worktrees/widgets-agent-a';
+	const providerWords = /grok|claude|codex|antigravity|agentType|toolType|provider/i;
+	const repo = createRepository({
+		slug: 'acme/widgets',
+		name: 'widgets',
+		url: 'https://github.com/acme/widgets',
+	});
+	const issue = createIssue({
+		number: 31,
+		title: 'Tidy widget docs',
+		documentPaths: [
+			{ name: 'TASK-01.md', path: 'docs/TASK-01.md', isExternal: false },
+			{ name: 'TASK-02.md', path: 'https://example.com/TASK-02.md', isExternal: true },
+		],
+	});
+
+	const renderLoaded = async () => {
+		const hook = renderHook(() => useSymphony());
+		await waitForLoaded(hook.result);
+		return hook.result;
+	};
+
+	/** The IPC payloads with the generated contribution id blanked, so two agents compare by shape. */
+	const payloads = () => {
+		const start = vi.mocked(window.maestro.symphony.startContribution).mock.calls.map(([p]) => ({
+			...p,
+			contributionId: '<id>',
+		}));
+		return {
+			clone: vi.mocked(window.maestro.symphony.cloneRepo).mock.calls.map(([p]) => p),
+			start,
+		};
+	};
+
+	beforeEach(() => {
+		vi.mocked(window.maestro.symphony.cloneRepo).mockResolvedValue({ success: true });
+		vi.mocked(window.maestro.symphony.startContribution).mockResolvedValue({
+			success: true,
+			branchName: 'symphony/issue-31',
+			autoRunPath: `${grokWorktree}/.maestro/playbooks`,
+			draftPrNumber: 77,
+			draftPrUrl: 'https://github.com/acme/widgets/pull/77',
+		});
+		vi.mocked(window.maestro.symphony.cancel).mockResolvedValue({ success: true, cancelled: true });
+		vi.mocked(window.maestro.symphony.getState).mockResolvedValue({
+			success: true,
+			state: createSymphonyState(),
+		});
+	});
+
+	it('hands the Grok worktree and the issue documents to clone and start, and returns the Auto Run path', async () => {
+		const result = await renderLoaded();
+
+		let started!: Awaited<ReturnType<typeof result.current.startContribution>>;
+		await act(async () => {
+			started = await result.current.startContribution(
+				repo,
+				issue,
+				'grok',
+				'session-a',
+				grokWorktree
+			);
+		});
+
+		expect(started).toEqual({
+			success: true,
+			contributionId: expect.stringMatching(/^contrib_/),
+			branchName: 'symphony/issue-31',
+			autoRunPath: `${grokWorktree}/.maestro/playbooks`,
+			draftPrNumber: 77,
+			draftPrUrl: 'https://github.com/acme/widgets/pull/77',
+		});
+		expect(window.maestro.symphony.cloneRepo).toHaveBeenCalledWith({
+			repoUrl: 'https://github.com/acme/widgets',
+			localPath: grokWorktree,
+		});
+		expect(window.maestro.symphony.startContribution).toHaveBeenCalledWith({
+			contributionId: started.contributionId,
+			sessionId: 'session-a',
+			repoSlug: 'acme/widgets',
+			issueNumber: 31,
+			issueTitle: 'Tidy widget docs',
+			localPath: grokWorktree,
+			documentPaths: issue.documentPaths,
+		});
+	});
+
+	it('sends the same payloads for a Grok agent as for a Claude agent and names no provider', async () => {
+		const result = await renderLoaded();
+
+		await act(async () => {
+			await result.current.startContribution(repo, issue, 'grok', 'session-x', grokWorktree);
+		});
+		const grok = payloads();
+		vi.mocked(window.maestro.symphony.cloneRepo).mockClear();
+		vi.mocked(window.maestro.symphony.startContribution).mockClear();
+		await act(async () => {
+			await result.current.startContribution(repo, issue, 'claude-code', 'session-x', grokWorktree);
+		});
+		const claude = payloads();
+
+		expect(grok).toEqual(claude);
+		expect(JSON.stringify(grok)).not.toMatch(providerWords);
+		for (const call of vi.mocked(window.maestro.symphony.startContribution).mock.calls) {
+			expect(Object.keys(call[0]).sort()).toEqual([
+				'contributionId',
+				'documentPaths',
+				'issueNumber',
+				'issueTitle',
+				'localPath',
+				'repoSlug',
+				'sessionId',
+			]);
+		}
+	});
+
+	it('falls back to the temporary clone path for a Grok agent with no worktree, like any agent', async () => {
+		const result = await renderLoaded();
+
+		let started!: Awaited<ReturnType<typeof result.current.startContribution>>;
+		await act(async () => {
+			started = await result.current.startContribution(repo, issue, 'grok', 'session-a');
+		});
+
+		const localPath = `/tmp/symphony/widgets-${started.contributionId}`;
+		expect(window.maestro.symphony.cloneRepo).toHaveBeenCalledWith({
+			repoUrl: repo.url,
+			localPath,
+		});
+		expect(window.maestro.symphony.startContribution).toHaveBeenCalledWith(
+			expect.objectContaining({ localPath })
+		);
+	});
+
+	it('propagates a Grok clone failure and never starts the contribution', async () => {
+		vi.mocked(window.maestro.symphony.cloneRepo).mockResolvedValue({
+			success: false,
+			error: 'Clone failed: worktree path exists',
+		});
+		const result = await renderLoaded();
+
+		let started!: Awaited<ReturnType<typeof result.current.startContribution>>;
+		await act(async () => {
+			started = await result.current.startContribution(
+				repo,
+				issue,
+				'grok',
+				'session-a',
+				grokWorktree
+			);
+		});
+
+		expect(started).toEqual({ success: false, error: 'Clone failed: worktree path exists' });
+		expect(window.maestro.symphony.startContribution).not.toHaveBeenCalled();
+	});
+
+	it('propagates a managed repository refusal verbatim and does not refresh state as if it started', async () => {
+		vi.mocked(window.maestro.symphony.startContribution).mockResolvedValue({
+			success: false,
+			error: '[managed-outside-ceiling] no pull-request for ada',
+		});
+		const result = await renderLoaded();
+		const stateCalls = vi.mocked(window.maestro.symphony.getState).mock.calls.length;
+
+		let started!: Awaited<ReturnType<typeof result.current.startContribution>>;
+		await act(async () => {
+			started = await result.current.startContribution(
+				repo,
+				issue,
+				'grok',
+				'session-a',
+				grokWorktree
+			);
+		});
+
+		expect(started).toEqual({
+			success: false,
+			error: '[managed-outside-ceiling] no pull-request for ada',
+		});
+		expect(vi.mocked(window.maestro.symphony.getState).mock.calls.length).toBe(stateCalls);
+	});
+
+	it('propagates a thrown start for a Grok agent as its message', async () => {
+		vi.mocked(window.maestro.symphony.startContribution).mockRejectedValue(
+			new Error('IPC channel closed')
+		);
+		const result = await renderLoaded();
+
+		let started!: Awaited<ReturnType<typeof result.current.startContribution>>;
+		await act(async () => {
+			started = await result.current.startContribution(
+				repo,
+				issue,
+				'grok',
+				'session-a',
+				grokWorktree
+			);
+		});
+
+		expect(started).toEqual({ success: false, error: 'IPC channel closed' });
+	});
+
+	it('cancels a Grok contribution by id alone and refreshes state', async () => {
+		const result = await renderLoaded();
+		const stateCalls = vi.mocked(window.maestro.symphony.getState).mock.calls.length;
+
+		let cancelled!: { success: boolean };
+		await act(async () => {
+			cancelled = await result.current.cancelContribution('contrib_a_1', false);
+		});
+
+		expect(cancelled).toEqual({ success: true });
+		expect(window.maestro.symphony.cancel).toHaveBeenCalledWith('contrib_a_1', false);
+		expect(vi.mocked(window.maestro.symphony.getState).mock.calls.length).toBeGreaterThan(
+			stateCalls
+		);
+	});
+
+	it('propagates a refused or failed Grok cancel as unsuccessful without refreshing state', async () => {
+		vi.mocked(window.maestro.symphony.cancel).mockResolvedValue({
+			success: true,
+			cancelled: false,
+		});
+		const result = await renderLoaded();
+		const stateCalls = vi.mocked(window.maestro.symphony.getState).mock.calls.length;
+
+		let cancelled!: { success: boolean };
+		await act(async () => {
+			cancelled = await result.current.cancelContribution('contrib_a_1');
+		});
+		expect(cancelled).toEqual({ success: false });
+		expect(vi.mocked(window.maestro.symphony.getState).mock.calls.length).toBe(stateCalls);
+
+		vi.mocked(window.maestro.symphony.cancel).mockRejectedValue(new Error('gone'));
+		await act(async () => {
+			cancelled = await result.current.cancelContribution('contrib_a_1');
+		});
+		expect(cancelled).toEqual({ success: false });
+	});
+
+	describe('finalizing a Grok contribution', () => {
+		const grokContribution = createActiveContribution({
+			id: 'contrib_a_1',
+			localPath: grokWorktree,
+			sessionId: 'session-a',
+			agentType: 'grok',
+			progress: {
+				totalDocuments: 2,
+				completedDocuments: 2,
+				currentDocument: 'TASK-02.md',
+				totalTasks: 6,
+				completedTasks: 6,
+			},
+			tokenUsage: { inputTokens: 4200, outputTokens: 900, estimatedCost: 0.12 },
+			timeSpent: 125000,
+		});
+
+		const renderWithGrokContribution = async () => {
+			vi.mocked(window.maestro.symphony.getState).mockResolvedValue({
+				success: true,
+				state: createSymphonyState({ active: [grokContribution] }),
+			});
+			const result = await renderLoaded();
+			await waitFor(() => expect(result.current.activeContributions).toHaveLength(1));
+			return result;
+		};
+
+		it('keeps the Grok agent type as the state reports it', async () => {
+			const result = await renderWithGrokContribution();
+
+			expect(result.current.activeContributions[0]).toMatchObject({
+				agentType: 'grok',
+				sessionId: 'session-a',
+				localPath: grokWorktree,
+			});
+		});
+
+		it('completes with the Grok batch stats and no provider field, returning the PR url', async () => {
+			vi.mocked(window.maestro.symphony.complete).mockResolvedValue({
+				success: true,
+				prUrl: 'https://github.com/acme/widgets/pull/77',
+			});
+			const result = await renderWithGrokContribution();
+
+			let finalized!: { success: boolean; prUrl?: string; error?: string };
+			await act(async () => {
+				finalized = await result.current.finalizeContribution('contrib_a_1');
+			});
+
+			expect(finalized).toEqual({
+				success: true,
+				prUrl: 'https://github.com/acme/widgets/pull/77',
+			});
+			expect(window.maestro.symphony.complete).toHaveBeenCalledWith({
+				contributionId: 'contrib_a_1',
+				stats: {
+					inputTokens: 4200,
+					outputTokens: 900,
+					estimatedCost: 0.12,
+					timeSpentMs: 125000,
+					documentsProcessed: 2,
+					tasksCompleted: 6,
+				},
+			});
+			const payload = vi.mocked(window.maestro.symphony.complete).mock.calls[0][0];
+			expect(JSON.stringify(payload)).not.toMatch(providerWords);
+		});
+
+		it('propagates a managed finalize refusal verbatim', async () => {
+			vi.mocked(window.maestro.symphony.complete).mockResolvedValue({
+				success: false,
+				error: '[managed-outside-ceiling] no finalize for ada',
+			});
+			const result = await renderWithGrokContribution();
+
+			let finalized!: { success: boolean; prUrl?: string; error?: string };
+			await act(async () => {
+				finalized = await result.current.finalizeContribution('contrib_a_1');
+			});
+
+			expect(finalized).toEqual({
+				success: false,
+				error: '[managed-outside-ceiling] no finalize for ada',
+			});
+		});
+	});
+});

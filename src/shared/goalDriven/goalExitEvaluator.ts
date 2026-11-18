@@ -61,7 +61,10 @@ function detectStall(series: number[]): number | null {
  * Evaluate whether a goal-driven run should continue or stop.
  *
  * Stop conditions are checked in strict priority order; the first match wins:
- *   1. Completion    - latest `complete` (or `progress === 100`)
+ *   1. Completion    - latest `complete` (or `progress === 100`), unless work the
+ *                      run delegated is still running: a goal is not done while
+ *                      its delegates are mid-work, so the run waits for them and
+ *                      lets one more iteration judge what came back
  *   2. Deadlock      - latest `deadlock`
  *   3. Max iterations - finite `config.maxIterations` reached
  *   4. Stall          - no upward progress across the last `STALL_THRESHOLD` records
@@ -71,7 +74,8 @@ function detectStall(series: number[]): number | null {
  */
 export function evaluateGoalExit(
 	history: GoalIterationRecord[],
-	config: GoalRunConfig
+	config: GoalRunConfig,
+	context: { pendingDelegations?: number } = {}
 ): GoalExitDecision {
 	// Nothing has run yet - keep going.
 	if (history.length === 0) {
@@ -81,7 +85,8 @@ export function evaluateGoalExit(
 	const latest = history[history.length - 1];
 
 	// 1. Completion beats everything, including a simultaneous iteration cap.
-	if (latest.complete || latest.progress === 100) {
+	const delegatesStillWorking = (context.pendingDelegations ?? 0) > 0;
+	if ((latest.complete || latest.progress === 100) && !delegatesStillWorking) {
 		return {
 			action: 'stop',
 			reason: 'completed',

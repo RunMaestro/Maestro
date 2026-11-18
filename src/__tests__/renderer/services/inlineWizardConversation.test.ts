@@ -16,6 +16,8 @@ const mockMaestro = {
 		spawn: vi.fn(),
 		onData: vi.fn(() => vi.fn()),
 		onExit: vi.fn(() => vi.fn()),
+		onAgentError: vi.fn(() => vi.fn()),
+		kill: vi.fn().mockResolvedValue(undefined),
 		onThinkingChunk: vi.fn(() => vi.fn()),
 		onToolExecution: vi.fn(() => vi.fn()),
 	},
@@ -26,6 +28,7 @@ vi.stubGlobal('window', { maestro: mockMaestro });
 // Import after mocking
 import {
 	startInlineWizardConversation,
+	endInlineWizardConversation,
 	sendWizardMessage,
 } from '../../../renderer/services/inlineWizardConversation';
 
@@ -349,28 +352,31 @@ describe('inlineWizardConversation', () => {
 				args: [],
 			};
 			mockMaestro.agents.get.mockResolvedValue(mockAgent);
-			mockMaestro.process.spawn.mockResolvedValue(undefined);
+			mockMaestro.process.spawn.mockResolvedValue({ pid: 123, success: true });
 
 			const session = await startInlineWizardConversation({
 				agentType: 'grok',
 				directoryPath: '/test/project',
 				projectName: 'Test Project',
-				mode: 'ask',
+				mode: 'new',
 			});
 
-			const messagePromise = sendWizardMessage(session, 'Hello', []);
+			const callbacks = { onChunk: vi.fn(), onThinkingChunk: vi.fn(), onToolExecution: vi.fn() };
+			const messagePromise = sendWizardMessage(session, 'Hello', [], callbacks);
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
-			// Discovery needs read/fetch: no plan mode / no web-search ban.
-			// Cap turns + no subagents to avoid silent freezes; always-approve for headless.
+			// Discovery caps do not replace the canonical read-only spawn intent.
 			expect(spawnCall.args).toEqual(
-				expect.arrayContaining(['--always-approve', '--max-turns', '8', '--no-subagents'])
+				expect.arrayContaining(['--max-turns', '8', '--no-subagents'])
 			);
-			expect(spawnCall.args).not.toEqual(expect.arrayContaining(['--permission-mode', 'plan']));
+			expect(spawnCall).toMatchObject({ permissionMode: 'readonly', readOnlyMode: true });
+			expect(spawnCall.args).not.toContain('--always-approve');
 			expect(spawnCall.args).not.toContain('--disable-web-search');
 
 			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			const tool = { toolName: 'read_file', state: { status: 'running' }, timestamp: 1 };
+			mockMaestro.process.onThinkingChunk.mock.calls[0][0](session.sessionId, 'private thought');
 			// Thought deltas must not pollute the structured JSON body
 			dataCallback(session.sessionId, '{"type":"thought","data":"planning response"}\n');
 			dataCallback(
@@ -381,6 +387,7 @@ describe('inlineWizardConversation', () => {
 				session.sessionId,
 				'{"type":"text","data":"\\"message\\":\\"Ready to build the playbook\\"}"}\n'
 			);
+			mockMaestro.process.onToolExecution.mock.calls[0][0](session.sessionId, tool);
 			dataCallback(
 				session.sessionId,
 				'{"type":"end","stopReason":"EndTurn","sessionId":"019f47fa-e297-7993-a1f6-adfaf940ba8c","requestId":"req-1"}\n'
@@ -392,7 +399,7 @@ describe('inlineWizardConversation', () => {
 			await expect(messagePromise).resolves.toEqual(
 				expect.objectContaining({
 					success: true,
-					agentSessionId: '019f47fa-e297-7993-a1f6-adfaf940ba8c',
+					agentSessionId: undefined,
 					response: expect.objectContaining({
 						confidence: 88,
 						ready: true,
@@ -400,49 +407,112 @@ describe('inlineWizardConversation', () => {
 					}),
 				})
 			);
+			expect(callbacks.onThinkingChunk).toHaveBeenCalledWith('private thought');
+			expect(callbacks.onToolExecution).toHaveBeenCalledWith(tool);
+			const resumed = sendWizardMessage(session, 'Continue', [
+				{ id: 'u1', role: 'user', content: 'Hello', timestamp: 1 },
+				{ id: 'a1', role: 'assistant', content: 'Ready to build the playbook', timestamp: 2 },
+			]);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			const nextSpawn = mockMaestro.process.spawn.mock.calls[1][0];
+			expect(nextSpawn.prompt).toContain('User: Hello\nAssistant: Ready to build the playbook');
+			expect(nextSpawn.prompt).toContain('## Current Message\n\nContinue');
+			expect(nextSpawn.agentSessionId).toBeUndefined();
+			expect(nextSpawn.args).not.toContain('--resume');
+			mockMaestro.process.onData.mock.calls[1][0](
+				session.sessionId,
+				'{"confidence":90,"ready":true,"message":"Next"}'
+			);
+			mockMaestro.process.onExit.mock.calls[1][0](session.sessionId, 0);
+			await expect(resumed).resolves.toMatchObject({
+				success: true,
+				response: { message: 'Next' },
+			});
 		});
 
-		it('should accept a parseable Grok reply even when the process exits non-zero', async () => {
-			// --max-turns can exit 1 after useful structured text; do not drop it.
-			const mockAgent = {
-				id: 'grok',
-				available: true,
-				command: 'grok',
-				args: [],
-			};
-			mockMaestro.agents.get.mockResolvedValue(mockAgent);
-			mockMaestro.process.spawn.mockResolvedValue(undefined);
-
+		it.each([
+			'exit',
+			'signal',
+			'inactive',
+			'provider-error',
+			'spawn-refused',
+			'cancelled',
+			'denied',
+			'limit',
+		])('rejects a parseable Grok plan after %s', async (failure) => {
+			mockMaestro.agents.get.mockResolvedValue({ id: 'grok', available: true, args: [] });
+			mockMaestro.process.spawn.mockResolvedValue({
+				pid: failure === 'spawn-refused' ? -1 : 123,
+				success: failure !== 'spawn-refused',
+			});
 			const session = await startInlineWizardConversation({
 				agentType: 'grok',
 				directoryPath: '/test/project',
-				projectName: 'Test Project',
-				mode: 'ask',
+				projectName: 'Test',
+				mode: 'new',
 			});
-
-			const messagePromise = sendWizardMessage(session, 'Hello', []);
+			const callbacks = { onComplete: vi.fn(), onError: vi.fn() };
+			const pending = sendWizardMessage(session, 'Hello', [], callbacks);
 			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
-			// Production path: process:data gets assembled text, not raw JSONL
-			dataCallback(
+			const answer = '{"confidence":99,"ready":true,"message":"Partial plan"}';
+			const stopReason =
+				failure === 'cancelled'
+					? 'cancelled'
+					: failure === 'denied'
+						? 'refusal'
+						: failure === 'limit'
+							? 'max_turn_requests'
+							: undefined;
+			mockMaestro.process.onData.mock.calls[0][0](
 				session.sessionId,
-				'{"confidence":55,"ready":false,"message":"What is the acceptance criteria?"}'
+				stopReason
+					? `${JSON.stringify({ type: 'text', data: answer })}\n${JSON.stringify({ type: 'end', stopReason })}\n`
+					: answer
 			);
-
-			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
-			exitCallback(session.sessionId, 1);
-
-			await expect(messagePromise).resolves.toEqual(
-				expect.objectContaining({
-					success: true,
-					response: expect.objectContaining({
-						confidence: 55,
-						ready: false,
-						message: 'What is the acceptance criteria?',
-					}),
-				})
+			if (failure === 'inactive') await endInlineWizardConversation(session);
+			if (failure === 'provider-error')
+				mockMaestro.process.onAgentError.mock.calls[0][0](session.sessionId, {
+					message: 'Policy denied discovery',
+				});
+			mockMaestro.process.onExit.mock.calls[0][0](
+				session.sessionId,
+				failure === 'exit' ? 1 : 0,
+				failure === 'signal' ? 15 : undefined
 			);
+			const result = await pending;
+			expect(result).toMatchObject({ success: false, error: expect.any(String) });
+			if (failure === 'provider-error') expect(result.error).toBe('Policy denied discovery');
+			expect(result.response).toBeUndefined();
+			expect(result.agentSessionId).toBeUndefined();
+			expect(callbacks.onComplete).not.toHaveBeenCalled();
+			expect(callbacks.onError).toHaveBeenCalledOnce();
+			expect(mockMaestro.process.onAgentError.mock.results[0].value).toHaveBeenCalled();
+		});
+
+		it.each([
+			'',
+			'99% confident, ready to proceed',
+			'{"confidence":99,"ready":true,',
+			'{"confidence":"99","ready":true,"message":"Plan"}',
+			'{"confidence":99,"ready":true,"message":" "}',
+			JSON.stringify({ type: 'thought', data: '{"confidence":99,"ready":true,"message":"Plan"}' }) +
+				'\n',
+		])('rejects Grok output without a valid structured answer: %s', async (output) => {
+			mockMaestro.agents.get.mockResolvedValue({ id: 'grok', available: true, args: [] });
+			mockMaestro.process.spawn.mockResolvedValue({ pid: 123, success: true });
+			const session = await startInlineWizardConversation({
+				agentType: 'grok',
+				directoryPath: '/test/project',
+				projectName: 'Test',
+				mode: 'new',
+			});
+			const onComplete = vi.fn();
+			const pending = sendWizardMessage(session, 'Hello', [], { onComplete });
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			mockMaestro.process.onData.mock.calls[0][0](session.sessionId, output);
+			mockMaestro.process.onExit.mock.calls[0][0](session.sessionId, 0);
+			await expect(pending).resolves.toMatchObject({ success: false });
+			expect(onComplete).not.toHaveBeenCalled();
 		});
 	});
 

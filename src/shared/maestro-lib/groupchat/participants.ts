@@ -22,6 +22,8 @@ import type { GroupChatParticipant, GroupChatPromptId } from './types';
  * Session-specific overrides for participant agent configuration.
  */
 export interface SessionOverrides {
+	/** GUID of the Maestro agent the participant is added from. */
+	sourceSessionId?: string;
 	customModel?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
@@ -145,8 +147,12 @@ export function createGroupChatParticipants(options: GroupChatParticipantsOption
 
 		logger.debug(`[GroupChat:Debug] Moderator is active: true`);
 
-		// Idempotent: if participant already exists, return it without spawning a new process
-		const existingParticipant = chat.participants.find((p) => p.name === name);
+		// Idempotent: if participant already exists, return it without spawning a new process.
+		// The same agent under a new name (renamed since it joined) is the same participant.
+		const sourceSessionId = sessionOverrides?.sourceSessionId;
+		const existingParticipant = chat.participants.find(
+			(p) => p.name === name || (!!sourceSessionId && p.sourceSessionId === sourceSessionId)
+		);
 		if (existingParticipant) {
 			logger.debug(`[GroupChat:Debug] Participant '${name}' already exists, returning existing`);
 			return existingParticipant;
@@ -164,6 +170,7 @@ export function createGroupChatParticipants(options: GroupChatParticipantsOption
 			sessionId,
 			addedAt: Date.now(),
 			sshRemoteName: sessionOverrides?.sshRemoteName,
+			...(sourceSessionId ? { sourceSessionId } : {}),
 		};
 
 		// Add participant to the group chat

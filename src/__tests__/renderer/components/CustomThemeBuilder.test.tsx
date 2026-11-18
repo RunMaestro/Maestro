@@ -908,6 +908,33 @@ describe('CustomThemeBuilder', () => {
 	});
 
 	describe('Color Input', () => {
+		it('leaves Enter in the hex field to the input method during an IME composition', () => {
+			render(
+				<CustomThemeBuilder
+					theme={mockTheme}
+					customThemeColors={mockThemeColors}
+					setCustomThemeColors={setCustomThemeColors}
+					customThemeBaseId="dracula"
+					setCustomThemeBaseId={setCustomThemeBaseId}
+					isSelected={false}
+					onSelect={onSelect}
+				/>
+			);
+
+			fireEvent.click(screen.getAllByRole('button', { name: mockThemeColors.bgMain })[0]);
+			const hexInput = () => document.querySelector('input[type="text"].font-mono');
+			expect(hexInput()).not.toBeNull();
+
+			for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+				fireEvent.keyDown(hexInput()!, { key: 'Enter', ...ime });
+			}
+			expect(hexInput()).not.toBeNull();
+
+			// A normal Enter still ends editing.
+			fireEvent.keyDown(hexInput()!, { key: 'Enter' });
+			expect(hexInput()).toBeNull();
+		});
+
 		it('should update color when color picker value changes', () => {
 			render(
 				<CustomThemeBuilder

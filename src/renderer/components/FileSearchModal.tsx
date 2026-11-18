@@ -33,6 +33,7 @@ import {
 import { getMediaKind } from '../../shared/mediaTypes';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { EscCloseButton } from './ui/EscCloseButton';
+import { isImeComposing } from '../utils/ime';
 
 /** Flattened file item for the search list */
 export interface FlatFileItem {
@@ -341,12 +342,14 @@ export function FileSearchModal({
 				e.preventDefault();
 				setSelectedIndex((prev) => Math.max(prev - 1, 0));
 			} else if (e.key === 'Enter') {
-				e.preventDefault();
 				e.stopPropagation();
-				if (isAbsoluteQuery) {
-					handleAbsoluteOpen();
-				} else if (filteredFiles[selectedIndex]) {
-					handleItemSelect(filteredFiles[selectedIndex]);
+				if (!isImeComposing(e)) {
+					e.preventDefault();
+					if (isAbsoluteQuery) {
+						handleAbsoluteOpen();
+					} else if (filteredFiles[selectedIndex]) {
+						handleItemSelect(filteredFiles[selectedIndex]);
+					}
 				}
 			} else if (e.metaKey && ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].includes(e.key)) {
 				e.preventDefault();

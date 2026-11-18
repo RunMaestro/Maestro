@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { parseAutoRunProgress } from '../../autorun/progress';
 import { parseProcessFrame } from '../../client/bridge-frames';
-import type { MaestroEvent, TurnEvent } from '../../client/types';
+import type { MaestroEvent, QueuedTurn, TurnEvent } from '../../client/types';
 import {
 	makeGroupChatLine,
 	parseGroupChatFrame,
@@ -10,12 +10,16 @@ import {
 	type GroupChatEvent,
 	type GroupChatRecord,
 } from '../../groupchat/chat';
+import type { AgentRecord } from '../../store/records';
 import {
 	createFrameState,
 	framesForEvent,
 	groupChatToWire,
 	progressToWire,
+	queueChangedFrame,
+	queuedTurnsToWire,
 	tabProcessId,
+	withLiveTabState,
 	type Frame,
 } from '../server-frames';
 
@@ -206,6 +210,127 @@ describe('framesForEvent', () => {
 		expect(
 			framesForEvent({ type: 'autorun.ended', agentId: 'a1', at: 4, outcome }, createFrameState())
 		).toEqual([{ type: 'autorun_ended', sessionId: 'a1', outcome }]);
+	});
+});
+
+describe('withLiveTabState', () => {
+	const agent = (overrides: Partial<AgentRecord> = {}): AgentRecord => ({
+		id: 'a1',
+		name: 'Alpha',
+		toolType: 'claude-code',
+		state: 'idle',
+		aiTabs: [
+			{ id: 't1', state: 'idle' },
+			{ id: 't2', state: 'idle' },
+		],
+		...overrides,
+	});
+
+	it('marks a running tab busy with its start time, and the agent busy', () => {
+		const live = withLiveTabState(agent(), new Map([['t1', 500]]));
+		expect(live.state).toBe('busy');
+		expect(live.aiTabs).toEqual([
+			{ id: 't1', state: 'busy', thinkingStartTime: 500 },
+			{ id: 't2', state: 'idle' },
+		]);
+	});
+
+	it('clears a stored busy tab and a stale start time when nothing runs', () => {
+		const live = withLiveTabState(
+			agent({
+				state: 'busy',
+				aiTabs: [
+					{ id: 't1', state: 'busy', thinkingStartTime: 1 },
+					{ id: 't2', state: 'idle', thinkingStartTime: 2 },
+				],
+			}),
+			new Map()
+		);
+		expect(live.state).toBe('idle');
+		expect(live.aiTabs).toEqual([
+			{ id: 't1', state: 'idle' },
+			{ id: 't2', state: 'idle' },
+		]);
+	});
+
+	it('replaces an older start time on a tab that runs again', () => {
+		const live = withLiveTabState(
+			agent({ aiTabs: [{ id: 't1', state: 'busy', thinkingStartTime: 1 }] }),
+			new Map([['t1', 9]])
+		);
+		expect(live.aiTabs).toEqual([{ id: 't1', state: 'busy', thinkingStartTime: 9 }]);
+	});
+
+	it('returns the same record when nothing changes', () => {
+		const idle = agent();
+		expect(withLiveTabState(idle, new Map())).toBe(idle);
+		const busy = agent({
+			state: 'busy',
+			aiTabs: [{ id: 't1', state: 'busy', thinkingStartTime: 7 }],
+		});
+		expect(withLiveTabState(busy, new Map([['t1', 7]]))).toBe(busy);
+		const tabless: AgentRecord = { id: 'a1', name: 'Alpha', toolType: 'claude-code' };
+		expect(withLiveTabState(tabless, new Map([['t1', 7]]))).toBe(tabless);
+	});
+
+	it('keeps a stored state other than busy when nothing runs, and overrides it while a tab runs', () => {
+		const errored = agent({ state: 'error' });
+		expect(withLiveTabState(errored, new Map())).toBe(errored);
+		expect(withLiveTabState(errored, new Map([['t2', 3]])).state).toBe('busy');
+	});
+});
+
+describe('queue frames', () => {
+	const items: QueuedTurn[] = [
+		{ itemId: 'q1', tabId: 't1', queuedAt: 10, kind: 'message', text: 'next', paused: false },
+		{ itemId: 'q2', tabId: 't2', queuedAt: 20, kind: 'command', text: '/go', paused: true },
+	];
+	const wire = [
+		{ id: 'q1', timestamp: 10, tabId: 't1', type: 'message', text: 'next', paused: false },
+		{ id: 'q2', timestamp: 20, tabId: 't2', type: 'command', text: '/go', paused: true },
+	];
+
+	it("projects waiting messages in list_queue's item shape", () => {
+		expect(queuedTurnsToWire(items)).toEqual(wire);
+	});
+
+	it('sends a queue.changed as a queue_changed frame', () => {
+		expect(queueChangedFrame('a1', items)).toEqual({
+			type: 'queue_changed',
+			sessionId: 'a1',
+			items: wire,
+		});
+		expect(
+			framesForEvent({ type: 'queue.changed', agentId: 'a1', items: [] }, createFrameState())
+		).toEqual([{ type: 'queue_changed', sessionId: 'a1', items: [] }]);
+	});
+});
+
+describe('framesForEvent live tab state', () => {
+	it('lays the live tab state over an agent push when the state has liveTabs', () => {
+		const lookups: string[] = [];
+		const state = createFrameState((agentId) => {
+			lookups.push(agentId);
+			return new Map([['t1', 42]]);
+		});
+		const agent: AgentRecord = {
+			id: 'a1',
+			name: 'Alpha',
+			toolType: 'claude-code',
+			state: 'idle',
+			aiTabs: [{ id: 't1', state: 'idle' }],
+		};
+		for (const type of ['agent.added', 'agent.updated'] as const) {
+			const [frame] = framesForEvent({ type, agent }, state);
+			const [sync] = frame.args as Array<{ added: AgentRecord[] }>;
+			expect(sync.added[0]).toMatchObject({
+				state: 'busy',
+				aiTabs: [{ id: 't1', state: 'busy', thinkingStartTime: 42 }],
+			});
+		}
+		expect(lookups).toEqual(['a1', 'a1']);
+		// The stored record is not touched.
+		expect(agent.aiTabs?.[0].state).toBe('idle');
 	});
 });
 

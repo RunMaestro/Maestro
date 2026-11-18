@@ -7,6 +7,12 @@ interface UseInputAreaAutosizeArgs {
 	inputValue: string;
 	activeTabId?: string;
 	/**
+	 * The phone fold. Folding unmounts the textarea, and the one an unfold mounts
+	 * holds the same draft, so without this in the reset key nothing measures it
+	 * and a multi-line draft reopens one row tall.
+	 */
+	isFolded?: boolean;
+	/**
 	 * When true, a keystroke has already scheduled a (deferred) resize, so the
 	 * shared hook skips its own synchronous resize to avoid a second forced layout
 	 * on the keystroke's critical path. See the ref comment in InputArea.tsx.
@@ -16,12 +22,14 @@ interface UseInputAreaAutosizeArgs {
 
 /**
  * AI composer binding over {@link useAutosizeTextarea}: the composer's height
- * cap, plus the tab id so switching tabs re-measures the restored draft.
+ * cap, plus the tab id and the phone fold, so switching tabs or unfolding the
+ * composer re-measures the draft in the textarea that just mounted.
  */
 export function useInputAreaAutosize({
 	inputRef,
 	inputValue,
 	activeTabId,
+	isFolded = false,
 	keystrokeResizeScheduledRef,
 }: UseInputAreaAutosizeArgs): void {
 	useAutosizeTextarea({
@@ -32,7 +40,7 @@ export function useInputAreaAutosize({
 		// rendered height once the box started scrolling internally (issue #1321),
 		// so the external path resizes to the same 176 the keystroke path does.
 		maxHeight: KEYSTROKE_TEXTAREA_MAX_HEIGHT,
-		resetKey: activeTabId,
+		resetKey: `${activeTabId ?? ''}:${isFolded}`,
 		deferredResizeRef: keystrokeResizeScheduledRef,
 	});
 }

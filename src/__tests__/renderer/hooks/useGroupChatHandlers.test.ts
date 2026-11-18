@@ -16,6 +16,7 @@ vi.mock('../../../renderer/stores/notificationStore', async () => {
 });
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import type { GroupChatMessage } from '../../../shared/group-chat-types';
+import type { ModeratorUsage } from '../../../shared/maestro-lib/groupchat/types';
 
 type ChatMessageHandler = (chatId: string, message: GroupChatMessage) => void;
 
@@ -1586,25 +1587,105 @@ describe('useGroupChatHandlers', () => {
 			});
 		});
 
-		it('onModeratorUsage preserves previous context when contextUsage is -1', () => {
+		it.each([0, 37.5])(
+			'onModeratorUsage preserves measured context %s and tokens for accumulated usage',
+			(contextUsage) => {
+				useGroupChatStore.setState({
+					activeGroupChatId: 'gc-1',
+					moderatorUsage: { contextUsage, totalCost: 0.01, tokenCount: 100 },
+				});
+
+				renderHook(() => useGroupChatHandlers());
+				const usageCallback: (id: string, usage: ModeratorUsage) => void =
+					mockGroupChat.onModeratorUsage.mock.calls[0][0];
+				act(() => usageCallback('gc-1', { contextUsage: -1, totalCost: 0.05, tokenCount: -1 }));
+
+				expect(useGroupChatStore.getState().moderatorUsage).toEqual({
+					contextUsage,
+					totalCost: 0.05,
+					tokenCount: 100,
+				});
+			}
+		);
+
+		it.each([0, 37.5])(
+			'clears stale moderator context through unknown and accumulated updates, then restores %s',
+			(contextUsage) => {
+				useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+				renderHook(() => useGroupChatHandlers());
+				const usageCallback: (id: string, usage: ModeratorUsage) => void =
+					mockGroupChat.onModeratorUsage.mock.calls[0][0];
+
+				act(() => usageCallback('gc-1', { contextUsage: 45, totalCost: 0.01, tokenCount: 9000 }));
+				expect(useGroupChatStore.getState().moderatorUsage).toEqual({
+					contextUsage: 45,
+					totalCost: 0.01,
+					tokenCount: 9000,
+				});
+
+				act(() => usageCallback('gc-1', { contextUsage: -2, totalCost: 0.02, tokenCount: -2 }));
+				expect(useGroupChatStore.getState().moderatorUsage).toEqual({
+					contextUsage: -2,
+					totalCost: 0.02,
+					tokenCount: -2,
+				});
+
+				act(() => usageCallback('gc-1', { contextUsage: -1, totalCost: 0.03, tokenCount: -1 }));
+				expect(useGroupChatStore.getState().moderatorUsage).toEqual({
+					contextUsage: -2,
+					totalCost: 0.03,
+					tokenCount: -2,
+				});
+
+				const measured = { contextUsage, totalCost: 0.04, tokenCount: contextUsage ? 7500 : 0 };
+				act(() => usageCallback('gc-1', measured));
+				expect(useGroupChatStore.getState().moderatorUsage).toEqual(measured);
+			}
+		);
+
+		it('keeps initial accumulated moderator usage unavailable while cost advances', () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			renderHook(() => useGroupChatHandlers());
+			const usageCallback: (id: string, usage: ModeratorUsage) => void =
+				mockGroupChat.onModeratorUsage.mock.calls[0][0];
+
+			for (const totalCost of [0.01, 0.02]) {
+				act(() => usageCallback('gc-1', { contextUsage: -1, totalCost, tokenCount: -1 }));
+				expect(useGroupChatStore.getState().moderatorUsage).toEqual({
+					contextUsage: -1,
+					totalCost,
+					tokenCount: -1,
+				});
+			}
+		});
+
+		it('does not preserve a measured percentage for other negative observations', () => {
 			useGroupChatStore.setState({
 				activeGroupChatId: 'gc-1',
-				moderatorUsage: { contextUsage: 0.5, totalCost: 0.01, tokenCount: 100 },
+				moderatorUsage: { contextUsage: 45, totalCost: 0.01, tokenCount: 9000 },
 			});
-
-			let usageCallback: any;
-			mockGroupChat.onModeratorUsage.mockImplementationOnce((cb: any) => {
-				usageCallback = cb;
-				return () => {};
-			});
-
 			renderHook(() => useGroupChatHandlers());
-			act(() => usageCallback('gc-1', { contextUsage: -1, totalCost: 0.05, tokenCount: 200 }));
+			const usageCallback: (id: string, usage: ModeratorUsage) => void =
+				mockGroupChat.onModeratorUsage.mock.calls[0][0];
+			const unknown = { contextUsage: -3, totalCost: 0.02, tokenCount: -3 };
 
-			const usage = useGroupChatStore.getState().moderatorUsage;
-			expect(usage?.contextUsage).toBe(0.5); // Preserved
-			expect(usage?.totalCost).toBe(0.05); // Updated
-			expect(usage?.tokenCount).toBe(100); // Preserved
+			act(() => usageCallback('gc-1', unknown));
+			expect(useGroupChatStore.getState().moderatorUsage).toEqual(unknown);
+		});
+
+		it("ignores another chat's unknown and accumulated moderator observations", () => {
+			const measured = { contextUsage: 45, totalCost: 0.01, tokenCount: 9000 };
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1', moderatorUsage: measured });
+			renderHook(() => useGroupChatHandlers());
+			const usageCallback: (id: string, usage: ModeratorUsage) => void =
+				mockGroupChat.onModeratorUsage.mock.calls[0][0];
+
+			for (const contextUsage of [-2, -1]) {
+				act(() =>
+					usageCallback('gc-2', { contextUsage, totalCost: 0.5, tokenCount: contextUsage })
+				);
+				expect(useGroupChatStore.getState().moderatorUsage).toEqual(measured);
+			}
 		});
 	});
 

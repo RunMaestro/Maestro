@@ -107,6 +107,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'Task-selection block injected into {{TASK_SELECTION_BLOCK}} when Fresh Context Per is set to Document',
 		category: 'autorun',
 	},
+	{
+		id: 'autorun-document',
+		filename: 'autorun-document.md',
+		description:
+			'Names the task document ({{DOCUMENT_PATH}}). Ends the default Auto Run prompt, and is appended to a playbook prompt that never names the document',
+		category: 'autorun',
+	},
 	// Commands
 	{
 		id: 'image-only-default',
@@ -125,6 +132,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		filename: 'ai-command.md',
 		description:
 			'AI command mode: turns a plain-English request into one shell command line for confirmation',
+		category: 'commands',
+	},
+	{
+		id: 'federation-settings-merge',
+		filename: 'federation-settings-merge.md',
+		description:
+			'Federation settings conflict: proposes one merged text from the host and local versions of a field',
 		category: 'commands',
 	},
 	// Per-agent prompt preambles
@@ -398,6 +412,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'includes',
 	},
 	{
+		id: '_autorun-delegation',
+		filename: '_autorun-delegation.md',
+		description:
+			'How an Auto Run task hands work to other agents and gets the result back (both modes)',
+		category: 'includes',
+	},
+	{
 		id: '_wizard-rich-replies',
 		filename: '_wizard-rich-replies.md',
 		description: 'Tells a wizard to draw mockups and diagrams inside its JSON `message`',
@@ -433,10 +454,12 @@ export const PROMPT_IDS = {
 	AUTORUN_SYNOPSIS: 'autorun-synopsis',
 	AUTORUN_PER_TASK: 'autorun-per-task',
 	AUTORUN_PER_DOCUMENT: 'autorun-per-document',
+	AUTORUN_DOCUMENT: 'autorun-document',
 	// Commands
 	IMAGE_ONLY_DEFAULT: 'image-only-default',
 	COMMIT_COMMAND: 'commit-command',
 	AI_COMMAND: 'ai-command',
+	FEDERATION_SETTINGS_MERGE: 'federation-settings-merge',
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System

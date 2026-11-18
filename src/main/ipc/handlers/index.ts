@@ -61,8 +61,10 @@ import {
 } from './web';
 import { registerWebLoginHandlers } from './webLogin';
 import { registerComputerHistoryHandlers } from './computerHistory';
+import { registerFederationHandlers } from './federation';
 import { registerMaestroRunHandlers } from './maestroRun';
 import { registerDataviewHandlers, DataviewHandlerDependencies } from './dataview';
+import { registerPromptLinkHandlers } from './promptLinks';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
 import { registerNotificationHistoryHandlers } from './notification-history';
 import { registerNotificationsHandlers } from './notifications';
@@ -148,9 +150,11 @@ export {
 export type { WebHandlerDependencies };
 export { registerWebLoginHandlers };
 export { registerComputerHistoryHandlers };
+export { registerFederationHandlers };
 export { registerMaestroRunHandlers };
 export { registerDataviewHandlers };
 export type { DataviewHandlerDependencies };
+export { registerPromptLinkHandlers };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
 export { registerNotificationsHandlers, registerNotificationHistoryHandlers };
@@ -276,6 +280,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		sessionsStore: deps.sessionsStore,
 	});
 	registerProcessHandlers({
+		groupsStore: deps.groupsStore,
+		getWebServer: deps.getWebServer,
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
@@ -336,7 +342,6 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	// Register stats handlers for usage tracking
 	registerStatsHandlers({
-		getMainWindow: deps.getMainWindow,
 		settingsStore: deps.settingsStore,
 	});
 	// Register Cue Stats handlers for the Cue Dashboard aggregation query

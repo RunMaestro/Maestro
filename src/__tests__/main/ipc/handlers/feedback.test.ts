@@ -94,7 +94,8 @@ import {
 	saveImageToTempFile,
 } from '../../../../main/process-manager/utils/imageUtils';
 import { registerFeedbackHandlers } from '../../../../main/ipc/handlers/feedback';
-import { clearFeedbackRepoVerdicts } from '../../../../main/feedback';
+import { clearFeedbackRepoVerdicts, resetFeedbackSubmissionGuard } from '../../../../main/feedback';
+import { feedbackReportFingerprint } from '../../../../shared/feedback';
 
 /** `gh auth status` for a signed-in account, in gh 2.40+ wording. */
 const statusOk = () => ({
@@ -110,9 +111,69 @@ const probeAllowed = () => ({
 	stderr: 'gh: Invalid request.\n\n"title" wasn\'t supplied. (HTTP 422)',
 });
 
+/** One screenshot upload's outcome, in attachment order. */
+interface MockUploadResult {
+	ok: boolean;
+	downloadUrl?: string;
+}
+
+interface MockConversationGhOptions {
+	uploadResults?: MockUploadResult[];
+	issueUrl?: string;
+	issueCreateFails?: boolean;
+}
+
+/**
+ * Route the gh calls one conversational submit makes: resolve the login, check
+ * the attachments repo, check the label, then upload each screenshot (one result
+ * per attachment, in order), then create the issue. Anything else succeeds.
+ */
+function mockConversationGh(options?: MockConversationGhOptions): void {
+	let uploadIndex = 0;
+	vi.mocked(execFileNoThrow).mockImplementation(async (_command, args) => {
+		const argv = (args ?? []) as string[];
+		const joined = argv.join(' ');
+		if (joined.includes('api user --jq .login')) {
+			return { exitCode: 0, stdout: 'octocat\n', stderr: '' } as any;
+		}
+		if (joined.includes('maestro-feedback-attachments') && !joined.includes('contents/')) {
+			return { exitCode: 0, stdout: '', stderr: '' } as any;
+		}
+		if (joined.includes('repos/RunMaestro/Maestro/labels/Maestro-feedback')) {
+			return { exitCode: 0, stdout: '', stderr: '' } as any;
+		}
+		if (joined.includes('contents/feedback/')) {
+			const upload = options?.uploadResults?.[uploadIndex++] ?? { ok: true };
+			return upload.ok
+				? ({
+						exitCode: 0,
+						stdout: JSON.stringify({
+							content: {
+								download_url: upload.downloadUrl ?? 'https://raw.githubusercontent.com/x/y',
+							},
+						}),
+						stderr: '',
+					} as any)
+				: ({ exitCode: 1, stdout: '', stderr: 'upload failed' } as any);
+		}
+		if (argv[0] === 'issue' && argv[1] === 'create') {
+			if (options?.issueCreateFails) {
+				return { exitCode: 1, stdout: '', stderr: 'gh exploded' } as any;
+			}
+			return {
+				exitCode: 0,
+				stdout: `${options?.issueUrl ?? 'https://github.com/RunMaestro/Maestro/issues/2000'}\n`,
+				stderr: '',
+			} as any;
+		}
+		return { exitCode: 0, stdout: '', stderr: '' } as any;
+	});
+}
+
 describe('feedback handlers', () => {
 	beforeEach(() => {
 		clearFeedbackRepoVerdicts();
+		resetFeedbackSubmissionGuard();
 		vi.clearAllMocks();
 		registeredHandlers.clear();
 		mockProcessManager.write.mockReset();
@@ -759,6 +820,371 @@ describe('feedback handlers', () => {
 		);
 
 		expect(result).toMatchObject({ success: false, needsGhLogin: true });
+	});
+
+	describe('submitting a report', () => {
+		const submit = (payload: Record<string, unknown>) =>
+			registeredHandlers.get('feedback:submit-conversation')!({}, payload);
+
+		const bodyWrites = () =>
+			vi
+				.mocked(fs.writeFile)
+				.mock.calls.filter(([target]) => String(target).endsWith('.md'))
+				.map(([target, contents]) => ({ path: String(target), contents: String(contents) }));
+
+		const issueCreateArgs = () =>
+			vi
+				.mocked(execFileNoThrow)
+				.mock.calls.map(([, args]) => (args ?? []) as string[])
+				.filter((args) => args[0] === 'issue' && args[1] === 'create');
+
+		beforeEach(() => {
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			vi.mocked(fs.unlink).mockResolvedValue(undefined);
+		});
+
+		it('gives two concurrent submissions their own temp files and upload paths', async () => {
+			mockConversationGh({
+				uploadResults: [
+					{ ok: true, downloadUrl: 'https://raw.example/a.png' },
+					{ ok: true, downloadUrl: 'https://raw.example/b.png' },
+				],
+			});
+
+			const screenshot = (base64: string) => [
+				{ name: 'shot.png', dataUrl: `data:image/png;base64,${base64}` },
+			];
+			const [first, second] = await Promise.all([
+				submit({
+					category: 'bug_report',
+					summary: 'First report',
+					expectedBehavior: 'e1',
+					actualBehavior: 'a1',
+					attachments: screenshot('AAA'),
+				}),
+				submit({
+					category: 'bug_report',
+					summary: 'Second report',
+					expectedBehavior: 'e2',
+					actualBehavior: 'a2',
+					attachments: screenshot('BBB'),
+				}),
+			]);
+
+			expect(first.success).toBe(true);
+			expect(second.success).toBe(true);
+
+			const uploadPayloadPaths = vi
+				.mocked(fs.writeFile)
+				.mock.calls.map(([target]) => String(target))
+				.filter((target) => target.includes('maestro-feedback-upload-'));
+			expect(new Set(uploadPayloadPaths).size).toBe(2);
+
+			const repoPaths = vi
+				.mocked(execFileNoThrow)
+				.mock.calls.map(([, args]) => (args ?? []) as string[])
+				.filter((args) => args.join(' ').includes('contents/feedback/'))
+				.map((args) => args.find((arg) => arg.includes('contents/feedback/'))!);
+			expect(repoPaths).toHaveLength(2);
+			expect(repoPaths[0]).not.toBe(repoPaths[1]);
+
+			const bodies = bodyWrites();
+			expect(new Set(bodies.map((body) => body.path)).size).toBe(2);
+			expect(bodies.some((body) => body.contents.includes('First report'))).toBe(true);
+			expect(bodies.some((body) => body.contents.includes('Second report'))).toBe(true);
+		});
+
+		it('refuses either report after two file concurrently', async () => {
+			mockConversationGh();
+			const reportA = {
+				category: 'bug_report',
+				summary: 'Concurrent A',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+			};
+			const reportB = { ...reportA, summary: 'Concurrent B' };
+
+			const [firstA, firstB] = await Promise.all([submit(reportA), submit(reportB)]);
+			expect(firstA.success).toBe(true);
+			expect(firstB.success).toBe(true);
+
+			const secondA = await submit(reportA);
+			const secondB = await submit(reportB);
+			expect(secondA).toMatchObject({ success: false });
+			expect(secondA.error).toContain('already been filed');
+			expect(secondB).toMatchObject({ success: false });
+			expect(secondB.error).toContain('already been filed');
+			expect(issueCreateArgs()).toHaveLength(2);
+		});
+
+		it('keeps the screenshots that uploaded when a later one fails, and warns', async () => {
+			mockConversationGh({
+				uploadResults: [{ ok: true, downloadUrl: 'https://raw.example/first.png' }, { ok: false }],
+			});
+
+			const result = await submit({
+				category: 'bug_report',
+				summary: 'Two screenshots',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+				attachments: [
+					{ name: 'first.png', dataUrl: 'data:image/png;base64,AAA' },
+					{ name: 'second.png', dataUrl: 'data:image/png;base64,BBB' },
+				],
+			});
+
+			expect(result).toMatchObject({ success: true });
+			expect(result.warnings).toHaveLength(1);
+			expect(result.warnings?.[0]).toContain('second.png');
+
+			const body = bodyWrites()[0].contents;
+			expect(body).toContain('![first.png](https://raw.example/first.png)');
+			expect(body).not.toContain('second.png');
+		});
+
+		it('does not claim the issue was filed when upload and issue creation both fail', async () => {
+			mockConversationGh({ uploadResults: [{ ok: false }], issueCreateFails: true });
+
+			const result = await submit({
+				category: 'bug_report',
+				summary: 'Nothing was filed',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+				attachments: [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AAA' }],
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.warnings).toHaveLength(1);
+			expect(result.warnings?.[0]).toContain('could not be uploaded');
+			expect(result.warnings?.[0]).not.toContain('filed');
+		});
+
+		it('refuses a report that changed after the user reviewed it', async () => {
+			const reviewedFingerprint = feedbackReportFingerprint({
+				category: 'bug_report',
+				summary: 'Old summary',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+			});
+
+			const result = await submit({
+				category: 'bug_report',
+				summary: 'New summary',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+				reviewedFingerprint,
+			});
+
+			expect(result).toMatchObject({ success: false });
+			expect(result.error).toContain('changed');
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('refuses to file the same report twice in one session', async () => {
+			mockConversationGh();
+			const payload = {
+				category: 'bug_report',
+				summary: 'Only once',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+			};
+
+			const first = await submit(payload);
+			const second = await submit(payload);
+
+			expect(first.success).toBe(true);
+			expect(second).toMatchObject({ success: false });
+			expect(second.error).toContain('already been filed');
+			expect(issueCreateArgs()).toHaveLength(1);
+		});
+
+		it('refuses a second submit of a report that is still being filed', async () => {
+			let releaseIssueCreate!: () => void;
+			const issueCreateGate = new Promise<void>((resolve) => {
+				releaseIssueCreate = resolve;
+			});
+			let markIssueCreateStarted!: () => void;
+			const issueCreateStarted = new Promise<void>((resolve) => {
+				markIssueCreateStarted = resolve;
+			});
+			vi.mocked(execFileNoThrow).mockImplementation(async (_command, args) => {
+				const argv = (args ?? []) as string[];
+				if (argv[0] === 'issue' && argv[1] === 'create') {
+					markIssueCreateStarted();
+					await issueCreateGate;
+					return {
+						exitCode: 0,
+						stdout: 'https://github.com/RunMaestro/Maestro/issues/2001\n',
+						stderr: '',
+					} as any;
+				}
+				return { exitCode: 0, stdout: '', stderr: '' } as any;
+			});
+			const payload = {
+				category: 'bug_report',
+				summary: 'Held while filing',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+			};
+
+			const firstPromise = submit(payload);
+			await issueCreateStarted;
+
+			const second = await submit(payload);
+			expect(second).toMatchObject({ success: false });
+			expect(second.error).toContain('already being filed');
+
+			releaseIssueCreate();
+			const first = await firstPromise;
+			expect(first.success).toBe(true);
+			expect(issueCreateArgs()).toHaveLength(1);
+		});
+
+		it('releases the claim when the first submit fails, so a retry can file', async () => {
+			let createCount = 0;
+			vi.mocked(execFileNoThrow).mockImplementation(async (_command, args) => {
+				const argv = (args ?? []) as string[];
+				if (argv[0] === 'issue' && argv[1] === 'create') {
+					createCount += 1;
+					return createCount === 1
+						? ({ exitCode: 1, stdout: '', stderr: 'gh exploded' } as any)
+						: ({
+								exitCode: 0,
+								stdout: 'https://github.com/RunMaestro/Maestro/issues/2002\n',
+								stderr: '',
+							} as any);
+				}
+				return { exitCode: 0, stdout: '', stderr: '' } as any;
+			});
+			const payload = {
+				category: 'bug_report',
+				summary: 'Retry after failure',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+			};
+
+			const first = await submit(payload);
+			const second = await submit(payload);
+
+			expect(first).toMatchObject({ success: false });
+			expect(second.success).toBe(true);
+			expect(issueCreateArgs()).toHaveLength(2);
+		});
+
+		it('tracks different reports filing at once without overwriting their claims', async () => {
+			let release!: () => void;
+			const gate = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			let started = 0;
+			let markBothStarted!: () => void;
+			const bothStarted = new Promise<void>((resolve) => {
+				markBothStarted = resolve;
+			});
+			let created = 0;
+			vi.mocked(execFileNoThrow).mockImplementation(async (_command, args) => {
+				const argv = (args ?? []) as string[];
+				if (argv[0] === 'issue' && argv[1] === 'create') {
+					started += 1;
+					if (started === 2) markBothStarted();
+					await gate;
+					created += 1;
+					return {
+						exitCode: 0,
+						stdout: `https://github.com/RunMaestro/Maestro/issues/${3000 + created}\n`,
+						stderr: '',
+					} as any;
+				}
+				return { exitCode: 0, stdout: '', stderr: '' } as any;
+			});
+			const reportA = {
+				category: 'bug_report',
+				summary: 'Report A',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+			};
+			const reportB = { ...reportA, summary: 'Report B' };
+
+			const firstA = submit(reportA);
+			const firstB = submit(reportB);
+			await bothStarted;
+
+			const secondA = await submit(reportA);
+			expect(secondA).toMatchObject({ success: false });
+			expect(secondA.error).toContain('already being filed');
+
+			release();
+			const [a, b] = await Promise.all([firstA, firstB]);
+			expect(a.success).toBe(true);
+			expect(b.success).toBe(true);
+			expect(issueCreateArgs()).toHaveLength(2);
+		});
+
+		it('keeps the performance trace when issue creation fails, then deletes it on success', async () => {
+			const tracePath = '/tmp/held-trace.zip';
+			vi.mocked(fs.readFile).mockResolvedValue(Buffer.from('zip-data'));
+			let createCalls = 0;
+			vi.mocked(execFileNoThrow).mockImplementation(async (_command, args) => {
+				const argv = (args ?? []) as string[];
+				const joined = argv.join(' ');
+				if (argv[0] === 'issue' && argv[1] === 'create') {
+					createCalls += 1;
+					return createCalls === 1
+						? ({ exitCode: 1, stdout: '', stderr: 'gh exploded' } as any)
+						: ({
+								exitCode: 0,
+								stdout: 'https://github.com/RunMaestro/Maestro/issues/2003\n',
+								stderr: '',
+							} as any);
+				}
+				if (joined.includes('contents/feedback/')) {
+					return {
+						exitCode: 0,
+						stdout: JSON.stringify({
+							content: { download_url: 'https://raw.example/trace.zip' },
+						}),
+						stderr: '',
+					} as any;
+				}
+				return { exitCode: 0, stdout: '', stderr: '' } as any;
+			});
+			const payload = {
+				category: 'bug_report',
+				summary: 'Trace attached',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+				performanceTracePath: tracePath,
+			};
+			const unlinked = () => vi.mocked(fs.unlink).mock.calls.map(([target]) => String(target));
+
+			const first = await submit(payload);
+			expect(first.success).toBe(false);
+			expect(unlinked()).not.toContain(tracePath);
+
+			const second = await submit(payload);
+			expect(second.success).toBe(true);
+			expect(unlinked()).toContain(tracePath);
+		});
+
+		it('files a report longer than the Windows command line limit whole, via --body-file', async () => {
+			mockConversationGh();
+			const long = 'x'.repeat(4990);
+
+			const result = await submit({
+				category: 'bug_report',
+				summary: 'Long report',
+				expectedBehavior: long,
+				actualBehavior: long,
+				additionalContext: long,
+			});
+
+			expect(result).toMatchObject({ success: true });
+			expect(bodyWrites()[0].contents).toContain(long);
+
+			const createArgs = issueCreateArgs()[0];
+			expect(createArgs).toContain('--body-file');
+			expect(createArgs).not.toContain('--body');
+		});
 	});
 
 	it('falls back to which-based detection when no custom path is configured', async () => {

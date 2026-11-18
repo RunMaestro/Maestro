@@ -22,10 +22,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { HistoryPanel, HistoryPanelHandle } from '../../../renderer/components/HistoryPanel';
+import type {
+	HistorySource,
+	HistorySourceListener,
+} from '../../../renderer/components/History/historySource';
 import type { Session, HistoryEntry, HistoryEntryType } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { resetStore } from '../../helpers/resetStores';
+import type { NativeSessionBinding } from '../../../shared/maestro-lib/agents/providerSwap';
 
 import { mockTheme } from '../../helpers/mockTheme';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
@@ -39,8 +46,10 @@ vi.mock('../../../renderer/components/HistoryDetailModal', () => ({
 		onUpdate,
 		filteredEntries,
 		currentIndex,
+		agentId,
 	}: {
 		entry: HistoryEntry;
+		agentId?: string;
 		onClose: () => void;
 		onDelete?: (id: string) => void;
 		onNavigate?: (entry: HistoryEntry, index: number) => void;
@@ -52,6 +61,7 @@ vi.mock('../../../renderer/components/HistoryDetailModal', () => ({
 			<span data-testid="modal-entry-id">{entry.id}</span>
 			<span data-testid="modal-entry-summary">{entry.summary}</span>
 			<span data-testid="modal-current-index">{currentIndex}</span>
+			<span data-testid="modal-agent-id">{agentId ?? 'none'}</span>
 			<button onClick={onClose} data-testid="modal-close">
 				Close
 			</button>
@@ -137,6 +147,7 @@ describe('HistoryPanel', () => {
 
 	beforeEach(() => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
+		resetStore(useSessionStore);
 
 		// Install a fresh in-memory localStorage mock between tests. Filter
 		// toggles persist under HISTORY_PANEL_FILTERS_KEY; without a reset, a test
@@ -262,6 +273,7 @@ describe('HistoryPanel', () => {
 	});
 
 	afterEach(() => {
+		resetStore(useSessionStore);
 		vi.useRealTimers();
 		vi.restoreAllMocks();
 		consoleErrorSpy.mockRestore();
@@ -1451,6 +1463,38 @@ describe('HistoryPanel', () => {
 			});
 		});
 
+		it.each([
+			['an unbound entry uses the panel agent', undefined, 'codex'],
+			[
+				'a bound entry uses its recorded provider',
+				{
+					version: 1,
+					state: 'bound',
+					provider: 'grok',
+					nativeSessionId: 'native',
+					accountRef: 'account',
+					host: { kind: 'local', identity: 'local' },
+					cwd: '/test/project',
+				},
+				'grok',
+			],
+		] as const)('gives the detail modal a provider: %s', async (_label, binding, expected) => {
+			// Codex already counts cached input, so the provider picks the token formula.
+			const entry = createMockEntry({
+				summary: 'Provider entry',
+				nativeSessionBinding: binding as NativeSessionBinding | undefined,
+			});
+			mockHistoryGetAll.mockResolvedValue([entry]);
+			const { container } = render(
+				<HistoryPanel session={createMockSession({ toolType: 'codex' })} theme={mockTheme} />
+			);
+			await screen.findByText('Provider entry');
+			const listContainer = container.querySelector('[tabIndex="0"]');
+			fireEvent.keyDown(listContainer!, { key: 'ArrowDown' });
+			fireEvent.keyDown(listContainer!, { key: 'Enter' });
+			expect(await screen.findByTestId('modal-agent-id')).toHaveTextContent(expected);
+		});
+
 		it('should open detail modal with Enter', async () => {
 			const entry = createMockEntry({ summary: 'Detail entry' });
 			mockHistoryGetAll.mockResolvedValue([entry]);
@@ -1474,9 +1518,10 @@ describe('HistoryPanel', () => {
 		});
 
 		it('should jump to the entry session with Cmd+Enter instead of opening the modal', async () => {
-			const onOpenSessionAsTab = vi.fn();
+			const onOpenSessionAsTab = vi.fn().mockResolvedValue(true);
 			const entry = createMockEntry({
 				summary: 'Jump entry',
+				sessionId: 'recorded-owner',
 				agentSessionId: 'abc12345-def-789',
 				sessionName: 'Jump Session',
 			});
@@ -1503,7 +1548,8 @@ describe('HistoryPanel', () => {
 			expect(onOpenSessionAsTab).toHaveBeenCalledWith(
 				'abc12345-def-789',
 				'/test/project',
-				'Jump Session'
+				'Jump Session',
+				{ targetSessionId: 'recorded-owner', nativeSessionBinding: undefined }
 			);
 			expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
 		});
@@ -1811,8 +1857,9 @@ describe('HistoryPanel', () => {
 		});
 
 		it('should call onOpenSessionAsTab when session badge is clicked', async () => {
-			const onOpenSessionAsTab = vi.fn();
+			const onOpenSessionAsTab = vi.fn().mockResolvedValue(true);
 			const entry = createMockEntry({
+				sessionId: 'recorded-owner',
 				agentSessionId: 'abc12345-def-789',
 			});
 			mockHistoryGetAll.mockResolvedValue([entry]);
@@ -1834,7 +1881,8 @@ describe('HistoryPanel', () => {
 			expect(onOpenSessionAsTab).toHaveBeenCalledWith(
 				'abc12345-def-789',
 				'/test/project',
-				undefined
+				undefined,
+				{ targetSessionId: 'recorded-owner', nativeSessionBinding: undefined }
 			);
 		});
 
@@ -2178,6 +2226,180 @@ describe('HistoryPanel', () => {
 	});
 
 	// ===== CALLBACKS =====
+	describe('recorded native resume ownership', () => {
+		it.each(['click', 'metaKey', 'ctrlKey'] as const)(
+			'forwards the selected same-ID record through %s and the full-handler fallback',
+			async (gesture) => {
+				const entries = ['one', 'two'].map((owner) =>
+					createMockEntry({
+						id: owner,
+						summary: `History ${owner}`,
+						sessionName: `Conversation ${owner}`,
+						sessionId: owner,
+						agentSessionId: 'shared-native',
+						projectPath: `/project/${owner}`,
+						nativeSessionBinding: Object.freeze({
+							version: 1,
+							state: 'bound',
+							provider: 'grok',
+							nativeSessionId: 'shared-native',
+							accountRef: `account-${owner}`,
+							host: Object.freeze({ kind: 'ssh', identity: `host-${owner}` }),
+							cwd: `/project/${owner}`,
+						}),
+					})
+				);
+				mockHistoryGetAll.mockResolvedValue(entries);
+				// The current provider/account must never relabel recorded history.
+				const session = createMockSession({
+					toolType: 'codex',
+					customEnvVars: { GROK_HOME: '/new' },
+				});
+				const onOpenSessionAsTab = vi.fn().mockResolvedValue(false);
+				const onResumeSession = vi.fn().mockResolvedValue(false);
+				const { container, rerender } = render(
+					<HistoryPanel
+						session={session}
+						theme={mockTheme}
+						onOpenSessionAsTab={onOpenSessionAsTab}
+					/>
+				);
+				await screen.findByText('History two');
+				const list = container.querySelector('[tabIndex="0"]')!;
+				fireEvent.keyDown(list, { key: 'ArrowDown' });
+				fireEvent.keyDown(list, { key: 'ArrowDown' });
+				if (gesture === 'click') fireEvent.click(screen.getByTitle('Conversation two'));
+				else fireEvent.keyDown(list, { key: 'Enter', [gesture]: true });
+				expect(onOpenSessionAsTab).toHaveBeenCalledExactlyOnceWith(
+					'shared-native',
+					'/project/two',
+					'Conversation two',
+					{ targetSessionId: 'two', nativeSessionBinding: entries[1].nativeSessionBinding }
+				);
+				expect(screen.queryByTestId('history-detail-modal')).not.toBeInTheDocument();
+				rerender(
+					<HistoryPanel session={session} theme={mockTheme} onResumeSession={onResumeSession} />
+				);
+				fireEvent.keyDown(list, { key: 'Enter', ctrlKey: true });
+				expect(onResumeSession).toHaveBeenCalledExactlyOnceWith(
+					'shared-native',
+					undefined,
+					'Conversation two',
+					undefined,
+					undefined,
+					'/project/two',
+					{ targetSessionId: 'two', nativeSessionBinding: entries[1].nativeSessionBinding }
+				);
+			}
+		);
+
+		it.each([undefined, { version: 1, state: 'unknown', reason: 'legacy' }] satisfies (
+			| NativeSessionBinding
+			| undefined
+		)[])(
+			'keeps legacy scope unknown and retains selection after refusal (%j)',
+			async (nativeSessionBinding) => {
+				const session = createMockSession({ id: 'active', toolType: 'grok' });
+				useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+				const entry = createMockEntry({
+					sessionId: 'owner',
+					agentSessionId: 'old-native',
+					nativeSessionBinding,
+				});
+				mockHistoryGetAll.mockResolvedValue([entry]);
+				const onOpenSessionAsTab = vi.fn().mockResolvedValue(false);
+				const { container } = render(
+					<HistoryPanel
+						session={session}
+						theme={mockTheme}
+						onOpenSessionAsTab={onOpenSessionAsTab}
+					/>
+				);
+				await screen.findByText('Test summary');
+				const list = container.querySelector('[tabIndex="0"]')!;
+				fireEvent.keyDown(list, { key: 'ArrowDown' });
+				await act(async () => {
+					fireEvent.keyDown(list, { key: 'Enter', metaKey: true });
+				});
+				expect(onOpenSessionAsTab).toHaveBeenCalledExactlyOnceWith(
+					'old-native',
+					'/test/project',
+					undefined,
+					{ targetSessionId: 'owner', nativeSessionBinding }
+				);
+				expect(useSessionStore.getState().activeSessionId).toBe('active');
+				// Enter still opens the same selected record after a refused resume.
+				fireEvent.keyDown(list, { key: 'Enter' });
+				expect(screen.getByTestId('modal-entry-id')).toHaveTextContent(entry.id);
+			}
+		);
+
+		it.each([undefined, '', '   '])('refuses a record with unknown owner %j', async (sessionId) => {
+			mockHistoryGetAll.mockResolvedValue([
+				createMockEntry({ sessionId, agentSessionId: 'legacy' }),
+			]);
+			const onOpenSessionAsTab = vi.fn().mockResolvedValue(true);
+			const { container } = render(
+				<HistoryPanel
+					session={createMockSession()}
+					theme={mockTheme}
+					onOpenSessionAsTab={onOpenSessionAsTab}
+				/>
+			);
+			await screen.findByText('Test summary');
+			fireEvent.click(screen.getByTitle('legacy'));
+			const list = container.querySelector('[tabIndex="0"]')!;
+			fireEvent.keyDown(list, { key: 'ArrowDown' });
+			fireEvent.keyDown(list, { key: 'Enter', ctrlKey: true });
+			expect(onOpenSessionAsTab).not.toHaveBeenCalled();
+			fireEvent.keyDown(list, { key: 'Enter' });
+			expect(screen.getByTestId('history-detail-modal')).toBeInTheDocument();
+		});
+
+		it.each(['success', 'refusal', 'navigation', 'owner-removed'] as const)(
+			'waits for confirmation and preserves fresh navigation on %s',
+			async (outcome) => {
+				const session = createMockSession({ id: 'active' });
+				const owner = createMockSession({ id: 'owner', toolType: 'grok' });
+				const other = createMockSession({ id: 'other' });
+				useSessionStore.setState({ sessions: [session, owner, other], activeSessionId: 'active' });
+				mockHistoryGetAll.mockResolvedValue([
+					createMockEntry({ sessionId: 'owner', agentSessionId: 'native' }),
+				]);
+				let finish!: (value: boolean) => void;
+				const onOpenSessionAsTab = vi.fn(
+					() =>
+						new Promise<boolean>((resolve) => {
+							finish = resolve;
+						})
+				);
+				const { container } = render(
+					<HistoryPanel
+						session={session}
+						theme={mockTheme}
+						onOpenSessionAsTab={onOpenSessionAsTab}
+					/>
+				);
+				await screen.findByText('Test summary');
+				const list = container.querySelector('[tabIndex="0"]')!;
+				fireEvent.keyDown(list, { key: 'ArrowDown' });
+				fireEvent.keyDown(list, { key: 'Enter', metaKey: true });
+				expect(onOpenSessionAsTab).toHaveBeenCalledTimes(1);
+				expect(useSessionStore.getState().activeSessionId).toBe('active');
+				if (outcome === 'navigation') useSessionStore.getState().setActiveSessionId('other');
+				if (outcome === 'owner-removed') useSessionStore.setState({ sessions: [session, other] });
+				await act(async () => {
+					finish(outcome !== 'refusal');
+				});
+				expect(useSessionStore.getState().activeSessionId).toBe(
+					outcome === 'success' ? 'owner' : outcome === 'navigation' ? 'other' : 'active'
+				);
+				fireEvent.keyDown(list, { key: 'Enter' });
+				expect(screen.getByTestId('history-detail-modal')).toBeInTheDocument();
+			}
+		);
+	});
+
 	describe('callbacks', () => {
 		it('should call onJumpToAgentSession from detail modal', async () => {
 			const onJumpToAgentSession = vi.fn();
@@ -2399,6 +2621,143 @@ describe('HistoryPanel', () => {
 			await waitFor(() => {
 				expect(autoFilter).toHaveClass('opacity-40');
 			});
+		});
+	});
+
+	// ===== A SOURCE OTHER THAN THE LOCAL HISTORY (a Federation peer's host) =====
+	describe('with a source', () => {
+		/** A read-only source like a mirrored agent's: no remove, no update, reset-only stream. */
+		function readOnlySource(entries: HistoryEntry[]) {
+			const listeners: HistorySourceListener[] = [];
+			const source = {
+				getPage: vi.fn(
+					async ({ pagination }: { pagination: { offset: number; limit: number } }) => ({
+						entries: entries.slice(pagination.offset, pagination.offset + pagination.limit),
+						hasMore: pagination.offset + pagination.limit < entries.length,
+						total: entries.length,
+					})
+				),
+				getGraphData: vi.fn(async () => ({
+					buckets: Array.from({ length: 24 }, () => ({ auto: 0, user: 0, cue: 0 })),
+					earliestTimestamp: Date.now() - 24 * 60 * 60 * 1000,
+					latestTimestamp: Date.now(),
+					hostCounts: {},
+				})),
+				getOffsetForTimestamp: vi.fn(async () => 0),
+				subscribe: vi.fn((listener: HistorySourceListener) => {
+					listeners.push(listener);
+					return () => listeners.splice(listeners.indexOf(listener), 1);
+				}),
+			};
+			return {
+				source: source as unknown as HistorySource,
+				fake: source,
+				listeners,
+				setEntries: (next: HistoryEntry[]) => {
+					entries = next;
+				},
+			};
+		}
+
+		const view = {
+			id: 'buildbox:a1',
+			cwd: '/srv/app',
+			projectRoot: '/srv/app',
+			toolType: 'claude-code' as const,
+		};
+
+		it('reads only through the source, never the local History', async () => {
+			const { source, fake } = readOnlySource([
+				createMockEntry({ id: 'host-1', summary: 'From the host', hostname: 'box.host' }),
+			]);
+
+			render(<HistoryPanel session={view} source={source} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('From the host')).toBeInTheDocument();
+			});
+			expect(fake.getPage).toHaveBeenCalled();
+			expect(fake.getGraphData).toHaveBeenCalled();
+			expect(fake.subscribe).toHaveBeenCalled();
+			expect(window.maestro.history.getAllPaginated).not.toHaveBeenCalled();
+			expect(window.maestro.history.getGraphData).not.toHaveBeenCalled();
+			expect(window.maestro.directorNotes.onHistoryEntryAdded).not.toHaveBeenCalled();
+		});
+
+		it('draws no delete or update control for a read-only source', async () => {
+			const { source } = readOnlySource([
+				createMockEntry({ id: 'ro', summary: 'Read only entry' }),
+			]);
+
+			render(<HistoryPanel session={view} source={source} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Read only entry')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('Read only entry'));
+			await waitFor(() => {
+				expect(screen.getByTestId('history-detail-modal')).toBeInTheDocument();
+			});
+			expect(screen.queryByTestId('modal-delete')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('modal-update')).not.toBeInTheDocument();
+			expect(mockHistoryDelete).not.toHaveBeenCalled();
+		});
+
+		it('reads again from the top when the source resets', async () => {
+			const fixture = readOnlySource([createMockEntry({ id: 'first', summary: 'First read' })]);
+
+			render(<HistoryPanel session={view} source={fixture.source} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('First read')).toBeInTheDocument();
+			});
+			const graphReads = fixture.fake.getGraphData.mock.calls.length;
+			fixture.setEntries([createMockEntry({ id: 'second', summary: 'After the turn ended' })]);
+			act(() => {
+				fixture.listeners.forEach((listener) => listener.onReset());
+			});
+
+			await waitFor(() => {
+				expect(screen.getByText('After the turn ended')).toBeInTheDocument();
+			});
+			expect(fixture.fake.getGraphData.mock.calls.length).toBeGreaterThan(graphReads);
+		});
+
+		it('passes the panel filters to the source', async () => {
+			const { source, fake } = readOnlySource([]);
+
+			render(<HistoryPanel session={view} source={source} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(fake.getPage).toHaveBeenCalled();
+			});
+			expect(fake.getPage.mock.calls[0][0]).toMatchObject({
+				types: expect.arrayContaining(['AUTO', 'USER']),
+				hostKey: null,
+				pagination: { offset: 0, limit: expect.any(Number) },
+			});
+		});
+
+		it('still deletes through a source that offers remove', async () => {
+			const fixture = readOnlySource([createMockEntry({ id: 'gone', summary: 'Removable entry' })]);
+			const remove = vi.fn(async () => true);
+			const source = { ...fixture.source, remove } as HistorySource;
+
+			render(<HistoryPanel session={view} source={source} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Removable entry')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('Removable entry'));
+			await waitFor(() => {
+				expect(screen.getByTestId('modal-delete')).toBeInTheDocument();
+			});
+			expect(screen.queryByTestId('modal-update')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByTestId('modal-delete'));
+			await waitFor(() => {
+				expect(remove).toHaveBeenCalledWith('gone');
+			});
+			expect(mockHistoryDelete).not.toHaveBeenCalled();
 		});
 	});
 });

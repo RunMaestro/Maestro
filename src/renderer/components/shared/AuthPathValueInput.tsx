@@ -31,7 +31,9 @@ export function AuthPathValueInput({
 			? knownAuthDirs.claudeConfigDirs
 			: envVarKey === 'CODEX_HOME'
 				? knownAuthDirs.codexHomes
-				: [];
+				: envVarKey === 'GROK_HOME'
+					? knownAuthDirs.grokHomes
+					: [];
 	const hasKnownValue = knownPaths.includes(value);
 	const [showCustomInput, setShowCustomInput] = useState(() => !hasKnownValue);
 	const [homeDir, setHomeDir] = useState(getHomeDir);

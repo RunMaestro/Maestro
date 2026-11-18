@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { logger } from '../utils/logger';
+import { isConcertoHtmlUrl } from '../../shared/concerto-html';
 
 /** Sentry severity levels */
 type SentrySeverityLevel = 'fatal' | 'error' | 'warning' | 'log' | 'info' | 'debug';
@@ -208,7 +209,11 @@ export function attachWindowCrashHandlers(
 				message.includes('is not defined') ||
 				message.includes('is not a function');
 
-			if (isCritical) {
+			// A Concerto document (Movement, Cadenza, a Codex visualization) is HTML
+			// an agent wrote, rendered in an isolated maestro-concerto:// frame. Its
+			// console errors reach this listener too, but they are bugs in that
+			// generated page, not in Maestro (MAESTRO-18D).
+			if (isCritical && !isConcertoHtmlUrl(sourceId)) {
 				reportCrashToSentry(`Renderer error: ${message}`, 'error', {
 					line,
 					source: sourceId,

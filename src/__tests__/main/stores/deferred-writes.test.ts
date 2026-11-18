@@ -23,7 +23,11 @@ import os from 'os';
 import path from 'path';
 import type Store from 'electron-store';
 
-import { deferStoreWrites, serializeWithMemoizedArray } from '../../../main/stores/deferred-writes';
+import {
+	deferStoreWrites,
+	serializeWithMemoizedArray,
+	sweepOrphanTempFiles,
+} from '../../../main/stores/deferred-writes';
 import { encodeWithMemoizedArray } from '../../../shared/memoizedJsonSerialize';
 
 vi.mock('../../../main/utils/logger', () => ({
@@ -454,5 +458,74 @@ describe('deferStoreWrites', () => {
 		await writer.flushAsync();
 
 		expect(fs.readdirSync(dir)).toEqual(['maestro-sessions.json']);
+	});
+
+	it('acknowledges a revision whose bytes are already on disk without rewriting it', async () => {
+		const store = makeStore({ sessions: [] });
+		const writer = deferStoreWrites(store, 'sessions');
+		writer.store.set('sessions', [{ id: 'a', logs: ['one'] }]);
+		await writer.flushAsync();
+		const writeFile = vi.spyOn(fsp, 'writeFile');
+		const writeFileSync = vi.spyOn(fs, 'writeFileSync');
+
+		// A peer echoing what the host already saved: new objects, same bytes.
+		writer.store.set('sessions', [{ id: 'a', logs: ['one'] }]);
+		await writer.flushAsync();
+		writer.store.set('sessions', [{ id: 'a', logs: ['one'] }]);
+		writer.flushSync();
+		expect(writeFile).not.toHaveBeenCalled();
+		expect(writeFileSync).not.toHaveBeenCalled();
+		expect(writer.hasPendingWrite()).toBe(false);
+
+		writer.store.set('sessions', [{ id: 'a', logs: ['one', 'two'] }]);
+		await writer.flushAsync();
+		expect(writeFile).toHaveBeenCalledOnce();
+		expect(readFile()).toEqual({ sessions: [{ id: 'a', logs: ['one', 'two'] }] });
+	});
+
+	it('removes temp files a dead writer left, and keeps live ones and other stores', async () => {
+		// Above every platform's pid ceiling, so no process can hold it.
+		const deadPid = 4194305;
+		const dead = `maestro-sessions.json.${deadPid}.3.tmp`;
+		// A pid from another machine sharing a synced folder reads as dead here,
+		// so a recent file may still be that machine's write in flight.
+		const recent = `maestro-sessions.json.${deadPid}.4.tmp`;
+		const own = `maestro-sessions.json.${process.pid}.1.tmp`;
+		const liveCli = `maestro-sessions.json.${process.ppid}.1.tmp`;
+		const otherStore = `maestro-groups.json.${deadPid}.1.tmp`;
+		fs.writeFileSync(filePath, '{}');
+		const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+		for (const name of [dead, recent, own, liveCli, otherStore]) {
+			fs.writeFileSync(path.join(dir, name), '');
+			if (name !== recent) fs.utimesSync(path.join(dir, name), twoHoursAgo, twoHoursAgo);
+		}
+
+		await expect(sweepOrphanTempFiles(filePath)).resolves.toBe(1);
+
+		expect(fs.readdirSync(dir).sort()).toEqual(
+			['maestro-sessions.json', recent, own, liveCli, otherStore].sort()
+		);
+	});
+
+	it('looks again, once it is old enough, at a leftover too recent to judge at startup', async () => {
+		// A relaunch right after a crash finds the crash's temp file under an hour
+		// old; it must not wait for the next launch.
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+		try {
+			const store = makeStore({ sessions: [] });
+			const leftover = path.join(dir, 'maestro-sessions.json.4194305.9.tmp');
+			fs.writeFileSync(leftover, '');
+			const minuteAgo = new Date(Date.now() - 60 * 1000);
+			fs.utimesSync(leftover, minuteAgo, minuteAgo);
+
+			deferStoreWrites(store, 'sessions');
+			await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+			expect(fs.existsSync(leftover)).toBe(true);
+
+			await vi.advanceTimersByTimeAsync(50 * 60 * 1000);
+			await vi.waitFor(() => expect(fs.existsSync(leftover)).toBe(false));
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

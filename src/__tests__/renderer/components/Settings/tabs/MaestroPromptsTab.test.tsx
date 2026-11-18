@@ -292,6 +292,9 @@ describe('MaestroPromptsTab selection precedence', () => {
 		});
 
 		await waitFor(() => expect(screen.getByTestId('prompt-preview')).toBeInTheDocument());
+		// The scoped prose styles match `.prompt-preview .prose`; rendered
+		// markdown outside that wrapper loses heading and spacing styles.
+		expect(screen.getByTestId('prompt-preview').querySelector('.prose')).toBeTruthy();
 	});
 
 	it('reports Escape as handled while the filter has text, and clears it', async () => {

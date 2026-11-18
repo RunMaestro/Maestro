@@ -117,6 +117,83 @@ describe('parseAgentErrorEffortRejection', () => {
 	});
 });
 
+describe('Grok effort refusal diagnostics', () => {
+	it.each(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])(
+		'reads native %s refusals from raw and escaped JSON without inventing a model',
+		(value) => {
+			const message = `--effort/--reasoning-effort: unknown effort level '${value}'; use one of: balanced-v2, careful.reasoner`;
+			const expected = { value, supported: ['balanced-v2', 'careful.reasoner'] };
+			expect(parseEffortRejection(message)).toEqual(expected);
+			expect(parseEffortRejection(`progress\n${message}\nnext diagnostic`)).toEqual(expected);
+			expect(parseEffortRejection(JSON.stringify({ type: 'error', message }))).toEqual(expected);
+			expect(
+				parseEffortRejection(JSON.stringify({ message: JSON.stringify({ message }) }))
+			).toEqual(expected);
+			// Another JSON wrapper makes the menu delimiters ambiguous.
+			expect(
+				parseEffortRejection(
+					JSON.stringify({ message: JSON.stringify({ message: JSON.stringify({ message }) }) })
+				)
+			).toEqual({ value, supported: [] });
+		}
+	);
+
+	it('keeps an empty-menu refusal without fabricating accepted values', () => {
+		const message =
+			"--effort/--reasoning-effort: unknown effort level 'HIGH'; this model has no selectable effort levels";
+		const expected = { value: 'HIGH', supported: [] };
+		expect(parseEffortRejection(message)).toEqual(expected);
+		expect(parseEffortRejection(`${message}\nnext diagnostic`)).toEqual(expected);
+		expect(parseEffortRejection(JSON.stringify({ type: 'error', message }))).toEqual(expected);
+	});
+
+	it('retains the rejected value when quoted menu IDs cannot be read unambiguously', () => {
+		const message =
+			'--effort/--reasoning-effort: unknown effort level \'max\'; use one of: "careful", balanced';
+		expect(parseEffortRejection(JSON.stringify({ message }))).toEqual({
+			value: 'max',
+			supported: [],
+		});
+	});
+
+	it.each([
+		"unknown effort level 'max'; use one of: low, high",
+		"--effort/--reasoning-effort: unknown effort level 'careful' (model catalog unavailable; remapped menu ids require a loaded catalog)",
+		'--effort/--reasoning-effort: no active model to apply effort to',
+		'--effort/--reasoning-effort: model does not support reasoning effort; ignoring',
+		'unknown reasoning_effort value',
+		'unknown reasoning_effort value: max',
+		"--effort/--reasoning-effort: unknown effort level 'max'",
+		"--effort/--reasoning-effort: unknown effort level 'max'; this model has no selectable effort levels yet",
+	])('does not guess a model refusal from %s', (message) => {
+		expect(parseEffortRejection(message)).toBeNull();
+		expect(parseEffortRejection(JSON.stringify({ type: 'error', message }))).toBeNull();
+	});
+
+	it.each(['errorLine', 'stderr', 'stdout'] as const)(
+		'recovers the native diagnostic from AgentError raw.%s',
+		(field) => {
+			const message =
+				"--effort/--reasoning-effort: unknown effort level 'minimal'; use one of: low, high";
+			expect(
+				parseAgentErrorEffortRejection({
+					message: 'Agent exited with code 1',
+					raw: { [field]: JSON.stringify({ type: 'error', message }) },
+				})
+			).toEqual({ value: 'minimal', supported: ['low', 'high'] });
+		}
+	);
+
+	it('keeps the primary native refusal ahead of a different raw diagnostic', () => {
+		expect(
+			parseAgentErrorEffortRejection({
+				message: "--effort/--reasoning-effort: unknown effort level 'max'; use one of: low, medium",
+				raw: { errorLine: AGENT_ERROR_MESSAGE, stderr: JSONL_LINE },
+			})
+		).toEqual({ value: 'max', supported: ['low', 'medium'] });
+	});
+});
+
 describe('noteEffortRejection', () => {
 	const rejection = { value: 'minimal', model: 'gpt-6-astra', supported: ['low', 'medium'] };
 
@@ -139,6 +216,23 @@ describe('noteEffortRejection', () => {
 		noteEffortRejection('codex', rejection);
 		resetEffortRejections();
 		expect(getEffortRejection('codex', 'minimal')).toBeUndefined();
+	});
+
+	it('deduplicates Grok ASCII case across models while retaining the original diagnostic', () => {
+		const original = { value: 'HIGH', model: 'grok-model-a', supported: ['balanced-v2'] };
+		expect(noteEffortRejection('grok', original)).toBe(true);
+		expect(
+			noteEffortRejection('grok', { value: 'high', model: 'grok-model-b', supported: [] })
+		).toBe(false);
+		expect(getEffortRejection('grok', 'HiGh')).toEqual(original);
+		expect(getEffortRejection('grok', 'balanced-v2')).toBeUndefined();
+		expect(getEffortRejection('grok', 'max')).toBeUndefined();
+		expect(getEffortRejection('codex', 'HIGH')).toBeUndefined();
+		expect(noteEffortRejection('codex', original)).toBe(true);
+		expect(getEffortRejection('codex', 'high')).toBeUndefined();
+		expect(getEffortRejection('codex', 'HIGH')).toEqual(original);
+		resetEffortRejections();
+		expect(getEffortRejection('grok', 'high')).toBeUndefined();
 	});
 });
 

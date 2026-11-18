@@ -21,7 +21,7 @@ import { AlertTriangle, Check, RefreshCw, X, Zap } from 'lucide-react';
 import { useRetryStore, useRetryStatus, retryNow, cancelRetry } from '../stores/retryStore';
 import { formatDurationHuman } from '../../shared/formatters';
 import { describeQuotaWindow } from '../../shared/quotaLimitDetail';
-import { getConnectingColor } from '../utils/theme';
+import { activeStatusHalo, getConnectingColor } from '../utils/theme';
 import { QuotaLimitEvidence } from './ui/QuotaLimitEvidence';
 import type { Theme } from '../types';
 
@@ -212,16 +212,11 @@ export function RetryStatusCard({
 			aria-live="polite"
 		>
 			<div className="flex items-center gap-2">
-				<span className="relative flex h-2.5 w-2.5 flex-shrink-0">
-					<span
-						className="absolute inline-flex h-full w-full rounded-full opacity-60 animate-ping"
-						style={{ backgroundColor: outageColor }}
-					/>
-					<span
-						className="relative inline-flex h-2.5 w-2.5 rounded-full"
-						style={{ backgroundColor: outageColor }}
-					/>
-				</span>
+				{/* Static live dot, not an `animate-ping` ring (see activeStatusHalo). */}
+				<span
+					className="inline-flex h-2.5 w-2.5 flex-shrink-0 rounded-full"
+					style={{ backgroundColor: outageColor, boxShadow: activeStatusHalo(outageColor) }}
+				/>
 				<AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: outageColor }} />
 				<span className="font-medium" style={{ color: outageColor }}>
 					{strategyLabel}

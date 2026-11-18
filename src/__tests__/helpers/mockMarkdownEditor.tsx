@@ -120,6 +120,29 @@ export function markdownEditorModuleMock() {
 				onChange?.(next);
 				el?.setSelectionRange(from + text.length, from + text.length);
 			},
+			replaceRanges(changes: { from: number; to: number; insert: string }[]) {
+				const current = textareaRef.current?.value ?? value;
+				// Apply right to left so earlier offsets stay valid, the way one CM6
+				// transaction maps every change against the original document.
+				const next = [...changes]
+					.sort((a, b) => b.from - a.from)
+					.reduce((text, c) => text.slice(0, c.from) + c.insert + text.slice(c.to), current);
+				onChange?.(next);
+			},
+			getSelectionDetails() {
+				const el = textareaRef.current;
+				if (!el || el.selectionStart === el.selectionEnd) return null;
+				const from = el.selectionStart;
+				const to = el.selectionEnd;
+				const lineAt = (pos: number) => el.value.slice(0, pos).split('\n').length;
+				return {
+					text: el.value.slice(from, to),
+					from,
+					to,
+					startLine: lineAt(from),
+					endLine: lineAt(to),
+				};
+			},
 			setSearchMatches() {
 				// Painted decorations have no jsdom equivalent.
 			},

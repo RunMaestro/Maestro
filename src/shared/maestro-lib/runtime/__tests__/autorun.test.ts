@@ -29,11 +29,17 @@ import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
 import type { AutoRunRunEvent } from '../../autorun/run-tracker';
 import type { AutoRunOutcome, ClientResult, MaestroEvent } from '../../client/types';
 import { readHistory } from '../../store/read-history';
+import { sharedHistoryDir, sharedHistoryFilename } from '../../store/shared-history';
 import { AUTO_RUN_SESSION_COLUMNS, AUTO_RUN_TASK_COLUMNS } from '../../stats/auto-run-insert';
 import { QUERY_EVENT_COLUMNS } from '../../stats/query-event-insert';
 import { runAgentTurn } from '../../turns/run-agent-turn';
 import { outcomeOfEngineEvent } from '../autorun';
-import { createMaestroRuntime, type MaestroRuntime, type RuntimeDeps } from '../index';
+import {
+	createMaestroRuntime,
+	type MaestroRuntime,
+	type MaestroRuntimeOptions,
+	type RuntimeDeps,
+} from '../index';
 import type { WatchDirectory } from '../settings-watch';
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
@@ -190,7 +196,10 @@ describe('runtime Auto Run', () => {
 		...extra,
 	});
 
-	async function start(agent: Record<string, unknown> = seedAgent()): Promise<MaestroRuntime> {
+	async function start(
+		agent: Record<string, unknown> = seedAgent(),
+		extra: Partial<MaestroRuntimeOptions> = {}
+	): Promise<MaestroRuntime> {
 		fs.writeFileSync(
 			path.join(dir, 'maestro-sessions.json'),
 			JSON.stringify({ sessions: [agent], activeSessionId: 'a1' }, null, '\t')
@@ -203,6 +212,7 @@ describe('runtime Auto Run', () => {
 				bundledPromptsDir: BUNDLED_PROMPTS,
 				loadSqlite: () => FakeDatabase as never,
 			},
+			...extra,
 		});
 		if (!started.ok) throw new Error(`refused: ${started.refusal.message}`);
 		open.push(started.runtime);
@@ -362,6 +372,29 @@ describe('runtime Auto Run', () => {
 			// Each turn is automation, not someone typing.
 			const env = JSON.parse(read(envFiles[0]));
 			expect(env.MAESTRO_QUERY_SOURCE).toBe('auto');
+		});
+
+		it('copies each History row to the project shared History through the runtime writer', async () => {
+			const file = doc('tasks', tasks(2));
+			script = [1, 2].map((n) => ({ text: `Finished task ${n}. Details.`, tick: file }));
+			fs.mkdirSync(sharedHistoryDir(work), { recursive: true });
+			const runtime = await start(seedAgent(), {
+				sharedHistory: { label: 'box.host', hostname: 'box' },
+			});
+			const run = watchRun(runtime);
+			value(await runtime.autoRun.launch('a1', { documents: [{ file }] }));
+			await run.ended();
+
+			const own = auto(runtime);
+			expect(own).toHaveLength(3);
+			const shared = fs
+				.readFileSync(path.join(sharedHistoryDir(work), sharedHistoryFilename('box.host')), 'utf-8')
+				.split('\n')
+				.filter(Boolean)
+				.map((line) => JSON.parse(line) as HistoryEntry);
+			const sharedAuto = shared.filter((entry) => entry.type === 'AUTO');
+			expect(sharedAuto.map((entry) => entry.id)).toEqual(own.map((entry) => entry.id));
+			expect(sharedAuto.every((entry) => entry.hostname === 'box')).toBe(true);
 		});
 
 		it('writes the usage rows the Usage Dashboard counts', async () => {

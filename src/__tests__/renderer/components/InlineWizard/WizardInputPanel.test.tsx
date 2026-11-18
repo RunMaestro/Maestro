@@ -434,6 +434,44 @@ describe('WizardInputPanel', () => {
 		});
 	});
 
+	describe('busy Enter during IME composition', () => {
+		it('swallows a normal Enter while busy without forwarding it', () => {
+			const handleInputKeyDown = vi.fn();
+			render(
+				<WizardInputPanel {...defaultProps} isBusy={true} handleInputKeyDown={handleInputKeyDown} />
+			);
+			const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+
+			const notPrevented = fireEvent.keyDown(textarea, { key: 'Enter' });
+
+			expect(notPrevented).toBe(false);
+			expect(handleInputKeyDown).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['isComposing', { isComposing: true }],
+			['keyCode 229', { keyCode: 229 }],
+		])(
+			'leaves a composing Enter (%s) undefaulted and hands it to the composer, whose IME guard keeps it from sending',
+			(_label, composing) => {
+				const handleInputKeyDown = vi.fn();
+				render(
+					<WizardInputPanel
+						{...defaultProps}
+						isBusy={true}
+						handleInputKeyDown={handleInputKeyDown}
+					/>
+				);
+				const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+
+				const notPrevented = fireEvent.keyDown(textarea, { key: 'Enter', ...composing });
+
+				expect(notPrevented).toBe(true);
+				expect(handleInputKeyDown).toHaveBeenCalledTimes(1);
+			}
+		);
+	});
+
 	describe('escape key handling', () => {
 		it('confirms before exiting even when the user has not interacted yet', () => {
 			const onExitWizard = vi.fn();

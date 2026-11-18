@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../../cli/services/storage', () => ({
 	readSettingValue: (...args: unknown[]) => mocks.settings(...args),
 	resolveAgentId: (id: string) => id,
+	getSessionById: () => undefined,
 	readLiveSessions: () => [],
 	readGroups: () => [],
 }));

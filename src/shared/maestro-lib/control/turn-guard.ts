@@ -40,17 +40,27 @@ export function recordRemoteAgent(launch: {
 	args: readonly string[];
 	sshStdinScript: string | undefined;
 	sessionId: string;
+	/** Remote-owned prompt file; requires descriptor-preserving cancellation. */
+	promptArtifactPath?: string;
 }): { sshStdinScript: string | undefined; remote?: RemoteAgentTarget } {
 	const { sshStdinScript } = launch;
-	if (!sshStdinScript || !sshConnectionArgs(launch.args)) return { sshStdinScript };
-	const pidFile = newRemotePidFilePath();
+	if (!sshStdinScript || !sshConnectionArgs(launch.args)) {
+		if (launch.promptArtifactPath !== undefined) {
+			throw new Error('Remote prompt preparation unavailable.');
+		}
+		return { sshStdinScript };
+	}
+	const pidFile = newRemotePidFilePath(launch.promptArtifactPath !== undefined);
 	return {
-		sshStdinScript: withRemotePidRecord(sshStdinScript, pidFile),
+		sshStdinScript: withRemotePidRecord(sshStdinScript, pidFile, launch.promptArtifactPath),
 		remote: {
 			sshCommand: launch.command,
 			sshArgs: launch.args,
 			pidFile,
 			sessionId: launch.sessionId,
+			...(launch.promptArtifactPath !== undefined
+				? { promptArtifactPath: launch.promptArtifactPath }
+				: {}),
 		},
 	};
 }
@@ -83,15 +93,30 @@ export function guardTurn(
 	const { child } = handle;
 	const { remote, sessionId } = options;
 	let settled = false;
-	void handle.done.then(() => {
+	void handle.done.then((exit) => {
 		settled = true;
+		// Revocation and stdin/transport failure can stop startTurn directly,
+		// bypassing these guarded methods. Local close cannot release the
+		// remote file's lifetime; ask its owning host to finish that cleanup.
+		if (
+			remote?.promptArtifactPath !== undefined &&
+			child.pid !== undefined &&
+			(exit.spawnError ||
+				exit.stdinError ||
+				exit.signal ||
+				exit.interrupted ||
+				exit.exitCode === 255)
+		) {
+			signalRemoteAgent(remote, 'terminate');
+		}
 	});
 
-	// Nothing is signalled once the turn has settled: its pid record may name a process the
-	// remote has since handed to something else, and `signalRemoteAgent` only guards a recycled
-	// pid by its start time.
-	const signalRemote = (mode: RemoteSignalMode): void => {
-		if (remote && !settled) signalRemoteAgent(remote, mode);
+	// Ordinary stops finish with the local turn. Artifact cleanup can outlive it;
+	// the remote owner rechecks PID/start time, group and descriptor identity.
+	const signalRemote = (mode: RemoteSignalMode, retainArtifactOwner = false): void => {
+		if (remote && (!settled || (retainArtifactOwner && remote.promptArtifactPath !== undefined))) {
+			signalRemoteAgent(remote, mode);
+		}
 	};
 
 	armStdioCloseWatchdog(child, {
@@ -126,9 +151,17 @@ export function guardTurn(
 			// signal is sent.
 			signalRemote('interrupt');
 			const timer = setTimeout(() => {
-				if (child.exitCode === null && child.signalCode === null) signalRemote('terminate');
+				if (
+					remote.promptArtifactPath !== undefined ||
+					(child.exitCode === null && child.signalCode === null)
+				) {
+					signalRemote('terminate', true);
+				}
 			}, options.graceMs);
-			child.once('exit', () => clearTimeout(timer));
+			// A local ssh exit/close says nothing about the remote reader's
+			// lifetime. Keep the artifact owner's escalation even after done.
+			if (remote.promptArtifactPath === undefined) child.once('exit', () => clearTimeout(timer));
+			else timer.unref?.();
 		},
 		terminate: () => {
 			signalRemote('terminate');

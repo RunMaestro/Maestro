@@ -106,7 +106,14 @@ export function estimateContextUsage(
 	 * table, which can mis-size the context window when the remote runs
 	 * a different model.
 	 */
-	sshRemoteId?: string
+	sshRemoteId?: string,
+	/**
+	 * The model and account key the window is scoped to, for providers whose
+	 * window depends on both (Grok). Today's callers (`recordTurn` and the CLI's
+	 * `send`) hold the provider and the usage but no resolved account key, so
+	 * they pass none and a Grok window stays `0`, unknown, rather than a guess.
+	 */
+	selection?: { model?: string | null; accountKey?: string | null }
 ): number | null {
 	// Calculate total context using agent-specific semantics
 	const totalContextTokens = calculateContextTokens(stats, agentId);
@@ -118,7 +125,7 @@ export function estimateContextUsage(
 		stats.contextWindow && stats.contextWindow > 0
 			? stats.contextWindow
 			: agentId && agentId !== 'terminal'
-				? getContextWindowForAgent(agentId, getCapabilitySnapshot(agentId, sshRemoteId))
+				? getContextWindowForAgent(agentId, getCapabilitySnapshot(agentId, sshRemoteId), selection)
 				: 0;
 
 	if (!effectiveContextWindow || effectiveContextWindow <= 0) {

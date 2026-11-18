@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { AgentConfig } from '../../../../../types';
 import type { AgentSshRemoteConfig } from '../../../../../../shared/types';
 import { logger } from '../../../../../utils/logger';
+import { captureException } from '../../../../../utils/sentry';
 import {
 	buildDetectionAnnouncement,
 	getConnectionErrors,
@@ -37,39 +38,45 @@ export function useAgentDetection({
 		setAnnouncementKey((previous) => previous + 1);
 	}, []);
 
-	const sshRemoteConfigKey = JSON.stringify(sshRemoteConfig) ?? 'null';
-
-	const detectAgentsWithContext = useCallback(async () => {
-		const sshRemoteId = getSshRemoteIdForDetection(sshRemoteConfig);
-		return window.maestro.agents.detect(sshRemoteId ?? undefined);
-	}, [sshRemoteConfigKey]);
 	const sshEnabled = Boolean(sshRemoteConfig?.enabled);
+	const sshRemoteId = getSshRemoteIdForDetection(sshRemoteConfig);
+	const host = useMemo(() => ({ sshEnabled, sshRemoteId }), [sshEnabled, sshRemoteId]);
+	const currentHost = useRef<typeof host | undefined>(host);
+	currentHost.current = host;
+	const detectionRequestRef = useRef(0);
 
-	const refreshAgentDetection = useCallback(async () => {
-		const agents = await detectAgentsWithContext();
-		const visibleAgents = getVisibleAgents(agents);
-		setDetectedAgents(visibleAgents);
-		setAvailableAgents(visibleAgents);
-	}, [detectAgentsWithContext, setAvailableAgents]);
-
-	useEffect(() => {
-		let mounted = true;
-
-		async function detectAgents() {
-			setIsDetecting(true);
+	const detectAgentsWithContext = useCallback(
+		async (initial: boolean) => {
+			// A saved-path callback may resume after its host has been replaced.
+			// It must not supersede the new host's request, even before the IPC call.
+			if (currentHost.current !== host) return;
+			const requestId = ++detectionRequestRef.current;
+			const isCurrentRequest = () =>
+				currentHost.current === host && detectionRequestRef.current === requestId;
+			if (initial) {
+				setIsDetecting(true);
+				setDetectedAgents([]);
+			}
+			// Keep manual refresh controls mounted, but block Continue until the
+			// current binary selection has been checked again.
+			setAvailableAgents([]);
 			setSshConnectionError(null);
 
 			try {
-				const agents = await detectAgentsWithContext();
-				if (!mounted) return;
+				if (host.sshEnabled && !host.sshRemoteId) {
+					throw new Error('Select an SSH remote before detecting agents.');
+				}
+				const agents = await window.maestro.agents.detect(host.sshRemoteId);
+				if (!isCurrentRequest()) return;
 
 				const visibleAgents = getVisibleAgents(agents);
 
-				if (hasSshConnectionFailure(visibleAgents, sshEnabled)) {
+				if (hasSshConnectionFailure(visibleAgents, host.sshEnabled)) {
 					const errorMessage = getConnectionErrors(visibleAgents)[0];
+					setDetectedAgents([]);
+					setAvailableAgents([]);
 					setSshConnectionError(errorMessage);
 					announce(`Unable to connect to remote host: ${errorMessage}`);
-					setIsDetecting(false);
 					return;
 				}
 
@@ -80,7 +87,7 @@ export function useAgentDetection({
 				const totalCount = visibleAgents.length;
 				let autoSelectedClaude = false;
 
-				if (!selectedAgentRef.current) {
+				if (initial && !selectedAgentRef.current) {
 					const claudeCode = visibleAgents.find(
 						(agent) => agent.id === 'claude-code' && agent.available
 					);
@@ -94,32 +101,46 @@ export function useAgentDetection({
 					buildDetectionAnnouncement({
 						availableCount,
 						totalCount,
-						remote: sshEnabled,
+						remote: host.sshEnabled,
 						autoSelectedClaude,
 					})
 				);
-
-				setIsDetecting(false);
 			} catch (error) {
+				if (!isCurrentRequest()) return;
 				logger.error('Failed to detect agents:', undefined, error);
-				if (!mounted) return;
+				captureException(error, {
+					extra: { operation: 'agentSelection:detectAgents', remoteMode: host.sshEnabled },
+				});
+				setDetectedAgents([]);
+				setAvailableAgents([]);
 
-				if (sshEnabled) {
+				if (host.sshEnabled) {
 					setSshConnectionError(
 						error instanceof Error ? error.message : 'Unknown connection error'
 					);
 				}
 				announce('Failed to detect available agents. Please try again.');
-				setIsDetecting(false);
+			} finally {
+				if (isCurrentRequest()) setIsDetecting(false);
 			}
-		}
+		},
+		[announce, host, setAvailableAgents, setSelectedAgent]
+	);
 
-		detectAgents();
+	const refreshAgentDetection = useCallback(
+		() => detectAgentsWithContext(false),
+		[detectAgentsWithContext]
+	);
+
+	useLayoutEffect(() => {
+		currentHost.current = host;
+		void detectAgentsWithContext(true);
 
 		return () => {
-			mounted = false;
+			currentHost.current = undefined;
+			detectionRequestRef.current++;
 		};
-	}, [announce, detectAgentsWithContext, setAvailableAgents, setSelectedAgent, sshEnabled]);
+	}, [detectAgentsWithContext, host]);
 
 	return {
 		isDetecting,

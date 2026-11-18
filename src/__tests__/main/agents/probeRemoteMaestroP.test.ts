@@ -8,7 +8,9 @@ vi.mock('../../../main/utils/execFile', () => ({
 const buildSshCommand = vi
 	.fn()
 	.mockResolvedValue({ command: 'ssh', args: ['host', 'maestro-p --version'] });
-vi.mock('../../../main/utils/ssh-command-builder', () => ({
+vi.mock('../../../main/utils/ssh-command-builder', async (importOriginal) => ({
+	// The real execSshCommand runs the mocked execFileNoThrow.
+	...(await importOriginal<typeof import('../../../main/utils/ssh-command-builder')>()),
 	buildSshCommand: (...args: unknown[]) => buildSshCommand(...args),
 }));
 

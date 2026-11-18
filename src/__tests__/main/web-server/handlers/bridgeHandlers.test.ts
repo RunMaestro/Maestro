@@ -497,6 +497,18 @@ describe('broadcastBridgeEvent', () => {
 		uninstallWebContentsBridgeHook();
 	});
 
+	it('fans out notification:historyChanged so a browser inbox follows the host', () => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		broadcastBridgeEvent('notification:historyChanged', [{ success: true, revision: 1 }]);
+		expect(broadcastToAll).toHaveBeenCalledTimes(1);
+
+		uninstallWebContentsBridgeHook();
+	});
+
 	it('stops broadcasting after uninstall', () => {
 		const broadcastToAll = vi.fn();
 		installWebContentsBridgeHook({
@@ -703,6 +715,47 @@ describe('handleBridgeInvoke denied channels', () => {
 			ok: true,
 			result: '/opt/maestro-run',
 		});
+	});
+
+	// #1862: a browser claims and releases its own Auto Run starts, and marks its
+	// inbox read, through these. Refusing the claim aborted every browser start.
+	// Orphan reclaim stays desktop-owned (see the ownership test above).
+	it.each(['web:claimAutoRunStart', 'web:releaseAutoRunStartClaim', 'notification:changeHistory'])(
+		'answers %s, which a browser client calls on its own',
+		async (channel) => {
+			const handler = vi.fn(async () => 'ok');
+			invokeHandlers.set(channel, handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: 13, channel, args: ['agent-1'] },
+				send
+			);
+			expect(handler).toHaveBeenCalledTimes(1);
+			expect(send.mock.calls[0][1]).toMatchObject({ requestId: 13, ok: true, result: 'ok' });
+		}
+	);
+
+	it('refuses every promptLinks channel: a browser may not mint, list, or revoke a link', async () => {
+		// A link would let a browser keep the power to prompt an agent after it
+		// disconnects or its account is disabled, and listing hands it every prompt.
+		for (const channel of [
+			'promptLinks:create',
+			'promptLinks:list',
+			'promptLinks:revoke',
+			'promptLinks:rendererReady',
+		]) {
+			const handler = vi.fn(async () => 'leaked');
+			invokeHandlers.set(channel, handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: channel, channel },
+				send
+			);
+			expect(handler).not.toHaveBeenCalled();
+			expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(false);
+		}
 	});
 
 	it('refuses a denied send-style channel too', async () => {
@@ -919,6 +972,12 @@ describe('notification history over the bridge', () => {
 			expect(isRemoteMethodAllowed(`notification:${operation}`)).toBe(false);
 		}
 		expect(isRemoteEventAllowed('notification:activateAction')).toBe(false);
+	});
+
+	it("keeps the host's Cue visibility flag out of a browser's reach", () => {
+		// One host-wide flag: a phone locking would pause the host's scanners.
+		expect(isRemoteMethodAllowed('cue:setActive')).toBe(false);
+		expect(isRemoteMethodAllowed('cue:getStatus')).toBe(true);
 	});
 });
 

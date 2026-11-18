@@ -13,6 +13,7 @@ import { FolderOpen } from 'lucide-react';
 import type { Theme } from '../types';
 import { Modal, ModalFooter } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { isImeComposing } from '../utils/ime';
 
 export interface SaveMarkdownModalProps {
 	theme: Theme;
@@ -107,7 +108,7 @@ export function SaveMarkdownModal({
 	};
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Enter' && !saving && folder.trim() && filename.trim()) {
+		if (e.key === 'Enter' && !isImeComposing(e) && !saving && folder.trim() && filename.trim()) {
 			e.preventDefault();
 			handleSave();
 		}

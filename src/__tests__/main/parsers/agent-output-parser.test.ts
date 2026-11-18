@@ -8,7 +8,10 @@ import {
 	type AgentOutputParser,
 	type ParsedEvent,
 } from '../../../main/parsers/agent-output-parser';
-import type { ToolType } from '../../../shared/types';
+import type { ToolType, UsageAccounting, UsageCost, UsageStats } from '../../../shared/types';
+import { GrokOutputParser } from '../../../shared/maestro-lib/parsers/grok-output-parser';
+import { ClaudeOutputParser } from '../../../shared/maestro-lib/parsers/claude-output-parser';
+import { CodexOutputParser } from '../../../shared/maestro-lib/parsers/codex-output-parser';
 
 // Mock parser for testing - fully implements AgentOutputParser interface
 class MockParser implements AgentOutputParser {
@@ -119,6 +122,221 @@ describe('agent-output-parser', () => {
 			expect(minimalEvent.sessionId).toBeUndefined();
 			expect(minimalEvent.text).toBeUndefined();
 		});
+	});
+
+	describe('shared terminal and accounting serialization', () => {
+		// Synthetic normalized events, not native Grok protocol fixtures. Consumer
+		// accumulation and parsedUsageToStats propagation are tested by their consumers.
+		const accounting: UsageAccounting = {
+			source: 'runtime-stream',
+			route: 'acp',
+			scope: 'turn',
+			reporting: 'snapshot',
+			scopeId: 'fixture-account-host',
+			providerSessionId: 'native-session-1',
+			processGeneration: 'process-2',
+			turnId: 'turn-3',
+			requestId: 4,
+			responseId: 'response-5',
+			cacheReadCounting: 'inside-input',
+			cacheCreationCounting: 'inside-input',
+			completeness: 'partial',
+			cost: { status: 'unknown', reason: 'No cost reported' },
+			childInclusion: 'completed',
+			childCompleteness: 'partial',
+		};
+
+		it('retains incomplete terminal usage, occupancy and model/child scopes at extraction', () => {
+			const event: ParsedEvent = {
+				type: 'result',
+				sessionId: 'native-session-1',
+				text: 'Partial answer',
+				terminal: {
+					status: 'incomplete',
+					kind: 'limit',
+					providerStopReason: 'max_tokens',
+					dispatchState: 'dispatched',
+				},
+				usage: {
+					inputTokens: 130,
+					outputTokens: 30,
+					cacheReadTokens: 20,
+					cacheCreationTokens: 10,
+					reasoningTokens: 5,
+					absoluteUsage: {
+						inputTokens: 50,
+						outputTokens: 10,
+						cacheReadInputTokens: 5,
+						cacheCreationInputTokens: 2,
+						reasoningTokens: 3,
+					},
+					accounting: {
+						...accounting,
+						final: true,
+						cost: { status: 'partial', costUsdTicks: '17', reason: 'Child still running' },
+						estimatedCost: {
+							status: 'estimated',
+							costUsd: 0.02,
+							model: 'fixture-model',
+							pricingRevision: 'fixture-pricing-v1',
+							completeness: 'partial',
+						},
+						callCount: 3,
+						mainAgentRounds: 2,
+						models: [
+							{
+								model: 'fixture-model',
+								inputTokens: 100,
+								outputTokens: 20,
+								completeness: 'partial',
+								cost: { status: 'partial', costUsdTicks: '17' },
+							},
+						],
+						children: [
+							{
+								providerSessionId: 'child-1',
+								parentToolUseId: 'tool-1',
+								status: 'completed',
+								includedInParent: true,
+								inputTokens: 20,
+								outputTokens: 10,
+								completeness: 'complete',
+								cost: { status: 'exact', costUsdTicks: '0' },
+							},
+							{
+								providerSessionId: 'child-2',
+								parentToolUseId: 'tool-2',
+								status: 'running',
+								includedInParent: false,
+								inputTokens: 10,
+								completeness: 'partial',
+								cost: { status: 'unknown' },
+							},
+						],
+					},
+				},
+				raw: {},
+			};
+			const restored: ParsedEvent = JSON.parse(JSON.stringify(event));
+			const parser = new GrokOutputParser();
+
+			expect(restored).toStrictEqual(event);
+			expect(parser.extractUsage(restored)).toStrictEqual(event.usage);
+			expect(parser.extractSessionId(restored)).toBe('native-session-1');
+			expect(restored.terminal).toStrictEqual(event.terminal);
+			expect(restored.usage?.accounting?.final).toBe(true);
+			expect(restored.usage?.accounting?.completeness).toBe('partial');
+			expect(restored.usage).not.toHaveProperty('costUsd');
+		});
+
+		it.each(['9007199254740993', '9007199254740993123456789'])(
+			'preserves exact decimal ticks %s beyond safe integer precision',
+			(costUsdTicks) => {
+				const event: ParsedEvent = {
+					type: 'usage',
+					usage: {
+						inputTokens: 10,
+						outputTokens: 2,
+						accounting: { ...accounting, cost: { status: 'exact', costUsdTicks } },
+					},
+					raw: {},
+				};
+				const restored: ParsedEvent = JSON.parse(JSON.stringify(event));
+				const extracted = new GrokOutputParser().extractUsage(restored);
+				expect(Number.isSafeInteger(Number(costUsdTicks))).toBe(false);
+				expect(extracted).toStrictEqual(event.usage);
+				expect(extracted?.accounting?.cost).toStrictEqual({ status: 'exact', costUsdTicks });
+				if (extracted?.accounting?.cost.status !== 'exact') throw new Error('Lost exact cost');
+				expect(typeof extracted.accounting.cost.costUsdTicks).toBe('string');
+				expect(extracted).not.toHaveProperty('costUsd');
+			}
+		);
+
+		it.each<[string, UsageCost, number | undefined]>([
+			['unknown', { status: 'unknown', reason: 'No cost reported' }, undefined],
+			['authoritative zero', { status: 'exact', costUsd: 0, costUsdTicks: '0' }, 0],
+			['partial without amount', { status: 'partial', reason: 'Interrupted ledger' }, undefined],
+			['partial zero', { status: 'partial', costUsdTicks: '0' }, undefined],
+			[
+				'estimate',
+				{
+					status: 'estimated',
+					costUsd: 0.25,
+					model: 'fixture-model',
+					pricingRevision: 'fixture-pricing-v1',
+					completeness: 'unknown',
+				},
+				undefined,
+			],
+		])('keeps %s distinct from complete free usage', (_label, cost, costUsd) => {
+			const event: ParsedEvent = {
+				type: 'usage',
+				usage: {
+					inputTokens: 10,
+					outputTokens: 2,
+					...(costUsd === undefined ? {} : { costUsd }),
+					accounting: { ...accounting, cost },
+				},
+				raw: {},
+			};
+			const restored: ParsedEvent = JSON.parse(JSON.stringify(event));
+			const extracted = new GrokOutputParser().extractUsage(restored);
+			expect(extracted).toStrictEqual(event.usage);
+			expect(extracted?.accounting?.cost).toStrictEqual(cost);
+			if (costUsd === undefined) expect(extracted).not.toHaveProperty('costUsd');
+			else expect(extracted).toHaveProperty('costUsd', 0);
+		});
+
+		it.each<UsageAccounting['scope']>([
+			'response',
+			'turn',
+			'process-session',
+			'native-session',
+			'child',
+		])('preserves %s accounting independently of legacy cost and occupancy', (scope) => {
+			const stats: UsageStats = {
+				inputTokens: 130,
+				outputTokens: 30,
+				cacheReadInputTokens: 20,
+				cacheCreationInputTokens: 10,
+				totalCostUsd: 0,
+				contextWindow: 200_000,
+				accounting: { ...accounting, scope },
+				absoluteUsage: {
+					inputTokens: 50,
+					outputTokens: 10,
+					cacheReadInputTokens: 5,
+					cacheCreationInputTokens: 2,
+					reasoningTokens: 3,
+				},
+			};
+			const restored: UsageStats = JSON.parse(JSON.stringify(stats));
+			expect(restored).toStrictEqual(stats);
+			expect(restored.accounting?.cost.status).toBe('unknown');
+			expect(restored.totalCostUsd).toBe(0);
+			expect(restored.accounting?.scope).toBe(scope);
+		});
+
+		it.each([new ClaudeOutputParser(), new CodexOutputParser()])(
+			'keeps legacy $agentId normalized events free of invented metadata',
+			(parser) => {
+				const event: ParsedEvent = {
+					type: 'result',
+					sessionId: 'legacy-session',
+					text: 'Finished',
+					usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 5 },
+					raw: {},
+				};
+				const restored: ParsedEvent = JSON.parse(JSON.stringify(event));
+				const extracted = parser.extractUsage(restored);
+				expect(restored).toStrictEqual(event);
+				expect(extracted).toStrictEqual(event.usage);
+				expect(restored).not.toHaveProperty('terminal');
+				expect(extracted).not.toHaveProperty('accounting');
+				expect(extracted).not.toHaveProperty('costUsd');
+				expect(parser.extractSessionId(restored)).toBe('legacy-session');
+			}
+		);
 	});
 
 	describe('registerOutputParser', () => {

@@ -13,7 +13,8 @@
  * separate per-agent calculation could disagree with the group total it sits
  * under, and the user would have no way to tell which one was lying.
  *
- * Clicking a row opens the existing per-agent detail modal on top of this one.
+ * Clicking a row (or pressing Enter on its agent name, which is a real button)
+ * opens the existing per-agent detail modal on top of this one.
  */
 
 import { memo, useMemo, useRef } from 'react';
@@ -22,6 +23,7 @@ import type { StatsAggregation } from '../../../shared/stats-types';
 import type { GroupStatRollup } from '../../../shared/statsGroupRollup';
 import { rollUpGroup, totalTokens } from '../../../shared/statsGroupRollup';
 import {
+	formatCalendarDay,
 	formatCost,
 	formatDurationHuman,
 	formatNumber,
@@ -34,11 +36,13 @@ import { SortableTh } from '../ui/SortableTh';
 import { useTableSort } from '../../hooks/ui/useTableSort';
 import { useElementWidth } from '../../hooks/ui/useElementWidth';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
-import { Sparkline } from './Sparkline';
+import { Sparkline } from '../widgets';
 import { Kpi, MetaField, SectionHeading } from './DetailPrimitives';
 import { usageCoverageNote } from './usageCoverage';
+import { buildRangeActivity } from './agentOverviewUtils';
 
-const EM_DASH = '—';
+/** Placeholder for a value that is absent rather than zero. */
+const NO_VALUE = '-';
 
 type MemberSortKey = 'name' | 'queries' | 'duration' | 'tokens' | 'cost' | 'auto' | 'lastActive';
 
@@ -51,8 +55,8 @@ interface MemberRow {
 	costUsd: number;
 	pricedQueries: number;
 	autoPercent: number | null;
-	/** Local-date string of the last day with recorded activity, or null. */
-	lastActiveDate: string | null;
+	/** Epoch ms of the agent's last query in the range, or null. */
+	lastQueryAt: number | null;
 }
 
 /**
@@ -95,7 +99,6 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 			// One member at a time through the same reducer the group total uses,
 			// so a row can never disagree with the header above it.
 			const stats = rollUpGroup([member], data);
-			const days = stats.byDay.filter((d) => d.count > 0);
 			return {
 				session: byId.get(member.id) ?? ({ ...member, toolType: member.toolType } as Session),
 				queries: stats.queries,
@@ -104,7 +107,9 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 				costUsd: stats.tokens.costUsd,
 				pricedQueries: stats.tokens.pricedQueries,
 				autoPercent: stats.autoPercent,
-				lastActiveDate: days.length > 0 ? days[days.length - 1].date : null,
+				// The exact time of the last query. A day string turned into a
+				// timestamp read as midnight, so a query minutes ago said "13h ago".
+				lastQueryAt: data.bySessionLastQuery?.[member.id] ?? null,
 			};
 		});
 	}, [rollup.sessions, sessions, data]);
@@ -138,10 +143,10 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 					return (a.autoPercent - b.autoPercent) * factor;
 				}
 				case 'lastActive': {
-					if (!a.lastActiveDate && !b.lastActiveDate) return 0;
-					if (!a.lastActiveDate) return 1;
-					if (!b.lastActiveDate) return -1;
-					return a.lastActiveDate.localeCompare(b.lastActiveDate) * factor;
+					if (a.lastQueryAt === null && b.lastQueryAt === null) return 0;
+					if (a.lastQueryAt === null) return 1;
+					if (b.lastQueryAt === null) return -1;
+					return (a.lastQueryAt - b.lastQueryAt) * factor;
 				}
 				default:
 					return 0;
@@ -149,7 +154,12 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 		});
 	}, [rows, sortKey, direction]);
 
-	const sparkline = useMemo(() => rollup.byDay.map((d) => d.count), [rollup.byDay]);
+	// Every calendar day of the range, zero-filled, so idle days read as idle.
+	const rangeActivity = useMemo(
+		() => buildRangeActivity(rollup.byDay, data.window),
+		[rollup.byDay, data.window]
+	);
+	const sparkline = useMemo(() => rangeActivity.map((d) => d.count), [rangeActivity]);
 	const groupTokens = totalTokens(rollup.tokens);
 	const hasUsage = rollup.tokens.pricedQueries > 0;
 	const note = usageCoverageNote(rollup.tokens.pricedQueries, rollup.queries);
@@ -203,15 +213,15 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 						testId="group-detail-queries"
 					/>
 					<Kpi
-						label="Active time"
-						value={rollup.duration > 0 ? formatDurationHuman(rollup.duration) : EM_DASH}
+						label="Time"
+						value={rollup.duration > 0 ? formatDurationHuman(rollup.duration) : NO_VALUE}
 						muted={rollup.duration === 0}
 						theme={theme}
 						testId="group-detail-duration"
 					/>
 					<Kpi
 						label="Tokens"
-						value={hasUsage ? formatTokensCompact(groupTokens) : EM_DASH}
+						value={hasUsage ? formatTokensCompact(groupTokens) : NO_VALUE}
 						muted={!hasUsage}
 						title={note}
 						theme={theme}
@@ -219,7 +229,7 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 					/>
 					<Kpi
 						label="Cost"
-						value={hasUsage ? formatCost(rollup.tokens.costUsd) : EM_DASH}
+						value={hasUsage ? formatCost(rollup.tokens.costUsd) : NO_VALUE}
 						muted={!hasUsage}
 						title={note}
 						theme={theme}
@@ -227,9 +237,9 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 					/>
 					<Kpi
 						label="Auto"
-						value={rollup.autoPercent === null ? EM_DASH : `${rollup.autoPercent}%`}
+						value={rollup.autoPercent === null ? NO_VALUE : `${rollup.autoPercent}%`}
 						muted={rollup.autoPercent === null}
-						title="Share of queries started by Auto Run or Cue rather than typed"
+						title="Share of queries started by Auto Run rather than typed"
 						theme={theme}
 						testId="group-detail-auto"
 					/>
@@ -241,7 +251,7 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 					</p>
 				)}
 
-				{sparkline.length > 0 && (
+				{rollup.queries > 0 && (
 					<section>
 						<SectionHeading theme={theme}>Daily Activity</SectionHeading>
 						<div
@@ -262,8 +272,10 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 								className="flex justify-between mt-1 text-2xs"
 								style={{ color: theme.colors.textDim }}
 							>
-								<span>{rollup.byDay[0]?.date ?? ''}</span>
-								<span>{rollup.byDay[rollup.byDay.length - 1]?.date ?? ''}</span>
+								<span>{formatCalendarDay(rangeActivity[0]?.date ?? '')}</span>
+								<span>
+									{formatCalendarDay(rangeActivity[rangeActivity.length - 1]?.date ?? '')}
+								</span>
 							</div>
 						</div>
 					</section>
@@ -322,7 +334,7 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 											theme={theme}
 											className={headerCellClass}
 											style={cellStyle}
-											title="Total agent run time"
+											title="Total agent time"
 											testId="group-detail-sort-duration"
 										/>
 										<SortableTh
@@ -394,9 +406,28 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 													className="py-2 px-2 border-b max-w-[260px]"
 													style={{ ...cellStyle, color: theme.colors.textMain }}
 												>
-													<span className="block truncate" title={row.session.name}>
-														{row.session.name}
-													</span>
+													{isClickable ? (
+														// A real button, so the row is reachable by Tab and opens on
+														// Enter or Space; the row's own click is the mouse shortcut.
+														<button
+															type="button"
+															className="block w-full text-left truncate rounded focus:outline-none focus-visible:ring-1"
+															style={{ color: theme.colors.textMain }}
+															title={row.session.name}
+															aria-label={`View detailed stats for ${row.session.name}`}
+															data-testid="group-detail-member-open"
+															onClick={(e) => {
+																e.stopPropagation();
+																onSelectAgent?.(row.session);
+															}}
+														>
+															{row.session.name}
+														</button>
+													) : (
+														<span className="block truncate" title={row.session.name}>
+															{row.session.name}
+														</span>
+													)}
 													{row.session.worktreeBranch && (
 														<span
 															className="block truncate text-2xs"
@@ -420,7 +451,7 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 														color: row.duration > 0 ? theme.colors.textMain : theme.colors.textDim,
 													}}
 												>
-													{row.duration > 0 ? formatDurationHuman(row.duration) : EM_DASH}
+													{row.duration > 0 ? formatDurationHuman(row.duration) : NO_VALUE}
 												</td>
 												<td
 													className="py-2 px-2 border-b text-right tabular-nums"
@@ -430,7 +461,7 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 													}}
 													title={rowNote}
 												>
-													{rowHasUsage ? formatTokensCompact(row.tokens) : EM_DASH}
+													{rowHasUsage ? formatTokensCompact(row.tokens) : NO_VALUE}
 												</td>
 												<td
 													className="py-2 px-2 border-b text-right tabular-nums"
@@ -441,7 +472,7 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 													title={rowNote}
 													data-testid="group-detail-member-cost"
 												>
-													{rowHasUsage ? formatCost(row.costUsd) : EM_DASH}
+													{rowHasUsage ? formatCost(row.costUsd) : NO_VALUE}
 												</td>
 												<td
 													className="py-2 px-2 border-b text-right tabular-nums"
@@ -453,17 +484,20 @@ export const GroupDetailModal = memo(function GroupDetailModal({
 																: theme.colors.textMain,
 													}}
 												>
-													{row.autoPercent === null ? EM_DASH : `${row.autoPercent}%`}
+													{row.autoPercent === null ? NO_VALUE : `${row.autoPercent}%`}
 												</td>
 												<td
 													className="py-2 px-2 border-b text-right"
 													style={{ ...cellStyle, color: theme.colors.textDim }}
+													data-testid="group-detail-member-last-active"
 												>
-													{row.lastActiveDate
-														? formatRelativeTime(
-																new Date(`${row.lastActiveDate}T00:00:00`).getTime()
-															)
-														: EM_DASH}
+													{row.lastQueryAt !== null ? (
+														<span title={new Date(row.lastQueryAt).toLocaleString()}>
+															{formatRelativeTime(row.lastQueryAt)}
+														</span>
+													) : (
+														NO_VALUE
+													)}
 												</td>
 											</tr>
 										);

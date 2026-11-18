@@ -90,9 +90,14 @@ async function loadAiTranscript(
 				},
 			];
 	// The handleResumeSession guard: a tab that gained logs meanwhile keeps them.
-	updateAiTab(sessionId, tabId, (current) =>
-		current.logs.length > 0 ? current : { ...current, logs: messages }
-	);
+	// The closed-tab entry normally carries its own pins; the origin record's
+	// copy only fills in when it does not (an entry stored before pins existed).
+	const storedPins = resumable?.pinnedMessages ?? [];
+	updateAiTab(sessionId, tabId, (current) => {
+		if (current.logs.length > 0) return current;
+		const adoptPins = !current.pinnedMessages?.length && storedPins.length > 0;
+		return { ...current, logs: messages, ...(adoptPins ? { pinnedMessages: storedPins } : {}) };
+	});
 	return resumable ? 'loaded' : 'unavailable';
 }
 

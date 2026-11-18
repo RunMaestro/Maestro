@@ -15,7 +15,11 @@
 import type { ToolType } from '../../shared/types';
 import { getAgentDisplayName as getDisplayName } from '../../shared/agentMetadata';
 import type { ContextSource, MergeRequest, GroomingProgress } from '../types/contextMerge';
-import type { LogEntry } from '../types';
+import type { LogEntry, Session } from '../types';
+import {
+	getClaudeTokenSourceFields,
+	type ClaudeTokenSourceFields,
+} from '../../shared/claudeTokenMode';
 import { logger } from '../utils/logger';
 import {
 	formatLogsForGrooming,
@@ -137,6 +141,29 @@ export const AGENT_ARTIFACTS: Partial<Record<ToolType, string[]>> = {
 		'Opus',
 		'Sonnet',
 	],
+	grok: [
+		// Brand references (agentMetadata, provider capabilities)
+		'Grok',
+		'Grok CLI',
+		'xAI',
+		// Model references: the ids grok 1.0.70 lists in its account models_cache.json
+		// (readGrokModelsCache in src/main/agents/detector.ts). This list is static
+		// renderer data, so it cannot read discovery; refresh it with the cache.
+		'grok-4.7',
+		'grok-4.7-build-fast',
+		'grok-4.6',
+		'grok-4.5',
+		// Session and headless-turn terms (provider definition, GrokSessionStorage).
+		// No slash commands: supportsSlashCommands is false and the native catalog is
+		// discovered per session, so there is no fixed list to scrub.
+		'~/.grok',
+		'~/.grok/sessions',
+		'--resume',
+		'--prompt-file',
+		'--always-approve',
+		'--permission-mode plan',
+		'streaming-json',
+	],
 	terminal: [
 		// Terminal has no agent-specific artifacts
 	],
@@ -169,6 +196,14 @@ export const AGENT_TARGET_NOTES: Partial<Record<ToolType, string>> = {
     It supports multiple model providers (Claude, GPT, Gemini).
     It can read and edit files, run commands, search code, and interact with git.
     It has tiered autonomy levels for controlling operation permissions.
+  `,
+	grok: `
+    Grok CLI is xAI's coding agent CLI.
+    Maestro drives it headless: one prompt per turn, chained by resuming the same session.
+    It can read and edit files, run terminal commands, and search code.
+    It accepts images referenced by file path and supports model selection.
+    It has no slash commands, project memory file, or appended system rules here,
+    so put every instruction and piece of context directly in the transferred message.
   `,
 	terminal: `
     Terminal is a raw shell interface.
@@ -230,6 +265,48 @@ export interface GroomingConfig {
 	timeoutMs?: number;
 	/** Default agent type for grooming session */
 	defaultAgentType?: ToolType;
+}
+
+/**
+ * The grooming agent's own identity, read from the session whose provider
+ * runs the turn, for a {@link MergeRequest}. Without it the turn runs under
+ * the process-global account and locally, even for an agent on a remote.
+ */
+export function groomingIdentityOf(
+	session: Pick<Session, 'sessionSshRemoteConfig' | 'customPath' | 'customArgs' | 'customEnvVars'> &
+		ClaudeTokenSourceFields
+): Pick<
+	MergeRequest,
+	'sshRemoteConfig' | 'customPath' | 'customArgs' | 'customEnvVars' | 'claudeTokenSource'
+> {
+	return {
+		sshRemoteConfig: session.sessionSshRemoteConfig,
+		customPath: session.customPath,
+		customArgs: session.customArgs,
+		customEnvVars: session.customEnvVars,
+		claudeTokenSource: getClaudeTokenSourceFields(session),
+	};
+}
+
+/**
+ * Options for the grooming turn. Grooming only reads the prompt and answers,
+ * so it is always a read-only turn: the main process applies the provider's
+ * enforced read-only flags, and refuses a provider that cannot enforce them
+ * (Grok's prompt-file route) instead of running it unrestricted. Tools are not
+ * disabled here: Grok has no verified all-tools-off flag and the main process
+ * refuses `disableTools` for it. Not a cheap turn: the output BECOMES context.
+ */
+function groomingTurnOptions(
+	request: MergeRequest
+): NonNullable<Parameters<typeof window.maestro.context.groomContext>[3]> {
+	return {
+		readOnly: true,
+		sshRemoteConfig: request.sshRemoteConfig,
+		customPath: request.customPath,
+		customArgs: request.customArgs,
+		customEnvVars: request.customEnvVars,
+		claudeTokenSource: request.claudeTokenSource,
+	};
 }
 
 /**
@@ -327,7 +404,8 @@ export class ContextGroomingService {
 				groomedText = await window.maestro.context.groomContext(
 					targetProjectRoot,
 					request.targetAgent,
-					prompt
+					prompt,
+					groomingTurnOptions(request)
 				);
 			} finally {
 				this.groomingInFlight--;

@@ -1143,3 +1143,136 @@ describe('Debug Package Sanitization', () => {
 		});
 	});
 });
+
+/**
+ * The collector-level redactors over synthetic Grok material. The
+ * end-to-end package write is in redaction-canaries.test.ts; these pin the
+ * one function each collector routes through.
+ */
+describe('Grok material through the debug package collectors', () => {
+	it('reduces Grok session, profile, auth and home paths to descriptors with no folder names', async () => {
+		const { redactText } = await import('../../../main/debug-package/collectors/sanitize');
+		const homeDir = os.homedir();
+
+		for (const raw of [
+			`resume ${homeDir}/.grok/sessions/acme-ledger/9d1e.jsonl`,
+			'resume ~/.grok/sessions/acme-ledger/9d1e.jsonl',
+			'GROK_AUTH_PATH=/Users/grokcanary/.grok/auth.json',
+			'GROK_HOME=/Users/grokcanary/.grok',
+			'profile C:\\Users\\grokcanary\\.grok\\profiles\\acme-ledger',
+		]) {
+			const result = redactText(raw);
+			expect(result, raw).toMatch(/\[path#[0-9a-f]{8} /);
+			expect(result, raw).not.toContain('grokcanary');
+			expect(result, raw).not.toContain('acme-ledger');
+			expect(result, raw).not.toContain('.grok');
+		}
+		expect(redactText(`resume ${homeDir}/.grok/sessions/acme-ledger/9d1e.jsonl`)).toContain(
+			'root=home depth=4 ext=.jsonl'
+		);
+	});
+
+	it('reduces a Grok model gateway to its registrable domain and drops host label, path and query', async () => {
+		const { redactText } = await import('../../../main/debug-package/collectors/sanitize');
+
+		const gateway = redactText(
+			'GROK_BASE_URL=https://grok-gw.acme-ledger-internal.example/v1/responses?tenant=acme-42'
+		);
+		expect(gateway).toMatch(
+			/^GROK_BASE_URL=\[url#[0-9a-f]{8} https:\/\/acme-ledger-internal\.example\/\[redacted\]\]$/
+		);
+		expect(gateway).not.toContain('grok-gw');
+		expect(gateway).not.toContain('tenant');
+
+		const vendor = redactText('model grok-4-fast via https://api.x.ai/v1/responses');
+		expect(vendor).toMatch(
+			/^model grok-4-fast via \[url#[0-9a-f]{8} https:\/\/x\.ai\/\[redacted\]\]$/
+		);
+	});
+
+	it('keeps the Grok key value under XAI_API_KEY out of the redactor the package sweep routes through, by name', async () => {
+		const { redactSecrets } = await import('../../../shared/redactSecrets');
+		const key = 'xai-' + 'Q9zR4tKp7LmN2vXc'.repeat(3);
+
+		expect(redactSecrets(`XAI_API_KEY=${key}`).text).toBe('XAI_API_KEY=[REDACTED_SECRET]');
+		expect(redactSecrets(`{"api_key":"${key}"}`).text).toBe('{"api_key":[REDACTED_SECRET]}');
+	});
+
+	it('keeps a stored Grok agent to metadata: no prompt, output, thought or tool text, and no cwd', async () => {
+		const { collectSessions } = await import('../../../main/debug-package/collectors/sessions');
+		const mockStore = {
+			get: vi.fn((key: string, fallback?: unknown) =>
+				key === 'sessions'
+					? [
+							{
+								id: 'grok-agent-1',
+								toolType: 'grok',
+								name: 'acme-ledger grok',
+								cwd: '/Users/grokcanary/acme-ledger',
+								aiTabs: [
+									{
+										id: 'tab-1',
+										agentSessionId: 'grok-session-canary',
+										logs: [
+											{ source: 'user', text: 'PROMPT-CANARY' },
+											{ source: 'stdout', text: 'OUTPUT-CANARY' },
+											{ source: 'thinking', text: 'THOUGHT-CANARY' },
+											{ source: 'tool', text: 'TOOL-CANARY' },
+										],
+									},
+								],
+								executionQueue: [{ text: 'QUEUED-CANARY' }],
+							},
+						]
+					: fallback
+			),
+			set: vi.fn(),
+			store: {},
+		};
+
+		const result = await collectSessions(mockStore as any);
+		const text = JSON.stringify(result);
+
+		expect(result[0]).toMatchObject({ toolType: 'grok', tabCount: 1, executionQueueLength: 1 });
+		for (const canary of ['CANARY', 'grokcanary', 'acme-ledger', 'grok-session-canary']) {
+			expect(text, canary).not.toContain(canary);
+		}
+	});
+
+	it('reports a Grok agent configuration as set or not set, never its env names or values', async () => {
+		const { collectAgents } = await import('../../../main/debug-package/collectors/agents');
+		const mockAgentDetector = {
+			detectAgents: vi.fn().mockResolvedValue([
+				{
+					id: 'grok',
+					name: 'Grok CLI',
+					available: true,
+					customPath: '/Users/grokcanary/.local/bin/grok',
+					customArgs: '-m grok-4-fast --base-url https://grok-gw.acme-ledger-internal.example',
+					customEnvVars: {
+						GROK_AUTH: 'xai-auth-canary',
+						XAI_API_KEY: 'xai-key-canary',
+						GROK_HOME: '/Users/grokcanary/.grok',
+					},
+				},
+			]),
+		};
+
+		const result = await collectAgents(mockAgentDetector as any);
+		const text = JSON.stringify(result);
+
+		expect(result.detectedAgents[0]).toMatchObject({ id: 'grok', customPath: '[SET]' });
+		for (const canary of [
+			'grokcanary',
+			'acme-ledger',
+			'xai-auth-canary',
+			'xai-key-canary',
+			'GROK_AUTH',
+			'XAI_API_KEY',
+			'GROK_HOME',
+			'grok-gw',
+		]) {
+			expect(text, canary).not.toContain(canary);
+		}
+	});
+});

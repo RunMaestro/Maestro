@@ -1,0 +1,44 @@
+Run Grok without the interactive UI
+
+Usage: grok agent [OPTIONS] [COMMAND]
+
+Commands:
+  stdio     Run the agent over stdio
+  headless  Run the agent headlessly over the Grok WebSocket relay
+  serve     Run the agent as a WebSocket server
+  leader    Run as the shared leader process for other clients
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+      --reauth
+          Run authentication before starting the agent [aliases: ----reauthenticate]
+  -m, --model <MODEL>
+          Model ID to use
+      --reasoning-effort <EFFORT>
+          Reasoning effort for reasoning models [aliases: --effort]
+      --always-approve
+          Auto-approve all tool executions
+      --agent-profile <PATH>
+          Path to an agent profile file
+      --plugin-dir <DIR>
+          Load a plugin from this directory for this process only (repeatable)
+      --leader
+          Connect to a shared leader process instead of starting a new agent
+      --no-leader
+          Start a new agent even when config enables leader mode
+      --grok-ws-origin <GROK_WS_ORIGIN>
+
+      --grok-ws-url <GROK_WS_URL>
+
+      --cli-chat-proxy-base-url <CLI_CHAT_PROXY_BASE_URL>
+          Override the CLI chat proxy base URL
+      --xai-api-base-url <XAI_API_BASE_URL>
+          Override the public xAI API base URL
+      --debug
+          Enable debug logging
+      --debug-file <FILE>
+          Write debug logs to FILE
+  -h, --help
+          Print help (see more with 'grok help agent')
+      --leader-socket <PATH>
+          Use a custom leader socket path instead of the default `~/.grok/leader.sock`

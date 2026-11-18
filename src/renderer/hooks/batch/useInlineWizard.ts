@@ -6,6 +6,7 @@
  * simple setters, and document generation stay independently testable.
  */
 
+import { useRef } from 'react';
 import { READY_CONFIDENCE_THRESHOLD } from '../../services/inlineWizardConversation';
 import { useInlineWizardConversationActions } from './inlineWizard/conversationActions';
 import { useInlineWizardGenerationActions } from './inlineWizard/generationActions';
@@ -27,6 +28,7 @@ export type {
 } from './inlineWizard/types';
 
 export function useInlineWizard(): UseInlineWizardReturn {
+	const generationControllersMap = useRef<Map<string, AbortController>>(new Map());
 	const {
 		setTabStates,
 		currentTabId,
@@ -60,6 +62,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 		setTabStates,
 		previousUIStateRefsMap,
 		conversationSessionsMap,
+		generationControllersMap,
 	});
 
 	const {
@@ -85,6 +88,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 		setCurrentTabId,
 		tabStatesRef,
 		setTabState,
+		generationControllersMap,
 	});
 
 	const readyToGenerate = state.ready && state.confidence >= READY_CONFIDENCE_THRESHOLD;

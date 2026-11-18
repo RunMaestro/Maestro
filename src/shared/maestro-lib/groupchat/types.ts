@@ -26,7 +26,10 @@ import type { AgentConfig } from '../providers/definitions';
  */
 export interface GroupChatParticipant {
 	name: string;
+	/** Provider type (e.g. `claude-code`), NOT the Maestro agent. See `sourceSessionId`. */
 	agentId: string;
+	/** GUID of the Maestro agent this participant was added from (survives a rename). */
+	sourceSessionId?: string;
 	/** Internal process session ID (used for routing) */
 	sessionId: string;
 	/** Agent's session ID (e.g., Claude Code's session GUID for continuity) */
@@ -111,6 +114,7 @@ export type ParticipantUpdate = Partial<
 		| 'processingTimeMs'
 		| 'agentSessionId'
 		| 'totalCost'
+		| 'sourceSessionId'
 	>
 >;
 
@@ -130,6 +134,8 @@ export interface GroupChatSessionInfo {
 	name: string;
 	toolType: string;
 	cwd: string;
+	/** The agent's own binary (`Session.customPath`); see `resolveAgentBinary`. */
+	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
 	customModel?: string;
@@ -158,10 +164,16 @@ export interface GroupChatSessionInfo {
 	isBusy?: boolean;
 }
 
-/** Moderator usage for the moderator card. */
+/**
+ * Moderator usage for the moderator card. Context/token observations use nonnegative
+ * measurements, -1 for accumulated usage that preserves the previous measurement,
+ * and -2 for an unknown window that clears it. Total cost advances in every case.
+ */
 export interface ModeratorUsage {
+	/** Context percentage, or the unavailable observation sentinel described above. */
 	contextUsage: number;
 	totalCost: number;
+	/** Context tokens, or the same sentinel as contextUsage. */
 	tokenCount: number;
 }
 
@@ -187,6 +199,11 @@ export interface GroupChatSpawn {
 	providerId: string;
 	agent: AgentConfig;
 	command?: string;
+	/**
+	 * The binary on an SSH remote, when the agent names its own (`customPath`). Absent: the
+	 * provider's bare binary name, which the remote resolves on its own PATH.
+	 */
+	remoteCommand?: string;
 	args: string[];
 	cwd: string;
 	prompt?: string;

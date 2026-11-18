@@ -27,12 +27,15 @@ import {
 	Type,
 	Regex,
 	Hash,
+	Replace,
+	ReplaceAll,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { captureException } from '../../utils/sentry';
 import { safeClipboardWrite, safeClipboardWriteImage } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import { isImeComposing } from '../../utils/ime';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { requestFileDeletion } from '../../services/fileDeletion';
@@ -82,6 +85,7 @@ import {
 	scanLineStats,
 	canScaleFontForView,
 	resolvePreviewScroller,
+	deriveProjectRoot,
 } from './filePreviewUtils';
 import { BionifyTextBlock } from '../../utils/bionifyReadingMode';
 import { MarkdownImage } from './MarkdownImage';
@@ -93,6 +97,7 @@ import { ImageViewer } from './ImageViewer';
 import { ImageSaveModal } from './ImageSaveModal';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
 import { getParentDir, getBasename } from '../../../shared/formatters';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 import { FilePreviewToc } from './FilePreviewToc';
 import { computeTocWidth } from '../Toc';
 import { HeadingPalette } from './HeadingPalette';
@@ -102,6 +107,15 @@ import { useFontScale } from '../../hooks/ui/useFontScale';
 import { isTextInputTarget } from '../../utils/messageScrollNavigation';
 import { MarkdownEditor } from './markdownEditor';
 import type { MarkdownEditorHandle } from './markdownEditor';
+import type { EditorSelectionDetails } from './markdownEditor/types';
+import { CODE_COMPLETION_MAX_CHARS } from './markdownEditor/codeEditing';
+import {
+	TerminalSelectionContextMenu,
+	type TerminalSelectionContextMenuState,
+} from '../TerminalSelectionContextMenu';
+import { formatFileLineReference, formatFileSelection } from '../../utils/quoteSelection';
+import { toRelativePath } from '../../utils/fileLinks/matcher';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import {
 	domGetTopLine,
 	domScrollToLine,
@@ -200,10 +214,18 @@ export const FilePreview = React.memo(
 			onHtmlRenderModeChange,
 			pendingScrollToLine,
 			onPendingScrollToLineConsumed,
+			showFloatingControls = true,
+			onSendSelectionToAgent,
+			onQuoteSelection,
 		},
 		ref
 	) {
 		const [showTocOverlay, setShowTocOverlay] = useState(false);
+		// A tiled pane that loses focus hides its floating controls. Close an open
+		// ToC with them, so it does not pop back open when the pane is refocused.
+		useEffect(() => {
+			if (!showFloatingControls) setShowTocOverlay(false);
+		}, [showFloatingControls]);
 		// The `#` heading palette - a filtered, keyboard-driven twin of the ToC.
 		const [showHeadingPalette, setShowHeadingPalette] = useState(false);
 		// Reader font zoom for the preview / edit pane. One shared preference
@@ -219,8 +241,13 @@ export const FilePreview = React.memo(
 		// (before paint) when the reused scroll container switches files. An
 		// effect-only reset flashes one frame of the previous file's hidden state.
 		const showStatsBarPathRef = useRef<string | undefined>(file?.path);
+		// scrollTop at which the user clicked the collapsed header to bring the
+		// details back. While set, the scroll handler keeps them shown until the
+		// user actually scrolls away from that spot. null = not pinned.
+		const detailsRevealedAtRef = useRef<number | null>(null);
 		if (file?.path !== showStatsBarPathRef.current) {
 			showStatsBarPathRef.current = file?.path;
+			detailsRevealedAtRef.current = null;
 			const atTop = initialScrollTop === undefined || initialScrollTop <= 10;
 			if (showStatsBar !== atTop) {
 				setShowStatsBar(atTop);
@@ -259,6 +286,14 @@ export const FilePreview = React.memo(
 			x: number;
 			y: number;
 		} | null>(null);
+		// Right-click on selected text in the code editor. `selection` is the
+		// passage as an agent receives it (path:lines + fenced text); `rawText`
+		// is what Copy puts on the clipboard.
+		const [editorSelectionMenu, setEditorSelectionMenu] = useState<
+			(TerminalSelectionContextMenuState & { rawText: string; sourceName: string }) | null
+		>(null);
+		// Replace field of the find bar (code editor only).
+		const [replaceText, setReplaceText] = useState('');
 
 		const codeContainerRef = useRef<HTMLDivElement>(null);
 		const contentRef = useRef<HTMLDivElement>(null);
@@ -632,6 +667,9 @@ export const FilePreview = React.memo(
 			searchKind,
 			cycleSearchKind,
 			regexError,
+			canReplace,
+			replaceCurrent,
+			replaceAll,
 		} = useFilePreviewSearch({
 			codeContainerRef,
 			markdownContainerRef,
@@ -663,6 +701,16 @@ export const FilePreview = React.memo(
 		const fileEditWordWrap = useSettingsStore((s) => s.fileEditWordWrap);
 		const setFileEditWordWrap = useSettingsStore((s) => s.setFileEditWordWrap);
 		const fileEditShowLineNumbers = useSettingsStore((s) => s.fileEditShowLineNumbers);
+		const fileEditVimMode = useSettingsStore((s) => s.fileEditVimMode);
+		// Code completes as you type; prose (markdown, plain text) only on
+		// Ctrl+Space, so a word followed by Enter stays a line break. Giant-tier
+		// sizes skip completion entirely.
+		const editorCompletion =
+			(file?.content.length ?? 0) > CODE_COMPLETION_MAX_CHARS
+				? ('off' as const)
+				: isCodeFile(language)
+					? ('typing' as const)
+					: ('request' as const);
 		const filePreviewToolbarVisibility = useSettingsStore((s) => s.filePreviewToolbarVisibility);
 		// Reading and editing are separate typographic jobs, so they are separate
 		// settings: a proportional face is easier to read a document in, while an
@@ -806,6 +854,8 @@ export const FilePreview = React.memo(
 			}
 			return null;
 		}, [fileTree]);
+		const fileTreeIndicesRef = useRef(fileTreeIndices);
+		fileTreeIndicesRef.current = fileTreeIndices;
 
 		// Resolve homeDir for tilde path expansion
 		const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -991,24 +1041,14 @@ export const FilePreview = React.memo(
 			return {
 				...components,
 				img: ({ src, alt, ...props }: any) => {
-					// Check if this image came from file tree (set by remarkFileLinks)
-					const isFromTree = props['data-maestro-from-tree'] === 'true';
-					let projectRootForImage: string | undefined;
-
-					if (isFromTree && cwd && file) {
-						// Resolve project root so relative image links from tree render correctly.
-						const cwdIndex = file.path.indexOf(`/${cwd}/`);
-						if (cwdIndex !== -1) {
-							projectRootForImage = file.path.substring(0, cwdIndex);
-						} else {
-							const firstCwdSegment = cwd.split('/')[0];
-							const segmentIndex = file.path.indexOf(`/${firstCwdSegment}/`);
-							if (segmentIndex !== -1) {
-								projectRootForImage = file.path.substring(0, segmentIndex);
-							}
-						}
-					}
-
+					// `![[name|300]]` embeds carry their width from remarkFileLinks.
+					const embedWidth = Number(props['data-maestro-width']) || undefined;
+					// Read through a ref: a file-tree refresh must not rebuild this map,
+					// which would remount the document and lose the reader's scroll.
+					const fileTreeIndices = fileTreeIndicesRef.current;
+					const embedProjectRoot = file
+						? deriveProjectRoot(file.path, cwd, fileTreeIndices)
+						: undefined;
 					return (
 						<MarkdownImage
 							src={src}
@@ -1016,8 +1056,11 @@ export const FilePreview = React.memo(
 							markdownFilePath={file?.path || ''}
 							theme={theme}
 							showRemoteImages={showRemoteImages}
-							isFromFileTree={isFromTree}
-							projectRoot={projectRootForImage}
+							projectRoot={embedProjectRoot}
+							homeDir={homeDir}
+							fileTreeIndices={fileTreeIndices}
+							width={embedWidth}
+							onOpenFile={onFileClick}
 							sshRemoteId={sshRemoteId}
 						/>
 					);
@@ -1037,6 +1080,7 @@ export const FilePreview = React.memo(
 			file?.path,
 			showRemoteImages,
 			sshRemoteId,
+			homeDir,
 			onSave,
 			stableToggleTask,
 			effectiveBionifyReadingMode,
@@ -1059,6 +1103,14 @@ export const FilePreview = React.memo(
 			if (!file?.path) return;
 			requestFileDeletion({ path: file.path, sshRemoteId });
 		}, [file?.path, sshRemoteId]);
+
+		// Click on the collapsed header: show the path + stats again, pinned to
+		// the current scroll position. The next real scroll collapses them.
+		const handleRevealDetails = useCallback(() => {
+			const scrollEl = contentRef.current ? resolvePreviewScroller(contentRef.current) : null;
+			detailsRevealedAtRef.current = scrollEl?.scrollTop ?? 0;
+			setShowStatsBar(true);
+		}, []);
 
 		// Fetch file stats when file changes
 		useEffect(() => {
@@ -1284,7 +1336,7 @@ export const FilePreview = React.memo(
 				notifyToast({
 					type: 'error',
 					title: 'Save Failed',
-					message: err instanceof Error ? err.message : 'Could not save file.',
+					message: ipcErrorMessage(err, 'Could not save file.'),
 				});
 			} finally {
 				setIsSaving(false);
@@ -1410,6 +1462,9 @@ export const FilePreview = React.memo(
 			// Stats subbar (~28px) + directory path row (~20px) + cushion.
 			const STATS_CHROME_PX = 64;
 			const AT_TOP_PX = 10;
+			// How far the user must scroll from a click-reveal before the
+			// details collapse again. Absorbs trailing momentum events.
+			const REVEAL_SCROLL_SLOP_PX = 8;
 
 			// Captured, because a table view scrolls its own element inside the
 			// column and scroll events do not bubble. Only the preview's real
@@ -1420,8 +1475,14 @@ export const FilePreview = React.memo(
 				if (!scrollEl || event.target !== scrollEl) return;
 				const { scrollTop, scrollHeight, clientHeight } = scrollEl;
 				const overflow = scrollHeight - clientHeight;
+				const revealedAt = detailsRevealedAtRef.current;
+				if (revealedAt !== null && Math.abs(scrollTop - revealedAt) >= REVEAL_SCROLL_SLOP_PX) {
+					detailsRevealedAtRef.current = null;
+				}
+				const pinnedByClick = detailsRevealedAtRef.current !== null;
 				setShowStatsBar((prev) => {
 					if (scrollTop <= AT_TOP_PX) return true;
+					if (pinnedByClick) return prev;
 					// Require scrollTop past chrome+at-top so after the header
 					// collapses we remain below the show threshold even if the
 					// browser preserves content position by reducing scrollTop.
@@ -1636,6 +1697,54 @@ export const FilePreview = React.memo(
 				message: 'Clipboard write was rejected. Check browser permissions and try again.',
 			});
 
+		// Right-click on an editor selection. The passage is built once here so
+		// Quote in Message and Send to Agent hand over the same thing: the
+		// project-relative path with its line range, then the text in a fence.
+		const handleEditorSelectionContextMenu = useCallback(
+			(selection: EditorSelectionDetails, event: MouseEvent) => {
+				if (!file) return;
+				const path = toRelativePath(file.path, cwd) ?? file.path;
+				setEditorSelectionMenu({
+					x: event.clientX,
+					y: event.clientY,
+					selection: formatFileSelection({
+						path,
+						startLine: selection.startLine,
+						endLine: selection.endLine,
+						text: selection.text,
+						language,
+					}),
+					rawText: selection.text,
+					sourceName: formatFileLineReference(file.name, selection.startLine, selection.endLine),
+				});
+			},
+			[file, cwd, language]
+		);
+
+		const copyEditorSelection = async (text: string) => {
+			try {
+				const ok = await safeClipboardWrite(text);
+				if (ok) {
+					flashCopiedToClipboard(text, 'Selection Copied');
+				} else {
+					failClipboardToast('Failed to Copy Selection');
+				}
+			} catch (err) {
+				captureException(err);
+				failClipboardToast('Failed to Copy Selection');
+			}
+		};
+
+		// Close the find bar and hand focus back to the pane. Shared by the
+		// search field and the replace field, which both close on Escape.
+		const closeFindBar = () => {
+			setSearchOpen(false);
+			setSearchQuery('');
+			setSearchMode('text');
+			setJqError(null);
+			containerRef.current?.focus();
+		};
+
 		const copyPathToClipboard = async () => {
 			if (!file) return;
 			try {
@@ -1732,7 +1841,7 @@ export const FilePreview = React.memo(
 		const handleKeyDown = (e: React.KeyboardEvent) => {
 			// Handle Escape key - dismiss overlays in priority order
 			// In tab mode, layer system isn't registered, so we handle Escape directly here
-			if (e.key === 'Escape') {
+			if (e.key === 'Escape' && !isImeComposing(e)) {
 				if (showHeadingPalette) {
 					e.preventDefault();
 					e.stopPropagation();
@@ -2034,6 +2143,7 @@ export const FilePreview = React.memo(
 					setWordWrap={setFileEditWordWrap}
 					toolbarVisibility={filePreviewToolbarVisibility}
 					onDelete={handleDeleteFile}
+					onRevealDetails={handleRevealDetails}
 				/>
 
 				{/* File changed on disk banner */}
@@ -2149,7 +2259,7 @@ export const FilePreview = React.memo(
 					    Sticky (not absolute) so it stays put while the pane scrolls
 					    without depending on a positioned ancestor. Drops below the
 					    find bar when that is open so the two never overlap. */}
-					{canScaleFont && (
+					{canScaleFont && showFloatingControls && (
 						<div
 							className={`sticky z-20 h-0 flex items-start justify-end pointer-events-none ${
 								searchOpen ? 'top-14' : 'top-0'
@@ -2238,20 +2348,18 @@ export const FilePreview = React.memo(
 										value={searchQuery}
 										onChange={(e) => setSearchQuery(e.target.value)}
 										onKeyDown={(e) => {
-											if (e.key === 'Escape') {
+											if (e.key === 'Escape' && !isImeComposing(e)) {
 												e.preventDefault();
 												e.stopPropagation();
 												if (showJqHelp) {
 													setShowJqHelp(false);
 												} else {
-													setSearchOpen(false);
-													setSearchQuery('');
-													setSearchMode('text');
-													setJqError(null);
-													containerRef.current?.focus();
+													closeFindBar();
 												}
 											} else if (searchMode === 'text' && searchKind !== 'line') {
-												if (e.key === 'Enter' && !e.shiftKey) {
+												if (e.key === 'Enter' && isImeComposing(e)) {
+													// Leave the key to the input method.
+												} else if (e.key === 'Enter' && !e.shiftKey) {
 													e.preventDefault();
 													goToNextMatch();
 												} else if (e.key === 'Enter' && e.shiftKey) {
@@ -2360,6 +2468,71 @@ export const FilePreview = React.memo(
 										</>
 									)}
 								</div>
+								{/* Replace: code editor only, for text and regex search. Enter
+								    replaces the current match and moves to the next; Cmd/Ctrl+Enter
+								    replaces every match as one undoable edit. */}
+								{canReplace && (
+									<div className="flex items-center gap-2 mt-2">
+										<input
+											type="text"
+											value={replaceText}
+											onChange={(e) => setReplaceText(e.target.value)}
+											onKeyDown={(e) => {
+												if (e.key === 'Escape') {
+													e.preventDefault();
+													e.stopPropagation();
+													closeFindBar();
+												} else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+													e.preventDefault();
+													e.stopPropagation();
+													replaceAll(replaceText);
+													onShortcutUsed?.('editorReplaceAll');
+												} else if (e.key === 'Enter') {
+													e.preventDefault();
+													e.stopPropagation();
+													replaceCurrent(replaceText);
+												}
+											}}
+											placeholder={
+												searchKind === 'regex'
+													? `Replace with... ($1 for a group; Enter: replace, ${formatShortcutKeys(['Meta', 'Enter'])}: all)`
+													: `Replace with... (Enter: replace, ${formatShortcutKeys(['Meta', 'Enter'])}: all)`
+											}
+											aria-label="Replace with"
+											className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
+											style={{
+												borderColor: theme.colors.border,
+												color: theme.colors.textMain,
+												backgroundColor: theme.colors.bgSidebar,
+											}}
+										/>
+										<button
+											type="button"
+											onClick={() => replaceCurrent(replaceText)}
+											disabled={totalMatches === 0}
+											className="p-1.5 rounded hover:bg-white/10 transition-colors disabled:opacity-30"
+											style={{ color: theme.colors.textDim }}
+											title="Replace (Enter)"
+											aria-label="Replace"
+										>
+											<Replace className="w-4 h-4" />
+										</button>
+										<button
+											type="button"
+											onClick={() => {
+												replaceAll(replaceText);
+												onShortcutUsed?.('editorReplaceAll');
+											}}
+											disabled={totalMatches === 0}
+											className="p-1.5 rounded hover:bg-white/10 transition-colors disabled:opacity-30"
+											style={{ color: theme.colors.textDim }}
+											title={`Replace All (${formatShortcutKeys(['Meta', 'Enter'])})`}
+											aria-label="Replace All"
+										>
+											<ReplaceAll className="w-4 h-4" />
+										</button>
+									</div>
+								)}
 								{/* regex error */}
 								{searchMode !== 'jq' && searchKind === 'regex' && regexError && (
 									<div
@@ -2520,6 +2693,11 @@ export const FilePreview = React.memo(
 							fontScale={fontScale}
 							fontFamily={editorFontFamily}
 							baseFontPx={editorTypography.fontSize}
+							codeEditing
+							completion={editorCompletion}
+							vimMode={fileEditVimMode}
+							onShortcutUsed={onShortcutUsed}
+							onSelectionContextMenu={handleEditorSelectionContextMenu}
 							onLineNumberContextMenu={(lineNumber, event) => {
 								setLineCtxMenu({
 									lineNumber,
@@ -2541,7 +2719,9 @@ export const FilePreview = React.memo(
 									e.preventDefault();
 									e.stopPropagation();
 									handleSave();
-								} else if (e.key === 'Escape') {
+								} else if (e.key === 'Escape' && !isImeComposing(e) && !fileEditVimMode) {
+									// In Vim mode Escape belongs to Vim (back to normal mode);
+									// Cmd+E below still leaves the editor.
 									e.preventDefault();
 									e.stopPropagation();
 									setMarkdownEditMode(false);
@@ -2855,20 +3035,22 @@ export const FilePreview = React.memo(
 					)}
 
 					{/* Table of Contents */}
-					<FilePreviewToc
-						theme={theme}
-						tocEntries={tocEntries}
-						tocWidth={tocWidth}
-						showTocOverlay={showTocOverlay}
-						setShowTocOverlay={setShowTocOverlay}
-						scrollMarkdownToBoundary={scrollMarkdownToBoundary}
-						tocButtonRef={tocButtonRef}
-						tocOverlayRef={tocOverlayRef}
-						isMarkdown={isMarkdown}
-						markdownEditMode={markdownEditMode}
-						onJumpToHeading={jumpToHeading}
-						activeIndex={activeTocIndex}
-					/>
+					{showFloatingControls && (
+						<FilePreviewToc
+							theme={theme}
+							tocEntries={tocEntries}
+							tocWidth={tocWidth}
+							showTocOverlay={showTocOverlay}
+							setShowTocOverlay={setShowTocOverlay}
+							scrollMarkdownToBoundary={scrollMarkdownToBoundary}
+							tocButtonRef={tocButtonRef}
+							tocOverlayRef={tocOverlayRef}
+							isMarkdown={isMarkdown}
+							markdownEditMode={markdownEditMode}
+							onJumpToHeading={jumpToHeading}
+							activeIndex={activeTocIndex}
+						/>
+					)}
 
 					{/* Heading palette - `#` opens the same list with a fuzzy filter */}
 					{showHeadingPalette && isMarkdown && !markdownEditMode && tocEntries.length > 0 && (
@@ -2938,6 +3120,20 @@ export const FilePreview = React.memo(
 
 				{/* Line-number gutter right-click menu. Single action: copy a
 				    maestro:// deep link pointing at this exact line. */}
+				{editorSelectionMenu && (
+					<TerminalSelectionContextMenu
+						menu={editorSelectionMenu}
+						theme={theme}
+						onDismiss={() => setEditorSelectionMenu(null)}
+						onQuote={onQuoteSelection}
+						onCopy={() => void copyEditorSelection(editorSelectionMenu.rawText)}
+						onSendToAgent={
+							onSendSelectionToAgent
+								? (text) => onSendSelectionToAgent(text, editorSelectionMenu.sourceName)
+								: undefined
+						}
+					/>
+				)}
 				{lineCtxMenu && (
 					<>
 						<div

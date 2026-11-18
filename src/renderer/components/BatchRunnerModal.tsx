@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
 	X,
 	RotateCcw,
@@ -22,6 +22,9 @@ import {
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import { ToggleSwitch } from './ui/ToggleSwitch';
+import { FormInput } from './ui/FormInput';
+import type { AgentDiscoveryRequest } from '../../shared/types';
+import { useAgentModelEffortOptions } from '../hooks/agent/useAgentModelEffortOptions';
 import {
 	AUTO_RESUME_DEFAULT_MINUTES,
 	AUTO_RESUME_DEFAULT_MAX_ATTEMPTS,
@@ -68,6 +71,7 @@ import {
 	useWorktreeRunTarget,
 	autoPlaybookName,
 	validateAgentPromptHasTaskReference,
+	buildDesktopAutoRunPrompt,
 } from '../hooks';
 import { formatMetaKey } from '../utils/shortcutFormatter';
 import { joinPath } from '../../shared/formatters';
@@ -195,58 +199,78 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const [scheduledStart, setScheduledStart] = useState('');
 	const [isScheduling, setIsScheduling] = useState(false);
 	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
-	const [availableModels, setAvailableModels] = useState<string[]>([]);
-	const [availableEfforts, setAvailableEfforts] = useState<string[]>([]);
+	// Open worktrees have their own provider/account. A new or closed worktree
+	// has no final execution identity until dispatch resolves it.
+	const discoverySession = !worktreeTarget
+		? activeSession
+		: worktreeTarget.mode === 'existing-open'
+			? sessions.find((session) => session.id === worktreeTarget.sessionId)
+			: undefined;
+	const discoveryProvider =
+		discoverySession?.toolType ??
+		(worktreeTarget && worktreeTarget.mode !== 'existing-open'
+			? worktreeParentSession?.toolType
+			: undefined);
+	const discoveryContext = useMemo<AgentDiscoveryRequest['context'] | undefined>(
+		() =>
+			discoverySession
+				? {
+						kind: 'draft',
+						cwd: discoverySession.cwd,
+						customPath: discoverySession.customPath,
+						customEnvVars: discoverySession.customEnvVars,
+						model: runModel || discoverySession.customModel,
+						effort: runEffort || discoverySession.customEffort,
+						sessionSshRemoteConfig: discoverySession.sessionSshRemoteConfig,
+						sshRemoteId: discoverySession.sshRemoteId,
+					}
+				: undefined,
+		[
+			discoverySession?.id,
+			discoverySession?.cwd,
+			discoverySession?.customPath,
+			discoverySession?.customEnvVars,
+			discoverySession?.customModel,
+			discoverySession?.customEffort,
+			discoverySession?.sessionSshRemoteConfig,
+			discoverySession?.sshRemoteId,
+			runModel,
+			runEffort,
+		]
+	);
+	const {
+		models: availableModels,
+		efforts: availableEfforts,
+		loaded: discoveryLoaded,
+		modelStatus,
+		effortStatus,
+	} = useAgentModelEffortOptions(discoveryProvider, discoveryContext);
+	const manualGrokOptions =
+		(discoverySession?.toolType ?? worktreeParentSession?.toolType ?? activeSession?.toolType) ===
+		'grok';
 
-	// Fetch the model and effort options for the agent behind this run. Uses a
-	// stale flag so a slow response (e.g. `opencode models` shelling out) for a
-	// previously selected agent can't overwrite the current agent's list. Same
-	// pattern as MainPanel's model pill.
+	// Legacy provider lists validate selections only after settling. Grok's
+	// discovery contract never treats an omitted configured value as invalid.
 	useEffect(() => {
-		const agentId = activeSession?.toolType;
-		if (!agentId) {
-			setAvailableModels([]);
-			setAvailableEfforts([]);
-			return;
-		}
-		let stale = false;
-		window.maestro.agents
-			.getModels(agentId)
-			.then((models) => {
-				if (!stale) setAvailableModels(models);
-			})
-			.catch(() => {
-				if (!stale) setAvailableModels([]);
-			});
-		// Agents expose reasoning effort under either `effort` (Claude Code) or
-		// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) - probe both and
-		// use whichever the agent defines.
-		Promise.all([
-			window.maestro.agents.getConfigOptions(agentId, 'effort').catch(() => [] as string[]),
-			window.maestro.agents
-				.getConfigOptions(agentId, 'reasoningEffort')
-				.catch(() => [] as string[]),
-		])
-			.then(([effortOpts, reasoningOpts]) => {
-				if (stale) return;
-				setAvailableEfforts(effortOpts.length > 0 ? effortOpts : reasoningOpts);
-			})
-			.catch(() => {
-				if (!stale) setAvailableEfforts([]);
-			});
-		return () => {
-			stale = true;
-		};
-	}, [activeSession?.toolType]);
-
-	// Drop a picked value that the newly fetched option list no longer offers,
-	// so switching agents can't leave a stale model in the launched config.
+		if (
+			!manualGrokOptions &&
+			discoveryLoaded &&
+			modelStatus === 'discovered' &&
+			runModel &&
+			!availableModels.includes(runModel)
+		)
+			setRunModel('');
+	}, [manualGrokOptions, discoveryLoaded, modelStatus, availableModels, runModel]);
 	useEffect(() => {
-		if (runModel && !availableModels.includes(runModel)) setRunModel('');
-	}, [availableModels, runModel]);
-	useEffect(() => {
-		if (runEffort && !availableEfforts.includes(runEffort)) setRunEffort('');
-	}, [availableEfforts, runEffort]);
+		if (
+			!manualGrokOptions &&
+			discoveryLoaded &&
+			effortStatus === 'discovered' &&
+			runEffort &&
+			!availableEfforts.includes(runEffort)
+		)
+			setRunEffort('');
+	}, [manualGrokOptions, discoveryLoaded, effortStatus, availableEfforts, runEffort]);
 
 	// Spec-Driven Auto Run: documents, task counts, loop mode.
 	const {
@@ -437,8 +461,13 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		}
 	}, [flushGoalConfig, hasUnsavedConfigChanges, showConfirmation, onClose]);
 
-	// Validate agent prompt has task references
-	const hasValidPrompt = validateAgentPromptHasTaskReference(prompt);
+	// Validate what the agent will actually receive: a prompt that never names
+	// {{DOCUMENT_PATH}} gets the default's task-selection and document blocks
+	// appended at dispatch, so it references tasks even when its own text does not.
+	const hasValidPrompt = useMemo(
+		() => validateAgentPromptHasTaskReference(buildDesktopAutoRunPrompt(prompt, taskSelectionMode)),
+		[prompt, taskSelectionMode]
+	);
 	const isPromptEmpty = !prompt || !prompt.trim();
 
 	// Goal mode is launch-ready as soon as a non-empty goal is entered. The
@@ -1281,15 +1310,56 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 					{/* Per-run model / effort override. Applies to every agent spawn this
 					    run makes (both modes, and worktree-dispatched runs), and dies with
 					    the run - the agent's own configured model is left alone. Each
-					    picker is hidden when its provider exposes no options. Lives last in
+					    Grok field permits manual entry while metadata is unqualified. Lives last in
 					    both modes so the two layouts stay consistent. */}
-					{(availableModels.length > 0 || availableEfforts.length > 0) && (
+					{(manualGrokOptions || availableModels.length > 0 || availableEfforts.length > 0) && (
 						<div className="flex flex-col gap-2">
 							<div className="text-2xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
 								Model for this run
 							</div>
 							<div className="flex items-center gap-2">
-								{availableModels.length > 0 && (
+								{manualGrokOptions && (
+									<>
+										<FormInput
+											theme={theme}
+											label="Model for this run"
+											value={runModel}
+											onChange={setRunModel}
+											placeholder="Use agent default"
+											addon={
+												availableModels.length > 0 ? (
+													<select
+														aria-label="Suggested models for this run"
+														value=""
+														onChange={(e) => setRunModel(e.target.value)}
+														style={{
+															backgroundColor: theme.colors.bgMain,
+															color: theme.colors.textMain,
+														}}
+													>
+														<option value="" disabled>
+															Models
+														</option>
+														{availableModels.map((model) => (
+															<option key={model} value={model}>
+																{model}
+															</option>
+														))}
+													</select>
+												) : undefined
+											}
+										/>
+										<FormInput
+											theme={theme}
+											label="Reasoning effort for this run"
+											value={runEffort}
+											onChange={setRunEffort}
+											placeholder="Default effort"
+										/>
+									</>
+								)}
+
+								{!manualGrokOptions && availableModels.length > 0 && (
 									<select
 										value={runModel}
 										onChange={(e) => setRunModel(e.target.value)}
@@ -1309,7 +1379,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 										))}
 									</select>
 								)}
-								{availableEfforts.length > 0 && (
+								{!manualGrokOptions && availableEfforts.length > 0 && (
 									<select
 										value={runEffort}
 										onChange={(e) => setRunEffort(e.target.value)}
@@ -1330,6 +1400,13 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									</select>
 								)}
 							</div>
+							{manualGrokOptions &&
+								(modelStatus !== 'discovered' || effortStatus !== 'discovered') && (
+									<p className="text-2xs" style={{ color: theme.colors.textDim }}>
+										Model or effort options are unavailable. Enter a supported value, or leave blank
+										to use the agent default.
+									</p>
+								)}
 							<p className="text-2xs" style={{ color: theme.colors.textDim }}>
 								Overrides the agent&apos;s configured model for this run only. The agent&apos;s own
 								settings and its interactive tabs are unchanged.

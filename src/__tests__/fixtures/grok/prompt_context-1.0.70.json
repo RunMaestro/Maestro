@@ -1,0 +1,18 @@
+{
+	"version": 1,
+	"prompt_mode": "extend",
+	"audience": "primary",
+	"include_browser_verification": true,
+	"agents_md_files": [],
+	"persona_summaries": [],
+	"build_timestamp_utc": "2026-10-30T00:00:00.000000+00:00",
+	"memory_v2_enabled": true,
+	"memory_global_path": "{{GROK_HOME}}/memory-v2/global",
+	"memory_workspace_path": "{{GROK_HOME}}/memory-v2/workspaces/my-project-0a1b2c3d",
+	"os_name": "macos",
+	"shell_path": "/bin/zsh",
+	"working_directory": "{{PROJECT}}",
+	"current_date": "2026-10-30",
+	"is_non_interactive": false,
+	"system_prompt_label": "Grok 4.7"
+}

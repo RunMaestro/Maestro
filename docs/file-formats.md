@@ -121,6 +121,8 @@ For everything without a format-specific filter - code, markdown, plain text - `
 
 Regex and line modes are offered only where they mean something. Rendered markdown, CSV tables, and jq mode fall back to plain text.
 
+In the editor (`Cmd+E` / `Ctrl+E`) the bar also has a **Replace** field, with replace-one and replace-all; see [Editing Files](./file-editor#find-and-replace).
+
 ## Very large files
 
 Text, code, and markdown files pick one of three rendering tiers automatically, based on size and line shape:

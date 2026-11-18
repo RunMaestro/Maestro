@@ -4,9 +4,40 @@ import {
 	walkTreePartitioned,
 } from '../../shared/treeUtils';
 import { isImageFile } from '../../shared/gitUtils';
+import { unloadedFileTreeState as sharedUnloadedFileTreeState } from '../../shared/fileTreeCache';
 import { isMediaFile } from '../../shared/mediaTypes';
 import { shouldIgnore, parseGitignoreContent, LOCAL_IGNORE_DEFAULTS } from '../../shared/globUtils';
 import { logger } from './logger';
+import type { Session } from '../types';
+
+/** Session fields that describe the in-memory file-tree scan, not the agent. */
+export type FileTreeCacheFields = Pick<
+	Session,
+	| 'fileTree'
+	| 'fileTreeStats'
+	| 'fileTreeTruncated'
+	| 'fileTreeLoadedCap'
+	| 'fileTreeLoading'
+	| 'fileTreeLoadingProgress'
+	| 'fileTreeLastScanTime'
+	| 'fileTreeError'
+	| 'fileTreeRetryAt'
+>;
+
+/**
+ * The file-tree fields of an agent whose tree has not been scanned yet.
+ *
+ * The auto-loader in useFileTreeManagement decides "already loaded" from
+ * `fileTreeLoadedCap` and `fileTreeStats`. The tree itself is never persisted,
+ * so any of these fields that survives a restart (or a directory move) next to
+ * an empty tree tells the loader to skip a folder it never scanned, and the
+ * Files panel stays on "No files found". Persistence, restore, and relocation
+ * all reset through this one object, which the main process's write boundary
+ * shares (`src/shared/fileTreeCache.ts`), so a new field cannot be missed.
+ */
+export function unloadedFileTreeState(): FileTreeCacheFields {
+	return sharedUnloadedFileTreeState();
+}
 
 /**
  * Check if a file should be opened in external app based on extension

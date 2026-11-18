@@ -13,7 +13,11 @@
  * (`isSelfContainedCard`): it raises no unread and moves no focus.
  */
 
-import { getContextCompactCommand } from '../../shared/contextCompaction';
+import {
+	getContextCompactCommand,
+	getContextCompactionBlocker,
+	type ContextCompactionBlocker,
+} from '../../shared/contextCompaction';
 import { getClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 import { selectSessionById, updateAiTab, useSessionStore } from '../stores/sessionStore';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
@@ -95,6 +99,20 @@ export function canCompactTabContext(sessionId: string, tabId: string): boolean 
 }
 
 /**
+ * The required-feature blocker on this tab's context-limit recovery, or null.
+ * The retry engine reads it to decline with the gap named rather than as if the
+ * provider were merely unlisted; the original error is still what the user sees.
+ */
+export function getTabContextCompactionBlocker(
+	sessionId: string,
+	tabId: string
+): ContextCompactionBlocker | null {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	if (!session || !findTab(session, tabId)) return null;
+	return getContextCompactionBlocker(session.toolType) ?? null;
+}
+
+/**
  * Compact the tab's provider session. Resolves once the hidden turn has exited;
  * never throws.
  *
@@ -109,6 +127,10 @@ export async function compactTabContext(
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const tab = findTab(session, tabId);
 	const command = getContextCompactCommand(session?.toolType);
+	// A blocked provider never spawns, whatever else is wired: an unqualified
+	// operation must not run and report success.
+	const blocker = getContextCompactionBlocker(session?.toolType);
+	if (blocker) return { success: false, error: blocker.detail };
 	if (!hiddenTurnSpawner || !session || !tab?.agentSessionId || !command) {
 		return { success: false, error: 'This conversation cannot be compacted.' };
 	}

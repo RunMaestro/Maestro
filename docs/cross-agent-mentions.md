@@ -24,7 +24,7 @@ It is the lightweight cousin of [Group Chat](./group-chat): no moderator, no sha
 The picker uses a **single `@` for everything**. Maestro tells files and agents apart by shape: a path-like body such as `@src/app.ts` or `@notes.md` is a file reference, while a bare word like `@codex` is matched against your live roster of agents and groups. A `@word` that names nothing stays plain text.
 
 <Tip>
-  You can also type the whole token by hand. `@Review-Bot` and `@review-bot` resolve to the same agent - matching is case-insensitive. If an agent's name has spaces, use hyphens (`@My-Project` for "My Project").
+  You can also type the whole token by hand, or press `Tab` on a partly typed `@name` to complete it (a single match completes it immediately; multiple matches reopen the picker filtered to candidates). Matching is case-insensitive (`@Review-Bot` and `@review-bot` resolve to the same agent). If an agent's name has spaces, use hyphens (`@My-Project` for "My Project").
 </Tip>
 
 ## What Happens When You Send

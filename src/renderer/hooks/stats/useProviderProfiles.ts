@@ -13,8 +13,9 @@
  * Environment: the session's own `customEnvVars`, or the agent-level set
  * (Settings -> Agents, fetched once per provider on mount) when the session has
  * none. The spawner replaces rather than layers, so this does too. An API key,
- * gateway, or cloud provider in that env is its own profile, because it outranks
- * the config dir's login. Global env vars are deliberately not consulted, matching
+ * gateway, or cloud provider in that env is its own profile when the canonical
+ * resolver can attribute it; uncertain Grok credentials remain unattributed.
+ * Global env vars are deliberately not consulted, matching
  * `useQuotaAccounts` - a machine-wide `CLAUDE_CONFIG_DIR` would move every
  * agent at once, which is not a per-agent attribution anyone is asking about.
  */
@@ -24,6 +25,7 @@ import type { Session } from '../../types';
 import {
 	effectiveAgentCustomEnvVars,
 	getProviderProfileConfig,
+	resolveAgentAccountKey,
 	resolveAgentProfile,
 	type AgentBillingCredential,
 } from '../../../shared/providerProfiles';
@@ -51,14 +53,15 @@ export interface ProviderProfile {
 export interface ProviderProfileIndex {
 	/** One entry per profile that holds at least one agent, sorted by label. */
 	profiles: ProviderProfile[];
-	/** Session id -> profile key. Agents whose account cannot be resolved yet are absent. */
+	/** Session id -> profile key. Pending and deliberately withheld accounts are absent. */
 	profileKeyBySessionId: Record<string, string>;
 	/** Profile key -> label, for labelling a filter that came from another surface. */
 	labelByKey: Record<string, string>;
 	/**
 	 * False while an attribution input is still loading: an agent-level env var
 	 * fetch in flight, or $HOME unresolved for an agent that needs it. Until then
-	 * a key missing from `profiles` may be late rather than gone.
+	 * a key missing from `profiles` may be late rather than gone. Deliberately
+	 * withheld profiles do not block readiness once those inputs have settled.
 	 */
 	ready: boolean;
 }
@@ -190,7 +193,7 @@ export function useProviderProfiles(sessions: Session[]): ProviderProfileIndex {
 	return useMemo((): ProviderProfileIndex => {
 		const profileKeyBySessionId: Record<string, string> = {};
 		const counts = new Map<string, ProviderProfile>();
-		let everyAgentAttributed = true;
+		let accountInputsSettled = true;
 
 		for (const session of sessions) {
 			if (session.toolType === 'terminal') continue;
@@ -206,11 +209,14 @@ export function useProviderProfiles(sessions: Session[]): ProviderProfileIndex {
 				homeDir,
 				remoteId ? { id: remoteId, name: remoteNames[remoteId] } : null
 			);
-			// $HOME has not resolved yet and the agent named no dir: there is no
-			// account to file it under, and guessing would put it in a bucket it
-			// may not belong to. It reappears on the next render.
 			if (!profile) {
-				everyAgentAttributed = false;
+				// A missing root still needs $HOME, but a known root with withheld
+				// attribution (such as uncertain Grok credentials) is settled. Keep
+				// both out of the index without inventing an account or duplicating
+				// the canonical resolver's credential classification.
+				if (!resolveAgentAccountKey(session.toolType, env, homeDir)) {
+					accountInputsSettled = false;
+				}
 				continue;
 			}
 
@@ -223,7 +229,7 @@ export function useProviderProfiles(sessions: Session[]): ProviderProfileIndex {
 			}
 		}
 
-		const ready = envSettled && everyAgentAttributed;
+		const ready = envSettled && accountInputsSettled;
 		if (counts.size === 0) return { ...EMPTY_INDEX, ready };
 
 		const profiles = Array.from(counts.values()).sort((a, b) => a.label.localeCompare(b.label));

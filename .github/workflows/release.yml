@@ -481,6 +481,12 @@ jobs:
           .github/scripts/rebuild-and-verify-native.sh arm64
           npx electron-builder --mac --arm64 --publish never --config.extraMetadata.version="$BUILD_VERSION"
 
+      # The macos-15 runner is arm64, so only the arm64 package can run here.
+      - name: Smoke test packaged app (macOS arm64)
+        if: matrix.platform == 'mac'
+        timeout-minutes: 5
+        run: npm run smoke:packaged -- --app release/mac-arm64/Maestro.app/Contents/MacOS/Maestro
+
       - name: Package for Windows
         if: matrix.platform == 'win'
         shell: bash
@@ -518,6 +524,15 @@ jobs:
               exit 1
             }
           }
+
+      # Launch the packaged app and prove it starts and stays up. A release once
+      # shipped that would not start on Windows with every step above green,
+      # because nothing ran the package. Runs in demo mode against a temp folder.
+      - name: Smoke test packaged app (Windows)
+        if: matrix.platform == 'win'
+        shell: bash
+        timeout-minutes: 5
+        run: npm run smoke:packaged -- --app release/win-unpacked/Maestro.exe
 
       # Linux/macOS: Rebuild native modules for the target arch, verify, then package.
       # npmRebuild: false in package.json prevents electron-builder from re-running npm rebuild,

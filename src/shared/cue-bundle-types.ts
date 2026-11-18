@@ -16,7 +16,8 @@
  * agents/<agentId>/playbooks.json          saved playbooks
  * workspaces/<key>/.maestro/cue.yaml       filtered subscriptions + settings
  * workspaces/<key>/<project-relative path> prompt files, Auto Run documents,
- *                                          Claude Code skills, .mcp.json, CLAUDE.md
+ *                                          Claude Code skills, .mcp.json, CLAUDE.md,
+ *                                          selected Grok skills and AGENTS.md
  * autorun/<agentId>/<filename>.md          Auto Run documents outside the workspace
  * claude-memory/<key>/<name>.md            Claude Code auto memory for a workspace
  * local.json                               machine data, exact copies only (see below)
@@ -105,6 +106,97 @@ export interface CueBundleWorkspace {
 	source?: CueBundleWorkspaceSource;
 	/** Claude Code assets exported with this workspace, when a Claude agent works in it. */
 	claude?: CueBundleClaudeAssets;
+	/** Grok project resources selected for this workspace, when a Grok agent works in it. */
+	grok?: CueBundleGrokResources;
+}
+
+/** `format` of {@link CueBundleGrokResources}. Any other value is refused on import. */
+export const CUE_BUNDLE_GROK_RESOURCES_FORMAT = 'grok-native-resources';
+
+/**
+ * Version of {@link CueBundleGrokResources}. Bump on any change an older
+ * importer would misread; the validator refuses a version it does not know
+ * instead of guessing what the resources mean.
+ */
+export const CUE_BUNDLE_GROK_RESOURCES_VERSION = 1;
+
+/**
+ * Pinned Grok source the project roots below follow (compat.rs
+ * `skill_config_dirs`). Discovery by a real binary is not qualified yet, so an
+ * export states `verification: 'unverified'` and the validator says so.
+ */
+export const CUE_BUNDLE_GROK_SCHEMA_SOURCE =
+	'xai-org/grok-build@2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8';
+
+/**
+ * Project roots a carried Grok resource may come from, by kind. These are the
+ * resources the phase 06 translation collection carries (`collectTranslationResources`):
+ * project instructions and project skills. Rules, agents and subagents have no
+ * pinned loader and never travel as resources; they are listed in `unsupported`.
+ * Account-global Grok files (`auth.json`, `config.toml`, anything else under the
+ * Grok home) are never a resource.
+ */
+export const CUE_BUNDLE_GROK_RESOURCE_ROOTS = {
+	/** An instruction root IS the file. */
+	instruction: ['AGENTS.md', 'CLAUDE.md'],
+	/** A skill is one folder directly under one of these roots. */
+	skill: ['.grok/skills', '.agents/skills'],
+} as const;
+
+export type CueBundleGrokResourceKind = keyof typeof CUE_BUNDLE_GROK_RESOURCE_ROOTS;
+
+/** One Grok project resource the bundle carries. Its files are listed in `files` like any other. */
+export interface CueBundleGrokResource {
+	kind: CueBundleGrokResourceKind;
+	/** The selected root it came from, one of {@link CUE_BUNDLE_GROK_RESOURCE_ROOTS}. */
+	root: string;
+	/** Workspace-relative path: the instruction file, or the skill folder under `root`. */
+	path: string;
+	/**
+	 * What the exporting machine's trust settings said of it. A `disabled`
+	 * resource travels so a re-export keeps it, and is imported disabled.
+	 */
+	trust: 'enabled' | 'disabled';
+}
+
+/**
+ * One Grok MCP server the workspace's agents use. Grok keeps MCP servers in
+ * its account-global `config.toml`, which never travels: only the server's name,
+ * its enabled state and the NAMES of the secrets it reads. Nothing else is a
+ * valid field, so a value cannot ride along under another key.
+ */
+export interface CueBundleGrokMcpServer {
+	name: string;
+	enabled: boolean;
+	/** Secret names, each also in `requirements.secrets`. */
+	secrets: string[];
+}
+
+/** A Grok resource that was seen but not carried, and why. */
+export interface CueBundleGrokUnsupportedResource {
+	/** Workspace-relative path or root (`.grok/rules`). */
+	path: string;
+	/** Stable code, the translation limitation's when there is one (`grok-rules-unsupported`). */
+	code: string;
+	/** Shown to the user on import. */
+	reason: string;
+}
+
+/**
+ * Grok assets a workspace carries: selected project resources, MCP secret-name
+ * requirements and the resources left behind. Versioned on its own, so a newer
+ * description is refused rather than half-read by an older importer.
+ */
+export interface CueBundleGrokResources {
+	format: typeof CUE_BUNDLE_GROK_RESOURCES_FORMAT;
+	version: typeof CUE_BUNDLE_GROK_RESOURCES_VERSION;
+	/** Pinned source the roots follow ({@link CUE_BUNDLE_GROK_SCHEMA_SOURCE}). */
+	schemaSource: string;
+	/** Whether a real Grok binary was shown to discover these resources. */
+	verification: 'unverified' | 'verified';
+	resources: CueBundleGrokResource[];
+	mcpServers?: CueBundleGrokMcpServer[];
+	unsupported?: CueBundleGrokUnsupportedResource[];
 }
 
 /**

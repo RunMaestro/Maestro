@@ -12,6 +12,7 @@
  */
 
 import { scanMentionSpans } from './mentionPatterns';
+import { truncateAtWordBoundary } from './formatters';
 
 // ============================================================================
 // TYPES
@@ -156,20 +157,33 @@ function stripMentions(message: string): string {
 }
 
 /**
- * Derive a short, human-readable subject line from the user's consult message,
- * for the target's History entry + its consult attribution pill. Strips the
- * `@mention` tokens (so "@rc which branch?" becomes "which branch?"), collapses
- * whitespace, and truncates to `maxLen` with an ellipsis. Returns '' when the
- * message carries no prose beyond the mention - callers fall back to the source
- * agent's name so the entry is never left blank.
+ * Longest consult subject used as a LABEL: the History attribution pill, which
+ * is also the tab name a resume restores. Labels stay short.
  */
-export function deriveConsultSubject(userPrompt: string, maxLen = 60): string {
-	let subject = stripMentions(userPrompt).replace(/\s+/g, ' ').trim();
+export const CONSULT_SUBJECT_MAX_LENGTH = 60;
+
+/**
+ * Longest consult subject carried into the History summary line. That line is
+ * clamped to three lines by CSS, so the data cap only bounds storage; cutting
+ * it at the label length clipped the line with room to spare.
+ */
+export const CONSULT_SUMMARY_MAX_LENGTH = 400;
+
+/**
+ * Derive a human-readable subject line from the user's consult message, for
+ * the target's History entry + its consult attribution pill. Strips the
+ * `@mention` tokens (so "@rc which branch?" becomes "which branch?"), collapses
+ * whitespace, and truncates to `maxLen` at a word boundary with an ellipsis.
+ * Returns '' when the message carries no prose beyond the mention - callers
+ * fall back to the source agent's name so the entry is never left blank.
+ */
+export function deriveConsultSubject(
+	userPrompt: string,
+	maxLen = CONSULT_SUBJECT_MAX_LENGTH
+): string {
+	const subject = stripMentions(userPrompt).replace(/\s+/g, ' ').trim();
 	if (!subject) return '';
-	if (subject.length > maxLen) {
-		subject = `${subject.slice(0, maxLen - 1).trimEnd()}…`;
-	}
-	return subject;
+	return truncateAtWordBoundary(subject, maxLen);
 }
 
 // ============================================================================
@@ -455,4 +469,63 @@ export function selectContextWindow<T extends TranscriptEntryLike>(
 		case 'recent-turns':
 			return tailByConversationalCount(logs, strategy.turns * 2);
 	}
+}
+
+/** "A", "A and B", "A, B and C". */
+export function formatConsultedAgentNames(names: string[]): string {
+	if (names.length <= 1) return names[0] ?? 'another agent';
+	return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/** The agent-only note appended to the local turn's prompt. */
+export function buildConsultPendingNote(template: string, names: string[]): string {
+	return template.split('{{CONSULTED_AGENTS}}').join(formatConsultedAgentNames(names));
+}
+
+/** The agent-only note appended to a turn whose answer is handed off. */
+export function buildHandoffPendingNote(template: string, names: string[]): string {
+	return template.split('{{HANDOFF_AGENTS}}').join(formatConsultedAgentNames(names));
+}
+
+/** Every reply, verbatim, under a heading naming who said it. */
+export function formatConsultReplies(
+	replies: { targetAgentName: string; text: string; error?: string }[]
+): string {
+	return replies
+		.map((reply) => {
+			if (!reply.error) return `### Reply from ${reply.targetAgentName}\n\n${reply.text}`;
+			const partial = reply.text ? `\n\nPartial reply before it stopped:\n\n${reply.text}` : '';
+			return `### ${reply.targetAgentName} could not respond\n\n${reply.error}${partial}`;
+		})
+		.join('\n\n');
+}
+
+/** The agent-only context a released hold carries into its spawn. */
+export function buildConsultReplyContext(
+	template: string,
+	replies: { targetAgentName: string; text: string; error?: string }[]
+): string {
+	const body = formatConsultReplies(replies);
+	if (!template) return body;
+	return template.split('{{CONSULT_REPLIES}}').join(body);
+}
+
+/**
+ * The agent-only context a released CONSULT-FIRST hold carries: the replies,
+ * then the user's message the agent has not seen yet. Without a template (not
+ * loaded) the message still rides along, so the turn can answer it.
+ */
+export function buildConsultFirstContext(
+	template: string,
+	replies: { targetAgentName: string; text: string; error?: string }[],
+	message: string
+): string {
+	const body = formatConsultReplies(replies);
+	if (!template) return `${body}\n\n${message}`;
+	const names = formatConsultedAgentNames(replies.map((r) => r.targetAgentName));
+	return template.replace(/\{\{(CONSULTED_AGENTS|CONSULT_REPLIES|USER_MESSAGE)\}\}/g, (_, key) => {
+		if (key === 'CONSULTED_AGENTS') return names;
+		if (key === 'CONSULT_REPLIES') return body;
+		return message;
+	});
 }

@@ -4,6 +4,7 @@ import type { Theme } from '../../types';
 import { Modal, ModalFooter, FormInput } from '../ui';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { isImeComposing } from '../../utils/ime';
 
 interface AutoRunSetupModalProps {
 	theme: Theme;
@@ -137,6 +138,10 @@ export function AutoRunSetupModal({
 		}
 		// Handle Enter for continue when folder is selected
 		if (e.key === 'Enter' && selectedFolder) {
+			if (isImeComposing(e)) {
+				e.stopPropagation();
+				return;
+			}
 			e.preventDefault();
 			e.stopPropagation();
 			handleContinue();

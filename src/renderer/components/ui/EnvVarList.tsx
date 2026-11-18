@@ -62,7 +62,7 @@ export function EnvVarList({
 			{vars.map((entry) => {
 				const secret = isSecretEnvKey(entry.key);
 				const isRevealed = revealed.has(entry.key);
-				const shown = secret && !isRevealed ? maskEnvValue(entry.value) : entry.value;
+				const shown = secret && !isRevealed ? maskEnvValue(entry.value, entry.key) : entry.value;
 
 				return (
 					<div

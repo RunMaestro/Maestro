@@ -13,6 +13,7 @@ const mockGetConfig = vi.fn();
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockGetConfig.mockReset();
 	(window as any).maestro = {
 		agents: {
 			getConfig: mockGetConfig,
@@ -116,4 +117,43 @@ describe('resolveEffectiveContextWindow', () => {
 		const value = await resolveEffectiveContextWindow({ toolType: 'terminal' });
 		expect(value).toBe(0);
 	});
+});
+
+describe.each([
+	{ name: 'configured', resolve: resolveConfiguredContextWindow },
+	{ name: 'effective', resolve: resolveEffectiveContextWindow },
+])('$name Grok context windows', ({ resolve }) => {
+	it.each([
+		{ label: 'no model metadata', sessionModel: undefined, providerModel: undefined },
+		{ label: 'a session model', sessionModel: 'grok-4.5', providerModel: undefined },
+		{
+			label: 'a provider model',
+			sessionModel: undefined,
+			providerModel: 'grok-composer-2.5-fast',
+		},
+	])('keeps the window unknown with $label', async ({ sessionModel, providerModel }) => {
+		mockGetConfig.mockResolvedValue({ model: providerModel });
+
+		await expect(resolve({ toolType: 'grok', customModel: sessionModel })).resolves.toBe(0);
+		expect(mockGetConfig).toHaveBeenCalledExactlyOnceWith('grok');
+	});
+
+	it('honors a positive per-agent override ahead of provider configuration', async () => {
+		mockGetConfig.mockResolvedValue({ contextWindow: 64_000 });
+
+		await expect(
+			resolve({ toolType: 'grok', customContextWindow: 128_000, customModel: 'grok-4.5' })
+		).resolves.toBe(128_000);
+		expect(mockGetConfig).not.toHaveBeenCalled();
+	});
+
+	it.each([undefined, 0, -1])(
+		'honors a positive provider override when the per-agent override is %s',
+		async (customContextWindow) => {
+			mockGetConfig.mockResolvedValue({ contextWindow: 64_000, model: 'grok-4.5' });
+
+			await expect(resolve({ toolType: 'grok', customContextWindow })).resolves.toBe(64_000);
+			expect(mockGetConfig).toHaveBeenCalledExactlyOnceWith('grok');
+		}
+	);
 });

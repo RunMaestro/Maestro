@@ -6,8 +6,9 @@
  * route and `maestro-cli interrupt` run. When the signal fails, the user is
  * asked before the turn is force-killed.
  *
- * Also registers the two deps only App owns (synopsis cancel and the gated
- * queue dispatch) with that service, so a remote stop gets them too.
+ * Also registers the deps only App owns (synopsis cancel, the queue dispatch,
+ * and whether this client drains the queue) with that service, so a remote
+ * stop gets them too.
  *
  * PERF: Reads activeSession via getState() at interrupt time so App does not
  * re-render when the active session / session list changes. Non-store deps are
@@ -17,11 +18,13 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { QueuedItem } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { isMirrorShown } from '../../stores/peerMirrorStore';
 import {
 	FORCE_KILL_PROMPT,
 	interruptTurn,
 	registerTurnInterruptDeps,
 } from '../../services/turnInterrupt';
+import { useOwnedSideEffectGate } from './internal/useOwnedSessionGate';
 
 // ============================================================================
 // Dependencies interface
@@ -50,16 +53,21 @@ export interface UseInterruptHandlerReturn {
 export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterruptHandlerReturn {
 	const depsRef = useRef(deps);
 	depsRef.current = deps;
+	const sideEffectGate = useOwnedSideEffectGate();
 
 	useEffect(() => {
 		registerTurnInterruptDeps({
 			cancelPendingSynopsis: (sessionId) => depsRef.current.cancelPendingSynopsis(sessionId),
 			processQueuedItem: (sessionId, item) => depsRef.current.processQueuedItem(sessionId, item),
+			ownsQueue: (sessionId) => sideEffectGate.current?.(sessionId) ?? true,
 		});
 		return () => registerTurnInterruptDeps(null);
 	}, []);
 
 	const handleInterrupt = useCallback(async () => {
+		// A Federation mirror on screen hides the local active agent: never stop a turn the user
+		// cannot see. (Its keyboard trigger is already gated; this is the backstop.)
+		if (isMirrorShown()) return;
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession) return;
 		await interruptTurn(activeSession.id, {

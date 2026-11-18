@@ -2,6 +2,7 @@ import { formatSize } from '../../../shared/formatters';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
+import type { FileTreeIndices } from '../../utils/fileLinks';
 
 // ─── Image Cache ──────────────────────────────────────────────────────────────
 
@@ -464,34 +465,28 @@ export { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 export type { TaskToggleResult } from '../../utils/markdownTasks';
 
 /**
- * Normalize a POSIX-style path by resolving `.` and `..` segments.
- * Does not use Node's path module (runs in renderer).
+ * The project root a previewed file sits under, from its absolute path and
+ * `cwd` (its folder relative to that root, as `useFilePreviewHandlers` derives
+ * it). That `cwd` is `''` both for a file at the root and for one outside the
+ * project, so for an empty `cwd` the file tree decides: when the tree lists the
+ * file's own name at its top level, the file's folder is the root.
  */
-function normalizePosixPath(p: string): string {
-	const parts = p.split('/');
-	const resolved: string[] = [];
-	for (const part of parts) {
-		if (part === '.' || part === '') continue;
-		if (part === '..') {
-			resolved.pop();
-		} else {
-			resolved.push(part);
-		}
+export const deriveProjectRoot = (
+	filePath: string,
+	cwd?: string,
+	indices?: FileTreeIndices | null
+): string | undefined => {
+	if (!filePath) return undefined;
+	const slash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+	const name = filePath.slice(slash + 1);
+	if (!cwd) {
+		return slash > 0 && indices?.allPaths.has(name) ? filePath.slice(0, slash) : undefined;
 	}
-	return (p.startsWith('/') ? '/' : '') + resolved.join('/');
-}
-
-/** Resolve image path relative to markdown file directory */
-export const resolveImagePath = (src: string, markdownFilePath: string): string => {
-	if (src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://')) {
-		return src;
-	}
-
-	if (src.startsWith('/')) {
-		return src;
-	}
-
-	const markdownDir = markdownFilePath.substring(0, markdownFilePath.lastIndexOf('/'));
-	if (!markdownDir) return normalizePosixPath(src);
-	return normalizePosixPath(`${markdownDir}/${src}`);
+	const tail = `/${cwd}/${name}`;
+	const posixPath = filePath.replace(/\\/g, '/');
+	if (posixPath.endsWith(tail)) return filePath.slice(0, -tail.length);
+	const cwdIndex = posixPath.indexOf(`/${cwd}/`);
+	if (cwdIndex !== -1) return filePath.substring(0, cwdIndex);
+	const segmentIndex = posixPath.indexOf(`/${cwd.split('/')[0]}/`);
+	return segmentIndex !== -1 ? filePath.substring(0, segmentIndex) : undefined;
 };

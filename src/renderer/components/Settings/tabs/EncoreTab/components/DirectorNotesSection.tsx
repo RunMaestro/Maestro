@@ -180,6 +180,18 @@ export function DirectorNotesSection({
 									</div>
 								)}
 							</div>
+							{directorNotesSettings.provider === 'grok' && (
+								<p className="text-xs opacity-70 mb-3" role="status">
+									{ac.modelDiscoveryStatus === 'configured-fallback'
+										? 'The configured model is retained, but its availability is unverified.'
+										: ac.modelDiscoveryStatus !== 'discovered'
+											? 'Model discovery is unavailable until the synopsis workspace is known.'
+											: 'Models discovered for the selected configuration.'}{' '}
+									{ac.dynamicOptionStatuses.reasoningEffort !== 'discovered' &&
+										'Effort discovery is unavailable. '}
+									You can keep or enter model and effort values below.
+								</p>
+							)}
 							<AgentConfigPanel
 								theme={theme}
 								agent={directorNotesAgentState.selectedAgentConfig}

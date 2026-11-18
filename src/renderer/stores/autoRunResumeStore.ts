@@ -8,11 +8,13 @@
  * matches neither and sits there until a human notices, which on a long
  * unattended run means the run is dead for however many hours that takes.
  *
- * This store is the unconditional fallback for that case: wait the run's
+ * This store is the fallback for that case: wait the run's
  * configured interval, resume, and stop after its configured number of
  * attempts so a genuinely stuck run is handed back rather than hammered.
  * `src/shared/autorunAutoResume.ts` explains why it is a separate mechanism
  * rather than a third Agent Resilience strategy.
+ * Grok still requires the canonical safe-replay decision: an uncertain turn
+ * must stay paused even when Agent Resilience declined to handle it.
  *
  * ## Ordering with the two mechanisms that outrank it
  *
@@ -40,7 +42,10 @@
 import { create } from 'zustand';
 import type { AgentError } from '../types';
 import { isLimitError } from '../../shared/types';
+import { classifyRetryableError } from '../../shared/retryClassification';
 import type { AutoResumePolicy } from '../../shared/autorunAutoResume';
+import { useSessionStore } from './sessionStore';
+import { useBatchStore } from './batchStore';
 import { getBatchResumer } from '../services/batchResumer';
 import { logger } from '../utils/logger';
 
@@ -87,6 +92,31 @@ function clearTimer(sessionId: string): void {
 	}
 }
 
+/** Recheck the live Grok pauses at both scheduling and firing, never just the timer's error. */
+function canAutomaticallyResumeBatch(sessionId: string, scheduledError: AgentError): boolean {
+	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+	const batch = useBatchStore.getState().batchRunStates[sessionId];
+	const errors = [scheduledError, batch?.error, session?.agentError];
+	if (session?.toolType !== 'grok' && !errors.some((error) => error?.agentId === 'grok')) {
+		return true; // Preserve the blanket fallback for existing non-Grok providers.
+	}
+	// The resumer clears the session's error as well as resolving the batch's
+	// promise. Neither may be released using another pause's dispatch evidence.
+	return (
+		!!session &&
+		batch?.isRunning === true &&
+		batch.errorPaused === true &&
+		batch.mirrored !== true &&
+		!batch.isStopping &&
+		!!batch.error &&
+		!isLimitError(batch.error) &&
+		(!session.agentErrorPaused || !!session.agentError) &&
+		errors.every(
+			(error) => !error || classifyRetryableError({ ...error, agentId: 'grok' }) !== null
+		)
+	);
+}
+
 /**
  * Schedule an automatic resume for a paused Auto Run, or decline.
  *
@@ -96,6 +126,7 @@ function clearTimer(sessionId: string): void {
  *
  * Declines, each of which leaves the run paused for the user:
  * - no policy (the run turned auto-resume off),
+ * - a Grok pause without a canonical safe-replay decision,
  * - a limit error (the limit coordinator owns those, on its own clock),
  * - no registered resumer (nothing to call; the manual controls still work),
  * - the attempt ceiling is already reached.
@@ -105,6 +136,20 @@ export function scheduleAutoResume(
 	policy: AutoResumePolicy | null | undefined,
 	error: AgentError
 ): boolean {
+	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+	const batch = useBatchStore.getState().batchRunStates[sessionId];
+	// Retain Grok identity even for legacy errors missing agentId and for a
+	// session that changes provider or disappears before its timer fires.
+	const scheduledError =
+		session?.toolType === 'grok' ||
+		[error, session?.agentError, batch?.error].some((err) => err?.agentId === 'grok')
+			? { ...error, agentId: 'grok' }
+			: error;
+	if (!canAutomaticallyResumeBatch(sessionId, scheduledError)) {
+		// A declined replacement must also disarm any previously scheduled retry.
+		cancelPendingAutoResume(sessionId);
+		return false;
+	}
 	if (!policy) return false;
 
 	// A quota pause is the limit coordinator's job. It probes the provider on an
@@ -167,7 +212,7 @@ export function scheduleAutoResume(
 		sessionId,
 		setTimeout(() => {
 			timers.delete(sessionId);
-			fireAutoResume(sessionId);
+			fireAutoResume(sessionId, scheduledError);
 		}, policy.delayMs)
 	);
 	return true;
@@ -180,8 +225,14 @@ export function scheduleAutoResume(
  * and clearing here would reset the ceiling every time a resume fired, so a run
  * failing forever would auto-resume forever. `clearAutoResume` is what ends it,
  * and the run ending is what calls that.
+ * A scheduled error identifies automatic firing; only explicit user Resume
+ * omits it. Keep the original provider identity even if the live pause changes.
  */
-function fireAutoResume(sessionId: string): void {
+function fireAutoResume(sessionId: string, scheduledError?: AgentError): void {
+	if (scheduledError && !canAutomaticallyResumeBatch(sessionId, scheduledError)) {
+		cancelPendingAutoResume(sessionId);
+		return;
+	}
 	const resumer = getBatchResumer();
 	if (!resumer) {
 		logger.warn(`${LOG_CONTEXT} Resumer vanished before firing`, undefined, { sessionId });

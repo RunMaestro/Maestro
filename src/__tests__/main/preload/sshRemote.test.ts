@@ -3,17 +3,21 @@
  *
  * Coverage:
  * - createSshRemoteApi: saveConfig, deleteConfig, getConfigs, getDefaultId, setDefaultId,
- *   test, getSshConfigHosts
+ *   test, getSshConfigHosts, getReachability, checkReachability, onReachability
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock electron ipcRenderer
 const mockInvoke = vi.fn();
+const mockOn = vi.fn();
+const mockRemoveListener = vi.fn();
 
 vi.mock('electron', () => ({
 	ipcRenderer: {
 		invoke: (...args: unknown[]) => mockInvoke(...args),
+		on: (...args: unknown[]) => mockOn(...args),
+		removeListener: (...args: unknown[]) => mockRemoveListener(...args),
 	},
 }));
 
@@ -191,6 +195,34 @@ describe('SSH Remote Preload API', () => {
 
 			expect(mockInvoke).toHaveBeenCalledWith('ssh-remote:test', 'config-123', 'claude');
 			expect(result).toEqual({ success: true, agentVersion: '1.0.0' });
+		});
+	});
+
+	describe('reachability', () => {
+		it('getReachability invokes ssh-remote:getReachability', async () => {
+			mockInvoke.mockResolvedValue({ success: true, unreachable: [] });
+			await expect(api.getReachability()).resolves.toEqual({ success: true, unreachable: [] });
+			expect(mockInvoke).toHaveBeenCalledWith('ssh-remote:getReachability');
+		});
+
+		it('checkReachability invokes ssh-remote:checkReachability with the remote id', async () => {
+			mockInvoke.mockResolvedValue({ success: true, reachable: true });
+			await api.checkReachability('remote-1');
+			expect(mockInvoke).toHaveBeenCalledWith('ssh-remote:checkReachability', 'remote-1');
+		});
+
+		it('onReachability subscribes to the push channel and unsubscribes the same handler', () => {
+			const callback = vi.fn();
+			const unsubscribe = api.onReachability(callback);
+
+			expect(mockOn).toHaveBeenCalledWith('ssh-remote:reachability', expect.any(Function));
+			const handler = mockOn.mock.calls[0][1] as (event: unknown, payload: unknown) => void;
+			const payload = { remoteId: 'r1', remoteName: 'pedtome', reachable: false, since: 1 };
+			handler({}, payload);
+			expect(callback).toHaveBeenCalledWith(payload);
+
+			unsubscribe();
+			expect(mockRemoveListener).toHaveBeenCalledWith('ssh-remote:reachability', handler);
 		});
 	});
 

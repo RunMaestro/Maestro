@@ -37,7 +37,7 @@ export interface EffortRejection {
 	value: string;
 	/** The model it was refused for, when the provider named one. */
 	model?: string;
-	/** The values the provider says it does accept, in the order it listed them. */
+	/** Accepted values or menu IDs, in provider order; diagnostic, not routing authority. */
 	supported: string[];
 }
 
@@ -74,6 +74,17 @@ const NO_EFFORT_SUPPORT_REGEX =
 	/Model\s+\\?['"]([^'"\\]+)\\?['"]\s+does not support reasoning effort configuration\s*\(requested:\s*\\?['"]([^'"\\]+)\\?['"]\)/i;
 
 /**
+ * Grok headless's selected-model validation (pinned grok-build model_state.rs):
+ *   --effort/--reasoning-effort: unknown effort level 'minimal'; use one of: low, high
+ * It can instead say "this model has no selectable effort levels". Require
+ * the CLI prefix and rejected token; ACP's generic "unknown reasoning_effort
+ * value" and warnings about ignored effort do not identify a safe retry.
+ * A missing catalog is not proof that a model rejected a value, either.
+ */
+const GROK_EFFORT_REJECTION_REGEX =
+	/--effort\/--reasoning-effort:\s*unknown effort level\s+\\?['"]([^'"\\\r\n]+)\\?['"];\s*(?:(use one of:)|this model has no selectable effort levels(?=$|[\r\n"]|\\[nr"]))/i;
+
+/**
  * The refusal described by `text`, or `null` when `text` is not one.
  *
  * Accepts anything, because the callers hold provider output of uncertain
@@ -81,6 +92,25 @@ const NO_EFFORT_SUPPORT_REGEX =
  */
 export function parseEffortRejection(text: unknown): EffortRejection | null {
 	if (typeof text !== 'string' || text.length === 0) return null;
+
+	const grokEffort = GROK_EFFORT_REJECTION_REGEX.exec(text);
+	if (grokEffort) {
+		// Menu IDs are arbitrary strings, not canonical effort tokens. Keep the
+		// refusal even when an escaped diagnostic cannot be read unambiguously.
+		const offered = grokEffort[2]
+			? /^[ \t]*([^\r\n"\\]+)(?=$|[\r\n"]|\\[nr"])/.exec(
+					text.slice(grokEffort.index + grokEffort[0].length)
+				)?.[1]
+			: undefined;
+		return {
+			value: grokEffort[1],
+			supported:
+				offered
+					?.split(',')
+					.map((value) => value.trim())
+					.filter(Boolean) ?? [],
+		};
+	}
 
 	const noEffort = NO_EFFORT_SUPPORT_REGEX.exec(text);
 	if (noEffort) return { value: noEffort[2], model: noEffort[1], supported: [] };
@@ -128,7 +158,8 @@ export function parseAgentErrorEffortRejection(
 const rejections = new Map<string, EffortRejection>();
 
 function rejectionKey(provider: string, value: string): string {
-	return `${provider}:${value}`;
+	// Grok's native CLI matches menu IDs and canonical values ignoring ASCII case.
+	return `${provider}:${provider === 'grok' ? value.replace(/[A-Z]/g, (char) => char.toLowerCase()) : value}`;
 }
 
 /**

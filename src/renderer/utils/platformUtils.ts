@@ -14,7 +14,8 @@
 
 import { isWebDesktop } from './runtimeContext';
 
-function getPlatform(): string {
+/** The host's `process.platform` value (`darwin`, `win32`, `linux`), or '' when unknown. */
+export function getPlatform(): string {
 	return (window as any).maestro?.platform ?? '';
 }
 

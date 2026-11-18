@@ -23,6 +23,7 @@ import { DataviewInlineError } from './DataviewInlineQuery';
 import { useDataviewJsInlineStore, type DataviewJsInlineStore } from './DataviewJsInlineHost';
 import { DataviewJsDesktopOnlyPill } from './DataviewJsBlock';
 import { DataviewValue, DataviewValueProvider } from './DataviewValue';
+import { DataviewInlineRefreshing } from './DataviewLoading';
 
 /**
  * The expression of an inline DataviewJS span (`$= dv.pages().length` gives `dv.pages().length`), or null when
@@ -176,6 +177,7 @@ function InlineValue({
 }) {
 	useEffect(() => store.register(expression), [store, expression]);
 	const outcome = useSyncExternalStore(store.subscribe, () => store.outcome(expression));
+	const refreshing = useSyncExternalStore(store.subscribe, () => store.isRefreshing(expression));
 
 	if (outcome === null) return <Placeholder fallback={fallback} />;
 	switch (outcome.kind) {
@@ -184,9 +186,11 @@ function InlineValue({
 		case 'value':
 			return (
 				<span className="dataview dataview-inline-query" data-dataview-js-inline="">
-					<DataviewValueProvider root={outcome.root} theme={theme}>
-						<DataviewValue value={outcome.value} />
-					</DataviewValueProvider>
+					<DataviewInlineRefreshing refreshing={refreshing}>
+						<DataviewValueProvider root={outcome.root} theme={theme}>
+							<DataviewValue value={outcome.value} />
+						</DataviewValueProvider>
+					</DataviewInlineRefreshing>
 				</span>
 			);
 		case 'error': {

@@ -1,16 +1,17 @@
-// src/main/codex-app-server/rpc-client.ts
+// src/shared/maestro-lib/codex/rpc-client.ts
 
 /**
  * The client half of `codex app-server`'s newline-delimited JSON-RPC 2.0.
  *
- * Owns request ids and the table of requests waiting on a response, nothing
- * else: it neither reads the child's stdout nor decides what a notification
+ * Delegates request correlation and lifetime to the shared RPC tracker. It
+ * neither reads the child's stdout nor decides what a notification
  * means. The spawner frames stdout into lines, hands every RESPONSE here
  * (`handleResponse`), and routes notifications and server requests itself.
  * Kept apart from the spawner so the steering phase can send `turn/steer` over
  * the same channel and get the same error shapes back.
  */
 
+import { RpcRequestTracker } from '../protocol/rpc-requests';
 import type { CodexAppServerResponse, CodexRpcError } from './protocol';
 import type { CodexServerRequestAnswer } from './server-requests';
 
@@ -48,17 +49,17 @@ export interface CodexRpcRequestOptions {
 	timeoutMs?: number;
 }
 
-interface PendingRequest {
-	method: string;
-	resolve: (result: unknown) => void;
-	reject: (error: Error) => void;
-	timer?: ReturnType<typeof setTimeout>;
-}
-
 export class CodexAppServerRpc {
-	private nextId = 1;
-	private pending = new Map<number, PendingRequest>();
-	private closedReason: string | null = null;
+	private readonly requests = new RpcRequestTracker((method, failure) => {
+		switch (failure.type) {
+			case 'closed':
+				return new CodexRpcTransportError(method, failure.reason);
+			case 'timeout':
+				return new CodexRpcTransportError(method, `no response after ${failure.timeoutMs}ms`);
+			case 'write':
+				return new CodexRpcTransportError(method, `write failed: ${String(failure.cause)}`);
+		}
+	});
 
 	/**
 	 * @param writeLine Writes one serialized line (without the newline) to the
@@ -72,30 +73,11 @@ export class CodexAppServerRpc {
 		params?: unknown,
 		options: CodexRpcRequestOptions = {}
 	): Promise<T> {
-		if (this.closedReason !== null) {
-			return Promise.reject(new CodexRpcTransportError(method, this.closedReason));
-		}
-		const id = this.nextId++;
-		return new Promise<T>((resolve, reject) => {
-			const entry: PendingRequest = {
-				method,
-				resolve: resolve as (result: unknown) => void,
-				reject,
-			};
-			if (options.timeoutMs !== undefined) {
-				entry.timer = setTimeout(() => {
-					this.pending.delete(id);
-					reject(new CodexRpcTransportError(method, `no response after ${options.timeoutMs}ms`));
-				}, options.timeoutMs);
-			}
-			this.pending.set(id, entry);
-			try {
-				this.write({ id, method, ...(params === undefined ? {} : { params }) });
-			} catch (error) {
-				this.settle(id);
-				reject(new CodexRpcTransportError(method, `write failed: ${String(error)}`));
-			}
-		});
+		return this.requests.request<T>(
+			method,
+			(id) => this.write({ id, method, ...(params === undefined ? {} : { params }) }),
+			options.timeoutMs
+		);
 	}
 
 	/** Send a notification (no response expected). Throws when stdin is gone. */
@@ -111,33 +93,20 @@ export class CodexAppServerRpc {
 	/** Settle the request a response belongs to. False when no request was waiting on it. */
 	handleResponse(response: CodexAppServerResponse): boolean {
 		if (typeof response.id !== 'number') return false;
-		const entry = this.settle(response.id);
-		if (!entry) return false;
-		if (response.error) entry.reject(new CodexRpcRequestError(entry.method, response.error));
-		else entry.resolve(response.result);
-		return true;
+		if (response.error) {
+			const error = response.error;
+			return this.requests.reject(response.id, (method) => new CodexRpcRequestError(method, error));
+		}
+		return this.requests.resolve(response.id, response.result);
 	}
 
 	/** Reject every waiting request and refuse new ones: the child is gone. */
 	close(reason: string): void {
-		if (this.closedReason !== null) return;
-		this.closedReason = reason;
-		for (const [id, entry] of [...this.pending]) {
-			this.settle(id);
-			entry.reject(new CodexRpcTransportError(entry.method, reason));
-		}
+		this.requests.close(reason);
 	}
 
 	get isClosed(): boolean {
-		return this.closedReason !== null;
-	}
-
-	private settle(id: number): PendingRequest | undefined {
-		const entry = this.pending.get(id);
-		if (!entry) return undefined;
-		this.pending.delete(id);
-		if (entry.timer) clearTimeout(entry.timer);
-		return entry;
+		return this.requests.isClosed;
 	}
 
 	private write(message: Record<string, unknown>): void {

@@ -558,9 +558,13 @@ describe('ReauthModal environment disclosure', () => {
  */
 describe('ReauthModal credential kinds', () => {
 	/** Render with `vars` as the agent's own environment layer. */
-	async function renderWithEnv(vars: Record<string, string>, toolType = 'claude-code') {
+	async function renderWithEnv(
+		vars: Record<string, string>,
+		toolType = 'claude-code',
+		sessionOverrides: Parameters<typeof createMockSession>[0] = {}
+	) {
 		mockGetCustomEnvVars.mockResolvedValue(vars);
-		const session = createMockSession({ id: 'sess-1', toolType });
+		const session = createMockSession({ id: 'sess-1', toolType, ...sessionOverrides });
 		render(
 			<ReauthModal
 				theme={mockTheme}
@@ -575,6 +579,120 @@ describe('ReauthModal credential kinds', () => {
 	it('opens the login shell for a plain OAuth agent', async () => {
 		await renderWithEnv({});
 		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(1);
+	});
+
+	it.each(
+		[
+			'XAI_API_KEY',
+			'GROK_CODE_XAI_API_KEY',
+			'GROK_DEPLOYMENT_KEY',
+			'GROK_AUTH',
+			'GROK_MODELS_BASE_URL',
+			'GROK_CLI_CHAT_PROXY_BASE_URL',
+			'GROK_XAI_API_BASE_URL',
+		].flatMap((key) => [
+			{ key, host: 'local' },
+			{ key, host: 'ssh' },
+		])
+	)('withholds Grok login and account claims for $key on $host', async ({ key, host }) => {
+		const secret = 'synthetic-nonlogin-credential-PRIVATE';
+		await renderWithEnv({ GROK_HOME: '/fixtures/grok-account', [key]: secret }, 'grok', {
+			sessionSshRemoteConfig:
+				host === 'ssh' ? { enabled: true, remoteId: 'synthetic-remote' } : undefined,
+		});
+
+		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
+		expect(mockWrite).not.toHaveBeenCalled();
+		expect(screen.queryByTestId('xterm-mock')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('reauth-profile-pill')).not.toBeInTheDocument();
+		const reason = screen.getByTestId('reauth-login-blocked');
+		expect(reason).toHaveTextContent(key);
+		if (['XAI_API_KEY', 'GROK_CODE_XAI_API_KEY'].includes(key)) {
+			expect(reason).toHaveTextContent('fallback API key');
+			expect(reason).toHaveTextContent('may take precedence');
+		}
+		expect(screen.getByTestId('reauth-resume')).toBeInTheDocument();
+		expect(screen.getByTestId('reauth-modal').outerHTML).not.toContain(secret);
+	});
+
+	it.each(
+		[
+			{ key: 'GROK_AUTH', value: '{"token":"synthetic-inline","refresh_token":"INLINE-TAIL"}' },
+			{
+				key: 'GROK_MODELS_BASE_URL',
+				value: 'https://synthetic-user:USERINFO-TAIL@gateway.invalid',
+			},
+			{ key: 'GROK_CLI_CHAT_PROXY_BASE_URL', value: 'https://gateway.invalid?token=QUERY-TAIL' },
+			{ key: 'GROK_XAI_API_BASE_URL', value: 'https://gateway.invalid/PATH-TAIL' },
+		].flatMap(({ key, value }) => [
+			{ key, value, shape: 'credential-bearing' },
+			{ key, value: 'malformed-credential-MALFORMED-TAIL', shape: 'malformed' },
+			{ key, value: 'abc', shape: 'short' },
+			{ key, value: '', shape: 'empty' },
+		])
+	)('fully masks $key ($shape) until explicitly revealed', async ({ key, value }) => {
+		await renderWithEnv({ [key]: value, GROK_REGION: 'test-region' }, 'grok');
+		fireEvent.click(screen.getByTestId('reauth-env-toggle'));
+
+		const row = screen
+			.getAllByTestId('reauth-env-row')
+			.find((entry) => entry.getAttribute('data-env-key') === key)!;
+		const displayed = row.querySelector('[data-testid="reauth-env-value"]')!;
+		expect(displayed.textContent).toBe('••••••••');
+		expect(screen.getByText('test-region')).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Reveal GROK_REGION' })).not.toBeInTheDocument();
+		if (value) {
+			expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
+			expect(mockWrite).not.toHaveBeenCalled();
+			// Even a four-character JSON/URL suffix is forbidden in ordinary disclosure.
+			expect(displayed.textContent).not.toContain(value.slice(-4));
+		}
+		// Short values could coincidentally occur in unrelated generated DOM IDs.
+		if (value.length > 8) {
+			expect(screen.getByTestId('reauth-modal').outerHTML).not.toContain(value);
+		}
+
+		fireEvent.click(screen.getByRole('button', { name: `Reveal ${key}` }));
+		expect(displayed.textContent).toBe(value || '(empty)');
+		fireEvent.click(screen.getByRole('button', { name: `Hide ${key}` }));
+		expect(displayed.textContent).toBe('••••••••');
+		if (value.length > 8) expect(screen.getByTestId('reauth-modal').outerHTML).not.toContain(value);
+	});
+
+	it('waits for the Grok provider environment before ruling out a login', async () => {
+		let resolveEnv!: (vars: Record<string, string>) => void;
+		mockGetCustomEnvVars.mockReturnValue(
+			new Promise((resolve) => {
+				resolveEnv = resolve;
+			})
+		);
+		const session = createMockSession({ id: 'sess-1', toolType: 'grok' });
+		render(
+			<ReauthModal
+				theme={mockTheme}
+				outage={createOutage({ toolType: 'grok' })}
+				session={session}
+				onClose={vi.fn()}
+			/>
+		);
+		await flushSpawn();
+		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
+		expect(screen.queryByTestId('reauth-profile-pill')).not.toBeInTheDocument();
+
+		await act(async () => resolveEnv({ GROK_AUTH: '{"token":"synthetic-delayed-secret"}' }));
+		await flushSpawn();
+		expect(screen.getByTestId('reauth-login-blocked')).toHaveTextContent('GROK_AUTH');
+		expect(mockSpawnTerminalTab).not.toHaveBeenCalled();
+		expect(mockWrite).not.toHaveBeenCalled();
+	});
+
+	it('allows Grok login when a session blank cancels the global fallback key', async () => {
+		useSettingsStore.setState({ shellEnvVars: { XAI_API_KEY: 'synthetic-global-secret' } });
+		await renderWithEnv({}, 'grok', { customEnvVars: { XAI_API_KEY: '' } });
+		expect(screen.queryByTestId('reauth-login-blocked')).not.toBeInTheDocument();
+		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(1);
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), 'grok login\r');
 	});
 
 	it('does not offer a login to an agent authenticating with an API key', async () => {

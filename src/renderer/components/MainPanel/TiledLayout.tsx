@@ -22,6 +22,7 @@ import {
 	AlertCircle,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
+import { activeStatusHalo } from '../../utils/theme';
 
 import { TerminalOutput, type TerminalOutputProps } from '../TerminalOutput';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
@@ -54,6 +55,7 @@ import { useTabStore } from '../../stores/tabStore';
 import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type { FileNode } from '../../types/fileTree';
+import { quoteIntoAgentComposer } from '../../services/quoteIntoComposer';
 import type {
 	PaneRects,
 	PanelLayoutNode,
@@ -189,6 +191,8 @@ export interface PaneFileActions {
 	onFileClick?: (path: string) => void;
 	onOpenFuzzySearch?: () => void;
 	onShortcutUsed?: (shortcutId: string) => void;
+	/** "Send to Agent" on a file editor selection (opens the Send-to-Agent modal). */
+	onSendTextToAgent?: (text: string, sourceName: string) => void;
 }
 
 /**
@@ -305,11 +309,13 @@ function TiledFilePane({
 	fileTabId,
 	session,
 	theme,
+	isFocused,
 	actions,
 }: {
 	fileTabId: string;
 	session: Session;
 	theme: Theme;
+	isFocused: boolean;
 	actions: PaneFileActions | null;
 }) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
@@ -389,6 +395,8 @@ function TiledFilePane({
 					onFileClick={actions?.onFileClick}
 					onOpenFuzzySearch={actions?.onOpenFuzzySearch}
 					onShortcutUsed={actions?.onShortcutUsed}
+					onSendSelectionToAgent={actions?.onSendTextToAgent}
+					onQuoteSelection={(text) => quoteIntoAgentComposer(session.id, text)}
 					// Scroll + find-query memory, so switching away and back lands where
 					// the user left off instead of jumping to the top with a cleared term.
 					initialScrollTop={fileTab.scrollTop}
@@ -410,6 +418,9 @@ function TiledFilePane({
 					// Transient deep-link scroll target, cleared once consumed.
 					pendingScrollToLine={fileTab.pendingScrollToLine}
 					onPendingScrollToLineConsumed={() => store.clearFileTabPendingScrollToLine(fileTabId)}
+					// Only the focused tile draws the floating font-zoom and ToC buttons, so
+					// background tiles read as plain documents.
+					showFloatingControls={isFocused}
 				/>
 			</React.Suspense>
 		</div>
@@ -561,7 +572,15 @@ function PaneContent({
 	}
 
 	if (tab.type === 'file') {
-		return <TiledFilePane fileTabId={tab.id} session={session} theme={theme} actions={file} />;
+		return (
+			<TiledFilePane
+				fileTabId={tab.id}
+				session={session}
+				theme={theme}
+				isFocused={isFocused}
+				actions={file}
+			/>
+		);
 	}
 
 	// Terminal and browser tabs are kept-alive overlays mounted at the panel level
@@ -998,8 +1017,11 @@ function PaneStatusIndicators({
 			)}
 			{aiTab.state === 'busy' && (
 				<span
-					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-					style={{ backgroundColor: theme.colors.warning }}
+					className="w-2 h-2 rounded-full shrink-0"
+					style={{
+						backgroundColor: theme.colors.warning,
+						boxShadow: activeStatusHalo(theme.colors.warning),
+					}}
 					title="Thinking"
 				/>
 			)}

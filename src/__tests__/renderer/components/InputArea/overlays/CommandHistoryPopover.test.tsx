@@ -117,4 +117,38 @@ describe('CommandHistoryPopover', () => {
 		expect(setInputValue).toHaveBeenCalledWith('explain code');
 		expect(focus).toHaveBeenCalled();
 	});
+
+	it('does not select or close on Enter during active IME composition (isComposing: true)', () => {
+		const setInputValue = vi.fn();
+		const setOpen = vi.fn();
+		renderPopover({ setInputValue, setOpen });
+
+		const filter = screen.getByPlaceholderText('Filter messages...');
+		const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+		Object.defineProperty(event, 'isComposing', { value: true });
+		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+		filter.dispatchEvent(event);
+
+		expect(setInputValue).not.toHaveBeenCalled();
+		expect(setOpen).not.toHaveBeenCalled();
+		expect(preventDefaultSpy).not.toHaveBeenCalled();
+	});
+
+	it('does not select or close on Enter during Safari IME confirmation (keyCode 229)', () => {
+		const setInputValue = vi.fn();
+		const setOpen = vi.fn();
+		renderPopover({ setInputValue, setOpen });
+
+		const filter = screen.getByPlaceholderText('Filter messages...');
+		const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+		Object.defineProperty(event, 'keyCode', { value: 229 });
+		const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+		filter.dispatchEvent(event);
+
+		expect(setInputValue).not.toHaveBeenCalled();
+		expect(setOpen).not.toHaveBeenCalled();
+		expect(preventDefaultSpy).not.toHaveBeenCalled();
+	});
 });

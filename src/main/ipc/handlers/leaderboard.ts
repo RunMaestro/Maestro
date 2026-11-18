@@ -101,6 +101,13 @@ export interface LeaderboardSubmitResponse {
 export interface AuthStatusResponse {
 	status: 'pending' | 'confirmed' | 'expired' | 'error';
 	authToken?: string;
+	/**
+	 * The subscriber email the server resolved this clientToken to. The server
+	 * looks the token up by clientToken alone, so this is the only way the client
+	 * can tell that `authToken` belongs to a different email than the one it is
+	 * registering (issue #2011).
+	 */
+	email?: string;
 	message?: string;
 	error?: string;
 }
@@ -270,9 +277,14 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 					};
 				} else if (response.status === 401) {
 					// Auth token required or invalid
-					logger.warn('Leaderboard submission requires auth token', 'Leaderboard', {
-						error: result.error || result.message,
-					});
+					// Missing OR rejected token: the server answers both with 401.
+					logger.warn(
+						'Leaderboard submission rejected: auth token missing or invalid',
+						'Leaderboard',
+						{
+							error: result.error || result.message,
+						}
+					);
 					return {
 						success: false,
 						message: result.message || 'Authentication required',
@@ -329,6 +341,7 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 				const result = (await response.json()) as {
 					status: 'pending' | 'confirmed' | 'expired';
 					authToken?: string;
+					email?: string;
 					message?: string;
 				};
 
@@ -339,6 +352,7 @@ export function registerLeaderboardHandlers(deps: LeaderboardHandlerDependencies
 					return {
 						status: result.status,
 						authToken: result.authToken,
+						email: result.email,
 						message: result.message,
 					};
 				} else {

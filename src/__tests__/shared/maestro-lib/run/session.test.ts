@@ -5,10 +5,17 @@
  * The provider's binary is the fake agent, handed in as `command`, so planning
  * is tested against real provider definitions without any provider installed.
  */
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterEach, afterAll } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
+import * as hostOs from 'node:os';
 import path from 'node:path';
+import * as definitions from '../../../../shared/maestro-lib/providers/definitions';
+
+vi.mock('node:os', async (original) => ({ ...(await original<typeof import('node:os')>()) }));
+vi.mock('../../../../shared/maestro-lib/providers/definitions', async (original) => ({
+	...(await original<typeof import('../../../../shared/maestro-lib/providers/definitions')>()),
+}));
 
 // Pinned so the same shape is asserted on every runner, with one Windows case:
 // a session turn is planned as the CLI plans one, prompt on the command line.
@@ -41,7 +48,9 @@ import {
 import { QUERY_SOURCE_ENV_VAR } from '../../../../shared/querySource';
 // The desktop spawners' own import path: the shim must escape with that code.
 import { escapeCmdArg } from '../../../../main/process-manager/utils/shellEscape';
-import { FAKE_AGENT_PATH } from './fakeAgent';
+import { createScratchDir, FAKE_AGENT_PATH } from './fakeAgent';
+import { isolateAgentEnv } from '../../../helpers/agentEnvIsolation';
+import { TRANSLATION_KNOWLEDGE_ENV_VAR } from '../../../../shared/maestro-lib/translation/knowledge-binding';
 
 const CWD = path.resolve(__dirname);
 const SESSION_ID = 'ses_f16769d8cffe7rc1MP406tiARM';
@@ -205,6 +214,139 @@ describe('planSessionTurn', () => {
 			error: `OpenCode was not found at ${missing}`,
 		});
 	});
+});
+
+describe('planSessionTurn with explicit prompt-file delivery', () => {
+	isolateAgentEnv([TRANSLATION_KNOWLEDGE_ENV_VAR]);
+	let scratch: ReturnType<typeof createScratchDir>;
+	let fileProvider: definitions.AgentDefinition;
+
+	beforeEach(() => {
+		mocks.isWindows.mockReturnValue(false);
+		scratch = createScratchDir('maestro-session-prompt');
+		vi.spyOn(hostOs, 'tmpdir').mockReturnValue(scratch.dir);
+		const original = definitions.getAgentDefinition;
+		// Exercise the inactive route without enabling it in the provider registry.
+		fileProvider = {
+			...original('grok')!,
+			promptFile: {
+				format: 'acp-json',
+				exclusivePromptFlags: ['-p', '--single', '--prompt-file'],
+			},
+			promptFileArgs: (file) => ['--prompt-file', file],
+		};
+		vi.spyOn(definitions, 'getAgentDefinition').mockImplementation((id) =>
+			id === 'grok' ? fileProvider : original(id)
+		);
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		mocks.isWindows.mockReturnValue(false);
+		scratch.cleanup();
+	});
+
+	it.each([
+		['empty', ''],
+		['multiline Unicode', '  first\r\n第二行 😀\n"quotes"\\backslash\tend  '],
+		['large', 'large prompt 😀\n'.repeat(8192)],
+	])(
+		'carries exact %s text and all artifact metadata to a fresh spec per attempt',
+		async (_, prompt) => {
+			const input = {
+				agentId: 'grok',
+				cwd: scratch.dir,
+				prompt,
+				model: 'grok-4.5',
+				resumeSessionId: SESSION_ID,
+				envVars: { GROK_HOME: path.join(scratch.dir, 'account') },
+				querySource: 'cue' as const,
+			};
+			const first = await plan(input);
+			const second = await plan(input);
+			const content = JSON.stringify({ type: 'acp', content: [{ type: 'text', text: prompt }] });
+
+			for (const { spec, resuming } of [first, second]) {
+				expect(spec.promptArtifact).toEqual({
+					path: expect.any(String),
+					owner: 'local',
+					content,
+					encoding: 'utf8',
+					mode: 0o600,
+					flag: 'wx',
+					cleanup: 'turn',
+				});
+				const artifact = spec.promptArtifact!;
+				expect(path.dirname(artifact.path)).toBe(scratch.dir);
+				expect(Buffer.from(artifact.content, 'utf8')).toEqual(Buffer.from(content, 'utf8'));
+				expect(spec.args.slice(-2)).toEqual(['--prompt-file', artifact.path]);
+				expect(spec.args.filter((arg) => arg === '--prompt-file')).toHaveLength(1);
+				expect(spec.args).not.toContain(prompt);
+				expect(spec.args).not.toContain('-p');
+				expect(spec.stdin).toBeUndefined();
+				expect(spec.command).toBe(FAKE_AGENT_PATH);
+				expect(spec.cwd).toBe(scratch.dir);
+				expect(containsRun(spec.args, ['--output-format', 'streaming-json'])).toBe(true);
+				expect(containsRun(spec.args, ['--resume', SESSION_ID])).toBe(true);
+				expect(containsRun(spec.args, ['-m', 'grok-4.5'])).toBe(true);
+				expect(spec.env.GROK_HOME).toBe(input.envVars.GROK_HOME);
+				expect(spec.env[QUERY_SOURCE_ENV_VAR]).toBe('cue');
+				expect(spec.env.MAESTRO_SESSION_RESUMED).toBe('1');
+				expect(resuming).toBe(true);
+			}
+			expect(first.spec.promptArtifact!.path).not.toBe(second.spec.promptArtifact!.path);
+			// Planning allocates names; startTurn owns every write and cleanup.
+			expect(fs.readdirSync(scratch.dir)).toEqual([]);
+		}
+	);
+
+	it('preserves the file artifact through Windows shim escaping without using raw stdin', async () => {
+		const shim = path.join(scratch.dir, 'agent shim.cmd');
+		fs.writeFileSync(shim, '@echo off\r\n', { mode: 0o755 });
+		mocks.isWindows.mockReturnValue(true);
+		const prompt = 'first\nsecond & 50% ^ "quoted" 😀';
+		const { spec } = await plan({ agentId: 'grok', command: shim, prompt });
+
+		expect(spec.shell).toBe(true);
+		expect(spec.command).toBe(`"${shim}"`);
+		expect(JSON.parse(spec.promptArtifact!.content)).toEqual({
+			type: 'acp',
+			content: [{ type: 'text', text: prompt }],
+		});
+		expect(spec.args.slice(-2)).toEqual(
+			['--prompt-file', spec.promptArtifact!.path].map(escapeCmdArg)
+		);
+		expect(spec.args.join(' ')).not.toContain('second');
+		expect(spec.stdin).toBeUndefined();
+		expect(fs.readdirSync(scratch.dir)).toEqual(['agent shim.cmd']);
+	});
+
+	it('returns a launch refusal when the file builder is missing without retrying raw delivery', async () => {
+		fileProvider.promptFileArgs = undefined;
+		const result = await planSessionTurn(request({ agentId: 'grok', prompt: 'private prompt' }));
+
+		expect(result).toEqual({
+			ok: false,
+			reason: 'launch',
+			error:
+				'Prompt-file delivery requires a fresh owned .json destination on the executing host and a provider file-argument builder.',
+		});
+		expect(fs.readdirSync(scratch.dir)).toEqual([]);
+	});
+
+	it.each(['omp', 'claude-code', 'codex'])(
+		'keeps %s legacy text delivery without creating an artifact',
+		async (agentId) => {
+			const prompt = 'ordinary provider prompt';
+			const { spec } = await plan({ agentId, prompt });
+
+			expect(spec.args.filter((arg) => arg === prompt)).toHaveLength(1);
+			expect(spec.args.at(-1)).toBe(prompt);
+			expect(spec.promptArtifact).toBeUndefined();
+			expect(spec.stdin).toBeUndefined();
+			expect(fs.readdirSync(scratch.dir)).toEqual([]);
+		}
+	);
 });
 
 describe('planSessionTurn on Windows with an npm .cmd shim', () => {

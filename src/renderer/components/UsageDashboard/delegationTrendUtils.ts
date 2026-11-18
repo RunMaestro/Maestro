@@ -4,12 +4,14 @@
  * The main process returns only days that had activity, in either stats system.
  * Rendering that list directly would compress gaps and lie about momentum - a
  * two-week silence would look like two adjacent bars - so the series is
- * densified across the calendar first, then grouped into wider buckets when a
- * long range would otherwise draw more bars than the chart has pixels for.
+ * densified across the whole selected window (the aggregation's `window`, not
+ * just first-to-last active day, so a quiet start or end of the range shows as
+ * quiet), then grouped into wider buckets when a long range would otherwise
+ * draw more bars than the chart has pixels for.
  */
 
 import type { DelegationDay, DelegationSlice } from '../../../shared/delegation';
-import { parseLocalYmd as parseYmd, toLocalYmd as toYmd } from '../../../shared/localDay';
+import { localDaysBetween } from '../../../shared/daySeries';
 import { chunkIntoEqualGroups } from './chartUtils';
 
 /** One drawn bar. `days` is how many calendar days it covers (1 unless grouped). */
@@ -27,6 +29,8 @@ export interface DelegationBucket {
 export interface BuildDelegationSeriesOptions {
 	/** Most bars to draw. Wider buckets are used past this. Default 120. */
 	maxBars?: number;
+	/** Densify from this day (local YYYY-MM-DD). Defaults to the first day with data. */
+	fromDate?: string;
 	/** Densify through this day (local YYYY-MM-DD). Defaults to the last day with data. */
 	throughDate?: string;
 }
@@ -47,10 +51,6 @@ function addInto(target: DelegationSlice, source: DelegationSlice): void {
 	target.durationMs += source.durationMs;
 }
 
-// Local day keys live in `src/shared/localDay.ts`; these names are kept for
-// the chart components that already import them from here.
-export { parseLocalYmd as parseYmd, toLocalYmd as toYmd } from '../../../shared/localDay';
-
 /**
  * Densify a sparse per-day series and group it down to at most `maxBars` bars
  * (see `chunkIntoEqualGroups` for why groups are equal runs of days).
@@ -59,19 +59,18 @@ export function buildDelegationSeries(
 	days: DelegationDay[],
 	options: BuildDelegationSeriesOptions = {}
 ): DelegationBucket[] {
-	if (days.length === 0) return [];
-
 	const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
-	const first = parseYmd(sorted[0].date);
-	const lastDate = options.throughDate ?? sorted[sorted.length - 1].date;
-	const last = parseYmd(lastDate);
-	if (!first || !last || last < first) return [];
+	const firstDate = [options.fromDate, sorted[0]?.date].filter(Boolean).sort()[0];
+	const lastDate = [options.throughDate, sorted[sorted.length - 1]?.date]
+		.filter(Boolean)
+		.sort()
+		.pop();
+	if (!firstDate || !lastDate || lastDate < firstDate) return [];
 
 	const byDate = new Map(sorted.map((day) => [day.date, day]));
 
 	const dense: DelegationBucket[] = [];
-	for (const cursor = new Date(first); cursor <= last; cursor.setDate(cursor.getDate() + 1)) {
-		const ymd = toYmd(cursor);
+	for (const ymd of localDaysBetween(firstDate, lastDate)) {
 		const bucket = emptyBucket(ymd);
 		const day = byDate.get(ymd);
 		if (day) {

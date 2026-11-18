@@ -1,6 +1,11 @@
+import { createPluginSessionLifecycle } from './plugins/plugin-session-lifecycle';
+import type { ConfirmQueueItem, ReleaseQueueItem } from './stores/queue-item-receipt';
 import { flushPendingSessionWrites } from './stores/instances';
 import { RelayConversations } from './plugins/relay-conversations';
-import { broadcastSessionLifecycle } from './ipc/handlers/persistence';
+import {
+	broadcastSessionLifecycle,
+	setSessionLifecycleRecipientFilter,
+} from './ipc/handlers/persistence';
 import { transcriptMessagesToLogEntries, stripSynopsisTurns } from '../shared/transcriptMessages';
 import { canonicalJson } from '../shared/canonicalJson';
 import { realpathSync, lstatSync } from 'fs';
@@ -22,6 +27,7 @@ import {
 	getPluginRunProofProtectedPaths,
 	pluginToolRunIdentity,
 } from './plugins/plugin-tool-run-identity';
+import { hostCallerRuns } from './agent-run/caller-identity';
 import {
 	app,
 	BrowserWindow,
@@ -36,7 +42,8 @@ import {
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
 import { DURATION_MS } from '../shared/duration';
-import { installApplicationMenu, setMenuEncoreFeatures } from './app-menu';
+import { installApplicationMenu, setMenuEncoreFeatures, setMenuWindowCycler } from './app-menu';
+import { attachWindowCycleShortcut, cycleWindows, type WindowCycleDirection } from './window-cycle';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -49,7 +56,7 @@ import { readFile } from 'fs/promises';
 import { ProcessManager } from './process-manager';
 import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
-import { createAgentConfigLookup } from './agents/agent-config-lookup';
+import { createAgentConfigLookup, customPathsFromAgentConfigs } from './agents/agent-config-lookup';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import { sentryUserForInstallation } from '../shared/sentryContext';
 import { v8OomFingerprint } from '../shared/sentryGrouping';
@@ -63,7 +70,8 @@ import { CueEngine } from './cue/cue-engine';
 import { hostVisibleProjectRoot } from '../shared/hostVisibleProjectRoot';
 import type { SshRemoteConfig } from '../shared/types';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
-import { PianolaSupervisor, type AutoWatchSession } from './pianola/pianola-supervisor';
+import { nativeCurrentTurns } from './pianola/current-turn';
+import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
 import type { PianolaMemoryHost } from './pianola/memory-host';
 import { createPianolaLifecycle } from './pianola/pianola-lifecycle';
@@ -75,6 +83,7 @@ import { createComputerHistoryForApp } from './computer-history/bootstrap';
 import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { createDataviewSupervisorHooks } from './dataview/dataview-service';
+import { createFederationRuntime, getPeerMirrorService } from './federation';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { PluginToolRunProofFiles } from './plugins/plugin-tool-run-proof-file';
@@ -182,6 +191,7 @@ import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
 import { getHistoryManager } from './history-manager';
 import { initDispatchCallbacks } from './dispatch-callbacks';
+import { AUTORUN_DELEGATION_CHANNEL } from '../shared/autoRunDelegation';
 import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
 import {
@@ -218,6 +228,7 @@ import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { initializeStatsDB, closeStatsDB } from './stats';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
+import { addParticipantByAgentId } from './group-chat/group-chat-router';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import {
 	captureException,
@@ -282,6 +293,8 @@ import { planWindowRestore, pickFocusWindowSpec } from './window-state-persisten
 import type { WindowState as SharedWindowState } from '../shared/window-types';
 import { setupAgentRunCapture } from './agent-run/setup-capture-listener';
 import { setAgentRunSink } from './agent-run/broadcast';
+import { configureSshReachability } from './ssh-reachability';
+import { sshRemoteManager } from './ssh-remote-manager';
 import { startAgentRunStoreWatcher } from './agent-run/store-watcher';
 import { setupAgentRunRecovery } from './agent-run/setup-recovery';
 import { createTimeZoneWatcher } from './utils/timezone-watcher';
@@ -299,6 +312,7 @@ import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore
 import { rememberQuotaAccounts } from './stores/quotaAccountsStore';
 import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
 import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
+import { ClaudeTuiCanary, setClaudeTuiCanary } from './agents/claude-tui-canary';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
 
 // ============================================================================
@@ -432,6 +446,7 @@ if (disableGpuAcceleration) {
 // Generate installation ID on first run (one-time generation)
 // This creates a unique identifier per Maestro installation for telemetry differentiation
 const store = getSettingsStore();
+nativeCurrentTurns.setEnabled(resolveEncoreFeatures(store.get('encoreFeatures')).pianola);
 let installationId = store.get('installationId');
 // An installationId already on disk means this settings store existed before
 // this boot, i.e. the app has launched before. Record that once, permanently -
@@ -457,6 +472,11 @@ const wakatimeManager = new WakaTimeManager(store, app.getVersion());
 // this instance's debounce and CLI-install state instead of making its own.
 setWakaTimeManager(wakatimeManager);
 const maestroCliManager = new MaestroCliManager();
+
+// Repair an AppImage-installed shim when an update renamed the AppImage, or
+// when an older build recorded a /tmp/.mount_* path that is gone. Fire and
+// forget: the shim is marker-guarded, and a failed repair must not block startup.
+void maestroCliManager.healAppImageShim();
 
 // Auto-install WakaTime CLI on startup if enabled
 if (store.get('wakatimeEnabled', false)) {
@@ -628,11 +648,15 @@ let pluginGroupingRegistry: PluginGroupingRegistry | null = null;
 let pluginBackgroundSupervisor: PluginBackgroundSupervisor | null = null;
 let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
+// Host-only receipt implementation, assigned during IPC bootstrap.
+let releaseQueueItemInPersistence: ReleaseQueueItem | null = null;
+let confirmQueueItemInPersistence: ConfirmQueueItem | null = null;
 // Set by registerPersistenceHandlers (in setupIpcHandlers). Lets the plugin
 // focus verbs record into the persistence layer's `session.activated` dedupe so
 // the two emit paths never desync. Null before IPC setup / when unavailable.
 let noteSessionActivatedInPersistence: ((sessionId: string) => void) | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
+let claudeTuiCanary: ClaudeTuiCanary | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring).
@@ -647,6 +671,14 @@ capabilitySnapshots.init(agentCapabilitiesStore, createSnapshotBroadcaster(safeS
 
 // A forced model discovery pushes the fresh list to every open model picker.
 setModelsRefreshedBroadcaster(safeSend);
+
+// One dialog per unreachable SSH remote, in every window and web client, fed by
+// every path that runs ssh (agent turns, remote-fs, remote git, shell commands).
+configureSshReachability({
+	resolveRemote: getSshRemoteById,
+	probe: (remote) => sshRemoteManager.probeReachability(remote),
+	emit: (event) => safeSend('ssh-remote:reachability', event),
+});
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
 const cliWatcher = createCliWatcher({
@@ -700,6 +732,20 @@ const settingsWatcher = createSettingsWatcher({
 		// here, and the only cost of an unnecessary one is a single `which`.
 		clearGhCache();
 	},
+	onAgentConfigsChangedExternally: () => {
+		// A provider's custom binary set outside the Settings UI (maestro-cli
+		// `settings agent set <provider> customPath`) must reach the detector, or
+		// every spawn that takes `agent.path` keeps running the old binary until a
+		// restart. The Settings setter applies it the same way.
+		const customPaths = customPathsFromAgentConfigs(agentConfigsStore.get('configs', {}));
+		if (
+			agentDetector &&
+			canonicalJson(agentDetector.getCustomPaths()) !== canonicalJson(customPaths)
+		) {
+			agentDetector.setCustomPaths(customPaths);
+			logger.info('Reloaded custom agent paths after an outside change', 'SettingsWatcher');
+		}
+	},
 });
 
 // Fallback must match DEFAULT_START_PORT in scripts/dev-port.mjs. Never 5173
@@ -720,6 +766,11 @@ let quitHandler: QuitHandler | null = null;
 // the primary window registers itself as `isMain` when createWindow() runs on
 // app-ready, and secondary windows register via createSecondaryWindow.
 const windowRegistry = new WindowRegistry();
+// Agent lifecycle deltas go to app windows only: feature windows and offscreen
+// browser pages never mount the listener, and every send clones the payload.
+setSessionLifecycleRecipientFilter(
+	(window) => !isHostBrowserPageWindow(window) && !windowRegistry.isFeatureWindow(window)
+);
 const getWindowForSession = (sessionId: string): BrowserWindow | null => {
 	const ownerId = windowRegistry.getWindowForSession(sessionId);
 	const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
@@ -783,6 +834,7 @@ registerCadenzaIpcHandlers({ getMainWindow: () => mainWindow, settingsStore: sto
 // (Stopping the community-plugin runtime when `plugins` turns off is the
 // plugins hook of the Encore lifecycle below.)
 store.onDidChange('encoreFeatures', (encoreFeatures) => {
+	nativeCurrentTurns.setEnabled(resolveEncoreFeatures(encoreFeatures).pianola);
 	pianolaMemoryHost?.reconcile();
 	if (!resolveEncoreFeatures(encoreFeatures).concerto) closeCadenzaHudWindow();
 	// A switched-off Throughput Gauge leaves no widget window behind.
@@ -921,6 +973,14 @@ const CUE_DISABLED_MESSAGE =
 
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
+	releaseQueueItem: (...args) => {
+		if (!releaseQueueItemInPersistence)
+			return Promise.reject(new Error('DispatchQueueDrainUnavailable'));
+		return releaseQueueItemInPersistence(...args);
+	},
+	confirmQueueItem: (request) =>
+		confirmQueueItemInPersistence?.(request) ??
+		Promise.resolve({ durable: false, reason: 'store-unavailable' }),
 	settingsStore: store,
 	sessionsStore,
 	groupsStore,
@@ -949,6 +1009,26 @@ const createWebServer = createWebServerFactory({
 	getCueActivityLog: () => {
 		if (!cueEngine) return [];
 		return cueEngine.getActivityLog();
+	},
+	addGroupChatParticipant: async (chatId, agentId) => {
+		try {
+			const { participant, alreadyMember } = await addParticipantByAgentId(chatId, agentId);
+			return { success: true, participantName: participant.name, alreadyMember };
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			// Expected refusals (unknown chat or agent, inactive moderator) go back
+			// to the caller as text. Anything else is a bug: report it as well.
+			const expected = [
+				'Group chat not found',
+				'No agent with ID',
+				'is a terminal agent',
+				'Moderator must be active',
+			].some((fragment) => message.includes(fragment));
+			if (!expected) {
+				void captureException(error, { operation: 'groupChat:addParticipantByAgentId', chatId });
+			}
+			return { success: false, error: message };
+		}
 	},
 });
 
@@ -1325,6 +1405,14 @@ app
 		// execution queue (or in a new tab when it has none), not as a fresh
 		// headless process.
 		initDispatchCallbacks({
+			// Every window and the web-desktop bridge hear it; only the client whose
+			// run loop owns `autoRunId` acts on it (broadcast + filter, see safeSend).
+			notifyAutoRun: (event) => safeSend(AUTORUN_DELEGATION_CHANNEL, event),
+			onDelivered: async ({ entry, status }) => {
+				if (!entry.admissionId || !['completed', 'failed'].includes(status)) return;
+				const { confirmDispatchCallback } = await import('./pianola/pianola-store-main');
+				confirmDispatchCallback(entry.admissionId, entry.callbackId);
+			},
 			enqueue: async (agentId, prompt, tabId) => {
 				const server = webServer;
 				if (!server) return { success: false, error: 'Desktop web server unavailable' };
@@ -1427,13 +1515,7 @@ app
 		}
 
 		// Load custom agent paths from settings
-		const allAgentConfigs = agentConfigsStore.get('configs', {});
-		const customPaths: Record<string, string> = {};
-		for (const [agentId, config] of Object.entries(allAgentConfigs)) {
-			if (config && typeof config === 'object' && 'customPath' in config && config.customPath) {
-				customPaths[agentId] = config.customPath as string;
-			}
-		}
+		const customPaths = customPathsFromAgentConfigs(agentConfigsStore.get('configs', {}));
 		if (Object.keys(customPaths).length > 0) {
 			agentDetector.setCustomPaths(customPaths);
 			logger.info(`Loaded custom agent paths: ${JSON.stringify(customPaths)}`, 'Startup');
@@ -1474,6 +1556,18 @@ app
 		if (isEncoreFeatureEnabled(store, 'usageStats')) {
 			usageRefreshScheduler.start();
 		}
+
+		// One real maestro-p turn after every Claude Code (or Maestro) update, so a
+		// release that breaks TUI-mode agents is known the morning it lands. See
+		// claude-tui-canary.ts. It runs only on an account with an authenticated
+		// usage snapshot, so it stays idle for anyone not on the TUI token source.
+		claudeTuiCanary = new ClaudeTuiCanary({
+			agentDetector,
+			maestroVersion: app.getVersion(),
+			notifyToast: (toast) => safeSend('remote:notifyToast', toast),
+		});
+		setClaudeTuiCanary(claudeTuiCanary);
+		claudeTuiCanary.start();
 
 		// Warm any provider the strict startup pass left cold (no auto-refresh
 		// interval picked, no eligible recent maestro-p session, Codex not sampled
@@ -1531,8 +1625,8 @@ app
 					(s) => s.id === sessionId
 				) as CueRunSessionRecord | undefined,
 			resolveAgentBinary: async ({ session, agentConfigValues }) => {
-				const { resolveCueAgentBinary } = await import('./cue/cue-agent-binary');
-				return resolveCueAgentBinary({
+				const { resolveAgentBinary } = await import('../shared/maestro-lib/launch/agent-binary');
+				return resolveAgentBinary({
 					sessionCustomPath: session.customPath,
 					providerCustomPath: agentConfigValues.customPath as string | undefined,
 					sshEnabled: !!session.sessionSshRemoteConfig?.enabled,
@@ -1548,6 +1642,23 @@ app
 			onLog: cueRunLog,
 			getConductorProfile: () => (store.get('conductorProfile', '') as string) || undefined,
 			onNotify: (params) => executeCueNotify({ ...params, mainWindow }),
+			// The tab this message was scheduled into is gone, so it went to a
+			// new tab. Say where, so the move is not silent.
+			onCliTabFallback: ({ subscriptionName, agentId, newTabId }) => {
+				emitCueNotifyToast(mainWindow, {
+					agentId,
+					title: subscriptionName,
+					color: newTabId ? 'yellow' : 'red',
+					message: newTabId
+						? 'The tab this task was scheduled into was closed, so it ran in a new tab.'
+						: 'The tab this task was scheduled into was closed, and a new tab could not be opened.',
+					clickAction: {
+						kind: 'jump-session',
+						sessionId: agentId,
+						...(newTabId ? { tabId: newTabId } : {}),
+					},
+				});
+			},
 			onAutoRun: (params) => {
 				const autoRunLog = (level: string, message: string) => {
 					if (level === 'error') logger.error(message, 'Cue');
@@ -2534,104 +2645,15 @@ app
 		};
 		const pluginSessionsGet = (sessionId: string): PluginSessionMetadata | null =>
 			pluginSessionsList().find((s) => s.id === sessionId) ?? null;
-		const pluginSessionsCreate = async (
-			params: Record<string, unknown>
-		): Promise<PluginSessionMetadata> => {
-			const now = Date.now();
-			const sessionId = typeof params.id === 'string' ? params.id : crypto.randomUUID();
-			const tabId = crypto.randomUUID();
-			const title =
-				typeof params.title === 'string'
-					? params.title
-					: typeof params.name === 'string'
-						? params.name
-						: 'Plugin Session';
-			const toolType =
-				typeof params.agentId === 'string'
-					? params.agentId
-					: typeof params.toolType === 'string'
-						? params.toolType
-						: 'claude-code';
-			const cwd =
-				typeof params.projectPath === 'string'
-					? params.projectPath
-					: typeof params.cwd === 'string'
-						? params.cwd
-						: os.homedir();
-			const session = {
-				id: sessionId,
-				name: title,
-				toolType,
-				state: 'idle',
-				cwd,
-				fullPath: cwd,
-				projectRoot: cwd,
-				createdAt: now,
-				updatedAt: now,
-				aiLogs: [],
-				shellLogs: [],
-				workLog: [],
-				contextUsage: 0,
-				inputMode: 'ai',
-				aiPid: 0,
-				terminalPid: 0,
-				port: 0,
-				isLive: false,
-				changedFiles: [],
-				isGitRepo: false,
-				fileTree: [],
-				fileExplorerExpanded: [],
-				fileExplorerScrollPos: 0,
-				executionQueue: [],
-				activeTimeMs: 0,
-				aiTabs: [
-					{
-						id: tabId,
-						agentSessionId: null,
-						name: null,
-						starred: false,
-						logs: [],
-						inputValue: '',
-						stagedImages: [],
-						createdAt: now,
-						state: 'idle',
-					},
-				],
-				activeTabId: tabId,
-				closedTabHistory: [],
-				filePreviewTabs: [],
-				activeFileTabId: null,
-				browserTabs: [],
-				activeBrowserTabId: null,
-				terminalTabs: [],
-				activeTerminalTabId: null,
-				unifiedTabOrder: [{ type: 'ai', id: tabId }],
-				unifiedClosedTabHistory: [],
-			};
-			const previousSessions = pluginSessionsRaw();
-			setPluginSessionsRaw([...previousSessions, session]);
-			if (!previousSessions.some((existing) => existing.id === sessionId)) {
-				try {
-					await pianolaSupervisor?.autoWatchNewSessions(
-						[session],
-						[...previousSessions, session] as AutoWatchSession[],
-						store.get('pianolaAutoWatchNewAgents', false) === true
-					);
-				} catch (error) {
-					logger.error('Could not register new Pianola watch', '[Pianola]', error);
-					void captureException(error, { operation: 'pianola:autoWatchPluginSession' });
-				}
-			}
-			sessionsStore.set('activeSessionId', sessionId);
-			return {
-				id: sessionId,
-				title,
-				agentId: toolType,
-				status: 'idle',
-				createdAt: now,
-				projectPath: cwd,
-			};
-		};
+		const { create: pluginSessionsCreate, remove: pluginSessionsDelete } =
+			createPluginSessionLifecycle({
+				readSessions: pluginSessionsRaw,
+				writeSessions: setPluginSessionsRaw,
+				flush: flushPendingSessionWrites,
+				getActiveSessionId: () => sessionsStore.get('activeSessionId', ''),
+				setActiveSessionId: (id) => sessionsStore.set('activeSessionId', id),
+				getSupervisor: () => pianolaSupervisor,
+			});
 		const pluginSessionsUpdate = async (
 			sessionId: string,
 			patch: Record<string, unknown>
@@ -2652,28 +2674,6 @@ app
 			if (!updated) return null;
 			setPluginSessionsRaw(next);
 			return pluginSessionsGet(sessionId);
-		};
-		const pluginSessionsDelete = async (sessionId: string): Promise<boolean> => {
-			const sessions = pluginSessionsRaw();
-			if (!sessions.some((s) => s.id === sessionId)) return false;
-			const remaining = sessions.filter((s) => s.id !== sessionId);
-			setPluginSessionsRaw(remaining);
-			try {
-				await pianolaSupervisor?.autoWatchNewSessions(
-					[],
-					remaining as unknown as AutoWatchSession[],
-					store.get('pianolaAutoWatchNewAgents', false) === true,
-					[sessionId]
-				);
-			} catch (error) {
-				logger.error('Could not retire Pianola watch', '[Pianola]', error);
-				void captureException(error, { operation: 'pianola:retireAutoWatch' });
-			}
-			if (sessionsStore.get('activeSessionId', '') === sessionId) {
-				const nextActive = pluginSessionsRaw()[0]?.id;
-				sessionsStore.set('activeSessionId', typeof nextActive === 'string' ? nextActive : '');
-			}
-			return true;
 		};
 		const pluginListHistoryEntries = async () => {
 			const all = [];
@@ -2808,6 +2808,7 @@ app
 				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId, unattended),
 			getRunReceipts: (token) => pluginToolRunIdentity.getReceipts(token),
 			hasRunReceiptOverflow: (token) => pluginToolRunIdentity.hasReceiptOverflowed(token),
+			getRunEvidence: (token) => pluginToolRunIdentity.getEvidence(token),
 			revokeRunToken: (token) => pluginToolRunIdentity.revoke(token),
 			cliScriptPath: resolveMaestroCliScriptPath,
 			audit: (agentId, resumed) =>
@@ -3771,6 +3772,12 @@ app
 			getPluginAuthStore: () => pluginAuthStore,
 			getPluginEventBus: () => pluginEventBus,
 			getInteractiveReplayController: () => interactiveReplayController,
+			setReleaseQueueItem: (fn) => {
+				releaseQueueItemInPersistence = fn;
+			},
+			setConfirmQueueItem: (fn) => {
+				confirmQueueItemInPersistence = fn;
+			},
 			setNoteSessionActivated: (fn) => {
 				noteSessionActivatedInPersistence = fn;
 			},
@@ -3916,6 +3923,15 @@ app
 		const bootEncoreFeatures = store.get('encoreFeatures');
 		encoreLifecycle.startIfEnabled('pianola', bootEncoreFeatures);
 		encoreLifecycle.startIfEnabled('plugins', bootEncoreFeatures);
+		// Federation is opportunistic and always on: the peer mirror probes each enabled SSH
+		// remote that has not opted out, one at a time, and mirrors the ones that run a host.
+		const federation = createFederationRuntime({
+			readRemotes: () => (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[],
+			watchRemotes: (onChange) => store.onDidChange('sshRemotes', () => onChange()),
+			safeSend,
+		});
+		federation.start();
+		app.on('will-quit', () => federation.stop());
 
 		// Install the application menu (File / Edit / View / Window on macOS,
 		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the
@@ -3923,6 +3939,16 @@ app
 		// The Encore flags go in first: an item for a switched-off feature is
 		// left out, and the menu follows the flags live from then on.
 		setMenuEncoreFeatures(store.get('encoreFeatures'));
+		// Cmd+` cycles Maestro's windows, Quick Chat included (AppKit skips the
+		// panel). The menu item takes the keystroke most of the time; the input
+		// hook takes it when Chromium hands it to the page. See window-cycle.ts.
+		const cycle = (direction: WindowCycleDirection) => cycleWindows(windowRegistry, direction);
+		setMenuWindowCycler(cycle);
+		if (isMacOS()) {
+			app.on('browser-window-created', (_event, win) =>
+				attachWindowCycleShortcut(win.webContents, cycle)
+			);
+		}
 		installApplicationMenu();
 		store.onDidChange('encoreFeatures', (value) => setMenuEncoreFeatures(value));
 
@@ -3963,6 +3989,13 @@ app
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeGlobalHotkey);
+		app.on('will-quit', () => {
+			try {
+				hostCallerRuns.stop();
+			} catch (error) {
+				captureException(error, { context: 'caller run shutdown' });
+			}
+		});
 		// Release parquet file descriptors (and their cached scans) on the way
 		// out. The idle reaper would get to them eventually, but a preview tab
 		// left open otherwise holds a descriptor until the process dies.
@@ -4048,6 +4081,9 @@ app
 					void captureException(err, { operation: 'cue.reconcileAfterWake' });
 				}
 			}
+			// Federation: reconnect every mirrored peer in turn and reload its agents.
+			// Idempotent against the several resume events one wake raises.
+			getPeerMirrorService()?.reloadAfterWake();
 		});
 	})
 	.catch(async (err) => {
@@ -4141,6 +4177,7 @@ quitHandler = createQuitHandler({
 		});
 		// Tear down the background quota refresh timers.
 		usageRefreshScheduler?.stop();
+		claudeTuiCanary?.stop();
 	},
 	stopSettingsWatcher: () => {
 		settingsWatcher.stop();

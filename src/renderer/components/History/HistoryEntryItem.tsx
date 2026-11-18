@@ -20,6 +20,7 @@ import { getTokenSourcePill } from '../../../shared/claudeTokenModeLabel';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { CueGroupRuns } from './CueGroupRuns';
 import type { CueGroupExpansionApi } from '../../hooks/history/useExpandedCueGroups';
+import type { ResumeSessionOptions } from '../../hooks/agent/useAgentSessionManagement';
 
 export interface HistoryEntryItemProps {
 	entry: HistoryEntry;
@@ -27,7 +28,12 @@ export interface HistoryEntryItemProps {
 	isSelected: boolean;
 	theme: Theme;
 	onOpenDetailModal: (entry: HistoryEntry, index: number) => void;
-	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
+	onOpenSessionAsTab?: (
+		agentSessionId: string,
+		projectPath?: string,
+		sessionName?: string,
+		opts?: ResumeSessionOptions
+	) => boolean | void | Promise<boolean | void>;
 	onOpenAboutModal?: () => void;
 	/** When true, displays the agentName field prominently in the entry header (used in unified history view) */
 	showAgentName?: boolean;
@@ -139,7 +145,17 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 								e.stopPropagation();
 								// Hand the label on this pill to the restore: it IS the tab's name,
 								// and nothing downstream can recover it once the tab is closed.
-								onOpenSessionAsTab?.(entry.agentSessionId!, entry.projectPath, entry.sessionName);
+								void onOpenSessionAsTab?.(
+									entry.agentSessionId!,
+									entry.projectPath,
+									entry.sessionName,
+									{
+										targetSessionId: entry.sessionId,
+										nativeSessionBinding: entry.nativeSessionBinding
+											? structuredClone(entry.nativeSessionBinding)
+											: undefined,
+									}
+								);
 							}}
 							className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold transition-colors hover:opacity-80 min-w-0 flex-shrink ${entry.sessionName ? '' : 'font-mono uppercase'}`}
 							style={{

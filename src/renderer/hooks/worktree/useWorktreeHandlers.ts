@@ -31,12 +31,13 @@ import {
 import { useSettingsStore } from '../../stores/settingsStore';
 import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
-import { buildWorktreeSession } from '../../utils/worktreeSession';
+import { buildWorktreeSession, recordWorktreeAgentsCreated } from '../../utils/worktreeSession';
 import { isPathAtOrUnderRoot } from '../../../shared/worktreePaths';
 import {
 	isRecentlyCreatedWorktreePath,
 	normalizePath,
 	sessionMatchesWorktreeRoot,
+	sessionOwnedByParent,
 } from '../../utils/worktreeDedup';
 import { runWorktreeSetupScript } from '../../utils/worktreeSetupScript';
 import { logger } from '../../utils/logger';
@@ -115,6 +116,24 @@ function getSshRemoteId(session: Session, inheritParent = false): string | undef
 	// Generated children copy the parent's config. A child without one remains
 	// local when its parent is later configured for SSH; only legacy state inherits.
 	return parent && !parent.sessionSshRemoteConfig ? getSshRemoteId(parent) : undefined;
+}
+
+/** Reopen only this parent's child on the same host, even when another root path matches. */
+function findOwnedWorktreeSession(parentSession: Session, path: string): Session | undefined {
+	const sshRemoteId = getSshRemoteId(parentSession);
+	const normalizedRoot = normalizePath(path, !!sshRemoteId);
+	return useSessionStore
+		.getState()
+		.sessions.find(
+			(session) =>
+				sessionOwnedByParent(session, parentSession) &&
+				getSshRemoteId(session, true) === sshRemoteId &&
+				(sshRemoteId
+					? [session.projectRoot, session.cwd].some(
+							(root) => root && normalizePath(root, true) === normalizedRoot
+						)
+					: sessionMatchesWorktreeRoot(session, normalizedRoot))
+		);
 }
 
 /** Fetch git branches and tags for a path, with optional SSH remote support. */
@@ -772,6 +791,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 					const unmarkedSessions = newWorktreeSessions.filter((s) => !isRecentlyCreated(s.cwd));
 					if (unmarkedSessions.length === 0) return;
 					useSessionStore.getState().setSessions((prev) => [...prev, ...unmarkedSessions]);
+					recordWorktreeAgentsCreated(unmarkedSessions);
 					// Expand worktrees on parent
 					useSessionStore.getState().updateSession(activeSession.id, { worktreesExpanded: true });
 					notifyToast({
@@ -824,8 +844,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 
 	const handleCreateWorktreeFromConfig = useCallback(
 		async (branchName: string, basePath: string) => {
-			const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
-			const activeSession = currentSessions.find((s) => s.id === activeSessionId);
+			const activeSession = resolveWorktreeConfigTarget();
 			if (!activeSession || !basePath) {
 				notifyToast({
 					type: 'error',
@@ -855,6 +874,9 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 			);
 
 			try {
+				if (activeSession.sessionSshRemoteConfig?.enabled && !sshRemoteId) {
+					throw new Error('Select an SSH remote before creating a worktree.');
+				}
 				// Create the worktree via git (pass SSH remote ID for remote sessions)
 				const result = await window.maestro.git.worktreeSetup(
 					activeSession.cwd,
@@ -893,10 +915,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				// and skip the duplicate creation. Done before fetchGitInfo so we don't
 				// pay for an unnecessary git round-trip when there's nothing to build.
 				if (reusedExisting) {
-					const normalizedActual = normalizePath(actualPath);
-					const existingSession = useSessionStore
-						.getState()
-						.sessions.find((s) => sessionMatchesWorktreeRoot(s, normalizedActual));
+					const existingSession = findOwnedWorktreeSession(activeSession, actualPath);
 					if (existingSession) {
 						useSessionStore.getState().setActiveSessionId(existingSession.id);
 						notifyToast({
@@ -928,6 +947,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 						...prev.map((s) => (s.id === activeSession.id ? { ...s, worktreesExpanded: true } : s)),
 						worktreeSession,
 					]);
+				recordWorktreeAgentsCreated([worktreeSession]);
 
 				// Auto-focus the new worktree session
 				useSessionStore.getState().setActiveSessionId(worktreeSession.id);
@@ -948,7 +968,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				throw err; // Re-throw so the modal can show the error
 			}
 		},
-		[]
+		[resolveWorktreeConfigTarget]
 	);
 
 	const handleCloseCreateWorktreeModal = useCallback(() => {
@@ -957,7 +977,8 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 	}, []);
 
 	const handleCreateWorktree = useCallback(async (branchName: string, baseBranch?: string) => {
-		const createWtSession = useModalStore.getState().getData('createWorktree')?.session ?? null;
+		const targetId = useModalStore.getState().getData('createWorktree')?.session?.id;
+		const createWtSession = useSessionStore.getState().sessions.find((s) => s.id === targetId);
 		if (!createWtSession) return;
 		const { defaultSaveToHistory: savToHist, defaultShowThinking: showThink } =
 			useSettingsStore.getState();
@@ -982,6 +1003,9 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 		setTimeout(() => recentlyCreatedWorktreePathsRef.current.delete(normalizedCreatedPath), 10000);
 
 		try {
+			if (createWtSession.sessionSshRemoteConfig?.enabled && !sshRemoteId) {
+				throw new Error('Select an SSH remote before creating a worktree.');
+			}
 			// Create the worktree via git (pass SSH remote ID for remote sessions).
 			// baseBranch is honored only when the named branch doesn't already exist
 			// - see git.ts handler for the full semantics.
@@ -1019,10 +1043,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 			// If a session for the existing worktree path already exists, focus it
 			// and skip the duplicate creation.
 			if (reusedExisting) {
-				const normalizedActual = normalizePath(actualPath);
-				const existingSession = useSessionStore
-					.getState()
-					.sessions.find((s) => sessionMatchesWorktreeRoot(s, normalizedActual));
+				const existingSession = findOwnedWorktreeSession(createWtSession, actualPath);
 				if (existingSession) {
 					useSessionStore.getState().setActiveSessionId(existingSession.id);
 					notifyToast({
@@ -1062,6 +1083,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				}),
 				worktreeSession,
 			]);
+			recordWorktreeAgentsCreated([worktreeSession]);
 
 			// Auto-focus the new worktree session
 			useSessionStore.getState().setActiveSessionId(worktreeSession.id);
@@ -1404,9 +1426,11 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 			const staleSet = new Set(staleSessionIds);
 			const reassignedSet = new Set(reassignedSessionIds);
 			const removalSet = new Set([...staleSessionIds, ...reassignedSessionIds]);
+			let closedIds: string[] = [];
 			useSessionStore.getState().setSessions((prev) => {
 				const removed = prev.filter((s) => removalSet.has(s.id) && removalGuards.get(s.id)?.(s));
 				const currentRemovalIds = new Set(removed.map((s) => s.id));
+				closedIds = [...currentRemovalIds];
 				for (const s of removed) {
 					if (reassignedSet.has(s.id)) {
 						notifyToast({
@@ -1424,9 +1448,14 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 				}
 				return prev.filter((s) => !currentRemovalIds.has(s.id));
 			});
+			// The agents this scan removed are gone from the Left Bar; record the
+			// closure so the Usage Dashboard's agent count drops on this day.
+			const closedAt = Date.now();
+			for (const id of closedIds) void window.maestro.stats.recordSessionClosed(id, closedAt);
 		}
 
 		if (newWorktreeSessions.length > 0) {
+			let addedSessions: Session[] = [];
 			useSessionStore.getState().setSessions((prev) => {
 				const pathKey = (session: Session) => {
 					const remoteId = getSshRemoteId(session, true);
@@ -1459,9 +1488,11 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 						!currentPaths.has(pathKey(s)) &&
 						!currentRawPaths.has(rawPathKey(s))
 				);
+				addedSessions = trulyNew;
 				if (trulyNew.length === 0) return prev;
 				return [...prev, ...trulyNew];
 			});
+			recordWorktreeAgentsCreated(addedSessions);
 
 			const parentIds = new Set(newWorktreeSessions.map((s) => s.parentSessionId));
 			useSessionStore
@@ -1647,6 +1678,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 					return [...prev, worktreeSession];
 				});
 				if (!added) return;
+				recordWorktreeAgentsCreated([worktreeSession]);
 
 				useSessionStore.getState().updateSession(sessionId, { worktreesExpanded: true });
 
@@ -1819,6 +1851,7 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 
 				// Add all new sessions in a single update (uses functional update to get fresh state)
 				if (newSessionsToAdd.length > 0) {
+					let addedSessions: Session[] = [];
 					useSessionStore.getState().setSessions((prev) => {
 						// Double-check against current state to avoid duplicates
 						const currentPaths = new Set(
@@ -1827,9 +1860,11 @@ export function useWorktreeHandlers(deps: UseWorktreeHandlersDeps = {}): Worktre
 						const trulyNew = newSessionsToAdd.filter(
 							(s) => !currentPaths.has(normalizePath(s.cwd))
 						);
+						addedSessions = trulyNew;
 						if (trulyNew.length === 0) return prev;
 						return [...prev, ...trulyNew];
 					});
+					recordWorktreeAgentsCreated(addedSessions);
 
 					for (const session of newSessionsToAdd) {
 						notifyToast({

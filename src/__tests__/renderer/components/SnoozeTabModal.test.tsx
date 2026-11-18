@@ -92,6 +92,17 @@ describe('SnoozeTabModal keyboard commit', () => {
 		expect(onConfirm).toHaveBeenCalledTimes(1);
 	});
 
+	it('leaves Enter and Cmd+Enter to the input method during an IME composition', () => {
+		const { onConfirm } = setup();
+		enterExpression();
+		for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+			expect(fireEvent.keyDown(typeInput(), { key: 'Enter', ...ime })).toBe(true);
+			expect(fireEvent.keyDown(typeInput(), { key: 'Enter', metaKey: true, ...ime })).toBe(true);
+			expect(fireEvent.keyDown(noteArea(), { key: 'Enter', metaKey: true, ...ime })).toBe(true);
+		}
+		expect(onConfirm).not.toHaveBeenCalled();
+	});
+
 	it('leaves plain Enter in the textarea alone, so it stays a newline', () => {
 		const { onConfirm } = setup();
 		enterExpression();

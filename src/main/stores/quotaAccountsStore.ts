@@ -16,13 +16,15 @@
  * A remembered key is not a guess: it is written when a sampler actually
  * targeted that account for a session. Entries are dropped only when their
  * directory is gone from disk (`pruneMissingQuotaAccounts`), so deleting an
- * account dir still removes the row.
+ * account dir still removes the row. The cached usage snapshots follow the same
+ * rule through `dropSnapshotsForMissingAccounts`.
  *
  * The `Store` instance is created lazily on first call so tests can
  * `vi.mock('electron-store')` before the module is touched.
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 import Store from 'electron-store';
 
 /** One remembered account. `accountKey` is the canonical (resolved) dir path. */
@@ -115,38 +117,67 @@ export function forgetQuotaAccounts(providerId: string, accountKeys: Iterable<st
 }
 
 /**
+ * The account keys (canonical dir paths) whose directory is definitely gone.
+ * Only a definite "not there" (ENOENT / ENOTDIR) counts: an unreadable or
+ * temporarily unmounted dir is treated as present rather than silently losing
+ * the account the user is waiting on. A key that is not an absolute path is
+ * not a local directory, so it is never reported missing.
+ *
+ * One rule for every surface that drops an account on deletion: the remembered
+ * account list below, and the cached usage snapshots the dashboard draws
+ * (`dropSnapshotsForMissingAccounts`).
+ */
+export async function findMissingAccountDirs(accountKeys: Iterable<string>): Promise<Set<string>> {
+	const missing = new Set<string>();
+	await Promise.all(
+		Array.from(new Set(accountKeys)).map(async (key) => {
+			if (!path.isAbsolute(key)) return;
+			try {
+				await fs.promises.access(key, fs.constants.F_OK);
+			} catch (err) {
+				const code = (err as NodeJS.ErrnoException).code;
+				if (code === 'ENOENT' || code === 'ENOTDIR') missing.add(key);
+			}
+		})
+	);
+	return missing;
+}
+
+/**
  * Forget remembered accounts whose directory no longer exists, and return the
- * keys that survived. Only a definite "not there" (ENOENT / ENOTDIR) forgets a
- * key: an unreadable or temporarily unmounted dir keeps its row rather than
- * silently losing the account the user is waiting on.
+ * keys that survived (see `findMissingAccountDirs` for what counts as gone).
  */
 export async function pruneMissingQuotaAccounts(providerId: string): Promise<string[]> {
 	const keys = getRememberedQuotaAccountKeys(providerId);
 	if (keys.length === 0) return [];
 
-	const missing: string[] = [];
-	const surviving: string[] = [];
-	await Promise.all(
-		keys.map(async (key) => {
-			try {
-				await fs.promises.access(key, fs.constants.F_OK);
-				surviving.push(key);
-			} catch (err) {
-				const code = (err as NodeJS.ErrnoException).code;
-				if (code === 'ENOENT' || code === 'ENOTDIR') {
-					missing.push(key);
-				} else {
-					surviving.push(key);
-				}
-			}
-		})
-	);
-
-	if (missing.length > 0) {
+	const missing = await findMissingAccountDirs(keys);
+	if (missing.size > 0) {
 		forgetQuotaAccounts(providerId, missing);
 	}
-	// Preserve the store's ordering rather than the Promise.all completion order.
-	return keys.filter((key) => surviving.includes(key));
+	// Preserve the store's ordering.
+	return keys.filter((key) => !missing.has(key));
+}
+
+/**
+ * Remove snapshots whose account dir is gone, from both the returned map and
+ * the backing store (`forget`). Snapshots are retained for weeks past their TTL
+ * so an idle account keeps its dashboard row, which also kept a DELETED
+ * account's row on the panel for those weeks: the account list forgot it, but
+ * every snapshot key is a row of its own.
+ */
+export async function dropSnapshotsForMissingAccounts<T>(
+	snapshots: Record<string, T>,
+	forget: (keys: Iterable<string>) => void
+): Promise<Record<string, T>> {
+	const missing = await findMissingAccountDirs(Object.keys(snapshots));
+	if (missing.size === 0) return snapshots;
+	forget(missing);
+	const kept: Record<string, T> = {};
+	for (const [key, snapshot] of Object.entries(snapshots)) {
+		if (!missing.has(key)) kept[key] = snapshot;
+	}
+	return kept;
 }
 
 /** Drop every remembered account for every provider. Test/reset helper. */

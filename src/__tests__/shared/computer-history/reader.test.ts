@@ -302,4 +302,21 @@ describe('reader', () => {
 		const recent = await readRecentDigests(dir, { limit: 2 });
 		expect(recent.map((d) => d.body)).toEqual(['# 1230Z.md', '# 1215Z.md']);
 	});
+
+	it('readRecentDigests with grep searches past the newest page and skips the header', async () => {
+		const day = path.join(dir, 'digests', '2026-10-03');
+		fs.mkdirSync(day, { recursive: true });
+		const digest = (summary: string) =>
+			`# 15-minute digest x - y\n\nSegment: \`segments/a.jsonl\` (3 events). Written by local model \`Qwen\`.\n\n${summary}\n`;
+		fs.writeFileSync(path.join(day, '1200Z.md'), digest('- Set up Gmail forwarding'));
+		fs.writeFileSync(path.join(day, '1215Z.md'), digest('- Read a post'));
+		fs.writeFileSync(path.join(day, '1230Z.md'), digest('- Opened Obsidian'));
+		// The oldest digest matches although the limit would stop a plain read at one.
+		const hits = await readRecentDigests(dir, { limit: 1, grep: 'gmail' });
+		expect(hits.map((d) => d.file)).toEqual(['digests/2026-10-03/1200Z.md']);
+		// The provenance line names the model on every digest; it is never matched.
+		expect(await readRecentDigests(dir, { grep: 'qwen' })).toEqual([]);
+		// An invalid regex searches literally instead of failing.
+		expect(await readRecentDigests(dir, { grep: '(' })).toEqual([]);
+	});
 });

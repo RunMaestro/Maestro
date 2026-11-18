@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	detectAwaitingInput,
+	extractQuestionCores,
 	enrichWithAwaitingInput,
 } from '../../../shared/pianola/pianola-awaiting-detector';
 import { classifyMessages } from '../../../shared/pianola/pianola-classifier';
@@ -145,5 +146,41 @@ describe('detector + classifier integration', () => {
 		expect(c.evidence.structured).toBe(true);
 		expect(c.kind).toBe('blocked'); // choice maps to blocked (awaiting a pick)
 		expect(c.risk).toBe('low');
+	});
+});
+
+describe('bounded native question cores', () => {
+	it.each([
+		'Should I name it count or total?',
+		'Progress complete. Should I name it count or total?',
+		'Progress complete: Should I name it count or total?',
+		'Should I name it count or total? Progress complete.',
+		'**Should I** name it  count\n or `total`?',
+	])('ignores unrelated prose and formatting: %s', (text) => {
+		expect(extractQuestionCores(text)).toEqual(['should i name it count or total?']);
+	});
+	it('retains all historical cores instead of only the last question', () => {
+		expect(extractQuestionCores('Should I use count? Should I use total?')).toEqual([
+			'should i use count?',
+			'should i use total?',
+		]);
+	});
+	it('distinguishes absence from ambiguous or over-budget questions', () => {
+		expect(extractQuestionCores('Working.')).toEqual([]);
+		expect(extractQuestionCores('Ready?')).toBeNull();
+		expect(extractQuestionCores('Please choose [a/b]')).toBeNull();
+		expect(extractQuestionCores('Should I ' + 'x'.repeat(2048) + '?')).toBeNull();
+		expect(extractQuestionCores('Should I run tests? '.repeat(33))).toBeNull();
+	});
+	it('handles long delimiter-free streams and preserves sentence boundaries', () => {
+		const progress = 'x'.repeat(131_072);
+		expect(extractQuestionCores(progress)).toEqual([]);
+		expect(extractQuestionCores(`${progress}. Should I run tests? ${progress}`)).toEqual([
+			'should i run tests?',
+		]);
+		expect(extractQuestionCores('Should I run tests??')).toBeNull();
+		expect(
+			detectAwaitingInput(`${progress}\nDo you want me to run tests? ${progress}`)?.prompt
+		).toBe('Do you want me to run tests?');
 	});
 });

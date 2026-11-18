@@ -9,12 +9,25 @@
  * call sites. Every surface now asks here.
  */
 
+import { randomUUID } from 'node:crypto';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { isAbsolutePath } from '../../formatters';
 import type { AgentCapabilities } from '../../types';
+import type { AgentConfig } from '../providers/definitions';
+import {
+	buildAcpPromptFileContent,
+	type AcpPromptBlock,
+	type EmbeddedImageSupport,
+} from './image-refs';
 
 /** The parts of a provider definition that decide how its prompt is written. */
 export interface PromptDeliveryAgent {
 	/** Builds the prompt flag, e.g. `['-p', prompt]`. Wins over the positional forms. */
 	promptArgs?: (prompt: string) => string[];
+	/** Explicit file delivery, independent of the legacy Windows-only builder. */
+	promptFile?: AgentConfig['promptFile'];
+	promptFileArgs?: AgentConfig['promptFileArgs'];
 	/** The CLI rejects `--` before a positional prompt (Pi, Factory Droid). */
 	noPromptSeparator?: boolean;
 	/** Args that make the CLI read its query from stdin (Hermes: `--query-file -`). */
@@ -114,6 +127,40 @@ export function promptExceedsArgvLimit(prompt: string, windowsHost: boolean): bo
 	return new TextEncoder().encode(prompt).length > POSIX_PROMPT_ARGV_MAX_BYTES;
 }
 
+/**
+ * A destination chosen by the executing host, without creating the file yet.
+ * The host allocates a fresh collision-resistant name for each launch attempt
+ * (for example maestro-prompt-<randomUUID>.txt), never a session-id-only name.
+ * Remote paths come from that remote, never from the local temporary directory.
+ */
+export interface PromptFileDestination {
+	path: string;
+	owner: 'local' | 'remote';
+	/** Selected SSH configuration that owns a remote destination. */
+	sshRemoteId?: string;
+}
+
+/**
+ * Choose a name only, without creating anything. Call once per local launch
+ * attempt; an SSH owner must supply its own destination from that host.
+ * Kept separate from the deterministic resolver and content encoder below.
+ */
+export function selectPromptFileDestination(
+	agent: PromptDeliveryAgent | null | undefined,
+	sshRemoteId: string | undefined,
+	destination?: PromptFileDestination
+): PromptFileDestination | undefined {
+	if (!agent?.promptFile || destination || sshRemoteId !== undefined) return destination;
+	const extension = agent.promptFile.format === 'acp-json' ? '.json' : '.txt';
+	return {
+		owner: 'local',
+		path: path.join(os.tmpdir(), `maestro-prompt-${randomUUID()}${extension}`),
+	};
+}
+
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
 /** Where the user prompt goes. */
 export type PromptDelivery =
 	/** Nothing to deliver. */
@@ -127,6 +174,27 @@ export type PromptDelivery =
 	 * travel with it.
 	 */
 	| { via: 'stdin'; format: 'raw' | 'stream-json'; args: string[] }
+	/** Materialize on the executing host before spawning with these prompt-only args. */
+	| {
+			via: 'file';
+			args: string[];
+			artifact: PromptFileDestination & {
+				/** Private prompt content. Never include the artifact in diagnostics. */
+				content: string;
+				encoding: 'utf8';
+				mode: 0o600;
+				/** Refuse a collision; never overwrite or claim an existing file. */
+				flag: 'wx';
+				/**
+				 * Remove only an exclusively created file, after its reader closes.
+				 * Also required on refusal, failed upload/spawn, cancellation, timeout
+				 * and supersession. A remote file needs cleanup on that same host.
+				 */
+				cleanup: 'turn';
+			};
+	  }
+	/** Mandatory delivery could not be planned; no argv/stdin fallback is allowed. */
+	| { via: 'refused'; error: string }
 	/** The SSH stdin script carries it; nothing is added locally. */
 	| { via: 'ssh' };
 
@@ -140,7 +208,9 @@ export interface ResolvePromptDeliveryInput {
 	isWindowsHost: boolean;
 	/** The agent runs on an SSH remote. */
 	sshRemote: boolean;
-	/** The turn carries images. */
+	/** When resolved, require a destination belonging to this exact SSH target. */
+	sshRemoteId?: string;
+	/** The turn carries images. A file route must receive their embedded bytes. */
 	hasImages?: boolean;
 	/**
 	 * The OS of the machine that starts the process, for the command-line size
@@ -149,12 +219,22 @@ export interface ResolvePromptDeliveryInput {
 	 * `isWindowsHost: false` but still hit the Windows cap.
 	 */
 	hostIsWindows?: boolean;
+	/** Ordered, resolved ACP blocks instead of `prompt`, never in addition to it. */
+	promptBlocks?: readonly AcpPromptBlock[];
+	/** Executing host's admitted image support; absence refuses embedded images. */
+	embeddedImageSupport?: EmbeddedImageSupport;
+	/** Arguments before prompt delivery, used to reject competing native sources. */
+	args?: readonly string[];
+	/** Required only for an explicitly declared prompt file. No I/O occurs here. */
+	promptFileDestination?: PromptFileDestination;
 }
 
 /**
  * Decide how the user prompt reaches the agent.
  *
- * - Over SSH the remote script always carries it.
+ * - An explicit prompt-file declaration wins on every host and surface. The
+ *   caller supplies a fresh executing-host path and owns creation and cleanup.
+ * - Otherwise, over SSH the remote script carries it.
  * - On a Windows host, an agent that declared `supportsPromptViaStdin` gets it
  *   over stdin, to stay under the CreateProcess command-line limit. With images
  *   and stream-json input it is one stream-json message; otherwise raw text.
@@ -168,6 +248,101 @@ export interface ResolvePromptDeliveryInput {
  */
 export function resolvePromptDelivery(input: ResolvePromptDeliveryInput): PromptDelivery {
 	const { agent, prompt } = input;
+	if (input.promptBlocks !== undefined) {
+		if (prompt !== undefined) {
+			return {
+				via: 'refused',
+				error: 'Supply either prompt text or ordered content blocks, not both.',
+			};
+		}
+		if (agent?.promptFile?.format !== 'acp-json') {
+			return { via: 'refused', error: 'Ordered content requires an ACP JSON prompt-file route.' };
+		}
+	}
+	if (
+		agent?.promptFile &&
+		(prompt !== undefined || input.promptBlocks !== undefined || input.hasImages)
+	) {
+		const { promptFileDestination: destination } = input;
+		const extension = agent.promptFile.format === 'acp-json' ? '.json' : '.txt';
+		if (
+			!agent.promptFileArgs ||
+			!destination ||
+			destination.owner !== (input.sshRemote ? 'remote' : 'local') ||
+			(input.sshRemoteId !== undefined && destination.sshRemoteId !== input.sshRemoteId) ||
+			(input.sshRemote && !path.posix.isAbsolute(destination.path)) ||
+			!isAbsolutePath(destination.path) ||
+			// A control character (NUL, CR, LF, ...) splits the argument a cmd.exe
+			// shim or the SSH script carries; a host-chosen name never needs one.
+			CONTROL_CHARACTER.test(destination.path) ||
+			!destination.path.endsWith(extension)
+		) {
+			return {
+				via: 'refused',
+				error: `Prompt-file delivery requires a fresh owned ${extension} destination on the executing host and a provider file-argument builder.`,
+			};
+		}
+		if (
+			input.args?.some(
+				(arg) =>
+					arg === '--' ||
+					agent.promptFile!.exclusivePromptFlags.some(
+						(flag) =>
+							arg === flag ||
+							arg.startsWith(`${flag}=`) ||
+							(flag.length === 2 && arg.startsWith(flag))
+					)
+			)
+		) {
+			return {
+				via: 'refused',
+				error: 'Prompt-file delivery conflicts with another prompt source in the launch arguments.',
+			};
+		}
+		// Text the file cannot carry exactly is refused, never repaired: UTF-8
+		// writes a lone surrogate as U+FFFD, and JSON escapes it into a string a
+		// strict native JSON reader rejects after spawn.
+		if (
+			(prompt !== undefined && LONE_SURROGATE.test(prompt)) ||
+			input.promptBlocks?.some(
+				(block) =>
+					block?.type === 'text' &&
+					typeof block.text === 'string' &&
+					LONE_SURROGATE.test(block.text)
+			)
+		) {
+			return {
+				via: 'refused',
+				error: 'Prompt-file text must be well-formed Unicode; it contains an unpaired surrogate.',
+			};
+		}
+		let content = prompt ?? '';
+		if (agent.promptFile.format === 'acp-json') {
+			const encoded = buildAcpPromptFileContent(
+				input.promptBlocks !== undefined ? input.promptBlocks : [{ type: 'text', text: content }],
+				input.embeddedImageSupport
+			);
+			if (!encoded.ok) return { via: 'refused', error: encoded.error };
+			if (input.hasImages && !encoded.hasImages) {
+				return { via: 'refused', error: 'Image content is missing from the ACP prompt file.' };
+			}
+			content = encoded.content;
+		} else if (input.hasImages) {
+			return { via: 'refused', error: 'This prompt-file format cannot carry embedded images.' };
+		}
+		return {
+			via: 'file',
+			args: agent.promptFileArgs(destination.path),
+			artifact: {
+				...destination,
+				content,
+				encoding: 'utf8',
+				mode: 0o600,
+				flag: 'wx',
+				cleanup: 'turn',
+			},
+		};
+	}
 	if (!prompt) return { via: 'none' };
 	if (input.sshRemote) return { via: 'ssh' };
 

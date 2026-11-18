@@ -1,6 +1,10 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { AchievementShareButton } from '../../../renderer/components/AchievementShareButton';
+import {
+	AchievementShareButton,
+	type AchievementShareGlobalStats,
+} from '../../../renderer/components/AchievementShareButton';
+import { formatTokensCompact } from '../../../renderer/utils/formatters';
 import { firstBadgeStats, mockTheme } from './AchievementCard/_fixtures';
 
 const { safeClipboardWriteImageMock, flashCopiedMock, saveImageMock, notifyToastMock } = vi.hoisted(
@@ -263,5 +267,165 @@ describe('AchievementShareButton', () => {
 			);
 		});
 		expect(screen.getByText('Save as Image')).toBeInTheDocument();
+	});
+
+	describe('Grok-containing global stats', () => {
+		// The stats handler shape: Grok beside the legacy providers, its cost
+		// a partial floor. The share card draws sessions and tokens, never cost.
+		const mixedByProvider = {
+			'claude-code': { sessions: 40, inputTokens: 600_000, outputTokens: 200_000 },
+			codex: { sessions: 10, inputTokens: 150_000, outputTokens: 50_000 },
+			grok: { sessions: 2, inputTokens: 250_000, outputTokens: 50_000, costCoverage: 'partial' },
+		};
+		const grokMixedStats = (
+			overrides: Partial<AchievementShareGlobalStats> & { costCoverage?: string } = {}
+		): AchievementShareGlobalStats & { costCoverage?: string } => ({
+			totalSessions: 52,
+			totalMessages: 496,
+			totalInputTokens: 1_000_000,
+			totalOutputTokens: 300_000,
+			totalCacheReadTokens: 0,
+			totalCacheCreationTokens: 0,
+			totalCostUsd: 14.75,
+			hasCostData: true,
+			totalSizeBytes: 0,
+			isComplete: true,
+			costCoverage: 'partial',
+			byProvider: mixedByProvider,
+			...overrides,
+		});
+		const copyAndCollect = async (
+			ctx: ReturnType<typeof installCanvasMocks>,
+			globalStats: AchievementShareGlobalStats
+		) => {
+			render(
+				<AchievementShareButton
+					theme={mockTheme}
+					autoRunStats={firstBadgeStats}
+					globalStats={globalStats}
+				/>
+			);
+			fireEvent.click(screen.getByTitle('Share achievements'));
+			fireEvent.click(screen.getByText('Copy to Clipboard'));
+			await waitFor(() => expect(safeClipboardWriteImageMock).toHaveBeenCalledTimes(1));
+			return ctx.fillText.mock.calls.map(([text]) => String(text));
+		};
+		const noCostDrawn = (drawn: string[]) => {
+			expect(drawn.filter((text) => /\$|Unknown|partial/.test(text))).toEqual([]);
+		};
+
+		it('draws the mixed-provider session and token totals with no floor mark', async () => {
+			const stats = grokMixedStats();
+			const providers = Object.values(mixedByProvider);
+			expect(providers.reduce((n, p) => n + p.sessions, 0)).toBe(stats.totalSessions);
+			expect(providers.reduce((n, p) => n + p.inputTokens + p.outputTokens, 0)).toBe(
+				stats.totalInputTokens + stats.totalOutputTokens
+			);
+
+			const drawn = await copyAndCollect(installCanvasMocks(), stats);
+			expect(drawn).toContain('52');
+			expect(drawn).toContain(formatTokensCompact(1_300_000));
+			expect(drawn.some((text) => text.endsWith('+'))).toBe(false);
+			noCostDrawn(drawn);
+			expect(saveImageMock).not.toHaveBeenCalled();
+		});
+
+		it('never turns an unknown Grok cost into a drawn amount', async () => {
+			const drawn = await copyAndCollect(
+				installCanvasMocks(),
+				grokMixedStats({
+					totalSessions: 37,
+					totalMessages: 9,
+					totalInputTokens: 1200,
+					totalOutputTokens: 300,
+					totalCostUsd: 0,
+					hasCostData: false,
+					costCoverage: 'unknown',
+					byProvider: { grok: { sessions: 37, costCoverage: 'unknown' } },
+				})
+			);
+			expect(drawn).toContain('37');
+			expect(drawn).toContain(formatTokensCompact(1500));
+			noCostDrawn(drawn);
+		});
+
+		it('waits for an incomplete Grok scan and draws the finished totals', async () => {
+			const ctx = installCanvasMocks();
+			const partialScan = grokMixedStats({
+				isComplete: false,
+				totalSessions: 40,
+				totalInputTokens: 600_000,
+				totalOutputTokens: 200_000,
+			});
+			const { rerender } = render(
+				<AchievementShareButton
+					theme={mockTheme}
+					autoRunStats={firstBadgeStats}
+					globalStats={partialScan}
+				/>
+			);
+			fireEvent.click(screen.getByTitle('Share achievements'));
+			fireEvent.click(screen.getByText('Copy to Clipboard'));
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(safeClipboardWriteImageMock).not.toHaveBeenCalled();
+
+			rerender(
+				<AchievementShareButton
+					theme={mockTheme}
+					autoRunStats={firstBadgeStats}
+					globalStats={grokMixedStats()}
+				/>
+			);
+			await waitFor(() => expect(safeClipboardWriteImageMock).toHaveBeenCalledTimes(1));
+			const drawn = ctx.fillText.mock.calls.map(([text]) => String(text));
+			expect(drawn).toContain('52');
+			expect(drawn).toContain(formatTokensCompact(1_300_000));
+			expect(drawn).not.toContain('40');
+			expect(drawn.some((text) => text.endsWith('+'))).toBe(false);
+		});
+
+		it('draws a Grok scan still running after the wait as a floor', async () => {
+			const ctx = installCanvasMocks();
+			vi.useFakeTimers();
+			try {
+				render(
+					<AchievementShareButton
+						theme={mockTheme}
+						autoRunStats={firstBadgeStats}
+						globalStats={grokMixedStats({ isComplete: false })}
+					/>
+				);
+				fireEvent.click(screen.getByTitle('Share achievements'));
+				fireEvent.click(screen.getByText('Copy to Clipboard'));
+				await vi.advanceTimersByTimeAsync(20_001);
+			} finally {
+				vi.useRealTimers();
+			}
+			await waitFor(() => expect(safeClipboardWriteImageMock).toHaveBeenCalledTimes(1));
+			const drawn = ctx.fillText.mock.calls.map(([text]) => String(text));
+			expect(drawn).toContain('52+');
+			expect(drawn).toContain(formatTokensCompact(1_300_000) + '+');
+			expect(drawn).not.toContain('52');
+			noCostDrawn(drawn);
+		});
+
+		it('draws an existing-provider payload exactly as before', async () => {
+			const drawn = await copyAndCollect(installCanvasMocks(), {
+				totalSessions: 1234,
+				totalMessages: 0,
+				totalInputTokens: 1_000_000,
+				totalOutputTokens: 500_000,
+				totalCacheReadTokens: 0,
+				totalCacheCreationTokens: 0,
+				totalCostUsd: 25.5,
+				hasCostData: true,
+				totalSizeBytes: 0,
+				isComplete: true,
+				byProvider: { 'claude-code': { sessions: 1234 } },
+			});
+			expect(drawn).toContain('1,234');
+			expect(drawn).toContain('1.5M');
+			noCostDrawn(drawn);
+		});
 	});
 });

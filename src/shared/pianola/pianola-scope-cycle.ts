@@ -5,6 +5,14 @@
  * unguarded fallback, including for a delayed manager reply.
  */
 import { createHash } from 'crypto';
+import {
+	isCurrentTurnCursor,
+	sameCurrentTurnCursor,
+	isNativeQuestionRequest,
+	nativeQuestionMessage,
+	type NativeQuestionRequest,
+	type CurrentTurnRead,
+} from '../currentTurn';
 import { canonicalJson } from '../canonicalJson';
 import type { DesktopSessionsSnapshot } from '../desktopTabs';
 import type { PianolaFsStore } from './fs-store';
@@ -31,6 +39,7 @@ import {
 	type WatchTarget,
 } from './pianola-watcher';
 import type { PianolaDecisionRecord, PianolaSupervisedTarget } from './storage';
+import { maxRisk } from './pianola-risk';
 import { decide } from './pianola-policy';
 import type { PianolaMessage } from './types';
 import {
@@ -41,9 +50,12 @@ import {
 } from './pianola-decision-lifecycle';
 
 export interface PianolaScopeSnapshotTab extends PianolaScopeTab {
+	agentSessionId?: string | null;
 	/** Host creation time, never the provider session's creation time. */
 	createdAt: number;
 	busy: boolean;
+	nativeQuestion?: NativeQuestionRequest;
+	enrollment?: CurrentTurnRead['cursor'];
 	cursorAvailable: boolean;
 	cursor: PianolaScopeCursor | null;
 }
@@ -57,6 +69,8 @@ export interface PianolaScopeSnapshot {
 }
 
 export interface PianolaScopeDeliveryGuard {
+	/** Binds delayed replies across selection edits, including remove/re-add. */
+	enrollmentRevision?: number;
 	scopeId: string;
 	configurationFingerprint: string;
 	bindingFingerprint: string;
@@ -64,6 +78,8 @@ export interface PianolaScopeDeliveryGuard {
 	tabId: string;
 	messageId: string;
 	decisionId: string;
+	nativeQuestion?: NativeQuestionRequest;
+	ruleRevision?: string;
 	cursor: PianolaScopeCursor;
 }
 
@@ -81,10 +97,14 @@ export interface PianolaScopeCycleDeps {
 	/** Unavailable/incomplete metadata must throw or return complete:false. */
 	readSnapshot: () => Promise<PianolaScopeSnapshot>;
 	/** All log entries in native order, with stable IDs. A bounded fetch may refuse. */
-	readTranscript: (target: WatchTarget) => Promise<{
+	readTranscript: (
+		target: WatchTarget,
+		expected?: import('../currentTurn').CurrentTurnCursor
+	) => Promise<{
 		agentId: string;
 		tabId: string;
 		messages: PianolaMessage[];
+		currentTurn?: CurrentTurnRead;
 	}>;
 	watch: Omit<WatchDeps, 'dispatch' | 'requestJudgment'>;
 	dispatch: (
@@ -103,6 +123,9 @@ export interface PianolaScopeCycleResult {
 	iterations: Array<{ agentId: string; tabId: string; result: IterationResult }>;
 	/** Metadata, history or delivery uncertainty, suitable for scope health. */
 	issues: string[];
+	/** Continue the current bounded sweep before revisiting an open decision. */
+	moreWork?: boolean;
+	nextDueAt?: number;
 }
 
 function fingerprint(value: unknown): string {
@@ -116,7 +139,16 @@ export function pianolaScopeConfigurationFingerprint(scope: PianolaScopeCandidat
 		managerAgentId: scope.managerAgentId,
 		mode: selection.mode,
 		...(selection.mode === 'agents-and-groups'
-			? { agentIds: [...selection.agentIds].sort(), groupIds: [...selection.groupIds].sort() }
+			? {
+					agentIds: [...selection.agentIds].sort(),
+					groupIds: [...selection.groupIds].sort(),
+					...(selection.futureLocalAgents === true
+						? {
+								futureLocalAgents: true,
+								futureAgentBaselineIds: [...(selection.futureAgentBaselineIds ?? [])].sort(),
+							}
+						: {}),
+				}
 			: {
 					projectRoots: [...selection.projectRoots].sort(),
 					ownerRoots: selection.ownerRoots,
@@ -146,13 +178,23 @@ export function pianolaCoverageRegistryFingerprint(targets: PianolaSupervisedTar
 										})
 									: null,
 						}
-					: { id: target.id, enabled: target.enabled, agentId: target.agentId, tabId: target.tabId }
+					: {
+							id: target.id,
+							enabled: target.enabled,
+							agentId: target.agentId,
+							tabId: target.tabId,
+							migratedToScopeId: target.migratedToScopeId ?? null,
+						}
 			)
 			.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 	);
 }
 
-function scopesFrom(targets: PianolaSupervisedTarget[]): PianolaScopeCandidate[] {
+/**
+ * Extract configured scopes from an unambiguous registry. Duplicate IDs or missing
+ * selection/manager configuration throw rather than yielding partial ownership information.
+ */
+function scopesFrom(targets: PianolaSupervisedTarget[]) {
 	if (new Set(targets.map((target) => target.id)).size !== targets.length)
 		throw new Error('Ambiguous Pianola registry IDs');
 	return targets
@@ -164,6 +206,11 @@ function scopesFrom(targets: PianolaSupervisedTarget[]): PianolaScopeCandidate[]
 		});
 }
 
+/**
+ * Require a complete, bounded census with unique owners and tabs. Validate native
+ * question/cursor bindings and empty-enrollment shape; malformed evidence raises a census
+ * error before ownership or delivery work.
+ */
 function assertSnapshot(snapshot: PianolaScopeSnapshot): void {
 	if (
 		snapshot.complete !== true ||
@@ -177,7 +224,17 @@ function assertSnapshot(snapshot: PianolaScopeSnapshot): void {
 				typeof tab.consult !== 'boolean' ||
 				typeof tab.ephemeral !== 'boolean' ||
 				typeof tab.busy !== 'boolean' ||
+				(tab.nativeQuestion !== undefined &&
+					(!isNativeQuestionRequest(tab.nativeQuestion) ||
+						!tab.busy ||
+						tab.nativeQuestion.cursor.agentId !== tab.agentId ||
+						tab.nativeQuestion.cursor.tabId !== tab.tabId ||
+						!sameCurrentTurnCursor(tab.nativeQuestion.cursor, tab.cursor?.native))) ||
 				typeof tab.cursorAvailable !== 'boolean' ||
+				(tab.enrollment !== undefined &&
+					(!isCurrentTurnCursor(tab.enrollment) ||
+						tab.enrollment.runId !== null ||
+						tab.enrollment.turnId !== null)) ||
 				!isPianolaScopeCursor(tab.cursor)
 		) ||
 		new Set(snapshot.tabs.map((tab) => canonicalJson([tab.agentId, tab.tabId]))).size !==
@@ -248,12 +305,26 @@ export function pianolaScopeSnapshotFromDesktop(raw: unknown): PianolaScopeSnaps
 			agentId: tab.agentId,
 			tabId: tab.tabId,
 			createdAt: tab.createdAt,
+			agentSessionId: tab.agentSessionId,
 			paused: info.paused,
 			busy: info.busy,
+			nativeQuestion: info.nativeQuestion,
 			consult: info.consult,
 			ephemeral: info.ephemeral,
-			cursorAvailable: info.cursorAvailable,
-			cursor: info.cursor,
+			enrollment: info.currentTurn?.enrollment,
+			cursorAvailable: info.currentTurn
+				? info.currentTurn.status === 'empty-enrollment' ||
+					(info.currentTurn.status === 'complete' && !!info.currentTurn.lastEntry)
+				: info.cursorAvailable,
+			cursor: info.currentTurn
+				? info.currentTurn.status === 'complete' && info.currentTurn.lastEntry
+					? {
+							...info.currentTurn.lastEntry,
+							count: info.currentTurn.entryCount!,
+							native: info.currentTurn.cursor,
+						}
+					: null
+				: info.cursor,
 		};
 	});
 	const snapshot = {
@@ -271,7 +342,7 @@ export function pianolaScopeSnapshotFromDesktop(raw: unknown): PianolaScopeSnaps
  * preserve cursors; changing an owner's parent lineage requires a baseline.
  * Only called after the ownership resolver has verified the entire chain.
  */
-function bindingFingerprint(
+export function pianolaScopeBindingFingerprint(
 	scope: PianolaScopeCandidate,
 	agentId: string,
 	owners: PianolaScopeOwner[]
@@ -295,9 +366,51 @@ function bindingFingerprint(
 	});
 }
 
+/**
+ * Compare all scope transcript evidence, including content revisions, question signatures
+ * and native cursor. Equal message counts alone cannot certify the same awaiting turn.
+ */
 function sameCursor(a: PianolaScopeCursor | null, b: PianolaScopeCursor | null): boolean {
 	return (
-		a === b || (!!a && !!b && a.id === b.id && a.count === b.count && a.textLength === b.textLength)
+		a === b ||
+		(!!a &&
+			!!b &&
+			a.id === b.id &&
+			a.count === b.count &&
+			a.textLength === b.textLength &&
+			a.contentRevision === b.contentRevision &&
+			a.contentSignature === b.contentSignature &&
+			canonicalJson(a.questionSignatures ?? null) === canonicalJson(b.questionSignatures ?? null) &&
+			a.orderMutationRevision === b.orderMutationRevision &&
+			sameCurrentTurnCursor(a.native, b.native))
+	);
+}
+
+/** Constant-size native proof, bound to the exact enrolled turn and ordered prefix.
+ * Only a proven question-free enrollment row may develop its first question.
+ * Different hashes cannot distinguish a new ask from a historical paraphrase.
+ */
+function freshNativeStream(saved: PianolaScopeCheckpointTab, cursor: PianolaScopeCursor): boolean {
+	const base = saved.baseline;
+	return !!(
+		saved.nativeStreamingBaseline &&
+		base?.native &&
+		cursor.native &&
+		base.id === cursor.id &&
+		base.count === cursor.count &&
+		typeof base.contentSignature === 'string' &&
+		typeof cursor.contentSignature === 'string' &&
+		base.contentSignature !== cursor.contentSignature &&
+		Array.isArray(base.questionSignatures) &&
+		base.questionSignatures.length === 0 &&
+		Array.isArray(cursor.questionSignatures) &&
+		cursor.questionSignatures.length === 1 &&
+		sameCurrentTurnCursor({ ...base.native, revision: cursor.native.revision }, cursor.native) &&
+		Number.isSafeInteger(cursor.contentRevision) &&
+		cursor.contentRevision! > base.native.revision &&
+		cursor.contentRevision! <= cursor.native.revision &&
+		Number.isSafeInteger(cursor.orderMutationRevision) &&
+		cursor.orderMutationRevision! <= base.native.revision
 	);
 }
 
@@ -322,21 +435,38 @@ function deliveryOutcome(result: PianolaScopeDeliveryResult): { success: boolean
 export async function runPianolaScopeCycle(
 	scopeId: string,
 	deps: PianolaScopeCycleDeps,
-	options: { dryRun: boolean; maxTabs?: number; shouldStop?: () => boolean }
+	options: { dryRun: boolean; maxTabs?: number; shouldStop?: () => boolean; sweep?: Set<string> }
 ): Promise<PianolaScopeCycleResult> {
 	const targets = deps.store.readSupervisorTargets();
 	const scopes = scopesFrom(targets);
 	const scope = scopes.find((candidate) => candidate.id === scopeId);
 	let checkpoint = deps.store.readScopeCheckpoint(scopeId);
+	// Coverage clocks/reasons may be refreshed after transcript reads. Only an
+	// enrollment/authority change needs the pre-work membership barrier.
+	const enrollmentState = (value: PianolaScopeCheckpoint): string =>
+		canonicalJson({
+			...value,
+			lastSnapshotAt: undefined,
+			nextTabIndex: undefined,
+			tabs: value.tabs.map(({ coverage: _coverage, ...tab }) => tab),
+		});
+	const enrolledAtStart = checkpoint ? enrollmentState(checkpoint) : null;
 	const result: PianolaScopeCycleResult = { status: 'suspended', iterations: [], issues: [] };
 	let persistenceFailed = false;
 	let lastPersistedStatus = checkpoint?.status;
 	let externallySuspended = false;
-	const persist = (): void => {
+	/**
+	 * Persist cycle progress while respecting a host suspension or newer enrollment. Carry
+	 * forward durable admitted intents and latch write failure so an older in-memory cycle
+	 * cannot restore send authority.
+	 */
+	const persist = (durable = false): void => {
 		try {
 			// The host may suspend the scope while this child awaits I/O. Never
 			// overwrite that pause with an older in-memory armed checkpoint.
 			const current = deps.store.readScopeCheckpoint(scopeId);
+			if ((current?.enrollmentRevision ?? 0) > (checkpoint?.enrollmentRevision ?? 0))
+				throw new Error('Scope enrollment changed; discard the old cycle and reload');
 			if (current?.status === 'suspended' && lastPersistedStatus !== 'suspended')
 				externallySuspended = true;
 			if (
@@ -346,10 +476,11 @@ export async function runPianolaScopeCycle(
 					.some((target) => target.id === scopeId && target.enabled)
 			)
 				checkpoint!.status = 'suspended';
+			const currentTabs = new Map(
+				current?.tabs.map((tab) => [canonicalJson([tab.agentId, tab.tabId]), tab])
+			);
 			for (const saved of checkpoint!.tabs) {
-				const durable = current?.tabs.find(
-					(tab) => tab.agentId === saved.agentId && tab.tabId === saved.tabId
-				);
+				const durable = currentTabs.get(canonicalJson([saved.agentId, saved.tabId]));
 				if (
 					saved.unresolvedIntent &&
 					durable?.unresolvedIntent?.decisionId === saved.unresolvedIntent.decisionId &&
@@ -357,7 +488,7 @@ export async function runPianolaScopeCycle(
 				)
 					saved.unresolvedIntent.admitted = true;
 			}
-			deps.store.writeScopeCheckpoint(checkpoint!);
+			deps.store.writeScopeCheckpoint(checkpoint!, durable);
 			lastPersistedStatus = checkpoint!.status;
 		} catch (error) {
 			persistenceFailed = true;
@@ -503,6 +634,18 @@ export async function runPianolaScopeCycle(
 			}
 			continue;
 		}
+		const firstNativeTurn =
+			!!saved?.emptyEnrollment &&
+			!!tab.enrollment &&
+			canonicalJson(saved.emptyEnrollment) === canonicalJson(tab.enrollment) &&
+			!tab.paused &&
+			!resume &&
+			!configurationChanged &&
+			!firstActivation;
+		if (!tab.enrollment || tab.paused) {
+			if (saved) delete saved.emptyEnrollment;
+		}
+		if (!tab.cursorAvailable && firstNativeTurn) continue;
 		if (!tab.cursorAvailable) {
 			// Persist even first-enrollment failures: otherwise a missing cursor
 			// disappears from the status API entirely.
@@ -533,12 +676,44 @@ export async function runPianolaScopeCycle(
 			result.issues.push(`Transcript cursor unavailable: ${tab.agentId}/${tab.tabId}`);
 			continue;
 		}
-		const binding = bindingFingerprint(scope, tab.agentId, snapshot.owners);
+		// A handover is an enrollment barrier even if an older worker overwrote
+		// its prepared checkpoint. Busy historical asks never become new work.
+		const historicalAtHandover =
+			(scope.legacyMigration !== undefined && tab.createdAt <= scope.legacyMigration.completedAt) ||
+			// A late/imported future identity is not evidence of a new current ask.
+			// Only tabs created after the last native census may expose first work.
+			(scope.selection.futureLocalAgents === true &&
+				!saved &&
+				tab.createdAt <= (checkpoint.lastSnapshotAt ?? checkpoint.activatedAt)) ||
+			// A host-prepared historical baseline stays historical on resume, even
+			// when the same assistant entry grew while its tab was busy/paused.
+			(!!saved?.baseline &&
+				saved.baselineBusy === false &&
+				tab.cursor?.id === saved.baseline.id &&
+				tab.cursor.count === saved.baseline.count);
+		const binding = pianolaScopeBindingFingerprint(scope, tab.agentId, snapshot.owners);
 		const needsBaseline =
 			firstActivation ||
 			resume ||
 			saved?.status !== 'active' ||
-			saved.bindingFingerprint !== binding;
+			saved.bindingFingerprint !== binding ||
+			(!firstNativeTurn &&
+				!!tab.cursor?.native &&
+				(!saved?.lastSeen?.native ||
+					canonicalJson({
+						...saved.lastSeen.native,
+						revision: 0,
+						runId: null,
+						turnId: null,
+						agentSessionId: null,
+					}) !==
+						canonicalJson({
+							...tab.cursor.native,
+							revision: 0,
+							runId: null,
+							turnId: null,
+							agentSessionId: null,
+						})));
 		if (!saved) {
 			// Only a genuinely new host-created tab may expose its first ask. An
 			// old/unknown timestamp, re-enrollment or ownership change baselines it.
@@ -553,8 +728,15 @@ export async function runPianolaScopeCycle(
 				agentId: tab.agentId,
 				tabId: tab.tabId,
 				bindingFingerprint: binding,
+				emptyEnrollment: tab.enrollment,
 				baseline: createdAfterActivation && !tab.paused ? null : tab.cursor,
-				baselineBusy: tab.busy && !tab.paused,
+				nativeStreamingBaseline:
+					!!tab.cursor?.native &&
+					tab.busy &&
+					!tab.paused &&
+					(firstActivation || !resume) &&
+					!historicalAtHandover,
+				baselineBusy: !tab.cursor?.native && tab.busy && !tab.paused && !historicalAtHandover,
 				lastSeen: createdAfterActivation && !tab.paused ? null : tab.cursor,
 				state:
 					createdAfterActivation && !tab.paused
@@ -569,17 +751,31 @@ export async function runPianolaScopeCycle(
 			checkpoint.tabs.push(saved);
 			savedByKey.set(key, saved);
 		} else if (needsBaseline || tab.paused) {
+			saved.emptyEnrollment = tab.enrollment;
 			saved.baseline = tab.cursor;
-			saved.baselineBusy = tab.busy && !tab.paused;
+			saved.nativeStreamingBaseline =
+				!!tab.cursor?.native &&
+				tab.busy &&
+				!tab.paused &&
+				(firstActivation || !resume) &&
+				!historicalAtHandover;
+			saved.baselineBusy = !tab.cursor?.native && tab.busy && !tab.paused && !historicalAtHandover;
 			saved.lastSeen = tab.cursor;
 			saved.bindingFingerprint = binding;
 			saved.state = initialWatchState();
 			saved.status = tab.paused ? 'suspended' : 'active';
 			// An unresolved intent survives loss of ownership, disable and close.
 		}
+		// A renewed scope cannot reuse a streaming exception from its old enrollment.
+		if (configurationChanged) saved.nativeStreamingBaseline = false;
 		// A transcript failure persists until an actual successful retry. An
 		// unchanged cursor alone must never clear the previous failure.
-		if (tab.paused || saved.coverage?.status !== 'blocked' || needsBaseline) {
+		if (
+			tab.paused ||
+			!saved.coverage ||
+			(saved.coverage.status !== 'blocked' && saved.coverage.status !== 'covered') ||
+			needsBaseline
+		) {
 			saved.coverage = {
 				observedAt: snapshot.capturedAt,
 				status: tab.paused ? 'paused' : 'covered',
@@ -600,8 +796,9 @@ export async function runPianolaScopeCycle(
 		);
 		if (
 			!tab.paused &&
-			(!tab.busy || openDecision) &&
-			(saved.coverage?.status === 'blocked' ||
+			(!tab.busy || !!tab.nativeQuestion || openDecision) &&
+			(!!tab.nativeQuestion ||
+				saved.coverage?.status === 'blocked' ||
 				!sameCursor(saved.lastSeen, tab.cursor) ||
 				saved.baselineBusy ||
 				saved.state.pendingRetry ||
@@ -616,8 +813,8 @@ export async function runPianolaScopeCycle(
 	checkpoint.coverageRegistryFingerprint = pianolaCoverageRegistryFingerprint(targets);
 	checkpoint.status = 'armed';
 	delete checkpoint.lastCycleError;
-	// Commit the entire membership/baseline before any rule, handoff or notice.
-	persist();
+	// Commit changed membership/baselines before any rule, handoff or notice.
+	if (enrollmentState(checkpoint) !== enrolledAtStart) persist(true);
 	result.status = checkpoint.status;
 	if (checkpoint.status !== 'armed') return result;
 	// Rotate over the census, not just changed tabs, so a failing/active prefix
@@ -625,15 +822,25 @@ export async function runPianolaScopeCycle(
 	const start = (checkpoint.nextTabIndex ?? 0) % Math.max(1, snapshot.tabs.length);
 	const maxTabs = Math.max(1, Math.min(100, Math.floor(options.maxTabs ?? 20)));
 	const positions = new Map(snapshot.tabs.map((tab, index) => [tab, index]));
-	working.sort(
+	const eligible = working.filter(
+		({ tab }) => !options.sweep?.has(canonicalJson([tab.agentId, tab.tabId]))
+	);
+	result.moreWork = eligible.length > maxTabs;
+	eligible.sort(
 		(a, b) =>
 			((positions.get(a.tab)! - start + snapshot.tabs.length) % snapshot.tabs.length) -
 			((positions.get(b.tab)! - start + snapshot.tabs.length) % snapshot.tabs.length)
 	);
-	for (const { tab, saved } of working.slice(0, maxTabs)) {
+	const unattempted = new Set(
+		eligible
+			.filter(({ saved }) => saved.coverage?.status !== 'blocked')
+			.map(({ tab }) => canonicalJson([tab.agentId, tab.tabId]))
+	);
+	for (const { tab, saved } of eligible.slice(0, maxTabs)) {
 		if (options.shouldStop?.() || externallySuspended) break;
+		options.sweep?.add(canonicalJson([tab.agentId, tab.tabId]));
 		checkpoint.nextTabIndex = (positions.get(tab)! + 1) % snapshot.tabs.length;
-		persist();
+		unattempted.delete(canonicalJson([tab.agentId, tab.tabId]));
 		try {
 			const target: WatchTarget = {
 				agentId: tab.agentId,
@@ -641,29 +848,60 @@ export async function runPianolaScopeCycle(
 				projectPath: snapshot.owners.find((owner) => owner.id === tab.agentId)!.cwd,
 				groupId: snapshot.owners.find((owner) => owner.id === tab.agentId)!.groupId,
 			};
-			const history = await deps.readTranscript(target);
-			const messages = history.messages;
+			const history = await deps.readTranscript(target, tab.cursor?.native);
+			const messages = [...history.messages];
 			if (
 				history.agentId !== tab.agentId ||
 				history.tabId !== tab.tabId ||
 				messages.length !== (tab.cursor?.count ?? 0) ||
 				new Set(messages.map((message) => message.id)).size !== messages.length ||
 				messages.some((message) => !message.id) ||
-				!atCursor(messages, tab.cursor) ||
-				!atCursor(messages, saved.baseline) ||
-				!atCursor(messages, saved.lastSeen) ||
-				(tab.cursor && messages[messages.length - 1]?.content.length !== tab.cursor.textLength)
+				(!tab.cursor?.native && !atCursor(messages, tab.cursor)) ||
+				(!tab.cursor?.native && !atCursor(messages, saved.baseline)) ||
+				(!tab.cursor?.native && !atCursor(messages, saved.lastSeen)) ||
+				(tab.cursor?.native &&
+					(!sameCurrentTurnCursor(history.currentTurn?.cursor, tab.cursor.native) ||
+						history.currentTurn?.lastEntry?.contentRevision !== tab.cursor.contentRevision ||
+						history.currentTurn?.lastEntry?.contentSignature !== tab.cursor.contentSignature ||
+						history.currentTurn?.lastEntry?.orderMutationRevision !==
+							tab.cursor.orderMutationRevision)) ||
+				(!tab.cursor?.native &&
+					tab.cursor &&
+					messages[messages.length - 1]?.content.length !== tab.cursor.textLength)
 			)
 				throw new Error('Transcript cursor gap or changed snapshot');
 			// Classify the full transcript so earlier assistant intent in the current
 			// turn still raises risk. Eligibility is separate: unchanged history must
 			// never become actionable just because a tool/system entry was appended.
-			const offset = saved.baseline?.count ?? 0;
+			const offset =
+				tab.cursor?.native &&
+				saved.baseline?.native &&
+				tab.cursor.native.turnId !== saved.baseline.native.turnId
+					? 0
+					: (saved.baseline?.count ?? 0);
+			if (
+				tab.cursor?.native &&
+				saved.baseline?.native &&
+				tab.cursor.native.turnId === saved.baseline.native.turnId &&
+				messages[saved.baseline.count - 1]?.id !== saved.baseline.id
+			)
+				throw new Error('Enrollment boundary lost in current turn');
 			const actionableIds = new Set(messages.slice(offset).map((message) => message.id));
-			if (saved.baselineBusy && saved.baseline) {
+			if (
+				(saved.baselineBusy || (tab.cursor && freshNativeStream(saved, tab.cursor))) &&
+				saved.baseline
+			) {
 				const streamed = messages[offset - 1];
 				if (streamed?.id === saved.baseline.id && streamed.role === 'assistant')
 					actionableIds.add(streamed.id);
+			}
+			// A native request is its own single-use question generation. This is a
+			// classification projection, never a fabricated captured transcript entry.
+			if (tab.nativeQuestion) {
+				if (messages.some((m) => m.id === tab.nativeQuestion!.requestId))
+					throw new Error('Request/log identity collision');
+				messages.push(nativeQuestionMessage(tab.nativeQuestion));
+				actionableIds.add(tab.nativeQuestion.requestId);
 			}
 			// Settle earlier decisions before classifying another ask. Authorship is
 			// established only by the controlled resolution path, never guessed.
@@ -683,7 +921,8 @@ export async function runPianolaScopeCycle(
 				// only an unsent answer (or an already delivered judgment), never an
 				// answer whose delivery may have reached the recipient.
 				if (
-					life.guard.configurationFingerprint !== configurationFingerprint &&
+					(life.guard.configurationFingerprint !== configurationFingerprint ||
+						(life.guard.enrollmentRevision ?? 0) !== (checkpoint.enrollmentRevision ?? 0)) &&
 					life.guard.bindingFingerprint === saved.bindingFingerprint &&
 					life.managerAgentId === scope.managerAgentId &&
 					!life.acknowledgedAt &&
@@ -735,7 +974,7 @@ export async function runPianolaScopeCycle(
 						sameCursor(currentTab.cursor, tab.cursor) &&
 						owner?.kind === 'scope' &&
 						owner.scopeId === scopeId &&
-						bindingFingerprint(currentScope, tab.agentId, current.owners) ===
+						pianolaScopeBindingFingerprint(currentScope, tab.agentId, current.owners) ===
 							saved.bindingFingerprint &&
 						!options.shouldStop?.() &&
 						!externallySuspended &&
@@ -744,7 +983,11 @@ export async function runPianolaScopeCycle(
 						observed = updatePianolaDecision(
 							observed,
 							{
-								guard: { ...life.guard, configurationFingerprint },
+								guard: {
+									...life.guard,
+									configurationFingerprint,
+									enrollmentRevision: checkpoint.enrollmentRevision,
+								},
 							},
 							deps.watch.now()
 						);
@@ -798,24 +1041,51 @@ export async function runPianolaScopeCycle(
 					? 'Reconcile the native receipt or recipient transcript before any retry'
 					: 'Continue bounded transcript monitoring',
 			};
-			if (saved.unresolvedIntent || pending || tab.busy) {
+			if (saved.unresolvedIntent || pending || (tab.busy && !tab.nativeQuestion)) {
+				// Native decision lifecycle/deadline owns an in-flight handoff.
+				// A stale watcher retry must not keep waking an acknowledged decision.
+				saved.nextWatchAt = undefined;
 				saved.lastSeen = tab.cursor;
-				persist();
+				if (saved.unresolvedIntent || pending) persist();
 				if (saved.unresolvedIntent)
 					result.issues.push(`Delivery outcome unknown: ${tab.agentId}/${tab.tabId}`);
 				continue;
 			}
+			if (
+				saved.state.pendingRetry &&
+				saved.nextWatchAt !== undefined &&
+				Date.parse(deps.watch.now()) < saved.nextWatchAt
+			)
+				continue;
 			let latestRecord: PianolaDecisionRecord | undefined;
+			/**
+			 * Capture the exact decision, enrollment, binding and transcript evidence required for
+			 * delivery. Native questions also pin the request and rule revision used to authorize an
+			 * answer.
+			 */
 			const deliveryGuard = (record: PianolaDecisionRecord): PianolaScopeDeliveryGuard => ({
 				scopeId,
+				enrollmentRevision: checkpoint.enrollmentRevision,
 				configurationFingerprint,
 				bindingFingerprint: saved.bindingFingerprint!,
 				agentId: tab.agentId,
 				tabId: tab.tabId,
 				messageId: record.classification.evidence.messageId!,
 				decisionId: record.id,
+				...(tab.nativeQuestion
+					? {
+							nativeQuestion: tab.nativeQuestion,
+							ruleRevision:
+								latestRecord?.lifecycle?.guard.ruleRevision ?? fingerprint(deps.watch.readRules()),
+						}
+					: {}),
 				cursor: tab.cursor!,
 			});
+			/**
+			 * Recheck actionable post-baseline evidence against a fresh registry and native census
+			 * before delivery. Reject changed ownership, pause, cursor or question rules and return a
+			 * guard bound to the current decision.
+			 */
 			const guard = async (): Promise<PianolaScopeDeliveryGuard> => {
 				const messageId = latestRecord?.classification.evidence.messageId;
 				if (
@@ -839,7 +1109,12 @@ export async function runPianolaScopeCycle(
 					current.capturedAt < snapshot.capturedAt ||
 					pianolaScopeConfigurationFingerprint(currentScope) !== configurationFingerprint ||
 					!currentTab ||
-					currentTab.busy ||
+					(currentTab.busy && !tab.nativeQuestion) ||
+					(tab.nativeQuestion &&
+						(canonicalJson(currentTab.nativeQuestion ?? null) !==
+							canonicalJson(tab.nativeQuestion) ||
+							fingerprint(deps.watch.readRules()) !==
+								latestRecord!.lifecycle?.guard.ruleRevision)) ||
 					!currentTab.cursorAvailable ||
 					!sameCursor(currentTab.cursor, tab.cursor)
 				)
@@ -853,19 +1128,29 @@ export async function runPianolaScopeCycle(
 				if (
 					winner.kind !== 'scope' ||
 					winner.scopeId !== scopeId ||
-					bindingFingerprint(currentScope, tab.agentId, current.owners) !== saved.bindingFingerprint
+					pianolaScopeBindingFingerprint(currentScope, tab.agentId, current.owners) !==
+						saved.bindingFingerprint
 				)
 					throw new Error('Scope ownership changed before delivery');
 				saved.unresolvedIntent = { decisionId: latestRecord!.id, messageId };
-				persist();
+				persist(true);
 				return {
 					scopeId,
+					enrollmentRevision: checkpoint.enrollmentRevision,
 					configurationFingerprint,
 					bindingFingerprint: saved.bindingFingerprint!,
 					agentId: tab.agentId,
 					tabId: tab.tabId,
 					messageId,
 					decisionId: latestRecord!.id,
+					...(tab.nativeQuestion
+						? {
+								nativeQuestion: tab.nativeQuestion,
+								ruleRevision:
+									latestRecord!.lifecycle?.guard.ruleRevision ??
+									fingerprint(deps.watch.readRules()),
+							}
+						: {}),
 					cursor: tab.cursor,
 				};
 			};
@@ -875,6 +1160,11 @@ export async function runPianolaScopeCycle(
 				saved.state,
 				{
 					...deps.watch,
+					/**
+					 * Journal the worker's decision without overwriting a native admission or response received
+					 * during an await. Preserve revision checks and mark definite pre-admission refusal rejected
+					 * so it is not misread as unknown delivery.
+					 */
 					recordDecision: (record) => {
 						const current = deps.store
 							.readDecisions()
@@ -883,17 +1173,22 @@ export async function runPianolaScopeCycle(
 						// must not overwrite a manager response received during its await.
 						if (
 							current?.lifecycle &&
-							(current.deliveryStatus === 'admitted' || current.lifecycle.delivery !== 'intent')
+							(current.lifecycle.status === 'done' ||
+								current.deliveryStatus === 'admitted' ||
+								current.lifecycle.delivery !== 'intent')
 						) {
 							latestRecord = current;
 							return;
 						}
+						const expectedRevision =
+							latestRecord?.id === record.id ? latestRecord.mutationRevision : undefined;
 						latestRecord = startPianolaDecision(
 							record,
 							deliveryGuard(record),
 							scope.managerAgentId,
 							snapshot.owners.find((owner) => owner.id === tab.agentId)?.groupId ?? null
 						);
+						latestRecord.mutationRevision = expectedRevision;
 						// A definitive refusal before native admission has no native
 						// outcome writer. Keep it retryable instead of inventing an
 						// interrupted/unknown delivery on the next poll.
@@ -912,7 +1207,16 @@ export async function runPianolaScopeCycle(
 								deliveryOutcome(await deps.requestJudgment!(request, await guard()))
 						: undefined,
 				},
-				{ ...options, canActOnMessage: (messageId) => actionableIds.has(messageId) }
+				{
+					...options,
+					canActOnMessage: (messageId) => actionableIds.has(messageId),
+					observedRisk: tab.cursor?.native
+						? maxRisk(
+								history.currentTurn?.observedRisk ?? 'high',
+								tab.nativeQuestion?.observedRisk ?? 'low'
+							)
+						: undefined,
+				}
 			);
 			if (iteration.result.record?.error) {
 				saved.coverage = {
@@ -926,10 +1230,14 @@ export async function runPianolaScopeCycle(
 				};
 			}
 			saved.state = iteration.state;
+			saved.nextWatchAt = iteration.state.pendingRetry
+				? Date.parse(deps.watch.now()) + 5000
+				: undefined;
 			saved.baselineBusy = false;
 			saved.lastSeen = tab.cursor;
 			saved.unresolvedIntent = null;
-			persist();
+			if (iteration.result.record || saved.state.pendingRetry || saved.state.pendingHandoff)
+				persist(true);
 			result.iterations.push({ agentId: tab.agentId, tabId: tab.tabId, result: iteration.result });
 		} catch (error) {
 			if (saved.unresolvedIntent) {
@@ -938,6 +1246,8 @@ export async function runPianolaScopeCycle(
 					.find((candidate) => candidate.id === saved.unresolvedIntent!.decisionId);
 				if (
 					record?.lifecycle &&
+					record.lifecycle.status !== 'done' &&
+					record.lifecycle.status !== 'paused' &&
 					(record.lifecycle.delivery === 'intent' || record.lifecycle.delivery === 'unknown')
 				)
 					deps.watch.recordDecision(
@@ -969,11 +1279,36 @@ export async function runPianolaScopeCycle(
 					? 'Reconcile the native receipt or recipient transcript before any retry'
 					: 'Restore transcript access/cursor consistency; worker retries this tab on the next cycle',
 			};
-			persist();
 			// Isolate an unavailable/stale tab, preserving any durable uncertain
 			// intent, so another healthy tab in this scope can still make progress.
 		}
 	}
+	persist();
+	const now = Date.parse(deps.watch.now());
+	const due = [
+		...checkpoint.tabs
+			.filter((tab) => tab.status === 'active' && !!tab.state.pendingRetry)
+			.map((tab) => ({ at: tab.nextWatchAt, key: canonicalJson([tab.agentId, tab.tabId]) })),
+		...deps.store
+			.readDecisions()
+			.filter(
+				(record) =>
+					record.lifecycle?.guard.scopeId === scopeId &&
+					record.lifecycle.status === 'mira_processing'
+			)
+			.map((record) => ({
+				at: record.lifecycle?.deadlineAt,
+				key: canonicalJson([record.agentId, record.tabId]),
+			})),
+	].flatMap(({ at, key }) => {
+		if (at === undefined) return [];
+		if (at > now) return [at];
+		// Only healthy work omitted by the bounded sweep needs another drain.
+		// Due work already attempted (including failed reads) uses the existing
+		// recovery census; a past deadline alone must never drive a 50ms loop.
+		return unattempted.has(key) ? [now + 50] : [];
+	});
+	if (due.length) result.nextDueAt = Math.min(...due);
 	return result;
 }
 
@@ -1024,7 +1359,13 @@ export function validatePianolaScopeDelivery(
 		scope.selection.mode !== 'agents-and-groups' ||
 		pianolaScopeConfigurationFingerprint(scope) !== guard.configurationFingerprint ||
 		!tab ||
-		tab.busy ||
+		(tab.busy && !guard.nativeQuestion) ||
+		(guard.nativeQuestion !== undefined &&
+			(!isNativeQuestionRequest(guard.nativeQuestion) ||
+				!tab.busy ||
+				canonicalJson(tab.nativeQuestion ?? null) !== canonicalJson(guard.nativeQuestion) ||
+				guard.messageId !== guard.nativeQuestion.requestId ||
+				guard.ruleRevision !== fingerprint(store.readRules()))) ||
 		!tab.cursorAvailable ||
 		!sameCursor(tab.cursor, guard.cursor)
 	)
@@ -1038,7 +1379,7 @@ export function validatePianolaScopeDelivery(
 	if (
 		owner.kind !== 'scope' ||
 		owner.scopeId !== scope.id ||
-		bindingFingerprint(scope, tab.agentId, snapshot.owners) !== guard.bindingFingerprint
+		pianolaScopeBindingFingerprint(scope, tab.agentId, snapshot.owners) !== guard.bindingFingerprint
 	)
 		throw new Error('Scope ownership changed');
 	const checkpoint = store.readScopeCheckpoint(scope.id);
@@ -1048,9 +1389,17 @@ export function validatePianolaScopeDelivery(
 	if (
 		!checkpoint ||
 		checkpoint.status !== 'armed' ||
+		(checkpoint.enrollmentRevision ?? 0) !== (guard.enrollmentRevision ?? 0) ||
 		checkpoint.configurationFingerprint !== guard.configurationFingerprint ||
 		snapshot.capturedAt < (checkpoint.lastSnapshotAt ?? checkpoint.activatedAt) ||
 		!saved ||
+		(!guard.nativeQuestion &&
+			(requireIntent || !!guard.cursor.native) &&
+			!saved.baselineBusy &&
+			!freshNativeStream(saved, guard.cursor) &&
+			saved.baseline !== null &&
+			guard.cursor.count <= saved.baseline.count &&
+			(!guard.cursor.native || guard.cursor.native.turnId === saved.baseline.native?.turnId)) ||
 		saved.status !== 'active' ||
 		saved.bindingFingerprint !== guard.bindingFingerprint ||
 		(requireIntent &&

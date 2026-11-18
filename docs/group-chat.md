@@ -125,6 +125,8 @@ agent is still busy after 15 minutes, the chat says so and the turn moves on wit
 - **Let the moderator work** - It may take multiple rounds for complex questions
 - **Mix local and remote** - Combine agents across machines for maximum coverage
 - **Hyphenated names for spaces** - If your session name has spaces, use hyphens in @mentions (e.g., `@My-Project` for "My Project")
+- **Renaming is safe** - A participant stays linked to its agent by ID, so renaming the agent does not break the chat. Mention it by its old or new name, or by its full agent ID (`@8dac9050-cc32-4bfa-a0e3-33bd62d8a503`)
+- **Add without a mention** - `maestro-cli group-chat add <chat> <agent>` adds an agent by ID, ID prefix, or name
 
 ## Managing Group Chats
 
@@ -141,10 +143,13 @@ Right-click on a group chat in the sidebar to access the context menu:
 The Group Chat input supports the same features as direct agent conversations:
 
 - **Read-only mode** - Toggle to prevent agents from modifying files (participants receive the mode flag)
-- **Image attachments** - Attach images to include in your message
+- **Image attachments** - Attach images to include in your message. Only when the moderator's provider can read images: otherwise the Attach Image button is hidden, a pasted or dropped image is refused with a warning, and a message with staged images is not sent until you remove them or switch to a moderator that can read them
+- **@mention pills** - An `@mention` of an agent becomes a pill as you type, the same as in an agent's composer
 - **Prompt Composer** - Open the full prompt composer with `Cmd+Shift+P` / `Ctrl+Shift+P`
 - **Enter/Cmd+Enter toggle** - Switch between send behaviors
 - **Message queuing** - Messages are queued if the moderator or agents are busy
+- **Quit when idle** - When you choose **Quit when idle** in the quit confirmation, the room composer shows the same waiting pill as an agent's composer, and a busy room counts as work still running
+- **Phone layout** - On a phone the room composer starts folded behind a handle. The handle shows a pulsing dot while the room is busy and a pencil when you have unsent text or images. Tap or swipe up to open it, tap or swipe down to fold it
 
 ### The message queue
 

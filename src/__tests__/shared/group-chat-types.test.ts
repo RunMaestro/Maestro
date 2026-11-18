@@ -7,6 +7,9 @@
 import { describe, it, expect } from 'vitest';
 import {
 	findSessionForParticipantName,
+	findAgentByGuidMention,
+	findParticipantSourceAgent,
+	isAgentGuid,
 	findUniqueMentionMatch,
 	getMentionNameForContext,
 	getMentionMatchPriority,
@@ -232,6 +235,46 @@ describe('getMentionNameForContext', () => {
 // ============================================================================
 // Type Definitions - Compile-time checks
 // ============================================================================
+
+describe('agent GUID references', () => {
+	const ID = '8dac9050-cc32-4bfa-a0e3-33bd62d8a503';
+	const agents = [
+		{ id: ID, name: 'CyberForce Isabelle' },
+		{ id: 'aaaf249a-aa54-4114-93f6-b173c2495dcf', name: 'Archer' },
+	];
+
+	it('recognizes only a full GUID', () => {
+		expect(isAgentGuid(ID)).toBe(true);
+		expect(isAgentGuid(ID.toUpperCase())).toBe(true);
+		expect(isAgentGuid('8dac9050')).toBe(false);
+		expect(isAgentGuid('Archer')).toBe(false);
+	});
+
+	it('finds an agent by a GUID mention, ignoring markdown and trailing punctuation', () => {
+		expect(findAgentByGuidMention(`**${ID}**:`, agents)?.name).toBe('CyberForce Isabelle');
+		expect(findAgentByGuidMention('8dac9050', agents)).toBeUndefined();
+	});
+
+	it('links a participant by GUID, so a rename keeps the link and a delete breaks it', () => {
+		const participant = { name: 'Isabelle Quinn', sourceSessionId: ID };
+		expect(findParticipantSourceAgent(participant, agents)?.name).toBe('CyberForce Isabelle');
+		// A different agent that took the old name is never borrowed.
+		expect(
+			findParticipantSourceAgent(participant, [{ id: 'other', name: 'Isabelle Quinn' }])
+		).toBeUndefined();
+	});
+
+	it('falls back to a conservative name match for a participant with no GUID', () => {
+		expect(findParticipantSourceAgent({ name: 'Archer' }, agents)?.id).toBe(
+			'aaaf249a-aa54-4114-93f6-b173c2495dcf'
+		);
+		expect(
+			findParticipantSourceAgent({ name: 'Review Bot [Linux]' }, [
+				{ id: 'r1', name: 'Review Bot (Linux)' },
+			])
+		).toBeUndefined();
+	});
+});
 
 describe('GroupChatParticipant type', () => {
 	it('should allow valid participant objects', () => {

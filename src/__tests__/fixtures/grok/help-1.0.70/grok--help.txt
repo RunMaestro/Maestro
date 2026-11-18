@@ -1,0 +1,119 @@
+Grok Build TUI
+
+Usage: grok [OPTIONS] [PROMPT] [COMMAND]
+
+Arguments:
+  [PROMPT]  Initial prompt for the interactive session
+
+Options:
+      --add-dir <DIR>
+          Also work in this folder, beside the working directory (repeatable)
+      --agent <NAME>
+          Agent name or definition file path
+      --agents <JSON>
+          Inline subagent definitions as JSON
+      --allow <RULE>
+          Permission allow rule (compat aliases: --allowedTools, --allowed-tools)
+      --always-approve
+          Auto-approve all tool executions
+  -c, --continue
+          Continue the most recent session for the current working directory
+      --cwd <CWD>
+          Working directory
+      --debug
+          Enable debug logging
+      --debug-file <FILE>
+          Write debug logs to FILE
+      --deny <RULE>
+          Permission deny rule (compat alias: --disallowedTools)
+      --disable-web-search
+          Disable web search and web fetch tools
+      --disallowed-tools <TOOLS>
+          Built-in tools to remove (comma-separated)
+      --fork-session
+          When resuming, create a new session ID instead of reusing the original
+      --fullscreen
+          Open in the standard fullscreen TUI for this session
+  -h, --help
+          Print help (see more with 'grok help')
+      --include-partial-messages
+          Emit incremental text and thinking deltas alongside whole messages
+      --json-schema <SCHEMA>
+          JSON Schema for structured output
+      --leader-socket <PATH>
+          Use a custom leader socket path instead of the default `~/.grok/leader.sock`
+  -m, --model <MODEL>
+          Model ID to use
+      --max-turns <N>
+          Maximum number of agent turns
+      --minimal
+          Experimental: scrollback-native rendering
+      --no-alt-screen
+          Run inline instead of using the terminal alternate screen
+      --no-plan
+          Disable plan mode
+      --no-subagents
+          Disable subagent spawning
+      --oauth
+          Force browser (loopback) login when the welcome screen authenticates
+      --output-format <OUTPUT_FORMAT>
+          Output format for headless mode [default: plain] [possible values: plain, json, streaming-json, streaming-messages-json]
+  -p, --single <PROMPT>
+          Single-turn prompt. Prints the response to stdout and exits
+      --permission-mode <MODE>
+          Permission mode [possible values: default, acceptEdits, auto, dontAsk, bypassPermissions, plan]
+      --prompt-file <PATH>
+          Single-turn prompt from a file
+      --prompt-json <JSON>
+          Single-turn prompt as JSON content blocks
+  -r, --resume [<SESSION_ID_OR_TITLE>]
+          Resume a session by ID or title, or the most recent if omitted
+      --reasoning-effort <EFFORT>
+          Reasoning effort for reasoning models [aliases: --effort]
+      --restore-code
+          Restore the original session's repository snapshot when resuming
+      --rules <RULES>
+          Extra rules to append to the system prompt
+  -s, --session-id <SESSION_ID>
+          Use a specific session UUID for a new conversation
+      --sandbox <PROFILE>
+          Sandbox profile for filesystem and network access [env: GROK_SANDBOX=]
+      --system-prompt-override <PROMPT>
+          Override the agent's system prompt (compat alias: --system-prompt)
+      --tools <TOOLS>
+          Built-in tools to allow (comma-separated)
+  -v, --version
+          Print version
+      --verbatim
+          Send the prompt exactly as given
+  -w, --worktree [<WORKTREE>]
+          Start the session in a new git worktree, optionally named
+      --worktree-ref <WORKTREE_REF>
+          Branch, tag, or commit to base the worktree on (with `--worktree`) [aliases: --ref]
+
+Commands:
+  agent        Run Grok without the interactive UI
+  clone        Lazy-clone a git repository via grove (NFS on macOS, FUSE on Linux)
+  completions  Generate shell completion scripts (bash, zsh, fish, powershell, ...)
+  dashboard    Open the Agent Dashboard view at startup
+  doctor       Check terminal, clipboard, color, and input support without starting Grok
+  du           Show what the grok home (~/.grok) uses on disk [aliases: disk-usage]
+  export       Export a session transcript as Markdown
+  help         Print this message or the help of the given subcommand(s)
+  inspect      Show the configuration Grok discovers for this directory
+  leader       Manage running leader processes
+  login        Sign in to Grok
+  logout       Sign out and clear cached credentials
+  mcp          Manage MCP server configurations
+  memory       Manage cross-session memory
+  models       List available models and exit
+  plugin       Manage plugins and marketplace sources
+  sessions     List, search, or restore sessions
+  setup        Fetch and install managed configuration
+  trace        Export or upload session trace data
+  update       Check for updates or install a specific version
+  usage        Print persisted token and cost usage for a session
+  version      Print version information [aliases: v]
+  worker       Run this machine as a Cursor private worker
+  worktree     Manage git worktrees
+  wrap         Run any command with local clipboard support

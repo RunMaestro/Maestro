@@ -5,8 +5,10 @@
  * - Renders one card per non-terminal session
  * - Status dot color reflects session state (idle/busy/error/other)
  * - Worktree children show the WT badge, dashed border, and branch row
- * - Query count comes from bySessionByDay when present, falls back to byAgent
- * - Sparklines render with per-session counts (accent color for worktrees)
+ * - Query count comes from the agent's own bySessionByDay rows only (no
+ *   provider-total fallback)
+ * - Sparklines cover the last 7 calendar days, zero-filled
+ * - The default sort is Queries
  * - Empty / terminal-only session arrays render nothing
  * - Staggered card-enter animation delays are applied
  * - The fuzzy agent filter narrows cards live and clears from the ESC pill
@@ -15,8 +17,9 @@
  *   and offers a Provider sort
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { posix } from 'node:path';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { AgentOverviewCards } from '../../../../renderer/components/UsageDashboard/AgentOverviewCards';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session } from '../../../../renderer/types';
@@ -24,6 +27,8 @@ import { THEMES } from '../../../../shared/themes';
 import { ALL_PROFILES_VALUE } from '../../../../shared/providerProfiles';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import { AGENT_TILE_SCALE_KEY } from '../../../../renderer/components/UsageDashboard/tileScale';
+import * as homeDir from '../../../../renderer/utils/homeDir';
+import { ipcCache } from '../../../../renderer/services/ipcWrapper';
 
 // The agent filter registers a layer while it holds text so Escape clears the
 // box instead of closing the dashboard. Stub the stack so the component can
@@ -63,25 +68,24 @@ const buildSession = (overrides: Partial<Session>): Session =>
 		...overrides,
 	}) as Session;
 
-const buildData = (overrides: Partial<StatsAggregation> = {}): StatsAggregation => ({
-	totalQueries: 0,
-	totalDuration: 0,
-	avgDuration: 0,
-	byAgent: {},
-	bySource: { user: 0, auto: 0 },
-	byLocation: { local: 0, remote: 0 },
-	byDay: [],
-	byHour: [],
-	totalSessions: 0,
-	sessionsByAgent: {},
-	sessionsByDay: [],
-	avgSessionDuration: 0,
-	byAgentByDay: {},
-	bySessionByDay: {},
-	bySessionSource: {},
-	bySessionLastQuery: {},
-	...overrides,
-});
+const buildData = (overrides: Partial<StatsAggregation> = {}): StatsAggregation =>
+	({
+		totalQueries: 0,
+		totalDuration: 0,
+		avgDuration: 0,
+		byAgent: {},
+		bySource: { user: 0, auto: 0 },
+		byLocation: { local: 0, remote: 0 },
+		byDay: [],
+		byHour: [],
+		totalSessions: 0,
+		byAgentByDay: {},
+		bySessionByDay: {},
+		bySessionSource: {},
+		bySessionLastQuery: {},
+		window: { startYmd: '2024-12-15', endYmd: '2024-12-21' },
+		...overrides,
+	}) as StatsAggregation;
 
 describe('AgentOverviewCards', () => {
 	beforeEach(() => {
@@ -215,7 +219,8 @@ describe('AgentOverviewCards', () => {
 		expect(screen.getByTestId('agent-card-query-count').textContent).toBe('20');
 	});
 
-	it('falls back to byAgent[toolType] when bySessionByDay has no entry', () => {
+	it('shows 0, not the provider total, for the only agent of a provider with no rows', () => {
+		// The provider's 42 queries belong to other (possibly deleted) agents.
 		const sessions: Session[] = [buildSession({ id: 's1', name: 'Alpha' })];
 		const data = buildData({
 			byAgent: { 'claude-code': { count: 42, duration: 0 } },
@@ -223,7 +228,34 @@ describe('AgentOverviewCards', () => {
 
 		render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
 
-		expect(screen.getByTestId('agent-card-query-count').textContent).toBe('42');
+		expect(screen.getByTestId('agent-card-query-count').textContent).toBe('0');
+	});
+
+	it('keeps the count when a group filter leaves one agent of a provider', () => {
+		const sessions: Session[] = [
+			buildSession({ id: 's1', name: 'Alpha', groupId: 'g1' }),
+			buildSession({ id: 's2', name: 'Beta', groupId: 'g2' }),
+		];
+		const data = buildData({
+			byAgent: { 'claude-code': { count: 42, duration: 0 } },
+			bySessionByDay: { s2: [{ date: '2024-12-21', count: 42, duration: 0 }] },
+		});
+
+		render(
+			<AgentOverviewCards
+				sessions={sessions}
+				data={data}
+				theme={theme}
+				groups={[
+					{ id: 'g1', name: 'One' },
+					{ id: 'g2', name: 'Two' },
+				]}
+			/>
+		);
+		fireEvent.click(screen.getByLabelText('Filter agents by group'));
+		fireEvent.click(screen.getByRole('option', { name: 'One' }));
+
+		expect(screen.getByTestId('agent-card-query-count').textContent).toBe('0');
 	});
 
 	it('shows 0 instead of duplicating the provider total when multiple sessions share a provider', () => {
@@ -272,132 +304,20 @@ describe('AgentOverviewCards', () => {
 		expect(card.querySelector('[data-testid="sparkline-empty"]')).not.toBeNull();
 	});
 
-	describe('Drill-down filter highlight', () => {
-		it('does not highlight any card when activeFilterKey is null', () => {
-			const sessions: Session[] = [
-				buildSession({ id: 's1', name: 'Alpha', toolType: 'claude-code' }),
-				buildSession({ id: 's2', name: 'Beta', toolType: 'codex' }),
-			];
-
-			render(
-				<AgentOverviewCards
-					sessions={sessions}
-					data={buildData()}
-					theme={theme}
-					activeFilterKey={null}
-				/>
-			);
-
-			const cards = screen.getAllByTestId('agent-card');
-			cards.forEach((card) => {
-				expect(card.dataset.selected).toBeUndefined();
-				expect(card.style.border).not.toContain('2px');
-			});
+	it('zero-fills the sparkline over the last 7 calendar days', () => {
+		// One active day 30 days before the window end: outside the 7-day window,
+		// so the sparkline is flat even though the count covers it.
+		const sessions: Session[] = [buildSession({ id: 's1', name: 'Alpha' })];
+		const data = buildData({
+			bySessionByDay: { s1: [{ date: '2024-11-21', count: 5, duration: 0 }] },
+			window: { startYmd: '2024-11-01', endYmd: '2024-12-21' },
 		});
 
-		it('highlights only the parent card whose toolType matches a provider key', () => {
-			const sessions: Session[] = [
-				buildSession({ id: 's1', name: 'Claude', toolType: 'claude-code' }),
-				buildSession({ id: 's2', name: 'Codex', toolType: 'codex' }),
-				buildSession({
-					id: 's3',
-					name: 'Claude WT',
-					toolType: 'claude-code',
-					parentSessionId: 's1',
-					worktreeBranch: 'feature/x',
-				}),
-			];
+		render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
 
-			render(
-				<AgentOverviewCards
-					sessions={sessions}
-					data={buildData()}
-					theme={theme}
-					activeFilterKey="claude-code"
-				/>
-			);
-
-			const cardByName = (name: string) =>
-				screen.getByText(name).closest('[data-testid="agent-card"]') as HTMLElement;
-
-			// Parent claude-code card should be selected
-			const parent = cardByName('Claude');
-			expect(parent.dataset.selected).toBe('true');
-			expect(parent.style.border).toBe(`2px solid ${hexToRgb(theme.colors.accent)}`);
-			// codex card should not be selected
-			expect(cardByName('Codex').dataset.selected).toBeUndefined();
-			// Worktree of claude-code should NOT match the bare provider key
-			const worktree = cardByName('Claude WT');
-			expect(worktree.dataset.selected).toBeUndefined();
-			expect(worktree.style.border).toContain('dashed');
-		});
-
-		it('highlights only worktree cards when filter key has __worktree suffix', () => {
-			const sessions: Session[] = [
-				buildSession({ id: 'p1', name: 'Claude Parent', toolType: 'claude-code' }),
-				buildSession({
-					id: 'wt1',
-					name: 'Claude WT',
-					toolType: 'claude-code',
-					parentSessionId: 'p1',
-					worktreeBranch: 'feature/x',
-				}),
-			];
-
-			render(
-				<AgentOverviewCards
-					sessions={sessions}
-					data={buildData()}
-					theme={theme}
-					activeFilterKey="claude-code__worktree"
-				/>
-			);
-
-			const cards = screen.getAllByTestId('agent-card');
-			// Parent should NOT be highlighted by the worktree key
-			expect(cards[0].dataset.selected).toBeUndefined();
-			// Worktree card should be highlighted
-			expect(cards[1].dataset.selected).toBe('true');
-			expect(cards[1].style.border).toBe(`2px solid ${hexToRgb(theme.colors.accent)}`);
-		});
-
-		it('highlights a single card when filter key matches the session id', () => {
-			const sessions: Session[] = [
-				buildSession({ id: 's1', name: 'Alpha', toolType: 'claude-code' }),
-				buildSession({ id: 's2', name: 'Beta', toolType: 'claude-code' }),
-			];
-
-			render(
-				<AgentOverviewCards
-					sessions={sessions}
-					data={buildData()}
-					theme={theme}
-					activeFilterKey="s2"
-				/>
-			);
-
-			const cards = screen.getAllByTestId('agent-card');
-			expect(cards[0].dataset.selected).toBeUndefined();
-			expect(cards[1].dataset.selected).toBe('true');
-		});
-
-		it('highlights nothing when the filter key does not match any session', () => {
-			const sessions: Session[] = [
-				buildSession({ id: 's1', name: 'Alpha', toolType: 'claude-code' }),
-			];
-
-			render(
-				<AgentOverviewCards
-					sessions={sessions}
-					data={buildData()}
-					theme={theme}
-					activeFilterKey="opencode"
-				/>
-			);
-
-			const cards = screen.getAllByTestId('agent-card');
-			expect(cards[0].dataset.selected).toBeUndefined();
-		});
+		const card = screen.getByTestId('agent-card');
+		expect(card.querySelector('[data-testid="sparkline-empty"]')).not.toBeNull();
+		expect(screen.getByTestId('agent-card-query-count').textContent).toBe('5');
 	});
 
 	describe('Created / age', () => {
@@ -520,12 +440,12 @@ describe('AgentOverviewCards', () => {
 			expect(pctIn('Beta').textContent).toBe('20%');
 		});
 
-		it('shows an em-dash when the session has no recorded queries', () => {
+		it('shows a hyphen placeholder when the session has no recorded queries', () => {
 			const sessions: Session[] = [buildSession({ id: 's1', name: 'Alpha' })];
 
 			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
 
-			expect(screen.getByTestId('agent-card-auto-pct').textContent).toBe('\u2014');
+			expect(screen.getByTestId('agent-card-auto-pct').textContent).toBe('-');
 		});
 
 		it('sorts cards by auto % descending and sinks no-data sessions to the bottom', () => {
@@ -553,12 +473,31 @@ describe('AgentOverviewCards', () => {
 	});
 
 	describe('Sort highlight', () => {
-		it('does not highlight any stat under the default Name sort', () => {
+		it('defaults to the Queries sort and highlights the query count', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 's1', name: 'Alpha' }),
+				buildSession({ id: 's2', name: 'Beta' }),
+			];
+			const data = buildData({
+				bySessionByDay: { s2: [{ date: '2024-12-21', count: 3, duration: 0 }] },
+			});
+
+			render(<AgentOverviewCards sessions={sessions} data={data} theme={theme} />);
+
+			const names = screen.getAllByTestId('agent-card').map((c) => c.textContent);
+			expect(names[0]).toContain('Beta');
+			expect(
+				(screen.getAllByTestId('agent-card-query-count')[0] as HTMLElement).dataset.highlighted
+			).toBe('true');
+		});
+
+		it('does not highlight any stat under the Name sort', () => {
 			const sessions: Session[] = [
 				buildSession({ id: 's1', name: 'Alpha', createdAt: Date.now() - 60_000 }),
 			];
 
 			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+			fireEvent.click(screen.getByTestId('agent-overview-sort-name'));
 
 			expect(
 				(screen.getByTestId('agent-card-query-count') as HTMLElement).dataset.highlighted
@@ -698,12 +637,13 @@ describe('AgentOverviewCards', () => {
 			expect(names[0]).toContain('acappella');
 		});
 
-		it('ranks the best match first under the default Name sort', () => {
+		it('ranks the best match first under the Name sort', () => {
 			const sessions: Session[] = [
 				buildSession({ id: 's1', name: 'Backups' }),
 				buildSession({ id: 's2', name: 'Bug Bounty' }),
 			];
 			render(<AgentOverviewCards sessions={sessions} data={buildData()} theme={theme} />);
+			fireEvent.click(screen.getByTestId('agent-overview-sort-name'));
 
 			// Alphabetically Backups leads; "bug" is a prefix match on Bug Bounty.
 			typeFilter('bug');
@@ -754,8 +694,8 @@ describe('AgentOverviewCards', () => {
 		});
 
 		it('leaves query counts untouched by the filter', () => {
-			// Two claude-code sessions with no per-session breakdown: the provider
-			// fallback must stay suppressed even when the filter shows just one.
+			// Two claude-code sessions with no per-session breakdown: neither borrows
+			// the provider total, even when the filter shows just one.
 			const sessions: Session[] = [
 				buildSession({ id: 's1', name: 'Alpha' }),
 				buildSession({ id: 's2', name: 'Beta' }),
@@ -923,9 +863,8 @@ describe('AgentOverviewCards', () => {
 			expect(screen.queryByText('Beta')).not.toBeInTheDocument();
 		});
 
-		it('does not count the provider-total fallback as activity', () => {
-			// Beta is the only codex agent, so its CARD borrows the provider total.
-			// That must not promote it to "active" - it ran nothing itself.
+		it('does not count another agent of the same provider as activity', () => {
+			// Beta is the only codex agent; the codex total is not its own work.
 			render(<AgentOverviewCards sessions={SESSIONS} data={DATA} theme={theme} />);
 			fireEvent.click(toggle());
 
@@ -1177,6 +1116,389 @@ describe('AgentOverviewCards', () => {
 			expect(
 				screen.getByRole('option', { name: 'Claude Code - smash @ pedtome (1)' })
 			).toBeInTheDocument();
+		});
+
+		describe('withheld Grok accounts', () => {
+			// Renderer account keys are host-owned strings, not native filesystem paths.
+			const FIXTURE_HOME = posix.join('/home', 'testuser');
+			const ROOT = posix.join(FIXTURE_HOME, '.grok-work');
+			const OTHER_ROOT = posix.join(FIXTURE_HOME, '.grok-personal');
+			const KNOWN_SESSIONS = [PROFILE_SESSIONS[0], PROFILE_SESSIONS[3]];
+
+			beforeEach(() => {
+				vi.mocked(window.maestro.agents.getCustomEnvVars).mockReset().mockResolvedValue(null);
+				vi.spyOn(homeDir, 'getHomeDir').mockReturnValue(FIXTURE_HOME);
+				vi.spyOn(homeDir, 'getHomeDirAsync').mockResolvedValue(FIXTURE_HOME);
+				ipcCache.invalidate('ssh-configs');
+			});
+
+			afterEach(() => {
+				vi.restoreAllMocks();
+				vi.mocked(window.maestro.agents.getCustomEnvVars).mockReset().mockResolvedValue(null);
+				ipcCache.invalidate('ssh-configs');
+			});
+
+			it.each([
+				['fallback key', { XAI_API_KEY: 'synthetic-fallback' }],
+				['legacy fallback key', { GROK_CODE_XAI_API_KEY: 'synthetic-legacy' }],
+				['inline credentials', { GROK_AUTH: '{"token":"synthetic-inline"}' }],
+				['models gateway', { GROK_MODELS_BASE_URL: 'https://models.example.test/v1' }],
+				['chat gateway', { GROK_CLI_CHAT_PROXY_BASE_URL: 'https://chat.example.test/v1' }],
+				['xAI gateway', { GROK_XAI_API_BASE_URL: 'https://api.example.test/v1' }],
+				['deployment key', { GROK_DEPLOYMENT_KEY: 'synthetic-deployment' }],
+				[
+					'independent auth file',
+					{ GROK_AUTH_PATH: posix.join(FIXTURE_HOME, 'separate-auth.json') },
+				],
+			] satisfies [string, Record<string, string>][])(
+				'recovers a selected root after %s withholds it',
+				async (_label, env) => {
+					const grok = buildSession({
+						id: 'grok-work',
+						name: 'Grok work',
+						toolType: 'grok',
+						customEnvVars: { GROK_HOME: ROOT },
+					});
+					const data = buildData();
+					const { rerender } = render(
+						<AgentOverviewCards sessions={[grok, ...KNOWN_SESSIONS]} data={data} theme={theme} />
+					);
+					await act(async () => {});
+					pickProfile('Grok CLI - work (1)');
+					expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+					expect(screen.getByText('Grok work')).toBeInTheDocument();
+
+					rerender(
+						<AgentOverviewCards
+							sessions={[
+								{ ...grok, customEnvVars: { GROK_HOME: ROOT, ...env } },
+								...KNOWN_SESSIONS,
+							]}
+							data={data}
+							theme={theme}
+						/>
+					);
+					await waitFor(() => {
+						expect(trigger()).toHaveTextContent('All providers');
+						expect(screen.getAllByTestId('agent-card')).toHaveLength(3);
+					});
+					const grokCard = screen.getByText('Grok work').closest('[data-testid="agent-card"]')!;
+					expect(
+						within(grokCard as HTMLElement).queryByTestId('agent-card-profile-badge')
+					).toBeNull();
+					expect(screen.getAllByTestId('agent-card-profile-badge')).toHaveLength(2);
+					fireEvent.click(trigger());
+					expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+						'All providers',
+						'Claude Code - smash (1)',
+						'OpenCode (1)',
+					]);
+					fireEvent.click(screen.getByRole('option', { name: 'Claude Code - smash (1)' }));
+					expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+					expect(screen.getByText('Alpha')).toBeInTheDocument();
+					pickProfile('All providers');
+					expect(screen.getByText('Grok work')).toBeInTheDocument();
+				}
+			);
+
+			it('recovers an entirely withheld fleet without merging inline accounts into a placeholder', async () => {
+				const sessions = [ROOT, OTHER_ROOT].map((root, i) =>
+					buildSession({
+						id: `grok-${i}`,
+						name: `Grok ${i}`,
+						toolType: 'grok',
+						customEnvVars: { GROK_HOME: root },
+					})
+				);
+				const data = buildData();
+				const { rerender } = render(
+					<AgentOverviewCards sessions={sessions} data={data} theme={theme} />
+				);
+				await act(async () => {});
+				pickProfile('Grok CLI - work (1)');
+				expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+				const withheldSessions = sessions.map((session, i) => ({
+					...session,
+					customEnvVars: { ...session.customEnvVars, GROK_AUTH: `{"token":"synthetic-${i}"}` },
+				}));
+				rerender(<AgentOverviewCards sessions={withheldSessions} data={data} theme={theme} />);
+				await waitFor(() => expect(screen.getAllByTestId('agent-card')).toHaveLength(2));
+				expect(screen.getByText('Grok 0')).toBeInTheDocument();
+				expect(screen.getByText('Grok 1')).toBeInTheDocument();
+				expect(screen.queryByLabelText('Filter agents by provider account')).toBeNull();
+				expect(screen.queryAllByTestId('agent-card-profile-badge')).toHaveLength(0);
+
+				// With known accounts present, any shared placeholder would be offered.
+				rerender(
+					<AgentOverviewCards
+						sessions={[...withheldSessions, ...KNOWN_SESSIONS]}
+						data={data}
+						theme={theme}
+					/>
+				);
+				await act(async () => {});
+				expect(screen.getAllByTestId('agent-card')).toHaveLength(4);
+				expect(screen.getAllByTestId('agent-card-profile-badge')).toHaveLength(2);
+				fireEvent.click(trigger());
+				expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+					'All providers',
+					'Claude Code - smash (1)',
+					'OpenCode (1)',
+				]);
+			});
+
+			it('uses session env replacement without inheriting withheld provider credentials', async () => {
+				vi.mocked(window.maestro.agents.getCustomEnvVars).mockImplementation((provider) =>
+					Promise.resolve(
+						provider === 'grok'
+							? { GROK_HOME: ROOT, GROK_AUTH: '{"token":"synthetic-provider"}' }
+							: null
+					)
+				);
+				renderProfiles([
+					buildSession({ id: 'inherits', name: 'Inherits credentials', toolType: 'grok' }),
+					buildSession({
+						id: 'own-root',
+						name: 'Own root',
+						toolType: 'grok',
+						customEnvVars: { GROK_HOME: ROOT },
+					}),
+					buildSession({
+						id: 'own-vars',
+						name: 'Own vars',
+						toolType: 'grok',
+						customEnvVars: { TERM: 'xterm' },
+					}),
+					...KNOWN_SESSIONS,
+				]);
+				await act(async () => {});
+				expect(screen.getAllByTestId('agent-card')).toHaveLength(5);
+				const inheritedCard = screen
+					.getByText('Inherits credentials')
+					.closest('[data-testid="agent-card"]')!;
+				expect(
+					within(inheritedCard as HTMLElement).queryByTestId('agent-card-profile-badge')
+				).toBeNull();
+				fireEvent.click(trigger());
+				expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+					'All providers',
+					'Claude Code - smash (1)',
+					'Grok CLI - Default account (1)',
+					'Grok CLI - work (1)',
+					'OpenCode (1)',
+				]);
+				fireEvent.click(screen.getByRole('option', { name: 'Grok CLI - work (1)' }));
+				expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+				expect(screen.getByText('Own root')).toBeInTheDocument();
+				pickProfile('Grok CLI - Default account (1)');
+				expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+				expect(screen.getByText('Own vars')).toBeInTheDocument();
+			});
+
+			it.each([false, true])(
+				'waits for provider env before deciding whether a filter is withheld (%s)',
+				async (withheld) => {
+					let resolveEnv!: (env: Record<string, string>) => void;
+					const pendingEnv = new Promise<Record<string, string>>((resolve) => {
+						resolveEnv = resolve;
+					});
+					vi.mocked(window.maestro.agents.getCustomEnvVars).mockImplementation((provider) =>
+						provider === 'grok' ? pendingEnv : Promise.resolve(null)
+					);
+					const sessions = [
+						buildSession({ id: 'grok-work', name: 'Grok work', toolType: 'grok' }),
+						...KNOWN_SESSIONS,
+					];
+					const props = { sessions, data: buildData(), theme, onProfileFilterChange: vi.fn() };
+					const { rerender } = render(
+						<AgentOverviewCards {...props} profileFilter={`grok::${ROOT}`} />
+					);
+					await act(async () => {});
+					expect(window.maestro.agents.getCustomEnvVars).toHaveBeenCalledWith('grok');
+					expect(props.onProfileFilterChange).not.toHaveBeenCalled();
+					expect(screen.queryAllByTestId('agent-card')).toHaveLength(0);
+
+					await act(async () => {
+						resolveEnv({
+							GROK_HOME: ROOT,
+							...(withheld ? { XAI_API_KEY: 'synthetic-fallback' } : {}),
+						});
+					});
+					if (withheld) {
+						expect(props.onProfileFilterChange).toHaveBeenCalledExactlyOnceWith(ALL_PROFILES_VALUE);
+						rerender(<AgentOverviewCards {...props} profileFilter={ALL_PROFILES_VALUE} />);
+						expect(screen.getAllByTestId('agent-card')).toHaveLength(3);
+					} else {
+						expect(props.onProfileFilterChange).not.toHaveBeenCalled();
+						expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+						expect(trigger()).toHaveTextContent('Grok CLI - work (1)');
+					}
+					expect(screen.getByText('Grok work')).toBeInTheDocument();
+				}
+			);
+
+			it.each([
+				{ root: undefined, withheld: false },
+				{ root: ' \t', withheld: false },
+				{ root: undefined, withheld: true },
+				{ root: ' \t', withheld: true },
+			])('waits for home with root=$root and withheld=$withheld', async ({ root, withheld }) => {
+				let resolveHome!: (value: string) => void;
+				const pendingHome = new Promise<string>((resolve) => {
+					resolveHome = resolve;
+				});
+				vi.mocked(homeDir.getHomeDir).mockReturnValue(undefined);
+				vi.mocked(homeDir.getHomeDirAsync).mockReturnValue(pendingHome);
+				const props = {
+					sessions: [
+						buildSession({
+							id: 'grok-default',
+							name: 'Grok default',
+							toolType: 'grok',
+							customEnvVars: {
+								...(root === undefined ? {} : { GROK_HOME: root }),
+								...(withheld ? { GROK_AUTH: '{"token":"synthetic"}' } : {}),
+							},
+						}),
+					],
+					data: buildData(),
+					theme,
+					onProfileFilterChange: vi.fn(),
+				};
+				const { rerender } = render(
+					<AgentOverviewCards
+						{...props}
+						profileFilter={`grok::${posix.join(FIXTURE_HOME, '.grok')}`}
+					/>
+				);
+				await act(async () => {});
+				expect(homeDir.getHomeDirAsync).toHaveBeenCalled();
+				expect(props.onProfileFilterChange).not.toHaveBeenCalled();
+				expect(screen.queryAllByTestId('agent-card')).toHaveLength(0);
+				await act(async () => {
+					resolveHome(FIXTURE_HOME);
+				});
+				if (withheld) {
+					expect(props.onProfileFilterChange).toHaveBeenCalledExactlyOnceWith(ALL_PROFILES_VALUE);
+					rerender(<AgentOverviewCards {...props} profileFilter={ALL_PROFILES_VALUE} />);
+				} else {
+					expect(props.onProfileFilterChange).not.toHaveBeenCalled();
+				}
+				expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+				expect(screen.getByText('Grok default')).toBeInTheDocument();
+			});
+
+			it('settles an explicit withheld root even while home remains pending', async () => {
+				let resolveHome!: (value: string) => void;
+				const pendingHome = new Promise<string>((resolve) => {
+					resolveHome = resolve;
+				});
+				vi.mocked(homeDir.getHomeDir).mockReturnValue(undefined);
+				vi.mocked(homeDir.getHomeDirAsync).mockReturnValue(pendingHome);
+				const onChange = vi.fn();
+				render(
+					<AgentOverviewCards
+						sessions={[
+							buildSession({
+								id: 'grok-work',
+								toolType: 'grok',
+								customEnvVars: { GROK_HOME: ROOT, GROK_AUTH: '{"token":"synthetic"}' },
+							}),
+						]}
+						data={buildData()}
+						theme={theme}
+						profileFilter={`grok::${ROOT}`}
+						onProfileFilterChange={onChange}
+					/>
+				);
+				await waitFor(() => expect(onChange).toHaveBeenCalledExactlyOnceWith(ALL_PROFILES_VALUE));
+				await act(async () => {
+					resolveHome(FIXTURE_HOME);
+				});
+			});
+
+			it('keeps the same root separate on local and SSH hosts when one remote account is withheld', async () => {
+				vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValueOnce({
+					success: true,
+					configs: [
+						{ id: 'r1', name: 'remote-one' },
+						{ id: 'r2', name: 'remote-two' },
+					],
+				} as never);
+				const sessions = [
+					buildSession({
+						id: 'local',
+						name: 'Local',
+						toolType: 'grok',
+						customEnvVars: { GROK_HOME: ROOT },
+					}),
+					buildSession({
+						id: 'remote-1',
+						name: 'Remote one',
+						toolType: 'grok',
+						customEnvVars: { GROK_HOME: ROOT },
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+					}),
+					buildSession({
+						id: 'remote-2',
+						name: 'Remote two',
+						toolType: 'grok',
+						customEnvVars: { GROK_HOME: ROOT },
+						sessionSshRemoteConfig: { enabled: true, remoteId: 'r2' },
+					}),
+					buildSession({
+						id: 'personal',
+						name: 'Personal',
+						toolType: 'grok',
+						customEnvVars: { GROK_HOME: OTHER_ROOT },
+					}),
+				];
+				const data = buildData();
+				const { rerender } = render(
+					<AgentOverviewCards sessions={sessions} data={data} theme={theme} />
+				);
+				await waitFor(() => expect(screen.getByText('work @ remote-two')).toBeInTheDocument());
+				for (const [label, name] of [
+					['personal', 'Personal'],
+					['work', 'Local'],
+					['work @ remote-two', 'Remote two'],
+					['work @ remote-one', 'Remote one'],
+				]) {
+					pickProfile(`Grok CLI - ${label} (1)`);
+					expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+					expect(screen.getByText(name)).toBeInTheDocument();
+				}
+				rerender(
+					<AgentOverviewCards
+						sessions={sessions.map((session) =>
+							session.id === 'remote-1'
+								? {
+										...session,
+										customEnvVars: { GROK_HOME: ROOT, GROK_DEPLOYMENT_KEY: 'synthetic-remote' },
+									}
+								: session
+						)}
+						data={data}
+						theme={theme}
+					/>
+				);
+				await waitFor(() => expect(screen.getAllByTestId('agent-card')).toHaveLength(4));
+				expect(trigger()).toHaveTextContent('All providers');
+				const remoteCard = screen.getByText('Remote one').closest('[data-testid="agent-card"]')!;
+				expect(
+					within(remoteCard as HTMLElement).queryByTestId('agent-card-profile-badge')
+				).toBeNull();
+				fireEvent.click(trigger());
+				expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+					'All providers',
+					'Grok CLI - personal (1)',
+					'Grok CLI - work (1)',
+					'Grok CLI - work @ remote-two (1)',
+				]);
+				fireEvent.click(screen.getByRole('option', { name: 'Grok CLI - work (1)' }));
+				expect(screen.getAllByTestId('agent-card')).toHaveLength(1);
+				expect(screen.getByText('Local')).toBeInTheDocument();
+			});
 		});
 
 		it('groups the grid by account under the Provider sort', () => {

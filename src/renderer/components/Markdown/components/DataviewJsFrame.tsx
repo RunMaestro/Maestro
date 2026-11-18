@@ -34,7 +34,8 @@
  * block then waits for a source change or Run again, rather than burning
  * another five seconds on the next save. A `dataview:changed` event for the
  * snapshot's root fetches a new snapshot (debounced) and runs the script again,
- * keeping the old output on screen until the new run answers.
+ * keeping the old output on screen, dimmed under `DataviewLoading`'s "Recalculating" pill, until the new run
+ * answers. Before the first output the block shows `DataviewSkeleton`.
  *
  * Mounting. A guest mounts only while the block holds one of the window's guest
  * slots, which it asks for only while near the viewport
@@ -72,6 +73,12 @@ import { logger } from '../../../utils/logger';
 import { AlertCallout } from './AlertCallout';
 import type { DataviewDocumentScope } from './DataviewDocumentContext';
 import {
+	DATAVIEW_REFRESH_DIM_OPACITY,
+	DataviewCalculatingPill,
+	DataviewSkeleton,
+	useDataviewRefreshIndicator,
+} from './DataviewLoading';
+import {
 	ERR_ABORTED,
 	answerGuestRequest,
 	createGuestRequestQueue,
@@ -87,9 +94,6 @@ import {
 export { DATAVIEW_JS_MAX_REQUESTS_IN_FLIGHT } from './dataviewJsGuestBridge';
 
 const LOG_CONTEXT = 'DataviewJsFrame';
-
-/** Height of the loading placeholder, as `DataviewBlock` uses. */
-const PLACEHOLDER_HEIGHT = '2.5em';
 
 /** How far past the viewport a block starts asking for a guest (clipping scroll containers still apply). */
 const NEAR_VIEWPORT_MARGIN = '600px 0px';
@@ -152,6 +156,8 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 	const [height, setHeight] = useState<number | null>(null);
 	/** Bumped to run again with the same snapshot (a task toggle that did not write). */
 	const [rerunToken, setRerunToken] = useState(0);
+	/** A run was sent and has not settled: drives the "Recalculating" look over output already on screen. */
+	const [running, setRunning] = useState(false);
 
 	const runRef = useRef<Run | null>(null);
 	const [requests] = useState(createGuestRequestQueue);
@@ -167,6 +173,8 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 			run.settled = true;
 			run.watchdog.disarm();
 			requests.dropRun(run.runId);
+			// A settled run that was replaced already has its successor running; only the current one stops the look.
+			if (runRef.current === run || runRef.current === null) setRunning(false);
 		},
 		[requests]
 	);
@@ -306,7 +314,8 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 			snapshot: snapshot.result,
 		});
 		// The guest went away before it took the run; its replacement's dom-ready runs again.
-		if (!sent) settleRun(run);
+		if (sent) setRunning(true);
+		else settleRun(run);
 	}, [ready, webview, snapshot, code, halted, rerunToken, blockId, settleRun, runWatchdog]);
 
 	// The watchdog's timer must not outlive the block.
@@ -410,29 +419,23 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 	const mountGuest = hasSlot && partition !== null;
 	const omittedListPages = snapshot?.result.omittedListPages ?? 0;
 	const background = isPanelThemeColor(theme.colors.bgMain) ? theme.colors.bgMain : 'transparent';
-	const placeholder = (
-		<div
-			data-dataview-placeholder=""
-			aria-busy="true"
-			aria-label="Running DataviewJS"
-			style={{
-				height: PLACEHOLDER_HEIGHT,
-				borderRadius: '6px',
-				background: theme.colors.bgActivity,
-				opacity: 0.5,
-			}}
-		/>
-	);
+	// Output on screen and a run re-computing it: keep the output, dimmed, under the "Recalculating" pill.
+	const refreshShown = useDataviewRefreshIndicator(running && height !== null && !problem);
 
 	return (
 		<div
 			ref={containerRef}
 			className="dataview dataview-js"
 			data-dataview-js-block=""
-			style={{ margin: '0.5em 0' }}
+			data-dataview-refreshing={refreshShown ? '' : undefined}
+			aria-busy={refreshShown || undefined}
+			style={{ margin: '0.5em 0', position: 'relative' }}
 		>
+			{refreshShown && <DataviewCalculatingPill theme={theme} label="Recalculating" />}
 			{problem && <DataviewJsProblem problem={problem} theme={theme} onRunAgain={runAgain} />}
-			{!problem && height === null && placeholder}
+			{!problem && height === null && (
+				<DataviewSkeleton theme={theme} ariaLabel="Running DataviewJS" />
+			)}
 			{mountGuest ? (
 				<webview
 					key={`${partition}:${guestKey}`}
@@ -447,6 +450,8 @@ function DataviewJsGuestFrame({ code, theme, doc }: DataviewJsFrameProps) {
 						height: `${Math.max(1, height ?? 0)}px`,
 						border: 0,
 						backgroundColor: background,
+						opacity: refreshShown ? DATAVIEW_REFRESH_DIM_OPACITY : 1,
+						transition: 'opacity 150ms ease',
 					}}
 				/>
 			) : (

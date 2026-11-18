@@ -10,11 +10,13 @@
  */
 
 import * as crypto from 'crypto';
+import * as os from 'os';
 
 import {
 	createMaestroRuntime,
 	createPromptLoaderFor,
 	deleteCliServerInfoFrom,
+	hostHasWork,
 	resolveRuntimeTurnOptions,
 	startRuntimeServer,
 	writeCliServerInfoTo,
@@ -25,8 +27,10 @@ import {
 	type RuntimeServer,
 } from '../../shared/maestro-lib';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
+import { hostSharedHistoryLabel } from '../../shared/maestro-lib/store/shared-history';
 import { cueEngineLockOwnerToken } from '../../main/cue/cue-engine-lock';
 import { startHostCue, type HostCue } from './host-cue';
+import { createHostSleepGuard, type HostSleepGuard } from './host-sleep-guard';
 
 /** The runtime refused the directory: another host, a desktop, a held lock, a corrupt store. */
 export class HostStartError extends Error {
@@ -44,6 +48,11 @@ export interface RuntimeHostOptions {
 	version?: string;
 	/** Port to listen on. Default 0: any free one. */
 	port?: number;
+	/**
+	 * Hold the Mac awake while work is in flight (`caffeinate`). Default `true`; `false` for
+	 * `host start --no-prevent-sleep`. No effect on other platforms.
+	 */
+	preventSleep?: boolean;
 	log(line: string): void;
 }
 
@@ -66,6 +75,7 @@ export interface RuntimeHostDeps {
 	createRuntime: typeof createMaestroRuntime;
 	startServer: typeof startRuntimeServer;
 	startCue: typeof startHostCue;
+	createSleepGuard: typeof createHostSleepGuard;
 	/** Can the runtime load its bundled prompts, looked for the way it looks for them? */
 	promptsLoad(moduleDirectory: string, userDataDir: string): boolean;
 	randomToken(): string;
@@ -90,6 +100,7 @@ const defaultDeps: RuntimeHostDeps = {
 	createRuntime: createMaestroRuntime,
 	startServer: startRuntimeServer,
 	startCue: startHostCue,
+	createSleepGuard: createHostSleepGuard,
 	promptsLoad: (moduleDirectory, userDataDir) =>
 		createPromptLoaderFor({ userDataDir, moduleDirectory })?.get(
 			PROMPT_IDS.MAESTRO_SYSTEM_PROMPT
@@ -120,6 +131,9 @@ export async function startRuntimeHost(
 		productionDataDir: paths.productionDataDir,
 		mode: 'host',
 		turns: resolveRuntimeTurnOptions(options.moduleDirectory),
+		// The host takes part in each project's shared History under its own file, so the people
+		// working the project from a desktop see its work, and its clients see theirs.
+		sharedHistory: { label: hostSharedHistoryLabel(os.hostname()), hostname: os.hostname() },
 	});
 	if (!started.ok) throw new HostStartError(started.refusal);
 	const { runtime } = started;
@@ -132,6 +146,24 @@ export async function startRuntimeHost(
 		stop: async () => undefined,
 		answer: async () => undefined,
 	};
+	const sleepGuard: HostSleepGuard = deps.createSleepGuard({
+		enabled: options.preventSleep !== false,
+		pid: deps.pid,
+		log,
+	});
+	// Every work change (a turn's events, a run's progress, a Cue run beginning or ending) asks for
+	// one look at the work, after the change has settled: the registry forgets a turn a few
+	// microtasks after its last event, so the look waits for the next turn of the event loop. A
+	// burst of streaming events costs one look.
+	let checkQueued = false;
+	const checkWork = (): void => {
+		if (checkQueued) return;
+		checkQueued = true;
+		setImmediate(() => {
+			checkQueued = false;
+			if (server && !stopping) sleepGuard.update(hostHasWork(server.work()));
+		});
+	};
 	let stopping: Promise<void> | undefined;
 	let finish!: () => void;
 	const stopped = new Promise<void>((resolve) => {
@@ -141,6 +173,8 @@ export async function startRuntimeHost(
 		stopping ??= (async () => {
 			// Unpublish first: nothing new should find a host that is going away.
 			deleteCliServerInfoFrom(paths.userDataDir, deps.pid);
+			unsubscribeWork();
+			sleepGuard.stop();
 			// Cue first, and waited for: its runs are stopped and their processes gone before the
 			// runtime closes, so none outlives the host. After a signal this is the drain the signal
 			// started; otherwise (`host stop`, a lost directory) a drain with no wait, which still
@@ -170,6 +204,7 @@ export async function startRuntimeHost(
 		},
 		{ types: ['host.lost'] }
 	);
+	const unsubscribeWork = runtime.events.subscribe(() => checkWork());
 
 	let server: RuntimeServer | undefined;
 	try {
@@ -179,6 +214,7 @@ export async function startRuntimeHost(
 			userDataDir: paths.userDataDir,
 			settingsFile: paths.settingsFile,
 			runtime,
+			onWorkChanged: checkWork,
 		});
 		server = await deps.startServer({
 			runtime,
@@ -191,6 +227,7 @@ export async function startRuntimeHost(
 			describe: () => ({
 				cue: cue.state(),
 				cueRuns: cue.activeRuns(),
+				preventingSleep: sleepGuard.holding(),
 				...(options.version ? { version: options.version } : {}),
 			}),
 		});

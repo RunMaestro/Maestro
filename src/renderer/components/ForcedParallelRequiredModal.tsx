@@ -44,6 +44,7 @@ export function ForcedParallelRequiredModal({
 			title="Force Send Is Off"
 			headerIcon={<Hammer className="w-5 h-5" style={{ color: theme.colors.warning }} />}
 			priority={MODAL_PRIORITIES.CONFIRM}
+			portal
 			onClose={onClose}
 			width={448}
 			initialFocusRef={confirmButtonRef}

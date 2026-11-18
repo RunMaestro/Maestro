@@ -570,9 +570,13 @@ function resolveId(partialId: string, allIds: string[]): IdResolution {
  *
  * `sessions` defaults to the LIVE agents in Maestro's data directory (a dormant
  * Pianola never resolves; naming it throws a "turned off" error); pass a list
- * read from somewhere else (`bundle export --data-dir`) to resolve against it.
+ * read from somewhere else (`bundle export --data-dir`, a Federation peer's host)
+ * to resolve against it. Only `id` and `name` are read.
  */
-export function resolveAgentId(partialId: string, sessionList?: SessionInfo[]): string {
+export function resolveAgentId(
+	partialId: string,
+	sessionList?: ReadonlyArray<Pick<SessionInfo, 'id' | 'name'>>
+): string {
 	const sessions = sessionList ?? readLiveSessions();
 	const allIds = sessions.map((s) => s.id);
 	const resolution = resolveId(partialId, allIds);
@@ -721,6 +725,43 @@ export function getSessionById(sessionId: string): SessionInfo | undefined {
 	}
 
 	return undefined;
+}
+
+/**
+ * The identity fields every persisted AI tab carries. `SessionInfo` does not
+ * declare `aiTabs` (the CLI reads a narrowed agent shape), so readers that need
+ * more of a stored tab widen this through {@link readStoredAiTabs}'s type
+ * parameter. Persisted `state` is always `idle`: busy state is runtime-only and
+ * stripped on save, so ask the desktop (`listDesktopTabs`) for that.
+ */
+export interface StoredAiTabRef {
+	id: string;
+	/** Provider session id (Claude `session_id`, Codex thread id) of the tab. */
+	agentSessionId?: string | null;
+	name?: string | null;
+}
+
+/** The AI tabs persisted for one agent, in stored order. Empty when unknown. */
+export function readStoredAiTabs<T extends StoredAiTabRef = StoredAiTabRef>(agentId: string): T[] {
+	const agent = readSessions().find((s) => s.id === agentId);
+	return ((agent as { aiTabs?: T[] } | undefined)?.aiTabs ?? []) as T[];
+}
+
+/**
+ * Resolve a tab id (exact, or a unique prefix) among an agent's persisted AI
+ * tabs. `null` when nothing matches; throws when a prefix is ambiguous.
+ */
+export function resolveStoredAiTabId(agentId: string, tabId: string): string | null {
+	const tabs = readStoredAiTabs(agentId);
+	if (tabs.some((tab) => tab.id === tabId)) return tabId;
+	const matches = tabs.filter((tab) => tab.id.startsWith(tabId));
+	if (matches.length === 1) return matches[0].id;
+	if (matches.length > 1) {
+		throw new Error(
+			`Ambiguous tab identifier "${tabId}" - matches ${matches.map((tab) => tab.id.slice(0, 8)).join(', ')}`
+		);
+	}
+	return null;
 }
 
 /**

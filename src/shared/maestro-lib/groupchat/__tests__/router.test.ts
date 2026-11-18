@@ -20,6 +20,7 @@ import { readLog } from '../log';
 import { createSleepTracker } from '../../../sleepTracking';
 import type { SteeringResultFrame } from '../../../chatSteering';
 import type {
+	GroupChatAgentDirectory,
 	GroupChatEventSink,
 	GroupChatLauncher,
 	GroupChatSessionInfo,
@@ -51,7 +52,8 @@ interface Harness {
 
 function createHarness(
 	dir: string,
-	systemPrompts?: Parameters<typeof createGroupChatEngine>[0]['systemPrompts']
+	systemPrompts?: Parameters<typeof createGroupChatEngine>[0]['systemPrompts'],
+	agentOverrides?: Partial<GroupChatAgentDirectory>
 ): Harness {
 	const store = createGroupChatStore({ groupChatsDir: () => dir });
 	const messages: Harness['messages'] = [];
@@ -94,6 +96,7 @@ function createHarness(
 			providerEnvVars: () => undefined,
 			conductorProfile: () => 'a conductor',
 			sshStore: () => null,
+			...agentOverrides,
 		},
 		prompts: {
 			get: (id) =>
@@ -219,6 +222,125 @@ describe('group chat engine', () => {
 			expect(synthesis).toHaveLength(1);
 			expect(synthesis[0].appendSystemPrompt).toBe('MODERATOR SECTIONS');
 			expect(forModerator).toHaveBeenCalledWith({ isSsh: false });
+		});
+	});
+
+	describe.each([
+		{ providerId: 'grok', rootKey: 'GROK_HOME' },
+		{ providerId: 'claude-code', rootKey: 'CLAUDE_CONFIG_DIR' },
+	])('$providerId environment selection across a round', ({ providerId, rootKey }) => {
+		const fallbackEnv = { [rootKey]: '/synthetic/fallback-account', FALLBACK_ONLY: 'fallback' };
+		const configuredEnv = { [rootKey]: '/synthetic/config-account', CONFIG_ONLY: 'config' };
+		const selectedEnv = { [rootKey]: '/synthetic/selected-account' };
+		const blankEnv = { [rootKey]: ' \t ', EMPTY_OVERRIDE: '' };
+
+		it.each([
+			{
+				name: 'absent environments inherit the directory fallback',
+				config: undefined,
+				selected: undefined,
+				expected: fallbackEnv,
+				fallback: true,
+			},
+			{
+				name: 'provider config wins over a different directory fallback',
+				config: configuredEnv,
+				selected: undefined,
+				expected: configuredEnv,
+				fallback: false,
+			},
+			{
+				name: 'session environment replaces both provider sources',
+				config: configuredEnv,
+				selected: selectedEnv,
+				expected: selectedEnv,
+				fallback: false,
+			},
+			{
+				name: 'empty session environment removes the configured account',
+				config: configuredEnv,
+				selected: {},
+				expected: {},
+				fallback: false,
+			},
+			{
+				name: 'blank session values remain explicit unsets',
+				config: configuredEnv,
+				selected: blankEnv,
+				expected: blankEnv,
+				fallback: false,
+			},
+			{
+				name: 'empty provider config removes the fallback account',
+				config: {},
+				selected: undefined,
+				expected: {},
+				fallback: false,
+			},
+			{
+				name: 'blank provider values remain explicit unsets',
+				config: blankEnv,
+				selected: undefined,
+				expected: blankEnv,
+				fallback: false,
+			},
+		])('$name', async ({ config, selected, expected, fallback }) => {
+			const providerConfig = vi.fn(() => (config === undefined ? {} : { customEnvVars: config }));
+			const providerEnvVars = vi.fn(() => fallbackEnv);
+			h = createHarness(dir, undefined, { providerConfig, providerEnvVars });
+			h.sessions.push({
+				id: 'agent-alice',
+				name: 'Alice',
+				toolType: providerId,
+				cwd: dir,
+				...(selected === undefined ? {} : { customEnvVars: selected }),
+			});
+			// Seed a synthetic stored identity: Grok moderation admission is still
+			// withheld. This checks router payloads, not native moderation support.
+			const created = await h.store.createGroupChat('Environment room', 'claude-code');
+			const chat = await h.store.updateGroupChat(created.id, {
+				moderatorAgentId: providerId,
+				moderatorConfig: selected === undefined ? {} : { customEnvVars: selected },
+			});
+			await h.engine.spawnModerator(chat);
+			await h.engine.addParticipant(chat.id, 'Alice', providerId);
+
+			await h.engine.routeUserMessage(chat.id, 'Review the plan', h.launcher);
+			expect(h.spawns).toHaveLength(1);
+			await h.engine.turnEnded(
+				{ processId: h.spawns[0].processId, text: '@Alice: please review the plan' },
+				h.launcher
+			);
+			expect(h.spawns).toHaveLength(2);
+			await h.engine.turnEnded(
+				{ processId: h.spawns[1].processId, rawOutput: 'Error: session not found', text: '' },
+				h.launcher
+			);
+			expect(h.spawns).toHaveLength(3);
+			expect(h.spawns[2].processId).toMatch(/-participant-Alice-recovery-\d+$/);
+			await h.engine.turnEnded(
+				{ processId: h.spawns[2].processId, text: 'Review complete' },
+				h.launcher
+			);
+			expect(h.spawns.map((spawn) => spawn.debugLabel)).toEqual([
+				'moderator',
+				'participant: Alice',
+				'recovery of Alice',
+				'synthesis moderator',
+			]);
+			for (const spawn of h.spawns) {
+				expect(spawn.providerId).toBe(providerId);
+				expect(spawn.customEnvVars).toEqual(expected);
+			}
+			expect(providerConfig).toHaveBeenCalledTimes(4);
+			expect(providerConfig).toHaveBeenCalledWith(providerId);
+			expect(providerEnvVars).toHaveBeenCalledTimes(fallback ? 4 : 0);
+			if (fallback) expect(providerEnvVars).toHaveBeenCalledWith(providerId);
+			await h.engine.turnEnded(
+				{ processId: h.spawns[3].processId, text: 'Final review' },
+				h.launcher
+			);
+			expect(lastState(chat.id)).toBe('idle');
 		});
 	});
 

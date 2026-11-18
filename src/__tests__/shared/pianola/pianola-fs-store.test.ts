@@ -657,3 +657,38 @@ describe('portfolio files', () => {
 		expect(first.readAsks()).toEqual([ask]);
 	});
 });
+
+describe('synchronous supervisor revision index', () => {
+	it('reads the registry once for repeated proofs and invalidates across stores and configured roots', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-revision-'));
+		dirs.push(dir);
+		let root = dir;
+		const store = createPianolaFsStore({
+			resolveDir: () => root,
+			indent: 2,
+			trailingNewline: true,
+		});
+		const other = createPianolaFsStore({ resolveDir: () => dir, indent: 2, trailingNewline: true });
+		const target = {
+			id: 'watch',
+			kind: 'watch' as const,
+			agentId: 'owner',
+			tabId: 'tab',
+			enabled: true,
+			createdAt: 1,
+		};
+		other.writeSupervisorTargets([target]);
+		const read = vi.spyOn(fs, 'readFileSync');
+		for (let i = 0; i < 1000; i++) expect(store.readSupervisorTarget('watch')?.enabled).toBe(true);
+		expect(read.mock.calls.filter(([file]) => file === store.supervisorFilePath())).toHaveLength(1);
+		// The returned target cannot mutate the cached authority.
+		store.readSupervisorTarget('watch')!.enabled = false;
+		expect(store.readSupervisorTarget('watch')?.enabled).toBe(true);
+		other.writeSupervisorTargets([{ ...target, enabled: false }]);
+		expect(store.readSupervisorTarget('watch')?.enabled).toBe(false);
+		root = path.join(dir, 'alternate');
+		expect(store.readSupervisorTarget('watch')).toBeUndefined();
+		root = dir;
+		expect(store.readSupervisorTarget('watch')?.enabled).toBe(false);
+	});
+});

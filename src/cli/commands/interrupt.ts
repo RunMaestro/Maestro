@@ -8,6 +8,12 @@
 //
 // Nothing running is a success with `wasBusy: false`, so the verb is safe to
 // re-run. Read the result back with `tab show <tab-id>` or `session list --json`.
+//
+// A `peer:agent` target (Federation) stops the turn on that peer's host. The host
+// has no `interrupt_turn` (it is the renderer's Stop ladder), so each tab is
+// stopped with the bridge's `process:interrupt`, the call the client's
+// `turns.interrupt` makes (through `runPeerAgentAction()`, shared with the
+// desktop's mirror), and the agent is read back to report `exited`.
 
 import { withMaestroClient } from '../services/maestro-client';
 import {
@@ -18,6 +24,21 @@ import {
 	resolveTabEntry,
 	type DesktopTabEntry,
 } from '../services/session-command';
+import {
+	PeerResolveError,
+	hostCallError,
+	peerAgentRef,
+	pickHostTab,
+	peerErrorCode,
+	routeAgentTarget,
+	withPeerAgent,
+	type PeerTarget,
+} from '../services/peer-resolver';
+import type { AITabRecord } from '../../shared/maestro-lib/store/records';
+import {
+	runPeerAgentAction,
+	type PeerAgentActionResult,
+} from '../../shared/maestro-lib/client/peer-actions';
 import { ExitCode, exitWith } from '../exit-codes';
 import { formatError, formatSuccess } from '../output/formatter';
 import { isQuiet } from '../output/verbosity';
@@ -36,6 +57,8 @@ export interface InterruptOptions {
 type InterruptReply = Partial<InterruptTurnResult> & { type?: string };
 
 export async function interrupt(agentId: string, options: InterruptOptions): Promise<void> {
+	const route = routeAgentTarget(agentId);
+	if (route.kind === 'peer') return interruptPeer(route.target, options);
 	const json = options.json;
 	const sessionId = resolveAgentOrFail(agentId, json);
 
@@ -103,29 +126,130 @@ export async function interrupt(agentId: string, options: InterruptOptions): Pro
 		exited: reply.exited === true,
 	};
 
+	reportStopped({ agentId: sessionId, tabId: tabId ?? null, ...result }, json, (check) =>
+		check ? `maestro-cli tab show ${check}` : 'maestro-cli session list --json'
+	);
+}
+
+interface StopReport {
+	agentId: string;
+	tabId: string | null;
+	wasBusy: boolean;
+	interrupted: boolean;
+	stoppedTabIds: string[];
+	exited: boolean;
+	/** Federation: the peer whose host ran the turn. */
+	peer?: string;
+}
+
+/** Print a stop, local or on a peer, the one way. `checkWith` names the read-back command. */
+function reportStopped(
+	report: StopReport,
+	json: boolean | undefined,
+	checkWith: (tabId: string | undefined) => string
+): void {
 	if (json) {
-		console.log(
-			JSON.stringify({ success: true, agentId: sessionId, tabId: tabId ?? null, ...result })
-		);
+		console.log(JSON.stringify({ success: true, ...report }));
 		return;
 	}
 	if (isQuiet()) return;
 
-	const target = tabId ? `tab ${tabId}` : `agent ${sessionId}`;
-	if (!result.wasBusy) {
-		console.log(`Nothing to stop: no turn is running on ${target}`);
+	const target = report.tabId ? `tab ${report.tabId}` : `agent ${report.agentId}`;
+	const on = report.peer ? ` on peer ${report.peer}` : '';
+	if (!report.wasBusy) {
+		console.log(`Nothing to stop: no turn is running on ${target}${on}`);
 		return;
 	}
-	const tabs = result.stoppedTabIds;
+	const tabs = report.stoppedTabIds;
 	const count = Math.max(tabs.length, 1);
 	const where = tabs.length > 0 ? ` (tab${tabs.length === 1 ? '' : 's'} ${tabs.join(', ')})` : '';
-	console.log(formatSuccess(`Stopped ${count} turn${count === 1 ? '' : 's'} on ${target}${where}`));
-	if (!result.exited) {
-		const check = tabId ?? tabs[0];
-		console.log(
-			check
-				? `The process is still exiting; check with: maestro-cli tab show ${check}`
-				: 'The process is still exiting; check with: maestro-cli session list --json'
-		);
+	console.log(
+		formatSuccess(`Stopped ${count} turn${count === 1 ? '' : 's'} on ${target}${on}${where}`)
+	);
+	if (!report.exited) {
+		console.log(`The process is still exiting; check with: ${checkWith(report.tabId ?? tabs[0])}`);
 	}
+}
+
+/**
+ * Stop a turn on a peer's host. No `--tab` stops every busy tab of the agent, as the Stop pill
+ * does; `--tab` stops that tab. Nothing is retried: a dropped forward is an error.
+ */
+async function interruptPeer(target: PeerTarget, options: InterruptOptions): Promise<void> {
+	const json = options.json;
+	let report: StopReport;
+	try {
+		report = await withPeerAgent(target, async ({ agent, client, peer }) => {
+			const tabs = agent.aiTabs ?? [];
+			let targets: AITabRecord[];
+			let tabId: string | null = null;
+			if (options.tab !== undefined) {
+				let tab: AITabRecord;
+				try {
+					tab = pickHostTab(tabs, options.tab, agent.activeTabId);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					throw new PeerResolveError(
+						'host-failed',
+						`${message} (agent ${peerAgentRef(peer, agent.id)})`,
+						ExitCode.GeneralError,
+						peer
+					);
+				}
+				tabId = tab.id;
+				targets = [tab];
+			} else {
+				targets = tabs.filter((tab) => tab.state === 'busy');
+			}
+
+			// The shared action stops the named tab, or every busy tab, as the desktop's Stop does.
+			const stopped = await runPeerAgentAction(
+				client,
+				agent,
+				tabId ? { kind: 'interrupt', tabId } : { kind: 'interrupt' }
+			);
+			if (!stopped.ok) throw hostCallError(peer, stopped.error);
+			const { stoppedTabIds } = stopped.value as Extract<
+				PeerAgentActionResult,
+				{ kind: 'interrupt' }
+			>;
+
+			// The host stops a tab by signalling its process; read the agent back to see it settle.
+			let exited = true;
+			if (stoppedTabIds.length > 0) {
+				const fresh = await client.agents.get(agent.id);
+				exited =
+					fresh.ok &&
+					!(fresh.value.aiTabs ?? []).some(
+						(tab) => stoppedTabIds.includes(tab.id) && tab.state === 'busy'
+					);
+			}
+			return {
+				agentId: agent.id,
+				tabId,
+				wasBusy: stoppedTabIds.length > 0 || targets.some((tab) => tab.state === 'busy'),
+				interrupted: stoppedTabIds.length > 0,
+				stoppedTabIds,
+				exited,
+				peer,
+			};
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const peerError = error instanceof PeerResolveError ? error : undefined;
+		if (json) {
+			console.log(
+				JSON.stringify({
+					success: false,
+					error: message,
+					...(peerError ? { code: peerErrorCode(peerError.code), peer: peerError.peer } : {}),
+				})
+			);
+		} else {
+			console.error(formatError(message));
+		}
+		exitWith(peerError?.exitCode ?? ExitCode.GeneralError);
+	}
+	const peerRef = peerAgentRef(report.peer as string, report.agentId);
+	reportStopped(report, json, () => `maestro-cli show agent ${peerRef}`);
 }

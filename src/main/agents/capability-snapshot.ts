@@ -77,7 +77,13 @@ export class CapabilitySnapshotManager {
 		this.cache = {};
 		for (const [key, snap] of Object.entries(persisted)) {
 			if (snap && snap.status !== 'probing') {
-				this.cache[key] = snap;
+				// A provider/host key cannot identify Grok's selected account,
+				// endpoint, binary version and model. Keep binary readiness, but
+				// never revive an unscoped catalog or context window from disk.
+				this.cache[key] =
+					key === 'grok' || key.startsWith('grok:')
+						? { ...snap, models: undefined, contextWindow: undefined }
+						: snap;
 			}
 		}
 		const count = Object.keys(this.cache).length;
@@ -184,6 +190,10 @@ export class CapabilitySnapshotManager {
 		const next: AgentCapabilitiesSnapshot = {
 			...previous,
 			...patch,
+			// Grok catalogs belong to a selected account/model, which this
+			// provider/host snapshot does not represent. Do not merge or persist
+			// them even after successful detection or a transient status change.
+			...(agentId === 'grok' ? { models: undefined, contextWindow: undefined } : {}),
 			lastProbedAt: Date.now(),
 			remoteId: remoteId ?? undefined,
 		};

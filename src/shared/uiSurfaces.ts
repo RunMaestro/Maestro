@@ -32,7 +32,8 @@ export type UiSurfaceEncoreFlag =
 	| 'concerto'
 	| 'computerHistory'
 	| 'quickChat'
-	| 'throughputGauge';
+	| 'throughputGauge'
+	| 'promptLinks';
 
 export interface UiSurface {
 	/** CLI name (kebab-case), and the wire value on the `open_modal` message. */
@@ -76,6 +77,17 @@ export const UI_SURFACES: UiSurface[] = [
 		description: 'Persistent notification history and unread entries.',
 		commandPalette: 'Open Notification Center',
 		click: 'the bell in the Left Bar header (Settings → Notifications → Notification center)',
+	},
+	{
+		id: 'prompt-links',
+		label: 'Prompt Links',
+		aliases: ['prompt-link', 'run-links'],
+		modal: 'promptLinks',
+		description: 'Create, copy, and revoke maestro://run links that send a prompt to an agent.',
+		shortcutId: 'openPromptLinks',
+		commandPalette: 'Prompt Links',
+		click: 'Prompt Links in the Left Bar hamburger menu, or Create Prompt Link in an AI tab menu',
+		encore: 'promptLinks',
 	},
 	{
 		id: 'concerto',
@@ -128,10 +140,14 @@ export const UI_SURFACES: UiSurface[] = [
 			{ id: 'overview', label: 'Overview' },
 			{ id: 'agent-overview', label: 'Agent Overview' },
 			{ id: 'agents', label: 'Agents' },
+			{ id: 'groups', label: 'Groups' },
+			{ id: 'tokens', label: 'Tokens' },
 			{ id: 'activity', label: 'Activity' },
 			{ id: 'autorun', label: 'Auto Run' },
 			{ id: 'cue', label: 'Cue', encore: 'maestroCue' },
 			{ id: 'shortcuts', label: 'Shortcuts' },
+			{ id: 'anthropic-usage', label: 'Anthropic Usage' },
+			{ id: 'codex-usage', label: 'OpenAI Usage' },
 		],
 		shortcutId: 'usageDashboard',
 		commandPalette: 'Usage Dashboard',
@@ -310,6 +326,26 @@ export const UI_SURFACES: UiSurface[] = [
 		description: 'Version, build info, and lifetime stats.',
 		commandPalette: 'About',
 		click: 'the Maestro menu → About Maestro',
+	},
+	{
+		id: 'federation-conflicts',
+		label: 'Federation Settings Conflicts',
+		aliases: ['settings-conflicts', 'hosted-settings-conflicts'],
+		modal: 'federationSettingsConflicts',
+		description:
+			"Settings a hosted agent's host and this machine both changed: take the host, keep yours, or merge.",
+		commandPalette: 'Review Federation Settings Conflicts',
+		click: 'the conflict toast, or Federation Settings Conflicts in the Left Bar hamburger menu',
+	},
+	{
+		id: 'add-hosted-agent',
+		label: 'Add Hosted Agent',
+		aliases: ['hosted-agents'],
+		modal: 'addHostedAgent',
+		description:
+			'Show an agent a Federation host runs in your Left Bar. A host agent stays out of the Left Bar until you add it.',
+		commandPalette: 'Add Hosted Agent...',
+		click: 'Add Hosted Agent in the Left Bar hamburger menu',
 	},
 ];
 

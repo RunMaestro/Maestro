@@ -18,6 +18,7 @@ import type { Theme } from '../../types';
 import type { InlineWizardMode } from '../../hooks/batch/useInlineWizard';
 import { Modal } from '../ui/Modal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { isImeComposing } from '../../utils/ime';
 
 export interface WizardModePromptProps {
 	/** Theme for styling */
@@ -85,7 +86,12 @@ export function WizardModePrompt({
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
-			if (e.key === 'Enter' && selectedOption === 'iterate' && iterateGoal.trim()) {
+			if (
+				e.key === 'Enter' &&
+				!isImeComposing(e) &&
+				selectedOption === 'iterate' &&
+				iterateGoal.trim()
+			) {
 				e.preventDefault();
 				handleIterateConfirm();
 			}

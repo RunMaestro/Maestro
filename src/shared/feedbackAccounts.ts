@@ -20,10 +20,17 @@
  * see one list.
  */
 
+import { getAgentDisplayName } from './agentMetadata';
+import { getAgentCapabilities } from './maestro-lib/providers/capabilities';
+import { getAgentDefinition } from './maestro-lib/providers/definitions';
 import { effectiveAgentCustomEnvVars, resolveAgentProfile } from './providerProfiles';
 
-/** Providers the feedback interview knows how to drive, in fallback order. */
-export const FEEDBACK_PROVIDERS = ['claude-code', 'codex', 'opencode'] as const;
+/**
+ * Providers the feedback interview knows how to drive, in fallback order. Grok
+ * is last so it never displaces an automatic pick that worked before it was
+ * listed: its provider default only leads when nothing earlier is installed.
+ */
+export const FEEDBACK_PROVIDERS = ['claude-code', 'codex', 'opencode', 'grok'] as const;
 export type FeedbackProvider = (typeof FEEDBACK_PROVIDERS)[number];
 
 export function isFeedbackProvider(toolType: string): toolType is FeedbackProvider {
@@ -31,12 +38,56 @@ export function isFeedbackProvider(toolType: string): toolType is FeedbackProvid
 }
 
 /**
- * What the cheap pre-check concluded. Only `not-installed` excludes an account
- * from the automatic pick: `not-logged-in` is a file-based guess (a key in the
- * global environment or the macOS keychain can still sign it in), so it is
- * ordered last and still tried.
+ * Providers whose interview route must be proven from the provider definition
+ * before any of their accounts counts as available. Registering an account does
+ * not establish that the interview can run on it: the interview hands live
+ * diagnostics to the model, so it needs a headless JSON turn and a read-only
+ * mode the CLI itself enforces (a prompt-only read-only is not a guarantee).
  */
-export type FeedbackAccountStatus = 'ready' | 'unknown' | 'not-logged-in' | 'not-installed';
+const ROUTE_QUALIFIED_PROVIDERS: ReadonlySet<FeedbackProvider> = new Set(['grok']);
+
+/**
+ * Why the feedback interview cannot run on this provider, or null when its
+ * route is qualified. Read from the shared definition and capability table, so
+ * a provider that loses its enforced read-only mode stops being offered at once.
+ */
+export function feedbackInterviewRouteProblem(toolType: FeedbackProvider): string | null {
+	if (!ROUTE_QUALIFIED_PROVIDERS.has(toolType)) return null;
+	const name = getAgentDisplayName(toolType);
+	const definition = getAgentDefinition(toolType);
+	const capabilities = getAgentCapabilities(toolType);
+	if (
+		!definition ||
+		!capabilities.supportsBatchMode ||
+		!capabilities.supportsJsonOutput ||
+		!definition.jsonOutputArgs?.length
+	) {
+		return `${name} has no qualified headless JSON turn for the feedback interview`;
+	}
+	if (
+		!capabilities.supportsReadOnlyMode ||
+		definition.readOnlyCliEnforced !== true ||
+		!definition.readOnlyArgs?.length
+	) {
+		return `${name} has no CLI-enforced read-only mode, so the feedback interview does not run on it`;
+	}
+	return null;
+}
+
+/**
+ * What the cheap pre-check concluded. `not-installed` and `unsupported` exclude
+ * an account from the automatic pick: `not-logged-in` is a file-based guess (a
+ * key in the global environment or the macOS keychain can still sign it in), so
+ * it is ordered last and still tried. `unsupported` means the provider has no
+ * qualified read-only interview route ({@link feedbackInterviewRouteProblem});
+ * the account is listed so the user sees why, never substituted silently.
+ */
+export type FeedbackAccountStatus =
+	| 'ready'
+	| 'unknown'
+	| 'not-logged-in'
+	| 'not-installed'
+	| 'unsupported';
 
 /** One agent, as far as account selection needs it. */
 export interface FeedbackAccountSource {
@@ -119,6 +170,9 @@ export function buildFeedbackAccountCandidates(
 		);
 		const remote = agent.sshRemote ?? null;
 		const profile = resolveAgentProfile(agent.toolType, env, input.homeDir, remote);
+		// No profile means no account identity. For Grok that includes an inline
+		// bundle, a gateway, a deployment or fallback key and a separate auth file:
+		// none names the selected state root, so it is never merged into one.
 		if (!profile) continue;
 		add(
 			{
@@ -168,11 +222,12 @@ const STATUS_RANK: Record<FeedbackAccountStatus, number> = {
 	unknown: 1,
 	'not-logged-in': 2,
 	'not-installed': 3,
+	unsupported: 4,
 };
 
 /** Whether the automatic pick may try this account. */
 export function isFeedbackAccountUsable(account: FeedbackAccount): boolean {
-	return account.status !== 'not-installed';
+	return account.status !== 'not-installed' && account.status !== 'unsupported';
 }
 
 /**
@@ -206,5 +261,7 @@ export function describeFeedbackAccountStatus(account: FeedbackAccount): string 
 			return 'not signed in';
 		case 'not-installed':
 			return 'not installed';
+		case 'unsupported':
+			return 'not supported';
 	}
 }

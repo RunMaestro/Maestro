@@ -14,9 +14,10 @@
  * ```
  */
 
-import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import type { ToolType, SshRemoteConfig, UsageAccounting } from '../../shared/types';
 import type { ModelTokenUsage } from '../../shared/tokenUsage';
 import type { TokenSpeedBucket } from '../../shared/tokenSpeed';
+import type { NativeSessionBinding } from '../../shared/maestro-lib/agents/providerSwap';
 import { isValidAgentId } from '../../shared/agentIds';
 import { logger } from '../utils/logger';
 
@@ -38,6 +39,16 @@ export interface SessionMessage {
 	timestamp: string;
 	uuid: string;
 	toolUse?: unknown;
+	/** Provider source-line provenance. The native view supplies raw text without
+	 * its newline delimiter; derived messages may reference the same line without
+	 * repeating raw bytes. This is not a whole-file archive. Exporters must redact
+	 * before disclosure; this is evidence, never executable input.
+	 */
+	native?: { provider: string; line: number; raw?: string; issues?: string[] };
+	/** Native tool-result linkage (never inferred from the tool name). */
+	toolCallId?: string;
+	/** References retained without fetching URLs or opening provider-owned paths. */
+	imageReferences?: string[];
 	/**
 	 * Base64 data URLs for any image content blocks attached to the message
 	 * (e.g. user-pasted screenshots). Reconstructed from the transcript so a
@@ -61,8 +72,40 @@ export interface AgentSessionInfo {
 	sizeBytes: number;
 	/** Cost in USD - optional, only provided by agents that support cost tracking */
 	costUsd?: number;
+	/** Native lifetime accounting, including unknown/partial amounts and raw model IDs.
+	 * Numeric legacy fields are display projections; these snapshots are not turn deltas.
+	 */
+	accounting?: UsageAccounting;
+	/** Opaque provider metadata, including schema/fork ancestry. Never use it to
+	 * redirect reads or execute historical actions; exporters must redact it.
+	 */
+	nativeMetadata?: {
+		provider: string;
+		summaryStatus: 'available' | 'unavailable' | 'invalid';
+		summary?: Record<string, unknown>;
+		/** Individual file observations, not an atomic cross-file snapshot. */
+		sources?: Record<string, NonNullable<SessionMessagesResult['source']>>;
+		/**
+		 * Grok: what the session's prompt_context.json records about native memory
+		 * and the AGENTS.md files its system prompt was rendered from. Observed
+		 * facts only: no file content is read, and a path outside the account or
+		 * project root is dropped (counted in droppedPaths). Absent when the file
+		 * is missing or malformed.
+		 */
+		nativeMemory?: {
+			memoryEnabled?: boolean;
+			globalMemoryPath?: string;
+			workspaceMemoryPath?: string;
+			agentsMdFiles?: string[];
+			promptMode?: string;
+			nonInteractive?: boolean;
+			droppedPaths: number;
+		};
+	};
 	inputTokens: number;
 	outputTokens: number;
+	/** Known reasoning tokens are a subset of output, never additional spend. */
+	reasoningTokens?: number;
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
 	/**
@@ -99,11 +142,28 @@ export interface PaginatedSessionsResult {
  * Session messages result with pagination info
  */
 export interface SessionMessagesResult {
+	/** Observed ownership, independent of source completeness. An adapter may
+	 * return the caller's binding only after validating the actual native source
+	 * account, cwd and ID against it. Missing/unknown is never proof of ownership.
+	 * The IPC boundary also rechecks the owner and executing endpoint after I/O.
+	 */
+	nativeSessionBinding?: NativeSessionBinding;
 	messages: SessionMessage[];
 	total: number;
 	hasMore: boolean;
 	/** Native row/file cursor for bounded ingestion; distinct from normalized message count. */
 	nativeCursor?: number;
+	/** Source availability is independent of pagination. An unavailable source's
+	 * zero total is not evidence of an empty transcript. Export must disclose
+	 * partial/unavailable content; available does not certify native migration.
+	 */
+	source?: {
+		provider: string;
+		status: 'available' | 'partial' | 'unavailable';
+		reason?: string;
+		sizeBytes?: number;
+		maxBytes?: number;
+	};
 }
 
 /**
@@ -139,6 +199,17 @@ export interface SessionListOptions {
  * Options for reading session messages
  */
 export interface SessionReadOptions {
+	/** Retained ownership to validate before reading, never a request to relabel
+	 * history. At the storage boundary this is the host-observed read scope:
+	 * adapters must pin/validate the actual source before returning it as a receipt.
+	 * Legacy adapters that cannot do so must leave the result binding absent.
+	 */
+	nativeSessionBinding?: NativeSessionBinding;
+	/** Request ordered context, reasoning and tool-result rows from supporting adapters.
+	 * Display readers may otherwise fold tool results and omit context-only rows.
+	 * This view supports context export, not certified native migration.
+	 */
+	includeNativeRecords?: boolean;
 	offset?: number;
 	limit?: number;
 	/** Host-resolved native source; paths never come directly from callers. */
@@ -148,6 +219,8 @@ export interface SessionReadOptions {
 	accountDir?: string;
 	/** Host-only native traversal; consumers resume with result.nativeCursor. */
 	nativeWindow?: boolean;
+	/** Selected account home, with the same meaning as SessionListOptions.configDir. */
+	configDir?: string;
 }
 
 /**
@@ -238,13 +311,15 @@ export interface AgentSessionStorage {
 	 * @param query - The search query
 	 * @param searchMode - Where to search (title, user messages, assistant, or all)
 	 * @param sshConfig - Optional SSH config for remote access
+	 * @param accountDir - Optional account config/home root, as in listSessions
 	 * @returns Array of matching sessions with match info
 	 */
 	searchSessions(
 		projectPath: string,
 		query: string,
 		searchMode: SessionSearchMode,
-		sshConfig?: SshRemoteConfig
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
 	): Promise<SessionSearchResult[]>;
 
 	/**
@@ -253,12 +328,14 @@ export interface AgentSessionStorage {
 	 * @param projectPath - The project directory path
 	 * @param sessionId - The session identifier
 	 * @param sshConfig - Optional SSH config for remote access
+	 * @param accountDir - Optional account config/home root, as in listSessions
 	 * @returns The file path or null if not applicable
 	 */
 	getSessionPath(
 		projectPath: string,
 		sessionId: string,
-		sshConfig?: SshRemoteConfig
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
 	): string | null;
 
 	/**
@@ -268,6 +345,7 @@ export interface AgentSessionStorage {
 	 * @param userMessageUuid - UUID of the user message to delete
 	 * @param fallbackContent - Optional content to match if UUID not found
 	 * @param sshConfig - Optional SSH config for remote access
+	 * @param accountDir - Optional account config/home root, as in listSessions
 	 * @returns Success status and number of lines removed
 	 */
 	deleteMessagePair(
@@ -275,9 +353,32 @@ export interface AgentSessionStorage {
 		sessionId: string,
 		userMessageUuid: string,
 		fallbackContent?: string,
-		sshConfig?: SshRemoteConfig
-	): Promise<{ success: boolean; error?: string; linesRemoved?: number }>;
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
+	): Promise<DeleteMessagePairResult>;
 }
+
+/**
+ * The outcome of deleting a message pair from a provider transcript.
+ *
+ * `notInTranscript` marks a message the provider never recorded, typically a
+ * turn that failed before the provider wrote it (an auth error, a crash at
+ * spawn). Nothing is in the agent's context to remove, so it is a success with
+ * zero lines removed: the caller may drop the message from the tab.
+ */
+export interface DeleteMessagePairResult {
+	success: boolean;
+	error?: string;
+	linesRemoved?: number;
+	notInTranscript?: boolean;
+}
+
+/** The result for a user message absent from the transcript (see {@link DeleteMessagePairResult}). */
+export const MESSAGE_NOT_IN_TRANSCRIPT: DeleteMessagePairResult = Object.freeze({
+	success: true,
+	linesRemoved: 0,
+	notInTranscript: true,
+});
 
 /**
  * Registry of session storage implementations

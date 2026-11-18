@@ -19,11 +19,19 @@ import type { AgentConfig } from '../agents/definitions';
 import type { AgentSshRemoteConfig } from '../../shared/types';
 import { resolveClaudeSpawnMode } from '../agents/resolveClaudeSpawnMode';
 import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
+import type { AgentLaunchInput } from '../../shared/maestro-lib/launch/launch-plan';
+import { argsResumeSession, resumeIdFromArgs } from '../../shared/maestro-lib/run/pipe-spawn';
 import { prepareGroupChatSpawn } from '../../shared/maestro-lib/groupchat/spawn';
 import { applySystemPromptDelivery } from '../utils/system-prompt-delivery';
 import { steeringSocketPathFor } from '../process-manager/steering-client';
+import type { ProcessConfig } from '../process-manager/types';
 
-export interface SpawnGroupChatAgentConfig {
+export interface SpawnGroupChatAgentConfig extends Pick<
+	AgentLaunchInput,
+	'remoteCommand' | 'promptBlocks' | 'embeddedImageSupport' | 'hasImages' | 'promptFileDestination'
+> {
+	/** Host capability: final synchronous fence after all asynchronous preparation. */
+	beforeSpawn?: () => void;
 	/** Stable session id for the process manager */
 	sessionId: string;
 	/** Agent id (e.g. 'claude-code', 'codex') - used as `toolType` */
@@ -79,6 +87,8 @@ export interface SpawnGroupChatAgentConfig {
 	appendSystemPrompt?: string;
 	/** True when `args` resume an existing provider session. */
 	isResume?: boolean;
+	/** Provider session identity before SSH wrapping hides the original resume arguments. */
+	agentSessionId?: ProcessConfig['agentSessionId'];
 	/**
 	 * `cwd` is the agent's own working directory, so maestro-p may accept
 	 * claude's folder-trust prompt there (#1872). Leave unset for any other
@@ -107,21 +117,99 @@ export interface SpawnGroupChatAgentResult {
 export async function spawnGroupChatAgent(
 	config: SpawnGroupChatAgentConfig
 ): Promise<SpawnGroupChatAgentResult> {
+	// Snapshot private input before system delivery or SSH preparation yields.
+	config = {
+		...config,
+		agent: {
+			...config.agent,
+			capabilities: { ...config.agent.capabilities },
+			promptFile: config.agent.promptFile
+				? {
+						...config.agent.promptFile,
+						exclusivePromptFlags: [...config.agent.promptFile.exclusivePromptFlags],
+					}
+				: undefined,
+		},
+		args: [...config.args],
+		customEnvVars: config.customEnvVars ? { ...config.customEnvVars } : undefined,
+		agentConfigValues: config.agentConfigValues ? { ...config.agentConfigValues } : undefined,
+		sshRemoteConfig: config.sshRemoteConfig
+			? { ...config.sshRemoteConfig }
+			: config.sshRemoteConfig,
+		promptFileDestination: config.promptFileDestination
+			? { ...config.promptFileDestination }
+			: undefined,
+		embeddedImageSupport: config.embeddedImageSupport
+			? {
+					...config.embeddedImageSupport,
+					mimeTypes: Array.isArray(config.embeddedImageSupport.mimeTypes)
+						? [...config.embeddedImageSupport.mimeTypes]
+						: config.embeddedImageSupport.mimeTypes,
+				}
+			: undefined,
+	};
 	const { processManager, sshStore } = config;
+	let promptBlocks = Array.isArray(config.promptBlocks)
+		? config.promptBlocks.map((block) => ({ ...block }))
+		: config.promptBlocks;
+	if (promptBlocks !== undefined && config.prompt !== undefined) {
+		throw new Error('Supply either prompt text or ordered content blocks, not both.');
+	}
+	const argumentSessionId = resumeIdFromArgs(config.args);
+	if (
+		config.agent.promptFile &&
+		config.agentSessionId !== undefined &&
+		config.agentSessionId !== argumentSessionId
+	) {
+		throw new Error('Prompt-file resume identity does not match its launch arguments.');
+	}
+	const agentSessionId = config.agentSessionId ?? argumentSessionId;
+	const isResume =
+		!!config.isResume ||
+		!!agentSessionId ||
+		(!!config.agent.promptFile && argsResumeSession(config.args));
+	if (config.agent.promptFile && isResume && !agentSessionId) {
+		throw new Error('Prompt-file resume requires an explicit provider session identity.');
+	}
+	// Apply the canonical system placement once to the first text block; every
+	// other block keeps its order and bytes. Image-only turns can gain a system
+	// text block, but malformed/empty blocks still reach canonical validation.
+	const textIndex = Array.isArray(promptBlocks)
+		? promptBlocks.findIndex((block) => block?.type === 'text' && typeof block.text === 'string')
+		: -1;
+	const textBlock = promptBlocks?.[textIndex];
 
 	// System prompt first, so every later step (maestro-p rewrite, SSH wrap,
 	// Windows stdin) sees the final args and prompt.
 	const delivered = await applySystemPromptDelivery({
 		args: config.args,
-		prompt: config.prompt,
+		prompt:
+			promptBlocks === undefined
+				? config.prompt
+				: textBlock?.type === 'text'
+					? textBlock.text
+					: undefined,
 		systemPrompt: config.appendSystemPrompt,
 		supportsAppendSystemPrompt: !!config.agent.capabilities?.supportsAppendSystemPrompt,
-		isResume: !!config.isResume,
+		isResume,
 		isSshSession: !!config.sshRemoteConfig?.enabled,
 		sessionId: config.sessionId,
 		agentId: config.agentId,
 		logContext: '[GroupChat:Spawn]',
+	}).catch((error: unknown) => {
+		if (config.agent.promptFile || promptBlocks !== undefined) {
+			throw new Error('Prompt-file system preparation unavailable.');
+		}
+		throw error;
 	});
+	if (Array.isArray(promptBlocks) && promptBlocks.length > 0 && delivered.prompt !== undefined) {
+		promptBlocks =
+			textIndex >= 0
+				? promptBlocks.map((block, index) =>
+						index === textIndex ? { type: 'text', text: delivered.prompt! } : block
+					)
+				: [{ type: 'text', text: delivered.prompt }, ...promptBlocks];
+	}
 
 	const prepared = await prepareGroupChatSpawn(
 		{
@@ -129,9 +217,14 @@ export async function spawnGroupChatAgent(
 			providerId: config.agentId,
 			agent: config.agent,
 			command: config.command,
+			remoteCommand: config.remoteCommand,
 			args: delivered.args,
 			cwd: config.cwd,
-			prompt: delivered.prompt,
+			prompt: promptBlocks === undefined ? delivered.prompt : undefined,
+			promptBlocks,
+			embeddedImageSupport: config.embeddedImageSupport,
+			hasImages: config.hasImages,
+			promptFileDestination: config.promptFileDestination,
 			customEnvVars: config.customEnvVars,
 			agentConfigValues: config.agentConfigValues,
 			sshRemoteConfig: config.sshRemoteConfig,
@@ -141,6 +234,7 @@ export async function spawnGroupChatAgent(
 			debugLabel: config.debugLabel,
 			maxWaitSeconds: config.maxWaitSeconds,
 			acceptWorkspaceTrust: config.acceptWorkspaceTrust,
+			isResume,
 		},
 		{
 			sshStore: sshStore ?? null,
@@ -150,25 +244,45 @@ export async function spawnGroupChatAgent(
 			beginTurn: beginGroupChatTurn,
 			steeringSocketPath: steeringSocketPathFor,
 		}
-	);
-
-	return processManager.spawn({
-		sessionId: prepared.processId,
-		toolType: prepared.providerId,
-		cwd: prepared.cwd,
-		command: prepared.command,
-		args: prepared.args,
-		readOnlyMode: prepared.readOnlyMode,
-		prompt: prepared.prompt,
-		contextWindow: prepared.contextWindow,
-		customEnvVars: prepared.customEnvVars,
-		promptArgs: prepared.promptArgs,
-		noPromptSeparator: prepared.noPromptSeparator,
-		shell: prepared.shell,
-		runInShell: prepared.runInShell,
-		sendPromptViaStdin: prepared.sendPromptViaStdin,
-		sendPromptViaStdinRaw: prepared.sendPromptViaStdinRaw,
-		sshStdinScript: prepared.sshStdinScript,
-		sshRemoteCommand: prepared.sshRemoteCommand,
+	).catch((error: unknown) => {
+		if (config.agent.promptFile || promptBlocks !== undefined) {
+			throw new Error('Prompt-file group chat preparation unavailable.');
+		}
+		throw error;
 	});
+
+	const promptArtifact = prepared.promptDelivery?.artifact;
+	if (
+		promptArtifact?.owner === 'remote' &&
+		(!config.sshRemoteConfig?.enabled ||
+			promptArtifact.sshRemoteId !== config.sshRemoteConfig.remoteId ||
+			prepared.promptArtifactPath !== promptArtifact.path)
+	) {
+		throw new Error('Prompt-file delivery does not match its host plan.');
+	}
+	const spawnConfig: ProcessConfig & Pick<Parameters<IProcessManager['spawn']>[0], 'readOnlyMode'> =
+		{
+			sessionId: prepared.processId,
+			toolType: prepared.providerId,
+			cwd: prepared.cwd,
+			command: prepared.command,
+			args: prepared.args,
+			readOnlyMode: prepared.readOnlyMode,
+			prompt: promptArtifact ? undefined : prepared.prompt,
+			...(promptArtifact ? { promptArtifact } : {}),
+			...(promptArtifact?.owner === 'remote' ? { sshRemoteId: promptArtifact.sshRemoteId } : {}),
+			...(agentSessionId ? { agentSessionId } : {}),
+			contextWindow: prepared.contextWindow,
+			customEnvVars: prepared.customEnvVars,
+			promptArgs: prepared.promptArgs,
+			noPromptSeparator: prepared.noPromptSeparator,
+			shell: prepared.shell,
+			runInShell: prepared.runInShell,
+			sendPromptViaStdin: promptArtifact ? false : prepared.sendPromptViaStdin,
+			sendPromptViaStdinRaw: promptArtifact ? false : prepared.sendPromptViaStdinRaw,
+			sshStdinScript: prepared.sshStdinScript,
+			sshRemoteCommand: prepared.sshRemoteCommand,
+		};
+	config.beforeSpawn?.();
+	return processManager.spawn(spawnConfig);
 }

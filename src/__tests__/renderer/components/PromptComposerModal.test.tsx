@@ -873,6 +873,30 @@ describe('PromptComposerModal', () => {
 				expect(onClose).toHaveBeenCalled();
 			});
 
+			it('leaves plain Enter to the input method during an IME composition', () => {
+				renderWithProvider(
+					<PromptComposerModal
+						isOpen={true}
+						onClose={onClose}
+						theme={mockTheme}
+						initialValue="Test message"
+						onSubmit={onSubmit}
+						onSend={onSend}
+						enterToSend={true}
+					/>
+				);
+
+				const textarea = screen.getByPlaceholderText(
+					'Write your prompt here... (@ to reference files)'
+				);
+				for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+					expect(fireEvent.keyDown(textarea, { key: 'Enter', ...ime })).toBe(true);
+				}
+
+				expect(onSend).not.toHaveBeenCalled();
+				expect(onClose).not.toHaveBeenCalled();
+			});
+
 			it('does not send on Shift + Enter (allows newline)', () => {
 				renderWithProvider(
 					<PromptComposerModal

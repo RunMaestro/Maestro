@@ -4,6 +4,7 @@ import { Gauge, RefreshCw, Sparkles } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { ShortcutHint, shortcutSuffix } from '../../ui/ShortcutHint';
 import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
+import { isImeComposing } from '../../../utils/ime';
 
 interface ModelEffortPillsProps {
 	isVisible: boolean;
@@ -170,7 +171,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 										}
 										// Enter confirms an IME candidate mid-composition; committing
 										// there would apply half a model ID and close the menu.
-										if (e.nativeEvent.isComposing) {
+										if (isImeComposing(e)) {
 											return;
 										}
 										const next = typedModel.trim();

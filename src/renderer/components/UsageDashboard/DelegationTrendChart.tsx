@@ -12,12 +12,14 @@
  * is the part that moves.
  */
 
-import { memo, useMemo, useState } from 'react';
+import { memo, useMemo, useState, type MouseEvent } from 'react';
 import type { Theme } from '../../types';
-import type { StatsTimeRange } from '../../../shared/stats-types';
 import type { DelegationDay } from '../../../shared/delegation';
-import { CUE_EVENT_RETENTION_DAYS } from '../../../shared/delegation';
 import { formatDurationHuman, formatNumber } from '../../../shared/formatters';
+import { parseLocalYmd } from '../../../shared/localDay';
+import { resolveCueHistoryRetentionDays } from '../../../shared/cue/retention';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { usePersistedChoice } from '../../hooks/ui/usePersistedChoice';
 import { MetricModeToggle, type ChartMetricMode } from './MetricModeToggle';
 import { computeAxisLabelIndices, PHONE_AXIS_LABELS } from './chartUtils';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
@@ -27,32 +29,33 @@ import {
 	bucketDelegatedPercent,
 	bucketDelegatedValue,
 	bucketInteractiveValue,
-	parseYmd,
 	type DelegationBucket,
 } from './delegationTrendUtils';
-import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { ChartTooltip } from '../widgets';
 
 interface DelegationTrendChartProps {
-	/** Per-day split from `stats.getDelegationByDay`. Empty while loading. */
+	/**
+	 * Per-day split from `stats.getDelegationByDay`. Fetched with the rest of the
+	 * dashboard payload, so it is present whenever this chart renders.
+	 */
 	days: DelegationDay[];
 	/**
-	 * The dashboard's selected range. Used only to decide whether the Cue slice
-	 * covers the whole window - Cue run history is pruned to a week, so a longer
-	 * range draws real interactive and Auto Run bars beside Cue bars that were
-	 * deleted, which reads as "I stopped using Cue" rather than "that data is
-	 * gone". The chart says so instead.
+	 * The calendar window of the selected range (`StatsAggregation.window`). The
+	 * bars span all of it, so a quiet start or end of the range draws as quiet.
+	 * It also decides whether the Cue slice covers the whole window: Cue run
+	 * history is pruned to the user's retention setting, so a longer window
+	 * draws real interactive and Auto Run bars beside Cue bars that were deleted,
+	 * which reads as "I stopped using Cue" rather than "that data is gone". The
+	 * chart says so instead.
 	 */
-	timeRange: StatsTimeRange;
+	dayWindow?: { startYmd: string; endYmd: string };
 	theme: Theme;
 	colorBlindMode?: boolean;
-	loading?: boolean;
 }
-
-/** Ranges that reach past the Cue retention window. */
-const RANGES_BEYOND_CUE_RETENTION: StatsTimeRange[] = ['month', 'quarter', 'year', 'all'];
 
 /** Only 'count' and 'duration' apply here - there is no per-source token split. */
 type TrendMode = Extract<ChartMetricMode, 'count' | 'duration'>;
+const TREND_MODES: readonly TrendMode[] = ['duration', 'count'];
 
 const CHART_HEIGHT = 160;
 
@@ -61,27 +64,41 @@ function formatValue(mode: TrendMode, value: number): string {
 }
 
 function formatBucketLabel(bucket: DelegationBucket): string {
-	const start = parseYmd(bucket.date);
+	const start = parseLocalYmd(bucket.date);
 	if (!start) return bucket.date;
 	const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
 	if (bucket.days <= 1) return start.toLocaleDateString(undefined, opts);
-	const end = parseYmd(bucket.endDate);
+	const end = parseLocalYmd(bucket.endDate);
 	if (!end) return start.toLocaleDateString(undefined, opts);
 	return `${start.toLocaleDateString(undefined, opts)} - ${end.toLocaleDateString(undefined, opts)}`;
 }
 
 export const DelegationTrendChart = memo(function DelegationTrendChart({
 	days,
-	timeRange,
+	dayWindow,
 	theme,
 	colorBlindMode = false,
-	loading = false,
 }: DelegationTrendChartProps) {
-	const [mode, setMode] = useState<TrendMode>('duration');
+	const { value: mode, setValue: setMode } = usePersistedChoice<TrendMode>(
+		'usageDashboard.activity.delegationMode',
+		TREND_MODES,
+		'duration'
+	);
 	const [hovered, setHovered] = useState<number | null>(null);
+	const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
+	const retentionDays = resolveCueHistoryRetentionDays(
+		useSettingsStore((s) => s.cueHistoryRetentionDays)
+	);
 
 	const colors = delegationColors(theme, colorBlindMode);
-	const buckets = useMemo(() => buildDelegationSeries(days), [days]);
+	const buckets = useMemo(
+		() =>
+			buildDelegationSeries(days, {
+				fromDate: dayWindow?.startYmd,
+				throughDate: dayWindow?.endYmd,
+			}),
+		[days, dayWindow?.startYmd, dayWindow?.endYmd]
+	);
 
 	const maxTotal = useMemo(
 		() =>
@@ -101,7 +118,7 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 			delegated += bucketDelegatedValue(bucket, mode);
 		}
 		const all = interactive + delegated;
-		return { interactive, delegated, percent: all > 0 ? (delegated / all) * 100 : 0 };
+		return { interactive, delegated, all, percent: all > 0 ? (delegated / all) * 100 : 0 };
 	}, [buckets, mode]);
 
 	const phone = usePhoneLayout();
@@ -110,7 +127,17 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 		[buckets.length, phone]
 	);
 	const hoveredBucket = hovered !== null ? buckets[hovered] : null;
-	const cueTruncated = RANGES_BEYOND_CUE_RETENTION.includes(timeRange);
+	const windowDays = buckets.reduce((sum, bucket) => sum + bucket.days, 0);
+	const cueTruncated = windowDays > retentionDays;
+	const hasActivity = totals.all > 0;
+	const hoverBar = (index: number) => (event: MouseEvent) => {
+		setHovered(index);
+		setAnchor({ x: event.clientX, y: event.clientY });
+	};
+	const leaveBar = () => {
+		setHovered(null);
+		setAnchor(null);
+	};
 
 	return (
 		<div
@@ -135,12 +162,8 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 			</div>
 
 			<div className="text-xs mb-4" style={{ color: theme.colors.textDim }}>
-				{buckets.length === 0 ? (
-					loading ? (
-						'Loading...'
-					) : (
-						'No activity in this range'
-					)
+				{!hasActivity ? (
+					'No activity in this range'
 				) : (
 					<>
 						<span style={{ color: colors.delegated }}>{Math.round(totals.percent)}% delegated</span>{' '}
@@ -150,20 +173,10 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 				)}
 			</div>
 
-			{buckets.length > 0 && (
+			{hasActivity && (
 				<div className="relative">
 					{hoveredBucket && (
-						<div
-							className="absolute z-10 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none"
-							style={{
-								left: `${((hovered! + 0.5) / buckets.length) * 100}%`,
-								bottom: '100%',
-								transform: 'translateX(-50%)',
-								marginBottom: '8px',
-								...elevatedSurfaceStyle(theme),
-								color: theme.colors.textMain,
-							}}
-						>
+						<ChartTooltip anchor={anchor} theme={theme} testId="delegation-trend-tooltip">
 							<div className="font-medium mb-1">{formatBucketLabel(hoveredBucket)}</div>
 							<div className="flex flex-col gap-0.5" style={{ color: theme.colors.textDim }}>
 								<span>
@@ -189,7 +202,7 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 									{Math.round(bucketDelegatedPercent(hoveredBucket, mode))}% delegated
 								</span>
 							</div>
-						</div>
+						</ChartTooltip>
 					)}
 
 					<div
@@ -210,8 +223,9 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 								<div
 									key={bucket.date}
 									className="flex-1 h-full flex flex-col justify-end cursor-default"
-									onMouseEnter={() => setHovered(index)}
-									onMouseLeave={() => setHovered(null)}
+									onMouseEnter={hoverBar(index)}
+									onMouseMove={hoverBar(index)}
+									onMouseLeave={leaveBar}
 									data-testid="delegation-trend-bar"
 								>
 									<div
@@ -300,8 +314,9 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 							style={{ color: theme.colors.textDim }}
 							data-testid="delegation-trend-cue-notice"
 						>
-							Cue runs older than {CUE_EVENT_RETENTION_DAYS} days are pruned, so days before then
-							show Auto Run only. The Delegation Score still counts your full Cue time.
+							Cue runs older than {retentionDays} {retentionDays === 1 ? 'day' : 'days'} are pruned
+							(Cue history retention setting), so days before then show Auto Run only. The
+							Delegation Score still counts your full Cue time.
 						</div>
 					)}
 				</div>

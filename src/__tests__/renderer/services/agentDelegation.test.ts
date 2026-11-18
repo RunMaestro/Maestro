@@ -19,8 +19,9 @@ const maestro = () =>
 		id: 'maestro',
 		name: 'Maestro',
 		aiTabs: [
-			createMockAITab({ id: 'caller-tab', logs: [] }),
-			createMockAITab({ id: 'other-tab', logs: [] }),
+			// Mid-turn: a delegation only counts while the stamped tab's turn runs.
+			createMockAITab({ id: 'caller-tab', state: 'busy', logs: [] }),
+			createMockAITab({ id: 'other-tab', state: 'busy', logs: [] }),
 		],
 		activeTabId: 'other-tab',
 	});
@@ -50,10 +51,13 @@ describe('resolveDelegationSourceTab', () => {
 	});
 
 	it('refuses to guess a tab when the spawn named none (a Cue run, a bare --from)', () => {
+		expect(resolveDelegationSourceTab(maestro())).toBeUndefined();
+	});
+
+	it('ignores a stamp from a process that outlived its turn (the named tab is idle)', () => {
 		const session = maestro();
-		expect(resolveDelegationSourceTab(session)).toBeUndefined();
-		session.aiTabs[0] = { ...session.aiTabs[0], state: 'busy' };
-		expect(resolveDelegationSourceTab(session)).toBeUndefined();
+		session.aiTabs[0] = { ...session.aiTabs[0], state: 'idle' };
+		expect(resolveDelegationSourceTab(session, 'caller-tab')).toBeUndefined();
 	});
 });
 
@@ -103,6 +107,15 @@ describe('recordAgentDelegation / settleAgentDelegation', () => {
 		expect(logsOf('maestro', 'caller-tab')).toHaveLength(1);
 		expect(logsOf('maestro', 'caller-tab')[0].delegation?.toAgentName).toBe('🖥 Proxmox');
 		expect(logsOf('maestro', 'other-tab')).toHaveLength(0);
+	});
+
+	it('records nothing when a leftover daemon dispatches from an idle tab', () => {
+		const session = maestro();
+		session.aiTabs[0] = { ...session.aiTabs[0], state: 'idle' };
+		useSessionStore.setState({ sessions: [proxmox(), session] } as never);
+
+		expect(recordAgentDelegation(notice({ targetSessionId: 'maestro', newTab: true }))).toBeNull();
+		expect(logsOf('maestro', 'caller-tab')).toHaveLength(0);
 	});
 
 	it('records nothing when the target or the caller is gone', () => {

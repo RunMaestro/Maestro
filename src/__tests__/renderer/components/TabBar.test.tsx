@@ -725,9 +725,13 @@ describe('TabBar', () => {
 				/>
 			);
 
-			const busyDot = container.querySelector('.animate-pulse');
+			// A static halo, not a looping pulse: one infinite animation per busy tab
+			// kept the renderer drawing every frame while the user was idle.
+			const busyDot = container.querySelector('.w-2.h-2.rounded-full.shrink-0') as HTMLElement;
 			expect(busyDot).toBeInTheDocument();
 			expect(busyDot).toHaveStyle({ backgroundColor: mockTheme.colors.warning });
+			expect(busyDot.className).not.toMatch(/animate-/);
+			expect(busyDot.style.boxShadow).toBeTruthy();
 		});
 
 		it('shows unread indicator for inactive tab with unread messages', () => {

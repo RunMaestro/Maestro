@@ -47,7 +47,7 @@ import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { imageList, imageSave } from './commands/image';
 import { openGraph } from './commands/open-graph';
-import { openBrowser, closeBrowser } from './commands/open-browser';
+import { openBrowser, closeBrowser, browserPick } from './commands/open-browser';
 import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
@@ -62,6 +62,7 @@ import {
 	groupChatStatus,
 	groupChatStop,
 	groupChatArchive,
+	groupChatAdd,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -89,8 +90,20 @@ import {
 	cueEngineInspect,
 } from './commands/cue-engine';
 import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './commands/bundle';
-import { hostStart, hostStatus, hostStop } from './commands/host';
-import { createAgent } from './commands/create-agent';
+import { hostEndpoint, hostStart, hostStatus, hostStop } from './commands/host';
+import { remoteHostInstall, remoteHostStart, remoteHostStatus } from './commands/remote-host';
+import { lift } from './commands/lift';
+import {
+	federationAdd,
+	federationAgents,
+	federationAuto,
+	federationAutoRun,
+	federationConflicts,
+	federationPeers,
+	federationReconnect,
+	federationResolve,
+} from './commands/federation';
+import { createAgent, CREATE_AGENT_TYPES } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
 import { liveStatus, liveOn, liveOff, liveTunnel } from './commands/live';
 import { createGroup } from './commands/create-group';
@@ -106,6 +119,8 @@ import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
 import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
 import { testSshRemote } from './commands/test-ssh-remote';
+import { sshRemoteStatus } from './commands/ssh-remote-status';
+import { claudeCanary } from './commands/claude-canary';
 import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
 import { directorNotesSynopsis } from './commands/director-notes-synopsis';
@@ -167,7 +182,18 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsIndexing, statsQuery, statsTokens } from './commands/stats';
+import {
+	stats,
+	statsActivity,
+	statsAgents,
+	statsCue,
+	statsDelegation,
+	statsExport,
+	statsIndexing,
+	statsPlanUsage,
+	statsQuery,
+	statsTokens,
+} from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
@@ -181,6 +207,15 @@ import {
 	autoRunFolder,
 } from './commands/auto-run-control';
 import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
+import {
+	diffReviewAdd,
+	diffReviewClear,
+	diffReviewEdit,
+	diffReviewList,
+	diffReviewRemove,
+	diffReviewSend,
+} from './commands/diff-review';
+import { promptLinkCreate, promptLinkList, promptLinkRevoke } from './commands/prompt-link';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import { interrupt } from './commands/interrupt';
@@ -200,6 +235,11 @@ import {
 	tabShow,
 	tabClosed,
 	tabReopen,
+	tabPinsList,
+	tabPinsAdd,
+	tabPinsRemove,
+	tabPinsRename,
+	tabPinsShow,
 	tabCompact,
 	tabMerge,
 	tabTransfer,
@@ -399,6 +439,11 @@ list
 	.command('agents')
 	.description('List all agents')
 	.option('-g, --group <id>', 'Filter by group ID')
+	.option('--peer <name>', "List the agents on one Federation peer (an SSH remote's name)")
+	.option(
+		'--all-peers',
+		'List local agents, then the agents on every SSH remote that runs a Federation host'
+	)
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.action(listAgents);
 
@@ -565,7 +610,10 @@ clean
 program
 	.command('send <agent-id> <message>')
 	.description('Send a message to an agent and get a JSON response')
-	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
+	.option(
+		'-s, --session <id>',
+		'Resume a PROVIDER session id (the sessionId a previous send returned, or one from `list sessions`), not a Maestro tab id. Runs headless beside the desktop; to deliver into a live tab use `dispatch --tab <tab-id> --queue`'
+	)
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
 	.option('--require-plugin-tools', 'Fail if a desktop-backed run with plugin tools is unavailable')
@@ -582,6 +630,11 @@ program
 		'Do not write a History entry for this turn (written by default, desktop app running or not)'
 	)
 	.option('--no-synopsis', 'Skip the synopsis turn; the History entry carries the response instead')
+	.option(
+		'--model <id>',
+		'peer:agent only: the model for this one turn, your own choice (the host tab and other conductors keep theirs)'
+	)
+	.option('--effort <level>', 'peer:agent only: the effort for this one turn, your own choice')
 	.action(send);
 
 // Dispatch command - hand a prompt to the desktop and return tab/session ID.
@@ -589,12 +642,16 @@ program
 // callers can address the same tab again without owning a persistent channel.
 program
 	.command('dispatch <agent-id> <message>')
+	.option(
+		'--dispatch-id <uuid>',
+		'For dispatch and --queue: reconcile the same dispatch after an unknown acknowledgment; never generate another send for it'
+	)
 	.description(
-		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID'
+		'Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID. Inside an Auto Run task, a dispatch that names no tab goes to a new hidden tab, and the run waits for it and hands its result to the next turn (autoRunTracked in the reply).'
 	)
 	.option(
 		'--new-tab',
-		'Create a fresh AI tab and deliver the prompt into it. The tab is hidden by default: it is named from the prompt but draws no chip until the user opens it from the completion toast or the delegation pill. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).'
+		'Create a fresh AI tab and deliver the prompt into it. The tab is hidden by default: it is named from the prompt but draws no chip until the user opens it from the completion toast or the delegation pill. It runs now, even while another tab of the agent is working.'
 	)
 	.option(
 		'--visible',
@@ -610,7 +667,7 @@ program
 	)
 	.option(
 		'-f, --force',
-		'Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab, which queues instead)'
+		'Write into a tab that is itself mid-turn (interleaves two answers); requires allowConcurrentSend. An idle tab of a busy agent needs no --force. Cannot be combined with --new-tab.'
 	)
 	.option(
 		'--focus',
@@ -618,7 +675,7 @@ program
 	)
 	.option(
 		'--queue',
-		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.'
+		'If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target tab dispatches immediately, even while another tab of the agent is working. Cannot be combined with --new-tab or --force. Returns the queue position.'
 	)
 	.option('--wait', 'Alias for --queue')
 	.option(
@@ -643,7 +700,7 @@ program
 	)
 	.option(
 		'--callback-timeout <seconds>',
-		'Give up and fire a timeout callback after this long (default 3600, max 86400)'
+		'Give up and fire a timeout callback after this long (default 3600, max 86400). Inside an Auto Run task it also bounds how long the run waits for this dispatch'
 	)
 	.action(dispatch);
 
@@ -892,6 +949,17 @@ const session = program
 session
 	.command('list')
 	.description('List open desktop AI tabs and their tab/session IDs')
+	.option('--include-hidden', 'Also list hidden tabs (consults) the tab bar does not show')
+	.option('--hidden', 'List only hidden tabs (consults and other tabs the tab bar does not show)')
+	.option(
+		'--all',
+		'List every tab, visible, hidden, and orphaned (no tab-strip slot), with a visibility field'
+	)
+	.option(
+		'--type <kind>',
+		'Which tabs: ai (default), file, browser, terminal, or all. Non-AI tabs are listed under "tabs" in JSON',
+		'ai'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sessionList);
 
@@ -1010,6 +1078,14 @@ groupChat
 	.action(groupChatStop);
 
 groupChat
+	.command('add <chat> <agent>')
+	.description(
+		'Add an agent (ID, ID prefix, or name) to a group chat without an @mention; linked by ID'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatAdd);
+
+groupChat
 	.command('archive <chat>')
 	.description(
 		'Archive a group chat (stops its moderator and participants); --restore brings it back'
@@ -1029,7 +1105,10 @@ program
 	.description(
 		'Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)'
 	)
-	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by file path's owning agent)")
+	.option(
+		'-a, --agent <id>',
+		"Target agent (defaults to the agent owning this shell or terminal tab, else the file path's owning agent)"
+	)
 	.option(
 		'--background',
 		'Open the preview tab without changing anything currently rendered, on any agent'
@@ -1050,7 +1129,10 @@ program
 program
 	.command('open-graph [paths...]')
 	.description('Open the Document Graph over specific markdown files or a directory')
-	.option('-a, --agent <id>', "Target agent (defaults to auto-detect by path's owning agent)")
+	.option(
+		'-a, --agent <id>',
+		"Target agent (defaults to the agent owning this shell or terminal tab, else the path's owning agent)"
+	)
 	.option('--focus <path>', 'Center the graph on this document (default: the most-linked one)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(openGraph);
@@ -1118,6 +1200,22 @@ program
 	.description('Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(closeBrowser);
+
+// Browser pick command - Design Mode by selector: add an element of a browser
+// tab (selector, trimmed HTML, computed styles, cropped screenshot) to the
+// owning agent's composer, through the same code a click in Design Mode runs.
+program
+	.command('browser-pick <tab>')
+	.description(
+		"Add an element of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)"
+	)
+	.requiredOption('-s, --selector <css>', 'CSS selector of the element (the first match is used)')
+	.option('--note <text>', 'Note added under the element, as typed in the pick card')
+	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
+	.option('--background', 'Add it without switching the view to the AI tab')
+	.option('--focus', 'Switch to the AI tab the element lands in (default)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserPick);
 
 // Open terminal command - open a new terminal tab in the Maestro desktop app
 program
@@ -1317,6 +1415,112 @@ steerAutoRun
 	.option('--json', 'Output the cancelled note as JSON')
 	.action(steerAutoRunCancel);
 
+// Git Diff review comments - the CLI half of the Git Diff viewer's Review tray.
+// Comments are pinned to lines of the agent's current diff and sent to it as
+// one prompt, each with its path:lines and hunk.
+const diffReview = program
+	.command('diff-review')
+	.description("Pin review comments to lines of an agent's git diff and send them as one review");
+
+diffReview
+	.command('list')
+	.description('Show the pending comments, flagging any whose lines changed since')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(diffReviewList);
+
+diffReview
+	.command('add <path> <lines> <comment>')
+	.description('Pin a comment to path:lines of the current diff (lines: 12 or 12-14)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--side <side>', 'Which version the line numbers are in: new (default) or old', 'new')
+	.option('--background', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--json', 'Output the new comment as JSON')
+	.action(diffReviewAdd);
+
+diffReview
+	.command('edit <comment-id> <comment>')
+	.description('Reword a pending comment, keeping its id and lines (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--json', 'Output the updated comment as JSON')
+	.action(diffReviewEdit);
+
+diffReview
+	.command('remove <comment-id>')
+	.description('Drop one pending comment (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--json', 'Output the removed comment as JSON')
+	.action(diffReviewRemove);
+
+diffReview
+	.command('clear')
+	.description('Discard every pending comment')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: discarding raises no notice')
+	.option('--focus', 'Accepted and ignored: discarding raises no notice')
+	.option('--json', 'Output as JSON')
+	.action(diffReviewClear);
+
+diffReview
+	.command('send')
+	.description('Send every current comment to the agent as one queued prompt')
+	.requiredOption('-a, --agent <id>', 'Agent to send the review to')
+	.option('--compose', "Put the review in the agent's message box instead of sending it")
+	.option('--background', 'Deliver without switching the view (the default)')
+	.option('--focus', 'Take the user to the agent, as the Send Review button does')
+	.option('--json', 'Output what was sent, what was left behind, and the prompt as JSON')
+	.action(diffReviewSend);
+
+// Prompt Links - `maestro://run/<token>` URLs that open a new tab in one agent
+// and send one stored prompt. The URL carries only a random token; creating a
+// link needs the Prompt Links Encore Feature. Same service as the Prompt Links
+// window (Opt+Cmd+Shift+L).
+const promptLink = program
+	.command('prompt-link')
+	.description(
+		'Create, list, and revoke one-shot maestro://run links (the window: `open prompt-links`)'
+	);
+
+promptLink
+	.command('create <agent> [prompt]')
+	.description('Create a link that runs PROMPT in a new tab of AGENT; prints the URL once')
+	.option('--prompt-file <path>', 'Read the prompt from a file instead of the argument')
+	.option('--uses <n>', 'How many times the link may run: a number, or "unlimited" (default: 1)')
+	.option('--expires <duration>', 'Expire after 12h, 7d, 30d, ... or "never" (default: never)')
+	.option('--label <text>', 'A name to recognize the link by in lists and toasts')
+	.option(
+		'--open <mode>',
+		'Where the tab opens when the link fires: background (default) or foreground'
+	)
+	.option('--background', 'Accepted and ignored: creating a link changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: creating a link changes nothing on screen')
+	.option('--json', 'Output the URL and link as JSON')
+	.action(promptLinkCreate);
+
+promptLink
+	.command('list')
+	.description('List active prompt links (never their URLs: only a hash is stored)')
+	.option('--all', 'Include used, expired, and revoked links')
+	.option('--background', 'Accepted and ignored: listing changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(promptLinkList);
+
+promptLink
+	.command('revoke <id>')
+	.description('Revoke a prompt link so it never runs again (accepts a unique id prefix)')
+	.option('--background', 'Accepted and ignored: revoking changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: revoking changes nothing on screen')
+	.option('--json', 'Output the revoked link as JSON')
+	.action(promptLinkRevoke);
+
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program
 	.command('marketplace')
@@ -1490,6 +1694,14 @@ cue
 		'With a worktree flag: ref a new branch is cut from, and the pull request target'
 	)
 	.option('--create-pr', 'With a worktree flag: open a pull request when the run finishes')
+	.option(
+		'--tab <tab-id>',
+		'Deliver the prompt into this existing AI tab of --agent (waits behind a busy turn, marks the tab unread, never moves the view; a closed tab falls back to a new tab + toast)'
+	)
+	.option(
+		'--here',
+		'Like --tab, for the AI tab this command runs from (an agent scheduling its own follow-up); --agent defaults to that agent'
+	)
 	.option('--notify', 'Show a toast notification when the task fires')
 	.option('--sticky', 'Make the notify toast sticky (requires --notify)')
 	.option('-m, --message <text>', 'Body for the notify toast (defaults to label/prompt)')
@@ -1822,6 +2034,10 @@ host
 		'--stop-grace <seconds>',
 		'On SIGTERM/SIGINT, wait this long for work in flight before stopping (default 30; 0 stops at once)'
 	)
+	.option(
+		'--no-prevent-sleep',
+		'macOS: let the Mac sleep even while work is in flight (default: caffeinate holds it awake)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => hostStart(options, cliVersion));
 
@@ -1832,6 +2048,18 @@ host
 	.option('--dev', 'Use the development data directory')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => hostStatus(options));
+
+// Federation pairing P1 (#1716): a laptop reads this over SSH. It prints nothing `cat` of the
+// owner-only discovery file would not.
+host
+	.command('endpoint')
+	.description(
+		"Print this data directory's host endpoint (port, token, CLI secret) for Federation over SSH"
+	)
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option('--json', 'Output as JSON, with the token and the CLI secret')
+	.action((options) => hostEndpoint(options));
 
 host
 	.command('stop')
@@ -1847,6 +2075,125 @@ host
 	.option('--force', 'Stop even with work in flight; a run records how it ended first')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => hostStop(options));
+
+// Remote host commands - the `maestro-cli host` on an SSH remote (Federation, #1716)
+const remoteHost = program
+	.command('remote-host')
+	.description('Install, check, and start the maestro-cli host on an SSH remote (Federation)');
+
+remoteHost
+	.command('status <ssh-remote>')
+	.description(
+		'Report whether Maestro is installed on the remote, whether its host runs, and the version skew'
+	)
+	.option('--timeout <seconds>', 'Give up on the SSH call after this many seconds (default 60)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((ref: string, options) => remoteHostStatus(ref, options, cliVersion));
+
+remoteHost
+	.command('install <ssh-remote>')
+	.description(
+		"Copy this maestro-cli to the remote (with Node.js and SQLite for the remote's platform), or upgrade an older one"
+	)
+	.option('--start', 'Start the host on the remote once the CLI is in place')
+	.option('--force', 'Install even over a maestro-cli that Maestro did not install there')
+	.option('--restart', 'Replace a running host on an older version: stop it, upgrade, start it')
+	.option(
+		'--no-service',
+		'Do not register the host with the remote service manager (systemd user unit, launchd agent)'
+	)
+	.option('--timeout <seconds>', 'Give up on the install after this many seconds (default 600)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((ref: string, options) => remoteHostInstall(ref, options, cliVersion));
+
+remoteHost
+	.command('start <ssh-remote>')
+	.description('Start the host on the remote (as the SSH user) when none runs, then report status')
+	.option('--timeout <seconds>', 'Give up on each SSH call after this many seconds (default 60)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((ref: string, options) => remoteHostStart(ref, options, cliVersion));
+
+// Lift - move an SSH remote agent onto the maestro-cli host on its remote (Federation, #1716)
+program
+	.command('lift <agent>')
+	.description(
+		'Move an SSH remote agent, with its tabs, transcripts, provider sessions and queue, onto the host on its remote'
+	)
+	.option('--dry-run', 'Print what would move and what stays, then stop')
+	.option('--with-env', 'Send secret env vars too (non-secret ones always move)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, options) => lift(agent, options));
+
+// Federation peer mirror - the peers the desktop mirrors in its Left Bar (FED-SSH-05)
+const federation = program
+	.command('federation')
+	.description('List and reconnect the Federation peers the desktop app mirrors in its Left Bar');
+
+federation
+	.command('peers')
+	.description('List the peers the desktop mirrors, with connection state and agent count')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationPeers(options));
+
+const federationAutoCommand = federation
+	.command('auto')
+	.description(
+		'Show what automatic Federation did, waits on, or needs from you, per SSH remote and SSH agent (exit 1 when something needs you)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationAuto(options));
+
+federationAutoCommand
+	.command('run')
+	.description(
+		'Run an automatic Federation pass now: start stopped hosts, install where SSH agents need one, and move agents that pass every check'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationAutoRun(options));
+
+federation
+	.command('agents')
+	.description(
+		'List every agent the mirrored hosts run, and which ones the Left Bar shows (a host agent shows only once added)'
+	)
+	.option('--peer <peer>', 'Only this peer')
+	.option('--not-added', 'Only the agents the Left Bar does not show yet')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationAgents(options));
+
+federation
+	.command('add <agent>')
+	.description(
+		"Add a host's agent (peer:agent) to the Left Bar, the same as Add Hosted Agent. Remove it with remove-agent; the host keeps it"
+	)
+	.option('-g, --group <group>', 'Local group id or name for the row (default: ungrouped)')
+	.option('--background', 'Add it without selecting it (Left Bar selection stays put)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, options) => federationAdd(agent, options));
+
+federation
+	.command('reconnect <peer>')
+	.description('Force the desktop to reconnect to a peer and reload its agent list')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((peer: string, options) => federationReconnect(peer, options));
+
+federation
+	.command('conflicts')
+	.description(
+		"List hosted agents' settings that this machine and the host both changed (exit 1 while any wait)"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationConflicts(options));
+
+federation
+	.command('resolve <agent> <field>')
+	.description(
+		"Settle one settings conflict of a hosted agent (peer:agent): take the host's value, keep this machine's, or send a merged text"
+	)
+	.option('--take <side>', 'host or local')
+	.option('--value <text>', 'A merged text to use instead (free-text fields only)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, field: string, options) => federationResolve(agent, field, options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program
@@ -1867,11 +2214,7 @@ program
 	.command('create-agent <name>')
 	.description('Create a new agent in the Maestro desktop app')
 	.requiredOption('-d, --cwd <path>', 'Working directory for the agent')
-	.option(
-		'-t, --type <type>',
-		'Agent type (claude-code, codex, opencode, factory-droid, copilot-cli, antigravity, gemini-cli, qwen3-coder)',
-		'claude-code'
-	)
+	.option('-t, --type <type>', `Agent type (${CREATE_AGENT_TYPES.join(', ')})`, 'claude-code')
 	.option('-g, --group <id>', 'Group ID to assign the agent to')
 	.option('--nudge <message>', 'Nudge message appended to every user message')
 	.option('--new-session-message <message>', 'Message prefixed to first message in new sessions')
@@ -2325,6 +2668,7 @@ tab
 	.command('closed')
 	.description('List the closed tabs an agent can reopen, newest first (index 0 = Cmd+Shift+T)')
 	.option('-a, --agent <id>', 'Whose closed tabs (default: the agent selected in the desktop)')
+	.option('--all', "Every agent's closed tabs, grouped by agent (agents with none are left out)")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => tabClosed(options));
 
@@ -2338,6 +2682,38 @@ tab
 	.option('--focus', 'Switch to the restored tab (default)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => tabReopen(options));
+
+// Message pins: the pin button on a message and the pin panel.
+const tabPins = tab
+	.command('pins')
+	.description("Read and change an AI tab's pinned messages (default: list them)");
+
+const tabPinsOptions = (cmd: Command): Command =>
+	cmd
+		.option('-t, --tab <tab-id>', 'The AI tab (exact, unique prefix, or "active"; default: active)')
+		.option('-a, --agent <id>', 'Whose active tab, when the tab is "active"')
+		.option('--json', 'Output as JSON (for scripting)');
+
+tabPinsOptions(tabPins.command('list', { isDefault: true }))
+	.description("List a tab's pinned messages in transcript order")
+	.action((options) => tabPinsList(options));
+
+tabPinsOptions(tabPins.command('add [message-id]'))
+	.description('Pin a message by transcript entry id, or the newest one with --last')
+	.option('--last <who>', 'Pin the newest message of this kind: user or agent')
+	.action((messageId, options) => tabPinsAdd(messageId, options));
+
+tabPinsOptions(tabPins.command('remove <pin-id>'))
+	.description('Unpin a message (pin id: exact or unique prefix)')
+	.action((pinId, options) => tabPinsRemove(pinId, options));
+
+tabPinsOptions(tabPins.command('rename <pin-id> [label...]'))
+	.description("Rename a pin; no label restores the message's own first line")
+	.action((pinId, label, options) => tabPinsRename(pinId, label, options));
+
+tabPinsOptions(tabPins.command('show'))
+	.description('Open the pin panel over the tab (selects the agent and the tab)')
+	.action((options) => tabPinsShow(options));
 
 tabTargetOptions(tab.command('compact [tab-id]'))
 	.description(
@@ -2369,6 +2745,13 @@ tabTargetOptions(tab.command('transfer [tab-id]'))
 	.option('--focus', 'Jump to the new tab (default)')
 	.action((tabId, options) => tabTransfer(tabId, options));
 
+// Federation is opportunistic: every remote takes part unless it opts out with `--federation off`.
+const federationOption = (): Option =>
+	new Option(
+		'--federation <on|off>',
+		'Look for a Maestro host on this remote (on, the default) or never (off)'
+	);
+
 // Create SSH remote command - add a new SSH remote configuration
 program
 	.command('create-ssh-remote <name>')
@@ -2394,6 +2777,7 @@ program
 	)
 	.option('--ssh-config', 'Use ~/.ssh/config for connection settings (host becomes Host pattern)')
 	.option('--disabled', 'Create in disabled state')
+	.addOption(federationOption())
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createSshRemote);
@@ -2447,6 +2831,7 @@ program
 	)
 	.option('--ssh-config <bool>', 'Use ~/.ssh/config for connection settings (true/false)')
 	.option('--enabled <bool>', 'Enable or disable this remote (true/false)')
+	.addOption(federationOption())
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(updateSshRemote);
@@ -2466,6 +2851,26 @@ program
 	.option('--timeout <seconds>', 'Give up after this many seconds', Number, 60)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(testSshRemote);
+
+// SSH remote status - the running app's view of which remotes are unreachable
+program
+	.command('ssh-remote-status')
+	.description(
+		'List SSH remotes the running app holds as unreachable, or re-check one (the dialog\'s "Check Now")'
+	)
+	.option('--check <remote-id>', 'Probe this remote now; exits 2 if it is still unreachable')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(sshRemoteStatus);
+
+// Claude TUI canary - did the installed Claude Code pass a maestro-p turn?
+program
+	.command('claude-canary')
+	.description(
+		'Show whether the installed Claude Code passed the TUI canary (one real maestro-p turn the app runs after every Claude Code update); --run runs it now'
+	)
+	.option('--run', 'Run the canary now; exits 2 if Claude Code fails it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(claudeCanary);
 
 // Display / typography commands
 //
@@ -2736,6 +3141,10 @@ computerHistory
 	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)')
 	.option('--until <time>', 'End (default now)')
 	.option('--kind <kind>', '15m | 6h (default both)')
+	.option(
+		'--grep <regex>',
+		'Case-insensitive regex over each digest summary (literal when invalid)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => computerHistoryDigests(options));
 
@@ -2894,9 +3303,12 @@ pianola
 pianola
 	.command('learn')
 	.description(
-		'Crawl installed CLI transcripts into a labeled decision corpus (Claude Code + Codex)'
+		'Crawl installed CLI transcripts into a labeled decision corpus (Claude Code, Codex, Grok CLI)'
 	)
-	.option('--agent <list>', 'Comma list of agents to crawl: claude-code,codex (default both)')
+	.option(
+		'--agent <list>',
+		'Comma list of agents to crawl: claude-code, codex, grok (default claude-code,codex)'
+	)
 	.option('--limit <n>', 'Max sessions per agent, newest first (default 300)')
 	.option('--since <date>', 'Only crawl transcripts modified on/after this date (e.g. 2026-06-01)')
 	.option(
@@ -3089,13 +3501,23 @@ const pianolaSupervise = pianola
 
 pianolaSupervise
 	.command('scope')
-	.description('Create or replace an agent/group watch selection (new selections start paused)')
+	.description(
+		'Configure or reconcile an owner-authorized agent/group selection through the desktop host'
+	)
 	.requiredOption('--manager <agent-id>', 'Manager agent id')
 	.requiredOption('--label <label>', 'Selection label')
-	.option('--id <scope-id>', 'Replace an existing selection')
+	.option('--id <scope-id>', 'Existing owner-authorized selection id')
 	.option('--agents <ids>', 'Comma-separated agent IDs')
 	.option('--groups <ids>', 'Comma-separated group IDs')
 	.option('--exclude <ids>', 'Comma-separated excluded agent IDs')
+	.option(
+		'--future-local-agents',
+		'Include future local agents (requires --id or --request-owner-approval)'
+	)
+	.option(
+		'--request-owner-approval',
+		'Request one native owner confirmation for this exact configuration'
+	)
 	.option('--json', 'Output as JSON')
 	.action((options) => pianolaSuperviseScope(options));
 
@@ -3127,6 +3549,7 @@ pianolaSupervise
 pianolaSupervise
 	.command('list')
 	.description('List registered supervised targets')
+	.option('--live', 'Read worker and coverage status from the desktop host')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => pianolaSuperviseList(options));
 
@@ -3434,7 +3857,7 @@ quickChatCmd
 
 quickChatCmd
 	.command('return')
-	.description('Close the Quick Chat window and bring Maestro forward (Cmd+` in the window)')
+	.description('Close the Quick Chat window and bring Maestro forward (the show-Maestro hotkey)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => quickChat('return', {}, options));
 
@@ -3868,6 +4291,62 @@ encoreCommand(program, 'stats-query <sql>', 'usageStats', encoreFlags)
 	)
 	.option('--json', 'Output rows as JSON instead of a tab-separated table')
 	.action(statsQuery);
+
+program
+	.command('stats-delegation')
+	.description(
+		'Show the delegation split (interactive turns vs Auto Run tasks vs Cue runs) for a range and per day'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output totals, delegated share, and the per-day split as JSON')
+	.action(statsDelegation);
+
+program
+	.command('stats-cue')
+	.description(
+		'Show the Usage Dashboard Cue tab: run totals, durations, and per-pipeline breakdowns'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option(
+		'--exclude-trigger <type>',
+		'Leave out a trigger type, like the Cue tab filter chips (repeatable)',
+		(value: string, prev: string[]) => [...prev, value],
+		[] as string[]
+	)
+	.option('--json', 'Output the full Cue statistics object as JSON')
+	.action(statsCue);
+
+program
+	.command('stats-plan-usage')
+	.description('Show the last sampled plan usage per Anthropic (Claude) and OpenAI (Codex) account')
+	.option('--provider <provider>', 'Only one provider: claude or codex')
+	.option('--json', 'Output the accounts as JSON')
+	.action(statsPlanUsage);
+
+program
+	.command('stats-agents')
+	.description('Show Agents Over Time: agents that existed each day, plus created and deleted')
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output the daily series as JSON')
+	.action(statsAgents);
+
+program
+	.command('stats-activity')
+	.description(
+		'Show Auto Run runs, wizard runs, resilience outages, and shortcut presses for a range and per day'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output totals and the daily counts as JSON')
+	.action(statsActivity);
+
+program
+	.command('stats-export')
+	.description('Export everything the Usage Dashboard reads for a range (the Export button)')
+	.requiredOption('-o, --output <path>', 'File to write (a .zip of CSVs, or a .json file)')
+	.option('-f, --format <format>', 'csv (a zip of CSV files) or json (default: csv)')
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output the result (path, row counts, notes) as JSON')
+	.action(statsExport);
 
 // Plugin authoring commands - scaffold, validate, sign, and package a Maestro
 // plugin from the command line. The manifest/signature contracts are the shared

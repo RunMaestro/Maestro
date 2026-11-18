@@ -11,7 +11,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { AgentError } from '../../../renderer/types';
+import type { AgentError, BatchRunState } from '../../../renderer/types';
+import {
+	classifyRetryableError,
+	type ClassifiableError,
+} from '../../../shared/retryClassification';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { DEFAULT_BATCH_STATE } from '../../../renderer/hooks/batch/batchReducer';
+import { createMockSession } from '../../helpers/mockSession';
+import { resetStores } from '../../helpers/resetStores';
 import { registerBatchResumer } from '../../../renderer/services/batchResumer';
 import {
 	scheduleAutoResume,
@@ -20,6 +29,7 @@ import {
 	resumeAutoRunNow,
 	getAutoResumeEntry,
 	resetAutoResumeStateForTests,
+	useAutoRunResumeStore,
 } from '../../../renderer/stores/autoRunResumeStore';
 
 vi.mock('../../../renderer/utils/logger', () => ({
@@ -28,7 +38,9 @@ vi.mock('../../../renderer/utils/logger', () => ({
 
 const POLICY = { delayMs: 5 * 60_000, maxAttempts: 5 };
 
-function agentError(overrides: Partial<AgentError> = {}): AgentError {
+function agentError(
+	overrides: Partial<AgentError & ClassifiableError> = {}
+): AgentError & ClassifiableError {
 	return {
 		type: 'unknown',
 		message: 'Something went wrong',
@@ -44,6 +56,7 @@ describe('autoRunResumeStore', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		resetAutoResumeStateForTests();
+		resetStores(useSessionStore, useBatchStore);
 		resumer = vi.fn();
 		registerBatchResumer(resumer);
 	});
@@ -51,6 +64,8 @@ describe('autoRunResumeStore', () => {
 	afterEach(() => {
 		resetAutoResumeStateForTests();
 		registerBatchResumer(null);
+		resetStores(useSessionStore, useBatchStore);
+		vi.restoreAllMocks();
 		vi.useRealTimers();
 	});
 
@@ -177,4 +192,185 @@ describe('autoRunResumeStore', () => {
 		vi.advanceTimersByTime(POLICY.delayMs);
 		expect(resumer).toHaveBeenCalledTimes(1);
 	});
+
+	describe('Grok automatic replay ownership', () => {
+		let safeError: AgentError & ClassifiableError;
+		beforeEach(() => {
+			safeError = agentError({
+				agentId: 'grok',
+				type: 'network_error',
+				message: 'Service unavailable',
+				terminal: { status: 'failed', kind: 'provider', dispatchState: 'not-dispatched' },
+			});
+			useSessionStore.getState().setSessions([
+				createMockSession({
+					id: 's1',
+					toolType: 'grok',
+					agentErrorPaused: true,
+					agentError: safeError,
+				}),
+			]);
+			useBatchStore.setState({
+				batchRunStates: {
+					s1: {
+						...DEFAULT_BATCH_STATE,
+						isRunning: true,
+						errorPaused: true,
+						error: safeError,
+					},
+				},
+			});
+		});
+
+		it.each<[string, Partial<AgentError & ClassifiableError>]>([
+			['missing terminal', { terminal: undefined }],
+			['uncertain rate limit', { type: 'rate_limited', terminal: undefined }],
+			[
+				'unknown dispatch',
+				{ terminal: { status: 'failed', kind: 'provider', dispatchState: 'unknown' } },
+			],
+			[
+				'dispatched network failure',
+				{ terminal: { status: 'failed', kind: 'provider', dispatchState: 'dispatched' } },
+			],
+			[
+				'cancelled',
+				{ terminal: { status: 'cancelled', origin: 'user', dispatchState: 'not-dispatched' } },
+			],
+			[
+				'refused',
+				{ terminal: { status: 'refused', origin: 'effect', dispatchState: 'not-dispatched' } },
+			],
+			['context limit', { type: 'token_exhaustion' }],
+			[
+				'partial transport',
+				{ terminal: { status: 'failed', kind: 'transport', dispatchState: 'not-dispatched' } },
+			],
+			[
+				'malformed protocol',
+				{ terminal: { status: 'failed', kind: 'protocol', dispatchState: 'not-dispatched' } },
+			],
+		])('cannot fall through Agent Resilience decline for %s', (_name, patch) => {
+			const error = { ...safeError, ...patch };
+			expect(classifyRetryableError(error)).toBeNull();
+			expect(scheduleAutoResume('s1', POLICY, error)).toBe(false);
+			vi.advanceTimersByTime(POLICY.delayMs * 2);
+			expect(resumer).not.toHaveBeenCalled();
+			expect(useBatchStore.getState().batchRunStates.s1.errorPaused).toBe(true);
+			expect(getAutoResumeEntry('s1')).toBeUndefined();
+		});
+
+		it('resumes a proven not-dispatched transient failure exactly once', () => {
+			expect(classifyRetryableError(safeError)).toBe('availability');
+			expect(scheduleAutoResume('s1', POLICY, safeError)).toBe(true);
+			vi.advanceTimersByTime(POLICY.delayMs * 2);
+			expect(resumer).toHaveBeenCalledExactlyOnceWith('s1');
+		});
+
+		describe.each(['session', 'batch'] as const)('%s error ownership', (owner) => {
+			it.each(['schedule', 'fire'] as const)('rejects an unsafe live error at %s', (stage) => {
+				if (stage === 'fire') expect(scheduleAutoResume('s1', POLICY, safeError)).toBe(true);
+				const uncertain = agentError({ agentId: 'grok', type: 'network_error' });
+				if (owner === 'session') {
+					useSessionStore
+						.getState()
+						.setSessions((sessions) => sessions.map((s) => ({ ...s, agentError: uncertain })));
+				} else {
+					useBatchStore
+						.getState()
+						.setBatchRunStates((states) => ({ ...states, s1: { ...states.s1, error: uncertain } }));
+				}
+				if (stage === 'schedule') expect(scheduleAutoResume('s1', POLICY, safeError)).toBe(false);
+				vi.advanceTimersByTime(POLICY.delayMs * 2);
+				expect(resumer).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions[0].agentErrorPaused).toBe(true);
+				expect(useBatchStore.getState().batchRunStates.s1.errorPaused).toBe(true);
+			});
+		});
+
+		it.each<Partial<BatchRunState>>([
+			{ isRunning: false },
+			{ errorPaused: false },
+			{ isStopping: true },
+			{ mirrored: true },
+			{ error: undefined },
+			{ error: agentError({ agentId: 'grok', type: 'rate_limited' }) },
+		])('disarms a timer when the current batch changes to %j', (patch) => {
+			expect(scheduleAutoResume('s1', POLICY, safeError)).toBe(true);
+			useBatchStore
+				.getState()
+				.setBatchRunStates((states) => ({ ...states, s1: { ...states.s1, ...patch } }));
+			vi.advanceTimersByTime(POLICY.delayMs);
+			expect(resumer).not.toHaveBeenCalled();
+			expect(getAutoResumeEntry('s1')).toMatchObject({ attempts: 1, nextResumeAt: null });
+		});
+
+		it('cancels a previously safe timer when its replacement is declined', () => {
+			expect(scheduleAutoResume('s1', POLICY, safeError)).toBe(true);
+			expect(scheduleAutoResume('s1', POLICY, agentError({ agentId: 'grok' }))).toBe(false);
+			vi.advanceTimersByTime(POLICY.delayMs);
+			expect(resumer).not.toHaveBeenCalled();
+			expect(getAutoResumeEntry('s1')).toMatchObject({ attempts: 1, nextResumeAt: null });
+		});
+
+		it.each(['changed provider', 'removed session'] as const)(
+			'retains Grok identity after %s',
+			(change) => {
+				const legacy = { ...safeError, agentId: undefined } as unknown as AgentError;
+				expect(scheduleAutoResume('s1', POLICY, legacy)).toBe(true);
+				useSessionStore.getState().setSessions((sessions) =>
+					change === 'removed session'
+						? []
+						: sessions.map((s) => ({
+								...s,
+								toolType: 'codex',
+								agentError: agentError(),
+								agentErrorPaused: true,
+							}))
+				);
+				useBatchStore.getState().setBatchRunStates((states) => ({
+					...states,
+					s1: { ...states.s1, error: agentError() },
+				}));
+				vi.advanceTimersByTime(POLICY.delayMs);
+				expect(resumer).not.toHaveBeenCalled();
+			}
+		);
+
+		it('does not turn a restored countdown entry into an automatic resume', () => {
+			expect(scheduleAutoResume('s1', POLICY, safeError)).toBe(true);
+			const saved = JSON.parse(JSON.stringify(useAutoRunResumeStore.getState().entries));
+			resetAutoResumeStateForTests();
+			useAutoRunResumeStore.setState({ entries: saved });
+			vi.advanceTimersByTime(POLICY.delayMs * 2);
+			resumeAutoRunNow('s1');
+			expect(resumer).not.toHaveBeenCalled();
+		});
+
+		it('preserves explicit user Resume after a scheduled error becomes uncertain', () => {
+			expect(scheduleAutoResume('s1', POLICY, safeError)).toBe(true);
+			useBatchStore.getState().setBatchRunStates((states) => ({
+				...states,
+				s1: { ...states.s1, error: agentError({ agentId: 'grok' }) },
+			}));
+			resumeAutoRunNow('s1');
+			vi.advanceTimersByTime(POLICY.delayMs * 2);
+			expect(resumer).toHaveBeenCalledExactlyOnceWith('s1');
+			expect(getAutoResumeEntry('s1')?.attempts).toBe(1);
+		});
+	});
+
+	it.each(['claude-code', 'codex', 'antigravity'] as const)(
+		'preserves %s blanket automatic resume',
+		(toolType) => {
+			const error = agentError({ agentId: toolType });
+			useSessionStore
+				.getState()
+				.setSessions([createMockSession({ id: 's1', toolType, agentError: error })]);
+			expect(classifyRetryableError(error)).toBeNull();
+			expect(scheduleAutoResume('s1', POLICY, error)).toBe(true);
+			vi.advanceTimersByTime(POLICY.delayMs * 2);
+			expect(resumer).toHaveBeenCalledExactlyOnceWith('s1');
+		}
+	);
 });

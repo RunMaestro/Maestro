@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { isImeComposing } from '../../utils/ime';
 import {
 	AlertTriangle,
 	Bot,
@@ -528,7 +529,7 @@ function PipelineNameEditor({
 					// Escape branch here would be dead code that reads as the source
 					// of the behavior.
 					e.stopPropagation();
-					if (e.key === 'Enter') {
+					if (e.key === 'Enter' && !isImeComposing(e)) {
 						e.preventDefault();
 						commit();
 					}

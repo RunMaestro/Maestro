@@ -7,6 +7,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { isValidCssColor } from '../../shared/cssColor';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
+import { isImeComposing } from '../utils/ime';
 
 interface CustomThemeBuilderProps {
 	theme: Theme; // Current active theme for styling the builder
@@ -255,7 +256,7 @@ function ColorInput({
 						value={value}
 						onChange={(e) => onChange(colorKey, e.target.value)}
 						onBlur={() => setIsEditing(false)}
-						onKeyDown={(e) => e.key === 'Enter' && setIsEditing(false)}
+						onKeyDown={(e) => e.key === 'Enter' && !isImeComposing(e) && setIsEditing(false)}
 						className="w-32 px-1.5 py-0.5 rounded text-xs font-mono border"
 						style={{
 							backgroundColor: theme.colors.bgActivity,

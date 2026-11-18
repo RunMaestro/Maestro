@@ -16,6 +16,9 @@ import { assembleTurn } from '../../../../shared/maestro-lib/turns/assemble';
 import { historyFilePath } from '../../../../shared/maestro-lib/store/read-history';
 import { journeyFilePath } from '../../../../shared/maestro-lib/store/read-journey';
 import { makeAgent, makeTab } from './fixtures';
+import { buildWorktreeSession } from '../../../../renderer/utils/worktreeSession';
+import { createMockSession } from '../../../helpers/mockSession';
+import { createMockAITab } from '../../../helpers/mockTab';
 
 let dir: string;
 let prompts: string;
@@ -262,6 +265,130 @@ describe('loadTurnContext', () => {
 			expect(result.context.historyFilePath).toBeUndefined();
 		});
 	});
+});
+
+describe('loadTurnContext: a Grok worktree child', () => {
+	it.each([
+		{ host: 'local', account: 'a', binary: 'agent' },
+		{ host: 'local', account: 'b', binary: 'provider' },
+		{ host: 'local', account: 'b', binary: 'PATH' },
+		{ host: 'local', account: 'a', binary: 'missing' },
+		{ host: 'SSH', account: 'a', binary: 'agent' },
+		{ host: 'SSH', account: 'b', binary: 'provider' },
+	])(
+		'resolves $host account $account through the $binary binary path',
+		async ({ host, account, binary }) => {
+			const remote = host === 'SSH';
+			const accountRoot = remote ? `/accounts/${account}` : path.join(dir, 'accounts', account);
+			const cwd = remote ? '/worktrees/child' : path.join(dir, 'worktrees', 'child');
+			const agentPath = remote ? '/opt/Grok CLI/grok' : path.join(dir, 'Agent Grok', 'grok');
+			const providerPath = path.join(dir, 'Provider Grok', 'grok');
+			const pathBinary = path.join(dir, 'bin', 'grok');
+			const invalidPath = path.join(dir, 'missing', 'grok');
+			const selected = createMockAITab({
+				agentSessionId: `parent-native-${account}`,
+				customModel: 'grok-4.5',
+				customEffort: 'max',
+				permissionMode: 'readonly',
+			});
+			const parent = createMockSession({
+				toolType: 'grok',
+				cwd: remote ? '/projects/parent' : path.join(dir, 'parent'),
+				customPath: binary === 'agent' ? agentPath : !remote ? invalidPath : undefined,
+				customEnvVars: { GROK_HOME: accountRoot, GROK_AUTH_PATH: '' },
+				aiTabs: [selected],
+				activeTabId: selected.id,
+				sessionSshRemoteConfig: remote
+					? { enabled: true, remoteId: 'r1', workingDirOverride: '/projects/parent' }
+					: undefined,
+			});
+			const original = structuredClone(parent);
+			const child = buildWorktreeSession({
+				parentSession: parent,
+				path: cwd,
+				name: 'Grok child',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			write(paths.agentConfigsFile, {
+				configs: {
+					grok: { customPath: providerPath, customEnvVars: { GROK_HOME: '/unselected/account' } },
+					'claude-code': { customPath: '/must-not-run/claude' },
+				},
+			});
+			write(historyFilePath(paths.historyDir, child.id), '');
+			const probeBinary = vi.fn(async (_name: string, customPath?: string) => {
+				if (binary === 'agent' && customPath === agentPath) return found(agentPath)();
+				if (binary === 'provider' && customPath === providerPath) return found(providerPath)();
+				if (binary === 'PATH' && !customPath) return found(pathBinary)();
+				return missing();
+			});
+			const readGitBranch = vi.fn(async () => 'worktree-branch');
+			const loaded = await load(child, { probeBinary, readGitBranch, isWindowsHost: false });
+
+			if (remote) {
+				expect(probeBinary).not.toHaveBeenCalled();
+				expect(readGitBranch).not.toHaveBeenCalled();
+			} else {
+				expect(probeBinary.mock.calls).toEqual(
+					binary === 'agent'
+						? [['grok', agentPath]]
+						: [
+								['grok', invalidPath],
+								['grok', providerPath],
+								...(binary === 'provider' ? [] : [['grok']]),
+							]
+				);
+			}
+			if (binary === 'missing') {
+				expect(loaded).toEqual({
+					ok: false,
+					reason: 'not-installed',
+					message: 'Grok CLI (grok) was not found on this machine',
+				});
+				expect(readGitBranch).not.toHaveBeenCalled();
+			} else {
+				if (!loaded.ok) throw new Error(loaded.message);
+				const command =
+					binary === 'agent'
+						? agentPath
+						: remote
+							? 'grok'
+							: binary === 'provider'
+								? providerPath
+								: pathBinary;
+				expect(loaded.context.command).toBe(command);
+				expect(loaded.context.provider.id).toBe('grok');
+				expect(loaded.context.provider.path).toBe(remote ? undefined : command);
+				expect(loaded.context.historyFilePath).toBe(
+					remote ? undefined : historyFilePath(paths.historyDir, child.id)
+				);
+				if (!remote) expect(readGitBranch).toHaveBeenCalledExactlyOnceWith(cwd);
+				const assembled = assembleTurn(
+					child,
+					child.aiTabs[0],
+					{ text: 'Review this worktree' },
+					loaded.context
+				);
+				if (!assembled.ok) throw new Error(assembled.message);
+				expect(assembled.turn).toMatchObject({
+					settings: { provider: 'grok', model: 'grok-4.5', effort: 'max' },
+					permissionMode: 'readonly',
+					launch: {
+						command,
+						cwd,
+						sessionCustomEnvVars: { GROK_HOME: accountRoot, GROK_AUTH_PATH: '' },
+					},
+				});
+				expect(assembled.turn.launch.sshRemoteConfig).toEqual(child.sessionSshRemoteConfig);
+				expect(assembled.turn.resumeSessionId).toBeUndefined();
+				expect(assembled.turn.launch.args).not.toContain('--resume');
+			}
+			expect(child.id).not.toBe(parent.id);
+			expect(child.aiTabs[0].agentSessionId).toBeNull();
+			expect(parent).toEqual(original);
+		}
+	);
 });
 
 describe('the plugin sections of the system prompt', () => {

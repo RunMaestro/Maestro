@@ -87,6 +87,107 @@ describe('model tiers', () => {
 	});
 });
 
+describe('Grok effort candidates and refusal memory', () => {
+	afterEach(() => resetEffortRejections());
+
+	it.each([
+		{ level: 'low', value: 'minimal' },
+		{ level: 'medium', value: 'medium' },
+		{ level: 'high', value: 'max' },
+	] as const)('keeps $level at $value across model menu changes', ({ level, value }) => {
+		const menu = Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+		expect(resolveEffortLevel('grok', level, menu)).toBe(value);
+		expect(resolveEffortLevel('grok', level, [...menu].reverse())).toBe(value);
+		expect(resolveEffortLevel('grok', level, ['future-rung', ...menu])).toBe(value);
+		// Another model's narrower menu must not turn the hint into a nearby rung.
+		expect(
+			resolveEffortLevel(
+				'grok',
+				level,
+				menu.filter((rung) => rung !== value)
+			)
+		).toBeUndefined();
+		expect(resolveEffortLevel('grok', level, [value])).toBe(value);
+		expect(resolveEffortLevel('grok', level)).toBeUndefined();
+		expect(resolveTierModel('grok', level)).toBeUndefined();
+		expect(supportsTierSelection('grok')).toBe(false);
+		expect(supportsEffortSelection('grok')).toBe(true);
+	});
+
+	it.each([
+		{ name: 'empty', menu: [], expected: [undefined, undefined, undefined] },
+		{
+			name: 'legacy',
+			menu: ['xhigh', 'high', 'medium', 'low'],
+			expected: [undefined, 'medium', undefined],
+		},
+		{
+			name: 'selector IDs',
+			menu: ['fast-choice', 'balanced-choice', 'deep-choice'],
+			expected: [undefined, undefined, undefined],
+		},
+		{
+			name: 'uppercase IDs',
+			menu: ['MINIMAL', 'MEDIUM', 'MAX'],
+			expected: [undefined, undefined, undefined],
+		},
+		{ name: 'none only', menu: ['none'], expected: [undefined, undefined, undefined] },
+	])('does not infer wire values from a $name menu', ({ menu, expected }) => {
+		expect(TIER_LEVELS.map((level) => resolveEffortLevel('grok', level, menu))).toEqual(expected);
+	});
+
+	it.each([
+		{ level: 'low', value: 'minimal', remaining: [undefined, 'medium', 'max'] },
+		{ level: 'medium', value: 'medium', remaining: ['minimal', undefined, 'max'] },
+		{ level: 'high', value: 'max', remaining: ['minimal', 'medium', undefined] },
+	] as const)(
+		'reports a refused $level candidate without replacing it',
+		({ level, value, remaining }) => {
+			const menu = ['minimal', 'medium', 'max'];
+			const rejection = {
+				value: value.toUpperCase(),
+				model: 'synthetic-refusing-model',
+				supported: ['fast-choice', 'deep-choice'],
+			};
+			noteEffortRejection('grok', rejection);
+			expect(rejectedEffortForLevel('grok', level)).toEqual(rejection);
+			expect(TIER_LEVELS.map((rung) => resolveEffortLevel('grok', rung, menu))).toEqual(remaining);
+			// Remembered refusal is provider-wide; a fresh menu cannot re-enable it.
+			expect(resolveEffortLevel('grok', level, [value])).toBeUndefined();
+			expect(isLadderEffortValue('grok', value)).toBe(true);
+			expect(supportsEffortSelection('grok')).toBe(true);
+			expect(resolveEffortLevel('claude-code', 'high')).toBe('max');
+			expect(resolveEffortLevel('codex', 'medium')).toBe('medium');
+			resetEffortRejections();
+			expect(rejectedEffortForLevel('grok', level)).toBeUndefined();
+			expect(resolveEffortLevel('grok', level, menu)).toBe(value);
+		}
+	);
+
+	it.each([
+		{ value: 'none', candidate: false },
+		{ value: 'minimal', candidate: true },
+		{ value: 'low', candidate: false },
+		{ value: 'medium', candidate: true },
+		{ value: 'high', candidate: false },
+		{ value: 'xhigh', candidate: false },
+		{ value: 'max', candidate: true },
+		{ value: 'deep-choice', candidate: false },
+	])('identifies whether $value belongs to the hint candidate set', ({ value, candidate }) => {
+		expect(isLadderEffortValue('grok', value)).toBe(candidate);
+		if (!candidate) {
+			noteEffortRejection('grok', { value, supported: [] });
+			const menu = ['minimal', 'medium', 'max'];
+			expect(TIER_LEVELS.map((level) => resolveEffortLevel('grok', level, menu))).toEqual(menu);
+			expect(TIER_LEVELS.map((level) => rejectedEffortForLevel('grok', level))).toEqual([
+				undefined,
+				undefined,
+				undefined,
+			]);
+		}
+	});
+});
+
 describe('cheap synopsis turn', () => {
 	it('pins to the bottom of both ladders', () => {
 		expect(cheapTurnSettings('claude-code')).toEqual({ model: 'haiku', effort: 'low' });
@@ -127,9 +228,113 @@ describe('cheap synopsis turn resumed on its session', () => {
 		});
 	});
 
+	it('keeps the session model on Codex, whose resume writes into the tab thread', () => {
+		// A Codex synopsis is not a leaf: a cheap model would append model-switch
+		// instructions to the tab's own thread. This must hold even if Codex ever
+		// gains a cheap tier row, so only effort drops.
+		expect(cheapResumeTurnSettings('codex', { model: 'gpt-6.1-sol', effort: 'high' })).toEqual({
+			model: 'gpt-6.1-sol',
+			effort: 'low',
+		});
+		expect(cheapResumeTurnSettings('codex')).toEqual({ model: undefined, effort: 'low' });
+	});
+
 	it('works with nothing configured on the session', () => {
 		expect(cheapResumeTurnSettings('claude-code')).toEqual({ model: 'haiku', effort: 'low' });
 		expect(cheapResumeTurnSettings('opencode')).toEqual({ model: undefined, effort: undefined });
+	});
+});
+
+describe('Grok cheap turns require advertised wire-value evidence', () => {
+	it.each([
+		{ name: 'absent', menu: undefined, floor: undefined },
+		{ name: 'empty', menu: [], floor: undefined },
+		{ name: 'legacy without minimal', menu: ['low', 'medium', 'high'], floor: undefined },
+		{ name: 'selector IDs only', menu: ['fast-choice', 'deep-choice'], floor: undefined },
+		{ name: 'none only', menu: ['none'], floor: undefined },
+		{ name: 'ordered', menu: ['minimal', 'medium', 'max'], floor: 'minimal' },
+		{ name: 'reordered', menu: ['max', 'minimal', 'medium'], floor: 'minimal' },
+		{
+			name: 'extended',
+			menu: ['none', 'ultra', 'max', 'high', 'medium', 'low', 'minimal'],
+			floor: 'minimal',
+		},
+	])('uses only the exact floor with a $name menu', ({ menu, floor }) => {
+		expect(cheapTurnSettings('grok', menu)).toEqual({ model: undefined, effort: floor });
+		const current = { model: 'synthetic-grok-model', effort: 'high' };
+		expect(cheapResumeTurnSettings('grok', current, menu)).toEqual({
+			model: 'synthetic-grok-model',
+			effort: floor ?? 'high',
+		});
+		expect(current).toEqual({ model: 'synthetic-grok-model', effort: 'high' });
+	});
+
+	it('keeps unspecified resume settings unspecified when the floor is unavailable', () => {
+		expect(cheapResumeTurnSettings('grok')).toEqual({ model: undefined, effort: undefined });
+		expect(cheapResumeTurnSettings('grok', {}, ['low', 'max'])).toEqual({
+			model: undefined,
+			effort: undefined,
+		});
+	});
+
+	describe('remembered floor refusal', () => {
+		afterEach(() => {
+			resetEffortRejections();
+		});
+
+		it('withholds a refused floor despite a new advertised menu, preserving explicit values', () => {
+			const menu = ['minimal', 'medium', 'max'];
+			expect(cheapTurnSettings('grok', menu).effort).toBe('minimal');
+			noteEffortRejection('grok', {
+				value: 'MINIMAL',
+				model: 'synthetic-grok-model',
+				supported: ['medium', 'max'],
+			});
+			expect(cheapTurnSettings('grok', menu)).toEqual({
+				model: undefined,
+				effort: undefined,
+			});
+			// A hint cannot rewrite the configured effort, including the refused value.
+			for (const effort of ['high', 'MINIMAL']) {
+				expect(
+					cheapResumeTurnSettings('grok', { model: 'another-grok-model', effort }, menu)
+				).toEqual({ model: 'another-grok-model', effort });
+			}
+			expect(resolveEffortLevel('grok', 'medium', menu)).toBe('medium');
+			expect(cheapTurnSettings('codex', menu)).toEqual({ model: undefined, effort: 'low' });
+		});
+	});
+});
+
+describe('optional effort menus leave ordinary cheap turns unchanged', () => {
+	it.each([
+		{ provider: 'claude-code', model: 'haiku', effort: 'low' },
+		{ provider: 'codex', model: undefined, effort: 'low' },
+		{ provider: 'factory-droid', model: 'claude-haiku-4-5-20251001', effort: 'low' },
+		{ provider: 'opencode', model: undefined, effort: undefined },
+	] as const)(
+		'preserves $provider defaults with unrelated menus',
+		({ provider, model, effort }) => {
+			for (const menu of [[], ['none', 'minimal', 'max']]) {
+				expect(cheapTurnSettings(provider, menu)).toEqual({ model, effort });
+				expect(
+					cheapResumeTurnSettings(
+						provider,
+						{ model: 'configured-model', effort: 'configured-effort' },
+						menu
+					)
+				).toEqual({
+					model: model ?? 'configured-model',
+					effort: effort ?? 'configured-effort',
+				});
+			}
+		}
+	);
+
+	it('preserves the larger resumed context window even when an empty menu is passed', () => {
+		expect(
+			cheapResumeTurnSettings('claude-code', { model: 'opus[1m]', effort: 'max' }, [])
+		).toEqual({ model: 'opus[1m]', effort: 'low' });
 	});
 });
 

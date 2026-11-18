@@ -47,6 +47,18 @@ import {
 	recordSteeringResponse,
 	takeSteeringNotesForDispatch,
 } from '../../../services/autoRunSteering';
+import {
+	awaitDelegationsBeforeTurn,
+	beginAutoRunDelegations,
+	endAutoRunDelegations,
+	pendingDelegationsUpdater,
+	settleDelegationsAtRunEnd,
+	type WaitForDelegationsOptions,
+} from '../../../services/autoRunDelegations';
+import {
+	formatDelegationHistory,
+	type AutoRunDelegation,
+} from '../../../../shared/autoRunDelegation';
 import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo, PRResultInfo } from '../useBatchProcessor';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
@@ -589,9 +601,28 @@ export function useBatchRunner({
 				logger.warn('[BatchProcessor] Failed to start stats tracking:', undefined, statsError);
 			}
 
+			// Work tasks hand to other agents with `maestro-cli dispatch` reports back
+			// to this run: no task starts while some of it is still running, and the
+			// next task's prompt carries what came back (services/autoRunDelegations).
+			const delegationRunId = beginAutoRunDelegations();
+			// Results handed to a task that then failed (a limit pause retries it,
+			// an error moves on): the next task gets them again rather than never.
+			let carriedDelegationResults: AutoRunDelegation[] = [];
+			const delegationWait: WaitForDelegationsOptions = {
+				isStopRequested: () => stopRequestedRefs.current[sessionId] === true,
+				onPendingChange: (pending) =>
+					updateBatchStateAndBroadcastRef.current!(
+						sessionId,
+						pendingDelegationsUpdater(sessionId, pending),
+						true
+					),
+			};
+
 			// Collect Claude session IDs and track completion
 			const agentSessionIds: string[] = [];
 			let totalCompletedTasks = 0;
+			// Agent invocations recorded to auto_run_tasks, productive or not.
+			let agentTurnIndex = 0;
 			let loopIteration = 0;
 
 			// Register this Auto Run for emergency stats/history flush on force-kill.
@@ -933,6 +964,13 @@ export function useBatchRunner({
 						// gate on a different line is treated as a fresh notification.
 						activeHitlGateLine = null;
 
+						// Work an earlier task delegated must finish before this one
+						// starts: this task may be the one that integrates it.
+						const delegated = await awaitDelegationsBeforeTurn(delegationRunId, delegationWait);
+						if (delegated.stopped) break;
+						const delegationResults = [...carriedDelegationResults, ...delegated.results];
+						carriedDelegationResults = [];
+
 						// Use extracted document processor hook for task processing
 						// This handles: template substitution, document expansion, agent spawning,
 						// session registration, re-reading document, and synopsis generation
@@ -978,6 +1016,8 @@ export function useBatchRunner({
 									sshRemoteId,
 									runOverrides,
 									steeringNotes,
+									autoRunId: delegationRunId,
+									delegationResults,
 								},
 								effectiveFilename, // Use working copy path for reset-on-completion docs
 								docCheckedCount,
@@ -989,6 +1029,7 @@ export function useBatchRunner({
 							);
 
 							progressPoll.stop();
+							if (!taskResult.success) carriedDelegationResults = delegationResults;
 
 							// Bring the task's reply back to the notes it was steered by.
 							recordSteeringResponse(sessionId, steeringNotes, {
@@ -1087,14 +1128,18 @@ export function useBatchRunner({
 							totalCompletedTasks += tasksCompletedThisRun;
 							loopTasksCompleted += tasksCompletedThisRun;
 
-							// Record this task in stats database (if stats tracking is active)
-							if (statsAutoRunId && tasksCompletedThisRun > 0) {
+							// Record this agent TURN in the stats database (if stats tracking
+							// is active). Every invocation is recorded, including turns that
+							// ticked no checkbox, so the dashboard's turn durations and
+							// time-of-day chart see stalled turns too; checkbox counts come
+							// from the run row, not from here.
+							if (statsAutoRunId) {
 								try {
 									await window.maestro.stats.recordAutoTask({
 										autoRunSessionId: statsAutoRunId,
 										sessionId: sessionId,
 										agentType: session.toolType,
-										taskIndex: totalCompletedTasks - 1, // 0-indexed
+										taskIndex: agentTurnIndex++, // 0-indexed turn within the run
 										taskContent: shortSummary || undefined,
 										startTime: Date.now() - elapsedTimeMs,
 										duration: elapsedTimeMs,
@@ -1356,6 +1401,7 @@ export function useBatchRunner({
 							}
 						} catch (error) {
 							progressPoll.stop();
+							carriedDelegationResults = delegationResults;
 							logger.error(
 								`[BatchProcessor] Error running task in ${docEntry.filename} for session ${sessionId}:`,
 								undefined,
@@ -1602,6 +1648,23 @@ export function useBatchRunner({
 				}));
 			}
 
+			// Delegated work still running after the last task is waited for, and
+			// whatever no task received is recorded, so the run's History says what
+			// its delegates did.
+			const lateDelegations = await settleDelegationsAtRunEnd(delegationRunId, delegationWait);
+			endAutoRunDelegations(delegationRunId);
+			if (lateDelegations.length > 0) {
+				void onAddHistoryEntry({
+					type: 'AUTO',
+					timestamp: Date.now(),
+					summary: `${lateDelegations.length} delegated ${lateDelegations.length === 1 ? 'task' : 'tasks'} finished after the last task`,
+					fullResponse: formatDelegationHistory(lateDelegations),
+					projectPath: effectiveCwd,
+					sessionId,
+					success: lateDelegations.every((d) => d.status === 'completed'),
+				});
+			}
+
 			// Working copy approach: no cleanup needed
 			// - Original documents are never modified
 			// - Working copies in /Runs/ serve as audit logs and are kept
@@ -1618,14 +1681,21 @@ export function useBatchRunner({
 				worktreePath
 			) {
 				// For worktree-dispatched runs, the main repo is the parent session's cwd
-				const mainRepoCwd = config.worktreeTarget
-					? getSessions().find((s) => s.id === session.parentSessionId)?.cwd || session.cwd
-					: session.cwd;
+				const parentSession = config.worktreeTarget
+					? getSessions().find((s) => s.id === session.parentSessionId)
+					: undefined;
+				const mainRepoCwd = parentSession?.cwd || session.cwd;
+				// config.worktree never carries the SSH remote; without it the push runs locally
+				const prSshRemoteId =
+					sshRemoteId ||
+					parentSession?.sshRemoteId ||
+					parentSession?.sessionSshRemoteConfig?.remoteId ||
+					undefined;
 
 				const prResult = await worktreeManager.createPR({
 					worktreePath,
 					mainRepoCwd,
-					worktree,
+					worktree: { ...worktree, sshRemoteId: prSshRemoteId },
 					documents,
 					totalCompletedTasks,
 				});
@@ -1739,10 +1809,14 @@ export function useBatchRunner({
 				// End stats tracking for this Auto Run session
 				if (statsAutoRunId) {
 					try {
+						// A looping run ticks the same checkboxes once per loop, so its
+						// completions can pass the start-time total; report the larger
+						// figure (the same one the run's own summary shows).
 						await window.maestro.stats.endAutoRun(
 							statsAutoRunId,
 							finalTotals.totalElapsedMs,
-							finalTotals.totalCompletedTasks
+							finalTotals.totalCompletedTasks,
+							Math.max(initialTotalTasks, finalTotals.totalCompletedTasks)
 						);
 					} catch (statsError) {
 						// Don't fail cleanup if stats tracking fails

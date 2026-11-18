@@ -2,13 +2,21 @@
  * Sessions domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_sessions,
- * create_session, create_worktree_session, delete_session, rename_session,
+ * create_session, import_agent, create_worktree_session, delete_session, rename_session,
  * update_session_cwd, update_session_ssh, update_session_config, provider_translation,
  * list_desktop_sessions, get_session_history.
  */
 
 import { AGENT_IDS } from '../../../../shared/agentIds';
+import { isCurrentTurnCursor, type CurrentTurnCursor } from '../../../../shared/currentTurn';
 import { readBackgroundField } from '../../../../shared/focusPlacement';
+import { importInputFromMessage } from '../../../../shared/maestro-lib/runtime/server-requests';
+import {
+	buildDesktopAgentImportDeps,
+	importAgentIntoDesktop,
+	type DesktopAgentImportDeps,
+} from '../../../federation/import-agent';
+import { captureException } from '../../../utils/sentry';
 import type { CreateSessionConfig } from '../../types';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -146,6 +154,57 @@ export function handleCreateSession(
 		})
 		.catch((error) => {
 			ctx.sendError(client, `Failed to create session: ${error.message}`);
+		});
+}
+
+/**
+ * Handle import_agent - a Federation lift onto this desktop, when the remote runs Maestro itself.
+ * The wire is read by the same parser the headless host uses, and the import by the same rule
+ * (`importAgentIntoDesktop()` over `planAgentImport()`). Queued messages reach the renderer
+ * through this bridge's own `enqueueCommand`, in the background.
+ */
+export function handleImportAgent(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const type = 'import_agent_result';
+	const reply = (frame: Record<string, unknown>) =>
+		ctx.send(client, { type, ...frame, requestId: message.requestId });
+
+	const parsed = importInputFromMessage(message);
+	if (!parsed.ok) {
+		reply({ success: false, error: parsed.error });
+		return;
+	}
+	const enqueue: DesktopAgentImportDeps['enqueue'] = (agentId, tabId, text, images) =>
+		ctx.callbacks.enqueueCommand
+			? ctx.callbacks.enqueueCommand(agentId, text, 'ai', tabId, images, true)
+			: Promise.resolve({ success: false, error: 'Enqueue not configured' });
+
+	importAgentIntoDesktop(parsed.input, buildDesktopAgentImportDeps(enqueue))
+		.then((result) => {
+			if (!result.ok) {
+				reply({
+					success: false,
+					error:
+						result.code === 'not-found' && !/not found/i.test(result.message)
+							? `Not found: ${result.message}`
+							: result.message,
+				});
+				return;
+			}
+			const { agentId, queued, notices } = result.receipt;
+			reply({ success: true, sessionId: agentId, queued, ...(notices ? { notices } : {}) });
+		})
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'import_agent' },
+			});
+			reply({
+				success: false,
+				error: `Failed to import agent: ${error instanceof Error ? error.message : String(error)}`,
+			});
 		});
 }
 
@@ -523,7 +582,8 @@ export function handleListDesktopSessions(
 		type: 'desktop_sessions_list',
 		success: true,
 		// Old callbacks remain usable for ordinary tab-list clients, but must
-		// never masquerade as a complete supervision census.
+		// never masquerade as a complete supervision census. A snapshot also
+		// carries the file, browser and terminal tabs (`session list --type`).
 		...(Array.isArray(snapshot) ? { sessions: snapshot, capturedAt } : snapshot),
 		requestId: message.requestId,
 	});
@@ -572,7 +632,36 @@ export function handleGetSessionHistory(
 			? Math.floor(message.tail)
 			: undefined;
 
-	const result = ctx.callbacks.getSessionHistory(tabId, { sinceMs, tail });
+	const currentTurn = message.currentTurn === true;
+	let expectedCursor: CurrentTurnCursor | undefined;
+	let deltaBase: CurrentTurnCursor | undefined;
+	for (const field of ['expectedCursor', 'deltaBase'] as const) {
+		const value = message[field];
+		if (value === undefined) continue;
+		if (!currentTurn || !isCurrentTurnCursor(value)) {
+			ctx.send(client, {
+				type: 'session_history_result',
+				success: false,
+				code: 'INVALID_CURSOR',
+				requestId: message.requestId,
+			});
+			return;
+		}
+		if (field === 'expectedCursor') expectedCursor = value;
+		else deltaBase = value;
+	}
+	const result = ctx.callbacks.getSessionHistory(
+		tabId,
+		currentTurn
+			? {
+					currentTurn,
+					expectedCursor,
+					deltaBase,
+					currentTurnInterest: message.currentTurnInterest === 'pianola' ? 'pianola' : undefined,
+					observationClient: client.socket,
+				}
+			: { sinceMs, tail }
+	);
 	if (!result) {
 		ctx.send(client, {
 			type: 'session_history_result',
@@ -593,6 +682,7 @@ export function handleGetSessionHistory(
 		agentSessionId: result.agentSessionId,
 		projectPath: result.projectPath,
 		messages: result.messages,
+		...(result.currentTurn && { currentTurn: result.currentTurn }),
 		requestId: message.requestId,
 	});
 }

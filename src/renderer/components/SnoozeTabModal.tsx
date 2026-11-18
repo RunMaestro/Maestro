@@ -31,6 +31,7 @@ import {
 	SNOOZE_PRESETS,
 	SNOOZE_DEFAULT_HOUR,
 } from '../../shared/snooze';
+import { isImeComposing } from '../utils/ime';
 
 export interface SnoozeTabModalProps {
 	theme: Theme;
@@ -194,7 +195,12 @@ export function SnoozeTabModal({
 				// Same shape as QueuedItemEditModal. Modal-local, so it is not a
 				// registered shortcut id - there is nothing here to rebind.
 				onKeyDown={(e) => {
-					if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && resolved.at != null) {
+					if (
+						e.key === 'Enter' &&
+						(e.metaKey || e.ctrlKey) &&
+						!isImeComposing(e) &&
+						resolved.at != null
+					) {
 						e.preventDefault();
 						e.stopPropagation();
 						handleConfirm();
@@ -246,7 +252,13 @@ export function SnoozeTabModal({
 							// Deliberately an explicit modifier test rather than a
 							// `defaultPrevented` check - the split records which control
 							// owns which chord, instead of leaving it to event ordering.
-							if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && resolved.at != null) {
+							if (
+								e.key === 'Enter' &&
+								!e.metaKey &&
+								!e.ctrlKey &&
+								!isImeComposing(e) &&
+								resolved.at != null
+							) {
 								e.preventDefault();
 								handleConfirm();
 							}

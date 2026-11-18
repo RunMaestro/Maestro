@@ -21,6 +21,7 @@ import {
 	useTemplateAutocompleteEngine,
 	type AutocompleteState,
 } from './useTemplateAutocompleteEngine';
+import { isImeComposing } from '../../utils/ime';
 
 interface UseEditorTemplateAutocompleteProps {
 	editorRef: React.RefObject<MarkdownEditorHandle>;
@@ -65,7 +66,9 @@ export function useEditorTemplateAutocomplete({
 	);
 
 	const handleKeyDown = useCallback(
-		(event: KeyboardEvent): boolean => handleKey(event.key, () => event.preventDefault()),
+		(event: KeyboardEvent): boolean =>
+			!(event.key === 'Enter' && isImeComposing(event)) &&
+			handleKey(event.key, () => event.preventDefault()),
 		[handleKey]
 	);
 

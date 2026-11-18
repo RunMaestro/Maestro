@@ -44,6 +44,7 @@ import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { BLANK_ENV_VAR_KEY } from '../../../shared/envVarCatalog';
 import { useKnownEnvVarKeys } from '../../hooks/agent/useKnownEnvVarKeys';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { getPermissionModeTooltip } from '../../../shared/agentMetadata';
 
 const MAESTRO_P_INSTALL_URL = 'https://runmaestro.ai/maestro-p/';
 
@@ -96,27 +97,29 @@ const BUILT_IN_ENV_VARS: { key: string; description: string; value: string }[] =
 	},
 ];
 
-// Separate component for text input with optional model dropdown
+// Separate component for text input with optional discovered options
 // This avoids the browser's native datalist styling issues
 interface ModelTextInputProps {
 	theme: Theme;
-	option: { key: string; default?: string };
+	option: { key: string; label: string; default?: string };
+	disabled?: boolean;
 	value: string;
 	onChange: (value: string) => void;
 	onBlur: (committedValue: string) => void;
-	availableModels: string[];
-	loadingModels: boolean;
+	availableOptions: string[];
+	loadingOptions: boolean;
 	onRefreshModels?: () => void;
 }
 
 function ModelTextInput({
 	theme,
 	option,
+	disabled = false,
 	value,
 	onChange,
 	onBlur,
-	availableModels,
-	loadingModels,
+	availableOptions,
+	loadingOptions,
 	onRefreshModels,
 }: ModelTextInputProps): JSX.Element {
 	const [showDropdown, setShowDropdown] = useState(false);
@@ -135,12 +138,12 @@ function ModelTextInput({
 		committedValueRef.current = value;
 	}, [value]);
 
-	// Filter models based on input
-	const filteredModels = useMemo(() => {
-		if (!filterText) return availableModels;
+	// Filter the supplied options without adding unadvertised effort levels.
+	const filteredOptions = useMemo(() => {
+		if (!filterText) return availableOptions;
 		const lower = filterText.toLowerCase();
-		return availableModels.filter((m) => m.toLowerCase().includes(lower));
-	}, [availableModels, filterText]);
+		return availableOptions.filter((m) => m.toLowerCase().includes(lower));
+	}, [availableOptions, filterText]);
 
 	// Close dropdown when clicking outside
 	useEffect(() => {
@@ -161,7 +164,8 @@ function ModelTextInput({
 	}, [showDropdown, isFiltering]);
 
 	const isModelField = option.key === 'model';
-	const hasModels = availableModels.length > 0;
+	const hasOptions = !disabled && availableOptions.length > 0;
+	const isEffortField = option.key === 'effort' || option.key === 'reasoningEffort';
 
 	// Display value: when filtering, show filter text; otherwise show actual value
 	const displayValue = isFiltering ? filterText : value;
@@ -173,9 +177,11 @@ function ModelTextInput({
 					<input
 						ref={inputRef}
 						type="text"
+						aria-label={option.label}
+						disabled={disabled}
 						value={displayValue}
 						onChange={(e) => {
-							if (isModelField && hasModels) {
+							if (hasOptions) {
 								// When typing with dropdown available, we're in filter mode
 								// Don't update the actual value until selection or explicit blur
 								setFilterText(e.target.value);
@@ -187,7 +193,7 @@ function ModelTextInput({
 							}
 						}}
 						onFocus={() => {
-							if (isModelField && hasModels) {
+							if (hasOptions) {
 								setFilterText(value);
 								setShowDropdown(true);
 							}
@@ -195,6 +201,8 @@ function ModelTextInput({
 						onBlur={() => {
 							// Delay to allow click on dropdown item
 							setTimeout(() => {
+								// A policy or capability may disable the input while blur is queued.
+								if (!inputRef.current || inputRef.current.matches(':disabled')) return;
 								// If a dropdown item was clicked, skip blur logic - the click handler already committed the value
 								if (selectionMadeRef.current) {
 									selectionMadeRef.current = false;
@@ -203,7 +211,7 @@ function ModelTextInput({
 								setShowDropdown(false);
 								if (isFiltering) {
 									// If user was filtering but didn't select, keep the filter text as the value
-									// (they might have typed a custom model name)
+									// (explicit values remain valid inputs when discovery is unavailable)
 									if (filterText !== committedValueRef.current) {
 										onChange(filterText);
 										committedValueRef.current = filterText;
@@ -225,9 +233,10 @@ function ModelTextInput({
 						className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono pr-8"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					/>
-					{isModelField && hasModels && (
+					{hasOptions && (
 						<button
 							type="button"
+							aria-label={`Show ${option.label.toLowerCase()} options`}
 							onClick={(e) => {
 								e.stopPropagation();
 								setShowDropdown(!showDropdown);
@@ -242,14 +251,14 @@ function ModelTextInput({
 						</button>
 					)}
 					{/* Custom dropdown */}
-					{isModelField && showDropdown && filteredModels.length > 0 && (
+					{hasOptions && showDropdown && filteredOptions.length > 0 && (
 						<div
 							className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded"
 							style={{
 								...elevatedSurfaceStyle(theme),
 							}}
 						>
-							{filteredModels.map((model) => (
+							{filteredOptions.map((model) => (
 								<button
 									key={model}
 									type="button"
@@ -275,7 +284,7 @@ function ModelTextInput({
 						</div>
 					)}
 				</div>
-				{isModelField && value && (
+				{(isModelField || isEffortField) && value && (
 					<button
 						onClick={(e) => {
 							e.stopPropagation();
@@ -289,7 +298,9 @@ function ModelTextInput({
 						}}
 						className="px-2 py-1.5 rounded text-xs whitespace-nowrap"
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						title="Reset to default model"
+						disabled={disabled}
+						aria-label={`Clear ${option.label.toLowerCase()} override`}
+						title={isModelField ? 'Reset to default model' : 'Inherit the selected model default'}
 					>
 						Clear
 					</button>
@@ -301,21 +312,22 @@ function ModelTextInput({
 							onRefreshModels();
 						}}
 						className="p-2 rounded border hover:bg-white/10 transition-colors"
+						disabled={disabled}
 						title="Refresh available models"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 					>
-						<RefreshCw className={`w-3 h-3 ${loadingModels ? 'animate-spin' : ''}`} />
+						<RefreshCw className={`w-3 h-3 ${loadingOptions ? 'animate-spin' : ''}`} />
 					</button>
 				)}
 			</div>
-			{isModelField && loadingModels && (
+			{loadingOptions && (
 				<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-					Loading available models...
+					{isModelField ? 'Loading available models...' : 'Loading effort options...'}
 				</p>
 			)}
-			{isModelField && !loadingModels && hasModels && (
+			{isModelField && !loadingOptions && hasOptions && (
 				<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-					{availableModels.length} model{availableModels.length !== 1 ? 's' : ''} available
+					{availableOptions.length} model{availableOptions.length !== 1 ? 's' : ''} available
 				</p>
 			)}
 		</>
@@ -653,6 +665,13 @@ export function AgentConfigPanel({
 
 	return (
 		<div className={spacing}>
+			{agent.id === 'grok' && (
+				<p className="text-xs" style={{ color: theme.colors.textDim }}>
+					Full Access uses headless streaming. {getPermissionModeTooltip('standard', agent.id)}{' '}
+					{getPermissionModeTooltip('readonly', agent.id)} Select the account through the
+					environment variables below; model and effort discovery follows that selection.
+				</p>
+			)}
 			{/* Path input - pre-filled with detected path, editable to override */}
 			{/* When SSH is enabled and no custom path is set, show the remote binary name instead of local path */}
 			<div
@@ -682,6 +701,7 @@ export function AgentConfigPanel({
 						// Over SSH the default is the remote binary name, shown as a placeholder so
 						// the field stays editable (an empty customPath means "use the default").
 						// Locally the field pre-fills with the detected path so it can be overridden.
+						aria-label={isSshEnabled ? 'Remote Command' : 'Path'}
 						value={customPath || (isSshEnabled ? '' : agent.path) || ''}
 						onChange={(e) => onCustomPathChange(e.target.value)}
 						onBlur={() => onCustomPathBlur()}
@@ -956,6 +976,7 @@ export function AgentConfigPanel({
 				<div className="flex gap-2">
 					<input
 						type="text"
+						aria-label="Custom Arguments"
 						value={customArgs}
 						onChange={(e) => onCustomArgsChange(e.target.value)}
 						// Called with no arguments, never handed the FocusEvent: a parent that
@@ -1159,130 +1180,143 @@ export function AgentConfigPanel({
 			{/* Agent-specific configuration options (contextWindow, model, etc.) */}
 			{agent.configOptions &&
 				agent.configOptions.length > 0 &&
-				agent.configOptions.map((option: AgentConfigOption) => (
-					<div
-						key={option.key}
-						className={`${padding} rounded border`}
-						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
-					>
-						<label
-							className="block text-xs font-medium mb-2"
-							style={{ color: theme.colors.textDim }}
+				agent.configOptions.map((option: AgentConfigOption) => {
+					return (
+						<fieldset
+							key={option.key}
+							disabled={option.key === 'model' && !agent.capabilities?.supportsModelSelection}
+							className={`${padding} min-w-0 rounded border`}
+							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 						>
-							{option.label}
-						</label>
-						{option.type === 'number' && (
-							<input
-								type="number"
-								value={agentConfig[option.key] ?? option.default}
-								onChange={(e) => {
-									const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
-									onConfigChange(option.key, isNaN(value) ? 0 : value);
-								}}
-								onBlur={(e) => {
-									const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
-									callOnConfigBlurSafely(option.key, isNaN(value) ? 0 : value);
-								}}
-								onClick={(e) => e.stopPropagation()}
-								placeholder={option.default?.toString() || '0'}
-								min={0}
-								className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-							/>
-						)}
-						{option.type === 'text' && (
-							<ModelTextInput
-								theme={theme}
-								option={option}
-								value={agentConfig[option.key] ?? option.default}
-								onChange={(value) => onConfigChange(option.key, value)}
-								onBlur={(committedValue) => callOnConfigBlurSafely(option.key, committedValue)}
-								availableModels={option.key === 'model' ? availableModels : []}
-								loadingModels={option.key === 'model' ? loadingModels : false}
-								onRefreshModels={
-									option.key === 'model' && agent.capabilities?.supportsModelSelection
-										? onRefreshModels
-										: undefined
-								}
-							/>
-						)}
-						{option.type === 'checkbox' && (
 							<label
-								className="flex items-center gap-2 cursor-pointer"
-								onClick={(e) => e.stopPropagation()}
+								className="block text-xs font-medium mb-2"
+								style={{ color: theme.colors.textDim }}
 							>
-								<input
-									type="checkbox"
-									checked={agentConfig[option.key] ?? option.default}
-									onChange={(e) => {
-										onConfigChange(option.key, e.target.checked);
-										// Immediately persist checkbox changes
-										callOnConfigBlurSafely(option.key, e.target.checked);
-									}}
-									className="w-4 h-4"
-									style={{ accentColor: theme.colors.accent }}
-								/>
-								<span className="text-xs" style={{ color: theme.colors.textMain }}>
-									Enabled
-								</span>
+								{option.label}
 							</label>
-						)}
-						{option.type === 'select' &&
-							(() => {
-								// Dynamic selects get their options from IPC discovery
-								const opts =
-									option.dynamic && dynamicOptions[option.key]?.length
-										? dynamicOptions[option.key]
-										: option.options;
-								if (!opts || opts.length === 0) {
-									if (option.dynamic && loadingDynamicOptions) {
-										return (
-											<p className="text-xs" style={{ color: theme.colors.textDim }}>
-												Loading options...
-											</p>
-										);
+							{option.type === 'number' && (
+								<input
+									type="number"
+									aria-label={option.label}
+									value={agentConfig[option.key] ?? option.default}
+									onChange={(e) => {
+										const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+										onConfigChange(option.key, isNaN(value) ? 0 : value);
+									}}
+									onBlur={(e) => {
+										const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+										callOnConfigBlurSafely(option.key, isNaN(value) ? 0 : value);
+									}}
+									onClick={(e) => e.stopPropagation()}
+									placeholder={option.default?.toString() || '0'}
+									min={0}
+									className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
+									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								/>
+							)}
+							{option.type === 'text' && (
+								<ModelTextInput
+									theme={theme}
+									option={option}
+									value={agentConfig[option.key] ?? option.default}
+									onChange={(value) => onConfigChange(option.key, value)}
+									onBlur={(committedValue) => callOnConfigBlurSafely(option.key, committedValue)}
+									availableOptions={
+										option.key === 'model' ? availableModels : (dynamicOptions[option.key] ?? [])
 									}
-									return null;
-								}
-								return (
-									<select
-										value={agentConfig[option.key] ?? option.default ?? ''}
+									loadingOptions={option.key === 'model' ? loadingModels : loadingDynamicOptions}
+									disabled={option.key === 'model' && !agent.capabilities?.supportsModelSelection}
+									onRefreshModels={
+										option.key === 'model' && agent.capabilities?.supportsModelSelection
+											? onRefreshModels
+											: undefined
+									}
+								/>
+							)}
+							{option.type === 'checkbox' && (
+								<label
+									className="flex items-center gap-2 cursor-pointer"
+									onClick={(e) => e.stopPropagation()}
+								>
+									<input
+										type="checkbox"
+										checked={agentConfig[option.key] ?? option.default}
 										onChange={(e) => {
-											onConfigChange(option.key, e.target.value);
-											callOnConfigBlurSafely(option.key, e.target.value);
+											onConfigChange(option.key, e.target.checked);
+											// Immediately persist checkbox changes
+											callOnConfigBlurSafely(option.key, e.target.checked);
 										}}
-										onClick={(e) => e.stopPropagation()}
-										className="w-full p-2 rounded border bg-transparent outline-none text-xs cursor-pointer"
-										style={{
-											borderColor: theme.colors.border,
-											color: theme.colors.textMain,
-											backgroundColor: theme.colors.bgMain,
-										}}
-									>
-										{opts.map((opt) => (
-											<option
-												key={opt}
-												value={opt}
-												style={{ backgroundColor: theme.colors.bgMain }}
-											>
-												{opt || '(default)'}
-											</option>
-										))}
-									</select>
-								);
-							})()}
-						{configOptionNotes?.[option.key] && (
-							<p
-								className="text-xs mt-2"
-								style={{ color: theme.colors.warning }}
-								data-testid={`config-option-note-${option.key}`}
-							>
-								{configOptionNotes[option.key]}
-							</p>
-						)}
-						<p className="text-xs opacity-50 mt-2">{option.description}</p>
-					</div>
-				))}
+										className="w-4 h-4"
+										style={{ accentColor: theme.colors.accent }}
+									/>
+									<span className="text-xs" style={{ color: theme.colors.textMain }}>
+										Enabled
+									</span>
+								</label>
+							)}
+							{option.type === 'select' &&
+								(() => {
+									// Dynamic selects get their options from IPC discovery
+									const opts =
+										option.dynamic && dynamicOptions[option.key]?.length
+											? dynamicOptions[option.key]
+											: option.options;
+									if (!opts || opts.length === 0) {
+										if (option.dynamic && loadingDynamicOptions) {
+											return (
+												<p className="text-xs" style={{ color: theme.colors.textDim }}>
+													Loading options...
+												</p>
+											);
+										}
+										return null;
+									}
+									return (
+										<select
+											aria-label={option.label}
+											value={agentConfig[option.key] ?? option.default ?? ''}
+											onChange={(e) => {
+												onConfigChange(option.key, e.target.value);
+												callOnConfigBlurSafely(option.key, e.target.value);
+											}}
+											onClick={(e) => e.stopPropagation()}
+											className="w-full p-2 rounded border bg-transparent outline-none text-xs cursor-pointer"
+											style={{
+												borderColor: theme.colors.border,
+												color: theme.colors.textMain,
+												backgroundColor: theme.colors.bgMain,
+											}}
+										>
+											{opts.map((opt) => (
+												<option
+													key={opt}
+													value={opt}
+													style={{ backgroundColor: theme.colors.bgMain }}
+												>
+													{opt || '(default)'}
+												</option>
+											))}
+										</select>
+									);
+								})()}
+							{option.key === 'model' && !agent.capabilities?.supportsModelSelection && (
+								<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
+									Model selection is unavailable for this provider.
+								</p>
+							)}
+							{configOptionNotes?.[option.key] && (
+								<p
+									className="text-xs mt-2"
+									style={{ color: theme.colors.warning }}
+									data-testid={`config-option-note-${option.key}`}
+								>
+									{configOptionNotes[option.key]}
+								</p>
+							)}
+							<p className="text-xs opacity-50 mt-2">{option.description}</p>
+						</fieldset>
+					);
+				})}
 
 			{/* Automatic usage resets - Codex only, and last, so it sits directly
 			    under Reasoning Effort where the Codex settings end.

@@ -4,6 +4,7 @@ import {
 	Edit2,
 	Star,
 	Link,
+	Link2,
 	Mail,
 	GitMerge,
 	ArrowRightCircle,
@@ -34,6 +35,8 @@ export interface AITabOverlayMenuProps {
 	// Action handlers
 	onCopySessionId: (e: React.MouseEvent) => void;
 	onCopyDeepLink: (e: React.MouseEvent) => void;
+	/** Present only while Prompt Links is available; absent hides the item. */
+	onCreatePromptLinkClick?: (e: React.MouseEvent) => void;
 	onStarClick: (e: React.MouseEvent) => void;
 	onRenameClick: (e: React.MouseEvent) => void;
 	onMarkUnreadClick: (e: React.MouseEvent) => void;
@@ -80,6 +83,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	tabIndex,
 	onCopySessionId,
 	onCopyDeepLink,
+	onCreatePromptLinkClick,
 	onStarClick,
 	onRenameClick,
 	onMarkUnreadClick,
@@ -172,6 +176,22 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 					>
 						<Link className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						{showCopied === 'deepLink' ? 'Copied!' : 'Copy Deep Link'}
+					</button>
+				)}
+
+				{sessionId && onCreatePromptLinkClick && (
+					<button
+						onClick={onCreatePromptLinkClick}
+						data-testid="ai-tab-create-prompt-link"
+						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textMain }}
+						title="A maestro://run link that opens a new tab in this agent and sends a prompt"
+					>
+						<Link2 className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						Create Prompt Link...
+						{shortcuts.openPromptLinks && (
+							<ShortcutHint keys={shortcuts.openPromptLinks.keys} theme={theme} />
+						)}
 					</button>
 				)}
 

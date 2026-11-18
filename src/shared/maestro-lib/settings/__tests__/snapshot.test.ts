@@ -95,6 +95,61 @@ describe('buildSettingsSnapshot (ST-1)', () => {
 		expect(JSON.stringify(snapshot)).not.toContain('abcdefghijkl');
 	});
 
+	it.each([
+		{
+			key: 'GROK_AUTH',
+			label: 'inline JSON',
+			value: '{"token":"snapshot-only-secret","nested":{"refresh":"private-tail"}}',
+		},
+		{ key: 'GROK_AUTH', label: 'malformed JSON', value: '{"token":"snapshot-only-secret' },
+		{ key: 'GROK_AUTH', label: 'short value', value: 'tiny' },
+		{ key: 'GROK_AUTH', label: 'empty value', value: '' },
+		...['GROK_MODELS_BASE_URL', 'GROK_CLI_CHAT_PROXY_BASE_URL', 'GROK_XAI_API_BASE_URL'].flatMap(
+			(key) => [
+				{
+					key,
+					label: 'userinfo credentials',
+					value: 'https://fixture-user:snapshot-only-secret@gateway.example/v1',
+				},
+				{
+					key,
+					label: 'query credentials',
+					value: 'https://gateway.example/v1?access=snapshot-only-secret',
+				},
+				{
+					key,
+					label: 'arbitrary path credentials',
+					value: 'https://gateway.example/snapshot-only-secret',
+				},
+				{ key, label: 'malformed URL', value: 'https://[invalid/snapshot-only-secret' },
+				{ key, label: 'ordinary URL', value: 'https://gateway.example/v1' },
+			]
+		),
+	])('fully masks $key with $label in every snapshot entry path', ({ key, value }) => {
+		const snapshot = buildSettingsSnapshot({
+			settings: { shellEnvVars: { [key]: value } },
+			agentConfigs: { grok: { [key]: value, customEnvVars: { [key]: value } } },
+			sshRemotes: [],
+			promptStore: {},
+			source: 'host',
+		});
+
+		// Exact display values catch leaked suffixes from either keyless masker call.
+		expect(snapshot.defaults.envVars).toEqual([{ key, value: '••••••••' }]);
+		const entries = snapshot.providers[0].entries;
+		expect(entries.find((entry) => entry.key === 'customEnvVars')).toEqual({
+			key: 'customEnvVars',
+			value: `${key}=••••••••`,
+		});
+		// Direct blank config entries are omitted; nested environment blanks remain visible.
+		expect(entries.find((entry) => entry.key === key)).toEqual(
+			value === '' ? undefined : { key, value: '••••••••' }
+		);
+		const serialized = JSON.stringify(snapshot);
+		expect(serialized).not.toContain('snapshot-only-secret');
+		if (value !== '') expect(serialized).not.toContain(JSON.stringify(value).slice(1, -1));
+	});
+
 	it('reads a setting the host never held as the desktop default', () => {
 		const snapshot = buildSettingsSnapshot({
 			settings: {},
@@ -140,6 +195,74 @@ describe('isEncoreEnabled (ST-2)', () => {
 });
 
 describe('readSettingsSnapshotFromFiles', () => {
+	it('keeps Grok secrets opaque while preserving ordinary settings and other provider tails', () => {
+		write('maestro-settings.json', {
+			defaultShell: 'bash',
+			defaultSaveToHistory: false,
+			conductorProfile: 'Be brief.',
+			shellEnvVars: { GROK_AUTH: '{"token":"file-only-secret"}', EDITOR: 'vim' },
+		});
+		write('maestro-agent-configs.json', {
+			configs: {
+				grok: {
+					customEnvVars: {
+						GROK_XAI_API_BASE_URL: 'https://gateway.example/file-only-secret',
+						MODE: 'fixture',
+					},
+				},
+				codex: {
+					model: 'fixture-model',
+					customEnvVars: {
+						OPENAI_API_KEY: 'sk-codex-fixture-1234',
+						OPENAI_BASE_URL: 'https://api.example/v1',
+					},
+				},
+				'claude-code': { ANTHROPIC_API_KEY: 'sk-claude-fixture-5678', enabled: true },
+			},
+		});
+
+		const snapshot = readSettingsSnapshotFromFiles(paths());
+		expect(snapshot.defaults).toEqual({
+			shell: 'bash',
+			saveToHistory: false,
+			thinkingMode: 'off',
+			envVars: [
+				{ key: 'EDITOR', value: 'vim' },
+				{ key: 'GROK_AUTH', value: '••••••••' },
+			],
+		});
+		expect(snapshot.providers).toEqual([
+			{
+				providerId: 'claude-code',
+				entries: [
+					{ key: 'ANTHROPIC_API_KEY', value: '••••••••5678' },
+					{ key: 'enabled', value: 'true' },
+				],
+			},
+			{
+				providerId: 'codex',
+				entries: [
+					{
+						key: 'customEnvVars',
+						value: 'OPENAI_API_KEY=••••••••1234, OPENAI_BASE_URL=https://api.example/v1',
+					},
+					{ key: 'model', value: 'fixture-model' },
+				],
+			},
+			{
+				providerId: 'grok',
+				entries: [{ key: 'customEnvVars', value: 'GROK_XAI_API_BASE_URL=••••••••, MODE=fixture' }],
+			},
+		]);
+		expect(snapshot.source).toBe('files');
+		expect(snapshot.conductorProfile).toBe('Be brief.');
+		expect(snapshot.problems).toEqual([]);
+		const serialized = JSON.stringify(snapshot);
+		for (const secret of ['file-only-secret', 'sk-codex-fixture', 'sk-claude-fixture']) {
+			expect(serialized).not.toContain(secret);
+		}
+	});
+
 	it('reads the settings, agent configs, and prompt customizations from disk', () => {
 		write('maestro-settings.json', {
 			defaultShell: 'bash',

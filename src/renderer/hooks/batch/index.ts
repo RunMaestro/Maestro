@@ -12,6 +12,7 @@ export {
 	uncheckAllTasks,
 	DEFAULT_BATCH_PROMPT,
 	validateAgentPromptHasTaskReference,
+	buildDesktopAutoRunPrompt,
 } from './batchUtils';
 
 // Whether a run is parked waiting on the user (agent error or HITL gate)

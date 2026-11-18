@@ -164,7 +164,7 @@ describe('the @ trigger', () => {
 
 	it('splices a literal over the @filter and parks the caret after it', () => {
 		expect(spliceMentionLiteral('ask @Ba now', 4, 'Ba', '@Backend ')).toEqual({
-			value: 'ask @Backend  now',
+			value: 'ask @Backend now',
 			caretPos: 13,
 		});
 	});

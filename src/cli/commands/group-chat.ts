@@ -13,6 +13,8 @@ import type { RemoteGroupChatState } from '../../shared/groupChatRemote';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import { QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS } from '../../shared/chatSteering';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
+import { groupChatModeratorRefusal } from '../../shared/group-chat-types';
+import { hasCapability } from '../../shared/maestro-lib/providers/capabilities';
 
 // Starting a chat spawns a moderator and every participant before the app
 // answers; the desktop allows itself 60s, so the CLI waits a little longer.
@@ -114,6 +116,15 @@ export async function groupChatStart(name: string, options: StartOptions): Promi
 	const refs = options.participant ?? [];
 	if (refs.length === 0) fail('At least one --participant is required', options.json);
 	const message = readMessage(options.message, options.messageFile, options.json);
+	// Refuse a provider that cannot moderate before the desktop is asked for
+	// anything, with the text storage would throw, so nothing is created or spawned.
+	if (options.moderator) {
+		const refusal = groupChatModeratorRefusal(
+			options.moderator,
+			hasCapability(options.moderator, 'supportsGroupChatModeration')
+		);
+		if (refusal) fail(refusal, options.json);
+	}
 
 	let participantIds: string[];
 	try {
@@ -245,6 +256,58 @@ export async function groupChatSteer(
 			console.error(`Error: ${result.outcome}${result.detail ? `: ${result.detail}` : ''}`);
 		}
 		if (!taken) process.exit(1);
+	} catch (error) {
+		fail(error instanceof Error ? error.message : String(error), options.json);
+	}
+}
+
+/**
+ * Add an agent to a group chat by GUID, GUID prefix or name, with no @mention.
+ * The agent is resolved here (`resolveAgentId`) and sent as its full GUID, so
+ * the chat links the participant by ID and a later rename does not break it.
+ */
+export async function groupChatAdd(
+	chatRef: string,
+	agentRef: string,
+	options: JsonOption
+): Promise<void> {
+	let agentId: string;
+	try {
+		agentId = resolveAgentId(agentRef);
+	} catch (error) {
+		fail(error instanceof Error ? error.message : String(error), options.json);
+	}
+
+	try {
+		const { chatId, reply } = await withMaestroClient(async (client) => {
+			const id = resolveChatRef(chatRef, await listChats(client));
+			const res = await client.sendCommand<
+				BridgeReply & { participantName?: string; alreadyMember?: boolean }
+			>(
+				{ type: 'add_group_chat_participant', chatId: id, agentId },
+				'add_group_chat_participant_result'
+			);
+			return { chatId: id, reply: res };
+		});
+		const error =
+			bridgeError(reply) ??
+			(reply.success ? undefined : reply.error || 'Failed to add participant');
+		if (error) {
+			if (options.json) console.log(JSON.stringify({ success: false, error, chatId, agentId }));
+			else console.error(`Error: ${error}`);
+			process.exit(1);
+		}
+		const participantName = reply.participantName;
+		const alreadyMember = reply.alreadyMember === true;
+		if (options.json) {
+			console.log(
+				JSON.stringify({ success: true, chatId, agentId, participantName, alreadyMember })
+			);
+		} else if (alreadyMember) {
+			console.log(`${participantName} (${agentId}) is already in group chat ${chatId}`);
+		} else {
+			console.log(`Added ${participantName} (${agentId}) to group chat ${chatId}`);
+		}
 	} catch (error) {
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}

@@ -4,6 +4,7 @@
  * data loading states, and CSV export functionality
  */
 
+import { emptyPromptCadence } from '../../../shared/promptCadence';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
@@ -59,10 +60,10 @@ vi.mock('lucide-react', () => {
 		AlertTriangle: createIcon('alert-triangle', '⚠️'),
 		ChevronDown: createIcon('chevron-down', '▼'),
 		ChevronUp: createIcon('chevron-up', '▲'),
-		// WeekdayComparisonChart icons
+		// Other chart icons
 		Briefcase: createIcon('briefcase', '💼'),
 		Coffee: createIcon('coffee', '☕'),
-		// RealtimeMetricsCard icons
+		// Card icons
 		Cpu: createIcon('cpu', '🖥️'),
 		DollarSign: createIcon('dollar', '💲'),
 		Activity: createIcon('activity', '📈'),
@@ -101,7 +102,6 @@ const mockGetAggregation = vi.fn();
 const mockExportUsage = vi.fn();
 const mockOnStatsUpdate = vi.fn(() => vi.fn()); // Returns unsubscribe function
 const mockGetAutoRunSessions = vi.fn(() => Promise.resolve([]));
-const mockGetAutoRunTasks = vi.fn(() => Promise.resolve([]));
 const mockGetDatabaseSize = vi.fn();
 
 // Mock dialog and fs API
@@ -123,7 +123,9 @@ const mockMaestro = {
 		exportUsage: mockExportUsage,
 		onStatsUpdate: mockOnStatsUpdate,
 		getAutoRunSessions: mockGetAutoRunSessions,
-		getAutoRunTasks: mockGetAutoRunTasks,
+		getAutoRunTurnsByHour: vi.fn(() => Promise.resolve([])),
+		getSessionLifecycle: vi.fn(() => Promise.resolve([])),
+		getShortcutUsageByShortcut: vi.fn(() => Promise.resolve([])),
 		getDatabaseSize: mockGetDatabaseSize,
 		getShortcutUsageByDay: mockGetShortcutUsageByDay,
 		getShortcutUsageTotal: mockGetShortcutUsageTotal,
@@ -213,18 +215,21 @@ const createSampleData = () => ({
 		{ hour: 14, count: 45, duration: 1080000 },
 		{ hour: 15, count: 50, duration: 1200000 },
 	],
+	byDayHour: [],
+	window: { startYmd: '2024-01-15', endYmd: '2024-01-18' },
+	earliestQueryAt: null,
+	streak: { current: 0, longest: 4 },
 	totalSessions: 25,
-	sessionsByAgent: { 'claude-code': 15, terminal: 10 },
-	sessionsByDay: [
-		{ date: '2024-01-15', count: 5 },
-		{ date: '2024-01-16', count: 7 },
-		{ date: '2024-01-17', count: 6 },
-		{ date: '2024-01-18', count: 7 },
-	],
-	avgSessionDuration: 144000,
 	byAgentByDay: {},
 	bySessionByDay: {},
 	bySessionSource: {},
+	bySessionLastQuery: {},
+	bySessionTokens: {},
+	worktreeQueries: 0,
+	parentQueries: 150,
+	imageAnnotations: 0,
+	byAgentWorktree: {},
+	prompts: emptyPromptCadence(),
 });
 
 describe('UsageDashboardModal', () => {
@@ -376,12 +381,13 @@ describe('UsageDashboardModal', () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
-				// Default view is overview, so all skeleton components should be present
+				// Default view is overview: the skeleton follows the Overview layout
+				// (cards, Provider Comparison, a trend chart, the Query Source donut).
 				expect(screen.getByTestId('summary-cards-skeleton')).toBeInTheDocument();
 				expect(screen.getByTestId('agent-comparison-skeleton')).toBeInTheDocument();
-				expect(screen.getByTestId('source-distribution-skeleton')).toBeInTheDocument();
-				expect(screen.getByTestId('activity-heatmap-skeleton')).toBeInTheDocument();
 				expect(screen.getByTestId('duration-trends-skeleton')).toBeInTheDocument();
+				expect(screen.getByTestId('source-distribution-skeleton')).toBeInTheDocument();
+				expect(screen.queryByTestId('activity-heatmap-skeleton')).not.toBeInTheDocument();
 			});
 		});
 
@@ -675,19 +681,15 @@ describe('UsageDashboardModal', () => {
 			});
 		});
 
-		it('displays top agent label', async () => {
+		it('displays the top provider by display name', async () => {
 			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
 
 			await waitFor(() => {
-				expect(screen.getByText('Top Agent')).toBeInTheDocument();
-				// claude-code appears in multiple places (summary and chart)
-				const claudeCodeElements = screen.getAllByText('claude-code');
-				expect(claudeCodeElements.length).toBeGreaterThan(0);
+				expect(screen.getByText('Top Provider')).toBeInTheDocument();
+				// Claude Code appears in several places (summary card and charts)
+				expect(screen.getAllByText('Claude Code').length).toBeGreaterThan(0);
 			});
 		});
-
-		// Interactive % card was removed in favor of streak/best-day/active-days/
-		// worktree % cards (see SummaryCards.tsx).
 	});
 
 	describe('Debounced Refresh - No Flickering', () => {
@@ -1814,7 +1816,7 @@ describe('UsageDashboardModal', () => {
 			expect(screen.getByTestId('section-source-distribution')).toHaveAttribute('tabIndex', '0');
 			expect(screen.getByTestId('section-source-distribution')).toHaveAttribute(
 				'aria-label',
-				'Session Type Chart'
+				'Query Source Chart'
 			);
 
 			expect(screen.getByTestId('section-radial-activity')).toHaveAttribute('tabIndex', '0');
@@ -2116,13 +2118,13 @@ describe('UsageDashboardModal', () => {
 
 			const heatmapSection = screen.getByTestId('section-activity-heatmap');
 
-			// Focus heatmap and Tab to weekday comparison (the next section in activity view)
+			// Focus heatmap and Tab to duration trends (the next section in activity view)
 			heatmapSection.focus();
 			fireEvent.keyDown(heatmapSection, { key: 'Tab' });
 
 			await waitFor(() => {
-				// Activity sections order: activity-heatmap -> weekday-comparison -> duration-trends
-				expect(document.activeElement).toBe(screen.getByTestId('section-weekday-comparison'));
+				// Activity sections order: activity-heatmap -> duration-trends
+				expect(document.activeElement).toBe(screen.getByTestId('section-duration-trends'));
 			});
 		});
 

@@ -15,6 +15,7 @@ vi.mock('../../../main/utils/logger', () => ({
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
 import { dropCueRowsAlreadyInJsonl, mergeEntriesById } from '../../../main/utils/cue-history-merge';
+import { mergeEntriesById as sharedMergeEntriesById } from '../../../shared/history';
 import type { HistoryEntry } from '../../../shared/types';
 
 const BASE = new Date('2026-09-14T12:00:00Z').getTime();
@@ -157,5 +158,9 @@ describe('mergeEntriesById', () => {
 		const merged = mergeEntriesById(jsonl, cue);
 		expect(merged).toHaveLength(1);
 		expect(merged[0].summary).toBe('no unfiled requests');
+	});
+
+	it('is the shared History helper, re-exported', () => {
+		expect(mergeEntriesById).toBe(sharedMergeEntriesById);
 	});
 });

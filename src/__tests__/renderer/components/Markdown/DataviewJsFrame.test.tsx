@@ -30,6 +30,10 @@ import { openUrl } from '../../../../renderer/utils/openUrl';
 import { toggleDataviewResultTask } from '../../../../renderer/services/dataviewTaskToggle';
 import { mockTheme } from '../../../helpers/mockTheme';
 import { snapshotPayload } from '../../../helpers/dataviewFixtureVault';
+import {
+	DATAVIEW_LOADING_PILL_DELAY_MS,
+	DATAVIEW_REFRESH_DIM_OPACITY,
+} from '../../../../renderer/components/Markdown/components/DataviewLoading';
 
 vi.mock('../../../../renderer/utils/openUrl', () => ({ openUrl: vi.fn() }));
 vi.mock('../../../../renderer/services/dataviewTaskToggle', () => ({
@@ -284,6 +288,40 @@ describe('DataviewJsFrame: runs', () => {
 		view.rerender(<DataviewJsFrame code="dv.paragraph(2)" theme={mockTheme} doc={doc} />);
 		expect(runs(guest)).toHaveLength(2);
 		expect(lastRun(guest).source).toBe('dv.paragraph(2)');
+	});
+
+	it('shows ghost rows with a Calculating pill before the first output', async () => {
+		vi.useFakeTimers();
+		await startFrame();
+		const placeholder = document.querySelector('[data-dataview-placeholder]') as HTMLElement;
+		expect(placeholder.getAttribute('aria-label')).toBe('Running DataviewJS');
+		expect(placeholder.querySelector('[data-dataview-pill]')).toBeNull();
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(DATAVIEW_LOADING_PILL_DELAY_MS);
+		});
+		expect(placeholder.querySelector('[data-dataview-pill]')?.textContent).toBe('Calculating');
+	});
+
+	it('dims output on screen under a Recalculating pill while a new run is out', async () => {
+		const { guest, view, doc, run } = await startFrame('dv.paragraph(1)');
+		guestSays(guest, done(run, 120));
+		vi.useFakeTimers();
+		view.rerender(<DataviewJsFrame code="dv.paragraph(2)" theme={mockTheme} doc={doc} />);
+		const second = lastRun(guest);
+		expect(second.runId).not.toBe(run.runId);
+		// A run that answers at once never dims the output.
+		expect(document.querySelector('[data-dataview-pill]')).toBeNull();
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(DATAVIEW_LOADING_PILL_DELAY_MS);
+		});
+		expect(document.querySelector('[data-dataview-pill]')?.textContent).toBe('Recalculating');
+		expect(guest.style.opacity).toBe(String(DATAVIEW_REFRESH_DIM_OPACITY));
+		// The old output stays; no skeleton replaces it.
+		expect(document.querySelector('[data-dataview-placeholder]')).toBeNull();
+
+		guestSays(guest, done(second, 130));
+		expect(document.querySelector('[data-dataview-pill]')).toBeNull();
+		expect(guest.style.opacity).toBe('1');
 	});
 
 	it('fetches a new snapshot and runs again after a change to its root, debounced', async () => {

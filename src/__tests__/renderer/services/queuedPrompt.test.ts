@@ -1,3 +1,4 @@
+import { registerSessionPersistenceFlush } from '../../../renderer/services/sessionPersistenceFlush';
 /**
  * Tests for src/renderer/services/queuedPrompt.ts
  *
@@ -9,6 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { webcrypto } from 'node:crypto';
 
 const planCrossAgentMentions = vi.fn();
 vi.mock('../../../renderer/services/crossAgentMentions', async (importOriginal) => ({
@@ -21,8 +23,13 @@ vi.mock('../../../renderer/services/crossAgentMentions', async (importOriginal) 
 import {
 	buildQueuedMessageItem,
 	enqueuePromptForTab,
+	getQueuedCommandScopeRefusal,
+	getQueuedCommandSelectionRefusal,
+	getQueuedCommandSpawnSelection,
+	matchQueuedSlashCommand,
 	mergeQueuedItemIntoAbove,
 	removeQueuedItem,
+	resolveQueuedItemEdit,
 	sendQueuedItemNow,
 	setQueuedItemPaused,
 	toggleQueuedItemPaused,
@@ -31,7 +38,11 @@ import { registerDispatchDepsProvider } from '../../../renderer/stores/retryStor
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
-import type { Session } from '../../../renderer/types';
+import type { QueuedItem, Session } from '../../../renderer/types';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { resetStores } from '../../helpers/resetStores';
+import { fingerprintGrokSpawnSelection } from '../../../shared/grokSpawnSelection';
+import { sha256Hex } from '../../../shared/maestro-lib/grok/host-seams';
 
 function seed(overrides: Partial<Session> = {}): Session {
 	const session = createMockSession({
@@ -386,6 +397,24 @@ describe('mergeQueuedItemIntoAbove', () => {
 });
 
 describe('sendQueuedItemNow', () => {
+	it('keeps technical admission held across user resume and force send', () => {
+		const held = {
+			id: 'held',
+			timestamp: 0,
+			tabId: 'b',
+			type: 'message' as const,
+			text: 'hi',
+			paused: true,
+			pendingAdmissionId: 'dispatch-1',
+		};
+		seed({ executionQueue: [held] });
+		const dispatch = vi.fn().mockResolvedValue(true);
+		expect(setQueuedItemPaused('session-1', held.id, false)).toBe(true);
+		expect(currentQueue()[0]).toMatchObject({ pendingAdmissionId: 'dispatch-1' });
+		expect(sendQueuedItemNow('session-1', held.id, dispatch)).toBe(false);
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(currentQueue()).toHaveLength(1);
+	});
 	beforeEach(() => {
 		planCrossAgentMentions.mockReset();
 		planCrossAgentMentions.mockReturnValue(null);
@@ -449,5 +478,354 @@ describe('sendQueuedItemNow', () => {
 		const dispatch = vi.fn().mockRejectedValue(new Error('spawn failed'));
 		expect(sendQueuedItemNow('session-1', item.id, dispatch)).toBe(true);
 		await Promise.resolve();
+	});
+});
+
+describe('Grok command ownership receipts', () => {
+	const commandOptions = {
+		sessionId: 'session-1',
+		tabId: 'b',
+		text: '/review raw',
+		slashCommand: true,
+	};
+	const providerConfig = {
+		customPath: '/fixtures/bin/grok',
+		customEnvVars: { GROK_HOME: '/fixtures/a' },
+	};
+	const remote = {
+		id: 'remote-a',
+		name: 'Fixture',
+		host: 'a.invalid',
+		port: 22,
+		username: 'fixture',
+		privateKeyPath: '',
+		enabled: true,
+	};
+
+	beforeEach(() => {
+		resetStores(useSessionStore, useSettingsStore);
+		vi.stubGlobal('crypto', webcrypto);
+		vi.mocked(window.maestro.agents.getConfig).mockReset().mockResolvedValue(providerConfig);
+		vi.mocked(window.maestro.settings.get).mockReset().mockResolvedValue({});
+		vi.mocked(window.maestro.sshRemote.getConfigs)
+			.mockReset()
+			.mockResolvedValue({ success: true, configs: [remote] });
+		seed({ toolType: 'grok', sessionSshRemoteConfig: { enabled: true, remoteId: remote.id } });
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+		resetStores(useSessionStore, useSettingsStore);
+	});
+
+	it.each([
+		['account', { customEnvVars: { GROK_HOME: '/fixtures/b' } }],
+		['cwd', { cwd: '/fixtures/other' }],
+		['executable', { customPath: '/fixtures/other/grok' }],
+		['provider', { toolType: 'codex' }],
+		['host', { sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-b' } }],
+		['removed tab', { aiTabs: [createMockAITab({ id: 'a' })], activeTabId: 'a' }],
+		['native identity', { aiTabs: [createMockAITab({ id: 'b', agentSessionId: 'other-native' })] }],
+		['permission', { aiTabs: [createMockAITab({ id: 'b', permissionMode: 'readonly' })] }],
+	] as [string, Partial<Session>][])(
+		'refuses a queued %s change without retargeting',
+		async (_label, patch) => {
+			const item = enqueuePromptForTab(commandOptions)!;
+			await expect(getQueuedCommandScopeRefusal('session-1', item)).resolves.toBeUndefined();
+			useSessionStore.getState().updateSession('session-1', patch);
+			expect(getQueuedCommandSelectionRefusal('session-1', item)).toContain('ownership');
+			await expect(getQueuedCommandSpawnSelection('session-1', item)).resolves.toBeNull();
+			expect(currentQueue()).toEqual([item]);
+			expect(item.tabId).toBe('b');
+		}
+	);
+
+	it.each(['spread', 'cloned scope', 'persisted', 'changed id', 'legacy'] as const)(
+		'accepts only retained receipt identity: %s',
+		async (kind) => {
+			const item = enqueuePromptForTab(commandOptions)!;
+			await expect(getQueuedCommandScopeRefusal('session-1', item)).resolves.toBeUndefined();
+			const copy: QueuedItem =
+				kind === 'persisted' ? JSON.parse(JSON.stringify(item)) : { ...item };
+			if (kind === 'cloned scope') copy.commandScope = { ...item.commandScope! };
+			if (kind === 'changed id') copy.id = 'another-item';
+			if (kind === 'legacy') delete copy.commandScope;
+			const refusal = await getQueuedCommandScopeRefusal('session-1', copy);
+			if (kind === 'spread') expect(refusal).toBeUndefined();
+			else expect(refusal).toContain('ownership');
+		}
+	);
+
+	it.each([
+		[
+			'inherited account',
+			{ ...providerConfig, customEnvVars: { GROK_HOME: '/fixtures/b' } },
+			{},
+			remote,
+		],
+		['executable', { ...providerConfig, customPath: '/fixtures/other/grok' }, {}, remote],
+		['arguments', { ...providerConfig, customArgs: '--fixture' }, {}, remote],
+		['absent environment', { customPath: providerConfig.customPath }, {}, remote],
+		['empty environment', { ...providerConfig, customEnvVars: {} }, {}, remote],
+		['blank environment', { ...providerConfig, customEnvVars: { GROK_HOME: ' ' } }, {}, remote],
+		['global environment', providerConfig, { GROK_HOME: '/fixtures/b' }, remote],
+		['same-ID host', providerConfig, {}, { ...remote, host: 'b.invalid' }],
+		[
+			'remote environment',
+			providerConfig,
+			{},
+			{ ...remote, remoteEnv: { GROK_HOME: '/fixtures/b' } },
+		],
+	] as const)(
+		'refuses changed %s and forwards only the original fingerprint',
+		async (_label, config, env, endpoint) => {
+			const item = enqueuePromptForTab(commandOptions)!;
+			const captured = await getQueuedCommandSpawnSelection('session-1', item);
+			expect(captured).toMatch(/^grok-spawn-selection-v1:[a-f0-9]{64}$/);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue(config);
+			vi.mocked(window.maestro.settings.get).mockResolvedValue(env);
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [endpoint],
+			});
+			await expect(getQueuedCommandScopeRefusal('session-1', item)).resolves.toContain(
+				'configuration'
+			);
+			await expect(getQueuedCommandSpawnSelection('session-1', item)).resolves.toBe(captured);
+			expect(currentQueue()).toEqual([item]);
+		}
+	);
+
+	it('matches main hashing while ignoring key order, model/effort and remote display changes', async () => {
+		const config = {
+			...providerConfig,
+			customArgs: "$& $$ $` $'",
+			customEnvVars: { GROK_HOME: '/fixtures/a', EMPTY: '', BLANK: ' ' },
+		};
+		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue(config);
+		const item = enqueuePromptForTab(commandOptions)!;
+		await expect(getQueuedCommandSpawnSelection('session-1', item)).resolves.toBe(
+			fingerprintGrokSpawnSelection(
+				{ providerConfig: config, shellEnvVars: {}, sshRemote: remote },
+				sha256Hex
+			)
+		);
+		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+			...config,
+			customEnvVars: { BLANK: ' ', EMPTY: '', GROK_HOME: '/fixtures/a' },
+			model: 'other',
+			effort: 'low',
+		});
+		vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+			success: true,
+			configs: [{ ...remote, name: 'Renamed' }],
+		});
+		useSessionStore
+			.getState()
+			.updateSession('session-1', { activeTabId: 'a', customModel: 'other', customEffort: 'low' });
+		await expect(getQueuedCommandScopeRefusal('session-1', item)).resolves.toBeUndefined();
+		expect(item.commandScope).toEqual({ provider: 'grok' });
+		expect(JSON.stringify(item)).not.toContain('/fixtures/a');
+		expect(JSON.stringify(item)).not.toContain('grok-spawn-selection-v1:');
+	});
+
+	it.each([
+		'missing provider',
+		'invalid global env',
+		'missing remote',
+		'disabled remote',
+		'rejected read',
+	] as const)('holds unavailable evidence: %s', async (kind) => {
+		if (kind === 'missing provider')
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue(undefined as never);
+		if (kind === 'invalid global env')
+			vi.mocked(window.maestro.settings.get).mockResolvedValue({ BAD: 7 });
+		if (kind === 'missing remote')
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [],
+			});
+		if (kind === 'disabled remote')
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [{ ...remote, enabled: false }],
+			});
+		if (kind === 'rejected read')
+			vi.mocked(window.maestro.agents.getConfig).mockRejectedValue(new Error('disconnected'));
+		const item = enqueuePromptForTab(commandOptions)!;
+		await expect(getQueuedCommandScopeRefusal('session-1', item)).resolves.toContain(
+			'configuration'
+		);
+		await expect(getQueuedCommandSpawnSelection('session-1', item)).resolves.toBeNull();
+	});
+
+	it('bounds disconnected reads, clears deadlines and consumes a late rejection', async () => {
+		vi.useFakeTimers();
+		let rejectRead!: (reason: Error) => void;
+		vi.mocked(window.maestro.agents.getConfig).mockReturnValue(
+			new Promise((_, reject) => {
+				rejectRead = reject;
+			})
+		);
+		const item = enqueuePromptForTab(commandOptions)!;
+		const pending = getQueuedCommandScopeRefusal('session-1', item);
+		await vi.advanceTimersByTimeAsync(3_000);
+		await expect(pending).resolves.toContain('configuration');
+		expect(vi.getTimerCount()).toBe(0);
+		rejectRead(new Error('late disconnect'));
+		await Promise.resolve();
+		await expect(getQueuedCommandSpawnSelection('session-1', item)).resolves.toBeNull();
+	});
+
+	it('refuses a missing Grok tab instead of borrowing the active tab', () => {
+		expect(enqueuePromptForTab({ ...commandOptions, tabId: 'gone' })).toBeNull();
+		expect(currentQueue()).toEqual([]);
+	});
+});
+
+describe('managed queue mutation persistence', () => {
+	afterEach(() => registerSessionPersistenceFlush(null));
+	it.each(['remove', 'pause'] as const)(
+		'flushes %s through the registered persistence owner immediately',
+		async (action) => {
+			const session = seed();
+			const item = {
+				...buildQueuedMessageItem({ session, tab: session.aiTabs[0], text: 'managed' }),
+				pendingAdmissionId: 'dispatch',
+			};
+			seed({ executionQueue: [item] });
+			const flush = vi.fn().mockResolvedValue(undefined);
+			registerSessionPersistenceFlush(flush);
+			if (action === 'remove') removeQueuedItem(session.id, item.id);
+			else setQueuedItemPaused(session.id, item.id, true);
+			expect(flush).toHaveBeenCalledOnce();
+			expect(flush.mock.calls[0][0][0].executionQueue).toEqual(
+				action === 'remove' ? [] : [{ ...item, paused: true }]
+			);
+		}
+	);
+});
+
+describe('matchQueuedSlashCommand', () => {
+	beforeEach(() => {
+		registerDispatchDepsProvider(() => ({
+			conductorProfile: '',
+			customAICommands: [
+				{ id: 'c1', command: '/commit', description: 'Commit and push', prompt: 'Commit it' },
+			],
+			speckitCommands: [],
+			openspecCommands: [],
+		}));
+	});
+
+	afterEach(() => {
+		registerDispatchDepsProvider(null);
+	});
+
+	it('matches one of the user commands, with no arguments', () => {
+		const session = seed();
+		expect(matchQueuedSlashCommand(session, '  /commit ')).toEqual({
+			command: '/commit',
+			commandArgs: '',
+			description: 'Commit and push',
+		});
+	});
+
+	it('splits arguments off the command the way the composer does', () => {
+		const session = seed();
+		expect(matchQueuedSlashCommand(session, '/commit and tag it')).toMatchObject({
+			command: '/commit',
+			commandArgs: 'and tag it',
+		});
+	});
+
+	it('matches an agent-discovered command only when it carries a prompt', () => {
+		const session = seed({
+			agentCommands: [
+				{ command: '/review', description: 'Review', prompt: 'Review it' },
+				{ command: '/compact', description: 'Compact' },
+			],
+		});
+		expect(matchQueuedSlashCommand(session, '/review')?.command).toBe('/review');
+		// A provider's own command stays a message and reaches the provider as typed.
+		expect(matchQueuedSlashCommand(session, '/compact')).toBeNull();
+	});
+
+	it('is null for ordinary text, unknown commands, and before App wires the deps', () => {
+		const session = seed();
+		expect(matchQueuedSlashCommand(session, 'please /commit')).toBeNull();
+		expect(matchQueuedSlashCommand(session, '/nope')).toBeNull();
+		registerDispatchDepsProvider(null);
+		expect(matchQueuedSlashCommand(session, '/commit')).toBeNull();
+	});
+});
+
+describe('resolveQueuedItemEdit', () => {
+	const patch = (text: string) => ({ text, images: [], turnSettings: {} });
+
+	beforeEach(() => {
+		planCrossAgentMentions.mockReset();
+		planCrossAgentMentions.mockReturnValue({ suppressLocal: true });
+		registerDispatchDepsProvider(() => ({
+			conductorProfile: '',
+			customAICommands: [{ id: 'c1', command: '/commit', description: 'Commit', prompt: 'x' }],
+			speckitCommands: [],
+			openspecCommands: [],
+		}));
+	});
+
+	afterEach(() => {
+		registerDispatchDepsProvider(null);
+	});
+
+	it('resolves a slash command and drops the mention flags', () => {
+		const session = seed();
+		const result = resolveQueuedItemEdit(session, patch('/commit'));
+
+		expect(result.slashCommand?.command).toBe('/commit');
+		expect(result.crossAgent).toEqual({ crossAgentMention: false, crossAgentOnly: false });
+		expect(planCrossAgentMentions).not.toHaveBeenCalled();
+	});
+
+	it('re-derives both mention flags for ordinary text', () => {
+		const session = seed();
+		const result = resolveQueuedItemEdit(session, patch('@Codex do X'));
+
+		expect(result.slashCommand).toBeUndefined();
+		expect(result.crossAgent).toEqual({ crossAgentMention: true, crossAgentOnly: true });
+		expect(planCrossAgentMentions).toHaveBeenCalledWith('@Codex do X', 'session-1', undefined);
+	});
+
+	it('keeps a routing the user picked when queuing the item', () => {
+		const session = seed({
+			executionQueue: [
+				{
+					id: 'q1',
+					timestamp: 1,
+					tabId: 'a',
+					type: 'message',
+					text: '@Codex do X',
+					mentionRouting: 'consult-first',
+				} as QueuedItem,
+			],
+		});
+		planCrossAgentMentions.mockReturnValue({
+			suppressLocal: false,
+			routing: 'consult-first',
+			routingSource: 'explicit',
+		});
+
+		const result = resolveQueuedItemEdit(session, patch('@Codex do X, then Y'), 'q1');
+
+		expect(planCrossAgentMentions).toHaveBeenCalledWith(
+			'@Codex do X, then Y',
+			'session-1',
+			'consult-first'
+		);
+		expect(result.crossAgent).toEqual({
+			crossAgentMention: true,
+			crossAgentOnly: false,
+			mentionRouting: 'consult-first',
+		});
 	});
 });

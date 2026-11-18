@@ -1,6 +1,8 @@
+import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import { ipcRenderer } from 'electron';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
+import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
 
 export function createQueueRemoteApi() {
 	return {
@@ -21,9 +23,16 @@ export function createQueueRemoteApi() {
 				background?: boolean,
 				held?: boolean,
 				mentionRouting?: MentionRouting,
-				dispatchCallback?: boolean
+				dispatchCallback?: boolean,
+				control?: PianolaQueueControl,
+				/** A Federation sender's own tab chips for this one message (`TurnInput.overrides`). */
+				turnOverrides?: TurnOverrides
 			) => void
 		): (() => void) => {
+			/**
+			 * Forward queue IPC arguments including held state and admission control. On synchronous
+			 * callback failure, send an explicit unsuccessful response and propagate the error.
+			 */
 			const handler = (
 				_: unknown,
 				sessionId: string,
@@ -35,10 +44,12 @@ export function createQueueRemoteApi() {
 				background?: boolean,
 				held?: boolean,
 				mentionRouting?: MentionRouting,
-				dispatchCallback?: boolean
+				dispatchCallback?: boolean,
+				control?: PianolaQueueControl,
+				turnOverrides?: TurnOverrides
 			) => {
 				try {
-					callback(
+					const args: Parameters<typeof callback> = [
 						sessionId,
 						command,
 						responseChannel,
@@ -48,8 +59,11 @@ export function createQueueRemoteApi() {
 						background,
 						held,
 						mentionRouting,
-						dispatchCallback
-					);
+						dispatchCallback,
+						control,
+					];
+					if (turnOverrides) args.push(turnOverrides);
+					callback(...args);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, { success: false });
 					throw error;

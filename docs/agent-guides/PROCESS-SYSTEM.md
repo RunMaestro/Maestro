@@ -98,6 +98,54 @@ Key responsibilities:
 - Handles stdin writing: SSH script, raw prompt, stream-json message, or close for batch
 - Windows-specific: auto-enables shell for `.exe` basenames and shell scripts, escapes args for cmd.exe or PowerShell
 
+### Shared turn cleanup and provider probes
+
+Use `startTurn()` in `src/shared/maestro-lib/run/start-turn.ts` for agent turns
+and `runProviderProbe()` in `src/main/agents/grok-probe.ts` for exec-style
+provider discovery. `startTurn` and bounded probe runs use the canonical
+`stopProcess()` ladder. Do not add a second probe runner.
+
+`startTurn` supports opt-in `trackDescendants: true`. The canonical
+`trackProcessTree(child)` observes owned POSIX descendants from spawn through
+pipe close, preserving recorded children after their parent exits. It verifies
+the root PID/start time before following new children and each recorded
+survivor before signaling. A reused PID must not become a new root; a legacy
+snapshot without root identity can follow only recorded descendants. Missing
+ownership and Windows provide no tracker. The tracker merges pending reads with
+the stop snapshot, avoids duplicate timers and joins the last observation/sweep
+before the turn settles. Normal trailing output still drains on `close`. A
+post-spawn signal error requests stopping while retaining ownership; it is not
+treated as a failed spawn.
+
+A probe that passes `limits` or `signal` runs through `startTurn` with that
+tracking: an absolute time budget, a combined UTF-8 stdout/stderr cap, and
+cancellation through the shared stop ladder. Failures discard partial output
+and use fixed diagnostics (`ETIMEDOUT`, `ENOBUFS`, `ECANCELED`). Invalid
+limits throw a `RangeError` and a pre-aborted request returns cancellation
+without starting anything. A probe without controls runs through
+`execFileNoThrow` exactly as discovery always did and does not opt into
+continuous tracking.
+
+Observation does **not** prove finite lifetime containment. A rapid fork/exit
+can occur between snapshots, tools can leave process groups, and Windows
+`taskkill /t` cannot recover an exited parent's orphan. The 5,000 ms taskkill
+and 2,000 ms asynchronous process-table helper timeouts bound those helpers,
+not every descendant's lifetime. Do not race completion against a timeout,
+destroy inherited pipes, claim group ownership, or add another runner.
+
+Grok exec discovery requires a guaranteed deadline. No proven host containment
+mechanism is available on this route, so `runProviderProbe` throws
+`ProviderProbeRefusedError` (state `unavailable`, code `runtime-unavailable`)
+for a Grok probe before anything starts. This also applies when a caller omits
+limits; invalid limits are rejected first and pre-aborted requests still
+return cancellation. No unbounded retry runs. Callers keep their fallback
+instead of treating the refusal as an empty catalog: `grok-inspect-probe.ts`
+reports `probe-refused`, and the detector's Grok discovery never probes at
+all (it reads an owned ACP observation or the account's `models_cache.json`,
+else returns `configured-fallback` with the selected model). Native
+containment and end-to-end deadline qualification remain open; the
+observation option is no substitute.
+
 ### Handler Classes
 
 **DataBufferManager** (`handlers/DataBufferManager.ts`):

@@ -1,5 +1,7 @@
 import type { Extension } from '@codemirror/state';
-import { StreamLanguage } from '@codemirror/language';
+import { LanguageDescription, LanguageSupport, StreamLanguage } from '@codemirror/language';
+import type { StreamParser } from '@codemirror/language';
+import { DATAVIEW_JS_LANGUAGE_IDS } from '../../../../shared/dataview/syntax';
 import { captureException } from '../../../utils/sentry';
 
 /**
@@ -16,9 +18,19 @@ import { captureException } from '../../../utils/sentry';
  * highlights also highlights while editing. Dedicated Lezer packs are used
  * where they exist; the long tail (ruby, shell, toml, scss, csharp) rides on
  * `@codemirror/legacy-modes` via `StreamLanguage`.
+ *
+ * The same table colors fenced code INSIDE a markdown file: the markdown
+ * grammar is built with `codeLanguages: fenceLanguage`, which resolves a
+ * fence's tag (` ```ts `, ` ```dataview `) through {@link ALIASES} and these
+ * loaders. So every language the editor highlights as a file it also
+ * highlights as a fence, and a grammar added here reaches both at once.
  */
 
-type LanguageLoader = () => Promise<Extension>;
+type LanguageLoader = () => Promise<LanguageSupport>;
+
+/** A legacy stream parser as full language support (what a fence description has to load). */
+const streamSupport = (parser: StreamParser<unknown>) =>
+	new LanguageSupport(StreamLanguage.define(parser));
 
 /**
  * Canonical language id → lazy loader. Aliases are resolved to a canonical id
@@ -27,7 +39,10 @@ type LanguageLoader = () => Promise<Extension>;
  * its answer from it, so the two can never drift.
  */
 const LANGUAGE_LOADERS: Record<string, LanguageLoader> = {
-	markdown: async () => (await import('@codemirror/lang-markdown')).markdown(),
+	markdown: async () =>
+		(await import('@codemirror/lang-markdown')).markdown({ codeLanguages: fenceLanguage }),
+	dataview: async () =>
+		streamSupport((await import('../../../utils/dataviewSyntax')).DQL_STREAM_PARSER),
 	javascript: async () => (await import('@codemirror/lang-javascript')).javascript(),
 	jsx: async () => (await import('@codemirror/lang-javascript')).javascript({ jsx: true }),
 	typescript: async () =>
@@ -46,15 +61,11 @@ const LANGUAGE_LOADERS: Record<string, LanguageLoader> = {
 	css: async () => (await import('@codemirror/lang-css')).css(),
 	sql: async () => (await import('@codemirror/lang-sql')).sql(),
 	xml: async () => (await import('@codemirror/lang-xml')).xml(),
-	ruby: async () =>
-		StreamLanguage.define((await import('@codemirror/legacy-modes/mode/ruby')).ruby),
-	shell: async () =>
-		StreamLanguage.define((await import('@codemirror/legacy-modes/mode/shell')).shell),
-	toml: async () =>
-		StreamLanguage.define((await import('@codemirror/legacy-modes/mode/toml')).toml),
-	scss: async () => StreamLanguage.define((await import('@codemirror/legacy-modes/mode/css')).sCSS),
-	csharp: async () =>
-		StreamLanguage.define((await import('@codemirror/legacy-modes/mode/clike')).csharp),
+	ruby: async () => streamSupport((await import('@codemirror/legacy-modes/mode/ruby')).ruby),
+	shell: async () => streamSupport((await import('@codemirror/legacy-modes/mode/shell')).shell),
+	toml: async () => streamSupport((await import('@codemirror/legacy-modes/mode/toml')).toml),
+	scss: async () => streamSupport((await import('@codemirror/legacy-modes/mode/css')).sCSS),
+	csharp: async () => streamSupport((await import('@codemirror/legacy-modes/mode/clike')).csharp),
 };
 
 /** Alias → canonical id. Keeps the loader map declared once per grammar. */
@@ -70,11 +81,54 @@ const ALIASES: Record<string, string> = {
 	c: 'cpp',
 	bash: 'shell',
 	sh: 'shell',
+	zsh: 'shell',
+	...Object.fromEntries(DATAVIEW_JS_LANGUAGE_IDS.map((id) => [id, 'javascript'])),
 };
 
 function resolveLanguageId(language: string): string {
-	const normalized = language.toLowerCase();
+	const normalized = language.trim().toLowerCase();
 	return ALIASES[normalized] ?? normalized;
+}
+
+/** Plain text, for a fence whose grammar failed to load: the fence stays editable, just uncolored. */
+const plainTextSupport = () =>
+	streamSupport({
+		token: (stream) => {
+			stream.skipToEnd();
+			return null;
+		},
+	});
+
+/** One description per canonical language, so a grammar is loaded once however many fences use it. */
+const fenceDescriptions = new Map<string, LanguageDescription>();
+
+/**
+ * The grammar for a markdown fence's tag, or null for a tag we have no grammar for (the fence stays plain
+ * text). Handed to `markdown({ codeLanguages })`; the grammar loads on first use, through the same loaders
+ * a file of that language uses.
+ */
+export function fenceLanguage(info: string): LanguageDescription | null {
+	const id = resolveLanguageId(info);
+	const loader = LANGUAGE_LOADERS[id];
+	if (!loader) return null;
+	let description = fenceDescriptions.get(id);
+	if (!description) {
+		description = LanguageDescription.of({
+			name: id,
+			load: async () => {
+				try {
+					return await loader();
+				} catch (err) {
+					captureException(err, {
+						extra: { component: 'giantPreview/languageLoader', language: id, fence: true },
+					});
+					return plainTextSupport();
+				}
+			},
+		});
+		fenceDescriptions.set(id, description);
+	}
+	return description;
 }
 
 /**

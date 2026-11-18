@@ -14,6 +14,12 @@ import type { DataBufferManager } from './DataBufferManager';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { captureException } from '../../utils/sentry';
 import { getSshRemoteById } from '../../stores/getters';
+import { noteSshExit } from '../../ssh-reachability';
+import {
+	describeSshUnreachable,
+	isSshConnectionFailure,
+	SSH_CONNECTION_FAILED_EXIT_CODE,
+} from '../../../shared/sshConnection';
 import {
 	waitForCopilotShutdown,
 	readCopilotFinalAnswer,
@@ -23,11 +29,16 @@ import {
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { isSupersededGeneration } from '../generation';
-import { redactAnswerTail } from '../../../shared/agent-run/redact';
+import { redactAnswerTail, redactSecrets } from '../../../shared/agent-run/redact';
 import {
 	resolveTurnOutcome,
 	type TurnFacts,
 } from '../../../shared/maestro-lib/streaming/turn-outcome';
+import {
+	agentNotInstalledMessage,
+	classifyMissingBinary,
+	type MissingBinaryEvidence,
+} from '../../../shared/agentInstall';
 
 interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -265,18 +276,51 @@ export class ExitHandler {
 			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText, managedProcess);
 		}
 
+		// A CLI that never started is not a crash. Classified ahead of the parser,
+		// whose fallback for an unrecognized non-zero exit is the bare
+		// "Agent exited with code N" that gives the user nothing to act on. A
+		// stopped turn is never classified, so a Stop cannot surface as an error.
+		if (!managedProcess.errorEmitted && !managedProcess.interrupted && code !== 0) {
+			const notInstalled = this.notInstalledError(sessionId, managedProcess, {
+				exitCode: code,
+				stderr: managedProcess.stderrBuffer || '',
+				command: managedProcess.command,
+			});
+			if (notInstalled) {
+				logger.info('[ProcessManager] Agent CLI could not be started', 'ProcessManager', {
+					sessionId,
+					toolType,
+					exitCode: code,
+					command: managedProcess.command,
+				});
+				emitAgentErrorAfterOutput(
+					this.emitter,
+					this.bufferManager,
+					sessionId,
+					managedProcess,
+					notInstalled
+				);
+			}
+		}
+
 		// Turn-completion classification, routed through maestro-lib's shared
 		// resolveTurnOutcome (Plans/maestro-lib-turn-contract.md, section 1)
 		// instead of the three independent checks this block used to run
 		// (detectErrorFromExit, then an SSH-pattern fallback, then omp's
 		// silent-exit override). Skipped entirely once managedProcess.interrupted
 		// is true or an error was already emitted upstream (the terminal-envelope-
-		// flush branch above) - matching the original per-check errorEmitted
-		// guards, plus a stricter rule approved for this migration: a user-
-		// requested stop skips this whole cascade (detectErrorFromExit and the
-		// SSH match included, not just the omp override), so a stopped turn can
-		// never surface as a crash.
+		// flush branch above, or the not-installed check just before this) -
+		// matching the original per-check errorEmitted guards, plus a stricter
+		// rule approved for this migration: a user-requested stop skips this whole
+		// cascade (detectErrorFromExit and the SSH match included, not just the
+		// omp override), so a stopped turn can never surface as a crash.
 		let settlement: TurnSettlement | undefined;
+
+		// Tell the reachability tracker how ssh ended. A Stop kills the local ssh
+		// client, which then exits 255 too, so a stopped turn proves nothing.
+		if (managedProcess.sshRemoteId && !managedProcess.interrupted) {
+			noteSshExit(managedProcess.sshRemoteId, code);
+		}
 
 		if (managedProcess.interrupted) {
 			settlement = {
@@ -303,13 +347,23 @@ export class ExitHandler {
 			// stays `null` (nothing found) rather than gating this whole block
 			// on `outputParser`.
 			let sshExplicitError: AgentError | undefined;
-			const providerError = outputParser
+			const parserError = outputParser
 				? outputParser.detectErrorFromExit(
 						code,
 						managedProcess.stderrBuffer || '',
 						managedProcess.stdoutBuffer || managedProcess.streamedText || ''
 					)
 				: null;
+			// ssh that lost its host exits 255, and every parser's last resort calls
+			// a bare non-zero exit a crash ("Agent exited with code 255"). Letting
+			// that win would skip the SSH checks below, so the outage dialog and the
+			// availability retry, which both key on a network_error carrying
+			// sshRemoteId, never fire and every queued message burns as a crash.
+			const isSshTransportCrash =
+				parserError?.type === 'agent_crashed' &&
+				Boolean(managedProcess.sshRemoteId) &&
+				isSshConnectionFailure(code);
+			const providerError = isSshTransportCrash ? null : parserError;
 
 			if (providerError === null && managedProcess.sshRemoteId) {
 				const stderrToCheck = managedProcess.stderrBuffer || '';
@@ -339,6 +393,30 @@ export class ExitHandler {
 							exitCode: code,
 							errorType: sshError.type,
 							errorMessage: sshError.message,
+							stderrPreview: stderrToCheck.substring(0, 500),
+						});
+					} else if (code === SSH_CONNECTION_FAILED_EXIT_CODE) {
+						// ssh itself failed and said so in words no pattern knows: a tunnel
+						// (`tailcat Ping: context deadline exceeded`, `Connection closed by
+						// UNKNOWN port 65535`) or a host that dropped mid-handshake. Without
+						// this the turn just ended, with no error on the tab at all.
+						const remote = getSshRemoteById(managedProcess.sshRemoteId);
+						sshExplicitError = {
+							type: 'network_error',
+							message: describeSshUnreachable(
+								remote ?? { name: '', host: managedProcess.sshRemoteId },
+								stderrToCheck
+							),
+							recoverable: true,
+							agentId: toolType,
+							sessionId,
+							sshRemoteId: managedProcess.sshRemoteId,
+							timestamp: Date.now(),
+							raw: { exitCode: code, stderr: stderrToCheck },
+						};
+						logger.info('[ProcessManager] SSH connection failure at exit', 'ProcessManager', {
+							sessionId,
+							sshRemoteId: managedProcess.sshRemoteId,
 							stderrPreview: stderrToCheck.substring(0, 500),
 						});
 					} else if (code !== 0) {
@@ -514,6 +592,11 @@ export class ExitHandler {
 		if (this.processes.get(sessionId) === managedProcess) {
 			this.processes.delete(sessionId);
 		}
+		// A call still open when the process exits (Claude's last assistant
+		// message is closed only by the next mark) is finished here.
+		for (const sample of managedProcess.callTimer?.finish() ?? []) {
+			this.emitter.emit('token-speed', sessionId, managedProcess.toolType, sample);
+		}
 		if (
 			settlement &&
 			(settlement.outcome === 'completed' || settlement.outcome === 'completed-with-warning') &&
@@ -523,6 +606,10 @@ export class ExitHandler {
 			// that decide dependency readiness must see the final answer, never an
 			// earlier partial snapshot that happened to look stable for two polls.
 			settlement.answerTail = redactAnswerTail(managedProcess.streamedText);
+			Object.defineProperty(settlement, 'nativeAnswer', {
+				value: redactSecrets(managedProcess.streamedText),
+				enumerable: false,
+			});
 		}
 		this.emitter.emit('exit', sessionId, code, undefined, settlement);
 	}
@@ -716,6 +803,43 @@ export class ExitHandler {
 	}
 
 	/**
+	 * An `agent_not_installed` error when the evidence says the agent's CLI could
+	 * not be started at all, or null when it ran (and failed some other way).
+	 *
+	 * Local agents only. Over SSH the binary lives on the remote host, where a
+	 * missing CLI is already reported by the SSH error bank - and the install
+	 * command named here would be for the wrong machine. Terminal shells are not
+	 * agents, so a 127 from a command typed into one is the user's business.
+	 */
+	private notInstalledError(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		evidence: MissingBinaryEvidence
+	): AgentError | null {
+		if (managedProcess.sshRemoteId || managedProcess.isTerminal) return null;
+		if (managedProcess.toolType === 'terminal') return null;
+		const missingBinary = classifyMissingBinary(evidence);
+		if (!missingBinary) return null;
+		return {
+			type: 'agent_not_installed',
+			message: agentNotInstalledMessage(
+				managedProcess.toolType,
+				missingBinary.reason,
+				process.platform,
+				missingBinary.runtime
+			),
+			recoverable: true,
+			agentId: managedProcess.toolType,
+			sessionId,
+			timestamp: Date.now(),
+			raw: {
+				exitCode: evidence.exitCode ?? undefined,
+				stderr: evidence.stderr,
+			},
+		};
+	}
+
+	/**
 	 * Handle process error event (spawn failures, etc.)
 	 */
 	handleError(sessionId: string, error: Error): void {
@@ -726,8 +850,20 @@ export class ExitHandler {
 			error: error.message,
 		});
 
-		// Emit agent error for process spawn failures
-		if (managedProcess && !managedProcess.errorEmitted) {
+		// Emit agent error for process spawn failures. ENOENT means the binary is
+		// not there at all, which the user fixes by installing it - not by
+		// restarting an agent that can never start.
+		const notInstalled = managedProcess
+			? this.notInstalledError(sessionId, managedProcess, {
+					errorCode: (error as NodeJS.ErrnoException).code,
+					stderr: error.message,
+					command: managedProcess.command,
+				})
+			: null;
+		if (managedProcess && !managedProcess.errorEmitted && notInstalled) {
+			managedProcess.errorEmitted = true;
+			this.emitter.emit('agent-error', sessionId, notInstalled);
+		} else if (managedProcess && !managedProcess.errorEmitted) {
 			managedProcess.errorEmitted = true;
 			const agentError: AgentError = {
 				type: 'agent_crashed',

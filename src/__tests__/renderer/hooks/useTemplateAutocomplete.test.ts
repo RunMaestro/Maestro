@@ -742,6 +742,36 @@ describe('useTemplateAutocomplete', () => {
 				expect(result.current.autocompleteState.isOpen).toBe(false);
 			});
 
+			it('leaves Enter to the input method during an IME composition', () => {
+				const { result } = renderHook(() =>
+					useTemplateAutocomplete({
+						textareaRef,
+						value: '',
+						onChange: onChangeMock,
+					})
+				);
+
+				openAutocomplete(result);
+				onChangeMock.mockClear();
+
+				for (const ime of [{ nativeEvent: { isComposing: true } }, { keyCode: 229 }]) {
+					const preventDefault = vi.fn();
+					let handled = true;
+					act(() => {
+						handled = result.current.handleKeyDown({
+							key: 'Enter',
+							preventDefault,
+							...ime,
+						} as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+					});
+					expect(handled).toBe(false);
+					expect(preventDefault).not.toHaveBeenCalled();
+				}
+
+				expect(result.current.autocompleteState.isOpen).toBe(true);
+				expect(onChangeMock).not.toHaveBeenCalled();
+			});
+
 			it('should insert selected variable into value', () => {
 				const { result } = renderHook(() =>
 					useTemplateAutocomplete({

@@ -77,7 +77,11 @@ Object.defineProperty(window, 'maestro', {
 	writable: true,
 });
 
-import { startInlineWizardConversation } from '../../../renderer/services/inlineWizardConversation';
+import {
+	startInlineWizardConversation,
+	sendWizardMessage,
+} from '../../../renderer/services/inlineWizardConversation';
+import { hasCapabilityCached } from '../../../renderer/hooks/agent/useAgentCapabilities';
 import { parseWizardIntent } from '../../../renderer/services/wizardIntentParser';
 
 const mockStartConversation = vi.mocked(startInlineWizardConversation);
@@ -87,6 +91,7 @@ describe('useInlineWizard - Session Overrides', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockParseWizardIntent.mockReturnValue({ mode: 'new' });
+		vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({ success: true, files: [] });
 	});
 
 	afterEach(() => {
@@ -182,4 +187,100 @@ describe('useInlineWizard - Session Overrides', () => {
 			})
 		);
 	});
+
+	it.each([
+		['direct', 'account-a', false, 'grok-code-fast-1', 'high'],
+		['direct', 'account-b', true, undefined, undefined],
+		['select', 'account-b', true, undefined, undefined],
+		['select', 'account-a', false, 'grok-code-fast-1', 'high'],
+		['message', 'account-a', true, 'grok-code-fast-1', 'low'],
+		['message', 'account-b', false, undefined, undefined],
+	] as const)(
+		'forwards Grok configuration through the %s constructor and replays follow-on history',
+		async (entry, account, remote, model, effort) => {
+			// Exercise the caller contract behind the still-disabled production capability.
+			vi.mocked(hasCapabilityCached).mockReturnValueOnce(true);
+			const actual = await vi.importActual<
+				typeof import('../../../renderer/services/inlineWizardConversation')
+			>('../../../renderer/services/inlineWizardConversation');
+			mockStartConversation.mockImplementationOnce(actual.startInlineWizardConversation);
+			mockParseWizardIntent.mockReturnValue({ mode: entry === 'direct' ? 'new' : 'ask' });
+			const ssh = remote
+				? { enabled: true, remoteId: 'test-host', workingDirOverride: '/remote/project' }
+				: undefined;
+			const overrides = {
+				customPath: '/custom/grok',
+				customArgs: '--max-turns 4',
+				customEnvVars: {
+					GROK_HOME: `/fixtures/${account}`,
+					GROK_AUTH_PATH: `/fixtures/${account}/auth.json`,
+				},
+				customModel: model,
+				customEffort: effort,
+			};
+			const original = structuredClone(overrides);
+			const { result } = renderHook(() => useInlineWizard());
+			await act(async () => {
+				await result.current.startWizard(
+					'Plan a project',
+					undefined,
+					'/test/project',
+					'grok',
+					'Grok Project',
+					'grok-tab',
+					'grok-agent',
+					'/autorun',
+					ssh,
+					'Profile',
+					overrides
+				);
+			});
+			if (entry !== 'direct') expect(mockStartConversation).not.toHaveBeenCalled();
+			if (entry === 'select') act(() => result.current.setMode('new'));
+			// The service withholds unbound native IDs; callers must not substitute its process ID.
+			vi.mocked(sendWizardMessage).mockResolvedValueOnce({
+				success: true,
+				response: { confidence: 50, ready: false, message: 'Need more detail' },
+				rawOutput: '{"session_id":"unbound-native-session"}',
+			});
+			await act(async () => {
+				await result.current.sendMessage('First goal');
+			});
+			expect(mockStartConversation).toHaveBeenCalledTimes(1);
+			const forwarded = {
+				agentType: 'grok',
+				directoryPath: '/test/project',
+				sessionSshRemoteConfig: ssh,
+				sessionCustomPath: overrides.customPath,
+				sessionCustomArgs: overrides.customArgs,
+				sessionCustomEnvVars: original.customEnvVars,
+				sessionCustomModel: model,
+				sessionCustomEffort: effort,
+			};
+			expect(mockStartConversation).toHaveBeenCalledWith(expect.objectContaining(forwarded));
+			const conversation = mockStartConversation.mock.results[0].value;
+			expect(conversation).toEqual(expect.objectContaining(forwarded));
+			const history = result.current.conversationHistory;
+			expect(history.map(({ role, content }) => ({ role, content }))).toEqual([
+				{ role: 'user', content: 'First goal' },
+				{ role: 'assistant', content: 'Need more detail' },
+			]);
+			await act(async () => {
+				await result.current.sendMessage('Refine the plan');
+			});
+			expect(sendWizardMessage).toHaveBeenNthCalledWith(
+				2,
+				conversation,
+				'Refine the plan',
+				history,
+				undefined
+			);
+			expect(result.current.agentSessionId).toBeNull();
+			expect(conversation.sessionId).not.toBe('unbound-native-session');
+			expect(overrides).toEqual(original);
+			await act(async () => {
+				await result.current.endWizard('grok-tab');
+			});
+		}
+	);
 });

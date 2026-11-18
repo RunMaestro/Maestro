@@ -14,6 +14,8 @@ import fs from 'fs/promises';
 import { createHash } from 'crypto';
 import { logger } from './logger';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
+import { mergeUsageCost, usageCostUsd } from '../../shared/maestro-lib/streaming/usage-totals';
+import type { StatsCostCoverage, UsageAccounting, UsageCost } from '../../shared/types';
 import { captureException } from './sentry';
 import { atomicWriteFile } from './atomic-json-store';
 
@@ -232,6 +234,20 @@ export interface CachedSessionStats {
 	 * entries fall back to flat-rate pricing derived from the token counts.
 	 */
 	costUsd?: number;
+	/**
+	 * The session's own cost observation, copied from its stored usage ledger
+	 * (`UsageAccounting.cost`, e.g. Grok's `usage.json`). When present it GOVERNS:
+	 * the entry is never priced from its token counts, and `costUsd` is only its
+	 * display projection (absent when the cost is unknown). Absent on entries
+	 * whose cost is derived by the legacy per-provider rule (Claude, Codex).
+	 */
+	cost?: UsageCost;
+	/** Provenance of the stored usage ledger (`UsageAccounting.source`); `none` when unreadable. */
+	usageSource?: UsageAccounting['source'];
+	/** Token completeness of the stored usage ledger; absent means unspecified, never complete. */
+	usageCompleteness?: UsageAccounting['completeness'];
+	/** Qualified identity, for providers whose native session ID is not globally unique. */
+	identity?: CachedSessionIdentity;
 	/** File modification time to detect external changes */
 	fileMtimeMs: number;
 	/**
@@ -244,6 +260,78 @@ export interface CachedSessionStats {
 	 * cache file's own `version`. Claude entries only; see `isDerivationStale`.
 	 */
 	derivedVersion?: number;
+}
+
+/**
+ * Who a cached session belongs to. A native session ID alone is not unique for
+ * Grok: two accounts (or an SSH host and this machine) can hold the same ID
+ * under the same project path, and must stay two sessions, never one.
+ */
+export interface CachedSessionIdentity {
+	/** Opaque account/host scope (a canonical account directory or remote ref); never a credential. */
+	accountScope: string;
+	/** Project working directory the session was recorded under. */
+	projectPath: string;
+	/** The provider's own session ID. */
+	nativeSessionId: string;
+}
+
+/**
+ * Cache key for a session with a qualified identity. Each part is
+ * percent-encoded, so `/` inside a path or scope cannot make two identities
+ * collide on one key, and the same identity always lands on the same key
+ * (incremental reuse and archiving key on it).
+ */
+export function qualifiedGlobalStatsSessionKey(identity: CachedSessionIdentity): string {
+	return [identity.accountScope, identity.projectPath, identity.nativeSessionId]
+		.map(encodeURIComponent)
+		.join('/');
+}
+
+/**
+ * Lifetime cost of the cached sessions that carry their own `cost`, merged
+ * through the canonical `mergeUsageCost` (no pricing: an unknown cost stays
+ * unknown, a partial one keeps the total partial, exact ticks are summed
+ * exactly). Archived entries count, as they do for every lifetime total.
+ * Entries without `cost` are skipped: the caller derives those by its legacy
+ * rule. Returns null when no entry carries a cost.
+ */
+export function summarizeCachedSessionCost(sessions: Record<string, CachedSessionStats>): {
+	cost: UsageCost;
+	costUsd: number;
+	costUsdTicks?: string;
+	coverage: StatsCostCoverage;
+} | null {
+	let merged: UsageCost | null = null;
+	for (const stats of Object.values(sessions)) {
+		if (!stats.cost) continue;
+		merged = merged ? mergeUsageCost(merged, stats.cost) : { ...stats.cost };
+	}
+	if (!merged) return null;
+	const costUsd = usageCostUsd(merged);
+	const ticks =
+		merged.status !== 'unknown' && 'costUsdTicks' in merged ? merged.costUsdTicks : undefined;
+	return {
+		cost: merged,
+		costUsd: costUsd ?? 0,
+		...(ticks !== undefined ? { costUsdTicks: ticks } : {}),
+		coverage:
+			merged.status === 'exact' ? 'complete' : costUsd === undefined ? 'unknown' : 'partial',
+	};
+}
+
+/**
+ * Combine per-provider coverage into one. Providers without coverage (legacy
+ * derivation) are left out; `undefined` when none reports one.
+ */
+export function mergeStatsCostCoverage(
+	values: ReadonlyArray<StatsCostCoverage | undefined>
+): StatsCostCoverage | undefined {
+	const present = values.filter((value): value is StatsCostCoverage => value !== undefined);
+	if (present.length === 0) return undefined;
+	if (present.every((value) => value === 'complete')) return 'complete';
+	if (present.every((value) => value === 'unknown')) return 'unknown';
+	return 'partial';
 }
 
 /**
@@ -274,6 +362,11 @@ export interface GlobalStatsCache {
  * v5: Claude usage counted once per API response instead of once per JSONL line.
  * v6: Claude subagent transcripts priced into their parent session.
  * v7: Claude messages counted as prompts and responses, not transcript lines.
+ *
+ * The optional `cost`, `usageSource`, `usageCompleteness` and `identity` entry
+ * fields (and any new provider key such as `grok`) are additive, not a bump: no
+ * existing entry's derivation changed, a v4-v7 cache simply has none of them,
+ * and a reader that predates them ignores both the fields and the provider.
  */
 export const GLOBAL_STATS_CACHE_VERSION = 7;
 

@@ -337,6 +337,16 @@ Numbered out of document order for the same reason as #41: a targeted 2026-09-15
 - **DO NOT TOUCH:** `mindMapLayouts.ts` - `NODE_PILL_CHAR_WIDTH` is also read back by `MindMap.tsx:537` to decide where to TRUNCATE a label, so the sizing constant and the truncation constant must stay the same number. Converting it means moving both together.
 - **Estimated savings:** ~20 lines; the value is that a font-size change stops silently clipping labels.
 
+### 43. Two `ipcErrorMessage()` Implementations (main and rc each grew one)
+
+Numbered out of document order like #41: found while back-merging main into rc on 2026-11-12.
+
+- **Evidence:** `src/renderer/utils/ipcErrorMessage.ts` (rc, one argument, strips one wrapper) and `src/shared/serializeError.ts` (main, `fallback` argument, keeps the innermost of nested `: Error:` layers). After the merge, `FilePreview.tsx` and `useGroupChatHandlers.ts` import the shared one; every other caller imports the renderer one.
+- **Why it matters:** the two disagree on input that is not an `Error` (`String(error)` vs. the fallback) and on a re-thrown handler error (`Failed to write file: Error: Unable to connect...` keeps its prefix in one and not the other), so the same failure reads differently in two surfaces.
+- **KEEP:** the shared one in `src/shared/serializeError.ts`: it is a superset, and main already ships it.
+- **CONSOLIDATE:** make `src/renderer/utils/ipcErrorMessage.ts` re-export it, check the renderer tests that pin the one-argument behaviour, then move the callers and delete the file. Update the CLAUDE.md index entry in the same change.
+- **Estimated savings:** ~25 lines; the value is one error string per failure.
+
 ---
 
 ## P3 - Nice to Have

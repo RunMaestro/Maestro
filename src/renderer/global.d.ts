@@ -1,3 +1,4 @@
+import type { PianolaQueueControl } from '../shared/pianola/pianola-dispatch';
 import type {
 	TranslationRequest,
 	TranslationReport,
@@ -8,6 +9,11 @@ import type {
 	HarnessInteractionResponse,
 	HarnessInteractionSettledEvent,
 } from '../shared/harness-control/types';
+import type { NativeSessionLaunch } from '../main/process-manager/types';
+import type { ProcessSpawnAttempt } from '../main/preload/process/core';
+import type { GrokCommandDiscoveryResult } from '../main/agents/grok-skills';
+import type { GrokSpawnSelectionFingerprint } from '../shared/grokSpawnSelection';
+import type { AgentDiscoveryRequest, AgentDiscoveryResult } from '../shared/types';
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Global type declarations for the renderer process.
@@ -61,7 +67,12 @@ type LocalFileScanNode = {
 };
 
 interface ProcessConfig {
+	/** Native submitted transcript boundary, checked against owner commits by the host. */
+	transcriptBoundaryId?: string;
 	sessionId: string;
+	pianolaDispatchId?: string;
+	pianolaQueueStepId?: string;
+	pianolaQueueItemId?: string;
 	toolType: string;
 	cwd: string;
 	command: string;
@@ -71,6 +82,17 @@ interface ProcessConfig {
 	images?: string[];
 	// Agent-specific spawn options (used to build args via agent config)
 	agentSessionId?: string;
+	/** Ephemeral enqueue configuration check, never a native binding or admission.
+	 *  Omitted for unguarded turns; null means guarded but evidence unavailable.
+	 *  A guarded request must refuse missing/stale evidence before preparation. */
+	expectedGrokSpawnSelection?: GrokSpawnSelectionFingerprint | null;
+	/** One ACP-advertised native Grok command the person picked (the command intent),
+	 *  riding this same request: there is no second queue. It authorizes nothing;
+	 *  `prompt` must be its exact text, the turn must resume its native session on
+	 *  its tab, and the newly admitted process must advertise the same entry before
+	 *  submission. A request carrying it is refused, never run as an ordinary prompt,
+	 *  when any of that cannot hold. Grok only. */
+	grokNativeCommand?: import('../shared/maestro-lib/grok/acp-turn').GrokAcpNativeCommandIntent;
 	readOnlyMode?: boolean;
 	modelId?: string;
 	yoloMode?: boolean;
@@ -103,6 +125,9 @@ interface ProcessConfig {
 	 *  the spawned process env as MAESTRO_QUERY_SOURCE. Cue runs never come through
 	 *  this IPC path - they spawn in the main process and mark themselves 'cue'. */
 	querySource?: 'user' | 'auto';
+	/** The Auto Run this spawn is a task of. Stamped as MAESTRO_CALLER_AUTORUN_ID so a
+	 *  `maestro-cli dispatch` it runs reports its result back to the run. */
+	autoRunId?: string;
 	// Claude token-source selection. Normally resolved server-side from the
 	// persisted session by sessionId, but spawns using a synthetic sessionId
 	// (e.g. background synopsis) forward these inline so the handler can resolve.
@@ -191,7 +216,11 @@ type GroupChatData = {
 
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
-import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
+import type {
+	CueStatsAggregation,
+	CueStatsSourceTotals,
+	CueStatsTimeRange,
+} from '../shared/cue-stats-types';
 import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { LiveModeSetResult, LiveModeStateEvent, LiveModeStatus } from '../shared/liveMode';
@@ -243,6 +272,10 @@ import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
 import type { ClosedTabCommandRequest, ClosedTabCommandResult } from '../shared/closedTabCommands';
+import type {
+	MessagePinCommandRequest,
+	MessagePinCommandResult,
+} from '../shared/messagePinCommands';
 import type { TabContextOpRequest, TabContextOpResult } from '../shared/tabContextOps';
 import type {
 	ThroughputGaugeCommandRequest,
@@ -255,9 +288,15 @@ import type {
 import type { WindowCommandRequest, WindowCommandResult } from '../shared/windowCommands';
 import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
+import type { FederationApi } from '../main/preload/federation';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
 import type { JourneyApi } from '../main/preload/journey';
 import type { DataviewApi } from '../main/preload/dataview';
+import type {
+	PromptLinkCreateInput,
+	PromptLinkCreated,
+	PromptLinkPublic,
+} from '../shared/promptLinks';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -405,7 +444,11 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: import('../shared/autoRunRemote').AutoRunRemoteResult
 		) => void;
-		spawn: (config: ProcessConfig) => Promise<{ pid: number; success: boolean }>;
+		spawn: (
+			config: ProcessConfig
+		) => Promise<import('../main/preload/process/core').ProcessSpawnResponse>;
+		/** Desktop-only, synchronous before spawn IPC; absent on older/web bridges. */
+		onSpawnAttempt?: (callback: (attempt: ProcessSpawnAttempt) => void) => () => void;
 		spawnTerminalTab: (config: {
 			sessionId: string;
 			cwd: string;
@@ -552,7 +595,14 @@ interface MaestroAPI {
 		respondHarnessInteraction: (
 			response: HarnessInteractionResponse
 		) => Promise<HarnessInteractionResolveResult>;
-		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
+		/** Native ownership is captured at launch; missing receipts remain unobserved. */
+		onSessionId: (
+			callback: (
+				sessionId: string,
+				agentSessionId: string,
+				nativeSessionLaunch?: NativeSessionLaunch
+			) => void
+		) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
 		/** The later, transcript-observed outcome of a steer that `steer()` reported `delivered`. */
 		onSteeringVerdict: (
@@ -591,7 +641,8 @@ interface MaestroAPI {
 				images?: string[],
 				background?: boolean,
 				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
-				receiptChannel?: string
+				receiptChannel?: string,
+				pianolaDispatchId?: string
 			) => void
 		) => () => void;
 		/** Answer a `remote:executeCommand` receipt channel. `accepted: true`
@@ -654,6 +705,14 @@ interface MaestroAPI {
 		sendRemoteClosedTabCommandResponse: (
 			responseChannel: string,
 			result: ClosedTabCommandResult
+		) => void;
+		// `maestro-cli tab pins ...` requests; returns unsubscribe.
+		onRemoteMessagePinCommand: (
+			callback: (request: MessagePinCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteMessagePinCommandResponse: (
+			responseChannel: string,
+			result: MessagePinCommandResult
 		) => void;
 		// `maestro-cli tab compact|merge|transfer` (the overlay menu's Context items);
 		// each returns unsubscribe and is answered with a TabContextOpResult.
@@ -937,7 +996,8 @@ interface MaestroAPI {
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
-				mentionRouting?: import('../shared/crossAgentContext').MentionRouting
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
+				control?: import('../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
@@ -984,7 +1044,8 @@ interface MaestroAPI {
 				background?: boolean,
 				held?: boolean,
 				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
-				dispatchCallback?: boolean
+				dispatchCallback?: boolean,
+				control?: PianolaQueueControl
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (
@@ -1132,6 +1193,16 @@ interface MaestroAPI {
 		sendRemoteAutoRunSteeringCommandResponse: (
 			responseChannel: string,
 			result: SteeringCommandResult
+		) => void;
+		onRemoteDiffReviewCommand: (
+			callback: (
+				request: import('../shared/diffReviewCommands').DiffReviewCommandRequest,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteDiffReviewCommandResponse: (
+			responseChannel: string,
+			result: import('../shared/diffReviewCommands').DiffReviewCommandResult
 		) => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
@@ -1301,6 +1372,8 @@ interface MaestroAPI {
 						errorLine?: string;
 					};
 					parsedJson?: unknown;
+					/** Set when the failing process ran over SSH. */
+					sshRemoteId?: string;
 				}
 			) => void
 		) => () => void;
@@ -1347,6 +1420,7 @@ interface MaestroAPI {
 			attachments?: Array<{ name: string; dataUrl: string }>;
 			includeDebugPackage?: boolean;
 			performanceTracePath?: string;
+			reviewedFingerprint?: string;
 		}) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		searchIssues: (query: string) => Promise<{
 			issues: Array<{
@@ -1774,13 +1848,17 @@ interface MaestroAPI {
 			baseBranch: string,
 			title: string,
 			body: string,
-			ghPath?: string
+			ghPath?: string,
+			sshRemoteId?: string
 		) => Promise<{
 			success: boolean;
 			prUrl?: string;
 			error?: string;
 		}>;
-		getDefaultBranch: (cwd: string) => Promise<{
+		getDefaultBranch: (
+			cwd: string,
+			sshRemoteId?: string
+		) => Promise<{
 			success: boolean;
 			branch?: string;
 			error?: string;
@@ -2047,6 +2125,12 @@ interface MaestroAPI {
 	 */
 	computerHistory: ComputerHistoryApi;
 	/**
+	 * Federation peer mirror (FED-SSH-05): the peers this desktop mirrors, their agents, a tab's
+	 * transcript, and the change pushes. Read-only. Desktop-only: no `federation:*` channel is on
+	 * the web-desktop allowlist, so in the browser build every call is refused.
+	 */
+	federation: FederationApi;
+	/**
 	 * MaestroRun (macOS launcher install, the Full Disk Access walkthrough, and
 	 * the readiness that gates its system-prompt section).
 	 */
@@ -2056,6 +2140,17 @@ interface MaestroAPI {
 	 * rebuild, and the `dataview:changed` push). The web-desktop bridge forwards it.
 	 */
 	dataview: DataviewApi;
+	/**
+	 * Prompt Links (`maestro://run/<token>`). Desktop-only: the web-desktop
+	 * bridge refuses every `promptLinks:*` channel. `create` returns the URL
+	 * once; only a hash of its token is stored.
+	 */
+	promptLinks: {
+		list: () => Promise<PromptLinkPublic[]>;
+		create: (input: PromptLinkCreateInput) => Promise<PromptLinkCreated>;
+		revoke: (id: string) => Promise<PromptLinkPublic>;
+		rendererReady: () => Promise<void>;
+	};
 	agents: {
 		translateProvider: (request: TranslationRequest) => Promise<TranslationReport>;
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
@@ -2095,27 +2190,33 @@ interface MaestroAPI {
 		) => Promise<boolean>;
 		getCustomEnvVars: (agentId: string) => Promise<Record<string, string> | null>;
 		getAllCustomEnvVars: () => Promise<Record<string, Record<string, string>>>;
-		getKnownAuthDirs: () => Promise<{ claudeConfigDirs: string[]; codexHomes: string[] }>;
+		getKnownAuthDirs: () => Promise<import('../shared/authPaths').KnownAuthDirs>;
 		getKnownEnvVarKeys: () => Promise<{
 			byProvider: Record<string, string[]>;
 			global: string[];
 		}>;
-		getModels: (agentId: string, forceRefresh?: boolean, sshRemoteId?: string) => Promise<string[]>;
+		getModels: {
+			(request: AgentDiscoveryRequest): Promise<AgentDiscoveryResult>;
+			(agentId: string, forceRefresh?: boolean, sshRemoteId?: string): Promise<string[]>;
+		};
 		onModelsRefreshed: (
 			callback: (payload: import('../shared/agentModelsRefresh').ModelsRefreshedPayload) => void
 		) => () => void;
-		getConfigOptions: (
-			agentId: string,
-			optionKey: string,
-			forceRefresh?: boolean
-		) => Promise<string[]>;
-		discoverSlashCommands: (
-			agentId: string,
-			cwd: string,
-			customPath?: string,
-			sshRemoteId?: string,
-			customEnvVars?: Record<string, string>
-		) => Promise<{ name: string; prompt?: string; description?: string }[] | null>;
+		getConfigOptions: {
+			(request: AgentDiscoveryRequest, optionKey: string): Promise<AgentDiscoveryResult>;
+			(agentId: string, optionKey: string, forceRefresh?: boolean): Promise<string[]>;
+		};
+		/** Grok catalogs retain native binding for dispatch revalidation; legacy Grok calls return null. */
+		discoverSlashCommands: {
+			(request: AgentDiscoveryRequest): Promise<GrokCommandDiscoveryResult | null>;
+			(
+				agentId: string,
+				cwd: string,
+				customPath?: string,
+				sshRemoteId?: string,
+				customEnvVars?: Record<string, string>
+			): Promise<{ name: string; prompt?: string; description?: string }[] | null>;
+		};
 
 		// Capability snapshots - persisted per-agent readiness + version info.
 		getSnapshot: (
@@ -2144,7 +2245,7 @@ interface MaestroAPI {
 					accountEmail?: string;
 					accountUuid?: string;
 					organizationName?: string;
-					session: { percent: number; resetsAt?: string };
+					session?: { percent: number; resetsAt?: string };
 					weekAllModels: { percent: number; resetsAt?: string };
 					weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
 				}
@@ -2196,7 +2297,8 @@ interface MaestroAPI {
 		list: (
 			agentId: string,
 			projectPath: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			ownerAgentId?: string
 		) => Promise<
 			Array<{
 				sessionId: string;
@@ -2246,26 +2348,19 @@ interface MaestroAPI {
 			agentId: string,
 			projectPath: string,
 			sessionId: string,
-			options?: { offset?: number; limit?: number },
+			/** The owner selects its account/host; unavailable or conflicting scope rejects the read. */
+			options?: import('../main/agents/session-storage').SessionReadOptions & {
+				ownerAgentId?: string;
+			},
 			sshRemoteId?: string
-		) => Promise<{
-			messages: Array<{
-				type: string;
-				role?: string;
-				content: string;
-				timestamp: string;
-				uuid: string;
-				toolUse?: unknown;
-			}>;
-			total: number;
-			hasMore: boolean;
-		}>;
+		) => Promise<import('../main/agents/session-storage').SessionMessagesResult>;
 		search: (
 			agentId: string,
 			projectPath: string,
 			query: string,
 			searchMode: 'title' | 'user' | 'assistant' | 'all',
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			ownerAgentId?: string
 		) => Promise<
 			Array<{
 				sessionId: string;
@@ -2278,19 +2373,24 @@ interface MaestroAPI {
 			agentId: string,
 			projectPath: string,
 			sessionId: string,
-			sshRemoteId?: string
+			sshRemoteId?: string,
+			ownerAgentId?: string
 		) => Promise<string | null>;
-		// Delete a message pair from a session (not supported for SSH remote sessions)
+		// Delete a message pair from a session (local, or on the agent's SSH remote)
 		deleteMessagePair: (
 			agentId: string,
 			projectPath: string,
 			sessionId: string,
 			userMessageUuid: string,
-			fallbackContent?: string
+			fallbackContent?: string,
+			sshRemoteId?: string,
+			ownerAgentId?: string
 		) => Promise<{
 			success: boolean;
 			error?: string;
 			linesRemoved?: number;
+			/** The provider never recorded this message: nothing was in its context to remove. */
+			notInTranscript?: boolean;
 		}>;
 		hasStorage: (agentId: string) => Promise<boolean>;
 		getAvailableStorages: () => Promise<string[]>;
@@ -2368,8 +2468,22 @@ interface MaestroAPI {
 			agentId: string,
 			projectPath: string
 		) => Promise<
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+			Record<
+				string,
+				{
+					origin?: 'user' | 'auto' | 'relay';
+					sessionName?: string;
+					starred?: boolean;
+					pinnedMessages?: unknown;
+				}
+			>
 		>;
+		setSessionPins: (
+			agentId: string,
+			projectPath: string,
+			sessionId: string,
+			pins: import('../shared/messagePins').MessagePin[]
+		) => Promise<void>;
 		setSessionName: (
 			agentId: string,
 			projectPath: string,
@@ -2514,6 +2628,20 @@ interface MaestroAPI {
 			error?: string;
 			configPath: string;
 		}>;
+		getReachability: () => Promise<{
+			success: boolean;
+			unreachable?: import('../shared/sshConnection').SshReachabilityEvent[];
+			error?: string;
+		}>;
+		checkReachability: (remoteId: string) => Promise<{
+			success: boolean;
+			reachable?: boolean;
+			event?: import('../shared/sshConnection').SshReachabilityEvent;
+			error?: string;
+		}>;
+		onReachability: (
+			callback: (event: import('../shared/sshConnection').SshReachabilityEvent) => void
+		) => () => void;
 	};
 	devtools: {
 		open: () => Promise<void>;
@@ -2747,11 +2875,13 @@ interface MaestroAPI {
 				string,
 				| 'user'
 				| 'auto'
+				| 'relay'
 				| {
-						origin: 'user' | 'auto';
+						origin: 'user' | 'auto' | 'relay';
 						sessionName?: string;
 						starred?: boolean;
 						contextUsage?: number;
+						pinnedMessages?: unknown;
 				  }
 			>
 		>;
@@ -3080,6 +3210,8 @@ interface MaestroAPI {
 				status: import('../shared/types').PlaybookStatus | null;
 			}) => void
 		) => () => void;
+		/** Auto Run delegation lifecycle; narrow with `parseAutoRunDelegationEvent`. */
+		onDelegation: (handler: (event: unknown) => void) => () => void;
 	};
 	// Playbooks API (saved batch run configurations)
 	playbooks: {
@@ -3459,18 +3591,7 @@ interface MaestroAPI {
 		onActivityChange: (handler: () => void) => () => void;
 	};
 	// Cross-Agent Dispatch API (@mentions)
-	crossAgent: {
-		/** Dispatch a cross-agent request; response streams back via onChunk. */
-		send: (
-			request: import('../shared/crossAgentTypes').CrossAgentSendRequest
-		) => Promise<{ requestId: string }>;
-		/** Stop every consult this source agent (or one of its tabs) still has in flight (Stop button). */
-		cancel: (sourceSessionId: string, sourceTabId?: string) => Promise<{ canceled: number }>;
-		/** Subscribe to streamed cross-agent response chunks. Returns a cleanup fn. */
-		onChunk: (
-			handler: (chunk: import('../shared/crossAgentTypes').CrossAgentResponseChunk) => void
-		) => () => void;
-	};
+	crossAgent: import('../main/preload/crossAgent').CrossAgentApi;
 	// Group Chat API (multi-agent coordination)
 	groupChat: {
 		// Shared return shape for group chat methods (mirrors GroupChat from shared/group-chat-types.ts)
@@ -3785,6 +3906,7 @@ interface MaestroAPI {
 		pollAuthStatus: (clientToken: string) => Promise<{
 			status: 'pending' | 'confirmed' | 'expired' | 'error';
 			authToken?: string;
+			email?: string;
 			message?: string;
 			error?: string;
 		}>;
@@ -4035,7 +4157,12 @@ interface MaestroAPI {
 			kind?: AutoRunKind;
 		}) => Promise<string>;
 		// End an Auto Run session (update duration and completed count)
-		endAutoRun: (id: string, duration: number, tasksCompleted: number) => Promise<boolean>;
+		endAutoRun: (
+			id: string,
+			duration: number,
+			tasksCompleted: number,
+			tasksTotal?: number
+		) => Promise<boolean>;
 		// Record an Auto Run task completion
 		recordAutoTask: (task: {
 			autoRunSessionId: string;
@@ -4082,20 +4209,10 @@ interface MaestroAPI {
 				projectPath?: string;
 			}>
 		>;
-		// Get tasks for a specific Auto Run session
-		getAutoRunTasks: (autoRunSessionId: string) => Promise<
-			Array<{
-				id: string;
-				autoRunSessionId: string;
-				sessionId: string;
-				agentType: string;
-				taskIndex: number;
-				taskContent?: string;
-				startTime: number;
-				duration: number;
-				success: boolean;
-			}>
-		>;
+		// Auto Run agent turns per local hour of day (24 entries, zero-filled)
+		getAutoRunTurnsByHour: (
+			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<Array<{ hour: number; count: number; successCount: number }>>;
 		// Token & cost usage aggregate for the Tokens tab. Reads agent session
 		// transcripts; `force` bypasses the accessor's in-memory memo.
 		getTokenUsage: (
@@ -4127,24 +4244,16 @@ interface MaestroAPI {
 			filePath: string
 		) => Promise<import('../shared/stats-types').UsageExportResult>;
 		// Subscribe to stats updates (for real-time dashboard refresh)
-		onStatsUpdate: (callback: () => void) => () => void;
-		// Clear old stats data (older than specified number of days)
-		clearOldData: (olderThanDays: number) => Promise<{
-			success: boolean;
-			deletedQueryEvents: number;
-			deletedAutoRunSessions: number;
-			deletedAutoRunTasks: number;
-			deletedSessionLifecycle: number;
-			error?: string;
-		}>;
+		onStatsUpdate: (
+			callback: (table?: import('../shared/stats-types').StatsTable) => void
+		) => () => void;
 		// Get database size in bytes
 		getDatabaseSize: () => Promise<number>;
-		// Get earliest stat timestamp (null if no entries exist)
-		getEarliestTimestamp: () => Promise<number | null>;
 		// Record an image annotation save event
 		recordImageAnnotation: (createdAt: number) => Promise<string | null>;
 		// Record a keyboard shortcut firing (buckets into local-time day)
-		recordShortcutUsage: (firedAt: number) => Promise<string | null>;
+		// `shortcutId` also bumps that shortcut's own counter
+		recordShortcutUsage: (firedAt: number, shortcutId?: string) => Promise<string | null>;
 		// Get per-day shortcut usage counts within a time range
 		getShortcutUsageByDay: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
@@ -4153,7 +4262,11 @@ interface MaestroAPI {
 		getShortcutUsageTotal: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<number>;
-		// Record session creation (launched)
+		// Firings per shortcut id within a time range, most used first
+		getShortcutUsageByShortcut: (
+			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<Array<{ shortcutId: string; count: number }>>;
+		// Record a resolved Agent Resilience outage
 		recordResilience: (event: {
 			id: string;
 			sessionId: string;
@@ -4255,6 +4368,9 @@ interface MaestroAPI {
 			range: CueStatsTimeRange,
 			excludeTriggerTypes?: string[]
 		) => Promise<CueStatsAggregation>;
+		// Runs, completed-run time and tokens only (the Overview's source chart).
+		// Throws 'CueStatsDisabled' under the same gate as getAggregation.
+		getSourceTotals: (range: CueStatsTimeRange) => Promise<CueStatsSourceTotals>;
 		// Conductor time (ms) the retained Cue run history would have credited.
 		// Ungated, unlike getAggregation; resolves 0 when there is no history.
 		getHistoricalConductorCredit: () => Promise<number>;
@@ -5137,6 +5253,8 @@ interface MaestroAPI {
 			agentType?: string,
 			confirmPolicy?: 'off' | 'dangerous' | 'all'
 		) => Promise<void>;
+		/** Coworking `browser:N` id of a browser tab, or null (unknown or hidden from agents). */
+		getBrowserId: (sessionId: string, tabUuid: string) => Promise<string | null>;
 		onRequestBrowserOp: (
 			callback: (
 				tabUuid: string,

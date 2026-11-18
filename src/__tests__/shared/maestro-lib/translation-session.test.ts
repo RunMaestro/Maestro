@@ -6,6 +6,11 @@ import {
 	translatedHistorySessionId,
 	type TranslatableSession,
 } from '../../../shared/maestro-lib/translation/session';
+import type { NativeSessionBinding } from '../../../shared/maestro-lib/agents/providerSwap';
+import {
+	getDeclaredTranslationDirection,
+	TRANSLATION_PROVIDER_VERSIONS,
+} from '../../../shared/maestro-lib/translation/support';
 import { switchTabProvider as rendererSwitch } from '../../../renderer/utils/providerTabSessions';
 import { switchTabProvider } from '../../../shared/maestro-lib/translation/session';
 
@@ -238,4 +243,152 @@ describe('one provider mapping commit', () => {
 		expect(migrationHoldsTurns({ ...base, state: 'committed' })).toBe(false);
 		expect(migrationHoldsTurns(undefined)).toBe(false);
 	});
+});
+
+describe('native ownership in translation snapshots', () => {
+	const sourceBinding: NativeSessionBinding = {
+		version: 1,
+		state: 'bound',
+		provider: 'grok',
+		nativeSessionId: 'shared-id',
+		accountRef: 'account:grok-fixture',
+		host: { kind: 'ssh', identity: 'endpoint:fixture' },
+		cwd: '/remote/project',
+	};
+	const destinationBinding: NativeSessionBinding = {
+		...sourceBinding,
+		provider: 'codex',
+		accountRef: 'account:codex-fixture',
+		host: { kind: 'local', identity: 'machine:fixture' },
+		cwd: '/local/project',
+	};
+	const mappings = [
+		{
+			tabId: 'tab',
+			sourceSessionId: 'shared-id',
+			destinationSessionId: 'shared-id',
+			artifacts: [],
+			lineage: {},
+		},
+	];
+
+	describe.each([
+		['bound', sourceBinding],
+		['absent legacy', undefined],
+		['explicit unknown', { version: 1, state: 'unknown', reason: 'legacy' }],
+	] as const)('%s source scope', (_name, nativeSessionBinding) => {
+		it.each(['open', 'closed', 'unified', 'snoozed', 'group', 'inventory', 'orphaned'])(
+			'preserves %s source ownership and leaves an equal-ID destination unobserved',
+			(location) => {
+				const tab = {
+					id: 'tab',
+					agentSessionId: 'shared-id',
+					nativeSessionBinding,
+					providerSessions: {
+						codex: {
+							agentSessionId: 'shared-id',
+							nativeSessionBinding: destinationBinding,
+						},
+					},
+				};
+				const session: TranslatableSession = {
+					id: 'agent',
+					toolType: 'grok',
+					aiTabs: location === 'open' ? [tab] : [],
+					closedTabHistory: location === 'closed' ? [{ tab }] : [],
+					unifiedClosedTabHistory: location === 'unified' ? [{ type: 'ai', tab }] : [],
+					snoozedTabs:
+						location === 'snoozed'
+							? [{ type: 'ai', tab }]
+							: location === 'group'
+								? [{ type: 'group', members: [{ type: 'ai', tab }] }]
+								: [],
+					providerTranslationTabInventory: location === 'inventory' ? [tab] : [],
+					orphanedThinkingTabs: location === 'orphaned' ? [tab] : [],
+				};
+				const before = structuredClone(session);
+				const result = commitTranslationSession(session, 'codex', 'operation', mappings);
+				const [translated] = translationSessionTabs(result);
+				expect(translated.nativeSessionBinding).toEqual({
+					version: 1,
+					state: 'unknown',
+					reason: 'unobserved',
+				});
+				expect(translated.providerSessions?.grok?.nativeSessionBinding).toEqual(
+					nativeSessionBinding
+				);
+				expect(translated.providerSessions?.codex).toBeUndefined();
+				expect(result.providerTranslationTabInventory).toEqual([
+					{
+						id: 'tab',
+						agentSessionId: 'shared-id',
+						nativeSessionBinding: translated.nativeSessionBinding,
+						providerSessions: translated.providerSessions,
+					},
+				]);
+				expect(session).toEqual(before);
+				// Committing an already supplied mapping does not declare or certify a native
+				// migration route: the Grok routes are the static, unverified declarations.
+				for (const [source, destination] of [
+					['grok', 'codex'],
+					['codex', 'grok'],
+				])
+					expect(getDeclaredTranslationDirection(source, destination)).toEqual({
+						source,
+						destination,
+						sourceVersions: TRANSLATION_PROVIDER_VERSIONS[source as 'grok' | 'codex'],
+						destinationVersions: TRANSLATION_PROVIDER_VERSIONS[destination as 'grok' | 'codex'],
+						verification: 'unverified',
+					});
+			}
+		);
+	});
+
+	it.each(['same committed', 'new operation', 'staged', 'other destination'])(
+		'retains observed destination ownership only on the same committed replay: %s',
+		(replay) => {
+			const session: TranslatableSession = {
+				id: 'agent',
+				toolType: 'codex',
+				aiTabs: [
+					{
+						id: 'tab',
+						agentSessionId: 'shared-id',
+						nativeSessionBinding: destinationBinding,
+						providerSessions: {
+							grok: {
+								agentSessionId: 'shared-id',
+								nativeSessionBinding: sourceBinding,
+							},
+						},
+					},
+				],
+				providerMigration: {
+					operationId: 'operation',
+					destination: replay === 'other destination' ? 'claude-code' : 'codex',
+					state: replay === 'staged' ? 'staged' : 'committed',
+					verification: 'unverified',
+				},
+			};
+			const before = structuredClone(session);
+			const result = commitTranslationSession(
+				session,
+				'codex',
+				replay === 'new operation' ? 'new-operation' : 'operation',
+				mappings,
+				undefined,
+				'grok'
+			);
+			expect(result.aiTabs[0].nativeSessionBinding).toEqual(
+				replay === 'same committed'
+					? destinationBinding
+					: { version: 1, state: 'unknown', reason: 'unobserved' }
+			);
+			expect(result.aiTabs[0].providerSessions?.grok?.nativeSessionBinding).toEqual(sourceBinding);
+			expect(result.providerTranslationTabInventory[0].nativeSessionBinding).toEqual(
+				result.aiTabs[0].nativeSessionBinding
+			);
+			expect(session).toEqual(before);
+		}
+	);
 });

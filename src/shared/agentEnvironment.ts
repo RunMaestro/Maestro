@@ -55,20 +55,30 @@ const SECRET_KEY_RE = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|SESSION
 const SECRET_KEY_EXCEPTIONS =
 	/^(.*_AUTH_TYPE|.*_KEY_PATH|.*_KEYCHAIN|.*_TOKEN_PATH|.*_AUTH_MODE)$/i;
 
+/**
+ * Inline credential bundles and gateway URLs must never expose even a suffix.
+ * Gateway credentials can live in userinfo, arbitrary paths or queries, so
+ * treat the whole value as opaque without parsing it or guessing which part is safe.
+ */
+const OPAQUE_SECRET_KEY_RE =
+	/^GROK_(AUTH|MODELS_BASE_URL|CLI_CHAT_PROXY_BASE_URL|XAI_API_BASE_URL)$/i;
+
 /** Whether a variable's value should be masked until explicitly revealed. */
 export function isSecretEnvKey(key: string): boolean {
 	if (SECRET_KEY_EXCEPTIONS.test(key)) return false;
-	return SECRET_KEY_RE.test(key);
+	return OPAQUE_SECRET_KEY_RE.test(key) || SECRET_KEY_RE.test(key);
 }
 
 /**
- * Mask a secret value, keeping the last few characters.
+ * Mask a secret value. Pass its key to keep credential bundles and gateway
+ * URLs wholly opaque; other secrets keep the last few characters.
  *
  * The tail is what distinguishes one key from another when you are checking
  * which credential is loaded, and it is not enough to use. Short values are
  * masked whole, since a 6-character secret would be mostly disclosed.
  */
-export function maskEnvValue(value: string): string {
+export function maskEnvValue(value: string, key?: string): string {
+	if (key && OPAQUE_SECRET_KEY_RE.test(key)) return '•'.repeat(8);
 	if (value.length <= 8) return '•'.repeat(Math.max(value.length, 1));
 	return `${'•'.repeat(8)}${value.slice(-4)}`;
 }

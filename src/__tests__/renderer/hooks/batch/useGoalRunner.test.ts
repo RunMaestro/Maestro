@@ -953,4 +953,359 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 
 		useSettingsStore.setState({ autoRunDisabled: false });
 	});
+
+	describe('Grok goal runs', () => {
+		const GROK_SSH = { enabled: true, remoteId: 'grok-remote-1' };
+		const GROK_ACCOUNT = { GROK_HOME: '/accounts/grok-b' };
+
+		const grokSession = (overrides?: Partial<Session>): Session =>
+			createMockSession({
+				toolType: 'grok' as Session['toolType'],
+				customModel: 'grok-session-model',
+				customEffort: 'low',
+				customEnvVars: GROK_ACCOUNT,
+				sessionSshRemoteConfig: GROK_SSH,
+				...overrides,
+			});
+
+		const usage = (inputTokens: number, outputTokens: number) => ({
+			inputTokens,
+			outputTokens,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			totalCostUsd: 0,
+			contextWindow: 0,
+		});
+
+		const progressEntries = () =>
+			mockOnAddHistoryEntry.mock.calls
+				.map((c) => c[0])
+				.filter((e) => typeof e?.summary === 'string' && e.summary.startsWith('Goal progress:'));
+
+		const startHeld = (
+			result: { current: ReturnType<typeof useBatchProcessor> },
+			config: BatchRunConfig
+		) => {
+			const state = { finished: false };
+			act(() => {
+				void result.current.startBatchRun(SESSION_ID, config, '/test/folder').then(() => {
+					state.finished = true;
+				});
+			});
+			return state;
+		};
+
+		beforeEach(() => {
+			setCapabilitiesCache('grok', { ...DEFAULT_CAPABILITIES, supportsResume: true });
+		});
+
+		it('completes in one iteration with the run model, account and SSH target', async () => {
+			const seenBySpawn: Array<Partial<Session> | undefined> = [];
+			mockOnSpawnAgent.mockImplementation(async (sid: string) => {
+				// What the real spawn callback resolves by id: the agent's own account
+				// and SSH target, never rewritten by the goal runner.
+				seenBySpawn.push(useSessionStore.getState().sessions.find((s) => s.id === sid));
+				return {
+					success: true,
+					agentSessionId: 'grok-native-1',
+					response: progressResponse(100, 'shipped'),
+					usageStats: usage(120, 30),
+				};
+			});
+
+			const { result } = renderProcessor([grokSession({ isGitRepo: true })], [createMockGroup()]);
+			await act(async () => {
+				await result.current.startBatchRun(
+					SESSION_ID,
+					{ ...goalConfig('Ship it', 'Tests pass', 5), model: 'grok-4', effort: 'high' },
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+			const [sid, prompt, cwdOverride, options] = mockOnSpawnAgent.mock.calls[0];
+			expect(sid).toBe(SESSION_ID);
+			expect(prompt).toContain('Goal: Ship it');
+			expect(cwdOverride).toBeUndefined();
+			expect(options).toMatchObject({ modelOverride: 'grok-4', effortOverride: 'high' });
+			expect(seenBySpawn[0]).toMatchObject({
+				toolType: 'grok',
+				customModel: 'grok-session-model',
+				customEnvVars: GROK_ACCOUNT,
+				sessionSshRemoteConfig: GROK_SSH,
+			});
+
+			expect(window.maestro.agentSessions.registerSessionOrigin).toHaveBeenCalledWith(
+				'/test/path',
+				'grok-native-1',
+				'auto'
+			);
+			// The iteration checkpoint commits on the agent's SSH remote.
+			expect(window.maestro.git.commitAll).toHaveBeenCalledWith(
+				'/test/path',
+				'Maestro Auto Run (goal) iteration 1 - shipped',
+				'grok-remote-1'
+			);
+			// A completed run needs no handoff.
+			expect(mockSpawnBackgroundSynopsis).not.toHaveBeenCalled();
+			expect(finalSummaryEntry().summary).toContain('Goal completed');
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({
+					completedTasks: 100,
+					wasStopped: false,
+					inputTokens: 120,
+					outputTokens: 30,
+					kind: 'goal-driven',
+				})
+			);
+		});
+
+		it('continues through a resumed handoff that keeps the run model, account and SSH target', async () => {
+			const responses = [progressResponse(40, 'schema done'), progressResponse(100, 'done')];
+			let call = 0;
+			mockOnSpawnAgent.mockImplementation(async () => {
+				const index = call++;
+				return {
+					success: true,
+					agentSessionId: `grok-native-${index + 1}`,
+					response: responses[index],
+					usageStats: usage(10, 5),
+				};
+			});
+			mockSpawnBackgroundSynopsis.mockResolvedValue({
+				success: true,
+				agentSessionId: 'grok-native-1',
+				response: 'Schema migrated; wire the API next.',
+				usageStats: usage(3, 2),
+			});
+
+			const { result } = renderProcessor([grokSession()], [createMockGroup()]);
+			await act(async () => {
+				await result.current.startBatchRun(
+					SESSION_ID,
+					{ ...goalConfig('Ship it', 'Tests pass', 5), model: 'grok-4', effort: 'high' },
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+			expect(mockSpawnBackgroundSynopsis).toHaveBeenCalledTimes(1);
+			const [sid, cwd, resumeId, handoffPrompt, toolType, config] =
+				mockSpawnBackgroundSynopsis.mock.calls[0];
+			expect(sid).toBe(SESSION_ID);
+			expect(cwd).toBe('/test/path');
+			expect(resumeId).toBe('grok-native-1');
+			expect(handoffPrompt).toBe(GOAL_SYNOPSIS_REQUEST_PROMPT);
+			expect(toolType).toBe('grok');
+			expect(config).toMatchObject({
+				customModel: 'grok-4',
+				customEffort: 'high',
+				customEnvVars: GROK_ACCOUNT,
+				sessionSshRemoteConfig: GROK_SSH,
+			});
+
+			expect(mockOnSpawnAgent.mock.calls[1][1]).toContain('Schema migrated; wire the API next.');
+			expect(mockOnSpawnAgent.mock.calls[1][3]).toMatchObject({
+				modelOverride: 'grok-4',
+				effortOverride: 'high',
+			});
+			// Two iterations plus the handoff resume, each counted once.
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({ completedTasks: 100, inputTokens: 23, outputTokens: 12 })
+			);
+		});
+
+		it('takes a session id that arrives only when the turn ends', async () => {
+			let resolveTurn: (value: unknown) => void = () => {};
+			mockOnSpawnAgent.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveTurn = resolve;
+					})
+			);
+			mockOnSpawnAgent.mockResolvedValue({
+				success: true,
+				agentSessionId: 'grok-native-2',
+				response: progressResponse(100, 'done'),
+			});
+
+			const { result } = renderProcessor([grokSession()], [createMockGroup()]);
+			const run = startHeld(result, goalConfig('Ship it', 'Tests pass', 5));
+
+			await waitFor(() => expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1));
+			// Nothing is known of the native session while the turn is in flight.
+			expect(window.maestro.agentSessions.registerSessionOrigin).not.toHaveBeenCalled();
+
+			await act(async () => {
+				resolveTurn({
+					success: true,
+					agentSessionId: 'grok-end-only',
+					response: progressResponse(50, 'half'),
+				});
+			});
+			await waitFor(() => expect(run.finished).toBe(true));
+
+			expect(window.maestro.agentSessions.registerSessionOrigin).toHaveBeenCalledWith(
+				'/test/path',
+				'grok-end-only',
+				'auto'
+			);
+			expect(mockSpawnBackgroundSynopsis.mock.calls[0][2]).toBe('grok-end-only');
+			expect(progressEntries()[0].agentSessionId).toBe('grok-end-only');
+		});
+
+		it('skips the handoff when a turn reports no session id and still completes', async () => {
+			const responses = [progressResponse(40, 'part one'), progressResponse(100, 'done')];
+			let call = 0;
+			mockOnSpawnAgent.mockImplementation(async () => ({
+				success: true,
+				response: responses[call++],
+			}));
+
+			const { result } = renderProcessor([grokSession()], [createMockGroup()]);
+			await act(async () => {
+				await result.current.startBatchRun(
+					SESSION_ID,
+					goalConfig('Ship it', 'Tests pass', 5),
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+			// No id means nothing to resume: no handoff and no origin registration.
+			expect(mockSpawnBackgroundSynopsis).not.toHaveBeenCalled();
+			expect(window.maestro.agentSessions.registerSessionOrigin).not.toHaveBeenCalled();
+			expect(mockOnSpawnAgent.mock.calls[1][1]).not.toContain('Handoff From Your Predecessor');
+			expect(progressEntries().map((e) => e.agentSessionId)).toEqual([undefined, undefined]);
+			expect(finalSummaryEntry().summary).toContain('Goal completed');
+		});
+
+		it('ends a cancelled turn as stopped without advancing progress from its preamble', async () => {
+			let resolveTurn: (value: unknown) => void = () => {};
+			mockOnSpawnAgent.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveTurn = resolve;
+					})
+			);
+
+			const { result } = renderProcessor([grokSession()], [createMockGroup()]);
+			const run = startHeld(result, goalConfig('Ship it', 'Tests pass', null));
+			await waitFor(() => expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1));
+
+			act(() => {
+				result.current.stopBatchRun(SESSION_ID);
+			});
+			// A cancelled Grok turn carries no error string, only what it streamed.
+			await act(async () => {
+				resolveTurn({
+					success: false,
+					agentSessionId: 'grok-cancelled',
+					response:
+						'Starting the migration...\n<!-- maestro:progress 90 | nearly -->\n<!-- maestro:goal-complete -->',
+				});
+			});
+			await waitFor(() => expect(run.finished).toBe(true));
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+			expect(mockSpawnBackgroundSynopsis).not.toHaveBeenCalled();
+			const [entry] = progressEntries();
+			expect(entry.summary).toBe('Goal progress: 0% - Iteration 1 failed');
+			expect(entry.fullResponse).toBe('Iteration 1 failed');
+			expect(entry.success).toBe(false);
+			expect(finalSummaryEntry().summary).toContain('stopped by user');
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({ completedTasks: 0, wasStopped: true })
+			);
+		});
+
+		it('retries a limit-paused iteration as its next attempt without counting it or its tokens', async () => {
+			useSessionStore.setState({ sessions: [] } as never);
+			let pause: ((err: AgentError) => void) | undefined;
+			let call = 0;
+			mockOnSpawnAgent.mockImplementation(async () => {
+				call++;
+				if (call === 1) {
+					pause?.({
+						type: 'rate_limited',
+						message: 'Grok rate limit reached',
+						recoverable: true,
+						agentId: 'grok' as AgentError['agentId'],
+						timestamp: Date.now(),
+					});
+					return {
+						success: false,
+						error: 'Grok rate limit reached',
+						agentSessionId: 'grok-limited',
+						response: '<!-- maestro:progress 100 | premature -->\n<!-- maestro:goal-complete -->',
+						usageStats: usage(999, 999),
+					};
+				}
+				return {
+					success: true,
+					agentSessionId: 'grok-native-retry',
+					response: progressResponse(100, 'done'),
+					usageStats: usage(10, 5),
+				};
+			});
+
+			const { result } = renderProcessor([grokSession()], [createMockGroup()]);
+			pause = (err) => result.current.pauseBatchOnError(SESSION_ID, err, 0);
+			const run = startHeld(result, {
+				...goalConfig('Ship it', 'Tests pass', null),
+				model: 'grok-4',
+				effort: 'high',
+			});
+
+			await waitFor(() => expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1));
+			expect(run.finished).toBe(false);
+			expect(result.current.getBatchState(SESSION_ID).errorPaused).toBe(true);
+			// The paused attempt wrote nothing: no iteration entry and no progress.
+			expect(progressEntries()).toHaveLength(0);
+			expect(result.current.getBatchState(SESSION_ID).goalProgress ?? 0).toBe(0);
+
+			act(() => {
+				result.current.resumeAfterError(SESSION_ID);
+			});
+			await waitFor(() => expect(run.finished).toBe(true));
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+			// The resume retries the SAME iteration with the same prompt.
+			expect(mockOnSpawnAgent.mock.calls[1][1]).toBe(mockOnSpawnAgent.mock.calls[0][1]);
+			expect(mockOnSpawnAgent.mock.calls[1][3]).toMatchObject({
+				modelOverride: 'grok-4',
+				effortOverride: 'high',
+			});
+
+			expect(progressEntries()).toHaveLength(1);
+			expect(progressEntries()[0].agentSessionId).toBe('grok-native-retry');
+			expect(window.maestro.agentSessions.registerSessionOrigin).toHaveBeenCalledTimes(1);
+			expect(finalSummaryEntry().fullResponse).toContain('- **Iterations:** 1');
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({ completedTasks: 100, inputTokens: 10, outputTokens: 5 })
+			);
+			useSessionStore.setState({ sessions: [] } as never);
+		});
+
+		it('keeps the preamble rule Grok-only: a failed Claude turn still reads its markers', async () => {
+			mockOnSpawnAgent.mockResolvedValue({
+				success: false,
+				agentSessionId: 'claude-1',
+				error: 'boom',
+				response: '<!-- maestro:progress 100 | done -->\n<!-- maestro:goal-complete -->',
+			});
+
+			const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+			await act(async () => {
+				await result.current.startBatchRun(
+					SESSION_ID,
+					goalConfig('Ship it', 'Tests pass', 5),
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+			expect(finalSummaryEntry().summary).toContain('Goal completed');
+		});
+	});
 });

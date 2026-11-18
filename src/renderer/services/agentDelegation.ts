@@ -48,13 +48,22 @@ const DELEGATION_SUBJECT_MAX_CHARS = 120;
  * typed outside any turn) the caller's tab is unknowable, and guessing is worse
  * than no pill: a Cue run's consult once landed in whatever tab the user had
  * open, claiming a conversation about something else had delegated.
+ *
+ * The stamped tab must also be mid-turn. The stamp is an environment variable,
+ * so every process the turn starts inherits it, including one that outlives the
+ * turn: a daemon the agent launched (`vped live on`) kept dispatching hours
+ * later, and each hand-off landed in the idle tab that had started it as
+ * "Delegated to <itself>". A turn's shell ends with the turn, so a command
+ * arriving while the stamped tab is idle came from such a leftover process,
+ * not from the conversation.
  */
 export function resolveDelegationSourceTab(
 	session: Session,
 	fromTabId?: string
 ): AITab | undefined {
 	if (!fromTabId) return undefined;
-	return session.aiTabs.find((tab) => tab.id === fromTabId);
+	const tab = session.aiTabs.find((candidate) => candidate.id === fromTabId);
+	return tab?.state === 'busy' ? tab : undefined;
 }
 
 /** Pure: the transcript entry for one hand-off. Exported for unit testing. */

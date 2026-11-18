@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { SshReachabilityEvent } from '../../shared/sshConnection';
 
 /**
  * SSH remote configuration
@@ -31,6 +32,8 @@ export interface SshRemoteConfig {
 	useSshConfig?: boolean;
 	/** Original SSH config Host pattern if imported from ~/.ssh/config */
 	sshConfigHost?: string;
+	/** `false` opts the remote out of Federation; see `SshRemoteConfig.federation` in `src/shared/types.ts` */
+	federation?: boolean;
 }
 
 /**
@@ -61,6 +64,7 @@ export function createSshRemoteApi() {
 			enabled?: boolean;
 			useSshConfig?: boolean;
 			sshConfigHost?: string;
+			federation?: boolean;
 		}) => ipcRenderer.invoke('ssh-remote:saveConfig', config),
 
 		deleteConfig: (id: string) => ipcRenderer.invoke('ssh-remote:deleteConfig', id),
@@ -73,6 +77,31 @@ export function createSshRemoteApi() {
 
 		test: (configOrId: string | SshRemoteConfig, agentCommand?: string) =>
 			ipcRenderer.invoke('ssh-remote:test', configOrId, agentCommand),
+
+		/** Remotes currently confirmed unreachable. */
+		getReachability: (): Promise<{
+			success: boolean;
+			unreachable?: SshReachabilityEvent[];
+			error?: string;
+		}> => ipcRenderer.invoke('ssh-remote:getReachability'),
+
+		/** Probe a remote now; resolves with whether it answered. */
+		checkReachability: (
+			remoteId: string
+		): Promise<{
+			success: boolean;
+			reachable?: boolean;
+			event?: SshReachabilityEvent;
+			error?: string;
+		}> => ipcRenderer.invoke('ssh-remote:checkReachability', remoteId),
+
+		/** Fires once when a remote is confirmed unreachable and once when it returns. */
+		onReachability: (callback: (event: SshReachabilityEvent) => void): (() => void) => {
+			const handler = (_event: Electron.IpcRendererEvent, payload: SshReachabilityEvent) =>
+				callback(payload);
+			ipcRenderer.on('ssh-remote:reachability', handler);
+			return () => ipcRenderer.removeListener('ssh-remote:reachability', handler);
+		},
 
 		getSshConfigHosts: (): Promise<{
 			success: boolean;

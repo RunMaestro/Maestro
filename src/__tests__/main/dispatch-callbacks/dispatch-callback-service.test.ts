@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { AutoRunDelegationEvent } from '../../../shared/autoRunDelegation';
 
 import {
 	initDispatchCallbacks,
@@ -45,6 +46,32 @@ describe('dispatch callback service', () => {
 		resetAutoRunStateTracker();
 		vi.useRealTimers();
 	});
+
+	it.each([true, false])(
+		'records parent delivery only after queue acceptance (%s)',
+		async (success) => {
+			const onDelivered = vi.fn();
+			enqueue.mockResolvedValue({ success });
+			initDispatchCallbacks({ enqueue, openTab, onDelivered });
+			const registry = getDispatchCallbackRegistry()!;
+			const entry = registry.register({
+				targetAgentId: 'target',
+				targetTabId: 'tab-1',
+				callerAgentId: 'caller',
+				callerTabId: 'parent',
+				timeoutMs: 60000,
+				prompt: 'go',
+				pendingAdmissionId: 'dispatch',
+			});
+			registry.releaseQueueAdmission(entry.callbackId, 'dispatch');
+			expect(entry.pendingAdmissionId).toBeUndefined();
+			registry.noteSpawn(KEY);
+			registry.noteExit(KEY, 0);
+			await vi.advanceTimersByTimeAsync(5000);
+			expect(onDelivered).toHaveBeenCalledTimes(success ? 1 : 0);
+			if (success) expect(onDelivered.mock.calls[0][0].entry.admissionId).toBe('dispatch');
+		}
+	);
 
 	// A dispatch from a run with no tab (a Cue or bot run) used to land in the
 	// caller's ACTIVE tab: an unrelated conversation the user happened to be in.
@@ -229,5 +256,115 @@ describe('dispatch callback service', () => {
 		expect(getDispatchCallbackRegistry()).not.toBeNull();
 		disposeDispatchCallbacks();
 		expect(getDispatchCallbackRegistry()).toBeNull();
+	});
+});
+
+describe('Auto Run delegation delivery', () => {
+	let enqueue: ReturnType<typeof vi.fn>;
+	let openTab: ReturnType<typeof vi.fn>;
+	let notifyAutoRun: ReturnType<typeof vi.fn<(event: AutoRunDelegationEvent) => void>>;
+
+	const armForRun = () =>
+		getDispatchCallbackRegistry()!.register({
+			targetAgentId: 'target',
+			targetTabId: 'tab-1',
+			targetName: 'Worker',
+			callerAgentId: 'manager',
+			autoRunId: 'autorun-7',
+			timeoutMs: 60_000,
+			prompt: 'build the parser',
+		});
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		resetAutoRunStateTracker();
+		enqueue = vi.fn().mockResolvedValue({ success: true });
+		openTab = vi.fn().mockResolvedValue({ success: true });
+		notifyAutoRun = vi.fn<(event: AutoRunDelegationEvent) => void>();
+		initDispatchCallbacks({
+			enqueue,
+			openTab,
+			notifyAutoRun,
+			getTargetOutput: async () => 'parser built, 12 tests pass',
+		});
+	});
+
+	afterEach(() => {
+		disposeDispatchCallbacks();
+		resetAutoRunStateTracker();
+		vi.useRealTimers();
+	});
+
+	it('reports started, then settled with the output, and never wakes a tab', async () => {
+		const entry = armForRun();
+		expect(notifyAutoRun).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: 'started',
+				autoRunId: 'autorun-7',
+				callbackId: entry.callbackId,
+				callerAgentId: 'manager',
+				targetAgentId: 'target',
+				targetTabId: 'tab-1',
+				targetName: 'Worker',
+				prompt: 'build the parser',
+			})
+		);
+
+		getDispatchCallbackRegistry()!.noteSpawn(KEY);
+		getDispatchCallbackRegistry()!.noteExit(KEY, 0);
+		await vi.advanceTimersByTimeAsync(5000);
+		await vi.waitFor(() => expect(notifyAutoRun).toHaveBeenCalledTimes(2));
+
+		expect(notifyAutoRun.mock.calls[1][0]).toMatchObject({
+			kind: 'settled',
+			callbackId: entry.callbackId,
+			status: 'completed',
+			output: 'parser built, 12 tests pass',
+		});
+		expect(enqueue).not.toHaveBeenCalled();
+		expect(openTab).not.toHaveBeenCalled();
+	});
+
+	it('reports withdrawn when a refused dispatch cancels its entry', () => {
+		const entry = armForRun();
+		getDispatchCallbackRegistry()!.cancel(entry.callbackId);
+		expect(notifyAutoRun).toHaveBeenLastCalledWith(
+			expect.objectContaining({ kind: 'withdrawn', callbackId: entry.callbackId })
+		);
+	});
+
+	it('says nothing to the Auto Run about an ordinary --notify-on-complete callback', () => {
+		armOne();
+		expect(notifyAutoRun).not.toHaveBeenCalled();
+	});
+});
+
+describe('buildAutoRunDelegationEvent', () => {
+	it('caps the output, keeping its tail', async () => {
+		const { buildAutoRunDelegationEvent } =
+			await import('../../../main/dispatch-callbacks/dispatch-callback-service');
+		const { DISPATCH_OUTPUT_MAX_CHARS } =
+			await import('../../../main/dispatch-callbacks/dispatch-callback-prompt');
+		const entry = {
+			callbackId: 'cb_1',
+			autoRunId: 'autorun-1',
+			targetAgentId: 'target',
+			targetTabId: 'tab-1',
+			callerAgentId: 'caller',
+			timeoutMs: 1000,
+			prompt: 'go',
+			processSessionId: KEY,
+			createdAt: 5,
+			expiresAt: 10,
+			state: 'fired' as const,
+		};
+		const output = 'x'.repeat(DISPATCH_OUTPUT_MAX_CHARS) + 'THE END';
+		const event = buildAutoRunDelegationEvent(entry, 'settled', {
+			fire: { entry, status: 'failed', exitCode: 1, durationMs: 42 },
+			output,
+		});
+		expect(event.output).toHaveLength(DISPATCH_OUTPUT_MAX_CHARS);
+		expect(event.output!.endsWith('THE END')).toBe(true);
+		expect(event).toMatchObject({ status: 'failed', durationMs: 42, startedAt: 5 });
 	});
 });

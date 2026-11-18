@@ -3,6 +3,7 @@
 import { readSshRemotes, readSettingValue } from '../services/storage';
 import { formatSshRemotes } from '../output/formatter';
 import { resolveSshOptions } from '../../shared/sshOptions';
+import { isFederationRemote } from '../../shared/federationRemote';
 
 interface ListSshRemotesOptions {
 	json?: boolean;
@@ -33,6 +34,7 @@ export function listSshRemotes(options: ListSshRemotesOptions): void {
 					// overrides layered on top of it.
 					resolvedSshOptions: resolveSshOptions(remote.sshOptions),
 					isDefault: remote.id === defaultId,
+					federation: isFederationRemote(remote),
 				})
 			);
 		}

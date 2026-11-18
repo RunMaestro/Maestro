@@ -201,6 +201,12 @@ describe('describeBlockingDialog', () => {
 		);
 	});
 
+	it('names the add-directory prompt (Claude Code 2.1.326)', () => {
+		expect(
+			describeBlockingDialog('Adding a new directory\n ❯ 1. Yes, add it\n   2. No, exit')
+		).toBe('an add-directory prompt');
+	});
+
 	it('returns null on an ordinary screen', () => {
 		expect(describeBlockingDialog(STREAMING_SCREEN)).toBeNull();
 	});

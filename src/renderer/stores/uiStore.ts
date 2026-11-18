@@ -122,6 +122,10 @@ export interface UIStoreState {
 	// jump is in flight; the target transcript clears it once it has scrolled.
 	pendingLogJump: PendingLogJump | null;
 
+	// The AI tab whose pinned-messages panel is open, or null. Keyed by tab so
+	// switching tabs never carries an open panel over to another transcript.
+	messagePinsTabId: string | null;
+
 	// Session filter (sidebar agent search)
 	sessionFilterOpen: boolean;
 	/**
@@ -298,6 +302,10 @@ export interface UIStoreActions {
 
 	// Cross-tab search jump target
 	setPendingLogJump: (jump: PendingLogJump | null) => void;
+	/** Open the pin panel over `tabId`, or close it with null. */
+	setMessagePinsTabId: (tabId: string | null) => void;
+	/** Open the pin panel over `tabId`, or close it if it is already open there. */
+	toggleMessagePins: (tabId: string) => void;
 	/** Clear only if the pending jump still points at this exact entry. */
 	clearPendingLogJump: (logId: string) => void;
 
@@ -436,6 +444,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	sidebarExtraSelection: null,
 	outputSearchByKey: {},
 	pendingLogJump: null,
+	messagePinsTabId: null,
 	sessionFilterOpen: false,
 	sessionFilter: '',
 	showArchivedGroupChats: false,
@@ -546,6 +555,9 @@ export const useUIStore = create<UIStore>()((set) => ({
 		})),
 
 	setPendingLogJump: (jump) => set({ pendingLogJump: jump }),
+	setMessagePinsTabId: (tabId) => set({ messagePinsTabId: tabId }),
+	toggleMessagePins: (tabId) =>
+		set((s) => ({ messagePinsTabId: s.messagePinsTabId === tabId ? null : tabId })),
 	// Guarded so a stale consumer can't wipe a newer jump the user just queued.
 	clearPendingLogJump: (logId) =>
 		set((s) => (s.pendingLogJump?.logId === logId ? { pendingLogJump: null } : s)),

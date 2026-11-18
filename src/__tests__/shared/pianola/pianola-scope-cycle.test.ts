@@ -1,8 +1,11 @@
 /** Scope lifecycle contracts through the real watcher and filesystem checkpoint store.
  * Delivery and desktop snapshots are controlled; no live agent receives a message. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+vi.mock('fs', async (importOriginal) => ({ ...(await importOriginal<typeof import('fs')>()) }));
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync, spawn } from 'child_process';
+import { buildSync } from 'esbuild';
 import { createPianolaFsStore } from '../../../shared/pianola/fs-store';
 import {
 	runPianolaScopeCycle,
@@ -80,6 +83,7 @@ function fixture() {
 		},
 	];
 	let decisionSequence = 0;
+	let clock = Date.parse('2026-10-28T00:00:00.000Z');
 	const deps: PianolaScopeCycleDeps = {
 		store,
 		readSnapshot: vi.fn(async () => JSON.parse(JSON.stringify(snapshot)) as PianolaScopeSnapshot),
@@ -91,7 +95,7 @@ function fixture() {
 		watch: {
 			readRules: () => rules,
 			recordDecision: (record) => store.appendDecision(record),
-			now: () => '2026-10-28T00:00:00.000Z',
+			now: () => new Date(clock).toISOString(),
 			genId: () => `decision-${++decisionSequence}`,
 			log: vi.fn(),
 			notify: vi.fn(),
@@ -125,6 +129,7 @@ function fixture() {
 	}
 	function cycle(id = scopeId) {
 		snapshot.capturedAt += 10;
+		clock += 5000;
 		return runPianolaScopeCycle(id, deps, { dryRun: false });
 	}
 	function saveScopes(...values: PianolaSupervisedTarget[]) {
@@ -980,6 +985,315 @@ describe('current coverage failure producers', () => {
 });
 
 describe('RF review regressions', () => {
+	it('keeps the original expected revision when a pause arrives during a worker outcome await', async () => {
+		const f = fixture();
+		const tab = f.tab();
+		await f.cycle();
+		f.history(tab, [message('pending')]);
+		vi.mocked(f.deps.dispatch).mockImplementation(async () => {
+			const current = f.store.readDecisions()[0];
+			f.store.appendDecision(
+				updatePianolaDecision(
+					current,
+					{
+						status: 'paused',
+						nextActor: 'none',
+						nextAction: 'Wait for explicit resume',
+					},
+					f.deps.watch.now()
+				)
+			);
+			return { status: 'rejected', error: 'Scope paused' };
+		});
+		const result = await f.cycle();
+		expect(result.issues.some((issue) => issue.includes('mutation conflict'))).toBe(true);
+		expect(f.store.readDecisions()[0].lifecycle?.status).toBe('paused');
+		expect(f.checkpoint().tabs[0].unresolvedIntent).toBeTruthy();
+	});
+
+	it('does not schedule a short wake for an expired deadline already attempted in the sweep', async () => {
+		const f = fixture();
+		f.rules.splice(0);
+		const tab = f.tab();
+		await f.cycle();
+		f.history(tab, [message('pending')]);
+		await f.cycle();
+		f.store.appendDecision(
+			updatePianolaDecision(
+				f.store.readDecisions()[0],
+				{
+					status: 'mira_processing',
+					phase: 'judgment',
+					delivery: 'accepted',
+					deadlineAt: 1,
+				},
+				f.deps.watch.now()
+			)
+		);
+		const sweep = new Set([JSON.stringify([tab.agentId, tab.tabId])]);
+		const result = await runPianolaScopeCycle(scopeId, f.deps, { dryRun: false, sweep });
+		expect(result.nextDueAt).toBeUndefined();
+		sweep.clear();
+		await runPianolaScopeCycle(scopeId, f.deps, { dryRun: false, sweep });
+		expect(f.store.readDecisions()[0].lifecycle?.status).toBe('waiting_human');
+	});
+
+	it('keeps a separate-process manager resolution between the worker reread and append', async () => {
+		const f = fixture();
+		f.rules.splice(0);
+		const tab = f.tab();
+		await f.cycle();
+		f.history(tab, [message('pending')]);
+		await f.cycle();
+		const directory = path.dirname(f.store.supervisorFilePath());
+		const entry = path.join(directory, 'store.cjs');
+		buildSync({
+			entryPoints: [path.resolve('src/shared/pianola/fs-store.ts')],
+			outfile: entry,
+			bundle: true,
+			platform: 'node',
+			format: 'cjs',
+		});
+		f.scope.selection.agentIds.push('another-owner');
+		f.saveScopes(f.scope);
+		const append = f.deps.watch.recordDecision;
+		f.deps.watch.recordDecision = (stale) => {
+			f.deps.watch.recordDecision = append;
+			const child = spawnSync(
+				process.execPath,
+				[
+					'-e',
+					`
+				const store = require(process.argv[1]).createPianolaFsStore({ resolveDir: () => process.argv[2], indent: 2, trailingNewline: true });
+				const row = store.readDecisions()[0];
+				store.appendDecision({ ...row, lifecycle: { ...row.lifecycle, status: 'done', phase: 'none', nextActor: 'none', nextAction: 'Resolved by manager', source: { kind: 'manager', actorId: 'manager' } } });
+			`,
+					entry,
+					directory,
+				],
+				{ encoding: 'utf8' }
+			);
+			expect(child.stderr).toBe('');
+			expect(child.status).toBe(0);
+			append(stale);
+		};
+		const result = await f.cycle();
+		expect(result.issues.some((issue) => issue.includes('mutation conflict'))).toBe(true);
+		expect(f.store.readDecisions()[0].lifecycle).toMatchObject({
+			status: 'done',
+			source: { kind: 'manager' },
+		});
+		expect(f.deps.dispatch).not.toHaveBeenCalled();
+	});
+
+	it.each(['receipt', 'claim', 'compaction'])(
+		'serializes a cross-process %s with the canonical mutation lock',
+		async (kind) => {
+			const f = fixture();
+			f.rules.splice(0);
+			const tab = f.tab();
+			await f.cycle();
+			f.history(tab, [message('pending')]);
+			await f.cycle();
+			const original = f.store.readDecisions()[0];
+			const directory = path.dirname(f.store.supervisorFilePath());
+			const entry = path.join(directory, 'store.cjs');
+			buildSync({
+				entryPoints: [path.resolve('src/shared/pianola/fs-store.ts')],
+				outfile: entry,
+				bundle: true,
+				platform: 'node',
+				format: 'cjs',
+			});
+			if (kind === 'compaction') {
+				// Trigger the production record cap on the next append, keeping the
+				// live decision in the retained tail while a second process writes.
+				fs.appendFileSync(
+					path.join(directory, 'pianola-decisions.jsonl'),
+					(
+						JSON.stringify({
+							...original,
+							id: 'padding',
+							lifecycle: undefined,
+							mutationRevision: undefined,
+						}) + '\n'
+					).repeat(5100) +
+						JSON.stringify(original) +
+						'\n'
+				);
+			}
+			const contender =
+				kind === 'claim'
+					? {
+							...original,
+							id: 'competing-decision',
+							mutationRevision: undefined,
+							lifecycle: {
+								...original.lifecycle!,
+								guard: { ...original.lifecycle!.guard, decisionId: 'competing-decision' },
+							},
+						}
+					: original;
+			if (kind === 'claim') f.store.appendDecision(contender);
+			const script = `
+				const fs = require('fs');
+				const store = require(process.argv[1]).createPianolaFsStore({ resolveDir: () => process.argv[2], indent: 2, trailingNewline: true });
+				const row = store.readDecisions().find(row => row.id === process.argv[3]);
+				console.log('ready');
+				process.stdin.once('data', () => {
+					const read = fs.readFileSync;
+					let held = false;
+					fs.readFileSync = (file, ...args) => {
+						const value = read(file, ...args);
+						if (!held && String(file).endsWith('pianola-decisions.jsonl')) {
+							held = true; console.log('locked');
+							Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+						}
+						return value;
+					};
+					store.appendDecision({ ...row, deliveryStatus: 'admitted', lifecycle: { ...row.lifecycle, phase: 'answer', delivery: 'unknown', status: 'blocked' } });
+					process.stdin.destroy();
+				});
+			`;
+			const child = spawn(process.execPath, ['-e', script, entry, directory, original.id], {
+				stdio: ['pipe', 'pipe', 'pipe'],
+			});
+			let errors = '';
+			child.stderr.on('data', (chunk) => {
+				errors += String(chunk);
+			});
+			const done = new Promise<void>((resolve, reject) => {
+				child.once('error', reject);
+				child.once('close', (code) => (code === 0 ? resolve() : reject(new Error(errors))));
+			});
+			try {
+				await new Promise<void>((resolve, reject) => {
+					child.once('error', reject);
+					child.once('close', () =>
+						reject(new Error('Child exited before mutation barrier: ' + errors))
+					);
+					child.stdout.on('data', (chunk) => {
+						if (String(chunk).includes('ready')) child.stdin.write('go');
+						if (String(chunk).includes('locked')) resolve();
+					});
+				});
+				// The child holds the real lock after reading its expected row.
+				// This second writer must wait, reread, and reject its stale source.
+				expect(() =>
+					f.store.appendDecision({
+						...contender,
+						deliveryStatus: 'admitted',
+						lifecycle: { ...contender.lifecycle!, delivery: 'accepted' },
+					})
+				).toThrow(kind === 'claim' ? 'already claimed' : 'mutation conflict');
+				await done;
+				expect(
+					f.store.readDecisions().find((row) => row.id === original.id)?.lifecycle?.delivery
+				).toBe('unknown');
+				if (kind === 'compaction') {
+					const lines = fs
+						.readFileSync(path.join(directory, 'pianola-decisions.jsonl'), 'utf8')
+						.trim()
+						.split('\n');
+					expect(lines.length).toBeLessThanOrEqual(5000);
+					expect(fs.existsSync(path.join(directory, 'pianola-decisions.jsonl.lock'))).toBe(false);
+				}
+			} finally {
+				if (child.exitCode === null) child.kill();
+			}
+		}
+	);
+
+	it.each(['cursor', 'history', 'paused', 'closed', 'excluded', 'retry'])(
+		'backs off overdue unreadable work (%s) and recovers without resending',
+		async (failure) => {
+			const f = fixture();
+			let clock = 100000;
+			f.deps.watch.now = () => new Date(clock).toISOString();
+			f.rules.splice(0);
+			const tab = f.tab();
+			await f.cycle();
+			f.history(tab, [message('pending')]);
+			await f.cycle();
+			const original = f.store.readDecisions()[0];
+			f.store.appendDecision(
+				updatePianolaDecision(
+					original,
+					{
+						status: 'mira_processing',
+						phase: 'judgment',
+						delivery: 'accepted',
+						deadlineAt: clock + 100,
+					},
+					f.deps.watch.now()
+				)
+			);
+			if (failure === 'cursor' || failure === 'retry') tab.cursorAvailable = false;
+			if (failure === 'history')
+				vi.mocked(f.deps.readTranscript).mockRejectedValue(new Error('read failed'));
+			if (failure === 'paused') tab.paused = true;
+			if (failure === 'closed') f.snapshot.tabs.splice(0);
+			if (failure === 'excluded') {
+				f.scope.selection.excludedAgentIds.push('owner');
+				f.saveScopes(f.scope);
+			}
+			if (failure === 'retry') {
+				const checkpoint = f.checkpoint();
+				checkpoint.tabs[0].state.pendingRetry = { messageId: 'pending', attempts: 1 };
+				checkpoint.tabs[0].nextWatchAt = clock;
+				f.store.writeScopeCheckpoint(checkpoint);
+			}
+			clock += 100;
+			for (let cycle = 0; cycle < 3; cycle++) {
+				const result = await runPianolaScopeCycle(scopeId, f.deps, { dryRun: false });
+				expect(result.nextDueAt).toBeUndefined();
+				clock += 20000;
+			}
+			expect(f.deps.dispatch).not.toHaveBeenCalled();
+			if (failure === 'cursor' || failure === 'history') {
+				tab.cursorAvailable = true;
+				vi.mocked(f.deps.readTranscript).mockResolvedValue({
+					agentId: tab.agentId,
+					tabId: tab.tabId,
+					messages: f.transcripts.get(tab.tabId)!,
+				});
+				await runPianolaScopeCycle(scopeId, f.deps, { dryRun: false });
+				expect(f.store.readDecisions()[0].lifecycle?.status).toBe('waiting_human');
+				expect(f.deps.dispatch).not.toHaveBeenCalled();
+			}
+		}
+	);
+
+	it('retains a manager resolution that arrives immediately before a stale rebind append', async () => {
+		const f = fixture();
+		f.rules.splice(0);
+		const tab = f.tab();
+		await f.cycle();
+		f.history(tab, [message('pending')]);
+		await f.cycle();
+		const original = f.store.readDecisions()[0];
+		f.scope.selection.agentIds.push('another-owner');
+		f.saveScopes(f.scope);
+		const record = f.deps.watch.recordDecision;
+		f.deps.watch.recordDecision = (stale) => {
+			f.store.appendDecision(
+				updatePianolaDecision(
+					original,
+					{
+						status: 'done',
+						nextActor: 'none',
+						nextAction: 'Resolved',
+						phase: 'none',
+						source: { kind: 'manager', actorId: 'manager' },
+					},
+					f.deps.watch.now()
+				)
+			);
+			record(stale);
+		};
+		await f.cycle();
+		expect(f.store.readDecisions()[0].lifecycle?.status).toBe('done');
+	});
 	it('RF01 rebinds a pending human ask after an unrelated selection edit', async () => {
 		const f = fixture();
 		f.rules.splice(0);
@@ -1189,5 +1503,141 @@ describe('RF review regressions', () => {
 				[{ agentId: 'owner', tabId: tab.tabId, enabled: true }]
 			)
 		).toEqual({ kind: 'explicit-watch' });
+	});
+});
+
+describe('event drain fairness and elapsed budgets', () => {
+	it('finishes a 45-tab sweep before revisiting the first 20 open decisions', async () => {
+		const f = fixture();
+		f.rules.splice(0);
+		const tabs = Array.from({ length: 45 }, (_, i) => f.tab('tab-' + i));
+		await f.cycle();
+		for (const tab of tabs) f.history(tab, [message('ask-' + tab.tabId)]);
+		const sweep = new Set<string>();
+		const drain = () =>
+			runPianolaScopeCycle(scopeId, f.deps, { dryRun: false, maxTabs: 20, sweep });
+		const first = await drain();
+		expect(first.moreWork).toBe(true);
+		expect(first.iterations).toHaveLength(20);
+		const second = await drain();
+		expect(second.moreWork).toBe(true);
+		expect(second.iterations.map((r) => r.tabId)).toEqual(tabs.slice(20, 40).map((t) => t.tabId));
+		const third = await drain();
+		expect(third.moreWork).toBe(false);
+		expect(third.iterations.map((r) => r.tabId)).toEqual(tabs.slice(40).map((t) => t.tabId));
+		expect(f.store.readDecisions()).toHaveLength(45);
+		expect(sweep.size).toBe(45);
+	});
+
+	it.each([1, 1000])(
+		'spends the same retry and handoff time budget with %i event cycles',
+		async (events) => {
+			const f = fixture();
+			let clock = Date.parse('2026-11-04T10:00:00Z');
+			f.deps.watch.now = () => new Date(clock).toISOString();
+			const tab = f.tab();
+			await f.cycle();
+			f.history(tab, [message('ask')]);
+			vi.mocked(f.deps.dispatch).mockResolvedValue({ status: 'rejected', error: 'refused' });
+			const cycle = () => runPianolaScopeCycle(scopeId, f.deps, { dryRun: false });
+			await cycle();
+			for (let i = 0; i < events; i++) await cycle();
+			expect(f.deps.dispatch).toHaveBeenCalledTimes(1);
+			clock += 4999;
+			await cycle();
+			expect(f.deps.dispatch).toHaveBeenCalledTimes(1);
+			clock++;
+			await cycle();
+			expect(f.deps.dispatch).toHaveBeenCalledTimes(2);
+			// The native outcome writer owns the existing accepted judgment deadline.
+			const record = f.store.readDecisions().at(-1)!;
+			const deadline = clock + 60000;
+			f.store.appendDecision(
+				updatePianolaDecision(
+					record,
+					{
+						phase: 'judgment',
+						delivery: 'accepted',
+						status: 'mira_processing',
+						deadlineAt: deadline,
+					},
+					f.deps.watch.now()
+				)
+			);
+			for (let i = 0; i < events; i++) await cycle();
+			expect(f.store.readDecisions().at(-1)?.lifecycle?.status).toBe('mira_processing');
+			clock = deadline - 1;
+			expect((await cycle()).nextDueAt).toBe(deadline);
+			clock = deadline;
+			await cycle();
+			expect(f.store.readDecisions().at(-1)?.lifecycle?.status).toBe('waiting_human');
+		},
+		20000
+	);
+});
+
+describe('passive checkpoint write economy', () => {
+	it('bounds idle observation writes and flushes membership, cursors and intents before delivery', async () => {
+		const f = fixture();
+		const tab = f.tab();
+		await f.cycle();
+		const rename = vi.spyOn(fs, 'renameSync');
+		const writes = () =>
+			rename.mock.calls.filter(([, to]) =>
+				String(to).endsWith(`maestro-pianola-scope-${scopeId}.json`)
+			).length;
+		for (let i = 0; i < 5; i++) await f.cycle();
+		expect(writes()).toBe(0);
+		f.snapshot.capturedAt += 20_000;
+		await f.cycle();
+		expect(writes()).toBe(1);
+		f.tab('new-tab');
+		await f.cycle();
+		expect(f.checkpoint().tabs.some((saved) => saved.tabId === 'new-tab')).toBe(true);
+		f.history(tab, [message('new-ask')]);
+		vi.mocked(f.deps.dispatch).mockImplementation(async (_target, _answer, guard) => {
+			const fresh = createPianolaFsStore({
+				resolveDir: () => path.dirname(f.store.supervisorFilePath()),
+				indent: 2,
+				trailingNewline: true,
+			});
+			expect(fresh.readScopeCheckpoint(scopeId)?.tabs[0].unresolvedIntent?.decisionId).toBe(
+				guard.decisionId
+			);
+			return { status: 'accepted' };
+		});
+		await f.cycle();
+		expect(f.deps.dispatch).toHaveBeenCalledTimes(1);
+		expect(f.checkpoint().tabs[0].lastSeen?.id).toBe('new-ask');
+	});
+
+	it('refuses delivery when fsync of the canonical intent fails', async () => {
+		const f = fixture();
+		const tab = f.tab();
+		await f.cycle();
+		f.history(tab, [message('fsync-ask')]);
+		const sync = vi.spyOn(fs, 'fsyncSync').mockImplementationOnce(() => {
+			throw new Error('intent fsync failed');
+		});
+		await expect(f.cycle()).rejects.toThrow('intent fsync failed');
+		expect(f.deps.dispatch).not.toHaveBeenCalled();
+		expect(f.checkpoint().tabs[0].unresolvedIntent).toBeNull();
+		sync.mockRestore();
+	});
+
+	it('batches passive transcript cursor updates across a fleet', async () => {
+		const f = fixture();
+		for (let i = 0; i < 12; i++) f.tab(`tab-${i}`);
+		await f.cycle();
+		for (const tab of f.snapshot.tabs) {
+			f.history(tab, [message(`progress-${tab.tabId}`, 'Working.')]);
+		}
+		const rename = vi.spyOn(fs, 'renameSync');
+		await f.cycle();
+		const writes = rename.mock.calls.filter(([, to]) =>
+			String(to).endsWith(`maestro-pianola-scope-${scopeId}.json`)
+		);
+		expect(writes.length).toBeLessThanOrEqual(2);
+		expect(f.deps.dispatch).not.toHaveBeenCalled();
 	});
 });

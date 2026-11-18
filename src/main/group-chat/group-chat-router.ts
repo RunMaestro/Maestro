@@ -25,12 +25,15 @@ import {
 import type { IProcessManager } from './group-chat-moderator';
 import type { SteeringResultFrame } from '../../shared/chatSteering';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
+import type { AddParticipantByAgentIdResult } from '../../shared/maestro-lib/groupchat/router';
 
 export {
 	extractMentions,
 	extractAllMentions,
 	extractAutoRunDirectives,
+	findParticipantForMention,
 	isDeletedGroupChatFailure,
+	type AddParticipantByAgentIdResult,
 	type AutoRunDirective,
 	type GroupChatSessionInfo,
 } from '../../shared/maestro-lib/groupchat/router';
@@ -240,4 +243,16 @@ export async function respawnParticipantWithRecovery(
 	if (!launcher)
 		throw new Error('Cannot respawn a participant without a process manager and detector');
 	await engine.respawnParticipantWithRecovery(groupChatId, participantName, launcher);
+}
+
+/**
+ * Add the agent with this exact GUID to a group chat, without an @mention
+ * (`maestro-cli group-chat add`). Links the participant by GUID so a later
+ * rename does not break it.
+ */
+export async function addParticipantByAgentId(
+	groupChatId: string,
+	agentId: string
+): Promise<AddParticipantByAgentIdResult> {
+	return engine.addParticipantByAgentId(groupChatId, agentId);
 }

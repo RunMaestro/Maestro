@@ -435,24 +435,6 @@ describe('Close', () => {
 		await act(async () => fireEvent.keyDown(filter, { key: 'w', metaKey: true }));
 		expect(window.maestro.quickChat.window).toHaveBeenCalledWith('hide');
 	});
-
-	it('Cmd+` goes back to Maestro instead of cycling windows, once per press', async () => {
-		vi.mocked(window.maestro.quickChat.window).mockClear();
-		await renderWith(snapshot({ agents: [{ id: 'a', name: 'Pedsidian' }] }));
-		const press = (init: KeyboardEventInit) =>
-			act(async () =>
-				fireEvent.keyDown(window, { key: '`', code: 'Backquote', metaKey: true, ...init })
-			);
-
-		await press({});
-		expect(window.maestro.quickChat.window).toHaveBeenCalledWith('return');
-		// Shift reverses the cycle; it is the same trip back.
-		await press({ key: '~', shiftKey: true });
-		expect(window.maestro.quickChat.window).toHaveBeenCalledTimes(2);
-		await press({ repeat: true });
-		expect(window.maestro.quickChat.window).toHaveBeenCalledTimes(2);
-		expect(window.maestro.quickChat.window).not.toHaveBeenCalledWith('hide');
-	});
 });
 
 describe('header', () => {

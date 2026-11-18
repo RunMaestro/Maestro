@@ -56,6 +56,12 @@ export interface HostStatusReport {
 	clients: number;
 	work: HostWork;
 	cue: HostCueState;
+	/**
+	 * The host holds the machine awake (`caffeinate` on macOS) while work is in flight. `false` when
+	 * idle, on another platform, or under `host start --no-prevent-sleep`. Absent from a host that
+	 * predates it.
+	 */
+	preventingSleep?: boolean;
 }
 
 export type HostStopReply =

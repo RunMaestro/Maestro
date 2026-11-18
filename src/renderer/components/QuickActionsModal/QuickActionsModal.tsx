@@ -21,6 +21,8 @@ import { buildConcertoCommands } from './commands/concertoCommands';
 import { buildThroughputGaugeCommands } from './commands/throughputGaugeCommands';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { applyThroughputGaugeSettingsPatch } from '../../../shared/throughputGauge';
+import { buildPromptLinksCommands } from './commands/promptLinksCommands';
+import { openPromptLinks, promptLinksAvailable } from '../../services/promptLinks';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
@@ -28,6 +30,7 @@ import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 import { revealAgentInSidebar } from '../../services/agentNavigation';
 import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
+import { isImeComposing } from '../../utils/ime';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
@@ -89,6 +92,20 @@ import {
 	buildSessionManagementCommands,
 } from './commands/sessionCommands';
 import { buildStarredSessionCommands } from './commands/starredSessionCommands';
+import { buildFederationCommands } from './commands/federationCommands';
+import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
+import {
+	selectHostedConflictCount,
+	useHostedAgentSettingsStore,
+} from '../../stores/hostedAgentSettingsStore';
+import { canMoveToHost, isPeerFederated } from '../../utils/peerMirrorView';
+import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
+import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
+import {
+	useAgentFederationStatus,
+	useAddableHostedAgentCount,
+	useLiftedMirrorTarget,
+} from '../../hooks/federation/useAgentLift';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
@@ -110,7 +127,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		sessions,
 		visibleSessions: visibleSessionsProp,
 		setSessions,
-		activeSessionId,
+		activeSessionId: localActiveSessionId,
 		groups,
 		setGroups,
 		shortcuts,
@@ -275,6 +292,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setUngroupedCollapsed = useSettingsStore((s) => s.setUngroupedCollapsed);
 	const groupChatsExpanded = useSettingsStore((s) => s.groupChatsExpanded);
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
+	const showHiddenGroups = useSettingsStore((s) => s.showHiddenGroups);
+	const setShowHiddenGroups = useSettingsStore((s) => s.setShowHiddenGroups);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
 	const batchRunStates = useBatchStore((s) => s.batchRunStates);
@@ -286,6 +305,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		useSettingsStore((s) => s.encoreFeatures.quickChat !== false) && !isWebDesktop();
 	const quickChatHotkey =
 		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
+	const promptLinksEnabled = useSettingsStore((s) =>
+		promptLinksAvailable(s.encoreFeatures.promptLinks)
+	);
 	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
 	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
 	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
@@ -444,6 +466,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const modalRef = useRef<HTMLDivElement>(null);
 	const resetSelectionToFirstRef = useRef<() => void>(() => {});
 	const resetSelectionToFirst = useCallback(() => resetSelectionToFirstRef.current(), []);
+	// While a Federation peer's mirrored agent is on screen the local active agent is hidden, not
+	// gone. Resolve NO active agent then, so every builder below bails out of its agent commands
+	// (rename, move, tabs, git, context, ...) instead of acting on an agent the user cannot see.
+	const mirrorShown = usePeerMirrorStore((s) => s.activeMirror !== null);
+	const activeSessionId = mirrorShown ? '' : localActiveSessionId;
 	const activeSession = sessions.find((s) => s.id === activeSessionId);
 	// The group a "Move Group to ..." command carries: a worktree child is filed
 	// under its parent's group, the same unit the window move relocates.
@@ -571,6 +598,45 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const activateStarredItem = useSidebarNavStore((s) => s.activateStarredItem);
 	const starredActions = buildStarredSessionCommands({ starredItems, activateStarredItem });
 
+	const mirrorOrder = usePeerMirrorStore((s) => s.order);
+	const mirrorPeers = usePeerMirrorStore((s) => s.peers);
+	const activeMirror = usePeerMirrorStore((s) => s.activeMirror);
+	const federationStatus = useAgentFederationStatus(activeSession);
+	const liftedTarget = useLiftedMirrorTarget(activeSession?.liftedTo);
+	const addableHostedAgentCount = useAddableHostedAgentCount();
+	const settingsConflictCount = useHostedAgentSettingsStore(selectHostedConflictCount);
+	const federationActions = buildFederationCommands({
+		// Only remotes that run a host: every other SSH remote was probed and is plain SSH.
+		peers: mirrorOrder.flatMap((peerId) =>
+			mirrorPeers[peerId] && isPeerFederated(mirrorPeers[peerId]) ? [mirrorPeers[peerId]] : []
+		),
+		activeMirror,
+		reconnectPeer,
+		copyPeerAgentRef,
+		// The active LOCAL agent's entries; hidden while the Main Window shows a mirrored one.
+		moveToHost:
+			activeSession && !activeMirror && canMoveToHost(federationStatus)
+				? {
+						sessionId: activeSession.id,
+						agentName: activeSession.name,
+						peerName: federationStatus.peer.name,
+						hostReady: federationStatus.hostReady,
+					}
+				: undefined,
+		requestMoveToHost,
+		liftedTarget: activeMirror ? undefined : liftedTarget,
+		openLiftedAgent: () => {
+			if (activeSession) openLiftedAgent(activeSession);
+		},
+		editHostedAgent: (peerId, agentId) =>
+			useHostedAgentSettingsStore.getState().openEditor({ peerId, agentId }),
+		settingsConflictCount,
+		openSettingsConflicts: () => useHostedAgentSettingsStore.getState().setConflictsOpen(true),
+		addableHostedAgentCount,
+		openAddHostedAgent: () => openModal('addHostedAgent'),
+		setQuickActionOpen,
+	});
+
 	const groupChatActions = buildGroupChatJumpCommands({
 		groupChats,
 		onOpenGroupChat,
@@ -581,6 +647,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...sessionActions,
 		...starredActions,
 		...groupChatActions,
+		...federationActions,
 		...buildMediaPlayerCommands({
 			canOpenMediaPlayer,
 			openMediaPlayer,
@@ -597,6 +664,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			scanActive: statsIndexingActive,
 			showScanProgress: showStatsIndexingProgress,
 			setQuickActionOpen,
+		}),
+		...buildPromptLinksCommands({
+			promptLinksEnabled,
+			activeAgent:
+				activeSession && activeSession.toolType !== 'terminal'
+					? { id: activeSession.id, name: activeSession.name }
+					: undefined,
+			activeDraft:
+				activeTabType === 'ai'
+					? activeSession?.aiTabs?.find((t) => t.id === activeSession.activeTabId)?.inputValue
+					: undefined,
+			openPromptLinks,
+			setQuickActionOpen,
+			shortcuts: { openPromptLinks: shortcuts.openPromptLinks },
 		}),
 		...buildConcertoCommands({
 			concertoEnabled,
@@ -758,6 +839,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setBookmarksCollapsed,
 			groupChatsExpanded,
 			setGroupChatsExpanded,
+			showHiddenGroups,
+			setShowHiddenGroups,
 		}),
 		...buildTabCommands({
 			activeSession,
@@ -788,6 +871,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				focusActiveTab: shortcuts.focusActiveTab,
 				clearTerminal: shortcuts.clearTerminal,
 				openModelEffort: shortcuts.openModelEffort,
+				toggleMessagePins: shortcuts.toggleMessagePins,
 			},
 			tabShortcuts,
 			toggleInputMode,
@@ -810,6 +894,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		}),
 		...buildFeatureCommands({
 			activeSession,
+			activeGroupChatId,
 			activeTabType,
 			canSummarizeActiveTab,
 			markdownEditMode,
@@ -866,6 +951,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildActiveTabContextCommands({
 			activeSession,
 			activeSessionId,
+			activeGroupChatId,
 			activeTabType,
 			ghCliAvailable,
 			setSessions,
@@ -878,6 +964,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			mainPanelRef,
 			toggleTabStarShortcut: shortcuts.toggleTabStar,
 			toggleTabUnreadShortcut: tabShortcuts?.toggleTabUnread,
+			toggleDesignModeShortcut: tabShortcuts?.toggleBrowserDesignMode,
 		}),
 		...buildSupportCommands({
 			setQuickActionOpen,
@@ -1130,10 +1217,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		// Handle rename mode separately
 		if (renamingSession) {
-			if (e.key === 'Enter') {
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				e.preventDefault();
 				handleRenameSession();
-			} else if (e.key === 'Escape') {
+			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
 				setRenamingSession(false);
 			}
@@ -1144,10 +1231,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		// the command list. Handled here so neither the list nav nor the modal's
 		// Escape-to-close fires while the input is focused.
 		if (renamingWindow) {
-			if (e.key === 'Enter') {
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				e.preventDefault();
 				commitRenameCurrentWindow();
-			} else if (e.key === 'Escape') {
+			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				e.preventDefault();
 				setRenamingWindow(false);
 			}

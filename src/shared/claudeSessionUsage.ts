@@ -19,7 +19,8 @@ import { createClaudeUsageAccumulator, type ClaudeUsageBreakdown } from './model
 /** Read failures that mean "no subagent transcript here", not "something is wrong". */
 const ABSENT_CODES = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'EISDIR']);
 
-function isAbsent(error: unknown): boolean {
+/** Whether a read failure means the transcript is simply not there. */
+export function isAbsentTranscriptError(error: unknown): boolean {
 	const code = (error as NodeJS.ErrnoException | undefined)?.code;
 	return typeof code === 'string' && ABSENT_CODES.has(code);
 }
@@ -30,6 +31,28 @@ export function claudeSubagentDir(sessionFilePath: string): string {
 }
 
 /**
+ * Paths of every subagent transcript a session spawned, in a stable order
+ * (async). For a caller that streams each file rather than reading it whole.
+ * A session with no subagent directory has none.
+ */
+export async function listClaudeSubagentTranscriptPaths(
+	sessionFilePath: string
+): Promise<string[]> {
+	const dir = claudeSubagentDir(sessionFilePath);
+	let names: string[];
+	try {
+		names = await fs.promises.readdir(dir);
+	} catch (error) {
+		if (isAbsentTranscriptError(error)) return [];
+		throw error;
+	}
+	return names
+		.filter((n) => n.endsWith('.jsonl'))
+		.sort()
+		.map((n) => path.join(dir, n));
+}
+
+/**
  * Each subagent transcript a session spawned, read one at a time (async). A
  * caller that only folds the contents into a total holds one file at a time
  * instead of every subagent's transcript at once.
@@ -37,20 +60,12 @@ export function claudeSubagentDir(sessionFilePath: string): string {
 export async function* iterateClaudeSubagentTranscripts(
 	sessionFilePath: string
 ): AsyncGenerator<string> {
-	const dir = claudeSubagentDir(sessionFilePath);
-	let names: string[];
-	try {
-		names = await fs.promises.readdir(dir);
-	} catch (error) {
-		if (isAbsent(error)) return;
-		throw error;
-	}
-	for (const name of names.filter((n) => n.endsWith('.jsonl')).sort()) {
+	for (const filePath of await listClaudeSubagentTranscriptPaths(sessionFilePath)) {
 		let content: string;
 		try {
-			content = await fs.promises.readFile(path.join(dir, name), 'utf-8');
+			content = await fs.promises.readFile(filePath, 'utf-8');
 		} catch (error) {
-			if (isAbsent(error)) continue;
+			if (isAbsentTranscriptError(error)) continue;
 			throw error;
 		}
 		yield content;
@@ -73,7 +88,7 @@ export function readClaudeSubagentTranscriptsSync(sessionFilePath: string): stri
 	try {
 		names = fs.readdirSync(dir);
 	} catch (error) {
-		if (isAbsent(error)) return [];
+		if (isAbsentTranscriptError(error)) return [];
 		throw error;
 	}
 	const contents: string[] = [];
@@ -81,7 +96,7 @@ export function readClaudeSubagentTranscriptsSync(sessionFilePath: string): stri
 		try {
 			contents.push(fs.readFileSync(path.join(dir, name), 'utf-8'));
 		} catch (error) {
-			if (!isAbsent(error)) throw error;
+			if (!isAbsentTranscriptError(error)) throw error;
 		}
 	}
 	return contents;

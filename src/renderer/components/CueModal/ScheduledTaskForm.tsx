@@ -97,7 +97,9 @@ export function ScheduledTaskForm({
 	const [turnSettings, setTurnSettings] = useState<CueTurnSettings>(
 		() => (task ? cueTurnSettingsOf(task) : undefined) ?? {}
 	);
-	const runsPrompt = task ? task.action !== 'notify' : true;
+	// A task delivered into an existing tab runs on that tab's own model, so it
+	// has no model choice of its own to show.
+	const runsPrompt = task ? task.action !== 'notify' && !task.tabId : true;
 	const [notifyEnabled, setNotifyEnabled] = useState(() => task?.action === 'notify');
 	const [notifyMessage, setNotifyMessage] = useState(() => task?.notifyMessage ?? '');
 	const [notifySticky, setNotifySticky] = useState(() => task?.notifySticky === true);

@@ -75,7 +75,6 @@ const defaultProps = {
 	selectedPathsRef: { current: new Set<string>() },
 	setSelectedPaths: vi.fn(),
 	fileExplorerIconTheme: 'vscode' as any,
-	fileTreeBranchConnectors: false,
 	fileTreeFilter: '',
 	htmlDoubleClickOpensInBrowser: false,
 	sshRemoteId: undefined,
@@ -143,21 +142,15 @@ describe('FileTreeRow', () => {
 		expect(guides).toHaveLength(2);
 	});
 
-	describe('branch connectors (Settings > Display, default off)', () => {
-		const connectorProps = { ...defaultProps, fileTreeBranchConnectors: true };
-
+	describe('branch connectors', () => {
 		it('draws no connector on a depth-0 row', () => {
-			const { container } = render(
-				<FileTreeRow {...connectorProps} item={makeItem(fileNode, 0)} />
-			);
+			const { container } = render(<FileTreeRow {...defaultProps} item={makeItem(fileNode, 0)} />);
 			expect(container.querySelector('[data-testid="file-tree-connector-stem"]')).toBeNull();
 			expect(container.querySelector('[data-testid="file-tree-connector-arm"]')).toBeNull();
 		});
 
 		it("puts the elbow on the row's own parent column, one indent step left of its icon", () => {
-			const { container } = render(
-				<FileTreeRow {...connectorProps} item={makeItem(fileNode, 2)} />
-			);
+			const { container } = render(<FileTreeRow {...defaultProps} item={makeItem(fileNode, 2)} />);
 			const arm = container.querySelector<HTMLElement>('[data-testid="file-tree-connector-arm"]')!;
 			const stem = container.querySelector<HTMLElement>(
 				'[data-testid="file-tree-connector-stem"]'
@@ -167,9 +160,28 @@ describe('FileTreeRow', () => {
 			expect(stem.style.left).toBe('32px');
 		});
 
+		it('reaches a folder chevron and a file icon with the same 4px gap', () => {
+			// Depth 2: padding 48, so the chevron slot starts at 48 and the icon
+			// column at 48 + 12 (slot) + 8 (gap) = 68. The arm starts at 32.
+			const armEnd = (node: FileNode) => {
+				const { container, unmount } = render(
+					<FileTreeRow {...defaultProps} item={makeItem(node, 2)} />
+				);
+				const arm = container.querySelector<HTMLElement>(
+					'[data-testid="file-tree-connector-arm"]'
+				)!;
+				const end = parseFloat(arm.style.left) + parseFloat(arm.style.width);
+				unmount();
+				return end;
+			};
+			expect(armEnd(folderNode)).toBe(44);
+			// A file's chevron slot is empty, so its arm crosses it to the icon.
+			expect(armEnd(fileNode)).toBe(64);
+		});
+
 		it('runs the elbow stem full height when the row has a following sibling', () => {
 			const { container } = render(
-				<FileTreeRow {...connectorProps} item={makeItem(fileNode, 1, { isLastChild: false })} />
+				<FileTreeRow {...defaultProps} item={makeItem(fileNode, 1, { isLastChild: false })} />
 			);
 			const stem = container.querySelector<HTMLElement>(
 				'[data-testid="file-tree-connector-stem"]'
@@ -180,7 +192,7 @@ describe('FileTreeRow', () => {
 
 		it("stops the elbow stem at the elbow on a folder's last child", () => {
 			const { container } = render(
-				<FileTreeRow {...connectorProps} item={makeItem(fileNode, 1, { isLastChild: true })} />
+				<FileTreeRow {...defaultProps} item={makeItem(fileNode, 1, { isLastChild: true })} />
 			);
 			const stem = container.querySelector<HTMLElement>(
 				'[data-testid="file-tree-connector-stem"]'
@@ -192,23 +204,12 @@ describe('FileTreeRow', () => {
 		it('only draws pass-through guides for ancestors the mask keeps alive', () => {
 			// depth 3, so pass-through columns are 0 and 1; only column 0 is set.
 			const { container } = render(
-				<FileTreeRow {...connectorProps} item={makeItem(fileNode, 3, { ancestorGuideMask: 0b1 })} />
+				<FileTreeRow {...defaultProps} item={makeItem(fileNode, 3, { ancestorGuideMask: 0b1 })} />
 			);
 			const guides = container.querySelectorAll<HTMLElement>(
 				'[data-testid="file-tree-indent-guide"]'
 			);
 			expect(Array.from(guides).map((g) => g.style.left)).toEqual(['12px']);
-		});
-
-		it('draws every ancestor column full height when connectors are off', () => {
-			const { container } = render(
-				<FileTreeRow {...defaultProps} item={makeItem(fileNode, 3, { ancestorGuideMask: 0 })} />
-			);
-			const guides = container.querySelectorAll<HTMLElement>(
-				'[data-testid="file-tree-indent-guide"]'
-			);
-			expect(Array.from(guides).map((g) => g.style.left)).toEqual(['12px', '32px', '52px']);
-			expect(container.querySelector('[data-testid="file-tree-connector-stem"]')).toBeNull();
 		});
 	});
 

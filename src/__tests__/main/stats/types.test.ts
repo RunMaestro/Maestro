@@ -275,7 +275,22 @@ describe('stats-types.ts', () => {
 
 	describe('StatsAggregation interface', () => {
 		it('should define proper aggregation structure', () => {
-			const aggregation: StatsAggregation = {
+			const aggregation: Pick<
+				StatsAggregation,
+				| 'totalQueries'
+				| 'totalDuration'
+				| 'avgDuration'
+				| 'byAgent'
+				| 'bySource'
+				| 'byLocation'
+				| 'byDay'
+				| 'byHour'
+				| 'window'
+				| 'earliestQueryAt'
+				| 'streak'
+				| 'totalSessions'
+				| 'byAgentWorktree'
+			> = {
 				totalQueries: 100,
 				totalDuration: 500000,
 				avgDuration: 5000,
@@ -285,6 +300,7 @@ describe('stats-types.ts', () => {
 				},
 				bySource: { user: 60, auto: 40 },
 				byLocation: { local: 80, remote: 20 },
+				// Gap-filled over `window`: one row per day
 				byDay: [
 					{ date: '2024-01-01', count: 10, duration: 50000 },
 					{ date: '2024-01-02', count: 15, duration: 75000 },
@@ -293,28 +309,27 @@ describe('stats-types.ts', () => {
 					{ hour: 9, count: 20, duration: 100000 },
 					{ hour: 10, count: 25, duration: 125000 },
 				],
-				// Session lifecycle fields
+				window: { startYmd: '2024-01-01', endYmd: '2024-01-02' },
+				earliestQueryAt: Date.UTC(2023, 11, 1),
+				streak: { current: 2, longest: 9 },
+				// Distinct agents with at least one query in the range
 				totalSessions: 15,
-				sessionsByAgent: {
-					'claude-code': 10,
-					opencode: 5,
+				byAgentWorktree: {
+					'claude-code': {
+						worktree: { count: 20, duration: 100000 },
+						parent: { count: 50, duration: 250000 },
+					},
 				},
-				sessionsByDay: [
-					{ date: '2024-01-01', count: 3 },
-					{ date: '2024-01-02', count: 5 },
-				],
-				avgSessionDuration: 1800000,
 			};
 
 			expect(aggregation.totalQueries).toBe(100);
 			expect(aggregation.byAgent['claude-code'].count).toBe(70);
 			expect(aggregation.bySource.user).toBe(60);
 			expect(aggregation.byDay).toHaveLength(2);
-			// Session lifecycle assertions
+			expect(aggregation.window.endYmd).toBe('2024-01-02');
+			expect(aggregation.streak.longest).toBe(9);
 			expect(aggregation.totalSessions).toBe(15);
-			expect(aggregation.sessionsByAgent['claude-code']).toBe(10);
-			expect(aggregation.sessionsByDay).toHaveLength(2);
-			expect(aggregation.avgSessionDuration).toBe(1800000);
+			expect(aggregation.byAgentWorktree['claude-code'].worktree.count).toBe(20);
 		});
 	});
 });

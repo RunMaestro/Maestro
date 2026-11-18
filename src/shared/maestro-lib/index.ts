@@ -122,6 +122,7 @@ export type { GroupChatMessage } from './groupchat/log';
 export {
 	createGroupChatEngine,
 	isDeletedGroupChatFailure,
+	isRemovedParticipantFailure,
 	extractMentions,
 	extractAutoRunDirectives,
 } from './groupchat/router';
@@ -302,6 +303,13 @@ export * from './run/start-turn';
 export * from './run/turn-capture';
 export * from './run/session';
 export * from './run/run-to-completion';
+export * from './grok/acp-turn';
+export * from './grok/route';
+export type {
+	GrokAcpQuestionEvent,
+	GrokAcpQuestionIdentity,
+	GrokAcpQuestionSettlement,
+} from './grok/acp-requests';
 
 // Headless turns: the prompt a desktop turn would send (L12), assembled with no desktop
 export * from './prompts/load';
@@ -335,3 +343,5 @@ export * from './control/turn-guard';
 
 // Host services
 export * from './host';
+
+export type { CurrentTurnCursor, CurrentTurnMessage, CurrentTurnRead } from '../currentTurn';

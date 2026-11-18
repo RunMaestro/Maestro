@@ -88,4 +88,65 @@ describe('findLoginUrl', () => {
 	it('ignores a bare origin with no path', () => {
 		expect(findLoginUrl('https://claude.ai')).toBeNull();
 	});
+
+	describe('Grok login output', () => {
+		it.each([
+			'https://auth.x.ai/oauth/authorize?client_id=grok&state=synthetic',
+			'https://auth.x.ai/device?user_code=TEST-CODE',
+			'https://accounts.x.ai/sign-in?redirect=grok-code',
+			'https://accounts.x.ai/activate?code=TEST-CODE',
+			'https://AUTH.X.AI/oauth2/authorize?state=synthetic',
+		])('recognises the xAI sign-in URL %s', (url) => {
+			expect(findLoginUrl(`Open in your browser: <${url}>`)).toBe(url);
+		});
+
+		it.each([
+			'https://docs.x.ai/docs/grok-code',
+			'https://status.x.ai/incidents/synthetic',
+			'https://auth.x.ai',
+			'https://accounts.x.ai/',
+			'https://auth.x.ai.example.com/sign-in',
+			'https://accounts.x.ai.example.com/sign-in',
+			'https://notauth.x.ai/sign-in',
+			'https://notaccounts.x.ai/sign-in',
+			'https://example.com/sign-in?next=https://auth.x.ai/sign-in',
+			'https://example.com/sign-in#https://accounts.x.ai/sign-in',
+			'https://example.com/auth.x.ai/sign-in',
+			'https://example.com/help?next=/oauth2/authorize',
+			'https://auth.x.ai@example.com/sign-in',
+			'https://accounts.x.ai:synthetic@example.com/sign-in',
+			'https://synthetic:secret@auth.x.ai/oauth/authorize',
+		])('does not mistake an unrelated or deceptive URL for login: %s', (url) => {
+			expect(findLoginUrl(url)).toBeNull();
+		});
+
+		it.each(['\n', '\r\n'])('rejoins ANSI-coloured xAI URLs wrapped with %j', (newline) => {
+			const url =
+				'https://auth.x.ai/oauth/authorize?client_id=grok&redirect_uri=http%3A%2F%2Flocalhost%3A3210%2Fcallback&state=synthetic';
+			const wrapped =
+				`\x1b[36mhttps://auth.x.ai/oauth/authorize?client_id=grok&redirect_uri=http%3A%2F%2Flocal${newline}` +
+				`  host%3A3210%2Fcallback&state=syn${newline}\tthetic\x1b[0m`;
+			expect(findLoginUrl(wrapped)).toBe(url);
+		});
+
+		it.each(['\n', '\r\n'])('keeps adjacent URLs and prose separate with %j', (newline) => {
+			const latest = 'https://accounts.x.ai/sign-in?attempt=2';
+			const output = [
+				'https://auth.x.ai/oauth/authorize?attempt=1',
+				latest,
+				'Waiting for you to finish signing in.',
+				'https://docs.x.ai/docs/grok-code',
+				'https://auth.x.ai.example.com/sign-in?attempt=3',
+			].join(newline);
+			expect(findLoginUrl(output)).toBe(latest);
+		});
+
+		it.each(['/oauth2/authorize', '/tenant/authorize'])(
+			'preserves custom identity-provider path %s',
+			(path) => {
+				const url = `https://idp.example.test${path}?client_id=grok&state=synthetic`;
+				expect(findLoginUrl(`Use your organisation's sign-in page: ${url}`)).toBe(url);
+			}
+		);
+	});
 });

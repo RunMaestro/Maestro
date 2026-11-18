@@ -7,7 +7,9 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	findLogicalLineMatches,
 	readLogicalLine,
+	readLogicalLineRows,
 	type ReadableBuffer,
 	type ReadableBufferLine,
 } from '../../../renderer/utils/terminalBuffer';
@@ -81,5 +83,96 @@ describe('readLogicalLine', () => {
 	it('returns empty string for a negative row', () => {
 		const buf = makeBuffer([{ text: 'only' }]);
 		expect(readLogicalLine(buf, -1)).toBe('');
+	});
+});
+
+describe('readLogicalLineRows', () => {
+	it('returns the untrimmed rows of the wrap group and its first row', () => {
+		const buf = makeBuffer([
+			{ text: 'intro' },
+			{ text: 'https://ex' },
+			{ text: 'ample.com', wrapped: true },
+		]);
+		expect(readLogicalLineRows(buf, 2)).toEqual({
+			firstRow: 1,
+			rows: ['https://ex', 'ample.com '],
+		});
+	});
+
+	it('bounds the walk in each direction', () => {
+		const buf = makeBuffer([
+			{ text: 'aaaaaaaaaa' },
+			{ text: 'bbbbbbbbbb', wrapped: true },
+			{ text: 'cccccccccc', wrapped: true },
+			{ text: 'dddddddddd', wrapped: true },
+			{ text: 'eeeeeeeeee', wrapped: true },
+		]);
+		expect(readLogicalLineRows(buf, 2, 1)).toEqual({
+			firstRow: 1,
+			rows: ['bbbbbbbbbb', 'cccccccccc', 'dddddddddd'],
+		});
+	});
+
+	it('returns null for a missing or negative row', () => {
+		const buf = makeBuffer([{ text: 'only' }]);
+		expect(readLogicalLineRows(buf, 3)).toBeNull();
+		expect(readLogicalLineRows(buf, -1)).toBeNull();
+	});
+});
+
+describe('findLogicalLineMatches', () => {
+	const URL = /https?:\/\/[^\s]+/g;
+
+	// "  https://example.com/a/very/long/path" soft-wrapped at 10 columns
+	const wrappedUrl = () =>
+		makeBuffer([
+			{ text: 'Open this:' },
+			{ text: '  https://' },
+			{ text: 'example.co', wrapped: true },
+			{ text: 'm/a/b?x=1', wrapped: true },
+			{ text: 'next line' },
+		]);
+
+	it('matches a soft-wrapped URL as one link spanning rows', () => {
+		expect(findLogicalLineMatches(wrappedUrl(), 1, URL)).toEqual([
+			{
+				text: 'https://example.com/a/b?x=1',
+				start: { row: 1, col: 2 },
+				end: { row: 3, col: 8 },
+			},
+		]);
+	});
+
+	it('returns the same whole link when hovering a continuation row', () => {
+		const fromFirst = findLogicalLineMatches(wrappedUrl(), 1, URL);
+		expect(findLogicalLineMatches(wrappedUrl(), 2, URL)).toEqual(fromFirst);
+		expect(findLogicalLineMatches(wrappedUrl(), 3, URL)).toEqual(fromFirst);
+	});
+
+	it('does not join across a hard line break', () => {
+		expect(findLogicalLineMatches(wrappedUrl(), 0, URL)).toEqual([]);
+		expect(findLogicalLineMatches(wrappedUrl(), 4, URL)).toEqual([]);
+	});
+
+	it('only returns matches that cover the hovered row', () => {
+		const buf = makeBuffer(
+			[
+				{ text: 'http://a.b x' },
+				{ text: 'y  http://c.', wrapped: true },
+				{ text: 'd', wrapped: true },
+			],
+			12
+		);
+		// Row 0 holds only the first link; rows 1 and 2 hold only the second.
+		expect(findLogicalLineMatches(buf, 0, URL).map((m) => m.text)).toEqual(['http://a.b']);
+		expect(findLogicalLineMatches(buf, 2, URL).map((m) => m.text)).toEqual(['http://c.d']);
+	});
+
+	it('accepts a pattern without the global flag', () => {
+		const buf = makeBuffer([{ text: 'http://a.b http://c.d' }], 24);
+		expect(findLogicalLineMatches(buf, 0, /http:\/\/\S+/).map((m) => m.text)).toEqual([
+			'http://a.b',
+			'http://c.d',
+		]);
 	});
 });

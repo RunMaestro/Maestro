@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import SymphonyModal from '../../../renderer/components/SymphonyModal';
 import type { Theme } from '../../../renderer/types';
+import type { AgentCreationDialogProps } from '../../../renderer/components/AgentCreationDialog';
 import type {
 	RegisteredRepository,
 	SymphonyIssue,
@@ -35,8 +36,17 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	}),
 }));
 
+const mockAgentCreationDialog = vi.fn();
 vi.mock('../../../renderer/components/AgentCreationDialog', () => ({
-	AgentCreationDialog: () => <div data-testid="agent-creation-dialog" />,
+	AgentCreationDialog: (props: AgentCreationDialogProps) => {
+		mockAgentCreationDialog(props);
+		return <div data-testid="agent-creation-dialog" />;
+	},
+}));
+
+// The success handoff selects Active; isolate its session-store-backed list.
+vi.mock('../../../renderer/components/SymphonyModal/tabs/ActiveTab', () => ({
+	ActiveTab: () => <div data-testid="active-contributions" />,
 }));
 
 vi.mock('../../../renderer/utils/markdownConfig', () => ({
@@ -252,11 +262,99 @@ describe('SymphonyModal', () => {
 		checkGhCliMock = vi.fn();
 		window.maestro.git.checkGhCli = checkGhCliMock;
 		mockSelectRepository.mockResolvedValue(undefined);
+		mockUseSymphonyReturn.startContribution.mockReset();
 	});
 
 	afterEach(() => {
 		vi.restoreAllMocks();
 	});
+
+	it.each([
+		[
+			'grok',
+			{ model: ' manual-model ', reasoningEffort: ' manual-effort ' },
+			'manual-model',
+			'manual-effort',
+		],
+		[
+			'grok',
+			{ model: 'alias-model', effort: ' alternate-effort ' },
+			'alias-model',
+			'alternate-effort',
+		],
+		['grok', undefined, undefined, undefined],
+		['grok', { model: '', reasoningEffort: '' }, undefined, undefined],
+		['grok', { model: '  ', reasoningEffort: '  ', effort: '  ' }, undefined, undefined],
+		['codex', { model: 'codex-model', reasoningEffort: 'high' }, 'codex-model', 'high'],
+		['claude-code', { model: 'sonnet', effort: 'low' }, 'sonnet', 'low'],
+	] as const)(
+		'hands %s dialog selection %j to contribution creation with inheritance intact',
+		async (agentType, agentConfig, customModel, customEffort) => {
+			const onStartContribution = vi.fn();
+			const customEnvVars = { GROK_AUTH: '{"api_key":"synthetic-dialog-secret"}' };
+			checkGhCliMock.mockResolvedValue({ installed: true, authenticated: true });
+			mockUseSymphonyReturn.startContribution.mockResolvedValue({
+				success: true,
+				contributionId: 'contribution-grok',
+				autoRunPath: '/workspace/auto-run',
+			});
+			render(
+				<SymphonyModal
+					theme={testTheme}
+					isOpen={true}
+					onClose={vi.fn()}
+					onStartContribution={onStartContribution}
+					sessions={[]}
+					onSelectSession={vi.fn()}
+				/>
+			);
+			await navigateToStartButton();
+			await act(async () => {
+				fireEvent.click(screen.getByText('Start Symphony'));
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByText('I Have the Build Tools'));
+			});
+			const dialog = mockAgentCreationDialog.mock.lastCall![0] as AgentCreationDialogProps;
+			expect(dialog.isOpen).toBe(true);
+			await act(async () => {
+				expect(
+					await dialog.onCreateAgent({
+						agentType,
+						agentConfig,
+						customEnvVars,
+						repo: mockRepo,
+						issue: mockIssue,
+						sessionName: 'Selected draft',
+						workingDirectory: '/workspace/selected account',
+						customPath: '/tools/selected binary',
+						customArgs: '--selected-argument',
+					})
+				).toEqual({ success: true });
+			});
+			expect(mockUseSymphonyReturn.startContribution).toHaveBeenCalledExactlyOnceWith(
+				mockRepo,
+				mockIssue,
+				agentType,
+				'',
+				'/workspace/selected account'
+			);
+			expect(onStartContribution).toHaveBeenCalledExactlyOnceWith(
+				expect.objectContaining({
+					contributionId: 'contribution-grok',
+					autoRunPath: '/workspace/auto-run',
+					agentType,
+					customModel,
+					customEffort,
+					customEnvVars,
+					sessionName: 'Selected draft',
+					localPath: '/workspace/selected account',
+					customPath: '/tools/selected binary',
+					customArgs: '--selected-argument',
+				})
+			);
+		}
+	);
 
 	describe('Pre-flight gh CLI check', () => {
 		it('shows loading state while checking gh CLI', async () => {

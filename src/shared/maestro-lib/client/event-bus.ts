@@ -39,6 +39,7 @@ export function matchesFilter(event: MaestroEvent, filter: EventFilter | undefin
 		case 'tab.updated':
 		case 'tab.removed':
 		case 'turn':
+		case 'queue.changed':
 		case 'autorun':
 		case 'autorun.ended':
 			return event.agentId === filter.agentId;

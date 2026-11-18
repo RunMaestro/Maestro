@@ -19,6 +19,8 @@
 import type { AgentRepository } from '../agents/repository';
 import type { EventBus } from '../client/event-bus';
 import type {
+	AgentImportInput,
+	AgentImportReceipt,
 	AutoRunApi,
 	ClientError,
 	ClientErrorCode,
@@ -26,6 +28,7 @@ import type {
 	ClientResult,
 	ConnectionState,
 	ConsultsApi,
+	HistoryApi,
 	GroupChatsApi,
 	HostInfo,
 	MaestroClient,
@@ -68,6 +71,8 @@ export interface RuntimeClientDeps {
 	groupChats: GroupChatsApi;
 	/** Ask another agent. `cancelForSource` is how Stop on the asker reaches the consults it started. */
 	consults: { api: ConsultsApi; cancelForSource(agentId: string): number };
+	/** An agent's History, with the shared History of its project. */
+	history: HistoryApi;
 }
 
 const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
@@ -133,6 +138,32 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 		return fail(method, 'failed', `The settings file could not be read: ${read.reason}`);
 	}
 
+	/**
+	 * Store the agent, then hand its queued messages to the turn service in order: the queue is in
+	 * memory, so it is the turn service's to hold. The first starts as soon as the agent is free,
+	 * the rest wait behind it. A message the service refuses is reported, never retried: the agent
+	 * is already here.
+	 */
+	async function importAgent(input: AgentImportInput): Promise<ClientResult<AgentImportReceipt>> {
+		const imported = await repository.importAgent(input);
+		if (!imported.ok) return imported;
+		const { agentId } = imported.value;
+		let queued = 0;
+		const notices: string[] = [];
+		for (const item of input.queue ?? []) {
+			const sent = await deps.turns.send(agentId, item.tabId, {
+				text: item.text,
+				...(item.images && item.images.length > 0 ? { images: item.images } : {}),
+			});
+			if (sent.ok) queued += 1;
+			else
+				notices.push(
+					`A queued message for tab ${item.tabId} was not queued: ${sent.error.message}`
+				);
+		}
+		return ok({ agentId, queued, ...(notices.length > 0 ? { notices } : {}) });
+	}
+
 	return {
 		connection: {
 			discover: () => guarded('connection.discover', () => ok(host)),
@@ -151,6 +182,7 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 					return agent ? ok(agent) : fail('agents.get', 'not-found', `No agent ${agentId}.`);
 				}),
 			create: (input) => guarded('agents.create', () => repository.createAgent(input)),
+			import: (input) => guarded('agents.import', () => importAgent(input)),
 			update: (agentId, patch) =>
 				guarded('agents.update', () => repository.updateAgent(agentId, patch)),
 			rename: (agentId, name) =>
@@ -210,6 +242,10 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 				list: (agentId) => guarded('turns.queue.list', () => deps.turns.queue.list(agentId)),
 				remove: (agentId, itemId) =>
 					guarded('turns.queue.remove', () => deps.turns.queue.remove(agentId, itemId)),
+				setPaused: (agentId, itemId, paused) =>
+					guarded('turns.queue.setPaused', () =>
+						deps.turns.queue.setPaused(agentId, itemId, paused)
+					),
 			},
 			subscribe: (agentId, tabId, listener): Unsubscribe =>
 				deps.turns.subscribe(agentId, tabId, listener),
@@ -249,6 +285,11 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 		// A fenced runtime does not start a consult: its answer could not be recorded.
 		consults: {
 			ask: (input) => Promise.resolve(gate('consults.ask', true) ?? deps.consults.api.ask(input)),
+		},
+
+		history: {
+			list: (agentId, options) =>
+				guarded('history.list', () => deps.history.list(agentId, options)),
 		},
 
 		settings: {

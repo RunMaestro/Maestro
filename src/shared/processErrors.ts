@@ -28,3 +28,16 @@ export function isAgentAlreadyRunningError(error: unknown): boolean {
 	const message = error instanceof Error ? error.message : String(error ?? '');
 	return message.includes(AGENT_ALREADY_RUNNING_PREFIX);
 }
+
+/**
+ * Log-safe description of a failure: the error class and errno code, never the
+ * message. Spawn, injection and SSH errors can echo prompt-bearing argv or
+ * private file paths, so a caller that must not leak them still reports WHAT
+ * failed (`ENOENT`, `EACCES`, `TypeError`) to the logger or Sentry.
+ */
+export function redactedErrorFields(error: unknown): { errorName: string; errorCode?: string } {
+	const errorName = error instanceof Error ? error.name : typeof error;
+	const code =
+		error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
+	return code ? { errorName, errorCode: code } : { errorName };
+}

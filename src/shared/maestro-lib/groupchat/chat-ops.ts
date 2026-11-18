@@ -16,6 +16,7 @@
 
 import type { GroupChatState, ModeratorConfig } from '../../group-chat-types';
 import { logger } from '../host';
+import { moderatorImagesRefusal } from './image-gate';
 import type { GroupChatEngine } from './router';
 import type { GroupChatStore } from './storage';
 import type { GroupChat, GroupChatEventSink, GroupChatLauncher } from './types';
@@ -131,8 +132,12 @@ export function createGroupChatOperations(options: GroupChatOperationsOptions) {
 		message: string,
 		sendOptions: SendMessageOptions = {}
 	): Promise<void> {
-		if (!engine.isModeratorActive(chatId)) {
-			const chat = await store.loadGroupChat(chatId);
+		const needsModerator = !engine.isModeratorActive(chatId);
+		const chat =
+			sendOptions.images?.length || needsModerator ? await store.loadGroupChat(chatId) : null;
+		const refusal = moderatorImagesRefusal(chat, sendOptions.images);
+		if (refusal) throw new Error(refusal);
+		if (needsModerator) {
 			if (!chat) throw new Error(`Group chat not found: ${chatId}`);
 			await engine.spawnModerator(chat);
 		}

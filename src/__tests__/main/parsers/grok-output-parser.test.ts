@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { GrokOutputParser } from '../../../main/parsers/grok-output-parser';
+import { TurnCapture } from '../../../shared/maestro-lib/run/turn-capture';
 
 // The thought/text/end/error lines below are copied verbatim from real captured
 // fixtures (grok v0.2.93, `--output-format streaming-json`): there is no init
@@ -138,8 +139,78 @@ describe('GrokOutputParser', () => {
 
 		expect(error).not.toBeNull();
 		expect(error?.type).toBe('unknown');
-		expect(error?.recoverable).toBe(true);
+		expect(error?.recoverable).toBe(false);
 		expect(error?.message).toContain('cancelled');
+	});
+
+	// Synthetic native records from the phase01 source pin
+	// 2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8 (candidate 1.0.70),
+	// headless.rs / headless/reducer/acp.rs. These do not certify a live binary.
+	it.each([
+		['end_turn', 'success', undefined],
+		['EndTurn', 'success', undefined],
+		['cancelled', 'cancelled', undefined],
+		['refusal', 'refused', undefined],
+		['max_tokens', 'incomplete', 'limit'],
+		['max_turn_requests', 'incomplete', 'limit'],
+		['error', 'failed', 'provider'],
+		['future_stop', 'incomplete', 'unknown-stop-reason'],
+		[undefined, 'incomplete', 'missing-terminal'],
+		['', 'incomplete', 'missing-terminal'],
+		[42, 'incomplete', 'missing-terminal'],
+	])('classifies native stop %s as %s', (stopReason, status, kind) => {
+		const parser = new GrokOutputParser();
+		const event = parser.parseJsonObject({ ...JSON.parse(RESUME_END_LINE), stopReason })!;
+		expect(event.terminal).toMatchObject({ status, dispatchState: 'unknown' });
+		if (kind) expect(event.terminal).toMatchObject({ kind });
+		expect(parser.isResultMessage(event)).toBe(status === 'success');
+		expect(parser.extractSessionId(event)).toBe('019f47fb-2316-7f21-98db-55907d4ddb60');
+		if (status !== 'success') {
+			expect(event.type).toBe('error');
+			expect(parser.detectErrorFromParsed(event.raw)?.recoverable).toBe(false);
+		}
+	});
+
+	it.each([
+		[{ type: 'max_turns_reached' }, 'incomplete'],
+		[{ type: 'error', message: 'provider failed' }, 'failed'],
+		[{ type: 'end', stopReason: 'end_turn', structured_output_error: 'invalid schema' }, 'failed'],
+		[{ type: 'end', stopReason: 'end_turn', error: { message: 'provider failed' } }, 'failed'],
+	] as const)('keeps terminal failure %j when a successful end follows', (record, status) => {
+		const parser = new GrokOutputParser();
+		const first = parser.parseJsonObject(record)!;
+		const end = parser.parseJsonLine(SIMPLE_TURN_END_LINE)!;
+		expect(first.terminal?.status).toBe(status);
+		expect(end.terminal).toEqual(first.terminal);
+		expect(end.text).toBe(first.text);
+		expect(parser.isResultMessage(end)).toBe(false);
+		expect(parser.extractSessionId(end)).toBe('019f47fa-e297-7993-a1f6-adfaf940ba8c');
+		expect(parser.detectErrorFromExit(0, '', SIMPLE_TURN_END_LINE)?.recoverable).toBe(false);
+	});
+
+	it.each([false, true])('keeps cancellation incomplete with permission call=%s', (permission) => {
+		const parser = new GrokOutputParser();
+		const capture = new TurnCapture('grok', parser);
+		if (permission) {
+			capture.handleEvent(parser.parseJsonLine('{"type":"text","data":"I will run it."}')!);
+			capture.handleEvent(
+				parser.parseJsonLine(
+					'{"type":"tool_call","toolCallId":"blocked","toolName":"run_terminal_command"}'
+				)!
+			);
+			const denied = parser.parseJsonLine(
+				'{"type":"tool_call_update","toolCallId":"blocked","status":"cancelled","error":"Permission cancelled"}'
+			)!;
+			expect(denied.toolState).toEqual({ status: 'failed', output: 'Permission cancelled' });
+			capture.handleEvent(denied);
+		}
+		const end = parser.parseJsonLine(CANCELLED_END_LINE)!;
+		capture.handleEvent(end);
+		expect(end.terminal).toMatchObject({ status: 'cancelled', origin: 'provider' });
+		expect(capture.resultMessageSeen).toBe(false);
+		expect(capture.sessionId).toBe('019f0000-aaaa-7000-8000-00000000c0de');
+		expect(capture.answerText).toBe(permission ? 'I will run it.' : undefined);
+		expect(capture.inBandError?.recoverable).toBe(false);
 	});
 
 	it('extracts the session ID from the result event (grok has no init event)', () => {
@@ -405,6 +476,28 @@ describe('GrokOutputParser', () => {
 				'The file /tmp/w/out.txt has been created.'
 			);
 		});
+
+		it.each(['pending', 'running', 'future_status'])('suppresses output while %s', (status) => {
+			const parser = new GrokOutputParser();
+			parser.parseJsonLine(LS_CALL);
+			const event = parser.parseJsonObject({ ...JSON.parse(LS_DONE), status });
+			expect(event?.toolState).toEqual({ status: 'running' });
+		});
+
+		it('ignores malformed tool text and diff fields without leaking raw byte arrays', () => {
+			const parser = new GrokOutputParser();
+			parser.parseJsonLine(LS_CALL);
+			const event = parser.parseJsonObject({
+				...JSON.parse(LS_DONE),
+				content: [
+					null,
+					{ type: 'content', content: { type: 'text', text: 42 } },
+					{ type: 'diff', path: 42, oldText: {}, newText: false },
+				],
+			});
+			expect(event?.toolState).toEqual({ status: 'completed', exitCode: 0 });
+			expect(event && parser.isResultMessage(event)).toBe(false);
+		});
 	});
 
 	it('reports no usage on a 0.2.93 turn - that stream carries no token or cost data', () => {
@@ -418,8 +511,8 @@ describe('GrokOutputParser', () => {
 	});
 
 	// Captured from grok 1.0.41: one `usage` line per model call, and an `end`
-	// whose usage is their sum plus the turn's cost. Every usage event Maestro
-	// sees is ADDED to the session totals, so only `end` may report usage.
+	// whose usage is their sum plus the turn's cost. Response lines supply
+	// occupancy; terminal snapshots supply spend and repeated finals count once.
 	describe('grok 1.x usage and cost', () => {
 		const CALL_1 =
 			'{"type":"usage","usage":{"input_tokens":19098,"output_tokens":99,"cache_read_input_tokens":12032,"cache_creation_input_tokens":0,"reasoning_tokens":37},"signature":"x"}';
@@ -444,6 +537,34 @@ describe('GrokOutputParser', () => {
 				reasoningTokens: 82,
 				costUsd: 0.02076516,
 				model: 'grok-4.7-build',
+				accounting: {
+					source: 'runtime-stream',
+					route: 'native-headless',
+					scope: 'turn',
+					reporting: 'snapshot',
+					final: true,
+					providerSessionId: '01a11188-3666-7872-8103-48299d68b4d7',
+					requestId: 'r',
+					cacheReadCounting: 'beside-input',
+					cacheCreationCounting: 'beside-input',
+					completeness: 'complete',
+					cost: { status: 'exact', costUsdTicks: '207651600' },
+					childInclusion: 'completed',
+					childCompleteness: 'unknown',
+					mainAgentRounds: 2,
+					models: [
+						{
+							model: 'grok-4.7-build',
+							inputTokens: 19252,
+							outputTokens: 167,
+							cacheReadInputTokens: 43136,
+							cacheCreationInputTokens: 0,
+							callCount: 2,
+							completeness: 'complete',
+							cost: { status: 'exact', costUsd: 0.02076516 },
+						},
+					],
+				},
 				absoluteUsage: {
 					inputTokens: 154,
 					outputTokens: 68,
@@ -465,6 +586,241 @@ describe('GrokOutputParser', () => {
 			const end = parser.parseJsonLine(END);
 			expect(end?.usage).toMatchObject({ inputTokens: 19252, costUsd: 0.02076516 });
 			expect(end?.usage?.absoluteUsage).toBeUndefined();
+		});
+
+		it('counts repeated terminal snapshots once through shared capture and accounting', () => {
+			const parser = new GrokOutputParser();
+			const capture = new TurnCapture('grok', parser);
+			for (const line of [CALL_1, CALL_2, CALL_2]) capture.handleEvent(parser.parseJsonLine(line)!);
+			// Pinned TurnUsage has no response identity; it is not another response delta.
+			capture.handleEvent(parser.parseJsonObject({ type: 'usage', usage: JSON.parse(END).usage })!);
+			expect(capture.usage).toBeUndefined();
+			capture.handleEvent(parser.parseJsonLine(END)!);
+			const first = structuredClone(capture.usage);
+			capture.handleEvent(parser.parseJsonLine(CALL_1)!); // Late response cannot change occupancy.
+			capture.handleEvent(parser.parseJsonLine(END)!);
+			expect(capture.usage).toEqual(first);
+			expect(capture.usage).toMatchObject({
+				inputTokens: 19252,
+				outputTokens: 167,
+				cacheReadInputTokens: 43136,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 82,
+				totalCostUsd: 0.02076516,
+				absoluteUsage: { inputTokens: 154, outputTokens: 68, cacheReadInputTokens: 31104 },
+				accounting: { cost: { status: 'exact', costUsdTicks: '207651600' } },
+			});
+			expect(capture.sessionId).toBe('01a11188-3666-7872-8103-48299d68b4d7');
+		});
+
+		it('keeps disjoint cache buckets and multiple models on a cancelled final snapshot', () => {
+			const parser = new GrokOutputParser();
+			const capture = new TurnCapture('grok', parser);
+			const event = parser.parseJsonObject({
+				...JSON.parse(END),
+				stopReason: 'cancelled',
+				usage: {
+					input_tokens: 100,
+					output_tokens: 40,
+					cache_read_input_tokens: 20,
+					cache_creation_input_tokens: 10,
+					reasoning_tokens: 5,
+					total_tokens: 170,
+				},
+				modelUsage: {
+					a: {
+						inputTokens: 60,
+						outputTokens: 30,
+						cacheReadInputTokens: 20,
+						cacheCreationInputTokens: 0,
+						modelCalls: 1,
+						costUSD: 0.01,
+					},
+					b: {
+						inputTokens: 40,
+						outputTokens: 10,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 10,
+						modelCalls: 1,
+					},
+				},
+			})!;
+			capture.handleEvent(event);
+			expect(event.usage?.model).toBeUndefined();
+			expect(event.usage?.accounting?.models).toEqual([
+				{
+					model: 'a',
+					inputTokens: 60,
+					outputTokens: 30,
+					cacheReadInputTokens: 20,
+					cacheCreationInputTokens: 0,
+					callCount: 1,
+					completeness: 'complete',
+					cost: { status: 'exact', costUsd: 0.01 },
+				},
+				{
+					model: 'b',
+					inputTokens: 40,
+					outputTokens: 10,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 10,
+					callCount: 1,
+					completeness: 'complete',
+					cost: { status: 'unknown' },
+				},
+			]);
+			expect(capture.usage).toMatchObject({
+				inputTokens: 100,
+				outputTokens: 40,
+				cacheReadInputTokens: 20,
+				cacheCreationInputTokens: 10,
+				reasoningTokens: 5,
+			});
+			expect(capture.resultMessageSeen).toBe(false);
+		});
+
+		it.each([
+			{ input_tokens: -1 },
+			{ output_tokens: 1.5 },
+			{ input_tokens: Number.MAX_SAFE_INTEGER + 1 },
+			{ reasoning_tokens: 168 },
+			{ total_tokens: 1 },
+			{ cache_creation_input_tokens: undefined },
+		])('marks invalid or absent counts partial: %j', (counts) => {
+			const record = JSON.parse(END);
+			record.usage = { ...record.usage, ...counts };
+			const usage = new GrokOutputParser().parseJsonObject(record)?.usage;
+			expect(usage?.accounting?.completeness).toBe('partial');
+			expect(usage?.accounting?.cost).toEqual({ status: 'partial', costUsdTicks: '207651600' });
+		});
+
+		it.each([
+			[{}, { status: 'unknown' }],
+			[{ total_cost_usd: 0 }, { status: 'exact', costUsd: 0 }],
+			[
+				{ total_cost_usd: 0.25, cost_is_partial: true },
+				{ status: 'partial', costUsd: 0.25 },
+			],
+			[{ cost_is_partial: true }, { status: 'partial' }],
+			[{ total_cost_usd: -1 }, { status: 'unknown' }],
+			[
+				{ total_cost_usd_ticks: Number.MAX_SAFE_INTEGER + 1, total_cost_usd: 1 },
+				{ status: 'unknown' },
+			],
+		] as const)('preserves cost provenance %j', (fields, cost) => {
+			const record = JSON.parse(END);
+			delete record.total_cost_usd;
+			delete record.total_cost_usd_ticks;
+			const event = new GrokOutputParser().parseJsonObject({ ...record, ...fields })!;
+			expect(event.usage?.accounting?.cost).toEqual(cost);
+			if (!('costUsd' in cost)) expect(event.usage?.costUsd).toBeUndefined();
+		});
+
+		it.each(['usage_is_incomplete', 'cost_is_partial'])('retains %s without usage', (flag) => {
+			const event = new GrokOutputParser().parseJsonObject({
+				type: 'error',
+				message: 'Connection lost',
+				[flag]: true,
+			})!;
+			expect(event.usage?.accounting).toMatchObject({
+				final: false,
+				completeness: 'partial',
+				cost: { status: 'partial' },
+			});
+			expect(event.usage?.costUsd).toBeUndefined();
+			expect(event.terminal?.status).toBe('failed');
+		});
+
+		it.each(['usage_is_incomplete', 'cost_is_partial'])(
+			'retains exact tick digits as partial spend when %s is set',
+			(flag) => {
+				const parser = new GrokOutputParser();
+				const event = parser.parseJsonObject({ ...JSON.parse(END), [flag]: true })!;
+				const capture = new TurnCapture('grok', parser);
+				capture.handleEvent(event);
+				expect(capture.usage?.accounting?.cost).toEqual({
+					status: 'partial',
+					costUsdTicks: '207651600',
+				});
+				expect(event.usage?.accounting?.completeness).toBe(
+					flag === 'usage_is_incomplete' ? 'partial' : 'complete'
+				);
+			}
+		);
+
+		it.each([false, true])(
+			'does not serialize missing cost as authoritative zero (partial=%s)',
+			(partial) => {
+				const parser = new GrokOutputParser();
+				const capture = new TurnCapture('grok', parser);
+				const record = JSON.parse(END);
+				delete record.total_cost_usd;
+				delete record.total_cost_usd_ticks;
+				record.cost_is_partial = partial;
+				capture.handleEvent(parser.parseJsonObject(record)!);
+				const saved = JSON.parse(JSON.stringify(capture.usage));
+				expect(saved.accounting.cost).toEqual({ status: partial ? 'partial' : 'unknown' });
+				expect(saved.totalCostUsd).toBe(0); // Legacy numeric projection is not cost authority.
+			}
+		);
+
+		// Replace the literal token before parsing: JSON.stringify of a large Number loses digits.
+		it.each(['9007199254740993', '9223372036854775807', '0'])(
+			'preserves raw exact ticks %s through duplicate ends and JSON serialization',
+			(ticks) => {
+				const parser = new GrokOutputParser();
+				const capture = new TurnCapture('grok', parser);
+				const line = END.replace('207651600', ticks);
+				const event = parser.parseJsonLine(line)!;
+				expect(event.usage?.accounting?.cost).toEqual({ status: 'exact', costUsdTicks: ticks });
+				capture.handleEvent(event);
+				capture.handleEvent(parser.parseJsonLine(line)!);
+				expect(JSON.parse(JSON.stringify(capture.usage)).accounting.cost).toEqual({
+					status: 'exact',
+					costUsdTicks: ticks,
+				});
+				if (ticks === '0') expect(capture.usage?.totalCostUsd).toBe(0);
+			}
+		);
+
+		it.each(['null', '-1', '1.5', '1e2', '"01"', '"bad"', 'true', '{}'])(
+			'keeps invalid exact ticks %s unknown despite a dollar projection',
+			(ticks) => {
+				const event = new GrokOutputParser().parseJsonLine(END.replace('207651600', ticks));
+				expect(event?.usage?.accounting?.cost).toEqual({ status: 'unknown' });
+				expect(event?.usage?.costUsd).toBeUndefined();
+			}
+		);
+
+		it.each(['01', '1.', '1e+', '+1'])('rejects malformed JSON tick token %s', (ticks) => {
+			const parser = new GrokOutputParser();
+			const event = parser.parseJsonLine(END.replace('207651600', ticks))!;
+			expect(event.terminal).toMatchObject({ status: 'failed', kind: 'protocol' });
+			expect(parser.isResultMessage(event)).toBe(false);
+		});
+
+		it('preserves escaped keys, duplicate last values, nested ticks and lookalike strings', () => {
+			const parser = new GrokOutputParser();
+			const escaped = END.replace(
+				'"total_cost_usd_ticks":207651600',
+				'"total_cost_usd_ticks":1,"total_cost_usd_\\u0074icks":9007199254740993'
+			);
+			const event = parser.parseJsonLine(escaped)!;
+			expect(event.usage?.accounting?.cost).toEqual({
+				status: 'exact',
+				costUsdTicks: '9007199254740993',
+			});
+			const text = '{"total_cost_usd_ticks":9007199254740993}';
+			expect(parser.parseJsonLine(JSON.stringify({ type: 'text', data: text }))?.text).toBe(text);
+			const nested = parser.parseJsonLine(
+				'{"type":"future","data":{"total_cost_usd_ticks":9007199254740993},"other":7,"costUsdTicks":9}'
+			);
+			expect(nested?.raw).toEqual({
+				type: 'future',
+				data: { total_cost_usd_ticks: '9007199254740993' },
+				other: 7,
+				costUsdTicks: 9,
+			});
 		});
 	});
 
@@ -595,15 +951,17 @@ describe('GrokOutputParser', () => {
 		expect(parser.detectErrorFromLine(SIMPLE_TURN_END_LINE)).toBeNull();
 	});
 
-	it('ignores error events with an empty message', () => {
+	it.each([undefined, '   ', 42])('fails malformed error message %s', (message) => {
 		const parser = new GrokOutputParser();
-
-		expect(parser.detectErrorFromParsed({ type: 'error' })).toBeNull();
-		expect(parser.detectErrorFromParsed({ type: 'error', message: '   ' })).toBeNull();
-		// parseJsonObject aligns with detectErrorFromParsed (no synthetic "Unknown error")
-		expect(parser.parseJsonObject({ type: 'error' })).toBeNull();
-		expect(parser.parseJsonObject({ type: 'error', message: '   ' })).toBeNull();
-		expect(parser.parseJsonObject({ type: 'error', message: 42 })).toBeNull();
+		const record = { type: 'error', message };
+		expect(parser.detectErrorFromParsed(record)).toMatchObject({
+			type: 'unknown',
+			recoverable: false,
+		});
+		expect(parser.parseJsonObject(record)?.terminal).toMatchObject({
+			status: 'failed',
+			kind: 'protocol',
+		});
 	});
 
 	it('only attaches string sessionIds from end events', () => {
@@ -710,15 +1068,73 @@ describe('GrokOutputParser', () => {
 		expect(parser.parseJsonLine('')).toBeNull();
 		expect(parser.parseJsonLine('   ')).toBeNull();
 		expect(parser.parseJsonLine('not json at all')).toBeNull();
-		expect(parser.parseJsonLine('{"type":"text","data":')).toBeNull();
 		expect(parser.parseJsonLine('Error: Couldn\'t set model "x"')).toBeNull();
-		expect(parser.parseJsonLine('null')).toBeNull();
-		expect(parser.parseJsonLine('"just a string"')).toBeNull();
-		expect(parser.parseJsonLine('42')).toBeNull();
 
 		expect(parser.detectErrorFromLine('')).toBeNull();
 		// Unmatched free-form stderr waits for exit classification
 		expect(parser.detectErrorFromLine('not json at all')).toBeNull();
+	});
+
+	it.each(['{"type":"text","data":', 'null', '"just a string"', '42', '[]', 'true'])(
+		'fails malformed native stdout %s without accepting a later end',
+		(line) => {
+			const parser = new GrokOutputParser();
+			const event = parser.parseJsonLine(line)!;
+			expect(event.terminal).toMatchObject({ status: 'failed', kind: 'protocol' });
+			expect(parser.isResultMessage(event)).toBe(false);
+			expect(parser.parseJsonLine(SIMPLE_TURN_END_LINE)?.type).toBe('error');
+		}
+	);
+
+	it.each(['[diagnostic] rate limit exceeded', '{"message":"API key invalid"', 'null', '42', '[]'])(
+		'keeps channel-ambiguous stderr %s from corrupting a successful native turn',
+		(line) => {
+			const parser = new GrokOutputParser();
+			expect(parser.detectErrorFromLine(line)).toBeNull();
+			const end = parser.parseJsonLine(SIMPLE_TURN_END_LINE)!;
+			expect(parser.isResultMessage(end)).toBe(true);
+			expect(parser.detectErrorFromExit(0, line, SIMPLE_TURN_END_LINE)).toBeNull();
+		}
+	);
+
+	it.each([false, true])('rejects exit zero without native end (live parser=%s)', (live) => {
+		const parser = new GrokOutputParser();
+		const capture = new TurnCapture('grok', parser);
+		const stdout = '{"type":"thought","data":"Think"}\n{"type":"text","data":"Unfinished"}';
+		if (live)
+			for (const line of stdout.split('\n')) capture.handleEvent(parser.parseJsonLine(line)!);
+		expect(parser.detectErrorFromExit(0, '', stdout)).toMatchObject({
+			type: 'unknown',
+			recoverable: false,
+			message: expect.stringContaining('incomplete'),
+		});
+		expect(capture.resultMessageSeen).toBe(false);
+		expect(capture.sessionId).toBeUndefined();
+		if (live) expect(capture.answerText).toBe('Unfinished');
+	});
+
+	it('uses live terminal state over a truncated stdout tail and quoted errors', () => {
+		const parser = new GrokOutputParser();
+		const line = '{"type":"text","data":"API key invalid; rate limit exceeded"}';
+		expect(parser.detectErrorFromLine(line)).toBeNull();
+		parser.parseJsonLine(line);
+		parser.parseJsonLine(SIMPLE_TURN_END_LINE);
+		expect(parser.detectErrorFromExit(0, '', '{"type":"end",')).toBeNull();
+		expect(
+			new GrokOutputParser().detectErrorFromExit(0, '', `${line}\n${SIMPLE_TURN_END_LINE}`)
+		).toBeNull();
+	});
+
+	it.each([
+		'',
+		'{"jsonrpc":"2.0","id":1,"result":{"stopReason":"end_turn"}}',
+		'{"type":"message_stop"}',
+		'{"type":"future_event"}',
+	])('does not invent a native success or exit failure for another route: %s', (stdout) => {
+		const parser = new GrokOutputParser();
+		const event = parser.parseJsonLine(stdout);
+		if (event) expect(parser.isResultMessage(event)).toBe(false);
+		expect(new GrokOutputParser().detectErrorFromExit(0, '', stdout)).toBeNull();
 	});
 
 	it('classifies mid-run non-JSON stderr against the pattern bank', () => {

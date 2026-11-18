@@ -1,7 +1,7 @@
 /**
  * Stats domain WebSocket message handlers.
  *
- * Extracted from WebSocketMessageHandler.ts. Handles: get_usage_dashboard,
+ * Extracted from WebSocketMessageHandler.ts. Handles:
  * get_stats_aggregation, get_token_usage, get_stats_indexing, stats_query, get_achievements,
  * generate_director_notes_synopsis.
  */
@@ -32,42 +32,6 @@ function refuseWhenUsageStatsOff(
 		{ requestId: message.requestId }
 	);
 	return true;
-}
-
-/**
- * Handle get_usage_dashboard message - fetch usage analytics data
- */
-export function handleGetUsageDashboard(
-	ctx: MessageHandlerContext,
-	client: WebClient,
-	message: WebClientMessage
-): void {
-	const timeRange = (message.timeRange as string) || 'week';
-	const validRanges = new Set(['day', 'week', 'month', 'all']);
-
-	if (!validRanges.has(timeRange)) {
-		ctx.sendError(client, 'Invalid timeRange. Must be one of: day, week, month, all');
-		return;
-	}
-
-	if (!ctx.callbacks.getUsageDashboard) {
-		ctx.sendError(client, 'Usage dashboard not available');
-		return;
-	}
-
-	ctx.callbacks
-		.getUsageDashboard(timeRange as 'day' | 'week' | 'month' | 'all')
-		.then((data) => {
-			ctx.send(client, {
-				type: 'usage_dashboard',
-				data,
-				requestId: message.requestId,
-				timestamp: Date.now(),
-			});
-		})
-		.catch((error) => {
-			ctx.sendError(client, `Failed to get usage dashboard: ${error.message}`);
-		});
 }
 
 /**

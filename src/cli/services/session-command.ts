@@ -209,9 +209,18 @@ export async function resolveTabEntry(tabId: string, agentHint?: string): Promis
 		throw new Error(`Agent ${agentId} has no active AI tab`);
 	}
 
-	const exact = list.find((s) => s.tabId === tabId);
+	return matchTabId(list, tabId, (entry) => entry.tabId);
+}
+
+/**
+ * Pick one tab by an exact id or a unique id prefix. Throws `Ambiguous tab ID` or
+ * `Tab not found`. The id rules every tab verb shares, for any tab list: the desktop's open tabs,
+ * or a Federation host's.
+ */
+export function matchTabId<T>(tabs: readonly T[], tabId: string, idOf: (tab: T) => string): T {
+	const exact = tabs.find((tab) => idOf(tab) === tabId);
 	if (exact) return exact;
-	const matches = list.filter((s) => s.tabId.startsWith(tabId));
+	const matches = tabs.filter((tab) => idOf(tab).startsWith(tabId));
 	if (matches.length === 1) return matches[0];
 	if (matches.length > 1) {
 		throw new Error(`Ambiguous tab ID '${tabId}' (${matches.length} matches)`);

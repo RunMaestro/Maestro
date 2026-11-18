@@ -114,19 +114,24 @@ describe('expandCommandArguments', () => {
 	});
 
 	it('removes the placeholder when there are no arguments', () => {
-		expect(expandCommandArguments('do $ARGUMENTS now', '')).toBe('do  now');
-		expect(expandCommandArguments('do $ARGUMENTS now')).toBe('do  now');
+		expect(expandCommandArguments('do $ARGUMENTS then $ARGUMENTS now', '')).toBe('do  then  now');
+		expect(expandCommandArguments('do $ARGUMENTS then $ARGUMENTS now')).toBe('do  then  now');
 	});
 
 	it('leaves a prompt without a placeholder alone when there are no arguments', () => {
 		expect(expandCommandArguments('do it')).toBe('do it');
+		expect(expandCommandArguments('do it', '')).toBe('do it');
 	});
 
-	it('reads a replacement pattern in the arguments as the desktop does (PA4)', () => {
-		// The desktop passes the arguments as a replacement STRING, so `$&` expands to the match.
-		// Parity means the TUI does the same; fixing it is one change for both surfaces.
-		expect(expandCommandArguments('run $ARGUMENTS', 'a$&b')).toBe('run a$ARGUMENTSb');
-	});
+	it.each(['a$&b', 'a$$b', 'a$`b', "a$'b", '$ARGUMENTS', "  $&\t$$\n$` $'  "])(
+		'inserts literal arguments %j once per placeholder and preserves append behavior',
+		(args) => {
+			expect(expandCommandArguments('before $ARGUMENTS between $ARGUMENTS after', args)).toBe(
+				`before ${args} between ${args} after`
+			);
+			expect(expandCommandArguments('run', args)).toBe(`run\n\n${args}`);
+		}
+	);
 });
 
 describe('resolveSlashCommand', () => {

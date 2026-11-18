@@ -1,8 +1,7 @@
 /**
- * Presentational building blocks shared by the provider quota panels
- * (`ClaudePlanUsage`, `CodexPlanUsage`). Each piece is provider-agnostic and
- * parameterized only by labels / `data-testid` prefixes, so the two panels
- * stay pixel-identical without copy-pasting markup.
+ * Presentational building blocks of the provider quota panel
+ * (`PlanUsagePanel`). Each piece is provider-agnostic and parameterized only by
+ * labels / `data-testid` prefixes.
  */
 
 import { memo, type ReactNode } from 'react';
@@ -20,6 +19,7 @@ import {
 import type { Theme } from '../../../types';
 import { formatFutureTime, formatTimestamp } from '../../../../shared/formatters';
 import {
+	isQuotaWindowReset,
 	isSampleBehindLatest,
 	isSampleExpired,
 	QUOTA_REFRESH_OPTIONS,
@@ -38,6 +38,10 @@ interface QuotaBarRowProps {
 /**
  * One horizontal usage bar: label, fill (color-coded by threshold), inside or
  * trailing percent text, and a reset-time caption. Percent is clamped 0-100.
+ *
+ * A window whose reset time has passed draws at 0% with "reset, awaiting
+ * sample": the sampled percentage belongs to a window that has since rolled
+ * over, and showing it would report a limit the account is no longer near.
  */
 export const QuotaBarRow = memo(function QuotaBarRow({
 	label,
@@ -45,7 +49,8 @@ export const QuotaBarRow = memo(function QuotaBarRow({
 	resetsAt,
 	theme,
 }: QuotaBarRowProps) {
-	const clampedPercent = Math.min(100, Math.max(0, percent));
+	const hasReset = isQuotaWindowReset(resetsAt);
+	const clampedPercent = hasReset ? 0 : Math.min(100, Math.max(0, percent));
 	const fillColor = resolveQuotaFillColor(clampedPercent, theme);
 	const showInsideLabel = clampedPercent >= 22;
 	const displayPercent = Math.round(clampedPercent);
@@ -112,20 +117,25 @@ export const QuotaBarRow = memo(function QuotaBarRow({
 				className="text-xs text-left whitespace-nowrap flex-shrink-0 ml-auto sm:min-w-[12rem]"
 				style={{ color: theme.colors.textDim }}
 				title={
-					resetsAt
-						? `Resets at ${new Date(resetsAt).toLocaleString()}`
-						: clampedPercent === 0
-							? 'No window is running yet, so there is no reset time. The window starts with the next request.'
-							: undefined
+					hasReset && resetsAt
+						? `This window reset at ${new Date(resetsAt).toLocaleString()}, after it was last sampled at ${Math.round(percent)}%. It shows 0% until the next sample.`
+						: resetsAt
+							? `Resets at ${new Date(resetsAt).toLocaleString()}`
+							: clampedPercent === 0
+								? 'No window is running yet, so there is no reset time. The window starts with the next request.'
+								: undefined
 				}
+				data-reset={hasReset || undefined}
 			>
 				{/* A 0% window with no reset is idle, not unparsed: claude paints no
 				    "Resets" row until a request opens the window. */}
-				{resetsAt
-					? `resets ${formatFutureTime(resetsAt)}`
-					: clampedPercent === 0
-						? 'not started'
-						: 'reset unknown'}
+				{hasReset
+					? 'reset, awaiting sample'
+					: resetsAt
+						? `resets ${formatFutureTime(resetsAt)}`
+						: clampedPercent === 0
+							? 'not started'
+							: 'reset unknown'}
 			</div>
 		</div>
 	);
@@ -639,103 +649,6 @@ export const QuotaAuthNotice = memo(function QuotaAuthNotice({
 					Log in
 				</button>
 			)}
-		</div>
-	);
-});
-
-/** Per-tab status dot state. `warning` = needs attention, `pending` = unsampled. */
-export type QuotaTabStatus = 'warning' | 'pending' | 'none';
-
-/**
- * Horizontal account selector tab bar. The status dot logic is provider-specific
- * (what counts as a "warning" differs), so the panel supplies `getTabStatus`
- * and the `warningTitle` tooltip.
- */
-export const QuotaAccountTabs = memo(function QuotaAccountTabs({
-	theme,
-	accountKeys,
-	effectiveSelectedKey,
-	onSelect,
-	testIdPrefix,
-	ariaLabel,
-	warningTitle,
-	deriveShortName,
-	deriveDisplayName,
-	getTabStatus,
-	getTabTitle,
-}: {
-	theme: Theme;
-	accountKeys: string[];
-	effectiveSelectedKey: string | null;
-	onSelect: (key: string) => void;
-	testIdPrefix: string;
-	ariaLabel: string;
-	warningTitle: string;
-	deriveShortName: (key: string | undefined) => string;
-	deriveDisplayName: (key: string | undefined) => string;
-	getTabStatus: (key: string) => QuotaTabStatus;
-	/**
-	 * Hover text for a tab. Defaults to the raw account key. Providers that can
-	 * resolve the account's real identity override this so a tab named after a
-	 * config directory still reveals which login it belongs to - two tabs can
-	 * be the same account, and the tab strip has no room to say so inline.
-	 */
-	getTabTitle?: (key: string) => string;
-}) {
-	return (
-		<div
-			className="flex items-center gap-1 mb-4 border-b"
-			style={{ borderColor: theme.colors.border }}
-			role="tablist"
-			aria-label={ariaLabel}
-			data-testid={`${testIdPrefix}-account-tabs`}
-		>
-			{accountKeys.map((key) => {
-				const shortName = deriveShortName(key);
-				const isActive = effectiveSelectedKey === key;
-				const status = getTabStatus(key);
-				return (
-					<button
-						key={key}
-						type="button"
-						role="tab"
-						aria-selected={isActive}
-						onClick={() => onSelect(key)}
-						className="px-3 py-1.5 text-sm font-medium transition-colors relative -mb-px"
-						style={{
-							color: isActive ? theme.colors.accent : theme.colors.textDim,
-							borderBottom: `2px solid ${isActive ? theme.colors.accent : 'transparent'}`,
-						}}
-						title={getTabTitle ? getTabTitle(key) : key}
-						data-testid={`${testIdPrefix}-tab-${shortName}`}
-					>
-						<span className="flex items-center gap-1.5">
-							{deriveDisplayName(key)}
-							{/* Status dot:
-							    - warning = provider-specific "needs attention"
-							    - pending = no snapshot yet, hit Refresh
-							    - none    = snapshot present + healthy */}
-							{status === 'warning' ? (
-								<span
-									className="text-2xs"
-									style={{ color: theme.colors.warning ?? theme.colors.accent }}
-									title={warningTitle}
-								>
-									●
-								</span>
-							) : status === 'pending' ? (
-								<span
-									className="text-2xs"
-									style={{ color: theme.colors.textDim, opacity: 0.6 }}
-									title="No snapshot yet - hit Refresh"
-								>
-									○
-								</span>
-							) : null}
-						</span>
-					</button>
-				);
-			})}
 		</div>
 	);
 });

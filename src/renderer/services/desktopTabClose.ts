@@ -9,6 +9,7 @@ import { logger } from '../utils/logger';
 import { reopenClosedTabWithTiling } from '../utils/panelLayout';
 import { isWebDesktop } from '../utils/runtimeContext';
 import { snapshotClosedTabTranscript } from '../utils/starredSessions';
+import { persistTabPins } from './messagePins';
 import {
 	addAiTabToUnifiedHistory,
 	aiTabFocusFields,
@@ -62,6 +63,7 @@ export function requestDesktopTabCloses(
 			}
 			clearLiveDraft(tabId);
 			snapshotClosedTabTranscript(session, tab);
+			if (tab.pinnedMessages?.length) persistTabPins(session, tab);
 			if (hasActiveWizard(tab) && endWizard) {
 				await endWizard(tabId).catch((error) =>
 					logger.warn('Failed to end closed wizard', undefined, error)

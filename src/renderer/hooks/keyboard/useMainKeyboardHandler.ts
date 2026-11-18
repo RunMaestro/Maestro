@@ -14,6 +14,7 @@ import { DESTINATION_SHORTCUT_IDS, getModalActions, useModalStore } from '../../
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { reopenDesktopTabIfNeeded } from '../../services/desktopTabClose';
+import { isPromptLinksEnabled, openPromptLinks } from '../../services/promptLinks';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
@@ -41,6 +42,8 @@ import { requestSteerSend } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
+import { isMirrorShown } from '../../stores/peerMirrorStore';
+import { gateKeyForMirror } from './mirrorKeyboardGate';
 
 /**
  * Open the floating media player on whatever it should be showing.
@@ -166,6 +169,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// the store so App does not need to push a live Session object onto this ref.
 			const ctx = keyboardHandlerRef.current;
 			if (!ctx) return;
+			// A Federation mirror on screen hides the local active agent rather than replacing it:
+			// only shortcuts that never touch the active agent may run (allowlist, see the gate).
+			if (isMirrorShown() && gateKeyForMirror(e, ctx) !== 'pass') return;
 			const activeSession = selectActiveSession(useSessionStore.getState());
 
 			// Terminal focus recovery: if a key event reaches this window handler while in
@@ -548,7 +554,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				// Fire-and-forget. A failed IPC must never block a shortcut from
 				// taking effect; the daily counter is best-effort telemetry.
-				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
+				void window.maestro?.stats?.recordShortcutUsage?.(Date.now(), shortcutId);
 			};
 
 			// Cmd+F while the output find bar is already open: bring focus back to its
@@ -735,7 +741,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.setQuickActionOpen(true, 'main');
 					trackShortcut('quickAction');
 				}
-			} else if (ctx.isShortcut(e, 'clearTerminal') && activeSession?.inputMode === 'terminal') {
+			} else if (
+				ctx.isShortcut(e, 'clearTerminal') &&
+				activeSession?.inputMode === 'terminal' &&
+				!ctx.activeGroupChatId
+			) {
 				// Clears the active xterm buffer in terminal mode
 				e.preventDefault();
 				ctx.mainPanelRef?.current?.clearActiveTerminal();
@@ -878,10 +888,22 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				void editClipboardImage();
 				trackShortcut('editClipboardImage');
-			} else if (ctx.isShortcut(e, 'toggleTabStar')) {
+			} else if (ctx.isShortcut(e, 'toggleTabStar') && !ctx.activeGroupChatId) {
 				e.preventDefault();
 				ctx.toggleTabStar();
 				trackShortcut('toggleTabStar');
+			} else if (ctx.isShortcut(e, 'toggleMessagePins')) {
+				e.preventDefault();
+				// Only a visible AI transcript draws the pin panel, and only once the
+				// tab has a pin; otherwise the key is a clean no-op.
+				const ref =
+					activeSession && !ctx.activeGroupChatId ? resolveActiveTabRef(activeSession) : null;
+				const tab =
+					ref?.type === 'ai' ? activeSession?.aiTabs.find((t) => t.id === ref.id) : undefined;
+				if (tab?.pinnedMessages?.length) {
+					useUIStore.getState().toggleMessagePins(tab.id);
+					trackShortcut('toggleMessagePins');
+				}
 			} else if (ctx.isShortcut(e, 'openPromptComposer')) {
 				e.preventDefault();
 				// Only act in AI mode - the composer is AI-only. While it's already
@@ -1106,6 +1128,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				useThroughputGaugeStore.getState().toggle();
 				trackShortcut('toggleThroughputGauge');
+			} else if (ctx.isShortcut(e, 'openPromptLinks') && isPromptLinksEnabled()) {
+				e.preventDefault();
+				openPromptLinks();
+				trackShortcut('openPromptLinks');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();
@@ -1213,7 +1239,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				if (useSettingsStore.getState().autoRunDisabled) return;
 				ctx.rightPanelRef?.current?.toggleAutoRunExpanded();
 				trackShortcut('toggleAutoRunExpanded');
-			} else if (ctx.isShortcut(e, 'editLastQueuedMessage')) {
+			} else if (ctx.isShortcut(e, 'editLastQueuedMessage') && !ctx.activeGroupChatId) {
 				// Open the edit modal on the newest queued message. The picking rules
 				// and the "nothing to edit" reporting live in the service so this and
 				// the palette's "Edit Last Queued Message" entry cannot disagree.
@@ -1384,6 +1410,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					e.preventDefault();
 					ctx.mainPanelRef?.current?.focusBrowserAddressBar();
 					trackShortcut('focusBrowserAddress');
+				}
+				// Cmd+Shift+C: Design Mode in the active browser tab (Chrome's inspect chord)
+				if (
+					ctx.isTabShortcut(e, 'toggleBrowserDesignMode') &&
+					activeSession?.activeBrowserTabId &&
+					activeSession.inputMode === 'ai'
+				) {
+					e.preventDefault();
+					ctx.mainPanelRef?.current?.toggleBrowserDesignMode();
+					trackShortcut('toggleBrowserDesignMode');
 				}
 				// Cmd+Left / Cmd+Right: Browser history back/forward when a browser
 				// tab is active. We deliberately skip when focus is inside an
@@ -1820,6 +1856,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				});
 				if (ctx?.isTabShortcut(probe, 'focusBrowserAddress')) {
 					ctx.mainPanelRef?.current?.focusBrowserAddressBar();
+					return;
+				}
+				// Design Mode toggled while the page has focus. Routed directly, like
+				// Cmd+L, so the overlay guard and the re-dispatch never see it.
+				if (ctx?.isTabShortcut(probe, 'toggleBrowserDesignMode')) {
+					ctx.mainPanelRef?.current?.toggleBrowserDesignMode();
+					// Count it for keyboard mastery, as the window path does.
+					const mastery = ctx.recordShortcutUsage?.('toggleBrowserDesignMode');
+					if (mastery && mastery.newLevel !== null) {
+						ctx.onKeyboardMasteryLevelUp?.(mastery.newLevel);
+					}
 					return;
 				}
 				// Cmd+F arrives here when forwarded from the webview guest. Open the

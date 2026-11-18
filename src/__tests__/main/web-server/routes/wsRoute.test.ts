@@ -16,11 +16,15 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WebSocket } from 'ws';
+import { logger } from '../../../../main/utils/logger';
 import { WsRoute, type WsRouteCallbacks } from '../../../../main/web-server/routes/wsRoute';
+import { BroadcastService } from '../../../../main/web-server/services/broadcastService';
+import { bindPairedDeviceAuth } from '../../../../main/web-server/auth/web-login-policy';
 import { sendBounded } from '../../../../main/web-server/services/socket-send';
 import { getCliSecret } from '../../../../main/web-server/auth/cli-secret';
 import { CLI_SECRET_HEADER } from '../../../../shared/webLogin';
 import { WEB_LOGIN_COOKIE, WEB_LOGIN_WS_CLOSE_CODE } from '../../../../shared/webLogin';
+import { CALLER_RUN_PROOF_HEADER } from '../../../../shared/agentDelegation';
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -39,21 +43,31 @@ const { webLogin } = vi.hoisted(() => ({
 	webLogin: {
 		/** The `webLogin` Encore flag. */
 		enabled: false,
+		reads: 0,
 		/** Session id -> the account behind it. */
 		sessions: new Map<string, { id: string; username: string; displayName: string }>(),
+		expires: new Map<string, number>(),
+		revokedAccounts: new Set<string>(),
 	},
 }));
 
 vi.mock('../../../../main/stores/getters', () => ({
 	getSettingsStore: () => ({
-		get: () => ({ webLogin: webLogin.enabled }),
+		get: () => {
+			webLogin.reads++;
+			return { webLogin: webLogin.enabled };
+		},
 	}),
 }));
 
 vi.mock('../../../../main/web-server/auth/web-user-store', () => ({
 	getWebUserStore: () => ({
-		resolveSession: (sessionId?: string) =>
-			sessionId ? webLogin.sessions.get(sessionId) : undefined,
+		resolveSession: (sessionId?: string) => {
+			const user = sessionId ? webLogin.sessions.get(sessionId) : undefined;
+			if (!sessionId || !user || webLogin.revokedAccounts.has(user.id)) return undefined;
+			if ((webLogin.expires.get(sessionId) ?? Infinity) <= Date.now()) return undefined;
+			return user;
+		},
 	}),
 }));
 
@@ -122,10 +136,12 @@ function createMockCallbacks(): WsRouteCallbacks {
  */
 function createMockSocket() {
 	const eventHandlers: Map<string, Function[]> = new Map();
-	return {
-		readyState: WebSocket.OPEN,
+	const socket = {
+		readyState: WebSocket.OPEN as number,
 		send: vi.fn(),
-		close: vi.fn(),
+		close: vi.fn(() => {
+			socket.readyState = WebSocket.CLOSED;
+		}),
 		on: vi.fn((event: string, handler: Function) => {
 			if (!eventHandlers.has(event)) {
 				eventHandlers.set(event, []);
@@ -133,11 +149,13 @@ function createMockSocket() {
 			eventHandlers.get(event)!.push(handler);
 		}),
 		emit: (event: string, ...args: any[]) => {
+			if (event === 'close') socket.readyState = WebSocket.CLOSED;
 			const handlers = eventHandlers.get(event) || [];
 			handlers.forEach((h) => h(...args));
 		},
 		eventHandlers,
 	};
+	return socket;
 }
 
 /**
@@ -251,6 +269,26 @@ describe('WsRoute', () => {
 	});
 
 	describe('Connection Handling', () => {
+		it.each([true, false])(
+			'rejects forged run proof before sync or client registration (authenticated=%s)',
+			(cli) => {
+				const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+				const connection = createMockConnection();
+				route!.handler(
+					connection,
+					createMockRequest(undefined, {
+						headers: {
+							host: 'localhost:3000',
+							[CALLER_RUN_PROOF_HEADER]: 'a'.repeat(64),
+							...(cli ? { [CLI_SECRET_HEADER]: getCliSecret() } : {}),
+						},
+					})
+				);
+				expect(connection.close).toHaveBeenCalledWith(1008, 'CallerRunUnavailable');
+				expect(callbacks.onClientConnect).not.toHaveBeenCalled();
+				expect(connection.send).not.toHaveBeenCalled();
+			}
+		);
 		it('should generate unique client IDs', () => {
 			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
 
@@ -433,6 +471,151 @@ describe('WsRoute', () => {
 	});
 
 	describe('Message Handling', () => {
+		it('answers a tab intent before draining a burst of background git reads', async () => {
+			const connection = createMockConnection();
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, createMockRequest());
+			for (let i = 0; i < 20; i++) {
+				connection.emit(
+					'message',
+					Buffer.from(
+						JSON.stringify({
+							type: 'bridge.invoke',
+							channel: 'git:status',
+							requestId: i,
+							args: [`/repo-${i}`],
+						})
+					)
+				);
+			}
+			connection.emit(
+				'message',
+				Buffer.from(
+					JSON.stringify({
+						type: 'bridge.invoke',
+						channel: 'web:requestNewTab',
+						requestId: 21,
+						args: ['session-1', true],
+					})
+				)
+			);
+			// Auth and dispatch of the background reads must yield to interaction.
+			expect(
+				vi.mocked(callbacks.handleMessage).mock.calls.map(([, message]) => (message as any).channel)
+			).toEqual(['web:requestNewTab']);
+			await vi.waitFor(() => expect(callbacks.handleMessage).toHaveBeenCalledTimes(21));
+		});
+
+		it('rechecks authorization when a queued git read runs and drops disconnected reads', async () => {
+			const connection = createMockConnection();
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, createMockRequest());
+			connection.emit(
+				'message',
+				Buffer.from(
+					JSON.stringify({
+						type: 'bridge.invoke',
+						channel: 'git:branch',
+						requestId: 1,
+						args: ['/repo'],
+					})
+				)
+			);
+			webLogin.enabled = true; // A fresh gate change before the scheduled dispatch.
+			await vi.waitFor(() =>
+				expect(connection.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required')
+			);
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+			webLogin.enabled = false;
+			const closed = createMockConnection();
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(closed, createMockRequest());
+			closed.emit(
+				'message',
+				Buffer.from(
+					JSON.stringify({
+						type: 'bridge.invoke',
+						channel: 'git:info',
+						requestId: 2,
+						args: ['/repo'],
+					})
+				)
+			);
+			closed.emit('close', 1000);
+			await new Promise<void>((resolve) => setImmediate(() => setImmediate(resolve)));
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+		});
+
+		it('fails closed and reports an authorization exception during deferred dispatch', async () => {
+			const connection = createMockConnection();
+			const request = createMockRequest();
+			let broken = false;
+			bindPairedDeviceAuth(request, () => {
+				if (broken) throw new Error('auth backend unavailable');
+				return { id: 'device', username: 'device', displayName: 'Device' };
+			});
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, request);
+			connection.emit(
+				'message',
+				Buffer.from(
+					JSON.stringify({
+						type: 'bridge.invoke',
+						channel: 'git:status',
+						requestId: 1,
+						args: ['/repo'],
+					})
+				)
+			);
+			broken = true;
+			await vi.waitFor(() =>
+				expect(connection.close).toHaveBeenCalledWith(1011, 'Background dispatch failed')
+			);
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['immediate message', JSON.stringify({ type: 'ping' })],
+			['malformed JSON', 'not valid json'],
+		])('contains a throwing authorizer in the %s fallback', (_label, message) => {
+			const connection = createMockConnection();
+			const request = createMockRequest();
+			const error = new Error('auth backend unavailable');
+			let broken = false;
+			bindPairedDeviceAuth(request, () => {
+				if (broken) throw error;
+				return { id: 'device', username: 'device', displayName: 'Device' };
+			});
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, request);
+			connection.send.mockClear();
+			vi.mocked(logger.error).mockClear();
+			broken = true;
+			expect(() => connection.emit('message', message)).not.toThrow();
+			expect(logger.error).toHaveBeenCalledWith(
+				'Client authorization failed',
+				'WebServer:WS',
+				error
+			);
+			expect(connection.close).toHaveBeenCalledWith(1011, 'Authorization failed');
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+			expect(connection.send).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['immediate message', JSON.stringify({ type: 'ping' })],
+			['malformed JSON', 'not valid json'],
+		])('keeps the unauthorized return for %s', (_label, message) => {
+			const connection = createMockConnection();
+			const request = createMockRequest();
+			let revoked = false;
+			bindPairedDeviceAuth(request, () =>
+				revoked ? undefined : { id: 'device', username: 'device', displayName: 'Device' }
+			);
+			mockFastify.getRoute('GET', `/${securityToken}/ws`)!.handler(connection, request);
+			connection.send.mockClear();
+			revoked = true;
+			expect(() => connection.emit('message', message)).not.toThrow();
+			expect(connection.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+			expect(callbacks.handleMessage).not.toHaveBeenCalled();
+			expect(connection.send).not.toHaveBeenCalled();
+		});
+
 		it('should delegate messages to handleMessage callback', () => {
 			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
 			const connection = createMockConnection();
@@ -797,5 +980,164 @@ describe('WsRoute Web Login gate', () => {
 		expect(connection.close).not.toHaveBeenCalled();
 		expect(callbacks.onClientConnect).toHaveBeenCalledTimes(1);
 		expect((callbacks.onClientConnect as any).mock.calls[0][0].cliAuthenticated).toBe(false);
+	});
+});
+
+describe('broadcast authorization freshness', () => {
+	it('denies only expired and revoked accounts on the next delivery', async () => {
+		webLogin.enabled = true;
+		webLogin.sessions.clear();
+		webLogin.expires.clear();
+		webLogin.revokedAccounts.clear();
+		for (const id of ['valid', 'expired', 'revoked']) {
+			webLogin.sessions.set(id, { id, username: id, displayName: id });
+		}
+		const service = new BroadcastService();
+		const clients = new Map();
+		service.setGetWebClientsCallback(() => clients);
+		const route = new WsRoute('token');
+		const callbacks = createMockCallbacks();
+		vi.mocked(callbacks.onClientConnect).mockImplementation((client) =>
+			clients.set(client.id, client)
+		);
+		route.setCallbacks(callbacks);
+		const fastify = createMockFastify();
+		route.registerRoute(fastify as any);
+		const handler = fastify.getRoute('GET', '/token/ws')!.handler;
+		const sockets = ['valid', 'expired', 'revoked'].map((id) => {
+			const socket = createMockConnection();
+			handler(
+				socket,
+				createMockRequest(undefined, {
+					headers: { host: 'localhost', cookie: `${WEB_LOGIN_COOKIE}=${id}` },
+				})
+			);
+			socket.send.mockClear();
+			return socket;
+		});
+		service.broadcastToAll({ type: 'before' });
+		webLogin.expires.set('expired', Date.now());
+		webLogin.revokedAccounts.add('revoked');
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		service.broadcastToAll({ type: 'after' });
+		expect(sockets.map((socket) => socket.send.mock.calls.length)).toEqual([2, 1, 1]);
+		for (const socket of sockets.slice(1))
+			expect(socket.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+		for (const socket of sockets) socket.emit('close');
+		webLogin.expires.clear();
+		webLogin.revokedAccounts.clear();
+	});
+	it.each([1, 5, 10])(
+		'reads the global flag once for %i real route clients per delivery',
+		(count) => {
+			webLogin.enabled = true;
+			webLogin.sessions.clear();
+			webLogin.sessions.set('valid', { id: 'u', username: 'u', displayName: 'U' });
+			const service = new BroadcastService();
+			const clients = new Map();
+			service.setGetWebClientsCallback(() => clients);
+			const route = new WsRoute('token');
+			const callbacks = createMockCallbacks();
+			vi.mocked(callbacks.onClientConnect).mockImplementation((client) =>
+				clients.set(client.id, client)
+			);
+			route.setCallbacks(callbacks);
+			const fastify = createMockFastify();
+			route.registerRoute(fastify as any);
+			const handler = fastify.getRoute('GET', '/token/ws')!.handler;
+			const sockets = Array.from({ length: count }, () => {
+				const socket = createMockConnection();
+				handler(
+					socket,
+					createMockRequest(undefined, {
+						headers: { host: 'localhost', cookie: `${WEB_LOGIN_COOKIE}=valid` },
+					})
+				);
+				socket.send.mockClear();
+				return socket;
+			});
+			webLogin.reads = 0;
+			service.broadcastToAll({ type: 'test' });
+			expect(webLogin.reads).toBe(1);
+			for (const socket of sockets) expect(socket.send).toHaveBeenCalledTimes(1);
+		}
+	);
+
+	it('rechecks sessions, device and host admission, CLI and login toggles on later deliveries', async () => {
+		webLogin.enabled = true;
+		webLogin.sessions.clear();
+		const user = { id: 'u', username: 'u', displayName: 'U' };
+		webLogin.sessions.set('valid', user);
+		let deviceValid = true;
+		let hostValid = true;
+		const clients = new Map();
+		const service = new BroadcastService();
+		service.setGetWebClientsCallback(() => clients);
+		const route = new WsRoute('token');
+		const callbacks = createMockCallbacks();
+		vi.mocked(callbacks.onClientConnect).mockImplementation((client) =>
+			clients.set(client.id, client)
+		);
+		route.setCallbacks(callbacks);
+		const fastify = createMockFastify();
+		route.registerRoute(
+			fastify as any,
+			'token',
+			(request) => request.headers.host !== 'revocable' || hostValid
+		);
+		const handler = fastify.getRoute('GET', '/token/ws')!.handler;
+		const connect = (request: any) => {
+			const socket = createMockConnection();
+			handler(socket, request);
+			socket.send.mockClear();
+			return socket;
+		};
+		const session = connect(
+			createMockRequest(undefined, {
+				headers: { host: 'localhost', cookie: `${WEB_LOGIN_COOKIE}=valid` },
+			})
+		);
+		const deviceRequest = createMockRequest();
+		bindPairedDeviceAuth(deviceRequest, () => (deviceValid ? user : undefined));
+		const device = connect(deviceRequest);
+		const host = connect(
+			createMockRequest(undefined, {
+				headers: { host: 'revocable', cookie: `${WEB_LOGIN_COOKIE}=valid` },
+			})
+		);
+		const cli = connect(
+			createMockRequest(undefined, {
+				headers: { host: 'localhost', [CLI_SECRET_HEADER]: getCliSecret() },
+			})
+		);
+		service.broadcastToAll({ type: 'before' });
+		for (const socket of [session, device, host, cli]) expect(socket.send).toHaveBeenCalledTimes(1);
+		webLogin.sessions.delete('valid');
+		deviceValid = false;
+		hostValid = false;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		service.broadcastToAll({ type: 'after' });
+		for (const socket of [session, device, host]) expect(socket.send).toHaveBeenCalledTimes(1);
+		expect(cli.send).toHaveBeenCalledTimes(2);
+		expect(session.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+		expect(device.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+		expect(host.close).toHaveBeenCalledWith(4403, 'Host admission expired or revoked');
+		for (const socket of [session, device, host]) expect(socket.readyState).toBe(WebSocket.CLOSED);
+		webLogin.enabled = false;
+		const guest = connect(createMockRequest());
+		expect(guest.readyState).toBe(WebSocket.OPEN);
+		service.broadcastToAll({ type: 'gate-off' });
+		expect(guest.send).toHaveBeenCalledTimes(1);
+		expect(guest.send).toHaveBeenCalledWith(expect.stringContaining('"type":"gate-off"'));
+		for (const socket of [session, device, host]) expect(socket.send).toHaveBeenCalledTimes(1);
+		expect(cli.send).toHaveBeenCalledTimes(3);
+		webLogin.enabled = true;
+		service.broadcastToAll({ type: 'gate-on' });
+		expect(guest.send).toHaveBeenCalledTimes(1);
+		expect(guest.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+		expect(guest.readyState).toBe(WebSocket.CLOSED);
+		for (const socket of [session, device, host]) expect(socket.send).toHaveBeenCalledTimes(1);
+		expect(cli.send).toHaveBeenCalledTimes(4);
+		for (const socket of [session, device, host, cli, guest]) socket.emit('close');
 	});
 });

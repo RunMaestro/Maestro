@@ -71,6 +71,7 @@ export function editorIsAcceptingInput(screen: string): boolean {
 // gets an Enter.
 const DIALOG_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
 	[/trust\s*this\s*folder|Yes,?\s*I\s*trust/i, 'a workspace-trust prompt'],
+	[/Adding\s*a\s*new\s*directory|Yes,?\s*add\s*it/i, 'an add-directory prompt'],
 	[/Bypass\s*Permissions\s*mode/i, 'the bypass-permissions gate'],
 	[/Do you want to/i, 'a permission prompt'],
 	[/Would you like to proceed|Ready to code\?/i, 'a plan-approval prompt'],

@@ -2,6 +2,9 @@ import { ChevronDown } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import type { StatsTimeRange, WakatimeSettingsState } from '../types';
 import { WakatimeSettings } from './WakatimeSettings';
+// The dashboard's own range labels, so the default offered here reads exactly
+// like the dropdown it pre-selects.
+import { TIME_RANGE_OPTIONS } from '../../../../UsageDashboard/UsageDashboardModal/constants';
 
 interface UsageStatsSectionProps {
 	theme: Theme;
@@ -48,12 +51,11 @@ export function UsageStatsSection({
 						}}
 						aria-label="Select default lookback window"
 					>
-						<option value="day">Today</option>
-						<option value="week">This Week</option>
-						<option value="month">This Month</option>
-						<option value="quarter">This Quarter</option>
-						<option value="year">This Year</option>
-						<option value="all">All Time</option>
+						{TIME_RANGE_OPTIONS.map((option) => (
+							<option key={option.value} value={option.value}>
+								{option.label}
+							</option>
+						))}
 					</select>
 					<ChevronDown
 						className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none"

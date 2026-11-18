@@ -54,6 +54,11 @@ vi.mock('../../../../main/stores/getters', () => ({
 	getSshRemoteById: vi.fn(() => null),
 }));
 
+const mockNoteSshExit = vi.fn();
+vi.mock('../../../../main/ssh-reachability', () => ({
+	noteSshExit: (...args: unknown[]) => mockNoteSshExit(...args),
+}));
+
 // For SSH-remote Copilot sessions the events file is read over SSH via
 // remote-fs. Mock the two read paths the shutdown reconciliation uses.
 // The Copilot shutdown wait is the one suspension point inside handleExit, so
@@ -1227,6 +1232,194 @@ describe('ExitHandler', () => {
 		});
 	});
 
+	describe('provider CLI that could not be started', () => {
+		function collectErrors(): AgentError[] {
+			const errors: AgentError[] = [];
+			emitter.on('agent-error', (_sid: string, err: AgentError) => errors.push(err));
+			return errors;
+		}
+
+		it('reports a spawn ENOENT as agent_not_installed, not a crash', () => {
+			processes.set('test-session', createMockProcess({ toolType: 'codex' }));
+			const errors = collectErrors();
+
+			const error = Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT' });
+			exitHandler.handleError('test-session', error);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].type).toBe('agent_not_installed');
+			expect(errors[0].message).toMatch(/^Codex CLI not installed/);
+			expect(errors[0].message).toContain('npm install -g @openai/codex');
+			expect(errors[0].agentId).toBe('codex');
+		});
+
+		it('keeps other spawn errors as agent_crashed', () => {
+			processes.set('test-session', createMockProcess({ toolType: 'codex' }));
+			const errors = collectErrors();
+
+			const error = Object.assign(new Error('spawn codex EACCES'), { code: 'EACCES' });
+			exitHandler.handleError('test-session', error);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].type).toBe('agent_crashed');
+		});
+
+		it('reports exit 127 as agent_not_installed ahead of the parser fallback', async () => {
+			const detectErrorFromExit = vi.fn(() => ({
+				type: 'agent_crashed' as const,
+				message: 'Agent exited with code 127',
+				recoverable: true,
+				agentId: 'codex',
+				timestamp: Date.now(),
+			}));
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					command: 'codex',
+					stderrBuffer: 'zsh: command not found: codex',
+					outputParser: createMockOutputParser({ detectErrorFromExit }),
+				})
+			);
+			const errors = collectErrors();
+
+			await exitHandler.handleExit('test-session', 127);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].type).toBe('agent_not_installed');
+			expect(detectErrorFromExit).not.toHaveBeenCalled();
+		});
+
+		it('raises no not-installed error for a turn the user stopped', async () => {
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					command: 'codex',
+					stderrBuffer: 'zsh: command not found: codex',
+					interrupted: true,
+				})
+			);
+			const errors = collectErrors();
+
+			await exitHandler.handleExit('test-session', 127);
+
+			expect(errors.some((e) => e.type === 'agent_not_installed')).toBe(false);
+		});
+
+		it('emits the not-installed error after flushing buffered output', async () => {
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					command: 'codex',
+					stderrBuffer: 'zsh: command not found: codex',
+				})
+			);
+			const order: string[] = [];
+			vi.spyOn(bufferManager, 'flushDataBuffer').mockImplementation(() => {
+				order.push('flush');
+			});
+			emitter.on('agent-error', () => order.push('error'));
+
+			await exitHandler.handleExit('test-session', 127);
+
+			expect(order.indexOf('flush')).toBeGreaterThanOrEqual(0);
+			expect(order.indexOf('flush')).toBeLessThan(order.indexOf('error'));
+		});
+
+		it('does not blame the provider when a child command is missing', async () => {
+			const detectErrorFromExit = vi.fn(() => null);
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					command: 'codex',
+					stderrBuffer: 'sh: 1: git: not found',
+					outputParser: createMockOutputParser({ detectErrorFromExit }),
+				})
+			);
+			const errors = collectErrors();
+
+			await exitHandler.handleExit('test-session', 127);
+
+			expect(errors.some((e) => e.type === 'agent_not_installed')).toBe(false);
+		});
+
+		it('reports the Windows "not recognized" wording as agent_not_installed', async () => {
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					command: 'codex.cmd',
+					stderrBuffer:
+						"'codex' is not recognized as an internal or external command, operable program or batch file.",
+				})
+			);
+			const errors = collectErrors();
+
+			await exitHandler.handleExit('test-session', 9009);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].type).toBe('agent_not_installed');
+			expect(errors[0].message).toContain('npm install -g @openai/codex');
+		});
+
+		it('names the missing runtime when the shebang interpreter is not on PATH', async () => {
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					command: 'codex',
+					stderrBuffer: 'env: node: No such file or directory',
+				})
+			);
+			const errors = collectErrors();
+
+			await exitHandler.handleExit('test-session', 127);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].type).toBe('agent_not_installed');
+			expect(errors[0].message).toMatch(/Node\.js/);
+		});
+
+		it('leaves an SSH remote to the SSH error bank', async () => {
+			vi.mocked(matchSshErrorPattern).mockReturnValue(null);
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					sshRemoteId: 'remote-1',
+					stderrBuffer: 'bash: codex: command not found',
+				})
+			);
+			const errors = collectErrors();
+
+			await exitHandler.handleExit('test-session', 127);
+
+			expect(errors.some((e) => e.type === 'agent_not_installed')).toBe(false);
+			vi.mocked(matchSshErrorPattern).mockReset();
+		});
+
+		it('does not classify an ordinary non-zero exit', async () => {
+			const detectErrorFromExit = vi.fn(() => null);
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					stderrBuffer: 'Error: something else went wrong',
+					outputParser: createMockOutputParser({ detectErrorFromExit }),
+				})
+			);
+			const errors = collectErrors();
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(errors).toHaveLength(0);
+			expect(detectErrorFromExit).toHaveBeenCalled();
+		});
+	});
+
 	describe('SSH error pattern false-positive prevention', () => {
 		it('should only check stderr for SSH patterns, not stdout', async () => {
 			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
@@ -1298,6 +1491,174 @@ describe('ExitHandler', () => {
 			expect(errors).toHaveLength(1);
 
 			mockedMatchSsh.mockReset();
+		});
+	});
+
+	describe('SSH connection failure with no matching pattern (exit 255)', () => {
+		const tunnelStderr =
+			'tailcat Ping: context deadline exceeded\nConnection closed by UNKNOWN port 65535\n';
+
+		it('raises a network_error naming the remote instead of ending the turn silently', async () => {
+			vi.mocked(matchSshErrorPattern).mockReturnValue(null);
+			vi.mocked(getSshRemoteById).mockReturnValue({
+				id: 'remote-1',
+				name: 'pedtome',
+				host: 'pedtome-tailcat',
+			} as ReturnType<typeof getSshRemoteById>);
+
+			processes.set(
+				'test-session',
+				createMockProcess({ sshRemoteId: 'remote-1', stdoutBuffer: '', stderrBuffer: tunnelStderr })
+			);
+			const errors: Array<[string, Record<string, unknown>]> = [];
+			emitter.on('agent-error', (sid: string, err: Record<string, unknown>) =>
+				errors.push([sid, err])
+			);
+
+			await exitHandler.handleExit('test-session', 255);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0][1]).toMatchObject({
+				type: 'network_error',
+				recoverable: true,
+				sshRemoteId: 'remote-1',
+				message:
+					'Unable to connect to "pedtome" over SSH. tailcat Ping: context deadline exceeded; Connection closed by UNKNOWN port 65535',
+			});
+			expect(mockNoteSshExit).toHaveBeenCalledWith('remote-1', 255);
+
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined as never);
+			vi.mocked(matchSshErrorPattern).mockReset();
+		});
+
+		it("routes the parser's generic exit-code crash to the SSH outage error", async () => {
+			// Every provider parser falls back to agent_crashed "Agent exited with
+			// code 255" for a bare non-zero exit. On an SSH run that fallback used to
+			// win, so the outage dialog and the availability retry never fired.
+			vi.mocked(matchSshErrorPattern).mockReturnValue(null);
+			vi.mocked(getSshRemoteById).mockReturnValue({
+				id: 'remote-1',
+				name: 'pedtome',
+				host: 'pedtome-tailcat',
+			} as ReturnType<typeof getSshRemoteById>);
+			const mockParser = createMockOutputParser({
+				detectErrorFromExit: vi.fn(() => ({
+					type: 'agent_crashed' as const,
+					message: 'Agent exited with code 255',
+					recoverable: true,
+					agentId: 'claude-code',
+					timestamp: Date.now(),
+				})),
+			});
+			processes.set(
+				'test-session',
+				createMockProcess({
+					sshRemoteId: 'remote-1',
+					outputParser: mockParser,
+					stdoutBuffer: '',
+					stderrBuffer: 'kex_exchange_identification: Connection closed by remote host\n',
+				})
+			);
+			const errors: Array<[string, Record<string, unknown>]> = [];
+			emitter.on('agent-error', (sid: string, err: Record<string, unknown>) =>
+				errors.push([sid, err])
+			);
+
+			await exitHandler.handleExit('test-session', 255);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0][1]).toMatchObject({
+				type: 'network_error',
+				recoverable: true,
+				sshRemoteId: 'remote-1',
+				message:
+					'Unable to connect to "pedtome" over SSH. kex_exchange_identification: Connection closed by remote host',
+			});
+
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined as never);
+			vi.mocked(matchSshErrorPattern).mockReset();
+		});
+
+		it("keeps the parser's crash for a local run that exits 255", async () => {
+			const mockParser = createMockOutputParser({
+				detectErrorFromExit: vi.fn(() => ({
+					type: 'agent_crashed' as const,
+					message: 'Agent exited with code 255',
+					recoverable: true,
+					agentId: 'claude-code',
+					timestamp: Date.now(),
+				})),
+			});
+			processes.set(
+				'test-session',
+				createMockProcess({ outputParser: mockParser, stdoutBuffer: '', stderrBuffer: '' })
+			);
+			const errors: Array<[string, Record<string, unknown>]> = [];
+			emitter.on('agent-error', (sid: string, err: Record<string, unknown>) =>
+				errors.push([sid, err])
+			);
+
+			await exitHandler.handleExit('test-session', 255);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0][1]).toMatchObject({ type: 'agent_crashed' });
+		});
+
+		it("keeps the parser's crash for an SSH run that exits non-255", async () => {
+			// ssh passes the remote command's own exit status through, so only 255
+			// says the connection failed. Anything else is the agent's own crash.
+			vi.mocked(matchSshErrorPattern).mockReturnValue(null);
+			const mockParser = createMockOutputParser({
+				detectErrorFromExit: vi.fn(() => ({
+					type: 'agent_crashed' as const,
+					message: 'Agent exited with code 1',
+					recoverable: true,
+					agentId: 'claude-code',
+					timestamp: Date.now(),
+				})),
+			});
+			processes.set(
+				'test-session',
+				createMockProcess({
+					sshRemoteId: 'remote-1',
+					outputParser: mockParser,
+					stdoutBuffer: '',
+					stderrBuffer: '',
+				})
+			);
+			const errors: Array<[string, Record<string, unknown>]> = [];
+			emitter.on('agent-error', (sid: string, err: Record<string, unknown>) =>
+				errors.push([sid, err])
+			);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0][1]).toMatchObject({ type: 'agent_crashed', sshRemoteId: 'remote-1' });
+
+			vi.mocked(matchSshErrorPattern).mockReset();
+		});
+
+		it('stays quiet, and tells the tracker nothing, when the user stopped the turn', async () => {
+			vi.mocked(matchSshErrorPattern).mockReturnValue(null);
+			mockNoteSshExit.mockClear();
+			processes.set(
+				'test-session',
+				createMockProcess({
+					sshRemoteId: 'remote-1',
+					stdoutBuffer: '',
+					stderrBuffer: 'Killed by signal 15.',
+					interrupted: true,
+				})
+			);
+			const errors: unknown[] = [];
+			emitter.on('agent-error', (...args: unknown[]) => errors.push(args));
+
+			await exitHandler.handleExit('test-session', 255);
+
+			expect(errors).toHaveLength(0);
+			expect(mockNoteSshExit).not.toHaveBeenCalled();
+			vi.mocked(matchSshErrorPattern).mockReset();
 		});
 	});
 
@@ -1611,6 +1972,28 @@ describe('ExitHandler', () => {
 				});
 			}
 		);
+
+		it('preserves full redacted native output without serializing it into the exit payload', async () => {
+			const answer =
+				'BEGIN-FULL\npassword=private-output-secret\n' + 'x'.repeat(20000) + 'END-FULL';
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				resultEmitted: true,
+				streamedText: answer,
+				outputParser: createMockOutputParser(),
+			});
+			processes.set('worker-ai-tab', proc);
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+			await exitHandler.handleExit('worker-ai-tab', 0);
+			const settlement = onExit.mock.calls[0][3];
+			expect(settlement.nativeAnswer).toContain('BEGIN-FULL');
+			expect(settlement.nativeAnswer).toContain('END-FULL');
+			expect(settlement.nativeAnswer).not.toContain('private-output-secret');
+			expect(settlement.answerTail).toHaveLength(4000);
+			expect(JSON.stringify(settlement)).not.toContain('BEGIN-FULL');
+			expect(Object.keys(settlement)).not.toContain('nativeAnswer');
+		});
 
 		it('redacts a secret whose label falls just before the stored tail boundary', async () => {
 			const secret = 'private-boundary-password';

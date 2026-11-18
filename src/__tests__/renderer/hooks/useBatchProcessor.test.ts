@@ -1855,6 +1855,7 @@ describe('useBatchProcessor hook', () => {
 				'develop',
 				expect.any(String),
 				expect.any(String),
+				undefined,
 				undefined
 			);
 		});
@@ -4404,6 +4405,7 @@ describe('useBatchProcessor hook', () => {
 				'develop',
 				expect.any(String),
 				expect.any(String),
+				undefined,
 				undefined
 			);
 		});
@@ -5079,6 +5081,7 @@ describe('useBatchProcessor hook', () => {
 				'develop', // The detected default branch
 				expect.any(String),
 				expect.any(String),
+				undefined,
 				undefined
 			);
 		});
@@ -5139,6 +5142,7 @@ describe('useBatchProcessor hook', () => {
 				'main', // Fallback
 				expect.any(String),
 				expect.any(String),
+				undefined,
 				undefined
 			);
 		});
@@ -5566,7 +5570,8 @@ describe('useBatchProcessor hook', () => {
 				'main',
 				expect.any(String),
 				expect.any(String),
-				'/usr/local/bin/gh'
+				'/usr/local/bin/gh',
+				undefined
 			);
 		});
 	});
@@ -5941,7 +5946,8 @@ describe('useBatchProcessor hook', () => {
 				'main', // prTargetBranch
 				expect.any(String), // PR title
 				expect.any(String), // PR body
-				undefined // ghPath
+				undefined, // ghPath
+				undefined // sshRemoteId
 			);
 
 			// Verify onPRResult callback was called
@@ -5951,6 +5957,81 @@ describe('useBatchProcessor hook', () => {
 					success: true,
 					prUrl: 'https://github.com/test/repo/pull/42',
 				})
+			);
+		});
+		it('should create the PR on the SSH remote for a worktree agent on that remote', async () => {
+			const parentSession = createMockSession({
+				id: 'parent-session-id',
+				name: 'Parent Agent',
+				cwd: '/home/dev/repo',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
+			});
+			const worktreeSession = createMockSession({
+				id: 'worktree-session-id',
+				name: 'Worktree Agent',
+				cwd: '/home/dev/worktrees/feature-branch',
+				parentSessionId: 'parent-session-id',
+				worktreeBranch: 'feature-branch',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
+			});
+			const sessions = [parentSession, worktreeSession];
+			const groups = [createMockGroup()];
+
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async () => {
+				callCount++;
+				if (callCount <= 3) return { success: true, content: '- [ ] Task' };
+				return { success: true, content: '- [x] Task' };
+			});
+			mockCreatePR.mockResolvedValue({
+				success: true,
+				prUrl: 'https://github.com/test/repo/pull/43',
+			});
+
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+					onPRResult: mockOnPRResult,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'worktree-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+						worktreeTarget: {
+							mode: 'create-new',
+							newBranchName: 'feature-branch',
+							baseBranch: 'main',
+							createPROnCompletion: true,
+						},
+						worktree: {
+							enabled: true,
+							path: '/home/dev/worktrees/feature-branch',
+							branchName: 'feature-branch',
+							createPROnCompletion: true,
+							prTargetBranch: 'main',
+						},
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockCreatePR).toHaveBeenCalledWith(
+				'/home/dev/worktrees/feature-branch',
+				'main',
+				expect.any(String),
+				expect.any(String),
+				undefined, // ghPath
+				'ssh-remote-123' // sshRemoteId
 			);
 		});
 
@@ -6487,10 +6568,14 @@ describe('useBatchProcessor hook', () => {
 			});
 		};
 
+		// Every task spawn carries its run's id so a dispatch it makes reports back.
+		const AUTO_RUN_ID = expect.stringMatching(/^autorun-/);
+
 		it('forwards config.model and config.effort to onSpawnAgent', async () => {
 			await startRun({ model: 'opus', effort: 'high' });
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				autoRunId: AUTO_RUN_ID,
 				modelOverride: 'opus',
 				effortOverride: 'high',
 			});
@@ -6500,6 +6585,7 @@ describe('useBatchProcessor hook', () => {
 			await startRun({ model: 'opus' });
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				autoRunId: AUTO_RUN_ID,
 				modelOverride: 'opus',
 			});
 		});
@@ -6508,6 +6594,7 @@ describe('useBatchProcessor hook', () => {
 			await startRun({ model: 'sonnet' }, '<!-- MAESTRO:MODEL tier="high" -->\n\n- [ ] Task');
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				autoRunId: AUTO_RUN_ID,
 				modelOverride: 'opus',
 				effortOverride: undefined,
 			});
@@ -6520,6 +6607,7 @@ describe('useBatchProcessor hook', () => {
 			);
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				autoRunId: AUTO_RUN_ID,
 				modelOverride: 'sonnet',
 				effortOverride: undefined,
 			});
@@ -6532,6 +6620,7 @@ describe('useBatchProcessor hook', () => {
 			);
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				autoRunId: AUTO_RUN_ID,
 				modelOverride: undefined,
 				effortOverride: undefined,
 			});
@@ -6545,6 +6634,7 @@ describe('useBatchProcessor hook', () => {
 			// present but empty on both axes. That is what "no override" looks like:
 			// the spawn falls through to the agent's own configured values.
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				autoRunId: AUTO_RUN_ID,
 				modelOverride: undefined,
 				effortOverride: undefined,
 			});

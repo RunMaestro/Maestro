@@ -1,6 +1,7 @@
 import type { RefObject } from 'react';
 import type { MarketplacePlaybook } from '../../../../shared/marketplace-types';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
+import { isImeComposing } from '../../../utils/ime';
 
 export interface UseMarketplaceListKeyboardNavParams {
 	isOpen: boolean;
@@ -70,6 +71,7 @@ export function useMarketplaceListKeyboardNav({
 					setSelectedTileIndex((index) => Math.max(0, index - gridColumns));
 					break;
 				case 'Enter':
+					if (isImeComposing(e)) return;
 					e.preventDefault();
 					if (orderedPlaybooks[selectedTileIndex]) {
 						onSelectPlaybook(orderedPlaybooks[selectedTileIndex]);

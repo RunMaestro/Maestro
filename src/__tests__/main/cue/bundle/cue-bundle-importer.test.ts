@@ -36,6 +36,12 @@ import { loadCueConfigDetailed } from '../../../../main/cue/cue-yaml-loader';
 import { loadPipelineLayout } from '../../../../main/cue/pipeline-layout-store';
 import { readSessions } from '../../../../cli/services/storage';
 import { FIXTURE_CUE_PATH, writeCueBundle } from '../../../helpers/cueBundleFixture';
+import {
+	CUE_BUNDLE_GROK_RESOURCES_FORMAT,
+	CUE_BUNDLE_GROK_RESOURCES_VERSION,
+	CUE_BUNDLE_GROK_SCHEMA_SOURCE,
+	type CueBundleManifest,
+} from '../../../../shared/cue-bundle-types';
 
 const RUNNING = '0.18.6-RC';
 
@@ -562,6 +568,138 @@ describe('importCueBundle against a fixture bundle', () => {
 			const hook = plan.secrets.find((x) => x.name === 'HOOK_SECRET');
 			expect(hook).toMatchObject({ set: false });
 			expect(hook?.problem).toContain('is empty');
+		});
+	});
+
+	describe('Grok resources (hand-built bundle)', () => {
+		type Fixture = NonNullable<Parameters<typeof writeCueBundle>[1]>;
+		type GrokBlock = NonNullable<CueBundleManifest['workspaces'][number]['grok']>;
+
+		/**
+		 * A Grok agent whose settings omit env.required, so its MCP secret
+		 * names can only come from the manifest's Grok block.
+		 */
+		function grokBundle(
+			edit: { files?: (f: Map<string, string>) => void; grok?: (g: GrokBlock) => void } = {}
+		): Fixture {
+			return {
+				files: (files) => {
+					files.set(
+						'agents/agent-g.json',
+						JSON.stringify({ id: 'agent-g', name: 'Gee', toolType: 'grok', workspace: 'proj' })
+					);
+					files.set('workspaces/proj/AGENTS.md', '# Agents\n');
+					files.set('workspaces/proj/.grok/skills/on/SKILL.md', 'on\n');
+					files.set('workspaces/proj/.grok/skills/off/SKILL.md', 'off\n');
+					files.set('workspaces/proj/docs/hooks/h.md', 'hook\n');
+					edit.files?.(files);
+				},
+				manifest: (manifest) => {
+					manifest.requirements.secrets.push('GROK_MCP_TOKEN');
+					manifest.agents.push({
+						id: 'agent-g',
+						name: 'Gee',
+						toolType: 'grok',
+						workspace: 'proj',
+						settings: 'agents/agent-g.json',
+					});
+					const grok: GrokBlock = {
+						format: CUE_BUNDLE_GROK_RESOURCES_FORMAT,
+						version: CUE_BUNDLE_GROK_RESOURCES_VERSION,
+						schemaSource: CUE_BUNDLE_GROK_SCHEMA_SOURCE,
+						verification: 'unverified',
+						resources: [
+							{ kind: 'instruction', root: 'AGENTS.md', path: 'AGENTS.md', trust: 'enabled' },
+							{ kind: 'skill', root: '.grok/skills', path: '.grok/skills/on', trust: 'enabled' },
+							{ kind: 'skill', root: '.grok/skills', path: '.grok/skills/off', trust: 'disabled' },
+							{
+								kind: 'hook' as 'skill',
+								root: 'docs/hooks',
+								path: 'docs/hooks/h.md',
+								trust: 'enabled',
+							},
+						],
+						mcpServers: [{ name: 'api', enabled: false, secrets: ['GROK_MCP_TOKEN'] }],
+						unsupported: [
+							{ path: '.grok/rules', code: 'grok-rules-unsupported', reason: 'not pinned' },
+						],
+					};
+					edit.grok?.(grok);
+					manifest.workspaces[0].grok = grok;
+				},
+			};
+		}
+
+		it('hands the Grok MCP secret names to the Grok agent alone and reports who reads them', async () => {
+			const plan = await planCueBundleImport(options(grokBundle()));
+			expect(plan.secrets.find((s) => s.name === 'GROK_MCP_TOKEN')?.usedBy).toEqual([
+				// The MCP server reads it; the agent record carries the name (below).
+				'mcp:proj',
+			]);
+			expect(plan.secrets.find((s) => s.name === 'API_KEY')?.usedBy).toEqual(['agent:Alpha']);
+
+			await importCueBundle(options(grokBundle()));
+			const sessions = readSessionsStoreFile(dataDir).sessions;
+			expect(sessions.find((s) => s.id === 'agent-g')!.requiredSecrets).toEqual(['GROK_MCP_TOKEN']);
+			expect(sessions.find((s) => s.id === 'agent-a')!.requiredSecrets).toEqual(['API_KEY']);
+		});
+
+		it('writes enabled resources, holds back disabled and unknown ones, and says why', async () => {
+			const result = await importCueBundle(options(grokBundle()));
+			expect(fs.readFileSync(path.join(projRoot, 'AGENTS.md'), 'utf-8')).toBe('# Agents\n');
+			expect(fs.existsSync(path.join(projRoot, '.grok/skills/on/SKILL.md'))).toBe(true);
+			expect(fs.existsSync(path.join(projRoot, '.grok/skills/off'))).toBe(false);
+			expect(fs.existsSync(path.join(projRoot, 'docs/hooks/h.md'))).toBe(false);
+			const warnings = result.plan.warnings.join('\n');
+			expect(warnings).toContain(
+				'Grok skill .grok/skills/off was disabled on the exporting machine'
+			);
+			expect(warnings).toContain('Grok MCP server "api" was disabled on the exporting machine');
+			expect(warnings).toContain('Grok resource kind "hook" is not supported');
+			expect(warnings).toContain('.grok/rules: not pinned');
+		});
+
+		it.each<[string, Parameters<typeof grokBundle>[0], string]>([
+			[
+				'an unknown format',
+				{ grok: (g) => void ((g as { format: string }).format = 'grok-v2') },
+				'grok-resources-unknown-format',
+			],
+			[
+				'a newer version',
+				{ grok: (g) => void ((g as { version: number }).version = 2) },
+				'grok-resources-unsupported-version',
+			],
+			[
+				'a skill under another root than it declares',
+				{
+					files: (f) => f.set('workspaces/proj/.agents/skills/on/SKILL.md', 'on\n'),
+					grok: (g) => void (g.resources[1].path = '.agents/skills/on'),
+				},
+				'grok-resource-outside-root',
+			],
+			[
+				'a skill under a root Grok does not read',
+				{
+					files: (f) => f.set('workspaces/proj/skills/on/SKILL.md', 'on\n'),
+					grok: (g) => void Object.assign(g.resources[1], { root: 'skills', path: 'skills/on' }),
+				},
+				'grok-resource-outside-root',
+			],
+			[
+				'an MCP server carrying a value field',
+				{ grok: (g) => void Object.assign(g.mcpServers![0], { env: { GROK_MCP_TOKEN: 'v' } }) },
+				'grok-mcp-credential-field',
+			],
+			[
+				'a Grok account file',
+				{ files: (f) => f.set('workspaces/proj/.grok/auth.json', '{"token":"t"}') },
+				'grok-account-file',
+			],
+		])('refuses %s and writes nothing', async (_label, edit, code) => {
+			const error = await refused(options(grokBundle(edit)));
+			expect(error.code).toBe('BUNDLE_INVALID');
+			expect((error.details.errors as Array<{ code: string }>).map((e) => e.code)).toContain(code);
 		});
 	});
 

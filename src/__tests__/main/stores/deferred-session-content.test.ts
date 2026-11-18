@@ -47,6 +47,19 @@ describe('projectWebSession', () => {
 		});
 	});
 
+	it('drops a stored file-tree scan: a browser scans its own and a phone must not download it', () => {
+		const projected = projectWebSession(
+			storedAgent({
+				fileTree: [{ name: 'src', type: 'folder', children: [] }],
+				fileTreeStats: { fileCount: 130152, folderCount: 10534, totalSize: 1 },
+				fileTreeLoadedCap: 250000,
+			})
+		);
+		expect(projected.fileTree).toEqual([]);
+		expect(projected.fileTreeStats).toBeUndefined();
+		expect(projected.fileTreeLoadedCap).toBeUndefined();
+	});
+
 	it('drops both closed-tab stacks: a browser keeps its own and never writes the host one', () => {
 		const projected = projectWebSession(
 			storedAgent({

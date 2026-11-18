@@ -7,6 +7,10 @@ import type {
 	ClosedTabCommandResult,
 } from '../../../shared/closedTabCommands';
 import type {
+	MessagePinCommandRequest,
+	MessagePinCommandResult,
+} from '../../../shared/messagePinCommands';
+import type {
 	ThroughputGaugeCommandRequest,
 	ThroughputGaugeCommandResult,
 } from '../../../shared/throughputGaugeCommands';
@@ -156,6 +160,26 @@ export function createTabRemoteApi() {
 		sendRemoteClosedTabCommandResponse: (
 			responseChannel: string,
 			result: ClosedTabCommandResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to a remote message-pin verb (`maestro-cli tab pins ...`). A
+		 * round trip: every verb answers with the tab's pins after it ran.
+		 */
+		onRemoteMessagePinCommand: (
+			callback: (request: MessagePinCommandRequest, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, request: MessagePinCommandRequest, responseChannel: string) =>
+				callback(request, responseChannel);
+			ipcRenderer.on('remote:messagePinCommand', handler);
+			return () => ipcRenderer.removeListener('remote:messagePinCommand', handler);
+		},
+
+		sendRemoteMessagePinCommandResponse: (
+			responseChannel: string,
+			result: MessagePinCommandResult
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

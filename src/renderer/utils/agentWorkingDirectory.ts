@@ -17,6 +17,7 @@ import {
 } from '../../shared/agentWorkingDirectory';
 import { relocateAgentPaths } from '../../shared/maestro-lib/agents/rules';
 import type { Session } from '../types';
+import { unloadedFileTreeState } from './fileExplorer';
 
 /**
  * Return `session` relocated to `newDir`, with every path field moved together
@@ -32,22 +33,14 @@ export function withWorkingDirectory(session: Session, newDir: string): Session 
 
 	return {
 		...moved,
-		fileTree: [],
 		// A load that was in flight for the old root must not be allowed to land.
 		// The auto-loader skips a session while `fileTreeLoading` is set, so the
-		// flag is cleared here so a fresh load starts. The loader itself refuses
-		// to write a scan whose root no longer matches the session, which covers
-		// the old request finishing before that fresh load begins.
-		fileTreeLoading: false,
-		fileTreeLoadingProgress: undefined,
+		// reset clears it and a fresh load starts. The loader itself refuses to
+		// write a scan whose root no longer matches the session, which covers the
+		// old request finishing before that fresh load begins.
+		...unloadedFileTreeState(),
 		fileExplorerExpanded: [],
 		fileExplorerScrollPos: 0,
-		fileTreeStats: undefined,
-		fileTreeError: undefined,
-		fileTreeRetryAt: undefined,
-		fileTreeTruncated: undefined,
-		fileTreeLoadedCap: undefined,
-		fileTreeLastScanTime: undefined,
 	};
 }
 

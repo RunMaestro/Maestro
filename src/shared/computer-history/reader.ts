@@ -35,6 +35,7 @@ import {
 } from './paths';
 import { APP_TIME_IDLE_CAP_MS, addEventToAppStats, createAppStats } from './appStats';
 import { STORED_EVENT_KINDS } from './types';
+import { splitDigestBody } from './digestBody';
 import type {
 	ComputerHistoryConfig,
 	SegmentIndexEntry,
@@ -652,20 +653,30 @@ export interface DigestWithBody extends DigestInfo {
 	body: string;
 }
 
+/** Whether a digest body matches a compiled `--grep` (summary only, never the header). */
+export function digestMatches(body: string, grep: RegExp | undefined): boolean {
+	return !grep || grep.test(splitDigestBody(body).summary);
+}
+
 /**
  * The newest `limit` digests overlapping `range` with their bodies, newest
- * first. Bodies are read only for the digests returned.
+ * first. Without `grep`, bodies are read only for the digests returned. With
+ * `grep`, the walk reads newest-first across the WHOLE range and stops at
+ * `limit` matches, so a search is never confined to the newest page.
  */
 export async function readRecentDigests(
 	storeDir: string,
-	options: TimeRange & { kind?: DigestKind; limit?: number } = {}
+	options: TimeRange & { kind?: DigestKind; limit?: number; grep?: string } = {}
 ): Promise<DigestWithBody[]> {
 	const limit = options.limit && options.limit > 0 ? options.limit : 50;
-	const infos = (await listDigests(storeDir, options)).reverse().slice(0, limit);
+	const grep = compileGrep(options.grep?.trim() || undefined);
+	const infos = (await listDigests(storeDir, options)).reverse();
 	const out: DigestWithBody[] = [];
-	for (const info of infos) {
+	for (const info of grep ? infos : infos.slice(0, limit)) {
 		const body = await readDigest(storeDir, info.file);
-		if (body !== null) out.push({ ...info, body });
+		if (body === null || !digestMatches(body, grep)) continue;
+		out.push({ ...info, body });
+		if (out.length >= limit) break;
 	}
 	return out;
 }

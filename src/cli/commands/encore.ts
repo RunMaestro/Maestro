@@ -58,6 +58,9 @@ const ALIASES: Record<string, string> = {
 	throughput: 'throughputGauge',
 	gauge: 'throughputGauge',
 	tps: 'throughputGauge',
+	'prompt-links': 'promptLinks',
+	promptlinks: 'promptLinks',
+	'prompt-link': 'promptLinks',
 };
 
 interface EncoreOptions {

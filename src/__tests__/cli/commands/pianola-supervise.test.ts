@@ -11,13 +11,17 @@ import * as os from 'os';
 import * as path from 'path';
 import {
 	pianolaSuperviseWatch,
+	pianolaSuperviseScope,
+	pianolaSuperviseList,
 	pianolaSuperviseProgram,
 	pianolaSuperviseOrchestrate,
 } from '../../../cli/commands/pianola-supervise';
+import { CommandTimeoutError } from '../../../cli/services/maestro-client';
 import { pianolaProgramLoop } from '../../../cli/commands/pianola-program-loop';
 import { pianolaProgramStatus } from '../../../cli/commands/pianola-portfolio';
 import {
 	readPianolaSupervisorTargets,
+	upsertPianolaSupervisorTarget,
 	upsertPianolaProgram,
 	upsertPianolaPlan,
 	writePianolaProgramLoopMemo,
@@ -26,6 +30,9 @@ import {
 
 const { sendCommand, dispatch } = vi.hoisted(() => ({ sendCommand: vi.fn(), dispatch: vi.fn() }));
 vi.mock('../../../cli/services/maestro-client', () => ({
+	CommandTimeoutError: class CommandTimeoutError extends Error {},
+	withMaestroClient: async (fn: (client: { sendCommand: typeof sendCommand }) => unknown) =>
+		fn({ sendCommand }),
 	MaestroClient: class {
 		connect = vi.fn();
 		disconnect = vi.fn();
@@ -73,7 +80,45 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
+describe('pianolaSuperviseList live status', () => {
+	it('reports the host snapshot separately from the offline registry', async () => {
+		sendCommand.mockResolvedValueOnce({
+			ok: true,
+			result: { targets: [], health: [], checkpoints: [] },
+		});
+		await pianolaSuperviseList({ json: true, live: true });
+		expect(sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({ channel: 'pianola:supervisor-list' }),
+			'bridge.response'
+		);
+		expect(JSON.parse(String(logSpy.mock.calls.at(-1)![0]))).toEqual({
+			targets: [],
+			health: [],
+			checkpoints: [],
+		});
+	});
+});
+
 describe('pianolaSuperviseWatch dedupe', () => {
+	it('reports a retained migration fence instead of claiming to restart the old watch', () => {
+		const scopeId = '11111111-1111-4111-8111-111111111111';
+		upsertPianolaSupervisorTarget({
+			id: 'old',
+			kind: 'watch',
+			enabled: false,
+			createdAt: 1,
+			agentId: 'agent-1',
+			tabId: 'tab-1',
+			migratedToScopeId: scopeId,
+		});
+		expect(() => pianolaSuperviseWatch('tab-1', { agent: 'agent-1', json: true })).toThrow(
+			'__exit__'
+		);
+		expect(readPianolaSupervisorTargets()).toEqual([
+			expect.objectContaining({ id: 'old', enabled: false, migratedToScopeId: scopeId }),
+		]);
+		expect(logSpy).toHaveBeenLastCalledWith(expect.stringContaining('cannot be restarted'));
+	});
 	it('reuses orchestration registration for the same plan', () => {
 		pianolaSuperviseOrchestrate('plan', { json: true });
 		const firstId = lastTargetId();
@@ -264,5 +309,26 @@ describe('program-loop target registration', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe('scope acknowledgement', () => {
+	it('reports Unknown on transport timeout and never retries a possible commit', async () => {
+		sendCommand.mockRejectedValueOnce(new CommandTimeoutError('bridge.response'));
+		const before = sendCommand.mock.calls.length;
+		await pianolaSuperviseScope({
+			manager: 'manager',
+			label: 'Scope',
+			agents: 'agent',
+			requestOwnerApproval: true,
+			json: true,
+		});
+		expect(sendCommand.mock.calls.length - before).toBe(1);
+		expect(JSON.parse(String(logSpy.mock.calls.at(-1)![0]))).toMatchObject({
+			success: false,
+			migration: { status: 'Unknown' },
+		});
+		expect(process.exitCode).toBe(1);
+		process.exitCode = 0;
 	});
 });

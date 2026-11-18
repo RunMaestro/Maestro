@@ -11,9 +11,12 @@
 import { AGENT_DEFINITIONS } from './definitions';
 import { parseOpenCodeConfig, extractModelsFromConfig } from './opencode-config';
 import type { AgentDetector } from './detector';
-import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
-import { buildSshCommand, RemoteCommandOptions } from '../utils/ssh-command-builder';
+import {
+	buildSshCommand,
+	execSshCommand,
+	RemoteCommandOptions,
+} from '../utils/ssh-command-builder';
 import { stripAnsi } from '../utils/stripAnsi';
 import type { SshRemoteConfig } from '../../shared/types';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
@@ -63,7 +66,7 @@ async function discoverModelsFromRemoteConfigs(sshRemote: SshRemoteConfig): Prom
 
 	try {
 		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
+		const resultPromise = execSshCommand(sshRemote, sshCommand);
 		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
 			(_, reject) => {
 				setTimeout(() => reject(new Error('SSH config read timed out')), SSH_MODEL_TIMEOUT_MS);
@@ -163,7 +166,7 @@ export async function discoverModelsRemote(
 		);
 
 		// Execute with timeout matching detectAgentsRemote pattern
-		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
+		const resultPromise = execSshCommand(sshRemote, sshCommand);
 		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
 			(_, reject) => {
 				setTimeout(

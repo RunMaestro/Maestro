@@ -37,21 +37,31 @@ import fs from 'fs';
  * what every caller that omits it intends.
  */
 export function unusableCwdReason(cwd: string | undefined): string | null {
-	if (!cwd) return null;
+	return unusableDirectoryReason(cwd, 'Working directory');
+}
+
+/**
+ * {@link unusableCwdReason} for any directory a process depends on, named by
+ * `label` in the reason (`Working directory`, `Provider session directory`).
+ * Same conservative rule: only a directory PROVEN absent or not a directory is
+ * reported.
+ */
+export function unusableDirectoryReason(dir: string | undefined, label: string): string | null {
+	if (!dir) return null;
 
 	let stats: fs.Stats;
 	try {
-		stats = fs.statSync(cwd);
+		stats = fs.statSync(dir);
 	} catch (err) {
 		const code = (err as NodeJS.ErrnoException).code;
 		if (code === 'ENOENT' || code === 'ENOTDIR') {
-			return `Working directory does not exist: ${cwd}`;
+			return `${label} does not exist: ${dir}`;
 		}
 		return null;
 	}
 
 	if (!stats.isDirectory()) {
-		return `Working directory is not a directory: ${cwd}`;
+		return `${label} is not a directory: ${dir}`;
 	}
 
 	return null;

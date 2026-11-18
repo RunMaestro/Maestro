@@ -88,6 +88,11 @@ export interface HostCueContext {
 	settingsFile: string;
 	/** The runtime this host serves. Without it the engine runs as `maestro-cli cue engine start` does: no Auto Run actions, no agent or settings changes. */
 	runtime?: HostCueRuntime;
+	/**
+	 * A Cue run began or ended (or a schedule armed or disarmed): the work in flight may have
+	 * changed. The host re-reads its work on it, to hold or release sleep prevention.
+	 */
+	onWorkChanged?(): void;
 }
 
 export interface HostCueDeps {
@@ -95,7 +100,10 @@ export interface HostCueDeps {
 	isEnabled(settingsFile: string): Promise<boolean>;
 	readLock(dataDir: string): CueEngineLockInfo | null;
 	createEngine(
-		options: Pick<StandaloneCueEngineOptions, 'onLog' | 'runAutoRun' | 'onLockLost'>
+		options: Pick<
+			StandaloneCueEngineOptions,
+			'onLog' | 'runAutoRun' | 'onLockLost' | 'onPreventSleep' | 'onAllowSleep'
+		>
 	): Promise<HostCueEngine>;
 	/** Serve `maestro-cli cue trigger`, which has no desktop WebSocket to reach this process by. Returns the stop. */
 	startInbox(engine: HostCueEngine, dataDir: string): () => void;
@@ -643,6 +651,9 @@ export async function startHostCue(
 				onLockLost: () => {
 					if (engine) lockLost(engine);
 				},
+				// The engine's sleep hooks are where a run begins and ends.
+				onPreventSleep: () => host.onWorkChanged?.(),
+				onAllowSleep: () => host.onWorkChanged?.(),
 			});
 			if (runtime) unfollowAgents = await followAgents(runtime, engine);
 			await engine.start('system-boot');

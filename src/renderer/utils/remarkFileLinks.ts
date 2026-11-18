@@ -102,7 +102,6 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				resolvedPath: string;
 				type: 'link' | 'image';
 				isRelativeToCwd?: boolean; // For images: true if path needs cwd prepended (fallback paths)
-				isFromFileTree?: boolean; // For images: true if path was found in file tree (complete from project root)
 				imageWidth?: number; // For images: optional width in pixels
 				absoluteUrl?: string; // For links outside projectRoot: use file:// URL instead of maestro-file://
 			}
@@ -142,12 +141,9 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				let resolvedPath: string;
 				let isRelativeToCwd = false; // Track if path needs cwd prepended
 
-				let isFromFileTree = false;
-
 				if (foundPath) {
 					// Found in file tree - path is already complete from project root
 					resolvedPath = foundPath;
-					isFromFileTree = true;
 				} else {
 					// Not found - use _attachments fallback relative to current document
 					resolvedPath = `_attachments/${imagePath}`;
@@ -161,7 +157,6 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 					resolvedPath,
 					type: 'image',
 					isRelativeToCwd,
-					isFromFileTree,
 					imageWidth,
 				});
 			}
@@ -341,7 +336,8 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				if (match.type === 'image') {
 					// Add image node - construct file:// URL for the image
 					// For AI terminal (has projectRoot): build absolute file:// URL
-					// For FilePreview (no projectRoot): use relative path (resolveImagePath handles it)
+					// For FilePreview (no projectRoot): emit a relative reference and let the
+					// preview's resolveEmbedCandidates find the file
 					let imageSrc: string;
 					if (projectRoot) {
 						// Build full path:
@@ -355,8 +351,11 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 						}
 						imageSrc = `file://${fullPath}`;
 					} else {
-						// Relative path - FilePreview's resolveImagePath will resolve from markdown file location
-						imageSrc = match.resolvedPath;
+						// Found in the tree: a root-relative path. Not found: the name exactly
+						// as written, since resolveEmbedCandidates already tries the
+						// attachment folders (`_attachments/` among them) and the note's own
+						// folder, which a pre-guessed `_attachments/` prefix would rule out.
+						imageSrc = match.isRelativeToCwd ? match.display : match.resolvedPath;
 					}
 					// Build style string - use specified width or default to max-width: 100%
 					const imageStyle = match.imageWidth
@@ -371,7 +370,6 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 							hProperties: {
 								'data-maestro-image': match.resolvedPath,
 								'data-maestro-width': match.imageWidth?.toString(),
-								'data-maestro-from-tree': match.isFromFileTree ? 'true' : undefined,
 								style: imageStyle,
 							},
 						},

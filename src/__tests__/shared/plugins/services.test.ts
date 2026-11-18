@@ -30,7 +30,10 @@ describe('host-known service contract', () => {
 		'accepts the documented native provider and consumer manifests with line endings %j',
 		(lineEnding) => {
 			const examples = [
-				...readFileSync(new URL('../../../../docs/plugin-services.md', import.meta.url), 'utf8')
+				...readFileSync(
+					new URL('../../../../docs/agent-guides/PLUGIN-SERVICES.md', import.meta.url),
+					'utf8'
+				)
 					.replace(/\r?\n/g, lineEnding)
 					.matchAll(/```json\r?\n([\s\S]*?)\r?\n```/g),
 			].map((match) => JSON.parse(match[1]));

@@ -8,7 +8,7 @@ const METHODS: Record<string, string> = {
 	agent: 'clearError retryAfterError',
 	agentRun: 'cancel event events list merge record resolveFinding retry show',
 	agentSessions:
-		'deleteMessagePair getAllNamedSessions getAvailableStorages getGlobalStats getOrigins getPath hasStorage list listPaginated read releaseSnoozedTranscript search setSessionName setSessionStarred snapshotStarredTranscript',
+		'deleteMessagePair getAllNamedSessions getAvailableStorages getGlobalStats getOrigins getPath hasStorage list listPaginated read releaseSnoozedTranscript search setSessionName setSessionPins setSessionStarred snapshotStarredTranscript',
 	agents:
 		'translateProvider consumeCodexResetCredit detect discoverSlashCommands get getAllCapabilities getAllCustomArgs getAllCustomEnvVars getAllCustomPaths getAllSnapshots getCapabilities getClaudeUsageAccountKeys getClaudeUsageSnapshots getCodexResetCredits getCodexUsageAccountKeys getCodexUsageSnapshots getConfig getConfigOptions getConfigValue getCustomArgs getCustomEnvVars getCustomPath getKnownAuthDirs getKnownEnvVarKeys getLimitResetAt getMaestroPDetectedPath getModels getRemoteMaestroPAvailable getSnapshot refresh reprobe setConfig setConfigValue setCustomArgs setCustomPath',
 	aiCommand: 'suggest',
@@ -29,7 +29,10 @@ const METHODS: Record<string, string> = {
 	coworking: 'getInstallStatus removeSession',
 	'cross-agent': 'cancel send',
 	'cue-stats': 'get-aggregation get-historical-conductor-credit',
-	cue: 'cancelScheduledTask createScheduledTask deleteYaml disable enable getActiveRuns getActivityLog getEventCount getFanInHealth getGraphData getMetrics getQueueStatus getRunLiveOutput getSettings getStatus listScheduledTasks loadPipelineLayout readYaml refreshSession removeSession renamePipeline savePipelineLayout saveSettings setActive stopAll stopRun triggerSubscription updateScheduledTask validateYaml writeYaml',
+	// setActive is absent on purpose: it is one host-wide visibility flag, and a
+	// browser reporting its own visibility paused the host's scanners on every
+	// phone lock.
+	cue: 'cancelScheduledTask createScheduledTask deleteYaml disable enable getActiveRuns getActivityLog getEventCount getFanInHealth getGraphData getMetrics getQueueStatus getRunLiveOutput getSettings getStatus listScheduledTasks loadPipelineLayout readYaml refreshSession removeSession renamePipeline savePipelineLayout saveSettings stopAll stopRun triggerSubscription updateScheduledTask validateYaml writeYaml',
 	cueBackup: 'create delete getDiffStatus inspect list readFile readLive restoreAll restoreFile',
 	// DQL only (DV-14). DataviewJS reads and the trust list stay desktop and CLI only.
 	dataview: 'query queryInline rebuild status',
@@ -57,6 +60,7 @@ const METHODS: Record<string, string> = {
 	maestroRun: 'readyPath',
 	marketplace: 'getDocument getManifest getReadme importPlaybook refreshManifest',
 	memory: 'create delete getPath list orphans read search write',
+	// Main owns the inbox; a browser marks read or clears through the same delta.
 	notification: 'changeHistory',
 	openspec: 'getCommand getMetadata getPrompts refresh resetPrompt savePrompt',
 	parquet: 'close export open query',
@@ -84,7 +88,10 @@ const METHODS: Record<string, string> = {
 	tabNaming: 'generateTabName',
 	tabs: 'aiTabClosed',
 	tempfile: 'delete read write',
-	web: 'getAutoRunStates broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab requestCloseTab requestReopenTab startAutoRun controlAutoRun',
+	// claimAutoRunStart / releaseAutoRunStartClaim serialize Auto Run starts across every
+	// client, so a browser must reach them to start a run (#1862). Reclaiming orphaned
+	// runs (takeOrphanedAutoRuns, abandonAutoRunReclaim) stays desktop-owned.
+	web: 'broadcastSessionState broadcastTabsChange broadcastUserInput claimAutoRunStart controlAutoRun getAutoRunStates releaseAutoRunStartClaim requestCloseTab requestNewTab requestReopenTab startAutoRun',
 	windows: 'getForSession getState list',
 	// floatingWidgets:* is absent on purpose: the browser build never opens widget windows.
 };
@@ -94,7 +101,7 @@ const EVENTS: Record<string, string> = {
 	agentSessions: 'globalStatsUpdate',
 	agents: 'snapshot-updated',
 	app: 'systemResume',
-	autorun: 'fileChanged statusChanged',
+	autorun: 'delegation fileChanged statusChanged',
 	claude: 'globalStatsUpdate projectStatsUpdate',
 	cli: 'activityChange',
 	'cross-agent': 'chunk',
@@ -116,7 +123,7 @@ const EVENTS: Record<string, string> = {
 	// is mirrored intentionally so host-created Concerto panels remain visible.
 	remote:
 		'movement cadenza cadenzaFlash cadenzaHidden notifyToast notifyCenterFlash autoRunStateMirror',
-	sessions: 'lifecycleSync transcriptSync',
+	sessions: 'lifecycleSync transcriptSync transcriptCommitted',
 	settings: 'externalChange',
 	stats: 'updated',
 	symphony: 'contributionStarted prCreated updated',

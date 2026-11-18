@@ -117,7 +117,16 @@ describe('computerHistory IPC', () => {
 			untilMs: undefined,
 			kind: undefined,
 			limit: 3,
+			grep: undefined,
 		});
+		await h.handlers.get('computerHistory:digests')!({}, { grep: 'gmail', limit: 5 });
+		expect(h.service!.digestsWithBodies).toHaveBeenLastCalledWith(
+			expect.objectContaining({ grep: 'gmail', limit: 5 })
+		);
+		await h.handlers.get('computerHistory:digests')!({}, { grep: 42 });
+		expect(h.service!.digestsWithBodies).toHaveBeenLastCalledWith(
+			expect.objectContaining({ grep: undefined })
+		);
 	});
 
 	it('rejects with a clear message before the service exists', async () => {

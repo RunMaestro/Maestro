@@ -228,6 +228,44 @@ describe('FormInput', () => {
 			expect(onSubmit).toHaveBeenCalledTimes(1);
 		});
 
+		it('should NOT call onSubmit on Enter during IME composition (isComposing: true)', () => {
+			const onChange = vi.fn();
+			const onSubmit = vi.fn();
+
+			render(<FormInput theme={mockTheme} value="test" onChange={onChange} onSubmit={onSubmit} />);
+
+			const input = screen.getByRole('textbox');
+			const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+			Object.defineProperty(event, 'isComposing', { value: true });
+			const stopPropagationSpy = vi.spyOn(event, 'stopPropagation');
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			input.dispatchEvent(event);
+
+			expect(onSubmit).not.toHaveBeenCalled();
+			expect(preventDefaultSpy).not.toHaveBeenCalled();
+			expect(stopPropagationSpy).toHaveBeenCalled();
+		});
+
+		it('should NOT call onSubmit on Enter during Safari IME confirmation (keyCode 229)', () => {
+			const onChange = vi.fn();
+			const onSubmit = vi.fn();
+
+			render(<FormInput theme={mockTheme} value="test" onChange={onChange} onSubmit={onSubmit} />);
+
+			const input = screen.getByRole('textbox');
+			const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+			Object.defineProperty(event, 'keyCode', { value: 229 });
+			const stopPropagationSpy = vi.spyOn(event, 'stopPropagation');
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			input.dispatchEvent(event);
+
+			expect(onSubmit).not.toHaveBeenCalled();
+			expect(preventDefaultSpy).not.toHaveBeenCalled();
+			expect(stopPropagationSpy).toHaveBeenCalled();
+		});
+
 		it('should NOT call onSubmit when submitEnabled is false', () => {
 			const onChange = vi.fn();
 			const onSubmit = vi.fn();

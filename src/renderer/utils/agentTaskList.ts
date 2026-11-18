@@ -122,6 +122,28 @@ export function summarizeAgentTaskList(list: AgentTaskList): string {
 	return `${label} (${completed}/${tasks.length})`;
 }
 
+/**
+ * Whether a tool state is a provider plan SNAPSHOT that reports no items. Snapshot
+ * reporting (`planUpdate.reporting`, set by the Grok ACP event mapper) means each
+ * update is the complete list, so an empty one clears the plan; a payload without
+ * that marker says nothing about the list and is skipped as before. Items the
+ * provider marks cancelled or unsupported stay pending (normalizeStatus), never
+ * completed work.
+ */
+function isEmptyPlanSnapshot(toolState: unknown): boolean {
+	if (!toolState || typeof toolState !== 'object') return false;
+	const { input, planUpdate } = toolState as { input?: unknown; planUpdate?: unknown };
+	return (
+		!!planUpdate &&
+		typeof planUpdate === 'object' &&
+		(planUpdate as { reporting?: unknown }).reporting === 'snapshot' &&
+		!!input &&
+		typeof input === 'object' &&
+		Array.isArray((input as { plan?: unknown }).plan) &&
+		(input as { plan: unknown[] }).plan.length === 0
+	);
+}
+
 /** A checklist plus the log entry it came from. */
 export interface LatestAgentTaskList {
 	/**
@@ -155,6 +177,9 @@ export function findLatestAgentTaskList(
 		if (!toolState || toolState.input === undefined) continue;
 		const list = extractAgentTaskList(toolState.input);
 		if (list) return { entryId: entry.id, list };
+		// A snapshot plan (Grok ACP) replaces the whole list, and an empty snapshot is the
+		// agent clearing it: an older checklist further back is not the current plan.
+		if (isEmptyPlanSnapshot(toolState)) return null;
 	}
 	return null;
 }

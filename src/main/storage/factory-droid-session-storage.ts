@@ -32,6 +32,7 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { readDirRemote, readFileRemote, statRemote } from '../utils/remote-fs';
 import { BaseSessionStorage, type SearchableMessage } from './base-session-storage';
+import { MESSAGE_NOT_IN_TRANSCRIPT, type DeleteMessagePairResult } from '../agents/session-storage';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
 import type {
 	AgentSessionInfo,
@@ -598,7 +599,7 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 		userMessageUuid: string,
 		fallbackContent?: string,
 		sshConfig?: SshRemoteConfig
-	): Promise<{ success: boolean; error?: string; linesRemoved?: number }> {
+	): Promise<DeleteMessagePairResult> {
 		// Note: Delete operations on remote sessions are not supported yet
 		// This would require implementing writeFileRemote
 		if (sshConfig) {
@@ -661,7 +662,7 @@ export class FactoryDroidSessionStorage extends BaseSessionStorage {
 			}
 
 			if (!foundUserMessage) {
-				return { success: false, error: 'User message not found' };
+				return MESSAGE_NOT_IN_TRANSCRIPT;
 			}
 
 			// Write the modified content back

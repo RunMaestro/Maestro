@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	buildConsultFirstContext,
 	inferMentionTiming,
 	parseAgentMentions,
 	messageStartsWithAgentMention,
@@ -56,6 +57,10 @@ describe('parseAgentMentions', () => {
 	it('skips a file-shaped body (path or dotted extension), not an agent', () => {
 		expect(parseAgentMentions('see @src/main/index.ts')).toEqual([]);
 		expect(parseAgentMentions('open @notes.md now')).toEqual([]);
+	});
+
+	it('skips a Windows drive-letter path even when an agent shares the drive letter', () => {
+		expect(parseAgentMentions('see @C:/Users/x/a.md', new Set(['c']))).toEqual([]);
 	});
 
 	it('parses a dotted agent name when it is in the roster (the @RunMaestro.ai regression)', () => {
@@ -282,6 +287,12 @@ describe('deriveConsultSubject', () => {
 		expect(subject.length).toBe(10);
 	});
 
+	it('cuts at a word boundary rather than mid-word', () => {
+		expect(deriveConsultSubject('@rc which branch should I build on', 20)).toBe(
+			'which branch should…'
+		);
+	});
+
 	it('returns empty string when only a mention with no prose', () => {
 		expect(deriveConsultSubject('@rc')).toBe('');
 		expect(deriveConsultSubject('   @rc   ')).toBe('');
@@ -370,5 +381,18 @@ describe('parseMentionRoutingField', () => {
 		if (result.ok) return;
 		expect(result.error).toContain('"sideways"');
 		expect(result.error).toContain('parallel, consult-first, handoff, only');
+	});
+});
+
+describe('consult-first template substitution', () => {
+	it('preserves placeholder literals within replies, agent names and the user message', () => {
+		const context = buildConsultFirstContext(
+			'{{CONSULTED_AGENTS}}\n{{CONSULT_REPLIES}}\n{{USER_MESSAGE}}',
+			[{ targetAgentName: '{{CONSULT_REPLIES}}', text: 'Keep {{USER_MESSAGE}} literal.' }],
+			'Inspect {{CONSULTED_AGENTS}}.'
+		);
+		expect(context).toContain('Keep {{USER_MESSAGE}} literal.');
+		expect(context).toContain('{{CONSULT_REPLIES}}');
+		expect(context).toContain('Inspect {{CONSULTED_AGENTS}}.');
 	});
 });

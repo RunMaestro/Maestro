@@ -26,16 +26,19 @@ import { execGitReadOnly } from './utils/remote-git';
 import { execFileNoThrow } from './utils/execFile';
 import { CodexSessionStorage } from './storage/codex-session-storage';
 import { getHistoryManager } from './history-manager';
-import { resolveAgentAccountKey } from '../shared/providerProfiles';
+import { getProviderProfileConfig, resolveAgentAccountKey } from '../shared/providerProfiles';
 import { buildAgentEnvironment } from '../shared/maestro-lib/launch/env';
 import { expandTilde, encodeClaudeProjectPath } from '../shared/pathUtils';
 import { AGENT_IDS } from '../shared/agentIds';
+import { getAgentDisplayName } from '../shared/agentMetadata';
 import { canonicalJson } from '../shared/canonicalJson';
 import { isPathAtOrUnderRoot } from '../shared/worktreePaths';
 import { createKeyedWriteQueue } from '../shared/keyedWriteQueue';
 import {
 	createTranslationRegistry,
 	projectConversation,
+	projectGrokConversation,
+	readGrokSessionSnapshot,
 } from '../shared/maestro-lib/translation/adapters';
 import {
 	TranslationArchive,
@@ -152,6 +155,19 @@ export class ProviderTranslationService {
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
 			}
+		} else if (provider === 'grok' && root) {
+			// Grok reads and writes confine to this root, so it is only ever inside the
+			// selected account: a sessions folder linked elsewhere is refused. A folder
+			// not created yet keeps its plain path, so staging it does not change the
+			// identity the pre-commit check compares.
+			nativeSessionRoot = path.join(root, 'sessions');
+			try {
+				nativeSessionRoot = await fs.realpath(nativeSessionRoot);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+			}
+			if (!isPathAtOrUnderRoot(nativeSessionRoot.replace(/\\/g, '/'), root.replace(/\\/g, '/')))
+				throw new Error('Grok sessions folder resolves outside the selected account');
 		}
 		const memoryProjectRoot = await resolveMemoryRepositoryRoot(projectRoot, async (cwd) => {
 			const result = await execGitReadOnly(['rev-parse', '--git-common-dir'], cwd);
@@ -207,6 +223,13 @@ export class ProviderTranslationService {
 				],
 			};
 		if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) throw new Error('Unsafe native session ID');
+		if (identity.provider === 'grok') {
+			// Two files under the selected account and project, sampled twice by the reader.
+			const snapshot = await readGrokSessionSnapshot(identity, sessionId);
+			const bundle = adapter.extract(identity, tabId, sessionId, snapshot.bytes);
+			bundle.artifacts[0].sourcePath = snapshot.transcriptPath;
+			return bundle;
+		}
 		const file =
 			identity.provider === 'claude-code'
 				? path.join(
@@ -250,6 +273,22 @@ export class ProviderTranslationService {
 				severity: 'block',
 				message:
 					'Remote native translation requires an SSH adapter; local roots cannot stand in for remote accounts.',
+			});
+		// Maestro writes a Claude or Grok destination under the account folder itself
+		// and never creates that folder, so an account the provider has never used is
+		// refused here by name rather than by a symlink-escape error at staging.
+		if (
+			source.provider !== destination.provider &&
+			destination.nativeSessionRoot &&
+			!(await fs.stat(destination.accountRoot).then(
+				(stat) => stat.isDirectory(),
+				() => false
+			))
+		)
+			limitations.push({
+				code: 'destination-account-missing',
+				severity: 'block',
+				message: `The selected ${getAgentDisplayName(destination.provider)} account folder does not exist yet. Run ${getAgentDisplayName(destination.provider)} once with this account, then plan the migration again.`,
 			});
 		const tabs = translationSessionTabs(session);
 		const conversations: PortableConversation[] = [];
@@ -538,14 +577,45 @@ export class ProviderTranslationService {
 			destination.provider,
 			capabilitySnapshots.get(destination.provider)
 		);
+		// Grok's window belongs to the selected model and account and is unknown
+		// here (0), so it is reported instead of passing a check against nothing.
+		if (destination.provider === 'grok' && capacity <= 0)
+			limitations.push({
+				code: 'context-capacity-unknown',
+				severity: 'warning',
+				message:
+					'The Grok context window for the selected model is unknown, so the carried history is not checked against it. No history is truncated or summarized.',
+			});
 		for (const conversation of conversations) {
-			const projected =
-				destination.provider === 'codex' || destination.provider === 'claude-code'
-					? projectConversation(conversation, destination.provider, 'capacity-preview').map(
-							(row) => row.item
-						)
-					: [];
-			if (estimateTokenCount(canonicalJson(projected)) > capacity)
+			let projected: unknown[] = [];
+			if (destination.provider === 'codex' || destination.provider === 'claude-code')
+				projected = projectConversation(conversation, destination.provider, 'capacity-preview').map(
+					(row) => row.item
+				);
+			else if (destination.provider === 'grok') {
+				const visible = conversation.records.some(
+					(r) => r.role === 'user' || r.role === 'assistant'
+				);
+				try {
+					projected = projectGrokConversation(conversation).map((row) => row.item);
+				} catch (error) {
+					limitations.push({
+						code: 'grok-projection-refused',
+						severity: 'block',
+						tabId: conversation.tabId,
+						message: `This conversation cannot be written as a Grok session: ${error instanceof Error ? error.message : String(error)}`,
+					});
+				}
+				if (visible && !this.destinationModel(session, destination.provider, conversation.tabId))
+					limitations.push({
+						code: 'destination-model-missing',
+						severity: 'block',
+						tabId: conversation.tabId,
+						message:
+							'Select a Grok model for this agent before migrating. A Grok session names its model; none is copied from the source or invented.',
+					});
+			}
+			if (capacity > 0 && estimateTokenCount(canonicalJson(projected)) > capacity)
 				limitations.push({
 					code: 'context-capacity',
 					severity: 'block',
@@ -585,8 +655,30 @@ export class ProviderTranslationService {
 			projections: resourceProjections.projections,
 		};
 	}
+	/**
+	 * The model a tab runs with on the destination after commit: its parked
+	 * destination model (restored by the provider switch), else the provider's
+	 * configured model. The source model is never used.
+	 */
+	private destinationModel(
+		session: StoredSession & TranslatableSession,
+		provider: ToolType,
+		tabId: string
+	): string | undefined {
+		const tab = translationSessionTabs(session).find((t) => t.id === tabId);
+		const configured = this.deps.agentConfigsStore.get('configs', {})[provider]?.model;
+		return [tab?.providerSessions?.[provider]?.customModel, configured]
+			.find((model): model is string => typeof model === 'string' && model.trim().length > 0)
+			?.trim();
+	}
 	private host(journal: TranslationJournal): TranslationTransactionHost {
 		return {
+			destinationModel: (tabId) =>
+				this.destinationModel(
+					this.session(journal.plan.agentId),
+					journal.plan.destination.provider,
+					tabId
+				),
 			assertSourceUnchanged: async (operation) => {
 				const session = this.session(operation.plan.agentId);
 				if (session.toolType !== operation.plan.source.provider)
@@ -670,15 +762,21 @@ export class ProviderTranslationService {
 						operation.mappings,
 						operation.knowledgeDirectory
 					);
-					const envKey =
-						operation.plan.destination.provider === 'codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR';
+					const destinationProvider = operation.plan.destination.provider;
+					// The destination account binds through its own variable (GROK_HOME for
+					// Grok), never another provider's; an inline Grok credential is not carried.
+					const envKey = getProviderProfileConfig(destinationProvider)?.envVar;
+					if (!envKey) throw new Error(`No account variable for ${destinationProvider}`);
+					const inherited: Record<string, string> = {
+						...((this.deps.agentConfigsStore.get('configs', {})[destinationProvider]
+							?.customEnvVars as Record<string, string> | undefined) ?? {}),
+					};
+					if (destinationProvider === 'grok') delete inherited.GROK_AUTH;
 					return {
 						...result,
 						providerMigration: { ...result.providerMigration!, state: 'committing' },
 						customEnvVars: {
-							...(this.deps.agentConfigsStore.get('configs', {})[
-								operation.plan.destination.provider
-							]?.customEnvVars ?? {}),
+							...inherited,
 							[envKey]: operation.plan.destination.accountRoot,
 							...(operation.knowledgeDirectory && {
 								[TRANSLATION_KNOWLEDGE_ENV_VAR]: operation.knowledgeDirectory,

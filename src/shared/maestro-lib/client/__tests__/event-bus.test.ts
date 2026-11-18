@@ -63,6 +63,8 @@ describe('event bus', () => {
 			expect(matchesFilter(agentEvent('b'), filter)).toBe(false);
 			expect(matchesFilter({ type: 'tab.removed', agentId: 'b', tabId: 't' }, filter)).toBe(false);
 			expect(matchesFilter({ type: 'tab.removed', agentId: 'a', tabId: 't' }, filter)).toBe(true);
+			expect(matchesFilter({ type: 'queue.changed', agentId: 'a', items: [] }, filter)).toBe(true);
+			expect(matchesFilter({ type: 'queue.changed', agentId: 'b', items: [] }, filter)).toBe(false);
 			expect(matchesFilter({ type: 'groups.changed', groups: [] }, filter)).toBe(true);
 			expect(matchesFilter({ type: 'settings.changed', keys: 'unknown' }, filter)).toBe(true);
 		});

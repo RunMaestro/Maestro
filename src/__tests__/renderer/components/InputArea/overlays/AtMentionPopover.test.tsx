@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AtMentionPopover } from '../../../../../renderer/components/InputArea/overlays/AtMentionPopover';
 import type {
@@ -191,31 +191,42 @@ describe('AtMentionPopover', () => {
 		});
 	});
 
-	it('replaces @filter on click and clears mention state', () => {
-		const setInputValue = vi.fn();
+	it('replaces @filter on click and clears mention state', async () => {
+		const textarea = document.createElement('textarea');
+		textarea.value = 'open @src now';
+		const focus = vi.spyOn(textarea, 'focus');
+		const setInputValue = vi.fn((value: string) => {
+			textarea.value = value;
+		});
 		const setOpen = vi.fn();
 		const setFilter = vi.fn();
 		const setStartIndex = vi.fn();
 		const setSelectedIndex = vi.fn();
-		const focus = vi.fn();
 		renderPopover({
 			setInputValue,
 			setOpen,
 			setFilter,
 			setStartIndex,
 			setSelectedIndex,
-			inputRef: { current: { focus } as unknown as HTMLTextAreaElement },
+			inputRef: { current: textarea },
 		});
 
 		const item = screen.getByText('src/index.ts').closest('button')!;
 		fireEvent.mouseEnter(item);
 		fireEvent.click(item);
+		// The caret is placed in the frame after the controlled value commits.
+		await act(async () => {
+			await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+		});
 
 		expect(setSelectedIndex).toHaveBeenCalledWith(0);
-		expect(setInputValue).toHaveBeenCalledWith('open @src/index.ts  now');
+		expect(setInputValue).toHaveBeenCalledWith('open @src/index.ts now');
 		expect(setOpen).toHaveBeenCalledWith(false);
 		expect(setFilter).toHaveBeenCalledWith('');
 		expect(setStartIndex).toHaveBeenCalledWith(-1);
 		expect(focus).toHaveBeenCalled();
+		expect(textarea.value).toBe('open @src/index.ts now');
+		expect(textarea.selectionStart).toBe('open @src/index.ts '.length);
+		expect(textarea.selectionEnd).toBe(textarea.selectionStart);
 	});
 });

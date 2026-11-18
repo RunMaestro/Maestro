@@ -1,3 +1,5 @@
+import { AGENT_IDS, type AgentId } from '../agentIds';
+
 export const AGENT_RUN_STATUSES = [
 	'queued',
 	'running',
@@ -13,15 +15,26 @@ export const AGENT_RUN_STATUSES = [
 
 export type AgentRunStatus = (typeof AGENT_RUN_STATUSES)[number];
 
+/** Every agent ID that runs a provider: the canonical registry minus `terminal`. */
+export type AgentRunAgentId = Exclude<AgentId, 'terminal'>;
+
+/**
+ * Provider values recorded before the run ledger followed the agent-ID
+ * registry. They are not agent IDs, but stored runs carry them, so they stay
+ * fixed points of the resolver and filterable as themselves.
+ */
+export const HISTORICAL_AGENT_RUN_PROVIDERS = ['qwen-coder', 'cursor'] as const;
+
+/**
+ * The provider values a run can be tagged with: every agent ID from
+ * `AGENT_IDS` (so a new agent, such as `grok`, is attributed the day it is
+ * registered, with no second list to update), the historical values above, and
+ * `unknown`. `AgentRunProvider` still admits any other string, so a record
+ * written by a newer build keeps its value.
+ */
 export const KNOWN_AGENT_RUN_PROVIDERS = [
-	'claude-code',
-	'codex',
-	'opencode',
-	'factory-droid',
-	'copilot-cli',
-	'qwen-coder',
-	'omp',
-	'cursor',
+	...AGENT_IDS.filter((id): id is AgentRunAgentId => id !== 'terminal'),
+	...HISTORICAL_AGENT_RUN_PROVIDERS,
 	'unknown',
 ] as const;
 

@@ -36,6 +36,7 @@ import { ResizeHandles } from './ui/ResizeHandles';
 import { ShortcutHint } from './ui/ShortcutHint';
 import { useSettingsStore } from '../stores/settingsStore';
 import { eventMatchesShortcutKeys } from '../utils/shortcutMatch';
+import { isImeComposing } from '../utils/ime';
 
 /**
  * Session availability status for display in the selection list
@@ -360,6 +361,7 @@ export function SendToAgentModal({
 
 			// Enter to confirm send
 			if (e.key === 'Enter') {
+				if (isImeComposing(e)) return;
 				e.preventDefault();
 				e.stopPropagation();
 				// Forced Parallel Send chord: force-send to the chosen (or highlighted) busy agent

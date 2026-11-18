@@ -30,3 +30,11 @@ export {
 } from './patterns';
 
 export { applyFileLinks, type MarkdownItFileLinksOptions } from './markdownItAdapter';
+
+export {
+	findFirstExistingPath,
+	parseEmbedAltSize,
+	resolveEmbedCandidates,
+	resolveNoteRelativePath,
+	type EmbedResolutionContext,
+} from './embedResolution';

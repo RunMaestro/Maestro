@@ -6,15 +6,95 @@
  * (`client/bridge-frames.ts` and `ws-client.ts`): a turn event becomes the `process:*` channel the
  * desktop would have raised for `<agentId>-ai-<tabId>`, a run's progress becomes the flat
  * `autorun_state` projection, and an agent change becomes `sessions:lifecycleSync`.
+ *
+ * Every agent record a host sends goes through `withLiveTabState()` first: the runtime never stores
+ * a tab as busy (RT14), so without it a client that attaches mid-turn, or reads an agent rewritten
+ * mid-turn, sees a working tab as idle.
  */
 
 import type { AutoRunBroadcastState } from '../../autoRunBroadcast';
 import type { AutoRunProgress } from '../autorun/progress';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
-import type { AutoRunOutcome, MaestroEvent, TurnEvent } from '../client/types';
+import type { AutoRunOutcome, MaestroEvent, QueuedTurn, TurnEvent } from '../client/types';
 import type { GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
+import type { AgentRecord, AITabRecord } from '../store/records';
 
 export type Frame = Record<string, unknown>;
+
+/** The agent's tabs with a process running now, and when each started: `MaestroRuntime.liveTabs`. */
+export type LiveTabsLookup = (agentId: string) => ReadonlyMap<string, number>;
+
+/**
+ * One tab with its live state: busy, with the turn's start time, while a process runs for it, and
+ * idle otherwise. A stored `busy` is stale by definition (the process registry is the truth), so it
+ * is cleared, along with a start time left from an earlier turn.
+ */
+function withLiveTab(tab: AITabRecord, startedAt: number | undefined): AITabRecord {
+	if (startedAt !== undefined) {
+		return tab.state === 'busy' && tab.thinkingStartTime === startedAt
+			? tab
+			: { ...tab, state: 'busy', thinkingStartTime: startedAt };
+	}
+	if (tab.state !== 'busy' && tab.thinkingStartTime === undefined) return tab;
+	const { thinkingStartTime: _stale, ...rest } = tab;
+	return { ...rest, state: 'idle' };
+}
+
+/**
+ * The record a host sends for an agent: each tab's state from the live process registry, and the
+ * agent busy while any of its tabs is. An agent whose stored state is not `busy` (an error) keeps
+ * it when nothing runs.
+ */
+export function withLiveTabState(
+	agent: AgentRecord,
+	running: ReadonlyMap<string, number>
+): AgentRecord {
+	if (!Array.isArray(agent.aiTabs)) return agent;
+	let changed = false;
+	const aiTabs = agent.aiTabs.map((tab) => {
+		const next = withLiveTab(tab, running.get(tab.id));
+		if (next !== tab) changed = true;
+		return next;
+	});
+	const anyBusy = aiTabs.some((tab) => tab.state === 'busy');
+	const state = anyBusy ? 'busy' : agent.state === 'busy' ? 'idle' : agent.state;
+	if (!changed && state === agent.state) return agent;
+	return { ...agent, aiTabs, ...(state !== undefined ? { state } : {}) };
+}
+
+/** One waiting message in `list_queue`'s item shape (the desktop bridge's, and the CLI's output). */
+export interface QueuedTurnWire {
+	id: string;
+	timestamp: number;
+	tabId: string;
+	type: QueuedTurn['kind'];
+	text: string;
+	paused: boolean;
+}
+
+/**
+ * One agent's waiting messages in `list_queue`'s item shape, the one the desktop bridge replies
+ * with. `queue_changed` carries the same items, so a client reads both with one parser.
+ */
+export function queuedTurnsToWire(items: readonly QueuedTurn[]): QueuedTurnWire[] {
+	return items.map((item) => ({
+		id: item.itemId,
+		timestamp: item.queuedAt,
+		tabId: item.tabId,
+		type: item.kind,
+		text: item.text,
+		paused: item.paused,
+	}));
+}
+
+/**
+ * An agent's execution queue changed. The desktop's bridge has no frame for this, so it is a
+ * headless host's own: `createWsMaestroClient` reads it back into `queue.changed`, and a client
+ * that does not know the type ignores it.
+ */
+export function queueChangedFrame(agentId: string, items: readonly QueuedTurn[]): Frame {
+	return { type: 'queue_changed', sessionId: agentId, items: queuedTurnsToWire(items) };
+}
 
 /** The desktop's process id for an agent's AI tab, which is what the client parses back. */
 export function tabProcessId(agentId: string, tabId: string): string {
@@ -108,10 +188,12 @@ function toolPayload(tool: {
 /** Remembers which tab turns already reported an error, so an outcome does not report it twice. */
 export interface FrameState {
 	erroredTurns: Set<string>;
+	/** The live tab state agent frames carry. Absent: records go out as stored. */
+	liveTabs?: LiveTabsLookup;
 }
 
-export function createFrameState(): FrameState {
-	return { erroredTurns: new Set() };
+export function createFrameState(liveTabs?: LiveTabsLookup): FrameState {
+	return { erroredTurns: new Set(), ...(liveTabs ? { liveTabs } : {}) };
 }
 
 function turnFrames(agentId: string, tabId: string, event: TurnEvent, state: FrameState): Frame[] {
@@ -255,14 +337,20 @@ function groupChatFrames(chatId: string, event: GroupChatEvent): Frame[] {
 export function framesForEvent(event: MaestroEvent, state: FrameState): Frame[] {
 	switch (event.type) {
 		case 'agent.added':
-		case 'agent.updated':
-			return [bridgeEvent('sessions:lifecycleSync', { added: [event.agent], removedIds: [] })];
+		case 'agent.updated': {
+			const agent = state.liveTabs
+				? withLiveTabState(event.agent, state.liveTabs(event.agent.id))
+				: event.agent;
+			return [bridgeEvent('sessions:lifecycleSync', { added: [agent], removedIds: [] })];
+		}
 		case 'agent.removed':
 			return [{ type: 'session_removed', sessionId: event.agentId }];
 		case 'settings.changed':
 			return [bridgeEvent('settings:externalChange')];
 		case 'turn':
 			return turnFrames(event.agentId, event.tabId, event.event, state);
+		case 'queue.changed':
+			return [queueChangedFrame(event.agentId, event.items)];
 		case 'autorun':
 			return autoRunFrames(event.agentId, event.event);
 		case 'autorun.ended':

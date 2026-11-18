@@ -58,10 +58,13 @@
  * drop-it behaviour instead of emitting a nameless badge.
  */
 
-import type { ToolType, AgentError } from '../../types';
+import type { ToolType, AgentError, UsageCost, UsageBreakdown } from '../../types';
+import type { TurnTerminal } from '../streaming/turn-outcome';
+import { usageCostUsd } from '../streaming/usage-totals';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { getErrorPatterns, matchErrorPattern, stripJsonEventLines } from './error-patterns';
 import { cleanToolOutputText } from '../../toolOutput';
+import { preserveJsonNumberTokens } from '../../jsonUtils';
 
 /** Cap for user-facing unmatched error bodies in UI/logs. */
 const MAX_ERROR_MESSAGE_CHARS = 500;
@@ -115,6 +118,13 @@ interface GrokRawMessage {
 	usage?: GrokUsage;
 	/** On `end`: what the turn cost, as reported by grok. */
 	total_cost_usd?: number;
+	total_cost_usd_ticks?: unknown;
+	cost_is_partial?: boolean;
+	usage_is_incomplete?: boolean;
+	num_turns?: number;
+	structured_output_error?: unknown;
+	messageId?: string;
+	signature?: string;
 	/** On `end`: the turn's tokens keyed by model id. */
 	modelUsage?: Record<string, unknown>;
 }
@@ -125,10 +135,11 @@ interface GrokUsage {
 	cache_read_input_tokens?: number;
 	cache_creation_input_tokens?: number;
 	reasoning_tokens?: number;
+	total_tokens?: number;
 }
 
 const tokenCount = (value: unknown): number =>
-	typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+	typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : 0;
 
 /** One ACP content block on a grok tool line. */
 interface GrokContentBlock {
@@ -142,13 +153,17 @@ interface GrokContentBlock {
 /** `-old` / `+new` lines for one ACP diff block, under its path. */
 function diffBlockText(block: GrokContentBlock): string {
 	const lines = (text: string | null | undefined, sign: string): string[] =>
-		text
+		typeof text === 'string' && text
 			? text
 					.replace(/\n$/, '')
 					.split('\n')
 					.map((line) => `${sign}${line}`)
 			: [];
-	return [block.path ?? '', ...lines(block.oldText, '-'), ...lines(block.newText, '+')]
+	return [
+		typeof block.path === 'string' ? block.path : '',
+		...lines(block.oldText, '-'),
+		...lines(block.newText, '+'),
+	]
 		.filter(Boolean)
 		.join('\n');
 }
@@ -184,7 +199,9 @@ function grokToolOutputText(msg: GrokRawMessage): string {
 			block?.type === 'diff'
 				? diffBlockText(block)
 				: block?.type === 'content' && block.content?.type === 'text'
-					? (block.content.text ?? '')
+					? typeof block.content.text === 'string'
+						? block.content.text
+						: ''
 					: ''
 		)
 		.filter((text) => text.trim())
@@ -235,13 +252,36 @@ function truncateErrorText(text: string): string {
 	return `${text.slice(0, MAX_ERROR_MESSAGE_CHARS)}...`;
 }
 
-/** The stopReason of an `end` event that died early, or null if the turn
- *  completed. A missing stopReason is treated as completed (schema drift must
- *  not turn every turn into an error). */
-function incompleteStopReason(msg: GrokRawMessage): string | null {
-	const reason = typeof msg.stopReason === 'string' ? msg.stopReason : '';
-	if (!reason || reason === 'end_turn' || reason === 'EndTurn') return null;
-	return reason;
+/** Native stop spellings only. An envelope or exit code cannot prove success. */
+function nativeTerminal(msg: GrokRawMessage): TurnTerminal {
+	const reason = firstString(msg.stopReason);
+	const base = { providerStopReason: reason, dispatchState: 'unknown' as const };
+	if (msg.type === 'error' || msg.error != null || msg.structured_output_error != null)
+		return {
+			...base,
+			status: 'failed',
+			kind: msg.type === 'error' && !firstString(msg.message) ? 'protocol' : 'provider',
+		};
+	switch (msg.type === 'max_turns_reached' ? 'max_turn_requests' : reason) {
+		case 'EndTurn':
+		case 'end_turn':
+			return { ...base, status: 'success' };
+		case 'cancelled':
+			return { ...base, status: 'cancelled', origin: 'provider' };
+		case 'refusal':
+			return { ...base, status: 'refused', origin: 'provider' };
+		case 'max_tokens':
+		case 'max_turn_requests':
+			return { ...base, status: 'incomplete', kind: 'limit' };
+		case 'error':
+			return { ...base, status: 'failed', kind: 'provider' };
+		default:
+			return {
+				...base,
+				status: 'incomplete',
+				kind: reason ? 'unknown-stop-reason' : 'missing-terminal',
+			};
+	}
 }
 
 /** User-facing message for a turn that ended without completing. */
@@ -272,12 +312,12 @@ export class GrokOutputParser implements AgentOutputParser {
 	 *  lives for one process, so an unsettled call cannot outlive the run. */
 	private readonly toolNamesById = new Map<string, string>();
 
-	/** The last model call's usage. Every usage event Maestro sees is ADDED to the
-	 *  session totals, so only `end` (the turn total) reports usage; this is the
-	 *  last call's size, attached there as `absoluteUsage`, the real context
-	 *  occupancy. Overwritten per call and never consumed, because StdoutHandler
-	 *  can parse the `end` line twice and uses the second parse. */
+	/** Occupancy only, never added to the turn total. Retained across repeated end parsing. */
 	private lastCallUsage: GrokUsage | undefined;
+	/** One parser owns one native process/turn; a later end cannot erase a failure. */
+	private terminal: TurnTerminal | undefined;
+	private terminalText: string | undefined;
+	private sawNativeEvent = false;
 
 	/** Parse a single JSON line from Grok's JSONL output stream.
 	 *  Non-JSON lines (e.g. stray stderr text like `Error: ...`) return null. */
@@ -286,20 +326,36 @@ export class GrokOutputParser implements AgentOutputParser {
 			return null;
 		}
 
+		let parsed: unknown;
 		try {
-			return this.parseJsonObject(JSON.parse(line));
+			parsed = JSON.parse(preserveJsonNumberTokens(line, 'total_cost_usd_ticks'));
 		} catch {
-			return null;
+			// Preserve plain stderr handling, but never swallow a broken JSON frame.
+			return /^[\s]*[\[{]/.test(line) ? this.malformedEvent() : null;
 		}
+		return this.parseJsonObject(parsed);
 	}
 
 	/** Parse an already-deserialized JSON object into a normalized ParsedEvent. */
 	parseJsonObject(parsed: unknown): ParsedEvent | null {
-		if (!parsed || typeof parsed !== 'object') {
-			return null;
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+			return this.malformedEvent();
 		}
 
 		const msg = parsed as GrokRawMessage;
+		if (
+			[
+				'thought',
+				'text',
+				'tool_call',
+				'tool_call_update',
+				'usage',
+				'end',
+				'error',
+				'max_turns_reached',
+			].includes(msg.type ?? '')
+		)
+			this.sawNativeEvent = true;
 
 		switch (msg.type) {
 			case 'thought':
@@ -313,51 +369,22 @@ export class GrokOutputParser implements AgentOutputParser {
 				return this.toolCallEvent(msg, false) ?? { type: 'system', raw: msg };
 			case 'tool_call_update':
 				return this.toolCallEvent(msg, true) ?? { type: 'system', raw: msg };
-			case 'end': {
-				const sessionId =
-					typeof msg.sessionId === 'string' && msg.sessionId ? msg.sessionId : undefined;
-				// A non-end_turn stop means the turn died early (headless
-				// permission cancel, token limit, ...). Reclassify as an error so
-				// the unfinished streamed text is not recorded as a successful
-				// result - same pattern as the Antigravity parser's failed
-				// terminal envelope. sessionId stays attached so resume capture
-				// still works.
-				const stopReason = incompleteStopReason(msg);
-				if (stopReason) {
-					return {
-						type: 'error',
-						sessionId,
-						text: incompleteTurnMessage(stopReason),
-						raw: msg,
-					};
-				}
-				// Sole result-style event. The full answer text was already
-				// streamed via `text` deltas, so no text is attached here.
-				const usage = this.turnUsage(msg);
-				return {
-					type: 'result',
-					sessionId,
-					...(usage ? { usage } : {}),
-					raw: msg,
-				};
-			}
+			case 'end':
+			case 'error':
+			case 'max_turns_reached':
+				return this.terminalEvent(msg);
 			case 'usage':
-				// One model call. Remembered for `end`, never reported on its own.
-				if (msg.usage && typeof msg.usage === 'object') this.lastCallUsage = msg.usage;
+				// Native TurnUsage also uses this type, without response metadata.
+				// It must neither replace occupancy nor be added to end's totals.
+				if (
+					!this.terminal &&
+					firstString(msg.messageId, msg.stopReason, msg.signature) !== undefined &&
+					msg.usage &&
+					typeof msg.usage === 'object' &&
+					!Array.isArray(msg.usage)
+				)
+					this.lastCallUsage = { ...msg.usage };
 				return { type: 'system', raw: msg };
-			case 'error': {
-				// Align with detectErrorFromParsed: empty/non-string messages are
-				// not errors (avoid synthetic "Unknown error" on the CLI path).
-				const message = typeof msg.message === 'string' ? msg.message.trim() : '';
-				if (!message) {
-					return null;
-				}
-				return {
-					type: 'error',
-					text: message,
-					raw: msg,
-				};
-			}
 			default:
 				// Unknown types are absorbed as system (forward-compat with CLI
 				// schema growth). No user-visible error; keep raw for debugging.
@@ -368,32 +395,183 @@ export class GrokOutputParser implements AgentOutputParser {
 		}
 	}
 
-	/** The turn's usage and cost from an `end` line (grok 1.x), or undefined on
-	 *  0.x, which reports none. Verified on 1.0.41: `end.usage` is the sum of the
-	 *  turn's `usage` lines, and a resumed turn reports only itself. */
+	private malformedEvent(): ParsedEvent {
+		this.sawNativeEvent = true;
+		return this.terminalEvent({ type: 'error' });
+	}
+
+	private terminalEvent(msg: GrokRawMessage): ParsedEvent {
+		const observed = nativeTerminal(msg);
+		if (!this.terminal || this.terminal.status === 'success') {
+			this.terminal = observed;
+			this.terminalText =
+				observed.status === 'success'
+					? undefined
+					: msg.type === 'error'
+						? (firstString(msg.message) ?? 'Grok emitted a malformed native error envelope.')
+						: msg.structured_output_error != null
+							? 'Grok could not produce the requested structured output.'
+							: incompleteTurnMessage(
+									firstString(msg.stopReason) ??
+										(msg.type === 'max_turns_reached' ? 'max_turn_requests' : 'missing')
+								);
+		}
+		const usage = this.turnUsage(msg);
+		return {
+			type: this.terminal.status === 'success' ? 'result' : 'error',
+			terminal: { ...this.terminal },
+			sessionId: firstString(msg.sessionId),
+			...(this.terminalText ? { text: this.terminalText } : {}),
+			...(usage ? { usage } : {}),
+			raw: msg,
+		};
+	}
+
+	/** Native terminal spend, including failed turns. Cache buckets are already disjoint. */
 	private turnUsage(msg: GrokRawMessage): ParsedEvent['usage'] | undefined {
 		const usage = msg.usage;
-		if (!usage || typeof usage !== 'object') return undefined;
+		const row = usage && typeof usage === 'object' && !Array.isArray(usage) ? usage : {};
+		if (
+			!usage &&
+			msg.usage_is_incomplete === undefined &&
+			msg.cost_is_partial === undefined &&
+			msg.total_cost_usd === undefined &&
+			msg.total_cost_usd_ticks === undefined
+		)
+			return undefined;
+		const counts = [
+			row.input_tokens,
+			row.output_tokens,
+			row.cache_read_input_tokens,
+			row.cache_creation_input_tokens,
+			row.reasoning_tokens,
+		];
+		const validCount = (value: unknown): value is number =>
+			typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+		const complete =
+			counts.every(validCount) &&
+			row.reasoning_tokens! <= row.output_tokens! &&
+			(msg.usage_is_incomplete === undefined || msg.usage_is_incomplete === false) &&
+			(row.total_tokens === undefined ||
+				(validCount(row.total_tokens) &&
+					row.total_tokens ===
+						tokenCount(row.input_tokens) +
+							tokenCount(row.output_tokens) +
+							tokenCount(row.cache_read_input_tokens) +
+							tokenCount(row.cache_creation_input_tokens)));
+		// Already parsed unsafe numbers cannot recover their lost digits. A malformed
+		// exact field also forbids falling back to its rounded floating projection.
+		const rawTicks = msg.total_cost_usd_ticks;
+		const ticks =
+			typeof rawTicks === 'string' && /^(0|[1-9][0-9]{0,18})$/.test(rawTicks)
+				? rawTicks
+				: validCount(rawTicks)
+					? String(rawTicks)
+					: undefined;
+		const dollars =
+			typeof msg.total_cost_usd === 'number' &&
+			Number.isFinite(msg.total_cost_usd) &&
+			msg.total_cost_usd >= 0
+				? msg.total_cost_usd
+				: undefined;
+		const amount =
+			ticks !== undefined
+				? { costUsdTicks: ticks }
+				: rawTicks === undefined && dollars !== undefined
+					? { costUsd: dollars }
+					: undefined;
+		const cost: UsageCost = amount
+			? complete && (msg.cost_is_partial === undefined || msg.cost_is_partial === false)
+				? { ...amount, status: 'exact' }
+				: { ...amount, status: 'partial' }
+			: msg.cost_is_partial === true || msg.usage_is_incomplete === true
+				? { status: 'partial' }
+				: { status: 'unknown' };
+		const models =
+			msg.modelUsage && typeof msg.modelUsage === 'object' && !Array.isArray(msg.modelUsage)
+				? Object.entries(msg.modelUsage)
+				: [];
 		const last = this.lastCallUsage;
-		const model = Object.keys(msg.modelUsage ?? {})[0];
+		const lastComplete =
+			last &&
+			[
+				last.input_tokens,
+				last.output_tokens,
+				last.cache_read_input_tokens,
+				last.cache_creation_input_tokens,
+				last.reasoning_tokens,
+			].every(validCount) &&
+			last.reasoning_tokens! <= last.output_tokens!;
 		return {
-			inputTokens: tokenCount(usage.input_tokens),
-			outputTokens: tokenCount(usage.output_tokens),
-			cacheReadTokens: tokenCount(usage.cache_read_input_tokens),
-			cacheCreationTokens: tokenCount(usage.cache_creation_input_tokens),
-			reasoningTokens: tokenCount(usage.reasoning_tokens),
-			...(typeof msg.total_cost_usd === 'number' && Number.isFinite(msg.total_cost_usd)
-				? { costUsd: msg.total_cost_usd }
-				: {}),
-			...(model ? { model } : {}),
-			...(last
+			inputTokens: tokenCount(row.input_tokens),
+			outputTokens: tokenCount(row.output_tokens),
+			cacheReadTokens: tokenCount(row.cache_read_input_tokens),
+			cacheCreationTokens: tokenCount(row.cache_creation_input_tokens),
+			reasoningTokens: tokenCount(row.reasoning_tokens),
+			...(usageCostUsd(cost) !== undefined ? { costUsd: usageCostUsd(cost) } : {}),
+			...(models.length === 1 ? { model: models[0][0] } : {}),
+			accounting: {
+				source: 'runtime-stream',
+				route: 'native-headless',
+				scope: 'turn',
+				reporting: 'snapshot',
+				// An empty incomplete ledger cannot overwrite earlier observed spend.
+				final: validCount(row.input_tokens) && validCount(row.output_tokens),
+				providerSessionId: firstString(msg.sessionId),
+				requestId: firstString(msg.requestId),
+				cacheReadCounting: 'beside-input',
+				cacheCreationCounting: 'beside-input',
+				completeness: complete ? 'complete' : 'partial',
+				cost,
+				childInclusion: 'completed',
+				childCompleteness: 'unknown',
+				mainAgentRounds: validCount(msg.num_turns) ? msg.num_turns : undefined,
+				models: models.map(([model, value]): UsageBreakdown & { model: string } => {
+					const entry =
+						value && typeof value === 'object' && !Array.isArray(value)
+							? (value as Record<string, unknown>)
+							: {};
+					const valid = [
+						entry.inputTokens,
+						entry.outputTokens,
+						entry.cacheReadInputTokens,
+						entry.cacheCreationInputTokens,
+					].every(validCount);
+					const modelCost =
+						typeof entry.costUSD === 'number' &&
+						Number.isFinite(entry.costUSD) &&
+						entry.costUSD >= 0
+							? entry.costUSD
+							: undefined;
+					return {
+						model,
+						inputTokens: validCount(entry.inputTokens) ? entry.inputTokens : undefined,
+						outputTokens: validCount(entry.outputTokens) ? entry.outputTokens : undefined,
+						cacheReadInputTokens: validCount(entry.cacheReadInputTokens)
+							? entry.cacheReadInputTokens
+							: undefined,
+						cacheCreationInputTokens: validCount(entry.cacheCreationInputTokens)
+							? entry.cacheCreationInputTokens
+							: undefined,
+						callCount: validCount(entry.modelCalls) ? entry.modelCalls : undefined,
+						completeness: complete && valid ? 'complete' : 'partial',
+						cost:
+							modelCost === undefined
+								? { status: 'unknown' }
+								: complete && valid && cost.status === 'exact'
+									? { status: 'exact', costUsd: modelCost }
+									: { status: 'partial', costUsd: modelCost },
+					};
+				}),
+			},
+			...(lastComplete
 				? {
 						absoluteUsage: {
-							inputTokens: tokenCount(last.input_tokens),
-							outputTokens: tokenCount(last.output_tokens),
-							cacheReadInputTokens: tokenCount(last.cache_read_input_tokens),
-							cacheCreationInputTokens: tokenCount(last.cache_creation_input_tokens),
-							reasoningTokens: tokenCount(last.reasoning_tokens),
+							inputTokens: last.input_tokens!,
+							outputTokens: last.output_tokens!,
+							cacheReadInputTokens: last.cache_read_input_tokens!,
+							cacheCreationInputTokens: last.cache_creation_input_tokens!,
+							reasoningTokens: last.reasoning_tokens!,
 						},
 					}
 				: {}),
@@ -506,7 +684,7 @@ export class GrokOutputParser implements AgentOutputParser {
 
 	/** Check whether a parsed event represents a completed agent response. */
 	isResultMessage(event: ParsedEvent): boolean {
-		return event.type === 'result';
+		return event.type === 'result' && (!event.terminal || event.terminal.status === 'success');
 	}
 
 	/** Extract the Grok session ID from a parsed event, if present.
@@ -520,8 +698,7 @@ export class GrokOutputParser implements AgentOutputParser {
 		return typeof raw?.sessionId === 'string' && raw.sessionId ? raw.sessionId : null;
 	}
 
-	/** Extract usage/token statistics from a parsed event. Only the `end`
-	 *  result carries any (grok 1.x); 0.x reports none. */
+	/** Terminal end/error spend (grok 1.x); 0.x reports none. */
 	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null {
 		return event.usage || null;
 	}
@@ -546,12 +723,19 @@ export class GrokOutputParser implements AgentOutputParser {
 		}
 
 		try {
-			const error = this.detectErrorFromParsed(JSON.parse(line));
+			const parsed: unknown = JSON.parse(line);
+			// This classifier also receives stderr; scalar/array diagnostics are not
+			// native frames. Stdout-only parseJsonLine owns framing failures.
+			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+			const error = this.detectErrorFromParsed(parsed);
 			if (error) {
 				error.raw = { ...(error.raw || {}), errorLine: line };
 			}
 			return error;
 		} catch {
+			// Do not classify text inside broken JSON as an auth/rate failure, or
+			// latch bracket-prefixed stderr diagnostics as a native stream failure.
+			if (/^[\s]*[\[{]/.test(line)) return null;
 			return this.matchPattern(line, { errorLine: line });
 		}
 	}
@@ -559,33 +743,41 @@ export class GrokOutputParser implements AgentOutputParser {
 	/** Detect agent errors from an already-parsed JSON object.
 	 *  Grok surfaces runtime failures as `{"type":"error","message":...}` on
 	 *  stdout, and an `end` event with a non-end_turn stopReason is a turn that
-	 *  died early (see incompleteStopReason). parseJsonObject reclassifies that
+	 *  died early (see nativeTerminal). parseJsonObject reclassifies that
 	 *  end as an error EVENT (blocking the bogus result); this detection is what
 	 *  actually emits the agent-error, mirroring the Antigravity parser's dual
 	 *  handling of its failed terminal envelope. */
 	detectErrorFromParsed(parsed: unknown): AgentError | null {
-		if (!parsed || typeof parsed !== 'object') {
-			return null;
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+			return this.toAgentError(
+				'unknown',
+				'Grok emitted a malformed native error envelope.',
+				false,
+				{ parsedJson: parsed }
+			);
 		}
 
 		const msg = parsed as GrokRawMessage;
-		if (msg.type === 'end') {
-			const stopReason = incompleteStopReason(msg);
-			if (!stopReason) {
-				return null;
-			}
-			return this.toAgentError('unknown', incompleteTurnMessage(stopReason), true, {
-				parsedJson: parsed,
-			});
+		if (msg.type === 'end' || msg.type === 'max_turns_reached') {
+			const terminal =
+				this.terminal?.status !== 'success' && this.terminal ? this.terminal : nativeTerminal(msg);
+			if (terminal.status === 'success') return null;
+			return this.toAgentError(
+				'unknown',
+				this.terminalText ?? incompleteTurnMessage(firstString(msg.stopReason) ?? 'missing'),
+				false,
+				{ parsedJson: parsed }
+			);
 		}
-		if (msg.type !== 'error') {
-			return null;
-		}
-
-		const errorText = typeof msg.message === 'string' ? msg.message.trim() : '';
-		if (!errorText) {
-			return null;
-		}
+		if (msg.type !== 'error') return null;
+		const errorText = firstString(msg.message)?.trim();
+		if (!errorText)
+			return this.toAgentError(
+				'unknown',
+				'Grok emitted a malformed native error envelope.',
+				false,
+				{ parsedJson: parsed }
+			);
 
 		const matched = this.matchPattern(errorText, undefined, parsed);
 		if (matched) {
@@ -603,7 +795,28 @@ export class GrokOutputParser implements AgentOutputParser {
 	 *  exits 1, so the combined text is matched against the pattern bank. */
 	detectErrorFromExit(exitCode: number, stderr: string, stdout: string): AgentError | null {
 		if (exitCode === 0) {
-			return null;
+			// Some callers only ask at exit. Inspect native envelopes without mutating
+			// parser state or matching phrases inside successful answer/tool payloads.
+			const replay = new GrokOutputParser();
+			// A live parser saw the complete stream; captured stdout may be a bounded
+			// tail starting mid-frame. Replay only for stateless exit-only callers.
+			if (!this.sawNativeEvent) for (const line of stdout.split('\n')) replay.parseJsonLine(line);
+			// ACP and bridge callers also reuse this error classifier, with no
+			// native stream. Only observed native records establish this contract.
+			if (!this.sawNativeEvent && !replay.sawNativeEvent) return null;
+			const terminal =
+				this.terminal && this.terminal.status !== 'success'
+					? this.terminal
+					: (replay.terminal ?? this.terminal);
+			if (terminal?.status === 'success') return null;
+			return this.toAgentError(
+				'unknown',
+				this.terminalText ??
+					replay.terminalText ??
+					'Grok closed the native stream without a successful terminal record. Any response is incomplete.',
+				false,
+				{ raw: { exitCode, stderr, stdout } }
+			);
 		}
 
 		// JSON event lines were classified as they streamed; see stripJsonEventLines.

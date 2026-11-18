@@ -56,6 +56,14 @@ export type { UseDragAutoScrollOptions } from './useDragAutoScroll';
 // Hover tooltip management
 export { useHoverTooltip } from './useHoverTooltip';
 
+// Menu that peeks on mouse hover and pins open on click (tab bar search and +)
+export {
+	useHoverPopover,
+	HOVER_POPOVER_OPEN_DELAY_MS,
+	HOVER_POPOVER_CLOSE_DELAY_MS,
+} from './useHoverPopover';
+export type { UseHoverPopoverOptions } from './useHoverPopover';
+
 // Fixed-pitch font for surfaces that render shell text
 export { useFixedPitchFont } from './useFixedPitchFont';
 

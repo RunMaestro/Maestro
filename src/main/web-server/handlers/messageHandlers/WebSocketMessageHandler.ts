@@ -1,3 +1,4 @@
+import type { ManagedQueueRoutingProgress } from '../../../../shared/crossAgentTypes';
 /**
  * WebSocket Message Handlers for Web Server
  *
@@ -28,6 +29,7 @@
  * - computer_history_command: Computer History writes, CLI clients only (CLI: `computer-history`)
  * - throughput_gauge_command: Show, hide, configure, or read the Throughput Gauge (CLI: `throughput-gauge`)
  * - live_command: Read or switch Live mode and Remote Control, CLI clients only (CLI: `live`)
+ * - federation_command: List or reconnect the Federation peers the desktop mirrors, CLI clients only (CLI: `federation`)
  *
  * Auto Run message types (refresh_auto_run_docs, configure_auto_run, get_auto_run_docs,
  * get_auto_run_state, get_auto_run_document, save_auto_run_document, stop_auto_run, etc.)
@@ -35,6 +37,7 @@
  */
 
 import { app } from 'electron';
+import { newTabAdmission } from './tabs';
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
 import { getCommitHash } from '../../../utils/build-info';
@@ -58,6 +61,7 @@ import {
 import {
 	handleGetSessions,
 	handleCreateSession,
+	handleImportAgent,
 	handleCreateWorktreeSession,
 	handleDeleteSession,
 	handleRenameSession,
@@ -83,6 +87,8 @@ import {
 } from './movement';
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
 import { handleQuickChat } from './quickChat';
+import { handleSshReachabilityCheck, handleSshReachabilityStatus } from './sshReachability';
+import { handleClaudeCanaryRun, handleClaudeCanaryStatus } from './claudeCanary';
 import {
 	handleSupportPackageCreate,
 	handleFeedbackCheckAuth,
@@ -118,11 +124,15 @@ import {
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
 import { handleClosedTabCommand } from './closedTabs';
+import { handleMessagePinCommand } from './messagePins';
 import { handleComputerHistoryCommand } from './computerHistory';
 import { handleLiveCommand } from './live';
+import { handleFederationCommand } from './federation';
 import { handleMaestroRunCommand } from './maestroRun';
 import { handleDataviewCommand } from './dataview';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
+import { handleDiffReviewCommand } from './diffReview';
+import { handlePromptLinkCommand } from './promptLinks';
 import { handleWindowCommand } from './windows';
 import { handleThroughputGaugeCommand } from './throughputGauge';
 import {
@@ -141,6 +151,7 @@ import {
 	handleReadTerminalTab,
 	handleListTerminalTabs,
 	handleCloseBrowserTab,
+	handlePickBrowserElement,
 	handleOpenTerminalTab,
 	handleNewAITabWithPrompt,
 } from './tabs';
@@ -168,6 +179,7 @@ import {
 	handleSteerGroupChat,
 	handleStopGroupChat,
 	handleArchiveGroupChat,
+	handleAddGroupChatParticipant,
 } from './groupChat';
 import {
 	handleMergeContext,
@@ -202,7 +214,6 @@ import {
 	handleDeletePlaybook,
 } from './playbooks';
 import {
-	handleGetUsageDashboard,
 	handleGetStatsAggregation,
 	handleGetTokenUsage,
 	handleGetStatsIndexing,
@@ -210,6 +221,14 @@ import {
 	handleGetAchievements,
 	handleGenerateDirectorNotesSynopsis,
 } from './stats';
+import {
+	handleGetDelegationStats,
+	handleGetCueStats,
+	handleGetPlanUsage,
+	handleGetAgentCountStats,
+	handleGetActivityStats,
+	handleStatsExport,
+} from './usageDashboard';
 
 /**
  * WebSocket Message Handler Class
@@ -277,6 +296,32 @@ export class WebSocketMessageHandler {
 	 * Bundles callbacks and the response-sending helpers for domain handler
 	 * modules extracted out of this class (e.g. `./autoRun`).
 	 */
+	startQueueHandoffFromMain(
+		...args: Parameters<
+			import('../../../pianola/pianola-new-tab-dispatch').PianolaNewTabDispatch['startQueueHandoff']
+		>
+	) {
+		return newTabAdmission(this.ctx).startQueueHandoff(...args);
+	}
+
+	prepareQueueSpawnFromMain(
+		agentId: string,
+		tabId: string,
+		itemId: string,
+		assertOwner: () => void,
+		routingConsumer?: { onSettled(progress: ManagedQueueRoutingProgress): void },
+		stepId?: string
+	) {
+		return newTabAdmission(this.ctx).prepareQueueSpawn(
+			agentId,
+			tabId,
+			itemId,
+			assertOwner,
+			routingConsumer,
+			stepId
+		);
+	}
+
 	private get ctx(): MessageHandlerContext {
 		return {
 			callbacks: this.callbacks,
@@ -372,12 +417,20 @@ export class WebSocketMessageHandler {
 				handleClosedTabCommand(this.ctx, client, message);
 				break;
 
+			case 'message_pin_command':
+				handleMessagePinCommand(this.ctx, client, message);
+				break;
+
 			case 'computer_history_command':
 				void handleComputerHistoryCommand(this.ctx, client, message);
 				break;
 
 			case 'live_command':
 				handleLiveCommand(this.ctx, client, message);
+				break;
+
+			case 'federation_command':
+				void handleFederationCommand(this.ctx, client, message);
 				break;
 
 			case 'maestro_run_command':
@@ -390,6 +443,14 @@ export class WebSocketMessageHandler {
 
 			case 'auto_run_steering_command':
 				handleAutoRunSteeringCommand(this.ctx, client, message);
+				break;
+
+			case 'diff_review_command':
+				handleDiffReviewCommand(this.ctx, client, message);
+				break;
+
+			case 'prompt_link_command':
+				void handlePromptLinkCommand(this.ctx, client, message);
 				break;
 
 			case 'window_command':
@@ -438,6 +499,10 @@ export class WebSocketMessageHandler {
 
 			case 'close_browser_tab':
 				handleCloseBrowserTab(this.ctx, client, message);
+				break;
+
+			case 'pick_browser_element':
+				handlePickBrowserElement(this.ctx, client, message);
 				break;
 
 			case 'open_terminal_tab':
@@ -564,6 +629,10 @@ export class WebSocketMessageHandler {
 				handleCreateSession(this.ctx, client, message);
 				break;
 
+			case 'import_agent':
+				handleImportAgent(this.ctx, client, message);
+				break;
+
 			case 'delete_session':
 				handleDeleteSession(this.ctx, client, message);
 				break;
@@ -656,6 +725,10 @@ export class WebSocketMessageHandler {
 				handleArchiveGroupChat(this.ctx, client, message);
 				break;
 
+			case 'add_group_chat_participant':
+				handleAddGroupChatParticipant(this.ctx, client, message);
+				break;
+
 			case 'merge_context':
 				handleMergeContext(this.ctx, client, message);
 				break;
@@ -712,10 +785,6 @@ export class WebSocketMessageHandler {
 				handleCueBundleImport(this.ctx, client, message);
 				break;
 
-			case 'get_usage_dashboard':
-				handleGetUsageDashboard(this.ctx, client, message);
-				break;
-
 			case 'get_achievements':
 				handleGetAchievements(this.ctx, client, message);
 				break;
@@ -734,6 +803,30 @@ export class WebSocketMessageHandler {
 
 			case 'stats_query':
 				handleStatsQuery(this.ctx, client, message);
+				break;
+
+			case 'get_delegation_stats':
+				handleGetDelegationStats(this.ctx, client, message);
+				break;
+
+			case 'get_cue_stats':
+				handleGetCueStats(this.ctx, client, message);
+				break;
+
+			case 'get_plan_usage':
+				handleGetPlanUsage(this.ctx, client, message);
+				break;
+
+			case 'get_agent_count_stats':
+				handleGetAgentCountStats(this.ctx, client, message);
+				break;
+
+			case 'get_activity_stats':
+				handleGetActivityStats(this.ctx, client, message);
+				break;
+
+			case 'stats_export':
+				handleStatsExport(this.ctx, client, message);
 				break;
 
 			case 'generate_director_notes_synopsis':
@@ -790,6 +883,22 @@ export class WebSocketMessageHandler {
 
 			case 'quick_chat':
 				handleQuickChat(this.ctx, client, message);
+				break;
+
+			case 'ssh_reachability_status':
+				handleSshReachabilityStatus(this.ctx, client, message);
+				break;
+
+			case 'ssh_reachability_check':
+				void handleSshReachabilityCheck(this.ctx, client, message);
+				break;
+
+			case 'claude_canary_status':
+				handleClaudeCanaryStatus(this.ctx, client, message);
+				break;
+
+			case 'claude_canary_run':
+				void handleClaudeCanaryRun(this.ctx, client, message);
 				break;
 
 			case 'support_package_create':

@@ -14,7 +14,13 @@ Open **Settings** (`Cmd+,` / `Ctrl+,`) and go to the **Plugins** tab. Every buil
 
 ![The Plugins tab in Settings, listing every built-in Encore Feature](./screenshots/plugins-catalog.png)
 
-Click a card to open its detail view, then use the **Enable** / **Disable** button. Features that carry their own options show them on a **Settings** tab beneath that button, and the capabilities the feature is allowed to use are itemized under **Permissions**.
+Click a card to open its detail view. The **Enable** switch is at the top right, beside a **Help** button, and stays there however long the content below is. Under the description are three tabs:
+
+- **Help** - the feature's usage guide: what it does and how to reach it. A feature that is off opens on this tab. A community plugin without a guide says so.
+- **Settings** - the feature's own options, when it has any. A feature that is on opens on this tab.
+- **Permissions** - the capabilities the feature is allowed to use.
+
+Turning the switch on or off does not change the tab you are on.
 
 ![A plugin's detail view, with its own settings and permission list](./screenshots/plugin-detail.png)
 
@@ -35,24 +41,29 @@ A built-in card carries one of two badges, and the badge says where the feature 
 Built-in features work with the community plugin subsystem switched off - that is the default, and the banner at the top of the tab says so. **Enable plugins** turns on loading of third-party plugins as well. You do not need it to use anything below.
 </Note>
 
+<Note>
+**Agent Flow** is no longer bundled. When plugins are enabled, Maestro retires an unmodified Agent Flow 0.3.0 install: it moves the package to `retired-plugins/agent-flow-0.3.0-<id>/` in the Maestro data folder and removes its permissions, settings, and stored data. A copy you changed is left where it is. Maestro never deletes the moved package; remove it yourself when you no longer need it.
+</Note>
+
 ## Available features
 
-| Feature                                | Category   | Shortcut                               | Description                                                                                                                           |
-| -------------------------------------- | ---------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| [Usage & Stats](./usage-dashboard)     | Insights   | `Opt+Cmd+U` / `Alt+Ctrl+U`             | Records query and Auto Run activity, and unlocks the Usage Dashboard that reports on it                                               |
-| [Director's Notes](./director-notes)   | Insights   | `Cmd+Shift+O` / `Ctrl+Shift+O`         | Unified timeline of all agent activity with AI-generated synopses                                                                     |
-| [Maestro Cue](./maestro-cue)           | Automation | `Opt+Q` / `Alt+Q`                      | Event-driven automation: file changes, timers, agent chaining, GitHub polling, and task tracking                                      |
-| [Concerto](./concerto)                 | UI         | `Opt+Cmd+C` / `Alt+Ctrl+C`             | Agents answer with something you can look at and click: interactive views on the Concerto stage, plus always-on-top Cadenza HUD cards |
-| [Throughput Gauge](./throughput-gauge) | UI         | `Opt+Cmd+Shift+T` / `Alt+Ctrl+Shift+T` | A floating gauge with the live tokens-per-second your agents read and write, plus a peak mark                                         |
-| [Maestro Symphony](./symphony)         | Agents     | `Opt+Cmd+Y` / `Alt+Ctrl+Y`             | Contribute to open source by donating AI tokens                                                                                       |
-| [Quick Chat](./quick-chat)             | UI         | `Opt+Space` / `Alt+Space`              | A small floating chat with one agent, opened from any app by a system-wide hotkey                                                     |
-| [Groups+](./general-usage#groups)      | UI         | -                                      | Organize agent groups into folders, and personalize them with icons and label colors                                                  |
-| Pianola                                | Agents     | -                                      | An autonomous manager agent that watches your other agents and answers or escalates their prompts                                     |
-| Coworking                              | Agents     | -                                      | Lets an agent read terminal scrollback and inspect or drive browser tabs, through a per-agent MCP server                              |
-| OpenCode Server                        | Agents     | -                                      | Runs local OpenCode through a shared `opencode serve` process instead of spawning the CLI per prompt                                  |
-| [Computer History](./computer-history) | Data       | -                                      | Records what you read and type across your apps, locally, so any agent can recall it                                                  |
-| [MaestroRun](./maestro-run)            | Automation | -                                      | macOS only. Installs a signed launcher that holds one Full Disk Access grant for your scheduled scripts                               |
-| [Dataview](./dataview)                 | Data       | -                                      | Renders Obsidian Dataview queries as live tables, lists, and task lists in File Preview and the Auto Run preview                      |
+| Feature                                   | Category   | Shortcut                               | Description                                                                                                                           |
+| ----------------------------------------- | ---------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| [Usage & Stats](./usage-dashboard)        | Insights   | `Opt+Cmd+U` / `Alt+Ctrl+U`             | Records query and Auto Run activity, and unlocks the Usage Dashboard that reports on it                                               |
+| [Director's Notes](./director-notes)      | Insights   | `Cmd+Shift+O` / `Ctrl+Shift+O`         | Unified timeline of all agent activity with AI-generated synopses                                                                     |
+| [Maestro Cue](./maestro-cue)              | Automation | `Opt+Q` / `Alt+Q`                      | Event-driven automation: file changes, timers, agent chaining, GitHub polling, and task tracking                                      |
+| [Concerto](./concerto)                    | UI         | `Opt+Cmd+C` / `Alt+Ctrl+C`             | Agents answer with something you can look at and click: interactive views on the Concerto stage, plus always-on-top Cadenza HUD cards |
+| [Throughput Gauge](./throughput-gauge)    | UI         | `Opt+Cmd+Shift+T` / `Alt+Ctrl+Shift+T` | A floating gauge with the live tokens-per-second your agents read and write, plus a peak mark                                         |
+| [Maestro Symphony](./symphony)            | Agents     | `Opt+Cmd+Y` / `Alt+Ctrl+Y`             | Contribute to open source by donating AI tokens                                                                                       |
+| [Prompt Links](./deep-links#prompt-links) | Automation | `Opt+Cmd+Shift+L` / `Alt+Ctrl+Shift+L` | `maestro://run` links that open a new tab in an agent and send a prompt you wrote; one-shot by default                                |
+| [Quick Chat](./quick-chat)                | UI         | `Opt+Space` / `Alt+Space`              | A small floating chat with one agent, opened from any app by a system-wide hotkey                                                     |
+| [Groups+](./general-usage#groups)         | UI         | -                                      | Organize agent groups into folders, and personalize them with icons and label colors                                                  |
+| Pianola                                   | Agents     | -                                      | An autonomous manager agent that watches your other agents and answers or escalates their prompts                                     |
+| Coworking                                 | Agents     | -                                      | Lets an agent read terminal scrollback and inspect or drive browser tabs, through a per-agent MCP server                              |
+| OpenCode Server                           | Agents     | -                                      | Runs local OpenCode through a shared `opencode serve` process instead of spawning the CLI per prompt                                  |
+| [Computer History](./computer-history)    | Data       | -                                      | Records what you read and type across your apps, locally, so any agent can recall it                                                  |
+| [MaestroRun](./maestro-run)               | Automation | -                                      | macOS only. Installs a signed launcher that holds one Full Disk Access grant for your scheduled scripts                               |
+| [Dataview](./dataview)                    | Data       | -                                      | Renders Obsidian Dataview queries as live tables, lists, and task lists in File Preview and the Auto Run preview                      |
 
 Features without a shortcut are not opened from the keyboard: they change how something you already use behaves, rather than putting a new surface on screen.
 
@@ -69,3 +80,5 @@ Disabling a feature hides its surfaces; it does not delete what you already have
 Want to build a new Encore Feature? The architecture is designed for easy extension - add a flag, wire up the toggle, gate the access points, and your feature ships behind a clean opt-in. Ship it off by default while it proves itself; flip its entry in `DEFAULT_ENCORE_FEATURES` (`src/shared/encoreFeatures.ts`) when it graduates.
 
 See the [Encore Features contributor guide](https://github.com/RunMaestro/Maestro/blob/main/CONTRIBUTING.md#encore-features-feature-gating) for the full implementation checklist, architecture details, and the canonical reference implementation (Director's Notes).
+
+Building a community plugin? Start with the [plugin development guide](https://github.com/RunMaestro/Maestro/blob/main/docs/agent-guides/PLUGIN-DEVELOPMENT.md). It links the host contracts for settings cards, services, platform primitives, and Relay.

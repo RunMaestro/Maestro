@@ -23,6 +23,7 @@ export const SHORTCUT_ENCORE_FLAGS: Readonly<Record<string, keyof EncoreFeatureF
 	toggleConcerto: 'concerto',
 	toggleCadenzas: 'concerto',
 	toggleThroughputGauge: 'throughputGauge',
+	openPromptLinks: 'promptLinks',
 };
 
 type EncoreFlagsInput = Partial<EncoreFeatureFlags> | null | undefined;

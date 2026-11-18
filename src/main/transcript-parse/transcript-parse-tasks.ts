@@ -9,24 +9,36 @@
  * type` is fine, a value import of anything that touches `electron`, the
  * logger, or Sentry breaks the worker at load.
  *
- * Each task READS ITS OWN FILE rather than being handed the content. A
- * transcript can run to hundreds of MB; reading it inside the worker keeps that
- * string out of the main process heap entirely instead of copying it across.
+ * Each task READS ITS OWN FILE rather than being handed the content, and reads
+ * it as a STREAM, one line at a time. A transcript can run to hundreds of MB.
+ * Reading one whole held it as one string (two bytes a character once it has
+ * any non-Latin-1 text), then a second copy as the line array. A worker thread
+ * that cannot fit one allocation does not just stop: V8's out-of-memory handler
+ * aborts the whole process, so a single large transcript took the app down
+ * (MAESTRO-183, MAESTRO-184, MAESTRO-186). Every result is therefore a FOLD fed
+ * line by line; the cost is bounded by the longest line, not by the file.
  * Errors propagate to the caller unchanged in kind (see the pool's rehydration),
  * so the `RangeError` / unreadable-file carve-outs at each call site still apply.
+ *
+ * `parseClaudeSessionInfo` keeps a content form for transcripts already in hand
+ * (an SSH read). It runs the SAME fold, so the two paths cannot disagree.
  */
 
-import fs from 'fs/promises';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
+import { forEachJsonlLine } from '../utils/jsonl-stream';
 import {
-	computeClaudeSessionUsage,
-	computeClaudeUsageWithSubagents,
-	readClaudeSubagentTranscripts,
+	isAbsentTranscriptError,
+	listClaudeSubagentTranscriptPaths,
 } from '../../shared/claudeSessionUsage';
 import { CodexTokenCounts } from '../../shared/codexTokenUsage';
-import { countClaudeTranscriptMessages } from '../../shared/claudeTranscriptMessages';
+import { createClaudeMessageCounter } from '../../shared/claudeTranscriptMessages';
+import { createClaudeUsageAccumulator } from '../../shared/modelPricing';
 import { claudeModelUsage } from '../../shared/modelUsage';
-import { computeClaudeTokenSpeed } from '../../shared/tokenSpeed';
+import {
+	createClaudeSpeedSampler,
+	TokenSpeedBucketer,
+	type ClaudeSpeedSampler,
+} from '../../shared/tokenSpeed';
 import type { CachedSessionStats } from '../utils/statsCache';
 import type { AgentSessionInfo } from '../agents/session-storage';
 
@@ -76,140 +88,201 @@ export async function runTranscriptParseTask<T extends TranscriptParseTask>(
 	task: T
 ): Promise<TranscriptParseResult<T>> {
 	switch (task.kind) {
-		case 'claude-usage-stats': {
-			const content = await fs.readFile(task.filePath, 'utf-8');
-			const subagents = await readClaudeSubagentTranscripts(task.filePath);
-			return parseClaudeUsageStats(content, task.sizeBytes, subagents) as TranscriptParseResult<T>;
-		}
-		case 'codex-usage-stats': {
-			const content = await fs.readFile(task.filePath, 'utf-8');
-			return parseCodexUsageStats(content, task.sizeBytes) as TranscriptParseResult<T>;
-		}
-		case 'claude-project-stats': {
-			const content = await fs.readFile(task.filePath, 'utf-8');
-			return (await parseClaudeProjectStats(
+		case 'claude-usage-stats':
+			return (await foldClaudeSessionFiles(
 				task.filePath,
-				content,
-				task.sizeBytes
+				claudeUsageStatsFold(task.sizeBytes)
 			)) as TranscriptParseResult<T>;
+		case 'codex-usage-stats': {
+			const fold = codexUsageStatsFold(task.sizeBytes);
+			await forEachJsonlLine(task.filePath, fold.line);
+			return fold.finish() as TranscriptParseResult<T>;
 		}
-		case 'claude-session-info': {
-			const content = await fs.readFile(task.filePath, 'utf-8');
-			const subagents = await readClaudeSubagentTranscripts(task.filePath);
-			return parseClaudeSessionInfo(
-				content,
-				task.sessionId,
-				task.projectPath,
-				{ size: task.sizeBytes, mtimeMs: task.mtimeMs },
-				subagents
-			) as TranscriptParseResult<T>;
-		}
+		case 'claude-project-stats':
+			return (await foldClaudeSessionFiles(
+				task.filePath,
+				claudeProjectStatsFold(task.sizeBytes)
+			)) as TranscriptParseResult<T>;
+		case 'claude-session-info':
+			return (await foldClaudeSessionFiles(
+				task.filePath,
+				claudeSessionInfoFold(task.sessionId, task.projectPath, {
+					size: task.sizeBytes,
+					mtimeMs: task.mtimeMs,
+				})
+			)) as TranscriptParseResult<T>;
 	}
 }
 
 /**
- * Usage totals for one Claude transcript. Usage and cost include the session's
- * subagent transcripts, which Claude Code keeps in separate files.
+ * A result derived from a Claude session: its own transcript, then each of its
+ * subagent transcripts (Claude Code keeps those in separate files), fed one
+ * non-blank line at a time.
  */
-export function parseClaudeUsageStats(
-	content: string,
-	sizeBytes: number,
-	subagentContents: readonly string[]
-): UsageStatsParse {
-	const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
-		computeClaudeUsageWithSubagents(content, subagentContents);
+interface ClaudeSessionFold<R> {
+	/** One line of the session's own transcript. */
+	parentLine(line: string): void;
+	/** The next subagent transcript starts. Every `subagentLine` after this belongs to it. */
+	beginSubagent(): void;
+	/** One line of the current subagent transcript. */
+	subagentLine(line: string): void;
+	/** Every line has been fed. Called once. */
+	finish(): R;
+}
 
+/** Stream a session file and its subagent files through a fold. */
+async function foldClaudeSessionFiles<R>(
+	sessionFilePath: string,
+	fold: ClaudeSessionFold<R>
+): Promise<R> {
+	await forEachJsonlLine(sessionFilePath, fold.parentLine);
+	for (const subagentPath of await listClaudeSubagentTranscriptPaths(sessionFilePath)) {
+		fold.beginSubagent();
+		try {
+			await forEachJsonlLine(subagentPath, fold.subagentLine);
+		} catch (error) {
+			// A subagent file that vanished between the listing and the read is
+			// not an error, matching `iterateClaudeSubagentTranscripts`.
+			if (!isAbsentTranscriptError(error)) throw error;
+		}
+	}
+	return fold.finish();
+}
+
+/** Run a fold over transcripts already in hand. Blank lines are skipped, as a stream skips them. */
+function foldClaudeSessionContents<R>(
+	fold: ClaudeSessionFold<R>,
+	parentContent: string,
+	subagentContents: readonly string[]
+): R {
+	for (const line of parentContent.split('\n')) if (line.trim()) fold.parentLine(line);
+	for (const content of subagentContents) {
+		fold.beginSubagent();
+		for (const line of content.split('\n')) if (line.trim()) fold.subagentLine(line);
+	}
+	return fold.finish();
+}
+
+/**
+ * Usage totals for one Claude transcript. Usage and cost include the session's
+ * subagent transcripts; the message count is the session's own conversation.
+ */
+function claudeUsageStatsFold(sizeBytes: number): ClaudeSessionFold<UsageStatsParse> {
+	const messages = createClaudeMessageCounter();
+	const usage = createClaudeUsageAccumulator();
 	return {
-		messages: countClaudeTranscriptMessages(content),
-		inputTokens,
-		outputTokens,
-		cacheReadTokens,
-		cacheCreationTokens,
-		cachedInputTokens: 0,
-		sizeBytes,
-		costUsd,
+		parentLine(line) {
+			messages.addLine(line);
+			usage.addLine(line);
+		},
+		beginSubagent() {},
+		subagentLine: usage.addLine,
+		finish() {
+			const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
+				usage.finish();
+			return {
+				messages: messages.count(),
+				inputTokens,
+				outputTokens,
+				cacheReadTokens,
+				cacheCreationTokens,
+				cachedInputTokens: 0,
+				sizeBytes,
+				costUsd,
+			};
+		},
 	};
 }
 
-/** Usage totals for one Codex transcript. */
-export function parseCodexUsageStats(content: string, sizeBytes: number): UsageStatsParse {
-	const lines = content.split('\n').filter((l) => l.trim());
-
+/** Usage totals for one Codex transcript, fed one line at a time. */
+function codexUsageStatsFold(sizeBytes: number): {
+	line(line: string): void;
+	finish(): UsageStatsParse;
+} {
 	let messageCount = 0;
 	const tokenCounts = new CodexTokenCounts();
 
-	for (const line of lines) {
-		try {
-			const entry = JSON.parse(line);
-
-			// Count messages from response_item entries
-			if (entry.type === 'response_item' && entry.payload?.type === 'message') {
-				const role = entry.payload.role;
-				if (role === 'user' || role === 'assistant') {
-					messageCount++;
-				}
-			}
-
-			// Extract token usage from event_msg with token_count payload.
-			// `total_token_usage` is cumulative, so it must never be summed - see
-			// CodexTokenCounts.
-			if (entry.type === 'event_msg' && entry.payload?.type === 'token_count') {
-				tokenCounts.addTokenCountEvent(entry.payload.info);
-			}
-		} catch {
-			// Skip malformed lines
-		}
-	}
-
 	return {
-		messages: messageCount,
-		inputTokens: tokenCounts.inputTokens,
-		outputTokens: tokenCounts.outputTokens,
-		cacheReadTokens: 0,
-		cacheCreationTokens: 0,
-		cachedInputTokens: tokenCounts.cachedTokens,
-		sizeBytes,
+		line(line) {
+			try {
+				const entry = JSON.parse(line);
+
+				// Count messages from response_item entries
+				if (entry.type === 'response_item' && entry.payload?.type === 'message') {
+					const role = entry.payload.role;
+					if (role === 'user' || role === 'assistant') {
+						messageCount++;
+					}
+				}
+
+				// Extract token usage from event_msg with token_count payload.
+				// `total_token_usage` is cumulative, so it must never be summed - see
+				// CodexTokenCounts.
+				if (entry.type === 'event_msg' && entry.payload?.type === 'token_count') {
+					tokenCounts.addTokenCountEvent(entry.payload.info);
+				}
+			} catch {
+				// Skip malformed lines
+			}
+		},
+		finish() {
+			return {
+				messages: messageCount,
+				inputTokens: tokenCounts.inputTokens,
+				outputTokens: tokenCounts.outputTokens,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				cachedInputTokens: tokenCounts.cachedTokens,
+				sizeBytes,
+			};
+		},
 	};
 }
 
 /** Per-project stats for one Claude transcript (the Agent Sessions browser totals). */
-export async function parseClaudeProjectStats(
-	filePath: string,
-	content: string,
-	sizeBytes: number
-): Promise<ProjectSessionStatsParse> {
-	const messages = countClaudeTranscriptMessages(content);
-
+function claudeProjectStatsFold(sizeBytes: number): ClaudeSessionFold<ProjectSessionStatsParse> {
+	const messages = createClaudeMessageCounter();
 	// Per-model token + cost extraction (a session may mix models).
-	const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
-		await computeClaudeSessionUsage(filePath, content);
-
+	const usage = createClaudeUsageAccumulator();
+	let parentLines = 0;
 	let oldestTimestamp: string | null = null;
-	const lines = content.split('\n').filter((l) => l.trim());
-	for (
-		let j = 0;
-		j < Math.min(lines.length, CLAUDE_SESSION_PARSE_LIMITS.OLDEST_TIMESTAMP_SCAN_LINES);
-		j++
-	) {
-		try {
-			const entry = JSON.parse(lines[j]);
-			if (entry.timestamp) {
-				oldestTimestamp = entry.timestamp;
-				break;
-			}
-		} catch {
-			// Skip malformed lines
-		}
-	}
 
 	return {
-		messages,
-		costUsd,
-		sizeBytes,
-		tokens: inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens,
-		tokenSplit: { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens },
-		oldestTimestamp,
+		parentLine(line) {
+			messages.addLine(line);
+			usage.addLine(line);
+			if (
+				oldestTimestamp === null &&
+				parentLines++ < CLAUDE_SESSION_PARSE_LIMITS.OLDEST_TIMESTAMP_SCAN_LINES
+			) {
+				oldestTimestamp = readTimestamp(line);
+			}
+		},
+		beginSubagent() {},
+		subagentLine: usage.addLine,
+		finish() {
+			const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd } =
+				usage.finish();
+			return {
+				messages: messages.count(),
+				costUsd,
+				sizeBytes,
+				tokens: inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens,
+				tokenSplit: { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens },
+				oldestTimestamp,
+			};
+		},
 	};
+}
+
+/** A line's `timestamp`, or null when it has none or is not JSON. */
+function readTimestamp(line: string): string | null {
+	try {
+		const entry = JSON.parse(line);
+		return entry.timestamp || null;
+	} catch {
+		return null; // Skip malformed lines
+	}
 }
 
 /**
@@ -232,8 +305,9 @@ export function extractClaudeTextFromContent(content: unknown): string {
 
 /**
  * Session-list metadata for one Claude transcript (preview, usage, cost,
- * duration, token speed). Throws on a transcript it cannot make sense of; the
- * storage layer decides how that is reported.
+ * duration, token speed), from content already in hand. Throws on a transcript
+ * it cannot make sense of; the storage layer decides how that is reported. A
+ * local file goes through the worker pool, which streams the same fold.
  */
 export function parseClaudeSessionInfo(
 	content: string,
@@ -242,98 +316,123 @@ export function parseClaudeSessionInfo(
 	stats: { size: number; mtimeMs: number },
 	subagentContents: readonly string[] = []
 ): AgentSessionInfo {
-	const lines = content.split('\n').filter((l) => l.trim());
+	return foldClaudeSessionContents(
+		claudeSessionInfoFold(sessionId, projectPath, stats),
+		content,
+		subagentContents
+	);
+}
 
+function claudeSessionInfoFold(
+	sessionId: string,
+	projectPath: string,
+	stats: { size: number; mtimeMs: number }
+): ClaudeSessionFold<AgentSessionInfo> {
+	const messages = createClaudeMessageCounter();
+	// Per-model token + cost extraction (a session may mix models).
+	const usage = createClaudeUsageAccumulator();
+	// Timed per transcript: a subagent's first call must not be timed from the
+	// parent's last line, so each transcript gets its own sampler.
+	const speed = new TokenSpeedBucketer();
+	let sampler: ClaudeSpeedSampler = createClaudeSpeedSampler((sample) => speed.add(sample));
+
+	let parentLines = 0;
 	let firstAssistantMessage = '';
 	let firstUserMessage = '';
-	let timestamp = new Date(stats.mtimeMs).toISOString();
+	let firstUserTimestamp: string | undefined;
+	// The session's last few lines, for its end time. A ring of raw lines: only
+	// the tail is ever parsed, so a long transcript is not parsed twice.
+	const tail: string[] = [];
 
-	const messageCount = countClaudeTranscriptMessages(content);
+	return {
+		parentLine(line) {
+			messages.addLine(line);
+			usage.addLine(line);
+			sampler.addLine(line);
 
-	// Extract first meaningful message content
-	// Prefer first assistant response as preview (more meaningful than system context)
-	// Fall back to first user message if no assistant response exists
-	for (
-		let i = 0;
-		i < Math.min(lines.length, CLAUDE_SESSION_PARSE_LIMITS.FIRST_MESSAGE_SCAN_LINES);
-		i++
-	) {
-		try {
-			const entry = JSON.parse(lines[i]);
-			// Capture first user message as fallback
-			if (!firstUserMessage && entry.type === 'user' && entry.message?.content) {
-				const textContent = extractClaudeTextFromContent(entry.message.content);
-				if (textContent.trim()) {
-					firstUserMessage = textContent;
-					timestamp = entry.timestamp || timestamp;
+			// Extract first meaningful message content. Prefer the first assistant
+			// response as preview (more meaningful than system context); fall back
+			// to the first user message if no assistant response exists.
+			if (
+				!firstAssistantMessage &&
+				parentLines < CLAUDE_SESSION_PARSE_LIMITS.FIRST_MESSAGE_SCAN_LINES
+			) {
+				try {
+					const entry = JSON.parse(line);
+					// Capture first user message as fallback
+					if (!firstUserMessage && entry.type === 'user' && entry.message?.content) {
+						const textContent = extractClaudeTextFromContent(entry.message.content);
+						if (textContent.trim()) {
+							firstUserMessage = textContent;
+							firstUserTimestamp = entry.timestamp;
+						}
+					}
+					// Capture first assistant message as preferred preview
+					if (entry.type === 'assistant' && entry.message?.content) {
+						const textContent = extractClaudeTextFromContent(entry.message.content);
+						if (textContent.trim()) firstAssistantMessage = textContent;
+					}
+				} catch {
+					// Skip malformed lines
 				}
 			}
-			// Capture first assistant message as preferred preview
-			if (!firstAssistantMessage && entry.type === 'assistant' && entry.message?.content) {
-				const textContent = extractClaudeTextFromContent(entry.message.content);
-				if (textContent.trim()) {
-					firstAssistantMessage = textContent;
-					// Once we have assistant message, we can stop scanning
+			parentLines++;
+
+			tail.push(line);
+			if (tail.length > CLAUDE_SESSION_PARSE_LIMITS.LAST_TIMESTAMP_SCAN_LINES) tail.shift();
+		},
+		beginSubagent() {
+			sampler.finish();
+			sampler = createClaudeSpeedSampler((sample) => speed.add(sample));
+		},
+		subagentLine(line) {
+			usage.addLine(line);
+			sampler.addLine(line);
+		},
+		finish() {
+			sampler.finish();
+
+			const timestamp = firstUserTimestamp || new Date(stats.mtimeMs).toISOString();
+			// Use assistant response as preview if available, otherwise fall back to user message
+			const previewMessage = firstAssistantMessage || firstUserMessage;
+
+			// Extract last timestamp for duration
+			let lastTimestamp = timestamp;
+			for (let i = tail.length - 1; i >= 0; i--) {
+				const found = readTimestamp(tail[i]);
+				if (found) {
+					lastTimestamp = found;
 					break;
 				}
 			}
-		} catch {
-			// Skip malformed lines
-		}
-	}
 
-	// Use assistant response as preview if available, otherwise fall back to user message
-	const previewMessage = firstAssistantMessage || firstUserMessage;
+			const startTime = new Date(timestamp).getTime();
+			const endTime = new Date(lastTimestamp).getTime();
+			const durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
 
-	// Per-model token + cost extraction (a session may mix models).
-	const {
-		inputTokens: totalInputTokens,
-		outputTokens: totalOutputTokens,
-		cacheReadTokens: totalCacheReadTokens,
-		cacheCreationTokens: totalCacheCreationTokens,
-		costUsd,
-		byModel,
-	} = computeClaudeUsageWithSubagents(content, subagentContents);
+			const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUsd, byModel } =
+				usage.finish();
 
-	// Extract last timestamp for duration
-	let lastTimestamp = timestamp;
-	for (
-		let i = lines.length - 1;
-		i >= Math.max(0, lines.length - CLAUDE_SESSION_PARSE_LIMITS.LAST_TIMESTAMP_SCAN_LINES);
-		i--
-	) {
-		try {
-			const entry = JSON.parse(lines[i]);
-			if (entry.timestamp) {
-				lastTimestamp = entry.timestamp;
-				break;
-			}
-		} catch {
-			// Skip malformed lines
-		}
-	}
-
-	const startTime = new Date(timestamp).getTime();
-	const endTime = new Date(lastTimestamp).getTime();
-	const durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
-
-	return {
-		sessionId,
-		projectPath,
-		timestamp,
-		modifiedAt: new Date(stats.mtimeMs).toISOString(),
-		firstMessage: previewMessage.slice(0, CLAUDE_SESSION_PARSE_LIMITS.FIRST_MESSAGE_PREVIEW_LENGTH),
-		messageCount,
-		sizeBytes: stats.size,
-		costUsd,
-		inputTokens: totalInputTokens,
-		outputTokens: totalOutputTokens,
-		cacheReadTokens: totalCacheReadTokens,
-		cacheCreationTokens: totalCacheCreationTokens,
-		byModel: claudeModelUsage(byModel),
-		// Timed per transcript: a subagent's first call must not be timed
-		// from the parent's last line.
-		speed: computeClaudeTokenSpeed([content, ...subagentContents]),
-		durationSeconds,
+			return {
+				sessionId,
+				projectPath,
+				timestamp,
+				modifiedAt: new Date(stats.mtimeMs).toISOString(),
+				firstMessage: previewMessage.slice(
+					0,
+					CLAUDE_SESSION_PARSE_LIMITS.FIRST_MESSAGE_PREVIEW_LENGTH
+				),
+				messageCount: messages.count(),
+				sizeBytes: stats.size,
+				costUsd,
+				inputTokens,
+				outputTokens,
+				cacheReadTokens,
+				cacheCreationTokens,
+				byModel: claudeModelUsage(byModel),
+				speed: speed.result(),
+				durationSeconds,
+			};
+		},
 	};
 }

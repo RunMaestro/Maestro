@@ -70,6 +70,25 @@ describe('IPC handler wiring parity', () => {
 		expect(missing).toEqual([]);
 	});
 
+	it('uses the composed post-flush Pianola consumer in the live bootstrap', () => {
+		const source = stripComments(readFileSync(BOOTSTRAP_INDEX, 'utf8'));
+		expect(source).toContain(
+			'onSessionsPersisted: pianolaPersistenceConsumer(deps.getPianolaSupervisor)'
+		);
+		expect(source).toContain("from './pianola-persistence'");
+	});
+
+	it('registers the same plugin create/delete implementation as the adapter composition', () => {
+		const source = stripComments(readFileSync(path.resolve(SRC, '../index.ts'), 'utf8'));
+		expect(source).toContain("from './plugins/plugin-session-lifecycle'");
+		expect(source).toMatch(
+			/create: pluginSessionsCreate, remove: pluginSessionsDelete[\s\S]*?createPluginSessionLifecycle\(/
+		);
+		expect(source).toContain('flush: flushPendingSessionWrites');
+		expect(source).toContain('sessionsCreate: pluginSessionsCreate');
+		expect(source).toContain('sessionsDelete: pluginSessionsDelete');
+	});
+
 	it('wires the Context Timeline handlers into the live bootstrap path', () => {
 		expect(invokedRegistrars(BOOTSTRAP_INDEX)).toContain('registerContextTimelineHandlers');
 	});

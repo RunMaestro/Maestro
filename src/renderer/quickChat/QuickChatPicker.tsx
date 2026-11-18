@@ -28,6 +28,7 @@ import { useElementHeight } from '../hooks/ui/useElementWidth';
 import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';
 import { EscCloseButton } from '../components/ui/EscCloseButton';
 import type { Theme } from '../types';
+import { isImeComposing } from '../utils/ime';
 
 export interface QuickChatPickerItem {
 	id: string;
@@ -180,12 +181,13 @@ export function QuickChatPicker({
 		// not. Cmd/Ctrl chords (the one that closes the picker, Cmd+S, Cmd+P)
 		// still reach the window, which ignores any chord it does not own.
 		if (!(e.metaKey || e.ctrlKey)) e.stopPropagation();
-		if (e.key === 'Escape') {
+		if (e.key === 'Escape' && !isImeComposing(e)) {
 			e.preventDefault();
 			onClose();
 			return;
 		}
 		if (e.key === 'Enter') {
+			if (isImeComposing(e)) return;
 			e.preventDefault();
 			pick(selectedIndex);
 			return;

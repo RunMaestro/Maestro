@@ -69,7 +69,7 @@ export function useSymphonyContribution(
 
 	const handleStartContribution = useCallback(
 		async (data: SymphonyContributionData) => {
-			logger.info('[Symphony] Creating session for contribution:', undefined, data);
+			logger.info('[Symphony] Creating session for contribution');
 
 			// Get agent definition
 			const agent = await window.maestro.agents.get(data.agentType);
@@ -188,6 +188,8 @@ export function useSymphonyContribution(
 				customPath: data.customPath,
 				customArgs: data.customArgs,
 				customEnvVars: data.customEnvVars,
+				customModel: data.customModel,
+				customEffort: data.customEffort,
 				// Auto Run setup - use autoRunPath from contribution
 				autoRunFolderPath: data.autoRunPath,
 				// Symphony metadata for tracking

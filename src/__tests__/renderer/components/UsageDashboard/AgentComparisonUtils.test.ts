@@ -1,148 +1,157 @@
 import { describe, expect, it } from 'vitest';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
-import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
-import {
-	buildAgentComparisonData,
-	buildAgentSplitAggregation,
-	getAgentColor,
-} from '../../../../renderer/components/UsageDashboard/agentComparisonUtils';
+import { buildProviderComparisonRows } from '../../../../renderer/components/UsageDashboard/agentComparisonUtils';
+import { rankProvidersByCount } from '../../../../renderer/components/UsageDashboard/chartUtils';
 import { COLORBLIND_AGENT_PALETTE } from '../../../../renderer/constants/colorblindPalettes';
 
 const theme = THEMES.dracula;
 
-function makeSession(overrides: Partial<Session>): Session {
-	return {
-		id: 's1',
-		name: 'Agent',
-		toolType: 'claude-code',
-		state: 'idle',
-		cwd: '/repo',
-		fullPath: '/repo',
-		projectRoot: '/repo',
-		aiLogs: [],
-		shellLogs: [],
-		workLog: [],
-		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
-		isGitRepo: false,
-		fileTree: [],
-		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		createdAt: 0,
-		...overrides,
-	} as Session;
-}
+type Input = Pick<StatsAggregation, 'byAgent' | 'byAgentWorktree'>;
 
-const data: StatsAggregation = {
-	totalQueries: 10,
-	totalDuration: 1000,
-	avgDuration: 100,
+const base: Input = {
 	byAgent: {
-		'claude-code': { count: 10, duration: 1000 },
+		'claude-code': { count: 10, duration: 1_000 },
+		codex: { count: 30, duration: 600 },
 	},
-	bySource: { user: 6, auto: 4 },
-	byLocation: { local: 10, remote: 0 },
-	byDay: [],
-	byHour: [],
-	totalSessions: 2,
-	sessionsByAgent: { 'claude-code': 2 },
-	sessionsByDay: [],
-	avgSessionDuration: 500,
-	byAgentByDay: {},
-	bySessionByDay: {
-		parent: [{ date: '2026-01-01', count: 3, duration: 300 }],
-		worktree: [{ date: '2026-01-01', count: 4, duration: 400 }],
-	},
-	bySessionSource: {},
-	worktreeQueries: 4,
-	parentQueries: 6,
-	byWorktreeStatus: {
-		worktree: { count: 4, duration: 400 },
-		parent: { count: 6, duration: 600 },
-	},
-	imageAnnotations: 0,
+	byAgentWorktree: {},
 };
 
-describe('agentComparisonUtils', () => {
-	it('assigns theme and colorblind colors', () => {
-		expect(getAgentColor('claude-code', 0, theme, false)).toBe(theme.colors.accent);
-		expect(getAgentColor('codex', 1, theme, false)).toBe('#10b981');
-		expect(getAgentColor('codex', 2, theme, true)).toBe(
-			COLORBLIND_AGENT_PALETTE[2 % COLORBLIND_AGENT_PALETTE.length]
-		);
+describe('rankProvidersByCount', () => {
+	it('orders providers by query count, ties broken by key', () => {
+		expect(
+			rankProvidersByCount({
+				b: { count: 5 },
+				a: { count: 5 },
+				c: { count: 9 },
+			})
+		).toEqual(['c', 'a', 'b']);
 	});
 
-	it('splits worktree and regular usage while reconciling historical remainder', () => {
-		const parent = makeSession({ id: 'parent', name: 'Parent', toolType: 'claude-code' });
-		const worktree = makeSession({
-			id: 'worktree',
-			name: 'Worktree',
-			toolType: 'claude-code',
-			parentSessionId: 'parent',
-		});
-
-		const split = buildAgentSplitAggregation(data, [parent, worktree]);
-
-		expect(split).toEqual({
-			'claude-code': {
-				regular: { count: 6, duration: 600 },
-				worktree: { count: 4, duration: 400 },
-			},
-		});
+	it('returns an empty list for missing input', () => {
+		expect(rankProvidersByCount(undefined)).toEqual([]);
 	});
+});
 
-	it('returns null split when there is no worktree signal', () => {
-		const parent = makeSession({ id: 'parent', name: 'Parent', toolType: 'claude-code' });
-		expect(buildAgentSplitAggregation(data, [parent])).toBeNull();
-		expect(buildAgentSplitAggregation(data, [])).toBeNull();
-	});
-
-	it('builds sorted comparison rows from split and legacy aggregations', () => {
-		const parent = makeSession({ id: 'parent', name: 'Parent', toolType: 'claude-code' });
-		const worktree = makeSession({
-			id: 'worktree',
-			name: 'Worktree',
-			toolType: 'claude-code',
-			parentSessionId: 'parent',
-		});
-		const splitAggregation = buildAgentSplitAggregation(data, [parent, worktree]);
-
-		const splitRows = buildAgentComparisonData({
-			data,
-			splitAggregation,
+describe('buildProviderComparisonRows', () => {
+	it('labels rows with the provider display name', () => {
+		const rows = buildProviderComparisonRows({
+			data: base,
+			mode: 'count',
 			theme,
 			colorBlindMode: false,
-			sessions: [parent, worktree],
 		});
+		expect(rows.map((r) => r.label)).toEqual(['Codex', 'Claude Code']);
+	});
 
-		expect(splitRows.map((row) => row.key)).toEqual(['claude-code', 'claude-code__worktree']);
-		expect(splitRows[0]).toMatchObject({
-			label: 'Claude Code',
-			count: 6,
-			duration: 600,
-			isWorktree: false,
+	it('sorts by the active mode and computes shares for count and duration', () => {
+		const byCount = buildProviderComparisonRows({
+			data: base,
+			mode: 'count',
+			theme,
+			colorBlindMode: false,
 		});
-		expect(splitRows[1]).toMatchObject({
+		expect(byCount.map((r) => r.provider)).toEqual(['codex', 'claude-code']);
+		expect(byCount[0].share).toBeCloseTo(75);
+
+		const byDuration = buildProviderComparisonRows({
+			data: base,
+			mode: 'duration',
+			theme,
+			colorBlindMode: false,
+		});
+		expect(byDuration.map((r) => r.provider)).toEqual(['claude-code', 'codex']);
+		expect(byDuration[0].share).toBeCloseTo(62.5);
+	});
+
+	it('plots mean time per query in average mode, with no share', () => {
+		const rows = buildProviderComparisonRows({
+			data: base,
+			mode: 'average',
+			theme,
+			colorBlindMode: false,
+		});
+		expect(rows.map((r) => [r.provider, r.value])).toEqual([
+			['claude-code', 100],
+			['codex', 20],
+		]);
+		expect(rows.every((r) => r.share === null)).toBe(true);
+	});
+
+	it('keeps each provider on its shared color whatever the sort', () => {
+		const byCount = buildProviderComparisonRows({
+			data: base,
+			mode: 'count',
+			theme,
+			colorBlindMode: true,
+		});
+		const byDuration = buildProviderComparisonRows({
+			data: base,
+			mode: 'duration',
+			theme,
+			colorBlindMode: true,
+		});
+		const color = (rows: typeof byCount, p: string) => rows.find((r) => r.provider === p)?.color;
+		// codex has the most queries, so it holds index 0 in both modes.
+		expect(color(byCount, 'codex')).toBe(COLORBLIND_AGENT_PALETTE[0]);
+		expect(color(byDuration, 'codex')).toBe(COLORBLIND_AGENT_PALETTE[0]);
+		expect(color(byDuration, 'claude-code')).toBe(COLORBLIND_AGENT_PALETTE[1]);
+	});
+
+	it('splits worktree queries into their own row from the recorded flag', () => {
+		const rows = buildProviderComparisonRows({
+			data: {
+				...base,
+				byAgentWorktree: {
+					'claude-code': {
+						worktree: { count: 4, duration: 400 },
+						parent: { count: 6, duration: 600 },
+					},
+				},
+			},
+			mode: 'count',
+			theme,
+			colorBlindMode: false,
+		});
+		const worktree = rows.find((r) => r.isWorktree);
+		const parent = rows.find((r) => r.key === 'claude-code');
+		expect(worktree).toMatchObject({
+			key: 'claude-code__worktree',
 			label: 'Claude Code (Worktree)',
 			count: 4,
 			duration: 400,
-			isWorktree: true,
 		});
+		expect(parent).toMatchObject({ count: 6, duration: 600 });
+		expect(worktree?.color).toBe(parent?.color);
+	});
 
-		const legacyRows = buildAgentComparisonData({
-			data,
-			splitAggregation: null,
+	it('draws no worktree rows when no query ran in a worktree', () => {
+		const rows = buildProviderComparisonRows({
+			data: {
+				...base,
+				byAgentWorktree: {
+					codex: { worktree: { count: 0, duration: 0 }, parent: { count: 30, duration: 600 } },
+				},
+			},
+			mode: 'count',
 			theme,
 			colorBlindMode: false,
-			sessions: [parent],
 		});
-		expect(legacyRows).toHaveLength(1);
-		expect(legacyRows[0].durationPercentage).toBe(100);
+		expect(rows.some((r) => r.isWorktree)).toBe(false);
+	});
+
+	it('drops a parent row with no queries left after the worktree split', () => {
+		const rows = buildProviderComparisonRows({
+			data: {
+				byAgent: { codex: { count: 3, duration: 30 } },
+				byAgentWorktree: {
+					codex: { worktree: { count: 3, duration: 30 }, parent: { count: 0, duration: 0 } },
+				},
+			},
+			mode: 'count',
+			theme,
+			colorBlindMode: false,
+		});
+		expect(rows.map((r) => r.key)).toEqual(['codex__worktree']);
 	});
 });

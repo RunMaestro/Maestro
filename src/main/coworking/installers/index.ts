@@ -7,12 +7,14 @@ import { claudeCodeInstaller } from './claude-code';
 import { codexInstaller } from './codex';
 import { opencodeInstaller } from './opencode';
 import { factoryDroidInstaller } from './factory-droid';
+import { grokInstaller } from './grok';
 
 const INSTALLERS: Record<string, AgentMcpInstaller> = {
 	[claudeCodeInstaller.agentId]: claudeCodeInstaller,
 	[codexInstaller.agentId]: codexInstaller,
 	[opencodeInstaller.agentId]: opencodeInstaller,
 	[factoryDroidInstaller.agentId]: factoryDroidInstaller,
+	[grokInstaller.agentId]: grokInstaller,
 };
 
 /** All agent ids the coworking installer supports. Drives the Settings UI rows. */

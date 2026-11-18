@@ -1,0 +1,329 @@
+---
+title: Federation
+description: Run agents on a remote machine's own Maestro, so they keep working after your laptop sleeps, and see and drive them from your Left Bar. Built in, and used wherever a remote can run it.
+icon: network-wired
+---
+
+Federation lets a Maestro that runs on another machine **own** an agent. That Maestro, a headless `maestro-cli host`, runs the turns, the queue, Auto Run, and Cue. The Maestro on your laptop is a **mirror**: it shows the hosted agents you keep in your Left Bar, streams their output, and sends your input. Close the laptop and the host keeps working. Open it again and the mirror reloads the current state.
+
+Every Maestro (or `maestro-cli`) that drives a hosted agent is a **conductor**. One agent can have several: your laptop and your desktop, or you and a teammate on the same host. They all see the same tabs, transcripts, queue, and settings, because all of it lives on the host.
+
+Federation is built in and **opportunistic**. Every SSH remote you add is a candidate: when one runs a Maestro host, you can move agents onto it or add the agents it runs to your Left Bar; when it does not, it stays a plain SSH remote and nothing changes. One right-click (**Move to Host**) turns an SSH agent into a hosted one that keeps running while your laptop sleeps, and Maestro installs what the remote needs. The laptop reaches the host over the SSH remote you already have. Nothing new listens on the network.
+
+## SSH remote agent or hosted agent
+
+Maestro has two ways to use another machine. An [SSH remote agent](./ssh-remote-execution) is owned by your local Maestro, which starts the provider over SSH for each turn. A hosted agent is owned by the Maestro host on the remote, so it keeps running while your laptop sleeps. Federation is the feature that makes this work; **Hosted** is what the Left Bar calls the result.
+
+|                                                           | SSH remote agent | Hosted agent                         |
+| --------------------------------------------------------- | ---------------- | ------------------------------------ |
+| Who owns the agent                                        | Local Maestro    | Remote Maestro                       |
+| Turn survives the laptop closing                          | No               | Yes                                  |
+| Auto Run and Cue run while the laptop is off              | No               | Yes                                  |
+| Agents created on the remote Maestro can be added locally | No               | Yes                                  |
+| Several clients can use the same agent                    | No               | Yes                                  |
+| Needs Maestro on the other machine                        | No               | Yes, and Maestro installs it for you |
+
+You can turn an existing SSH remote agent into a hosted one with **Move to Host**. See [Move an SSH agent to its host](#move-an-ssh-agent-to-its-host).
+
+### Tell them apart in the Left Bar
+
+Every agent on another machine wears a badge under its name. Hover it to see what it means and what to do next.
+
+| Badge    | Agent            | What the hover card says                                                                                                                                                                        |
+| -------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SSH`    | SSH remote agent | Stops when this machine sleeps or disconnects, because this Maestro starts every turn over SSH. Then the next step: **Move to Host**, which sets up a host on the remote first when it has none |
+| `Hosted` | Hosted agent     | Keeps running while this machine sleeps or is off. The Maestro host on that remote owns the agent and runs its turns, queue, Auto Run, and Cue                                                  |
+
+A local agent has no badge. A hosted agent stays in its own group (or ungrouped), like any other agent, and wears `Hosted` where it wore `SSH`. The badge's color shows the host's connection:
+
+| Color  | Connection                                                                     |
+| ------ | ------------------------------------------------------------------------------ |
+| Accent | Connected                                                                      |
+| Orange | Connecting or reconnecting                                                     |
+| Red    | Connection lost, no host running, Maestro not installed, or the forward failed |
+
+Hover the badge to see why a host is out of reach. Clicking a hosted agent's row opens it on its host; while the host shows no copy of it, the row shows the local copy as it was.
+
+## How it connects
+
+```mermaid
+sequenceDiagram
+    participant L as Laptop Maestro
+    participant S as SSH
+    participant H as maestro-cli host (remote)
+    L->>S: maestro-cli host endpoint --json
+    S->>H: runs as the SSH user
+    H-->>L: port, token, CLI secret (kept in memory only)
+    L->>S: local forward to the host's loopback port
+    L->>H: list agents, subscribe to live events, send input
+```
+
+- **SSH is the authentication.** On every connect the laptop reads the host's own port, token, and CLI secret over SSH. It keeps them in memory and never writes them to disk.
+- **The host stays on loopback.** The laptop reaches it through an SSH local forward. No port is opened on the remote's network. The forward runs on its own private SSH connection and skips any `LocalForward` your ssh config sets for that host, so a tunnel you open yourself (a VNC forward, for example) keeps its port. On Windows, whose OpenSSH cannot do this, the forward also opens your config's forwards; one whose port is taken is skipped with a warning.
+- **Opportunistic, with an opt-out per remote.** Maestro probes every enabled SSH remote once at startup, with one SSH call, to see whether it runs a host. A remote with no host stays a plain SSH remote and is not shown as a peer. Maestro probes it again after the laptop wakes, when you edit your SSH remotes, after **Move to Host** sets up a host, or **Start Host**, and every 15 minutes. Turn **Federation** off on a remote and Maestro never probes it.
+- **One at a time.** Maestro connects to the remotes one after another, never at the same time, so a laptop with many remotes does not start an SSH storm.
+- **The host is the only record.** Mirrored agents live in memory only. They are never written to your local agent store, so a disconnect or a removed remote cannot damage local data.
+
+A remote with Federation on and a running host is called a **peer**. Its peer name is the remote's name, or its ID when two remotes share a name. A peer's agents are addressed as `peer:agent`, for example `build-box:docs`.
+
+## Setup
+
+There is nothing to set up. With **Move SSH agents to their host automatically** on (the default, in **Settings > SSH Hosts > Federation automation**), Maestro does the whole job on its own, one remote and one agent at a time:
+
+1. It checks each SSH remote for a Maestro host.
+2. Where a remote has an SSH agent but no host, it installs its own `maestro-cli` there. A `maestro-cli` too old to run a host is upgraded the same way. See [What Maestro installs on the remote](#what-maestro-installs-on-the-remote).
+3. It registers the host with the remote's service manager and starts it. See [Durability](#durability).
+4. It moves each SSH agent onto the host once every [sanity check](#automatic-moves-and-their-sanity-checks) passes.
+
+When it cannot do a step on its own, it tells you what to do. See [When Maestro needs you](#when-maestro-needs-you).
+
+To do the same steps by hand (or with automatic moves off), right-click the agent in the Left Bar and choose **Move to Host**. When the remote runs no host yet, the window first offers **Set Up Host**, which installs and starts it. Once the host answers, the same window shows the plan: what moves and which env vars stay. Confirm to move the agent. From the CLI:
+
+```bash
+maestro-cli remote-host install build-box --start
+maestro-cli lift docs
+```
+
+The provider CLIs your agents use (Claude Code, Codex, and so on) must already be installed on the remote and logged in as the SSH user. An SSH agent that already worked there has them.
+
+### Automatic moves and their sanity checks
+
+Maestro moves an SSH agent onto its host only when all of these hold:
+
+| Check                                                                                                            | When it fails                                                                                                                                       |
+| ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The agent can be lifted at all (an SSH agent, not moved yet, its remote enabled with Federation on)              | It stays an SSH agent. It is not tried again until its record changes                                                                               |
+| No turn is running                                                                                               | It waits, and moves on a later pass once it is idle                                                                                                 |
+| The host can run the agent's provider (skipped when the agent names its own binary path)                         | Blocked: install the provider on the remote and log in to it as the SSH user                                                                        |
+| No secret env var stays behind on this machine                                                                   | Blocked: move it with **Move to Host** and check **Send secret env vars too**, or set those variables on the remote and remove them from this agent |
+| Every refusal the lift itself would make (for example a provider session folder that does not exist on the host) | Blocked, with the lift's own reason                                                                                                                 |
+
+A blocked agent is tried again when its record or its remote changes, or after an hour. Maestro also runs a pass every five minutes, when a remote connects or drops, and when you edit an agent. **Run Now** in Settings > SSH Hosts, or `maestro-cli federation auto run`, runs one at once.
+
+Maestro never replaces a running host on its own to upgrade it, because that would interrupt its work. A host on an older version keeps running and gets agents, and the status names the upgrade command.
+
+Turn **Move SSH agents to their host automatically** off and the moves stop: **Move to Host** stays a right-click. Maestro still keeps the hosts you already have running. To keep one remote out of all of this, turn its **Federation** switch off.
+
+### When Maestro needs you
+
+Whatever Maestro cannot do itself ends with the reason and the one thing you have to do, in four places:
+
+- **A toast**, when an agent moves and when something new needs you.
+- **The agent's badge.** The `SSH` badge turns red. Hover it for the reason and the fix.
+- **Settings > SSH Hosts > Federation automation**, which lists every remote and agent with its state, and **Run Now**.
+- **`maestro-cli federation auto`**, the same list. It exits `1` when something needs you, so a script can check it.
+
+The usual cases:
+
+| Message                                       | What to do                                                                                                                                                                                                                                                                                                                                           |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lingering is off for the SSH user             | Run `sudo loginctl enable-linger <user>` on the remote once, so the host survives logout and starts at boot                                                                                                                                                                                                                                          |
+| A provider is not available to the host       | Install it on the remote and log in as the SSH user. If it lives outside `~/.local/bin` or a Node version manager, add `export PATH="<its folder>:$PATH"` to `~/.maestro/host.env` on the remote (Maestro never rewrites that file), then **Start Host**                                                                                             |
+| Secret env vars would stay on this machine    | **Move to Host** with **Send secret env vars too**, or set them on the remote and remove them from this agent                                                                                                                                                                                                                                        |
+| Could not download Node.js, or install SQLite | Let the remote reach nodejs.org and the npm registry, or install Node.js 22+ there                                                                                                                                                                                                                                                                   |
+| A `maestro-cli` that Maestro did not install  | **Move to Host** offers **Install Maestro's Own Copy**                                                                                                                                                                                                                                                                                               |
+| No service manager (Windows, a container)     | Shown as a note, not a blocker: Maestro starts the host again when it finds it stopped. To start it at boot yourself, run `~/.maestro/bin/maestro-host-service` from your init (Linux), or on Windows add a Task Scheduler task "At log on" that runs `"C:\Program Files\Git\bin\bash.exe" -lc "~/.maestro/bin/maestro-cli host start --foreground"` |
+
+### What Maestro installs on the remote
+
+Maestro installs into `~/.maestro` on the remote, as the SSH user. It never asks for sudo and runs only as the SSH user you connect as. The install writes nothing outside that folder, npm's cache included. Registering the [service](#durability) adds one file in the service manager's folder (`~/.config/systemd/user/maestro-host.service`, or `~/Library/LaunchAgents/sh.maestro.host.plist`), and may turn lingering on for that user.
+
+| On the remote             | What Maestro uses                                                                                                                                    |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maestro-cli`             | This machine's own copy, with its prompts, so both sides run the same version                                                                        |
+| Operating system          | Linux, macOS, or Windows through Git Bash or WSL (the same POSIX shell an [SSH agent needs on Windows](./ssh-remote-execution#windows-remote-hosts)) |
+| CPU                       | x64 or arm64                                                                                                                                         |
+| Node.js                   | The remote's own Node.js 22 or newer when it has one. Otherwise Node.js 24 from nodejs.org, checked against nodejs.org's SHA-256 list                |
+| SQLite (`better-sqlite3`) | Installed with npm for that Node.js. A prebuilt binary when one exists for the platform, else built from source                                      |
+
+The remote needs to reach nodejs.org (only when it has no Node.js 22 or newer) and the npm registry. Where no prebuilt SQLite binary exists, it also needs python3, make, and a C++ compiler.
+
+The new install is staged beside the old one and swapped in only after SQLite loads and the CLI runs, so a failed install leaves the old one working. When something stops the install, the window says why and what to do. Two cases offer a button to continue:
+
+| Refusal                                                                                      | Button                                                                                                           |
+| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| A host on an older version is running                                                        | **Upgrade and Restart Host**: stops it once its work in flight finishes, upgrades, and starts it again           |
+| The remote has a `maestro-cli` that Maestro did not install (Maestro.app, the server bundle) | **Install Maestro's Own Copy**: leaves the other one alone and puts a copy in `~/.maestro` that takes precedence |
+
+A remote Mac that runs the Maestro desktop app is already a host while the app is open. Its agents show up without an install.
+
+### Turn Federation off for one remote
+
+Open **Settings > SSH Hosts**, edit the remote, and switch **Federation** off. Maestro then never probes that remote for a host, and its agents stay SSH agents. From the CLI:
+
+```bash
+maestro-cli list ssh-remotes
+maestro-cli update-ssh-remote 3f2a --federation off
+```
+
+### Check the host
+
+```bash
+maestro-cli remote-host status build-box
+maestro-cli remote-host start build-box
+```
+
+`remote-host status` reports whether Maestro is installed, whether a host runs, and whether its version differs from yours. `remote-host start` starts a stopped host. Neither prints the host's token or secret. In the desktop app, right-click a hosted agent whose host went down and choose **Start Host**: it installs or upgrades `maestro-cli` first when it needs to. To keep the host running across reboots, see [Durability](#durability).
+
+### See the host's agents
+
+The Left Bar shows only the hosted agents you keep there: the ones you moved from this machine, and the ones you added. A host's other agents belong to whoever runs that host, so they stay out of your Left Bar, the Thinking pill, and the command palette until you add them.
+
+To add one, open **Add Hosted Agent** from the command palette or the Left Bar hamburger menu. It lists every agent your hosts run that your Left Bar does not show yet, per host. Pick a group and click **Add**. The new row opens the agent on its host. **Remove Agent** on that row later removes only your row; the host keeps its agent.
+
+Right-click a hosted row to copy its `peer:agent` target or to reconnect its host, and to start the host while it is down. When the connection drops, the rows stay where they are with their last known state, and Maestro reconnects on its own. After the laptop wakes, it reconnects every peer and reloads its agents.
+
+From the CLI:
+
+```bash
+maestro-cli federation agents                 # every agent your hosts run, and which ones you added
+maestro-cli federation agents --not-added     # only the ones your Left Bar does not show
+maestro-cli federation add build-box:docs --group Research   # add one (agent id, id prefix, or name)
+maestro-cli list agents --peer build-box      # the agents on one peer
+maestro-cli list agents --all-peers           # local agents, then every peer
+maestro-cli federation peers                  # what the desktop probes, with connection state
+maestro-cli federation reconnect build-box
+```
+
+## Drive a hosted agent
+
+Click a hosted agent's row to open it. Its tabs, transcript, and live output come from the host. When the agent moved from this machine, the tabs it had before the move follow the host's tabs in the same strip. Each tab then carries a pill that says where it lives: the host's name, or `Local` for a tab this machine kept. A `Local` tab is read only: continue that conversation in a tab on the host. The composer works as it does for a local agent:
+
+- **Send** a message. While a tab is busy, the message queues on the host, not here. It shows as a queued card under the transcript, as a local queued message does, and leaves the list when the host starts it. **Remove** and **Hold** / **Resume** on a card act on the host's queue.
+- **Stop** the running turn. The Thinking pill above the composer shows a busy mirrored tab with its elapsed time, the same as a local one, and its Stop button stops the turn on the host.
+- **New tab**, **rename**, and **star** a tab, from the controls beside the tab strip.
+- **Choose your model, effort, read-only, and save to History** for the tab with the chips under the message box. They are yours only: they go with each message you send and never change the tab for other conductors. See [Settings of a hosted agent](#settings-of-a-hosted-agent).
+- **Edit Agent** from the gear beside the agent's name, to change the settings every conductor shares.
+
+Some things stay off, with a tooltip that says why, because the host does not serve them:
+
+- **Slash commands.** They run in your local window, and the host receives plain messages only.
+- **Shell command mode.** It would run the command on your laptop, not on the host.
+- **Images.** The host receives text only for now.
+
+A send while the peer is disconnected fails at once with an error toast. It is **never** queued here or sent later. Your draft stays in the composer.
+
+A busy tab of a hosted agent in your Left Bar also shows on the Thinking pill while you look at a local agent, named `<agent> on <peer>`. Click it to open the hosted agent. Its Stop button stops that turn on the host.
+
+### Close the lid, open it again
+
+The queue and the turns belong to the host, so they keep going while your laptop sleeps. When it wakes, Maestro reconnects each peer and reads its current state again: the agent list, which tabs are busy and since when, the messages still waiting in each queue, and the transcript of the tab you look at. A turn that started while you were away shows as busy with its real elapsed time, and a message the host already ran is gone from the queue and present in the transcript. The History column reads the host again too.
+
+### History
+
+Toggle the Right Bar, or press <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd>, to show a mirrored agent's History beside its transcript. It is the same History panel a local agent has: the activity graph, the type, host, and sender filters, search, and the detail view. It is read-only, because the host owns the entries.
+
+The entries come from the host. They are the agent's own History, plus the shared History of its project (`<project>/.maestro/history/`). That is the same shared History desktops already use when several people work one project over SSH, so the host's entries and theirs appear together:
+
+- Each turn's entry names the machine it was sent from. A message you send from your laptop shows your laptop's hostname. A turn the host starts itself (Auto Run, Cue) shows the host's hostname.
+- The host writes its entries to its own file, `history-<hostname>.host.jsonl`. A desktop on the same machine keeps `history-<hostname>.jsonl`, so neither hides the other.
+- Sharing is opt-in, as on a desktop. The host writes the shared file for an agent when the project already has a `.maestro/history/` folder (a desktop with **Sync history** on creates it), or when the agent's record has `shareHistoryToProjectDir` on. Otherwise the host keeps the entries in its own History only, and the mirror still shows them.
+
+The same actions work from the CLI with a `peer:agent` target, through the same code the desktop uses:
+
+```bash
+maestro-cli send build-box:docs "Summarize the open PRs"
+maestro-cli interrupt build-box:docs
+maestro-cli tab new --agent build-box:docs
+maestro-cli tab star active --agent build-box:docs
+```
+
+`show agent`, `ask`, and `dispatch` also take a `peer:agent` target. [Agents on a Peer](./cli#agents-on-a-peer) lists every verb and the options a peer refuses.
+
+## Settings of a hosted agent
+
+A hosted agent's settings belong to its host, and every conductor that drives it follows them. When Maestro connects to a peer it loads the host's settings. While it stays connected, the host sends every change as it happens, so when one conductor changes the agent's default model, everyone else sees it.
+
+Change the shared settings with **Edit Agent**: the gear beside the agent's name in its view, **Edit Agent...** in the right-click menu of a mirrored agent, or **Edit Agent on Host** in the command palette. A lifted agent's own Left Bar row opens the hosted agent, and its **Edit Agent** and `maestro-cli update-agent` changes go to the host too. From the CLI, `maestro-cli update-agent <peer:agent> --model ...` changes the host directly.
+
+- **Shared (on the host):** name, provider, working directory, model, effort, context window, custom path and arguments, nudge message, new session message, bookmark, token source (maestro-p mode), Codex transport, harness control mode, the Auto Run folder (only inside the working directory, as in a lift), custom env vars, and each tab's name.
+- **Yours only:** a tab's model, effort, read-only, and save to History, set with the chips in the hosted agent's composer. They go with each message you send from that tab and are never saved on the host, so another conductor on the same tab keeps theirs. `maestro-cli send <peer:agent>` takes the same choices with `--model`, `--effort`, `--read-only`, and `--no-history`. Thinking display, Enter to send, and a tab's star also stay with you.
+- **Never sent:** the Left Bar group, the SSH settings, and the maestro-p binary path. A secret env var syncs only when the host already holds it (you sent it with `--with-env`). A host env var you never set on this agent is never changed or copied back.
+- **When the peer is down:** your change waits, marked pending, and goes out when the peer reconnects.
+- **When the host changed the same setting since:** nothing moves until you choose. A toast names the settings; click it, or open **Federation Settings Conflicts** from the command palette or the hamburger menu. For each setting, take the host's value, keep yours, or, for the nudge message, new session message, and custom arguments, ask the agent to **Merge** the two. A merge is a proposal you can edit, and it is used only when you click **Use this**. From the CLI: `maestro-cli federation conflicts`, then `maestro-cli federation resolve <peer:agent> <field> --take host|local` or `--value <merged text>`.
+- **The first sync of an agent:** any setting that differs between this machine and the host shows as a conflict, with the host's value as the suggested choice. A lift sends every setting, so a newly moved agent starts with none.
+- **When the host refuses a change:** for example, a new working directory while a turn runs. A toast says why, and the host's value stays.
+
+Read the host's copy back with `maestro-cli show agent <peer:agent> --json`.
+
+### More than one conductor
+
+Any number of conductors can drive one hosted agent at the same time.
+
+- **Messages** from every conductor wait in the host's one queue for that tab, in the order the host received them. Each History entry names the machine the message came from.
+- **Shared settings** changed by one conductor reach the others within moments, while they are connected, and on their next connect otherwise.
+- **Your own tab choices** (model, effort, read-only, save to History) never reach anyone else. Two conductors on the same tab can send with different models.
+- **Stop** stops the turn for everyone: the turn runs on the host, not on your machine.
+- Anyone who can drive an agent can make it do anything its permissions allow on the host. Drive only agents on machines you trust, with people you trust. See [Known limits](#known-limits).
+
+## Move an SSH agent to its host
+
+An SSH remote agent already runs its provider on the remote as the SSH user, so its provider session files are already there. A **lift** moves the agent onto the host on that remote:
+
+- The host gets an agent with the same remote working directory, provider, model, effort, and arguments.
+- Every visible tab moves with its transcript and its provider session ID, so the next turn resumes the same conversation. Queued messages move too.
+- Non-secret custom env vars move. Secret ones stay on your laptop unless you choose to send them. The variable that selects the provider's config or session directory (such as `CLAUDE_CONFIG_DIR` or `CODEX_HOME`) always moves.
+- Your local agent keeps its tabs and transcripts but becomes a pointer. Its Left Bar row stays in its group with a `Hosted` badge, and clicking it opens the agent on its host, with the tabs it kept here listed after the host's. Sends to the local copy are refused. Its settings follow the host from then on (see [Settings of a hosted agent](#settings-of-a-hosted-agent)).
+- Settings the import cannot carry (bookmark, token source, Codex transport, harness control mode) are sent right after it, so the hosted agent starts with all of them.
+
+From the desktop, right-click the agent in the Left Bar and choose **Move to Host**, or run it from the command palette. When the remote runs no host yet, it sets one up first and then continues. Either way it shows the plan (what moves and which env vars stay) before anything moves. From the CLI:
+
+```bash
+maestro-cli lift docs --dry-run    # the same plan, nothing moves
+maestro-cli lift docs              # move it
+maestro-cli lift docs --with-env   # also send secret env vars
+```
+
+A lift refuses, and moves nothing, while a tab is running a turn, when no host runs on the remote, or when the agent is not an SSH remote agent. The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. A lift is one way: there is no automatic move back to an SSH agent. [Lift an SSH Agent Onto Its Host](./cli#lift-an-ssh-agent-onto-its-host) lists every refusal code.
+
+## Durability
+
+A host is only useful while it keeps running.
+
+- **macOS sleep.** While the host has work in flight (a turn, an Auto Run, a group chat round, a consult, or a Cue run), it holds `caffeinate -i` so the Mac does not sleep mid-turn, and releases it when idle. `host start --no-prevent-sleep` turns this off. `host status --json` reports `preventingSleep`.
+- **Reboots and crashes.** Maestro registers the host with the remote's service manager when it sets the host up (Move to Host, Start Host, automatic setup, or `remote-host install`), and once per app run for a host it is already connected to:
+
+  | Remote                                   | Service                                                                                                                                                                                                    |
+  | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | Linux with a systemd user session        | `~/.config/systemd/user/maestro-host.service`, enabled and started. It restarts on a crash                                                                                                                 |
+  | macOS without Maestro.app                | `~/Library/LaunchAgents/sh.maestro.host.plist`. It starts at login, so a headless Mac needs automatic login                                                                                                |
+  | macOS with Maestro.app                   | None: the app is the host while it runs. Keep it open (add it to Login Items)                                                                                                                              |
+  | Windows, or Linux without a user session | None. On Linux run `~/.maestro/bin/maestro-host-service` from your own init; on Windows add a Task Scheduler task that runs `bash.exe -lc "~/.maestro/bin/maestro-cli host start --foreground"` (Git Bash) |
+
+  Both service files run `~/.maestro/bin/maestro-host-service`, which sets up the same PATH an SSH agent gets, so the host finds the same provider CLIs. Maestro rewrites that wrapper on every setup; put your own settings, such as an extra PATH entry, in `~/.maestro/host.env`, which the wrapper reads first and Maestro never touches. A host that already runs another way is left running; the service takes over at the next boot. `remote-host install --no-service` skips the service.
+
+- **Linux logout.** systemd stops a user's services when their last session ends unless lingering is on. Maestro turns lingering on itself where the system lets a user do that. Where it needs sudo, Maestro tells you to run `sudo loginctl enable-linger <user>` on the remote once. `host start`, `host status`, and `remote-host status` warn while it is off.
+- **A stopped host.** When a remote's `maestro-cli` is installed but its host is not running, Maestro starts it on its own (through the service when there is one). **Start Host** on the peer, or `maestro-cli remote-host start`, does it at once.
+
+<Warning>
+Run the host as the same user your SSH agents run as. The host then reads the same provider logins and session files. A host that runs as another user cannot resume the sessions of a lifted agent.
+</Warning>
+
+## Troubleshooting
+
+| What you see                                                       | Why, and what to do                                                                                                                                                                                                     |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A remote's agents do not show in the Left Bar                      | No host runs there, or its **Federation** switch is off. Check with `maestro-cli remote-host status <remote>`; **Move to Host** sets a host up                                                                          |
+| The peer's dot is red                                              | The host stopped, or the SSH forward failed. Right-click the peer and choose **Start Host** or **Reconnect**. Its agents stay in the list, dimmed, until it is back                                                     |
+| A send fails with "Not connected to peer"                          | The peer is down. Nothing was sent, and your draft is still in the message box. Send again once the dot is green                                                                                                        |
+| A setting you changed did not reach the host                       | The peer was down, so the change is pending. It goes out when the peer reconnects                                                                                                                                       |
+| A toast says the settings differ from the host                     | You and the host (or another conductor) changed the same setting. Click the toast, or open **Federation Settings Conflicts**, and choose. `maestro-cli federation conflicts` lists the same choices                     |
+| A toast says the host kept its settings                            | The host refused your change, for example a new working directory while a turn runs. The agent shows the host's value again. Change it again when the host can take it                                                  |
+| A lifted agent's row shows the old local copy                      | Its peer is not connected, so the row cannot open the hosted agent. Reconnect the peer                                                                                                                                  |
+| A hosted agent starts a fresh provider session instead of resuming | The host runs as a different user, or the session directory variable (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) names a folder that does not exist on the remote. Run the host as the SSH user (see [Durability](#durability)) |
+
+## Known limits
+
+- **Driving an agent means running commands as the host user.** Anyone who can send to a hosted agent can make it do anything that agent's permissions allow, on the host, as the SSH user. There are no per-person permissions: everyone who can reach the host over SSH as that user can drive, and change the settings of, every agent on it. Share a host only with people you would give that SSH login to.
+- **SSH is the only transport.** A peer must be an SSH remote you can already reach. There is no bundled tunnel, no pairing with a short code, and no offline invite link.
+- **No re-export.** A host does not offer agents that it mirrors from a third Maestro.
+- **No phone or web interface control.** The browser build of Maestro and the web interface do not show peers. Use the desktop app or the CLI.
+- **No worktrees for host-owned agents.** You cannot create or scan worktrees for a mirrored agent.
+- **No `@mention` of a mirrored agent** from a local composer. Use `maestro-cli ask peer:agent` instead.
+- **Auto Run and Cue status are not mirrored.** They run on the host. Check them there with `maestro-cli` over SSH.
+- **History of Auto Run and Cue runs refreshes on the next turn.** The History column reads again when a chat turn ends, the peer reconnects, or the laptop wakes. A host-started run's entry shows up at the next of those.
+- **Some queue actions are local only.** On a mirrored agent's queued cards you can remove, hold, and resume a message. Edit, merge, reorder, Force Send, and steer stay off, because the host does not serve them.
+- **The queue lives in the host's memory.** If the host process stops or the machine reboots, the messages still waiting are lost, and a turn that was running is recorded as interrupted. Run the host as a service (see [Durability](#durability)).
+- **Some agent settings stay on this machine for now.** Extra directories, the Agent Resilience retry switches, Codex automatic reset, and env vars you parked with the eye button are not sent to the host yet, so a hosted agent runs without them. Set them on the host's own Maestro if you need them there.
+- **The model list in a hosted agent's message box** is the one this machine finds. **Edit Agent** shows the host's list.
+- **The installer needs a POSIX shell.** A Windows remote must answer SSH with Git Bash or WSL, as an SSH agent there already must. The host's sleep prevention and lingering check cover macOS and Linux only.

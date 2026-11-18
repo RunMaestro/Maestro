@@ -23,6 +23,7 @@ import { formatTimestamp } from '../../shared/formatters';
 import { useListNavigation, useScrollIntoView } from '../hooks';
 import { CUE_COLOR, tintedPillColors } from './History/historyConstants';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
+import { isImeComposing } from '../utils/ime';
 
 // Lookback period options for the activity graph
 type LookbackPeriod = {
@@ -772,7 +773,7 @@ export function GroupChatHistoryPanel({
 						value={searchFilter}
 						onChange={(e) => setSearchFilter(e.target.value)}
 						onKeyDown={(e) => {
-							if (e.key === 'Escape') {
+							if (e.key === 'Escape' && !isImeComposing(e)) {
 								setSearchFilterOpen(false);
 								setSearchFilter('');
 								panelRef.current?.focus();

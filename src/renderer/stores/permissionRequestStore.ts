@@ -46,6 +46,8 @@ export type PermissionDecision =
 
 interface PermissionRequestState {
 	queue: PermissionRequestUI[];
+	/** Drop closed native requests without sending another response. */
+	retainPending: (requestIds: string[]) => void;
 	/** Add a request to the queue (from the IPC listener). */
 	enqueue: (request: PermissionRequestUI) => void;
 	/** Answer a request: send the decision to main, then dequeue it. */
@@ -67,6 +69,12 @@ function sendDecision(requestId: string, decision: PermissionDecision): void {
 
 export const usePermissionRequestStore = create<PermissionRequestState>((set) => ({
 	queue: [],
+	retainPending: (requestIds) =>
+		set((state) => {
+			const live = new Set(requestIds);
+			const queue = state.queue.filter((r) => live.has(r.requestId));
+			return queue.length === state.queue.length ? state : { queue };
+		}),
 	enqueue: (request) =>
 		set((state) => {
 			// Ignore duplicates (defensive against double-delivery).

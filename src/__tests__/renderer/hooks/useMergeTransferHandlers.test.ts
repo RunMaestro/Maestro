@@ -1243,6 +1243,83 @@ describe('useMergeTransferHandlers', () => {
 	});
 
 	// ----------------------------------------------------------------
+	// handleSendToAgent - permission mode
+	// ----------------------------------------------------------------
+	// The transfer names the mode of the target agent's active tab, never none
+	// (which plans `standard` whatever that tab shows).
+
+	describe('handleSendToAgent - permission mode', () => {
+		const targetWithActiveTab = (tabFields: Record<string, unknown>, state: 'idle' | 'busy') => {
+			const base = createMockSession();
+			return createMockSession({
+				id: 'mode-target',
+				name: 'Mode Target',
+				toolType: 'grok',
+				state,
+				executionQueue: [],
+				aiTabs: [{ ...(base.aiTabs[0] as any), ...tabFields }] as any,
+			});
+		};
+
+		it.each([
+			['an explicit standard tab', { permissionMode: 'standard' }, 'standard'],
+			['a tab never set (the pill reads Full Access)', {}, 'full'],
+			['a legacy read-only tab', { readOnlyMode: true }, 'readonly'],
+		])('spawns and stamps the new tab with the mode of %s', async (_label, tabFields, expected) => {
+			useSessionStore.setState({
+				sessions: [createMockSession(), targetWithActiveTab(tabFields, 'idle')],
+				activeSessionId: 'session-1',
+			});
+			const { result } = renderHook(() => useMergeTransferHandlers(createMockDeps()));
+
+			let sendResult: any;
+			await act(async () => {
+				sendResult = await result.current.handleSendToAgent('mode-target', {
+					groomContext: false,
+					targetSessionId: 'mode-target',
+				});
+			});
+
+			expect(sendResult.success).toBe(true);
+			await vi.waitFor(() => {
+				expect((window as any).maestro.process.spawn).toHaveBeenCalledTimes(1);
+			});
+			const spawn = (window as any).maestro.process.spawn.mock.calls[0][0];
+			expect(spawn.permissionMode).toBe(expected);
+			expect(spawn.readOnlyMode).toBe(expected === 'readonly');
+			const target = useSessionStore.getState().sessions.find((s) => s.id === 'mode-target')!;
+			const newTab = target.aiTabs.find((t) => t.id === sendResult.newTabId)!;
+			expect(newTab.permissionMode).toBe(expected);
+			expect(newTab.readOnlyMode).toBe(expected === 'readonly');
+		});
+
+		it('stamps the queued tab so the queue dispatch resolves the same mode', async () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession(),
+					targetWithActiveTab({ permissionMode: 'standard' }, 'busy'),
+				],
+				activeSessionId: 'session-1',
+			});
+			const { result } = renderHook(() => useMergeTransferHandlers(createMockDeps()));
+
+			let sendResult: any;
+			await act(async () => {
+				sendResult = await result.current.handleSendToAgent('mode-target', {
+					groomContext: false,
+					targetSessionId: 'mode-target',
+				});
+			});
+
+			expect((window as any).maestro.process.spawn).not.toHaveBeenCalled();
+			const target = useSessionStore.getState().sessions.find((s) => s.id === 'mode-target')!;
+			const queuedTab = target.aiTabs.find((t) => t.id === sendResult.newTabId)!;
+			expect(queuedTab.permissionMode).toBe('standard');
+			expect(queuedTab.readOnlyMode).toBe(false);
+		});
+	});
+
+	// ----------------------------------------------------------------
 	// onMergeComplete - additional coverage
 	// ----------------------------------------------------------------
 

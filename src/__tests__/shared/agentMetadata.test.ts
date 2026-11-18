@@ -277,6 +277,71 @@ describe('agentMetadata', () => {
 			});
 		});
 
+		describe('Grok login selection', () => {
+			it.each([
+				[false, 'grok login'],
+				[true, 'grok login --device-auth'],
+			] as const)('selects a complete login command for remote=%s', (remote, expected) => {
+				const login = getAgentLoginCommand('grok', undefined, { remote });
+				expect(login).not.toBeNull();
+				expect(formatAgentLoginCommand(login!)).toBe(expected);
+				expect(login?.followUp).toBeUndefined();
+			});
+
+			it.each([
+				['posix', '/opt/Grok Tools/grok', '"/opt/Grok Tools/grok"'],
+				[
+					'powershell',
+					'C:\\Program Files\\Grok\\grok.exe',
+					'& "C:\\Program Files\\Grok\\grok.exe"',
+				],
+				['cmd', 'C:\\Program Files\\Grok\\grok.exe', '"C:\\Program Files\\Grok\\grok.exe"'],
+			] as const)('quotes the selected executable using %s', (syntax, binary, quoted) => {
+				for (const remote of [false, true]) {
+					const login = getAgentLoginCommand('grok', `  ${binary}  `, { remote });
+					expect(login?.binary).toBe(binary);
+					expect(formatAgentLoginCommand(login!, syntax)).toBe(
+						`${quoted} login${remote ? ' --device-auth' : ''}`
+					);
+					expect(login?.followUp).toBeUndefined();
+				}
+			});
+
+			it.each([undefined, '', ' \t '])('keeps the remote flow with an unset path %o', (path) => {
+				const login = getAgentLoginCommand('grok', path, { remote: true });
+				expect(formatAgentLoginCommand(login!)).toBe('grok login --device-auth');
+			});
+
+			it('does not carry a remote executable or device flow into subsequent local logins', () => {
+				const local = getAgentLoginCommand('grok');
+				const remote = getAgentLoginCommand('grok', '/srv/Grok Tools/grok', { remote: true });
+				expect(formatAgentLoginCommand(remote!)).toBe('"/srv/Grok Tools/grok" login --device-auth');
+				expect(formatAgentLoginCommand(local!)).toBe('grok login');
+				expect(formatAgentLoginCommand(getAgentLoginCommand('grok')!)).toBe('grok login');
+				expect(
+					formatAgentLoginCommand(getAgentLoginCommand('grok', undefined, { remote: true })!)
+				).toBe('grok login --device-auth');
+			});
+
+			it("leaves other providers' remote login and TUI follow-up behavior unchanged", () => {
+				getAgentLoginCommand('grok', '/srv/Grok Tools/grok', { remote: true });
+				for (const [id, command] of [
+					['codex', 'codex login --device-auth'],
+					['claude-code', 'claude /login'],
+					['opencode', 'opencode auth login'],
+				] as const) {
+					expect(
+						formatAgentLoginCommand(getAgentLoginCommand(id, undefined, { remote: true })!)
+					).toBe(command);
+				}
+				expect(getAgentLoginCommand('factory-droid', undefined, { remote: true })).toMatchObject({
+					binary: 'droid',
+					args: '',
+					followUp: '/login',
+				});
+			});
+		});
+
 		it('keeps the local args on a remote for agents with no remote variant', () => {
 			expect(getAgentLoginCommand('claude-code', undefined, { remote: true })?.args).toBe('/login');
 		});

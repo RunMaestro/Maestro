@@ -39,6 +39,7 @@ import {
 	installApplicationMenu,
 	setMenuShortcutKeys,
 	setMenuEncoreFeatures,
+	setMenuWindowCycler,
 	resetMenuShortcutKeysForTesting,
 } from '../../main/app-menu';
 
@@ -113,15 +114,17 @@ describe('app menu', () => {
 	//
 	// `registerAccelerator: false` does NOT prevent that here: Electron marks it
 	// `@platform linux,win32` and macOS ignores it, so the only safe answer is
-	// to not set an accelerator at all. Quit is the single exception, and it is
-	// deliberate: Cmd+Q is a real OS-level action and its handler reads the
-	// click event's modifier flags to swallow Opt+Cmd+Q.
+	// to not set an accelerator at all. Quit and the Cmd+` window cycle are the
+	// exceptions, both deliberate: Cmd+Q is a real OS-level action and its
+	// handler reads the click event's modifier flags to swallow Opt+Cmd+Q, and
+	// Cmd+` is a reserved system hotkey that never reaches the renderer anyway.
 	it('never sets an accelerator on a command item', () => {
 		setMenuShortcutKeys({ toggleMode: ['Meta', 'j'], closeTab: ['Meta', 'w'] });
 
+		const exceptions = ['Quit Maestro', 'Cycle Through Windows', 'Cycle Through Windows Backwards'];
 		const commands = lastTemplate()
 			.flatMap((menu) => menu.submenu ?? [])
-			.filter((item) => item.click && item.label !== 'Quit Maestro');
+			.filter((item) => item.click && !exceptions.includes(item.label ?? ''));
 
 		expect(commands.length).toBeGreaterThan(0);
 		for (const item of commands) {
@@ -135,6 +138,21 @@ describe('app menu', () => {
 		const item = itemNamed(menuNamed('View'), 'Switch AI / Shell Mode');
 		expect(item.label).toContain('⌘J');
 		expect(item.accelerator).toBeUndefined();
+	});
+
+	it('takes Cmd+` and Cmd+Shift+` in the Window menu to cycle Maestro windows', () => {
+		const cycle = vi.fn();
+		setMenuWindowCycler(cycle);
+		installApplicationMenu();
+
+		const next = itemNamed(menuNamed('Window'), 'Cycle Through Windows');
+		const previous = itemNamed(menuNamed('Window'), 'Cycle Through Windows Backwards');
+		expect(next.accelerator).toBe('Cmd+`');
+		expect(previous.accelerator).toBe('Cmd+Shift+`');
+
+		next.click?.({}, undefined);
+		previous.click?.({}, undefined);
+		expect(cycle.mock.calls).toEqual([['next'], ['previous']]);
 	});
 
 	it('keeps Cmd+W and Cmd+Z out of the natively-registered roles', () => {

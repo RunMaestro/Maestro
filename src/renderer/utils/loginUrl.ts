@@ -25,9 +25,12 @@ const LOGIN_URL_HINTS = [
 	'github.com/login',
 	'githubcopilot.com',
 	'accounts.google.com',
+	'auth.x.ai',
+	'accounts.x.ai',
 	'auth0.com',
 	'okta.com',
 	'/oauth',
+	'/oauth2',
 	'/authorize',
 	'/device',
 	'/activate',
@@ -45,10 +48,16 @@ const TRAILING_JUNK = /[.,;:!?'")\]}>]+$/;
  * those separate the URL from surrounding prose.
  */
 function unwrap(text: string): string {
-	return text.replace(/\n[ \t]*(?=[^\s])/g, (match, offset: number) => {
+	return text.replace(/\r?\n[ \t]*(?=[^\s])/g, (match, offset: number) => {
 		// Only stitch when the character before the break could continue a URL.
 		// Stitching after a sentence would glue prose onto the link.
 		const before = text.slice(0, offset).trimEnd().slice(-1);
+		const nextLine = text
+			.slice(offset + match.length)
+			.split(/\r?\n/, 1)[0]
+			.trim();
+		// A second URL or a sentence is a new line of output, not a URL fragment.
+		if (/^https?:\/\//i.test(nextLine) || /\s/.test(nextLine)) return match;
 		return /[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]/.test(before) ? '' : match;
 	});
 }
@@ -74,8 +83,27 @@ export function findLoginUrl(rawOutput: string): string | null {
 		.filter((url) => /^https?:\/\/[^/?#]+(\/[^\s]|\?)/.test(url));
 
 	const loginUrls = cleaned.filter((url) => {
-		const lower = url.toLowerCase();
-		return LOGIN_URL_HINTS.some((hint) => lower.includes(hint));
+		try {
+			const parsed = new URL(url);
+			// A query, fragment or userinfo mentioning a login host is not that host.
+			if (parsed.username || parsed.password) return false;
+			const hostname = parsed.hostname.toLowerCase();
+			const pathname = parsed.pathname.toLowerCase();
+			return LOGIN_URL_HINTS.some((hint) => {
+				if (hint.startsWith('/')) {
+					return pathname.split('/').includes(hint.slice(1));
+				}
+				const slash = hint.indexOf('/');
+				const host = slash < 0 ? hint : hint.slice(0, slash);
+				const path = slash < 0 ? '' : hint.slice(slash);
+				return (
+					(hostname === host || hostname.endsWith(`.${host}`)) &&
+					(!path || pathname === path || pathname.startsWith(`${path}/`))
+				);
+			});
+		} catch {
+			return false;
+		}
 	});
 
 	return loginUrls.length > 0 ? loginUrls[loginUrls.length - 1] : null;

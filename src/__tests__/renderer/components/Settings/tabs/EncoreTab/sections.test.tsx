@@ -160,6 +160,15 @@ describe('EncoreTab section components', () => {
 
 		const select = screen.getByLabelText('Select default lookback window') as HTMLSelectElement;
 		expect(select.value).toBe('week');
+		// Same labels as the dashboard's own range dropdown.
+		expect(Array.from(select.options).map((option) => option.textContent)).toEqual([
+			'Today',
+			'Last 7 Days',
+			'Last 30 Days',
+			'Last 90 Days',
+			'Last 365 Days',
+			'All Time',
+		]);
 		fireEvent.change(select, { target: { value: 'quarter' } });
 		expect(setDefaultStatsTimeRange).toHaveBeenCalledWith('quarter');
 
@@ -250,6 +259,21 @@ describe('EncoreTab section components', () => {
 		expect(state.setNewRegistryUrl).toHaveBeenCalledWith('https://new.example/registry.json');
 		expect(state.addRegistryUrl).toHaveBeenCalledTimes(2);
 		expect(state.removeRegistryUrl).toHaveBeenCalledWith('https://custom.example/registry.json');
+	});
+
+	it('leaves Enter in the registry URL field to the input method during an IME composition', () => {
+		const state = registryState({ newRegistryUrl: 'https://new.example/registry.json' });
+
+		render(
+			<SymphonyRegistrySection theme={mockTheme} symphonyRegistryUrls={[]} registryState={state} />
+		);
+
+		const input = screen.getByPlaceholderText('https://example.com/registry.json');
+		for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+			expect(fireEvent.keyDown(input, { key: 'Enter', ...ime })).toBe(true);
+		}
+
+		expect(state.addRegistryUrl).not.toHaveBeenCalled();
 	});
 
 	it('wires Cue loading, save status, and setting inputs', () => {

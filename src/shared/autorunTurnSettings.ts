@@ -52,12 +52,16 @@ export interface ResolvedTurnSettings {
  *
  * `agentModel` / `agentEffort` are the agent's own configured values, used
  * whenever the document is silent or the provider cannot act on the hint.
+ * `supportedEfforts` carries advertised wire values for the selected Grok
+ * model/account/host/version, as required by resolveEffortLevel. Omit it when
+ * that evidence is unavailable; configured fallbacks and menu IDs are not proof.
  */
 export function resolveTurnSettings(
 	toolType: ToolType,
 	hint: ModelHint | null,
 	agentModel?: string,
-	agentEffort?: string
+	agentEffort?: string,
+	supportedEfforts?: readonly string[]
 ): ResolvedTurnSettings {
 	const notes: string[] = [];
 	const warnings: string[] = [];
@@ -88,7 +92,7 @@ export function resolveTurnSettings(
 	}
 
 	if (hint?.effort && hint.effort !== 'default') {
-		const effortValue = resolveEffortLevel(toolType, hint.effort);
+		const effortValue = resolveEffortLevel(toolType, hint.effort, supportedEfforts);
 		if (effortValue) {
 			effort = effortValue;
 			notes.push(
@@ -99,13 +103,23 @@ export function resolveTurnSettings(
 			// story from one Maestro never mapped: say which, so the author knows
 			// the document is fine and the provider's catalogue moved.
 			const rejection = rejectedEffortForLevel(toolType, hint.effort);
-			warnings.push(
-				rejection
-					? `${describeEffortRejection(toolType, rejection)} effort="${hint.effort}" was ignored; using the agent's configured effort.`
-					: supportsEffortSelection(toolType)
+			if (rejection) {
+				warnings.push(
+					`${describeEffortRejection(toolType, rejection)} effort="${hint.effort}" was ignored; using the agent's configured effort.`
+				);
+			} else if (toolType === 'grok') {
+				warnings.push(
+					supportedEfforts === undefined
+						? `No advertised effort menu is available for the selected Grok model, so effort="${hint.effort}" was ignored; using the agent's configured effort.`
+						: `The selected Grok model's advertised effort menu does not include the rung for effort="${hint.effort}"; using the agent's configured effort.`
+				);
+			} else {
+				warnings.push(
+					supportsEffortSelection(toolType)
 						? `No "${hint.effort}" effort level is mapped for ${toolType}; using the agent's configured effort.`
 						: `${toolType} has no effort setting, so effort="${hint.effort}" was ignored.`
-			);
+				);
+			}
 		}
 	}
 

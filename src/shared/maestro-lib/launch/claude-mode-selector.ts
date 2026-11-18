@@ -50,7 +50,11 @@ export interface UsageSnapshot {
 	// `resetsAt` is absent when claude painted a percentage but no "Resets ..."
 	// row for that window (it omits the row for an idle 0% session). Consumers
 	// render the percentage anyway and drop the reset caption.
-	session: { percent: number; resetsAt?: string };
+	//
+	// `session` (the 5-hour window) is absent when the /usage panel painted no
+	// session block, which claude 2.1.317 does for every account. Absent means
+	// "no such window", so it can neither trigger nor hold a fallback.
+	session?: { percent: number; resetsAt?: string };
 	weekAllModels: { percent: number; resetsAt?: string };
 	/**
 	 * The separately-metered premium-model weekly limit. The field name is
@@ -80,7 +84,7 @@ export function selectMode(input: SelectModeInput): SelectModeResult {
 		return { mode: 'interactive', reason: 'auto' };
 	}
 
-	const sessionWindow = windowState(snap.session.resetsAt, input.now);
+	const sessionWindow = snap.session ? windowState(snap.session.resetsAt, input.now) : 'unknown';
 	const weekWindow = windowState(snap.weekAllModels.resetsAt, input.now);
 	// An unknown reset time does NOT veto the fallback: the reset time is here
 	// to age out a cached percentage, and the snapshot's own TTL already bounds
@@ -89,7 +93,8 @@ export function selectMode(input: SelectModeInput): SelectModeResult {
 	const sessionWindowOpen = sessionWindow !== 'closed';
 	const weekWindowOpen = weekWindow !== 'closed';
 
-	const sessionOverThreshold = snap.session.percent >= LIMIT_THRESHOLD_PERCENT;
+	const sessionOverThreshold =
+		snap.session !== undefined && snap.session.percent >= LIMIT_THRESHOLD_PERCENT;
 	const weekOverThreshold = snap.weekAllModels.percent >= LIMIT_THRESHOLD_PERCENT;
 
 	const limitTriggered =

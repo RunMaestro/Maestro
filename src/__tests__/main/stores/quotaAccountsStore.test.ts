@@ -33,6 +33,8 @@ vi.mock('electron-store', () => {
 import * as fs from 'fs';
 import {
 	clearRememberedQuotaAccounts,
+	dropSnapshotsForMissingAccounts,
+	findMissingAccountDirs,
 	forgetQuotaAccounts,
 	getRememberedQuotaAccountKeys,
 	getRememberedQuotaAccounts,
@@ -170,6 +172,79 @@ describe('quotaAccountsStore', () => {
 
 		it('returns an empty list when nothing is remembered', async () => {
 			expect(await pruneMissingQuotaAccounts('claude-code')).toEqual([]);
+		});
+	});
+
+	describe('findMissingAccountDirs', () => {
+		it('reports only definite misses, and never a key that is not a local path', async () => {
+			const access = vi.spyOn(fs.promises, 'access').mockImplementation(async (target) => {
+				const name = String(target);
+				if (name.endsWith('.claude-gone')) {
+					throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+				}
+				// A regular file sitting where a parent directory should be: access()
+				// on anything beneath it fails with ENOTDIR, so match the whole path.
+				if (name.includes('.claude-file')) {
+					throw Object.assign(new Error('not a dir'), { code: 'ENOTDIR' });
+				}
+				if (name.endsWith('.claude-locked')) {
+					throw Object.assign(new Error('denied'), { code: 'EACCES' });
+				}
+			});
+
+			try {
+				const missing = await findMissingAccountDirs([
+					'/Users/test/.claude-live',
+					'/Users/test/.claude-gone',
+					'/Users/test/.claude-file/sub',
+					'/Users/test/.claude-locked',
+					'work @ build-host',
+				]);
+				expect(missing).toEqual(
+					new Set(['/Users/test/.claude-gone', '/Users/test/.claude-file/sub'])
+				);
+				expect(access).not.toHaveBeenCalledWith('work @ build-host', expect.anything());
+			} finally {
+				access.mockRestore();
+			}
+		});
+	});
+
+	describe('dropSnapshotsForMissingAccounts', () => {
+		// The Usage Dashboard draws a row for every snapshot key, and snapshots
+		// are retained for weeks, so a deleted account dir kept its row (badged
+		// stale) long after the account list itself had forgotten it.
+		it('removes a deleted account from the returned map and the backing store', async () => {
+			const access = vi.spyOn(fs.promises, 'access').mockImplementation(async (target) => {
+				if (String(target).endsWith('.claude-adrian')) {
+					throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+				}
+			});
+			const forget = vi.fn();
+
+			try {
+				const kept = await dropSnapshotsForMissingAccounts(
+					{ '/Users/test/.claude-smash': { n: 1 }, '/Users/test/.claude-adrian': { n: 2 } },
+					forget
+				);
+				expect(kept).toEqual({ '/Users/test/.claude-smash': { n: 1 } });
+				expect(forget).toHaveBeenCalledWith(new Set(['/Users/test/.claude-adrian']));
+			} finally {
+				access.mockRestore();
+			}
+		});
+
+		it('returns the same map and forgets nothing when every dir exists', async () => {
+			const access = vi.spyOn(fs.promises, 'access').mockResolvedValue(undefined);
+			const forget = vi.fn();
+			const snapshots = { '/Users/test/.claude-smash': { n: 1 } };
+
+			try {
+				expect(await dropSnapshotsForMissingAccounts(snapshots, forget)).toBe(snapshots);
+				expect(forget).not.toHaveBeenCalled();
+			} finally {
+				access.mockRestore();
+			}
 		});
 	});
 });

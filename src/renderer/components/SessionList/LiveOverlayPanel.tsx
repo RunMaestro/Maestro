@@ -9,6 +9,7 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import type { TunnelStatus } from '../../hooks/remote/useLiveOverlay';
 import { openUrl } from '../../utils/openUrl';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { isImeComposing } from '../../utils/ime';
 
 /**
  * "On" in this panel is green rather than the theme accent: the URL, the dot
@@ -345,6 +346,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 										}
 									}}
 									onKeyDown={(e) => {
+										if (isImeComposing(e)) return;
 										if (e.key === 'Enter') {
 											const clampedPort = Math.max(1024, Math.min(65535, webInterfaceCustomPort));
 											if (clampedPort !== webInterfaceCustomPort) {

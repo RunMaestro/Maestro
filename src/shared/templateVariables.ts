@@ -898,16 +898,12 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		}
 	}
 
-	// Perform case-insensitive replacement
-	let result = template;
-	for (const [key, value] of Object.entries(replacements)) {
-		// Match {{KEY}} with case insensitivity. The replacement goes through a
-		// function so `$&`/`$1` sequences inside a value (a directory path, a
-		// Cue output blob) are inserted literally instead of being read as
-		// replacement patterns.
-		const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'gi');
-		result = result.replace(regex, () => value);
-	}
-
-	return result;
+	// Match the original template once: inserted context is literal data, even
+	// when it contains another placeholder or a replacement pattern like `$&`.
+	// Looking up the whole name also keeps dynamic Cue names literal instead
+	// of interpreting punctuation in those names as regular expressions.
+	return template.replace(/\{\{([^{}]+)\}\}/g, (match, name: string) => {
+		const key = name.toUpperCase();
+		return Object.prototype.hasOwnProperty.call(replacements, key) ? replacements[key] : match;
+	});
 }

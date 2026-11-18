@@ -185,4 +185,72 @@ describe('findLatestAgentTaskList', () => {
 
 		expect(findLatestAgentTaskList([nested])).toBeNull();
 	});
+
+	// Grok ACP plans arrive as update_plan snapshots (input.plan plus planUpdate).
+	describe('Grok ACP plan snapshots', () => {
+		const planEntry = (id: string, plan: unknown[], providerSessionId = 'native-a') =>
+			({
+				id,
+				timestamp: 0,
+				source: 'tool',
+				text: 'update_plan',
+				metadata: {
+					toolState: {
+						status: 'completed',
+						input: { plan },
+						planUpdate: { reporting: 'snapshot', revision: 1, providerSessionId, turnId: 't' },
+					},
+				},
+			}) as unknown as LogEntry;
+		const step = (name: string, status: string) => ({ step: name, status });
+
+		it('clears the plan when the newest snapshot is empty', () => {
+			expect(
+				findLatestAgentTaskList([planEntry('a', [step('old', 'pending')]), planEntry('b', [])])
+			).toBeNull();
+		});
+
+		it('still falls back past an empty payload that is not a snapshot', () => {
+			expect(
+				findLatestAgentTaskList([
+					planEntry('a', [step('old', 'pending')]),
+					toolEntry('b', { plan: [] }),
+				])?.entryId
+			).toBe('a');
+		});
+
+		it('shows a newer non-empty snapshot after a clear', () => {
+			const latest = findLatestAgentTaskList([
+				planEntry('a', []),
+				planEntry('b', [step('new', 'in_progress')]),
+			]);
+			expect(latest?.entryId).toBe('b');
+			expect(latest?.list.inProgress?.content).toBe('new');
+		});
+
+		it('never counts cancelled or unsupported items as completed work', () => {
+			const latest = findLatestAgentTaskList([
+				planEntry('a', [step('x', 'cancelled'), step('y', 'unsupported'), step('z', 'completed')]),
+			]);
+			expect(latest?.list.completed).toBe(1);
+			expect(latest?.list.tasks.map((t) => t.status)).toEqual(['pending', 'pending', 'completed']);
+		});
+
+		it("keeps each tab's plan to its own log", () => {
+			const tabA = [planEntry('a1', [step('plan a', 'in_progress')], 'native-a')];
+			const tabB = [planEntry('b1', [], 'native-b')];
+			expect(findLatestAgentTaskList(tabA)?.list.inProgress?.content).toBe('plan a');
+			expect(findLatestAgentTaskList(tabB)).toBeNull();
+		});
+
+		it('reads the same plan after the log is reloaded from storage', () => {
+			const logs = [
+				planEntry('a', [step('old', 'pending')]),
+				planEntry('b', [step('one', 'completed'), step('two', 'in_progress')]),
+			];
+			const reloaded = JSON.parse(JSON.stringify(logs)) as LogEntry[];
+			expect(findLatestAgentTaskList(reloaded)).toEqual(findLatestAgentTaskList(logs));
+			expect(findLatestAgentTaskList(reloaded)?.entryId).toBe('b');
+		});
+	});
 });

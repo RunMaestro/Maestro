@@ -59,3 +59,69 @@ describe('turnEndOf', () => {
 		).toBeNull();
 	});
 });
+
+/**
+ * The tails are read with the patterns of the provider that ran the turn. The lines
+ * below are what grok v0.2.93 prints on stderr for `--resume <id>`: the first precedes every
+ * remote restore, successful or not; only the second and third mean the session is gone.
+ */
+describe('turnEndOf with the participant provider', () => {
+	const RESTORING = 'Session 6b1f0c2e not found locally, restoring from remote...';
+	const DEAD =
+		'Error: Failed to restore session from remote: fetching session record: session get failed: 404 Not Found';
+
+	it("keeps a successful Grok remote restore out of what came back when Grok's patterns read it", () => {
+		const end = turnEndOf('p1', { exit: exit({ stderrText: RESTORING }) }, 'grok');
+		expect(end).toMatchObject({ text: '', rawOutput: '' });
+	});
+
+	it('would have counted the same restore line as a lost session under the default patterns', () => {
+		// The contrast that makes the case above meaningful: Claude's `session.*not found` matches.
+		const end = turnEndOf('p1', { exit: exit({ stderrText: RESTORING }) });
+		expect(end.rawOutput).toBe(RESTORING);
+	});
+
+	it('leaves a Grok answer alone after a successful restore', () => {
+		const end = turnEndOf(
+			'p1',
+			{ answerText: 'Restored and answered.', exit: exit({ stderrText: RESTORING }) },
+			'grok'
+		);
+		expect(end).toMatchObject({
+			text: 'Restored and answered.',
+			rawOutput: 'Restored and answered.',
+		});
+	});
+
+	it("reaches recovery for a dead Grok session through Grok's own patterns", () => {
+		const end = turnEndOf(
+			'p1',
+			{ exit: exit({ exitCode: 1, stderrText: `${RESTORING}\n${DEAD}` }) },
+			'grok'
+		);
+		expect(end.text).toBe('');
+		expect(end.rawOutput).toContain('Failed to restore session');
+		expect(end.rawOutput).toContain('session get failed: 404 Not Found');
+		expect(end.exitCode).toBe(1);
+	});
+
+	it("keeps Claude's vanished session unchanged when the provider is named", () => {
+		const end = turnEndOf(
+			'p1',
+			{
+				exit: exit({
+					exitCode: 1,
+					stderrText: 'Error: No conversation found with session ID: 0f1e2d',
+				}),
+			},
+			'claude-code'
+		);
+		expect(end.rawOutput).toBe('Error: No conversation found with session ID: 0f1e2d');
+	});
+
+	it('keeps the tails out for a provider with no session_not_found match', () => {
+		// Pi declares no session_not_found patterns; the line matches no raw fallback either.
+		const end = turnEndOf('p1', { exit: exit({ exitCode: 1, stderrText: RESTORING }) }, 'pi');
+		expect(end).toMatchObject({ text: '', rawOutput: '', exitCode: 1 });
+	});
+});

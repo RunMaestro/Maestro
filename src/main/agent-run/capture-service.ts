@@ -26,10 +26,12 @@ import {
 	deriveTerminalStatus,
 	redactPrompt,
 	redactAnswerTail,
+	redactSecrets,
 	type AgentRun,
 	type AgentRunEvent,
 	type AgentRunStatus,
 } from '../../shared/agent-run';
+import { nativeTabSession, type NativeTabSession } from '../pianola/pianola-queue-session';
 import type { AgentError } from '../../shared/types';
 import type { TurnSettlement } from '../process-manager/types';
 import { canonicalJson } from '../../shared/canonicalJson';
@@ -38,6 +40,9 @@ const GROUP_CHAT_PREFIX = 'group-chat-';
 
 /** Minimal shape of a spawn we capture, projected from ProcessConfig. */
 export interface CaptureSpawnInput {
+	transcriptBoundaryId?: string;
+	nativeTabSession?: NativeTabSession;
+	agentSessionId?: string;
 	sessionId: string;
 	toolType: string;
 	cwd: string;
@@ -62,8 +67,11 @@ export interface CaptureExitInput {
 
 /** Everything the service touches that is not pure. Injected for testability. */
 export interface CaptureServiceDeps {
+	resolveNativeTabSession?: (input: CaptureSpawnInput) => NativeTabSession | undefined;
 	getAgentRun: (runId: string) => AgentRun | undefined;
-	upsertAgentRun: (run: AgentRun) => AgentRun;
+	/** Persist the run first, then pass ephemeral redacted output to native observers.
+	 * The output must never be merged into the run ledger or a wire payload. */
+	upsertAgentRun: (run: AgentRun, terminalOutput?: string) => AgentRun;
 	appendAgentRunEvent: (event: AgentRunEvent) => AgentRunEvent;
 	/** Find the live (non-terminal) run for a session, if any. */
 	findActiveRunBySession: (sessionId: string) => AgentRun | undefined;
@@ -124,6 +132,7 @@ export class AgentRunCaptureService {
 			}
 
 			const prepared = (this.deps.preparePrompt ?? ((p) => p))(input.prompt);
+			const nativeIdentity = this.deps.resolveNativeTabSession?.(input) ?? input.nativeTabSession;
 			const run: AgentRun = {
 				id: runId,
 				createdAt: ts,
@@ -134,7 +143,7 @@ export class AgentRunCaptureService {
 				agentId: input.agentId,
 				agentName: input.agentName,
 				sessionId: input.sessionId,
-				tabId: input.tabId,
+				tabId: nativeIdentity?.tabId ?? input.tabId,
 				cwd: input.cwd,
 				repo: input.repo,
 				worktreePath: input.worktreePath,
@@ -142,6 +151,16 @@ export class AgentRunCaptureService {
 				baseBranch: input.baseBranch,
 				prompt: prepared,
 				source: input.source,
+				...(nativeIdentity
+					? {
+							metadata: {
+								nativeTabSession: nativeIdentity,
+								...(input.transcriptBoundaryId && {
+									transcriptBoundaryId: input.transcriptBoundaryId,
+								}),
+							},
+						}
+					: {}),
 				artifacts: [],
 				touchedFiles: [],
 				checks: [],
@@ -153,6 +172,32 @@ export class AgentRunCaptureService {
 		} catch (error) {
 			this.report('error', `captureSpawn failed for ${input.sessionId}`, error);
 			return undefined;
+		}
+	}
+
+	/** The native session announcement belongs only to this live capture. */
+	captureSessionAnnouncement(sessionId: string, announcedSessionId: string): void {
+		try {
+			const run = this.deps.findActiveRunBySession(sessionId);
+			const identity = run && nativeTabSession(run);
+			if (!run || !identity || !announcedSessionId) return;
+			this.deps.upsertAgentRun({
+				...run,
+				metadata: {
+					...run.metadata,
+					nativeTabSession: {
+						...identity,
+						announcedSessionId,
+						...((identity.announcedSessionId &&
+							identity.announcedSessionId !== announcedSessionId) ||
+						(identity.initialSessionId && identity.initialSessionId !== announcedSessionId)
+							? { conflicted: true }
+							: {}),
+					},
+				},
+			});
+		} catch (error) {
+			this.report('error', `captureSessionAnnouncement failed for ${sessionId}`, error);
 		}
 	}
 
@@ -231,6 +276,7 @@ export class AgentRunCaptureService {
 			assertTransition(current.status, target);
 
 			const durationMs = Math.max(0, ts - existing.createdAt);
+			const { nativeAnswer, ...settlement } = input.settlement ?? {};
 			const next: AgentRun = {
 				...merged,
 				status: target,
@@ -240,7 +286,7 @@ export class AgentRunCaptureService {
 					...(current.metadata ?? {}),
 					exitCode: input.exitCode,
 					...(input.signal ? { signal: input.signal } : {}),
-					...(input.settlement ? input.settlement : {}),
+					...settlement,
 					...(input.settlement?.answerTail
 						? { answerTail: redactAnswerTail(input.settlement.answerTail) }
 						: {}),
@@ -248,7 +294,14 @@ export class AgentRunCaptureService {
 					completedAt: ts,
 				},
 			};
-			const saved = this.deps.upsertAgentRun(next);
+			const saved = this.deps.upsertAgentRun(
+				next,
+				nativeAnswer !== undefined
+					? redactSecrets(nativeAnswer)
+					: input.settlement?.answerTail === undefined
+						? undefined
+						: redactSecrets(input.settlement.answerTail)
+			);
 			this.emit(runId, 'status_change', ts, target, `run ${target} (exit ${input.exitCode})`);
 			return saved;
 		} catch (error) {

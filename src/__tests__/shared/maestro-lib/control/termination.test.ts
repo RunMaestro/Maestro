@@ -16,12 +16,15 @@ const mocks = vi.hoisted(() => ({
 	execFileSync: vi.fn(),
 	snapshotProcessTree: vi.fn(),
 	refreshProcessTree: vi.fn(),
-	killSurvivors: vi.fn(() => 0),
+	killSurvivors: vi.fn<
+		typeof import('../../../../shared/maestro-lib/control/process-tree').killSurvivors
+	>(() => 0),
 	killProcessTreeNow: vi.fn(),
 }));
 
 vi.mock('../../../../shared/platformDetection', () => ({
 	isWindows: mocks.isWindows,
+	isLinux: () => false,
 }));
 
 vi.mock('child_process', async (importOriginal) => ({
@@ -39,6 +42,7 @@ vi.mock('../../../../shared/maestro-lib/control/process-tree', () => ({
 
 import {
 	stopProcess,
+	trackProcessTree,
 	INTERACTIVE_STOP_GRACE_MS,
 	BACKGROUND_STOP_GRACE_MS,
 	TREE_REFRESH_MS,
@@ -112,6 +116,9 @@ const asPty = (fake: FakePty) => fake as unknown as pty.IPty;
 beforeEach(() => {
 	vi.useFakeTimers();
 	vi.clearAllMocks();
+	mocks.execFile.mockReset();
+	mocks.execFileSync.mockReset();
+	mocks.killSurvivors.mockReset().mockReturnValue(0);
 	mocks.isWindows.mockReturnValue(false);
 	mocks.snapshotProcessTree.mockReturnValue({ owned: true, descendants: [] });
 	// A refresh that finds nothing new hands the same record back.
@@ -119,6 +126,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	vi.useRealTimers();
 });
 
@@ -389,6 +397,90 @@ describe('descendants started after the stop was requested', () => {
 	});
 });
 
+describe('descendants recorded from spawn', () => {
+	it.each([true, false])(
+		'handles a parent already exited with includeDescendants=%s',
+		async (includeDescendants) => {
+			const child = fakeChild();
+			const root = { pid: PID, startedAt: 'original-root' };
+			const snapshot = { owned: true, root, descendants: [TOOL] };
+			mocks.snapshotProcessTree.mockReturnValue(snapshot);
+			const finish = trackProcessTree(asChild(child))!;
+			expect(trackProcessTree(asChild(child))).toBe(finish);
+			expect(vi.getTimerCount()).toBe(1);
+			exit(child, 0);
+
+			stopProcess(
+				{ child: asChild(child) },
+				{ from: 'terminate', graceMs: GRACE_MS, includeDescendants }
+			);
+			expect(mocks.snapshotProcessTree).toHaveBeenLastCalledWith(PID, snapshot);
+			expect(child.kill).not.toHaveBeenCalled();
+			if (includeDescendants) {
+				expect(mocks.killSurvivors).toHaveBeenCalledWith([TOOL], expect.any(Object));
+			} else {
+				expect(mocks.killSurvivors).not.toHaveBeenCalled();
+			}
+			await finish();
+			expect(vi.getTimerCount()).toBe(0);
+			expect(child.listenerCount('exit')).toBe(0);
+		}
+	);
+
+	it.each(['unowned', 'exited', 'windows'])('does not track a %s child', (reason) => {
+		const child = fakeChild(reason === 'exited' ? { exitCode: 0 } : {});
+		mocks.isWindows.mockReturnValue(reason === 'windows');
+		mocks.snapshotProcessTree.mockReturnValue({ owned: false, descendants: [] });
+		expect(trackProcessTree(asChild(child))).toBeUndefined();
+		expect(mocks.refreshProcessTree).not.toHaveBeenCalled();
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('passes recorded identities to the final sweep instead of blindly killing a PID tree', async () => {
+		const child = fakeChild();
+		const root = { pid: PID, startedAt: 'original-root' };
+		const snapshot = { owned: true, root, descendants: [TOOL] };
+		mocks.snapshotProcessTree.mockReturnValue(snapshot);
+		const finish = trackProcessTree(asChild(child))!;
+		stopProcess({ child: asChild(child) }, { from: 'kill', graceMs: GRACE_MS });
+		expect(mocks.snapshotProcessTree).toHaveBeenLastCalledWith(PID, snapshot);
+		expect(mocks.killSurvivors).toHaveBeenCalledWith([root, TOOL], expect.any(Object));
+		expect(mocks.killProcessTreeNow).not.toHaveBeenCalled();
+		expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+		exit(child, null, 'SIGKILL');
+		await finish();
+		expect(vi.getTimerCount()).toBe(0);
+		expect(child.listenerCount('exit')).toBe(0);
+	});
+
+	it('rejects reused root and descendant PIDs in the real survivor sweep', async () => {
+		const { killSurvivors } = await vi.importActual<
+			typeof import('../../../../shared/maestro-lib/control/process-tree')
+		>('../../../../shared/maestro-lib/control/process-tree');
+		const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+		const child = fakeChild();
+		const root = { pid: PID, startedAt: TOOL.startedAt };
+		mocks.snapshotProcessTree.mockReturnValue({ owned: true, root, descendants: [TOOL] });
+		const finish = trackProcessTree(asChild(child))!;
+		mocks.killSurvivors.mockImplementation(killSurvivors);
+		mocks.execFileSync.mockReturnValue(
+			`${PID} ${process.pid} ${LATE_TOOL.startedAt}\n${TOOL.pid} ${PID} ${LATE_TOOL.startedAt}\n`
+		);
+		stopProcess({ child: asChild(child) }, { from: 'kill', graceMs: GRACE_MS });
+		exit(child, null, 'SIGKILL');
+		await finish();
+		expect(mocks.killSurvivors).toHaveBeenCalledWith([root, TOOL], expect.any(Object));
+		expect(kill).not.toHaveBeenCalled();
+		expect(mocks.killProcessTreeNow).not.toHaveBeenCalled();
+		expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+		// The same mocked table reader still permits a matching owned identity.
+		mocks.execFileSync.mockReturnValue(`${TOOL.pid} 1 ${TOOL.startedAt}\n`);
+		expect(killSurvivors([TOOL], {})).toBe(1);
+		expect(kill.mock.calls).toEqual([[TOOL.pid, 'SIGKILL']]);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+});
+
 describe('a second stop on the same process', () => {
 	it('advances the ladder already running instead of starting another', () => {
 		const child = fakeChild();
@@ -639,6 +731,7 @@ describe('stopProcess on Windows', () => {
 		expect(mocks.execFile).toHaveBeenCalledWith(
 			'taskkill',
 			['/pid', String(PID), '/t', '/f'],
+			{ timeout: 5000 },
 			expect.any(Function)
 		);
 	});
@@ -653,6 +746,7 @@ describe('stopProcess on Windows', () => {
 		expect(mocks.execFile).toHaveBeenCalledWith(
 			'taskkill',
 			['/pid', String(PID), '/t', '/f'],
+			{ timeout: 5000 },
 			expect.any(Function)
 		);
 		expect(child.kill).not.toHaveBeenCalled();
@@ -689,21 +783,36 @@ describe('stopProcess on Windows', () => {
 		expect(child.kill.mock.calls).toEqual([[]]);
 	});
 
-	it('ends a running child through its handle when taskkill fails', () => {
+	it.each(['failure', 'timeout'])('falls back after asynchronous taskkill %s', async (reason) => {
 		const child = fakeChild();
-
+		mocks.execFile.mockImplementation((_file, _args, options, callback) => {
+			setTimeout(
+				() => callback(Object.assign(new Error(reason), { killed: reason === 'timeout' })),
+				reason === 'timeout' ? options.timeout : 1
+			);
+		});
 		stopProcess({ child: asChild(child) }, { from: 'terminate', graceMs: GRACE_MS });
-		const onTaskkillDone = mocks.execFile.mock.calls[0][2] as (error: Error | null) => void;
-		onTaskkillDone(new Error('ERROR: Access is denied.'));
-
+		expect(mocks.execFile).toHaveBeenCalledWith(
+			'taskkill',
+			['/pid', String(PID), '/t', '/f'],
+			{ timeout: 5000 },
+			expect.any(Function)
+		);
+		await vi.advanceTimersByTimeAsync(reason === 'timeout' ? 4999 : 0);
+		expect(child.kill).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
 		expect(child.kill.mock.calls).toEqual([[]]);
+		expect(mocks.execFile).toHaveBeenCalledTimes(1);
+		exit(child, null, 'SIGTERM');
+		expect(child.listenerCount('exit')).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
 	});
 
 	it('sends nothing more when taskkill fails for a child that is already gone', () => {
 		const child = fakeChild();
 
 		stopProcess({ child: asChild(child) }, { from: 'terminate', graceMs: GRACE_MS });
-		const onTaskkillDone = mocks.execFile.mock.calls[0][2] as (error: Error | null) => void;
+		const onTaskkillDone = mocks.execFile.mock.calls[0][3] as (error: Error | null) => void;
 		exit(child, 1);
 		onTaskkillDone(new Error('ERROR: The process "4242" not found.'));
 
@@ -714,7 +823,7 @@ describe('stopProcess on Windows', () => {
 		const child = fakeChild();
 
 		stopProcess({ child: asChild(child) }, { from: 'terminate', graceMs: GRACE_MS });
-		const onTaskkillDone = mocks.execFile.mock.calls[0][2] as (error: Error | null) => void;
+		const onTaskkillDone = mocks.execFile.mock.calls[0][3] as (error: Error | null) => void;
 		onTaskkillDone(null);
 
 		expect(child.kill).not.toHaveBeenCalled();
@@ -728,6 +837,7 @@ describe('stopProcess on Windows', () => {
 		expect(mocks.execFile).toHaveBeenCalledWith(
 			'taskkill',
 			['/pid', String(PID), '/t', '/f'],
+			{ timeout: 5000 },
 			expect.any(Function)
 		);
 		expect(fake.kill).not.toHaveBeenCalled();

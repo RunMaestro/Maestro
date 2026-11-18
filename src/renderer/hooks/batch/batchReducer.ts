@@ -13,6 +13,7 @@
 
 import type { BatchRunState, AgentError, PlaybookStatus } from '../../types';
 import type { GoalExitReason } from '../../../shared/goalDriven/types';
+import type { AutoRunPendingDelegation } from '../../../shared/autoRunDelegation';
 import {
 	transition,
 	canTransition,
@@ -207,6 +208,8 @@ export interface UpdateProgressPayload {
 	goalRationale?: string;
 	goalIteration?: number;
 	goalExitReason?: GoalExitReason;
+	// Delegated work the run is waiting on (both modes). `[]` clears it.
+	pendingDelegations?: AutoRunPendingDelegation[];
 }
 
 /**
@@ -385,6 +388,9 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 					...(payload.goalRationale !== undefined && { goalRationale: payload.goalRationale }),
 					...(payload.goalIteration !== undefined && { goalIteration: payload.goalIteration }),
 					...(payload.goalExitReason !== undefined && { goalExitReason: payload.goalExitReason }),
+					...(payload.pendingDelegations !== undefined && {
+						pendingDelegations: payload.pendingDelegations,
+					}),
 				},
 			};
 		}

@@ -1,7 +1,8 @@
 /**
  * @file boundary-rules.test.ts
- * @description RuleTester coverage for the import-boundary lint rule
- * `no-shared-to-main-imports` (src/shared/** never reaches src/main/**).
+ * @description RuleTester coverage for the import-boundary lint rules
+ * `no-shared-to-main-imports` (src/shared/** never reaches src/main/**) and
+ * `no-main-to-renderer-imports` (src/main/** never reaches src/renderer/**).
  */
 
 import { describe, it, afterAll } from 'vitest';
@@ -37,6 +38,33 @@ tester.run('no-shared-to-main-imports', sharedBoundary.rules['no-shared-to-main-
 		{
 			filename: '/repo/src/shared/a.ts',
 			code: "const m = await import('../main/b');",
+			errors: [{ messageId: 'newEdge' }],
+		},
+	],
+});
+
+tester.run('no-main-to-renderer-imports', sharedBoundary.rules['no-main-to-renderer-imports'], {
+	valid: [
+		{ filename: '/repo/src/main/a.ts', code: "import b from '../shared/b';" },
+		{ filename: '/repo/src/main/a.ts', code: "import { app } from 'electron';" },
+		{ filename: '/repo/src/renderer/a.ts', code: "import b from '../renderer/b';" },
+		{ filename: '/repo/src/shared/a.ts', code: "import b from '../renderer/b';" },
+	],
+	invalid: [
+		{
+			// The 1.1.1-RC shape: a spawner reaching into a renderer component folder.
+			filename: '/repo/src/main/process-manager/spawners/ClaudeSdkSpawner.ts',
+			code: "import { encodeQuestionAnswer } from '../../../renderer/components/PermissionPrompt/questionAnswer';",
+			errors: [{ messageId: 'newEdge' }],
+		},
+		{
+			filename: '/repo/src/main/a.ts',
+			code: "export * from '../renderer/b';",
+			errors: [{ messageId: 'newEdge' }],
+		},
+		{
+			filename: '/repo/src/main/a.ts',
+			code: "const m = require('../renderer/b');",
 			errors: [{ messageId: 'newEdge' }],
 		},
 	],

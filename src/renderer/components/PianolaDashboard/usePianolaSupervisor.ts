@@ -1,10 +1,8 @@
 /**
  * Pianola supervisor (watch) state for the dashboard.
  *
- * The desktop `PianolaSupervisor` daemon keeps a "watch" child alive per
- * supervised (tab, agent). The same registry is what `maestro-cli pianola
- * supervise watch ...` writes; this hook is the in-app way to add/remove those
- * watches from the Pianola Dashboard instead of the CLI.
+ * The desktop supervisor maintains scope workers and legacy tab watches in the
+ * shared registry. The dashboard edits scopes and shows the legacy watches.
  *
  * Pure derivation lives in `deriveWatchState` (testable without IPC); the hook
  * adds the session-store subscription, the polled `supervisor.list()` fetch, and
@@ -31,17 +29,17 @@ export interface WatchedAgentRow {
 	targetId: string;
 	agentId: string;
 	agentName: string;
+	tabId?: string;
+	migratedToScopeId?: string;
 	enabled: boolean;
 	/** Live child state, when the daemon currently has one for this target. */
 	state?: PianolaSupervisedState;
 	lastError?: string;
 }
 
-/** An agent that can be watched: not Pianola, not already watched, has an AI tab. */
+/** An agent available for a whole-agent selection. */
 export interface WatchableAgent {
 	agentId: string;
-	/** The AI tab the watch will babysit (active AI tab, else the first). */
-	tabId: string;
 	agentName: string;
 }
 
@@ -50,18 +48,11 @@ function shortId(id: string): string {
 	return id.slice(0, 6);
 }
 
-/** The AI tab a watch should target: the active tab when it's an AI tab, else the first. */
-function watchableTabId(session: Session): string | undefined {
-	const aiTabIds = new Set(session.aiTabs.map((t) => t.id));
-	if (session.activeTabId && aiTabIds.has(session.activeTabId)) return session.activeTabId;
-	return session.aiTabs[0]?.id;
-}
-
 /**
  * Pure derivation of the watch UI state from live sessions + the supervisor
  * snapshot. `watched` lists existing watch targets (enriched with name + live
- * health); `watchable` lists top-level, non-Pianola agents that have an AI tab
- * and are not already watched, ready for the "+ Watch an agent" picker.
+ * health); `watchable` lists top-level agents not already selected by a scope.
+ * Legacy tab watches remain available for the host's controlled handover.
  */
 export function deriveWatchState(
 	sessions: readonly Session[],
@@ -81,19 +72,28 @@ export function deriveWatchState(
 			targetId: t.id,
 			agentId,
 			agentName: nameById.get(agentId) ?? shortId(agentId),
+			tabId: t.tabId,
+			migratedToScopeId: t.migratedToScopeId,
 			enabled: t.enabled,
 			...(h ? { state: h.state } : {}),
 			...(h?.lastError ? { lastError: h.lastError } : {}),
 		};
 	});
 
-	const watchedAgentIds = new Set(watchTargets.map((t) => t.agentId));
 	const watchable: WatchableAgent[] = [];
 	for (const s of sessions) {
-		if (s.isPianola || s.parentSessionId || watchedAgentIds.has(s.id)) continue;
-		const tabId = watchableTabId(s);
-		if (!tabId) continue; // no AI tab -> nothing to babysit
-		watchable.push({ agentId: s.id, tabId, agentName: s.name });
+		if (s.isPianola || s.parentSessionId) continue;
+		const selected = targets.some((target) => {
+			const selection = target.kind === 'watch-scope' ? target.selection : undefined;
+			return (
+				selection?.mode === 'agents-and-groups' &&
+				(selection.agentIds.includes(s.id) ||
+					selection.excludedAgentIds.includes(s.id) ||
+					(!!s.groupId && selection.groupIds.includes(s.groupId)))
+			);
+		});
+		if (selected) continue;
+		watchable.push({ agentId: s.id, agentName: s.name });
 	}
 
 	return { watched, watchable };
@@ -105,7 +105,7 @@ export interface PianolaSupervisorState {
 	targets: PianolaSupervisedTarget[];
 	health: PianolaSupervisorHealth[];
 	checkpoints: PianolaSupervisorSnapshot['checkpoints'];
-	saveScope: (target: Partial<PianolaSupervisedTarget>) => Promise<void>;
+	saveScope: (target: Partial<PianolaSupervisedTarget>) => Promise<boolean>;
 	watched: WatchedAgentRow[];
 	watchable: WatchableAgent[];
 	autoWatchNewAgents: boolean;
@@ -195,7 +195,7 @@ export function usePianolaSupervisor(): PianolaSupervisorState {
 	}, [load]);
 
 	const mutate = useCallback(
-		async (op: Promise<PianolaSupervisorSnapshot>, action: string): Promise<void> => {
+		async (op: Promise<PianolaSupervisorSnapshot>, action: string): Promise<boolean> => {
 			mutationEpochRef.current += 1; // invalidate polls issued before this mutation
 			try {
 				const snap = await op;
@@ -205,6 +205,15 @@ export function usePianolaSupervisor(): PianolaSupervisorState {
 					setHealth(snap.health);
 					setCheckpoints(snap.checkpoints ?? []);
 				}
+				if (snap.migration?.status === 'NeedsConfiguration') {
+					notifyToast({
+						color: 'red',
+						title: 'Pianola needs configuration',
+						message: snap.migration.reason ?? 'The selection was not saved.',
+					});
+					return false;
+				}
+				return true;
 			} catch (err) {
 				mutationEpochRef.current += 1;
 				const error = err instanceof Error ? err : new Error(String(err));
@@ -219,30 +228,34 @@ export function usePianolaSupervisor(): PianolaSupervisorState {
 				});
 				if (!isPianolaDisabled(error))
 					captureException(error, { tags: { feature: 'pianola' }, extra: { action } });
+				return false;
 			}
 		},
 		[]
 	);
 
 	const watch = useCallback(
-		(agentId: string, tabId: string) =>
-			mutate(
+		async (agentId: string, tabId: string) => {
+			await mutate(
 				window.maestro.pianola.supervisor.add({ kind: 'watch', agentId, tabId, enabled: true }),
 				'start watching the agent'
-			),
+			);
+		},
 		[mutate]
 	);
 	const unwatch = useCallback(
-		(targetId: string) =>
-			mutate(window.maestro.pianola.supervisor.remove(targetId), 'stop watching the agent'),
+		async (targetId: string) => {
+			await mutate(window.maestro.pianola.supervisor.remove(targetId), 'stop watching the agent');
+		},
 		[mutate]
 	);
 	const setEnabled = useCallback(
-		(targetId: string, enabled: boolean) =>
-			mutate(
+		async (targetId: string, enabled: boolean) => {
+			await mutate(
 				window.maestro.pianola.supervisor.setEnabled(targetId, enabled),
 				enabled ? 'resume watching' : 'pause watching'
-			),
+			);
+		},
 		[mutate]
 	);
 

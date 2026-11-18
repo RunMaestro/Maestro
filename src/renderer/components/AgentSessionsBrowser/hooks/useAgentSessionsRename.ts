@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, RefObject } from 'react';
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
+import { notifyToast } from '../../../stores/notificationStore';
 import type { Session } from '../../../types';
 import type { AgentSession } from '../../../hooks/agent/useSessionViewer';
 
@@ -86,6 +87,15 @@ export function useAgentSessionsRename({
 
 	const submitRename = useCallback(
 		async (sessionId: string) => {
+			if (agentId === 'grok') {
+				notifyToast({
+					color: 'yellow',
+					title: 'Grok native rename unavailable',
+					message:
+						'Maestro cannot yet rename Grok native history. Rename the session in Grok CLI using the same account and host, then refresh History. To change only its label in Maestro, rename the open conversation tab.',
+				});
+				return;
+			}
 			if (!activeSession?.projectRoot) return;
 
 			const trimmedName = renameValue.trim();

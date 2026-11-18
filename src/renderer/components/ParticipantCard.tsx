@@ -110,8 +110,13 @@ export function ParticipantCard({
 		}
 	};
 
-	// Context usage percentage (default to 0 if not set)
-	const contextUsage = participant.contextUsage ?? 0;
+	// Only measured percentages are available; absent or sentinel values must not imply zero.
+	const contextUsage =
+		typeof participant.contextUsage === 'number' &&
+		Number.isFinite(participant.contextUsage) &&
+		participant.contextUsage >= 0
+			? participant.contextUsage
+			: undefined;
 
 	// Always show reset button (useful for disconnected sessions, not just high context)
 	const showResetButton = onContextReset && groupChatId && !isResetting;
@@ -233,20 +238,22 @@ export function ParticipantCard({
 							Context
 						</span>
 						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
-							{contextUsage}%
+							{contextUsage !== undefined ? `${contextUsage}%` : 'Unavailable'}
 						</span>
 					</div>
 					<div
 						className="h-1 rounded-full overflow-hidden"
 						style={{ backgroundColor: theme.colors.border }}
 					>
-						<div
-							className="h-full rounded-full transition-all"
-							style={{
-								width: `${contextUsage}%`,
-								backgroundColor: contextUsage > 80 ? theme.colors.warning : theme.colors.accent,
-							}}
-						/>
+						{contextUsage !== undefined && (
+							<div
+								className="h-full rounded-full transition-all"
+								style={{
+									width: `${contextUsage}%`,
+									backgroundColor: contextUsage > 80 ? theme.colors.warning : theme.colors.accent,
+								}}
+							/>
+						)}
 					</div>
 				</div>
 				{/* Cost pill (optional) */}

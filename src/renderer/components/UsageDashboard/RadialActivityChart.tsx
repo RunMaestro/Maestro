@@ -5,18 +5,23 @@
  * Two preset modes: 24-hour clock dial (`hours`) and day-of-week wheel
  * (`weekday`).
  *
- * The visual: each slice's outward extent is proportional to its count, the
- * peak slice gets the theme accent at full opacity, and the center renders
- * a hero label (e.g. "17" / "peak hr") so the chart works as a glanceable
- * stat card on its own. Replaces the flat PeakHoursChart bar layout.
+ * The visual: each slice's outward extent is proportional to its query
+ * count, the peak slice gets the theme accent at full opacity, and the center
+ * names the peak ("5 PM" / "peak hour", "Mon" / "peak day"). The center is the
+ * one place the Overview states the peak hour; the tooltip carries exact counts.
  */
 
 import { memo, useMemo, useState } from 'react';
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
-import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
+import {
+	formatDurationHuman as formatDuration,
+	formatHourOfDay,
+	formatNumber,
+} from '../../../shared/formatters';
+import { parseLocalYmd } from '../../../shared/localDay';
 import { COLORBLIND_LINE_COLORS } from '../../constants/colorblindPalettes';
-import { ChartTooltip } from './ChartTooltip';
+import { ChartTooltip } from '../widgets';
 
 type RadialMode = 'hours' | 'weekday';
 
@@ -43,22 +48,15 @@ interface SliceDatum {
 	duration: number;
 }
 
-/**
- * 12-hour clock-style hour formatter - matches the inner-ring callout
- * label "17" by exposing both the 24h slot (used internally) and the
- * 12h-with-suffix presentation (used in tooltips and the center hero).
- */
-function formatHour12(hour24: number): string {
-	const suffix = hour24 >= 12 ? 'PM' : 'AM';
-	const displayHour = hour24 % 12 || 12;
-	return `${displayHour} ${suffix}`;
+/** "5 PM - 6 PM": the hour slot a slice covers. */
+function formatHourSlot(hour: number): string {
+	return `${formatHourOfDay(hour)} - ${formatHourOfDay((hour + 1) % 24)}`;
 }
 
 /**
  * Compute day-of-week buckets from `byDay`. The aggregation doesn't expose
  * a pre-rolled-up weekday breakdown, so we walk `byDay` and bucket each
- * date into its local-day-of-week. Local parsing avoids the UTC shift trap
- * that bites every other "parse a YYYY-MM-DD string" call site.
+ * date into its local day of week.
  */
 function bucketWeekdays(
 	byDay: StatsAggregation['byDay']
@@ -68,10 +66,9 @@ function bucketWeekdays(
 		duration: 0,
 	}));
 	for (const day of byDay) {
-		const parts = day.date.split('-').map(Number);
-		if (parts.length !== 3 || parts.some(Number.isNaN)) continue;
-		const [y, m, d] = parts;
-		const dow = new Date(y, m - 1, d).getDay(); // 0=Sun
+		const date = parseLocalYmd(day.date);
+		if (!date) continue;
+		const dow = date.getDay(); // 0=Sun
 		buckets[dow].count += day.count;
 		buckets[dow].duration += day.duration;
 	}
@@ -98,7 +95,12 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 			}
 			return Array.from({ length: 24 }, (_, i) => {
 				const stats = byHourMap.get(i)!;
-				return { index: i, label: formatHour12(i), count: stats.count, duration: stats.duration };
+				return {
+					index: i,
+					label: formatHourOfDay(i),
+					count: stats.count,
+					duration: stats.duration,
+				};
 			});
 		}
 		// weekday mode
@@ -170,9 +172,9 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 		return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
 	};
 
-	// Center hero text - bottom line of metric / "peak hr" / "peak day" label.
-	const heroValue = peak ? (mode === 'hours' ? String(peak.index % 12 || 12) : peak.label) : '-';
-	const heroSuffix = mode === 'hours' ? 'peak hr' : 'peak day';
+	// Center hero: the peak slot, with its AM/PM (a bare "5" read as both 5 AM and 5 PM).
+	const heroValue = peak ? peak.label : '-';
+	const heroSuffix = mode === 'hours' ? 'peak hour' : 'peak day';
 
 	const hovered = hoveredIndex != null ? slices[hoveredIndex] : null;
 
@@ -187,26 +189,6 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 		setHoveredIndex(null);
 		setTooltipPos(null);
 	};
-
-	// Footer summary - different per mode.
-	const footer = peak ? (
-		mode === 'hours' ? (
-			<>
-				Peak:{' '}
-				<strong style={{ color: theme.colors.textMain }}>
-					{formatHour12(peak.index)}–{formatHour12((peak.index + 1) % 24)}
-				</strong>{' '}
-				<span style={{ color: theme.colors.textDim }}>({formatNumber(peak.count)} events)</span>
-			</>
-		) : (
-			<>
-				Most active: <strong style={{ color: theme.colors.textMain }}>{peak.label}</strong>{' '}
-				<span style={{ color: theme.colors.textDim }}>({formatNumber(peak.count)} events)</span>
-			</>
-		)
-	) : (
-		<span style={{ color: theme.colors.textDim }}>No data in this range</span>
-	);
 
 	return (
 		<div
@@ -229,7 +211,7 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 				{totalCount === 0 ? (
 					<div className="h-48 flex items-center justify-center">
 						<span className="text-sm" style={{ color: theme.colors.textDim }}>
-							No data in this range
+							No queries in this range
 						</span>
 					</div>
 				) : (
@@ -267,7 +249,7 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 									onMouseEnter={(e) => handleMouseEnter(slice.index, e)}
 									onMouseMove={handleMouseMove}
 									onMouseLeave={handleMouseLeave}
-									style={{ transition: 'opacity 0.2s ease', cursor: 'pointer' }}
+									style={{ transition: 'opacity 0.2s ease' }}
 								/>
 							);
 						})}
@@ -307,7 +289,7 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 							y={cy - 4}
 							textAnchor="middle"
 							dominantBaseline="middle"
-							fontSize={mode === 'hours' ? 32 : 20}
+							fontSize={mode === 'hours' ? 24 : 20}
 							fontWeight={700}
 							fill={accent}
 						>
@@ -330,22 +312,16 @@ export const RadialActivityChart = memo(function RadialActivityChart({
 				{hovered && (
 					<ChartTooltip anchor={tooltipPos} theme={theme} width={220} height={60}>
 						<div className="font-medium mb-1">
-							{mode === 'hours'
-								? `${formatHour12(hovered.index)}–${formatHour12((hovered.index + 1) % 24)}`
-								: WEEKDAY_FULL[hovered.index]}
+							{mode === 'hours' ? formatHourSlot(hovered.index) : WEEKDAY_FULL[hovered.index]}
 						</div>
 						<div style={{ color: theme.colors.textDim }}>
-							<div>{formatNumber(hovered.count)} events</div>
+							<div>
+								{formatNumber(hovered.count)} {hovered.count === 1 ? 'query' : 'queries'}
+							</div>
 							{hovered.duration > 0 && <div>{formatDuration(hovered.duration)} total</div>}
 						</div>
 					</ChartTooltip>
 				)}
-			</div>
-			<div
-				className="mt-3 pt-3 border-t text-xs text-center"
-				style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-			>
-				{footer}
 			</div>
 		</div>
 	);

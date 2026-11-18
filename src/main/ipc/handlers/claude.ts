@@ -55,6 +55,7 @@ import {
 } from '../../storage/starred-transcript-mirror';
 import { countClaudeTranscriptMessages } from '../../../shared/claudeTranscriptMessages';
 import { resolveAgentAccountDir } from '../../agents/provider-account-dirs';
+import { removeClaudeMessagePair } from '../../storage/claude-message-pair';
 
 /**
  * Legacy global stats cache structure for deprecated claude:getGlobalStats handler.
@@ -1180,56 +1181,8 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 				const sessionFile = path.join(claudeProjectsDir, encodedPath, `${sessionId}.jsonl`);
 
 				const content = await fs.readFile(sessionFile, 'utf-8');
-				const lines = content.split('\n').filter((l) => l.trim());
-
-				const parsedLines: Array<{ line: string; entry: unknown }> = [];
-				let userMessageIndex = -1;
-
-				for (let i = 0; i < lines.length; i++) {
-					try {
-						const entry = JSON.parse(lines[i]);
-						parsedLines.push({ line: lines[i], entry });
-
-						if (entry.uuid === userMessageUuid && entry.type === 'user') {
-							userMessageIndex = parsedLines.length - 1;
-						}
-					} catch {
-						parsedLines.push({ line: lines[i], entry: null });
-					}
-				}
-
-				// If UUID match failed, try content match
-				if (userMessageIndex === -1 && fallbackContent) {
-					const normalizedFallback = fallbackContent.trim();
-
-					for (let i = parsedLines.length - 1; i >= 0; i--) {
-						const entry = parsedLines[i].entry as {
-							type?: string;
-							message?: { content?: unknown };
-						} | null;
-						if (entry?.type === 'user') {
-							let messageText = '';
-							if (entry.message?.content) {
-								if (typeof entry.message.content === 'string') {
-									messageText = entry.message.content;
-								} else if (Array.isArray(entry.message.content)) {
-									const textBlocks = (
-										entry.message.content as Array<{ type?: string; text?: string }>
-									).filter((b) => b.type === 'text');
-									messageText = textBlocks.map((b) => b.text).join('\n');
-								}
-							}
-
-							if (messageText.trim() === normalizedFallback) {
-								userMessageIndex = i;
-								logger.info('Found message by content match', LOG_CONTEXT, { sessionId, index: i });
-								break;
-							}
-						}
-					}
-				}
-
-				if (userMessageIndex === -1) {
+				const removal = removeClaudeMessagePair(content, userMessageUuid, fallbackContent);
+				if (!removal.found) {
 					logger.warn('User message not found for deletion', LOG_CONTEXT, {
 						sessionId,
 						userMessageUuid,
@@ -1237,107 +1190,15 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					});
 					return { success: false, error: 'User message not found' };
 				}
-
-				// Find the end of the response and collect tool_use IDs being deleted
-				let endIndex = parsedLines.length;
-				const deletedToolUseIds = new Set<string>();
-
-				for (let i = userMessageIndex + 1; i < parsedLines.length; i++) {
-					const entry = parsedLines[i].entry as {
-						type?: string;
-						message?: { content?: unknown };
-					} | null;
-
-					if (entry?.type === 'user') {
-						endIndex = i;
-						break;
-					}
-
-					// Collect tool_use IDs from assistant messages being deleted
-					if (entry?.type === 'assistant' && entry.message?.content) {
-						const content = entry.message.content;
-						if (Array.isArray(content)) {
-							for (const block of content as Array<{ type?: string; id?: string }>) {
-								if (block.type === 'tool_use' && block.id) {
-									deletedToolUseIds.add(block.id);
-								}
-							}
-						}
-					}
-				}
-
-				// Remove the message pair
-				let linesToKeep = [
-					...parsedLines.slice(0, userMessageIndex),
-					...parsedLines.slice(endIndex),
-				];
-
-				// If we deleted any tool_use blocks, clean up orphaned tool_result blocks
-				if (deletedToolUseIds.size > 0) {
-					linesToKeep = linesToKeep
-						.map((item) => {
-							const entry = item.entry as {
-								type?: string;
-								message?: { content?: unknown };
-							} | null;
-
-							// Only process user messages (tool_result blocks are in user messages)
-							if (entry?.type !== 'user' || !entry.message?.content) {
-								return item;
-							}
-
-							const content = entry.message.content;
-							if (!Array.isArray(content)) {
-								return item;
-							}
-
-							// Filter out tool_result blocks that reference deleted tool_use IDs
-							const filteredContent = (
-								content as Array<{ type?: string; tool_use_id?: string }>
-							).filter((block) => {
-								if (block.type === 'tool_result' && block.tool_use_id) {
-									return !deletedToolUseIds.has(block.tool_use_id);
-								}
-								return true;
-							});
-
-							// If we removed all content blocks, mark this line for removal
-							if (filteredContent.length === 0) {
-								return { line: '', entry: null, remove: true };
-							}
-
-							// If content changed, update the line
-							if (filteredContent.length !== content.length) {
-								const updatedEntry = {
-									...entry,
-									message: {
-										...entry.message,
-										content: filteredContent,
-									},
-								};
-								return { line: JSON.stringify(updatedEntry), entry: updatedEntry };
-							}
-
-							return item;
-						})
-						.filter((item) => !(item as { remove?: boolean }).remove);
-
-					logger.info(`Cleaned up orphaned tool_result blocks`, LOG_CONTEXT, {
-						sessionId,
-						deletedToolUseIds: Array.from(deletedToolUseIds),
-					});
-				}
-
-				const newContent = linesToKeep.map((p) => p.line).join('\n') + '\n';
-				await fs.writeFile(sessionFile, newContent, 'utf-8');
+				await fs.writeFile(sessionFile, removal.content, 'utf-8');
 
 				logger.info(`Deleted message pair from Claude session`, LOG_CONTEXT, {
 					sessionId,
 					userMessageUuid,
-					linesRemoved: endIndex - userMessageIndex,
+					linesRemoved: removal.linesRemoved,
 				});
 
-				return { success: true, linesRemoved: endIndex - userMessageIndex };
+				return { success: true, linesRemoved: removal.linesRemoved };
 			}
 		)
 	);

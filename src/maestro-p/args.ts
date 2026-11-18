@@ -156,7 +156,7 @@ const VARIADIC_CLAUDE_LONG_FLAGS = new Set([
  * the options), as does any `--name` / `--name=value` token. A value that only
  * starts with dashes (`--- frontmatter`, `-1`) does not.
  */
-function isFlagToken(token: string): boolean {
+export function isFlagToken(token: string): boolean {
 	return token === '--' || /^--[A-Za-z][A-Za-z0-9-]*(=|$)/.test(token);
 }
 

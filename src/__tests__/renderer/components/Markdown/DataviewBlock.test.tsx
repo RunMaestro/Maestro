@@ -103,11 +103,18 @@ describe('DataviewBlock', () => {
 		expect(window.maestro.dataview.query).not.toHaveBeenCalled();
 	});
 
-	it('shows a stable-height placeholder while the query runs', () => {
+	it('shows ghost rows, then a Calculating pill, while the first run is out', async () => {
+		vi.mocked(window.maestro.dataview.query).mockReturnValueOnce(new Promise(() => {}));
 		const { container } = renderBlock('LIST');
 		const placeholder = container.querySelector('[data-dataview-placeholder]') as HTMLElement;
 		expect(placeholder).not.toBeNull();
-		expect(placeholder.style.height).toBe('2.5em');
+		expect(placeholder.getAttribute('aria-label')).toBe('Running Dataview query');
+		expect(placeholder.querySelectorAll('[data-testid="skeleton-box"]').length).toBeGreaterThan(0);
+		// A fast answer never flashes the pill.
+		expect(container.querySelector('[data-dataview-pill]')).toBeNull();
+		await waitFor(() =>
+			expect(container.querySelector('[data-dataview-pill]')?.textContent).toBe('Calculating')
+		);
 		expect(window.maestro.dataview.query).toHaveBeenCalledWith({
 			filePath: NOTE,
 			source: 'LIST',
@@ -304,8 +311,14 @@ describe('DataviewBlock', () => {
 		await waitFor(() => expect(window.maestro.dataview.query).toHaveBeenCalledTimes(2), {
 			timeout: DATAVIEW_REFRESH_DEBOUNCE_MS * 4,
 		});
-		// The burst cost one query, and the previous answer is still shown.
+		// The burst cost one query, and the previous answer is still shown, dimmed under a Recalculating pill.
 		expect(screen.getByText('first')).toBeTruthy();
+		const refreshing = await waitFor(() => {
+			const element = document.querySelector('[data-dataview-refreshing]');
+			expect(element).not.toBeNull();
+			return element as HTMLElement;
+		});
+		expect(refreshing.querySelector('[data-dataview-pill]')?.textContent).toBe('Recalculating');
 
 		answer({
 			root: ROOT,
@@ -316,6 +329,8 @@ describe('DataviewBlock', () => {
 		});
 		await screen.findByText('second');
 		expect(screen.queryByText('first')).toBeNull();
+		expect(document.querySelector('[data-dataview-refreshing]')).toBeNull();
+		expect(document.querySelector('[data-dataview-pill]')).toBeNull();
 	});
 
 	it('ignores a change to another root or one it has already read', async () => {

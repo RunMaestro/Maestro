@@ -13,28 +13,7 @@
 
 import { ProcessManager } from '../process-manager';
 import { logger } from './logger';
-
-/**
- * Serialize an error object for logging.
- * Error objects don't serialize well with JSON.stringify (they produce {}).
- * This function extracts the useful properties for logging.
- */
-function serializeError(error: unknown): Record<string, unknown> {
-	if (error instanceof Error) {
-		return {
-			name: error.name,
-			message: error.message,
-			stack: error.stack,
-			// Include any additional properties that might be on the error
-			...(error as unknown as Record<string, unknown>),
-		};
-	}
-	// For non-Error objects, return as-is if it's an object, otherwise wrap it
-	if (typeof error === 'object' && error !== null) {
-		return error as Record<string, unknown>;
-	}
-	return { value: String(error) };
-}
+import { serializeError } from '../../shared/serializeError';
 
 /**
  * Standard IPC response format for operations that return data

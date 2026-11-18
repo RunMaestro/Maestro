@@ -32,7 +32,7 @@ Tips and gotchas:
 
 [Quick Chat](./quick-chat) has its own system-wide hotkey, `Opt+Space` on macOS and `Alt+Space` on Windows and Linux by default. It opens a small floating chat window from any app, brings it to the front if it is behind another window, and closes it if it is in front. Change or clear it in **Settings -> Plugins -> Quick Chat -> Settings**.
 
-Inside the Quick Chat window: `Enter` sends, `Shift+Enter` adds a line, `Cmd+N` / `Ctrl+N` starts a new chat, `Cmd+O` / `Ctrl+O` opens the agent picker, `Cmd+T` / `Ctrl+T` opens the tab picker (where the next message goes), `Cmd+Y` / `Ctrl+Y` opens the recent chats to bring one back, `Cmd+S` / `Ctrl+S` keeps the chat as a tab (or makes it temporary again), `Cmd+P` / `Ctrl+P` pins the window on top (or unpins it), `Cmd+Shift+K` / `Ctrl+Shift+K` cycles the agent's thinking (hidden, shown while it works, kept), `Cmd+Shift+T` / `Ctrl+Shift+T` opens the chat as a tab in Maestro, `Cmd+=` / `Cmd+-` / `Cmd+0` (`Ctrl` off macOS) make the conversation text bigger, smaller, or back to normal, `Esc` closes the window (or, with the picker open, just the picker), `Cmd+W` / `Ctrl+W` closes the window even with the picker open, and ``Cmd+` `` (macOS) closes it and brings Maestro forward. The [show Maestro hotkey](#system-wide-hotkey-summon-maestro) also closes Quick Chat on its way to the Maestro window.
+Inside the Quick Chat window: `Enter` sends, `Shift+Enter` adds a line, `Cmd+N` / `Ctrl+N` starts a new chat, `Cmd+O` / `Ctrl+O` opens the agent picker, `Cmd+T` / `Ctrl+T` opens the tab picker (where the next message goes), `Cmd+Y` / `Ctrl+Y` opens the recent chats to bring one back, `Cmd+S` / `Ctrl+S` keeps the chat as a tab (or makes it temporary again), `Cmd+P` / `Ctrl+P` pins the window on top (or unpins it), `Cmd+Shift+K` / `Ctrl+Shift+K` cycles the agent's thinking (hidden, shown while it works, kept), `Cmd+Shift+T` / `Ctrl+Shift+T` opens the chat as a tab in Maestro, `Cmd+=` / `Cmd+-` / `Cmd+0` (`Ctrl` off macOS) make the conversation text bigger, smaller, or back to normal, `Esc` closes the window (or, with the picker open, just the picker), `Cmd+W` / `Ctrl+W` closes the window even with the picker open, and ``Cmd+` `` / ``Cmd+Shift+` `` (macOS) switch between Quick Chat and the Maestro windows, leaving Quick Chat up. The [show Maestro hotkey](#system-wide-hotkey-summon-maestro) also closes Quick Chat on its way to the Maestro window.
 
 The two system-wide hotkeys cannot share a combo. If you set one to the other's combo, the second registration fails and Maestro tells you.
 
@@ -77,6 +77,7 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
 | Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
 | Show/Hide Throughput Gauge    | `Opt+Cmd+Shift+T`       | `Alt+Ctrl+Shift+T`        |
+| Prompt Links                  | `Opt+Cmd+Shift+L`       | `Alt+Ctrl+Shift+L`        |
 | Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
 | Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
 | Steer Running Turn            | `Opt+Cmd+Enter`         | `Alt+Ctrl+Enter`          |
@@ -131,6 +132,47 @@ asking, and the on-disk-change banner is where that question belongs. Plain
 `Cmd+R` is reserved: Maestro blocks it so the window can never reload out from
 under a running agent.
 
+## File Editor
+
+These work while the File Preview editor (`Cmd+E` on a file) has focus. See
+[Editing Files](./file-editor) for everything the editor does.
+
+| Action                         | macOS                            | Windows/Linux                     |
+| ------------------------------ | -------------------------------- | --------------------------------- |
+| Save                           | `Cmd+S`                          | `Ctrl+S`                          |
+| Accept completion              | `Tab` or `Enter`                 | `Tab` or `Enter`                  |
+| Open completion list           | `Ctrl+Space`                     | `Ctrl+Space`                      |
+| Toggle comment                 | `Cmd+/`                          | `Ctrl+/`                          |
+| Add cursor at next occurrence  | `Cmd+D`                          | `Ctrl+D`                          |
+| Add a cursor                   | `Opt+Click`                      | `Alt+Click`                       |
+| Column (rectangular) selection | `Shift+Opt+Drag`                 | `Shift+Alt+Drag`                  |
+| Back to one cursor             | `Esc`                            | `Esc`                             |
+| Move line up / down            | `Opt+Up` / `Opt+Down`            | `Alt+Up` / `Alt+Down`             |
+| Duplicate line up / down       | `Shift+Opt+Up` / `Down`          | `Shift+Alt+Up` / `Down`           |
+| Indent / outdent selection     | `Tab` / `Shift+Tab`              | `Tab` / `Shift+Tab`               |
+| Find / replace                 | `Cmd+F`, then `Tab` to Replace   | `Ctrl+F`, then `Tab` to Replace   |
+| Replace current match          | `Enter` in the Replace field     | `Enter` in the Replace field      |
+| Replace all                    | `Cmd+Enter` in the Replace field | `Ctrl+Enter` in the Replace field |
+| Back to preview                | `Esc` or `Cmd+E`                 | `Esc` or `Ctrl+E`                 |
+
+`Cmd+/` is Show Shortcuts everywhere else; inside the editor it toggles a
+comment. `Cmd+[` and `Cmd+]` keep switching agents, so indent with `Tab` and
+`Shift+Tab` instead. With **Vim keybindings** on, `Esc` returns to Vim's normal
+mode, and `Cmd+E` leaves the editor.
+
+## Git Diff Review
+
+These work while the Git Diff viewer is open over an agent that can take a
+review. See [Reviewing Diffs](./diff-review).
+
+| Action                        | macOS                     | Windows/Linux             |
+| ----------------------------- | ------------------------- | ------------------------- |
+| Move the line cursor          | `Down` / `Up`             | `Down` / `Up`             |
+| Extend the line selection     | `Shift+Down` / `Shift+Up` | `Shift+Down` / `Shift+Up` |
+| Comment on the selected lines | `C`                       | `C`                       |
+| Save the comment              | `Cmd+Enter`               | `Ctrl+Enter`              |
+| Send the review               | `Cmd+Shift+Enter`         | `Ctrl+Shift+Enter`        |
+
 ## Group Chat
 
 A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.
@@ -160,6 +202,7 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 | Toggle Read-Only Mode       | `Cmd+R`               | `Ctrl+R`              |
 | Toggle Show Thinking        | `Cmd+Shift+K`         | `Ctrl+Shift+K`        |
 | Toggle Tab Star             | `Cmd+Shift+S`         | `Ctrl+Shift+S`        |
+| Toggle Pinned Messages      | `Ctrl+Cmd+P`          | `Ctrl+Win+P`          |
 | Toggle Tab Unread           | `Cmd+Shift+U`         | `Ctrl+Shift+U`        |
 | Filter Unread Agents        | `Opt+U`               | `Alt+U`               |
 | Filter Unread Tabs          | `Cmd+U`               | `Ctrl+U`              |
@@ -184,33 +227,34 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 
 ## Tab Management Shortcuts
 
-| Action                    | macOS                   | Windows/Linux             |
-| ------------------------- | ----------------------- | ------------------------- |
-| New Tab                   | `Cmd+T`                 | `Ctrl+T`                  |
-| New Browser Tab           | `Cmd+B`                 | `Ctrl+B`                  |
-| New File Tab              | `Opt+N`                 | `Alt+N`                   |
-| New Terminal Tab          | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
-| Focus Browser Address Bar | `Cmd+L`                 | `Ctrl+L`                  |
-| Find in Browser Tab       | `Cmd+F`                 | `Ctrl+F`                  |
-| Focus Active Tab          | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
-| Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
-| Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
-| Show Snoozed Tabs         | unassigned by default   | unassigned by default     |
-| Move Tab to First         | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
-| Move Tab to Last          | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
-| Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
-| Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
-| Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
-| Close Tabs to Left        | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
-| Close Tabs to Right       | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
-| Reopen Closed Tab         | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
-| Previous Tab              | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
-| Next Tab                  | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
-| Tab Switcher              | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
-| Rename Tab                | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
-| Rename Tab Group          | unassigned by default   | unassigned by default     |
-| Go to Tab 1-9             | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
-| Go to Last Tab            | `Cmd+0`                 | `Ctrl+0`                  |
+| Action                     | macOS                   | Windows/Linux             |
+| -------------------------- | ----------------------- | ------------------------- |
+| New Tab                    | `Cmd+T`                 | `Ctrl+T`                  |
+| New Browser Tab            | `Cmd+B`                 | `Ctrl+B`                  |
+| New File Tab               | `Opt+N`                 | `Alt+N`                   |
+| New Terminal Tab           | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
+| Focus Browser Address Bar  | `Cmd+L`                 | `Ctrl+L`                  |
+| Find in Browser Tab        | `Cmd+F`                 | `Ctrl+F`                  |
+| Toggle Browser Design Mode | `Cmd+Shift+C`           | `Ctrl+Shift+C`            |
+| Focus Active Tab           | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
+| Snooze Tab                 | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
+| Change Model and Effort    | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
+| Show Snoozed Tabs          | unassigned by default   | unassigned by default     |
+| Move Tab to First          | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
+| Move Tab to Last           | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
+| Close Tab                  | `Cmd+W`                 | `Ctrl+W`                  |
+| Close All Tabs             | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
+| Close Other Tabs           | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
+| Close Tabs to Left         | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
+| Close Tabs to Right        | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
+| Reopen Closed Tab          | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
+| Previous Tab               | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
+| Next Tab                   | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
+| Tab Switcher               | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
+| Rename Tab                 | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
+| Rename Tab Group           | unassigned by default   | unassigned by default     |
+| Go to Tab 1-9              | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
+| Go to Last Tab             | `Cmd+0`                 | `Ctrl+0`                  |
 
 In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
 Right Bar instead, switching between the Participants and History panels. The Right
@@ -353,18 +397,19 @@ When AI command mode proposes a command, the card owns the keyboard until you an
 | Move Run / Cancel  | `Left/Right Arrow` |
 | Take the selection | `Enter`            |
 
-## @ File Mentions (AI Terminal)
+## @ Mentions (AI Terminal & Group Chat)
 
-In AI mode, use `@` to reference files in your prompts:
+Use `@` in AI chat and Group Chat rooms to reference files or mention agents:
 
-| Action               | Key                                |
-| -------------------- | ---------------------------------- |
-| Open File Picker     | Type `@` followed by a search term |
-| Navigate Suggestions | `Up/Down Arrow`                    |
-| Select File          | `Tab` or `Enter`                   |
-| Close Dropdown       | `Esc`                              |
+| Action                    | Key                                                                           |
+| ------------------------- | ----------------------------------------------------------------------------- |
+| Open Mention Picker       | Type `@` followed by a search term                                            |
+| Navigate Suggestions      | `Up/Down Arrow`                                                               |
+| Select Suggestion         | `Tab` or `Enter`                                                              |
+| Complete @agent Reference | `Tab` (picker closed: completes single match, or reopens picker for multiple) |
+| Close Dropdown            | `Esc`                                                                         |
 
-**Example**: Type `@readme` to see matching files, then select to insert the file reference into your prompt. The AI will have context about the referenced file.
+**Example**: Type `@readme` to see matching files, or type `@backend` and press `Tab` to complete the agent mention into your prompt.
 
 ## Navigation & Search
 
@@ -479,6 +524,15 @@ on top of it.
 
 ## Usage Dashboard
 
+These keys move between the dashboard's tabs while it is open. See
+[Keyboard Navigation](./usage-dashboard#keyboard-navigation) for the keys that
+move between sections inside a tab.
+
+| Action       | macOS         | Windows/Linux  |
+| ------------ | ------------- | -------------- |
+| Previous tab | `Cmd+Shift+[` | `Ctrl+Shift+[` |
+| Next tab     | `Cmd+Shift+]` | `Ctrl+Shift+]` |
+
 The Agents and Groups tabs draw one tile per agent or group. The tile size is
 yours to set, and it is remembered across restarts. See
 [Usage Dashboard](./usage-dashboard).
@@ -553,6 +607,31 @@ so the selection slides sideways instead of jumping to another branch's tip.
 `Home`/`End` and the page keys also stay on the current branch. Clicking a commit
 message selects it, the same as clicking its dot. The graph is built from every
 branch, so all of this reaches commits the List view does not hold.
+
+## Settings Search
+
+Type in the search box at the top of Settings to find a setting on any tab. The
+results are a filtered view of Settings: each matching section appears once,
+already open, and shows only the controls that match, so you change a setting
+right where you found it. **Show all** at the bottom of a section shows the rest
+of it. A match with nothing to change in place, such as the theme picker, is a
+row that opens its tab.
+
+Search matches inside words from three characters on. A shorter query, such as
+`gh` or `ai`, matches only a whole word in a setting's name or keywords.
+
+| Action                                | macOS        | Windows/Linux |
+| ------------------------------------- | ------------ | ------------- |
+| Focus the search box                  | `Cmd+F`      | `Ctrl+F`      |
+| Move from the search box into results | `Down Arrow` | `Down Arrow`  |
+| Move between controls                 | `Tab`        | `Tab`         |
+| Go to the top result on its tab       | `Enter`      | `Enter`       |
+| Back to the search box (from a row)   | `Esc`        | `Esc`         |
+| Clear the search                      | `Esc`        | `Esc`         |
+
+`Enter` in the search box goes to the top result's tab. Each section's header
+has a button that opens that section on its tab. Inside a section, `Esc` is
+left to the section's own controls.
 
 ## Maestro Prompts (Settings)
 

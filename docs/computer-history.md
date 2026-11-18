@@ -104,7 +104,7 @@ App rules match the app id or its exact name. App ids are the macOS bundle id (`
 Open the viewer with <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>H</kbd> (<kbd>Ctrl</kbd>+<kbd>Win</kbd>+<kbd>H</kbd> elsewhere), **Computer History** in the command palette or the hamburger menu, or `maestro-cli open computer-history`. It is available while Computer History is on, in the desktop app only.
 
 - **Timeline:** an activity strip across the range (1 hour to 30 days), stacked by app. Click a bar to see only that slice; click it again to widen back out. The app list on the left shows foreground time per app; click apps to filter to them. Below, every visit (a run of time in one app and window) lists what you typed, what you selected, window changes, and the screen text it captured (collapsed). Search matches text, window titles, URLs, and field labels, and accepts regular expressions.
-- **Digests:** the 15-minute digests and 6-hour roll-ups an agent wrote, newest first, when digests are on.
+- **Digests:** the 15-minute digests and 6-hour roll-ups an agent wrote, newest first, when digests are on. The search box searches every digest in the selected range, not only the ones on screen, and matches the summary text (never the header line that names the writer).
 - **Capture:** which apps and domains are recorded (see above).
 
 The header shows whether the recorder is running and pauses or resumes it.
@@ -143,6 +143,8 @@ Digests are off by default. Turn on **Write digests** and pick an agent, and Mae
 - **15-minute digest:** after each 15-minute window with activity closes, a summary of that window in `digests/<day>/<HHMM>Z.md`. Windows start at :00, :15, :30, and :45 UTC.
 - **6-hour roll-up:** when a 6-hour block ends (00:00, 06:00, 12:00, and 18:00 UTC), one summary of the block written from its 15-minute digests, in `digests/<day>/6h-<HHMM>Z.md`. A block with no 15-minute digests gets no roll-up. Turn it off with the **6-hour roll-up** toggle or `maestro-cli computer-history config --digest-rollup off`.
 
+Every digest has the same shape: a bold title and one sentence on what you mostly did, then **Threads** (each piece of work and how far it got), **Open items** (what was left unfinished, or for a roll-up, where it stood when the block ended), and **Context to keep** (facts worth remembering past that window, such as a project name or a collaborator). Each 15-minute digest is also handed the previous digest from the last hour, so a thread keeps its name from one window to the next. A roll-up ends with a **Sources** list of the 15-minute digests it came from.
+
 The agent is given file paths, not contents, and told that everything in them is untrusted. Its answer is scrubbed for secrets before it is saved. If Maestro was closed when a window or block ended, it catches up on the next start: missing 15-minute digests from the last 6 hours (at most 24) and missing roll-ups from the last 24 hours. Clearing history deletes the digests for the cleared range and stops any digest in progress for it.
 
 Digests cost the chosen agent's tokens for every window you were active in, plus one roll-up per block.
@@ -155,6 +157,7 @@ Two limits to know before you turn them on:
 ```bash
 maestro-cli computer-history digests --since 1d
 maestro-cli computer-history digests --since 1w --kind 6h --json
+maestro-cli computer-history digests --since 30d --grep "gmail forwarding"
 ```
 
 ## CLI

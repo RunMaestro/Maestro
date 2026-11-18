@@ -84,13 +84,45 @@ describe('Stats Preload API', () => {
 		});
 	});
 
+	describe('Auto Run and shortcut reads added for the Usage Dashboard', () => {
+		it('endAutoRun forwards a corrected tasksTotal', async () => {
+			mockInvoke.mockResolvedValue(true);
+			await api.endAutoRun('autorun-1', 1000, 12, 12);
+			expect(mockInvoke).toHaveBeenCalledWith('stats:end-autorun', 'autorun-1', 1000, 12, 12);
+		});
+
+		it('getAutoRunTurnsByHour invokes the grouped channel', async () => {
+			mockInvoke.mockResolvedValue([]);
+			await api.getAutoRunTurnsByHour('week');
+			expect(mockInvoke).toHaveBeenCalledWith('stats:get-autorun-turns-by-hour', 'week');
+		});
+
+		it('recordShortcutUsage sends the shortcut id', async () => {
+			mockInvoke.mockResolvedValue('2026-06-21');
+			await api.recordShortcutUsage(123, 'toggleSidebar');
+			expect(mockInvoke).toHaveBeenCalledWith('stats:record-shortcut-usage', 123, 'toggleSidebar');
+		});
+
+		it('getShortcutUsageByShortcut invokes the per-shortcut channel', async () => {
+			mockInvoke.mockResolvedValue([]);
+			await api.getShortcutUsageByShortcut('month');
+			expect(mockInvoke).toHaveBeenCalledWith('stats:get-shortcut-usage-by-shortcut', 'month');
+		});
+	});
+
 	describe('endAutoRun', () => {
 		it('should invoke stats:end-autorun', async () => {
 			mockInvoke.mockResolvedValue(true);
 
 			const result = await api.endAutoRun('autorun-123', 60000, 8);
 
-			expect(mockInvoke).toHaveBeenCalledWith('stats:end-autorun', 'autorun-123', 60000, 8);
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'stats:end-autorun',
+				'autorun-123',
+				60000,
+				8,
+				undefined
+			);
 			expect(result).toBe(true);
 		});
 	});
@@ -171,30 +203,6 @@ describe('Stats Preload API', () => {
 
 			expect(mockInvoke).toHaveBeenCalledWith('stats:get-autorun-sessions', 'day');
 			expect(result).toEqual(sessions);
-		});
-	});
-
-	describe('getAutoRunTasks', () => {
-		it('should invoke stats:get-autorun-tasks', async () => {
-			const tasks = [
-				{
-					id: 'task-1',
-					autoRunSessionId: 'ar-1',
-					sessionId: 'session-1',
-					agentType: 'claude-code',
-					taskIndex: 0,
-					taskContent: 'Task 1',
-					startTime: Date.now(),
-					duration: 5000,
-					success: true,
-				},
-			];
-			mockInvoke.mockResolvedValue(tasks);
-
-			const result = await api.getAutoRunTasks('ar-1');
-
-			expect(mockInvoke).toHaveBeenCalledWith('stats:get-autorun-tasks', 'ar-1');
-			expect(result).toEqual(tasks);
 		});
 	});
 
@@ -284,35 +292,26 @@ describe('Stats Preload API', () => {
 		});
 	});
 
-	describe('clearOldData', () => {
-		it('should invoke stats:clear-old-data', async () => {
-			const response = {
-				success: true,
-				deletedQueryEvents: 100,
-				deletedAutoRunSessions: 10,
-				deletedAutoRunTasks: 50,
-			};
-			mockInvoke.mockResolvedValue(response);
-
-			const result = await api.clearOldData(30);
-
-			expect(mockInvoke).toHaveBeenCalledWith('stats:clear-old-data', 30);
-			expect(result).toEqual(response);
+	describe('retired surface', () => {
+		it('no longer exposes cleanup or the earliest-timestamp read', () => {
+			expect(api).not.toHaveProperty('clearOldData');
+			expect(api).not.toHaveProperty('getEarliestTimestamp');
 		});
+	});
 
-		it('should handle errors', async () => {
-			mockInvoke.mockResolvedValue({
-				success: false,
-				deletedQueryEvents: 0,
-				deletedAutoRunSessions: 0,
-				deletedAutoRunTasks: 0,
-				error: 'Database error',
+	describe('initialization result', () => {
+		it('reads and clears the stats database reset notice', async () => {
+			mockInvoke.mockResolvedValueOnce({ success: true, wasReset: true, userMessage: 'reset' });
+			await expect(api.getInitializationResult()).resolves.toEqual({
+				success: true,
+				wasReset: true,
+				userMessage: 'reset',
 			});
+			expect(mockInvoke).toHaveBeenCalledWith('stats:get-initialization-result');
 
-			const result = await api.clearOldData(7);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toBe('Database error');
+			mockInvoke.mockResolvedValueOnce(true);
+			await expect(api.clearInitializationResult()).resolves.toBe(true);
+			expect(mockInvoke).toHaveBeenCalledWith('stats:clear-initialization-result');
 		});
 	});
 

@@ -14,8 +14,10 @@
  */
 
 import type { TokenCounts } from './modelPricing';
-import type { TokenSpeedBucket, TokenSpeedSummary } from './tokenSpeed';
+import type { UsageAccounting, UsageBreakdown } from './types';
+import type { TokenSpeedBucket, TokenSpeedGranularity, TokenSpeedSummary } from './tokenSpeed';
 import type { StatsTimeRange } from './stats-types';
+import { getTimeRangeStart } from './statsTimeRange';
 
 /**
  * Per-agent token coverage, mirroring the Cue accessor's classification so both
@@ -43,17 +45,22 @@ export interface ModelTokenUsage extends Required<
 	Pick<TokenCounts, 'inputTokens' | 'outputTokens'>
 > {
 	/**
-	 * Normalized model id (via `normalizeModelId`), e.g. `claude-opus-4-8`. Empty
-	 * string when the transcript carried no model id (rare fallback bucket).
+	 * Legacy normalized id, or the raw id when canonical accounting is available.
+	 * Empty string when the transcript carried no model id.
 	 */
 	model: string;
+	/** Native identity, before pricing aliases or normalization. */
+	rawModel?: string;
+	/** Canonical detail; numeric fields below are compatibility projections. */
+	accounting?: UsageBreakdown;
 	inputTokens: number;
 	outputTokens: number;
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
 	/**
-	 * USD cost for this model's tokens. Provider-reported when the agent tracks
-	 * cost; otherwise computed from the `modelPricing` rate table.
+	 * Numeric projection of accounting.cost when present (zero if unavailable).
+	 * Legacy providers retain reported or rate-table amounts; consult accounting
+	 * before interpreting a numeric zero as measured free usage.
 	 */
 	costUsd: number;
 	/** True when `costUsd` was estimated from the rate table, not provider-reported. */
@@ -61,9 +68,17 @@ export interface ModelTokenUsage extends Required<
 }
 
 /**
+ * Token fields are ADDITIVE across providers: `inputTokens` is fresh
+ * (uncached) input only, and `cacheReadTokens` / `cacheCreationTokens` are
+ * separate, so `input + output + cacheRead + cacheCreation` is every token a
+ * session moved, once. Claude reports usage that way already. Codex counts its
+ * cached tokens INSIDE `input_tokens`; the token-usage accessor subtracts them
+ * before a Codex session reaches any of these shapes (its cost is computed
+ * from the raw Codex counts first, so pricing is unaffected).
+ *
  * One session's token consumption, split by model. Produced by the token-usage
  * accessor from a single on-disk transcript and cached per source-file
- * fingerprint. Session totals are the sum across `byModel`.
+ * fingerprint. Native lifetime totals are authoritative; `byModel` may be partial.
  */
 export interface SessionTokenBreakdown {
 	/** Provider session id (e.g. Claude's `session_id`) the totals were read from. */
@@ -86,10 +101,13 @@ export interface SessionTokenBreakdown {
 	 */
 	origin?: 'user' | 'auto' | 'relay';
 	byModel: ModelTokenUsage[];
+	/** Native lifetime evidence, including model/child detail already in the totals. */
+	accounting?: UsageAccounting;
 	inputTokens: number;
 	outputTokens: number;
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
+	/** Compatibility projection; canonical cost evidence takes precedence. */
 	costUsd: number;
 	/** True when any contributing model bucket was rate-table estimated. */
 	costEstimated: boolean;
@@ -100,10 +118,13 @@ export interface SessionTokenBreakdown {
 
 /** Rolled-up token + cost totals over an arbitrary set of sessions/models. */
 export interface TokenUsageTotals {
+	/** Aggregate evidence without claiming a single native session as its source. */
+	accounting?: Pick<UsageAccounting, 'completeness' | 'cost'>;
 	inputTokens: number;
 	outputTokens: number;
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
+	/** Compatibility projection; canonical cost evidence takes precedence. */
 	costUsd: number;
 	/** True when any part of `costUsd` was rate-table estimated. */
 	costEstimated: boolean;
@@ -112,7 +133,7 @@ export interface TokenUsageTotals {
 
 /** A named group of totals (one agent, one model, or one project). */
 export interface TokenUsageGroup extends TokenUsageTotals {
-	/** Stable grouping key: agent id, normalized model id, or project path. */
+	/** Stable key: agent, legacy model, provider/raw-model tuple, account or project. */
 	key: string;
 	/** Human-facing label for the group. */
 	label: string;
@@ -152,8 +173,31 @@ export interface TokenUsageAggregate {
 	 */
 	speed: TokenSpeedSummary;
 	coverageByAgent: Record<string, TokenCoverage>;
+	/**
+	 * What the totals leave out: agent types Maestro has run that have no
+	 * readable transcript storage, and how many agent/project pairs ran over
+	 * SSH (their transcripts live on the remote host). The Tokens tab states
+	 * both, so a total is never read as covering every agent.
+	 */
+	excluded: TokenUsageExclusions;
+	/** Slice size of `timeline` (and of `speed.timeline`, which uses the same). */
+	granularity: TokenTimelineGranularity;
+	/**
+	 * The window `timeline` spans (ms since epoch): the query's `sinceMs`, or for
+	 * All Time the earliest activity seen, through now. `timeline` has one entry
+	 * per slice of it, idle slices included.
+	 */
+	windowStartMs: number;
+	windowEndMs: number;
 	/** When the aggregate was computed (ms since epoch). */
 	generatedAtMs: number;
+}
+
+export interface TokenUsageExclusions {
+	/** Agent types with recorded activity but no transcript storage to read. */
+	unsupportedAgents: string[];
+	/** Distinct remote (SSH) agent type + project pairs, skipped entirely. */
+	remoteProjects: number;
 }
 
 /**
@@ -186,8 +230,12 @@ export interface TokenSeries {
 	bySource: { user: number; auto: number };
 }
 
-/** Bucket granularity for the timeline series. */
-export type TokenTimelineGranularity = 'day' | 'week' | 'month';
+/**
+ * Bucket granularity for the timeline series. The same type (and the same
+ * span rule, `tokenGranularityFor`) as the speed timeline, so the two charts
+ * on the Tokens tab always slice time alike.
+ */
+export type TokenTimelineGranularity = TokenSpeedGranularity;
 
 /** Request options for a token-usage aggregate. */
 export interface TokenUsageQuery {
@@ -195,30 +243,24 @@ export interface TokenUsageQuery {
 	sinceMs?: number;
 	/** Inclusive upper bound on session activity (ms since epoch). Omit for now. */
 	untilMs?: number;
-	/** Timeline bucket granularity. Defaults to `day`. */
+	/**
+	 * Timeline bucket granularity. Omitted, it is picked from the window's span
+	 * (`tokenGranularityFor`), which is what the dashboard does.
+	 */
 	granularity?: TokenTimelineGranularity;
 }
-
-/** Lookback per dashboard range, matching `getTimeRangeStart` in main. */
-const RANGE_DAYS: Record<Exclude<StatsTimeRange, 'all'>, number> = {
-	day: 1,
-	week: 7,
-	month: 30,
-	quarter: 90,
-	year: 365,
-};
 
 /**
  * The token-usage query for a dashboard time range. One definition so the
  * Tokens tab, the Overview speed cards, the chart Tokens modes, and
- * `maestro-cli stats-tokens` all read the same window.
+ * `maestro-cli stats-tokens` all read the same window. The window is
+ * calendar-aligned (`getTimeRangeStart`), and the granularity is left to the
+ * accessor so All Time is sliced by the history it actually has.
  */
 export function tokenUsageQueryForRange(
 	range: StatsTimeRange,
 	nowMs: number = Date.now()
 ): TokenUsageQuery {
-	if (range === 'all') return { granularity: 'month' };
-	const days = RANGE_DAYS[range];
-	const granularity = days <= 30 ? 'day' : days <= 90 ? 'week' : 'month';
-	return { sinceMs: nowMs - days * 24 * 60 * 60 * 1000, granularity };
+	if (range === 'all') return {};
+	return { sinceMs: getTimeRangeStart(range, nowMs) };
 }

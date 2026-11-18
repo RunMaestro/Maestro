@@ -6,9 +6,10 @@
  * agent change, refresh, and reset.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useAgentConfiguration } from '../../../renderer/hooks/agent/useAgentConfiguration';
+import type { AgentDiscoveryResult } from '../../../shared/types';
 import type { AgentConfig } from '../../../renderer/types';
 
 // Mock window.maestro
@@ -16,6 +17,7 @@ const mockDetect = vi.fn();
 const mockGetConfig = vi.fn();
 const mockSetConfig = vi.fn();
 const mockGetModels = vi.fn();
+const mockGetConfigOptions = vi.fn();
 const mockRefresh = vi.fn();
 const mockGetSshConfigs = vi.fn();
 
@@ -25,6 +27,7 @@ const mockGetSshConfigs = vi.fn();
 		getConfig: mockGetConfig,
 		setConfig: mockSetConfig,
 		getModels: mockGetModels,
+		getConfigOptions: mockGetConfigOptions,
 		refresh: mockRefresh,
 	},
 	sshRemote: {
@@ -564,6 +567,171 @@ describe('useAgentConfiguration', () => {
 			expect(mockGetConfig).toHaveBeenCalledWith('claude-code');
 			// Agent doesn't have supportsModelSelection, so no getModels call
 			expect(result.current.agentConfig).toEqual({ model: 'opus' });
+		});
+	});
+
+	describe('Grok draft discovery', () => {
+		const context = {
+			kind: 'draft' as const,
+			cwd: '/project',
+			customEnvVars: { GROK_HOME: '/account-a' },
+		};
+		const manual = { model: 'manual-model', effort: 'manual-effort' };
+		const discovered: AgentDiscoveryResult = { status: 'discovered', options: ['catalog-only'] };
+		beforeEach(() => {
+			vi.useFakeTimers();
+			mockDetect.mockResolvedValue([makeAgent({ id: 'grok' })]);
+			mockGetConfig.mockResolvedValue(manual);
+			mockGetModels.mockReset().mockResolvedValue(discovered);
+			mockGetConfigOptions.mockReset().mockResolvedValue(discovered);
+		});
+		afterEach(() => vi.useRealTimers());
+
+		it.each([undefined, {}, { GROK_HOME: ' ' }] as (Record<string, string> | undefined)[])(
+			'preserves raw environment override %j',
+			async (customEnvVars) => {
+				const { result } = renderHook(() =>
+					useAgentConfiguration({
+						enabled: true,
+						discoveryContext: context,
+						initialValues: { selectedAgent: 'grok', customEnvVars },
+					})
+				);
+				await act(async () => {});
+				await act(async () => result.current.toggleConfigExpanded());
+				await act(async () => vi.advanceTimersByTimeAsync(300));
+				expect(mockGetModels).toHaveBeenLastCalledWith(
+					expect.objectContaining({
+						providerId: 'grok',
+						forceRefresh: false,
+						context: expect.objectContaining({
+							cwd: '/project',
+							customEnvVars: customEnvVars ?? context.customEnvVars,
+						}),
+					})
+				);
+				expect(result.current.availableModels).toEqual(['catalog-only']);
+				expect(result.current.agentConfig).toEqual(manual);
+			}
+		);
+
+		it.each(['account', 'path', 'model', 'remote', 'workspace'] as const)(
+			'discards late model and effort responses after a %s change',
+			async (change) => {
+				const { result, rerender } = renderHook(
+					({ cwd }) =>
+						useAgentConfiguration({
+							enabled: true,
+							discoveryContext: { ...context, cwd },
+							initialValues: { selectedAgent: 'grok' },
+						}),
+					{ initialProps: { cwd: '/project' } }
+				);
+				await act(async () => {});
+				await act(async () => result.current.toggleConfigExpanded());
+				await act(async () => vi.advanceTimersByTimeAsync(300));
+				expect(result.current.modelDiscoveryStatus).toBe('discovered');
+				let resolveModels!: (value: AgentDiscoveryResult) => void;
+				let resolveEfforts!: (value: AgentDiscoveryResult) => void;
+				mockGetModels.mockImplementationOnce(
+					() =>
+						new Promise((resolve) => {
+							resolveModels = resolve;
+						})
+				);
+				mockGetConfigOptions.mockImplementationOnce(
+					() =>
+						new Promise((resolve) => {
+							resolveEfforts = resolve;
+						})
+				);
+				act(() => {
+					void result.current.refreshModels();
+				});
+				expect(mockGetModels.mock.lastCall?.[0].forceRefresh).toBe(true);
+				act(() => {
+					if (change === 'account') result.current.setCustomEnvVars({ GROK_HOME: '/account-b' });
+					if (change === 'path') result.current.setCustomPath('/other/grok');
+					if (change === 'model')
+						result.current.setAgentConfig({ model: 'typed-model', effort: 'typed-effort' });
+					if (change === 'remote')
+						result.current.setSshRemoteConfig({ enabled: true, remoteId: 'remote-b' });
+					if (change === 'workspace') rerender({ cwd: '/other-project' });
+				});
+				expect(result.current.availableModels).toEqual([]);
+				expect(result.current.dynamicOptions).toEqual({});
+				expect(result.current.modelDiscoveryStatus).toBe('unavailable');
+				await act(async () => {
+					resolveModels({ status: 'discovered', options: ['stale-model'] });
+					resolveEfforts({ status: 'discovered', options: ['stale-effort'] });
+				});
+				expect(result.current.availableModels).toEqual([]);
+				expect(result.current.dynamicOptions).toEqual({});
+				await act(async () => vi.advanceTimersByTimeAsync(300));
+				const expected = {
+					account: { customEnvVars: { GROK_HOME: '/account-b' } },
+					path: { customPath: '/other/grok' },
+					model: { model: 'typed-model', effort: 'typed-effort' },
+					remote: { sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-b' } },
+					workspace: { cwd: '/other-project' },
+				}[change];
+				expect(mockGetModels.mock.lastCall?.[0].context).toEqual(expect.objectContaining(expected));
+				expect(result.current.availableModels).toEqual(['catalog-only']);
+				expect(result.current.dynamicOptions).toEqual({ effort: ['catalog-only'] });
+				expect(mockGetConfigOptions.mock.lastCall).toEqual([
+					mockGetModels.mock.lastCall?.[0],
+					'effort',
+				]);
+				expect(result.current.agentConfig).toEqual(change === 'model' ? expected : manual);
+			}
+		);
+
+		it.each(['unavailable', 'configured-fallback'] as const)(
+			'exposes %s without clearing manual values or inventing cwd',
+			async (status) => {
+				const fallback = { status, options: status === 'unavailable' ? [] : ['manual-model'] };
+				mockGetModels.mockResolvedValue(fallback);
+				mockGetConfigOptions.mockResolvedValue({
+					...fallback,
+					options: status === 'unavailable' ? [] : ['manual-effort'],
+				});
+				const { result } = renderHook(() =>
+					useAgentConfiguration({ enabled: true, initialValues: { selectedAgent: 'grok' } })
+				);
+				await act(async () => {});
+				await act(async () => result.current.toggleConfigExpanded());
+				await act(async () => vi.advanceTimersByTimeAsync(300));
+				expect(mockGetModels.mock.lastCall?.[0].context).toEqual(
+					expect.objectContaining({ cwd: undefined, customEnvVars: undefined })
+				);
+				expect(result.current.modelDiscoveryStatus).toBe(status);
+				expect(result.current.dynamicOptionStatuses).toEqual({ effort: status });
+				expect(result.current.availableModels).toEqual(fallback.options);
+				expect(result.current.agentConfig).toEqual(manual);
+			}
+		);
+
+		it('debounces executable typing while immediately hiding the old catalog', async () => {
+			const { result } = renderHook(() =>
+				useAgentConfiguration({
+					enabled: true,
+					discoveryContext: context,
+					initialValues: { selectedAgent: 'grok' },
+				})
+			);
+			await act(async () => {});
+			await act(async () => result.current.toggleConfigExpanded());
+			await act(async () => vi.advanceTimersByTimeAsync(300));
+			mockGetModels.mockClear();
+			act(() => result.current.setCustomPath('/g'));
+			expect(result.current.availableModels).toEqual([]);
+			await act(async () => vi.advanceTimersByTimeAsync(299));
+			act(() => result.current.setCustomPath('/grok'));
+			await act(async () => vi.advanceTimersByTimeAsync(299));
+			expect(mockGetModels).not.toHaveBeenCalled();
+			await act(async () => vi.advanceTimersByTimeAsync(1));
+			expect(mockGetModels).toHaveBeenCalledTimes(1);
+			expect(mockGetModels.mock.lastCall?.[0].context.customPath).toBe('/grok');
 		});
 	});
 });

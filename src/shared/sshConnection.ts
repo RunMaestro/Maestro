@@ -93,7 +93,14 @@ export function buildSshProbeCommand(agentCommand?: string): string {
  * reach its relay says so in words this function has never heard of.
  */
 export function describeSshConnectionError(stderr: string): string | undefined {
-	const lower = stderr.toLowerCase();
+	// When ssh printed nothing, Node's execFile message stands in for stderr:
+	// "Command failed: <the whole command line>". That line is ours, not ssh's,
+	// and it carries every -o option, a ProxyCommand credential included (a
+	// tailcat auth key reached the Federation peer list this way). Drop it
+	// before anything reads the text, so it is never shown and never matched.
+	const nodeWrapped = stderr.trimStart().startsWith('Command failed:');
+	const text = nodeWrapped ? stderr.trimStart().replace(/^Command failed:[^\n]*\n?/, '') : stderr;
+	const lower = text.toLowerCase();
 
 	if (lower.includes('permission denied')) {
 		return 'Authentication failed. Check username and private key.';
@@ -120,8 +127,64 @@ export function describeSshConnectionError(stderr: string): string | undefined {
 		return 'Private key file not found.';
 	}
 
-	const trimmed = stderr.trim();
+	const trimmed = text.trim();
+	if (nodeWrapped && !trimmed) {
+		return 'ssh exited without printing an error. The host or its ProxyCommand may be down.';
+	}
 	return trimmed || undefined;
+}
+
+/**
+ * The exit code `ssh` uses for its OWN failures: it could not reach the host,
+ * the tunnel (`ProxyCommand`) died, or authentication failed. A remote command
+ * that ran and failed exits with its own code, so 255 means "never got there".
+ */
+export const SSH_CONNECTION_FAILED_EXIT_CODE = 255;
+
+/**
+ * True when an ssh run failed to CONNECT, as opposed to the remote command
+ * running and failing.
+ */
+export function isSshConnectionFailure(exitCode: number | string): boolean {
+	return exitCode === SSH_CONNECTION_FAILED_EXIT_CODE;
+}
+
+/**
+ * The message for an ssh run that never reached the host, naming the remote so
+ * the user knows which link is down: `Unable to connect to "pedtome" over SSH.
+ * tailcat Ping: context deadline exceeded; Connection closed by ...`.
+ */
+export function describeSshUnreachable(
+	remote: Pick<SshRemoteConfig, 'name' | 'host'>,
+	stderr: string
+): string {
+	const label = remote.name?.trim() || remote.host;
+	const detail = describeSshConnectionError(stderr)
+		?.split('\n')
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.join('; ');
+	return `Unable to connect to "${label}" over SSH.${detail ? ` ${detail}` : ''}`;
+}
+
+/** How often an unreachable remote is probed to notice it came back. */
+export const SSH_RECOVERY_PROBE_INTERVAL_SECONDS = 30;
+
+/**
+ * A change in whether a remote can be reached, pushed from the main process on
+ * `ssh-remote:reachability` (see `src/main/ssh-reachability.ts`). Sent once when
+ * a remote is confirmed unreachable and once when it comes back, never per
+ * failed operation.
+ */
+export interface SshReachabilityEvent {
+	remoteId: string;
+	/** The remote's display name, or its host when it has none. */
+	remoteName: string;
+	reachable: boolean;
+	/** `describeSshUnreachable()` text; present only when `reachable` is false. */
+	message?: string;
+	/** Epoch ms the remote entered this state. */
+	since: number;
 }
 
 /** Parsed form of a probe's stdout. */

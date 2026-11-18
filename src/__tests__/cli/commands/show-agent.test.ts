@@ -322,6 +322,38 @@ describe('show-agent command', () => {
 
 			expect(parsed.recentHistory[0].cost).toBeUndefined();
 		});
+
+		it('names the machine of an entry that carries a hostname, and only then', () => {
+			const history: HistoryEntry[] = [
+				mockHistoryEntry({ id: 'remote', timestamp: 2000, hostname: 'laptop.local' }),
+				mockHistoryEntry({ id: 'local', timestamp: 1000 }),
+			];
+
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue(history);
+
+			showAgent('agent-123', { json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.recentHistory[0]).toMatchObject({ id: 'remote', hostname: 'laptop.local' });
+			expect(parsed.recentHistory[1]).not.toHaveProperty('hostname');
+		});
+
+		it('does not reorder the history it was given', () => {
+			const history: HistoryEntry[] = [
+				mockHistoryEntry({ id: 'old', timestamp: 1000 }),
+				mockHistoryEntry({ id: 'new', timestamp: 2000 }),
+			];
+
+			vi.mocked(getSessionById).mockReturnValue(mockSession());
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue(history);
+
+			showAgent('agent-123', { json: true });
+
+			expect(history.map((entry) => entry.id)).toEqual(['old', 'new']);
+		});
 	});
 
 	describe('JSON output', () => {

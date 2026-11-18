@@ -27,10 +27,12 @@ import type {
 	StartGroupChatOptions,
 	StartGroupChatResult,
 	SteerGroupChatRequest,
+	AddGroupChatParticipantResult,
 	CueSubscriptionInfo,
 	CueActivityEntry,
-	UsageDashboardData,
 	AchievementData,
+	PickBrowserElementRequest,
+	PickBrowserElementResult,
 	CreateSessionConfig,
 	DirectorNotesSynopsisResult,
 	WebPlaybook,
@@ -49,8 +51,10 @@ import type {
 	RenameTabResult,
 	SnoozeCommandCallback,
 	ClosedTabCommandCallback,
+	MessagePinCommandCallback,
 	TabContextOpCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	OpenFileTabOptions,
@@ -140,7 +144,8 @@ export interface MessageHandlerCallbacks {
 		images?: string[],
 		background?: boolean,
 		mentionRouting?: MentionRouting,
-		requireDeliveryReceipt?: boolean
+		requireDeliveryReceipt?: boolean,
+		pianolaDispatchId?: string
 	) => Promise<boolean>;
 	switchMode: (
 		sessionId: string,
@@ -161,8 +166,12 @@ export interface MessageHandlerCallbacks {
 	snoozeCommand: SnoozeCommandCallback;
 	/** `maestro-cli tab closed` / `tab reopen` - read and reopen the closed-tab stack. */
 	closedTabCommand: ClosedTabCommandCallback;
+	/** `maestro-cli tab pins` - list, add, remove, rename, and show a tab's message pins. */
+	messagePinCommand: MessagePinCommandCallback;
 	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
+	/** `maestro-cli diff-review` - list, add, remove, clear, send Git Diff review comments. */
+	diffReviewCommand: DiffReviewCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */
 	windowCommand: WindowCommandCallback;
 	/** `maestro-cli throughput-gauge` - show, hide, toggle, set, reset-peak, status. */
@@ -181,6 +190,8 @@ export interface MessageHandlerCallbacks {
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
+	/** Design Mode by selector (`browser-pick`). See `PickBrowserElementCallback`. */
+	pickBrowserElement?: (request: PickBrowserElementRequest) => Promise<PickBrowserElementResult>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
 	notificationInbox?: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>;
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
@@ -216,8 +227,9 @@ export interface MessageHandlerCallbacks {
 		prompt: string,
 		background?: boolean,
 		hidden?: boolean,
-		mentionRouting?: MentionRouting
-	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
+		mentionRouting?: MentionRouting,
+		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
+	) => Promise<import('../../types').NewAITabWithPromptResult>;
 	/** Stop a running turn, the agent's or one tab's (`maestro-cli interrupt`). */
 	interruptSession: InterruptSessionCallback;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */
@@ -232,8 +244,13 @@ export interface MessageHandlerCallbacks {
 		images?: string[],
 		background?: boolean,
 		held?: boolean,
-		mentionRouting?: MentionRouting
+		mentionRouting?: MentionRouting,
+		dispatchCallback?: boolean,
+		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaQueueControl,
+		turnOverrides?: import('../../../../shared/maestro-lib/client/types').TurnOverrides
 	) => Promise<EnqueueCommandResult>;
+	confirmQueueItem?: import('../../../stores/queue-item-receipt').ConfirmQueueItem;
+	releaseQueueItem?: import('../../../stores/queue-item-receipt').ReleaseQueueItem;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;
 		queues: unknown[];
@@ -403,6 +420,10 @@ export interface MessageHandlerCallbacks {
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
 	stopGroupChat: (chatId: string) => Promise<boolean>;
 	archiveGroupChat: (chatId: string, archived: boolean) => Promise<boolean>;
+	addGroupChatParticipant: (
+		chatId: string,
+		agentId: string
+	) => Promise<AddGroupChatParticipantResult>;
 	sendGroupChatMessage: (chatId: string, message: string) => Promise<boolean>;
 	steerGroupChat?: (
 		chatId: string,
@@ -437,7 +458,6 @@ export interface MessageHandlerCallbacks {
 	exportCueBundle: (request: CueBundleExportRequest) => Promise<CueBundleExportOutcome>;
 	/** Same function as the Export Agent and Import Agent modals; agents land in the running app. */
 	importCueBundle: (request: CueBundleImportRequest) => Promise<CueBundleImportOutcome>;
-	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;
 	generateDirectorNotesSynopsis: (
 		lookbackDays: number,

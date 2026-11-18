@@ -15,6 +15,7 @@ interface UseInlineWizardGenerationActionsParams {
 	setCurrentTabId: Dispatch<SetStateAction<string | null>>;
 	tabStatesRef: MutableRefObject<Map<string, InlineWizardState>>;
 	setTabState: SetInlineWizardTabState;
+	generationControllersMap: MutableRefObject<Map<string, AbortController>>;
 }
 
 export function parseGenerationProgress(message: string): GenerationProgress | null {
@@ -36,6 +37,7 @@ export function useInlineWizardGenerationActions({
 	setCurrentTabId,
 	tabStatesRef,
 	setTabState,
+	generationControllersMap,
 }: UseInlineWizardGenerationActionsParams) {
 	const generateDocuments = useCallback(
 		async (callbacks?: DocumentGenerationCallbacks, explicitTabId?: string): Promise<void> => {
@@ -65,6 +67,14 @@ export function useInlineWizardGenerationActions({
 				callbacks?.onError?.(errorMsg);
 				return;
 			}
+
+			// Own only this tab's generation; a replacement invalidates its old callbacks.
+			const controller = new AbortController();
+			const previousController = generationControllersMap.current.get(tabId);
+			generationControllersMap.current.set(tabId, controller);
+			previousController?.abort();
+			const isCurrentGeneration = () =>
+				!controller.signal.aborted && generationControllersMap.current.get(tabId) === controller;
 
 			setTabState(tabId, (prev) => ({
 				...prev,
@@ -96,14 +106,18 @@ export function useInlineWizardGenerationActions({
 					sessionCustomArgs: currentState.sessionCustomArgs,
 					sessionCustomEnvVars: currentState.sessionCustomEnvVars,
 					sessionCustomModel: currentState.sessionCustomModel,
+					sessionCustomEffort: currentState.sessionCustomEffort,
 					sessionClaudeTokenSource: currentState.sessionClaudeTokenSource,
 					conductorProfile: currentState.conductorProfile,
+					signal: controller.signal,
 					callbacks: {
 						onStart: () => {
+							if (!isCurrentGeneration()) return;
 							logger.info('[useInlineWizard] Document generation started');
 							callbacks?.onStart?.();
 						},
 						onProgress: (message) => {
+							if (!isCurrentGeneration()) return;
 							logger.info('[useInlineWizard] Progress:', undefined, message);
 							const progress = parseGenerationProgress(message);
 							if (progress) {
@@ -115,6 +129,7 @@ export function useInlineWizardGenerationActions({
 							callbacks?.onProgress?.(message);
 						},
 						onChunk: (chunk) => {
+							if (!isCurrentGeneration()) return;
 							const displayText = extractDisplayTextFromChunk(
 								chunk,
 								currentState.agentType as ToolType
@@ -129,6 +144,7 @@ export function useInlineWizardGenerationActions({
 							callbacks?.onChunk?.(chunk);
 						},
 						onDocumentComplete: (doc) => {
+							if (!isCurrentGeneration()) return;
 							logger.info('[useInlineWizard] Document saved:', undefined, doc.filename);
 							setTabState(tabId, (prev) => {
 								const newDocs = [...prev.generatedDocuments, doc];
@@ -146,6 +162,7 @@ export function useInlineWizardGenerationActions({
 							callbacks?.onDocumentComplete?.(doc);
 						},
 						onComplete: (allDocs) => {
+							if (!isCurrentGeneration()) return;
 							logger.info('[useInlineWizard] All documents complete:', undefined, allDocs.length);
 							setTabState(tabId, (prev) => ({
 								...prev,
@@ -159,12 +176,14 @@ export function useInlineWizardGenerationActions({
 							callbacks?.onComplete?.(allDocs);
 						},
 						onError: (error) => {
+							if (!isCurrentGeneration()) return;
 							logger.error('[useInlineWizard] Generation error:', undefined, error);
 							callbacks?.onError?.(error);
 						},
 					},
 				});
 
+				if (!isCurrentGeneration()) return;
 				if (result.success) {
 					const finalDocs = result.documents || [];
 					setTabState(tabId, (prev) => ({
@@ -206,6 +225,7 @@ export function useInlineWizardGenerationActions({
 					}));
 				}
 			} catch (error) {
+				if (!isCurrentGeneration()) return;
 				const errorMessage =
 					error instanceof Error ? error.message : 'Unknown error during document generation';
 				logger.error('[useInlineWizard] generateDocuments error:', undefined, error);
@@ -220,10 +240,13 @@ export function useInlineWizardGenerationActions({
 
 				callbacks?.onError?.(errorMessage);
 			} finally {
-				setWizardAgentWorking(tabId, false);
+				if (generationControllersMap.current.get(tabId) === controller) {
+					generationControllersMap.current.delete(tabId);
+					if (!controller.signal.aborted) setWizardAgentWorking(tabId, false);
+				}
 			}
 		},
-		[currentTabId, setCurrentTabId, setTabState, tabStatesRef]
+		[currentTabId, setCurrentTabId, setTabState, tabStatesRef, generationControllersMap]
 	);
 
 	return {

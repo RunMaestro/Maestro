@@ -7,11 +7,13 @@ import { EventEmitter } from 'events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const remoteSignals = vi.hoisted(() => [] as string[]);
+const remoteTargets = vi.hoisted(() => [] as unknown[]);
 vi.mock('../../../../shared/maestro-lib/control/ssh-remote-signal', async (importOriginal) => ({
 	...(await importOriginal<
 		typeof import('../../../../shared/maestro-lib/control/ssh-remote-signal')
 	>()),
-	signalRemoteAgent: (_target: unknown, mode: string) => {
+	signalRemoteAgent: (target: unknown, mode: string) => {
+		remoteTargets.push(target);
 		remoteSignals.push(mode);
 		return true;
 	},
@@ -41,9 +43,10 @@ function fakeTurn() {
 		stdout: stream(),
 		stderr: stream(),
 	});
-	let settle: () => void = () => undefined;
-	const done = new Promise<never>((resolve) => {
-		settle = () => resolve(undefined as never);
+	type Exit = Awaited<TurnHandle['done']>;
+	let settle: (exit?: Partial<Exit>) => void = () => undefined;
+	const done = new Promise<Exit>((resolve) => {
+		settle = (exit = {}) => resolve({ exitCode: 0, signal: null, ...exit } as Exit);
 	});
 	const handle = {
 		child: child as unknown as TurnHandle['child'],
@@ -65,6 +68,7 @@ const remote = {
 describe('guardTurn', () => {
 	beforeEach(() => {
 		remoteSignals.length = 0;
+		remoteTargets.length = 0;
 		vi.useFakeTimers();
 	});
 	afterEach(() => {
@@ -118,6 +122,72 @@ describe('guardTurn', () => {
 		expect(remoteSignals).toEqual(['terminate']);
 	});
 
+	it('retains the artifact owner escalation after the local SSH client closes', async () => {
+		const { child, handle, settle } = fakeTurn();
+		const owner = { ...remote, promptArtifactPath: '/tmp/private-prompt.json' };
+		const stops = guardTurn(handle, { sessionId: 's1', graceMs: 100, remote: owner });
+		stops.interrupt();
+		child.exitCode = 0;
+		child.emit('exit', 0, null);
+		child.emit('close', 0, null);
+		settle();
+		await Promise.resolve();
+		vi.advanceTimersByTime(100);
+		expect(remoteSignals).toEqual(['interrupt', 'terminate']);
+		expect(remoteTargets).toEqual([owner, owner]);
+	});
+
+	it.each(['terminate', 'terminateNow', 'abort'] as const)(
+		'keeps remote artifact ownership when stopped through %s',
+		async (method) => {
+			const { handle, settle } = fakeTurn();
+			const owner = { ...remote, promptArtifactPath: '/tmp/private-prompt.json' };
+			const controller = new AbortController();
+			const stops = guardTurn(handle, {
+				sessionId: 's1',
+				graceMs: 100,
+				remote: owner,
+				signal: controller.signal,
+			});
+			if (method === 'abort') controller.abort();
+			else stops[method]();
+			expect(remoteSignals).toEqual(['terminate']);
+			expect(remoteTargets).toEqual([owner]);
+			if (method !== 'abort') expect(handle[method]).toHaveBeenCalledOnce();
+			settle();
+			await Promise.resolve();
+		}
+	);
+
+	it.each([
+		{ spawnError: new Error('post-spawn failure') },
+		{ stdinError: new Error('partial transfer') },
+		{ signal: 'SIGKILL' as const },
+		{ interrupted: true },
+		{ exitCode: 255 },
+	])('requests owning-host cleanup after transport completion %j', async (exit) => {
+		const { handle, settle } = fakeTurn();
+		const owner = { ...remote, promptArtifactPath: '/tmp/private-prompt.json' };
+		guardTurn(handle, { sessionId: 's1', graceMs: 100, remote: owner });
+		settle(exit);
+		await Promise.resolve();
+		expect(remoteSignals).toEqual(['terminate']);
+		expect(remoteTargets).toEqual([owner]);
+	});
+
+	it('does not signal an artifact whose local process never spawned', async () => {
+		const { handle, settle } = fakeTurn();
+		Object.defineProperty(handle.child, 'pid', { value: undefined });
+		guardTurn(handle, {
+			sessionId: 's1',
+			graceMs: 100,
+			remote: { ...remote, promptArtifactPath: '/tmp/private-prompt.json' },
+		});
+		settle({ spawnError: new Error('ENOENT') });
+		await Promise.resolve();
+		expect(remoteSignals).toEqual([]);
+	});
+
 	it('signals no remote for a local turn, and still stops the local process', async () => {
 		const { handle, settle } = fakeTurn();
 		const stops = guardTurn(handle, { sessionId: 's1', graceMs: 100 });
@@ -145,6 +215,30 @@ describe('recordRemoteAgent', () => {
 		expect(recorded.remote).toMatchObject({ sshCommand: 'ssh', sshArgs: remote.sshArgs });
 		expect(recorded.sshStdinScript).toContain(recorded.remote!.pidFile);
 		expect(recorded.sshStdinScript?.endsWith('\nexec claude')).toBe(true);
+	});
+
+	it('binds one fresh private owner record to the artifact path', () => {
+		const launch = {
+			command: 'ssh',
+			args: remote.sshArgs,
+			sshStdinScript: 'synthetic-script',
+			sessionId: 's1',
+			promptArtifactPath: '/tmp/private-prompt.json',
+		};
+		const first = recordRemoteAgent(launch);
+		const second = recordRemoteAgent(launch);
+		expect(first.remote).toMatchObject({ promptArtifactPath: launch.promptArtifactPath });
+		expect(first.remote!.pidFile).toMatch(/^\/tmp\/maestro-prompt-owner-[0-9a-f-]{36}\.pid$/);
+		expect(first.remote!.pidFile).not.toBe(second.remote!.pidFile);
+		expect(first.sshStdinScript).toContain(
+			`readonly _maestro_prompt_path='${launch.promptArtifactPath}'`
+		);
+		expect(first.sshStdinScript).not.toContain('find /tmp');
+		for (const invalid of [{ args: ['host'] }, { sshStdinScript: undefined }]) {
+			expect(() => recordRemoteAgent({ ...launch, ...invalid })).toThrow(
+				'Remote prompt preparation unavailable.'
+			);
+		}
 	});
 
 	it('passes anything else through with no target', () => {

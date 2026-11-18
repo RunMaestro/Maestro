@@ -18,7 +18,9 @@ import type { ChildProcess } from 'child_process';
 // The store read/path are stubbed so reconcile/relaunch work off a controllable
 // target list without touching electron, fs, or a real watcher.
 vi.mock('../../../main/pianola/pianola-store-main', () => ({
+	compactDispatchArtifacts: vi.fn(async () => {}),
 	readSupervisorTargets: vi.fn(() => []),
+	readSupervisorTarget: vi.fn(),
 	removeSupervisorTargetAsync: vi.fn(async () => []),
 	updateSupervisorTargetsAsync: vi.fn(),
 	supervisorFilePath: vi.fn(() => '/fake/maestro-pianola-supervisor.json'),
@@ -200,65 +202,57 @@ describe('PianolaSupervisor automatic watches', () => {
 		sup.stopAll();
 	});
 
-	it('registers only new top-level agents and waits for an AI tab', async () => {
-		const newAgent = { id: 'new', aiTabs: [] as Array<{ id: string }>, activeTabId: 'file' };
-		const pianola = { id: 'manager', isPianola: true, aiTabs: [{ id: 'manager-tab' }] };
-		const child = { id: 'child', parentSessionId: 'new', aiTabs: [{ id: 'child-tab' }] };
-		await sup.autoWatchNewSessions([newAgent, pianola, child], [newAgent, pianola, child], true);
+	it('keeps bool-only configuration inert for session and plugin lifecycle calls', async () => {
+		const agent = { id: 'new', aiTabs: [{ id: 'chat' }] };
+		await sup.autoWatchNewSessions([agent], [agent]);
 		expect(readSupervisorTargets()).toEqual([]);
-		const ready = { ...newAgent, aiTabs: [{ id: 'ai-tab' }] };
-		await sup.autoWatchNewSessions([], [ready, pianola, child], true);
-		const targets = readSupervisorTargets();
-		expect(targets).toEqual([
-			expect.objectContaining({ kind: 'watch', agentId: 'new', tabId: 'ai-tab', enabled: true }),
-		]);
-		expect(sup.getHealth()[0]).toMatchObject({ id: targets[0].id, state: 'running' });
-		await sup.autoWatchNewSessions([], [ready], true);
-		expect(readSupervisorTargets()).toEqual(targets);
+		expect(spawned).toHaveLength(0);
 	});
-	it('preserves both new agents when registrations wait behind the same store lock', async () => {
-		let release!: () => void;
-		let first = true;
-		let previous: Promise<unknown> = Promise.resolve();
-		const gate = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		vi.mocked(updateSupervisorTargetsAsync).mockImplementation((update) => {
-			const ready = first ? gate : previous;
-			first = false;
-			const operation = ready.then(() => {
-				const targets = update(readSupervisorTargets());
-				setTargets(targets);
-				return targets;
-			});
-			previous = operation;
-			return operation;
-		});
-		const a = { id: 'a', aiTabs: [{ id: 'a-tab' }] };
-		const b = { id: 'b', aiTabs: [{ id: 'b-tab' }] };
-		const registrationA = sup.autoWatchNewSessions([a], [a], true);
-		const registrationB = sup.autoWatchNewSessions([b], [a, b], true);
-		release();
-		await Promise.all([registrationA, registrationB]);
-		expect(
-			readSupervisorTargets()
-				.map((target) => target.agentId)
-				.sort()
-		).toEqual(['a', 'b']);
-		expect(sup.getHealth().map((target) => target.state)).toEqual(['running', 'running']);
+	it('uses one standing whole-agent worker across concurrent session/plugin calls and new tabs/children', async () => {
+		const scope: PianolaSupervisedTarget = {
+			id: '11111111-1111-4111-8111-111111111111',
+			kind: 'watch-scope',
+			createdAt: 1,
+			enabled: true,
+			managerAgentId: 'manager',
+			selection: {
+				label: 'Future',
+				mode: 'agents-and-groups',
+				agentIds: [],
+				groupIds: [],
+				excludedAgentIds: [],
+				futureLocalAgents: true,
+				futureAgentBaselineIds: [],
+			},
+		};
+		setTargets([scope]);
+		const a = { id: 'a', aiTabs: [{ id: 'a-chat' }] };
+		const child = { id: 'child', parentSessionId: 'a', aiTabs: [{ id: 'child-chat' }] };
+		await Promise.all([
+			sup.autoWatchNewSessions([a], [a]),
+			sup.autoWatchNewSessions([child], [a, child]),
+		]);
+		await sup.autoWatchNewSessions([], [{ ...a, aiTabs: [...a.aiTabs, { id: 'another' }] }, child]);
+		expect(readSupervisorTargets()).toEqual([scope]);
+		expect(spawned).toHaveLength(1);
+		expect(spawnArgs[0]).toContain('watch-scope');
+		enabled = false;
+		await sup.autoWatchNewSessions([], [a]);
+		expect(spawned[0].killed).toBe(true);
+		sup.stopAll();
 	});
 
-	it('respects the option, Encore gate, and existing disabled watches', async () => {
+	it('respects missing standing configuration, Encore gate, and existing disabled watches', async () => {
 		const fresh = { id: 'fresh', aiTabs: [{ id: 'tab' }] };
-		await sup.autoWatchNewSessions([fresh], [fresh], false);
+		await sup.autoWatchNewSessions([fresh], [fresh]);
 		expect(readSupervisorTargets()).toEqual([]);
 		enabled = false;
-		await sup.autoWatchNewSessions([fresh], [fresh], true);
+		await sup.autoWatchNewSessions([fresh], [fresh]);
 		expect(readSupervisorTargets()).toEqual([]);
 		enabled = true;
 		const disabled = { ...watchTarget(), agentId: 'fresh', enabled: false };
 		setTargets([disabled]);
-		await sup.autoWatchNewSessions([fresh], [fresh], true);
+		await sup.autoWatchNewSessions([fresh], [fresh]);
 		expect(readSupervisorTargets()).toEqual([disabled]);
 		expect(sup.getHealth()).toEqual([]);
 	});
@@ -267,7 +261,7 @@ describe('PianolaSupervisor automatic watches', () => {
 		const automatic = { ...watchTarget('auto'), agentId: 'closed', autoCreated: true };
 		const manual = { ...watchTarget('manual'), agentId: 'closed' };
 		setTargets([automatic, manual]);
-		await sup.autoWatchNewSessions([], [], false, ['closed']);
+		await sup.autoWatchNewSessions([], [], ['closed']);
 		expect(readSupervisorTargets()).toEqual([manual]);
 	});
 });
@@ -660,5 +654,232 @@ describe('program target', () => {
 		]);
 		spawned[0].exit(0);
 		expect(sup.relaunchStale()).toBe(1);
+	});
+});
+
+/**
+ * Standalone supervision of Grok work. The supervisor launches
+ * maestro-cli for a Grok agent's watcher or a plan of Grok tasks, never a
+ * provider binary, and every restart, retirement and cancellation keeps the
+ * same agent, tab and plan: no provider word enters the argv, a failed launch
+ * retries the same command, and a cancelled target is never relaunched.
+ */
+describe('PianolaSupervisor with Grok targets', () => {
+	let launches: Array<{ command: string; env: NodeJS.ProcessEnv | undefined }>;
+	let failNextSpawn: NodeJS.ErrnoException | null;
+
+	const grokWatch = (
+		overrides: Partial<PianolaSupervisedTarget> = {}
+	): PianolaSupervisedTarget => ({
+		id: 'grok-watch',
+		kind: 'watch',
+		enabled: true,
+		createdAt: 0,
+		tabId: 'grok-tab',
+		agentId: 'grok-agent-7',
+		intervalSeconds: 9,
+		...overrides,
+	});
+	const grokPlan = (overrides: Partial<PianolaSupervisedTarget> = {}): PianolaSupervisedTarget => ({
+		id: 'grok-orch',
+		kind: 'orchestrate',
+		enabled: true,
+		createdAt: 0,
+		planId: 'grok-plan',
+		concurrency: 2,
+		intervalSeconds: 7,
+		...overrides,
+	});
+	const GROK_WATCH_ARGS = [
+		'/fake/maestro-cli.js',
+		'pianola',
+		'watch',
+		'grok-tab',
+		'--agent',
+		'grok-agent-7',
+		'--interval',
+		'9',
+	];
+	const GROK_PLAN_ARGS = [
+		'/fake/maestro-cli.js',
+		'pianola',
+		'orchestrate',
+		'grok-plan',
+		'--concurrency',
+		'2',
+		'--interval',
+		'7',
+	];
+
+	function grokSupervisor(storedSessions?: AutoWatchSession[]): PianolaSupervisor {
+		return new PianolaSupervisor({
+			getStoredSessions: storedSessions ? () => storedSessions : undefined,
+			isEnabled: () => enabled,
+			getPianolaAgentId: () => 'pianola-agent',
+			spawnChild: (command, args, opts) => {
+				if (failNextSpawn) {
+					const error = failNextSpawn;
+					failNextSpawn = null;
+					throw error;
+				}
+				launches.push({ command, env: opts?.env });
+				spawnArgs.push([...args]);
+				const child = new FakeChild(++pidSeq);
+				spawned.push(child);
+				return child as unknown as ChildProcess;
+			},
+		});
+	}
+
+	beforeEach(() => {
+		launches = [];
+		failNextSpawn = null;
+	});
+
+	it('launches maestro-cli for a Grok watcher with the Pianola lineage and no provider binary', () => {
+		const s = grokSupervisor();
+		setTargets([grokWatch({ idleHours: 3 })]);
+		s.reconcile();
+		expect(spawnArgs).toEqual([[...GROK_WATCH_ARGS, '--idle-hours', '3']]);
+		expect(launches[0].command).toBe(process.execPath);
+		expect(launches[0].env).toMatchObject({
+			ELECTRON_RUN_AS_NODE: '1',
+			MAESTRO_AGENT_ID: 'pianola-agent',
+			MAESTRO_CLI_JS: '/fake/maestro-cli.js',
+		});
+		expect(spawnArgs[0].join(' ')).not.toMatch(/claude|codex|grok-cli|--model|--account/);
+		s.stopAll();
+	});
+
+	it('leaves new Grok agents unwatched and retires a retained auto-created watcher on close', async () => {
+		const s = grokSupervisor();
+		const grokAgent = {
+			id: 'grok-agent-7',
+			activeTabId: 'grok-tab-2',
+			aiTabs: [{ id: 'grok-tab-1' }, { id: 'grok-tab-2' }],
+		};
+		const grokChild = {
+			id: 'grok-sub',
+			parentSessionId: 'grok-agent-7',
+			aiTabs: [{ id: 'sub-tab' }],
+		};
+		await s.autoWatchNewSessions([grokAgent, grokChild], [grokAgent, grokChild]);
+		expect(readSupervisorTargets()).toEqual([]);
+		expect(spawnArgs).toHaveLength(0);
+
+		// RC no longer enrolls new agents implicitly; retained legacy watches still retire.
+		setTargets([grokWatch({ tabId: 'grok-tab-2', autoCreated: true })]);
+		s.reconcile();
+		expect(readSupervisorTargets()).toEqual([
+			expect.objectContaining({
+				kind: 'watch',
+				agentId: 'grok-agent-7',
+				tabId: 'grok-tab-2',
+				autoCreated: true,
+			}),
+		]);
+		expect(spawnArgs).toHaveLength(1);
+		expect(spawnArgs[0]).toEqual(expect.arrayContaining(['grok-tab-2', '--agent', 'grok-agent-7']));
+		expect(spawnArgs.flat()).not.toContain('grok-sub');
+
+		await s.autoWatchNewSessions([], [], ['grok-agent-7']);
+		expect(readSupervisorTargets()).toEqual([]);
+		s.stopAll();
+	});
+
+	it('retries a Grok watcher whose launch failed with the same command and reports no crash for ENOENT', () => {
+		const s = grokSupervisor();
+		failNextSpawn = Object.assign(new Error('spawn node ENOENT'), { code: 'ENOENT' });
+		setTargets([grokWatch()]);
+		s.reconcile();
+		expect(spawned).toHaveLength(0);
+		expect(s.getHealth()[0]).toMatchObject({
+			id: 'grok-watch',
+			state: 'backing-off',
+			restarts: 1,
+			lastError: 'spawn node ENOENT',
+		});
+		expect(captureException).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(BACKOFF_CAP_MS);
+		expect(spawnArgs).toEqual([GROK_WATCH_ARGS]);
+		expect(s.getHealth()[0].state).toBe('running');
+		s.stopAll();
+	});
+
+	it('restarts a crashing Grok watcher on the same agent and tab until the cap, then gives up', () => {
+		const s = grokSupervisor();
+		setTargets([grokWatch()]);
+		s.reconcile();
+		for (let i = 0; i <= MAX_RESTARTS; i++) {
+			spawned[spawned.length - 1].exit(1);
+			if (s.getHealth()[0]?.state === 'failed') break;
+			vi.advanceTimersByTime(BACKOFF_CAP_MS);
+		}
+		expect(s.getHealth()[0]).toMatchObject({ state: 'failed', restarts: MAX_RESTARTS + 1 });
+		expect(spawnArgs).toHaveLength(MAX_RESTARTS + 1);
+		for (const args of spawnArgs) expect(args).toEqual(GROK_WATCH_ARGS);
+		vi.advanceTimersByTime(BACKOFF_CAP_MS * 10);
+		expect(spawned).toHaveLength(MAX_RESTARTS + 1);
+	});
+
+	it('removes a retired Grok watcher and never relaunches it', async () => {
+		const s = grokSupervisor();
+		setTargets([grokWatch()]);
+		s.reconcile();
+		spawned[0].exit(PIANOLA_WATCH_RETIRED_EXIT_CODE);
+		await vi.waitFor(() => expect(removeSupervisorTargetAsync).toHaveBeenCalledWith('grok-watch'));
+		setTargets([]);
+		expect(s.relaunchStale()).toBe(0);
+		vi.advanceTimersByTime(BACKOFF_CAP_MS * 2);
+		expect(spawned).toHaveLength(1);
+	});
+
+	it('cancels a pending Grok restart when the target is removed while backing off', () => {
+		const s = grokSupervisor();
+		setTargets([grokWatch()]);
+		s.reconcile();
+		spawned[0].exit(1);
+		expect(s.getHealth()[0].state).toBe('backing-off');
+		setTargets([]);
+		vi.advanceTimersByTime(BACKOFF_CAP_MS * 2);
+		expect(spawned).toHaveLength(1);
+		expect(s.getHealth()).toHaveLength(0);
+	});
+
+	it('does not relaunch a crashed Grok plan once Pianola is switched off', () => {
+		const s = grokSupervisor();
+		setTargets([grokPlan()]);
+		s.reconcile();
+		spawned[0].exit(1);
+		enabled = false;
+		vi.advanceTimersByTime(BACKOFF_CAP_MS * 2);
+		expect(spawned).toHaveLength(1);
+		expect(s.getHealth()[0].state).toBe('stopped');
+	});
+
+	it('relaunches a crashed Grok plan with the same plan, concurrency and interval, and a clean finish is terminal', () => {
+		const s = grokSupervisor();
+		setTargets([grokPlan()]);
+		s.reconcile();
+		spawned[0].exit(1);
+		vi.advanceTimersByTime(BACKOFF_CAP_MS);
+		expect(spawnArgs).toEqual([GROK_PLAN_ARGS, GROK_PLAN_ARGS]);
+		spawned[1].exit(0);
+		expect(s.getHealth()[0].state).toBe('stopped');
+		expect(s.relaunchStale()).toBe(0);
+		expect(spawned).toHaveLength(2);
+	});
+
+	it('stops a running Grok watcher when it is disabled and ignores its crash-code exit', () => {
+		const s = grokSupervisor();
+		setTargets([grokWatch()]);
+		s.reconcile();
+		setTargets([grokWatch({ enabled: false })]);
+		s.reconcile();
+		expect(spawned[0].killed).toBe(true);
+		spawned[0].exit(1);
+		vi.advanceTimersByTime(BACKOFF_CAP_MS * 2);
+		expect(spawned).toHaveLength(1);
+		expect(s.relaunchStale()).toBe(0);
 	});
 });

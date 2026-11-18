@@ -28,6 +28,13 @@ export type { ArrayFunc, ArrayComparator, LowestKey, Ingrouped } from './vendor/
 export { DEFAULT_QUERY_SETTINGS } from './vendor/settings';
 export type { QuerySettings, ExportSettings } from './vendor/settings';
 export { DataviewSettings } from './settings';
+export {
+	DATAVIEW_LANGUAGE_ID,
+	DATAVIEW_JS_LANGUAGE_IDS,
+	DQL_KEYWORDS,
+	DQL_TOKEN_RULES,
+} from './syntax';
+export type { DqlTokenName, DqlTokenRule } from './syntax';
 export { renderMinimalDate, renderMinimalDuration, getFileTitle } from './vendor/util/normalize';
 export { currentLocale } from './vendor/util/locale';
 

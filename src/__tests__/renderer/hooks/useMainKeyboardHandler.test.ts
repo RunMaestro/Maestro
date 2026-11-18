@@ -18,6 +18,7 @@ import { OPEN_STAGED_IMAGES_ORGANIZER_EVENT } from '../../../renderer/services/s
 import { FORCED_PARALLEL_SEND_EVENT } from '../../../renderer/hooks/input/useInputKeyDown';
 import {
 	clearDesktopAiTabSelections,
+	startDesktopAiTabSelectionSync,
 	consumeDesktopAiTabSelection,
 } from '../../../renderer/utils/desktopTabSelectionSync';
 
@@ -129,9 +130,12 @@ describe('useMainKeyboardHandler', () => {
 	const originalAddEventListener = window.addEventListener;
 	const originalRemoveEventListener = window.removeEventListener;
 
+	let stopSelectionSync: () => void;
+
 	beforeEach(() => {
 		addedListeners = [];
 		clearDesktopAiTabSelections();
+		stopSelectionSync = startDesktopAiTabSelectionSync();
 		// Hoisted module mocks survive across tests in this file, so a "did NOT
 		// fire" assertion would otherwise read calls left by an earlier case.
 		mockTileNewTabInSession.mockClear();
@@ -161,6 +165,7 @@ describe('useMainKeyboardHandler', () => {
 	});
 
 	afterEach(() => {
+		stopSelectionSync();
 		window.addEventListener = originalAddEventListener;
 		window.removeEventListener = originalRemoveEventListener;
 		(window as any).maestro = originalMaestro;
@@ -2176,6 +2181,62 @@ describe('useMainKeyboardHandler', () => {
 
 				expect(mockSetSessions).not.toHaveBeenCalled();
 			});
+
+			it('Cmd+Shift+S toggles tab star and counts as used outside a group chat', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const mockToggleTabStar = vi.fn();
+				const mockRecordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'toggleTabStar',
+					toggleTabStar: mockToggleTabStar,
+					recordShortcutUsage: mockRecordShortcutUsage,
+					activeGroupChatId: null,
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: 's',
+							metaKey: true,
+							shiftKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+				expect(mockToggleTabStar).toHaveBeenCalledTimes(1);
+				expect(mockRecordShortcutUsage).toHaveBeenCalledWith('toggleTabStar');
+			});
+
+			it('Cmd+Shift+S does not toggle tab star or count as used inside a group chat room', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const mockToggleTabStar = vi.fn();
+				const mockRecordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'toggleTabStar',
+					toggleTabStar: mockToggleTabStar,
+					recordShortcutUsage: mockRecordShortcutUsage,
+					activeGroupChatId: 'chat-1',
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: 's',
+							metaKey: true,
+							shiftKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+				expect(mockToggleTabStar).not.toHaveBeenCalled();
+				expect(mockRecordShortcutUsage).not.toHaveBeenCalled();
+			});
 		});
 
 		// Unified tab shortcuts in terminal mode - verifies that tab navigation and
@@ -2537,6 +2598,35 @@ describe('useMainKeyboardHandler', () => {
 				});
 
 				expect(mockClearActiveTerminal).toHaveBeenCalled();
+			});
+
+			it('Cmd+Shift+K does not clear terminal or count as used in a group chat room', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const mockClearActiveTerminal = vi.fn();
+				const mockRecordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+
+				result.current.keyboardHandlerRef.current = createTerminalTabContext({
+					isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'clearTerminal',
+					sessions: [{ id: 'session-1' }],
+					activeGroupChatId: 'chat-1',
+					mainPanelRef: { current: { clearActiveTerminal: mockClearActiveTerminal } },
+					recordShortcutUsage: mockRecordShortcutUsage,
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: 'k',
+							metaKey: true,
+							shiftKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+				expect(mockClearActiveTerminal).not.toHaveBeenCalled();
+				expect(mockRecordShortcutUsage).not.toHaveBeenCalled();
 			});
 
 			it('Cmd+Shift+R opens rename modal for terminal tab', () => {
@@ -4083,6 +4173,77 @@ describe('useMainKeyboardHandler', () => {
 			expect(dispatched.find((e) => e.key === 'l' && e.metaKey)).toBeUndefined();
 		});
 
+		it('routes forwarded Cmd+Shift+C to Design Mode and counts it for mastery', () => {
+			let ipcCallback: ((input: Record<string, unknown>) => void) | null = null;
+			(window as any).maestro = {
+				...(window as any).maestro,
+				app: {
+					...((window as any).maestro?.app ?? {}),
+					onBrowserTabShortcutKey: (cb: (input: Record<string, unknown>) => void) => {
+						ipcCallback = cb;
+						return () => {
+							ipcCallback = null;
+						};
+					},
+				},
+			};
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const toggleBrowserDesignMode = vi.fn();
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSession: { id: 's1', activeBrowserTabId: 'b1' },
+				isTabShortcut: (_e: unknown, id: string) => id === 'toggleBrowserDesignMode',
+				mainPanelRef: { current: { toggleBrowserDesignMode } },
+				recordShortcutUsage,
+			});
+
+			act(() => {
+				ipcCallback!({
+					key: 'C',
+					code: 'KeyC',
+					meta: true,
+					control: false,
+					alt: false,
+					shift: true,
+				});
+			});
+
+			expect(toggleBrowserDesignMode).toHaveBeenCalledTimes(1);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('toggleBrowserDesignMode');
+		});
+
+		it('Cmd+Shift+C toggles Design Mode only while a browser tab is showing', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const toggleBrowserDesignMode = vi.fn();
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			const press = () =>
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', { key: 'C', metaKey: true, shiftKey: true, bubbles: true })
+					);
+				});
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSession: { id: 's1', activeBrowserTabId: 'b1', inputMode: 'ai' },
+				isTabShortcut: (_e: unknown, id: string) => id === 'toggleBrowserDesignMode',
+				mainPanelRef: { current: { toggleBrowserDesignMode } },
+				recordShortcutUsage,
+			});
+			press();
+			expect(toggleBrowserDesignMode).toHaveBeenCalledTimes(1);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('toggleBrowserDesignMode');
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSession: { id: 's1', activeBrowserTabId: null, inputMode: 'ai' },
+				isTabShortcut: (_e: unknown, id: string) => id === 'toggleBrowserDesignMode',
+				mainPanelRef: { current: { toggleBrowserDesignMode } },
+				recordShortcutUsage,
+			});
+			press();
+			expect(toggleBrowserDesignMode).toHaveBeenCalledTimes(1);
+		});
+
 		it('routes forwarded Cmd+Left and Cmd+Right to browserBack/browserForward', () => {
 			let ipcCallback: ((input: Record<string, unknown>) => void) | null = null;
 			(window as any).maestro = {
@@ -4824,6 +4985,41 @@ describe('useMainKeyboardHandler - editLastQueuedMessage', () => {
 		press({ activeSession: session({ executionQueue: [item] }) });
 
 		expect(useUIStore.getState().editingQueuedItemId).toBe('q-orphan');
+	});
+
+	it('opens queued message and counts as used outside a group chat', () => {
+		const item = queued();
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [item] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		const mockRecordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		press({
+			activeSession: session({ executionQueue: [item] }),
+			recordShortcutUsage: mockRecordShortcutUsage,
+		});
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q1');
+		expect(mockRecordShortcutUsage).toHaveBeenCalledWith('editLastQueuedMessage');
+	});
+
+	it('does not open queued message or count as used inside a group chat room', () => {
+		const item = queued();
+		useSessionStore.setState({
+			sessions: [session({ executionQueue: [item] })],
+			activeSessionId: 'agent-1',
+		} as any);
+
+		const mockRecordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		press({
+			activeSession: session({ executionQueue: [item] }),
+			activeGroupChatId: 'chat-1',
+			recordShortcutUsage: mockRecordShortcutUsage,
+		});
+
+		expect(useUIStore.getState().editingQueuedItemId).toBeNull();
+		expect(mockRecordShortcutUsage).not.toHaveBeenCalled();
 	});
 });
 

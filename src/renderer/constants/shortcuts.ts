@@ -166,6 +166,11 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Meta', 'Shift', 'y'],
 	},
 	toggleTabStar: { id: 'toggleTabStar', label: 'Toggle Tab Star', keys: ['Meta', 'Shift', 's'] },
+	toggleMessagePins: {
+		id: 'toggleMessagePins',
+		label: 'Toggle Pinned Messages',
+		keys: ['Control', 'Meta', 'p'],
+	},
 	openPromptComposer: {
 		id: 'openPromptComposer',
 		label: 'Open Prompt Composer',
@@ -220,6 +225,14 @@ export const DEFAULT_SHORTCUTS = {
 		id: 'toggleThroughputGauge',
 		label: 'Show/Hide Throughput Gauge',
 		keys: ['Alt', 'Meta', 'Shift', 't'],
+	},
+	// L for Link. Opt+Cmd+L is System Logs and Cmd+Shift+L is taken, so the
+	// four-key chord is the free one in the L family. Inert unless the Prompt
+	// Links Encore Feature is on.
+	openPromptLinks: {
+		id: 'openPromptLinks',
+		label: 'Prompt Links',
+		keys: ['Alt', 'Meta', 'Shift', 'l'],
 	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
@@ -517,6 +530,75 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Decrease Font Size',
 		keys: ['Meta', '-'],
 	},
+	// File Preview code editor (markdownEditor/codeEditing.ts). Live only while
+	// the editor has focus; ids match CODE_EDITOR_SHORTCUT_IDS there.
+	editorToggleComment: {
+		id: 'editorToggleComment',
+		label: 'File Editor: Toggle Comment',
+		keys: ['Meta', '/'],
+	},
+	editorSelectNextOccurrence: {
+		id: 'editorSelectNextOccurrence',
+		label: 'File Editor: Add Cursor at Next Occurrence',
+		keys: ['Meta', 'd'],
+	},
+	editorMoveLineUp: {
+		id: 'editorMoveLineUp',
+		label: 'File Editor: Move Line Up',
+		keys: ['Alt', 'ArrowUp'],
+	},
+	editorMoveLineDown: {
+		id: 'editorMoveLineDown',
+		label: 'File Editor: Move Line Down',
+		keys: ['Alt', 'ArrowDown'],
+	},
+	editorDuplicateLineUp: {
+		id: 'editorDuplicateLineUp',
+		label: 'File Editor: Duplicate Line Up',
+		keys: ['Alt', 'Shift', 'ArrowUp'],
+	},
+	editorDuplicateLineDown: {
+		id: 'editorDuplicateLineDown',
+		label: 'File Editor: Duplicate Line Down',
+		keys: ['Alt', 'Shift', 'ArrowDown'],
+	},
+	editorAcceptCompletion: {
+		id: 'editorAcceptCompletion',
+		label: 'File Editor: Accept Completion',
+		keys: ['Tab'],
+	},
+	editorReplaceAll: {
+		id: 'editorReplaceAll',
+		label: 'File Editor: Replace All (in the replace field)',
+		keys: ['Meta', 'Enter'],
+	},
+	// Git Diff viewer review comments (GitDiffViewer.tsx). Live only while the
+	// viewer is open over an agent that can take a review.
+	gitDiffMoveLineCursor: {
+		id: 'gitDiffMoveLineCursor',
+		label: 'Git Diff: Move Line Cursor (Down / Up)',
+		keys: ['ArrowDown'],
+	},
+	gitDiffExtendLineSelection: {
+		id: 'gitDiffExtendLineSelection',
+		label: 'Git Diff: Extend Line Selection (Down / Up)',
+		keys: ['Shift', 'ArrowDown'],
+	},
+	gitDiffCommentOnLines: {
+		id: 'gitDiffCommentOnLines',
+		label: 'Git Diff: Comment on Selected Lines',
+		keys: ['c'],
+	},
+	gitDiffSaveComment: {
+		id: 'gitDiffSaveComment',
+		label: 'Git Diff: Save Comment (in the comment box)',
+		keys: ['Meta', 'Enter'],
+	},
+	gitDiffSendReview: {
+		id: 'gitDiffSendReview',
+		label: 'Git Diff: Send Review to Agent',
+		keys: ['Meta', 'Shift', 'Enter'],
+	},
 };
 
 // Tab navigation shortcuts (AI mode only)
@@ -529,6 +611,12 @@ export const TAB_SHORTCUTS = {
 		id: 'focusBrowserAddress',
 		label: 'Focus Browser Address Bar',
 		keys: ['Meta', 'l'],
+	},
+	// Chrome's own "inspect element" chord, so the hand already knows it.
+	toggleBrowserDesignMode: {
+		id: 'toggleBrowserDesignMode',
+		label: 'Toggle Browser Design Mode',
+		keys: ['Meta', 'Shift', 'c'],
 	},
 	closeTab: { id: 'closeTab', label: 'Close Tab', keys: ['Meta', 'w'] },
 	closeAllTabs: { id: 'closeAllTabs', label: 'Close All Tabs', keys: ['Meta', 'Shift', 'w'] },

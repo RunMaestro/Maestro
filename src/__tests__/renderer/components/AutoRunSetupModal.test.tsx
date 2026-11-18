@@ -798,6 +798,38 @@ describe('AutoRunSetupModal', () => {
 			expect(onClose).toHaveBeenCalled();
 		});
 
+		it('leaves Enter to the input method during an active IME composition', async () => {
+			const onClose = vi.fn();
+			const onFolderSelected = vi.fn();
+
+			vi.mocked(window.maestro.autorun.listDocs).mockResolvedValue({ success: true, files: [] });
+
+			const { container } = renderWithLayerStack(
+				<AutoRunSetupModal
+					theme={theme}
+					onClose={onClose}
+					onFolderSelected={onFolderSelected}
+					currentFolder="/valid/path"
+				/>
+			);
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			const wrapper = container.firstChild as HTMLElement;
+			for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+				fireEvent.keyDown(wrapper, { key: 'Enter', ...ime });
+				expect(onFolderSelected).not.toHaveBeenCalled();
+				expect(onClose).not.toHaveBeenCalled();
+			}
+
+			// A normal Enter still triggers continue.
+			fireEvent.keyDown(wrapper, { key: 'Enter' });
+			expect(onFolderSelected).toHaveBeenCalledWith('/valid/path');
+			expect(onClose).toHaveBeenCalled();
+		});
+
 		it('does not trigger continue on Enter when folder is empty', async () => {
 			const onClose = vi.fn();
 			const onFolderSelected = vi.fn();

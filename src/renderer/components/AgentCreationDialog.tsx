@@ -11,7 +11,7 @@
  * - Uses shared AgentSelector and AgentConfigPanel components
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Music, X, Bot, Settings, FolderOpen, ChevronRight, RefreshCw } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
@@ -23,6 +23,9 @@ import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { useAgentConfiguration } from '../hooks/agent/useAgentConfiguration';
+import { useAgentModelEffortOptions } from '../hooks/agent/useAgentModelEffortOptions';
+import { readEffortFromConfig } from '../utils/agentEffort';
+import type { AgentDiscoveryRequest } from '../../shared/types';
 import { isBetaAgent } from '../../shared/agentMetadata';
 import { isAdaptiveModeDefaultOn } from '../../shared/agentConstants';
 import { logger } from '../utils/logger';
@@ -113,6 +116,7 @@ export function AgentCreationDialog({
 	const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
 	const [sessionName, setSessionName] = useState('');
 	const [workingDirectory, setWorkingDirectory] = useState('');
+	const workingDirectoryRevisionRef = useRef(0);
 	const [isCreating, setIsCreating] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [refreshingAgent, setRefreshingAgent] = useState<string | null>(null);
@@ -138,6 +142,40 @@ export function AgentCreationDialog({
 	);
 	const [loadingDynamicOptions, setLoadingDynamicOptions] = useState<Record<string, boolean>>({});
 
+	const [grokRefresh, setGrokRefresh] = useState(0);
+	const grokContext = useMemo<AgentDiscoveryRequest['context'] | undefined>(() => {
+		// A refresh changes context identity so the shared hook reloads the catalog.
+		void grokRefresh;
+		return isOpen && selectedAgent === 'grok' && expandedAgent === 'grok'
+			? {
+					kind: 'draft',
+					cwd: workingDirectory.trim(),
+					customPath: customAgentPaths.grok?.trim() || undefined,
+					customEnvVars: customAgentEnvVars.grok,
+					model: agentConfigs.grok?.model,
+					effort: readEffortFromConfig(agentConfigs.grok),
+				}
+			: undefined;
+	}, [
+		isOpen,
+		selectedAgent,
+		expandedAgent,
+		workingDirectory,
+		customAgentPaths.grok,
+		customAgentEnvVars.grok,
+		agentConfigs.grok,
+		grokRefresh,
+	]);
+	const grokOptions = useAgentModelEffortOptions(grokContext ? 'grok' : undefined, grokContext);
+	const currentGrokContext = useRef(grokContext);
+	currentGrokContext.current = grokContext;
+	useEffect(() => {
+		currentGrokContext.current = grokContext;
+		return () => {
+			currentGrokContext.current = undefined;
+		};
+	}, [grokContext]);
+
 	// Resolve the bundled maestro-p path once so the Batch Mode toggle can show
 	// it as helper text in the path-override input.
 	useEffect(() => {
@@ -149,7 +187,10 @@ export function AgentCreationDialog({
 
 	// Reset all state when dialog opens
 	useEffect(() => {
+		let stale = false;
+		const directoryRevision = ++workingDirectoryRevisionRef.current;
 		if (isOpen) {
+			setWorkingDirectory('');
 			// Reset error state
 			setError(null);
 			setIsCreating(false);
@@ -164,14 +205,20 @@ export function AgentCreationDialog({
 				window.maestro.fs
 					.homeDir()
 					.then((homeDir) => {
+						if (stale || workingDirectoryRevisionRef.current !== directoryRevision) return;
 						setWorkingDirectory(`${homeDir}/Maestro-Symphony/${dirName}`);
 					})
 					.catch(() => {
+						if (stale || workingDirectoryRevisionRef.current !== directoryRevision) return;
 						// Fallback to tilde (will be expanded in process-manager)
 						setWorkingDirectory(`~/Maestro-Symphony/${dirName}`);
 					});
 			}
 		}
+		return () => {
+			stale = true;
+			workingDirectoryRevisionRef.current++;
+		};
 	}, [isOpen, repo, issue]);
 
 	// Auto-select first compatible agent when detection completes,
@@ -190,6 +237,22 @@ export function AgentCreationDialog({
 	// Load models for an agent
 	const loadModelsForAgent = useCallback(
 		async (agentId: string, force = false) => {
+			if (agentId === 'grok') {
+				const context = currentGrokContext.current;
+				if (!force || !context) return; // Automatic discovery belongs to the shared hook.
+				try {
+					await window.maestro.agents.getModels({
+						providerId: agentId,
+						context,
+						forceRefresh: true,
+					});
+				} catch {
+					// The shared hook reports unavailable and preserves manual selections.
+				} finally {
+					if (currentGrokContext.current === context) setGrokRefresh((value) => value + 1);
+				}
+				return;
+			}
 			if (!force && availableModels[agentId]) return;
 
 			setLoadingModels((prev) => ({ ...prev, [agentId]: true }));
@@ -208,6 +271,7 @@ export function AgentCreationDialog({
 	// Load dynamic config options for an agent
 	const loadDynamicOptionsForAgent = useCallback(
 		async (agentId: string) => {
+			if (agentId === 'grok') return;
 			if (dynamicOptions[agentId]) return;
 			const agent = ac.detectedAgents.find((a) => a.id === agentId);
 			const dynamicSelects = agent?.configOptions?.filter(
@@ -252,8 +316,10 @@ export function AgentCreationDialog({
 
 	// Handle folder selection
 	const handleSelectFolder = useCallback(async () => {
+		const directoryRevision = workingDirectoryRevisionRef.current;
 		const folder = await window.maestro.dialog.selectFolder();
-		if (folder) {
+		if (folder && workingDirectoryRevisionRef.current === directoryRevision) {
+			workingDirectoryRevisionRef.current++;
 			setWorkingDirectory(folder);
 		}
 	}, []);
@@ -276,8 +342,16 @@ export function AgentCreationDialog({
 	);
 
 	// Handle create
+	const canCreate =
+		isOpen &&
+		!ac.isDetecting &&
+		!refreshingAgent &&
+		!isCreating &&
+		!!sessionName.trim() &&
+		!!workingDirectory.trim() &&
+		ac.detectedAgents.some((agent) => agent.id === selectedAgent && symphonyAgentFilter(agent));
 	const handleCreate = useCallback(async () => {
-		if (!selectedAgent || !sessionName.trim()) return;
+		if (!canCreate || !selectedAgent) return;
 
 		setIsCreating(true);
 		setError(null);
@@ -286,11 +360,11 @@ export function AgentCreationDialog({
 			const result = await onCreateAgent({
 				agentType: selectedAgent,
 				sessionName: sessionName.trim(),
-				workingDirectory,
+				workingDirectory: workingDirectory.trim(),
 				repo,
 				issue,
-				customPath: customAgentPaths[selectedAgent] || undefined,
-				customArgs: customAgentArgs[selectedAgent] || undefined,
+				customPath: customAgentPaths[selectedAgent]?.trim() || undefined,
+				customArgs: customAgentArgs[selectedAgent]?.trim() || undefined,
 				customEnvVars: customAgentEnvVars[selectedAgent] || undefined,
 				agentConfig: agentConfigs[selectedAgent] || undefined,
 				enableMaestroP:
@@ -313,6 +387,7 @@ export function AgentCreationDialog({
 			setIsCreating(false);
 		}
 	}, [
+		canCreate,
 		selectedAgent,
 		sessionName,
 		workingDirectory,
@@ -541,18 +616,10 @@ export function AgentCreationDialog({
 														onEnvVarRemove={(key) => {
 															const currentVars = { ...customAgentEnvVars[agent.id] };
 															delete currentVars[key];
-															if (Object.keys(currentVars).length > 0) {
-																setCustomAgentEnvVars((prev) => ({
-																	...prev,
-																	[agent.id]: currentVars,
-																}));
-															} else {
-																setCustomAgentEnvVars((prev) => {
-																	const newVars = { ...prev };
-																	delete newVars[agent.id];
-																	return newVars;
-																});
-															}
+															setCustomAgentEnvVars((prev) => ({
+																...prev,
+																[agent.id]: currentVars,
+															}));
 														}}
 														onEnvVarAdd={() => {
 															setCustomAgentEnvVars((prev) => ({
@@ -583,11 +650,41 @@ export function AgentCreationDialog({
 															}));
 														}}
 														onConfigBlur={(_key, _value) => {}}
-														availableModels={availableModels[agent.id] || []}
-														loadingModels={loadingModels[agent.id] || false}
+														availableModels={
+															agent.id === 'grok'
+																? grokOptions.models
+																: availableModels[agent.id] || []
+														}
+														loadingModels={
+															agent.id === 'grok'
+																? !grokOptions.loaded
+																: loadingModels[agent.id] || false
+														}
 														onRefreshModels={() => loadModelsForAgent(agent.id, true)}
-														dynamicOptions={dynamicOptions[agent.id] || {}}
-														loadingDynamicOptions={loadingDynamicOptions[agent.id] || false}
+														dynamicOptions={
+															agent.id === 'grok'
+																? { reasoningEffort: grokOptions.efforts }
+																: dynamicOptions[agent.id] || {}
+														}
+														loadingDynamicOptions={
+															agent.id === 'grok'
+																? !grokOptions.loaded
+																: loadingDynamicOptions[agent.id] || false
+														}
+														configOptionNotes={
+															agent.id === 'grok'
+																? {
+																		model:
+																			grokOptions.modelStatus !== 'discovered'
+																				? 'Model discovery unavailable for this draft. You can keep or enter a model manually.'
+																				: undefined,
+																		reasoningEffort:
+																			grokOptions.effortStatus !== 'discovered'
+																				? 'Effort discovery unavailable for this draft. You can keep or enter effort manually.'
+																				: undefined,
+																	}
+																: undefined
+														}
 														onRefreshAgent={() => handleRefreshAgent(agent.id)}
 														refreshingAgent={refreshingAgent === agent.id}
 														compact
@@ -621,6 +718,7 @@ export function AgentCreationDialog({
 					{/* Session name */}
 					<div>
 						<label
+							htmlFor="symphony-session-name"
 							className="block text-sm font-medium mb-2"
 							style={{ color: theme.colors.textMain }}
 						>
@@ -628,6 +726,7 @@ export function AgentCreationDialog({
 							Session Name
 						</label>
 						<input
+							id="symphony-session-name"
 							type="text"
 							value={sessionName}
 							onChange={(e) => setSessionName(e.target.value)}
@@ -640,6 +739,7 @@ export function AgentCreationDialog({
 					{/* Working directory (editable with folder browser) */}
 					<div>
 						<label
+							htmlFor="symphony-working-directory"
 							className="block text-sm font-medium mb-2"
 							style={{ color: theme.colors.textMain }}
 						>
@@ -648,9 +748,14 @@ export function AgentCreationDialog({
 						</label>
 						<div className="flex gap-2">
 							<input
+								id="symphony-working-directory"
 								type="text"
 								value={workingDirectory}
-								onChange={(e) => setWorkingDirectory(e.target.value)}
+								onChange={(e) => {
+									// Even a cleared draft belongs to the user, not the pending home lookup.
+									workingDirectoryRevisionRef.current++;
+									setWorkingDirectory(e.target.value);
+								}}
 								className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm focus:ring-1"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 								placeholder="~/Maestro-Symphony/owner-repo"
@@ -694,9 +799,7 @@ export function AgentCreationDialog({
 					</button>
 					<button
 						onClick={handleCreate}
-						disabled={
-							!selectedAgent || !sessionName.trim() || isCreating || ac.detectedAgents.length === 0
-						}
+						disabled={!canCreate}
 						className="px-4 py-2 rounded font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 					>

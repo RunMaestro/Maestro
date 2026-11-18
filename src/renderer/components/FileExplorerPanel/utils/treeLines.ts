@@ -19,10 +19,22 @@ export const INDENT_STEP = 20;
 /** Left offset of the guide line for depth level `i`, in px. */
 export const GUIDE_OFFSET = 12;
 /**
- * Length of the horizontal elbow arm, in px. Stops 4px short of the row's
- * chevron slot so the connector reads as pointing at the icon, not touching it.
+ * Length of the horizontal elbow arm on a folder row, in px. Stops 4px short of
+ * the row's chevron slot, so the arm meets the chevron the way a branch meets
+ * its node.
  */
 export const CONNECTOR_ARM_WIDTH = 12;
+
+/**
+ * Length of the elbow arm on a row, in px. A file's chevron slot is an empty
+ * spacer, so a folder-length arm stopped in blank space a full indent step
+ * short of the file icon. A file's arm crosses that slot and its gap
+ * ({@link INDENT_STEP}) to reach the icon the same way a folder's arm reaches
+ * its chevron.
+ */
+export function connectorArmWidth(isFolder: boolean): number {
+	return isFolder ? CONNECTOR_ARM_WIDTH : CONNECTOR_ARM_WIDTH + INDENT_STEP;
+}
 
 /** Left edge of the guide line for depth level `i`, in px. */
 export function guideLeft(level: number): number {
@@ -63,9 +75,10 @@ export function annotateTreeLines(rows: FlattenedNode[]): void {
 		}
 	}
 
-	// Forward pass. `running` carries one bit per depth: set while the most
-	// recent row at that depth still has a following sibling, i.e. while its
-	// guide line has somewhere further down to reach.
+	// Forward pass. `running` carries one bit per guide COLUMN. Column `c` is the
+	// line that joins the siblings at depth `c + 1`, so a row at depth `d` owns
+	// column `d - 1`, and that bit is set while the most recent row at depth `d`
+	// still has a following sibling. Root rows own no column.
 	let running = 0;
 	for (const row of rows) {
 		const depth = row.depth;
@@ -73,11 +86,11 @@ export function annotateTreeLines(rows: FlattenedNode[]): void {
 			row.ancestorGuideMask = 0;
 			continue;
 		}
-		// Drop the bits of any sibling subtree we just left.
-		running &= (1 << depth) - 1;
-		// Column `depth - 1` is this row's own elbow column, drawn from
-		// `isLastChild`, so it never appears in the pass-through mask.
-		row.ancestorGuideMask = depth > 0 ? running & ((1 << (depth - 1)) - 1) : 0;
-		if (!row.isLastChild) running |= 1 << depth;
+		// Keep only the columns left of this row's own elbow column. Its own
+		// column is drawn from `isLastChild`, and anything further right belonged
+		// to the sibling subtree we just left.
+		running &= depth > 0 ? (1 << (depth - 1)) - 1 : 0;
+		row.ancestorGuideMask = running;
+		if (depth > 0 && !row.isLastChild) running |= 1 << (depth - 1);
 	}
 }

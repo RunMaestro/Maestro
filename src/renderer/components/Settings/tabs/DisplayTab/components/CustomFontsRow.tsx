@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Theme } from '../../../../../types';
+import { isImeComposing } from '../../../../../utils/ime';
 
 interface CustomFontsRowProps {
 	theme: Theme;
@@ -48,7 +49,7 @@ export function CustomFontsRow({
 					value={draft}
 					onChange={(e) => setDraft(e.target.value)}
 					onKeyDown={(e) => {
-						if (e.key === 'Enter') commit();
+						if (e.key === 'Enter' && !isImeComposing(e)) commit();
 					}}
 					placeholder="Add custom font name..."
 					aria-label="Add custom font name"

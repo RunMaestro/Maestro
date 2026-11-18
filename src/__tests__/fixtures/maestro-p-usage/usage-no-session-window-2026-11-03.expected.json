@@ -1,0 +1,17 @@
+{
+	"now_iso": "2026-11-03T13:15:00Z",
+	"config_dir": "/Users/test/.claude",
+	"snapshot": {
+		"type": "status",
+		"config_dir": "/Users/test/.claude",
+		"week_all_models": {
+			"percent": 21,
+			"resets_at": "2026-11-05T15:00:00.000Z"
+		},
+		"week_sonnet_only": {
+			"percent": 0,
+			"resets_at": "2026-11-05T15:00:00.000Z",
+			"label": "Fable"
+		}
+	}
+}

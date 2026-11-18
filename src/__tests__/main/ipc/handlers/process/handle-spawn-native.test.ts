@@ -1,5 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
-import { handleProcessSpawn } from '../../../../../main/ipc/handlers/process/handle-spawn';
+import { pianolaNewTabSpawns } from '../../../../../main/pianola/pianola-new-tab-dispatch';
+import { generateUUID } from '../../../../../shared/uuid';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'events';
+import { hostCallerRuns } from '../../../../../main/agent-run/caller-identity';
+import { CALLER_RUN_PROOF_FILE_ENV_VAR } from '../../../../../shared/agentDelegation';
+import {
+	handleProcessSpawn,
+	cancelPendingDesktopSpawns,
+} from '../../../../../main/ipc/handlers/process/handle-spawn';
 import type { SpawnProcessConfig } from '../../../../../main/ipc/handlers/process/spawn-types';
 import type { ProcessConfig } from '../../../../../main/process-manager/types';
 import { getAgentCapabilities } from '../../../../../shared/maestro-lib/providers/capabilities';
@@ -24,6 +32,10 @@ async function spawnNativeWithResult(
 		nativeCapabilities?: Record<string, unknown> | null;
 		opencodeServer?: boolean;
 		shellEnvVars?: Record<string, string>;
+		storedAgent?: boolean;
+		spawnError?: boolean;
+		spawnRefused?: boolean;
+		cancelPreflight?: boolean;
 	} = {}
 ) {
 	const definition = getAgentDefinition(toolType)!;
@@ -33,19 +45,35 @@ async function spawnNativeWithResult(
 		path: `/usr/local/bin/${definition.binaryName}`,
 		capabilities: getAgentCapabilities(toolType),
 	};
+	const events = new EventEmitter();
+	const processRecord = { pid: 4242 };
 	const processManager = {
-		spawn: vi.fn(() => ({ success: true, pid: 4242 })),
-		get: vi.fn(),
+		spawn: vi.fn(() => {
+			if (options.spawnError) throw new Error('Fixture spawn failed');
+			if (options.spawnRefused) return { success: false, pid: -1 };
+			return { success: true, pid: 4242 };
+		}),
+		get: vi.fn(() => (options.storedAgent ? processRecord : undefined)),
 		getAll: vi.fn(() => []),
-		on: vi.fn(),
-		off: vi.fn(),
+		on: vi.fn(events.on.bind(events)),
+		off: vi.fn(events.off.bind(events)),
 		getHarnessControlCapabilities: vi.fn(() =>
 			options.nativeCapabilities === undefined ? { protocol: 'test' } : options.nativeCapabilities
 		),
 	};
 	const safeSend = vi.fn();
 	const webContentsSend = vi.fn();
-	let sessions: Array<Record<string, unknown>> = [];
+	let sessions: Array<Record<string, unknown>> = options.storedAgent
+		? [
+				{
+					id: 'agent-1',
+					toolType,
+					codexTransport: 'app-server',
+					harnessControlMode: 'current',
+					aiTabs: [{ id: 'tab-1' }],
+				},
+			]
+		: [];
 	const sessionsStore = {
 		get: (key: string, fallback: unknown) => (key === 'sessions' ? sessions : fallback),
 		set: (key: string, value: unknown) => {
@@ -66,7 +94,13 @@ async function spawnNativeWithResult(
 	} as SpawnProcessConfig;
 	const result = await handleProcessSpawn(config, {
 		getProcessManager: () => processManager as never,
-		getAgentDetector: () => ({ getAgent: async () => detected }) as never,
+		getAgentDetector: () =>
+			({
+				getAgent: async () => {
+					if (options.cancelPreflight) cancelPendingDesktopSpawns(config.sessionId);
+					return detected;
+				},
+			}) as never,
 		agentConfigsStore: {
 			get: (key: string, fallback: unknown) =>
 				key === 'configs' ? { [toolType]: agentConfigValues } : fallback,
@@ -92,8 +126,73 @@ async function spawnNativeWithResult(
 		processManager,
 		safeSend,
 		webContentsSend,
+		events,
 	};
 }
+
+afterEach(() => vi.restoreAllMocks());
+
+describe('host caller identity spawn wiring with plugins off', () => {
+	it('issues before spawn, pins the actual process and disposes only at its own exit', async () => {
+		const dispose = vi.fn();
+		const issue = vi.spyOn(hostCallerRuns, 'issue').mockImplementation((_binding, authority) => ({
+			runTokenFile: '/private/fixture-proof',
+			signal: authority.signal,
+			assertActive: authority.assertActive,
+			dispose,
+		}));
+		const attempt = await spawnNativeWithResult('codex', {}, {}, { storedAgent: true });
+		expect(issue).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: 'agent-1',
+				tabId: 'tab-1',
+				spawnGeneration: expect.any(String),
+			}),
+			expect.objectContaining({ signal: expect.any(AbortSignal), unattended: true }),
+			process.cwd()
+		);
+		expect(attempt.config?.customEnvVars?.[CALLER_RUN_PROOF_FILE_ENV_VAR]).toBe(
+			'/private/fixture-proof'
+		);
+		expect(issue.mock.invocationCallOrder[0]).toBeLessThan(
+			attempt.processManager.spawn.mock.invocationCallOrder[0]
+		);
+		const authority = issue.mock.calls[0][1];
+		expect(() => authority.assertActive()).not.toThrow();
+		attempt.events.emit('exit', 'another-agent-ai-tab');
+		expect(dispose).not.toHaveBeenCalled();
+		attempt.processManager.get.mockReturnValue({ pid: 9000 });
+		expect(() => authority.assertActive()).toThrow('CallerRunUnavailable');
+		attempt.events.emit('exit', 'agent-1-ai-tab-1');
+		expect(dispose).toHaveBeenCalledOnce();
+	});
+
+	it('disposes the issued proof when spawning fails', async () => {
+		const dispose = vi.fn();
+		vi.spyOn(hostCallerRuns, 'issue').mockImplementation((_binding, authority) => ({
+			runTokenFile: '/private/fixture-proof',
+			signal: authority.signal,
+			assertActive: authority.assertActive,
+			dispose,
+		}));
+		await expect(
+			spawnNativeWithResult('codex', {}, {}, { storedAgent: true, spawnError: true })
+		).rejects.toThrow('Fixture spawn failed');
+		expect(dispose).toHaveBeenCalledOnce();
+	});
+
+	it('does not issue for a claimed tab that differs from the actual spawn key', async () => {
+		const issue = vi.spyOn(hostCallerRuns, 'issue');
+		const attempt = await spawnNativeWithResult(
+			'codex',
+			{ tabId: 'forged-tab' },
+			{},
+			{ storedAgent: true }
+		);
+		expect(issue).not.toHaveBeenCalled();
+		expect(attempt.config?.customEnvVars?.[CALLER_RUN_PROOF_FILE_ENV_VAR]).toBe('');
+	});
+});
 
 async function spawnNative(
 	toolType: ToolType,
@@ -107,6 +206,163 @@ async function spawnNative(
 }
 
 describe('native spawn configuration', () => {
+	it('allows an ordinary markerless send with Pianola disabled and no held admission', async () => {
+		const result = await spawnNativeWithResult('copilot-cli');
+		expect(result.result.success).toBe(true);
+		expect(result.processManager.spawn).toHaveBeenCalledOnce();
+	});
+
+	it.each(['existing-tab', 'new-tab'])(
+		'requires the exact %s dispatch marker at native spawn',
+		async (kind) => {
+			const tabId = generateUUID();
+			const dispatchId = kind === 'new-tab' ? tabId : generateUUID();
+			pianolaNewTabSpawns.hold('worker', tabId);
+			const started = vi.fn();
+			pianolaNewTabSpawns.arm('worker', tabId, () => {}, started, dispatchId);
+			await expect(
+				spawnNativeWithResult('copilot-cli', { sessionId: `worker-ai-${tabId}` })
+			).rejects.toThrow('DispatchIdentityMismatch');
+			await spawnNativeWithResult('copilot-cli', {
+				sessionId: `worker-ai-${tabId}`,
+				pianolaDispatchId: dispatchId,
+			});
+			expect(started).toHaveBeenCalledOnce();
+		}
+	);
+
+	it('carries the native submitted boundary into both scope admission checks', async () => {
+		const tabId = generateUUID();
+		const dispatchId = generateUUID();
+		const boundaryId = generateUUID();
+		const guard = vi.fn();
+		pianolaNewTabSpawns.hold('worker', tabId);
+		pianolaNewTabSpawns.arm('worker', tabId, guard, vi.fn(), dispatchId);
+		await spawnNativeWithResult('copilot-cli', {
+			sessionId: 'worker-ai-' + tabId,
+			pianolaDispatchId: dispatchId,
+			transcriptBoundaryId: boundaryId,
+		});
+		expect(guard).toHaveBeenCalledTimes(2);
+		expect(guard.mock.calls).toEqual([[boundaryId], [boundaryId]]);
+	});
+
+	it('blocks an unadmitted new tab before any spawn preflight', async () => {
+		const tabId = generateUUID();
+		pianolaNewTabSpawns.hold('worker', tabId);
+		await expect(
+			spawnNativeWithResult('copilot-cli', { sessionId: `worker-ai-${tabId}` })
+		).rejects.toThrow('DispatchAdmissionPending');
+	});
+	it('rechecks the admission after asynchronous spawn preflight', async () => {
+		const tabId = generateUUID();
+		pianolaNewTabSpawns.hold('worker', tabId);
+		const guard = vi
+			.fn()
+			.mockImplementationOnce(() => {})
+			.mockImplementation(() => {
+				throw new Error('PausedDuringSpawn');
+			});
+		const started = vi.fn();
+		pianolaNewTabSpawns.arm('worker', tabId, guard, started);
+		await expect(
+			spawnNativeWithResult('copilot-cli', { sessionId: `worker-ai-${tabId}` })
+		).rejects.toThrow('PausedDuringSpawn');
+		expect(guard).toHaveBeenCalledTimes(2);
+		expect(started).not.toHaveBeenCalled();
+	});
+
+	it('releases a conclusively refused preflight so a later normal send can use the tab', async () => {
+		const tabId = generateUUID();
+		const sessionId = `worker-ai-${tabId}`;
+		pianolaNewTabSpawns.hold('worker', tabId);
+		pianolaNewTabSpawns.arm('worker', tabId, () => {}, vi.fn());
+		const refused = await spawnNativeWithResult('qwen3-coder', {
+			sessionId,
+			harnessControlMode: 'current',
+			permissionMode: 'standard',
+		});
+		expect(refused.result.success).toBe(false);
+		expect(refused.processManager.spawn).not.toHaveBeenCalled();
+		expect(pianolaNewTabSpawns.isHeld('worker', tabId)).toBe(false);
+		const later = await spawnNativeWithResult('copilot-cli', { sessionId });
+		expect(later.result.success).toBe(true);
+		expect(later.processManager.spawn).toHaveBeenCalledOnce();
+	});
+
+	it('releases after a failed final preflight but preserves uncertainty once native spawn is entered', async () => {
+		const tabId = generateUUID();
+		const sessionId = `worker-ai-${tabId}`;
+		pianolaNewTabSpawns.hold('worker', tabId);
+		pianolaNewTabSpawns.arm(
+			'worker',
+			tabId,
+			vi
+				.fn()
+				.mockImplementationOnce(() => {})
+				.mockImplementation(() => {
+					throw new Error('Paused');
+				}),
+			vi.fn()
+		);
+		await expect(spawnNativeWithResult('copilot-cli', { sessionId })).rejects.toThrow('Paused');
+		expect(pianolaNewTabSpawns.isHeld('worker', tabId)).toBe(false);
+		pianolaNewTabSpawns.hold('worker', tabId);
+		const started = vi.fn();
+		pianolaNewTabSpawns.arm('worker', tabId, () => {}, started);
+		await expect(
+			spawnNativeWithResult('copilot-cli', { sessionId }, {}, { spawnError: true })
+		).rejects.toThrow('Fixture spawn failed');
+		expect(pianolaNewTabSpawns.isHeld('worker', tabId)).toBe(true);
+		await expect(spawnNativeWithResult('copilot-cli', { sessionId })).rejects.toThrow(
+			'DispatchAlreadyStarting'
+		);
+		expect(started).not.toHaveBeenCalled();
+	});
+
+	it.each(['cancel', 'refused', 'initial-guard'] as const)(
+		'clears a proven %s nonstart before the next normal send',
+		async (failure) => {
+			const tabId = generateUUID();
+			const sessionId = `worker-ai-${tabId}`;
+			pianolaNewTabSpawns.hold('worker', tabId);
+			pianolaNewTabSpawns.arm(
+				'worker',
+				tabId,
+				() => {
+					if (failure === 'initial-guard') throw new Error('Already paused');
+				},
+				vi.fn()
+			);
+			const attempt = spawnNativeWithResult(
+				'copilot-cli',
+				{ sessionId },
+				{},
+				{
+					cancelPreflight: failure === 'cancel',
+					spawnRefused: failure === 'refused',
+				}
+			);
+			if (failure === 'refused')
+				await expect(attempt).rejects.toThrow('agent process did not start');
+			else
+				await expect(attempt).rejects.toThrow(
+					failure === 'cancel' ? /cancel|abort/i : 'Already paused'
+				);
+			expect(pianolaNewTabSpawns.isHeld('worker', tabId)).toBe(false);
+			expect((await spawnNativeWithResult('copilot-cli', { sessionId })).result.success).toBe(true);
+		}
+	);
+
+	it('never substitutes the caller generation when capture has no run evidence', async () => {
+		const tabId = generateUUID();
+		const started = vi.fn();
+		pianolaNewTabSpawns.hold('worker', tabId);
+		pianolaNewTabSpawns.arm('worker', tabId, () => {}, started);
+		await spawnNativeWithResult('copilot-cli', { sessionId: `worker-ai-${tabId}` });
+		expect(started).toHaveBeenCalledWith(undefined);
+	});
+
 	it('passes effective model and effort with session-over-agent precedence', async () => {
 		const session = await spawnNative(
 			'copilot-cli',

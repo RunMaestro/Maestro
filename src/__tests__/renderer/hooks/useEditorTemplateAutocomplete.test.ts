@@ -92,6 +92,28 @@ describe('useEditorTemplateAutocomplete', () => {
 		expect(result.current.autocompleteState.selectedIndex).toBe(1);
 	});
 
+	it('leaves Enter to the input method during an IME composition', () => {
+		const { result } = renderHook(() =>
+			useEditorTemplateAutocomplete({ editorRef: editor.ref, onChange })
+		);
+
+		act(() => editor.type(result.current, '{{'));
+		const before = editor.state.doc;
+
+		for (const init of [{ isComposing: true }, { keyCode: 229 }]) {
+			let taken = true;
+			act(() => {
+				taken = result.current.handleKeyDown(
+					new KeyboardEvent('keydown', { key: 'Enter', ...init })
+				);
+			});
+			expect(taken).toBe(false);
+		}
+
+		expect(result.current.autocompleteState.isOpen).toBe(true);
+		expect(editor.state.doc).toBe(before);
+	});
+
 	it('replaces the trigger through the editor when a variable is chosen', () => {
 		const { result } = renderHook(() =>
 			useEditorTemplateAutocomplete({ editorRef: editor.ref, onChange })

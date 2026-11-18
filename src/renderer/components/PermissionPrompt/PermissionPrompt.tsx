@@ -1,6 +1,8 @@
 /**
- * PermissionPrompt - app-wide modal for Claude Code standard-mode tool
- * permission requests.
+ * PermissionPrompt - app-wide modal for standard-mode tool permission requests:
+ * Claude Code over the relay bridge, and Grok ACP 'session/request_permission'
+ * through the relay's in-process consent session. The prompt names the provider
+ * of the agent the request came from.
  *
  * Mounted once near the app root (alongside CenterFlash). It:
  *   - subscribes to `window.maestro.process.onPermissionRequest` and enqueues
@@ -25,6 +27,9 @@ import {
 	type PermissionRequestUI,
 } from '../../stores/permissionRequestStore';
 import { QuestionPrompt } from './QuestionPrompt';
+import { useSessionStore } from '../../stores/sessionStore';
+import { getBaseSessionId } from '../../utils/sessionIdParser';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 
 interface PermissionPromptProps {
 	theme: Theme;
@@ -51,20 +56,36 @@ function describeAction(request: PermissionRequestUI): string {
 function PermissionPromptInner({ theme }: PermissionPromptProps) {
 	const enqueue = usePermissionRequestStore((s) => s.enqueue);
 	const respond = usePermissionRequestStore((s) => s.respond);
+	const retainPending = usePermissionRequestStore((s) => s.retainPending);
 	const clearSession = usePermissionRequestStore((s) => s.clearSession);
 	const request = usePermissionRequestStore(selectActivePermissionRequest);
+	// The request carries the spawn id; its agent says which provider is asking.
+	const requestSessionId = request?.sessionId;
+	const agentToolType = useSessionStore((s) => {
+		if (!requestSessionId) return undefined;
+		const baseId = getBaseSessionId(requestSessionId);
+		return s.sessions.find((agent) => agent.id === baseId)?.toolType;
+	});
+	const agentName = agentToolType ? getAgentDisplayName(agentToolType) : 'The agent';
 
 	// Wire the IPC listeners once.
 	useEffect(() => {
+		let version = -1;
+		const offPending = window.maestro?.process?.onPendingPermissionsChanged?.((snapshot) => {
+			if (snapshot.version <= version || !snapshot.requestIds) return;
+			version = snapshot.version;
+			retainPending(snapshot.requestIds);
+		});
 		const offRequest = window.maestro?.process?.onPermissionRequest?.((req) => enqueue(req));
 		const offExit = window.maestro?.process?.onExit?.((sessionId: string) =>
 			clearSession(sessionId)
 		);
 		return () => {
 			offRequest?.();
+			offPending?.();
 			offExit?.();
 		};
-	}, [enqueue, clearSession]);
+	}, [enqueue, clearSession, retainPending]);
 
 	const isOpen = !!request;
 	const isQuestion = !!request && request.kind === 'question' && !!request.questions?.length;
@@ -118,7 +139,7 @@ function PermissionPromptInner({ theme }: PermissionPromptProps) {
 			>
 				<div
 					role="dialog"
-					aria-label="Question from Claude Code"
+					aria-label={`Question from ${agentName}`}
 					className="w-[560px] max-w-[90vw] rounded-xl shadow-2xl border p-5"
 					style={{
 						backgroundColor: theme.colors.bgSidebar,
@@ -128,7 +149,7 @@ function PermissionPromptInner({ theme }: PermissionPromptProps) {
 				>
 					<div className="flex items-center gap-2 mb-3">
 						<MessagesSquare className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h2 className="text-sm font-semibold">Claude Code has a question</h2>
+						<h2 className="text-sm font-semibold">{agentName} has a question</h2>
 					</div>
 					<QuestionPrompt
 						key={request.requestId}
@@ -164,7 +185,7 @@ function PermissionPromptInner({ theme }: PermissionPromptProps) {
 					<h2 className="text-sm font-semibold">Permission required</h2>
 				</div>
 				<p className="text-xs mb-2" style={{ color: theme.colors.textDim }}>
-					Claude Code wants to use{' '}
+					{agentName} wants to use{' '}
 					<span className="font-semibold" style={{ color: theme.colors.textMain }}>
 						{request.toolName}
 					</span>

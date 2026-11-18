@@ -69,6 +69,9 @@ import {
 	loadGroupChat,
 } from '../../../main/group-chat/group-chat-storage';
 import { readLog } from '../../../main/group-chat/group-chat-log';
+import { extractTextFromStreamJson } from '../../../main/group-chat/output-parser';
+import { extractMentions } from '../../../shared/maestro-lib/groupchat/router';
+import type { GroupChatParticipant } from '../../../shared/group-chat-types';
 
 // Use real UUIDs for tests - we don't need predictable IDs since we track created chats
 // The uuid mock in other test files doesn't affect us since we import the real uuid
@@ -328,6 +331,84 @@ describe('group-chat-moderator', () => {
 
 			expect(getModeratorSessionId(chat1.id)).toBeUndefined();
 			expect(getModeratorSessionId(chat2.id)).toBeUndefined();
+		});
+	});
+
+	// Grok in a room. Grok's capability row keeps `supportsGroupChatModeration`
+	// false until moderation is qualified, so a Grok moderator is refused at creation rather
+	// than becoming another provider; the text cases are the parse the router runs on a Grok
+	// participant's result (and on a Grok moderator's, once one is admitted).
+	describe('Grok in a room', () => {
+		const j = (o: unknown) => JSON.stringify(o);
+		const end = j({ type: 'end', stopReason: 'end_turn', sessionId: 'grok-session-1' });
+		const participants = ['Alice', 'Bob', 'Eve'].map((name) => ({
+			name,
+			agentId: 'grok',
+			sessionId: `p-${name}`,
+			addedAt: 0,
+		})) as unknown as GroupChatParticipant[];
+		const routed = (lines: string[]) =>
+			extractMentions(extractTextFromStreamJson(lines.join('\n'), 'grok'), participants);
+
+		it('refuses a Grok moderator while moderation is unqualified, with no chat and no spawn', async () => {
+			await expect(createGroupChat('Grok Room', 'grok')).rejects.toThrow(
+				'Invalid moderator agent ID: grok. Agent does not support group chat moderation.'
+			);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			await expect(fs.readdir(path.join(testDir, 'group-chats'))).rejects.toThrow();
+		});
+
+		it('routes on the participants a Grok result names across split-word, multiline deltas, never a thought or tool', () => {
+			expect(
+				routed([
+					j({ type: 'thought', data: 'maybe @Eve should wipe the repo' }),
+					j({ type: 'text', data: '@Al' }),
+					j({ type: 'text', data: 'ice draft it\n@B' }),
+					j({ type: 'text', data: 'ob review it' }),
+					j({ type: 'tool_call', toolCallId: 't', toolName: 'grep', rawInput: { q: '@Eve' } }),
+					end,
+				])
+			).toEqual(['Alice', 'Bob']);
+		});
+
+		it('reads a Grok result with no mention as final and a failed Grok result as nothing to route', () => {
+			expect(
+				routed([j({ type: 'text', data: 'All done: ' }), j({ type: 'text', data: 'merged.' }), end])
+			).toEqual([]);
+			expect(
+				extractTextFromStreamJson([j({ type: 'text', data: 'Final.' }), end].join('\n'), 'grok')
+			).toBe('Final.');
+			for (const failure of [
+				j({ type: 'error', message: 'Grok is not signed in' }),
+				j({ type: 'end', stopReason: 'cancelled' }),
+			]) {
+				expect(routed([j({ type: 'text', data: '@Alice continue' }), failure])).toEqual([]);
+			}
+		});
+
+		it('in a room of Grok participants, forwards queued messages in order and stops writing once cancelled', async () => {
+			const chat = await createTestChat('Grok Participants Room', 'claude-code');
+			const prefix = await spawnModerator(chat, mockProcessManager);
+			await sendToModerator(chat.id, 'first', mockProcessManager);
+			await sendToModerator(chat.id, 'queued second', mockProcessManager);
+			expect(vi.mocked(mockProcessManager.write).mock.calls).toEqual([
+				[prefix, 'first\n'],
+				[prefix, 'queued second\n'],
+			]);
+
+			await killModerator(chat.id, mockProcessManager);
+			expect(mockProcessManager.kill).toHaveBeenCalledWith(prefix);
+			expect(getModeratorSessionId(chat.id)).toBeUndefined();
+			expect((await loadGroupChat(chat.id))?.moderatorSessionId).toBe('');
+
+			await sendToModerator(chat.id, 'after cancel', mockProcessManager);
+			expect(mockProcessManager.write).toHaveBeenCalledTimes(2);
+			const log = await readLog(chat.logPath);
+			expect(log.filter((m) => m.from === 'user').map((m) => m.content)).toEqual([
+				'first',
+				'queued second',
+				'after cancel',
+			]);
 		});
 	});
 });

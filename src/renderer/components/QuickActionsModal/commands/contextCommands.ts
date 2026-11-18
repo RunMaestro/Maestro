@@ -8,6 +8,7 @@ import type { ActiveTabInfo, QuickAction } from '../types';
 interface BuildActiveTabContextCommandsArgs {
 	activeSession: Session | undefined;
 	activeSessionId: string;
+	activeGroupChatId?: string | null;
 	/**
 	 * Resolved type of the active tab. Selects the action noun and command set:
 	 * Context (ai) / Buffer (terminal) / Content (browser) / none (file).
@@ -25,11 +26,14 @@ interface BuildActiveTabContextCommandsArgs {
 	mainPanelRef?: React.RefObject<MainPanelHandle | null>;
 	toggleTabStarShortcut?: QuickAction['shortcut'];
 	toggleTabUnreadShortcut?: QuickAction['shortcut'];
+	/** Chord shown on the browser tab's Design Mode entry. */
+	toggleDesignModeShortcut?: QuickAction['shortcut'];
 }
 
 export function buildActiveTabContextCommands({
 	activeSession,
 	activeSessionId,
+	activeGroupChatId,
 	activeTabType,
 	ghCliAvailable,
 	setSessions,
@@ -42,6 +46,7 @@ export function buildActiveTabContextCommands({
 	mainPanelRef,
 	toggleTabStarShortcut,
 	toggleTabUnreadShortcut,
+	toggleDesignModeShortcut,
 }: BuildActiveTabContextCommandsArgs): QuickAction[] {
 	if (!activeSession) return [];
 	const commands: QuickAction[] = [];
@@ -95,6 +100,16 @@ export function buildActiveTabContextCommands({
 			action: () => {
 				mainPanelRef.current?.sendActiveBrowserContentToAgent();
 				setQuickActionOpen(false);
+			},
+		});
+		commands.push({
+			id: 'toggleBrowserDesignMode',
+			label: 'Design Mode: Pick an Element',
+			subtext: 'Click an element in the page to send it to the agent',
+			shortcut: toggleDesignModeShortcut,
+			action: () => {
+				setQuickActionOpen(false);
+				mainPanelRef.current?.toggleBrowserDesignMode();
 			},
 		});
 		return commands;
@@ -158,25 +173,27 @@ export function buildActiveTabContextCommands({
 			},
 		});
 
-		commands.push({
-			id: 'toggleStarTab',
-			label: activeTab.starred ? 'Unstar Session' : 'Star Session',
-			shortcut: toggleTabStarShortcut,
-			action: () => {
-				setSessions((prev) =>
-					prev.map((session) => {
-						if (session.id !== activeSessionId) return session;
-						return {
-							...session,
-							aiTabs: session.aiTabs.map((tab) =>
-								tab.id === activeTab.id ? { ...tab, starred: !tab.starred } : tab
-							),
-						};
-					})
-				);
-				setQuickActionOpen(false);
-			},
-		});
+		if (!activeGroupChatId) {
+			commands.push({
+				id: 'toggleStarTab',
+				label: activeTab.starred ? 'Unstar Session' : 'Star Session',
+				shortcut: toggleTabStarShortcut,
+				action: () => {
+					setSessions((prev) =>
+						prev.map((session) => {
+							if (session.id !== activeSessionId) return session;
+							return {
+								...session,
+								aiTabs: session.aiTabs.map((tab) =>
+									tab.id === activeTab.id ? { ...tab, starred: !tab.starred } : tab
+								),
+							};
+						})
+					);
+					setQuickActionOpen(false);
+				},
+			});
+		}
 
 		commands.push({
 			id: 'markTabUnread',

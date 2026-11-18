@@ -6,6 +6,8 @@
  * and the local cache.
  */
 
+import type { TaskSelectionMode } from './types';
+
 // ============================================================================
 // Marketplace Manifest Types (fetched from GitHub)
 // ============================================================================
@@ -58,6 +60,12 @@ export interface MarketplacePlaybook {
 	maxLoops?: number | null;
 	/** Custom prompt, or null to use Maestro's default Auto Run prompt */
 	prompt: string | null;
+	/**
+	 * Fresh agent session per unchecked `task` (the default) or per `document`. Optional: absent,
+	 * or any other value, runs per task, which is what every playbook before this field was
+	 * written against. Carried onto the imported playbook, where Auto Run reads it.
+	 */
+	taskSelectionMode?: TaskSelectionMode;
 	/**
 	 * Optional list of asset files in the assets/ subfolder.
 	 * These are non-markdown files like config files, YAML, Dockerfiles, etc.

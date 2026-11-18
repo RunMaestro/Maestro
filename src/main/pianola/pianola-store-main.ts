@@ -10,6 +10,7 @@
  */
 
 import { app } from 'electron';
+import { captureException } from '../utils/sentry';
 import { settledDecisionPairs } from '../../shared/pianola/transcript-mining';
 import type { PianolaDecisionRecord } from '../../shared/pianola/storage';
 import * as path from 'path';
@@ -33,6 +34,7 @@ const store = createPianolaFsStore({
 	resolveDir: pianolaDir,
 	indent: '\t',
 	trailingNewline: false,
+	decisionLockMode: 'try',
 });
 
 export const readRulesResult = store.readRulesResult;
@@ -48,7 +50,12 @@ export function onHumanDecisionSettled(listener: () => void): () => void {
 	};
 }
 
-export function appendDecision(record: PianolaDecisionRecord): void {
+/**
+ * Prepare a notification for a newly settled human evidence pair. The returned closure fires
+ * listeners only if equivalent evidence was not already stored; callers invoke it after
+ * persistence.
+ */
+function decisionSettledNotification(record: PianolaDecisionRecord): () => void {
 	const candidate = settledDecisionPairs([record])[0];
 	const alreadySettled =
 		candidate &&
@@ -62,10 +69,25 @@ export function appendDecision(record: PianolaDecisionRecord): void {
 				canonicalJson([pair.evidence, pair.classification]) ===
 					canonicalJson([candidate.evidence, candidate.classification])
 		);
+	return () => {
+		if (candidate && !alreadySettled) {
+			for (const listener of humanDecisionListeners) listener();
+		}
+	};
+}
+
+/** Final synchronous admission: contention refuses before any send. */
+export function appendDecision(record: PianolaDecisionRecord): void {
+	const notify = decisionSettledNotification(record);
 	store.appendDecision(record);
-	if (candidate && !alreadySettled) {
-		for (const listener of humanDecisionListeners) listener();
-	}
+	notify();
+}
+
+/** Receipt/resolution persistence yields while another process owns the log. */
+export async function appendDecisionAsync(record: PianolaDecisionRecord): Promise<void> {
+	const notify = decisionSettledNotification(record);
+	await store.appendDecisionAsync(record);
+	notify();
 }
 export const readDecisions = store.readDecisions;
 export const readPlans = store.readPlans;
@@ -97,6 +119,7 @@ export const getProfile = store.getProfile;
 export const setProfile = store.setProfile;
 export const supervisorFilePath = store.supervisorFilePath;
 export const readSupervisorTargets = store.readSupervisorTargets;
+export const readSupervisorTarget = store.readSupervisorTarget;
 export const writeSupervisorTargets = store.writeSupervisorTargets;
 export const updateSupervisorTargets = store.updateSupervisorTargets;
 export const upsertSupervisorTarget = store.upsertSupervisorTarget;
@@ -104,7 +127,52 @@ export const removeSupervisorTarget = store.removeSupervisorTarget;
 
 export const readScopeCheckpoint = store.readScopeCheckpoint;
 export const writeScopeCheckpoint = store.writeScopeCheckpoint;
+export const withScopeCheckpointLockAsync = store.withScopeCheckpointLockAsync;
 export const writeSupervisorTargetsAsync = store.writeSupervisorTargetsAsync;
 export const updateSupervisorTargetsAsync = store.updateSupervisorTargetsAsync;
 export const upsertSupervisorTargetAsync = store.upsertSupervisorTargetAsync;
 export const removeSupervisorTargetAsync = store.removeSupervisorTargetAsync;
+
+export const readDispatchAdmission = store.readDispatchAdmission;
+// Coalesce housekeeping outside the synchronous final admission boundary. No poller.
+let artifactCleanupScheduled = false;
+let artifactCleanupRequested = false;
+export function compactDispatchArtifacts(): Promise<void> {
+	return store.compactDispatchArtifacts();
+}
+/**
+ * Coalesce artifact cleanup outside synchronous journal commits. Repeat when requested
+ * during a pass and report cleanup errors before releasing the scheduled flag.
+ */
+function scheduleArtifactCleanup(): void {
+	artifactCleanupRequested = true;
+	if (artifactCleanupScheduled) return;
+	artifactCleanupScheduled = true;
+	setImmediate(() => {
+		void (async () => {
+			try {
+				do {
+					artifactCleanupRequested = false;
+					await compactDispatchArtifacts();
+				} while (artifactCleanupRequested);
+			} catch (error) {
+				void captureException(error, { operation: 'pianola:compactDispatchArtifacts' });
+			} finally {
+				artifactCleanupScheduled = false;
+			}
+		})();
+	});
+}
+export function writeDispatchAdmission(
+	admission: Parameters<typeof store.writeDispatchAdmission>[0]
+): void {
+	try {
+		store.writeDispatchAdmission(admission);
+	} finally {
+		scheduleArtifactCleanup();
+	}
+}
+export function confirmDispatchCallback(dispatchId: string, callbackId: string): void {
+	store.confirmDispatchCallback(dispatchId, callbackId);
+	scheduleArtifactCleanup();
+}

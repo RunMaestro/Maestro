@@ -29,6 +29,7 @@ import { OpenSpecCommandsPanel } from '../OpenSpecCommandsPanel';
 import { BmadCommandsPanel } from '../BmadCommandsPanel';
 import { NotificationsPanel } from '../NotificationsPanel';
 import { SshRemotesSection } from './SshRemotesSection';
+import { FederationAutomationSection } from './FederationAutomationSection';
 import { SshRemoteIgnoreSection } from './SshRemoteIgnoreSection';
 import { GeneralTab } from './tabs/GeneralTab';
 import { DisplayTab } from './tabs/DisplayTab';
@@ -524,7 +525,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 							setQuery={search.setQuery}
 							inputRef={search.inputRef}
 							isActive={search.isActive}
-							results={search.results}
+							resultCount={search.groups.length}
 							onClear={search.clear}
 						/>
 					</div>
@@ -538,10 +539,12 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					<SettingsSearchResults
 						theme={theme}
 						query={search.query}
-						results={search.results}
-						onNavigate={handleSearchNavigate}
-						selectedIndex={search.selectedIndex}
-						setSelectedIndex={search.setSelectedIndex}
+						groups={search.groups}
+						isOpen={isOpen}
+						resultsRef={search.resultsRef}
+						unfiltered={search.unfiltered}
+						onToggleUnfiltered={search.toggleUnfiltered}
+						onNavigate={search.navigate}
 					/>
 				)}
 
@@ -597,7 +600,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					>
 						{activeTab === 'general' && <GeneralTab theme={theme} isOpen={isOpen} />}
 
-						{activeTab === 'display' && <DisplayTab theme={theme} />}
+						{activeTab === 'display' && <DisplayTab theme={theme} isOpen={isOpen} />}
 
 						{activeTab === 'shortcuts' && (
 							<ShortcutsTab
@@ -705,6 +708,9 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 							<div className="space-y-5">
 								<div data-setting-id="ssh-remotes">
 									<SshRemotesSection theme={theme} />
+								</div>
+								<div data-setting-id="ssh-federation-automation">
+									<FederationAutomationSection theme={theme} />
 								</div>
 								<div data-setting-id="ssh-ignore-patterns">
 									<SshRemoteIgnoreSection

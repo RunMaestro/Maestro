@@ -28,6 +28,7 @@ import { useLiveDataviewResult } from '../../../hooks/file/useLiveDataviewResult
 import { ipcErrorMessage } from '../../../utils/ipcErrorMessage';
 import { useDataviewDocument, type DataviewDocumentScope } from './DataviewDocumentContext';
 import { DataviewValue, DataviewValueProvider } from './DataviewValue';
+import { DataviewInlineRefreshing } from './DataviewLoading';
 
 type DataviewInlineData = DataviewQueryResponse<RevivedDataviewInlineResult>;
 
@@ -99,14 +100,16 @@ function InlineQueryView({
 			throw new Error(ipcErrorMessage(error));
 		}
 	}, [agentId, filePath, expression]);
-	const { data, error, loading } = useLiveDataviewResult(key, fetchValue);
+	const { data, error, loading, refreshing } = useLiveDataviewResult(key, fetchValue);
 
 	if (data?.result.kind === 'value') {
 		return (
 			<span className="dataview dataview-inline-query" data-dataview-inline="">
-				<DataviewValueProvider root={data.root} theme={theme}>
-					<DataviewValue value={data.result.value} />
-				</DataviewValueProvider>
+				<DataviewInlineRefreshing refreshing={refreshing}>
+					<DataviewValueProvider root={data.root} theme={theme}>
+						<DataviewValue value={data.result.value} />
+					</DataviewValueProvider>
+				</DataviewInlineRefreshing>
 			</span>
 		);
 	}

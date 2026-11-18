@@ -37,6 +37,7 @@ import { useAtMentionCompletion } from '../hooks/input/useAtMentionCompletion';
 import { useModalStore } from '../stores/modalStore';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { displayImageSrc } from '../utils/sessionImageSrc';
+import { isImeComposing } from '../utils/ime';
 
 const EMPTY_STAGED_IMAGES: string[] = [];
 
@@ -339,6 +340,7 @@ export function PromptComposerModal({
 	};
 
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		if (e.key === 'Enter' && isImeComposing(e)) return;
 		// Handle mention dropdown navigation
 		if (showMentions && filteredMentions.length > 0) {
 			if (e.key === 'ArrowDown') {
@@ -414,33 +416,12 @@ export function PromptComposerModal({
 		}
 	};
 
-	// Handle paste for images and text (with whitespace trimming)
+	// Handle paste for images. Text pastes land verbatim (native paste, no
+	// trimming).
 	const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
 		const items = e.clipboardData.items;
 		const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
-
-		// Handle text paste with whitespace trimming (when no images)
-		if (!hasImage) {
-			const text = e.clipboardData.getData('text/plain');
-			if (text) {
-				const trimmedText = text.trim();
-				// Only intercept if trimming actually changed the text
-				if (trimmedText !== text) {
-					e.preventDefault();
-					const target = e.target as HTMLTextAreaElement;
-					const start = target.selectionStart ?? 0;
-					const end = target.selectionEnd ?? 0;
-					const currentValue = target.value;
-					const pastedValue = currentValue.slice(0, start) + trimmedText + currentValue.slice(end);
-					handleValueChange(pastedValue);
-					// Set cursor position after the pasted text
-					requestAnimationFrame(() => {
-						target.selectionStart = target.selectionEnd = start + trimmedText.length;
-					});
-				}
-			}
-			return;
-		}
+		if (!hasImage) return;
 
 		if (!setStagedImages) {
 			if (hasImage) {

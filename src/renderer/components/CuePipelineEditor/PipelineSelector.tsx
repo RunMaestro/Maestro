@@ -23,6 +23,7 @@ import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { widestLabelWidth } from '../../utils/labelWidth';
 import { highlightMatches } from '../../utils/highlightMatches';
 import { PIPELINE_COLORS } from './pipelineColors';
+import { isImeComposing } from '../../utils/ime';
 import type { PipelineAgentScope } from './utils/pipelineMembership';
 
 const ALL_PIPELINES_LABEL = 'All Pipelines';
@@ -234,7 +235,7 @@ export function PipelineSelector({
 	// Enter takes the first match, pipelines before agents (the order drawn).
 	const handleFilterKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLInputElement>) => {
-			if (e.key !== 'Enter') return;
+			if (e.key !== 'Enter' || isImeComposing(e)) return;
 			e.preventDefault();
 			if (visiblePipelines.length > 0) handleSelect(visiblePipelines[0].id);
 			else if (visibleAgents.length > 0) handleSelectAgent(visibleAgents[0]);
@@ -256,9 +257,9 @@ export function PipelineSelector({
 
 	const handleRenameKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
-			if (e.key === 'Enter') {
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				handleFinishRename();
-			} else if (e.key === 'Escape') {
+			} else if (e.key === 'Escape' && !isImeComposing(e)) {
 				setRenamingId(null);
 			}
 		},

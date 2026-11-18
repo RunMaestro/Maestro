@@ -18,6 +18,30 @@ import {
 	foldKeymap,
 } from '@codemirror/language';
 import { highlightSelectionMatches } from '@codemirror/search';
+import {
+	buildCodeEditingExtensions,
+	editorClaimsKey,
+	withoutAppOwnedChords,
+	type BuildCodeEditingExtensionsOptions,
+} from './codeEditing';
+import type { EditorSelectionDetails } from './types';
+
+/**
+ * The main selection with its 1-based line span, or null for a bare caret.
+ * A selection that ends at column 0 of a line (the usual result of selecting
+ * whole lines by dragging down) does not count that last line.
+ */
+export function mainSelectionDetails(state: EditorState): EditorSelectionDetails | null {
+	const { from, to } = state.selection.main;
+	if (from === to) return null;
+	const startLine = state.doc.lineAt(from).number;
+	const endLineInfo = state.doc.lineAt(to);
+	const endLine =
+		endLineInfo.from === to && endLineInfo.number > startLine
+			? endLineInfo.number - 1
+			: endLineInfo.number;
+	return { text: state.sliceDoc(from, to), from, to, startLine, endLine };
+}
 
 export interface BuildEditorExtensionsOptions {
 	wrap: boolean;
@@ -42,6 +66,16 @@ export interface BuildEditorExtensionsOptions {
 	onPaste?: (event: ClipboardEvent) => boolean | void;
 	/** Hint text painted while the document is empty. */
 	placeholder?: string;
+	/**
+	 * Turn on the code-editor set from `./codeEditing` (completion, bracket
+	 * auto-close, multiple cursors, editing chords). Omit for prose editors.
+	 */
+	codeEditing?: BuildCodeEditingExtensionsOptions;
+	/**
+	 * Right-click on selected text. Fires only when the click lands inside the
+	 * main selection; anywhere else the native menu (spellcheck, copy) opens.
+	 */
+	onSelectionContextMenu?: (selection: EditorSelectionDetails, event: MouseEvent) => void;
 }
 
 /**
@@ -68,8 +102,17 @@ export function buildEditorExtensions(opts: BuildEditorExtensionsOptions): Exten
 		indentOnInput(),
 		highlightSelectionMatches(),
 		syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-		keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab]),
+		keymap.of([
+			...(opts.codeEditing ? withoutAppOwnedChords(defaultKeymap) : defaultKeymap),
+			...historyKeymap,
+			...foldKeymap,
+			indentWithTab,
+		]),
 	];
+
+	if (opts.codeEditing) {
+		exts.push(buildCodeEditingExtensions(opts.codeEditing));
+	}
 
 	if (opts.showLineNumbers) {
 		exts.push(
@@ -120,7 +163,14 @@ export function buildEditorExtensions(opts: BuildEditorExtensionsOptions): Exten
 			// (and stopped the chain) by the time the host's popup was offered them.
 			Prec.highest(
 				EditorView.domEventHandlers({
-					keydown(event) {
+					keydown(event, view) {
+						// An open completion popup, or several cursors, own Escape /
+						// Enter / the arrows (see editorClaimsKey). Keep them from the
+						// host and from the window: the editor answers this one.
+						if (editorClaimsKey(event, view.state)) {
+							event.stopPropagation();
+							return false;
+						}
 						return opts.onKeyDown?.(event) === true;
 					},
 				})
@@ -140,6 +190,22 @@ export function buildEditorExtensions(opts: BuildEditorExtensionsOptions): Exten
 					},
 				})
 			)
+		);
+	}
+
+	if (opts.onSelectionContextMenu) {
+		exts.push(
+			EditorView.domEventHandlers({
+				contextmenu(event, view) {
+					const selection = mainSelectionDetails(view.state);
+					if (!selection) return false;
+					const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+					if (pos === null || pos < selection.from || pos > selection.to) return false;
+					event.preventDefault();
+					opts.onSelectionContextMenu?.(selection, event);
+					return true;
+				},
+			})
 		);
 	}
 

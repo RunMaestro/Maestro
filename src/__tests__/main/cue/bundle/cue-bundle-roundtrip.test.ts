@@ -505,3 +505,107 @@ describe('bundle round trip', () => {
 		expect(strip(mB)).toEqual(strip(mA));
 	});
 });
+
+describe('Grok resources round trip', () => {
+	/** A clean Grok agent and a Claude agent sharing one workspace, the Grok MCP scanner off. */
+	function seedGrokSource(): { dataDir: string; root: string } {
+		const dataDir = path.join(tmp, 'source', 'data');
+		const root = path.join(tmp, 'source', 'z', 'web');
+		fakeClone(root);
+		write(path.join(root, 'AGENTS.md'), '# Agents\n');
+		write(path.join(root, 'CLAUDE.md'), '# App\n');
+		write(path.join(root, '.grok/skills/triage/SKILL.md'), '---\nname: triage\n---\n');
+		write(path.join(root, '.agents/skills/lint/SKILL.md'), '---\nname: lint\n---\n');
+		write(path.join(root, '.claude/skills/review/SKILL.md'), '---\nname: review\n---\n');
+		writeJson(path.join(root, '.mcp.json'), {
+			mcpServers: { github: { command: 'gh-mcp', env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' } } },
+		});
+		write(
+			path.join(root, '.maestro/cue.yaml'),
+			yaml.dump({
+				subscriptions: ['agent-gee', 'agent-cee'].map((id) => ({
+					name: `tick-${id}`,
+					event: 'time.heartbeat',
+					agent_id: id,
+					interval_minutes: 15,
+					prompt: 'go',
+					pipeline_name: 'Mixed',
+				})),
+			})
+		);
+		const agent = (id: string, name: string, toolType: string, env: Record<string, string>) => ({
+			id,
+			name,
+			toolType,
+			cwd: root,
+			projectRoot: root,
+			autoRunFolderPath: path.join(root, '.maestro/playbooks'),
+			customEnvVars: env,
+		});
+		writeJson(path.join(dataDir, 'maestro-sessions.json'), {
+			sessions: [
+				agent('agent-gee', 'Gee', 'grok', { GROK_CLAUDE_MCPS_ENABLED: '0' }),
+				agent('agent-cee', 'Cee', 'claude-code', {}),
+			],
+		});
+		return { dataDir, root };
+	}
+
+	const exportMixed = (dataDir: string, name: string) =>
+		exportCueBundle({
+			dataDir,
+			pipeline: 'Mixed',
+			outputPath: path.join(tmp, name),
+			producerVersion: PRODUCER,
+			claudeConfigDir: path.join(tmp, 'claude-home'),
+		}).then(() => path.join(tmp, name));
+
+	it('imports supported Grok resources and secret names, then re-exports byte for byte', async () => {
+		const source = seedGrokSource();
+		const first = await exportMixed(source.dataDir, 'grok-first.zip');
+		const manifest = manifestOf(first);
+		expect(manifest.workspaces[0].grok?.resources.map((r) => r.path)).toEqual([
+			'AGENTS.md',
+			'CLAUDE.md',
+			'.grok/skills/triage',
+			'.agents/skills/lint',
+		]);
+		expect(manifest.workspaces[0].grok?.mcpServers).toEqual([
+			{ name: 'github', enabled: false, secrets: ['GITHUB_TOKEN'] },
+		]);
+		// The Claude record keeps its own shape beside the Grok block.
+		expect(manifest.workspaces[0].claude).toEqual({
+			skills: ['review'],
+			mcpServers: ['github'],
+			projectMemory: ['CLAUDE.md'],
+		});
+
+		const dataDir = path.join(tmp, 'server', 'data');
+		const root = path.join(tmp, 'server', 'a', 'web');
+		fakeClone(root);
+		const result = await importCueBundle({
+			bundlePath: first,
+			dataDir,
+			workspaces: { web: root },
+			runningVersion: PRODUCER,
+			claudeConfigDir: path.join(tmp, 'server-claude'),
+			env: {},
+			runSecretsDir: null,
+		});
+		expect(result.applied).toBe(true);
+		for (const rel of [
+			'AGENTS.md',
+			'.grok/skills/triage/SKILL.md',
+			'.agents/skills/lint/SKILL.md',
+		]) {
+			expect(fs.existsSync(path.join(root, rel)), rel).toBe(true);
+		}
+		const sessions = readSessionsStoreFile(dataDir).sessions;
+		const gee = sessions.find((s) => s.id === 'agent-gee')!;
+		expect(gee.requiredSecrets).toEqual(['GITHUB_TOKEN']);
+		expect(gee.customEnvVars).toEqual({ GROK_CLAUDE_MCPS_ENABLED: '0' });
+
+		const second = await exportMixed(dataDir, 'grok-second.zip');
+		expectSameZip(first, second);
+	});
+});

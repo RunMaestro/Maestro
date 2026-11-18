@@ -97,6 +97,7 @@ describe('runCrossAgentAsk', () => {
 			{
 				id: 'asking-tab',
 				name: 'Work',
+				state: 'busy',
 				logs: [{ id: 'l1', timestamp: 1, source: 'user', text: 'the real thread' }],
 			},
 			{
@@ -198,7 +199,7 @@ describe('runCrossAgentAsk', () => {
 						name: '🥋 Kensho',
 						cwd: '/Users/me/kensho',
 						aiTabs: [
-							createMockAITab({ id: 'asking-tab', logs: [] }),
+							createMockAITab({ id: 'asking-tab', state: 'busy', logs: [] }),
 							createMockAITab({ id: 'other-tab', logs: [] }),
 						],
 						activeTabId: 'other-tab',

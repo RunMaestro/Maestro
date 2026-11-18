@@ -74,6 +74,8 @@ function installMaestroMock() {
 			onData: vi.fn(() => vi.fn()),
 			onSessionId: vi.fn(() => vi.fn()),
 			onUsage: vi.fn(() => vi.fn()),
+			onToolExecution: vi.fn(() => vi.fn()),
+			onThinkingChunk: vi.fn(() => vi.fn()),
 			onExit: vi.fn((cb: (sessionId: string, code: number) => void) => {
 				emitExit = cb;
 				return vi.fn();

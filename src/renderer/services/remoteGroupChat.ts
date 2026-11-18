@@ -11,6 +11,7 @@
  */
 
 import type { GroupChatState } from '../../shared/group-chat-types';
+import { ipcErrorMessage } from '../utils/ipcErrorMessage';
 import {
 	type RemoteGroupChatState,
 	planGroupChatStart,
@@ -80,8 +81,7 @@ export async function startRemoteGroupChat(
 	try {
 		chat = await window.maestro.groupChat.create(topic, moderatorAgentId);
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		return { error: message.replace(/^Error invoking remote method '[^']+': /, '') };
+		return { error: ipcErrorMessage(err) };
 	}
 	useGroupChatStore.getState().setGroupChats((prev) => [chat, ...prev]);
 

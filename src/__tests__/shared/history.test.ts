@@ -22,6 +22,11 @@ import {
 	isHistoryEntryType,
 	visibleHistoryEntryTypes,
 	ALL_HISTORY_ENTRY_TYPES,
+	mergeEntriesById,
+	LOCAL_HOST_AGG_KEY,
+	historyLookbackCutoff,
+	filterHistoryEntries,
+	historyOffsetForTimestamp,
 	type HistoryFileData,
 	type MigrationMarker,
 	type PaginationOptions,
@@ -508,5 +513,127 @@ describe('parseHistoryFileData (legacy single-object format)', () => {
 	it('throws the SyntaxError for bytes it cannot recover', () => {
 		expect(() => parseHistoryFileData('{"version":1,"entr')).toThrow(SyntaxError);
 		expect(() => parseHistoryFileData('not json')).toThrow(SyntaxError);
+	});
+});
+
+describe('History list helpers', () => {
+	const entry = (id: string, timestamp: number, overrides: Partial<HistoryEntry> = {}) =>
+		createMockEntry({ id, timestamp, ...overrides });
+	const ids = (list: HistoryEntry[]) => list.map((e) => e.id);
+
+	describe('mergeEntriesById', () => {
+		it('returns the base untouched when nothing comes in', () => {
+			const base = [entry('a', 1), entry('b', 2)];
+			expect(mergeEntriesById(base, [])).toBe(base);
+		});
+
+		it('adds the entries whose ids are new, once each, and sorts newest first', () => {
+			const merged = mergeEntriesById(
+				[entry('a', 1), entry('b', 3)],
+				[entry('a', 9), entry('c', 2), entry('c', 5)]
+			);
+			expect(ids(merged)).toEqual(['b', 'c', 'a']);
+			// The base copy wins over an incoming entry with the same id.
+			expect(merged.find((e) => e.id === 'a')?.timestamp).toBe(1);
+		});
+	});
+
+	describe('LOCAL_HOST_AGG_KEY', () => {
+		it('is the synthetic host key of an entry with no hostname', () => {
+			expect(LOCAL_HOST_AGG_KEY).toBe('__local__');
+		});
+	});
+
+	describe('historyLookbackCutoff', () => {
+		it('is now minus the hours for a positive lookback', () => {
+			expect(historyLookbackCutoff(2, 10_000_000)).toBe(10_000_000 - 2 * 3_600_000);
+			expect(historyLookbackCutoff(0.5, 10_000_000)).toBe(10_000_000 - 1_800_000);
+		});
+
+		it('is 0 (no lookback) for null, undefined, zero, or a negative lookback', () => {
+			expect(historyLookbackCutoff(null, 10_000_000)).toBe(0);
+			expect(historyLookbackCutoff(undefined, 10_000_000)).toBe(0);
+			expect(historyLookbackCutoff(0, 10_000_000)).toBe(0);
+			expect(historyLookbackCutoff(-4, 10_000_000)).toBe(0);
+		});
+
+		it('defaults now to the clock', () => {
+			const before = Date.now();
+			const cutoff = historyLookbackCutoff(1);
+			expect(cutoff).toBeGreaterThanOrEqual(before - 3_600_000);
+			expect(cutoff).toBeLessThanOrEqual(Date.now() - 3_600_000);
+		});
+	});
+
+	describe('filterHistoryEntries', () => {
+		const list = [
+			entry('u1', 100, { type: 'USER', hostname: 'laptop' }),
+			entry('a1', 200, { type: 'AUTO' }),
+			entry('u2', 300, { type: 'USER' }),
+			entry('c1', 400, { type: 'CUE', hostname: 'box.host' }),
+		];
+
+		it('returns the same array when nothing narrows it', () => {
+			expect(filterHistoryEntries(list, {})).toBe(list);
+			expect(filterHistoryEntries(list, { cutoffTime: 0, types: null, hostKey: null })).toBe(list);
+		});
+
+		it('keeps entries at or after the cutoff', () => {
+			expect(ids(filterHistoryEntries(list, { cutoffTime: 200 }))).toEqual(['a1', 'u2', 'c1']);
+		});
+
+		it('keeps only the listed types, and none for an empty list', () => {
+			expect(ids(filterHistoryEntries(list, { types: ['USER', 'CUE'] }))).toEqual([
+				'u1',
+				'u2',
+				'c1',
+			]);
+			expect(filterHistoryEntries(list, { types: [] })).toEqual([]);
+		});
+
+		it('keeps one host, with LOCAL_HOST_AGG_KEY for entries that name none', () => {
+			expect(ids(filterHistoryEntries(list, { hostKey: 'laptop' }))).toEqual(['u1']);
+			expect(ids(filterHistoryEntries(list, { hostKey: LOCAL_HOST_AGG_KEY }))).toEqual([
+				'a1',
+				'u2',
+			]);
+		});
+
+		it('combines every filter', () => {
+			expect(
+				ids(
+					filterHistoryEntries(list, {
+						cutoffTime: 150,
+						types: ['USER', 'AUTO'],
+						hostKey: LOCAL_HOST_AGG_KEY,
+					})
+				)
+			).toEqual(['a1', 'u2']);
+		});
+	});
+
+	describe('historyOffsetForTimestamp', () => {
+		it('is 0 for an empty list', () => {
+			expect(historyOffsetForTimestamp([], 500)).toBe(0);
+		});
+
+		it('is the newest-first index of the first entry at or before the time', () => {
+			// Given out of order: the offset is into the sorted (newest-first) list.
+			const list = [entry('b', 200), entry('d', 400), entry('a', 100), entry('c', 300)];
+			expect(historyOffsetForTimestamp(list, 1000)).toBe(0);
+			expect(historyOffsetForTimestamp(list, 400)).toBe(0);
+			expect(historyOffsetForTimestamp(list, 350)).toBe(1);
+			expect(historyOffsetForTimestamp(list, 100)).toBe(3);
+		});
+
+		it('is the last offset when every entry is newer', () => {
+			expect(historyOffsetForTimestamp([entry('a', 100), entry('b', 200)], 50)).toBe(1);
+		});
+
+		it('does not reorder the caller array', () => {
+			const list = [entry('a', 100), entry('b', 200)];
+			historyOffsetForTimestamp(list, 150);
+			expect(ids(list)).toEqual(['a', 'b']);
+		});
 	});
 });

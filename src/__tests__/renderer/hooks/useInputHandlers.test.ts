@@ -12,7 +12,7 @@
  * - syncFileTreeToTabCompletion
  * - handleMainPanelInputBlur
  * - handleReplayMessage
- * - handlePaste (text trimming + image staging)
+ * - handlePaste (text pastes pass through untouched; image staging)
  * - handleDrop (image staging)
  * - processInputRef tracking
  * - Return value stability
@@ -22,6 +22,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, BatchRunState } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { resetStores } from '../../helpers/resetStores';
+import { makeGrokCommandObservation } from '../../fixtures/grok-command-observation';
+import type { GrokCommandDiscoveryResult } from '../../../main/agents/grok-skills';
+import {
+	assembleSlashCommandCompletions,
+	grokCommandCompletions,
+} from '../../../renderer/slashCommands';
+import { useInputKeyDown } from '../../../renderer/hooks/input/useInputKeyDown';
+import { tokenizeMentions } from '../../../shared/mentionPatterns';
 
 // ============================================================================
 // Mock InputContext
@@ -121,12 +130,18 @@ import {
 	type UseInputHandlersDeps,
 } from '../../../renderer/hooks/input/useInputHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-vi.mock('../../../renderer/stores/centerFlashStore', () => ({
+vi.mock('../../../renderer/stores/centerFlashStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/centerFlashStore')>()),
 	notifyCenterFlash: vi.fn(),
 }));
 
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
+import {
+	setCapabilitiesCache,
+	clearCapabilitiesCache,
+	DEFAULT_CAPABILITIES,
+} from '../../../renderer/hooks/agent/useAgentCapabilities';
 
 const mockNotifyCenterFlash = vi.mocked(notifyCenterFlash);
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
@@ -1032,36 +1047,43 @@ describe('useInputHandlers', () => {
 	// ========================================================================
 
 	describe('handleReplayMessage', () => {
-		it('calls processInput via ref with text', () => {
+		afterEach(() => {
+			mockProcessInput.mockReset();
+		});
+
+		it('sends the replayed text pinned to the active agent and tab', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			act(() => {
 				result.current.handleReplayMessage('replay this');
 			});
 
-			// processInputRef is called via setTimeout
-			act(() => {
-				vi.runAllTimers();
+			expect(mockProcessInput).toHaveBeenCalledWith('replay this', {
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				images: [],
 			});
-
-			expect(result.current.processInputRef.current).toBeDefined();
 		});
 
-		it('stages images before processing when provided', () => {
+		it('hands the replayed images to processInput instead of staging them', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			act(() => {
 				result.current.handleReplayMessage('describe these', ['img1.png', 'img2.png']);
 			});
 
-			// Check that images were staged
+			expect(mockProcessInput).toHaveBeenCalledWith('describe these', {
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				images: ['img1.png', 'img2.png'],
+			});
+			// The composer's staged images are the draft's, not the replay's.
 			const sessions = useSessionStore.getState().sessions;
 			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
-			expect(tab?.stagedImages).toEqual(['img1.png', 'img2.png']);
+			expect(tab?.stagedImages ?? []).toEqual([]);
 		});
 
-		it('does not stage images when array is empty', () => {
-			const origStagedImages = ['keep-me.png'];
+		it('leaves the draft staged images alone', () => {
 			useSessionStore.setState({
 				sessions: [
 					createMockSession({
@@ -1071,7 +1093,7 @@ describe('useInputHandlers', () => {
 								name: 'Tab 1',
 								inputValue: '',
 								data: [],
-								stagedImages: origStagedImages,
+								stagedImages: ['keep-me.png'],
 							} as any,
 						],
 					}),
@@ -1082,10 +1104,9 @@ describe('useInputHandlers', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			act(() => {
-				result.current.handleReplayMessage('no images', []);
+				result.current.handleReplayMessage('with images', ['replayed.png']);
 			});
 
-			// Images should be unchanged (empty array doesn't trigger setStagedImages)
 			const sessions = useSessionStore.getState().sessions;
 			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
 			expect(tab?.stagedImages).toEqual(['keep-me.png']);
@@ -1097,39 +1118,28 @@ describe('useInputHandlers', () => {
 	// ========================================================================
 
 	describe('handlePaste', () => {
-		it('trims whitespace from pasted text', () => {
+		it('leaves surrounding whitespace on pasted text (dictation trailing space)', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			const mockPreventDefault = vi.fn();
-			const mockTarget = {
-				selectionStart: 0,
-				selectionEnd: 0,
-				value: '',
-			};
-
 			const pasteEvent = {
 				preventDefault: mockPreventDefault,
 				clipboardData: {
-					items: [],
-					getData: vi.fn().mockReturnValue('  trimmed text  '),
+					items: { length: 0, [Symbol.iterator]: function* () {} },
+					getData: vi.fn().mockReturnValue('dictated text '),
 				},
-				target: mockTarget,
+				target: { selectionStart: 0, selectionEnd: 0, value: '' },
 			} as unknown as React.ClipboardEvent;
-
-			// Patch items to be iterable
-			Object.defineProperty(pasteEvent.clipboardData, 'items', {
-				value: { length: 0, [Symbol.iterator]: function* () {} },
-			});
 
 			act(() => {
 				result.current.handlePaste(pasteEvent);
 			});
 
-			expect(mockPreventDefault).toHaveBeenCalled();
-			expect(inputVal()).toBe('trimmed text');
+			// Native paste runs untouched, so the trailing space survives
+			expect(mockPreventDefault).not.toHaveBeenCalled();
 		});
 
-		it('does not intercept text paste when no trimming needed', () => {
+		it('does not intercept a plain text paste', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			const mockPreventDefault = vi.fn();
@@ -1146,7 +1156,6 @@ describe('useInputHandlers', () => {
 				result.current.handlePaste(pasteEvent);
 			});
 
-			// Should NOT call preventDefault since no trimming was needed
 			expect(mockPreventDefault).not.toHaveBeenCalled();
 		});
 
@@ -1273,6 +1282,38 @@ describe('useInputHandlers', () => {
 			expect(mockNotifyCenterFlash).toHaveBeenCalled();
 		});
 
+		it('refuses image paste in group chat mode when moderator cannot read images', () => {
+			clearCapabilitiesCache();
+			setCapabilitiesCache('terminal', {
+				...DEFAULT_CAPABILITIES,
+				supportsImageInput: false,
+			});
+
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [{ id: 'group-1', moderatorAgentId: 'terminal' } as any],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const pasteEvt = imagePasteEvent();
+			mockNotifyCenterFlash.mockClear();
+
+			act(() => {
+				result.current.handlePaste(pasteEvt);
+			});
+
+			expect(pasteEvt.preventDefault).toHaveBeenCalled();
+			expect(mockNotifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+			});
+			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
+		});
+
 		it('ignores a file drop while in command mode', () => {
 			const { result } = renderInCommandMode();
 
@@ -1374,6 +1415,216 @@ describe('useInputHandlers', () => {
 			});
 
 			// The drop handler creates a FileReader - just verify it doesn't throw
+			expect(dropEvent.preventDefault).toHaveBeenCalled();
+		});
+
+		it('inserts a dragged staged-image reference once in a room draft', () => {
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [
+					{ id: 'group-1', draftMessage: 'compare', moderatorAgentId: 'claude-code' } as any,
+				],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-staged-image'
+							? '1'
+							: type === 'text/plain'
+								? 'Screenshot 2'
+								: '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const chat = useGroupChatStore.getState().groupChats.find((c) => c.id === 'group-1');
+			expect(chat?.draftMessage).toBe('compare Screenshot 2 ');
+			expect(chat?.draftMessage?.match(/Screenshot 2/g)).toHaveLength(1);
+			// The image was already staged; the drop only writes text, so the
+			// room's image gate is not bypassed.
+			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
+		});
+
+		it('inserts a dragged staged-image reference once in the AI draft', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			act(() => {
+				result.current.setInputValue('compare');
+			});
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: (type: string) =>
+						type === 'application/x-maestro-staged-image'
+							? '1'
+							: type === 'text/plain'
+								? 'Screenshot 2'
+								: '',
+					files: { length: 0 } as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const draft = inputVal();
+			expect(draft).toBe('compare Screenshot 2 ');
+			expect(draft.match(/Screenshot 2/g)).toHaveLength(1);
+		});
+
+		it('refuses image drop in group chat mode when moderator cannot read images and flashes once for multiple images', () => {
+			clearCapabilitiesCache();
+			setCapabilitiesCache('terminal', {
+				...DEFAULT_CAPABILITIES,
+				supportsImageInput: false,
+			});
+
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [{ id: 'group-1', moderatorAgentId: 'terminal' } as any],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const img1 = new Blob(['data1'], { type: 'image/png' });
+			Object.defineProperty(img1, 'type', { value: 'image/png' });
+			const img2 = new Blob(['data2'], { type: 'image/png' });
+			Object.defineProperty(img2, 'type', { value: 'image/png' });
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 2,
+						0: img1,
+						1: img2,
+						item: (idx: number) => (idx === 0 ? img1 : img2),
+						[Symbol.iterator]: function* () {
+							yield img1;
+							yield img2;
+						},
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			mockNotifyCenterFlash.mockClear();
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(mockNotifyCenterFlash).toHaveBeenCalledTimes(1);
+			expect(mockNotifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+			});
+			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
+		});
+
+		it('keeps the documents from a mixed drop when the moderator cannot read images', () => {
+			clearCapabilitiesCache();
+			setCapabilitiesCache('terminal', {
+				...DEFAULT_CAPABILITIES,
+				supportsImageInput: false,
+			});
+
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [{ id: 'group-1', moderatorAgentId: 'terminal', draftMessage: '' } as any],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const image = new Blob(['data1'], { type: 'image/png' });
+			Object.defineProperty(image, 'type', { value: 'image/png' });
+			const documentFile = {
+				type: 'application/pdf',
+				name: 'notes.pdf',
+				path: '/tmp/notes.pdf',
+			};
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: [image, documentFile] as any,
+				},
+			} as unknown as React.DragEvent;
+
+			mockNotifyCenterFlash.mockClear();
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(mockNotifyCenterFlash).toHaveBeenCalledTimes(1);
+			expect(mockNotifyCenterFlash).toHaveBeenCalledWith({
+				message: "This room's moderator can't read images",
+				color: 'yellow',
+			});
+			expect(mockSetGroupChatStagedImages).not.toHaveBeenCalled();
+			expect(useGroupChatStore.getState().groupChats[0].draftMessage).toBe('@/tmp/notes.pdf ');
+		});
+
+		it('allows image drop in group chat mode when moderator capabilities are unknown / uncached', () => {
+			clearCapabilitiesCache();
+
+			const mockSetGroupChatStagedImages = vi.fn();
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [{ id: 'group-1', moderatorAgentId: 'fresh-uncached-agent' } as any],
+				setGroupChatStagedImages: mockSetGroupChatStagedImages,
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const img1 = new Blob(['data1'], { type: 'image/png' });
+			Object.defineProperty(img1, 'type', { value: 'image/png' });
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: img1,
+						item: () => img1,
+						[Symbol.iterator]: function* () {
+							yield img1;
+						},
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			mockNotifyCenterFlash.mockClear();
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			expect(mockNotifyCenterFlash).not.toHaveBeenCalled();
 			expect(dropEvent.preventDefault).toHaveBeenCalled();
 		});
 	});
@@ -1865,7 +2116,7 @@ describe('useInputHandlers', () => {
 			}
 		});
 
-		it('does not call preventDefault for text paste with no whitespace to trim', () => {
+		it('does not call preventDefault for a single-word text paste', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			const mockPreventDefault = vi.fn();
@@ -2274,6 +2525,37 @@ describe('useInputHandlers', () => {
 			expect(inputVal()).toBe('@/Users/somebody/notes ');
 		});
 
+		it('inserts a Windows drive path as one file mention in AI chat when dropped from outside the project', () => {
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: { type: 'text/plain', name: 'a.md', path: 'C:\\Users\\Alice\\a.md' },
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const draft = inputVal().trim();
+			expect(draft).toBe('@C:/Users/Alice/a.md');
+			expect(tokenizeMentions(draft)).toEqual([
+				{
+					kind: 'file',
+					value: '@C:/Users/Alice/a.md',
+					path: 'C:/Users/Alice/a.md',
+					extension: 'md',
+				},
+			]);
+		});
+
 		it('joins multiple external file drops with spaces', () => {
 			const deps = createMockDeps();
 			const { result } = renderHook(() => useInputHandlers(deps));
@@ -2297,7 +2579,7 @@ describe('useInputHandlers', () => {
 			expect(inputVal()).toBe('@src/a.ts @docs ');
 		});
 
-		it('updates group chat draftMessage when external files are dropped during group chat', () => {
+		it('updates group chat draftMessage with absolute path even when inside active agent project root', () => {
 			const initialChat = {
 				id: 'group-1',
 				name: 'g',
@@ -2336,7 +2618,176 @@ describe('useInputHandlers', () => {
 
 			expect(setGroupChats).toHaveBeenCalled();
 			const updated = useGroupChatStore.getState().groupChats[0];
-			expect(updated.draftMessage).toBe('@src/a.ts ');
+			expect(updated.draftMessage).toBe('@/test/src/a.ts ');
+		});
+
+		it('inserts an absolute path in group chat when dropping a file outside active agent project root', () => {
+			const initialChat = {
+				id: 'group-1',
+				name: 'g',
+				draftMessage: '',
+				participants: [],
+				messages: [],
+			};
+			const setGroupChats = vi.fn((updater: any) => {
+				const next = typeof updater === 'function' ? updater([initialChat as any]) : updater;
+				useGroupChatStore.setState({ groupChats: next } as any);
+			});
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [initialChat as any],
+				setGroupChats,
+				setGroupChatStagedImages: vi.fn(),
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: { type: 'text/plain', name: 'notes.txt', path: '/other/path/notes.txt' },
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const updated = useGroupChatStore.getState().groupChats[0];
+			expect(updated.draftMessage).toBe('@/other/path/notes.txt ');
+		});
+
+		it('normalises Windows-style backslash paths to forward slashes as absolute paths in group chat', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						projectRoot: 'C:\\Users\\Alice\\proj',
+						fullPath: 'C:\\Users\\Alice\\proj',
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+
+			const initialChat = {
+				id: 'group-1',
+				name: 'g',
+				draftMessage: '',
+				participants: [],
+				messages: [],
+			};
+			const setGroupChats = vi.fn((updater: any) => {
+				const next = typeof updater === 'function' ? updater([initialChat as any]) : updater;
+				useGroupChatStore.setState({ groupChats: next } as any);
+			});
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [initialChat as any],
+				setGroupChats,
+				setGroupChatStagedImages: vi.fn(),
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: {
+							type: 'text/plain',
+							name: 'index.ts',
+							path: 'C:\\Users\\Alice\\proj\\src\\index.ts',
+						},
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const updated = useGroupChatStore.getState().groupChats[0];
+			expect(updated.draftMessage).toBe('@C:/Users/Alice/proj/src/index.ts ');
+			// The dropped path scans back as ONE file mention, so the room shows a
+			// chip rather than `@C` plus plain text.
+			expect(tokenizeMentions(updated.draftMessage.trim())).toEqual([
+				{
+					kind: 'file',
+					value: '@C:/Users/Alice/proj/src/index.ts',
+					path: 'C:/Users/Alice/proj/src/index.ts',
+					extension: 'ts',
+				},
+			]);
+		});
+
+		it('quotes a Windows drive path with spaces so the room draft is one file mention', () => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						projectRoot: 'C:\\Users\\Alice\\proj',
+						fullPath: 'C:\\Users\\Alice\\proj',
+					}),
+				],
+				activeSessionId: 'session-1',
+			} as any);
+
+			const initialChat = {
+				id: 'group-1',
+				name: 'g',
+				draftMessage: '',
+				participants: [],
+				messages: [],
+			};
+			const setGroupChats = vi.fn((updater: any) => {
+				const next = typeof updater === 'function' ? updater([initialChat as any]) : updater;
+				useGroupChatStore.setState({ groupChats: next } as any);
+			});
+			useGroupChatStore.setState({
+				activeGroupChatId: 'group-1',
+				groupChats: [initialChat as any],
+				setGroupChats,
+				setGroupChatStagedImages: vi.fn(),
+			} as any);
+
+			const deps = createMockDeps();
+			const { result } = renderHook(() => useInputHandlers(deps));
+
+			const dropEvent = {
+				preventDefault: vi.fn(),
+				dataTransfer: {
+					getData: () => '',
+					files: {
+						length: 1,
+						0: {
+							type: 'text/plain',
+							name: 'a b.md',
+							path: 'C:\\Users\\Alice\\proj\\My Docs\\a b.md',
+						},
+					} as any,
+				},
+			} as unknown as React.DragEvent;
+
+			act(() => {
+				result.current.handleDrop(dropEvent);
+			});
+
+			const updated = useGroupChatStore.getState().groupChats[0];
+			expect(updated.draftMessage).toBe('@"C:/Users/Alice/proj/My Docs/a b.md" ');
+			expect(tokenizeMentions(updated.draftMessage.trim())).toEqual([
+				{
+					kind: 'file',
+					value: '@"C:/Users/Alice/proj/My Docs/a b.md"',
+					path: 'C:/Users/Alice/proj/My Docs/a b.md',
+					extension: 'md',
+				},
+			]);
 		});
 
 		it('appends to existing group chat draft with a separating space', () => {
@@ -2380,7 +2831,7 @@ describe('useInputHandlers', () => {
 			});
 
 			const updated = useGroupChatStore.getState().groupChats[0];
-			expect(updated.draftMessage).toBe('check @README.md ');
+			expect(updated.draftMessage).toBe('check @/test/README.md ');
 		});
 
 		it('ignores files without a path (browser-only drops have no fs path)', () => {
@@ -2579,38 +3030,27 @@ describe('useInputHandlers', () => {
 			expect(tab?.stagedImages).toEqual(['existing.png']);
 		});
 
-		it('preserves draft input value after replay sends', () => {
+		it('does not touch the draft text', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
-			// Type a draft message
 			act(() => {
 				result.current.setInputValue('my draft message');
 			});
 
-			expect(inputVal()).toBe('my draft message');
-
-			// Simulate processInput clearing the input (as it does in real usage)
-			mockProcessInput.mockImplementation(() => {
-				result.current.setInputValue('');
-			});
-
-			// Replay a previous message
 			act(() => {
 				result.current.handleReplayMessage('replayed message');
 			});
 
-			act(() => {
-				vi.runAllTimers();
-			});
-
-			// Draft should be restored after replay
+			// processInput owns the "leave the composer alone" rule for override
+			// sends (covered in useInputProcessing.test.ts); the handler itself must
+			// neither clear nor rewrite the draft.
 			expect(inputVal()).toBe('my draft message');
 			expect(mockProcessInput).toHaveBeenCalledWith('replayed message', {
 				sessionId: 'session-1',
 				tabId: 'tab-1',
+				images: [],
 			});
 
-			// Clean up mock
 			mockProcessInput.mockReset();
 		});
 	});
@@ -2674,5 +3114,211 @@ describe('useInputHandlers', () => {
 			expect(deps.fileTreeKeyboardNavRef.current).toBe(true);
 			expect(mockSetSelectedFileIndex).toHaveBeenCalledWith(0);
 		});
+	});
+});
+
+describe('Grok completion assembly and real keyboard acceptance', () => {
+	let discovery: GrokCommandDiscoveryResult;
+	beforeEach(async () => {
+		resetStores(useSessionStore, useSettingsStore);
+		resetStores(useUIStore, useGroupChatStore, useComposerInputStore);
+		useSettingsStore.setState({ customAICommands: [] });
+		const actual = await vi.importActual<
+			typeof import('../../../renderer/hooks/input/useInputKeyDown')
+		>('../../../renderer/hooks/input/useInputKeyDown');
+		vi.mocked(useInputKeyDown).mockImplementation(actual.useInputKeyDown);
+		mockInputContext.selectedSlashCommandIndex = 0;
+		mockInputContext.setSelectedSlashCommandIndex.mockImplementation((value) => {
+			mockInputContext.selectedSlashCommandIndex =
+				typeof value === 'function' ? value(mockInputContext.selectedSlashCommandIndex) : value;
+		});
+		mockInputContext.setSlashCommandOpen.mockImplementation((value) => {
+			mockInputContext.slashCommandOpen = value;
+		});
+		const session = createMockSession({ toolType: 'grok' });
+		session.agentCommands = [{ command: '/persisted', description: '', prompt: 'NEVER EXPAND' }];
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		const receipt = makeGrokCommandObservation({
+			cwd: useSessionStore.getState().sessions[0].cwd,
+			sessionId: 'native-1',
+			environment: { surface: 'cli' },
+		});
+		discovery = {
+			status: 'discovered',
+			commands: (
+				[
+					['repo:review', 'skill', 'repo'],
+					['plugin:review', 'workflow', 'plugin'],
+					['history', 'native-command', 'server'],
+				] as const
+			).map(([name, kind, scope], index) => ({
+				name,
+				kind,
+				scope,
+				description: name,
+				argumentHint: index === 0 ? 'x'.repeat(1024) : '<path>',
+			})),
+			binding: {
+				route: 'grok-acp',
+				sessionId: receipt.sessionId,
+				processGeneration: receipt.processGeneration,
+				configGeneration: receipt.configGeneration,
+				catalogRevision: receipt.catalogRevision,
+				agentVersion: receipt.agentVersion,
+				observedAt: receipt.observedAt,
+			},
+		};
+	});
+
+	afterEach(() => {
+		cleanup();
+		resetStores(useSessionStore, useSettingsStore);
+		resetStores(useUIStore, useGroupChatStore, useComposerInputStore);
+		vi.mocked(useInputKeyDown).mockImplementation(() => ({
+			handleInputKeyDown: mockHandleInputKeyDown,
+		}));
+		mockInputContext.setSelectedSlashCommandIndex.mockReset();
+		mockInputContext.setSlashCommandOpen.mockReset();
+	});
+
+	const completions = (
+		overrides: Partial<Parameters<typeof assembleSlashCommandCompletions>[0]> = {}
+	) =>
+		assembleSlashCommandCompletions({
+			toolType: 'grok',
+			supportsProviderCommands: true,
+			customCommands: useSettingsStore.getState().customAICommands,
+			agentCommands: useSessionStore.getState().sessions[0].agentCommands,
+			grokDiscovery: discovery,
+			...overrides,
+		});
+
+	it('preserves exact advisory provenance, argument hints and owned binding without prompt bodies', () => {
+		expect(grokCommandCompletions(discovery)).toEqual(
+			discovery.commands.map((metadata) => ({
+				command: `/${metadata.name}`,
+				description: metadata.description,
+				aiOnly: true,
+				nativeCommand: { provider: 'grok', metadata, binding: discovery.binding },
+				selectable: false,
+			}))
+		);
+		expect(grokCommandCompletions(discovery)[0].nativeCommand?.metadata.argumentHint).toHaveLength(
+			1024
+		);
+	});
+
+	it.each(['Tab', 'Enter'])('accepts %s with Maestro/custom/bundled precedence', (key) => {
+		const custom = [
+			['/history', 'CUSTOM HISTORY'],
+			['/repo:review', 'Review $ARGUMENTS'],
+			['/speckit.plan', 'PLAN'],
+			['/openspec.proposal', 'PROPOSAL'],
+			['/bmad-help', 'HELP'],
+		].map(([command, prompt], index) => ({
+			id: command,
+			command,
+			prompt,
+			description: command,
+			isBuiltIn: index >= 2,
+		}));
+		useSettingsStore.setState({ customAICommands: custom });
+		const session = useSessionStore.getState().sessions[0];
+		const commands = completions();
+		expect(commands.map((command) => command.command)).toEqual([
+			'/history',
+			'/wizard',
+			...custom.map(({ command }) => command),
+		]);
+		expect(commands.find((command) => command.command === '/history')?.prompt).toBeUndefined();
+		expect(commands.find((command) => command.command === '/repo:review')?.prompt).toBe(
+			'Review $ARGUMENTS'
+		);
+		expect(commands.every((command) => !command.nativeCommand)).toBe(true);
+		const deps = createMockDeps({ allSlashCommands: commands, allCustomCommands: custom });
+		const { result, rerender } = renderHook(() => useInputHandlers(deps));
+		const press = (pressed: string) =>
+			act(() =>
+				result.current.handleInputKeyDown(
+					new KeyboardEvent('keydown', { key: pressed }) as unknown as React.KeyboardEvent
+				)
+			);
+		for (const [draft, accepted] of [
+			['/', '/wizard '],
+			['/plugin:review', '/plugin:review'],
+			['/persisted', '/persisted'],
+		]) {
+			act(() => result.current.setInputValue(draft));
+			mockInputContext.slashCommandOpen = true;
+			rerender();
+			if (draft === '/') {
+				press('ArrowDown');
+				rerender();
+				expect(mockInputContext.selectedSlashCommandIndex).toBe(1);
+			}
+			press(key);
+			expect(inputVal()).toBe(accepted);
+			expect(mockInputContext.slashCommandOpen).toBe(draft !== '/');
+		}
+		expect(mockProcessInput).not.toHaveBeenCalled();
+		expect(session.agentCommands?.[0].prompt).toBe('NEVER EXPAND');
+		expect(useSettingsStore.getState().customAICommands).toEqual(custom);
+	});
+
+	describe.each(['claude-code', 'codex', 'opencode', 'copilot-cli', 'antigravity'] as const)(
+		'%s completion compatibility',
+		(toolType) => {
+			it.each([false, true])(
+				'preserves provider capability gating (%s) and ignores Grok receipts',
+				(supportsProviderCommands) => {
+					const agentCommands = [
+						{
+							command: '/provider:review',
+							description: 'Review the selected project',
+							prompt: 'PRIVATE PROVIDER PROMPT BODY',
+						},
+					];
+					useSessionStore.setState({
+						sessions: [{ ...useSessionStore.getState().sessions[0], toolType, agentCommands }],
+					});
+					const sessionsBefore = structuredClone(useSessionStore.getState().sessions);
+					const options = { toolType, supportsProviderCommands };
+					const commands = completions(options);
+					expect(commands).toEqual(completions({ ...options, grokDiscovery: null }));
+					expect(commands.map(({ command }) => command)).toEqual([
+						'/history',
+						'/wizard',
+						...(toolType === 'claude-code' ? ['/skills'] : []),
+						...(supportsProviderCommands ? ['/provider:review'] : []),
+					]);
+					if (supportsProviderCommands) {
+						expect(commands.at(-1)).toEqual({
+							command: '/provider:review',
+							description: 'Review the selected project',
+							aiOnly: true,
+						});
+					}
+					expect(commands.every((command) => !command.nativeCommand && !command.prompt)).toBe(true);
+					expect(useSessionStore.getState().sessions).toEqual(sessionsBefore);
+					expect(useSettingsStore.getState().customAICommands).toEqual([]);
+				}
+			);
+		}
+	);
+
+	it.each([
+		['object', {}],
+		['sparse', new Array(1)],
+		['empty name', [{ name: '', description: '', kind: 'skill' }]],
+		['kind', [{ name: 'x', description: '', kind: 'tui-command' }]],
+		['scope', [{ name: 'x', description: '', kind: 'skill', scope: 'all' }]],
+		['hint', [{ name: 'x', description: '', kind: 'skill', argumentHint: 'x'.repeat(1025) }]],
+	])('rejects %s catalogs before completion rendering', (_label, commands) => {
+		const malformed = { ...discovery, commands } as unknown as GrokCommandDiscoveryResult;
+		expect(grokCommandCompletions(malformed)).toEqual([]);
+		expect(completions({ grokDiscovery: malformed }).map((command) => command.command)).toEqual([
+			'/history',
+			'/wizard',
+		]);
 	});
 });

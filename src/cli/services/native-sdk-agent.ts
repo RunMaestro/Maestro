@@ -14,7 +14,7 @@ import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-fact
 import { AcpOutputParser } from '../../shared/maestro-lib/harness/acp/output-parser';
 import { parseQuestionRequest } from '../../main/permission-relay/question-request';
 import { buildChildProcessEnv } from '../../shared/maestro-lib/launch/env';
-import { encodeQuestionAnswer } from '../../renderer/components/PermissionPrompt/questionAnswer';
+import { encodeQuestionAnswer } from '../../shared/questionAnswer';
 import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './turn-result';
 import type { AgentResult, SpawnAgentOptions } from './agent-spawner';
 import type { ToolType } from '../../shared/types';

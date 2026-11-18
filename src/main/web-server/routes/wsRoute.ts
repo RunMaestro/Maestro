@@ -17,6 +17,11 @@
 
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { logger } from '../../utils/logger';
+import { WebSocket } from 'ws';
+import { createKeyedWriteQueue } from '../../../shared/keyedWriteQueue';
+import { yieldToEventLoop } from '../../utils/concurrency';
+import { hostCallerRuns } from '../../agent-run/caller-identity';
+import { CALLER_RUN_PROOF_HEADER } from '../../../shared/agentDelegation';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
 import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
 import {
@@ -39,6 +44,9 @@ export type { LiveSessionInfo, CustomAICommand } from '../types';
 
 // Logger context for all WebSocket route logs
 const LOG_CONTEXT = 'WebServer:WS';
+
+// Only the read-only channels used by the renderer's background git poll.
+const BACKGROUND_GIT_CHANNELS = new Set(['git:status', 'git:branch', 'git:numstat', 'git:info']);
 
 /** RFC 6455 close code for a connection refused on policy grounds. */
 const WS_CLOSE_POLICY_VIOLATION = 1008;
@@ -100,6 +108,7 @@ export class WsRoute {
 	private securityToken: string;
 	private callbacks: Partial<WsRouteCallbacks> = {};
 	private clientIdCounter: number = 0;
+	private readonly backgroundGit = createKeyedWriteQueue();
 
 	constructor(securityToken: string) {
 		this.securityToken = securityToken;
@@ -184,12 +193,12 @@ export class WsRoute {
 				...(auth.user ? { user: auth.user, sessionId: auth.sessionId } : {}),
 				// Same moment, same reason: only the upgrade carries the CLI secret.
 				...(auth.cli ? { cli: true } : {}),
-				isAuthorized: () => {
+				isAuthorized: (context) => {
 					if (admission && !admission(request)) {
 						socket.close(4403, 'Host admission expired or revoked');
 						return false;
 					}
-					const currentAuth = resolveWebRequestAuth(request);
+					const currentAuth = resolveWebRequestAuth(request, context);
 					if (!isWebRequestAuthorized(currentAuth)) {
 						socket.close(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
 						return false;
@@ -198,6 +207,17 @@ export class WsRoute {
 					return true;
 				},
 			};
+			// The upgrade header stays off message echoes, receipts and client serialization.
+			const callerProof = request.headers[CALLER_RUN_PROOF_HEADER];
+			if (callerProof !== undefined) {
+				try {
+					hostCallerRuns.bind(client, callerProof);
+				} catch (error) {
+					if (!(error instanceof Error) || error.message !== 'CallerRunUnavailable') throw error;
+					socket.close(WS_CLOSE_POLICY_VIOLATION, 'CallerRunUnavailable');
+					return;
+				}
+			}
 			const admissionCheck = admission
 				? setInterval(() => client.isAuthorized?.(), 1000)
 				: undefined;
@@ -317,11 +337,23 @@ export class WsRoute {
 				});
 			}
 
-			// Handle incoming messages
-			socket.on('message', (message) => {
-				if (!client.isAuthorized?.()) return;
+			// A browser poll sends status/branch for every agent in one burst.
+			// Defer just these independent reads so tab intents do not wait behind
+			// every policy read and handler start in that burst. Authorization stays
+			// live: it is checked immediately before each dispatch, never cached.
+			const invalidMessage = () => {
 				try {
-					const data = JSON.parse(message.toString()) as WebClientMessage;
+					if (!client.isAuthorized?.()) return;
+				} catch (error) {
+					logger.error('Client authorization failed', LOG_CONTEXT, error);
+					socket.close(1011, 'Authorization failed');
+					return;
+				}
+				sendBounded(socket, JSON.stringify({ type: 'error', message: 'Invalid message format' }));
+			};
+			const dispatch = (data: WebClientMessage) => {
+				if (socket.readyState !== WebSocket.OPEN || !client.isAuthorized?.()) return;
+				try {
 					if ((data as { type: string }).type === 'bridge.chunkAck') {
 						if (client.isAuthorized?.() !== false)
 							acknowledgeWebSocketChunk(socket, (data as unknown as { offset: unknown }).offset);
@@ -329,13 +361,31 @@ export class WsRoute {
 					}
 					this.callbacks.handleMessage?.(clientId, data);
 				} catch {
-					sendBounded(
-						socket,
-						JSON.stringify({
-							type: 'error',
-							message: 'Invalid message format',
-						})
-					);
+					invalidMessage();
+				}
+			};
+			socket.on('message', (message) => {
+				try {
+					const data = JSON.parse(message.toString()) as WebClientMessage;
+					const invoke = data as { type?: string; channel?: string };
+					if (
+						invoke.type === 'bridge.invoke' &&
+						BACKGROUND_GIT_CHANNELS.has(invoke.channel ?? '')
+					) {
+						void this.backgroundGit
+							.enqueue('dispatch', async () => {
+								await yieldToEventLoop();
+								dispatch(data);
+							})
+							.catch((error: unknown) => {
+								logger.error('Background git dispatch failed', LOG_CONTEXT, error);
+								socket.close(1011, 'Background dispatch failed');
+							});
+					} else {
+						dispatch(data);
+					}
+				} catch {
+					invalidMessage();
 				}
 			});
 

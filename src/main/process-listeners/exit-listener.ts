@@ -14,9 +14,12 @@ import { parseProcessId } from '../../shared/maestro-lib/client/bridge-frames';
 
 type ExitEventArgs = Parameters<ProcessManagerEvents['exit']>;
 
-// The predicate moved into the library with the progression that uses it; re-exported
+// The predicates moved into the library with the progression that uses them; re-exported
 // so this module keeps its public surface.
-export { isDeletedGroupChatFailure } from '../../shared/maestro-lib/groupchat/router';
+export {
+	isDeletedGroupChatFailure,
+	isRemovedParticipantFailure,
+} from '../../shared/maestro-lib/groupchat/router';
 
 /**
  * Sets up the exit listener for process termination.

@@ -14,6 +14,11 @@ import {
 	activePinnedTabIds,
 } from '../../../../renderer/stores/coworkingBrowserKeepAliveStore';
 
+vi.mock('../../../../renderer/services/designModePick', () => ({
+	deliverDesignPick: vi.fn(async () => ({ aiTabId: 'ai-1', text: 'ELEMENT BLOCK' })),
+}));
+import { deliverDesignPick } from '../../../../renderer/services/designModePick';
+
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
 	useSessionStore: { getState: vi.fn(() => ({})) },
 	selectActiveSession: vi.fn(),
@@ -59,6 +64,8 @@ function makeHandle(overrides: Partial<BrowserTabViewHandle> = {}): BrowserTabVi
 		stop: vi.fn(),
 		executeJavaScript: vi.fn(async () => undefined),
 		capturePage: vi.fn(async () => 'data:image/png;base64,AAAA'),
+		toggleDesignMode: vi.fn(),
+		inspectElement: vi.fn(async () => null),
 		...overrides,
 	};
 }
@@ -321,6 +328,77 @@ describe('resolveAndRun', () => {
 		expect(String(res.content)).toMatch(/could not be reached/i);
 		// No activate/restore surface-switch on the unreachable path.
 		expect(setSessions).not.toHaveBeenCalled();
+	});
+
+	it('pick (browser-pick) describes by selector and delivers to the owning agent, unprompted', async () => {
+		vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', 'u-1'));
+		const capture = {
+			pick: { selector: 'h1', tagName: 'h1' },
+			screenshot: 'data:image/png;base64,CROP',
+		};
+		const inspectElement = vi.fn(async () => capture);
+		const handle = makeHandle({
+			getTabId: () => 'u-1',
+			inspectElement: inspectElement as unknown as BrowserTabViewHandle['inspectElement'],
+		});
+		const requestApproval = vi.fn(async () => true);
+		const res = await resolveAndRun(
+			{ current: new Map([['u-1', handle]]) },
+			'u-1',
+			'sess-A',
+			{ kind: 'pick', selector: 'h1', note: 'bigger', background: true },
+			requestApproval
+		);
+		expect(requestApproval).not.toHaveBeenCalled();
+		expect(inspectElement).toHaveBeenCalledWith('h1');
+		expect(deliverDesignPick).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sessionId: 'sess-A',
+				browserTabId: 'u-1',
+				note: 'bigger',
+				reveal: false,
+				screenshot: 'data:image/png;base64,CROP',
+			})
+		);
+		expect(res).toMatchObject({
+			ok: true,
+			content: 'ELEMENT BLOCK',
+			aiTabId: 'ai-1',
+			dataUrl: 'data:image/png;base64,CROP',
+		});
+	});
+
+	it('pick reports a selector miss and an invalid selector', async () => {
+		const miss = makeHandle({
+			inspectElement: vi.fn(async () => 'not-found' as const),
+		});
+		expect(await applyBrowserOp(miss, { kind: 'pick', selector: '.x' }, 'sess-A')).toMatchObject({
+			ok: false,
+			content: 'No element matches selector: .x',
+		});
+		const bad = makeHandle({
+			inspectElement: vi.fn(async () => 'invalid-selector' as const),
+		});
+		expect(await applyBrowserOp(bad, { kind: 'pick', selector: '[[' }, 'sess-A')).toMatchObject({
+			ok: false,
+			content: 'Not a valid CSS selector: [[',
+		});
+	});
+
+	it('pick refuses a tab hidden from agents', async () => {
+		vi.mocked(selectActiveSession).mockReturnValue(
+			fakeActive('sess-A', 'u-1', [{ id: 'u-1', hiddenFromAgent: true }])
+		);
+		const handle = makeHandle({ getTabId: () => 'u-1' });
+		const res = await resolveAndRun(
+			{ current: new Map([['u-1', handle]]) },
+			'u-1',
+			'sess-A',
+			{ kind: 'pick', selector: 'h1' },
+			vi.fn(async () => true)
+		);
+		expect(res.ok).toBe(false);
+		expect(handle.inspectElement).not.toHaveBeenCalled();
 	});
 
 	it('does not request approval for read ops', async () => {

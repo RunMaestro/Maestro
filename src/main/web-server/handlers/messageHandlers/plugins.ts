@@ -58,6 +58,15 @@ export function handlePluginsListTools(
 			logger.warn(`[Web] plugins_list_tools failed: ${reason}`, LOG_CONTEXT);
 		}
 	}
+	// A bridge holding a run proof gets this listing recorded against its run
+	// as the host's own projection, so a provider cannot claim tools
+	// it was never shown. A bad or expired proof records nothing.
+	if (message.runToken !== undefined) {
+		pluginToolRunIdentity.recordAdvertisement(
+			message.runToken,
+			tools.map((tool) => tool.toolId)
+		);
+	}
 	ctx.send(client, {
 		type: 'plugins_list_tools_result',
 		success: true,

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	isRunnableQueueItem,
 	nextRunnableQueueItem,
+	nextQueueDrainItem,
 	hasRunnableQueueItem,
 	takeNextRunnableQueueItem,
 	reorderQueueItem,
@@ -39,6 +40,43 @@ function tabItem(id: string, tabId: string): QueuedItem {
 }
 
 describe('executionQueue helpers', () => {
+	it('holds admission work and later work on the same tab while other tabs proceed', () => {
+		const held = { ...tabItem('held', 'tab-1'), pendingAdmissionId: 'dispatch-1' };
+		const sameTab = tabItem('same', 'tab-1');
+		const otherTab = tabItem('other', 'tab-2');
+		const queue = [held, sameTab, otherTab];
+		expect(isRunnableQueueItem(held)).toBe(false);
+		expect(nextRunnableQueueItem(queue)).toBe(otherTab);
+		expect(takeNextRunnableQueueItem(queue)).toEqual({
+			item: otherTab,
+			remaining: [held, sameTab],
+		});
+		expect(hasWorkAheadOfNewMessage(createMockSession({ executionQueue: [held] }))).toBe(true);
+		expect(releaseConnectionHeldQueueItems([held])[0]).toEqual(held);
+	});
+
+	it('prevents editing or merging either side of a pending admission', () => {
+		const first = item('first');
+		const held = { ...item('held'), pendingAdmissionId: 'dispatch-1' };
+		const last = item('last');
+		expect(mergeQueuedItemIntoPrevious([first, held], held.id)).toBeNull();
+		expect(mergeQueuedItemIntoPrevious([held, last], last.id)).toBeNull();
+		expect(applyQueuedItemEdit([held], held.id, { text: 'changed' })[0]).toEqual(held);
+	});
+
+	it('disables force send and steering for pending admission independently of user pause', () => {
+		const held = { ...item('held'), pendingAdmissionId: 'dispatch-1' };
+		const session = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+		});
+		const force = getForceSendEligibility(session, held, { forcedParallelEnabled: true });
+		expect(force).toMatchObject({ canForce: false, blockedReason: 'pending-admission' });
+		expect(shouldOfferForceSend(force)).toBe(false);
+		expect(getSteerEligibility(session, held)).toEqual({
+			canSteer: false,
+			blockedReason: 'pending-admission',
+		});
+	});
 	it('isRunnableQueueItem treats user and connection holds as non-runnable', () => {
 		expect(isRunnableQueueItem(item('a'))).toBe(true);
 		expect(isRunnableQueueItem(item('b', true))).toBe(false);
@@ -184,6 +222,33 @@ describe('mergeQueuedItemIntoPrevious', () => {
 });
 
 describe('reorderQueueItem', () => {
+	it('keeps admission holds and same-tab work in order in both queue views', () => {
+		const held = { ...tabItem('held', 'tab-1'), pendingAdmissionId: 'dispatch-1' };
+		const q = [
+			tabItem('before', 'tab-1'),
+			held,
+			tabItem('other', 'tab-2'),
+			tabItem('after', 'tab-1'),
+		];
+		expect(reorderQueueItem(q, 1, 3)).toBe(q);
+		expect(reorderQueueItem(q, 3, 0)).toBe(q);
+		expect(reorderQueueItem(q, 0, 3)).toBe(q);
+		expect(reorderQueueItem(q, 1, 2, 'tab-1')).toBe(q);
+		expect(reorderQueueItem(q, 2, 0, 'tab-1')).toBe(q);
+		expect(nextRunnableQueueItem(reorderQueueItem(q, 3, 0))?.id).toBe('before');
+	});
+
+	it('allows other tabs and same-tab work on one side of an admission hold to reorder', () => {
+		const held = { ...tabItem('held', 'tab-1'), pendingAdmissionId: 'dispatch-1' };
+		const q = [held, tabItem('a', 'tab-1'), tabItem('other', 'tab-2'), tabItem('b', 'tab-1')];
+		expect(reorderQueueItem(q, 2, 0).map((i) => i.id)).toEqual(['other', 'held', 'a', 'b']);
+		expect(reorderQueueItem(q, 2, 1, 'tab-1').map((i) => i.id)).toEqual([
+			'held',
+			'b',
+			'other',
+			'a',
+		]);
+	});
 	it('moves an item within the whole queue when no tabId is given', () => {
 		const q = [item('a'), item('b'), item('c')];
 		expect(reorderQueueItem(q, 0, 2).map((i) => i.id)).toEqual(['b', 'c', 'a']);
@@ -498,6 +563,39 @@ describe('applyQueuedItemEdit', () => {
 		const next = applyQueuedItemEdit(queue, 'a', patch({ model: 'opus' }));
 
 		expect(next[0].paused).toBe(true);
+	});
+
+	// The user replaced a queued message with `/commit` and it drained as the
+	// literal text, which the provider refused as an unknown command.
+	it('turns a message edited into a slash command into that command', () => {
+		const queue = [{ ...item('a'), crossAgentMention: true, crossAgentOnly: true }];
+
+		const next = applyQueuedItemEdit(
+			queue,
+			'a',
+			{ text: '/commit', images: [], turnSettings: { model: 'opus' } },
+			{ crossAgentMention: false, crossAgentOnly: false },
+			{ command: '/commit', commandArgs: '', description: 'Commit and push' }
+		);
+
+		expect(next[0]).toMatchObject({
+			id: 'a',
+			type: 'command',
+			command: '/commit',
+			commandArgs: '',
+			commandDescription: 'Commit and push',
+			turnSettings: { model: 'opus' },
+		});
+		expect(next[0].text).toBeUndefined();
+		expect(next[0].crossAgentMention).toBeUndefined();
+		expect(next[0].crossAgentOnly).toBeUndefined();
+	});
+
+	it('keeps the item a message when no slash command is passed', () => {
+		const next = applyQueuedItemEdit([item('a')], 'a', patch());
+
+		expect(next[0].type).toBe('message');
+		expect(next[0].command).toBeUndefined();
 	});
 });
 
@@ -1271,5 +1369,27 @@ describe('describeSteerBlocked', () => {
 		const fallback = describeSteerBlocked(undefined);
 		expect(describeSteerBlocked('some-future-reason')).toBe(fallback);
 		expect(describeSteerBlocked('toString')).toBe(fallback);
+	});
+});
+
+describe('host queue drain candidate selection', () => {
+	it('offers an unpaused managed item only to the host consumer, retaining its exact row', () => {
+		const held = { ...item('held'), pendingAdmissionId: 'dispatch' };
+		expect(nextQueueDrainItem([held])).toBe(held);
+		expect(nextRunnableQueueItem([held])).toBeUndefined();
+		expect(held.pendingAdmissionId).toBe('dispatch');
+	});
+	it('preserves a paused admission barrier for its own tab while other tabs proceed', () => {
+		const held = { ...item('held', true), pendingAdmissionId: 'dispatch' };
+		const same = item('same');
+		const other = tabItem('other', 'tab-2');
+		expect(nextQueueDrainItem([held, same, other])).toBe(other);
+	});
+	it('keeps connection and consult barriers and earlier eligible work ahead of managed work', () => {
+		const held = { ...item('held'), pendingAdmissionId: 'dispatch' };
+		const earlier = item('earlier');
+		expect(nextQueueDrainItem([earlier, held])).toBe(earlier);
+		expect(nextQueueDrainItem([{ ...earlier, waitingForConnection: true }, held])).toBeUndefined();
+		expect(nextQueueDrainItem([{ ...earlier, awaitingConsult: 'consult' }, held])).toBeUndefined();
 	});
 });

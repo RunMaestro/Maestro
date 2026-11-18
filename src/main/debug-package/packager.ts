@@ -128,6 +128,16 @@ export async function createZipPackage(
 			reject(err);
 		});
 
+		// The file is opened lazily, so a write stream that cannot open or write
+		// (the output directory removed after the mkdir above, a full disk)
+		// reports through 'error' after this function returns. With no listener
+		// that error became an uncaught exception in the main process and this
+		// promise never settled (MAESTRO-18B). Reject so the caller reports it.
+		output.on('error', (err) => {
+			archive.abort();
+			reject(err);
+		});
+
 		// Pipe archive data to the file
 		archive.pipe(output);
 

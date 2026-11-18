@@ -7,6 +7,7 @@ import {
 	getAgentDisplayName,
 	buildContextTransferPrompt,
 	loadContextGroomerPrompts,
+	groomingIdentityOf,
 } from '../../../renderer/services/contextGroomer';
 import type {
 	MergeRequest,
@@ -104,7 +105,9 @@ describe('ContextGroomingService', () => {
 		expect(mockGroomContext).toHaveBeenCalledWith(
 			'/test/project',
 			'claude-code',
-			expect.stringContaining('How do I implement X?')
+			expect.stringContaining('How do I implement X?'),
+			// Grooming is always a read-only turn.
+			expect.objectContaining({ readOnly: true })
 		);
 		expect(stages.at(-1)).toBe('complete');
 	});
@@ -160,6 +163,72 @@ describe('ContextGroomingService', () => {
 			await vi.waitFor(() => expect(mockGroomContext).toHaveBeenCalled());
 
 			await expect(service.cancelGrooming()).resolves.toBeUndefined();
+		});
+	});
+
+	// A Grok merge grooming call is a restricted turn on the
+	// grooming agent's own account and host, and a refusal is a failed result.
+	describe('Grok merge grooming invariants', () => {
+		const grokAgent = {
+			customEnvVars: { GROK_HOME: '/accounts/source-home' },
+			customPath: '/bin/grok-source',
+			customArgs: '--source-arg',
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-source',
+				workingDirOverride: '/remote/source',
+			},
+		};
+
+		const grokRequest = (): MergeRequest => ({
+			sources: [
+				createMockContext({ sessionId: 'grok-source', tabId: 'grok-tab', agentType: 'grok' }),
+			],
+			targetAgent: 'grok',
+			targetProjectRoot: '/work/source',
+			...groomingIdentityOf(grokAgent),
+		});
+
+		it('groomingIdentityOf reads the account, binary and host from the session', () => {
+			expect(groomingIdentityOf(grokAgent)).toEqual(
+				expect.objectContaining({
+					customEnvVars: { GROK_HOME: '/accounts/source-home' },
+					customPath: '/bin/grok-source',
+					customArgs: '--source-arg',
+					sshRemoteConfig: grokAgent.sessionSshRemoteConfig,
+				})
+			);
+		});
+
+		it('passes readOnly, the selected account env and SSH config, and no disableTools', async () => {
+			await service.groomContexts(grokRequest(), () => {});
+
+			expect(mockGroomContext).toHaveBeenCalledTimes(1);
+			const [root, agent, , options] = mockGroomContext.mock.calls[0];
+			expect(root).toBe('/work/source');
+			expect(agent).toBe('grok');
+			expect(options.readOnly).toBe(true);
+			expect(options.customEnvVars).toEqual({ GROK_HOME: '/accounts/source-home' });
+			expect(options.sshRemoteConfig).toEqual(grokAgent.sessionSshRemoteConfig);
+			expect(options.customPath).toBe('/bin/grok-source');
+			expect(options.customArgs).toBe('--source-arg');
+			expect(options).not.toHaveProperty('disableTools');
+			expect(options.cheapTurn).toBeUndefined();
+		});
+
+		it('surfaces a read-only refusal as a failed grooming result with no logs', async () => {
+			mockGroomContext.mockRejectedValueOnce(
+				new Error('grok cannot enforce read-only on this route; grooming refused')
+			);
+			const stages: GroomingProgress[] = [];
+
+			const result = await service.groomContexts(grokRequest(), (p) => stages.push(p));
+
+			expect(result.success).toBe(false);
+			expect(result.groomedLogs).toEqual([]);
+			expect(result.error).toContain('grooming refused');
+			expect(stages.at(-1)?.message).toContain('Grooming failed');
+			expect(service.isGroomingActive()).toBe(false);
 		});
 	});
 
@@ -247,6 +316,59 @@ describe('AGENT_TARGET_NOTES', () => {
 		const notes = AGENT_TARGET_NOTES['codex'];
 		expect(notes).toContain('OpenAI');
 		expect(notes).toContain('reasoning');
+	});
+});
+
+/**
+ * A Grok source or target must carry its own transfer
+ * metadata instead of falling through to the generic note, and that metadata
+ * may only use vocabulary the Grok integration actually has.
+ */
+describe('Grok context-transfer metadata', () => {
+	beforeAll(async () => {
+		await loadContextGroomerPrompts(true);
+	});
+
+	it('lists the Grok brand, model and session artifacts', () => {
+		const artifacts = AGENT_ARTIFACTS.grok;
+		expect(artifacts).toBeDefined();
+		expect(artifacts).toEqual(
+			expect.arrayContaining([
+				'Grok',
+				'Grok CLI',
+				'xAI',
+				'~/.grok/sessions',
+				'--resume',
+				'--prompt-file',
+			])
+		);
+	});
+
+	it('lists no slash commands, since Grok has no fixed catalog to scrub', () => {
+		expect((AGENT_ARTIFACTS.grok ?? []).filter((artifact) => artifact.startsWith('/'))).toEqual([]);
+	});
+
+	it('has its own target note that matches the headless capability block', () => {
+		const notes = AGENT_TARGET_NOTES.grok;
+		expect(notes).toBeDefined();
+		expect(notes).toContain('xAI');
+		expect(notes).toContain('resuming the same session');
+		expect(notes).toContain('no slash commands');
+	});
+
+	it('makes no read-only claim in the target note (A11-F05 stays unqualified)', () => {
+		expect(AGENT_TARGET_NOTES.grok ?? '').not.toMatch(/read-only|readonly/i);
+	});
+
+	it('carries the Grok metadata through a transfer prompt in both directions', () => {
+		const fromGrok = buildContextTransferPrompt('grok', 'claude-code');
+		expect(fromGrok).toContain('"Grok CLI"');
+		expect(fromGrok).toContain('"~/.grok/sessions"');
+		expect(fromGrok).not.toContain('No specific artifacts to remove');
+
+		const toGrok = buildContextTransferPrompt('claude-code', 'grok');
+		expect(toGrok).toContain('Grok CLI is xAI');
+		expect(toGrok).not.toContain('No specific notes for this agent.');
 	});
 });
 

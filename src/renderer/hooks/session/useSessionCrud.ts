@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import type { AdditionalDirectory, ToolType, Session } from '../../types';
+import type { AdditionalDirectory, AITab, ToolType, Session } from '../../types';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -33,6 +33,8 @@ import { logger } from '../../utils/logger';
 import { killAgentAiProcesses } from '../../services/process';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
 import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
+import { getAgentDisplayName, getPermissionModeLabel } from '../../../shared/agentMetadata';
+import { permissionModeFields } from '../../utils/tabHelpers/focusFields';
 
 // ============================================================================
 // Dependencies interface
@@ -88,7 +90,9 @@ export interface UseSessionCrudReturn {
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
-		harnessControlMode?: HarnessControlMode
+		harnessControlMode?: HarnessControlMode,
+		/** Permission mode for the fresh initial tab; omitted for ordinary new agents. */
+		permissionMode?: AITab['permissionMode']
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -186,13 +190,26 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			codexAutoResetOnExhaustion?: boolean,
 			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 			codexTransport?: CodexTransport,
-			harnessControlMode?: HarnessControlMode
+			harnessControlMode?: HarnessControlMode,
+			permissionMode?: AITab['permissionMode']
 		) => {
 			try {
 				// Get agent definition to get correct command
 				const agent = await (window as any).maestro.agents.get(agentId);
 				if (!agent) {
 					logger.error(`Agent not found: ${agentId}`);
+					return;
+				}
+				// Duplication must not turn an unsupported restricted mode into full access.
+				if (
+					(permissionMode === 'standard' && !agent.capabilities?.supportsStandardPermissionMode) ||
+					(permissionMode === 'readonly' && !agent.capabilities?.supportsReadOnlyMode)
+				) {
+					notifyToast({
+						type: 'error',
+						title: 'Agent Creation Failed',
+						message: `${getAgentDisplayName(agentId)} does not support ${getPermissionModeLabel(permissionMode, agentId)} permissions in Maestro. Choose a supported permission mode before creating this agent.`,
+					});
 					return;
 				}
 				const currentSessions = useSessionStore.getState().sessions;
@@ -282,6 +299,12 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					harnessControlMode: harnessControlMode === 'native' ? 'native' : undefined,
 					claudeInteractive: newAgentClaudeInteractive(agentId),
 				};
+				if (permissionMode !== undefined) {
+					newSession.aiTabs = newSession.aiTabs.map((tab) => ({
+						...tab,
+						...permissionModeFields(permissionMode),
+					}));
+				}
 
 				setSessions((prev) => [...prev, newSession]);
 				setActiveSessionId(newId);

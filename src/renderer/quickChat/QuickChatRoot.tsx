@@ -48,6 +48,7 @@ import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { HoverTooltip } from '../components/ui/HoverTooltip';
+import { isImeComposing } from '../utils/ime';
 import type { ShortcutChords } from '../components/ui/ShortcutHint';
 import { ZOOM_VIEWER_ATTR, ZoomViewerHost, useZoomViewerStore } from '../components/ZoomViewer';
 import { LayerStackProvider } from '../contexts/LayerStackContext';
@@ -63,7 +64,6 @@ import {
 } from '../components/InputArea/components/stagedImageDrag';
 import { moveStagedImage } from '../utils/stagedImageOrder';
 import { imageFilesIn, readBlobAsDataUrl } from '../utils/imageData';
-import { isMacOSPlatform } from '../utils/platformUtils';
 import { openZoomViewer } from '../components/ZoomViewer';
 
 /** The reply box under a conversation: the conversation keeps the room. */
@@ -677,14 +677,6 @@ function QuickChatWindow() {
 				return;
 			}
 			if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
-			// Cmd+` (either direction) cycles an app's windows on macOS. From the
-			// floating chat that means back to Maestro, which also puts the chat
-			// away; left to the OS it cycles into nothing while the panel stays on top.
-			if (e.metaKey && e.code === 'Backquote' && isMacOSPlatform()) {
-				e.preventDefault();
-				if (!e.repeat) void window.maestro.quickChat.window('return');
-				return;
-			}
 			// Text zoom first: it takes Shift (`+`), and a held key keeps stepping.
 			const zoom = FONT_ZOOM_KEYS[e.key];
 			if (zoom !== undefined) {
@@ -872,7 +864,7 @@ function QuickChatWindow() {
 				onChange={(e) => setDraft(e.target.value)}
 				onPaste={onPaste}
 				onKeyDown={(e) => {
-					if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+					if (e.key === 'Enter' && !e.shiftKey && !isImeComposing(e)) {
 						e.preventDefault();
 						void send();
 					}

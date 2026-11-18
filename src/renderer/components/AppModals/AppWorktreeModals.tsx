@@ -176,6 +176,7 @@ export const AppWorktreeModals = memo(function AppWorktreeModals({
 					worktreeBranch={prSourceBranch}
 					agentName={prSession.name}
 					sessionId={prSession.id}
+					sshRemoteId={resolveGitSshRemoteId(prSession)}
 					availableBranches={prAvailableBranches}
 				/>
 			)}

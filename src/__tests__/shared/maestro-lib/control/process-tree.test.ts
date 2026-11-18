@@ -51,6 +51,7 @@ import {
 	parseProcStat,
 	refreshProcessTree,
 	type ProcessTableRow,
+	type ProcessTreeSnapshot,
 } from '../../../../shared/maestro-lib/control/process-tree';
 
 const SELF = process.pid;
@@ -66,7 +67,9 @@ function row(pid: number, ppid: number, startedAt = MORNING): string {
 }
 
 function processTable(...rows: string[]): void {
-	mocks.execFileSyncNoThrow.mockReturnValue(rows.join('\n') + '\n');
+	const stdout = rows.join('\n') + '\n';
+	mocks.execFileSyncNoThrow.mockReturnValue(stdout);
+	mocks.execFileNoThrow.mockResolvedValue({ stdout, stderr: '', exitCode: 0 });
 }
 
 /**
@@ -102,6 +105,10 @@ beforeEach(() => {
 	mocks.isLinux.mockReturnValue(false);
 	mocks.execFileSyncNoThrow.mockReturnValue('');
 	mocks.execFileNoThrow.mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+	mocks.readdirSync.mockReset().mockReturnValue([]);
+	mocks.readFileSync.mockReset().mockReturnValue('');
+	mocks.readdir.mockReset().mockResolvedValue([]);
+	mocks.readFile.mockReset().mockResolvedValue('');
 	killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
 });
 
@@ -129,6 +136,7 @@ describe('snapshotProcessTree', () => {
 
 		expect(snapshotProcessTree(AGENT)).toEqual({
 			owned: true,
+			root: { pid: AGENT, startedAt: MORNING },
 			descendants: [
 				{ pid: 5000, startedAt: MORNING },
 				{ pid: 5001, startedAt: MORNING },
@@ -140,7 +148,11 @@ describe('snapshotProcessTree', () => {
 	it('owns a child that has started nothing', () => {
 		processTable(row(AGENT, SELF), row(7777, 1));
 
-		expect(snapshotProcessTree(AGENT)).toEqual({ owned: true, descendants: [] });
+		expect(snapshotProcessTree(AGENT)).toEqual({
+			owned: true,
+			root: { pid: AGENT, startedAt: MORNING },
+			descendants: [],
+		});
 	});
 
 	it('does not own a pid whose parent is some other process', () => {
@@ -310,6 +322,7 @@ describe('on Linux, where the table comes from /proc', () => {
 
 		expect(snapshotProcessTree(AGENT)).toEqual({
 			owned: true,
+			root: { pid: AGENT, startedAt: '100' },
 			descendants: [
 				{ pid: 5000, startedAt: '200' },
 				{ pid: 6000, startedAt: '300' },
@@ -354,10 +367,15 @@ describe('on Linux, where the table comes from /proc', () => {
 			5000: procStat(5000, AGENT, 200),
 			5001: procStat(5001, AGENT, 400),
 		});
-		const before = { owned: true, descendants: [{ pid: 5000, startedAt: '200' }] };
+		const before = {
+			owned: true,
+			root: { pid: AGENT, startedAt: '100' },
+			descendants: [{ pid: 5000, startedAt: '200' }],
+		};
 
 		expect(await refreshProcessTree(AGENT, before)).toEqual({
 			owned: true,
+			root: before.root,
 			descendants: [
 				{ pid: 5000, startedAt: '200' },
 				{ pid: 5001, startedAt: '400' },
@@ -370,7 +388,11 @@ describe('on Linux, where the table comes from /proc', () => {
 
 describe('mergeProcessTree', () => {
 	const tool = { pid: 5000, startedAt: MORNING };
-	const owned = { owned: true, descendants: [tool] };
+	const owned = {
+		owned: true,
+		root: { pid: AGENT, startedAt: MORNING },
+		descendants: [tool],
+	};
 	const tableRow = (pid: number, ppid: number, startedAt = MORNING): ProcessTableRow => ({
 		pid,
 		ppid,
@@ -382,6 +404,7 @@ describe('mergeProcessTree', () => {
 
 		expect(mergeProcessTree(AGENT, owned, rows)).toEqual({
 			owned: true,
+			root: owned.root,
 			descendants: [tool, { pid: 5001, startedAt: LATER }],
 		});
 	});
@@ -405,11 +428,28 @@ describe('mergeProcessTree', () => {
 
 	it('does not follow the agent pid once it is not a child of this process', () => {
 		const rows = [tableRow(AGENT, 1), tableRow(5001, AGENT, LATER)];
+		const before = { ...owned, descendants: [] };
 
-		expect(mergeProcessTree(AGENT, { owned: true, descendants: [] }, rows)).toEqual({
-			owned: true,
-			descendants: [],
-		});
+		expect(mergeProcessTree(AGENT, before, rows)).toBe(before);
+	});
+
+	it('does not adopt a reused root even when its parent is still this process', () => {
+		const rows = [tableRow(AGENT, SELF, LATER), tableRow(5001, AGENT, LATER)];
+
+		expect(mergeProcessTree(AGENT, owned, rows)).toBe(owned);
+	});
+
+	it('does not follow another root with the same start time', () => {
+		const rows = [tableRow(7777, SELF), tableRow(5001, 7777)];
+
+		expect(mergeProcessTree(7777, owned, rows)).toBe(owned);
+	});
+
+	it('cannot recover a legacy root identity from its current parent link', () => {
+		const legacy = { owned: true, descendants: [] };
+		const rows = [tableRow(AGENT, SELF), tableRow(5001, AGENT)];
+
+		expect(mergeProcessTree(AGENT, legacy, rows)).toBe(legacy);
 	});
 
 	it('hands back the same record when nothing new has started', () => {
@@ -431,7 +471,11 @@ describe('mergeProcessTree', () => {
 });
 
 describe('refreshProcessTree', () => {
-	const owned = { owned: true, descendants: [{ pid: 5000, startedAt: MORNING }] };
+	const owned = {
+		owned: true,
+		root: { pid: AGENT, startedAt: MORNING },
+		descendants: [{ pid: 5000, startedAt: MORNING }],
+	};
 
 	it('reads the table through ps without blocking', async () => {
 		mocks.execFileNoThrow.mockResolvedValue({
@@ -444,14 +488,34 @@ describe('refreshProcessTree', () => {
 			{ pid: 5000, startedAt: MORNING },
 			{ pid: 5001, startedAt: LATER },
 		]);
-		expect(mocks.execFileNoThrow).toHaveBeenCalledWith('ps', ['-eo', 'pid=,ppid=,lstart=']);
+		expect(mocks.execFileNoThrow).toHaveBeenCalledWith(
+			'ps',
+			['-eo', 'pid=,ppid=,lstart='],
+			undefined,
+			{
+				timeout: 2000,
+			}
+		);
 		expect(mocks.execFileSyncNoThrow).not.toHaveBeenCalled();
 	});
 
-	it('keeps the record it has when ps fails', async () => {
-		mocks.execFileNoThrow.mockResolvedValue({ stdout: '', stderr: 'boom', exitCode: 1 });
+	it.each([1, 'ETIMEDOUT'])('ignores partial ps output after failure %s', async (exitCode) => {
+		mocks.execFileNoThrow.mockResolvedValue({
+			stdout: [row(AGENT, SELF), row(5001, AGENT)].join('\n'),
+			stderr: 'failed process table read',
+			exitCode,
+		});
 
 		expect(await refreshProcessTree(AGENT, owned)).toBe(owned);
+		expect(killSpy).not.toHaveBeenCalled();
+		expect(mocks.execFileNoThrow).toHaveBeenCalledWith(
+			'ps',
+			['-eo', 'pid=,ppid=,lstart='],
+			undefined,
+			{
+				timeout: 2000,
+			}
+		);
 	});
 
 	it('reads nothing for a tree that is not ours, or on Windows', async () => {
@@ -462,5 +526,175 @@ describe('refreshProcessTree', () => {
 		expect(await refreshProcessTree(AGENT, owned)).toBe(owned);
 
 		expect(mocks.execFileNoThrow).not.toHaveBeenCalled();
+	});
+});
+
+describe.each(['ps', 'procfs'])('identity-preserving refresh through %s', (platform) => {
+	const rootStart = platform === 'procfs' ? '100' : MORNING;
+	const toolStart = platform === 'procfs' ? '200' : MORNING;
+	const newStart = platform === 'procfs' ? '300' : LATER;
+	let before: ProcessTreeSnapshot;
+
+	beforeEach(() => {
+		mocks.isLinux.mockReturnValue(platform === 'procfs');
+		processTable(row(AGENT, SELF), row(5000, AGENT));
+		procTable({ [AGENT]: procStat(AGENT, SELF, 100), 5000: procStat(5000, AGENT, 200) });
+		before = snapshotProcessTree(AGENT);
+		expect(before).toEqual({
+			owned: true,
+			root: { pid: AGENT, startedAt: rootStart },
+			descendants: [{ pid: 5000, startedAt: toolStart }],
+		});
+	});
+
+	describe.each(['sync', 'async'])('%s reader', (reader) => {
+		it('follows surviving descendants after the root exits and preserves its identity', async () => {
+			processTable(row(5000, 1), row(5500, 5000, LATER), row(7777, 1, LATER));
+			procTable({
+				5000: procStat(5000, 1, 200),
+				5500: procStat(5500, 5000, 300),
+				7777: procStat(7777, 1, 300),
+			});
+
+			const refreshed =
+				reader === 'sync'
+					? snapshotProcessTree(AGENT, before)
+					: await refreshProcessTree(AGENT, before);
+
+			expect(refreshed).toEqual({
+				...before,
+				descendants: [...before.descendants, { pid: 5500, startedAt: newStart }],
+			});
+			expect(refreshed.root).toBe(before.root);
+			expect(before.descendants).toEqual([{ pid: 5000, startedAt: toolStart }]);
+			expect(killSpy).not.toHaveBeenCalled();
+			expect(killSurvivors(refreshed.descendants, CTX)).toBe(2);
+			expect(killSpy.mock.calls).toEqual([
+				[5500, 'SIGKILL'],
+				[5000, 'SIGKILL'],
+			]);
+		});
+
+		it('rejects children of a reused root but still follows a verified survivor', async () => {
+			processTable(
+				row(AGENT, SELF, LATER),
+				row(5001, AGENT, LATER),
+				row(5000, 1),
+				row(5500, 5000, LATER)
+			);
+			procTable({
+				[AGENT]: procStat(AGENT, SELF, 300),
+				5001: procStat(5001, AGENT, 300),
+				5000: procStat(5000, 1, 200),
+				5500: procStat(5500, 5000, 300),
+			});
+
+			const refreshed =
+				reader === 'sync'
+					? snapshotProcessTree(AGENT, before)
+					: await refreshProcessTree(AGENT, before);
+
+			expect(refreshed).toEqual({
+				...before,
+				descendants: [...before.descendants, { pid: 5500, startedAt: newStart }],
+			});
+			expect(killSpy).not.toHaveBeenCalled();
+			expect(killSurvivors(refreshed.descendants, CTX)).toBe(2);
+			expect(killSpy.mock.calls).toEqual([
+				[5500, 'SIGKILL'],
+				[5000, 'SIGKILL'],
+			]);
+		});
+
+		it('follows only recorded descendants from a legacy rootless snapshot', async () => {
+			const legacy = { owned: true, descendants: before.descendants };
+			processTable(
+				row(AGENT, SELF),
+				row(5000, AGENT),
+				row(5001, AGENT, LATER),
+				row(5500, 5000, LATER)
+			);
+			procTable({
+				[AGENT]: procStat(AGENT, SELF, 100),
+				5000: procStat(5000, AGENT, 200),
+				5001: procStat(5001, AGENT, 300),
+				5500: procStat(5500, 5000, 300),
+			});
+
+			const refreshed =
+				reader === 'sync'
+					? snapshotProcessTree(AGENT, legacy)
+					: await refreshProcessTree(AGENT, legacy);
+
+			expect(refreshed).toEqual({
+				...legacy,
+				descendants: [...legacy.descendants, { pid: 5500, startedAt: newStart }],
+			});
+			expect(refreshed).not.toHaveProperty('root');
+			expect(killSurvivors(refreshed.descendants, CTX)).toBe(2);
+			expect(killSpy.mock.calls).toEqual([
+				[5500, 'SIGKILL'],
+				[5000, 'SIGKILL'],
+			]);
+		});
+
+		it('does not follow or signal reused descendants after the root exits', async () => {
+			processTable(row(5000, 1, LATER), row(5500, 5000, LATER));
+			procTable({ 5000: procStat(5000, 1, 300), 5500: procStat(5500, 5000, 300) });
+
+			const refreshed =
+				reader === 'sync'
+					? snapshotProcessTree(AGENT, before)
+					: await refreshProcessTree(AGENT, before);
+
+			expect(refreshed).toBe(before);
+			expect(killSurvivors(refreshed.descendants, CTX)).toBe(0);
+			expect(killSpy).not.toHaveBeenCalled();
+		});
+
+		it('does not acquire ownership while refreshing an unowned snapshot', async () => {
+			const unowned = { owned: false, descendants: [] };
+			const refreshed =
+				reader === 'sync'
+					? snapshotProcessTree(AGENT, unowned)
+					: await refreshProcessTree(AGENT, unowned);
+
+			expect(refreshed).toBe(unowned);
+			expect(killSurvivors(refreshed.descendants, CTX)).toBe(0);
+			expect(killSpy).not.toHaveBeenCalled();
+		});
+
+		it.each(['missing', 'malformed'])(
+			'retains the record for a %s table without guessing ownership',
+			async (failure) => {
+				if (failure === 'missing') {
+					processTable();
+					mocks.readdirSync.mockImplementation(() => {
+						throw new Error('EACCES');
+					});
+					mocks.readdir.mockRejectedValue(new Error('EACCES'));
+				} else {
+					processTable('garbage', `${AGENT} ${SELF}`, `5000 1`, row(7777, 1));
+					procTable(
+						{
+							[AGENT]: `${AGENT} (node) S ${SELF}`,
+							5000: '5000 (node) S 1',
+							7777: procStat(7777, 1, 300),
+						},
+						['5001', 'self']
+					);
+				}
+
+				const refreshed =
+					reader === 'sync'
+						? snapshotProcessTree(AGENT, before)
+						: await refreshProcessTree(AGENT, before);
+
+				expect(refreshed).toBe(before);
+				expect(snapshotProcessTree(AGENT)).toEqual({ owned: false, descendants: [] });
+				expect(killSurvivors(refreshed.descendants, CTX)).toBe(0);
+				expect(killSpy).not.toHaveBeenCalled();
+			}
+		);
 	});
 });

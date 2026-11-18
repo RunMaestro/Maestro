@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { execFileNoThrow } from './utils/execFile';
 import { atomicWriteFile } from './utils/atomic-json-store';
+import { shellEscape } from './utils/shell-escape';
 import { getWhichCommand, isWindows } from '../shared/platformDetection';
 import { compareVersions } from '../shared/pathUtils';
 import { getExpandedEnv } from './utils/cliDetection';
@@ -11,7 +12,29 @@ import { logger } from './utils/logger';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 
 const CLI_BINARY_NAME = 'maestro-cli';
+const BOOTSTRAP_FILE_NAME = `${CLI_BINARY_NAME}-bootstrap.js`;
 const LOG_CONTEXT = 'MaestroCliManager';
+
+/**
+ * Marker in a shim this installer wrote for the Linux AppImage. Startup repair
+ * rewrites such a shim when the recorded AppImage path changes, and leaves any
+ * shim without the marker alone.
+ */
+const APPIMAGE_SHIM_MARKER = '# Maestro CLI shim for the Linux AppImage build.';
+
+/**
+ * Script the AppImage shim runs. It rebuilds argv so the CLI reads its own
+ * script path at `argv[1]`, then requires the bundled CLI resolved from the
+ * mount the current AppImage run created. A real script file (not `-e`) keeps
+ * `--version` and `--help` out of Electron's own argument parser.
+ */
+const APPIMAGE_BOOTSTRAP_SOURCE =
+	`// Maestro CLI bootstrap for the Linux AppImage build.\n` +
+	`// The app mounts at a new /tmp/.mount_* path on every launch.\n` +
+	`const path = require('path');\n` +
+	`const cli = path.join(path.dirname(process.execPath), 'resources', 'maestro-cli.js');\n` +
+	`process.argv = [process.execPath, cli, ...process.argv.slice(2)];\n` +
+	`require(cli);\n`;
 
 export function normalizeVersion(raw: string): string {
 	const lines = splitOutputLines(raw);
@@ -101,6 +124,25 @@ export class MaestroCliManager {
 		return path.join(this.getInstallDir(), CLI_BINARY_NAME);
 	}
 
+	/** The bootstrap sits beside the shim, so both move together. */
+	private getBootstrapPath(installPath: string): string {
+		return path.join(path.dirname(installPath), BOOTSTRAP_FILE_NAME);
+	}
+
+	/**
+	 * The AppImage file this process runs from, or null. `APPIMAGE` alone is not
+	 * enough: the AppImage runtime exports it, so every child process (a dev
+	 * run, a test run, a shell command) inherits it. Require `APPDIR` as well,
+	 * and require the running binary to sit inside that mount.
+	 */
+	private resolveAppImagePath(): string | null {
+		const appImagePath = process.env.APPIMAGE;
+		const appDir = process.env.APPDIR;
+		if (!appImagePath || !appDir) return null;
+		const execDir = path.resolve(path.dirname(process.execPath));
+		return execDir === path.resolve(appDir) ? appImagePath : null;
+	}
+
 	private async resolveBundledCliPath(): Promise<string | null> {
 		const candidates = getBundledCliCandidates();
 		logger.debug('Resolving bundled maestro-cli.js path', LOG_CONTEXT, { candidates });
@@ -180,6 +222,12 @@ export class MaestroCliManager {
 	 * exec'd itself as JavaScript and broke every `maestro-cli` call.
 	 */
 	private async writeUnixShim(installPath: string, bundledCliPath: string): Promise<void> {
+		const appImagePath = this.resolveAppImagePath();
+		if (appImagePath) {
+			await this.writeAppImageShim(installPath, appImagePath);
+			return;
+		}
+
 		const safeCliPath = bundledCliPath.replace(/'/g, "'\\''");
 		const safeRuntimePath = process.execPath.replace(/'/g, "'\\''");
 		const script =
@@ -190,6 +238,54 @@ export class MaestroCliManager {
 			bundledCliPath,
 			runtimePath: process.execPath,
 		});
+		await atomicWriteFile(installPath, script);
+		await fs.promises.chmod(installPath, 0o755);
+	}
+
+	/**
+	 * AppImage builds run from a temporary mount (`/tmp/.mount_*`) whose name
+	 * changes on every launch, so a shim recording `process.execPath` breaks at
+	 * the next start. `$APPIMAGE` holds the stable AppImage file path. Write a
+	 * shim that re-enters that file in node mode, plus a bootstrap beside it
+	 * that resolves the bundled CLI from the mount that run creates. The shim
+	 * then survives a restart, an AppImage update that renames the file, and a
+	 * closed desktop app.
+	 */
+	private async writeAppImageShim(installPath: string, appImagePath: string): Promise<void> {
+		const bootstrapPath = this.getBootstrapPath(installPath);
+		const safeAppImage = shellEscape(appImagePath);
+		const safeBootstrap = shellEscape(bootstrapPath);
+		const script =
+			`#!/usr/bin/env bash\n` +
+			`${APPIMAGE_SHIM_MARKER}\n` +
+			`# The app mounts at a new /tmp/.mount_* path on every launch. This shim\n` +
+			`# re-enters the AppImage in node mode; the bootstrap resolves the bundled\n` +
+			`# CLI from the mount that run creates. Install / Update CLI rewrites it.\n` +
+			`set -euo pipefail\n` +
+			`\n` +
+			`appimage=${safeAppImage}\n` +
+			`bootstrap=${safeBootstrap}\n` +
+			`\n` +
+			`if [ ! -x "$appimage" ]; then\n` +
+			`  echo "maestro-cli: the Maestro AppImage is not at $appimage." >&2\n` +
+			`  echo "Run Install / Update CLI in Maestro settings." >&2\n` +
+			`  exit 127\n` +
+			`fi\n` +
+			`\n` +
+			`if [ ! -f "$bootstrap" ]; then\n` +
+			`  echo "maestro-cli: $bootstrap is missing." >&2\n` +
+			`  echo "Run Install / Update CLI in Maestro settings." >&2\n` +
+			`  exit 127\n` +
+			`fi\n` +
+			`\n` +
+			`ELECTRON_RUN_AS_NODE=1 exec "$appimage" "$bootstrap" "$@"\n`;
+		logger.info('Writing AppImage maestro-cli shim', LOG_CONTEXT, {
+			installPath,
+			appImagePath,
+			bootstrapPath,
+		});
+		await atomicWriteFile(bootstrapPath, APPIMAGE_BOOTSTRAP_SOURCE);
+		await fs.promises.chmod(bootstrapPath, 0o644);
 		await atomicWriteFile(installPath, script);
 		await fs.promises.chmod(installPath, 0o755);
 	}
@@ -207,6 +303,71 @@ export class MaestroCliManager {
 			runtimePath: process.execPath,
 		});
 		await atomicWriteFile(installPath, script);
+	}
+
+	/**
+	 * True when the file at `installPath` is a shim this installer wrote: either
+	 * the current AppImage shim (marker present) or the older shim that recorded
+	 * a `.mount_*` path. Any other file belongs to the user and stays as is.
+	 */
+	private isInstallerShim(contents: string): boolean {
+		if (contents.includes(APPIMAGE_SHIM_MARKER)) return true;
+		// The pre-fix installer wrote exactly two lines, with both paths inside
+		// the same AppImage mount. The `.mount_` segment rejects the same shape
+		// written for a deb, rpm, or macOS install, and tolerates a non-/tmp
+		// TMPDIR. A hand-written wrapper that only mentions these strings is
+		// left alone too.
+		return /^#!\/usr\/bin\/env bash\r?\nELECTRON_RUN_AS_NODE=1 '([^']*\/\.mount_[^'\/]*)\/maestro' '\1\/resources\/maestro-cli\.js' "\$@"\r?\n?$/.test(
+			contents
+		);
+	}
+
+	private shimTargetsAppImage(contents: string, appImagePath: string): boolean {
+		return contents.includes(`appimage=${shellEscape(appImagePath)}`);
+	}
+
+	/**
+	 * Repair the shim when the recorded AppImage path no longer matches the app
+	 * that is running: an update renamed the file, or an older build recorded a
+	 * `.mount_*` path that is now gone. Startup runs this, so a failure is
+	 * logged and never thrown. Returns true when the shim was rewritten.
+	 */
+	async healAppImageShim(): Promise<boolean> {
+		const appImagePath = this.resolveAppImagePath();
+		if (!appImagePath || isWindows()) return false;
+
+		const installPath = this.getInstallPath();
+		let contents: string;
+		try {
+			contents = await fs.promises.readFile(installPath, 'utf-8');
+		} catch {
+			return false;
+		}
+
+		if (!this.isInstallerShim(contents)) return false;
+		if (
+			contents.includes(APPIMAGE_SHIM_MARKER) &&
+			this.shimTargetsAppImage(contents, appImagePath)
+		) {
+			return false;
+		}
+
+		try {
+			await fs.promises.mkdir(this.getInstallDir(), { recursive: true });
+			await this.writeAppImageShim(installPath, appImagePath);
+			logger.info('Repaired AppImage maestro-cli shim', LOG_CONTEXT, {
+				installPath,
+				appImagePath,
+			});
+			return true;
+		} catch (err) {
+			logger.warn('Could not repair AppImage maestro-cli shim', LOG_CONTEXT, {
+				installPath,
+				appImagePath,
+				error: err instanceof Error ? err.message : String(err),
+			});
+			return false;
+		}
 	}
 
 	private async ensurePosixPathExport(

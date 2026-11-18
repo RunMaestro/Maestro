@@ -658,6 +658,37 @@ describe('RenameTabModal', () => {
 			expect(mockOnRename).not.toHaveBeenCalled();
 		});
 
+		it('leaves Cmd+Shift+Enter to the input method during an IME composition', () => {
+			const mockOnAutoName = vi.fn();
+
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+						onAutoName={mockOnAutoName}
+						hasLogs={true}
+					/>
+				</TestWrapper>
+			);
+
+			const input = screen.getByRole('textbox');
+			for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+				const handled = fireEvent.keyDown(input, {
+					key: 'Enter',
+					shiftKey: true,
+					metaKey: true,
+					...ime,
+				});
+				expect(handled).toBe(true);
+			}
+
+			expect(mockOnAutoName).not.toHaveBeenCalled();
+			expect(mockOnRename).not.toHaveBeenCalled();
+		});
+
 		it('triggers onAutoName on Ctrl+Shift+Enter when Auto button is shown', () => {
 			const mockOnAutoName = vi.fn();
 

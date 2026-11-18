@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { EditorState, type Extension } from '@codemirror/state';
+import { ensureSyntaxTree } from '@codemirror/language';
+import { classHighlighter, highlightTree } from '@lezer/highlight';
 import {
+	fenceLanguage,
 	loadLanguageExtension,
 	hasLanguageSupport,
 } from '../../../../../renderer/components/FilePreview/giantPreview/languageLoader';
@@ -149,5 +153,64 @@ describe('loadLanguageExtension', () => {
 	it('is case-insensitive', async () => {
 		expect(await loadLanguageExtension('PYTHON')).toBeTruthy();
 		expect(await loadLanguageExtension('Markdown')).toBeTruthy();
+	});
+});
+
+describe('fenceLanguage', () => {
+	it('resolves a fence tag through the same aliases a file name uses', () => {
+		expect(fenceLanguage('ts')?.name).toBe('typescript');
+		expect(fenceLanguage('zsh')?.name).toBe('shell');
+		expect(fenceLanguage('dataview')?.name).toBe('dataview');
+		expect(fenceLanguage('dataviewjs')?.name).toBe('javascript');
+		expect(fenceLanguage(' Python ')?.name).toBe('python');
+	});
+
+	it('returns null for a tag with no grammar, so the fence stays plain text', () => {
+		expect(fenceLanguage('cobol')).toBeNull();
+		expect(fenceLanguage('')).toBeNull();
+	});
+
+	it('hands out one description per language, so a grammar loads once', () => {
+		expect(fenceLanguage('js')).toBe(fenceLanguage('javascript'));
+		expect(fenceLanguage('dataviewjs')).toBe(fenceLanguage('js'));
+	});
+
+	it('colors the code inside markdown fences, including dataview and dataviewjs', async () => {
+		const doc = [
+			'# Note',
+			'',
+			'```dataview',
+			'TABLE file.cday AS Created',
+			'FROM #meeting or "meetings"',
+			'LIMIT 25',
+			'```',
+			'',
+			'```dataviewjs',
+			'const p = dv.pages("#x");',
+			'```',
+			'',
+			'```ts',
+			'const n: number = 1;',
+			'```',
+			'',
+		].join('\n');
+		// The editor loads a fence's grammar on demand and reparses; load them up front to parse once.
+		for (const tag of ['dataview', 'dataviewjs', 'ts']) await fenceLanguage(tag)!.load();
+		const markdown = (await loadLanguageExtension('markdown')) as Extension;
+		const state = EditorState.create({ doc, extensions: [markdown] });
+		const tree = ensureSyntaxTree(state, doc.length, 5000)!;
+		const tokens: string[] = [];
+		highlightTree(tree, classHighlighter, (from, to, classes) => {
+			tokens.push(`${classes.replace(/tok-/g, '')}:${doc.slice(from, to)}`);
+		});
+
+		// DQL, from the shared Dataview token rules.
+		expect(tokens).toContain('keyword:TABLE');
+		expect(tokens).toContain('keyword:LIMIT');
+		expect(tokens).toContain('string:"meetings"');
+		expect(tokens).toContain('number:25');
+		// dataviewjs and ts, from their JavaScript grammars.
+		expect(tokens).toContain('propertyName:pages');
+		expect(tokens).toContain('typeName:number');
 	});
 });

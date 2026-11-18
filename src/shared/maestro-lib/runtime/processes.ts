@@ -37,17 +37,25 @@ export interface ProcessRegistry extends RepositoryProcesses {
 	terminateAllNow(): void;
 	/** How many turns are registered. */
 	size(): number;
+	/**
+	 * The agent's tabs with a registered turn, and when the earliest of each tab's turns was
+	 * registered (epoch ms). Live state (RT14): what a host reports as busy, never the stored state.
+	 */
+	runningTabs(agentId: string): ReadonlyMap<string, number>;
 }
 
 export interface ProcessRegistryOptions {
 	/** How long `stop*` waits for a turn to end before it resolves anyway. Default 10000. */
 	waitMs?: number;
+	/** The clock `runningTabs` stamps a registration with. Default `Date.now`. */
+	now?: () => number;
 }
 
 interface Entry {
 	agentId: string;
 	tabId: string;
 	turn: RegisteredTurn;
+	registeredAt: number;
 }
 
 /** Resolves when `promise` settles or after `ms`, whichever is first. Never rejects. */
@@ -70,6 +78,7 @@ function settledWithin(promise: Promise<unknown>, ms: number): Promise<void> {
 
 export function createProcessRegistry(options: ProcessRegistryOptions = {}): ProcessRegistry {
 	const waitMs = options.waitMs ?? 10_000;
+	const now = options.now ?? (() => Date.now());
 	const entries = new Set<Entry>();
 
 	const matching = (agentId: string, tabId?: string): Entry[] =>
@@ -96,7 +105,7 @@ export function createProcessRegistry(options: ProcessRegistryOptions = {}): Pro
 
 	return {
 		register(agentId, tabId, turn) {
-			const entry: Entry = { agentId, tabId, turn };
+			const entry: Entry = { agentId, tabId, turn, registeredAt: now() };
 			entries.add(entry);
 			const forget = (): void => {
 				entries.delete(entry);
@@ -122,5 +131,15 @@ export function createProcessRegistry(options: ProcessRegistryOptions = {}): Pro
 			}
 		},
 		size: () => entries.size,
+		runningTabs(agentId) {
+			const tabs = new Map<string, number>();
+			for (const entry of matching(agentId)) {
+				const earliest = tabs.get(entry.tabId);
+				if (earliest === undefined || entry.registeredAt < earliest) {
+					tabs.set(entry.tabId, entry.registeredAt);
+				}
+			}
+			return tabs;
+		},
 	};
 }

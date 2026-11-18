@@ -28,8 +28,13 @@ import { diagnoseApiUsageBilling } from './billing-mode';
 import { buildChildEnv } from './child-env';
 import { JsonEmitter, type EmitResultOptions } from './json-emitter';
 import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
-import { isSlashCommandPrompt, localCommandOutput } from './local-command-row';
+import {
+	isSlashCommandPrompt,
+	localCommandOutput,
+	unknownSlashCommandError,
+} from './local-command-row';
 import { extractExitPlanText } from './plan-mode';
+import { extractAskUserQuestionText } from './ask-user-question';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
 import { isPreTurnRow } from './turn-start';
 import { collectAssistantText, ReplyText } from './reply-text';
@@ -48,9 +53,15 @@ import {
 } from '../shared/chatSteering';
 import { startSteeringServer, type SteeringServer } from './steering-server';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
-import { formatScreenTailReport, idleTimeoutMessage, readyTimeoutMessage } from './timeout-report';
+import {
+	formatScreenTailReport,
+	idleTimeoutMessage,
+	readyTimeoutMessage,
+	startupDialogBlockedMessage,
+} from './timeout-report';
 import { PROMPT_TAB_SPACES, TuiDriver } from './tui-driver';
 import { OpenToolCalls, skipsPermissionPrompts, withPermissionBypass } from './open-tool-calls';
+import { parseStreamTokenCount, StreamProgress } from './stream-progress';
 import {
 	addToCostState,
 	parseCostStateRow,
@@ -70,6 +81,13 @@ const WATCHDOG_INTERVAL_MS = 1000;
 // unattended. Claude bounds its own Bash calls well under this; the ceiling
 // is for a call nothing else bounds, such as a hung MCP tool.
 const OPEN_TOOL_SILENCE_CEILING_MS = 60 * 60 * 1000;
+
+// Transcript silence after which the watchdog starts reading claude's live
+// token counter, and how often it reads it (see stream-progress.ts). Well under
+// the smallest real --max-wait, so a baseline and at least one comparison exist
+// before any budget runs out.
+const STREAM_SAMPLE_AFTER_MS = 20 * 1000;
+const STREAM_SAMPLE_INTERVAL_MS = 10 * 1000;
 
 // Interval between Enter re-submits while waiting for the first transcript
 // byte. send()'s initial burst all lands within ~3s; on agents that load
@@ -214,6 +232,13 @@ function acceptsWorkspaceTrust(): boolean {
 // the TUI quit on the blind Enter and the only signal was `tui_exited`.
 function workspaceUntrustedHint(cwd: string): string {
 	return `maestro-p: claude has not been trusted to work in ${cwd}, and its folder-trust prompt defaults to "No, exit" there. Open claude in that folder once and choose "Yes, I trust this folder", or set MAESTRO_P_ACCEPT_WORKSPACE_TRUST=1 to have maestro-p accept it. Failing with workspace_untrusted.\n`;
+}
+
+// What to tell the caller when claude asked to add a directory maestro-p was
+// not given with --add-dir (see add-dir-prompt.ts). maestro-p answers that
+// dialog only for directories on its own command line.
+function addDirUntrustedHint(dir: string): string {
+	return `maestro-p: claude asked to add the directory ${dir}, which was not passed with --add-dir, and its prompt defaults to "No, exit". Pass it with --add-dir, or remove it from claude's additionalDirectories settings. Failing with add_dir_untrusted.\n`;
 }
 
 function waitForEvent(emitter: EventEmitter, event: string): Promise<void> {
@@ -589,6 +614,9 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// the desktop replay the prompt through the API, which is the opposite of
 		// what the user just asked for.
 		stopped?: boolean;
+		// The screen that explains a failure, read BEFORE finalize() quits the TUI
+		// (`/quit` repaints it). Carried on the result as `last_screen`.
+		screen?: string;
 	};
 
 	const finalize = (options: FinalizeOptions): void => {
@@ -668,6 +696,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				isError: finalIsError,
 			};
 			if (finalError !== undefined) resultOpts.error = finalError;
+			if (options.isError && options.screen) resultOpts.lastScreen = options.screen;
 			// Carry aggregated text/usage on success and on the limit-drain path
 			// (assistant emitted text BEFORE the limit was hit). Pure error paths
 			// (timeout, tui_exited) omit them.
@@ -806,6 +835,16 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// local-command-row.ts). The result carries the session id the row was
 		// written under: `/clear` rotates claude onto a new session.
 		if (slashCommandPrompt) {
+			// A command claude does not have is refused with an informational row
+			// and nothing else, so without this the turn rode out `--max-wait` and
+			// exited 3 as a crash. Exit 8 like a terminal API error: replaying the
+			// turn under `claude --print` gets the same refusal.
+			const unknownCommand = unknownSlashCommandError(e);
+			if (unknownCommand !== null) {
+				process.stderr.write(`maestro-p: claude refused the slash command: ${unknownCommand}\n`);
+				finalize({ isError: true, error: unknownCommand, exitCode: 8 });
+				return;
+			}
 			const commandOutput = localCommandOutput(e);
 			if (commandOutput !== null) {
 				if (graceTimer) clearTimeout(graceTimer);
@@ -856,6 +895,17 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			const planText = extractExitPlanText(message);
 			if (planText !== null) {
 				reply.appendIfMissing(planText);
+				finalize({ isError: false, exitCode: 0 });
+				return;
+			}
+
+			// AskUserQuestion parks the TUI on a picker the same way, and nothing
+			// answers it here (the permission relay is an API-path feature). End
+			// the turn with the questions as the reply; the user answers in their
+			// next message. See ask-user-question.ts.
+			const questionText = extractAskUserQuestionText(message);
+			if (questionText !== null) {
+				reply.appendIfMissing(questionText);
 				finalize({ isError: false, exitCode: 0 });
 				return;
 			}
@@ -1143,12 +1193,28 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				driver.getScreenTail()
 			)
 		);
-		finalize({ isError: true, error: 'tui_exited', exitCode: 1 });
+		finalize({
+			isError: true,
+			error: 'tui_exited',
+			exitCode: 1,
+			screen: driver.getFailureScreen(),
+		});
 	});
 	driver.on('workspace-untrusted', () => {
 		if (finalized) return;
 		process.stderr.write(workspaceUntrustedHint(cwd));
 		finalize({ isError: true, error: 'workspace_untrusted', exitCode: 7 });
+	});
+	driver.on('add-dir-untrusted', (dir: string) => {
+		if (finalized) return;
+		process.stderr.write(addDirUntrustedHint(dir));
+		finalize({ isError: true, error: 'add_dir_untrusted', exitCode: 10 });
+	});
+	driver.on('startup-dialog-blocked', (option: string) => {
+		if (finalized) return;
+		const screen = driver.getFailureScreen();
+		process.stderr.write(formatScreenTailReport(startupDialogBlockedMessage(option), screen));
+		finalize({ isError: true, error: 'startup_dialog_blocked', exitCode: 11, screen });
 	});
 	driver.on('ready-timeout', () => {
 		if (finalized) return;
@@ -1161,7 +1227,12 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		process.stderr.write(
 			formatScreenTailReport(readyTimeoutMessage(args.readyTimeoutSeconds), driver.getScreenTail())
 		);
-		finalize({ isError: true, error: 'ready_timeout', exitCode: 4 });
+		finalize({
+			isError: true,
+			error: 'ready_timeout',
+			exitCode: 4,
+			screen: driver.getFailureScreen(),
+		});
 	});
 
 	// A Stop (SIGINT from the desktop's interrupt, or SIGTERM) ends the turn like
@@ -1215,7 +1286,12 @@ async function runMode(args: ParsedArgs): Promise<never> {
 				driver.getScreenTail()
 			)
 		);
-		finalize({ isError: true, error: 'first_byte_timeout', exitCode: 5 });
+		finalize({
+			isError: true,
+			error: 'first_byte_timeout',
+			exitCode: 5,
+			screen: driver.getFailureScreen(),
+		});
 	}, firstByteTimeoutMs);
 
 	if (resumeSessionId) {
@@ -1279,7 +1355,12 @@ async function runMode(args: ParsedArgs): Promise<never> {
 						driver.getScreenTail()
 					)
 				);
-				finalize({ isError: true, error: 'first_byte_timeout', exitCode: 5 });
+				finalize({
+					isError: true,
+					error: 'first_byte_timeout',
+					exitCode: 5,
+					screen: driver.getFailureScreen(),
+				});
 			}
 			return new Promise<never>(() => undefined);
 		}
@@ -1297,11 +1378,26 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	// Watchdog: trips when no JSONL bytes have arrived for maxWaitSeconds.
 	// JsonlTailer seeds lastByteAt at start() time, so a fresh tailer with
 	// no data still gets the full window before timeout.
+	const streamProgress = new StreamProgress();
+	let lastStreamSampleAt = 0;
 	watchdogTimer = setInterval(() => {
 		if (finalized || !tailer) return;
+		const now = Date.now();
 		// A subagent writing its own transcript is the turn making progress too.
-		const lastByteAt = Math.max(tailer.getLastByteAt(), subagents?.getLastByteAt() ?? 0);
-		const idleMs = Date.now() - lastByteAt;
+		const transcriptAt = Math.max(tailer.getLastByteAt(), subagents?.getLastByteAt() ?? 0);
+		// So is a response still streaming into one long content block, which
+		// writes nothing to the transcript until it ends. Sampled from the screen
+		// only once the transcript has been quiet a while, and sparingly, since
+		// reading the screen replays the captured stream (see stream-progress.ts).
+		if (
+			now - transcriptAt >= STREAM_SAMPLE_AFTER_MS &&
+			now - lastStreamSampleAt >= STREAM_SAMPLE_INTERVAL_MS
+		) {
+			lastStreamSampleAt = now;
+			streamProgress.observe(parseStreamTokenCount(driver.getLiveScreen()), now);
+		}
+		const lastByteAt = Math.max(transcriptAt, streamProgress.getLastProgressAt());
+		const idleMs = now - lastByteAt;
 		if (idleMs > args.maxWaitSeconds * 1000) {
 			// A tool still running unattended (a long `npm test`, a subagent) is
 			// expected silence, not a stall, up to the ceiling (see open-tool-calls.ts).
@@ -1321,7 +1417,12 @@ async function runMode(args: ParsedArgs): Promise<never> {
 					driver.getScreenTail()
 				)
 			);
-			finalize({ isError: true, error: 'timeout', exitCode: 3 });
+			finalize({
+				isError: true,
+				error: 'timeout',
+				exitCode: 3,
+				screen: driver.getFailureScreen(),
+			});
 		}
 	}, WATCHDOG_INTERVAL_MS);
 
@@ -1375,6 +1476,22 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		if (statusFinalized) return;
 		statusFinalized = true;
 		process.stderr.write(workspaceUntrustedHint(cwd));
+		driver.kill('SIGTERM');
+		process.exit(1);
+	});
+	driver.on('add-dir-untrusted', (dir: string) => {
+		if (statusFinalized) return;
+		statusFinalized = true;
+		process.stderr.write(addDirUntrustedHint(dir));
+		driver.kill('SIGTERM');
+		process.exit(1);
+	});
+	driver.on('startup-dialog-blocked', (option: string) => {
+		if (statusFinalized) return;
+		statusFinalized = true;
+		process.stderr.write(
+			formatScreenTailReport(startupDialogBlockedMessage(option), driver.getFailureScreen())
+		);
 		driver.kill('SIGTERM');
 		process.exit(1);
 	});
@@ -1469,7 +1586,7 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		// and that is load-bearing rather than an oversight. Both accumulate, so a
 		// retry's panel lands appended to the previous one - which is exactly the
 		// shape parseUsage already expects: sliceToFinalPanel() anchors on the LAST
-		// `Current session` header and reads forward from there, so the newest panel
+		// opening section header and reads forward from there, so the newest panel
 		// wins and the stale one is ignored. Clearing would break claude's
 		// differential repaints, where only the changed cells arrive and no fresh
 		// section header is painted: a cleared buffer would hold anchorless

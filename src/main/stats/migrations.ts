@@ -28,6 +28,9 @@ import {
 	CREATE_IMAGE_ANNOTATIONS_SQL,
 	CREATE_IMAGE_ANNOTATIONS_INDEXES_SQL,
 	CREATE_SHORTCUT_USAGE_DAILY_SQL,
+	CREATE_SHORTCUT_USAGE_BY_ID_SQL,
+	CREATE_QUERY_START_SESSION_INDEX_SQL,
+	CREATE_TOKEN_SPEED_HOURLY_SQL,
 	CREATE_MULTI_WINDOW_USAGE_DAILY_SQL,
 	ADD_QUERY_EVENT_TOKEN_COLUMNS,
 	CREATE_RESILIENCE_EVENTS_SQL,
@@ -136,8 +139,28 @@ function getMigrations(): Migration[] {
 		},
 		{
 			version: 14,
-			description: 'Add kind column to auto_run_sessions for goal-driven vs spec-driven split',
+			description:
+				'Add shortcut_usage_by_id table and the (start_time, session_id) index on query_events',
 			up: (db) => migrateV14(db),
+			isApplied: (db) => hasTable(db, 'shortcut_usage_by_id'),
+		},
+		{
+			// rc first shipped this as v14, the number main gave shortcut_usage_by_id.
+			// A database an rc build left at v14 has `kind` but not main's v14, so
+			// both declare isApplied and repairSkippedMigrations fills the gap.
+			version: 15,
+			description: 'Add kind column to auto_run_sessions for goal-driven vs spec-driven split',
+			up: (db) => migrateV15(db),
+			isApplied: (db) => hasColumn(db, 'auto_run_sessions', 'kind'),
+		},
+		{
+			// main ships this as v15, the number rc gave the `kind` column. A
+			// database a main build left at v15 has token_speed_hourly but not
+			// `kind`, so v15's isApplied repairs it and this one is a no-op.
+			version: 16,
+			description: 'Add token_speed_hourly table (token speed timed off the live stream)',
+			up: (db) => migrateV16(db),
+			isApplied: (db) => hasTable(db, 'token_speed_hourly'),
 		},
 	];
 }
@@ -499,17 +522,42 @@ function migrateV13(db: Database.Database): void {
 }
 
 /**
- * Migration v14: `kind` column on auto_run_sessions ('goal-driven' |
+ * Migration v14:
+ * - `shortcut_usage_by_id`: per-shortcut, per-day firing counts, so the
+ *   Shortcuts tab can show which shortcuts get used. History before this
+ *   version only has the daily total, so the per-shortcut list starts empty.
+ * - `idx_query_start_session`: covers the dashboard's "distinct agents with a
+ *   query in range" count.
+ * Both statements are idempotent, so a partially applied run is safe to repeat.
+ */
+function migrateV14(db: Database.Database): void {
+	db.prepare(CREATE_SHORTCUT_USAGE_BY_ID_SQL).run();
+	db.prepare(CREATE_QUERY_START_SESSION_INDEX_SQL).run();
+	logger.debug('Created shortcut_usage_by_id table and idx_query_start_session', LOG_CONTEXT);
+}
+
+/**
+ * Migration v15: `kind` column on auto_run_sessions ('goal-driven' |
  * 'spec-driven'), so the Usage Dashboard can split Auto Run time by engine.
  *
  * Additive with a DEFAULT, so every existing row reads back as spec-driven with
  * its other fields untouched. Guarded by hasColumn for the same reason as v5.
  */
-function migrateV14(db: Database.Database): void {
+function migrateV15(db: Database.Database): void {
 	if (!hasColumn(db, 'auto_run_sessions', 'kind')) {
 		db.prepare(ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL).run();
 	}
 	logger.debug('Added kind column to auto_run_sessions table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v16: token_speed_hourly, the per-hour rollup of token speed timed
+ * off the live stream. CREATE IF NOT EXISTS, so a database main already took to
+ * this table (as its v15) is left as is.
+ */
+function migrateV16(db: Database.Database): void {
+	db.prepare(CREATE_TOKEN_SPEED_HOURLY_SQL).run();
+	logger.debug('Created token_speed_hourly table', LOG_CONTEXT);
 }
 
 /**

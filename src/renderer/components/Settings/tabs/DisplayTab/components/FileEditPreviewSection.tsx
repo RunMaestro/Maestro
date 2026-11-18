@@ -17,6 +17,8 @@ interface FileEditPreviewSectionProps {
 	setFileEditShowLineNumbers: (enabled: boolean) => void;
 	fileEditWordWrap: boolean;
 	setFileEditWordWrap: (enabled: boolean) => void;
+	fileEditVimMode: boolean;
+	setFileEditVimMode: (enabled: boolean) => void;
 	filePreviewToolbarVisibility: FilePreviewToolbarVisibility;
 	setFilePreviewToolbarButtonVisibility: (
 		button: FilePreviewToolbarButton,
@@ -30,6 +32,8 @@ export function FileEditPreviewSection({
 	setFileEditShowLineNumbers,
 	fileEditWordWrap,
 	setFileEditWordWrap,
+	fileEditVimMode,
+	setFileEditVimMode,
 	filePreviewToolbarVisibility,
 	setFilePreviewToolbarButtonVisibility,
 }: FileEditPreviewSectionProps) {
@@ -52,6 +56,15 @@ export function FileEditPreviewSection({
 					checked={fileEditWordWrap}
 					onChange={setFileEditWordWrap}
 					ariaLabel="Wrap long lines in the editor"
+					borderTop
+				/>
+				<ToggleSettingRow
+					theme={theme}
+					title="Vim keybindings in the editor"
+					description="Normal, insert, and visual modes, plus :commands, in the file editor. Escape returns to normal mode instead of leaving the editor; use Cmd+E / Ctrl+E to go back to the preview."
+					checked={fileEditVimMode}
+					onChange={setFileEditVimMode}
+					ariaLabel="Vim keybindings in the editor"
 					borderTop
 				/>
 

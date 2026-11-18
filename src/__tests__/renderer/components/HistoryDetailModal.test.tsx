@@ -47,12 +47,12 @@ const createMockEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry =>
 });
 
 describe('HistoryDetailModal', () => {
-	let mockOnClose: ReturnType<typeof vi.fn>;
+	let mockOnClose = vi.fn();
 	let mockOnDelete: ReturnType<typeof vi.fn>;
 	let mockOnUpdate: ReturnType<typeof vi.fn>;
 	let mockOnNavigate: ReturnType<typeof vi.fn>;
 	let mockOnJumpToClaudeSession: ReturnType<typeof vi.fn>;
-	let mockOnResumeSession: ReturnType<typeof vi.fn>;
+	let mockOnResumeSession = vi.fn();
 
 	beforeEach(() => {
 		vi.useFakeTimers();
@@ -453,7 +453,8 @@ describe('HistoryDetailModal', () => {
 			expect(screen.getByText('Resume')).toBeInTheDocument();
 		});
 
-		it('should call onResumeSession and onClose when Resume is clicked', () => {
+		it('should call onResumeSession and onClose when Resume is clicked', async () => {
+			mockOnResumeSession.mockResolvedValue(true);
 			const sessionId = 'abc12345-def6-7890-ghij-klmnopqrstuv';
 			render(
 				<HistoryDetailModal
@@ -475,10 +476,158 @@ describe('HistoryDetailModal', () => {
 			expect(mockOnResumeSession).toHaveBeenCalledWith(
 				sessionId,
 				'/test/project',
-				'PP Farm Meta Data'
+				'PP Farm Meta Data',
+				{ targetSessionId: undefined, nativeSessionBinding: undefined }
 			);
-			expect(mockOnClose).toHaveBeenCalled();
+			expect(mockOnClose).not.toHaveBeenCalled();
+			await act(async () => {});
+			expect(mockOnClose).toHaveBeenCalledExactlyOnceWith();
 		});
+
+		it.each(['click', 'metaKey', 'ctrlKey'] as const)(
+			'forwards detached recorded ownership for colliding IDs via %s',
+			async (gesture) => {
+				mockOnResumeSession.mockResolvedValue(false);
+				const entries = ['one', 'two'].map((owner) =>
+					createMockEntry({
+						id: owner,
+						sessionId: owner,
+						agentSessionId: 'shared-native',
+						projectPath: `/project/${owner}`,
+						sessionName: `Conversation ${owner}`,
+						nativeSessionBinding: Object.freeze({
+							version: 1,
+							state: 'bound',
+							provider: 'grok',
+							nativeSessionId: 'shared-native',
+							accountRef: `account-${owner}`,
+							cwd: `/project/${owner}`,
+							host: Object.freeze({ kind: 'ssh', identity: `endpoint-${owner}` }),
+						}),
+					})
+				);
+				const props = {
+					theme: mockTheme,
+					onClose: mockOnClose,
+					onResumeSession: mockOnResumeSession,
+				};
+				const { rerender } = render(<HistoryDetailModal {...props} entry={entries[0]} />);
+				for (const [index, entry] of entries.entries()) {
+					rerender(<HistoryDetailModal {...props} entry={entry} agentId="codex" />);
+					await act(async () => {
+						if (gesture === 'click')
+							fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+						else fireEvent.keyDown(window, { key: 'Enter', [gesture]: true });
+					});
+					expect(mockOnResumeSession).toHaveBeenNthCalledWith(
+						index + 1,
+						'shared-native',
+						entry.projectPath,
+						entry.sessionName,
+						{ targetSessionId: entry.sessionId, nativeSessionBinding: entry.nativeSessionBinding }
+					);
+					const forwarded = mockOnResumeSession.mock.calls[index][3].nativeSessionBinding;
+					expect(forwarded).not.toBe(entry.nativeSessionBinding);
+					if (entry.nativeSessionBinding?.state === 'bound') {
+						expect(forwarded.host).not.toBe(entry.nativeSessionBinding.host);
+						forwarded.host.identity = 'mutated-consumer-copy';
+						expect(entry.nativeSessionBinding.host).toEqual({
+							kind: 'ssh',
+							identity: `endpoint-${entry.id}`,
+						});
+					}
+					expect(screen.getByRole('dialog')).toHaveTextContent(entry.sessionName!);
+				}
+				expect(mockOnClose).not.toHaveBeenCalled();
+			}
+		);
+
+		it.each([undefined, 'legacy', 'unobserved'] as const)(
+			'preserves unknown %s scope after false and void opens',
+			async (reason) => {
+				const entry = createMockEntry({
+					agentSessionId: 'old-native',
+					sessionId: reason ? 'recorded-owner' : undefined,
+					nativeSessionBinding: reason ? { version: 1, state: 'unknown', reason } : undefined,
+				});
+				mockOnResumeSession.mockResolvedValueOnce(false).mockResolvedValueOnce(undefined);
+				render(
+					<HistoryDetailModal
+						theme={mockTheme}
+						entry={entry}
+						agentId="grok"
+						onClose={mockOnClose}
+						onResumeSession={mockOnResumeSession}
+					/>
+				);
+				for (let attempt = 1; attempt <= 2; attempt++) {
+					await act(async () => {
+						fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+					});
+					expect(mockOnResumeSession).toHaveBeenNthCalledWith(
+						attempt,
+						'old-native',
+						undefined,
+						undefined,
+						{ targetSessionId: entry.sessionId, nativeSessionBinding: entry.nativeSessionBinding }
+					);
+					expect(mockOnClose).not.toHaveBeenCalled();
+					expect(screen.getByRole('dialog')).toHaveTextContent('Test summary');
+				}
+			}
+		);
+
+		it.each(['navigation', 'unmount', 'newer resume'] as const)(
+			'ignores late success after %s',
+			async (change) => {
+				let complete!: (value: boolean) => void;
+				mockOnResumeSession.mockReturnValueOnce(
+					new Promise<boolean>((resolve) => {
+						complete = resolve;
+					})
+				);
+				mockOnResumeSession.mockResolvedValue(false);
+				const entry = createMockEntry({
+					agentSessionId: 'shared-native',
+					sessionId: 'original-owner',
+				});
+				const props = {
+					theme: mockTheme,
+					onClose: mockOnClose,
+					onResumeSession: mockOnResumeSession,
+				};
+				const { rerender, unmount } = render(<HistoryDetailModal {...props} entry={entry} />);
+				fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+				expect(mockOnClose).not.toHaveBeenCalled();
+				if (change === 'unmount') unmount();
+				else if (change === 'navigation') {
+					rerender(
+						<HistoryDetailModal
+							{...props}
+							entry={createMockEntry({
+								id: 'next-entry',
+								agentSessionId: 'shared-native',
+								sessionId: 'next-owner',
+								summary: 'Next selection',
+							})}
+						/>
+					);
+				} else {
+					await act(async () => {
+						fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true });
+					});
+					expect(mockOnResumeSession).toHaveBeenCalledTimes(2);
+				}
+				await act(async () => {
+					complete(true);
+				});
+				expect(mockOnClose).not.toHaveBeenCalled();
+				if (change !== 'unmount')
+					expect(screen.getByRole('dialog')).toHaveTextContent(
+						change === 'navigation' ? 'Next selection' : 'Test summary'
+					);
+			}
+		);
 
 		it('should not show Resume button when onResumeSession is not provided', () => {
 			render(
@@ -1188,7 +1337,8 @@ describe('HistoryDetailModal', () => {
 		// Enter opens this modal from the History list, so the list's Cmd+Enter
 		// has to keep working once you are inside it - otherwise the shortcut
 		// silently stops halfway through the flow it belongs to.
-		it('should jump to the entry session with Cmd+Enter and close', () => {
+		it('should jump to the entry session with Cmd+Enter and close', async () => {
+			mockOnResumeSession.mockResolvedValue(true);
 			const entry = createMockEntry({
 				agentSessionId: 'abc12345-def6-7890',
 				projectPath: '/test/project',
@@ -1211,9 +1361,12 @@ describe('HistoryDetailModal', () => {
 			expect(mockOnResumeSession).toHaveBeenCalledWith(
 				'abc12345-def6-7890',
 				'/test/project',
-				'Named Session'
+				'Named Session',
+				{ targetSessionId: undefined, nativeSessionBinding: undefined }
 			);
-			expect(mockOnClose).toHaveBeenCalled();
+			expect(mockOnClose).not.toHaveBeenCalled();
+			await act(async () => {});
+			expect(mockOnClose).toHaveBeenCalledExactlyOnceWith();
 		});
 
 		it('should not jump on plain Enter', () => {

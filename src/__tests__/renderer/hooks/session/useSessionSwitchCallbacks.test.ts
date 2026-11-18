@@ -7,6 +7,7 @@ import { useUIStore } from '../../../../renderer/stores/uiStore';
 import { outputSearchKeyFor } from '../../../../renderer/utils/outputSearch';
 import {
 	clearDesktopAiTabSelections,
+	startDesktopAiTabSelectionSync,
 	consumeDesktopAiTabSelection,
 } from '../../../../renderer/utils/desktopTabSelectionSync';
 import {
@@ -27,12 +28,15 @@ vi.mock('electron', () => ({ ipcRenderer: nativeIpc }));
 const originalOnClickAction = window.maestro.notification.onClickAction;
 
 describe('useSessionSwitchCallbacks', () => {
+	let stopSelectionSync: () => void;
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		nativeIpc.invoke.mockResolvedValue(undefined);
 		window.maestro.notification.onClickAction = createNotificationApi().onClickAction;
 		resetTabHandlerStores();
 		clearDesktopAiTabSelections();
+		stopSelectionSync = startDesktopAiTabSelectionSync();
 		if (!window.maestro.app.onDeepLink) {
 			(window.maestro.app as any).onDeepLink = vi.fn();
 		}
@@ -40,6 +44,7 @@ describe('useSessionSwitchCallbacks', () => {
 	});
 
 	afterEach(() => {
+		stopSelectionSync();
 		cleanup();
 		window.maestro.notification.onClickAction = originalOnClickAction;
 		vi.restoreAllMocks();

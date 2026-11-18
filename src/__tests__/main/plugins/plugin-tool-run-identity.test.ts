@@ -6,6 +6,9 @@ import { HEADLESS_RUN_COMPLETION_TIMEOUT_MS } from '../../../shared/plugins/head
 import {
 	PluginToolRunIdentity,
 	createPluginRunProofFile,
+	pluginToolEvidenceMessage,
+	pluginToolEvidenceProblem,
+	type PluginToolRunEvidence,
 	removePluginRunProofFile,
 } from '../../../main/plugins/plugin-tool-run-identity';
 
@@ -201,5 +204,153 @@ describe('PluginToolRunIdentity', () => {
 			removePluginRunProofFile(file);
 		}
 		expect(fs.existsSync(file)).toBe(false);
+	});
+});
+
+// The host-observed evidence a Grok required run is judged by
+// (toolEvidence 'observed'). Advertisement is never execution, and nothing a
+// provider or a tool result says can stand in for the host's own record.
+describe('host-observed plugin tool evidence', () => {
+	const TOOL = 'sh.maestro.relay/send';
+	const evidence = (over: Partial<PluginToolRunEvidence> = {}): PluginToolRunEvidence => ({
+		advertisements: 1,
+		advertisedToolIds: [TOOL],
+		receipts: [{ runId: 'r'.repeat(32), agentId: 'agent-a', toolId: TOOL, messageIds: ['101'] }],
+		receiptsOverflowed: false,
+		...over,
+	});
+	const judge = (ev: PluginToolRunEvidence, receiptToolId: string | null = TOOL) =>
+		pluginToolEvidenceProblem({
+			requirePluginTools: true,
+			receiptToolId: receiptToolId ?? undefined,
+			agentId: 'agent-a',
+			evidence: ev,
+		});
+
+	it('accumulates listings across reconnects and keeps only bounded, well-formed tool names', () => {
+		const runs = new PluginToolRunIdentity();
+		const token = runs.issue('agent-a', 60_000, TOOL);
+		try {
+			runs.recordAdvertisement(token, [TOOL, '', 'x'.repeat(201), 42 as unknown as string]);
+			runs.recordAdvertisement(token, ['other/tool', TOOL]);
+			const ev = runs.getEvidence(token);
+			expect(ev.advertisements).toBe(2);
+			expect(ev.advertisedToolIds).toEqual([TOOL, 'other/tool']);
+			runs.recordAdvertisement(
+				token,
+				Array.from({ length: 400 }, (_, i) => `bulk/${i}`)
+			);
+			expect(runs.getEvidence(token).advertisedToolIds).toHaveLength(256);
+		} finally {
+			runs.revoke(token);
+		}
+	});
+
+	it('records no listing for an unknown, malformed, revoked or expired proof', () => {
+		vi.useFakeTimers();
+		try {
+			const runs = new PluginToolRunIdentity();
+			const expired = runs.issue('agent-a', 1_000, TOOL);
+			const revoked = runs.issue('agent-a', 60_000, TOOL);
+			runs.revoke(revoked);
+			vi.advanceTimersByTime(1_001);
+			for (const token of [expired, revoked, 'f'.repeat(64), 'not-a-token', undefined]) {
+				runs.recordAdvertisement(token, [TOOL]);
+				expect(runs.getEvidence(token)).toEqual({
+					advertisements: 0,
+					advertisedToolIds: [],
+					receipts: [],
+					receiptsOverflowed: false,
+				});
+			}
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('never exposes the proof token or extra tool-result fields through the evidence record', () => {
+		const runs = new PluginToolRunIdentity();
+		const token = runs.issue('agent-a', 60_000, TOOL);
+		try {
+			runs.recordAdvertisement(token, [TOOL]);
+			runs.recordReceipt(token, TOOL, {
+				messageIds: ['101'],
+				apiKey: 'xai-secret-credential',
+				token,
+			});
+			const serialized = JSON.stringify(runs.getEvidence(token));
+			expect(serialized).not.toContain(token);
+			expect(serialized).not.toContain('xai-secret-credential');
+			expect(runs.getEvidence(token).receipts).toEqual([
+				expect.objectContaining({ agentId: 'agent-a', toolId: TOOL, messageIds: ['101'] }),
+			]);
+		} finally {
+			runs.revoke(token);
+		}
+	});
+
+	it('a denied or failed tool call leaves no receipt, so the run reads receipt-missing', () => {
+		const runs = new PluginToolRunIdentity();
+		const token = runs.issue('agent-a', 60_000, TOOL);
+		try {
+			runs.recordAdvertisement(token, [TOOL]);
+			for (const denied of [
+				{ success: false, messageIds: ['101'] },
+				{ ok: false, messageIds: ['101'] },
+				{ error: 'permission denied by policy', messageIds: ['101'] },
+				{ messageIds: ['fabricated'] },
+				'{"messageIds":["101"]}',
+				null,
+			]) {
+				runs.recordReceipt(token, TOOL, denied);
+			}
+			expect(judge(runs.getEvidence(token))).toBe('receipt-missing');
+		} finally {
+			runs.revoke(token);
+		}
+	});
+
+	it('judges absent listings, absent tools and absent receipts as failures, never success', () => {
+		expect(judge(evidence({ advertisements: 0, advertisedToolIds: [] }))).toBe(
+			'tools-not-advertised'
+		);
+		expect(judge(evidence({ advertisedToolIds: [] }))).toBe('tools-not-advertised');
+		expect(judge(evidence({ advertisements: 0 }))).toBe('tools-not-advertised');
+		expect(judge(evidence({ advertisedToolIds: ['other/tool'] }))).toBe(
+			'required-tool-not-advertised'
+		);
+		expect(judge(evidence({ receipts: [] }))).toBe('receipt-missing');
+		expect(judge(evidence({ receipts: [{ ...evidence().receipts[0], agentId: 'agent-b' }] }))).toBe(
+			'receipt-missing'
+		);
+		expect(
+			judge(evidence({ receipts: [{ ...evidence().receipts[0], toolId: 'other/tool' }] }))
+		).toBe('receipt-missing');
+		expect(judge(evidence({ receipts: [{ ...evidence().receipts[0], messageIds: [] }] }))).toBe(
+			'receipt-missing'
+		);
+		expect(judge(evidence({ receiptsOverflowed: true }))).toBe('receipt-limit-exceeded');
+		expect(judge(evidence())).toBeNull();
+	});
+
+	it('required tools without a receipt need a non-empty listing; an unrequired run is not judged', () => {
+		expect(judge(evidence({ receipts: [] }), null)).toBeNull();
+		expect(judge(evidence({ advertisedToolIds: [] }), null)).toBe('tools-not-advertised');
+		expect(
+			pluginToolEvidenceProblem({
+				requirePluginTools: false,
+				agentId: 'agent-a',
+				evidence: evidence({ advertisements: 0, advertisedToolIds: [], receipts: [] }),
+			})
+		).toBeNull();
+	});
+
+	it('names each failure without echoing anything but the requested tool id', () => {
+		expect(pluginToolEvidenceMessage('tools-not-advertised')).toMatch(/never listed/);
+		expect(pluginToolEvidenceMessage('required-tool-not-advertised', TOOL)).toContain(`"${TOOL}"`);
+		expect(pluginToolEvidenceMessage('receipt-missing', TOOL)).toBe(
+			'Required plugin tool returned no delivery receipt'
+		);
+		expect(pluginToolEvidenceMessage('receipt-limit-exceeded')).toMatch(/limit exceeded/);
 	});
 });

@@ -13,7 +13,7 @@ import type { ToolType, ProcessConfig } from '../types';
 import type { InlineWizardMessage } from '../hooks/batch/inlineWizard/types';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
-import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../utils/grokWizard';
+import { readGrokWizardOutput, GROK_WIZARD_DISCOVERY_ARGS } from '../utils/grokWizard';
 import {
 	parseStructuredOutput,
 	getConfidenceColor,
@@ -155,6 +155,7 @@ export interface InlineWizardConversationConfig {
 	sessionCustomEnvVars?: Record<string, string>;
 	/** Custom model ID (overrides agent-level) */
 	sessionCustomModel?: string;
+	sessionCustomEffort?: string;
 	/** The agent's Claude token source, so a TUI agent's wizard runs through maestro-p */
 	sessionClaudeTokenSource?: ClaudeTokenSourceFields;
 }
@@ -189,6 +190,7 @@ export interface InlineWizardConversationSession {
 	sessionCustomEnvVars?: Record<string, string>;
 	/** Custom model ID */
 	sessionCustomModel?: string;
+	sessionCustomEffort?: string;
 	/** The agent's Claude token source, so a TUI agent's wizard runs through maestro-p */
 	sessionClaudeTokenSource?: ClaudeTokenSourceFields;
 }
@@ -226,9 +228,8 @@ export const READY_CONFIDENCE_THRESHOLD = 80;
 
 /**
  * Suffix appended to each user message to remind the agent about JSON format.
- * Keep discovery turns bounded: unbounded tool loops (especially agents that emit
- * no tool events on stdout, like Grok) leave the wizard UI stuck on the last
- * thought/text with isWaiting true until the process finally exits.
+ * Keep discovery turns bounded so tool loops cannot leave the wizard waiting
+ * indefinitely. The launch request also carries Grok's read-only intent.
  */
 const STRUCTURED_OUTPUT_SUFFIX = `
 
@@ -347,6 +348,7 @@ export function startInlineWizardConversation(
 		sessionCustomArgs: config.sessionCustomArgs,
 		sessionCustomEnvVars: config.sessionCustomEnvVars,
 		sessionCustomModel: config.sessionCustomModel,
+		sessionCustomEffort: config.sessionCustomEffort,
 		sessionClaudeTokenSource: config.sessionClaudeTokenSource,
 	};
 }
@@ -394,8 +396,18 @@ function buildPromptWithContext(
  * @param response The raw response string from the agent
  * @returns Parsed WizardResponse or null if parsing failed
  */
-export function parseWizardResponse(response: string): WizardResponse | null {
+export function parseWizardResponse(
+	response: string,
+	requireStructured = false
+): WizardResponse | null {
 	const result = parseStructuredOutput(response);
+	if (
+		requireStructured &&
+		(!result.parseSuccess ||
+			!result.structured?.message.trim() ||
+			!Number.isFinite(result.structured.confidence))
+	)
+		return null;
 
 	if (result.parseSuccess && result.structured) {
 		// Apply our ready threshold check on top of the shared parsing
@@ -503,14 +515,6 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 			}
 		}
 
-		// For Grok: concatenate text deltas only (skip thought/reasoning deltas).
-		// The `end` event has sessionId but no result body, so the full answer is
-		// only available by joining {"type":"text","data":"..."} lines.
-		if (agentType === 'grok') {
-			const grokText = extractGrokTextFromJsonl(lines);
-			if (grokText) return grokText;
-		}
-
 		// For Copilot: final answers arrive as assistant.message with phase=final_answer
 		if (agentType === 'copilot-cli') {
 			for (const line of lines) {
@@ -603,7 +607,7 @@ function buildArgsForAgent(agent: any): string[] {
 		}
 
 		case 'grok': {
-			// Shared discovery caps (always-approve, max-turns, no-subagents).
+			// Shared discovery caps; permission intent travels through process.spawn.
 			// Leave batch/json/cwd/prompt out - IPC buildAgentArgs adds those.
 			const args = [...(agent.args || [])];
 			args.push(...GROK_WIZARD_DISCOVERY_ARGS);
@@ -648,13 +652,22 @@ export async function sendWizardMessage(
 		const agent = await window.maestro.agents.get(session.agentType);
 		// For SSH remote sessions, skip local availability checks since agent may be remote
 		const isRemoteSession = session.sessionSshRemoteConfig?.enabled;
-		if (!agent && !isRemoteSession) {
+		if (
+			!agent &&
+			!isRemoteSession &&
+			!(session.agentType === 'grok' && session.sessionCustomPath)
+		) {
 			return {
 				success: false,
 				error: `Agent ${session.agentType} is not available`,
 			};
 		}
-		if (agent && !agent.available && !isRemoteSession) {
+		if (
+			agent &&
+			!agent.available &&
+			!isRemoteSession &&
+			!(session.agentType === 'grok' && session.sessionCustomPath)
+		) {
 			return {
 				success: false,
 				error: `Agent ${session.agentType} is not available`,
@@ -677,13 +690,20 @@ export async function sendWizardMessage(
 		const fullPrompt = buildPromptWithContext(session, userMessage, conversationHistory);
 
 		// Build args for the agent
-		const argsForSpawn = agent ? buildArgsForAgent(agent) : [];
+		const argsForSpawn = agent
+			? buildArgsForAgent(agent)
+			: session.agentType === 'grok'
+				? [...GROK_WIZARD_DISCOVERY_ARGS]
+				: [];
+		if (!session.isActive) return { success: false, error: 'Session is not active' };
 
 		// Spawn agent and collect output
 		const result = await new Promise<InlineWizardSendResult>((resolve) => {
 			let outputBuffer = '';
 			let dataListenerCleanup: (() => void) | undefined;
 			let exitListenerCleanup: (() => void) | undefined;
+			let errorListenerCleanup: (() => void) | undefined;
+			let providerError: string | undefined;
 
 			// Activity-based timeout: resets whenever the agent produces output.
 			// This prevents false timeouts on complex prompts where the agent is
@@ -730,6 +750,8 @@ export async function sendWizardMessage(
 			let toolExecutionListenerCleanup: (() => void) | undefined;
 
 			function cleanupListeners() {
+				errorListenerCleanup?.();
+				errorListenerCleanup = undefined;
 				if (dataListenerCleanup) {
 					dataListenerCleanup();
 					dataListenerCleanup = undefined;
@@ -746,6 +768,13 @@ export async function sendWizardMessage(
 					toolExecutionListenerCleanup();
 					toolExecutionListenerCleanup = undefined;
 				}
+			}
+
+			if (session.agentType === 'grok') {
+				errorListenerCleanup = window.maestro.process.onAgentError((id, error) => {
+					if (id === session.sessionId)
+						providerError ??= error.message || 'Grok wizard turn failed.';
+				});
 			}
 
 			// Set up data listener
@@ -806,19 +835,44 @@ export async function sendWizardMessage(
 
 			// Set up exit listener
 			exitListenerCleanup = window.maestro.process.onExit(
-				(receivedSessionId: string, code: number) => {
+				(receivedSessionId: string, code: number, signal?: number) => {
 					if (receivedSessionId === session.sessionId) {
 						clearTimeout(timeoutId);
 						cleanupListeners();
 
-						// Extract the Claude agent session ID from output (for resume capability)
-						const agentSessionId = extractAgentSessionIdFromOutput(outputBuffer);
+						// Grok continues through explicit history replay here. An ephemeral
+						// wizard ID has no bound owner, so never promote a bare native ID
+						// into a normal tab where it would imply verified native resume.
+						const isGrok = session.agentType === 'grok';
+						const agentSessionId = isGrok ? null : extractAgentSessionIdFromOutput(outputBuffer);
+						const grokOutput = isGrok ? readGrokWizardOutput(outputBuffer) : undefined;
+						if (
+							isGrok &&
+							(providerError ||
+								grokOutput?.error ||
+								code !== 0 ||
+								signal != null ||
+								!session.isActive)
+						) {
+							resolve({
+								success: false,
+								error:
+									providerError ||
+									grokOutput?.error ||
+									(signal != null || !session.isActive
+										? 'Grok wizard conversation was cancelled.'
+										: `Agent exited with code ${code}`),
+								rawOutput: outputBuffer,
+							});
+							return;
+						}
 
-						// Prefer a parseable structured reply even on non-zero exit
-						// (e.g. Grok `--max-turns` can exit 1 after useful text).
+						// Preserve reference-provider parsing; Grok requires validated structure.
 						const extractedResult = extractResultFromStreamJson(outputBuffer, session.agentType);
-						const textToParse = extractedResult || outputBuffer;
-						const parsedResponse = textToParse.trim() ? parseWizardResponse(textToParse) : null;
+						const textToParse = grokOutput ? grokOutput.text : extractedResult || outputBuffer;
+						const parsedResponse = textToParse.trim()
+							? parseWizardResponse(textToParse, isGrok)
+							: null;
 
 						if (parsedResponse) {
 							resolve({
@@ -872,6 +926,9 @@ export async function sendWizardMessage(
 					command: commandToUse,
 					args: argsForSpawn,
 					prompt: fullPrompt,
+					...(session.agentType === 'grok'
+						? { permissionMode: 'readonly', readOnlyMode: true }
+						: {}),
 					// Pass SSH config for remote execution
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					// Pass session-level overrides
@@ -879,11 +936,18 @@ export async function sendWizardMessage(
 					sessionCustomArgs: session.sessionCustomArgs,
 					sessionCustomEnvVars: session.sessionCustomEnvVars,
 					sessionCustomModel: session.sessionCustomModel,
+					sessionCustomEffort: session.sessionCustomEffort,
 					// The wizard's process id carries no agent id, so the TUI setting
 					// travels inline.
 					...getClaudeTokenSourceFields(session.sessionClaudeTokenSource),
 				} as ProcessConfig)
-				.then(() => {
+				.then((spawnResult) => {
+					if (session.agentType === 'grok' && !spawnResult.success) {
+						cleanupListeners();
+						clearTimeout(timeoutId);
+						resolve({ success: false, error: providerError || 'Grok wizard launch was refused.' });
+						return;
+					}
 					callbacks?.onReceiving?.();
 				})
 				.catch((error: Error) => {

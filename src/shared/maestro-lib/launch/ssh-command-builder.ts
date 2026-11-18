@@ -7,6 +7,7 @@
  * on remote hosts via SSH.
  */
 
+import { createHash, randomUUID } from 'node:crypto';
 import { SshRemoteConfig } from '../../types';
 import { shellEscape, buildShellCommand, shellEscapeRemotePath } from './shell-escape';
 import { expandTilde } from '../../pathUtils';
@@ -14,11 +15,31 @@ import { logger } from '../host';
 import { resolveSshPath } from './ssh-path';
 import { buildSshOptionArgs } from '../../sshOptions';
 import { parseDataUrl, buildImagePromptPrefix } from './image-refs';
+import type { PromptDelivery, PromptFileDestination } from './prompt-delivery';
+
+/** Select in the supported remote Linux namespace, never the local temp/home directory. */
+export function newRemotePromptFileDestination(
+	sshRemoteId: string,
+	format: 'text' | 'acp-json' = 'acp-json'
+): PromptFileDestination {
+	if (!sshRemoteId) throw new Error('Prompt-file delivery requires a selected remote host.');
+	return {
+		owner: 'remote',
+		sshRemoteId,
+		path: `/tmp/maestro-prompt-${randomUUID()}.${format === 'acp-json' ? 'json' : 'txt'}`,
+	};
+}
 
 /**
  * Base PATH directories that are always added to the remote PATH.
  * These cover common binary locations that don't require dynamic detection.
  */
+/**
+ * The maestro-cli Federation installs (`remote-host install`). Prepended AFTER the version-manager
+ * setup, which prepends directories of its own, so it stays first and wins over an older copy.
+ */
+const MAESTRO_INSTALL_PATH_LINE = 'export PATH="$HOME/.maestro/bin:$PATH"';
+
 const BASE_SSH_PATH_DIRS = [
 	'$HOME/.local/bin',
 	'$HOME/.opencode/bin',
@@ -139,6 +160,23 @@ function buildNodeVersionManagerPathSnippet(): string {
 }
 
 /**
+ * Wrap a remote shell command so it runs under `/bin/bash --norc --noprofile`
+ * with the PATH an agent spawn gets: the base directories above plus the Node
+ * version managers. A non-interactive SSH shell reads no profile, so its PATH
+ * is short; this is how `claude`, `codex` and `maestro-cli` are found there
+ * without sourcing rc files that break `-c` embedding. The whole command is
+ * single-quoted, so the remote login shell (often zsh) passes it to bash
+ * untouched. Shared by every one-shot SSH command that must find a binary the
+ * user installed (agent spawns, Federation's remote host discovery).
+ */
+export function wrapRemoteCommandWithPath(remoteCommand: string): string {
+	const pathSetup = `export PATH="${BASE_SSH_PATH_DIRS.join(':')}:$PATH"`;
+	const versionManagerSetup = buildNodeVersionManagerPathSnippet();
+	const fullBashCommand = `${pathSetup}; ${versionManagerSetup}; ${MAESTRO_INSTALL_PATH_LINE}; ${remoteCommand}`;
+	return `/bin/bash --norc --noprofile -c ${shellEscape(fullBashCommand)}`;
+}
+
+/**
  * Result of building an SSH command.
  * Contains the command and arguments to pass to spawn().
  */
@@ -171,6 +209,8 @@ export interface RemoteCommandOptions {
 	env?: Record<string, string>;
 	/** Indicates the caller will send input via stdin to the remote command (optional) */
 	useStdin?: boolean;
+	/** Private file plan. Its remote PID/stop owner must bind the returned script before spawn. */
+	promptArtifact?: Extract<PromptDelivery, { via: 'file' }>['artifact'];
 }
 
 /**
@@ -307,6 +347,36 @@ export async function buildSshCommandWithStdin(
 		imageResumeMode?: 'prompt-embed';
 	}
 ): Promise<SshCommandResult> {
+	// Snapshot private bytes and arguments before the first asynchronous operation.
+	const artifact = remoteOptions.promptArtifact ? { ...remoteOptions.promptArtifact } : undefined;
+	if (artifact) {
+		remoteOptions = {
+			...remoteOptions,
+			args: [...remoteOptions.args],
+			env: { ...remoteOptions.env },
+		};
+		if (
+			artifact.owner !== 'remote' ||
+			artifact.sshRemoteId !== config.id ||
+			!/^\/tmp\/maestro-prompt-[0-9a-f-]{36}\.(json|txt)$/.test(artifact.path) ||
+			artifact.encoding !== 'utf8' ||
+			artifact.mode !== 0o600 ||
+			artifact.flag !== 'wx' ||
+			artifact.cleanup !== 'turn' ||
+			typeof artifact.content !== 'string' ||
+			!remoteOptions.args.includes(artifact.path) ||
+			remoteOptions.prompt !== undefined ||
+			remoteOptions.stdinInput !== undefined ||
+			remoteOptions.images?.length ||
+			Object.keys({ ...config.remoteEnv, ...remoteOptions.env }).some((key) =>
+				key.startsWith('_maestro_')
+			)
+		) {
+			throw new Error(
+				'Prompt-file delivery requires an exclusive artifact on the selected remote without other prompt sources.'
+			);
+		}
+	}
 	const args: string[] = [];
 
 	// Resolve the SSH binary path
@@ -348,6 +418,7 @@ export async function buildSshCommandWithStdin(
 	scriptLines.push(`export PATH="${BASE_SSH_PATH_DIRS.join(':')}:$PATH"`);
 	// Dynamically detect Node version manager paths (nvm, fnm, volta, etc.)
 	scriptLines.push(...buildNodeVersionManagerPathLines());
+	scriptLines.push(MAESTRO_INSTALL_PATH_LINE);
 
 	// Change directory if specified
 	if (remoteOptions.cwd) {
@@ -367,6 +438,60 @@ export async function buildSshCommandWithStdin(
 		if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
 			scriptLines.push(`export ${key}=${shellEscape(value)}`);
 		}
+	}
+
+	if (artifact) {
+		const bytes = Buffer.from(artifact.content, 'utf8');
+		const digest = createHash('sha256').update(bytes).digest('hex');
+		const fail =
+			"printf '%s\\n' 'Could not prepare the private remote prompt artifact.' >&2; exit 1";
+		// withRemotePidRecord supplies the ownership binding. A caller that drops it
+		// cannot create a file. Keep the whole payload in one parsed compound so a
+		// truncated stdin script cannot begin preparation or execute a partial prompt.
+		scriptLines.push(
+			`[ "\${_maestro_prompt_path-}" = ${shellEscape(artifact.path)} ] && [ -n "\${_maestro_prompt_pid_file-}" ] && [ -f /proc/$$/fd/8 ] || { ${fail}; }`,
+			`command -v base64 >/dev/null && command -v sha256sum >/dev/null || { ${fail}; }`,
+			'_maestro_prompt_cleanup() {',
+			'  _maestro_status=$?',
+			'  trap - EXIT',
+			'  if [ -f /proc/$$/fd/9 ]; then',
+			'    if [ ! -L "$_maestro_prompt_path" ] && [ "$_maestro_prompt_path" -ef /proc/$$/fd/9 ]; then',
+			'      rm -f -- "$_maestro_prompt_path" 2>/dev/null || printf "%s\\n" "Could not remove an owned remote prompt artifact." >&2',
+			'    elif [ -e "$_maestro_prompt_path" ] || [ -L "$_maestro_prompt_path" ]; then',
+			'      printf "%s\\n" "Remote prompt artifact changed ownership; cleanup skipped." >&2',
+			'    fi',
+			'  fi',
+			'  if [ ! -L "$_maestro_prompt_pid_file" ] && [ "$_maestro_prompt_pid_file" -ef /proc/$$/fd/8 ]; then',
+			'    rm -f -- "$_maestro_prompt_pid_file" 2>/dev/null || printf "%s\\n" "Could not remove the remote ownership record." >&2',
+			'  fi',
+			'  exec 9>&- 8>&-',
+			'  exit "$_maestro_status"',
+			'}',
+			'trap _maestro_prompt_cleanup EXIT',
+			"trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP",
+			`[ ! -e "$_maestro_prompt_path" ] && [ ! -L "$_maestro_prompt_path" ] || { ${fail}; }`,
+			'_maestro_mask=$(umask); umask 077; set -C',
+			`{ exec 9>"$_maestro_prompt_path"; } 2>/dev/null || { ${fail}; }`,
+			'set +C; umask "$_maestro_mask"',
+			`[ -f /proc/$$/fd/9 ] && [ "$(stat -Lc %a /proc/$$/fd/9 2>/dev/null)" = 600 ] || { ${fail}; }`,
+			`base64 -d >&9 2>/dev/null <<'MAESTRO_PROMPT_EOF' || { ${fail}; }`,
+			bytes.toString('base64'),
+			'MAESTRO_PROMPT_EOF',
+			'_maestro_hash=$(sha256sum /proc/$$/fd/9 2>/dev/null)',
+			`[ "\${_maestro_hash%% *}" = '${digest}' ] && [ ! -L "$_maestro_prompt_path" ] && [ "$_maestro_prompt_path" -ef /proc/$$/fd/9 ] || { ${fail}; }`,
+			`${shellEscapeRemotePath(remoteOptions.command)} ${remoteOptions.args.map(shellEscape).join(' ')} </dev/null 8>&- 9>&-`,
+			'exit $?'
+		);
+		logger.info('SSH command built with private prompt artifact', '[ssh-command-builder]', {
+			sshArgsCount: args.length,
+		});
+		return {
+			command: sshPath,
+			args,
+			stdinScript: `{\n${scriptLines.join('\n')}\n}\n`,
+			// The actual argv contains a private artifact destination. Do not expose it in UI/logs.
+			remoteCommandLine: `${shellEscapeRemotePath(remoteOptions.command)} [private prompt file]`,
+		};
 	}
 
 	// Decode images into remote temp files for file-based agents (Codex, OpenCode)
@@ -481,8 +606,6 @@ export async function buildSshCommandWithStdin(
 		stdinLength: stdinScript.length,
 		hasStdinInput,
 		stdinInputLength: remoteOptions.stdinInput?.length,
-		// Show first part of script for debugging (truncate if long)
-		scriptPreview: stdinScript.length > 500 ? stdinScript.substring(0, 500) + '...' : stdinScript,
 	});
 
 	return {
@@ -550,6 +673,7 @@ export async function buildSshCommand(
 	config: SshRemoteConfig,
 	remoteOptions: RemoteCommandOptions
 ): Promise<SshCommandResult> {
+	if (remoteOptions.promptArtifact) return buildSshCommandWithStdin(config, remoteOptions);
 	const args: string[] = [];
 
 	// Resolve the SSH binary path (handles packaged Electron apps where PATH is limited)
@@ -656,10 +780,7 @@ export async function buildSshCommand(
 	// Single quotes are parsed literally by zsh - it just passes the content to bash as-is.
 	//
 	// The inner command uses shellEscape() which handles embedded single quotes via '\'' pattern.
-	const pathSetup = `export PATH="${BASE_SSH_PATH_DIRS.join(':')}:$PATH"`;
-	const versionManagerSetup = buildNodeVersionManagerPathSnippet();
-	const fullBashCommand = `${pathSetup}; ${versionManagerSetup}; ${remoteCommand}`;
-	const wrappedCommand = `/bin/bash --norc --noprofile -c ${shellEscape(fullBashCommand)}`;
+	const wrappedCommand = wrapRemoteCommandWithPath(remoteCommand);
 	args.push(wrappedCommand);
 
 	// Log the exact command being built - use info level so it appears in system logs

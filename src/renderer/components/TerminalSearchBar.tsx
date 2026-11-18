@@ -3,6 +3,7 @@ import { ChevronUp, ChevronDown, X } from 'lucide-react';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Theme } from '../../shared/theme-types';
+import { isImeComposing } from '../utils/ime';
 
 interface TerminalSearchBarProps {
 	theme: Theme;
@@ -75,7 +76,7 @@ export const TerminalSearchBar = memo(function TerminalSearchBar({
 	};
 
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-		if (e.key === 'Enter' && query) {
+		if (e.key === 'Enter' && query && !isImeComposing(e)) {
 			e.preventDefault();
 			if (e.shiftKey) {
 				const found = onSearchPrevious();

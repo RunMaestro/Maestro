@@ -1,16 +1,24 @@
-// Stats commands - introspect the Usage Dashboard's SQLite store.
+// Stats commands - introspect the Usage Dashboard.
 //
-//   maestro-cli stats [--range <r>] [--json]   -> aggregated dashboard metrics
-//   maestro-cli stats-query "<sql>" [--json]    -> arbitrary read-only SQL
-//   maestro-cli stats-tokens [--range <r>] [--json] -> Tokens tab: totals + speed
-//   maestro-cli stats-indexing [--wait] [--json] -> progress of a usage-data scan
+//   maestro-cli stats [--range <r>] [--json]            -> aggregated dashboard metrics
+//   maestro-cli stats-query "<sql>" [--json]             -> arbitrary read-only SQL
+//   maestro-cli stats-tokens [--range <r>] [--json]      -> Tokens tab: totals + speed
+//   maestro-cli stats-indexing [--wait] [--json]         -> progress of a usage-data scan
+//   maestro-cli stats-delegation [--range <r>] [--json]  -> interactive vs Auto Run vs Cue
+//   maestro-cli stats-cue [--range <r>] [--json]         -> Cue tab statistics
+//   maestro-cli stats-plan-usage [--json]                -> Anthropic / OpenAI plan usage
+//   maestro-cli stats-agents [--range <r>] [--json]      -> Agents Over Time
+//   maestro-cli stats-activity [--range <r>] [--json]    -> Auto Run, wizard, resilience, shortcuts
+//   maestro-cli stats-export --format <f> --output <p>   -> the dashboard's Export button
 //
-// Both route through the running desktop app over the existing WebSocket
-// bridge; the app owns the open stats database and runs the query/aggregation
-// against it. The SQL path is read-only enforced in the main process.
+// All route through the running desktop app over the WebSocket bridge, which
+// calls the same main-process function the dashboard panel does. The SQL path is
+// read-only enforced in the main process.
 
 import { withMaestroClient } from '../services/maestro-client';
+import { errorFrameMessage } from '../services/session-command';
 import { formatError } from '../output/formatter';
+import { resolveCliPath } from '../utils/parse';
 import {
 	formatCalendarDay,
 	formatCost,
@@ -29,8 +37,18 @@ import {
 } from '../../shared/statsIndexing';
 import type { PromptCadence } from '../../shared/promptCadence';
 import type { TokenUsageAggregate } from '../../shared/tokenUsage';
+import { usageCostUsd } from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TokenSpeedStats } from '../../shared/tokenSpeed';
 import { exitIfMaestroNotRunning } from '../services/session-command';
+import type { StatsAggregation, UsageExportResult } from '../../shared/stats-types';
+import type { CueStatsAggregation, CueStatsByGroup } from '../../shared/cue-stats-types';
+import type {
+	AgentCountStats,
+	DelegationStats,
+	PlanUsageAccount,
+	PlanUsageReport,
+	UsageActivityStats,
+} from '../../shared/usageDashboardReads';
 
 const VALID_RANGES = ['day', 'week', 'month', 'quarter', 'year', 'all'] as const;
 type StatsRange = (typeof VALID_RANGES)[number];
@@ -47,7 +65,7 @@ interface StatsQueryOptions {
 
 interface AggregationResponse {
 	type: string;
-	data: Record<string, unknown>;
+	data: StatsAggregation;
 	error?: string;
 }
 
@@ -142,6 +160,7 @@ export async function statsTokens(options: StatsTokensOptions): Promise<void> {
 }
 
 function speedLine(stats: TokenSpeedStats): string {
+	if (stats.calls === 0) return 'Unknown (no timed calls)';
 	return (
 		`avg ${formatTokensPerSecond(stats.avgInputTps)} in / ${formatTokensPerSecond(stats.avgOutputTps)} out / ${formatTokensPerSecond(stats.avgTotalTps)} total` +
 		`, peak ${formatTokensPerSecond(stats.peakInputTps)} / ${formatTokensPerSecond(stats.peakOutputTps)} / ${formatTokensPerSecond(stats.peakTotalTps)}` +
@@ -153,11 +172,42 @@ function printTokenUsageSummary(range: string, data: TokenUsageAggregate): void 
 	const { totals, speed } = data;
 	const lines: string[] = [];
 	lines.push(`Token Usage (${range})`);
-	lines.push(`  Cost:            ${totals.costEstimated ? '~' : ''}${formatCost(totals.costUsd)}`);
-	lines.push(
-		`  Tokens:          ${formatTokensCompact(totals.inputTokens)} in / ${formatTokensCompact(totals.outputTokens)} out / ${formatTokensCompact(totals.cacheReadTokens)} cache read`
-	);
-	lines.push(`  Sessions:        ${totals.sessionCount}`);
+	// Render the accessor's totals and groups directly: model detail can be partial
+	// and must never be summed again to reconstruct a native lifetime total.
+	for (const { title, groups } of [
+		{ title: undefined, groups: [{ ...totals, key: '', label: '' }] },
+		{ title: 'By provider', groups: data.byAgent },
+		{ title: 'By model', groups: data.byModel },
+		{ title: 'By account', groups: data.byAccount },
+	]) {
+		if (groups.length === 0) continue;
+		if (title) lines.push('', `${title}:`);
+		for (const group of groups) {
+			const cost = group.accounting?.cost;
+			const amount = cost ? usageCostUsd(cost) : group.costUsd;
+			const partial =
+				cost?.status === 'partial' ||
+				(cost?.status === 'estimated' && cost.completeness !== 'complete');
+			const estimated = cost ? cost.status === 'estimated' : group.costEstimated;
+			const costLabel =
+				(amount === undefined ? 'Unknown' : `${estimated ? '~' : ''}${formatCost(amount)}`) +
+				(partial ? ' (partial)' : '');
+			const tokenLabel =
+				`${formatTokensCompact(group.inputTokens)} in / ${formatTokensCompact(group.outputTokens)} out / ` +
+				`${formatTokensCompact(group.cacheReadTokens)} cache read / ${formatTokensCompact(group.cacheCreationTokens)} cache creation`;
+			if (title) {
+				// Account labels can share a basename; model keys include their provider.
+				// Keep both the readable label and opaque identity supplied by the accessor.
+				const identity = group.key === group.label ? group.label : `${group.label} [${group.key}]`;
+				lines.push(`  ${identity}: ${costLabel}`);
+				lines.push(`    ${tokenLabel}; ${group.sessionCount} sessions`);
+			} else {
+				lines.push(`  API-equivalent cost: ${costLabel}`);
+				lines.push(`  Tokens:          ${tokenLabel}`);
+				lines.push(`  Sessions:        ${group.sessionCount}`);
+			}
+		}
+	}
 	lines.push('');
 	lines.push('Tokens per second (per API call)');
 	lines.push(`  Overall:         ${speedLine(speed.overall)}`);
@@ -294,22 +344,32 @@ export async function statsQuery(sql: string, options: StatsQueryOptions): Promi
 	}
 }
 
-function printAggregationSummary(range: string, data: Record<string, unknown>): void {
-	const byAgent = (data.byAgent as Record<string, { count: number }>) || {};
-	const bySource = (data.bySource as { user?: number; auto?: number }) || {};
+function printAggregationSummary(range: string, data: StatsAggregation): void {
+	const byAgent = data.byAgent ?? {};
+	const bySource = data.bySource ?? { user: 0, auto: 0 };
 
 	const lines: string[] = [];
 	lines.push(`Usage Stats (${range})`);
-	lines.push(`  Total queries:   ${data.totalQueries ?? 0}`);
-	lines.push(`  Total sessions:  ${data.totalSessions ?? 0}`);
-	lines.push(`  Avg duration:    ${formatMs(Number(data.avgDuration ?? 0))}`);
+	if (data.window) {
+		lines.push(
+			`  Range:           ${formatCalendarDay(data.window.startYmd)} - ${formatCalendarDay(data.window.endYmd)}`
+		);
+	}
+	lines.push(`  Total queries:   ${formatCount(data.totalQueries ?? 0)}`);
+	lines.push(`  Active agents:   ${formatCount(data.totalSessions ?? 0)}`);
+	lines.push(`  Avg duration:    ${formatDurationHuman(Number(data.avgDuration ?? 0))}`);
 	lines.push(`  Source:          ${bySource.user ?? 0} user / ${bySource.auto ?? 0} auto`);
+	if (data.streak) {
+		lines.push(
+			`  Streak:          ${data.streak.current} days current, ${data.streak.longest} longest`
+		);
+	}
 
 	const agentEntries = Object.entries(byAgent);
 	if (agentEntries.length > 0) {
-		lines.push('  By agent:');
+		lines.push('  By provider:');
 		for (const [agent, stat] of agentEntries) {
-			lines.push(`    ${agent}: ${stat.count}`);
+			lines.push(`    ${agent}: ${formatCount(stat.count)}`);
 		}
 	}
 
@@ -380,12 +440,6 @@ function formatCell(value: unknown): string {
 	return String(value);
 }
 
-function formatMs(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-	return `${(ms / 60_000).toFixed(1)}m`;
-}
-
 function handleCommandError(error: unknown, json?: boolean): never {
 	const message = error instanceof Error ? error.message : String(error);
 	if (json) {
@@ -394,4 +448,360 @@ function handleCommandError(error: unknown, json?: boolean): never {
 		console.error(formatError(message));
 	}
 	process.exit(1);
+}
+
+// ============================================================================
+// Usage Dashboard reads (each verb calls the function its panel calls)
+// ============================================================================
+
+interface RangeOptions {
+	range?: string;
+	json?: boolean;
+}
+
+interface DataResponse<T> {
+	type: string;
+	data: T;
+}
+
+/** A Cue aggregate or a token scan can take a while on a large history. */
+const SLOW_READ_TIMEOUT_MS = 120_000;
+/** The export runs the token scan and writes every table. */
+const EXPORT_TIMEOUT_MS = 600_000;
+
+/** The validated `--range` (default week). Exits on an invalid one. */
+function readRange(options: RangeOptions): StatsRange {
+	const range = (options.range || 'week') as StatsRange;
+	if (!VALID_RANGES.includes(range)) {
+		handleCommandError(
+			new Error(`Invalid range "${options.range}". Must be one of: ${VALID_RANGES.join(', ')}`),
+			options.json
+		);
+	}
+	return range;
+}
+
+/** Send one bridge read and unwrap `data`, failing on an error frame. */
+async function readFromApp<T>(
+	payload: Record<string, unknown>,
+	responseType: string,
+	timeoutMs?: number
+): Promise<T> {
+	const reply = await withMaestroClient((client) =>
+		client.sendCommand<DataResponse<T>>(payload, responseType, timeoutMs)
+	);
+	const failure = errorFrameMessage(reply);
+	if (failure) throw new Error(failure);
+	return reply.data;
+}
+
+function windowLine(window: { startYmd: string; endYmd: string }): string {
+	return `${formatCalendarDay(window.startYmd)} - ${formatCalendarDay(window.endYmd)}`;
+}
+
+/**
+ * `maestro-cli stats-delegation` - the Overview delegation score and the
+ * Activity tab's delegation trend: interactive turns vs Auto Run tasks vs Cue
+ * runs, for the range and per day.
+ */
+export async function statsDelegation(options: RangeOptions): Promise<void> {
+	const range = readRange(options);
+	try {
+		const data = await readFromApp<DelegationStats>(
+			{ type: 'get_delegation_stats', range },
+			'delegation_stats'
+		);
+		if (options.json) {
+			console.log(JSON.stringify(data, null, 2));
+			return;
+		}
+		const { totals } = data;
+		const lines = [
+			`Delegation (${range}, ${windowLine(data.window)})`,
+			`  Delegated:       ${Math.round(data.percent)}% of tracked time`,
+			`  Interactive:     ${formatCount(totals.interactive.count)} turns, ${formatDurationHuman(totals.interactive.durationMs)}`,
+			`  Auto Run:        ${formatCount(totals.autoRun.count)} tasks, ${formatDurationHuman(totals.autoRun.durationMs)}`,
+			`  Cue:             ${formatCount(totals.cue.count)} runs, ${formatDurationHuman(totals.cue.durationMs)}`,
+		];
+		const active = data.byDay.filter(
+			(day) => day.interactive.count + day.autoRun.count + day.cue.count > 0
+		);
+		if (active.length > 0) {
+			lines.push('  By day (days with activity):');
+			for (const day of active) {
+				lines.push(
+					`    ${formatCalendarDay(day.date)}: ${day.interactive.count} interactive / ${day.autoRun.count} Auto Run / ${day.cue.count} Cue`
+				);
+			}
+		}
+		console.log(lines.join('\n'));
+	} catch (error) {
+		handleCommandError(error, options.json);
+	}
+}
+
+interface StatsCueOptions extends RangeOptions {
+	excludeTrigger?: string[];
+}
+
+function cueGroupLines(title: string, groups: CueStatsByGroup[]): string[] {
+	if (groups.length === 0) return [];
+	const lines = [`  ${title}:`];
+	for (const group of groups.slice(0, 10)) {
+		const t = group.totals;
+		lines.push(
+			`    ${group.label}: ${formatCount(t.occurrences)} runs (${t.successCount} ok / ${t.failureCount} failed), ${formatDurationHuman(t.totalDurationMs)}`
+		);
+	}
+	if (groups.length > 10) lines.push(`    ... ${groups.length - 10} more (see --json)`);
+	return lines;
+}
+
+/**
+ * `maestro-cli stats-cue` - the Cue tab: run totals, duration percentiles, and
+ * the per-pipeline / per-agent / per-trigger breakdowns. `--exclude-trigger`
+ * hides a trigger type the way the tab's filter chips do.
+ */
+export async function statsCue(options: StatsCueOptions): Promise<void> {
+	const range = readRange(options);
+	try {
+		const data = await readFromApp<CueStatsAggregation>(
+			{ type: 'get_cue_stats', range, excludeTriggerTypes: options.excludeTrigger ?? [] },
+			'cue_stats',
+			SLOW_READ_TIMEOUT_MS
+		);
+		if (options.json) {
+			console.log(JSON.stringify({ range, ...data }, null, 2));
+			return;
+		}
+		const t = data.totals;
+		const p = data.durationPercentiles;
+		const lines = [
+			`Cue (${range})`,
+			`  Runs:            ${formatCount(t.occurrences)} (${t.successCount} ok / ${t.failureCount} failed)`,
+			`  Time:            ${formatDurationHuman(t.totalDurationMs)}`,
+			`  Tokens:          ${formatTokensCompact(t.totalInputTokens)} in / ${formatTokensCompact(t.totalOutputTokens)} out`,
+		];
+		if (t.totalCostUsd !== null) lines.push(`  Cost:            ${formatCost(t.totalCostUsd)}`);
+		if (p.count > 0) {
+			lines.push(
+				`  Run duration:    median ${formatDurationHuman(p.p50)}, p90 ${formatDurationHuman(p.p90)}, max ${formatDurationHuman(p.max)}`
+			);
+		}
+		if (data.excludedTriggerTypes.length > 0) {
+			lines.push(`  Excluded:        ${data.excludedTriggerTypes.join(', ')}`);
+		}
+		lines.push(...cueGroupLines('By pipeline', data.byPipeline));
+		lines.push(...cueGroupLines('By provider', data.byAgent));
+		lines.push(...cueGroupLines('By trigger', data.byTriggerType));
+		for (const warning of data.coverageWarnings) lines.push(`  Note: ${warning}`);
+		console.log(lines.join('\n'));
+	} catch (error) {
+		handleCommandError(error, options.json);
+	}
+}
+
+interface StatsPlanUsageOptions {
+	provider?: string;
+	json?: boolean;
+}
+
+const PLAN_PROVIDERS = ['claude', 'codex'] as const;
+
+function planAccountLines(account: PlanUsageAccount): string[] {
+	const who = [account.email, account.organization, account.plan].filter(Boolean).join(', ');
+	const lines = [
+		`  ${account.accountKey}${who ? ` (${who})` : ''}${account.stale ? ' [stale]' : ''}`,
+		`    Sampled:       ${new Date(account.sampledAt).toLocaleString()}${account.authState && account.authState !== 'authenticated' ? `, ${account.authState}` : ''}`,
+	];
+	for (const window of account.windows) {
+		const reset = window.resetsAt ? `, resets ${window.resetsAt}` : '';
+		lines.push(`    ${window.name}: ${window.percent}% used${reset}`);
+	}
+	if (account.resetCreditsAvailable !== undefined) {
+		lines.push(`    Reset credits: ${account.resetCreditsAvailable} available`);
+	}
+	if (account.error) lines.push(`    Error: ${account.error}`);
+	return lines;
+}
+
+/**
+ * `maestro-cli stats-plan-usage` - the Anthropic Usage and OpenAI Usage tabs:
+ * the last sampled plan quota per account. Reads the cached snapshots; it does
+ * not re-sample.
+ */
+export async function statsPlanUsage(options: StatsPlanUsageOptions): Promise<void> {
+	const provider = options.provider;
+	if (provider !== undefined && !(PLAN_PROVIDERS as readonly string[]).includes(provider)) {
+		handleCommandError(
+			new Error(`Invalid provider "${provider}". Must be one of: ${PLAN_PROVIDERS.join(', ')}`),
+			options.json
+		);
+	}
+	try {
+		const data = await readFromApp<PlanUsageReport>({ type: 'get_plan_usage' }, 'plan_usage');
+		const report: Partial<PlanUsageReport> =
+			provider === 'claude'
+				? { claude: data.claude }
+				: provider === 'codex'
+					? { codex: data.codex }
+					: data;
+		if (options.json) {
+			console.log(JSON.stringify(report, null, 2));
+			return;
+		}
+		const lines: string[] = [];
+		const section = (title: string, accounts: PlanUsageAccount[] | undefined) => {
+			if (!accounts) return;
+			if (lines.length > 0) lines.push('');
+			lines.push(title);
+			if (accounts.length === 0) lines.push('  No sampled accounts.');
+			for (const account of accounts) lines.push(...planAccountLines(account));
+		};
+		section('Anthropic Usage (Claude)', report.claude);
+		section('OpenAI Usage (Codex)', report.codex);
+		console.log(lines.join('\n'));
+	} catch (error) {
+		handleCommandError(error, options.json);
+	}
+}
+
+/**
+ * `maestro-cli stats-agents` - Agent Overview's Agents Over Time: how many
+ * agents existed at the end of each day, plus how many were created and
+ * deleted in the range.
+ */
+export async function statsAgents(options: RangeOptions): Promise<void> {
+	const range = readRange(options);
+	try {
+		const data = await readFromApp<AgentCountStats>(
+			{ type: 'get_agent_count_stats', range },
+			'agent_count_stats'
+		);
+		if (options.json) {
+			console.log(JSON.stringify(data, null, 2));
+			return;
+		}
+		const first = data.points[0];
+		const last = data.points.at(-1);
+		const lines = [`Agents Over Time (${range})`, `  Agents now:      ${data.liveAgents}`];
+		if (first && last) {
+			lines.push(
+				`  Range:           ${formatCalendarDay(first.date)} - ${formatCalendarDay(last.date)}, ${first.count} -> ${last.count} agents`
+			);
+		}
+		lines.push(`  Created:         ${data.created}`, `  Deleted:         ${data.removed}`);
+		if (data.points.length > 1 && data.points.length <= 31) {
+			lines.push('  By day:');
+			for (const point of data.points) {
+				lines.push(`    ${formatCalendarDay(point.date)}: ${point.count}`);
+			}
+		}
+		console.log(lines.join('\n'));
+	} catch (error) {
+		handleCommandError(error, options.json);
+	}
+}
+
+/**
+ * `maestro-cli stats-activity` - the Auto Run tab (runs, wizard runs), Agent
+ * Resilience, and the Shortcuts tab's press counts, as range totals and daily
+ * counts.
+ */
+export async function statsActivity(options: RangeOptions): Promise<void> {
+	const range = readRange(options);
+	try {
+		const data = await readFromApp<UsageActivityStats>(
+			{ type: 'get_activity_stats', range },
+			'activity_stats'
+		);
+		if (options.json) {
+			console.log(JSON.stringify(data, null, 2));
+			return;
+		}
+		const t = data.totals;
+		const lines = [
+			`Activity (${range}, ${windowLine(data.window)})`,
+			`  Auto Runs:       ${formatCount(t.autoRuns)} (${t.autoRunGoalRuns} goal, ${t.autoRunUnfinished} unfinished), ${formatDurationHuman(t.autoRunDurationMs)}, ${formatCount(t.autoRunTasksCompleted)} of ${formatCount(t.autoRunTasksTotal)} tasks done (${t.autoRunSuccessRate}%)`,
+			`  Wizard runs:     ${formatCount(t.wizardRuns)} (${t.wizardRunsGenerated} wrote documents: ${t.wizardDocuments} docs, ${t.wizardTasks} tasks), ${formatDurationHuman(t.wizardActiveMs)} active`,
+			`  Resilience:      ${formatCount(t.resilienceEvents)} outages (${t.resilienceRecovered} recovered), ${formatCount(t.resilienceRetries)} retries`,
+			`  Shortcuts:       ${formatCount(t.shortcutPresses)} presses`,
+		];
+		const active = data.byDay.filter(
+			(day) => day.autoRuns + day.wizardRuns + day.resilienceEvents + day.shortcutPresses > 0
+		);
+		const turns = data.autoRunTurnsByHour.filter((h) => h.count > 0);
+		if (turns.length > 0) {
+			lines.push(
+				`  Agent turns by hour: ${turns.map((h) => `${formatHourOfDay(h.hour)} ${h.count}`).join(', ')}`
+			);
+		}
+		if (data.byShortcut.length > 0) {
+			lines.push(
+				`  Most used shortcuts: ${data.byShortcut
+					.slice(0, 10)
+					.map((s) => `${s.shortcutId} ${formatCount(s.count)}`)
+					.join(', ')}`
+			);
+		}
+		if (active.length > 0) {
+			lines.push('  By day (days with activity):');
+			for (const day of active) {
+				lines.push(
+					`    ${formatCalendarDay(day.date)}: ${day.autoRuns} Auto Runs, ${day.wizardRuns} wizard, ${day.resilienceEvents} outages, ${day.shortcutPresses} shortcuts`
+				);
+			}
+		}
+		console.log(lines.join('\n'));
+	} catch (error) {
+		handleCommandError(error, options.json);
+	}
+}
+
+interface StatsExportOptions extends RangeOptions {
+	format?: string;
+	output?: string;
+}
+
+const EXPORT_FORMATS = ['csv', 'json'] as const;
+
+/**
+ * `maestro-cli stats-export` - the Usage Dashboard's Export button. Main writes
+ * the file (JSON, or a zip of CSVs) to `--output`, resolved against the
+ * current directory; no save dialog.
+ */
+export async function statsExport(options: StatsExportOptions): Promise<void> {
+	const range = readRange(options);
+	const format = options.format ?? 'csv';
+	if (!(EXPORT_FORMATS as readonly string[]).includes(format)) {
+		handleCommandError(
+			new Error(`Invalid format "${format}". Must be one of: ${EXPORT_FORMATS.join(', ')}`),
+			options.json
+		);
+	}
+	const output = options.output?.trim();
+	if (!output) {
+		handleCommandError(new Error('Missing --output <path>'), options.json);
+	}
+	const filePath = resolveCliPath(output);
+
+	try {
+		const result = await readFromApp<UsageExportResult>(
+			{ type: 'stats_export', range, format, path: filePath },
+			'stats_export_result',
+			EXPORT_TIMEOUT_MS
+		);
+		if (options.json) {
+			console.log(JSON.stringify(result, null, 2));
+			return;
+		}
+		const lines = [`Exported usage data (${result.format}, ${range}) to ${result.path}`];
+		for (const [table, rows] of Object.entries(result.rowCounts)) {
+			lines.push(`  ${table}: ${formatCount(rows)} rows`);
+		}
+		for (const note of result.notes) lines.push(`  Note: ${note}`);
+		console.log(lines.join('\n'));
+	} catch (error) {
+		handleCommandError(error, options.json);
+	}
 }

@@ -29,6 +29,7 @@ import { GhostIconButton } from './GhostIconButton';
 import { highlightMatches } from '../../utils/highlightMatches';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { isImeComposing } from '../../utils/ime';
 
 const KEY_HINTS: { keys: string[]; label: string }[] = [
 	{ keys: ['←', '→'], label: 'Row' },
@@ -149,7 +150,7 @@ export function RecordDetailModal({
 		// runs - "Escape clears the filter first" is not implementable here, and
 		// Escape closing every modal outright is the app-wide contract anyway.
 		if (e.target === searchRef.current) {
-			if (e.key === 'Enter') {
+			if (e.key === 'Enter' && !isImeComposing(e)) {
 				e.preventDefault();
 				scrollRef.current?.focus();
 			}

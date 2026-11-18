@@ -3,6 +3,7 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 import type { Extension } from '@codemirror/state';
 import type { Theme } from '../../../constants/themes';
+import { getElevatedSurfaceColors } from '../../../utils/elevatedSurface';
 
 /** Unzoomed editor font size, in CSS pixels. */
 export const EDITOR_BASE_FONT_PX = 13;
@@ -40,6 +41,7 @@ export function buildEditorTheme(
 ): Extension {
 	const c = theme.colors;
 	const isDark = theme.mode !== 'light';
+	const elevated = getElevatedSurfaceColors(c);
 
 	const editorTheme = EditorView.theme(
 		{
@@ -120,6 +122,93 @@ export function buildEditorTheme(
 			'.cm-app-search-current': {
 				backgroundColor: c.accent + '60',
 				outline: `1px solid ${c.accent}`,
+			},
+
+			// ── Code-editor chrome (markdownEditor/codeEditing) ──────────────
+			// CM6's base theme paints these with `&light` / `&dark` selectors (one
+			// class more specific than a plain rule) and, for the focused
+			// selection, a five-class chain. Matching that specificity is what
+			// lets the palette win: at a tie, a theme beats the base theme.
+			'&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
+				backgroundColor: c.accent + '40',
+			},
+			// Every caret, including the extra ones from Option/Alt-click. The
+			// secondary carets are a step dimmer so the primary stays findable.
+			'&.cm-editor .cm-cursor, &.cm-editor .cm-dropCursor': {
+				borderLeftColor: c.accent,
+			},
+			'&.cm-editor .cm-cursor-secondary': {
+				borderLeftColor: c.accent + 'b0',
+			},
+			// Other occurrences of the selected word (highlightSelectionMatches).
+			'.cm-selectionMatch': {
+				backgroundColor: c.accent + '26',
+			},
+			'&.cm-editor .cm-matchingBracket': {
+				backgroundColor: c.accent + '30',
+				outline: `1px solid ${c.accent}80`,
+			},
+			'&.cm-editor .cm-nonmatchingBracket': {
+				backgroundColor: c.error + '30',
+			},
+			// Completion popup: the same elevated surface every other Maestro
+			// popover uses, so it reads as a menu rather than as editor text.
+			'&.cm-editor .cm-tooltip': {
+				backgroundColor: elevated.background,
+				color: c.textMain,
+				border: `1px solid ${elevated.border}`,
+				boxShadow: elevated.shadow,
+				borderRadius: '6px',
+			},
+			'&.cm-editor .cm-tooltip-autocomplete > ul': {
+				fontFamily: 'inherit',
+				maxHeight: '16em',
+			},
+			'&.cm-editor .cm-tooltip-autocomplete > ul > li': {
+				padding: '2px 8px',
+			},
+			'&.cm-editor .cm-tooltip-autocomplete ul li[aria-selected]': {
+				backgroundColor: c.accent + '33',
+				color: c.textMain,
+			},
+			'.cm-completionMatchedText': {
+				color: c.accent,
+				textDecoration: 'none',
+				fontWeight: 'bold',
+			},
+			'.cm-completionDetail': {
+				color: c.textDim,
+				fontStyle: 'normal',
+				marginLeft: '0.75em',
+			},
+			'.cm-completionIcon': {
+				color: c.textDim,
+				opacity: '1',
+			},
+			'&.cm-editor .cm-tooltip.cm-completionInfo': {
+				padding: '4px 8px',
+				maxWidth: '28em',
+			},
+			// Vim mode (@replit/codemirror-vim): the block cursor and the status
+			// line it draws under the editor.
+			'.cm-fat-cursor': {
+				background: c.accent + '90',
+				color: c.bgMain,
+			},
+			'&:not(.cm-focused) .cm-fat-cursor': {
+				background: 'none',
+				outline: `1px solid ${c.accent}`,
+				color: 'transparent',
+			},
+			'.cm-vim-panel': {
+				backgroundColor: c.bgSidebar,
+				color: c.textMain,
+				fontFamily: 'inherit',
+				padding: '0 8px',
+			},
+			'.cm-vim-panel input': {
+				color: c.textMain,
+				backgroundColor: 'transparent',
 			},
 		},
 		{ dark: isDark }

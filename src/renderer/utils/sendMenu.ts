@@ -37,10 +37,15 @@ export const CODEX_TRANSPORT_DOCS_URL = 'https://docs.runmaestro.ai/provider-not
 export type SteerSupport =
 	| { kind: 'supported' }
 	| { kind: 'fixable'; reason: 'api-token-source' | 'codex-exec'; detail: string }
-	| { kind: 'unsupported'; reason: 'ssh-remote' | 'not-claude'; detail: string };
+	| {
+			kind: 'unsupported';
+			reason: 'ssh-remote' | 'not-claude' | 'grok-no-input-op';
+			detail: string;
+	  };
 
 /**
- * Classify the harness. Same order of checks as {@link getSteerEligibility}, so
+ * Classify the harness. Same order of checks as {@link getSteerEligibility} (Grok,
+ * then Codex, then SSH, then Claude's token source), so
  * the help can never name a different cause than the row's reason line.
  */
 export function getSteerSupport(
@@ -56,6 +61,17 @@ export function getSteerSupport(
 	>
 ): SteerSupport {
 	const name = getAgentDisplayName(session.toolType);
+	// Grok before everything: neither of its transports takes input mid-turn (main
+	// refuses every Grok steer from the route it runs on), wherever the agent runs.
+	// No feature-request link: the provider is wired, the protocol lacks the op.
+	if (session.toolType === 'grok') {
+		return {
+			kind: 'unsupported',
+			reason: 'grok-no-input-op',
+			detail:
+				'Grok cannot take a message while a turn runs: its headless route has no input channel, and its ACP route advertises no operation for it. Queue the message and it sends when the turn ends.',
+		};
+	}
 	// Codex first: app-server steers over SSH too, so a remote Codex agent's gap is
 	// its transport, which has a fix.
 	if (session.toolType === 'codex') {

@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useInlineWizardLifecycleActions } from '../../../../../renderer/hooks/batch/inlineWizard/lifecycleActions';
@@ -10,15 +11,18 @@ vi.mock('../../../../../renderer/services/inlineWizardConversation', async () =>
 
 function useLifecycleHarness() {
 	const tabState = useInlineWizardTabState();
+	const generationControllersMap = useRef(new Map<string, AbortController>());
 	const lifecycle = useInlineWizardLifecycleActions({
 		currentTabId: tabState.currentTabId,
 		setTabStates: tabState.setTabStates,
 		previousUIStateRefsMap: tabState.previousUIStateRefsMap,
 		conversationSessionsMap: tabState.conversationSessionsMap,
+		generationControllersMap,
 	});
 
 	return {
 		...tabState,
+		generationControllersMap,
 		...lifecycle,
 	};
 }
@@ -39,11 +43,13 @@ describe('inline wizard lifecycle actions', () => {
 			systemPrompt: 'prompt',
 			isActive: true,
 		};
+		const generation = new AbortController();
 
 		act(() => {
 			result.current.setTabState('tab-a', (prev) => ({ ...prev, isActive: true }));
 			result.current.previousUIStateRefsMap.current.set('tab-a', previousState);
 			result.current.conversationSessionsMap.current.set('tab-a', session);
+			result.current.generationControllersMap.current.set('tab-a', generation);
 		});
 
 		let restored = null as typeof previousState | null;
@@ -55,6 +61,9 @@ describe('inline wizard lifecycle actions', () => {
 		expect(result.current.getStateForTab('tab-a')).toBeUndefined();
 		expect(result.current.conversationSessionsMap.current.has('tab-a')).toBe(false);
 		expect(endInlineWizardConversation).toHaveBeenCalledWith(session);
+		// An in-flight document generation for the ended tab is aborted and forgotten.
+		expect(generation.signal.aborted).toBe(true);
+		expect(result.current.generationControllersMap.current.has('tab-a')).toBe(false);
 	});
 
 	it('resets the current tab without touching another tab', () => {

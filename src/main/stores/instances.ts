@@ -42,6 +42,7 @@ import { getCustomSyncPath } from './utils';
 import { migrateWindowStateToMultiWindow } from './migrations/multi-window-state';
 import { readExistingAgentIds } from '../window-state-persistence';
 import { trackStoreWrites } from './write-tracker';
+import { cacheStoreReads } from './cached-reads';
 import { deferStoreWrites, type DeferredWriteStore } from './deferred-writes';
 
 /**
@@ -120,15 +121,19 @@ export function initializeStores(options: StoreInitOptions): {
 
 	// 3. Initialize all other stores
 	// Instrumented so the settings file watcher can tell our own writes from an
-	// external edit (maestro-cli, an editor) - see stores/write-tracker.ts.
-	_settingsStore = trackStoreWrites(
-		new Store<MaestroSettings>({
-			name: 'maestro-settings',
-			cwd: _syncPath,
-			defaults: SETTINGS_DEFAULTS,
-			deserialize: deserializeStoreJson('maestro-settings', _syncPath),
-		}),
-		'maestro-settings.json'
+	// external edit (maestro-cli, an editor) - see stores/write-tracker.ts. Reads
+	// are served from a stat-validated parse: conf re-reads and re-parses the
+	// whole file on every get() otherwise - see stores/cached-reads.ts.
+	_settingsStore = cacheStoreReads(
+		trackStoreWrites(
+			new Store<MaestroSettings>({
+				name: 'maestro-settings',
+				cwd: _syncPath,
+				defaults: SETTINGS_DEFAULTS,
+				deserialize: deserializeStoreJson('maestro-settings', _syncPath),
+			}),
+			'maestro-settings.json'
+		)
 	);
 
 	// The sessions store is read and written far more than any other, and is the
@@ -158,14 +163,16 @@ export function initializeStores(options: StoreInitOptions): {
 
 	// Agent configs are ALWAYS stored in the production path, even in dev mode
 	// This ensures agent paths, custom args, and env vars are shared between dev and prod
-	_agentConfigsStore = trackStoreWrites(
-		new Store<AgentConfigsData>({
-			name: 'maestro-agent-configs',
-			cwd: _productionDataPath,
-			defaults: AGENT_CONFIGS_DEFAULTS,
-			deserialize: deserializeStoreJson('maestro-agent-configs', productionDataPath),
-		}),
-		'maestro-agent-configs.json'
+	_agentConfigsStore = cacheStoreReads(
+		trackStoreWrites(
+			new Store<AgentConfigsData>({
+				name: 'maestro-agent-configs',
+				cwd: _productionDataPath,
+				defaults: AGENT_CONFIGS_DEFAULTS,
+				deserialize: deserializeStoreJson('maestro-agent-configs', productionDataPath),
+			}),
+			'maestro-agent-configs.json'
+		)
 	);
 
 	// Agent capability snapshots - keyed by `agentId` or `agentId:remoteUuid`.
