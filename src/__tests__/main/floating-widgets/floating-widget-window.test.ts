@@ -195,6 +195,7 @@ describe('floating widget window lifecycle', () => {
 		expect(win.setAlwaysOnTop).toHaveBeenCalledWith(true, 'floating');
 		expect(win.setVisibleOnAllWorkspaces).toHaveBeenCalledWith(true, {
 			visibleOnFullScreen: true,
+			skipTransformProcessType: true,
 		});
 	});
 
