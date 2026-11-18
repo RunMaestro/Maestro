@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-glibc-floor.sh - Fail the build if any shipped x86-64 native module
+# verify-glibc-floor.sh - Fail the build if any shipped Linux native module
 # requires a glibc symbol version newer than the supported floor.
 #
 # Why this exists: the Linux native modules (better-sqlite3, node-pty, ...) are
@@ -14,14 +14,24 @@
 # the package: it inspects the actual packaged binaries and fails loudly if the
 # floor was exceeded.
 #
-# Usage: ./verify-glibc-floor.sh <max-glibc> <search-dir>
+# Usage: ./verify-glibc-floor.sh <max-glibc> <search-dir> [arch]
 #   max-glibc:  highest allowed glibc version, e.g. 2.35 (Ubuntu 22.04)
 #   search-dir: directory scanned recursively for *.node files
+#   arch:       x64 (default) or arm64; only ELF objects for this arch are checked
 
 set -euo pipefail
 
 MAX_GLIBC="${1:?Usage: $0 <max-glibc> <search-dir>}"
-SEARCH_DIR="${2:?Usage: $0 <max-glibc> <search-dir>}"
+SEARCH_DIR="${2:?Usage: $0 <max-glibc> <search-dir> [x64|arm64]}"
+ARCH="${3:-x64}"
+case "$ARCH" in
+	x64) ARCH_LABEL="x86-64" ;;
+	arm64) ARCH_LABEL="aarch64" ;;
+	*)
+		echo "✗ ERROR: unsupported arch '$ARCH' (expected x64 or arm64)" >&2
+		exit 1
+		;;
+esac
 
 if ! command -v readelf >/dev/null 2>&1; then
 	echo "✗ ERROR: readelf not found (install binutils)" >&2
@@ -60,19 +70,24 @@ FAIL=0
 CHECKED=0
 for bin in "${NODES[@]}"; do
 	rel="${bin#"$SEARCH_DIR"/}"
-	# Only x86-64 ELF objects matter for the x64 glibc floor. Skip Windows PE
-	# prebuilds and foreign-arch (arm64) prebuilds that node-pty bundles.
+	# Only ELF objects for the target arch matter for its glibc floor. Skip Windows
+	# PE prebuilds and the foreign-arch prebuilds that node-pty bundles.
 	info=$(file -b "$bin" 2>/dev/null || echo "")
-	case "$info" in
-		*ELF*x86-64* | *ELF*x86_64*) ;;
+	if [ "$ARCH" = "arm64" ]; then
+		case "$info" in *ELF*aarch64*) is_target=1 ;; *) is_target=0 ;; esac
+	else
+		case "$info" in *ELF*x86-64* | *ELF*x86_64*) is_target=1 ;; *) is_target=0 ;; esac
+	fi
+	case "$is_target" in
+		1) ;;
 		*)
-			echo "  - skip (not x86-64 ELF): $rel"
+			echo "  - skip (not $ARCH_LABEL ELF): $rel"
 			continue
 			;;
 	esac
 	# Read the ELF version info once, failing closed on a readelf error. A bare
 	# `readelf ... || true` would turn a parse failure into an empty result and
-	# skip the binary as "musl/static" - an x86-64 .node we cannot inspect must
+	# skip the binary as "musl/static" - a target-arch .node we cannot inspect must
 	# fail the guard instead of slipping through.
 	if ! readelf_out=$(readelf -V "$bin" 2>&1); then
 		echo "  ✗ ERROR: readelf failed on $rel (failing closed):" >&2
@@ -103,7 +118,7 @@ for bin in "${NODES[@]}"; do
 done
 
 if [ "$CHECKED" -eq 0 ]; then
-	echo "✗ ERROR: no x86-64 glibc-linked .node files were inspected under $SEARCH_DIR" >&2
+	echo "✗ ERROR: no $ARCH_LABEL glibc-linked .node files were inspected under $SEARCH_DIR" >&2
 	exit 1
 fi
 
@@ -113,8 +128,8 @@ if [ "$FAIL" -ne 0 ]; then
 	echo "  This package would fail to load on Ubuntu 22.04 (glibc 2.35) with a"
 	echo "  \"version 'GLIBC_x.y' not found\" error at native-module load time."
 	echo "  Fix: build the native modules against an older glibc - pin the release"
-	echo "  runner to ubuntu-22.04 or build inside an older-glibc container."
+	echo "  runner to ubuntu-22.04 / ubuntu-22.04-arm or build inside an older-glibc container."
 	exit 1
 fi
 
-echo "All x86-64 native modules are within the GLIBC_${MAX_GLIBC} floor."
+echo "All $ARCH_LABEL native modules are within the GLIBC_${MAX_GLIBC} floor."

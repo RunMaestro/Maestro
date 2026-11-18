@@ -47,7 +47,10 @@ jobs:
             arch: x64
           # ARM64 Linux requires native ARM64 runner for node-pty native module
           # Cross-compilation from x64 doesn't work: https://github.com/electron-userland/electron-builder/issues/7608
-          - os: ubuntu-24.04-arm
+          # Pinned to ubuntu-22.04-arm for the same glibc reason as the x64 job above:
+          # ubuntu-24.04-arm ships glibc 2.39, which raises the floor of the arm64
+          # native modules past Ubuntu 22.04. Enforced by verify-glibc-floor.sh arm64.
+          - os: ubuntu-22.04-arm
             platform: linux-arm64
             arch: arm64
           - os: windows-latest
@@ -542,6 +545,11 @@ jobs:
             find "$UNPACKED_DIR" -name "*.node" 2>/dev/null || echo "Directory not found"
             exit 1
           fi
+
+      # Same glibc floor guard as Linux x64, for the arm64 package.
+      - name: Verify GLIBC floor (Linux ARM64)
+        if: matrix.platform == 'linux-arm64'
+        run: .github/scripts/verify-glibc-floor.sh 2.35 release/linux-arm64-unpacked/resources/app.asar.unpacked arm64
 
       # List what was built for debugging
       - name: List release artifacts
