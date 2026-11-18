@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildRebuildSpawn } from './lib/rebuild-command.mjs';
 
 const MODULE = 'better-sqlite3';
 const TARGETS = ['node', 'electron'];
@@ -71,28 +72,16 @@ function probe() {
 }
 
 function rebuild() {
-	const [command, args] =
-		target === 'node'
-			? [isWindows ? 'npm.cmd' : 'npm', ['rebuild', MODULE]]
-			: [
-					path.join(
-						rootDir,
-						'node_modules',
-						'.bin',
-						isWindows ? 'electron-rebuild.cmd' : 'electron-rebuild'
-					),
-					['-f', '-w', MODULE],
-				];
-	// .cmd shims need a shell on Windows (Node >=22.12 refuses them otherwise).
-	const result = spawnSync(
-		isWindows ? `"${command}" ${args.join(' ')}` : command,
-		isWindows ? [] : args,
-		{
-			cwd: rootDir,
-			stdio: 'inherit',
-			shell: isWindows,
-		}
-	);
+	const { command, args, shell } = buildRebuildSpawn(target, {
+		moduleName: MODULE,
+		win32: isWindows,
+		rootDir,
+	});
+	const result = spawnSync(command, args, {
+		cwd: rootDir,
+		stdio: 'inherit',
+		shell,
+	});
 	return result.status === 0;
 }
 
@@ -112,6 +101,11 @@ console.log(
 );
 if (!rebuild()) {
 	console.error(`[native] rebuilding ${MODULE} for ${target} failed`);
+	if (isWindows) {
+		console.error(
+			'[native] if the Maestro app or another process from this checkout is running, it may hold better_sqlite3.node open; close it and run the command again'
+		);
+	}
 	process.exit(1);
 }
 
