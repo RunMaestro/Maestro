@@ -34,7 +34,9 @@
  * database's tables and columns. The rail stays as a reference; picking an
  * object in it goes back to Browse to show that object. The query text, its
  * parameter values, the Plan toggle, and the last run's result are kept
- * here, so all survive the switch; opening another file clears them.
+ * here, so all survive the switch; opening another file clears them. The
+ * Query panel's History rail and Export are its own (the history is kept
+ * per file by the main process).
  */
 
 import {
@@ -395,6 +397,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 							// One mount per open database, so a catalog never carries over.
 							key={info.handle}
 							handle={info.handle}
+							fileName={fileName}
 							value={query}
 							onChange={setQuery}
 							params={queryParams}

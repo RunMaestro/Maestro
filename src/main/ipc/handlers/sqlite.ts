@@ -7,7 +7,9 @@
  * table-list, schema, and column-catalog calls return names, numbers, and
  * schema text,
  * the row calls return one bounded window of cells, a query run returns one
- * window of a read-only statement's result, a BLOB save writes the
+ * window of a read-only statement's result, an export writes a statement's
+ * whole result to a file in a child process, the history calls read and
+ * forget what ran against the file, a BLOB save writes the
  * value to disk here rather than shipping it, and the read-only
  * connection stays in this process (see src/main/sqlite/sqlite-database.ts).
  */
@@ -27,6 +29,9 @@ import type {
 	SqliteObjectList,
 	SqliteObjectSchema,
 	SqliteObjectStats,
+	SqliteQueryExported,
+	SqliteQueryExportRequest,
+	SqliteQueryHistory,
 	SqliteQueryRequest,
 	SqliteQueryResult,
 	SqliteRowCount,
@@ -38,7 +43,11 @@ import { countSqliteRows } from '../../sqlite/sqlite-count';
 import { closeSqliteDatabase, openSqliteDatabase } from '../../sqlite/sqlite-database';
 import { checkSqliteIntegrity } from '../../sqlite/sqlite-integrity';
 import { listSqliteObjects, readSqliteObjectStats } from '../../sqlite/sqlite-objects';
-import { cancelSqliteQuery, runSqliteQuery } from '../../sqlite/sqlite-query';
+import { cancelSqliteQuery, exportSqliteQuery, runSqliteQuery } from '../../sqlite/sqlite-query';
+import {
+	forgetSqliteQueryHistory,
+	readSqliteQueryHistory,
+} from '../../sqlite/sqlite-query-history';
 import { readSqliteRows } from '../../sqlite/sqlite-rows';
 import { readSqliteColumnCatalog, readSqliteObjectSchema } from '../../sqlite/sqlite-schema';
 import { readSqliteDatabaseSummary } from '../../sqlite/sqlite-summary';
@@ -128,10 +137,32 @@ export function registerSqliteHandlers(): void {
 			runSqliteQuery(request)
 	);
 
-	// Query mode's Stop: terminate the run going under this id.
+	// Query mode's Stop: terminate the run (or export) going under this id.
 	ipcMain.handle(
 		'sqlite:cancelQuery',
 		async (_event, queryId: string): Promise<boolean> => cancelSqliteQuery(queryId)
+	);
+
+	// Query mode's Export: the statement's whole result written to a file as
+	// CSV or JSON Lines, in a child process; only what was written comes back.
+	ipcMain.handle(
+		'sqlite:exportQuery',
+		async (_event, request: SqliteQueryExportRequest): Promise<SqliteQueryExported> =>
+			exportSqliteQuery(request)
+	);
+
+	// Query mode's History rail: what ran against this file, newest first.
+	ipcMain.handle(
+		'sqlite:readQueryHistory',
+		async (_event, handle: string): Promise<SqliteQueryHistory> => readSqliteQueryHistory(handle)
+	);
+
+	// Forget one history entry, or the whole history with a null id. Answers
+	// with the history left.
+	ipcMain.handle(
+		'sqlite:forgetQueryHistory',
+		async (_event, handle: string, entryId: string | null): Promise<SqliteQueryHistory> =>
+			forgetSqliteQueryHistory(handle, entryId ?? null)
 	);
 
 	// Save one BLOB cell to a file, whole. The value is read and written in

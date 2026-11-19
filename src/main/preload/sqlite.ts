@@ -6,7 +6,8 @@
  * objects, measure their row counts and sizes, read one object's structure,
  * read every table's column names for SQL completion,
  * read a window of a table's rows, count its rows, run a read-only statement
- * (and stop it), save a BLOB to a file, close the handle.
+ * (and stop it), export a statement's result to a file, read and forget the
+ * file's query history, save a BLOB to a file, close the handle.
  */
 
 import { ipcRenderer } from 'electron';
@@ -23,6 +24,9 @@ import type {
 	SqliteObjectList,
 	SqliteObjectSchema,
 	SqliteObjectStats,
+	SqliteQueryExported,
+	SqliteQueryExportRequest,
+	SqliteQueryHistory,
 	SqliteQueryRequest,
 	SqliteQueryResult,
 	SqliteRowCount,
@@ -110,9 +114,26 @@ export function createSqliteApi() {
 		runQuery: (request: SqliteQueryRequest): Promise<SqliteQueryResult> =>
 			ipcRenderer.invoke('sqlite:runQuery', request),
 
-		/** Stop the run started under `queryId`. Resolves whether one was running. */
+		/** Stop the run or export started under `queryId`. Resolves whether one was running. */
 		cancelQuery: (queryId: string): Promise<boolean> =>
 			ipcRenderer.invoke('sqlite:cancelQuery', queryId),
+
+		/**
+		 * Write every row of one read-only statement to `destPath` as CSV or
+		 * JSON Lines, whole, in a child process. Rejects as `runQuery` does,
+		 * and for a statement that returns no rows; a failed export leaves no
+		 * file behind.
+		 */
+		exportQuery: (request: SqliteQueryExportRequest): Promise<SqliteQueryExported> =>
+			ipcRenderer.invoke('sqlite:exportQuery', request),
+
+		/** The statements run against this database, newest first. */
+		readQueryHistory: (handle: string): Promise<SqliteQueryHistory> =>
+			ipcRenderer.invoke('sqlite:readQueryHistory', handle),
+
+		/** Forget one history entry, or all of them with `entryId` null. Resolves the history left. */
+		forgetQueryHistory: (handle: string, entryId: string | null): Promise<SqliteQueryHistory> =>
+			ipcRenderer.invoke('sqlite:forgetQueryHistory', handle, entryId),
 
 		/**
 		 * Write one BLOB cell to `destPath`, whole. The row is named by its rowid

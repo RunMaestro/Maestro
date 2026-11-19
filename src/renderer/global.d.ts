@@ -253,6 +253,9 @@ import type {
 	SqliteObjectList,
 	SqliteObjectSchema,
 	SqliteObjectStats,
+	SqliteQueryExported,
+	SqliteQueryExportRequest,
+	SqliteQueryHistory,
 	SqliteQueryRequest,
 	SqliteQueryResult,
 	SqliteRowCount,
@@ -2001,6 +2004,9 @@ interface MaestroAPI {
 		countRows: (request: SqliteCountRequest) => Promise<SqliteRowCount>;
 		runQuery: (request: SqliteQueryRequest) => Promise<SqliteQueryResult>;
 		cancelQuery: (queryId: string) => Promise<boolean>;
+		exportQuery: (request: SqliteQueryExportRequest) => Promise<SqliteQueryExported>;
+		readQueryHistory: (handle: string) => Promise<SqliteQueryHistory>;
+		forgetQueryHistory: (handle: string, entryId: string | null) => Promise<SqliteQueryHistory>;
 		saveBlob: (request: SqliteBlobRequest) => Promise<SqliteBlobSaved>;
 		close: (handle: string) => Promise<void>;
 	};

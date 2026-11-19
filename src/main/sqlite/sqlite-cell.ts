@@ -11,6 +11,10 @@
  *     process and is cut there: `sqliteCellFromValue()`. Only the cut cell
  *     leaves it.
  *
+ * An export (Query mode's Export) is the one reader that keeps values whole:
+ * `sqliteExportValue()` hands the shared CSV / JSON Lines encoder each value
+ * uncut, a BLOB as its bytes in hex.
+ *
  * Both expect a statement read with `safeIntegers(true)`, so an INTEGER past
  * 2^53 arrives as a BigInt and keeps every digit.
  *
@@ -20,6 +24,7 @@
 
 import { SQLITE_CELL_BLOB_HEAD_BYTES, SQLITE_CELL_TEXT_LIMIT } from '../../shared/sqlite/cells';
 import type { SqliteCellValue } from '../../shared/sqlite/types';
+import type { TabularExportValue } from '../../shared/tabularExport';
 
 function toCount(value: unknown): number {
 	return typeof value === 'bigint' ? Number(value) : Number(value ?? 0);
@@ -83,4 +88,18 @@ export function sqliteCellFromValue(value: unknown): SqliteCellValue {
 		};
 	}
 	return sqliteCellFromHead(value, null);
+}
+
+/**
+ * One whole value as an export writes it: TEXT and REAL as they are, an
+ * INTEGER as a `bigint` (every digit kept), a BLOB as lowercase hex, NULL as
+ * null. Nothing is cut.
+ */
+export function sqliteExportValue(value: unknown): TabularExportValue {
+	if (value === null || value === undefined) return null;
+	if (typeof value === 'string' || typeof value === 'number' || typeof value === 'bigint') {
+		return value;
+	}
+	if (Buffer.isBuffer(value)) return value.toString('hex');
+	return String(value);
 }

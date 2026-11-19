@@ -9,18 +9,30 @@
  *     page (sqlite-integrity-task.ts).
  *   - `query`: one statement a person wrote in Query mode, which may run for
  *     ever (sqlite-query-task.ts).
+ *   - `export`: the same statement, every row written to a file as CSV or
+ *     JSON Lines (Query mode's Export, also sqlite-query-task.ts).
  *
  * Nothing here, or reachable from here, may import `electron`.
  */
 
-import type { SqliteIntegrityResult, SqliteQueryResult } from '../../shared/sqlite/types';
+import type {
+	SqliteIntegrityResult,
+	SqliteQueryExported,
+	SqliteQueryResult,
+} from '../../shared/sqlite/types';
 import { runSqliteIntegrityCheck, type SqliteIntegrityTask } from './sqlite-integrity-task';
-import { runSqliteQueryTask, type SqliteQueryTask } from './sqlite-query-task';
+import {
+	exportSqliteQueryTask,
+	runSqliteQueryTask,
+	type SqliteQueryExportTask,
+	type SqliteQueryTask,
+} from './sqlite-query-task';
 
 /** Each kind's task and result. */
 export interface SqliteWorkerTasks {
 	integrity: { task: SqliteIntegrityTask; result: SqliteIntegrityResult };
 	query: { task: SqliteQueryTask; result: SqliteQueryResult };
+	export: { task: SqliteQueryExportTask; result: SqliteQueryExported };
 }
 
 export type SqliteWorkerKind = keyof SqliteWorkerTasks;
@@ -41,6 +53,7 @@ const RUNNERS: {
 } = {
 	integrity: runSqliteIntegrityCheck,
 	query: runSqliteQueryTask,
+	export: exportSqliteQueryTask,
 };
 
 /** Run one task where it is called. The child process calls this; so does the inline fallback. */

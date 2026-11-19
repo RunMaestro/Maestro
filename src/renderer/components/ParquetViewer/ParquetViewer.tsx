@@ -44,6 +44,10 @@ import type {
 } from '../../../shared/parquet/types';
 import type { Theme } from '../../types';
 import { formatCount, formatSize } from '../../../shared/formatters';
+import {
+	TABULAR_EXPORT_FILE_FILTERS,
+	tabularExportFormatForPath,
+} from '../../../shared/tabularExport';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useDebouncedValue } from '../../hooks/utils/useThrottle';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
@@ -328,10 +332,7 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 			const destination = await window.maestro.dialog.saveFile({
 				title: 'Export matching rows',
 				defaultPath: `${base}${appliedFilter ? '-filtered' : ''}.csv`,
-				filters: [
-					{ name: 'CSV', extensions: ['csv'] },
-					{ name: 'JSON Lines', extensions: ['jsonl'] },
-				],
+				filters: [...TABULAR_EXPORT_FILE_FILTERS],
 			});
 			if (!destination) return;
 			try {
@@ -341,7 +342,7 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 					columns: projection,
 					sort,
 					destPath: destination,
-					format: destination.toLowerCase().endsWith('.jsonl') ? 'jsonl' : 'csv',
+					format: tabularExportFormatForPath(destination),
 				});
 				notifyToast({
 					color: exported.truncated ? 'yellow' : 'green',

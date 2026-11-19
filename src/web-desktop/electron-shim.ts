@@ -28,6 +28,7 @@ import {
 	type WebBridgeReconcileDetail,
 } from '../shared/webClientConfig';
 import { WEB_LOGIN_PATHS, WEB_LOGIN_WS_CLOSE_CODE } from '../shared/webLogin';
+import { SQLITE_EXPORT_TIMEOUT_MS } from '../shared/sqlite/query';
 import { selectHostFolder, selectHostSaveFile } from './remote-file-dialog';
 import {
 	readClientViewState,
@@ -270,6 +271,8 @@ function requestTimeoutMs(channel: string): number {
 	) {
 		return 600_000;
 	}
+	// Main stops an export at its own 10-minute timeout; leave room for the reply.
+	if (channel === 'sqlite:exportQuery') return SQLITE_EXPORT_TIMEOUT_MS + 60_000;
 	return isSubmissionChannel(channel) ? BRIDGE_MUTATION_TIMEOUT_MS : BRIDGE_READ_TIMEOUT_MS;
 }
 

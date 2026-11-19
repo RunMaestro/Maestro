@@ -109,6 +109,21 @@ describe('SQLite Preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('sqlite:cancelQuery', 'q1');
 	});
 
+	it('exports a query, and reads and forgets its history', async () => {
+		const request = { handle: 'h1', sql: 'SELECT 1', destPath: '/tmp/out.jsonl', queryId: 'e1' };
+		mockInvoke.mockResolvedValue({ path: '/tmp/out.jsonl', rows: 1 });
+		await api.exportQuery(request);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:exportQuery', request);
+
+		mockInvoke.mockResolvedValue({ path: '/data/app.db', entries: [] });
+		await api.readQueryHistory('h1');
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:readQueryHistory', 'h1');
+		await api.forgetQueryHistory('h1', 'id-1');
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:forgetQueryHistory', 'h1', 'id-1');
+		await api.forgetQueryHistory('h1', null);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:forgetQueryHistory', 'h1', null);
+	});
+
 	it('closes a handle', async () => {
 		mockInvoke.mockResolvedValue(undefined);
 		await api.close('h1');

@@ -20,6 +20,9 @@ import type {
 	SqliteObjectSchema,
 	SqliteObjectStats,
 	SqliteObjectSummary,
+	SqliteQueryExportRequest,
+	SqliteQueryHistory,
+	SqliteQueryHistoryEntry,
 	SqliteQueryRequest,
 	SqliteQueryResult,
 	SqliteRowCount,
@@ -123,6 +126,9 @@ let readSummary: ReturnType<typeof vi.fn>;
 let checkIntegrity: ReturnType<typeof vi.fn>;
 let runQuery: ReturnType<typeof vi.fn>;
 let cancelQuery: ReturnType<typeof vi.fn>;
+let exportQuery: ReturnType<typeof vi.fn>;
+let readQueryHistory: ReturnType<typeof vi.fn>;
+let forgetQueryHistory: ReturnType<typeof vi.fn>;
 
 const SUMMARY: SqliteDatabaseSummary = {
 	pageSize: 4096,
@@ -306,6 +312,20 @@ beforeEach(() => {
 	checkIntegrity = vi.fn(() => new Promise<SqliteIntegrityResult>(() => {}));
 	runQuery = vi.fn(async (request: SqliteQueryRequest) => queryWindow(request));
 	cancelQuery = vi.fn().mockResolvedValue(true);
+	exportQuery = vi.fn(async (request: SqliteQueryExportRequest) => ({
+		path: request.destPath,
+		format: request.format ?? 'csv',
+		rows: 3,
+		columns: 2,
+		bytes: 40,
+		elapsedMs: 2,
+	}));
+	readQueryHistory = vi.fn(
+		async (): Promise<SqliteQueryHistory> => ({ path: '/data/app.db', entries: [] })
+	);
+	forgetQueryHistory = vi.fn(
+		async (): Promise<SqliteQueryHistory> => ({ path: '/data/app.db', entries: [] })
+	);
 	notifyToastMock.mockReset();
 	(window as unknown as { maestro: unknown }).maestro = {
 		sqlite: {
@@ -321,6 +341,9 @@ beforeEach(() => {
 			saveBlob,
 			runQuery,
 			cancelQuery,
+			exportQuery,
+			readQueryHistory,
+			forgetQueryHistory,
 			close,
 		},
 		dialog: { saveFile },
@@ -1633,5 +1656,202 @@ describe('SqliteViewer query plan', () => {
 			'true'
 		);
 		expect(runQuery).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('SqliteViewer query export', () => {
+	async function runStatement(sql: string) {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		const panel = await screen.findByTestId('sqlite-query-panel');
+		fireEvent.change(within(panel).getAllByRole('textbox')[0], { target: { value: sql } });
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		await screen.findByTestId('sqlite-query-grid');
+	}
+
+	it('stays off until a statement has rows to export', async () => {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		expect(await screen.findByTestId('sqlite-query-export')).toBeDisabled();
+	});
+
+	it('writes every row of the statement shown, with its values, to the file picked', async () => {
+		saveFile.mockResolvedValue('/tmp/out.jsonl');
+		await runStatement('SELECT * FROM users WHERE id > :min');
+		// The editor moves on; the export is of what ran.
+		fireEvent.change(screen.getAllByRole('textbox')[0], { target: { value: 'SELECT 2' } });
+		fireEvent.click(screen.getByTestId('sqlite-query-export'));
+
+		await waitFor(() => expect(exportQuery).toHaveBeenCalledTimes(1));
+		expect(saveFile).toHaveBeenCalledWith({
+			title: 'Export the query result',
+			defaultPath: 'app-query.csv',
+			filters: [
+				{ name: 'CSV', extensions: ['csv'] },
+				{ name: 'JSON Lines', extensions: ['jsonl'] },
+			],
+		});
+		const request = exportQuery.mock.calls[0][0];
+		expect(request).toMatchObject({
+			handle: 'h1',
+			sql: 'SELECT * FROM users WHERE id > :min',
+			params: { ':min': { type: 'text', text: '' } },
+			destPath: '/tmp/out.jsonl',
+			format: 'jsonl',
+		});
+		expect(request.queryId).toEqual(expect.any(String));
+		expect(await screen.findByTestId('sqlite-query-export-status')).toHaveTextContent(
+			'Exported 3 rows to /tmp/out.jsonl'
+		);
+		expect(notifyToastMock).toHaveBeenCalledWith({
+			color: 'green',
+			title: 'Export complete',
+			message: '3 rows written to /tmp/out.jsonl',
+		});
+	});
+
+	it('does nothing when the save dialog is cancelled', async () => {
+		saveFile.mockResolvedValue(null);
+		await runStatement('SELECT 1');
+		fireEvent.click(screen.getByTestId('sqlite-query-export'));
+		await waitFor(() => expect(saveFile).toHaveBeenCalled());
+		expect(exportQuery).not.toHaveBeenCalled();
+		expect(screen.queryByTestId('sqlite-query-export-status')).not.toBeInTheDocument();
+	});
+
+	it('shows a failed export in the status line, not as a toast', async () => {
+		saveFile.mockResolvedValue('/tmp/out.csv');
+		exportQuery.mockRejectedValue(new Error('no such column: nope'));
+		await runStatement('SELECT nope');
+		fireEvent.click(screen.getByTestId('sqlite-query-export'));
+		expect(await screen.findByTestId('sqlite-query-export-status')).toHaveTextContent(
+			'Export failed: no such column: nope'
+		);
+		expect(notifyToastMock).not.toHaveBeenCalled();
+	});
+
+	it('stops an export in flight by its own id', async () => {
+		saveFile.mockResolvedValue('/tmp/out.csv');
+		exportQuery.mockImplementation(() => new Promise(() => {}));
+		await runStatement('SELECT 1');
+		fireEvent.click(screen.getByTestId('sqlite-query-export'));
+		fireEvent.click(await screen.findByTestId('sqlite-query-export-stop'));
+		const exportId = exportQuery.mock.calls[0][0].queryId;
+		expect(cancelQuery).toHaveBeenCalledWith(exportId);
+		expect(screen.getByTestId('sqlite-query-export')).toBeDisabled();
+	});
+
+	it('has nothing to export for a query plan', async () => {
+		runQuery.mockResolvedValue({
+			...queryWindow({ handle: 'h1', sql: '' }),
+			plan: true,
+			columns: ['id', 'parent', 'notused', 'detail'].map((name) => ({ name, declaredType: null })),
+			rows: [[2, 0, 0, 'SCAN users']],
+		});
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'SELECT 1' } });
+		fireEvent.click(screen.getByTestId('sqlite-query-result-mode-plan'));
+		await screen.findByTestId('sqlite-query-plan');
+		expect(screen.getByTestId('sqlite-query-export')).toBeDisabled();
+	});
+});
+
+describe('SqliteViewer query history', () => {
+	const ENTRY: SqliteQueryHistoryEntry = {
+		id: 'e1',
+		sql: 'SELECT *\nFROM users WHERE id = :id',
+		plan: true,
+		params: { ':id': { type: 'number', text: '7' } },
+		ranAt: Date.now() - 60_000,
+		runs: 2,
+		outcome: { ok: true, rows: 500, hasMore: true, returnsRows: true, elapsedMs: 3 },
+	};
+	const FAILED: SqliteQueryHistoryEntry = {
+		...ENTRY,
+		id: 'e2',
+		sql: 'SELECT nope',
+		plan: false,
+		params: {},
+		runs: 1,
+		outcome: { ok: false, error: 'no such column: nope' },
+	};
+
+	async function openHistory() {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		fireEvent.click(await screen.findByTestId('sqlite-query-toggle-history'));
+		return screen.findByTestId('sqlite-query-history');
+	}
+
+	it('is off by default, and the toggle opens it and is remembered', async () => {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		await screen.findByTestId('sqlite-query-panel');
+		expect(screen.queryByTestId('sqlite-query-history')).not.toBeInTheDocument();
+		expect(readQueryHistory).not.toHaveBeenCalled();
+
+		fireEvent.click(screen.getByTestId('sqlite-query-toggle-history'));
+		expect(await screen.findByTestId('sqlite-query-history-empty')).toBeInTheDocument();
+		expect(readQueryHistory).toHaveBeenCalledWith('h1');
+		expect(localStorage.getItem('sqlite-query-history')).toBe('true');
+	});
+
+	it('lists the statements newest first, with how each last ended', async () => {
+		readQueryHistory.mockResolvedValue({ path: '/data/app.db', entries: [ENTRY, FAILED] });
+		await openHistory();
+		const entries = await screen.findAllByTestId('sqlite-query-history-entry');
+		expect(entries).toHaveLength(2);
+		expect(entries[0]).toHaveTextContent('SELECT * FROM users WHERE id = :id');
+		expect(entries[0]).toHaveTextContent('500+ rows');
+		expect(entries[0]).toHaveTextContent('plan');
+		expect(entries[0]).toHaveTextContent('x2');
+		expect(entries[1]).toHaveTextContent('failed');
+	});
+
+	it('puts a picked statement back in the editor with its values and mode, without running it', async () => {
+		readQueryHistory.mockResolvedValue({ path: '/data/app.db', entries: [ENTRY] });
+		await openHistory();
+		fireEvent.click(await screen.findByTestId('sqlite-query-history-pick'));
+
+		expect(screen.getAllByRole('textbox')[0]).toHaveValue(ENTRY.sql);
+		expect(await screen.findByTestId('sqlite-query-parameter-input-:id')).toHaveValue('7');
+		expect(screen.getByTestId('sqlite-query-result-mode-plan')).toHaveAttribute(
+			'aria-checked',
+			'true'
+		);
+		expect(runQuery).not.toHaveBeenCalled();
+	});
+
+	it('reads the history again when a run settles', async () => {
+		await openHistory();
+		await waitFor(() => expect(readQueryHistory).toHaveBeenCalledTimes(1));
+		fireEvent.change(screen.getAllByRole('textbox')[0], { target: { value: 'SELECT 1' } });
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		await screen.findByTestId('sqlite-query-grid');
+		await waitFor(() => expect(readQueryHistory).toHaveBeenCalledTimes(2));
+	});
+
+	it('forgets one statement, and clears them all, showing what is left', async () => {
+		readQueryHistory.mockResolvedValue({ path: '/data/app.db', entries: [ENTRY, FAILED] });
+		forgetQueryHistory.mockResolvedValueOnce({ path: '/data/app.db', entries: [FAILED] });
+		await openHistory();
+		fireEvent.click((await screen.findAllByTestId('sqlite-query-history-forget'))[0]);
+		await waitFor(() =>
+			expect(screen.getAllByTestId('sqlite-query-history-entry')).toHaveLength(1)
+		);
+		expect(forgetQueryHistory).toHaveBeenCalledWith('h1', 'e1');
+
+		fireEvent.click(screen.getByTestId('sqlite-query-history-clear'));
+		expect(await screen.findByTestId('sqlite-query-history-empty')).toBeInTheDocument();
+		expect(forgetQueryHistory).toHaveBeenLastCalledWith('h1', null);
+	});
+
+	it('says so when the history cannot be read', async () => {
+		readQueryHistory.mockRejectedValue(new Error('EACCES'));
+		await openHistory();
+		expect(await screen.findByTestId('sqlite-query-history-error')).toHaveTextContent(
+			'The history could not be read: EACCES'
+		);
 	});
 });

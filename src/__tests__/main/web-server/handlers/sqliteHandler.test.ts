@@ -1,7 +1,9 @@
 // Covers the sqlite_read_summary, sqlite_list_objects, sqlite_read_schema,
-// sqlite_read_rows, sqlite_count_rows, sqlite_save_blob, and sqlite_run_query
+// sqlite_read_rows, sqlite_count_rows, sqlite_save_blob, sqlite_run_query,
+// sqlite_export_query, and sqlite_query_history
 // WebSocket messages that back `maestro-cli sqlite info`, `sqlite tables`,
-// `sqlite schema`, `sqlite rows`, `sqlite count`, `sqlite blob`, and `sqlite query`. It opens the database through the viewer's own open path,
+// `sqlite schema`, `sqlite rows`, `sqlite count`, `sqlite blob`, `sqlite query`
+// (with and without `--output`), and `sqlite history`. It opens the database through the viewer's own open path,
 // answers with the rail's listing and measurements, never closes the shared
 // connection, and always echoes the request id so the CLI never hangs.
 
@@ -42,8 +44,13 @@ const summaries = vi.hoisted(() => ({ readSqliteDatabaseSummary: vi.fn() }));
 vi.mock('../../../../main/sqlite/sqlite-summary', () => summaries);
 const integrity = vi.hoisted(() => ({ checkSqliteIntegrity: vi.fn() }));
 vi.mock('../../../../main/sqlite/sqlite-integrity', () => integrity);
-const queries = vi.hoisted(() => ({ runSqliteQuery: vi.fn() }));
+const queries = vi.hoisted(() => ({ runSqliteQuery: vi.fn(), exportSqliteQuery: vi.fn() }));
 vi.mock('../../../../main/sqlite/sqlite-query', () => queries);
+const histories = vi.hoisted(() => ({
+	readSqliteQueryHistory: vi.fn(),
+	forgetSqliteQueryHistory: vi.fn(),
+}));
+vi.mock('../../../../main/sqlite/sqlite-query-history', () => histories);
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
@@ -780,6 +787,228 @@ describe('sqlite_run_query handler', () => {
 		});
 		await flush();
 		expect(lastResponse(client)).toMatchObject({ requestId: 'q5', success: false });
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+	});
+});
+
+describe('sqlite_export_query handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+	const exported = {
+		path: '/tmp/out.csv',
+		format: 'csv',
+		rows: 3,
+		columns: 2,
+		bytes: 40,
+		elapsedMs: 1,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+		queries.exportSqliteQuery.mockResolvedValue(exported);
+	});
+
+	it("writes the file through the viewer's own export, with the values and format given", async () => {
+		const params = { ':id': { type: 'number', text: '1' } };
+		handler.handleMessage(client, {
+			type: 'sqlite_export_query',
+			requestId: 'e1',
+			path: '/data/app.db',
+			sql: 'SELECT * FROM t WHERE id = :id',
+			params,
+			destPath: '/tmp/out.csv',
+			format: 'csv',
+		});
+		await flush();
+		expect(queries.exportSqliteQuery).toHaveBeenCalledWith({
+			handle: 'h1',
+			sql: 'SELECT * FROM t WHERE id = :id',
+			params,
+			destPath: '/tmp/out.csv',
+			format: 'csv',
+		});
+		expect(lastResponse(client)).toEqual({
+			type: 'sqlite_export_result',
+			requestId: 'e1',
+			success: true,
+			database: info,
+			exported,
+		});
+		expect(database.closeSqliteDatabase).not.toHaveBeenCalled();
+	});
+
+	it('leaves the format to the destination when none is given', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_export_query',
+			requestId: 'e2',
+			path: '/data/app.db',
+			sql: 'SELECT 1',
+			destPath: '/tmp/out.jsonl',
+		});
+		await flush();
+		expect(queries.exportSqliteQuery.mock.calls[0][0]).not.toHaveProperty('format');
+	});
+
+	it('refuses a missing destination or an unknown format before opening anything', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_export_query',
+			requestId: 'e3',
+			path: '/data/app.db',
+			sql: 'SELECT 1',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 'e3', success: false });
+
+		handler.handleMessage(client, {
+			type: 'sqlite_export_query',
+			requestId: 'e4',
+			path: '/data/app.db',
+			sql: 'SELECT 1',
+			destPath: '/tmp/out.xml',
+			format: 'xml',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			requestId: 'e4',
+			success: false,
+			error: 'format must be "csv" or "jsonl"',
+		});
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+	});
+
+	it('answers a failed export with its message', async () => {
+		queries.exportSqliteQuery.mockRejectedValue(new Error('no such column: nope'));
+		handler.handleMessage(client, {
+			type: 'sqlite_export_query',
+			requestId: 'e5',
+			path: '/data/app.db',
+			sql: 'SELECT nope',
+			destPath: '/tmp/out.csv',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_export_result',
+			requestId: 'e5',
+			success: false,
+			error: 'no such column: nope',
+		});
+	});
+});
+
+describe('sqlite_query_history handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+	const entry = (id: string) => ({
+		id,
+		sql: `SELECT '${id}'`,
+		plan: false,
+		params: {},
+		ranAt: 1,
+		runs: 1,
+		outcome: { ok: true, rows: 1, hasMore: false, returnsRows: true, elapsedMs: 1 },
+	});
+	const full = { path: '/data/app.db', entries: [entry('abcd1234-1'), entry('abcd9999-2')] };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+		histories.readSqliteQueryHistory.mockResolvedValue(full);
+	});
+
+	it('answers with the history and nothing removed', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_query_history',
+			requestId: 'h1',
+			path: '/data/app.db',
+		});
+		await flush();
+		expect(histories.readSqliteQueryHistory).toHaveBeenCalledWith('h1');
+		expect(histories.forgetSqliteQueryHistory).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toEqual({
+			type: 'sqlite_history_result',
+			requestId: 'h1',
+			success: true,
+			database: info,
+			history: full,
+			removed: 0,
+		});
+	});
+
+	it('forgets one entry by a unique start of its id', async () => {
+		histories.forgetSqliteQueryHistory.mockResolvedValue({
+			path: '/data/app.db',
+			entries: [entry('abcd9999-2')],
+		});
+		handler.handleMessage(client, {
+			type: 'sqlite_query_history',
+			requestId: 'h2',
+			path: '/data/app.db',
+			forget: 'abcd1',
+		});
+		await flush();
+		expect(histories.forgetSqliteQueryHistory).toHaveBeenCalledWith('h1', 'abcd1234-1');
+		expect(lastResponse(client)).toMatchObject({ requestId: 'h2', success: true, removed: 1 });
+	});
+
+	it('refuses an id that names no entry, or more than one', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_query_history',
+			requestId: 'h3',
+			path: '/data/app.db',
+			forget: 'zzzz',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 'h3', success: false });
+
+		handler.handleMessage(client, {
+			type: 'sqlite_query_history',
+			requestId: 'h4',
+			path: '/data/app.db',
+			forget: 'abcd',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			requestId: 'h4',
+			success: false,
+			error: expect.stringContaining('more than one'),
+		});
+		expect(histories.forgetSqliteQueryHistory).not.toHaveBeenCalled();
+	});
+
+	it('clears the whole history', async () => {
+		histories.forgetSqliteQueryHistory.mockResolvedValue({ path: '/data/app.db', entries: [] });
+		handler.handleMessage(client, {
+			type: 'sqlite_query_history',
+			requestId: 'h5',
+			path: '/data/app.db',
+			clear: true,
+		});
+		await flush();
+		expect(histories.forgetSqliteQueryHistory).toHaveBeenCalledWith('h1', null);
+		expect(lastResponse(client)).toMatchObject({ requestId: 'h5', success: true, removed: 2 });
+	});
+
+	it('refuses forget and clear together, and a missing path', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_query_history',
+			requestId: 'h6',
+			path: '/data/app.db',
+			forget: 'abcd1',
+			clear: true,
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 'h6', success: false });
+
+		handler.handleMessage(client, { type: 'sqlite_query_history', requestId: 'h7' });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 'h7', success: false });
 		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
 	});
 });

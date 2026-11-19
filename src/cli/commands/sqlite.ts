@@ -22,23 +22,30 @@
 //       -> the record view's Save to file: one BLOB cell written whole
 //   maestro-cli sqlite query <path> <sql> [--param <name=value>]...
 //                            [--param-number <name=value>]... [--param-null <name>]...
-//                            [--plan] [--offset <n>] [--limit <n>] [--json]
+//                            [--plan] [--offset <n>] [--limit <n>]
+//                            [--output <file> [--format <csv|jsonl>]] [--json]
 //       -> Query mode's Run: one read-only statement, its parameters bound, a
-//          window of its result (or, with --plan, its query plan as a tree)
+//          window of its result (or, with --plan, its query plan as a tree);
+//          with --output, Query mode's Export: every row written to a file
+//   maestro-cli sqlite history <path> [--forget <id>] [--clear] [--json]
+//       -> Query mode's History rail: the statements run against the file,
+//          newest first; --forget drops one, --clear drops them all
 //
 // The CLI links no native modules, so it cannot open a database itself. Each
 // verb rides a WS message (`sqlite_read_summary`, `sqlite_list_objects`, `sqlite_read_schema`,
-// `sqlite_read_rows`, `sqlite_count_rows`, `sqlite_save_blob`, `sqlite_run_query`) to the running
+// `sqlite_read_rows`, `sqlite_count_rows`, `sqlite_save_blob`, `sqlite_run_query`,
+// `sqlite_export_query`, `sqlite_query_history`) to the running
 // app, which answers with the same functions the viewer's `sqlite:*` IPC calls.
 // The app must be running, and the database is opened read-only there; a
-// BLOB is written to `--output` by the app, so its bytes never ride the socket.
+// BLOB or an export is written to `--output` by the app, so its bytes never
+// ride the socket.
 
 import { withMaestroClient } from '../services/maestro-client';
 import { failFromError } from '../services/session-command';
 import { ExitCode, exitWith } from '../exit-codes';
 import { formatTextTable } from '../output/formatter';
 import { resolveCliPath } from '../utils/parse';
-import { formatSize } from '../../shared/formatters';
+import { formatRelativeTime, formatSize } from '../../shared/formatters';
 import {
 	SQLITE_OBJECT_KINDS,
 	SQLITE_OBJECT_KIND_LABELS,
@@ -56,11 +63,19 @@ import {
 } from '../../shared/sqlite/schema';
 import { formatSqliteCell } from '../../shared/sqlite/cells';
 import {
+	SQLITE_EXPORT_TIMEOUT_MS,
 	SQLITE_QUERY_MAX_LIMIT,
 	SQLITE_QUERY_TIMEOUT_MS,
 	sqliteQueryBinding,
 	sqliteQueryParameters,
+	sqliteReadOnlyRefusal,
 } from '../../shared/sqlite/query';
+import { formatSqliteQueryHistoryOutcome } from '../../shared/sqlite/history';
+import {
+	isTabularExportFormat,
+	tabularExportFormatForPath,
+	type TabularExportFormat,
+} from '../../shared/tabularExport';
 import {
 	SQLITE_QUERY_PLAN_KIND_HINTS,
 	formatSqliteQueryPlan,
@@ -81,6 +96,9 @@ import type {
 	SqliteObjectSummary,
 	SqliteParameterValue,
 	SqliteParameterValues,
+	SqliteQueryExported,
+	SqliteQueryHistory,
+	SqliteQueryHistoryEntry,
 	SqliteQueryResult,
 	SqliteRowCount,
 	SqliteRowsPage,
@@ -698,6 +716,10 @@ interface SqliteQueryOptions {
 	paramNull?: string[];
 	/** Show the statement's `EXPLAIN QUERY PLAN` instead of its rows. */
 	plan?: boolean;
+	/** Write every row to this file instead (Query mode's Export). */
+	output?: string;
+	/** `csv` or `jsonl`; default from `--output`'s extension. */
+	format?: string;
 	json?: boolean;
 }
 
@@ -756,7 +778,8 @@ interface SqliteQueryReply {
  * A statement that would write is refused, not run. With `--plan`, the
  * statement's `EXPLAIN QUERY PLAN` is shown as a tree instead (Query mode's
  * Plan toggle); `--offset` and `--limit` do not apply, since a plan is
- * shown whole.
+ * shown whole. With `--output`, every row is written to that file as CSV or
+ * JSON Lines instead (Query mode's Export), whole, by the app.
  */
 export async function sqliteQuery(
 	file: string,
@@ -766,8 +789,19 @@ export async function sqliteQuery(
 	const filePath = resolveCliPath(file);
 	if (!sql.trim()) fail('Give the statement to run, e.g. "SELECT * FROM users"', options.json);
 	const plan = options.plan === true;
-	const offset = plan ? 0 : parseCount(options.offset, '--offset', 0, options.json);
-	const limit = plan
+	if (options.output !== undefined && plan) {
+		fail("--output writes the statement's rows; it does not take --plan", options.json);
+	}
+	if (options.format !== undefined && options.output === undefined) {
+		fail('--format needs --output <file>', options.json);
+	}
+	if (options.format !== undefined && !isTabularExportFormat(options.format)) {
+		fail(`--format must be csv or jsonl (got "${options.format}")`, options.json);
+	}
+	// A plan is shown whole and an export writes every row: no window applies.
+	const whole = plan || options.output !== undefined;
+	const offset = whole ? 0 : parseCount(options.offset, '--offset', 0, options.json);
+	const limit = whole
 		? SQLITE_QUERY_MAX_LIMIT
 		: parseCount(options.limit, '--limit', SQLITE_ROWS_DEFAULT_LIMIT, options.json);
 	if (limit > SQLITE_QUERY_MAX_LIMIT) {
@@ -783,6 +817,12 @@ export async function sqliteQuery(
 	// without the app, the way the panel settles it without a process.
 	const { problem } = sqliteQueryBinding(sql, params);
 	if (problem) fail(problem, options.json);
+	if (options.output !== undefined) {
+		const refusal = sqliteReadOnlyRefusal(sql);
+		if (refusal) fail(refusal, options.json);
+		await exportSqliteQueryResult(filePath, sql, params, options);
+		return;
+	}
 
 	let reply: SqliteQueryReply;
 	try {
@@ -862,5 +902,175 @@ function printSqliteQueryPlan(
 	}
 	if (result.hasMore) lines.push('', `Only the first ${result.rows.length} steps are shown.`);
 	lines.push('', `${result.elapsedMs} ms.`);
+	console.log(lines.join('\n'));
+}
+
+interface SqliteExportReply {
+	type: string;
+	success: boolean;
+	error?: string;
+	database?: SqliteDatabaseInfo;
+	exported?: SqliteQueryExported;
+}
+
+const EXPORT_FORMAT_LABELS: Record<TabularExportFormat, string> = {
+	csv: 'CSV',
+	jsonl: 'JSON Lines',
+};
+
+/** `sqlite query --output`: the app writes every row of the statement to the file. */
+async function exportSqliteQueryResult(
+	filePath: string,
+	sql: string,
+	params: SqliteParameterValues,
+	options: SqliteQueryOptions
+): Promise<void> {
+	const destPath = resolveCliPath(options.output ?? '');
+	const format = isTabularExportFormat(options.format)
+		? options.format
+		: tabularExportFormatForPath(destPath);
+
+	let reply: SqliteExportReply;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<SqliteExportReply>(
+				{ type: 'sqlite_export_query', path: filePath, sql, params, destPath, format },
+				'sqlite_export_result',
+				// The app stops the export at its own timeout; leave room for the reply.
+				SQLITE_EXPORT_TIMEOUT_MS + 30_000
+			)
+		);
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+	if (!reply.success || !reply.database || !reply.exported) {
+		fail(reply.error || `Could not export the query on ${filePath}`, options.json);
+	}
+
+	const { database, exported } = reply;
+	if (options.json) {
+		// `path` is the database, as for every sqlite verb; `output` is the file written.
+		console.log(
+			JSON.stringify({
+				success: true,
+				path: database.displayPath,
+				output: exported.path,
+				format: exported.format,
+				rows: exported.rows,
+				columns: exported.columns,
+				bytes: exported.bytes,
+				elapsedMs: exported.elapsedMs,
+			})
+		);
+		return;
+	}
+	const rows = `${exported.rows} ${exported.rows === 1 ? 'row' : 'rows'}`;
+	console.log(
+		`Exported ${rows} (${exported.columns} ${exported.columns === 1 ? 'column' : 'columns'}) to ${exported.path} as ${EXPORT_FORMAT_LABELS[exported.format]}: ${formatSize(exported.bytes)}. ${exported.elapsedMs} ms.`
+	);
+}
+
+interface SqliteHistoryOptions {
+	/** Forget the entry with this id (or a unique start of it). */
+	forget?: string;
+	/** Forget every entry. */
+	clear?: boolean;
+	json?: boolean;
+}
+
+interface SqliteHistoryReply {
+	type: string;
+	success: boolean;
+	error?: string;
+	database?: SqliteDatabaseInfo;
+	history?: SqliteQueryHistory;
+	removed?: number;
+}
+
+/** The characters of an entry id the text listing shows; `--forget` takes them. */
+const HISTORY_ID_CHARS = 8;
+
+/** One entry as the text listing shows it: id, age, outcome, then the statement and its values. */
+function historyEntryLines(entry: SqliteQueryHistoryEntry): string[] {
+	const facts = [
+		entry.id.slice(0, HISTORY_ID_CHARS),
+		formatRelativeTime(entry.ranAt),
+		formatSqliteQueryHistoryOutcome(entry.outcome),
+		...(entry.plan ? ['plan'] : []),
+		...(entry.runs > 1 ? [`ran ${entry.runs} times`] : []),
+	];
+	const lines = [facts.join('  '), ...entry.sql.split('\n').map((line) => `    ${line}`)];
+	for (const [label, value] of Object.entries(entry.params)) {
+		lines.push(
+			`    ${label} = ${value.type === 'null' ? 'NULL' : `${JSON.stringify(value.text)}${value.type === 'number' ? ' (number)' : ''}`}`
+		);
+	}
+	if (!entry.outcome.ok) lines.push(`    ${entry.outcome.error}`);
+	return lines;
+}
+
+/**
+ * `maestro-cli sqlite history <path>` - the statements run against a
+ * database, newest first, as Query mode's History rail lists them (runs
+ * from the viewer and from `sqlite query` alike). `--forget <id>` drops one
+ * entry and `--clear` drops them all; either prints what is left.
+ */
+export async function sqliteHistory(file: string, options: SqliteHistoryOptions): Promise<void> {
+	const filePath = resolveCliPath(file);
+	if (options.forget !== undefined && options.clear) {
+		fail('Give --forget <id> or --clear, not both', options.json);
+	}
+	if (options.forget !== undefined && !options.forget.trim()) {
+		fail('--forget takes an entry id (`sqlite history` lists them)', options.json);
+	}
+
+	let reply: SqliteHistoryReply;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<SqliteHistoryReply>(
+				{
+					type: 'sqlite_query_history',
+					path: filePath,
+					...(options.forget !== undefined ? { forget: options.forget.trim() } : {}),
+					...(options.clear ? { clear: true } : {}),
+				},
+				'sqlite_history_result',
+				SQLITE_TIMEOUT_MS
+			)
+		);
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+	if (!reply.success || !reply.database || !reply.history) {
+		fail(reply.error || `Could not read the query history of ${filePath}`, options.json);
+	}
+
+	const { database, history } = reply;
+	const removed = reply.removed ?? 0;
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				path: database.displayPath,
+				...(options.forget !== undefined || options.clear ? { removed } : {}),
+				entries: history.entries,
+			})
+		);
+		return;
+	}
+
+	const lines: string[] = [];
+	if (options.forget !== undefined || options.clear) {
+		lines.push(`Forgot ${removed} ${removed === 1 ? 'statement' : 'statements'}.`, '');
+	}
+	if (history.entries.length === 0) {
+		lines.push(`No queries have run against ${database.displayPath}.`);
+	} else {
+		const count = history.entries.length;
+		lines.push(
+			`Query history of ${database.displayPath}: ${count} ${count === 1 ? 'statement' : 'statements'}, newest first.`
+		);
+		for (const entry of history.entries) lines.push('', ...historyEntryLines(entry));
+	}
 	console.log(lines.join('\n'));
 }

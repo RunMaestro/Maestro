@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { sqliteCellFromHead, sqliteCellFromValue } from '../../../main/sqlite/sqlite-cell';
+import {
+	sqliteCellFromHead,
+	sqliteCellFromValue,
+	sqliteExportValue,
+} from '../../../main/sqlite/sqlite-cell';
 import { SQLITE_CELL_BLOB_HEAD_BYTES, SQLITE_CELL_TEXT_LIMIT } from '../../../shared/sqlite/cells';
 
 describe('sqliteCellFromHead', () => {
@@ -68,5 +72,22 @@ describe('sqliteCellFromValue', () => {
 	it('reads INTEGERs and NULL the way the table view does', () => {
 		expect(sqliteCellFromValue(BigInt(7))).toBe(7);
 		expect(sqliteCellFromValue(null)).toBeNull();
+	});
+});
+
+describe('sqliteExportValue', () => {
+	it('keeps every value whole: no TEXT cut, every INTEGER digit, a BLOB as hex', () => {
+		const long = 'z'.repeat(SQLITE_CELL_TEXT_LIMIT * 2);
+		expect(sqliteExportValue(long)).toBe(long);
+		expect(sqliteExportValue(BigInt('9007199254740993'))).toBe(BigInt('9007199254740993'));
+		expect(sqliteExportValue(1.25)).toBe(1.25);
+		const blob = Buffer.alloc(SQLITE_CELL_BLOB_HEAD_BYTES * 2, 0xab);
+		expect(sqliteExportValue(blob)).toBe('ab'.repeat(SQLITE_CELL_BLOB_HEAD_BYTES * 2));
+		expect(sqliteExportValue(Buffer.alloc(0))).toBe('');
+	});
+
+	it('writes NULL as null', () => {
+		expect(sqliteExportValue(null)).toBeNull();
+		expect(sqliteExportValue(undefined)).toBeNull();
 	});
 });

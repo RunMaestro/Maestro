@@ -36,6 +36,18 @@
  * temporary b-tree. A plan reads none of the statement's rows, so switching
  * to Plan runs the editor's statement at once; switching back waits for Run.
  *
+ * Export writes EVERY row of the statement shown (the one that ran, with the
+ * values it ran with, not the editor's newer text) to a CSV or JSON Lines
+ * file the person picks (`sqlite:exportQuery`): the statement runs again in
+ * a child process, which writes the rows whole, so none of them cross IPC.
+ * Its progress, Stop, and outcome sit in the status line; a finished export
+ * also raises a toast, since it may end long after the person moved on.
+ *
+ * History (a toolbar toggle, remembered) opens a rail of the statements run
+ * against this database, newest first (SqliteQueryHistoryRail). The main
+ * process records every run, so the rail is re-read whenever a run settles;
+ * picking an entry puts its statement, values, and mode back in the editor.
+ *
  * The query text and the run are owned by the viewer (`value` / `run`), so
  * switching to Browse and back keeps both. Every call carries a fresh id; a
  * reply under any other id than the run's current one is stale and dropped,
@@ -43,7 +55,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState, type SetStateAction } from 'react';
-import { Play, Square } from 'lucide-react';
+import { Download, History, Play, Square } from 'lucide-react';
 import type { Extension } from '@codemirror/state';
 
 import { formatCount } from '../../../shared/formatters';
@@ -59,10 +71,18 @@ import { sqliteQueryPlanSteps } from '../../../shared/sqlite/plan';
 import type {
 	SqliteParameterValue,
 	SqliteParameterValues,
+	SqliteQueryExported,
+	SqliteQueryHistoryEntry,
 	SqliteQueryResult,
 } from '../../../shared/sqlite/types';
+import {
+	TABULAR_EXPORT_FILE_FILTERS,
+	tabularExportFormatForPath,
+} from '../../../shared/tabularExport';
 import type { Theme } from '../../types';
+import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { useStableCallback } from '../../hooks/utils/useStableCallback';
+import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
@@ -71,6 +91,7 @@ import { DataGrid } from '../ui/DataGrid';
 import { Spinner } from '../ui/Spinner';
 import { sqliteGridCell, sqliteGridColumn } from './sqliteGrid';
 import { SegmentedControl } from '../ui/SegmentedControl';
+import { SqliteQueryHistoryRail } from './SqliteQueryHistoryRail';
 import { SqliteQueryParameters, sqliteParameterValuesFor } from './SqliteQueryParameters';
 import { SqliteQueryPlanView } from './SqliteQueryPlanView';
 
@@ -92,8 +113,21 @@ export interface SqliteQueryRunState {
 	error: string | null;
 }
 
+/** An export of the shown result: in flight, written, or failed. */
+interface SqliteQueryExportState {
+	/** Id of the export call, which Stop cancels. */
+	exportId: string;
+	/** The run whose result it exports; a finished export is shown only beside that run. */
+	runId: string;
+	running: boolean;
+	exported: SqliteQueryExported | null;
+	error: string | null;
+}
+
 interface SqliteQueryPanelProps {
 	handle: string;
+	/** The database's file name, for the export's suggested name. */
+	fileName: string;
 	value: string;
 	onChange: (value: string) => void;
 	/** Values typed for the statement's parameters, keyed by label. */
@@ -122,6 +156,7 @@ const BLOB_HINT = 'Open the table in Browse to save a BLOB to a file';
 
 export function SqliteQueryPanel({
 	handle,
+	fileName,
 	value,
 	onChange,
 	params,
@@ -134,6 +169,10 @@ export function SqliteQueryPanel({
 }: SqliteQueryPanelProps) {
 	const [language, setLanguage] = useState<Extension | undefined>(undefined);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
+	const showHistory = usePersistedToggle('sqlite-query-history', false);
+	/** Bumped when a run settles, so the History rail reads the history again. */
+	const [historyStamp, setHistoryStamp] = useState(0);
+	const [exportState, setExportState] = useState<SqliteQueryExportState | null>(null);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -206,8 +245,62 @@ export function SqliteQueryPanel({
 					? { ...previous, running: false, error: ipcErrorMessage(failure) }
 					: previous
 			);
+		} finally {
+			// Main records a first window's run before it answers.
+			if (offset === 0) setHistoryStamp((stamp) => stamp + 1);
 		}
 	});
+
+	/** Write every row of the statement shown to a file the person picks. */
+	const handleExport = useStableCallback(async () => {
+		if (!run?.result?.returnsRows || run.plan || exportState?.running) return;
+		const shown = run;
+		const destination = await window.maestro.dialog.saveFile({
+			title: 'Export the query result',
+			defaultPath: `${fileName.replace(/\.[^.]+$/, '') || 'query'}-query.csv`,
+			filters: [...TABULAR_EXPORT_FILE_FILTERS],
+		});
+		if (!destination) return;
+		const exportId = generateId();
+		setExportState({ exportId, runId: shown.runId, running: true, exported: null, error: null });
+		try {
+			const exported = await window.maestro.sqlite.exportQuery({
+				handle,
+				sql: shown.sql,
+				params: shown.params,
+				destPath: destination,
+				format: tabularExportFormatForPath(destination),
+				queryId: exportId,
+			});
+			setExportState((previous) =>
+				previous?.exportId === exportId ? { ...previous, running: false, exported } : previous
+			);
+			notifyToast({
+				color: 'green',
+				title: 'Export complete',
+				message: `${formatCount(exported.rows)} ${exported.rows === 1 ? 'row' : 'rows'} written to ${exported.path}`,
+			});
+		} catch (failure) {
+			setExportState((previous) =>
+				previous?.exportId === exportId
+					? { ...previous, running: false, error: ipcErrorMessage(failure) }
+					: previous
+			);
+		}
+	});
+	const handleStopExport = useCallback(() => {
+		if (exportState?.running) void window.maestro.sqlite.cancelQuery(exportState.exportId);
+	}, [exportState]);
+
+	/** Put a history entry back in the editor, with its values and mode, without running it. */
+	const handlePickHistory = useCallback(
+		(entry: SqliteQueryHistoryEntry) => {
+			onChange(entry.sql);
+			onParamsChange((previous) => ({ ...previous, ...entry.params }));
+			onPlanChange(entry.plan);
+		},
+		[onChange, onParamsChange, onPlanChange]
+	);
 
 	const handleRun = useCallback(() => void runQuery(0), [runQuery]);
 	const handleResultModeChange = useCallback(
@@ -275,173 +368,255 @@ export function SqliteQueryPanel({
 		() => (showsPlan && result ? sqliteQueryPlanSteps(result.rows) : []),
 		[showsPlan, result]
 	);
+	const exporting = exportState?.running === true;
+	const canExport = result?.returnsRows === true && run?.plan !== true && !running && !exporting;
+	// A finished export is news only beside the result it exported.
+	const shownExport = exporting || exportState?.runId === run?.runId ? exportState : null;
 
 	return (
-		<div className="flex flex-col h-full min-h-0" data-testid="sqlite-query-panel">
-			<div className="shrink-0 h-[38%] min-h-[120px]">
-				<MarkdownEditor
-					value={value}
-					onChange={onChange}
-					language="sql"
-					languageExtension={language}
-					theme={theme}
-					codeEditing
-					completion="typing"
-					showLineNumbers
-					wrap
-					placeholder="SELECT * FROM ... WHERE id = :id"
-					onKeyDown={handleEditorKey}
-				/>
-			</div>
-			<div
-				className="shrink-0 flex items-center gap-2 px-3 py-1.5 text-xs-plus select-none"
-				style={{
-					borderTop: `1px solid ${theme.colors.border}`,
-					borderBottom: `1px solid ${theme.colors.border}`,
-					color: theme.colors.textDim,
-				}}
-			>
-				<button
-					type="button"
-					onClick={handleRun}
-					className="flex items-center gap-1.5 px-2.5 py-1 rounded font-medium"
-					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-					title={
-						plan
-							? `Show the statement's query plan (${runKeys}). Reads none of its rows.`
-							: `Run the statement (${runKeys}). Read-only: ${SQLITE_READ_ONLY_KEYWORDS.join(', ')}.`
-					}
-					data-testid="sqlite-query-run"
+		<div className="flex h-full min-h-0" data-testid="sqlite-query-panel">
+			<div className="flex flex-col flex-1 min-w-0 min-h-0">
+				<div className="shrink-0 h-[38%] min-h-[120px]">
+					<MarkdownEditor
+						value={value}
+						onChange={onChange}
+						language="sql"
+						languageExtension={language}
+						theme={theme}
+						codeEditing
+						completion="typing"
+						showLineNumbers
+						wrap
+						placeholder="SELECT * FROM ... WHERE id = :id"
+						onKeyDown={handleEditorKey}
+					/>
+				</div>
+				<div
+					className="shrink-0 flex items-center gap-2 px-3 py-1.5 text-xs-plus select-none"
+					style={{
+						borderTop: `1px solid ${theme.colors.border}`,
+						borderBottom: `1px solid ${theme.colors.border}`,
+						color: theme.colors.textDim,
+					}}
 				>
-					<Play className="w-3 h-3" />
-					Run
-					<span className="opacity-70" data-shortcut-hint>
-						{runKeys}
-					</span>
-				</button>
-				{running && (
 					<button
 						type="button"
-						onClick={handleStop}
-						className="flex items-center gap-1.5 px-2.5 py-1 rounded"
-						style={{ border: `1px solid ${theme.colors.border}`, color: theme.colors.textMain }}
-						title="Stop the statement"
-						data-testid="sqlite-query-stop"
+						onClick={handleRun}
+						className="flex items-center gap-1.5 px-2.5 py-1 rounded font-medium"
+						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+						title={
+							plan
+								? `Show the statement's query plan (${runKeys}). Reads none of its rows.`
+								: `Run the statement (${runKeys}). Read-only: ${SQLITE_READ_ONLY_KEYWORDS.join(', ')}.`
+						}
+						data-testid="sqlite-query-run"
 					>
-						<Square className="w-3 h-3" />
-						Stop
+						<Play className="w-3 h-3" />
+						Run
+						<span className="opacity-70" data-shortcut-hint>
+							{runKeys}
+						</span>
 					</button>
+					{running && (
+						<button
+							type="button"
+							onClick={handleStop}
+							className="flex items-center gap-1.5 px-2.5 py-1 rounded"
+							style={{ border: `1px solid ${theme.colors.border}`, color: theme.colors.textMain }}
+							title="Stop the statement"
+							data-testid="sqlite-query-stop"
+						>
+							<Square className="w-3 h-3" />
+							Stop
+						</button>
+					)}
+					<SegmentedControl<ResultMode>
+						value={plan ? 'plan' : 'rows'}
+						onChange={handleResultModeChange}
+						options={RESULT_MODES}
+						theme={theme}
+						ariaLabel="Show the statement's rows or its query plan"
+						testId="sqlite-query-result-mode"
+					/>
+					<span className="truncate">
+						Read-only: anything that would change the database is refused.
+					</span>
+					<div className="ml-auto flex items-center gap-1 shrink-0">
+						<button
+							type="button"
+							onClick={() => void handleExport()}
+							disabled={!canExport}
+							className="flex items-center gap-1 px-2 py-1 rounded disabled:opacity-40"
+							style={{ color: theme.colors.textDim }}
+							title={
+								run?.plan
+									? 'A query plan has no rows to export; switch to Rows and run the statement'
+									: 'Write every row of the result to a CSV or JSON Lines file, whole'
+							}
+							data-testid="sqlite-query-export"
+						>
+							<Download className="w-3.5 h-3.5" />
+							Export
+						</button>
+						<button
+							type="button"
+							onClick={showHistory.toggle}
+							className="flex items-center gap-1 px-2 py-1 rounded"
+							style={{
+								color: showHistory.value ? theme.colors.accentText : theme.colors.textDim,
+								backgroundColor: showHistory.value ? `${theme.colors.accent}22` : 'transparent',
+							}}
+							title="Show the statements run against this database"
+							aria-pressed={showHistory.value}
+							data-testid="sqlite-query-toggle-history"
+						>
+							<History className="w-3.5 h-3.5" />
+							History
+						</button>
+					</div>
+				</div>
+				{(scan.parameters.length > 0 || scan.problem) && (
+					<SqliteQueryParameters
+						parameters={scan.parameters}
+						values={params}
+						onChange={handleParamChange}
+						problem={scan.problem}
+						onRun={handleRun}
+						theme={theme}
+					/>
 				)}
-				<SegmentedControl<ResultMode>
-					value={plan ? 'plan' : 'rows'}
-					onChange={handleResultModeChange}
-					options={RESULT_MODES}
-					theme={theme}
-					ariaLabel="Show the statement's rows or its query plan"
-					testId="sqlite-query-result-mode"
-				/>
-				<span>Read-only: anything that would change the database is refused.</span>
+				<div className="flex-1 min-h-0" data-testid="sqlite-query-results">
+					{showsPlan ? (
+						<SqliteQueryPlanView steps={planSteps} theme={theme} />
+					) : result && result.returnsRows ? (
+						<DataGrid
+							columns={gridColumns}
+							rowCount={result.rows.length}
+							getCell={getCell}
+							getRowLabel={getRowLabel}
+							gutterTitle="Row number in the result"
+							theme={theme}
+							sort={null}
+							onSortChange={ignoreSort}
+							onReachEnd={handleReachEnd}
+							loadingMore={running && result.rows.length > 0}
+							emptyMessage="The statement returns no columns."
+							testIdPrefix="sqlite-query"
+						/>
+					) : (
+						<div
+							className="flex items-center justify-center h-full gap-2 text-sm select-none"
+							style={{ color: theme.colors.textDim }}
+							data-testid="sqlite-query-empty"
+						>
+							{running ? (
+								<>
+									<Spinner size={16} decorative />
+									Running...
+								</>
+							) : result ? (
+								`${result.statement} ran and returns no rows.`
+							) : plan ? (
+								`Write a statement and press Run (${runKeys}) to see its query plan.`
+							) : (
+								`Write a statement and press Run (${runKeys}).`
+							)}
+						</div>
+					)}
+				</div>
+				<div
+					className="shrink-0 px-3 py-1.5 text-xs-plus flex gap-3 flex-wrap select-none"
+					style={{ borderTop: `1px solid ${theme.colors.border}`, color: theme.colors.textDim }}
+					data-testid="sqlite-query-status"
+				>
+					{run?.error ? (
+						<span
+							className="select-text whitespace-pre-wrap"
+							style={{ color: theme.colors.error }}
+							data-testid="sqlite-query-error"
+						>
+							{run.error}
+						</span>
+					) : showsPlan && result ? (
+						<>
+							<span data-testid="sqlite-query-total">
+								Query plan of {result.statement}: {formatCount(planSteps.length)}{' '}
+								{planSteps.length === 1 ? 'step' : 'steps'}
+								{result.hasMore ? ' (the first ones only)' : ''}
+							</span>
+							<span>{result.elapsedMs} ms</span>
+						</>
+					) : result?.returnsRows ? (
+						<>
+							<span data-testid="sqlite-query-total">
+								{result.rows.length === 0
+									? 'No rows'
+									: `${formatCount(result.rows.length)} ${result.rows.length === 1 ? 'row' : 'rows'}${result.hasMore ? ' loaded, more below' : ''}`}
+							</span>
+							<span>{result.elapsedMs} ms</span>
+						</>
+					) : null}
+					{running && result && (
+						<span className="flex items-center gap-1">
+							<Spinner size={10} decorative />
+							running
+						</span>
+					)}
+					{shownExport && (
+						<span
+							className="flex items-center gap-1.5 select-text"
+							data-testid="sqlite-query-export-status"
+						>
+							{shownExport.running ? (
+								<>
+									<Spinner size={10} decorative />
+									Exporting...
+									<button
+										type="button"
+										onClick={handleStopExport}
+										className="flex items-center gap-1 px-1.5 rounded select-none"
+										style={{
+											border: `1px solid ${theme.colors.border}`,
+											color: theme.colors.textMain,
+										}}
+										title="Stop the export; no file is left behind"
+										data-testid="sqlite-query-export-stop"
+									>
+										<Square className="w-2.5 h-2.5" />
+										Stop
+									</button>
+								</>
+							) : shownExport.error ? (
+								<span style={{ color: theme.colors.error }}>
+									Export failed: {shownExport.error}
+								</span>
+							) : shownExport.exported ? (
+								`Exported ${formatCount(shownExport.exported.rows)} ${shownExport.exported.rows === 1 ? 'row' : 'rows'} to ${shownExport.exported.path}`
+							) : null}
+						</span>
+					)}
+					{catalogError ? (
+						<span style={{ color: theme.colors.warning }} data-testid="sqlite-query-catalog-error">
+							Completing keywords only. The table and column names could not be read: {catalogError}
+						</span>
+					) : (
+						!run && (
+							<span>
+								Completes keywords, table names, and the columns of the tables a statement names.
+								Ctrl+Space asks for suggestions.
+							</span>
+						)
+					)}
+				</div>
 			</div>
-			{(scan.parameters.length > 0 || scan.problem) && (
-				<SqliteQueryParameters
-					parameters={scan.parameters}
-					values={params}
-					onChange={handleParamChange}
-					problem={scan.problem}
-					onRun={handleRun}
+			{showHistory.value && (
+				<SqliteQueryHistoryRail
+					handle={handle}
+					refreshKey={historyStamp}
+					onPick={handlePickHistory}
 					theme={theme}
 				/>
 			)}
-			<div className="flex-1 min-h-0" data-testid="sqlite-query-results">
-				{showsPlan ? (
-					<SqliteQueryPlanView steps={planSteps} theme={theme} />
-				) : result && result.returnsRows ? (
-					<DataGrid
-						columns={gridColumns}
-						rowCount={result.rows.length}
-						getCell={getCell}
-						getRowLabel={getRowLabel}
-						gutterTitle="Row number in the result"
-						theme={theme}
-						sort={null}
-						onSortChange={ignoreSort}
-						onReachEnd={handleReachEnd}
-						loadingMore={running && result.rows.length > 0}
-						emptyMessage="The statement returns no columns."
-						testIdPrefix="sqlite-query"
-					/>
-				) : (
-					<div
-						className="flex items-center justify-center h-full gap-2 text-sm select-none"
-						style={{ color: theme.colors.textDim }}
-						data-testid="sqlite-query-empty"
-					>
-						{running ? (
-							<>
-								<Spinner size={16} decorative />
-								Running...
-							</>
-						) : result ? (
-							`${result.statement} ran and returns no rows.`
-						) : plan ? (
-							`Write a statement and press Run (${runKeys}) to see its query plan.`
-						) : (
-							`Write a statement and press Run (${runKeys}).`
-						)}
-					</div>
-				)}
-			</div>
-			<div
-				className="shrink-0 px-3 py-1.5 text-xs-plus flex gap-3 flex-wrap select-none"
-				style={{ borderTop: `1px solid ${theme.colors.border}`, color: theme.colors.textDim }}
-				data-testid="sqlite-query-status"
-			>
-				{run?.error ? (
-					<span
-						className="select-text whitespace-pre-wrap"
-						style={{ color: theme.colors.error }}
-						data-testid="sqlite-query-error"
-					>
-						{run.error}
-					</span>
-				) : showsPlan && result ? (
-					<>
-						<span data-testid="sqlite-query-total">
-							Query plan of {result.statement}: {formatCount(planSteps.length)}{' '}
-							{planSteps.length === 1 ? 'step' : 'steps'}
-							{result.hasMore ? ' (the first ones only)' : ''}
-						</span>
-						<span>{result.elapsedMs} ms</span>
-					</>
-				) : result?.returnsRows ? (
-					<>
-						<span data-testid="sqlite-query-total">
-							{result.rows.length === 0
-								? 'No rows'
-								: `${formatCount(result.rows.length)} ${result.rows.length === 1 ? 'row' : 'rows'}${result.hasMore ? ' loaded, more below' : ''}`}
-						</span>
-						<span>{result.elapsedMs} ms</span>
-					</>
-				) : null}
-				{running && result && (
-					<span className="flex items-center gap-1">
-						<Spinner size={10} decorative />
-						running
-					</span>
-				)}
-				{catalogError ? (
-					<span style={{ color: theme.colors.warning }} data-testid="sqlite-query-catalog-error">
-						Completing keywords only. The table and column names could not be read: {catalogError}
-					</span>
-				) : (
-					!run && (
-						<span>
-							Completes keywords, table names, and the columns of the tables a statement names.
-							Ctrl+Space asks for suggestions.
-						</span>
-					)
-				)}
-			</div>
 		</div>
 	);
 }

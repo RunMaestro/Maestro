@@ -9,6 +9,11 @@
  *   - `sqlite_save_blob`: one BLOB cell written to a file (`maestro-cli sqlite blob`).
  *   - `sqlite_run_query`: Query mode's Run, one read-only statement with its
  *     parameter values, or its plan (`maestro-cli sqlite query --param`, `--plan`).
+ *   - `sqlite_export_query`: Query mode's Export, the statement's whole result
+ *     written to a file (`maestro-cli sqlite query --output`).
+ *   - `sqlite_query_history`: Query mode's History rail, read, one entry
+ *     forgotten (by id or a unique start of one), or cleared
+ *     (`maestro-cli sqlite history`).
  *
  * The CLI cannot link better-sqlite3 (it is a plain-Node bundle with no native
  * modules), so it asks the running app. The answer comes from the SAME
@@ -18,10 +23,14 @@
  * stats reader for the row counts and sizes, `readSqliteObjectSchema()` for
  * the schema pane, `readSqliteRows()` for the table view, and the budgeted
  * row counter run to the end for the footer's count, `saveSqliteBlob()`
- * for the record view's Save to file, and `runSqliteQuery()` for Query mode's
- * Run, so the CLI prints what the viewer shows.
- * The BLOB is written by the app, to the absolute path the CLI resolved, the
- * way `profiling_stop` writes its bundle: its bytes never ride the socket.
+ * for the record view's Save to file, `runSqliteQuery()` for Query mode's
+ * Run (which records it in the same history the rail shows),
+ * `exportSqliteQuery()` for its Export, and `readSqliteQueryHistory()` /
+ * `forgetSqliteQueryHistory()` for its History rail, so the CLI prints what
+ * the viewer shows.
+ * The BLOB and an export are written by the app, to the absolute path the
+ * CLI resolved, the way `profiling_stop` writes its bundle: their bytes
+ * never ride the socket.
  *
  * The connection is NOT closed afterwards. It may be the one a preview tab is
  * already using (opens on the same file share a connection), and closing it
@@ -33,7 +42,11 @@ import { countAllSqliteRows } from '../../../sqlite/sqlite-count';
 import { openSqliteDatabase } from '../../../sqlite/sqlite-database';
 import { checkSqliteIntegrity } from '../../../sqlite/sqlite-integrity';
 import { listSqliteObjects, readAllSqliteObjectStats } from '../../../sqlite/sqlite-objects';
-import { runSqliteQuery } from '../../../sqlite/sqlite-query';
+import { exportSqliteQuery, runSqliteQuery } from '../../../sqlite/sqlite-query';
+import {
+	forgetSqliteQueryHistory,
+	readSqliteQueryHistory,
+} from '../../../sqlite/sqlite-query-history';
 import { readSqliteRows } from '../../../sqlite/sqlite-rows';
 import { readSqliteObjectSchema } from '../../../sqlite/sqlite-schema';
 import { readSqliteDatabaseSummary } from '../../../sqlite/sqlite-summary';
@@ -44,6 +57,7 @@ import type {
 	SqliteSortSpec,
 } from '../../../../shared/sqlite/types';
 import { SQLITE_OBJECT_KINDS } from '../../../../shared/sqlite/objects';
+import { isTabularExportFormat } from '../../../../shared/tabularExport';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 const SORT_SHAPE_ERROR = 'sort must be { column, direction: "asc" | "desc" }';
@@ -319,6 +333,102 @@ export async function handleSqliteRunQuery(
 			plan: message.plan === true,
 		});
 		reply({ success: true, database, result });
+	} catch (error) {
+		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
+	}
+}
+
+export async function handleSqliteExportQuery(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (payload: Record<string, unknown>) => {
+		ctx.send(client, { type: 'sqlite_export_result', ...payload, requestId: message.requestId });
+	};
+
+	const filePath = typeof message.path === 'string' ? message.path : '';
+	const sql = typeof message.sql === 'string' ? message.sql : '';
+	const destPath = typeof message.destPath === 'string' ? message.destPath : '';
+	if (!filePath || !sql.trim() || !destPath) {
+		reply({
+			success: false,
+			error: 'Missing required "path", "sql", or "destPath" for sqlite_export_query',
+		});
+		return;
+	}
+	if (message.format !== undefined && !isTabularExportFormat(message.format)) {
+		reply({ success: false, error: 'format must be "csv" or "jsonl"' });
+		return;
+	}
+
+	try {
+		const database = await openSqliteDatabase(filePath);
+		// No queryId: a CLI export is stopped by its timeout, or by closing the app.
+		const exported = await exportSqliteQuery({
+			handle: database.handle,
+			sql,
+			destPath,
+			...(message.format !== undefined ? { format: message.format } : {}),
+			params: (message.params ?? undefined) as SqliteParameterValues | undefined,
+		});
+		reply({ success: true, database, exported });
+	} catch (error) {
+		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
+	}
+}
+
+export async function handleSqliteQueryHistory(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (payload: Record<string, unknown>) => {
+		ctx.send(client, { type: 'sqlite_history_result', ...payload, requestId: message.requestId });
+	};
+
+	const filePath = typeof message.path === 'string' ? message.path : '';
+	if (!filePath) {
+		reply({ success: false, error: 'Missing required "path" for sqlite_query_history' });
+		return;
+	}
+	if (message.forget !== undefined && typeof message.forget !== 'string') {
+		reply({ success: false, error: 'forget must be a history entry id' });
+		return;
+	}
+	if (message.forget !== undefined && message.clear === true) {
+		reply({ success: false, error: 'Give "forget" or "clear", not both' });
+		return;
+	}
+
+	try {
+		const database = await openSqliteDatabase(filePath);
+		const before = await readSqliteQueryHistory(database.handle);
+		let history = before;
+		if (typeof message.forget === 'string') {
+			// An id or a unique start of one: the CLI lists the first eight characters.
+			const prefix = message.forget;
+			const matches = before.entries.filter((entry) => entry.id.startsWith(prefix));
+			if (!prefix || matches.length !== 1) {
+				reply({
+					success: false,
+					error:
+						matches.length > 1
+							? `${prefix} starts more than one history entry; give more of the id`
+							: `No history entry ${prefix} for ${filePath}`,
+				});
+				return;
+			}
+			history = await forgetSqliteQueryHistory(database.handle, matches[0].id);
+		} else if (message.clear === true) {
+			history = await forgetSqliteQueryHistory(database.handle, null);
+		}
+		reply({
+			success: true,
+			database,
+			history,
+			removed: before.entries.length - history.entries.length,
+		});
 	} catch (error) {
 		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
 	}

@@ -10,6 +10,7 @@
  */
 
 import type { ParquetFilterProblem } from '../parquet/types';
+import type { TabularExportFormat } from '../tabularExport';
 
 /**
  * Filter text that did not parse or bind, with the span to underline. The
@@ -515,4 +516,85 @@ export interface SqliteQueryResult {
 	returnsRows: boolean;
 	/** Time SQLite spent producing the window, in milliseconds. */
 	elapsedMs: number;
+}
+
+/**
+ * Write a statement's WHOLE result to a file as CSV or JSON Lines (Query
+ * mode's Export, `maestro-cli sqlite query --output`). The statement runs
+ * read-only in a child process, exactly as a Run does, and the rows are
+ * written there, whole (no cell is cut), so none of them cross IPC; see
+ * `exportSqliteQuery()` in src/main/sqlite/sqlite-query.ts.
+ */
+export interface SqliteQueryExportRequest {
+	handle: string;
+	/** One read-only statement, as for `SqliteQueryRequest.sql`. */
+	sql: string;
+	/** Values for its parameters, as for `SqliteQueryRequest.params`. */
+	params?: SqliteParameterValues;
+	/** Absolute path of the file to write. A file already there is replaced once the export succeeds. */
+	destPath: string;
+	/** Default: from `destPath`'s extension (`tabularExportFormatForPath()`). */
+	format?: TabularExportFormat;
+	/** Names the export so `cancelQuery` can stop it, as for a run. */
+	queryId?: string | null;
+}
+
+/** What an export wrote. */
+export interface SqliteQueryExported {
+	/** The file written. */
+	path: string;
+	format: TabularExportFormat;
+	/** Result rows written (the CSV header line not counted). */
+	rows: number;
+	/** Result columns per row. */
+	columns: number;
+	/** Size of the file written, in bytes. */
+	bytes: number;
+	/** Time from the statement's start to the last row written, in milliseconds. */
+	elapsedMs: number;
+}
+
+/** How a statement in the history last ended. */
+export type SqliteQueryHistoryOutcome =
+	| {
+			ok: true;
+			/** Rows in its first window (`SQLITE_QUERY_PAGE_ROWS` at most for a Run). */
+			rows: number;
+			/** More rows followed that window. */
+			hasMore: boolean;
+			/** False for a statement that returns no rows by design. */
+			returnsRows: boolean;
+			elapsedMs: number;
+	  }
+	| {
+			ok: false;
+			/** SQLite's message, the timeout, or the stop, cut to a readable length. */
+			error: string;
+	  };
+
+/**
+ * One statement in a database's query history: what ran against the file in
+ * Query mode or through `maestro-cli sqlite query`. A statement run again is
+ * the same entry, moved to the top, with its latest values and outcome.
+ */
+export interface SqliteQueryHistoryEntry {
+	id: string;
+	/** The statement as it ran. */
+	sql: string;
+	/** It ran as `EXPLAIN QUERY PLAN` (the Plan toggle). */
+	plan: boolean;
+	/** The parameter values of its latest run, keyed by label. */
+	params: SqliteParameterValues;
+	/** When it last ran, epoch milliseconds. */
+	ranAt: number;
+	/** How many times it has run. */
+	runs: number;
+	outcome: SqliteQueryHistoryOutcome;
+}
+
+/** One database's query history, newest first. */
+export interface SqliteQueryHistory {
+	/** The database's path, which the history is kept under. */
+	path: string;
+	entries: SqliteQueryHistoryEntry[];
 }

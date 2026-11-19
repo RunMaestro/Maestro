@@ -107,7 +107,26 @@ vi.mock('../../../main/sqlite/sqlite-database', () => ({
 	},
 }));
 
-import { cancelSqliteQuery, runSqliteQuery } from '../../../main/sqlite/sqlite-query';
+// The history file lives in the app's data directory; here it is a recorder.
+const history = vi.hoisted(() => ({ record: vi.fn(async (..._args: unknown[]) => undefined) }));
+vi.mock('../../../main/sqlite/sqlite-query-history', () => ({
+	getSqliteQueryHistory: () => history,
+}));
+vi.mock('../../../main/utils/logger', () => ({
+	logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
+}));
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
+
+import { promises as fs } from 'fs';
+import os from 'os';
+import path from 'path';
+
+import {
+	cancelSqliteQuery,
+	exportSqliteQuery,
+	runSqliteQuery,
+} from '../../../main/sqlite/sqlite-query';
+import { SQLITE_EXPORT_NO_ROWS_MESSAGE } from '../../../main/sqlite/sqlite-query-task';
 import { SQLITE_QUERY_REFUSED } from '../../../main/sqlite/sqlite-query-task';
 import { SQLITE_BUSY_TIMEOUT_MS } from '../../../main/sqlite/sqlite-connection';
 import { SQLITE_CELL_TEXT_LIMIT } from '../../../shared/sqlite/cells';
@@ -117,6 +136,7 @@ import {
 	SQLITE_ONE_STATEMENT_MESSAGE,
 	SQLITE_PLAN_OF_EXPLAIN_MESSAGE,
 	SQLITE_QUERY_STOPPED_MESSAGE,
+	SQLITE_EXPORT_STOPPED_MESSAGE,
 } from '../../../shared/sqlite/query';
 
 function numbered(count: number): unknown[][] {
@@ -139,6 +159,8 @@ describe('runSqliteQuery', () => {
 		driver.ran = 0;
 		driver.boundArgs = null;
 		releaseHooks.clear();
+		history.record.mockClear();
+		history.record.mockImplementation(async () => undefined);
 	});
 
 	afterEach(() => {
@@ -420,5 +442,209 @@ describe('runSqliteQuery', () => {
 		expect(vi.getTimerCount()).toBe(1);
 		await run;
 		expect(vi.getTimerCount()).toBe(0);
+	});
+});
+
+describe('runSqliteQuery history', () => {
+	beforeEach(() => {
+		driver.instances = [];
+		driver.statement = {
+			readonly: true,
+			reader: true,
+			columns: [{ name: 'id', type: 'INTEGER' }],
+			rows: numbered(3),
+			prepareError: null,
+		};
+		releaseHooks.clear();
+		history.record.mockClear();
+		history.record.mockImplementation(async () => undefined);
+	});
+
+	it("records a first window's run with its values and numbers, before it answers", async () => {
+		let recordedBeforeAnswer = false;
+		const result = await runSqliteQuery({
+			handle: 'h1',
+			sql: 'SELECT id FROM t WHERE id > :min',
+			params: { ':min': { type: 'number', text: '0' } },
+			limit: 2,
+		}).then((value) => {
+			recordedBeforeAnswer = history.record.mock.calls.length === 1;
+			return value;
+		});
+		expect(result.rows).toHaveLength(2);
+		expect(recordedBeforeAnswer).toBe(true);
+		expect(history.record).toHaveBeenCalledWith('/data/app.db', {
+			sql: 'SELECT id FROM t WHERE id > :min',
+			plan: false,
+			params: { ':min': { type: 'number', text: '0' } },
+			ranAt: expect.any(Number),
+			outcome: {
+				ok: true,
+				rows: 2,
+				hasMore: true,
+				returnsRows: true,
+				elapsedMs: expect.any(Number),
+			},
+		});
+	});
+
+	it('records a plan as a plan', async () => {
+		await runSqliteQuery({ handle: 'h1', sql: 'SELECT 1', plan: true });
+		expect(history.record.mock.calls[0][1]).toMatchObject({ plan: true });
+	});
+
+	it('does not record a later window', async () => {
+		await runSqliteQuery({ handle: 'h1', sql: 'SELECT id FROM t', offset: 1 });
+		expect(history.record).not.toHaveBeenCalled();
+	});
+
+	it('records a failure with its message, and not a refusal', async () => {
+		driver.statement.prepareError = new Error('no such table: nope');
+		await expect(runSqliteQuery({ handle: 'h1', sql: 'SELECT * FROM nope' })).rejects.toThrow(
+			'no such table'
+		);
+		expect(history.record.mock.calls[0][1]).toMatchObject({
+			outcome: { ok: false, error: 'no such table: nope' },
+		});
+
+		history.record.mockClear();
+		await expect(runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM t' })).rejects.toThrow();
+		expect(history.record).not.toHaveBeenCalled();
+	});
+
+	it('still answers when the history cannot be written', async () => {
+		history.record.mockImplementation(async () => {
+			throw new Error('disk full');
+		});
+		await expect(runSqliteQuery({ handle: 'h1', sql: 'SELECT 1' })).resolves.toMatchObject({
+			statement: 'SELECT',
+		});
+	});
+});
+
+describe('exportSqliteQuery', () => {
+	let dir: string;
+
+	beforeEach(async () => {
+		dir = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-sqlite-export-'));
+		driver.instances = [];
+		driver.statement = {
+			readonly: true,
+			reader: true,
+			columns: [
+				{ name: 'id', type: 'INTEGER' },
+				{ name: 'note', type: 'TEXT' },
+				{ name: 'data', type: 'BLOB' },
+			],
+			rows: [
+				[BigInt('9007199254740993'), 'a, "b"', Buffer.from([0, 255])],
+				[BigInt(2), 'z'.repeat(SQLITE_CELL_TEXT_LIMIT + 5), null],
+			],
+			prepareError: null,
+		};
+		driver.flags = [];
+		driver.boundArgs = null;
+		releaseHooks.clear();
+		history.record.mockClear();
+	});
+
+	afterEach(async () => {
+		await fs.rm(dir, { recursive: true, force: true });
+	});
+
+	it('writes every row whole as CSV, through a temporary file, on its own connection', async () => {
+		const destPath = path.join(dir, 'nested', 'out.csv');
+		const exported = await exportSqliteQuery({ handle: 'h1', sql: 'SELECT * FROM t', destPath });
+		expect(exported).toMatchObject({ path: destPath, format: 'csv', rows: 2, columns: 3 });
+
+		const text = await fs.readFile(destPath, 'utf8');
+		const long = 'z'.repeat(SQLITE_CELL_TEXT_LIMIT + 5);
+		expect(text).toBe(`id,note,data\n9007199254740993,"a, ""b""",00ff\n2,${long},\n`);
+		expect(exported.bytes).toBe(Buffer.byteLength(text));
+		expect(await fs.readdir(path.dirname(destPath))).toEqual(['out.csv']);
+		expect(driver.instances[0].options).toMatchObject({ readonly: true });
+		expect(driver.instances[0].closed).toBe(true);
+		expect(driver.flags).toContain('safeIntegers');
+		// An export is the statement already run: it is not a new history entry.
+		expect(history.record).not.toHaveBeenCalled();
+	});
+
+	it('writes JSON Lines for a .jsonl destination, binding the parameters', async () => {
+		const destPath = path.join(dir, 'out.jsonl');
+		await exportSqliteQuery({
+			handle: 'h1',
+			sql: 'SELECT * FROM t WHERE id > :min',
+			params: { ':min': { type: 'number', text: '0' } },
+			destPath,
+		});
+		expect({ ...(driver.boundArgs?.[0] as object) }).toEqual({ min: 0 });
+		const lines = (await fs.readFile(destPath, 'utf8')).trim().split('\n');
+		expect(lines[0]).toBe('{"id":9007199254740993,"note":"a, \\"b\\"","data":"00ff"}');
+		expect(JSON.parse(lines[1])).toMatchObject({ id: 2, data: null });
+	});
+
+	it('replaces an existing file only once the export succeeds, and leaves nothing on failure', async () => {
+		const destPath = path.join(dir, 'kept.csv');
+		await fs.writeFile(destPath, 'OLD');
+		driver.statement.prepareError = new Error('no such column: nope');
+		await expect(
+			exportSqliteQuery({ handle: 'h1', sql: 'SELECT nope FROM t', destPath })
+		).rejects.toThrow('no such column');
+		expect(await fs.readFile(destPath, 'utf8')).toBe('OLD');
+		expect(await fs.readdir(dir)).toEqual(['kept.csv']);
+	});
+
+	it('refuses a write and a statement that returns no rows', async () => {
+		const destPath = path.join(dir, 'out.csv');
+		await expect(
+			exportSqliteQuery({ handle: 'h1', sql: 'DELETE FROM t', destPath })
+		).rejects.toThrow(/read-only/);
+		expect(driver.instances).toHaveLength(0);
+
+		driver.statement.reader = false;
+		await expect(
+			exportSqliteQuery({ handle: 'h1', sql: 'PRAGMA trusted_schema = ON', destPath })
+		).rejects.toThrow(SQLITE_EXPORT_NO_ROWS_MESSAGE);
+		expect(await fs.readdir(dir)).toEqual([]);
+	});
+
+	it('rejects a relative destination, an unknown format, bad params, and a closed handle', async () => {
+		await expect(
+			exportSqliteQuery({ handle: 'h1', sql: 'SELECT 1', destPath: 'out.csv' })
+		).rejects.toThrow(/absolute path/);
+		await expect(
+			exportSqliteQuery({
+				handle: 'h1',
+				sql: 'SELECT 1',
+				destPath: path.join(dir, 'x'),
+				format: 'xml' as never,
+			})
+		).rejects.toThrow(/"csv" or "jsonl"/);
+		await expect(
+			exportSqliteQuery({
+				handle: 'h1',
+				sql: 'SELECT 1',
+				destPath: path.join(dir, 'x'),
+				params: [] as never,
+			})
+		).rejects.toThrow(/object keyed by parameter/);
+		await expect(
+			exportSqliteQuery({ handle: 'gone', sql: 'SELECT 1', destPath: path.join(dir, 'x') })
+		).rejects.toThrow('no longer open');
+	});
+
+	it('stops an export by id in its own words, leaving no file', async () => {
+		const exported = exportSqliteQuery({
+			handle: 'h1',
+			sql: 'SELECT * FROM t',
+			destPath: path.join(dir, 'stopped.csv'),
+			queryId: 'e1',
+		});
+		expect(cancelSqliteQuery('e1')).toBe(true);
+		await expect(exported).rejects.toThrow(SQLITE_EXPORT_STOPPED_MESSAGE);
+		expect(cancelSqliteQuery('e1')).toBe(false);
+		await expect(fs.stat(path.join(dir, 'stopped.csv'))).rejects.toMatchObject({
+			code: 'ENOENT',
+		});
 	});
 });

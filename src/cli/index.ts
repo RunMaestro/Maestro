@@ -162,6 +162,7 @@ import {
 import {
 	sqliteBlob,
 	sqliteCount,
+	sqliteHistory,
 	sqliteInfo,
 	sqliteQuery,
 	sqliteRows,
@@ -3964,10 +3965,25 @@ sqliteCmd
 		'--plan',
 		"Show the statement's EXPLAIN QUERY PLAN as a tree instead of its rows (full scans, index searches, temporary sorts); nothing is read from the tables"
 	)
-	.option('--offset <n>', 'Result rows to skip (not with --plan)', '0')
-	.option('--limit <n>', 'Rows to show (at most 1000; not with --plan)', '50')
+	.option('--offset <n>', 'Result rows to skip (not with --plan or --output)', '0')
+	.option('--limit <n>', 'Rows to show (at most 1000; not with --plan or --output)', '50')
+	.option(
+		'--output <file>',
+		"Write EVERY row to this file instead, whole (Query mode's Export): CSV, or JSON Lines for a .jsonl / .ndjson name; the app writes it"
+	)
+	.option('--format <format>', 'Export format: csv or jsonl (default: from the --output name)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, sql, options) => sqliteQuery(file, sql, options));
+
+sqliteCmd
+	.command('history <path>')
+	.description(
+		"List the statements run against a database, newest first, as the viewer's Query mode History rail shows them (runs from the viewer and from `sqlite query` alike)"
+	)
+	.option('--forget <id>', 'Forget one entry, by its id or the start of it the listing shows')
+	.option('--clear', "Forget the database's whole query history")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteHistory(file, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

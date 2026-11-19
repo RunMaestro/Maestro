@@ -36,9 +36,17 @@
  * would hold a lock on someone's live database for as long as the grid sat
  * there.
  *
+ * An export (`exportSqliteQueryTask()`, Query mode's Export) runs the same
+ * statement behind the same layers and writes EVERY row to a file as CSV or
+ * JSON Lines (`createTabularRowEncoder()`, shared with the Parquet export),
+ * whole: no cell is cut, an INTEGER keeps every digit, a BLOB is written as
+ * lowercase hex. The rows go from SQLite to the file inside this process, so
+ * an export of millions of rows never crosses IPC or sits in memory.
+ *
  * Nothing here, or reachable from here, may import `electron`.
  */
 
+import { closeSync, fstatSync, openSync, writeSync } from 'fs';
 import { performance } from 'perf_hooks';
 
 import type Database from 'better-sqlite3';
@@ -55,10 +63,12 @@ import {
 } from '../../shared/sqlite/query';
 import type {
 	SqliteParameterValues,
+	SqliteQueryExported,
 	SqliteQueryResult,
 	SqliteResultColumn,
 } from '../../shared/sqlite/types';
-import { sqliteCellFromValue } from './sqlite-cell';
+import { createTabularRowEncoder, type TabularExportFormat } from '../../shared/tabularExport';
+import { sqliteCellFromValue, sqliteExportValue } from './sqlite-cell';
 import { openReadOnlySqliteConnection } from './sqlite-connection';
 
 /** What one run's thread is handed. Bounds are already checked by the caller. */
@@ -72,6 +82,22 @@ export interface SqliteQueryTask {
 	/** Run the statement's `EXPLAIN QUERY PLAN` instead of the statement. */
 	plan?: boolean;
 }
+
+/** What one export's process is handed. The caller picks `destPath` (a temporary file) and renames it. */
+export interface SqliteQueryExportTask {
+	filePath: string;
+	sql: string;
+	params?: SqliteParameterValues;
+	destPath: string;
+	format: TabularExportFormat;
+}
+
+/** An export's statement sets a value and returns no rows, so there is nothing to write. */
+export const SQLITE_EXPORT_NO_ROWS_MESSAGE =
+	'This statement returns no rows, so there is nothing to export.';
+
+/** Rows of encoded text gathered before one write to the file. */
+const EXPORT_CHUNK_CHARS = 256 * 1024;
 
 /** better-sqlite3's wording when the text holds a second statement. */
 const MULTIPLE_STATEMENTS = /more than one statement/i;
@@ -99,13 +125,21 @@ function prepareOne(db: Database.Database, sql: string): Database.Statement {
  * `offset`. Throws a refusal (`code: SQLITE_QUERY_REFUSED`) for a statement
  * that is not read-only, and SQLite's own error, verbatim, for one that fails.
  */
-export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
-	const options = { plan: task.plan === true };
+/**
+ * Every read-only layer, then the statement prepared on a connection of its
+ * own: refuse a statement that is not read-only or a parameter with no
+ * usable value (before the file is opened), open the file read-only,
+ * prepare one statement, and refuse it unless the driver calls it
+ * read-only. The caller closes `db`; on a throw it is already closed.
+ */
+function prepareReadOnlyRun(
+	task: { filePath: string; sql: string; params?: SqliteParameterValues },
+	options: { plan: boolean }
+): { db: Database.Database; statement: Database.Statement; args: readonly unknown[] } {
 	const refusal = sqliteReadOnlyRefusal(task.sql, options);
 	if (refusal) throw refuse(refusal);
 	const binding = sqliteQueryBinding(task.sql, task.params);
 	if (binding.problem !== null) throw refuse(binding.problem);
-	const limit = Math.min(task.limit, SQLITE_QUERY_MAX_LIMIT);
 
 	const db = openReadOnlySqliteConnection(task.filePath);
 	try {
@@ -113,7 +147,18 @@ export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
 		db.function(SQLITE_REGEXP_FUNCTION, { deterministic: true }, sqliteRegexpTest);
 		const statement = prepareOne(db, sqliteStatementToRun(task.sql, options));
 		if (!statement.readonly) throw refuse(SQLITE_NOT_READ_ONLY_MESSAGE);
+		return { db, statement, args: binding.args };
+	} catch (error) {
+		db.close();
+		throw error;
+	}
+}
 
+export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
+	const options = { plan: task.plan === true };
+	const limit = Math.min(task.limit, SQLITE_QUERY_MAX_LIMIT);
+	const { db, statement, args } = prepareReadOnlyRun(task, options);
+	try {
 		const base = {
 			statement: sqliteLeadingKeyword(task.sql),
 			...(options.plan ? { plan: true } : {}),
@@ -122,7 +167,7 @@ export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
 		const started = performance.now();
 		if (!statement.reader) {
 			// A PRAGMA that sets a value on this connection, which closes below.
-			statement.run(...binding.args);
+			statement.run(...args);
 			return {
 				...base,
 				columns: [],
@@ -137,7 +182,7 @@ export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
 			.columns()
 			.map((column) => ({ name: column.name, declaredType: column.type }));
 		statement.raw(true).safeIntegers(true);
-		const { rows, hasMore } = readWindow(statement, binding.args, task.offset, limit);
+		const { rows, hasMore } = readWindow(statement, args, task.offset, limit);
 		return {
 			...base,
 			columns,
@@ -146,6 +191,51 @@ export function runSqliteQueryTask(task: SqliteQueryTask): SqliteQueryResult {
 			returnsRows: true,
 			elapsedMs: Math.round(performance.now() - started),
 		};
+	} finally {
+		db.close();
+	}
+}
+
+/**
+ * Run one read-only statement and write all of its rows to `task.destPath`
+ * (replacing what is there), whole. Throws the same refusals and SQLite
+ * errors a run does, and `SQLITE_EXPORT_NO_ROWS_MESSAGE` for a statement
+ * that returns no rows by design. A failed export may leave a partial file:
+ * the caller writes to a temporary path and removes it.
+ */
+export function exportSqliteQueryTask(task: SqliteQueryExportTask): SqliteQueryExported {
+	const { db, statement, args } = prepareReadOnlyRun(task, { plan: false });
+	try {
+		if (!statement.reader) throw refuse(SQLITE_EXPORT_NO_ROWS_MESSAGE);
+		const columns = statement.columns().map((column) => column.name);
+		const encoder = createTabularRowEncoder(task.format, columns);
+		statement.raw(true).safeIntegers(true);
+
+		const started = performance.now();
+		const fd = openSync(task.destPath, 'w');
+		try {
+			let pending = encoder.header;
+			let rows = 0;
+			for (const row of statement.iterate(...args) as IterableIterator<unknown[]>) {
+				pending += encoder.row(row.map(sqliteExportValue));
+				rows++;
+				if (pending.length >= EXPORT_CHUNK_CHARS) {
+					writeSync(fd, pending);
+					pending = '';
+				}
+			}
+			if (pending) writeSync(fd, pending);
+			return {
+				path: task.destPath,
+				format: task.format,
+				rows,
+				columns: columns.length,
+				bytes: fstatSync(fd).size,
+				elapsedMs: Math.round(performance.now() - started),
+			};
+		} finally {
+			closeSync(fd);
+		}
 	} finally {
 		db.close();
 	}

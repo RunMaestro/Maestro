@@ -49,6 +49,12 @@ export const SQLITE_QUERY_MAX_LIMIT = 1000;
 export const SQLITE_QUERY_TIMEOUT_MS = 60_000;
 
 /**
+ * How long one export may run, statement and file together, before it is
+ * stopped. Longer than a Run's: an export reads every row, not one window.
+ */
+export const SQLITE_EXPORT_TIMEOUT_MS = 10 * 60_000;
+
+/**
  * The statement's first keyword, upper case, after any leading whitespace,
  * line comments (`--`), and block comments. Empty when the text starts with
  * anything else (a stray `;`, a quote) or holds only comments.
@@ -138,6 +144,14 @@ export function sqliteQueryTimeoutMessage(timeoutMs = SQLITE_QUERY_TIMEOUT_MS): 
 
 /** The run was stopped by the user, by a newer run, or by closing the database. */
 export const SQLITE_QUERY_STOPPED_MESSAGE = 'The query was stopped.';
+
+/** An export outlived `SQLITE_EXPORT_TIMEOUT_MS` and was stopped. */
+export function sqliteExportTimeoutMessage(timeoutMs = SQLITE_EXPORT_TIMEOUT_MS): string {
+	return `The export was stopped after ${Math.round(timeoutMs / 60_000)} min. Narrow the statement (a WHERE, a LIMIT) and export again.`;
+}
+
+/** An export was stopped by the user or by closing the database. */
+export const SQLITE_EXPORT_STOPPED_MESSAGE = 'The export was stopped.';
 
 /** Whether a character may sit inside a SQLite identifier or parameter name. */
 function isSqliteIdChar(char: string): boolean {

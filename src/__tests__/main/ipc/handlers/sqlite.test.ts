@@ -34,7 +34,15 @@ const count = vi.hoisted(() => ({ countSqliteRows: vi.fn() }));
 const blob = vi.hoisted(() => ({ saveSqliteBlob: vi.fn() }));
 const summary = vi.hoisted(() => ({ readSqliteDatabaseSummary: vi.fn() }));
 const integrity = vi.hoisted(() => ({ checkSqliteIntegrity: vi.fn() }));
-const query = vi.hoisted(() => ({ runSqliteQuery: vi.fn(), cancelSqliteQuery: vi.fn() }));
+const query = vi.hoisted(() => ({
+	runSqliteQuery: vi.fn(),
+	cancelSqliteQuery: vi.fn(),
+	exportSqliteQuery: vi.fn(),
+}));
+const history = vi.hoisted(() => ({
+	readSqliteQueryHistory: vi.fn(),
+	forgetSqliteQueryHistory: vi.fn(),
+}));
 
 vi.mock('../../../../main/sqlite/sqlite-objects', () => objects);
 vi.mock('../../../../main/sqlite/sqlite-schema', () => schema);
@@ -44,6 +52,7 @@ vi.mock('../../../../main/sqlite/sqlite-blob', () => blob);
 vi.mock('../../../../main/sqlite/sqlite-summary', () => summary);
 vi.mock('../../../../main/sqlite/sqlite-integrity', () => integrity);
 vi.mock('../../../../main/sqlite/sqlite-query', () => query);
+vi.mock('../../../../main/sqlite/sqlite-query-history', () => history);
 
 import { registerSqliteHandlers } from '../../../../main/ipc/handlers/sqlite';
 
@@ -62,10 +71,13 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:checkIntegrity',
 			'sqlite:close',
 			'sqlite:countRows',
+			'sqlite:exportQuery',
+			'sqlite:forgetQueryHistory',
 			'sqlite:listObjects',
 			'sqlite:open',
 			'sqlite:readColumns',
 			'sqlite:readObjectStats',
+			'sqlite:readQueryHistory',
 			'sqlite:readRows',
 			'sqlite:readSchema',
 			'sqlite:readSummary',
@@ -183,6 +195,40 @@ describe('SQLite IPC handlers', () => {
 		query.cancelSqliteQuery.mockReturnValue(true);
 		await expect(invoke('sqlite:cancelQuery', 'q1')).resolves.toBe(true);
 		expect(query.cancelSqliteQuery).toHaveBeenCalledWith('q1');
+	});
+
+	it('exports a query with the request passed through whole', async () => {
+		const request = {
+			handle: 'h1',
+			sql: 'SELECT * FROM t',
+			destPath: '/tmp/out.csv',
+			format: 'csv',
+			queryId: 'e1',
+		};
+		const exported = {
+			path: '/tmp/out.csv',
+			format: 'csv',
+			rows: 3,
+			columns: 2,
+			bytes: 40,
+			elapsedMs: 1,
+		};
+		query.exportSqliteQuery.mockResolvedValue(exported);
+		await expect(invoke('sqlite:exportQuery', request)).resolves.toEqual(exported);
+		expect(query.exportSqliteQuery).toHaveBeenCalledWith(request);
+	});
+
+	it('reads the query history by handle, and forgets one entry or all of them', async () => {
+		const left = { path: '/data/app.db', entries: [] };
+		history.readSqliteQueryHistory.mockResolvedValue(left);
+		await expect(invoke('sqlite:readQueryHistory', 'h1')).resolves.toEqual(left);
+		expect(history.readSqliteQueryHistory).toHaveBeenCalledWith('h1');
+
+		history.forgetSqliteQueryHistory.mockResolvedValue(left);
+		await expect(invoke('sqlite:forgetQueryHistory', 'h1', 'id-1')).resolves.toEqual(left);
+		expect(history.forgetSqliteQueryHistory).toHaveBeenCalledWith('h1', 'id-1');
+		await invoke('sqlite:forgetQueryHistory', 'h1', undefined);
+		expect(history.forgetSqliteQueryHistory).toHaveBeenLastCalledWith('h1', null);
 	});
 
 	it('closes by handle', async () => {

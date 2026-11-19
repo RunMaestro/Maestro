@@ -11,7 +11,9 @@
  * app, over `sqlite_save_blob`. And `maestro-cli sqlite info`: the header facts
  * and, with `--check`, the integrity verdict, over `sqlite_read_summary`. And
  * `maestro-cli sqlite query`: one read-only statement's window, over
- * `sqlite_run_query`.
+ * `sqlite_run_query`, and with `--output` its whole result written to a file
+ * by the app, over `sqlite_export_query`. And `maestro-cli sqlite history`:
+ * the statements run against a database, over `sqlite_query_history`.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -25,6 +27,7 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 import {
 	sqliteBlob,
 	sqliteCount,
+	sqliteHistory,
 	sqliteInfo,
 	sqliteQuery,
 	sqliteQueryParamsFromFlags,
@@ -1028,5 +1031,206 @@ describe('sqliteQueryParamsFromFlags', () => {
 		expect(() =>
 			sqliteQueryParamsFromFlags('SELECT :a', { param: ['a=1'], paramNull: [':a'] })
 		).toThrow(':a is given more than once');
+	});
+});
+
+describe('sqlite query --output', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const OUT = path.resolve('/tmp/result.jsonl');
+	const EXPORTED = {
+		path: OUT,
+		format: 'jsonl',
+		rows: 1204,
+		columns: 2,
+		bytes: 52_000,
+		elapsedMs: 31,
+	};
+
+	function respondExport(overrides: Record<string, unknown> = {}) {
+		return mockReply({
+			type: 'sqlite_export_result',
+			success: true,
+			database: { handle: 'h1', displayPath: DB, fileBytes: 4096 },
+			exported: EXPORTED,
+			...overrides,
+		});
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('asks the app to write every row to the resolved path, format from its name', async () => {
+		const sent = respondExport();
+		await sqliteQuery(DB, 'SELECT * FROM users WHERE id > :min', {
+			paramNumber: ['min=10'],
+			output: '/tmp/result.jsonl',
+			limit: '5000',
+		});
+		expect(sent[0]).toEqual({
+			type: 'sqlite_export_query',
+			path: DB,
+			sql: 'SELECT * FROM users WHERE id > :min',
+			params: { ':min': { type: 'number', text: '10' } },
+			destPath: OUT,
+			format: 'jsonl',
+			responseType: 'sqlite_export_result',
+		});
+		expect(logSpy.mock.calls.join('\n')).toContain(
+			`Exported 1204 rows (2 columns) to ${OUT} as JSON Lines`
+		);
+	});
+
+	it('takes --format over the name', async () => {
+		const sent = respondExport();
+		await sqliteQuery(DB, 'SELECT 1', { output: '/tmp/result.jsonl', format: 'csv' });
+		expect(sent[0]).toMatchObject({ format: 'csv' });
+	});
+
+	it('prints what was written under --json', async () => {
+		respondExport();
+		await sqliteQuery(DB, 'SELECT 1', { output: '/tmp/result.jsonl', json: true });
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+			success: true,
+			path: DB,
+			output: OUT,
+			format: 'jsonl',
+			rows: 1204,
+			columns: 2,
+			bytes: 52_000,
+			elapsedMs: 31,
+		});
+	});
+
+	it('refuses --plan, a bad --format, --format alone, and a write before asking the app', async () => {
+		const sent = respondExport();
+		await expect(sqliteQuery(DB, 'SELECT 1', { output: '/tmp/x.csv', plan: true })).rejects.toThrow(
+			'__exit__'
+		);
+		await expect(
+			sqliteQuery(DB, 'SELECT 1', { output: '/tmp/x.csv', format: 'xml' })
+		).rejects.toThrow('__exit__');
+		await expect(sqliteQuery(DB, 'SELECT 1', { format: 'csv' })).rejects.toThrow('__exit__');
+		await expect(sqliteQuery(DB, 'DELETE FROM users', { output: '/tmp/x.csv' })).rejects.toThrow(
+			'__exit__'
+		);
+		const errors = errorSpy.mock.calls.join('\n');
+		expect(errors).toContain('does not take --plan');
+		expect(errors).toContain('--format must be csv or jsonl');
+		expect(errors).toContain('--format needs --output');
+		expect(errors).toContain('DELETE is not a read-only statement');
+		expect(sent).toHaveLength(0);
+	});
+
+	it("exits 1 with the app's error", async () => {
+		mockReply({ type: 'sqlite_export_result', success: false, error: 'no such column: nope' });
+		await expect(sqliteQuery(DB, 'SELECT nope', { output: '/tmp/x.csv' })).rejects.toThrow(
+			'__exit__'
+		);
+		expect(errorSpy.mock.calls.join('\n')).toContain('no such column: nope');
+	});
+});
+
+describe('sqlite history', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const logged = () => logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+	const ENTRIES = [
+		{
+			id: 'abcd1234-0000-4000-8000-000000000001',
+			sql: 'SELECT *\nFROM users WHERE id = :id',
+			plan: false,
+			params: { ':id': { type: 'number', text: '7' } },
+			ranAt: Date.now() - 60_000,
+			runs: 3,
+			outcome: { ok: true, rows: 500, hasMore: true, returnsRows: true, elapsedMs: 4 },
+		},
+		{
+			id: 'ef567890-0000-4000-8000-000000000002',
+			sql: 'SELECT nope',
+			plan: true,
+			params: {},
+			ranAt: Date.now() - 120_000,
+			runs: 1,
+			outcome: { ok: false, error: 'no such column: nope' },
+		},
+	];
+
+	function respondHistory(entries: unknown[] = ENTRIES, removed?: number) {
+		return mockReply({
+			type: 'sqlite_history_result',
+			success: true,
+			database: { handle: 'h1', displayPath: DB, fileBytes: 4096 },
+			history: { path: DB, entries },
+			...(removed !== undefined ? { removed } : {}),
+		});
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('lists the statements newest first, with ids, outcomes, values, and errors', async () => {
+		const sent = respondHistory();
+		await sqliteHistory(DB, {});
+		expect(sent[0]).toEqual({
+			type: 'sqlite_query_history',
+			path: DB,
+			responseType: 'sqlite_history_result',
+		});
+		const out = logged();
+		expect(out).toContain(`Query history of ${DB}: 2 statements, newest first.`);
+		expect(out).toMatch(/abcd1234 {2}.* {2}500\+ rows {2}ran 3 times/);
+		expect(out).toContain('    SELECT *\n    FROM users WHERE id = :id');
+		expect(out).toContain('    :id = "7" (number)');
+		expect(out).toMatch(/ef567890 {2}.* {2}failed {2}plan/);
+		expect(out).toContain('    no such column: nope');
+	});
+
+	it('says when nothing has run', async () => {
+		respondHistory([]);
+		await sqliteHistory(DB, {});
+		expect(logged()).toContain(`No queries have run against ${DB}.`);
+	});
+
+	it('forgets one entry by id, and clears the history', async () => {
+		let sent = respondHistory(ENTRIES.slice(1), 1);
+		await sqliteHistory(DB, { forget: ' abcd1234 ' });
+		expect(sent[0]).toMatchObject({ forget: 'abcd1234' });
+		expect(logged()).toContain('Forgot 1 statement.');
+
+		sent = respondHistory([], 2);
+		await sqliteHistory(DB, { clear: true, json: true });
+		expect(sent[0]).toMatchObject({ clear: true });
+		expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0]))).toEqual({
+			success: true,
+			path: DB,
+			removed: 2,
+			entries: [],
+		});
+	});
+
+	it('refuses --forget with --clear, and an empty --forget, before asking the app', async () => {
+		const sent = respondHistory();
+		await expect(sqliteHistory(DB, { forget: 'abcd', clear: true })).rejects.toThrow('__exit__');
+		await expect(sqliteHistory(DB, { forget: '  ' })).rejects.toThrow('__exit__');
+		expect(sent).toHaveLength(0);
+	});
+
+	it("exits 1 with the app's error", async () => {
+		mockReply({ type: 'sqlite_history_result', success: false, error: 'No history entry zz' });
+		await expect(sqliteHistory(DB, { forget: 'zz' })).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('No history entry zz');
 	});
 });

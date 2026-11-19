@@ -3439,9 +3439,21 @@ Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) th
 | `--param-number <name=value>` | Bind a parameter as a number (repeatable)                                                                                                            | `[]`    |
 | `--param-null <name>`         | Bind a parameter as NULL (repeatable)                                                                                                                | `[]`    |
 | `--plan`                      | Show the statement's EXPLAIN QUERY PLAN as a tree instead of its rows (full scans, index searches, temporary sorts); nothing is read from the tables | -       |
-| `--offset <n>`                | Result rows to skip (not with --plan)                                                                                                                | `0`     |
-| `--limit <n>`                 | Rows to show (at most 1000; not with --plan)                                                                                                         | `50`    |
+| `--offset <n>`                | Result rows to skip (not with --plan or --output)                                                                                                    | `0`     |
+| `--limit <n>`                 | Rows to show (at most 1000; not with --plan or --output)                                                                                             | `50`    |
+| `--output <file>`             | Write EVERY row to this file instead, whole (Query mode's Export): CSV, or JSON Lines for a .jsonl / .ndjson name; the app writes it                 | -       |
+| `--format <format>`           | Export format: csv or jsonl (default: from the --output name)                                                                                        | -       |
 | `--json`                      | Output as JSON (for scripting)                                                                                                                       | -       |
+
+## `maestro-cli sqlite history <path>`
+
+List the statements run against a database, newest first, as the viewer's Query mode History rail shows them (runs from the viewer and from `sqlite query` alike)
+
+| Option          | Description                                                      | Default |
+| --------------- | ---------------------------------------------------------------- | ------- |
+| `--forget <id>` | Forget one entry, by its id or the start of it the listing shows | -       |
+| `--clear`       | Forget the database's whole query history                        | -       |
+| `--json`        | Output as JSON (for scripting)                                   | -       |
 
 ## `maestro-cli quick-chat`
 
