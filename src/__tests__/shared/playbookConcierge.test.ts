@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	collectOpenPlaybookParams,
+	collectUnansweredPlaybookParams,
 	conciergeQuestionCap,
 	decidePlaybookConcierge,
 	isConciergeFinished,
@@ -80,6 +81,16 @@ describe('collectOpenPlaybookParams', () => {
 	});
 });
 
+describe('collectUnansweredPlaybookParams', () => {
+	it('keeps every parameter without a usable stored answer, defaults included', () => {
+		const unanswered = collectUnansweredPlaybookParams([PR_URL, TEST_COMMAND, MAX_ITEMS], {
+			TEST_COMMAND: 'npm test',
+			PR_URL: 'https://github.com/OWNER/REPO/pull/XXX',
+		});
+		expect(unanswered.map((s) => s.name)).toEqual(['PR_URL', 'MAX_ITEMS']);
+	});
+});
+
 describe('isPlausiblyDiscoverable', () => {
 	it('accepts workspace and repository words, rejects preferences', () => {
 		expect(isPlausiblyDiscoverable(TEST_COMMAND, facts())).toBe(true);
@@ -139,6 +150,43 @@ describe('decidePlaybookConcierge (D5)', () => {
 			unresolved: ['MARKET_TOPIC'],
 			questionCap: 2,
 		});
+	});
+
+	it('interviews a guided playbook whose every parameter has a default, on its first configure', () => {
+		// Message-Bus: an installer with a prose default for every parameter.
+		const marker = spec({ name: 'TRIGGER_MARKER', default: '@maestro' });
+		const poll = spec({ name: 'POLL_MINUTES', type: 'number', default: '3' });
+		const first = decidePlaybookConcierge(
+			input({ specs: [marker, poll], interaction: 'guided', firstConfigure: true })
+		);
+		expect(first).toMatchObject({
+			mode: 'interview',
+			reason: 'guided',
+			open: ['TRIGGER_MARKER', 'POLL_MINUTES'],
+			questionCap: 3,
+		});
+
+		// Once configured, the confirmed defaults stand: no interview.
+		const rerun = decidePlaybookConcierge(input({ specs: [marker, poll], interaction: 'guided' }));
+		expect(rerun).toMatchObject({ mode: 'none', reason: 'nothing-open' });
+
+		// A stored answer is never reopened, first configure or not.
+		const answered = decidePlaybookConcierge(
+			input({
+				specs: [marker, poll],
+				stored: { TRIGGER_MARKER: '@jarvis' },
+				interaction: 'guided',
+				firstConfigure: true,
+			})
+		);
+		expect(answered.open).toEqual(['POLL_MINUTES']);
+	});
+
+	it('keeps a form playbook on the D5 rule on its first configure', () => {
+		const decision = decidePlaybookConcierge(
+			input({ specs: [MAX_ITEMS], interaction: 'form', firstConfigure: true })
+		);
+		expect(decision).toMatchObject({ mode: 'none', reason: 'nothing-open', open: [] });
 	});
 
 	it('offers help on a form playbook only when an unresolved parameter is discoverable', () => {
@@ -217,6 +265,27 @@ describe('readConciergeParameters (JSON contract)', () => {
 			open
 		);
 		expect(result).toEqual([]);
+	});
+
+	it('drops a value equal to the author default, so the form keeps it badged Default', () => {
+		const result = readConciergeParameters(
+			[
+				{ name: 'MAX_ITEMS', value: '25', source: 'default', confidence: 90 },
+				{ name: 'MAX_ITEMS', value: ' 25 ', source: 'default', confidence: 90 },
+			],
+			specs,
+			new Set(['MAX_ITEMS'])
+		);
+		expect(result).toEqual([]);
+
+		const changed = readConciergeParameters(
+			[{ name: 'MAX_ITEMS', value: '10', source: 'detected', confidence: 90 }],
+			specs,
+			new Set(['MAX_ITEMS'])
+		);
+		expect(changed).toEqual([
+			{ name: 'MAX_ITEMS', value: '10', source: 'detected', confidence: 90 },
+		]);
 	});
 
 	it('lets a later entry replace an earlier one, and reads an unknown source as asked', () => {

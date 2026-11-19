@@ -7,7 +7,8 @@
  *   Detected proposals with `proposeFromFacts()`.
  * - A `guided` playbook opens on the interview (`PlaybookConciergePanel`)
  *   once the facts are in, unless the D5 rule says there is nothing to ask,
- *   no agent, or no network (`decidePlaybookConcierge()`).
+ *   no agent, or no network (`decidePlaybookConcierge()`). On its first
+ *   configure (no stored answers yet) its defaulted parameters count as open.
  * - A `form` playbook opens on the sheet; its footer carries "Help me fill
  *   this in" only when the rule says an interview could find something.
  * - The interview's ready, or Skip to form, lands on the sheet with the
@@ -75,6 +76,8 @@ export function PlaybookConfigureFlow({
 	const [answers, setAnswers] = useState<PlaybookParamValues>(() => ({
 		...playbook.parameterValues,
 	}));
+	// Read once: the sheet's own saves give the record stored answers mid-flow.
+	const [firstConfigure] = useState(() => playbook.parameterValues === undefined);
 	const [conciergeProposals, setConciergeProposals] = useState<ConciergeParameterProposal[]>([]);
 	const [view, setView] = useState<FlowView>(
 		playbook.interaction === 'guided' ? 'pending' : 'form'
@@ -116,10 +119,11 @@ export function PlaybookConfigureFlow({
 				factProposals: proposals,
 				facts: factsPack,
 				interaction: playbook.interaction,
+				firstConfigure,
 				agentReady: agent !== null,
 				online: typeof navigator === 'undefined' || navigator.onLine !== false,
 			}),
-		[specs, answers, proposals, factsPack, playbook.interaction, agent]
+		[specs, answers, proposals, factsPack, playbook.interaction, firstConfigure, agent]
 	);
 
 	const startInterview = useCallback(() => {

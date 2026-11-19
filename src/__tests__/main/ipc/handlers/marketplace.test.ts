@@ -2214,11 +2214,16 @@ describe('marketplace IPC handlers', () => {
 
 		const rawPhase1 = '# Phase 1\n\nSee {{AUTORUN_FOLDER}}/assets/config.yaml';
 		const rawPhase2 = '# Phase 2';
+		const rawReport = '# Report\n\nSay what was installed.';
 
 		/** Run one import of `entry` from a cached official manifest. */
 		async function importEntry(
 			entry: MarketplaceManifest['playbooks'][number],
-			options: { autoRunFolderPath?: string; sshRemoteId?: string; failPristine?: boolean } = {}
+			options: {
+				autoRunFolderPath?: string;
+				sshRemoteId?: string;
+				failPristine?: boolean;
+			} = {}
 		) {
 			vi.mocked(fs.readFile)
 				.mockResolvedValueOnce(
@@ -2238,6 +2243,13 @@ describe('marketplace IPC handlers', () => {
 			mockFetch
 				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(rawPhase1) })
 				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(rawPhase2) });
+			// An unlisted report document is fetched third; queue it only then, so no
+			// unused response leaks into the next test.
+			const report = (entry as unknown as { report?: unknown }).report;
+			const reportName = typeof report === 'string' ? report.trim().replace(/\.md$/i, '') : '';
+			if (reportName && !entry.documents.some((doc) => doc.filename === reportName)) {
+				mockFetch.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(rawReport) });
+			}
 			const handler = handlers.get('marketplace:importPlaybook');
 			return handler!(
 				{} as any,
@@ -2268,7 +2280,11 @@ describe('marketplace IPC handlers', () => {
 				sourceChannel: 'official',
 				targetFolderName: 'My Test Playbook',
 				importedAt: expect.any(Number),
-				documentHashes: { 'phase-1': sha256(rawPhase1), 'phase-2': sha256(rawPhase2) },
+				documentHashes: {
+					'phase-1': sha256(rawPhase1),
+					'phase-2': sha256(rawPhase2),
+					'Final-Report': sha256(rawReport),
+				},
 			});
 			expect(result.playbook.provenance.importedAt).toBeGreaterThanOrEqual(before);
 			// The user's copy is rebased; the hash is of what shipped.
@@ -2294,6 +2310,32 @@ describe('marketplace IPC handlers', () => {
 			expect(saved.interaction).toBe('guided');
 			expect(saved.scope).toBe('repo');
 			expect(saved.report).toBe('Final-Report');
+		});
+
+		it('fetches a report document the manifest does not list, and keeps it off the run list', async () => {
+			const result = await importEntry(exchangePlaybook);
+
+			expect(mockFetch).toHaveBeenCalledTimes(3);
+			expect(String(mockFetch.mock.calls[2][0])).toContain('Final-Report.md');
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join('/autorun/folder', 'My Test Playbook', 'Final-Report.md'),
+				rawReport,
+				'utf-8'
+			);
+			expect(result.playbook.documents.map((doc: { filename: string }) => doc.filename)).toEqual([
+				'My Test Playbook/phase-1',
+				'My Test Playbook/phase-2',
+			]);
+		});
+
+		it('fetches a listed report document once', async () => {
+			const listed = {
+				...exchangePlaybook,
+				report: 'phase-2',
+			} as unknown as MarketplaceManifest['playbooks'][number];
+			await importEntry(listed);
+
+			expect(mockFetch).toHaveBeenCalledTimes(2);
 		});
 
 		it('leaves malformed Exchange fields off the record', async () => {
@@ -2369,6 +2411,7 @@ describe('marketplace IPC handlers', () => {
 			expect(Object.keys(result.playbook.provenance.documentHashes)).toEqual([
 				'phase-1',
 				'phase-2',
+				'Final-Report',
 			]);
 		});
 
@@ -2385,6 +2428,7 @@ describe('marketplace IPC handlers', () => {
 				)
 				.mockResolvedValueOnce(rawPhase1)
 				.mockResolvedValueOnce(rawPhase2)
+				.mockResolvedValueOnce(rawReport)
 				.mockRejectedValueOnce({ code: 'ENOENT' });
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
@@ -2403,7 +2447,11 @@ describe('marketplace IPC handlers', () => {
 				marketplaceId: 'local-exchange',
 				sourceChannel: 'local',
 				sourcePath: '/Users/test/custom-playbooks/my-playbook',
-				documentHashes: { 'phase-1': sha256(rawPhase1), 'phase-2': sha256(rawPhase2) },
+				documentHashes: {
+					'phase-1': sha256(rawPhase1),
+					'phase-2': sha256(rawPhase2),
+					'Final-Report': sha256(rawReport),
+				},
 			});
 		});
 	});

@@ -147,6 +147,23 @@ describe('PlaybookConfigureFlow', () => {
 		expect(service.loadPlaybookConciergePrompt).not.toHaveBeenCalled();
 	});
 
+	it('interviews a freshly installed guided playbook whose every parameter has a default', async () => {
+		const prompt = '<!-- CONFIGURE: The trigger marker -->\n**TRIGGER_MARKER:** `@maestro`';
+		renderFlow(makePlaybook({ interaction: 'guided', prompt }));
+
+		await waitFor(() => expect(screen.getByTestId('playbook-concierge-panel')).toBeTruthy());
+		expect(service.loadPlaybookConciergePrompt).toHaveBeenCalled();
+	});
+
+	it('takes the defaults of a guided playbook configured before', async () => {
+		const prompt = '<!-- CONFIGURE: The trigger marker -->\n**TRIGGER_MARKER:** `@maestro`';
+		renderFlow(makePlaybook({ interaction: 'guided', prompt, parameterValues: {} }));
+
+		await waitFor(() => expect(screen.getByTestId('parameter-sheet')).toBeTruthy());
+		expect(provenance('TRIGGER_MARKER')).toBe('Default');
+		expect(service.loadPlaybookConciergePrompt).not.toHaveBeenCalled();
+	});
+
 	it('offers help on a form playbook when an unresolved parameter is discoverable', async () => {
 		renderFlow(makePlaybook());
 

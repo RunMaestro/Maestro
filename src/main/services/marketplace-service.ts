@@ -686,24 +686,27 @@ export async function importMarketplacePlaybook(
 	const importedDocs: string[] = [];
 	const failedDocs: string[] = [];
 	const documentHashes: Record<string, string> = {};
-	for (const doc of marketplacePlaybook.documents) {
+	const importDocument = async (filename: string): Promise<boolean> => {
 		let fetched: string;
 		try {
-			fetched = await fetchDocument(marketplacePlaybook.path, doc.filename);
+			fetched = await fetchDocument(marketplacePlaybook.path, filename);
 			await writeTargetFile(
-				joinTarget(targetPath, `${doc.filename}.md`),
+				joinTarget(targetPath, `${filename}.md`),
 				rebaseAssetReferences(fetched, targetFolderName)
 			);
-			importedDocs.push(doc.filename);
 			// Hashed as fetched, before the asset rebase, so the hash names what shipped.
-			documentHashes[doc.filename] = hashPlaybookDocument(fetched);
+			documentHashes[filename] = hashPlaybookDocument(fetched);
 		} catch (error) {
 			void captureException(error);
-			logger.warn(`Failed to import document ${doc.filename}`, LOG_CONTEXT, { error });
-			failedDocs.push(doc.filename);
-			continue;
+			logger.warn(`Failed to import document ${filename}`, LOG_CONTEXT, { error });
+			failedDocs.push(filename);
+			return false;
 		}
-		await writePristineCopy(doc.filename, fetched);
+		await writePristineCopy(filename, fetched);
+		return true;
+	};
+	for (const doc of marketplacePlaybook.documents) {
+		if (await importDocument(doc.filename)) importedDocs.push(doc.filename);
 	}
 
 	// Refuse to persist a playbook whose documents all failed to write -
@@ -715,6 +718,17 @@ export async function importMarketplacePlaybook(
 		throw new MarketplaceImportError(
 			`Failed to import any documents for playbook: ${marketplacePlaybook.title}`
 		);
+	}
+
+	// The report document runs once after the others, read from the import
+	// folder (`resolvePlaybookReportDocument`). An author need not also list it
+	// in `documents`, so an unlisted one is fetched here; it stays off the run
+	// list, which the task loop works through.
+	const reportName = readPlaybookExchangeHints(
+		marketplacePlaybook as unknown as Record<string, unknown>
+	).report;
+	if (reportName && !marketplacePlaybook.documents.some((doc) => doc.filename === reportName)) {
+		await importDocument(reportName);
 	}
 
 	// The effective asset list is the manifest list plus the files found in the

@@ -689,6 +689,37 @@ export function expandPlaybookParamTemplates(
 	return { specs, values };
 }
 
+/**
+ * The prompt with each prose-form declaration (`**NAME:** \`value\``) restating
+ * the value the run resolved, so the agent never reads the author's default
+ * beside a different answer in the Resolved Configuration table. In memory
+ * only, like every `[NAME]` substitution. Left as they are: lines inside a
+ * fenced code block, names that are not declared, parameters with no value,
+ * and a value holding a backtick or a line break (it cannot sit in a
+ * one-backtick span; the table still carries it).
+ */
+export function restatePlaybookParameterForm(
+	prompt: string,
+	specs: PlaybookParamSpec[],
+	values: PlaybookParamValues
+): string {
+	const specByName = new Map(specs.map((spec) => [spec.name, spec]));
+	const lines = prompt.replace(/\r\n?/g, '\n').split('\n');
+	let changed = false;
+	forEachMarkdownLine(prompt, (line, index) => {
+		const match = line.match(PARAM_LINE_REGEX);
+		const spec = match ? specByName.get(match[1].trim()) : undefined;
+		if (!match || !spec) return;
+		const value = resolvePlaybookParamValue(spec, values);
+		if (value === undefined || /[`\n]/.test(value) || value === match[2]) return;
+		const start = line.indexOf('`') + 1;
+		const end = line.lastIndexOf('`');
+		lines[index] = `${line.slice(0, start)}${value}${line.slice(end)}`;
+		changed = true;
+	});
+	return changed ? lines.join('\n') : prompt;
+}
+
 /** The result of {@link applyPlaybookParamsToPrompt}. */
 export interface PlaybookParamPrompt {
 	/** The task prompt with each answer substituted and the Resolved Configuration table appended. */
@@ -703,8 +734,9 @@ export interface PlaybookParamPrompt {
 /**
  * Finish one Auto Run turn's parameter pass. The engine has already
  * substituted the document in memory (`substitutePlaybookParams`, never
- * persisted); this substitutes the task prompt, appends the Resolved
- * Configuration table, and reports any token that survived in either.
+ * persisted); this restates the prompt's prose form with the resolved values
+ * (`restatePlaybookParameterForm`), substitutes the task prompt, appends the
+ * Resolved Configuration table, and reports any token that survived in either.
  *
  * Both engines call it after the `{{}}` pass and its write-back, and before
  * anything that must stay literal (steering notes, delegated results) is
@@ -717,7 +749,8 @@ export function applyPlaybookParamsToPrompt(
 ): PlaybookParamPrompt {
 	const { specs, values } = set;
 	if (specs.length === 0) return { prompt, surviving: [] };
-	const substitutedPrompt = substitutePlaybookParams(prompt, specs, values).text;
+	const restated = restatePlaybookParameterForm(prompt, specs, values);
+	const substitutedPrompt = substitutePlaybookParams(restated, specs, values).text;
 	const surviving = assertNoSurvivingParams(substitutedDocument, specs);
 	for (const name of assertNoSurvivingParams(substitutedPrompt, specs)) {
 		if (!surviving.includes(name)) surviving.push(name);

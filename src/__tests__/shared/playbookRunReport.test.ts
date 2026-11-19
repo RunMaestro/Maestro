@@ -175,7 +175,7 @@ describe('renderPlaybookReportMarkdown', () => {
 			)
 		);
 		expect(markdown).toContain(
-			'**Status:** Partially completed · 4 tasks completed · Completed with 1 stalled document(s)'
+			'**Status:** Partially completed · 4 tasks completed · 1 stalled document'
 		);
 		expect(sectionOrder(markdown)).toEqual(['What did not happen', 'What was done']);
 		expect(markdown).toContain('- `02-BUILD.md`: no progress in 3 runs');
@@ -194,8 +194,8 @@ describe('renderPlaybookReportMarkdown', () => {
 				}
 			)
 		);
-		expect(stalled).toContain('**Status:** Failed');
-		expect(stalled).toContain('Stalled - All 2 document(s) stopped making progress');
+		expect(stalled).toContain('**Status:** Failed · 4 tasks completed · 2 stalled documents');
+		expect(stalled).not.toContain('Completed with');
 		expect(sectionOrder(stalled)[0]).toBe('What did not happen');
 
 		const halted = renderPlaybookReportMarkdown(makeReport('failed'));
@@ -291,6 +291,26 @@ describe('playbookReportSections', () => {
 				.filter(Boolean)
 				.join('\n\n') + '\n';
 		expect(joined).toBe(renderPlaybookReportMarkdown(report));
+	});
+
+	it("drops the narrative's Next Steps only when the report has its own", () => {
+		const withSteps: DirectorNotesNarrative = {
+			version: 1,
+			sections: [
+				...narrative.sections,
+				{ kind: 'nextSteps', title: 'Next Steps', items: [{ text: 'Re-run verify' }] },
+			],
+		};
+		const own = playbookReportSections(
+			makeReport('completed', { narrative: withSteps, nextSteps: ['Re-run verify'] })
+		);
+		expect(own.whatWasDone).toContain('Added the release workflow');
+		expect(own.whatWasDone).not.toContain('Next Steps');
+		expect(own.nextSteps).toContain('Re-run verify');
+
+		const none = playbookReportSections(makeReport('completed', { narrative: withSteps }));
+		expect(none.whatWasDone).toContain('### Next Steps');
+		expect(none.whatWasDone).toContain('Re-run verify');
 	});
 
 	it('leaves out the sections with nothing to say', () => {

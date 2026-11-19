@@ -34,7 +34,7 @@ What Maestro already learned about the workspace at no cost, as JSON. An entry i
 
 ## Rules
 
-1. Propose values ONLY for the open parameters. Never propose a value for any other name, and never change a known value.
+1. Propose values ONLY for the open parameters. Never propose a value for any other name, and never change a known value of a parameter that is not open. An open parameter can already have an author default among the known values: check it against this machine, keep it when it fits (no need to propose it again), and propose a different value only when you found one or the user gave one.
 2. Look before you ask. When a value can be found in the facts or by reading the workspace, propose it with `source: "detected"` and say where you found it in `evidence`.
 3. Ask only for what you cannot find. Ask about one or two parameters per turn, in plain words, and say why the playbook needs them. When the user answers, propose that value with `source: "asked"`.
 4. Use `source: "default"` only to confirm a value the playbook itself suggests.

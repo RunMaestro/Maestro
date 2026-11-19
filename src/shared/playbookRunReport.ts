@@ -428,10 +428,27 @@ function whatDidNotHappenSection(report: PlaybookRunReport): string[] {
 	return lines;
 }
 
+/**
+ * The narrative "What was done" draws. Its own Next Steps bucket is left out
+ * when the report has a "Next steps" section, which the report document wrote
+ * for the reader: both together read as the same list twice.
+ */
+function whatWasDoneNarrative(report: PlaybookRunReport): DirectorNotesNarrative | undefined {
+	const narrative = report.narrative;
+	if (!narrative) return undefined;
+	const hasNextSteps = (report.nextSteps ?? []).some((step) => step.trim() !== '');
+	if (!hasNextSteps) return narrative;
+	return {
+		...narrative,
+		sections: narrative.sections.filter((section) => section.kind !== 'nextSteps'),
+	};
+}
+
 function whatWasDoneSection(report: PlaybookRunReport): string[] {
 	const lines = ['## What was done', ''];
-	if (report.narrative && report.narrative.sections.length > 0) {
-		lines.push(demotedNarrativeMarkdown(report.narrative));
+	const narrative = whatWasDoneNarrative(report);
+	if (narrative && narrative.sections.length > 0) {
+		lines.push(demotedNarrativeMarkdown(narrative));
 		return lines;
 	}
 	const { facts } = report;
@@ -532,10 +549,12 @@ export function playbookReportSections(report: PlaybookRunReport): PlaybookRepor
 		`**Status:** ${playbookRunReportStatusLabel(status)}`,
 		`${formatCount(facts.totalCompletedTasks)} ${taskWord} completed`,
 	];
-	// The stall sentence explains a partial or stalled run. Elsewhere it only
-	// repeats the label, and for a halted run it would wrongly say "Completed".
+	// The stall count explains a partial or stalled run. It is a count, not the
+	// classic summary's sentence, which opens with "Completed" and so contradicts
+	// a "Partially completed" or "Failed" label beside it.
 	if (!facts.wasStopped && facts.stalledDocuments.length > 0) {
-		statusLine.push(facts.statusMessage);
+		const stalled = facts.stalledDocuments.length;
+		statusLine.push(`${formatCount(stalled)} stalled ${stalled === 1 ? 'document' : 'documents'}`);
 	}
 
 	const sections: PlaybookReportSections = {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	PLACEHOLDER_PR_URL,
 	applyPlaybookParamsToPrompt,
+	restatePlaybookParameterForm,
 	assertNoSurvivingParams,
 	buildResolvedConfigurationTable,
 	collectUnresolvedRequired,
@@ -95,7 +96,8 @@ describe('parsePlaybookParameterForm', () => {
 		expect(spec.DOMAIN_ENTITY.required).toBe(false);
 		expect(spec.DOMAIN_ENTITY.default).toBeUndefined();
 		expect(spec.DOMAIN_ENTITY.options?.[0]).toBe('Regulated finance ....... Charter / Regulator');
-		expect(spec.SEED_SOURCE).toMatchObject({ required: false, default: undefined });
+		expect(spec.SEED_SOURCE).toMatchObject({ required: false });
+		expect(spec.SEED_SOURCE.default).toBeUndefined();
 
 		expect(spec.OUTPUT_FOLDER).toMatchObject({
 			default: '{{AUTORUN_FOLDER}}/vault',
@@ -122,9 +124,9 @@ describe('parsePlaybookParameterForm', () => {
 
 		expect(spec.CORPUS_SOURCE).toMatchObject({
 			required: true,
-			default: undefined,
 			help: 'What you want processed. One source, not a list.',
 		});
+		expect(spec.CORPUS_SOURCE.default).toBeUndefined();
 		// Bullets keep only the text before the explanation column.
 		expect(spec.CORPUS_SOURCE.options).toEqual([
 			'https://www.youtube.com/playlist?list=PLjmt1tu85IhAiVPugOjP-7Cy0Oemi3m7z',
@@ -214,6 +216,7 @@ describe('parsePlaybookParameterForm', () => {
 				required: false,
 				source: 'prose',
 				help: 'The real one',
+				default: 'yes',
 			},
 		]);
 	});
@@ -858,6 +861,54 @@ describe('applyPlaybookParamsToPrompt', () => {
 				surviving: [],
 			}
 		);
+	});
+});
+
+describe('restatePlaybookParameterForm', () => {
+	const marker: PlaybookParamSpec = {
+		name: 'TRIGGER_MARKER',
+		type: 'string',
+		default: '@maestro',
+		required: true,
+		source: 'prose',
+	};
+	const dir: PlaybookParamSpec = {
+		name: 'INSTALL_DIR',
+		type: 'string',
+		default: '~/bin/bus',
+		required: false,
+		source: 'prose',
+	};
+	const form = [
+		'<!-- CONFIGURE: The trigger marker -->',
+		'**TRIGGER_MARKER:** `@maestro`',
+		'',
+		'<!-- CONFIGURE: Where it goes -->',
+		'**INSTALL_DIR:** `~/bin/bus`',
+	].join('\n');
+
+	it('restates each declaration with the answer the run resolved', () => {
+		const out = restatePlaybookParameterForm(form, [marker, dir], { TRIGGER_MARKER: '@pbxbus' });
+		expect(out).toContain('**TRIGGER_MARKER:** `@pbxbus`');
+		// A parameter on its default keeps the default.
+		expect(out).toContain('**INSTALL_DIR:** `~/bin/bus`');
+	});
+
+	it('leaves fenced examples, undeclared names, and unsafe values alone', () => {
+		const fenced = '```\n**TRIGGER_MARKER:** `@maestro`\n```\n**OTHER:** `x`';
+		expect(restatePlaybookParameterForm(fenced, [marker], { TRIGGER_MARKER: '@pbxbus' })).toBe(
+			fenced
+		);
+		expect(restatePlaybookParameterForm(form, [marker], { TRIGGER_MARKER: 'a`b' })).toBe(form);
+	});
+
+	it('runs inside applyPlaybookParamsToPrompt, so the agent reads one value', () => {
+		const result = applyPlaybookParamsToPrompt(`${form}\n\nWatch for [TRIGGER_MARKER].`, '', {
+			specs: [marker, dir],
+			values: { TRIGGER_MARKER: '@pbxbus' },
+		});
+		expect(result.prompt).not.toContain('@maestro');
+		expect(result.prompt).toContain('Watch for @pbxbus.');
 	});
 });
 

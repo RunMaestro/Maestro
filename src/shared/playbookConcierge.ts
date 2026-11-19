@@ -10,6 +10,9 @@
  * Vocabulary, as in the proposal:
  * - OPEN (`U`): declared parameters with no usable stored answer and no
  *   usable author default. The interviewer may only propose into these.
+ *   A `guided` playbook configured for the first time widens this to every
+ *   parameter with no stored answer, author defaults included (D24): an
+ *   installer reads the machine before it takes its author's defaults.
  * - UNRESOLVED: open parameters the zero-cost facts pass
  *   (`proposeFromFacts()`) left without a value. The question cap counts them.
  * - DISCOVERABLE (`F`): unresolved parameters the workspace could plausibly
@@ -80,6 +83,13 @@ export interface PlaybookConciergeDecisionInput {
 	/** The facts pack, or null while it is still loading or when it failed. */
 	facts: PlaybookFacts | null;
 	interaction: PlaybookInteraction | undefined;
+	/**
+	 * The playbook has never been configured: its record has no stored answers
+	 * yet (`parameterValues` absent), as right after an install. Only then does
+	 * a `guided` playbook interview over its defaulted parameters too; a re-run
+	 * takes the defaults the user already confirmed once.
+	 */
+	firstConfigure?: boolean;
 	/** The target agent exists and can run a read-only turn. */
 	agentReady: boolean;
 	online: boolean;
@@ -98,6 +108,18 @@ export function collectOpenPlaybookParams(
 	return specs.filter(
 		(spec) => describePlaybookParamProvenance(spec, stored, undefined) === 'unresolved'
 	);
+}
+
+/**
+ * Parameters with no usable stored answer, author defaults included: the
+ * scope of a first `guided` interview, where the agent may confirm a default
+ * or replace it with what it finds on this machine.
+ */
+export function collectUnansweredPlaybookParams(
+	specs: PlaybookParamSpec[],
+	stored: PlaybookParamValues
+): PlaybookParamSpec[] {
+	return specs.filter((spec) => describePlaybookParamProvenance(spec, stored, undefined) !== 'you');
 }
 
 /** Name segments that point at the git repository or its host. */
@@ -159,7 +181,9 @@ export function isPlausiblyDiscoverable(spec: PlaybookParamSpec, facts: Playbook
  * The D5 rule: whether the interview can earn its tokens. Computed before
  * any spawn.
  *
- * - nothing open (a re-run, or every parameter has a default): never
+ * - nothing open (a re-run, or every parameter has a default): never. A
+ *   `guided` playbook on its first configure counts defaulted parameters as
+ *   open, so an installer whose every parameter has a default still asks.
  * - no agent, or offline: never
  * - the facts pass answered every open parameter: never
  * - a `guided` playbook: interview, scoped to the open parameters
@@ -169,7 +193,10 @@ export function isPlausiblyDiscoverable(spec: PlaybookParamSpec, facts: Playbook
 export function decidePlaybookConcierge(
 	input: PlaybookConciergeDecisionInput
 ): PlaybookConciergeDecision {
-	const open = collectOpenPlaybookParams(input.specs, input.stored);
+	const open =
+		input.interaction === 'guided' && input.firstConfigure
+			? collectUnansweredPlaybookParams(input.specs, input.stored)
+			: collectOpenPlaybookParams(input.specs, input.stored);
 	const unresolved = open.filter((spec) => !input.factProposals[spec.name]);
 	const facts = input.facts;
 	const discoverable = facts
@@ -227,6 +254,12 @@ function asText(value: unknown): string | null {
 	return null;
 }
 
+/** Whether `value` is the parameter's own usable author default. */
+function isAuthorDefault(spec: PlaybookParamSpec, value: string): boolean {
+	const authorDefault = spec.default?.trim() ?? '';
+	return authorDefault === value && !isPlaceholderDefault(authorDefault);
+}
+
 function clampConfidence(value: unknown): number {
 	if (typeof value !== 'number' || !Number.isFinite(value)) return 50;
 	return Math.max(0, Math.min(100, Math.round(value)));
@@ -236,8 +269,10 @@ function clampConfidence(value: unknown): number {
  * Read the interviewer's `parameters` array out of untrusted JSON. An entry
  * is kept only when it names an OPEN parameter, carries a non-placeholder
  * value, and passes that parameter's own validation; everything else is
- * dropped, so the agent can never write into a stored answer or an author
- * default, or hand the form a value it would reject. A later entry for the
+ * dropped, so the agent can never write into a stored answer or a parameter
+ * outside its scope, or hand the form a value it would reject. A value equal
+ * to the author's default is dropped too: it adds nothing, and the form would
+ * badge it Detected instead of Default. A later entry for the
  * same name replaces an earlier one. An unknown `source` reads as `asked`.
  */
 export function readConciergeParameters(
@@ -257,6 +292,7 @@ export function readConciergeParameters(
 		const value = asText(item.value);
 		if (!value || isPlaceholderDefault(value)) continue;
 		if (validatePlaybookParamValue(spec, value) !== null) continue;
+		if (isAuthorDefault(spec, value)) continue;
 		const evidence = typeof item.evidence === 'string' ? item.evidence.trim() : '';
 		accepted.set(name, {
 			name,
