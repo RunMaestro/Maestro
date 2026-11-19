@@ -122,6 +122,8 @@ export interface ManagedProcess {
 	/** An in-turn error notice held until the turn shows whether the agent
 	 *  recovered from it. See `AgentOutputParser.isProvisionalErrorNotice`. */
 	provisionalError?: AgentError;
+	/** Latest assistant envelope ID observed from this OpenCode invocation. */
+	openCodeMessageId?: string;
 	startTime: number;
 	outputParser?: AgentOutputParser;
 	/** Times this process's model calls off its stream for token speed. Created
