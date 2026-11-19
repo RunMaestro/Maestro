@@ -424,6 +424,7 @@ function MaestroConsoleInner() {
 		state: wizardState,
 		openWizard: _baseOpenWizardModal,
 		restoreState: restoreWizardState,
+		resetWizard: resetWizardState,
 		loadResumeState: _loadResumeState,
 		clearResumeState,
 		completeWizard,
@@ -1914,6 +1915,7 @@ function MaestroConsoleInner() {
 			// after the resume prompt, and openWizardModal would find the saved
 			// state still on disk and raise the same prompt again (#1835).
 			openWizard: _baseOpenWizardModal,
+			resetWizard: resetWizardState,
 			restoreState: restoreWizardState,
 		},
 		spawnBackgroundSynopsis,
