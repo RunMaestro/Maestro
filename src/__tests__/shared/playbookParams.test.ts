@@ -1011,6 +1011,8 @@ describe('proposeFromFacts', () => {
 		unknownProbes: [],
 		encoreFlags: resolveEncoreFeatures(undefined),
 		cueSubscriptionCount: 0,
+		cwdIsObsidianVault: false,
+		obsidianVaults: [],
 		...overrides,
 	});
 
@@ -1065,6 +1067,62 @@ describe('proposeFromFacts', () => {
 		expect(proposeFromFacts([spec('FEATURE_BRANCH')], facts()).FEATURE_BRANCH?.value).toBe(
 			'feat/x'
 		);
+	});
+
+	describe('an Obsidian vault', () => {
+		const vault = (path: string, open = false) => ({ path, open });
+
+		it('proposes the working directory when the agent works inside a vault', () => {
+			expect(
+				proposeFromFacts(
+					[spec('VAULT_PATH')],
+					facts({
+						cwd: '/notes/life',
+						cwdIsObsidianVault: true,
+						obsidianVaults: [vault('/a', true), vault('/b')],
+					})
+				).VAULT_PATH
+			).toEqual({ value: '/notes/life', evidence: 'The agent works inside this Obsidian vault' });
+		});
+
+		it('proposes the only vault Obsidian knows', () => {
+			expect(
+				proposeFromFacts([spec('OBSIDIAN_VAULT')], facts({ obsidianVaults: [vault('/v')] }))
+					.OBSIDIAN_VAULT
+			).toEqual({ value: '/v', evidence: "The only vault in Obsidian's vault list" });
+		});
+
+		it('proposes the one open vault among several', () => {
+			expect(
+				proposeFromFacts(
+					[spec('VAULT_PATH')],
+					facts({ obsidianVaults: [vault('/a'), vault('/b', true), vault('/c')] })
+				).VAULT_PATH
+			).toEqual({ value: '/b', evidence: 'The vault Obsidian has open (3 known)' });
+		});
+
+		it('never picks between several open vaults, or when there is none', () => {
+			const specs = [spec('VAULT_PATH')];
+			expect(
+				proposeFromFacts(specs, facts({ obsidianVaults: [vault('/a', true), vault('/b', true)] }))
+			).toEqual({});
+			expect(
+				proposeFromFacts(specs, facts({ obsidianVaults: [vault('/a'), vault('/b')] }))
+			).toEqual({});
+			expect(proposeFromFacts(specs, facts())).toEqual({});
+		});
+
+		it('matches a whole VAULT segment and only a string parameter', () => {
+			const known = facts({ obsidianVaults: [vault('/v')] });
+			expect(proposeFromFacts([spec('VAULTS_DIR'), spec('VAULT', 'url')], known)).toEqual({});
+		});
+
+		it('drops a vault the spec pattern rejects', () => {
+			const absolute: PlaybookParamSpec = { ...spec('VAULT_PATH'), pattern: '[/~].*' };
+			expect(proposeFromFacts([absolute], facts({ obsidianVaults: [vault('C:\\Vault')] }))).toEqual(
+				{}
+			);
+		});
 	});
 
 	it('proposes nothing when the fact is missing', () => {

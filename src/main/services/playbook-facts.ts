@@ -2,16 +2,19 @@
  * The local facts pack for a playbook's configure step (see
  * `src/shared/playbookFacts.ts`). Gathers what Maestro can learn about an
  * agent's workspace without spending tokens: git branch and remote, open pull
- * requests for the branch, whether `gh` and `python3` exist, Encore flags, and
- * how many Cue subscriptions the agent owns.
+ * requests for the branch, whether `gh` and `python3` exist, Encore flags, how
+ * many Cue subscriptions the agent owns, and the Obsidian vaults on the host.
  *
  * Every probe is best-effort: a missing tool or a folder that is not a repo is
  * an answer (`false`, absent), never an error, and {@link gatherPlaybookFacts}
- * never rejects. For an SSH agent the git and tool probes run on the remote;
+ * never rejects. For an SSH agent the git, tool, and Obsidian probes run on the remote;
  * when the remote cannot be resolved or reached they are reported in
  * `unknownProbes` rather than answered from this machine.
  */
 
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { CueSessionStatus } from '../../shared/cue/contracts';
 import {
 	resolveEncoreFeatures,
@@ -21,7 +24,12 @@ import {
 	createSshRemoteStoreAdapter,
 	resolveSshLaunchTarget,
 } from '../../shared/maestro-lib/launch/ssh-remote-resolver';
-import type { PlaybookFactProbe, PlaybookFacts } from '../../shared/playbookFacts';
+import type {
+	PlaybookFactProbe,
+	PlaybookFacts,
+	PlaybookObsidianVault,
+} from '../../shared/playbookFacts';
+import { isMacOS, isWindows } from '../../shared/platformDetection';
 import { isSshConnectionFailure } from '../../shared/sshConnection';
 import type { SshRemoteConfig } from '../../shared/types';
 import { getLiveSessions, getSettingsStore } from '../stores/getters';
@@ -31,6 +39,7 @@ import { execFileNoThrow, type ExecResult } from '../utils/execFile';
 import { resolveConfiguredGhCommand } from '../utils/gh-command';
 import { logger } from '../utils/logger';
 import { execGitReadOnly, execShellRemote } from '../utils/remote-git';
+import { shellEscapeRemotePath } from '../utils/shell-escape';
 import { captureException } from '../utils/sentry';
 
 const LOG_CONTEXT = '[PlaybookFacts]';
@@ -47,6 +56,28 @@ export interface PlaybookFactsDeps {
 	getCueStatus?: () => CueSessionStatus[] | null | undefined;
 	/** The gh binary to run (honours Settings > GitHub CLI Path). */
 	resolveGhCommand: () => Promise<string>;
+	/** A local file's text, or null when it does not exist. */
+	readLocalFile: (filePath: string) => Promise<string | null>;
+	/** True when a local path is a directory. */
+	isLocalDirectory: (dirPath: string) => Promise<boolean>;
+}
+
+async function readLocalFile(filePath: string): Promise<string | null> {
+	try {
+		return await fs.readFile(filePath, 'utf8');
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+		throw error;
+	}
+}
+
+async function isLocalDirectory(dirPath: string): Promise<boolean> {
+	try {
+		return (await fs.stat(dirPath)).isDirectory();
+	} catch {
+		// Missing or unreadable: either way it is not a vault we can use.
+		return false;
+	}
 }
 
 /** Production wiring: live agents, the settings store, and the running Cue engine. */
@@ -59,6 +90,8 @@ export function createPlaybookFactsDeps(
 		getEncoreFeatures: () => getSettingsStore().get('encoreFeatures'),
 		getCueStatus,
 		resolveGhCommand: resolveConfiguredGhCommand,
+		readLocalFile,
+		isLocalDirectory,
 	};
 }
 
@@ -200,6 +233,117 @@ async function probeOpenPrs(
 		.filter((url): url is string => typeof url === 'string' && url.length > 0);
 }
 
+interface ObsidianFacts {
+	cwdIsVault: boolean;
+	vaults: PlaybookObsidianVault[];
+	/** True when SSH never reached the host. */
+	unreachable: boolean;
+}
+
+/**
+ * Vaults from the text of Obsidian's `obsidian.json` (`{ vaults: { <id>: {
+ * path, open } } }`), in file order, duplicates dropped. Text that is not that
+ * shape yields no vaults: a file Obsidian is mid-way through writing is an
+ * answer of "none known", not an error.
+ */
+export function parseObsidianVaults(text: string): PlaybookObsidianVault[] {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text);
+	} catch {
+		return [];
+	}
+	const vaults = (parsed as { vaults?: unknown } | null)?.vaults;
+	if (!vaults || typeof vaults !== 'object') return [];
+	const seen = new Set<string>();
+	const result: PlaybookObsidianVault[] = [];
+	for (const entry of Object.values(vaults)) {
+		const vaultPath = (entry as { path?: unknown } | null)?.path;
+		if (typeof vaultPath !== 'string' || !vaultPath.trim() || seen.has(vaultPath)) continue;
+		seen.add(vaultPath);
+		result.push({ path: vaultPath, open: (entry as { open?: unknown }).open === true });
+	}
+	return result;
+}
+
+/** Where Obsidian keeps `obsidian.json` on this machine, most likely first. */
+export function localObsidianConfigPaths(
+	home = os.homedir(),
+	env: NodeJS.ProcessEnv = process.env
+): string[] {
+	if (isWindows()) {
+		return [
+			path.join(env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'obsidian', 'obsidian.json'),
+		];
+	}
+	if (isMacOS()) {
+		return [path.join(home, 'Library', 'Application Support', 'obsidian', 'obsidian.json')];
+	}
+	return [
+		path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'obsidian', 'obsidian.json'),
+		// Flatpak and Snap installs keep their own config folder.
+		path.join(home, '.var', 'app', 'md.obsidian.Obsidian', 'config', 'obsidian', 'obsidian.json'),
+		path.join(home, 'snap', 'obsidian', 'current', '.config', 'obsidian', 'obsidian.json'),
+	];
+}
+
+async function probeLocalObsidian(cwd: string, deps: PlaybookFactsDeps): Promise<ObsidianFacts> {
+	const cwdIsVault = cwd ? await deps.isLocalDirectory(path.join(cwd, '.obsidian')) : false;
+	for (const configPath of localObsidianConfigPaths()) {
+		const text = await deps.readLocalFile(configPath);
+		if (text !== null) return { cwdIsVault, vaults: parseObsidianVaults(text), unreachable: false };
+	}
+	return { cwdIsVault, vaults: [], unreachable: false };
+}
+
+/** Marks the start of `obsidian.json` in the remote probe's output. */
+const REMOTE_OBSIDIAN_CONFIG_MARKER = '--maestro-obsidian-json--';
+
+/**
+ * The same answers on an SSH remote in one round trip: `vault` when the
+ * working directory holds `.obsidian/`, then the first `obsidian.json` found
+ * (Linux, Flatpak, Snap, or macOS location) after a marker line.
+ */
+async function probeRemoteObsidian(cwd: string, remote: SshRemoteConfig): Promise<ObsidianFacts> {
+	const configs = [
+		'"${XDG_CONFIG_HOME:-$HOME/.config}/obsidian/obsidian.json"',
+		'"$HOME/.var/app/md.obsidian.Obsidian/config/obsidian/obsidian.json"',
+		'"$HOME/snap/obsidian/current/.config/obsidian/obsidian.json"',
+		'"$HOME/Library/Application Support/obsidian/obsidian.json"',
+	].join(' ');
+	const vaultCheck = cwd ? `[ -d ${shellEscapeRemotePath(cwd)}/.obsidian ] && echo vault; ` : '';
+	const result = await execShellRemote(
+		`${vaultCheck}for f in ${configs}; do if [ -f "$f" ]; then echo ${REMOTE_OBSIDIAN_CONFIG_MARKER}; cat "$f"; break; fi; done; exit 0`,
+		remote,
+		{ timeoutMs: PLAYBOOK_FACT_PROBE_TIMEOUT_MS }
+	);
+	if (result.exitCode !== 0) return { cwdIsVault: false, vaults: [], unreachable: true };
+	const [head, ...config] = result.stdout.split(REMOTE_OBSIDIAN_CONFIG_MARKER);
+	return {
+		cwdIsVault: head.split(/\r?\n/).some((line) => line.trim() === 'vault'),
+		vaults:
+			config.length > 0 ? parseObsidianVaults(config.join(REMOTE_OBSIDIAN_CONFIG_MARKER)) : [],
+		unreachable: false,
+	};
+}
+
+/** Whether the working directory is a vault, and the vaults Obsidian knows, on the agent's host. */
+function probeObsidian(
+	host: Exclude<ProbeHost, { kind: 'unresolved' }>,
+	deps: PlaybookFactsDeps
+): Promise<ObsidianFacts> {
+	const fallback: ObsidianFacts = {
+		cwdIsVault: false,
+		vaults: [],
+		unreachable: host.kind === 'remote',
+	};
+	return guarded('obsidian', fallback, () =>
+		host.kind === 'remote'
+			? probeRemoteObsidian(host.cwd, host.remote)
+			: probeLocalObsidian(host.cwd, deps)
+	);
+}
+
 function cueSubscriptionCount(sessionId: string, deps: PlaybookFactsDeps): number {
 	const status = deps.getCueStatus?.() ?? [];
 	return status.find((entry) => entry.sessionId === sessionId)?.subscriptionCount ?? 0;
@@ -229,9 +373,11 @@ export async function gatherPlaybookFacts(
 			openPrUrlsForBranch: [],
 			hasGh: false,
 			hasPython3: false,
-			unknownProbes: ['git', 'gh', 'python3'],
+			unknownProbes: ['git', 'gh', 'python3', 'obsidian'],
 			encoreFlags,
 			cueSubscriptionCount: cueCount,
+			cwdIsObsidianVault: false,
+			obsidianVaults: [],
 		};
 	}
 
@@ -245,17 +391,20 @@ export async function gatherPlaybookFacts(
 		unknownProbes: [],
 		encoreFlags,
 		cueSubscriptionCount: cueCount,
+		cwdIsObsidianVault: false,
+		obsidianVaults: [],
 	};
 	if (host.kind === 'unresolved') {
-		facts.unknownProbes = ['git', 'gh', 'python3'];
+		facts.unknownProbes = ['git', 'gh', 'python3', 'obsidian'];
 		return facts;
 	}
 
 	const unknown = new Set<PlaybookFactProbe>();
 	const ghCommand = await guarded('gh-path', 'gh', deps.resolveGhCommand);
-	const [git, tools, prLookupGh] = await Promise.all([
+	const [git, tools, obsidian, prLookupGh] = await Promise.all([
 		guarded<GitFacts>('git', { unreachable: true }, () => probeGit(host)),
 		probeTools(host, ghCommand),
+		probeObsidian(host, deps),
 		// The PR lookup runs this machine's gh whatever the agent's host, so an
 		// SSH agent needs its own check that the local gh runs.
 		host.kind === 'remote' ? guarded('gh', false, () => localToolRuns(ghCommand)) : null,
@@ -272,6 +421,11 @@ export async function gatherPlaybookFacts(
 	} else {
 		facts.hasGh = tools.hasGh;
 		facts.hasPython3 = tools.hasPython3;
+	}
+	if (obsidian.unreachable) unknown.add('obsidian');
+	else {
+		facts.cwdIsObsidianVault = obsidian.cwdIsVault;
+		facts.obsidianVaults = obsidian.vaults;
 	}
 
 	const branch = facts.gitBranch;

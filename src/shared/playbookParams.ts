@@ -627,6 +627,31 @@ function factProposalFor(
 		const where = facts.isSshRemote ? 'on the SSH remote' : 'on this machine';
 		return { value: facts.cwd, evidence: `Agent working directory ${where}` };
 	}
+	if (has('VAULT')) return obsidianVaultProposal(facts);
+	return null;
+}
+
+/**
+ * The Obsidian vault a playbook should work in, only when the answer is not a
+ * guess: the agent's working directory when it is a vault, else the one vault
+ * Obsidian knows, else the one vault it has open. Several candidates and none
+ * open is a question for the user, never a pick.
+ */
+function obsidianVaultProposal(facts: PlaybookFacts): PlaybookParamProposal | null {
+	if (facts.cwdIsObsidianVault && facts.cwd) {
+		return { value: facts.cwd, evidence: 'The agent works inside this Obsidian vault' };
+	}
+	const vaults = facts.obsidianVaults;
+	if (vaults.length === 1) {
+		return { value: vaults[0].path, evidence: "The only vault in Obsidian's vault list" };
+	}
+	const open = vaults.filter((vault) => vault.open);
+	if (open.length === 1) {
+		return {
+			value: open[0].path,
+			evidence: `The vault Obsidian has open (${vaults.length} known)`,
+		};
+	}
 	return null;
 }
 
@@ -634,8 +659,9 @@ function factProposalFor(
  * Proposals the facts pack answers at zero token cost, by parameter name: a
  * `url` named with a `PR` segment gets the branch's open pull request, a
  * `string` named with `BRANCH` gets the current branch (never for
- * `BASE_BRANCH` and kin), and one named `WORK_DIR`, `WORKING_DIR`, or `CWD`
- * gets the agent's working directory. A proposal that would fail the spec's
+ * `BASE_BRANCH` and kin), one named `WORK_DIR`, `WORKING_DIR`, or `CWD`
+ * gets the agent's working directory, and one with a `VAULT` segment gets
+ * the Obsidian vault when only one fits. A proposal that would fail the spec's
  * own validation is dropped. Answered names are filtered later, by
  * {@link mergeProposedParamValues}.
  */

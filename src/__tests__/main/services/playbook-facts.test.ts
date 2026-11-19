@@ -20,6 +20,11 @@ vi.mock('../../../main/stores/getters', () => ({
 	getSettingsStore: vi.fn(() => ({ get: vi.fn() })),
 }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
+vi.mock('../../../shared/platformDetection', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../shared/platformDetection')>()),
+	isWindows: vi.fn(() => false),
+	isMacOS: vi.fn(() => false),
+}));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -27,7 +32,14 @@ vi.mock('../../../main/utils/logger', () => ({
 import { execGitReadOnly, execShellRemote } from '../../../main/utils/remote-git';
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { captureException } from '../../../main/utils/sentry';
-import { gatherPlaybookFacts, type PlaybookFactsDeps } from '../../../main/services/playbook-facts';
+import { isMacOS, isWindows } from '../../../shared/platformDetection';
+import path from 'node:path';
+import {
+	gatherPlaybookFacts,
+	localObsidianConfigPaths,
+	parseObsidianVaults,
+	type PlaybookFactsDeps,
+} from '../../../main/services/playbook-facts';
 import type { StoredSession } from '../../../main/stores/types';
 
 const ok = (stdout: string): ExecResult => ({ stdout, stderr: '', exitCode: 0 });
@@ -64,6 +76,8 @@ function deps(overrides: Partial<PlaybookFactsDeps> = {}): PlaybookFactsDeps {
 			{ sessionId: 'other', subscriptionCount: 9 } as never,
 		],
 		resolveGhCommand: async () => '/opt/gh',
+		readLocalFile: async () => null,
+		isLocalDirectory: async () => false,
 		...overrides,
 	};
 }
@@ -233,7 +247,8 @@ describe('gatherPlaybookFacts', () => {
 		expect(facts.gitBranch).toBeUndefined();
 		expect(facts.hasGh).toBe(false);
 		expect(facts.hasPython3).toBe(false);
-		expect(facts.unknownProbes.sort()).toEqual(['gh', 'git', 'python3']);
+		expect(facts.unknownProbes.sort()).toEqual(['gh', 'git', 'obsidian', 'python3']);
+		expect(facts.obsidianVaults).toEqual([]);
 		expect(facts.openPrUrlsForBranch).toEqual([]);
 	});
 
@@ -243,7 +258,7 @@ describe('gatherPlaybookFacts', () => {
 		const facts = await gatherPlaybookFacts('a1', deps({ getSession: () => remoteSession }));
 
 		expect(facts.isSshRemote).toBe(true);
-		expect(facts.unknownProbes).toEqual(['git', 'gh', 'python3']);
+		expect(facts.unknownProbes).toEqual(['git', 'gh', 'python3', 'obsidian']);
 		expect(execGitReadOnly).not.toHaveBeenCalled();
 		expect(execFileNoThrow).not.toHaveBeenCalled();
 	});
@@ -254,8 +269,10 @@ describe('gatherPlaybookFacts', () => {
 		expect(facts).toMatchObject({
 			cwd: '',
 			isSshRemote: false,
-			unknownProbes: ['git', 'gh', 'python3'],
+			unknownProbes: ['git', 'gh', 'python3', 'obsidian'],
 			cueSubscriptionCount: 0,
+			cwdIsObsidianVault: false,
+			obsidianVaults: [],
 		});
 		expect(execGitReadOnly).not.toHaveBeenCalled();
 	});
@@ -291,5 +308,176 @@ describe('gatherPlaybookFacts', () => {
 		const facts = await gatherPlaybookFacts('a1', deps({ getCueStatus: () => null }));
 
 		expect(facts.cueSubscriptionCount).toBe(0);
+	});
+
+	describe('Obsidian', () => {
+		const CONFIG = JSON.stringify({
+			vaults: {
+				a: { path: '/Users/me/Life', ts: 1, open: true },
+				b: { path: '/Users/me/Work', ts: 2 },
+			},
+		});
+
+		it('reports a local working directory that is a vault and the vaults Obsidian lists', async () => {
+			mockGit(fail(), fail());
+			mockLocalExec({});
+			const isLocalDirectory = vi.fn(async (dir: string) => dir === '/work/repo/.obsidian');
+			const readLocalFile = vi.fn(async (file: string) =>
+				file === localObsidianConfigPaths()[0] ? CONFIG : null
+			);
+
+			const facts = await gatherPlaybookFacts('a1', deps({ isLocalDirectory, readLocalFile }));
+
+			expect(facts.cwdIsObsidianVault).toBe(true);
+			expect(facts.obsidianVaults).toEqual([
+				{ path: '/Users/me/Life', open: true },
+				{ path: '/Users/me/Work', open: false },
+			]);
+			expect(facts.unknownProbes).toEqual([]);
+		});
+
+		it('reports no vaults when Obsidian has no config on this machine', async () => {
+			mockGit(fail(), fail());
+			mockLocalExec({});
+
+			const facts = await gatherPlaybookFacts('a1', deps());
+
+			expect(facts.cwdIsObsidianVault).toBe(false);
+			expect(facts.obsidianVaults).toEqual([]);
+			expect(facts.unknownProbes).toEqual([]);
+		});
+
+		it('falls back and reports to Sentry when reading the config throws', async () => {
+			mockGit(fail(), fail());
+			mockLocalExec({});
+
+			const facts = await gatherPlaybookFacts(
+				'a1',
+				deps({
+					readLocalFile: async () => {
+						throw new Error('EACCES');
+					},
+				})
+			);
+
+			expect(facts.obsidianVaults).toEqual([]);
+			expect(captureException).toHaveBeenCalledWith(expect.any(Error), {
+				operation: 'playbookFacts:obsidian',
+			});
+		});
+
+		it('reads the vault and the config on the SSH remote, never this machine', async () => {
+			const remoteSession = session({
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', workingDirOverride: '~/notes' },
+			});
+			mockGit(ok('main'), fail());
+			mockLocalExec({});
+			vi.mocked(execShellRemote).mockImplementation(async (command) =>
+				command.includes('obsidian.json')
+					? ok(`vault\n--maestro-obsidian-json--\n${CONFIG}\n`)
+					: ok('')
+			);
+			const readLocalFile = vi.fn(async () => CONFIG);
+
+			const facts = await gatherPlaybookFacts(
+				'a1',
+				deps({ getSession: () => remoteSession, readLocalFile })
+			);
+
+			expect(facts.cwdIsObsidianVault).toBe(true);
+			expect(facts.obsidianVaults.map((vault) => vault.path)).toEqual([
+				'/Users/me/Life',
+				'/Users/me/Work',
+			]);
+			expect(readLocalFile).not.toHaveBeenCalled();
+			const command = vi
+				.mocked(execShellRemote)
+				.mock.calls.map(([text]) => text)
+				.find((text) => text.includes('obsidian.json'));
+			// `~` stays expandable on the remote.
+			expect(command).toContain('[ -d "$HOME/notes"/.obsidian ]');
+		});
+
+		it('reads a remote with no Obsidian as no vaults', async () => {
+			const remoteSession = session({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } });
+			mockGit(ok('main'), fail());
+			mockLocalExec({});
+			vi.mocked(execShellRemote).mockResolvedValue(ok(''));
+
+			const facts = await gatherPlaybookFacts('a1', deps({ getSession: () => remoteSession }));
+
+			expect(facts.cwdIsObsidianVault).toBe(false);
+			expect(facts.obsidianVaults).toEqual([]);
+			expect(facts.unknownProbes).toEqual([]);
+		});
+	});
+});
+
+describe('parseObsidianVaults', () => {
+	it('reads vaults in file order and drops duplicates and entries without a path', () => {
+		const text = JSON.stringify({
+			vaults: {
+				a: { path: '/one' },
+				b: { path: '/two', open: true },
+				c: { path: '/one', open: true },
+				d: { open: true },
+				e: null,
+				f: { path: '   ' },
+			},
+		});
+		expect(parseObsidianVaults(text)).toEqual([
+			{ path: '/one', open: false },
+			{ path: '/two', open: true },
+		]);
+	});
+
+	it('returns no vaults for text that is not the expected shape', () => {
+		expect(parseObsidianVaults('{not json')).toEqual([]);
+		expect(parseObsidianVaults('null')).toEqual([]);
+		expect(parseObsidianVaults('{"vaults": 3}')).toEqual([]);
+		expect(parseObsidianVaults('{}')).toEqual([]);
+	});
+});
+
+describe('localObsidianConfigPaths', () => {
+	beforeEach(() => {
+		vi.mocked(isWindows).mockReturnValue(false);
+		vi.mocked(isMacOS).mockReturnValue(false);
+	});
+
+	it('uses Application Support on macOS', () => {
+		vi.mocked(isMacOS).mockReturnValue(true);
+		expect(localObsidianConfigPaths('/Users/me', {})).toEqual([
+			path.join('/Users/me', 'Library', 'Application Support', 'obsidian', 'obsidian.json'),
+		]);
+	});
+
+	it('uses APPDATA on Windows, or Roaming under the home folder without it', () => {
+		vi.mocked(isWindows).mockReturnValue(true);
+		expect(localObsidianConfigPaths('C:/Users/me', { APPDATA: 'D:/Roam' })).toEqual([
+			path.join('D:/Roam', 'obsidian', 'obsidian.json'),
+		]);
+		expect(localObsidianConfigPaths('C:/Users/me', {})).toEqual([
+			path.join('C:/Users/me', 'AppData', 'Roaming', 'obsidian', 'obsidian.json'),
+		]);
+	});
+
+	it('tries XDG config, then Flatpak, then Snap on Linux', () => {
+		expect(localObsidianConfigPaths('/home/me', { XDG_CONFIG_HOME: '/cfg' })).toEqual([
+			path.join('/cfg', 'obsidian', 'obsidian.json'),
+			path.join(
+				'/home/me',
+				'.var',
+				'app',
+				'md.obsidian.Obsidian',
+				'config',
+				'obsidian',
+				'obsidian.json'
+			),
+			path.join('/home/me', 'snap', 'obsidian', 'current', '.config', 'obsidian', 'obsidian.json'),
+		]);
+		expect(localObsidianConfigPaths('/home/me', {})[0]).toBe(
+			path.join('/home/me', '.config', 'obsidian', 'obsidian.json')
+		);
 	});
 });

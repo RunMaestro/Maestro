@@ -12,7 +12,8 @@
  * - A `form` playbook opens on the sheet; its footer carries "Help me fill
  *   this in" only when the rule says an interview could find something.
  * - The interview's ready, or Skip to form, lands on the sheet with the
- *   interview's proposals layered over the facts'.
+ *   interview's proposals layered over the facts', and with what the user
+ *   said in the chat as their own answers (`conciergeAnswers()`).
  *
  * Mounted by the Playbook Exchange configure step and `PlaybookConfigureModal`.
  */
@@ -20,6 +21,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Wand2 } from 'lucide-react';
 import {
+	conciergeAnswers,
 	decidePlaybookConcierge,
 	mergeConciergeProposals,
 	type ConciergeParameterProposal,
@@ -148,6 +150,9 @@ export function PlaybookConfigureFlow({
 	}, [view, facts.status, decision.mode, agent, startInterview]);
 
 	const landOnForm = useCallback((found: ConciergeParameterProposal[]) => {
+		// What the user said in the chat is their answer (You), not a detection.
+		const said = conciergeAnswers(found);
+		if (Object.keys(said).length > 0) setAnswers((prev) => ({ ...prev, ...said }));
 		setConciergeProposals((prev) => {
 			const byName = new Map(prev.map((proposal) => [proposal.name, proposal]));
 			for (const proposal of found) byName.set(proposal.name, proposal);

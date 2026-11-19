@@ -309,16 +309,32 @@ export function readConciergeParameters(
 }
 
 /** The evidence a form row shows on hover when the interviewer gave none. */
-const FALLBACK_EVIDENCE: Record<ConciergeParameterSource, string> = {
+const FALLBACK_EVIDENCE: Record<Exclude<ConciergeParameterSource, 'asked'>, string> = {
 	detected: 'Found by the guided interview',
-	asked: 'Your answer in the guided interview',
 	default: 'Suggested by the playbook, confirmed in the guided interview',
 };
 
 /**
+ * The values the user gave in the interview (`source: "asked"`), as answers.
+ * They are the user's own words, so the form badges them You, the same as a
+ * value typed into the form, and the run stores them as answers. A later
+ * entry for the same name replaces an earlier one.
+ */
+export function conciergeAnswers(
+	conciergeProposals: ConciergeParameterProposal[]
+): PlaybookParamValues {
+	const answers: PlaybookParamValues = {};
+	for (const proposal of conciergeProposals) {
+		if (proposal.source === 'asked') answers[proposal.name] = proposal.value;
+	}
+	return answers;
+}
+
+/**
  * The interviewer's proposals layered over the facts pass's, as the form's
  * proposal map: the interviewer wins for a name both answered, because it
- * saw the facts and the user. Inputs are not mutated.
+ * saw the facts and the user. The user's own answers are left out: they are
+ * answers ({@link conciergeAnswers}), not proposals. Inputs are not mutated.
  */
 export function mergeConciergeProposals(
 	factProposals: PlaybookParamProposals,
@@ -326,6 +342,7 @@ export function mergeConciergeProposals(
 ): PlaybookParamProposals {
 	const merged: PlaybookParamProposals = { ...factProposals };
 	for (const proposal of conciergeProposals) {
+		if (proposal.source === 'asked') continue;
 		merged[proposal.name] = {
 			value: proposal.value,
 			evidence: proposal.evidence ?? FALLBACK_EVIDENCE[proposal.source],

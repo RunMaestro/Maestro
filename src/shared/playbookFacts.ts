@@ -13,7 +13,15 @@
 import type { EncoreFeatureDefaults } from './encoreFeatureDefaults';
 
 /** A probe that can come back unknown (SSH host unreachable or unresolved). */
-export type PlaybookFactProbe = 'git' | 'gh' | 'python3';
+export type PlaybookFactProbe = 'git' | 'gh' | 'python3' | 'obsidian';
+
+/** One vault Obsidian has registered on the agent's host, from its `obsidian.json`. */
+export interface PlaybookObsidianVault {
+	/** Absolute path of the vault folder, as Obsidian recorded it. */
+	path: string;
+	/** True when Obsidian had the vault open the last time it ran. */
+	open: boolean;
+}
 
 export interface PlaybookFacts {
 	/** The agent's working directory where it runs (the remote path for SSH). */
@@ -36,4 +44,12 @@ export interface PlaybookFacts {
 	encoreFlags: EncoreFeatureDefaults;
 	/** Cue subscriptions this agent owns. 0 when Cue is off or not loaded. */
 	cueSubscriptionCount: number;
+	/** True when `cwd` is itself an Obsidian vault (it holds a `.obsidian/` folder). */
+	cwdIsObsidianVault: boolean;
+	/**
+	 * Vaults listed in Obsidian's `obsidian.json` on the agent's host. Empty
+	 * when Obsidian is not installed or has never opened a vault; unknown when
+	 * `obsidian` is in `unknownProbes`.
+	 */
+	obsidianVaults: PlaybookObsidianVault[];
 }

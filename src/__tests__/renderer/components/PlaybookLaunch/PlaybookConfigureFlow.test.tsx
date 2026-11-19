@@ -1,7 +1,7 @@
 /**
  * PlaybookConfigureFlow: a guided playbook opens on the interview and lands
- * on the form (pre-filled, badged Detected) when the agent is ready or the
- * user skips; a form playbook offers "Help me fill this in" only under the
+ * on the form (pre-filled, badged Detected, or You for what the user said in
+ * the chat) when the agent is ready or the user skips; a form playbook offers "Help me fill this in" only under the
  * D5 rule.
  */
 
@@ -39,6 +39,8 @@ const FACTS: PlaybookFacts = {
 	unknownProbes: [],
 	encoreFlags: resolveEncoreFeatures({}),
 	cueSubscriptionCount: 0,
+	cwdIsObsidianVault: false,
+	obsidianVaults: [],
 };
 
 const PROPOSAL = { name: 'TEST_COMMAND', value: 'npm test', source: 'detected', confidence: 95 };
@@ -129,6 +131,23 @@ describe('PlaybookConfigureFlow', () => {
 		await waitFor(() => expect(screen.getByTestId('parameter-sheet')).toBeTruthy());
 		expect(provenance('TEST_COMMAND')).toBe('Detected');
 		expect(screen.getByTestId('parameter-sheet-run')).toHaveProperty('disabled', false);
+	});
+
+	it('lands what the user said in the chat on the form as their own answer', async () => {
+		service.sendPlaybookConciergeMessage.mockResolvedValue({
+			success: true,
+			response: {
+				confidence: 95,
+				ready: true,
+				message: 'Ready.',
+				parameters: [{ ...PROPOSAL, value: 'npm run test:unit', source: 'asked' }],
+			},
+		});
+		renderFlow(makePlaybook({ interaction: 'guided' }));
+
+		await waitFor(() => expect(screen.getByTestId('parameter-sheet')).toBeTruthy());
+		expect(provenance('TEST_COMMAND')).toBe('You');
+		expect(screen.getByDisplayValue('npm run test:unit')).toBeTruthy();
 	});
 
 	it('lets a guided playbook skip to the form while the facts are still loading', async () => {

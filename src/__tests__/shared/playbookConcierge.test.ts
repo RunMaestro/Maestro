@@ -12,6 +12,7 @@ import {
 	isConciergeFinished,
 	isPlausiblyDiscoverable,
 	mergeConciergeProposals,
+	conciergeAnswers,
 	readConciergeParameters,
 	type PlaybookConciergeDecisionInput,
 } from '../../shared/playbookConcierge';
@@ -35,6 +36,8 @@ function facts(overrides: Partial<PlaybookFacts> = {}): PlaybookFacts {
 		unknownProbes: [],
 		encoreFlags: resolveEncoreFeatures({}),
 		cueSubscriptionCount: 0,
+		cwdIsObsidianVault: false,
+		obsidianVaults: [],
 		...overrides,
 	};
 }
@@ -315,11 +318,38 @@ describe('mergeConciergeProposals', () => {
 				PR_URL: { value: 'https://github.com/acme/app/pull/1', evidence: 'Open pull request' },
 				TEST_COMMAND: { value: 'make test', evidence: 'facts' },
 			},
-			[{ name: 'TEST_COMMAND', value: 'npm test', source: 'asked', confidence: 100 }]
+			[{ name: 'TEST_COMMAND', value: 'npm test', source: 'detected', confidence: 90 }]
 		);
 		expect(merged).toEqual({
 			PR_URL: { value: 'https://github.com/acme/app/pull/1', evidence: 'Open pull request' },
-			TEST_COMMAND: { value: 'npm test', evidence: 'Your answer in the guided interview' },
+			TEST_COMMAND: { value: 'npm test', evidence: 'Found by the guided interview' },
 		});
+	});
+
+	it("leaves the user's own answers out of the proposals", () => {
+		const merged = mergeConciergeProposals(
+			{ TEST_COMMAND: { value: 'make test', evidence: 'facts' } },
+			[{ name: 'TEST_COMMAND', value: 'npm test', source: 'asked', confidence: 100 }]
+		);
+		expect(merged).toEqual({ TEST_COMMAND: { value: 'make test', evidence: 'facts' } });
+	});
+});
+
+describe('conciergeAnswers', () => {
+	it('keeps only what the user said, a later entry winning', () => {
+		expect(
+			conciergeAnswers([
+				{
+					name: 'PR_URL',
+					value: 'https://github.com/acme/app/pull/1',
+					source: 'detected',
+					confidence: 90,
+				},
+				{ name: 'TEST_COMMAND', value: 'npm test', source: 'asked', confidence: 100 },
+				{ name: 'MARKET_TOPIC', value: 'EVs', source: 'default', confidence: 80 },
+				{ name: 'TEST_COMMAND', value: 'npm run test:unit', source: 'asked', confidence: 100 },
+			])
+		).toEqual({ TEST_COMMAND: 'npm run test:unit' });
+		expect(conciergeAnswers([])).toEqual({});
 	});
 });
