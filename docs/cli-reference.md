@@ -269,6 +269,8 @@ List all agents
 | `-g, --group <id>` | Filter by group ID                                                                 | -       |
 | `--peer <name>`    | List the agents on one Federation peer (an SSH remote's name)                      | -       |
 | `--all-peers`      | List local agents, then the agents on every SSH remote that runs a Federation host | -       |
+| `--visible-only`   | Only agents whose group is not hidden from the Left Bar                            | -       |
+| `--hidden-only`    | Only agents in a hidden group                                                      | -       |
 | `--json`           | Output as JSON lines (for scripting)                                               | -       |
 
 ## `maestro-cli list playbooks`
