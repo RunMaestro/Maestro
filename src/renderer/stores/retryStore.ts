@@ -933,8 +933,19 @@ function truncateForToast(text: string, max = 80): string {
 	return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
 }
 
+/** Why a human-triggered replay is happening. */
+export type ReplayReason = 'auth' | 'install';
+
 /** What the transcript says where a replayed turn resumes. */
-const AUTH_REPLAY_NOTE = 'Re-sent after re-authentication.';
+const REPLAY_NOTES: Record<ReplayReason, string> = {
+	auth: 'Re-sent after re-authentication.',
+	install: 'Re-sent after installing provider CLI.',
+};
+
+const REPLAY_REASON_LABELS: Record<ReplayReason, string> = {
+	auth: 'after re-auth',
+	install: 'after provider CLI install',
+};
 
 /**
  * Put the agent into the running state for a replayed turn, then dispatch it.
@@ -959,7 +970,8 @@ function dispatchReplay(
 	sessionId: string,
 	item: QueuedItem,
 	deps: ProcessQueuedItemDeps,
-	key: string
+	key: string,
+	reason: ReplayReason = 'auth'
 ): boolean {
 	type ReplayOutcome = ReplayBlockedReason | 'dispatched';
 	let outcome: ReplayOutcome = 'no-target-tab' as ReplayOutcome;
@@ -967,13 +979,21 @@ function dispatchReplay(
 	// outcome back after this call is deterministic - and it is the only honest
 	// answer, because the decision depends on live state this caller cannot see.
 	updateSessionWith(sessionId, (session) => {
-		const result = applyReplayDispatch(session, item, AUTH_REPLAY_NOTE);
+		const tabStillExists =
+			!item.tabId ||
+			session.aiTabs?.some((t) => t.id === item.tabId) ||
+			session.orphanedThinkingTabs?.some((t) => t.id === item.tabId);
+		if (!tabStillExists) {
+			outcome = 'no-target-tab';
+			return session;
+		}
+		const result = applyReplayDispatch(session, item, REPLAY_NOTES[reason]);
 		outcome = result.blocked ?? 'dispatched';
 		return result.session;
 	});
 
 	if (outcome !== 'dispatched') {
-		logger.info('[retry] Skipped replaying a turn after re-auth', undefined, {
+		logger.info(`[retry] Skipped replaying a turn ${REPLAY_REASON_LABELS[reason]}`, undefined, {
 			key,
 			reason: outcome,
 		});
@@ -989,7 +1009,7 @@ function dispatchReplay(
 			// set above belongs to nothing. Settle it or the tab blinks forever and
 			// the Thinking pill counts elapsed time for work nobody is doing.
 			if (tabId) updateSessionWith(sessionId, (s) => settleTabThinkingState(s, tabId));
-			logger.error('[retry] Replay after re-auth threw', undefined, error);
+			logger.error(`[retry] Replay ${REPLAY_REASON_LABELS[reason]} threw`, undefined, error);
 		});
 	return true;
 }
@@ -1002,15 +1022,16 @@ function dispatchReplay(
 async function replayPersistedSnapshot(
 	sessionId: string,
 	tabId: string,
-	key: string
+	key: string,
+	reason: ReplayReason = 'auth'
 ): Promise<void> {
 	const persisted = (await loadPersistedSnapshots())[key];
 	if (persisted) {
 		// Consume it: a replayed prompt must never be resent twice, and a stale
 		// entry outliving its outage is how the wrong message reaches the wire later.
 		void forgetPersistedSnapshot(key);
-		logger.info('[retry] Replaying a turn from the persisted snapshot', undefined, { key });
-		dispatchReplay(sessionId, { ...persisted.item, tabId }, persisted.deps, key);
+		logger.info('[retry] Replaying a turn from the persisted snapshot', undefined, { key, reason });
+		dispatchReplay(sessionId, { ...persisted.item, tabId }, persisted.deps, key, reason);
 		return;
 	}
 
@@ -1025,7 +1046,9 @@ async function replayPersistedSnapshot(
 	// time, so rebuilding from it resends something the user never typed. The
 	// session_not_found path next door has the same constraint and resolves it
 	// the same way: surface the prompt and let the human press send.
-	logger.info('[retry] No dispatch snapshot to replay after re-auth', undefined, { key });
+	logger.info(`[retry] No dispatch snapshot to replay ${REPLAY_REASON_LABELS[reason]}`, undefined, {
+		key,
+	});
 	const lastPrompt = lastUserPromptFor(sessionId, tabId);
 	notifyToast({
 		color: 'yellow',
@@ -1037,7 +1060,11 @@ async function replayPersistedSnapshot(
 	});
 }
 
-export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
+export function replayAfterAuth(
+	sessionId: string,
+	tabIds: string[],
+	reason: ReplayReason = 'auth'
+): void {
 	for (const tabId of tabIds) {
 		const key = keyFor(sessionId, tabId);
 
@@ -1052,15 +1079,15 @@ export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
 		// async, and it ends in the same dispatch.
 		const snapshot = snapshots.get(key);
 		if (!snapshot) {
-			void replayPersistedSnapshot(sessionId, tabId, key);
+			void replayPersistedSnapshot(sessionId, tabId, key, reason);
 			continue;
 		}
 		void forgetPersistedSnapshot(key);
 
-		logger.info('[retry] Replaying a turn lost to expired credentials', undefined, { key });
+		logger.info(`[retry] Replaying a turn ${REPLAY_REASON_LABELS[reason]}`, undefined, { key });
 		// A dispatch-time throw is handled inside dispatchReplay (it settles the
 		// tab); it must not abort the replay of the remaining tabs.
-		dispatchReplay(sessionId, { ...snapshot.item, tabId }, snapshot.deps, key);
+		dispatchReplay(sessionId, { ...snapshot.item, tabId }, snapshot.deps, key, reason);
 	}
 }
 

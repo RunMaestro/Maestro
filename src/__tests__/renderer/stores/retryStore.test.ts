@@ -1245,6 +1245,27 @@ describe('replayAfterAuth', () => {
 		expect(session.executionQueue).toHaveLength(1);
 		expect(session.state).not.toBe('busy');
 	});
+
+	it('notes provider CLI install rather than re-auth when replayed with reason install', () => {
+		setupSession('sess-install', 'tab-1');
+		seedSnapshot('sess-install', 'tab-1');
+
+		replayAfterAuth('sess-install', ['tab-1'], 'install');
+
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+		expect(tab.logs.some((l: any) => l.text === 'Re-sent after installing provider CLI.')).toBe(
+			true
+		);
+	});
+
+	it('does not throw or send into another tab when the original tab was closed while installing', () => {
+		setupSession('sess-closed-tab', 'tab-other');
+		seedSnapshot('sess-closed-tab', 'tab-closed');
+
+		expect(() => replayAfterAuth('sess-closed-tab', ['tab-closed'], 'install')).not.toThrow();
+		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
 });
 
 /**
