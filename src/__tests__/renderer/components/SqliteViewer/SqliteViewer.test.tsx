@@ -11,6 +11,7 @@ import { sqliteMeasurementOrder } from '../../../../shared/sqlite/objects';
 import { SQLITE_AUTO_INTEGRITY_MAX_BYTES } from '../../../../shared/sqlite/summary';
 import type {
 	SqliteBlobRequest,
+	SqliteCellUpdateRequest,
 	SqliteColumnCatalog,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
@@ -132,6 +133,7 @@ let readQueryHistory: ReturnType<typeof vi.fn>;
 let forgetQueryHistory: ReturnType<typeof vi.fn>;
 let enableEditing: ReturnType<typeof vi.fn>;
 let disableEditing: ReturnType<typeof vi.fn>;
+let updateCell: ReturnType<typeof vi.fn>;
 
 const SUMMARY: SqliteDatabaseSummary = {
 	pageSize: 4096,
@@ -187,8 +189,12 @@ function eventsPage(request: SqliteRowsRequest, total = 2): SqliteRowsPage {
 			index === 0 ? '' : 'click',
 			index === 0 ? null : { kind: 'blob', head: 'ff', bytes: 2048 },
 		]),
-		// events is a WITHOUT ROWID table: no rowid to name a row by.
+		// events is a WITHOUT ROWID table: no rowid to name a row by, so each
+		// row's primary key comes whole beside it.
 		rowids: null,
+		rowKeys: Array.from({ length: count }, (_, index) => [
+			{ type: 'integer' as const, text: String(request.offset + index + 1) },
+		]),
 		offset: request.offset,
 		hasMore: request.offset + count < total,
 		orderedBy: request.sort ? [request.sort.column, 'id'] : ['id'],
@@ -345,6 +351,30 @@ beforeEach(() => {
 	);
 	enableEditing = vi.fn(async (handle: string) => ({ handle, editToken: 'token-1' }));
 	disableEditing = vi.fn().mockResolvedValue(true);
+	// Echo the edit back as stored: the edited cell takes the new value.
+	updateCell = vi.fn(async (request: SqliteCellUpdateRequest) => {
+		const page = eventsPage({ handle: 'h1', name: 'events', offset: 0, limit: 10 });
+		const key = request.row.kind === 'primary-key' ? request.row.values.id : null;
+		// A key the page does not hold (a row re-keyed by an earlier edit) maps to its last row.
+		const position = Math.min(Number(key?.text ?? 1), page.rows.length) - 1;
+		const index = page.columns.findIndex((column) => column.name === request.column);
+		const row = [...page.rows[position]];
+		row[index] =
+			request.value.type === 'null'
+				? null
+				: request.value.type === 'number'
+					? Number(request.value.text)
+					: request.value.text;
+		const newKey = request.column === 'id' ? { type: 'integer', text: request.value.text } : key;
+		return {
+			name: 'events',
+			column: request.column,
+			columns: page.columns,
+			row,
+			key: { kind: 'primary-key', values: { id: newKey } },
+			elapsedMs: 4,
+		};
+	});
 	notifyToastMock.mockReset();
 	(window as unknown as { maestro: unknown }).maestro = {
 		sqlite: {
@@ -365,6 +395,7 @@ beforeEach(() => {
 			forgetQueryHistory,
 			enableEditing,
 			disableEditing,
+			updateCell,
 			close,
 		},
 		dialog: { saveFile },
@@ -2088,5 +2119,179 @@ describe('SqliteViewer query history', () => {
 		expect(await screen.findByTestId('sqlite-query-history-error')).toHaveTextContent(
 			'The history could not be read: EACCES'
 		);
+	});
+});
+
+describe('SqliteViewer cell edit', () => {
+	/** events' columns, in grid order. */
+	const COLUMN = { id: 0, kind: 1, payload: 2 } as const;
+
+	/** The grid cell at a row and column: the row's children are the gutter, then the cells. */
+	function cell(row: number, column: keyof typeof COLUMN): HTMLElement {
+		return screen.getByTestId(`sqlite-row-${row}`).children[1 + COLUMN[column]] as HTMLElement;
+	}
+
+	async function renderEditing() {
+		const view = render(
+			<LayerStackProvider>
+				<SqliteViewer filePath="/data/app.db" fileName="app.db" theme={mockTheme} />
+			</LayerStackProvider>
+		);
+		await screen.findByTestId('sqlite-row-1');
+		fireEvent.click(screen.getByTestId('sqlite-editing-enable'));
+		await screen.findByTestId('sqlite-rows-editability');
+		return view;
+	}
+
+	it('saves an edited cell as one UPDATE keyed on the whole primary key', async () => {
+		await renderEditing();
+		fireEvent.doubleClick(cell(1, 'kind'));
+		const editor = await screen.findByTestId('sqlite-cell-editor');
+		expect(editor).toHaveValue('click');
+
+		fireEvent.change(editor, { target: { value: 'view' } });
+		fireEvent.keyDown(editor, { key: 'Enter' });
+
+		await waitFor(() => expect(updateCell).toHaveBeenCalledTimes(1));
+		expect(updateCell).toHaveBeenCalledWith({
+			handle: 'h1',
+			editToken: 'token-1',
+			name: 'events',
+			column: 'kind',
+			row: { kind: 'primary-key', values: { id: { type: 'integer', text: '2' } } },
+			value: { type: 'text', text: 'view' },
+		});
+		await waitFor(() => expect(screen.queryByTestId('sqlite-cell-editor')).not.toBeInTheDocument());
+		// The saved row replaces its line in place; nothing is read again.
+		expect(cell(1, 'kind')).toHaveTextContent('view');
+		expect(readRows).toHaveBeenCalledTimes(1);
+		expect(screen.getByTestId('sqlite-edit-status')).toHaveTextContent('Saved kind in row 2');
+		expect(screen.queryByTestId('sqlite-row-detail-modal')).not.toBeInTheDocument();
+	});
+
+	it('keeps a number a number, and re-keys the row when its key changes', async () => {
+		await renderEditing();
+		fireEvent.doubleClick(cell(1, 'id'));
+		const editor = await screen.findByTestId('sqlite-cell-editor');
+		fireEvent.change(editor, { target: { value: '20' } });
+		fireEvent.keyDown(editor, { key: 'Enter' });
+		await waitFor(() => expect(cell(1, 'id')).toHaveTextContent('20'));
+		expect(updateCell).toHaveBeenLastCalledWith(
+			expect.objectContaining({ column: 'id', value: { type: 'number', text: '20' } })
+		);
+
+		// The next edit of that row names it by its NEW key.
+		fireEvent.doubleClick(cell(1, 'kind'));
+		const next = await screen.findByTestId('sqlite-cell-editor');
+		fireEvent.change(next, { target: { value: 'tap' } });
+		fireEvent.keyDown(next, { key: 'Enter' });
+		await waitFor(() => expect(updateCell).toHaveBeenCalledTimes(2));
+		expect(updateCell).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				row: { kind: 'primary-key', values: { id: { type: 'integer', text: '20' } } },
+			})
+		);
+	});
+
+	it('writes nothing when the text did not change, so a NULL never becomes an empty string', async () => {
+		await renderEditing();
+		fireEvent.doubleClick(cell(0, 'payload'));
+		// payload is generated: refused. id 1 opens unchanged and closes on Enter.
+		expect(screen.queryByTestId('sqlite-cell-editor')).not.toBeInTheDocument();
+		fireEvent.doubleClick(cell(0, 'id'));
+		const editor = await screen.findByTestId('sqlite-cell-editor');
+		fireEvent.keyDown(editor, { key: 'Enter' });
+		await waitFor(() => expect(screen.queryByTestId('sqlite-cell-editor')).not.toBeInTheDocument());
+		expect(updateCell).not.toHaveBeenCalled();
+	});
+
+	it('cancels on Escape without writing', async () => {
+		await renderEditing();
+		fireEvent.doubleClick(cell(1, 'kind'));
+		const editor = await screen.findByTestId('sqlite-cell-editor');
+		fireEvent.change(editor, { target: { value: 'gone' } });
+		fireEvent.keyDown(editor, { key: 'Escape' });
+		expect(screen.queryByTestId('sqlite-cell-editor')).not.toBeInTheDocument();
+		expect(cell(1, 'kind')).toHaveTextContent('click');
+		expect(updateCell).not.toHaveBeenCalled();
+	});
+
+	it('says why a generated column cannot be edited instead of opening an editor', async () => {
+		await renderEditing();
+		fireEvent.doubleClick(cell(1, 'payload'));
+		expect(screen.queryByTestId('sqlite-cell-editor')).not.toBeInTheDocument();
+		expect(screen.getByTestId('sqlite-edit-status')).toHaveTextContent(
+			'payload is a generated column: SQLite calculates its value from other columns.'
+		);
+		expect(screen.queryByTestId('sqlite-row-detail-modal')).not.toBeInTheDocument();
+	});
+
+	it("keeps the editor open with SQLite's words when the save is refused", async () => {
+		updateCell.mockRejectedValueOnce(
+			new Error(
+				"Error invoking remote method 'sqlite:updateCell': Error: CHECK constraint failed: kind_known"
+			)
+		);
+		await renderEditing();
+		fireEvent.doubleClick(cell(1, 'kind'));
+		const editor = await screen.findByTestId('sqlite-cell-editor');
+		fireEvent.change(editor, { target: { value: 'bogus' } });
+		fireEvent.keyDown(editor, { key: 'Enter' });
+		expect(await screen.findByTestId('sqlite-edit-status')).toHaveTextContent(
+			'CHECK constraint failed: kind_known'
+		);
+		expect(screen.getByTestId('sqlite-cell-editor')).toHaveValue('bogus');
+	});
+
+	it('announces where the backup went on the first change', async () => {
+		updateCell.mockImplementationOnce(async () => ({
+			name: 'events',
+			column: 'kind',
+			columns: eventsPage({ handle: 'h1', name: 'events', offset: 0, limit: 2 }).columns,
+			row: [2, 'view', null],
+			key: { kind: 'primary-key', values: { id: { type: 'integer', text: '2' } } },
+			backup: { path: '/data/app.maestro-backup-20261119.db', bytes: 8192, createdAt: 1 },
+			elapsedMs: 4,
+		}));
+		await renderEditing();
+		fireEvent.doubleClick(cell(1, 'kind'));
+		const editor = await screen.findByTestId('sqlite-cell-editor');
+		fireEvent.change(editor, { target: { value: 'view' } });
+		fireEvent.keyDown(editor, { key: 'Enter' });
+		await waitFor(() =>
+			expect(notifyToastMock).toHaveBeenCalledWith({
+				color: 'green',
+				title: 'Database backed up before the first change',
+				message: '8.0 KB copy saved to /data/app.maestro-backup-20261119.db',
+			})
+		);
+	});
+
+	it('opens the record view from the row number while editing, and from the row when locked', async () => {
+		await renderEditing();
+		fireEvent.doubleClick(screen.getByTestId('sqlite-row-1'));
+		expect(await screen.findByTestId('sqlite-row-detail-modal')).toBeInTheDocument();
+		expect(screen.queryByTestId('sqlite-cell-editor')).not.toBeInTheDocument();
+	});
+
+	it('does not edit while the tab is read-only, and Lock closes an open editor', async () => {
+		render(
+			<LayerStackProvider>
+				<SqliteViewer filePath="/data/app.db" fileName="app.db" theme={mockTheme} />
+			</LayerStackProvider>
+		);
+		await screen.findByTestId('sqlite-row-1');
+		fireEvent.doubleClick(cell(1, 'kind'));
+		expect(screen.queryByTestId('sqlite-cell-editor')).not.toBeInTheDocument();
+		// Read-only: the double-click reaches the row, which opens the record view.
+		expect(await screen.findByTestId('sqlite-row-detail-modal')).toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId('sqlite-editing-enable'));
+		await screen.findByTestId('sqlite-rows-editability');
+		fireEvent.doubleClick(cell(1, 'kind'));
+		await screen.findByTestId('sqlite-cell-editor');
+		fireEvent.click(screen.getByTestId('sqlite-editing-disable'));
+		await waitFor(() => expect(screen.queryByTestId('sqlite-cell-editor')).not.toBeInTheDocument());
+		expect(updateCell).not.toHaveBeenCalled();
 	});
 });

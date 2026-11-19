@@ -4,6 +4,7 @@ import {
 	sqliteCellFromHead,
 	sqliteCellFromValue,
 	sqliteExportValue,
+	sqliteKeyValue,
 } from '../../../main/sqlite/sqlite-cell';
 import { SQLITE_CELL_BLOB_HEAD_BYTES, SQLITE_CELL_TEXT_LIMIT } from '../../../shared/sqlite/cells';
 
@@ -89,5 +90,28 @@ describe('sqliteExportValue', () => {
 	it('writes NULL as null', () => {
 		expect(sqliteExportValue(null)).toBeNull();
 		expect(sqliteExportValue(undefined)).toBeNull();
+	});
+});
+
+describe('sqliteKeyValue', () => {
+	it('keeps every kind of stored value whole and typed', () => {
+		expect(sqliteKeyValue(null)).toBeNull();
+		expect(sqliteKeyValue(undefined)).toBeNull();
+		expect(sqliteKeyValue(BigInt('9223372036854775807'))).toEqual({
+			type: 'integer',
+			text: '9223372036854775807',
+		});
+		expect(sqliteKeyValue(BigInt(-5))).toEqual({ type: 'integer', text: '-5' });
+		// With safe integers on, a JavaScript number is a REAL; its text reads back exactly.
+		expect(sqliteKeyValue(0.1)).toEqual({ type: 'real', text: '0.1' });
+		expect(Number(sqliteKeyValue(1 / 3)!.text)).toBe(1 / 3);
+		expect(sqliteKeyValue(3)).toEqual({ type: 'real', text: '3' });
+		expect(sqliteKeyValue(Infinity)).toEqual({ type: 'real', text: 'Infinity' });
+		expect(sqliteKeyValue(Buffer.from([0, 255, 16]))).toEqual({ type: 'blob', text: '00ff10' });
+	});
+
+	it('never cuts TEXT, however long', () => {
+		const long = 'k'.repeat(SQLITE_CELL_TEXT_LIMIT * 2);
+		expect(sqliteKeyValue(long)).toEqual({ type: 'text', text: long });
 	});
 });

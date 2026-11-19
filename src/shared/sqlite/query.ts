@@ -218,23 +218,28 @@ export function sqliteQueryParameters(sql: string): SqliteQueryParameterScan {
 	return { parameters, problem };
 }
 
-/** The value one parameter binds as, or why it cannot bind. */
-function parameterBindValue(
-	parameter: SqliteQueryParameter,
-	value: SqliteParameterValue | undefined
+/**
+ * The value a typed value binds as, or why it cannot bind: TEXT as is, NULL,
+ * or a number (an integer exactly, a `bigint` past 2^53, or a double).
+ * `label` names it in the problem: a parameter (`:id`) or a column. Shared by
+ * the Query panel's parameters and the table view's cell edit.
+ */
+export function sqliteParameterBindValue(
+	label: string,
+	value: SqliteParameterValue | null | undefined
 ): { value: SqliteBindValue } | { problem: string } {
 	if (!value || typeof value !== 'object' || typeof value.text !== 'string') {
-		return { problem: `Give ${parameter.label} a value.` };
+		return { problem: `Give ${label} a value.` };
 	}
 	if (value.type === 'null') return { value: null };
 	if (value.type === 'text') return { value: value.text };
 	if (value.type !== 'number') {
-		return { problem: `${parameter.label} has an unknown type; use text, number, or null.` };
+		return { problem: `${label} has an unknown type; use text, number, or null.` };
 	}
 	const number = sqliteNumberBindValue(value.text.trim());
 	if (number === null) {
 		const shown = value.text.trim() ? `"${value.text}" is not a number` : 'it is empty';
-		return { problem: `${parameter.label} is set to Number, but ${shown}.` };
+		return { problem: `${label} is set to Number, but ${shown}.` };
 	}
 	return { value: number };
 }
@@ -268,7 +273,7 @@ export function sqliteQueryBinding(
 		const given = Object.prototype.hasOwnProperty.call(source, parameter.label)
 			? source[parameter.label]
 			: undefined;
-		const bound = parameterBindValue(parameter, given);
+		const bound = sqliteParameterBindValue(parameter.label, given);
 		if ('problem' in bound) return { args: null, problem: bound.problem };
 		if (parameter.anonymous) positional.push(bound.value);
 		else named[parameter.label.slice(1)] = bound.value;

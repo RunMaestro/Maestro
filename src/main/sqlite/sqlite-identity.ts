@@ -20,6 +20,12 @@
  *
  * A generated column is never written, though its row can be.
  *
+ * A write turns the identity and the row's key (`SqliteRowKey`, sent by the
+ * viewer or the CLI) into its `WHERE` with `sqliteRowKeyCondition()`: every
+ * value bound, every name quoted, and a key that does not fit the identity
+ * (the wrong kind, a missing or extra key column, a NULL, a malformed value)
+ * refused before anything runs.
+ *
  * Everything here reads schema metadata only (`sqlite_master` and pragma
  * functions, names bound), so it is instant on any database. The renderer
  * gets the result to draw; a write resolves it again in main and never trusts
@@ -28,13 +34,20 @@
 
 import type Database from 'better-sqlite3';
 
+import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
 import type {
 	SqliteEditability,
+	SqliteKeyValue,
 	SqliteObjectSummary,
 	SqliteReadOnlyColumn,
 	SqliteResultColumn,
+	SqliteRowIdentity,
+	SqliteRowKey,
 } from '../../shared/sqlite/types';
 import { readSqliteObjectSummaries } from './sqlite-objects';
+
+/** A rowid as the wire carries it: decimal text, signed, up to 64 bits. */
+export const SQLITE_ROWID_TEXT = /^-?\d{1,19}$/;
 
 /** The names SQLite answers to for a rowid, in the order we prefer them. */
 const ROWID_ALIASES = ['rowid', '_rowid_', 'oid'] as const;
@@ -211,4 +224,125 @@ export function resolveSqliteEditability(
 		'no-identity',
 		`${name} has columns named rowid, _rowid_, and oid that hide its rowid, and no primary key, so an edit cannot name one row.`
 	);
+}
+
+/**
+ * The columns a statement reads to name a row by this identity, in order:
+ * the rowid alias, or every primary-key column in key order.
+ */
+export function sqliteRowKeyColumns(identity: SqliteRowIdentity): string[] {
+	return identity.kind === 'rowid' ? [identity.alias] : [...identity.columns];
+}
+
+const INTEGER_TEXT = /^-?\d+$/;
+const HEX_TEXT = /^(?:[0-9a-f]{2})*$/i;
+
+/**
+ * A key value as the driver binds it, so it compares equal to exactly the
+ * stored value: an INTEGER as a BigInt, a REAL as a double, TEXT as a
+ * string, a BLOB as bytes. Throws on a malformed value; returns null for NULL.
+ */
+export function sqliteKeyBindValue(
+	value: SqliteKeyValue | undefined,
+	column: string
+): bigint | number | string | Buffer | null {
+	if (value === null) return null;
+	const malformed = () => new Error(`The key value given for ${column} is not a stored value.`);
+	if (!value || typeof value !== 'object' || typeof value.text !== 'string') throw malformed();
+	switch (value.type) {
+		case 'integer':
+			if (!INTEGER_TEXT.test(value.text)) throw malformed();
+			return BigInt(value.text);
+		case 'real': {
+			const number = Number(value.text);
+			if (value.text.trim() === '' || Number.isNaN(number)) throw malformed();
+			return number;
+		}
+		case 'text':
+			return value.text;
+		case 'blob':
+			if (!HEX_TEXT.test(value.text)) throw malformed();
+			return Buffer.from(value.text, 'hex');
+		default:
+			throw malformed();
+	}
+}
+
+/** A key value as a person reads it in a message: `42`, `'abc'`, `x'00ff'`, `NULL`. */
+function keyValueLabel(value: SqliteKeyValue): string {
+	if (value === null) return 'NULL';
+	const text = value.text.length > 40 ? `${value.text.slice(0, 40)}…` : value.text;
+	if (value.type === 'text') return `'${text}'`;
+	if (value.type === 'blob') return `x'${text}'`;
+	return text;
+}
+
+/** A row's `WHERE`, its bound values, and how a message names the row. */
+export interface SqliteRowKeyCondition {
+	/** `"rowid" = ?`, or `"a" = ? AND "b" = ?` in key order. */
+	where: string;
+	params: Array<bigint | number | string | Buffer>;
+	/** `rowid 42`, or `primary key (a = 1, b = 'x')`. */
+	label: string;
+}
+
+/**
+ * The `WHERE` that names exactly one row of a table by its identity. Throws,
+ * before anything runs, when `key` is not that identity's kind, leaves out a
+ * key column or names one the key does not have, holds a malformed value, or
+ * holds a NULL: NULL never compares equal, so such a row cannot be named.
+ */
+export function sqliteRowKeyCondition(
+	identity: SqliteRowIdentity,
+	key: SqliteRowKey | null | undefined,
+	objectName: string
+): SqliteRowKeyCondition {
+	if (identity.kind === 'rowid') {
+		if (key?.kind !== 'rowid') {
+			throw new Error(`${objectName} names its rows by rowid; give the row's rowid.`);
+		}
+		const rowid = String(key.rowid);
+		if (!SQLITE_ROWID_TEXT.test(rowid)) throw new Error(`Not a rowid: ${rowid}`);
+		return {
+			where: `${quoteSqliteIdentifier(identity.alias)} = ?`,
+			params: [BigInt(rowid)],
+			label: `rowid ${rowid}`,
+		};
+	}
+
+	const keyNames = identity.columns.join(', ');
+	if (key?.kind !== 'primary-key' || !key.values || typeof key.values !== 'object') {
+		throw new Error(
+			`${objectName} names its rows by its primary key (${keyNames}); give a value for each key column.`
+		);
+	}
+	const given = Object.keys(key.values);
+	const extra = given.filter((name) => !identity.columns.includes(name));
+	const missing = identity.columns.filter(
+		(name) => !Object.prototype.hasOwnProperty.call(key.values, name)
+	);
+	if (extra.length > 0 || missing.length > 0) {
+		const problems = [
+			missing.length > 0 ? `no value for ${missing.join(', ')}` : '',
+			extra.length > 0 ? `${extra.join(', ')} ${extra.length === 1 ? 'is' : 'are'} not in it` : '',
+		].filter(Boolean);
+		throw new Error(`The primary key of ${objectName} is (${keyNames}): ${problems.join('; ')}.`);
+	}
+
+	const terms: string[] = [];
+	const params: SqliteRowKeyCondition['params'] = [];
+	const labels: string[] = [];
+	for (const column of identity.columns) {
+		const value = key.values[column];
+		const bound = sqliteKeyBindValue(value, column);
+		if (bound === null) {
+			throw new Error(
+				`This row's primary key holds NULL in ${column}, and NULL never equals anything, so the row cannot be named for a change.`
+			);
+		}
+		terms.push(`${quoteSqliteIdentifier(column)} = ?`);
+		params.push(bound);
+		labels.push(`${column} = ${keyValueLabel(value)}`);
+	}
+	return { where: terms.join(' AND '), params, label: `primary key (${labels.join(', ')})` };
 }

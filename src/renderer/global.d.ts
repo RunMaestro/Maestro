@@ -243,6 +243,8 @@ import type {
 import type {
 	SqliteBlobRequest,
 	SqliteBlobSaved,
+	SqliteCellUpdateRequest,
+	SqliteCellUpdateResult,
 	SqliteColumnCatalog,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
@@ -2011,6 +2013,7 @@ interface MaestroAPI {
 		saveBlob: (request: SqliteBlobRequest) => Promise<SqliteBlobSaved>;
 		enableEditing: (handle: string) => Promise<SqliteEditingGrant>;
 		disableEditing: (handle: string, editToken: string) => Promise<boolean>;
+		updateCell: (request: SqliteCellUpdateRequest) => Promise<SqliteCellUpdateResult>;
 		close: (handle: string) => Promise<void>;
 	};
 	fs: {

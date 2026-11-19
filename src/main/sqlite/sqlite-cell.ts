@@ -11,11 +11,13 @@
  *     process and is cut there: `sqliteCellFromValue()`. Only the cut cell
  *     leaves it.
  *
- * An export (Query mode's Export) is the one reader that keeps values whole:
- * `sqliteExportValue()` hands the shared CSV / JSON Lines encoder each value
- * uncut, a BLOB as its bytes in hex.
+ * Two readers keep values whole. A primary key (the table view's `rowKeys`, a
+ * cell edit's new key) must name its row exactly, so `sqliteKeyValue()` hands
+ * it over typed and uncut. An export (Query mode's Export) keeps them whole
+ * too: `sqliteExportValue()` hands the shared CSV / JSON Lines encoder each
+ * value uncut, a BLOB as its bytes in hex.
  *
- * Both expect a statement read with `safeIntegers(true)`, so an INTEGER past
+ * All expect a statement read with `safeIntegers(true)`, so an INTEGER past
  * 2^53 arrives as a BigInt and keeps every digit.
  *
  * Nothing here, or reachable from here, may import `electron`: the SQLite
@@ -23,7 +25,7 @@
  */
 
 import { SQLITE_CELL_BLOB_HEAD_BYTES, SQLITE_CELL_TEXT_LIMIT } from '../../shared/sqlite/cells';
-import type { SqliteCellValue } from '../../shared/sqlite/types';
+import type { SqliteCellValue, SqliteKeyValue } from '../../shared/sqlite/types';
 import type { TabularExportValue } from '../../shared/tabularExport';
 
 function toCount(value: unknown): number {
@@ -102,4 +104,18 @@ export function sqliteExportValue(value: unknown): TabularExportValue {
 	}
 	if (Buffer.isBuffer(value)) return value.toString('hex');
 	return String(value);
+}
+
+/**
+ * One whole value as a primary key carries it (`SqliteKeyValue`): typed and
+ * never cut, so a write can bind it back and match exactly that row. With
+ * `safeIntegers(true)` every INTEGER arrives as a BigInt, so a JavaScript
+ * number here is always a REAL.
+ */
+export function sqliteKeyValue(value: unknown): SqliteKeyValue {
+	if (value === null || value === undefined) return null;
+	if (typeof value === 'bigint') return { type: 'integer', text: value.toString() };
+	if (typeof value === 'number') return { type: 'real', text: String(value) };
+	if (Buffer.isBuffer(value)) return { type: 'blob', text: value.toString('hex') };
+	return { type: 'text', text: String(value) };
 }

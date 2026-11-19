@@ -30,13 +30,20 @@
 //   maestro-cli sqlite history <path> [--forget <id>] [--clear] [--json]
 //       -> Query mode's History rail: the statements run against the file,
 //          newest first; --forget drops one, --clear drops them all
+//   maestro-cli sqlite set <path> <table> <column> (--rowid <id> | --key <col=value>...)
+//                          (--value <text> | --value-number <n> | --null)
+//                          --enable-editing [--json]
+//       -> the table view's cell edit: one single-row UPDATE keyed on the
+//          row's rowid or primary key; --enable-editing is the per-call
+//          unlock, and the session's first change backs the file up first
 //
 // The CLI links no native modules, so it cannot open a database itself. Each
 // verb rides a WS message (`sqlite_read_summary`, `sqlite_list_objects`, `sqlite_read_schema`,
 // `sqlite_read_rows`, `sqlite_count_rows`, `sqlite_save_blob`, `sqlite_run_query`,
-// `sqlite_export_query`, `sqlite_query_history`) to the running
+// `sqlite_export_query`, `sqlite_query_history`, `sqlite_update_cell`) to the running
 // app, which answers with the same functions the viewer's `sqlite:*` IPC calls.
-// The app must be running, and the database is opened read-only there; a
+// The app must be running, and the database is opened read-only there (only
+// `set` writes, through the viewer's own editing gate and backup); a
 // BLOB or an export is written to `--output` by the app, so its bytes never
 // ride the socket.
 
@@ -56,6 +63,7 @@ import {
 import {
 	SQLITE_INDEX_ORIGIN_LABELS,
 	formatSqliteColumnReferences,
+	SQLITE_CLI_UNLOCK_REQUIRED_MESSAGE,
 	formatSqliteEditability,
 	formatSqliteForeignKey,
 	formatSqliteIndexColumn,
@@ -90,6 +98,7 @@ import {
 import { formatSqliteIntegrity, sqliteSummaryFacts } from '../../shared/sqlite/summary';
 import type {
 	SqliteBlobSaved,
+	SqliteCellUpdateResult,
 	SqliteDatabaseInfo,
 	SqliteDatabaseSummary,
 	SqliteFilterProblem,
@@ -109,7 +118,10 @@ import type {
 	SqliteRowCount,
 	SqliteRowsPage,
 	SqliteCellValue,
+	SqliteKeyValue,
+	SqliteRowKey,
 } from '../../shared/sqlite/types';
+import { sqliteNumberBindValue } from '../../shared/sqlite/filter';
 
 /** Counting and sizing a large database takes a while; give it room. */
 const SQLITE_TIMEOUT_MS = 2 * 60_000;
@@ -1112,6 +1124,179 @@ export async function sqliteHistory(file: string, options: SqliteHistoryOptions)
 			`Query history of ${database.displayPath}: ${count} ${count === 1 ? 'statement' : 'statements'}, newest first.`
 		);
 		for (const entry of history.entries) lines.push('', ...historyEntryLines(entry));
+	}
+	console.log(lines.join('\n'));
+}
+
+interface SqliteSetOptions {
+	rowid?: string;
+	/** `column=value` pairs naming the row by its primary key, as TEXT. */
+	key?: string[];
+	/** `column=value` pairs naming the row by its primary key, as numbers. */
+	keyNumber?: string[];
+	/** The new value, as TEXT. */
+	value?: string;
+	/** The new value, as a number. */
+	valueNumber?: string;
+	/** Set the cell to NULL. */
+	null?: boolean;
+	/** The per-call unlock: without it nothing is written. */
+	enableEditing?: boolean;
+	json?: boolean;
+}
+
+interface SqliteUpdateReply {
+	type: string;
+	success: boolean;
+	error?: string;
+	database?: SqliteDatabaseInfo;
+	result?: SqliteCellUpdateResult;
+}
+
+/**
+ * The row a `sqlite set` names, from flags: `--rowid <id>`, or one `--key`
+ * / `--key-number column=value` per primary-key column. Throws a message on
+ * a malformed flag, a column given twice, or both forms at once.
+ */
+export function sqliteRowKeyFromFlags(
+	options: Pick<SqliteSetOptions, 'rowid' | 'key' | 'keyNumber'>
+): SqliteRowKey {
+	const keyFlags = [...(options.key ?? []), ...(options.keyNumber ?? [])];
+	if ((options.rowid === undefined) === (keyFlags.length === 0)) {
+		throw new Error(
+			'Name the row with --rowid <id>, or with --key column=value for each key column'
+		);
+	}
+	if (options.rowid !== undefined) {
+		if (!/^-?\d+$/.test(options.rowid)) {
+			throw new Error(`--rowid must be a whole number (got "${options.rowid}")`);
+		}
+		return { kind: 'rowid', rowid: options.rowid };
+	}
+	const values: Record<string, SqliteKeyValue> = {};
+	const pairs = (flag: string, list: string[] | undefined, numeric: boolean) => {
+		for (const pair of list ?? []) {
+			const equals = pair.indexOf('=');
+			if (equals <= 0) throw new Error(`${flag} takes column=value (got "${pair}")`);
+			const column = pair.slice(0, equals);
+			const text = pair.slice(equals + 1);
+			if (Object.prototype.hasOwnProperty.call(values, column)) {
+				throw new Error(`Key column ${column} is given more than once`);
+			}
+			if (!numeric) {
+				values[column] = { type: 'text', text };
+				continue;
+			}
+			const number = sqliteNumberBindValue(text.trim());
+			if (number === null) throw new Error(`${flag} ${column}: "${text}" is not a number`);
+			// The number parser reads text with a point or an exponent as a REAL.
+			values[column] = { type: /[.eE]/.test(text) ? 'real' : 'integer', text: String(number) };
+		}
+	};
+	pairs('--key', options.key, false);
+	pairs('--key-number', options.keyNumber, true);
+	return { kind: 'primary-key', values };
+}
+
+/** The new value a `sqlite set` writes, from exactly one of its value flags. */
+export function sqliteCellValueFromFlags(
+	options: Pick<SqliteSetOptions, 'value' | 'valueNumber' | 'null'>
+): SqliteParameterValue {
+	const given = [
+		options.value !== undefined,
+		options.valueNumber !== undefined,
+		options.null === true,
+	];
+	if (given.filter(Boolean).length !== 1) {
+		throw new Error('Give the new value with exactly one of --value, --value-number, or --null');
+	}
+	if (options.null) return { type: 'null', text: '' };
+	if (options.valueNumber !== undefined) return { type: 'number', text: options.valueNumber };
+	return { type: 'text', text: options.value ?? '' };
+}
+
+/**
+ * `maestro-cli sqlite set <path> <table> <column>` - change one cell the way
+ * the viewer's table view does: one parameterised UPDATE of the row named by
+ * its rowid or primary key, in the app, refused unless `--enable-editing`
+ * unlocks editing for this call (the tab's "Enable editing"). The first
+ * change of a session backs the file up beside itself first.
+ */
+export async function sqliteSet(
+	file: string,
+	name: string,
+	column: string,
+	options: SqliteSetOptions
+): Promise<void> {
+	const filePath = resolveCliPath(file);
+	if (!options.enableEditing) fail(SQLITE_CLI_UNLOCK_REQUIRED_MESSAGE, options.json);
+	let row: SqliteRowKey;
+	let value: SqliteParameterValue;
+	try {
+		row = sqliteRowKeyFromFlags(options);
+		value = sqliteCellValueFromFlags(options);
+	} catch (error) {
+		fail(error instanceof Error ? error.message : String(error), options.json);
+	}
+
+	let reply: SqliteUpdateReply;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<SqliteUpdateReply>(
+				{
+					type: 'sqlite_update_cell',
+					path: filePath,
+					name,
+					column,
+					row,
+					value,
+					enableEditing: true,
+				},
+				'sqlite_update_result',
+				// The first change of a session waits for the backup.
+				SQLITE_EXPORT_TIMEOUT_MS + 60_000
+			)
+		);
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+	if (!reply.success || !reply.database || !reply.result) {
+		fail(reply.error || `Could not change ${column} of ${name} in ${filePath}`, options.json);
+	}
+
+	const { database, result } = reply;
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				path: database.displayPath,
+				name: result.name,
+				column: result.column,
+				columns: result.columns.map((entry) => entry.name),
+				row: result.row,
+				key: result.key,
+				backup: result.backup ?? null,
+				elapsedMs: result.elapsedMs,
+			})
+		);
+		return;
+	}
+	const position = result.columns.findIndex((entry) => entry.name === result.column);
+	const cell = position >= 0 ? formatSqliteCell(result.row[position] ?? null).text : '';
+	const keyText =
+		result.key.kind === 'rowid'
+			? `rowid ${result.key.rowid}`
+			: Object.entries(result.key.values)
+					.map(
+						([keyColumn, keyValue]) =>
+							`${keyColumn} = ${keyValue === null ? 'NULL' : keyValue.text}`
+					)
+					.join(', ');
+	const lines = [`Set ${result.column} of ${result.name} (${keyText}) to ${cell}.`];
+	if (result.backup) {
+		lines.push(
+			`Backed up ${database.displayPath} before this first change: ${result.backup.path} (${formatSize(result.backup.bytes)}).`
+		);
 	}
 	console.log(lines.join('\n'));
 }

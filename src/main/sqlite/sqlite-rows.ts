@@ -22,10 +22,12 @@
  *     page of megabyte payloads stays a page of kilobytes on the wire.
  *     Integers are read as BigInt and only narrowed when that loses nothing.
  *   - **A row can be named again.** An ordinary table's rows come back with
- *     their rowid (`rowids`), so a later call (saving a BLOB) reads exactly
- *     that row whatever the order or filter. A view, a virtual table, or a
- *     `WITHOUT ROWID` table has none to offer. The page also says whether
- *     the rows can be edited and by what identity (sqlite-identity.ts).
+ *     their rowid (`rowids`), so a later call (saving a BLOB, an edit) reads
+ *     exactly that row whatever the order or filter. A view, a virtual table,
+ *     or a `WITHOUT ROWID` table has none to offer. The page also says
+ *     whether the rows can be edited and by what identity
+ *     (sqlite-identity.ts); a table edited by its primary key gets each row's
+ *     key read whole (`rowKeys`), since a key cell may be cut.
  *
  * better-sqlite3 is synchronous, so a sort on an unindexed column of a very
  * large table holds the main process while SQLite sorts, and a filter that
@@ -40,15 +42,21 @@ import { buildSqliteFilter, type SqliteFilterBuild } from '../../shared/sqlite/f
 import { sqliteColumnAffinity } from '../../shared/sqlite/schema';
 import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
 import type {
+	SqliteCellValue,
+	SqliteKeyValue,
 	SqliteObjectSummary,
 	SqliteResultColumn,
 	SqliteRowsPage,
 	SqliteRowsRequest,
 	SqliteSortSpec,
 } from '../../shared/sqlite/types';
-import { sqliteCellFromHead } from './sqlite-cell';
+import { sqliteCellFromHead, sqliteKeyValue } from './sqlite-cell';
 import { getSqliteDatabase } from './sqlite-database';
-import { reachableRowidAlias, resolveSqliteEditability } from './sqlite-identity';
+import {
+	reachableRowidAlias,
+	resolveSqliteEditability,
+	sqliteRowKeyColumns,
+} from './sqlite-identity';
 import { findSqliteObject, readSqliteObjectSummaries } from './sqlite-objects';
 
 /** Most rows one window may hold, whatever the caller asks for. */
@@ -188,6 +196,60 @@ function columnExpressions(name: string): string {
 }
 
 /**
+ * What a row statement selects: the rowid alias (when named) first, then each
+ * column's value/length pair, then the key columns (when named) bare and
+ * whole. Shared by the window reader and the cell edit's read-back
+ * (sqlite-row-edit.ts), so an edited row comes back exactly as a window
+ * shows it. Nothing has an `AS` alias.
+ */
+export function sqliteRowSelectList(
+	columns: readonly SqliteResultColumn[],
+	rowidAlias: string | null,
+	keyColumns: readonly string[]
+): string {
+	const parts: string[] = [];
+	if (rowidAlias) parts.push(quoteSqliteIdentifier(rowidAlias));
+	parts.push(
+		columns.length > 0 ? columns.map((column) => columnExpressions(column.name)).join(', ') : '1'
+	);
+	for (const key of keyColumns) parts.push(quoteSqliteIdentifier(key));
+	return parts.join(', ');
+}
+
+/** One raw row read with `sqliteRowSelectList()`, as wire values. */
+export interface SqliteSelectedRow {
+	cells: SqliteCellValue[];
+	/** The rowid as decimal text, when the list selected one. */
+	rowid: string | null;
+	/** The key values whole, when the list selected key columns. */
+	key: SqliteKeyValue[] | null;
+}
+
+/** Split one raw row read with `sqliteRowSelectList()` (raw, safe integers). */
+export function sqliteSelectedRow(
+	raw: readonly unknown[],
+	columnCount: number,
+	rowidAlias: string | null,
+	keyColumns: readonly string[]
+): SqliteSelectedRow {
+	const first = rowidAlias ? 1 : 0;
+	const cells: SqliteCellValue[] = [];
+	for (let index = 0; index < columnCount; index++) {
+		cells.push(sqliteCellFromHead(raw[first + index * 2], raw[first + index * 2 + 1]));
+	}
+	// With no columns the list selects a lone `1` in their place.
+	const keyStart = first + Math.max(columnCount * 2, 1);
+	return {
+		cells,
+		rowid: rowidAlias ? String(raw[0]) : null,
+		key:
+			keyColumns.length > 0
+				? keyColumns.map((_, index) => sqliteKeyValue(raw[keyStart + index]))
+				: null,
+	};
+}
+
+/**
  * Read one window of a table's or view's rows. Throws when no table or view
  * has the name, when the sort names a column the object does not have, or
  * when SQLite cannot read the object (a view over a dropped table, a virtual
@@ -209,10 +271,14 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 	// (saving a BLOB, later an edit). Bare, with no `AS`, like the cells.
 	const rowidAlias = reachableRowidAlias(object, columns);
 	const editability = resolveSqliteEditability(db, object);
+	// A table edited by its primary key gets each row's key whole: a key cell
+	// may be cut, and an edit must name its row exactly.
+	const keyColumns =
+		editability.editable && editability.identity.kind === 'primary-key'
+			? sqliteRowKeyColumns(editability.identity)
+			: [];
 
-	const cellList =
-		columns.length > 0 ? columns.map((column) => columnExpressions(column.name)).join(', ') : '1';
-	const selectList = rowidAlias ? `${quoteSqliteIdentifier(rowidAlias)}, ${cellList}` : cellList;
+	const selectList = sqliteRowSelectList(columns, rowidAlias, keyColumns);
 	if (filter.problem) {
 		// Text that does not parse reads nothing: the caller keeps what it shows
 		// and underlines the span.
@@ -228,6 +294,7 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 			filtered: false,
 			filterProblem: filter.problem,
 			editability,
+			rowKeys: keyColumns.length > 0 ? [] : null,
 		};
 	}
 	const where = filter.compiled;
@@ -247,14 +314,12 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 		.all(...(where?.params ?? []), limit + 1, offset) as unknown[][];
 	const elapsedMs = Math.round(performance.now() - started);
 
-	const first = rowidAlias ? 1 : 0;
-	const kept = raw.slice(0, limit);
-	const rows = kept.map((row) =>
-		columns.map((_, index) =>
-			sqliteCellFromHead(row[first + index * 2], row[first + index * 2 + 1])
-		)
-	);
-	const rowids = rowidAlias ? kept.map((row) => String(row[0])) : null;
+	const kept = raw
+		.slice(0, limit)
+		.map((row) => sqliteSelectedRow(row, columns.length, rowidAlias, keyColumns));
+	const rows = kept.map((row) => row.cells);
+	const rowids = rowidAlias ? kept.map((row) => row.rowid ?? '') : null;
+	const rowKeys = keyColumns.length > 0 ? kept.map((row) => row.key ?? []) : null;
 
 	return {
 		name: object.name,
@@ -267,5 +332,6 @@ export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
 		elapsedMs,
 		filtered: where !== null,
 		editability,
+		rowKeys,
 	};
 }

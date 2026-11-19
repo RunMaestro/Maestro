@@ -13,7 +13,9 @@
  * `maestro-cli sqlite query`: one read-only statement's window, over
  * `sqlite_run_query`, and with `--output` its whole result written to a file
  * by the app, over `sqlite_export_query`. And `maestro-cli sqlite history`:
- * the statements run against a database, over `sqlite_query_history`.
+ * the statements run against a database, over `sqlite_query_history`. And
+ * `maestro-cli sqlite set`: one cell changed by the app, unlocked for that one
+ * call, over `sqlite_update_cell`.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -32,7 +34,10 @@ import {
 	sqliteQuery,
 	sqliteQueryParamsFromFlags,
 	sqliteRows,
+	sqliteCellValueFromFlags,
+	sqliteRowKeyFromFlags,
 	sqliteSchema,
+	sqliteSet,
 	sqliteTables,
 } from '../../../cli/commands/sqlite';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
@@ -1302,5 +1307,175 @@ describe('sqlite history', () => {
 		mockReply({ type: 'sqlite_history_result', success: false, error: 'No history entry zz' });
 		await expect(sqliteHistory(DB, { forget: 'zz' })).rejects.toThrow('__exit__');
 		expect(errorSpy.mock.calls.join('\n')).toContain('No history entry zz');
+	});
+});
+
+describe('sqliteRowKeyFromFlags', () => {
+	it('names a row by rowid', () => {
+		expect(sqliteRowKeyFromFlags({ rowid: '-12' })).toEqual({ kind: 'rowid', rowid: '-12' });
+	});
+
+	it('names a row by its primary key, TEXT or numbers per flag', () => {
+		expect(
+			sqliteRowKeyFromFlags({
+				key: ['name=o=brien', 'note='],
+				keyNumber: ['org=3', 'score=1.5', 'big=9007199254740993'],
+			})
+		).toEqual({
+			kind: 'primary-key',
+			values: {
+				name: { type: 'text', text: 'o=brien' },
+				note: { type: 'text', text: '' },
+				org: { type: 'integer', text: '3' },
+				score: { type: 'real', text: '1.5' },
+				big: { type: 'integer', text: '9007199254740993' },
+			},
+		});
+	});
+
+	it.each([
+		[{}, 'Name the row with --rowid <id>, or with --key column=value'],
+		[{ rowid: '1', key: ['a=1'] }, 'Name the row with --rowid <id>, or with --key column=value'],
+		[{ rowid: '1 OR 1=1' }, '--rowid must be a whole number'],
+		[{ key: ['=1'] }, '--key takes column=value'],
+		[{ key: ['a'] }, '--key takes column=value'],
+		[{ key: ['a=1'], keyNumber: ['a=1'] }, 'Key column a is given more than once'],
+		[{ keyNumber: ['a=one'] }, '--key-number a: "one" is not a number'],
+	])('refuses %o', (options, message) => {
+		expect(() => sqliteRowKeyFromFlags(options)).toThrow(message);
+	});
+});
+
+describe('sqliteCellValueFromFlags', () => {
+	it('takes exactly one value flag', () => {
+		expect(sqliteCellValueFromFlags({ value: '' })).toEqual({ type: 'text', text: '' });
+		expect(sqliteCellValueFromFlags({ valueNumber: '42' })).toEqual({ type: 'number', text: '42' });
+		expect(sqliteCellValueFromFlags({ null: true })).toEqual({ type: 'null', text: '' });
+		expect(() => sqliteCellValueFromFlags({})).toThrow(
+			'Give the new value with exactly one of --value, --value-number, or --null'
+		);
+		expect(() => sqliteCellValueFromFlags({ value: 'a', null: true })).toThrow('exactly one');
+	});
+});
+
+describe('sqlite set', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const logged = () => logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+
+	function respondSet(
+		result: Record<string, unknown> = {},
+		overrides: Record<string, unknown> = {}
+	) {
+		return mockReply({
+			type: 'sqlite_update_result',
+			success: true,
+			database: { handle: 'h1', displayPath: DB, fileBytes: 4096 },
+			result: {
+				name: 'users',
+				column: 'email',
+				columns: [
+					{ name: 'id', declaredType: 'INTEGER' },
+					{ name: 'email', declaredType: 'TEXT' },
+				],
+				row: [7, 'a@b.c'],
+				key: { kind: 'rowid', rowid: '7' },
+				elapsedMs: 2,
+				...result,
+			},
+			...overrides,
+		});
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('sends the row, the value, and the per-call unlock, and says what changed', async () => {
+		const sent = respondSet();
+		await sqliteSet(DB, 'users', 'email', { rowid: '7', value: 'a@b.c', enableEditing: true });
+		expect(sent[0]).toEqual({
+			type: 'sqlite_update_cell',
+			path: DB,
+			name: 'users',
+			column: 'email',
+			row: { kind: 'rowid', rowid: '7' },
+			value: { type: 'text', text: 'a@b.c' },
+			enableEditing: true,
+			responseType: 'sqlite_update_result',
+		});
+		expect(logged()).toBe('Set email of users (rowid 7) to a@b.c.');
+	});
+
+	it('says where the backup went on the first change, and names a key row by its key', async () => {
+		respondSet({
+			key: {
+				kind: 'primary-key',
+				values: { org: { type: 'integer', text: '3' }, name: { type: 'text', text: 'ada' } },
+			},
+			backup: { path: '/data/app.maestro-backup-x.db', bytes: 2048, createdAt: 1 },
+		});
+		await sqliteSet(DB, 'users', 'email', {
+			key: ['name=ada'],
+			keyNumber: ['org=3'],
+			value: 'a@b.c',
+			enableEditing: true,
+		});
+		expect(logged()).toBe(
+			[
+				'Set email of users (org = 3, name = ada) to a@b.c.',
+				`Backed up ${DB} before this first change: /data/app.maestro-backup-x.db (2.0 KB).`,
+			].join('\n')
+		);
+	});
+
+	it('prints the row and its key as JSON under --json', async () => {
+		respondSet();
+		await sqliteSet(DB, 'users', 'email', {
+			rowid: '7',
+			null: true,
+			enableEditing: true,
+			json: true,
+		});
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+			success: true,
+			path: DB,
+			name: 'users',
+			column: 'email',
+			columns: ['id', 'email'],
+			row: [7, 'a@b.c'],
+			key: { kind: 'rowid', rowid: '7' },
+			backup: null,
+			elapsedMs: 2,
+		});
+	});
+
+	it.each([
+		[{ rowid: '7', value: 'x' }, 'Pass --enable-editing to unlock editing for this one call'],
+		[{ value: 'x', enableEditing: true }, 'Name the row with --rowid <id>'],
+		[{ rowid: '7', enableEditing: true }, 'exactly one of --value, --value-number, or --null'],
+	])('refuses %o before asking the app', async (options, message) => {
+		const sent = respondSet();
+		await expect(sqliteSet(DB, 'users', 'email', options)).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain(message);
+		expect(sent).toEqual([]);
+	});
+
+	it("exits 1 with SQLite's refusal", async () => {
+		mockReply({
+			type: 'sqlite_update_result',
+			success: false,
+			error: 'NOT NULL constraint failed: users.email',
+		});
+		await expect(
+			sqliteSet(DB, 'users', 'email', { rowid: '7', null: true, enableEditing: true })
+		).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('NOT NULL constraint failed: users.email');
+		expect(process.exit).toHaveBeenCalledWith(1);
 	});
 });

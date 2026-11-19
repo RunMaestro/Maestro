@@ -13,6 +13,11 @@
  * removes - so column widths are explicit state here, seeded from each
  * column's `initialWidth` and adjustable by dragging a header edge.
  *
+ * Editing is the caller's too: with `onEditCell`, a double-click on a cell
+ * asks to edit that cell (the row-number gutter still opens the row), and the
+ * cell named by `editingCell` draws `renderCellEditor` in place of its text.
+ * The grid holds no draft and writes nothing.
+ *
  * Sorting is the caller's: a header click reports the next sort (ascending,
  * then descending, then none) through `onSortChange`, and the caller asks its
  * engine for rows in that order. Sorting the loaded page locally would only
@@ -100,6 +105,12 @@ export interface DataGridCell {
 	title?: string;
 }
 
+/** A cell by its loaded row position and its column position. */
+export interface DataGridCellPosition {
+	row: number;
+	column: number;
+}
+
 /** The sort a header click moves to: ascending, then descending, then none. */
 export function nextDataGridSort(
 	current: DataGridSort | null,
@@ -124,6 +135,15 @@ interface DataGridProps {
 	onSortChange: (sort: DataGridSort | null) => void;
 	/** Open the record view for a loaded row. Rows are inert without it. */
 	onOpenRow?: (rowPosition: number) => void;
+	/**
+	 * Edit one cell. When set, a double-click on a cell calls this instead of
+	 * `onOpenRow`; a double-click on the row-number gutter still opens the row.
+	 */
+	onEditCell?: (rowPosition: number, columnPosition: number) => void;
+	/** The cell an editor is open on, if any. */
+	editingCell?: DataGridCellPosition | null;
+	/** Drawn in place of `editingCell`'s text. */
+	renderCellEditor?: (rowPosition: number, columnPosition: number) => ReactNode;
 	/** Extra control in a header, shown on hover (the Parquet filter shortcut). */
 	renderHeaderAction?: (column: DataGridColumn) => ReactNode;
 	/** Called when the viewport nears the end of the loaded rows. */
@@ -134,7 +154,7 @@ interface DataGridProps {
 	emptyMessage?: string;
 	/**
 	 * Prefix for test ids: `${prefix}-grid`, `${prefix}-header-${key}`,
-	 * `${prefix}-row-${position}`.
+	 * `${prefix}-row-${position}`, `${prefix}-cell-editing`.
 	 */
 	testIdPrefix: string;
 }
@@ -149,6 +169,9 @@ export function DataGrid({
 	sort,
 	onSortChange,
 	onOpenRow,
+	onEditCell,
+	editingCell = null,
+	renderCellEditor,
 	renderHeaderAction,
 	onReachEnd,
 	loadingMore,
@@ -387,11 +410,36 @@ export function DataGrid({
 								{getRowLabel(virtualRow.index)}
 							</div>
 							{columns.map((column, columnIndex) => {
+								const editing =
+									renderCellEditor !== undefined &&
+									editingCell?.row === virtualRow.index &&
+									editingCell.column === columnIndex;
+								if (editing) {
+									return (
+										<div
+											key={column.key}
+											className="shrink-0 flex items-stretch"
+											style={{ width: widthOf(column) }}
+											data-testid={`${testIdPrefix}-cell-editing`}
+										>
+											{renderCellEditor(virtualRow.index, columnIndex)}
+										</div>
+									);
+								}
 								const cell = getCell(virtualRow.index, columnIndex);
 								return (
 									<div
 										key={column.key}
 										className="shrink-0 flex items-center px-2 text-xs truncate"
+										onDoubleClick={
+											onEditCell
+												? (event) => {
+														// The cell's own gesture: not the row's "open".
+														event.stopPropagation();
+														onEditCell(virtualRow.index, columnIndex);
+													}
+												: undefined
+										}
 										style={{
 											width: widthOf(column),
 											justifyContent: column.align === 'right' ? 'flex-end' : 'flex-start',

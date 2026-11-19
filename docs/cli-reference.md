@@ -3455,6 +3455,21 @@ List the statements run against a database, newest first, as the viewer's Query 
 | `--clear`       | Forget the database's whole query history                        | -       |
 | `--json`        | Output as JSON (for scripting)                                   | -       |
 
+## `maestro-cli sqlite set <path> <table> <column>`
+
+Change one cell the way the viewer's table view does: one parameterised UPDATE of the row named by its rowid or primary key. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first
+
+| Option                        | Description                                                                                                      | Default |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------- |
+| `--rowid <id>`                | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                                  | -       |
+| `--key <column=value>`        | The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid) | `[]`    |
+| `--key-number <column=value>` | A primary-key value given as a number (repeatable)                                                               | `[]`    |
+| `--value <text>`              | The new value, bound as TEXT (the column affinity converts it)                                                   | -       |
+| `--value-number <n>`          | The new value, bound as a number                                                                                 | -       |
+| `--null`                      | Set the cell to NULL                                                                                             | -       |
+| `--enable-editing`            | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it                     | -       |
+| `--json`                      | Output as JSON (for scripting)                                                                                   | -       |
+
 ## `maestro-cli quick-chat`
 
 Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey

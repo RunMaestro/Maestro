@@ -47,6 +47,7 @@ const history = vi.hoisted(() => ({
 	readSqliteQueryHistory: vi.fn(),
 	forgetSqliteQueryHistory: vi.fn(),
 }));
+const rowEdit = vi.hoisted(() => ({ updateSqliteCell: vi.fn() }));
 
 vi.mock('../../../../main/sqlite/sqlite-objects', () => objects);
 vi.mock('../../../../main/sqlite/sqlite-schema', () => schema);
@@ -58,6 +59,7 @@ vi.mock('../../../../main/sqlite/sqlite-integrity', () => integrity);
 vi.mock('../../../../main/sqlite/sqlite-query', () => query);
 vi.mock('../../../../main/sqlite/sqlite-query-history', () => history);
 vi.mock('../../../../main/sqlite/sqlite-editing', () => editing);
+vi.mock('../../../../main/sqlite/sqlite-row-edit', () => rowEdit);
 
 import { registerSqliteHandlers } from '../../../../main/ipc/handlers/sqlite';
 import { splitSqliteErrorOffset } from '../../../../shared/sqlite/queryError';
@@ -91,6 +93,7 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:readSummary',
 			'sqlite:runQuery',
 			'sqlite:saveBlob',
+			'sqlite:updateCell',
 		]);
 	});
 
@@ -268,6 +271,33 @@ describe('SQLite IPC handlers', () => {
 		editing.disableSqliteEditing.mockReturnValue(true);
 		await expect(invoke('sqlite:disableEditing', 'h1', 't1')).resolves.toBe(true);
 		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 't1');
+	});
+
+	it('forwards a cell edit, token and all, to the one UPDATE path', async () => {
+		const request = {
+			handle: 'h1',
+			editToken: 't1',
+			name: 'users',
+			column: 'email',
+			row: { kind: 'rowid', rowid: '7' },
+			value: { type: 'text', text: 'a@b.c' },
+		};
+		const result = {
+			name: 'users',
+			column: 'email',
+			columns: [],
+			row: [7, 'a@b.c'],
+			key: { kind: 'rowid', rowid: '7' },
+			elapsedMs: 1,
+		};
+		rowEdit.updateSqliteCell.mockResolvedValue(result);
+		await expect(invoke('sqlite:updateCell', request)).resolves.toEqual(result);
+		expect(rowEdit.updateSqliteCell).toHaveBeenCalledWith(request);
+
+		rowEdit.updateSqliteCell.mockRejectedValue(new Error('UNIQUE constraint failed: users.email'));
+		await expect(invoke('sqlite:updateCell', request)).rejects.toThrow(
+			'UNIQUE constraint failed: users.email'
+		);
 	});
 
 	it('closes by handle', async () => {

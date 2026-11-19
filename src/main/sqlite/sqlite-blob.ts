@@ -31,11 +31,8 @@ import * as path from 'path';
 import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
 import type { SqliteBlobRequest, SqliteBlobSaved } from '../../shared/sqlite/types';
 import { getSqliteDatabase } from './sqlite-database';
-import { reachableRowidAlias } from './sqlite-identity';
+import { SQLITE_ROWID_TEXT, reachableRowidAlias } from './sqlite-identity';
 import { resolveSqliteRowSource, sqliteRowOrder, windowBound } from './sqlite-rows';
-
-/** A rowid as the wire carries it: decimal text, signed, up to 64 bits. */
-const ROWID_TEXT = /^-?\d{1,19}$/;
 
 /** One BLOB, read whole, and the row it came from. */
 export interface SqliteBlobValue {
@@ -71,7 +68,7 @@ export function readSqliteBlob(request: Omit<SqliteBlobRequest, 'destPath'>): Sq
 	if (hasRowid) {
 		const rowid = String(request.rowid);
 		if (!alias) throw new Error(`${object.name} has no rowid; name the row by its position.`);
-		if (!ROWID_TEXT.test(rowid)) throw new Error(`Not a rowid: ${rowid}`);
+		if (!SQLITE_ROWID_TEXT.test(rowid)) throw new Error(`Not a rowid: ${rowid}`);
 		rowLabel = `rowid ${rowid}`;
 		row = db
 			.prepare(`SELECT ${selectList} FROM ${source} WHERE ${quoteSqliteIdentifier(alias)} = ?`)

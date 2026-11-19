@@ -8,13 +8,15 @@
  * read a window of a table's rows, count its rows, run a read-only statement
  * (and stop it), export a statement's result to a file, read and forget the
  * file's query history, save a BLOB to a file, turn this tab's editing on
- * and off, close the handle.
+ * and off, change one cell, close the handle.
  */
 
 import { ipcRenderer } from 'electron';
 import type {
 	SqliteBlobRequest,
 	SqliteBlobSaved,
+	SqliteCellUpdateRequest,
+	SqliteCellUpdateResult,
 	SqliteColumnCatalog,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
@@ -155,6 +157,15 @@ export function createSqliteApi() {
 		/** Turn this tab's editing off again. Resolves whether a live grant was revoked. */
 		disableEditing: (handle: string, editToken: string): Promise<boolean> =>
 			ipcRenderer.invoke('sqlite:disableEditing', handle, editToken),
+
+		/**
+		 * Change one cell: a single-row UPDATE keyed on the row's rowid or
+		 * primary key. Needs this tab's editing token; resolves the row as
+		 * stored after the change and its key (new when a key column changed).
+		 * Rejects with SQLite's message when it refuses the value.
+		 */
+		updateCell: (request: SqliteCellUpdateRequest): Promise<SqliteCellUpdateResult> =>
+			ipcRenderer.invoke('sqlite:updateCell', request),
 
 		/** Release the read-only connection. */
 		close: (handle: string): Promise<void> => ipcRenderer.invoke('sqlite:close', handle),

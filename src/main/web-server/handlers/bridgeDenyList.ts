@@ -80,7 +80,7 @@ const METHODS: Record<string, string> = {
 	shells: 'detect',
 	speckit: 'getCommand getMetadata getPrompts refresh resetPrompt savePrompt',
 	sqlite:
-		'cancelQuery checkIntegrity close countRows disableEditing enableEditing listObjects open readColumns readObjectStats readRows readSchema readSummary runQuery saveBlob',
+		'cancelQuery checkIntegrity close countRows disableEditing enableEditing listObjects open readColumns readObjectStats readRows readSchema readSummary runQuery saveBlob updateCell',
 	'ssh-remote':
 		'deleteConfig getConfigs getDefaultId getSshConfigHosts saveConfig setDefaultId test',
 	stats:

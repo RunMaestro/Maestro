@@ -108,6 +108,20 @@ describe('SQLite Preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('sqlite:disableEditing', 'h1', 't1');
 	});
 
+	it('changes one cell', async () => {
+		const request = {
+			handle: 'h1',
+			editToken: 't1',
+			name: 'users',
+			column: 'age',
+			row: { kind: 'rowid' as const, rowid: '3' },
+			value: { type: 'number' as const, text: '42' },
+		};
+		mockInvoke.mockResolvedValue({ name: 'users', column: 'age', row: [3, 42] });
+		await api.updateCell(request);
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:updateCell', request);
+	});
+
 	it('runs a query and stops one by id', async () => {
 		const request = { handle: 'h1', sql: 'SELECT 1', queryId: 'q1' };
 		mockInvoke.mockResolvedValue({ statement: 'SELECT', rows: [] });

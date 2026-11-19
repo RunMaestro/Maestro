@@ -43,6 +43,18 @@
  * While the tab has editing enabled, the footer says how an edit would name a
  * row (rowid, else the primary key) or why this object is read-only, from the
  * `editability` each page carries (src/main/sqlite/sqlite-identity.ts).
+ *
+ * With editing enabled on an editable table, a double-click on a cell opens an
+ * editor over it (SqliteCellEditor) and a double-click on the row number opens
+ * the record view. Saving sends the tab's edit token, the row's key from its
+ * page (`rowids`, or `rowKeys` read whole for a primary key), and the new
+ * value to `sqlite:updateCell`, one single-row UPDATE in main
+ * (src/main/sqlite/sqlite-row-edit.ts). The saved row replaces its line in
+ * place, with its new key when the edit changed one; the order and filter are
+ * not re-applied until the next read. A cell main would refuse anyway (a
+ * BLOB, a cut TEXT value, a generated column, a key holding NULL) says why in
+ * the footer instead of opening, and so does a refused save, with SQLite's
+ * own words. The first save of a session announces where the file's backup went.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -59,6 +71,7 @@ import type {
 	SqliteCountCursor,
 	SqliteEditability,
 	SqliteFilterProblem,
+	SqliteKeyValue,
 	SqliteObjectSummary,
 	SqliteResultColumn,
 	SqliteRowsPage,
@@ -68,7 +81,7 @@ import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { notifyToast } from '../../stores/notificationStore';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
-import { DataGrid } from '../ui/DataGrid';
+import { DataGrid, type DataGridCellPosition } from '../ui/DataGrid';
 import {
 	FilterExpressionBar,
 	type FilterExpressionBarHandle,
@@ -76,6 +89,13 @@ import {
 } from '../ui/FilterExpressionBar';
 import { RecordDetailModal, type RecordDetailField } from '../ui/RecordDetailModal';
 import { Spinner } from '../ui/Spinner';
+import { SqliteCellEditor } from './SqliteCellEditor';
+import {
+	sqliteCellEditRefusal,
+	sqliteCellEditText,
+	sqliteCellEditValue,
+	sqliteRowKeyAt,
+} from './sqliteCellEdit';
 import { sqliteGridCell, sqliteGridColumn } from './sqliteGrid';
 
 /** Rows asked for per window. Large enough to fill a tall pane in one call. */
@@ -152,8 +172,11 @@ interface SqliteTableViewProps {
 	onFilterFocused: () => void;
 	/** The unfiltered count settled: the rail can replace its capped count. */
 	onRowCountSettled?: (name: string, rowCount: number) => void;
-	/** This tab holds the editing unlock: say whether this object's rows can be edited. */
-	editingEnabled?: boolean;
+	/**
+	 * The tab's edit token while it holds the editing unlock: the footer says
+	 * whether this object's rows can be edited, and its cells can be.
+	 */
+	editToken?: string | null;
 	theme: Theme;
 }
 
@@ -165,9 +188,10 @@ export function SqliteTableView({
 	focusFilterRequested,
 	onFilterFocused,
 	onRowCountSettled,
-	editingEnabled = false,
+	editToken = null,
 	theme,
 }: SqliteTableViewProps) {
+	const editingEnabled = editToken !== null;
 	const [sort, setSort] = useState<SqliteSortSpec | null>(null);
 	const appliedFilter = useDebouncedValue(filter.trim(), FILTER_DEBOUNCE_MS);
 	const [filterProblem, setFilterProblem] = useState<SqliteFilterProblem | undefined>(undefined);
@@ -183,6 +207,15 @@ export function SqliteTableView({
 	const [rowsSort, setRowsSort] = useState<SqliteSortSpec | null>(null);
 	/** Each loaded row's rowid, parallel to `rows`; null when the object has none. */
 	const [rowids, setRowids] = useState<string[] | null>(null);
+	/** Each loaded row's primary key, whole, parallel to `rows`; null unless edits key on it. */
+	const [rowKeys, setRowKeys] = useState<SqliteKeyValue[][] | null>(null);
+	/** The cell an editor is open on, and its draft. */
+	const [editingCell, setEditingCell] = useState<DataGridCellPosition | null>(null);
+	const [editDraft, setEditDraft] = useState('');
+	/** A cell save is in flight. */
+	const [savingCell, setSavingCell] = useState(false);
+	/** The last edit's outcome or refusal, for the footer. */
+	const [editStatus, setEditStatus] = useState<{ text: string; error: boolean } | null>(null);
 	/** A BLOB save is in flight; its button waits. */
 	const [savingBlob, setSavingBlob] = useState(false);
 	const [count, setCount] = useState<CountProgress | null>(null);
@@ -233,9 +266,13 @@ export function SqliteTableView({
 					setColumns(page.columns);
 					setRows(page.rows);
 					setRowids(page.rowids);
+					setRowKeys(page.rowKeys);
 				} else {
 					setRows((previous) => [...previous, ...page.rows]);
 					setRowids((previous) => (previous && page.rowids ? [...previous, ...page.rowids] : null));
+					setRowKeys((previous) =>
+						previous && page.rowKeys ? [...previous, ...page.rowKeys] : null
+					);
 				}
 			} catch (failure) {
 				if (token === generation.current) setError(errorText(failure));
@@ -257,8 +294,18 @@ export function SqliteTableView({
 		generation.current++;
 		setError(null);
 		setDetailRow(null);
+		// A position now holds a different row: an open editor would write to it.
+		setEditingCell(null);
+		setEditStatus(null);
 		void fetchWindow(0);
 	}, [fetchWindow]);
+
+	// Locking the tab ends any edit in progress; a save in flight is refused in main.
+	useEffect(() => {
+		if (editToken !== null) return;
+		setEditingCell(null);
+		setEditStatus(null);
+	}, [editToken]);
 
 	const handleReachEnd = useCallback(() => {
 		if (!lastPage?.hasMore || inFlight.current !== null || error || filterProblem) return;
@@ -365,6 +412,116 @@ export function SqliteTableView({
 	);
 
 	const getRowLabel = useCallback((rowPosition: number) => formatCount(rowPosition + 1), []);
+
+	// -- Cell edit ----------------------------------------------------------
+
+	const canEditCells = editingEnabled && editability?.editable === true;
+
+	const handleEditCell = useStableCallback((rowPosition: number, columnPosition: number) => {
+		if (savingCell) return;
+		const column = columns?.[columnPosition];
+		if (!column) return;
+		const value = rows[rowPosition]?.[columnPosition] ?? null;
+		const key = sqliteRowKeyAt(editability, rowids, rowKeys, rowPosition);
+		const refusal = sqliteCellEditRefusal(editability, column.name, value, key);
+		if (refusal) {
+			setEditingCell(null);
+			setEditStatus({ text: refusal, error: true });
+			return;
+		}
+		setEditStatus(null);
+		setEditDraft(sqliteCellEditText(value));
+		setEditingCell({ row: rowPosition, column: columnPosition });
+	});
+
+	const cancelEdit = useCallback(() => {
+		setEditingCell(null);
+		setEditStatus(null);
+	}, []);
+
+	const commitEdit = useStableCallback(async () => {
+		const cell = editingCell;
+		// A blur can follow the save that closed the editor.
+		if (!cell || savingCell || !editToken) return;
+		const column = columns?.[cell.column];
+		const original = rows[cell.row]?.[cell.column] ?? null;
+		const key = sqliteRowKeyAt(editability, rowids, rowKeys, cell.row);
+		if (!column || !key) return;
+		const value = sqliteCellEditValue(original, editDraft);
+		if (!value) {
+			// Nothing changed, so nothing is written.
+			setEditingCell(null);
+			return;
+		}
+		const token = generation.current;
+		setSavingCell(true);
+		try {
+			const result = await window.maestro.sqlite.updateCell({
+				handle,
+				editToken,
+				name,
+				column: column.name,
+				row: key,
+				value,
+			});
+			if (result.backup) {
+				notifyToast({
+					color: 'green',
+					title: 'Database backed up before the first change',
+					message: `${formatSize(result.backup.bytes)} copy saved to ${result.backup.path}`,
+				});
+			}
+			// A new sort or filter since the save started moved the rows; the
+			// next window shows the change.
+			if (token !== generation.current) return;
+			setRows((previous) =>
+				previous.map((row, position) => (position === cell.row ? result.row : row))
+			);
+			if (result.key.kind === 'rowid') {
+				const rowid = result.key.rowid;
+				setRowids((previous) =>
+					previous
+						? previous.map((entry, position) => (position === cell.row ? rowid : entry))
+						: null
+				);
+			} else if (editability?.editable && editability.identity.kind === 'primary-key') {
+				const values = result.key.values;
+				const keyRow = editability.identity.columns.map((keyColumn) => values[keyColumn] ?? null);
+				setRowKeys((previous) =>
+					previous
+						? previous.map((entry, position) => (position === cell.row ? keyRow : entry))
+						: null
+				);
+			}
+			setEditingCell(null);
+			setEditStatus({
+				text: `Saved ${column.name} in row ${formatCount(cell.row + 1)} (${result.elapsedMs} ms)`,
+				error: false,
+			});
+		} catch (failure) {
+			// The editor stays open with the draft, so the value can be fixed.
+			if (token === generation.current) {
+				setEditStatus({ text: ipcErrorMessage(failure), error: true });
+			}
+		} finally {
+			setSavingCell(false);
+		}
+	});
+
+	const renderCellEditor = useCallback(
+		(_rowPosition: number, columnPosition: number) => (
+			<SqliteCellEditor
+				column={columns?.[columnPosition]?.name ?? ''}
+				draft={editDraft}
+				onDraftChange={setEditDraft}
+				onCommit={() => void commitEdit()}
+				onCancel={cancelEdit}
+				saving={savingCell}
+				theme={theme}
+			/>
+		),
+		[columns, editDraft, commitEdit, cancelEdit, savingCell, theme]
+	);
 
 	// -- Record view --------------------------------------------------------
 
@@ -507,12 +664,19 @@ export function SqliteTableView({
 					rowCount={rows.length}
 					getCell={getCell}
 					getRowLabel={getRowLabel}
-					gutterTitle="Row number in the current order"
+					gutterTitle={
+						canEditCells
+							? 'Row number in the current order. Double-click it to open the row; double-click a cell to edit it.'
+							: 'Row number in the current order'
+					}
 					theme={theme}
 					sort={sort}
 					onSortChange={handleSortChange}
 					onReachEnd={handleReachEnd}
 					onOpenRow={setDetailRow}
+					onEditCell={canEditCells ? handleEditCell : undefined}
+					editingCell={canEditCells ? editingCell : null}
+					renderCellEditor={canEditCells ? renderCellEditor : undefined}
 					loadingMore={busy && rows.length > 0}
 					emptyMessage={`${name} has no columns.`}
 					testIdPrefix="sqlite"
@@ -568,6 +732,21 @@ export function SqliteTableView({
 					</span>
 				)}
 				{lastPage && <span>{lastPage.elapsedMs} ms</span>}
+				{savingCell && (
+					<span className="flex items-center gap-1" data-testid="sqlite-edit-saving">
+						<Spinner size={10} decorative />
+						saving
+					</span>
+				)}
+				{editingEnabled && editStatus && (
+					<span
+						className="select-text"
+						style={{ color: editStatus.error ? theme.colors.warning : theme.colors.textDim }}
+						data-testid="sqlite-edit-status"
+					>
+						{editStatus.text}
+					</span>
+				)}
 				{error && (
 					<span style={{ color: theme.colors.warning }} data-testid="sqlite-rows-error">
 						{error}

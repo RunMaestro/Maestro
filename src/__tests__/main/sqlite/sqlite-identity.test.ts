@@ -60,8 +60,11 @@ import type Database from 'better-sqlite3';
 import {
 	reachableRowidAlias,
 	resolveSqliteEditability,
+	sqliteKeyBindValue,
+	sqliteRowKeyColumns,
+	sqliteRowKeyCondition,
 } from '../../../main/sqlite/sqlite-identity';
-import type { SqliteObjectSummary } from '../../../shared/sqlite/types';
+import type { SqliteObjectSummary, SqliteRowIdentity } from '../../../shared/sqlite/types';
 
 function table(name: string, extra: Partial<SqliteObjectSummary> = {}): SqliteObjectSummary {
 	return {
@@ -254,5 +257,125 @@ describe('resolveSqliteEditability', () => {
 		state.tables['a"b'] = { xinfo: [{ name: 'x' }] };
 		resolve(table('a"b'));
 		expect(state.prepared.some((sql) => sql.includes('a"b'))).toBe(false);
+	});
+});
+
+describe('sqliteKeyBindValue', () => {
+	it('binds each stored type so it compares equal to exactly that value', () => {
+		expect(sqliteKeyBindValue(null, 'k')).toBeNull();
+		expect(sqliteKeyBindValue({ type: 'integer', text: '9223372036854775807' }, 'k')).toBe(
+			9223372036854775807n
+		);
+		expect(sqliteKeyBindValue({ type: 'real', text: '0.1' }, 'k')).toBe(0.1);
+		expect(sqliteKeyBindValue({ type: 'real', text: '-Infinity' }, 'k')).toBe(-Infinity);
+		expect(sqliteKeyBindValue({ type: 'text', text: '' }, 'k')).toBe('');
+		expect(sqliteKeyBindValue({ type: 'blob', text: '00ff' }, 'k')).toEqual(Buffer.from([0, 255]));
+	});
+
+	it('refuses a malformed value rather than binding something else', () => {
+		const malformed = 'The key value given for k is not a stored value.';
+		expect(() => sqliteKeyBindValue({ type: 'integer', text: '1.5' }, 'k')).toThrow(malformed);
+		expect(() => sqliteKeyBindValue({ type: 'real', text: 'abc' }, 'k')).toThrow(malformed);
+		expect(() => sqliteKeyBindValue({ type: 'real', text: ' ' }, 'k')).toThrow(malformed);
+		expect(() => sqliteKeyBindValue({ type: 'blob', text: 'abc' }, 'k')).toThrow(malformed);
+		expect(() => sqliteKeyBindValue({ type: 'date', text: 'x' } as never, 'k')).toThrow(malformed);
+		expect(() => sqliteKeyBindValue(undefined, 'k')).toThrow(malformed);
+	});
+});
+
+describe('sqliteRowKeyCondition', () => {
+	const byRowid: SqliteRowIdentity = { kind: 'rowid', alias: '_rowid_', rowidColumn: null };
+	const byKey: SqliteRowIdentity = {
+		kind: 'primary-key',
+		columns: ['org', 'my "id"'],
+		keyMayBeNull: false,
+	};
+
+	it('names the columns a statement reads the key by', () => {
+		expect(sqliteRowKeyColumns(byRowid)).toEqual(['_rowid_']);
+		expect(sqliteRowKeyColumns(byKey)).toEqual(['org', 'my "id"']);
+	});
+
+	it('names a row by its rowid alias, bound as a 64-bit integer', () => {
+		expect(
+			sqliteRowKeyCondition(byRowid, { kind: 'rowid', rowid: '-9223372036854775808' }, 't')
+		).toEqual({
+			where: '"_rowid_" = ?',
+			params: [-9223372036854775808n],
+			label: 'rowid -9223372036854775808',
+		});
+		expect(() => sqliteRowKeyCondition(byRowid, { kind: 'rowid', rowid: '1 OR 1=1' }, 't')).toThrow(
+			'Not a rowid: 1 OR 1=1'
+		);
+		expect(() =>
+			sqliteRowKeyCondition(byRowid, { kind: 'primary-key', values: {} }, 'users')
+		).toThrow("users names its rows by rowid; give the row's rowid.");
+	});
+
+	it('names a row by every key column, in key order, names quoted and values bound', () => {
+		const condition = sqliteRowKeyCondition(
+			byKey,
+			{
+				kind: 'primary-key',
+				values: {
+					'my "id"': { type: 'text', text: "o'brien" },
+					org: { type: 'integer', text: '7' },
+				},
+			},
+			'members'
+		);
+		expect(condition).toEqual({
+			where: '"org" = ? AND "my ""id""" = ?',
+			params: [7n, "o'brien"],
+			label: `primary key (org = 7, my "id" = 'o'brien')`,
+		});
+	});
+
+	it('refuses a key that leaves out a column, adds one, or is the wrong kind', () => {
+		expect(() =>
+			sqliteRowKeyCondition(
+				byKey,
+				{ kind: 'primary-key', values: { org: { type: 'integer', text: '1' } } },
+				'members'
+			)
+		).toThrow('The primary key of members is (org, my "id"): no value for my "id".');
+		expect(() =>
+			sqliteRowKeyCondition(
+				byKey,
+				{
+					kind: 'primary-key',
+					values: {
+						org: { type: 'integer', text: '1' },
+						'my "id"': { type: 'text', text: 'a' },
+						extra: null,
+					},
+				},
+				'members'
+			)
+		).toThrow('extra is not in it');
+		expect(() => sqliteRowKeyCondition(byKey, { kind: 'rowid', rowid: '1' }, 'members')).toThrow(
+			'members names its rows by its primary key (org, my "id")'
+		);
+		expect(() => sqliteRowKeyCondition(byKey, null, 'members')).toThrow('primary key');
+	});
+
+	it('refuses a key holding NULL, which can never name a row', () => {
+		expect(() =>
+			sqliteRowKeyCondition(
+				{ ...byKey, keyMayBeNull: true },
+				{ kind: 'primary-key', values: { org: null, 'my "id"': { type: 'text', text: 'a' } } },
+				'members'
+			)
+		).toThrow("This row's primary key holds NULL in org");
+	});
+
+	it('does not read a key from the object prototype', () => {
+		expect(() =>
+			sqliteRowKeyCondition(
+				{ kind: 'primary-key', columns: ['toString'], keyMayBeNull: false },
+				{ kind: 'primary-key', values: {} },
+				't'
+			)
+		).toThrow('no value for toString');
 	});
 });

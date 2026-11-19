@@ -43,7 +43,7 @@
  * grant (src/main/sqlite/sqlite-editing.ts), a token this tab alone holds and
  * every write must send back. The grant is never persisted: it is released
  * when the tab locks again, opens another file, or unmounts, so a reload
- * starts read-only.
+ * starts read-only. The table view gets the token, and with it the cell edit.
  */
 
 import {
@@ -554,7 +554,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 											focusFilterRequested={focusFilterRequested}
 											onFilterFocused={handleFilterFocused}
 											onRowCountSettled={handleRowCountSettled}
-											editingEnabled={editGrant !== null}
+											editToken={editGrant?.editToken ?? null}
 											theme={theme}
 										/>
 									</div>

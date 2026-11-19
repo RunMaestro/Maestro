@@ -167,6 +167,7 @@ import {
 	sqliteQuery,
 	sqliteRows,
 	sqliteSchema,
+	sqliteSet,
 	sqliteTables,
 } from './commands/sqlite';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
@@ -3984,6 +3985,34 @@ sqliteCmd
 	.option('--clear', "Forget the database's whole query history")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, options) => sqliteHistory(file, options));
+
+sqliteCmd
+	.command('set <path> <table> <column>')
+	.description(
+		"Change one cell the way the viewer's table view does: one parameterised UPDATE of the row named by its rowid or primary key. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first"
+	)
+	.option('--rowid <id>', "The row, by rowid (`sqlite rows --json` lists each row's rowid)")
+	.option(
+		'--key <column=value>',
+		'The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--key-number <column=value>',
+		'A primary-key value given as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option('--value <text>', 'The new value, bound as TEXT (the column affinity converts it)')
+	.option('--value-number <n>', 'The new value, bound as a number')
+	.option('--null', 'Set the cell to NULL')
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, table, column, options) => sqliteSet(file, table, column, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

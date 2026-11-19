@@ -143,3 +143,11 @@ export function formatSqliteEditability(editability: SqliteEditability): string 
 	}
 	return sentences.join(' ');
 }
+
+/**
+ * Why a CLI write is refused without its per-call unlock (`--enable-editing`),
+ * the CLI's counterpart of a tab's "Enable editing". Shared by the CLI and the
+ * app's WebSocket handler, which refuses the message too.
+ */
+export const SQLITE_CLI_UNLOCK_REQUIRED_MESSAGE =
+	'This changes the database. Pass --enable-editing to unlock editing for this one call.';

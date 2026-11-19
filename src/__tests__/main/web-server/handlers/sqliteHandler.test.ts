@@ -1,9 +1,9 @@
 // Covers the sqlite_read_summary, sqlite_list_objects, sqlite_read_schema,
 // sqlite_read_rows, sqlite_count_rows, sqlite_save_blob, sqlite_run_query,
-// sqlite_export_query, and sqlite_query_history
+// sqlite_export_query, sqlite_query_history, and sqlite_update_cell
 // WebSocket messages that back `maestro-cli sqlite info`, `sqlite tables`,
 // `sqlite schema`, `sqlite rows`, `sqlite count`, `sqlite blob`, `sqlite query`
-// (with and without `--output`), and `sqlite history`. It opens the database through the viewer's own open path,
+// (with and without `--output`), `sqlite history`, and `sqlite set`. It opens the database through the viewer's own open path,
 // answers with the rail's listing and measurements, never closes the shared
 // connection, and always echoes the request id so the CLI never hangs.
 
@@ -51,6 +51,13 @@ const histories = vi.hoisted(() => ({
 	forgetSqliteQueryHistory: vi.fn(),
 }));
 vi.mock('../../../../main/sqlite/sqlite-query-history', () => histories);
+const editing = vi.hoisted(() => ({
+	enableSqliteEditing: vi.fn(),
+	disableSqliteEditing: vi.fn(),
+}));
+vi.mock('../../../../main/sqlite/sqlite-editing', () => editing);
+const rowEdits = vi.hoisted(() => ({ updateSqliteCell: vi.fn() }));
+vi.mock('../../../../main/sqlite/sqlite-row-edit', () => rowEdits);
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
@@ -1030,5 +1037,113 @@ describe('sqlite_query_history handler', () => {
 		await flush();
 		expect(lastResponse(client)).toMatchObject({ requestId: 'h7', success: false });
 		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+	});
+});
+
+describe('sqlite_update_cell handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+	const message = {
+		type: 'sqlite_update_cell',
+		requestId: 'u1',
+		path: '/data/app.db',
+		name: 'users',
+		column: 'email',
+		row: { kind: 'rowid', rowid: '7' },
+		value: { type: 'text', text: 'a@b.c' },
+		enableEditing: true,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+		editing.enableSqliteEditing.mockResolvedValue({ handle: 'h1', editToken: 'cli-token' });
+	});
+
+	it('unlocks for this one call, writes through the shared edit, and locks again', async () => {
+		const result = {
+			name: 'users',
+			column: 'email',
+			columns: [{ name: 'email', declaredType: 'TEXT' }],
+			row: ['a@b.c'],
+			key: { kind: 'rowid', rowid: '7' },
+			backup: { path: '/data/app.maestro-backup-x.db', bytes: 4096, createdAt: 1 },
+			elapsedMs: 1,
+		};
+		rowEdits.updateSqliteCell.mockResolvedValue(result);
+
+		handler.handleMessage(client, message);
+		await flush();
+
+		expect(editing.enableSqliteEditing).toHaveBeenCalledWith('h1');
+		expect(rowEdits.updateSqliteCell).toHaveBeenCalledWith({
+			handle: 'h1',
+			editToken: 'cli-token',
+			name: 'users',
+			column: 'email',
+			row: { kind: 'rowid', rowid: '7' },
+			value: { type: 'text', text: 'a@b.c' },
+		});
+		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 'cli-token');
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_update_result',
+			requestId: 'u1',
+			success: true,
+			database: info,
+			result,
+		});
+		expect(database.closeSqliteDatabase).not.toHaveBeenCalled();
+	});
+
+	it("locks again when the edit fails, and answers with SQLite's words", async () => {
+		rowEdits.updateSqliteCell.mockRejectedValue(new Error('UNIQUE constraint failed: users.email'));
+		handler.handleMessage(client, message);
+		await flush();
+		expect(editing.disableSqliteEditing).toHaveBeenCalledWith('h1', 'cli-token');
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_update_result',
+			requestId: 'u1',
+			success: false,
+			error: 'UNIQUE constraint failed: users.email',
+		});
+	});
+
+	it('refuses without the per-call unlock, opening nothing', async () => {
+		handler.handleMessage(client, { ...message, enableEditing: undefined });
+		await flush();
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+		expect(editing.enableSqliteEditing).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toMatchObject({
+			success: false,
+			error:
+				'This changes the database. Pass --enable-editing to unlock editing for this one call.',
+		});
+	});
+
+	it('answers with the reason when the file cannot be unlocked', async () => {
+		editing.enableSqliteEditing.mockRejectedValue(
+			new Error('/data/app.db is on a read-only file system.')
+		);
+		handler.handleMessage(client, message);
+		await flush();
+		expect(rowEdits.updateSqliteCell).not.toHaveBeenCalled();
+		expect(editing.disableSqliteEditing).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toMatchObject({
+			success: false,
+			error: '/data/app.db is on a read-only file system.',
+		});
+	});
+
+	it('needs a path, a table, a column, a row, and a value', async () => {
+		handler.handleMessage(client, { ...message, row: undefined });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			requestId: 'u1',
+			success: false,
+			error: 'Missing required "path", "name", "column", "row", or "value" for sqlite_update_cell',
+		});
 	});
 });

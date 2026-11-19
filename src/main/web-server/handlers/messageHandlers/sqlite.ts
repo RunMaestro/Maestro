@@ -14,6 +14,12 @@
  *   - `sqlite_query_history`: Query mode's History rail, read, one entry
  *     forgotten (by id or a unique start of one), or cleared
  *     (`maestro-cli sqlite history`).
+ *   - `sqlite_update_cell`: the table view's cell edit, one single-row UPDATE
+ *     (`maestro-cli sqlite set`). The CLI has no tab and so no editing grant:
+ *     the message must say `enableEditing: true` (the verb's per-call unlock
+ *     flag), and the handler enables editing for this one call, writes
+ *     through `updateSqliteCell()` (same gate, same once-per-session backup),
+ *     and disables it again, whatever happened.
  *
  * The CLI cannot link better-sqlite3 (it is a plain-Node bundle with no native
  * modules), so it asks the running app. The answer comes from the SAME
@@ -27,7 +33,8 @@
  * Run (which records it in the same history the rail shows),
  * `exportSqliteQuery()` for its Export, and `readSqliteQueryHistory()` /
  * `forgetSqliteQueryHistory()` for its History rail, so the CLI prints what
- * the viewer shows.
+ * the viewer shows; `enableSqliteEditing()`, `updateSqliteCell()`, and
+ * `disableSqliteEditing()` make the cell edit.
  * The BLOB and an export are written by the app, to the absolute path the
  * CLI resolved, the way `profiling_stop` writes its bundle: their bytes
  * never ride the socket.
@@ -40,6 +47,7 @@
 import { saveSqliteBlob } from '../../../sqlite/sqlite-blob';
 import { countAllSqliteRows } from '../../../sqlite/sqlite-count';
 import { openSqliteDatabase } from '../../../sqlite/sqlite-database';
+import { disableSqliteEditing, enableSqliteEditing } from '../../../sqlite/sqlite-editing';
 import { checkSqliteIntegrity } from '../../../sqlite/sqlite-integrity';
 import { listSqliteObjects, readAllSqliteObjectStats } from '../../../sqlite/sqlite-objects';
 import { exportSqliteQuery, runSqliteQuery } from '../../../sqlite/sqlite-query';
@@ -47,16 +55,20 @@ import {
 	forgetSqliteQueryHistory,
 	readSqliteQueryHistory,
 } from '../../../sqlite/sqlite-query-history';
+import { updateSqliteCell } from '../../../sqlite/sqlite-row-edit';
 import { readSqliteRows } from '../../../sqlite/sqlite-rows';
 import { readSqliteObjectSchema } from '../../../sqlite/sqlite-schema';
 import { readSqliteDatabaseSummary } from '../../../sqlite/sqlite-summary';
 import type {
 	SqliteIntegrityMode,
 	SqliteObjectKind,
+	SqliteParameterValue,
 	SqliteParameterValues,
+	SqliteRowKey,
 	SqliteSortSpec,
 } from '../../../../shared/sqlite/types';
 import { SQLITE_OBJECT_KINDS } from '../../../../shared/sqlite/objects';
+import { SQLITE_CLI_UNLOCK_REQUIRED_MESSAGE } from '../../../../shared/sqlite/schema';
 import { isTabularExportFormat } from '../../../../shared/tabularExport';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -435,6 +447,52 @@ export async function handleSqliteQueryHistory(
 			history,
 			removed: before.entries.length - history.entries.length,
 		});
+	} catch (error) {
+		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
+	}
+}
+
+export async function handleSqliteUpdateCell(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (payload: Record<string, unknown>) => {
+		ctx.send(client, { type: 'sqlite_update_result', ...payload, requestId: message.requestId });
+	};
+
+	const filePath = typeof message.path === 'string' ? message.path : '';
+	const name = typeof message.name === 'string' ? message.name : '';
+	const column = typeof message.column === 'string' ? message.column : '';
+	if (!filePath || !name || !column || !message.row || !message.value) {
+		reply({
+			success: false,
+			error: 'Missing required "path", "name", "column", "row", or "value" for sqlite_update_cell',
+		});
+		return;
+	}
+	if (message.enableEditing !== true) {
+		reply({ success: false, error: SQLITE_CLI_UNLOCK_REQUIRED_MESSAGE });
+		return;
+	}
+
+	try {
+		const database = await openSqliteDatabase(filePath);
+		const grant = await enableSqliteEditing(database.handle);
+		try {
+			// Key and value shapes are checked by the edit, which refuses a bad one.
+			const result = await updateSqliteCell({
+				handle: database.handle,
+				editToken: grant.editToken,
+				name,
+				column,
+				row: message.row as SqliteRowKey,
+				value: message.value as SqliteParameterValue,
+			});
+			reply({ success: true, database, result });
+		} finally {
+			disableSqliteEditing(database.handle, grant.editToken);
+		}
 	} catch (error) {
 		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
 	}

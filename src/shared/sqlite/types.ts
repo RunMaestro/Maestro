@@ -388,6 +388,70 @@ export interface SqliteRowsPage {
 	filterProblem?: SqliteFilterProblem;
 	/** Whether the object's rows can be edited, and how an edit names a row. */
 	editability: SqliteEditability;
+	/**
+	 * Each row's primary key, read whole (never cut like a cell), in the key's
+	 * column order and parallel to `rows`. Set only when `editability` names
+	 * rows by their primary key; null otherwise (a rowid table uses `rowids`).
+	 */
+	rowKeys: SqliteKeyValue[][] | null;
+}
+
+/**
+ * One stored value, whole and typed, as a primary key carries it: an
+ * INTEGER as decimal text (it may pass 2^53), a REAL as the text that reads
+ * back as the same double, TEXT as itself, a BLOB as lowercase hex, and NULL
+ * as null. Unlike a cell, it is never cut, so a write can name its row by it.
+ */
+export type SqliteKeyValue = null | {
+	type: 'integer' | 'real' | 'text' | 'blob';
+	text: string;
+};
+
+/**
+ * How a write names the one row it changes: by rowid, or by the value of
+ * every primary-key column (keyed by column name). Which one a table takes is
+ * its `SqliteRowIdentity`, resolved again in main for every write.
+ */
+export type SqliteRowKey =
+	| { kind: 'rowid'; rowid: string }
+	| { kind: 'primary-key'; values: Record<string, SqliteKeyValue> };
+
+/**
+ * Change one cell (the table view's inline editor, `maestro-cli sqlite set`):
+ * a parameterised single-row `UPDATE` keyed on the row's identity. Refused
+ * unless `editToken` is the tab's live editing grant.
+ */
+export interface SqliteCellUpdateRequest {
+	handle: string;
+	/** The tab's grant from "Enable editing". */
+	editToken: string;
+	/** The table the row belongs to. */
+	name: string;
+	/** The column to change. */
+	column: string;
+	/** The row, by the identity its table takes. */
+	row: SqliteRowKey;
+	/** The new value, bound by the driver: as TEXT, as a number, or NULL. */
+	value: SqliteParameterValue;
+}
+
+/** What one cell edit changed. */
+export interface SqliteCellUpdateResult {
+	name: string;
+	column: string;
+	/** The table's columns, as a rows page reports them. */
+	columns: SqliteResultColumn[];
+	/** The row as stored after the change, cells in `columns` order, cut as a window cuts them. */
+	row: SqliteCellValue[];
+	/**
+	 * The row's key after the change. It differs from the request's when the
+	 * edit wrote a key column (an `INTEGER PRIMARY KEY` changes the rowid).
+	 */
+	key: SqliteRowKey;
+	/** Set only on the write that took this session's backup of the file. */
+	backup?: SqliteBackup;
+	/** Time SQLite spent on the change, in milliseconds. */
+	elapsedMs: number;
 }
 
 /**

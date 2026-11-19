@@ -13,6 +13,8 @@ interface FakeTable {
 	rows: unknown[][];
 	/** Each row's rowid; the fake numbers rows from 1 when this is absent. */
 	rowids?: bigint[];
+	/** Each row's whole key values, appended when the window selects key columns. */
+	keys?: unknown[][];
 	/** Thrown by prepare, as SQLite does for a broken view. */
 	error?: Error;
 }
@@ -23,6 +25,8 @@ const state = vi.hoisted(() => ({
 	windowSql: [] as string[],
 	windowArgs: [] as unknown[][],
 	flags: [] as string[],
+	/** Editability per object name; absent means the default read-only answer. */
+	editability: {} as Record<string, unknown>,
 }));
 
 function quoted(name: string) {
@@ -64,7 +68,9 @@ function fakeDb() {
 				all(...args: unknown[]) {
 					state.windowArgs.push(args);
 					const [limit, offset] = args.slice(-2) as [number, number];
-					const rows = table.rows.slice(offset, offset + limit);
+					const rows = table.rows
+						.slice(offset, offset + limit)
+						.map((row, index) => (table.keys ? [...row, ...table.keys[offset + index]] : row));
 					if (!/^SELECT "(rowid|_rowid_|oid)", /.test(sql)) return rows;
 					return rows.map((row, index) => [
 						table.rowids?.[offset + index] ?? BigInt(offset + index + 1),
@@ -93,11 +99,12 @@ vi.mock('../../../main/sqlite/sqlite-objects', async (importOriginal) => ({
 // to reach the page. reachableRowidAlias stays real.
 vi.mock('../../../main/sqlite/sqlite-identity', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../main/sqlite/sqlite-identity')>()),
-	resolveSqliteEditability: (_db: unknown, object: { name: string }) => ({
-		editable: false,
-		code: 'no-identity',
-		reason: `resolved for ${object.name}`,
-	}),
+	resolveSqliteEditability: (_db: unknown, object: { name: string }) =>
+		state.editability[object.name] ?? {
+			editable: false,
+			code: 'no-identity',
+			reason: `resolved for ${object.name}`,
+		},
 }));
 
 import { SQLITE_ROWS_MAX_LIMIT, readSqliteRows } from '../../../main/sqlite/sqlite-rows';
@@ -122,6 +129,7 @@ function pairs(...values: unknown[]): unknown[] {
 }
 
 beforeEach(() => {
+	state.editability = {};
 	state.windowSql = [];
 	state.windowArgs = [];
 	state.flags = [];
@@ -463,6 +471,50 @@ describe('readSqliteRows', () => {
 			filter: 'nmae = bob',
 		});
 		expect(page.rowids).toEqual([]);
+	});
+
+	it('has no row keys unless the rows are edited by their primary key', () => {
+		expect(readSqliteRows({ handle: 'h1', name: 'users', offset: 0, limit: 2 }).rowKeys).toBeNull();
+		state.editability.users = {
+			editable: true,
+			identity: { kind: 'rowid', alias: 'rowid', rowidColumn: 'id' },
+			readOnlyColumns: [],
+		};
+		expect(readSqliteRows({ handle: 'h1', name: 'users', offset: 0, limit: 2 }).rowKeys).toBeNull();
+	});
+
+	it("reads each row's primary key whole, after the cells, for a table edited by it", () => {
+		state.editability.pairs = {
+			editable: true,
+			identity: { kind: 'primary-key', columns: ['a', 'b'], keyMayBeNull: false },
+			readOnlyColumns: [],
+		};
+		// The cell is cut to its head; the key column carries the whole value.
+		const long = 'k'.repeat(SQLITE_CELL_TEXT_LIMIT + 10);
+		state.tables.pairs.rows = [[long.slice(0, SQLITE_CELL_TEXT_LIMIT), long.length, 1n, null]];
+		state.tables.pairs.keys = [[long, 1n]];
+		const page = readSqliteRows({ handle: 'h1', name: 'pairs', offset: 0, limit: 5 });
+		expect(state.windowSql[0]).toMatch(/END, "a", "b" FROM "pairs"/);
+		expect(page.rows[0]).toEqual([
+			{ kind: 'text', head: long.slice(0, SQLITE_CELL_TEXT_LIMIT), length: long.length },
+			1,
+		]);
+		expect(page.rowKeys).toEqual([
+			[
+				{ type: 'text', text: long },
+				{ type: 'integer', text: '1' },
+			],
+		]);
+		expect(page.rowids).toBeNull();
+
+		const problem = readSqliteRows({
+			handle: 'h1',
+			name: 'pairs',
+			offset: 0,
+			limit: 5,
+			filter: 'nope = 1',
+		});
+		expect(problem.rowKeys).toEqual([]);
 	});
 
 	it('fails on a handle that is no longer open', () => {

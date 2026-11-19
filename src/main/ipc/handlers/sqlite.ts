@@ -11,8 +11,9 @@
  * whole result to a file in a child process, the history calls read and
  * forget what ran against the file, a BLOB save writes the
  * value to disk here rather than shipping it, the editing switch hands one
- * tab a write token (sqlite-editing.ts) without writing anything, and the read-only
- * connection stays in this process (see src/main/sqlite/sqlite-database.ts).
+ * tab a write token (sqlite-editing.ts) without writing anything, a cell edit
+ * sends that token back with one single-row UPDATE (sqlite-row-edit.ts), and
+ * the connections stay in this process (see src/main/sqlite/sqlite-database.ts).
  */
 
 import { ipcMain } from 'electron';
@@ -20,6 +21,8 @@ import { ipcMain } from 'electron';
 import type {
 	SqliteBlobRequest,
 	SqliteBlobSaved,
+	SqliteCellUpdateRequest,
+	SqliteCellUpdateResult,
 	SqliteColumnCatalog,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
@@ -52,6 +55,7 @@ import {
 	forgetSqliteQueryHistory,
 	readSqliteQueryHistory,
 } from '../../sqlite/sqlite-query-history';
+import { updateSqliteCell } from '../../sqlite/sqlite-row-edit';
 import { readSqliteRows } from '../../sqlite/sqlite-rows';
 import { readSqliteColumnCatalog, readSqliteObjectSchema } from '../../sqlite/sqlite-schema';
 import { readSqliteDatabaseSummary } from '../../sqlite/sqlite-summary';
@@ -196,6 +200,15 @@ export function registerSqliteHandlers(): void {
 		'sqlite:disableEditing',
 		async (_event, handle: string, editToken: string): Promise<boolean> =>
 			disableSqliteEditing(handle, editToken)
+	);
+
+	// The table view's cell edit: one parameterised single-row UPDATE keyed on
+	// the row's identity, refused unless the tab's editing token is live. The
+	// first write of the session waits for the file's backup.
+	ipcMain.handle(
+		'sqlite:updateCell',
+		async (_event, request: SqliteCellUpdateRequest): Promise<SqliteCellUpdateResult> =>
+			updateSqliteCell(request)
 	);
 
 	// Release the connection. Called when the tab closes; idle handles are
