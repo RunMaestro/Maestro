@@ -40,6 +40,7 @@ import {
 	sanitizeSessionId,
 	paginateEntries,
 	sortEntriesByTimestamp,
+	mergeEntriesById,
 	normalizeHistoryEntries,
 	parseHistoryFileData,
 } from '../shared/history';
@@ -246,9 +247,15 @@ export class HistoryManager {
 			// distinct paths.
 			const writes = Array.from(entriesBySession.entries()).map(
 				async ([sessionId, sessionEntries]) => {
-					// Legacy order is newest-first; JSONL is append order, so the
-					// kept slice is reversed on the way to disk.
-					const kept = sessionEntries.slice(0, migrationLimit).reverse();
+					// A per-session file may already exist: a data dir that started
+					// on the per-session format has no marker, and a CLI that wrote
+					// the legacy file there must not cost the agent its History.
+					// Merge, never overwrite. Merged order is newest-first; JSONL
+					// is append order, so the kept slice is reversed on the way to
+					// disk.
+					const existing = (await this.readEntriesInFileOrder(sessionId)).reverse();
+					const merged = mergeEntriesById(existing, sessionEntries);
+					const kept = merged.slice(0, migrationLimit).reverse();
 					const filePath = this.getSessionFilePath(sessionId);
 					await atomicWriteFile(filePath, kept.map(serializeHistoryEntryLine).join(''));
 					logger.debug(

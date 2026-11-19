@@ -66,6 +66,8 @@ The import creates:
 
 After import, the playbook is immediately available in your **Load Playbook** dropdown in the Auto Run panel, even if the panel was already open.
 
+From the command line, `maestro-cli marketplace import <id> -a <agent>` does the same import and prints the saved playbook's id (`playbookId` with `--json`). Run it with `maestro-cli playbook <playbook-id>`, which applies its parameters and ends with its report.
+
 ### Answering a Playbook's Parameters
 
 Many playbooks ask a few questions before they run, such as a pull request URL or how many items to process. After **Install and Run**, the Exchange shows a form with one row per parameter: its type, whether it is required, its help text, and where the current value comes from:

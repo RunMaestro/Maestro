@@ -421,6 +421,42 @@ describe('HistoryManager', () => {
 			expect(sessBEntries[0].sessionId).toBe('sess-b');
 		});
 
+		it('merges into an existing per-session file instead of overwriting it', async () => {
+			// A data dir that started on the per-session format has no marker.
+			// When a CLI then wrote the legacy file, the migration used to replace
+			// the agent's whole per-session History with the CLI's few entries.
+			const desktopOld = createMockEntry({ sessionId: 'sess-a', id: 'd1', timestamp: 1000 });
+			const desktopNew = createMockEntry({ sessionId: 'sess-a', id: 'd2', timestamp: 3000 });
+			const cliEntry = createMockEntry({ sessionId: 'sess-a', id: 'c1', timestamp: 2000 });
+			const duplicate = createMockEntry({ sessionId: 'sess-a', id: 'd2', timestamp: 3000 });
+
+			mockExistsSync.mockImplementation((p: fs.PathLike) => {
+				const s = p.toString();
+				if (s.endsWith('history-migrated.json')) return false;
+				if (s.endsWith('maestro-history.json')) return true;
+				return false;
+			});
+			mockReadFileSync.mockImplementation((p: fs.PathOrFileDescriptor) => {
+				const s = p.toString();
+				if (s.endsWith('maestro-history.json')) {
+					return JSON.stringify({ entries: [duplicate, cliEntry] });
+				}
+				if (s.endsWith(`sess-a${HISTORY_JSONL_EXT}`)) {
+					return [desktopOld, desktopNew].map((e) => `${JSON.stringify(e)}\n`).join('');
+				}
+				return undefined;
+			});
+
+			await manager.initialize();
+
+			const sessACall = mockWriteFileSync.mock.calls.find((c) =>
+				c[0].toString().endsWith(`sess-a${HISTORY_JSONL_EXT}`)
+			);
+			expect(sessACall).toBeDefined();
+			// File order (oldest first), every id once.
+			expect(parseJsonlWrite(sessACall![1]).map((e) => e.id)).toEqual(['d1', 'c1', 'd2']);
+		});
+
 		it('should create migration marker with correct metadata', async () => {
 			const entries = [
 				createMockEntry({ sessionId: 'sess-1' }),

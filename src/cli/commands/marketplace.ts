@@ -162,11 +162,15 @@ export async function marketplaceImport(id: string, options: ImportOptions): Pro
 	if (!reply.success) failCommand(reply.error || 'Import failed', options.json);
 
 	const docs = reply.importedDocs ?? [];
+	// The import wrote a saved playbook record. Running that record (not the
+	// bare documents) is what applies its parameters and ends with its report.
+	const savedPlaybookId = reply.playbook?.id ?? null;
 	if (options.json) {
 		console.log(
 			JSON.stringify({
 				success: true,
 				sessionId,
+				playbookId: savedPlaybookId,
 				folder: targetFolderName,
 				importedDocs: docs,
 				importedAssets: reply.importedAssets ?? [],
@@ -181,5 +185,11 @@ export async function marketplaceImport(id: string, options: ImportOptions): Pro
 	);
 	const failures = describeMarketplaceImportFailures(reply);
 	if (failures) console.error(`Warning: partial import. ${failures}`);
-	console.log(`Run it with: maestro-cli auto-run <docs...> -a ${sessionId}`);
+	if (savedPlaybookId) {
+		console.log(`Saved as playbook ${savedPlaybookId}.`);
+		console.log(`Run it with: maestro-cli playbook ${savedPlaybookId}`);
+		console.log(`See its parameters with: maestro-cli playbook configure ${savedPlaybookId}`);
+	} else {
+		console.log(`Run it with: maestro-cli auto-run <docs...> -a ${sessionId}`);
+	}
 }

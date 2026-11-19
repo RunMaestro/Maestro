@@ -111,6 +111,33 @@ describe('marketplace commands', () => {
 		});
 	});
 
+	it('import points at the saved playbook record, not at the bare documents', async () => {
+		mockBridge({
+			marketplace_import_playbook: {
+				success: true,
+				importedDocs: ['one'],
+				playbook: { id: 'pb-123', name: 'Docs Pass', documents: [] },
+			},
+		});
+		await marketplaceImport('docs-pass', { agent: 'a1', folder: 'docs-pass' });
+		const printed = vi.mocked(console.log).mock.calls.map((c) => String(c[0]));
+		expect(printed).toContain('Run it with: maestro-cli playbook pb-123');
+		expect(printed).toContain('See its parameters with: maestro-cli playbook configure pb-123');
+		expect(printed.some((line) => line.includes('auto-run'))).toBe(false);
+
+		vi.mocked(console.log).mockClear();
+		await marketplaceImport('docs-pass', { agent: 'a1', folder: 'docs-pass', json: true });
+		const json = JSON.parse(String(vi.mocked(console.log).mock.calls[0][0]));
+		expect(json).toMatchObject({ success: true, sessionId: 'a1', playbookId: 'pb-123' });
+	});
+
+	it('import falls back to the auto-run hint when the app returns no record', async () => {
+		mockBridge({ marketplace_import_playbook: { success: true, importedDocs: ['one'] } });
+		await marketplaceImport('docs-pass', { agent: 'a1', folder: 'docs-pass' });
+		const printed = vi.mocked(console.log).mock.calls.map((c) => String(c[0]));
+		expect(printed).toContain('Run it with: maestro-cli auto-run <docs...> -a a1');
+	});
+
 	it('import honors --folder and reports an app-side failure', async () => {
 		const sent = mockBridge({
 			marketplace_import_playbook: { success: false, error: 'folder exists' },
