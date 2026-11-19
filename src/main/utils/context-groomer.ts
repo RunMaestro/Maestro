@@ -163,6 +163,12 @@ export interface GroomContextOptions {
 	prompt: string;
 	/** Optional session ID to resume (for context access) */
 	agentSessionId?: string;
+	/**
+	 * Resume `agentSessionId` as a throwaway fork (see `ephemeralForkArgs`): the
+	 * turn reads the conversation but never writes to it. Throws when the agent
+	 * cannot fork, rather than resume, and append to, the real session.
+	 */
+	ephemeralFork?: boolean;
 	/** Use read-only mode (default: false) */
 	readOnlyMode?: boolean;
 	/** Optional model ID override (e.g., when using a utility agent) */
@@ -287,6 +293,7 @@ async function groomContextOnce(
 		agentType,
 		prompt,
 		agentSessionId,
+		ephemeralFork = false,
 		readOnlyMode = false,
 		modelId,
 		timeoutMs = DEFAULT_GROOMING_TIMEOUT_MS,
@@ -323,6 +330,10 @@ async function groomContextOnce(
 		throw new Error(`Agent ${agentType} is not available`);
 	}
 
+	if (ephemeralFork && agentSessionId && !agent.ephemeralForkArgs?.length) {
+		throw new Error(`${agentType} cannot fork a session, so it cannot answer a side question`);
+	}
+
 	// Build args using the unified buildAgentArgs utility
 	const baseArgs = buildAgentArgs(agent, {
 		baseArgs: agent.args || [],
@@ -333,6 +344,7 @@ async function groomContextOnce(
 		yoloMode: false,
 		permissionMode: 'standard' as const,
 		agentSessionId,
+		ephemeralFork,
 	});
 
 	// Apply agent config overrides (model, custom args, custom env vars)

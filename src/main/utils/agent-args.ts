@@ -21,6 +21,14 @@ type BuildAgentArgsOptions = {
 	permissionMode?: 'full' | 'standard' | 'readonly';
 	agentSessionId?: string;
 	/**
+	 * Resume `agentSessionId` as a throwaway branch (the agent's
+	 * `ephemeralForkArgs`): the turn sees the conversation, the conversation never
+	 * sees the turn. Ignored without `agentSessionId`. Callers must check the agent
+	 * declares `ephemeralForkArgs` first; without them the turn would resume, and
+	 * write into, the real session.
+	 */
+	ephemeralFork?: boolean;
+	/**
 	 * The session's Additional Directories. Providers that declare
 	 * `supportsAdditionalDirectories` turn these into native grant flags; the rest
 	 * ignore them here and rely on the system-prompt block instead.
@@ -265,7 +273,10 @@ export function buildAgentArgs(
 	const dedupedArgs = dedupe(finalArgs);
 	const resumeArgs =
 		options.agentSessionId && agent.resumeArgs
-			? dedupe(agent.resumeArgs(options.agentSessionId))
+			? dedupe([
+					...agent.resumeArgs(options.agentSessionId),
+					...(options.ephemeralFork ? (agent.ephemeralForkArgs ?? []) : []),
+				])
 			: [];
 
 	// Additional Directories skip the dedupe on purpose. Every provider expresses

@@ -778,6 +778,9 @@ interface MaestroAPI {
 					fromSessionId?: string;
 					fromTabId?: string;
 					withContext?: boolean;
+					/** `ask --btw`: answer from a throwaway fork of `targetTabId`. */
+					sideQuestion?: boolean;
+					targetTabId?: string;
 				},
 				responseChannel: string
 			) => void
@@ -4442,6 +4445,26 @@ interface MaestroAPI {
 				status?: 'running' | 'finished' | 'cancelled';
 			}[];
 		}) => Promise<{ success: boolean; command?: string; error?: string }>;
+	};
+
+	// Side question API (`/btw`: ask about a tab through a throwaway session fork)
+	sideQuestion: {
+		ask: (config: {
+			question: string;
+			agentType: string;
+			cwd: string;
+			agentSessionId?: string;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+			customEffort?: string;
+		}) => Promise<{ success: boolean; answer?: string; error?: string }>;
 	};
 
 	// Director's Notes API (unified history + synopsis generation)

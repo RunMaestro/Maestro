@@ -508,6 +508,13 @@ export type ConsultAgentParams = {
 	fromTabId?: string;
 	/** Forward the caller's transcript as context (off by default). */
 	withContext?: boolean;
+	/**
+	 * Ask a `/btw` side question instead of consulting: the answer comes from a
+	 * throwaway fork of one of the target's tabs, which is never written to.
+	 */
+	sideQuestion?: boolean;
+	/** The target's tab a side question forks. Defaults to its active tab. */
+	targetTabId?: string;
 	/** How long the caller is willing to wait, already clamped by the CLI. */
 	timeoutMs: number;
 };

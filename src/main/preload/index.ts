@@ -56,6 +56,7 @@ import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
 import { createTabsApi } from './tabs';
 import { createAiCommandApi } from './aiCommand';
+import { createSideQuestionApi } from './sideQuestion';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
@@ -246,6 +247,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	tabs: createTabsApi(),
 	// AI Command API (plain-English request -> one shell command line)
 	aiCommand: createAiCommandApi(),
+	// Side question API (`/btw`: ask about a tab without writing to it)
+	sideQuestion: createSideQuestionApi(),
 
 	// Director's Notes API (unified history + synopsis)
 	directorNotes: createDirectorNotesApi(),
@@ -617,6 +620,12 @@ export type {
 	AiCommandSuggestRequest,
 	AiCommandSuggestResult,
 } from './aiCommand';
+export type {
+	// From sideQuestion
+	SideQuestionApi,
+	SideQuestionRequest,
+	SideQuestionResult,
+} from './sideQuestion';
 export type {
 	// From directorNotes
 	DirectorNotesApi,

@@ -422,6 +422,48 @@ describe('buildAgentArgs', () => {
 		expect(result).toEqual(['--print']);
 	});
 
+	// -- ephemeralFork (side questions) --
+	it('appends ephemeralForkArgs after the resume selector when ephemeralFork is set', () => {
+		const agent = makeAgent({
+			resumeArgs: (sid: string) => ['--resume', sid],
+			ephemeralForkArgs: ['--fork-session', '--no-session-persistence'],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--print'],
+			agentSessionId: 'sess-123',
+			ephemeralFork: true,
+		});
+		expect(result).toEqual([
+			'--print',
+			'--resume',
+			'sess-123',
+			'--fork-session',
+			'--no-session-persistence',
+		]);
+	});
+
+	it('ignores ephemeralFork without a session to resume', () => {
+		const agent = makeAgent({
+			resumeArgs: (sid: string) => ['--resume', sid],
+			ephemeralForkArgs: ['--fork-session'],
+		});
+		expect(buildAgentArgs(agent, { baseArgs: ['--print'], ephemeralFork: true })).toEqual([
+			'--print',
+		]);
+	});
+
+	it('never forks an ordinary resume', () => {
+		const agent = makeAgent({
+			resumeArgs: (sid: string) => ['--resume', sid],
+			ephemeralForkArgs: ['--fork-session'],
+		});
+		expect(buildAgentArgs(agent, { baseArgs: ['--print'], agentSessionId: 'sess-123' })).toEqual([
+			'--print',
+			'--resume',
+			'sess-123',
+		]);
+	});
+
 	// -- combined --
 	it('combines options in read-only mode', () => {
 		const agent = makeAgent({

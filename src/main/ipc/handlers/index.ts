@@ -68,6 +68,7 @@ import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphon
 import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
 import { registerAiCommandHandlers } from './aiCommand';
+import { registerSideQuestionHandlers } from './sideQuestion';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
 import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
@@ -150,6 +151,7 @@ export { registerSymphonyHandlers };
 export { registerAgentErrorHandlers };
 export { registerTabNamingHandlers };
 export { registerAiCommandHandlers };
+export { registerSideQuestionHandlers };
 export type { TabNamingHandlerDependencies };
 export { registerDirectorNotesHandlers };
 export type { DirectorNotesHandlerDependencies };

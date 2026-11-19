@@ -179,7 +179,28 @@ describe('groomContext', () => {
 			yoloMode: false,
 			permissionMode: 'standard',
 			agentSessionId: undefined,
+			ephemeralFork: false,
 		});
+	});
+
+	it('refuses an ephemeral fork the agent cannot do, rather than resume the real session', async () => {
+		const agent = makeAgent();
+		const detector = createMockAgentDetector(agent);
+
+		await expect(
+			groomContext(
+				{
+					projectRoot: '/project',
+					agentType: 'claude-code',
+					prompt: 'side question',
+					agentSessionId: 'sess-1',
+					ephemeralFork: true,
+				},
+				mockPM,
+				detector
+			)
+		).rejects.toThrow('cannot fork a session');
+		expect(buildAgentArgs).not.toHaveBeenCalled();
 	});
 
 	// A one-shot turn that belongs to an agent (AI command mode, summarization,
