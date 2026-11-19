@@ -246,6 +246,8 @@ import type {
 	SqliteObjectList,
 	SqliteObjectSchema,
 	SqliteObjectStats,
+	SqliteRowsPage,
+	SqliteRowsRequest,
 } from '../shared/sqlite/types';
 import type {
 	GitWorktreeSetupResult,
@@ -1982,6 +1984,7 @@ interface MaestroAPI {
 			name: string,
 			kind?: SqliteObjectKind
 		) => Promise<SqliteObjectSchema>;
+		readRows: (request: SqliteRowsRequest) => Promise<SqliteRowsPage>;
 		close: (handle: string) => Promise<void>;
 	};
 	fs: {

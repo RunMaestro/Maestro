@@ -3,8 +3,9 @@
  *
  * The renderer's view of a SQLite database goes through these calls. As with
  * parquet, no database bytes cross IPC: `open` returns a summary and a handle,
- * the table-list and schema calls return names, numbers, and schema text, and the read-only connection
- * stays in this process (see src/main/sqlite/sqlite-database.ts).
+ * the table-list and schema calls return names, numbers, and schema text,
+ * the row calls return one bounded window of cells, and the read-only
+ * connection stays in this process (see src/main/sqlite/sqlite-database.ts).
  */
 
 import { ipcMain } from 'electron';
@@ -15,9 +16,12 @@ import type {
 	SqliteObjectList,
 	SqliteObjectSchema,
 	SqliteObjectStats,
+	SqliteRowsPage,
+	SqliteRowsRequest,
 } from '../../../shared/sqlite/types';
 import { closeSqliteDatabase, openSqliteDatabase } from '../../sqlite/sqlite-database';
 import { listSqliteObjects, readSqliteObjectStats } from '../../sqlite/sqlite-objects';
+import { readSqliteRows } from '../../sqlite/sqlite-rows';
 import { readSqliteObjectSchema } from '../../sqlite/sqlite-schema';
 
 export function registerSqliteHandlers(): void {
@@ -55,6 +59,14 @@ export function registerSqliteHandlers(): void {
 			name: string,
 			kind?: SqliteObjectKind
 		): Promise<SqliteObjectSchema> => readSqliteObjectSchema(handle, name, kind)
+	);
+
+	// One window of a table's or view's rows for the table view: LIMIT/OFFSET
+	// paged, optionally sorted by one column in SQLite. Long TEXT and BLOB
+	// values arrive cut to a head plus their length.
+	ipcMain.handle(
+		'sqlite:readRows',
+		async (_event, request: SqliteRowsRequest): Promise<SqliteRowsPage> => readSqliteRows(request)
 	);
 
 	// Release the connection. Called when the tab closes; idle handles are

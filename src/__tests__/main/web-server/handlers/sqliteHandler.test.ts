@@ -1,5 +1,6 @@
-// Covers the sqlite_list_objects and sqlite_read_schema WebSocket messages that
-// back `maestro-cli sqlite tables` and `maestro-cli sqlite schema`. It opens the database through the viewer's own open path,
+// Covers the sqlite_list_objects, sqlite_read_schema, and sqlite_read_rows
+// WebSocket messages that back `maestro-cli sqlite tables`, `sqlite schema`,
+// and `sqlite rows`. It opens the database through the viewer's own open path,
 // answers with the rail's listing and measurements, never closes the shared
 // connection, and always echoes the request id so the CLI never hangs.
 
@@ -30,6 +31,8 @@ const schemas = vi.hoisted(() => ({ readSqliteObjectSchema: vi.fn() }));
 
 vi.mock('../../../../main/sqlite/sqlite-objects', () => objects);
 vi.mock('../../../../main/sqlite/sqlite-schema', () => schemas);
+const rows = vi.hoisted(() => ({ readSqliteRows: vi.fn() }));
+vi.mock('../../../../main/sqlite/sqlite-rows', () => rows);
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
@@ -206,6 +209,110 @@ describe('sqlite_read_schema handler', () => {
 			requestId: 's5',
 			success: false,
 			error: 'Unknown object kind: column',
+		});
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+	});
+});
+
+describe('sqlite_read_rows handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+	});
+
+	it('answers with the database and one window, read through the shared reader', async () => {
+		const page = { name: 'users', columns: [], rows: [[1]], offset: 10, hasMore: true };
+		rows.readSqliteRows.mockReturnValue(page);
+
+		handler.handleMessage(client, {
+			type: 'sqlite_read_rows',
+			requestId: 'r1',
+			path: '/data/app.db',
+			name: 'users',
+			offset: 10,
+			limit: 5,
+			sort: { column: 'name', direction: 'desc' },
+		});
+		await flush();
+
+		expect(rows.readSqliteRows).toHaveBeenCalledWith({
+			handle: 'h1',
+			name: 'users',
+			offset: 10,
+			limit: 5,
+			sort: { column: 'name', direction: 'desc' },
+		});
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_rows_result',
+			requestId: 'r1',
+			success: true,
+			database: info,
+			page,
+		});
+		expect(database.closeSqliteDatabase).not.toHaveBeenCalled();
+	});
+
+	it('defaults to the first 50 rows, unsorted', async () => {
+		rows.readSqliteRows.mockReturnValue({ name: 'users' });
+		handler.handleMessage(client, {
+			type: 'sqlite_read_rows',
+			requestId: 'r2',
+			path: '/data/app.db',
+			name: 'users',
+		});
+		await flush();
+		expect(rows.readSqliteRows).toHaveBeenCalledWith({
+			handle: 'h1',
+			name: 'users',
+			offset: 0,
+			limit: 50,
+			sort: null,
+		});
+	});
+
+	it("reports the reader's refusal with the request id", async () => {
+		rows.readSqliteRows.mockImplementation(() => {
+			throw new Error('users has no column named zzz.');
+		});
+		handler.handleMessage(client, {
+			type: 'sqlite_read_rows',
+			requestId: 'r3',
+			path: '/data/app.db',
+			name: 'users',
+			sort: { column: 'zzz', direction: 'asc' },
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_rows_result',
+			requestId: 'r3',
+			success: false,
+			error: 'users has no column named zzz.',
+		});
+	});
+
+	it('refuses a missing name or a malformed sort before opening anything', async () => {
+		handler.handleMessage(client, { type: 'sqlite_read_rows', requestId: 'r4', path: '/x.db' });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 'r4', success: false });
+
+		handler.handleMessage(client, {
+			type: 'sqlite_read_rows',
+			requestId: 'r5',
+			path: '/x.db',
+			name: 'users',
+			sort: { column: 'name', direction: 'up' },
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			requestId: 'r5',
+			success: false,
+			error: 'sort must be { column, direction: "asc" | "desc" }',
 		});
 		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
 	});

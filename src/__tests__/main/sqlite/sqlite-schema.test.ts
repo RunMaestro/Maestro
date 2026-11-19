@@ -59,7 +59,9 @@ vi.mock('../../../main/sqlite/sqlite-database', () => ({
 	},
 }));
 
-vi.mock('../../../main/sqlite/sqlite-objects', () => ({
+vi.mock('../../../main/sqlite/sqlite-objects', async (importOriginal) => ({
+	// findSqliteObject stays real: it is how the reader resolves a name.
+	...(await importOriginal<typeof import('../../../main/sqlite/sqlite-objects')>()),
 	readSqliteObjectSummaries: () => state.objects,
 }));
 

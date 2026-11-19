@@ -3384,6 +3384,18 @@ Show a table's or view's columns (type, affinity, nullability, default, primary 
 | `--kind <kind>` | Pick table, view, index, or trigger when a trigger shares a name with another object | -       |
 | `--json`        | Output as JSON (for scripting)                                                       | -       |
 
+## `maestro-cli sqlite rows <path> <object>`
+
+Show one window of a table's or view's rows, paged with LIMIT/OFFSET and optionally sorted by a column in SQLite
+
+| Option            | Description                                                            | Default |
+| ----------------- | ---------------------------------------------------------------------- | ------- |
+| `--offset <n>`    | Rows to skip                                                           | `0`     |
+| `--limit <n>`     | Rows to show (at most 1000)                                            | `50`    |
+| `--sort <column>` | Sort by this column (server side, ties broken by rowid or primary key) | -       |
+| `--desc`          | Sort descending (needs --sort)                                         | -       |
+| `--json`          | Output as JSON (for scripting)                                         | -       |
+
 ## `maestro-cli quick-chat`
 
 Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey

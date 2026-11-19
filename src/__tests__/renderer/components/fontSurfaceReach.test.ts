@@ -35,10 +35,11 @@ describe('font settings reach their surfaces', () => {
 			expect(src).toMatch(/fontSize: '[\d.]+em'/);
 		});
 
-		it('keeps parquet numeric columns aligned without overriding the font', () => {
+		it('keeps data-grid numeric columns aligned without overriding the font', () => {
 			// tabular-nums aligns digits in ANY face; the mono stack was doing
-			// that job by side effect while ignoring the user's setting.
-			const src = read('src/renderer/components/ParquetViewer/ParquetGrid.tsx');
+			// that job by side effect while ignoring the user's setting. The
+			// parquet and SQLite viewers both draw through the shared grid.
+			const src = read('src/renderer/components/ui/DataGrid.tsx');
 			expect(src).toContain("fontVariantNumeric: 'tabular-nums'");
 			expect(src).not.toContain('ui-monospace, SFMono-Regular');
 		});

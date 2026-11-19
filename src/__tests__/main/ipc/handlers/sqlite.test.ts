@@ -26,9 +26,11 @@ const objects = vi.hoisted(() => ({
 
 vi.mock('../../../../main/sqlite/sqlite-database', () => database);
 const schema = vi.hoisted(() => ({ readSqliteObjectSchema: vi.fn() }));
+const rows = vi.hoisted(() => ({ readSqliteRows: vi.fn() }));
 
 vi.mock('../../../../main/sqlite/sqlite-objects', () => objects);
 vi.mock('../../../../main/sqlite/sqlite-schema', () => schema);
+vi.mock('../../../../main/sqlite/sqlite-rows', () => rows);
 
 import { registerSqliteHandlers } from '../../../../main/ipc/handlers/sqlite';
 
@@ -47,6 +49,7 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:listObjects',
 			'sqlite:open',
 			'sqlite:readObjectStats',
+			'sqlite:readRows',
 			'sqlite:readSchema',
 		]);
 	});
@@ -73,6 +76,23 @@ describe('SQLite IPC handlers', () => {
 			kind: 'table',
 		});
 		expect(schema.readSqliteObjectSchema).toHaveBeenCalledWith('h1', 'users', 'table');
+	});
+
+	it('reads a window of rows with the request passed through whole', async () => {
+		const request = {
+			handle: 'h1',
+			name: 'users',
+			offset: 300,
+			limit: 300,
+			sort: { column: 'name', direction: 'desc' },
+		};
+		rows.readSqliteRows.mockReturnValue({ name: 'users', rows: [], hasMore: false });
+		await expect(invoke('sqlite:readRows', request)).resolves.toEqual({
+			name: 'users',
+			rows: [],
+			hasMore: false,
+		});
+		expect(rows.readSqliteRows).toHaveBeenCalledWith(request);
 	});
 
 	it('closes by handle', async () => {

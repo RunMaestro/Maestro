@@ -23,10 +23,9 @@ import type {
 	SqliteIndexOrigin,
 	SqliteObjectKind,
 	SqliteObjectSchema,
-	SqliteObjectSummary,
 } from '../../shared/sqlite/types';
 import { getSqliteDatabase } from './sqlite-database';
-import { readSqliteObjectSummaries } from './sqlite-objects';
+import { findSqliteObject, readSqliteObjectSummaries } from './sqlite-objects';
 
 interface TableXinfoRow {
 	cid: number;
@@ -72,19 +71,6 @@ const INDEX_ORIGINS: Record<string, SqliteIndexOrigin> = {
 	u: 'unique',
 	pk: 'primary-key',
 };
-
-/** Rail order, used to pick one object when a name is shared (a trigger and a table can be). */
-const KIND_ORDER: readonly SqliteObjectKind[] = ['table', 'view', 'index', 'trigger'];
-
-function findObject(
-	objects: readonly SqliteObjectSummary[],
-	name: string,
-	kind: SqliteObjectKind | undefined
-): SqliteObjectSummary | undefined {
-	const named = objects.filter((object) => object.name === name);
-	if (kind) return named.find((object) => object.kind === kind);
-	return named.sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind))[0];
-}
 
 /**
  * A table's foreign keys in declaration order. SQLite numbers them from the
@@ -195,7 +181,7 @@ export function readSqliteObjectSchema(
 	kind?: SqliteObjectKind
 ): SqliteObjectSchema {
 	const { db } = getSqliteDatabase(handle);
-	const object = findObject(readSqliteObjectSummaries(db), name, kind);
+	const object = findSqliteObject(readSqliteObjectSummaries(db), name, kind);
 	if (!object) {
 		throw new Error(`No ${kind ?? 'table, view, index, or trigger'} is named ${name}.`);
 	}

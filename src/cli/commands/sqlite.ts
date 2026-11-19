@@ -6,12 +6,15 @@
 //   maestro-cli sqlite schema <path> <object> [--kind <kind>] [--json]
 //       -> the schema pane: columns with type, affinity, nullability, default,
 //          primary key and foreign-key targets, index key columns, CREATE SQL
+//   maestro-cli sqlite rows <path> <object> [--offset <n>] [--limit <n>]
+//                           [--sort <column>] [--desc] [--json]
+//       -> the table view: one LIMIT/OFFSET window of rows, sorted in SQLite
 //
 // The CLI links no native modules, so it cannot open a database itself. Each
-// verb rides a WS message (`sqlite_list_objects`, `sqlite_read_schema`) to the
-// running app, which answers with the same functions the viewer's `sqlite:*`
-// IPC calls. The app
-// must be running, and the database is opened read-only there.
+// verb rides a WS message (`sqlite_list_objects`, `sqlite_read_schema`,
+// `sqlite_read_rows`) to the running app, which answers with the same
+// functions the viewer's `sqlite:*` IPC calls. The app must be running, and
+// the database is opened read-only there.
 
 import { withMaestroClient } from '../services/maestro-client';
 import { failFromError } from '../services/session-command';
@@ -34,6 +37,7 @@ import {
 	sqliteColumnTags,
 	sqliteMissingSqlNote,
 } from '../../shared/sqlite/schema';
+import { formatSqliteCell } from '../../shared/sqlite/cells';
 import type {
 	SqliteDatabaseInfo,
 	SqliteObjectKind,
@@ -41,6 +45,7 @@ import type {
 	SqliteObjectSchema,
 	SqliteObjectStats,
 	SqliteObjectSummary,
+	SqliteRowsPage,
 } from '../../shared/sqlite/types';
 
 /** Counting and sizing a large database takes a while; give it room. */
@@ -256,4 +261,108 @@ export async function sqliteSchema(
 		return;
 	}
 	console.log(formatSchemaText(reply.database, reply.schema));
+}
+
+interface SqliteRowsOptions {
+	offset?: string;
+	limit?: string;
+	sort?: string;
+	desc?: boolean;
+	json?: boolean;
+}
+
+interface SqliteRowsReply {
+	type: string;
+	success: boolean;
+	error?: string;
+	database?: SqliteDatabaseInfo;
+	page?: SqliteRowsPage;
+}
+
+/** Rows printed when `--limit` is not given: one screen, not one page of the grid. */
+const SQLITE_ROWS_DEFAULT_LIMIT = 50;
+
+/** Widest a cell prints in the text table; `--json` carries the full value. */
+const SQLITE_ROWS_CELL_WIDTH = 60;
+
+function parseCount(value: string | undefined, flag: string, fallback: number, json?: boolean) {
+	if (value === undefined) return fallback;
+	const parsed = Number(value);
+	if (!Number.isInteger(parsed) || parsed < 0) {
+		fail(`${flag} must be a non-negative whole number (got "${value}")`, json);
+	}
+	return parsed;
+}
+
+/** One cell as one line of a text table. */
+function cellText(text: string): string {
+	const line = text.replace(/\s+/g, ' ');
+	return line.length > SQLITE_ROWS_CELL_WIDTH
+		? `${line.slice(0, SQLITE_ROWS_CELL_WIDTH - 1)}…`
+		: line;
+}
+
+/**
+ * `maestro-cli sqlite rows <path> <object>` - one window of a table's or
+ * view's rows, the way the viewer's table view pages and sorts them.
+ */
+export async function sqliteRows(
+	file: string,
+	name: string,
+	options: SqliteRowsOptions
+): Promise<void> {
+	const filePath = resolveCliPath(file);
+	const offset = parseCount(options.offset, '--offset', 0, options.json);
+	const limit = parseCount(options.limit, '--limit', SQLITE_ROWS_DEFAULT_LIMIT, options.json);
+	if (options.desc && !options.sort) fail('--desc needs --sort <column>', options.json);
+	const sort = options.sort
+		? { column: options.sort, direction: options.desc ? ('desc' as const) : ('asc' as const) }
+		: null;
+
+	let reply: SqliteRowsReply;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<SqliteRowsReply>(
+				{ type: 'sqlite_read_rows', path: filePath, name, offset, limit, sort },
+				'sqlite_rows_result',
+				SQLITE_TIMEOUT_MS
+			)
+		);
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+	if (!reply.success || !reply.database || !reply.page) {
+		fail(reply.error || `Could not read rows of ${name} in ${filePath}`, options.json);
+	}
+
+	const { database, page } = reply;
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, path: database.displayPath, ...page }));
+		return;
+	}
+
+	const lines: string[] = [`${page.name} in ${database.displayPath}`];
+	if (page.rows.length === 0) {
+		lines.push('', offset > 0 ? `No rows past offset ${offset}.` : 'No rows.');
+	} else {
+		lines.push(
+			'',
+			formatTextTable(
+				page.columns.map((column) => column.name),
+				page.rows.map((row) => row.map((cell) => cellText(formatSqliteCell(cell).text)))
+			)
+		);
+		const first = page.offset + 1;
+		const last = page.offset + page.rows.length;
+		lines.push(
+			'',
+			`Rows ${first}-${last}${page.hasMore ? `; more follow (--offset ${last})` : ''}.`
+		);
+	}
+	lines.push(
+		page.orderedBy.length > 0
+			? `Ordered by ${page.orderedBy.join(', ')}.`
+			: 'Not ordered: rows come back in the order SQLite scans them.'
+	);
+	console.log(lines.join('\n'));
 }

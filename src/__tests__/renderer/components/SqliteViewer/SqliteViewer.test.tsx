@@ -9,10 +9,30 @@ import type {
 	SqliteObjectSchema,
 	SqliteObjectStats,
 	SqliteObjectSummary,
+	SqliteRowsPage,
+	SqliteRowsRequest,
 } from '../../../../shared/sqlite/types';
 import { mockTheme } from '../../../helpers/mockTheme';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 // lucide-react icons are auto-mocked globally in src/__tests__/setup.ts
+
+// jsdom has no layout, so the grid's virtualizer is stubbed to draw every
+// loaded row. The grid's own "is it on screen" guard (clientHeight 0) still
+// keeps it from paging on its own.
+vi.mock('@tanstack/react-virtual', () => ({
+	useVirtualizer: (opts: { count: number; estimateSize: () => number }) => {
+		const items = Array.from({ length: opts.count }, (_, index) => ({
+			index,
+			key: index,
+			start: index * opts.estimateSize(),
+			size: opts.estimateSize(),
+		}));
+		return {
+			getTotalSize: () => opts.count * opts.estimateSize(),
+			getVirtualItems: () => items,
+		};
+	},
+}));
 
 function object(overrides: Partial<SqliteObjectSummary>): SqliteObjectSummary {
 	return {
@@ -66,6 +86,29 @@ let listObjects: ReturnType<typeof vi.fn>;
 let readObjectStats: ReturnType<typeof vi.fn>;
 let close: ReturnType<typeof vi.fn>;
 let readSchema: ReturnType<typeof vi.fn>;
+let readRows: ReturnType<typeof vi.fn>;
+
+/** A page of `count` rows of events, starting at `offset`. */
+function eventsPage(request: SqliteRowsRequest, total = 2): SqliteRowsPage {
+	const count = Math.max(0, Math.min(request.limit, total - request.offset));
+	return {
+		name: request.name,
+		columns: [
+			{ name: 'id', declaredType: 'INTEGER' },
+			{ name: 'kind', declaredType: 'TEXT' },
+			{ name: 'payload', declaredType: null },
+		],
+		rows: Array.from({ length: count }, (_, index) => [
+			request.offset + index + 1,
+			index === 0 ? '' : 'click',
+			index === 0 ? null : { kind: 'blob', head: 'ff', bytes: 2048 },
+		]),
+		offset: request.offset,
+		hasMore: request.offset + count < total,
+		orderedBy: request.sort ? [request.sort.column, 'id'] : ['id'],
+		elapsedMs: 3,
+	};
+}
 
 const EVENTS_SCHEMA: SqliteObjectSchema = {
 	name: 'events',
@@ -144,8 +187,9 @@ beforeEach(() => {
 	readSchema = vi.fn(async (_handle: string, name: string) =>
 		name === 'users_email' ? INDEX_SCHEMA : { ...EVENTS_SCHEMA, name }
 	);
+	readRows = vi.fn(async (request: SqliteRowsRequest) => eventsPage(request));
 	(window as unknown as { maestro: unknown }).maestro = {
-		sqlite: { open, listObjects, readObjectStats, readSchema, close },
+		sqlite: { open, listObjects, readObjectStats, readSchema, readRows, close },
 	};
 });
 
@@ -288,6 +332,11 @@ describe('SqliteViewer', () => {
 });
 
 describe('SqliteViewer schema pane', () => {
+	beforeEach(() => {
+		// The pane opens on the rows by default; these tests are about the schema.
+		localStorage.setItem('sqlite-object-view', 'schema');
+	});
+
 	it('reads the selected object schema by handle, name, and kind', async () => {
 		renderViewer();
 		await screen.findByTestId('sqlite-schema');
@@ -372,5 +421,123 @@ describe('SqliteViewer schema pane', () => {
 		resolveFirst(EVENTS_SCHEMA);
 		await Promise.resolve();
 		expect(screen.queryByTestId('sqlite-schema-column')).not.toBeInTheDocument();
+	});
+});
+
+describe('SqliteViewer table view', () => {
+	it('opens a table on its rows, read by handle and name from offset 0, unsorted', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-table-view');
+		expect(readRows).toHaveBeenCalledWith({
+			handle: 'h1',
+			name: 'events',
+			offset: 0,
+			limit: 300,
+			sort: null,
+		});
+		expect(readSchema).not.toHaveBeenCalled();
+	});
+
+	it('draws NULL as a placeholder apart from an empty string, and a BLOB by size', async () => {
+		renderViewer();
+		const first = await screen.findByTestId('sqlite-row-0');
+		expect(first).toHaveTextContent('NULL');
+		const second = screen.getByTestId('sqlite-row-1');
+		expect(second).toHaveTextContent('click');
+		expect(second).toHaveTextContent('BLOB 2.0 KB');
+	});
+
+	it('shows column types from the statement and the order in the footer', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-table-view');
+		expect(screen.getByTestId('sqlite-header-id')).toHaveTextContent('INTEGER');
+		expect(screen.getByTestId('sqlite-header-payload')).toHaveAttribute(
+			'title',
+			'payload (an expression) - click to sort'
+		);
+		const footer = screen.getByTestId('sqlite-rows-footer');
+		expect(footer).toHaveTextContent('2 loaded');
+		expect(footer).toHaveTextContent('ordered by id');
+		expect(footer).toHaveTextContent('3 ms');
+	});
+
+	it('sorts in SQLite on a header click: ascending, descending, then off', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-header-kind');
+		fireEvent.click(screen.getByTestId('sqlite-header-kind'));
+		await waitFor(() =>
+			expect(readRows).toHaveBeenLastCalledWith(
+				expect.objectContaining({ offset: 0, sort: { column: 'kind', direction: 'asc' } })
+			)
+		);
+		fireEvent.click(screen.getByTestId('sqlite-header-kind'));
+		await waitFor(() =>
+			expect(readRows).toHaveBeenLastCalledWith(
+				expect.objectContaining({ offset: 0, sort: { column: 'kind', direction: 'desc' } })
+			)
+		);
+		fireEvent.click(screen.getByTestId('sqlite-header-kind'));
+		await waitFor(() =>
+			expect(readRows).toHaveBeenLastCalledWith(expect.objectContaining({ sort: null }))
+		);
+		expect(await screen.findByTestId('sqlite-rows-footer')).toHaveTextContent('ordered by id');
+	});
+
+	it('drops a window that arrives for an older sort', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-header-kind');
+		// The ascending window hangs; the descending one answers with 3 rows.
+		let resolveStale: (page: SqliteRowsPage) => void = () => {};
+		readRows.mockImplementationOnce(
+			() => new Promise<SqliteRowsPage>((resolve) => (resolveStale = resolve))
+		);
+		readRows.mockImplementationOnce(async (request: SqliteRowsRequest) => eventsPage(request, 3));
+		fireEvent.click(screen.getByTestId('sqlite-header-kind'));
+		fireEvent.click(screen.getByTestId('sqlite-header-kind'));
+		await waitFor(() =>
+			expect(screen.getByTestId('sqlite-rows-footer')).toHaveTextContent('3 loaded')
+		);
+		resolveStale(eventsPage({ handle: 'h1', name: 'events', offset: 0, limit: 300 }, 7));
+		await Promise.resolve();
+		expect(screen.getByTestId('sqlite-rows-footer')).toHaveTextContent('3 loaded');
+	});
+
+	it('shows a read failure verbatim in the pane', async () => {
+		readRows.mockRejectedValue(new Error('no such table: main.gone'));
+		renderViewer();
+		expect(await screen.findByTestId('sqlite-rows-error')).toHaveTextContent(
+			'Could not read the rows of events: no such table: main.gone'
+		);
+	});
+
+	it('switches to the schema and back, and remembers the choice', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-table-view');
+		fireEvent.click(screen.getByTestId('sqlite-object-view-schema'));
+		expect(await screen.findByTestId('sqlite-schema')).toBeInTheDocument();
+		expect(screen.queryByTestId('sqlite-table-view')).not.toBeInTheDocument();
+		expect(localStorage.getItem('sqlite-object-view')).toBe('schema');
+		fireEvent.click(screen.getByTestId('sqlite-object-view-data'));
+		expect(await screen.findByTestId('sqlite-table-view')).toBeInTheDocument();
+	});
+
+	it('reads a view the same way, and starts over for each selected object', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-table-view');
+		fireEvent.click(screen.getByTestId('sqlite-rail-object-active_users'));
+		await waitFor(() =>
+			expect(readRows).toHaveBeenLastCalledWith(
+				expect.objectContaining({ name: 'active_users', offset: 0, sort: null })
+			)
+		);
+	});
+
+	it('shows an index or trigger as its schema, with no Data switch', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-table-view');
+		fireEvent.click(screen.getByTestId('sqlite-rail-object-users_email'));
+		expect(await screen.findByTestId('sqlite-schema')).toBeInTheDocument();
+		expect(screen.queryByTestId('sqlite-object-view')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('sqlite-table-view')).not.toBeInTheDocument();
 	});
 });

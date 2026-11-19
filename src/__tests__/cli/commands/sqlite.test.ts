@@ -4,7 +4,8 @@
  * on `sqlite_list_objects`, prints the rail's groups with row counts and sizes,
  * hides internal objects unless `--internal`, and reports failures with exit 1.
  * Also `maestro-cli sqlite schema`: columns, foreign keys, index keys, and the
- * CREATE SQL, over `sqlite_read_schema`.
+ * CREATE SQL, over `sqlite_read_schema`. And `maestro-cli sqlite rows`: one
+ * LIMIT/OFFSET window, sorted in SQLite, over `sqlite_read_rows`.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -15,7 +16,7 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 	withMaestroClient: vi.fn(),
 }));
 
-import { sqliteSchema, sqliteTables } from '../../../cli/commands/sqlite';
+import { sqliteRows, sqliteSchema, sqliteTables } from '../../../cli/commands/sqlite';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 
 const DB = path.resolve('/data/app.db');
@@ -292,6 +293,121 @@ describe('sqlite schema', () => {
 		});
 		await expect(sqliteSchema(DB, 'nope', {})).rejects.toThrow('__exit__');
 		expect(errorSpy.mock.calls.join('\n')).toContain('is named nope');
+		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+});
+
+function respondRows(page: Record<string, unknown> = {}) {
+	return mockReply({
+		type: 'sqlite_rows_result',
+		success: true,
+		database: { handle: 'h1', displayPath: DB, fileBytes: 4096 },
+		page: {
+			name: 'users',
+			columns: [
+				{ name: 'id', declaredType: 'INTEGER' },
+				{ name: 'email', declaredType: 'TEXT' },
+				{ name: 'avatar', declaredType: 'BLOB' },
+			],
+			rows: [
+				[1, 'ada@example.com', null],
+				[2, '', { kind: 'blob', head: 'ffd8', bytes: 2048 }],
+				[{ kind: 'integer', text: '9007199254740993' }, 'line one\nline two', null],
+			],
+			offset: 0,
+			hasMore: true,
+			orderedBy: ['rowid'],
+			elapsedMs: 2,
+			...page,
+		},
+	});
+}
+
+describe('sqlite rows', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const logged = () => logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('sends the resolved path, the window, and no sort by default', async () => {
+		const sent = respondRows();
+		await sqliteRows(DB, 'users', {});
+		expect(sent[0]).toEqual({
+			type: 'sqlite_read_rows',
+			path: DB,
+			name: 'users',
+			offset: 0,
+			limit: 50,
+			sort: null,
+			responseType: 'sqlite_rows_result',
+		});
+	});
+
+	it('sends --offset, --limit, --sort, and --desc', async () => {
+		const sent = respondRows();
+		await sqliteRows(DB, 'users', { offset: '100', limit: '20', sort: 'email', desc: true });
+		expect(sent[0]).toMatchObject({
+			offset: 100,
+			limit: 20,
+			sort: { column: 'email', direction: 'desc' },
+		});
+	});
+
+	it('prints the window as a table with NULL, BLOB sizes, and exact big integers', async () => {
+		respondRows();
+		await sqliteRows(DB, 'users', {});
+		const out = logged();
+		expect(out).toContain(`users in ${DB}`);
+		expect(out).toMatch(/id\s+email\s+avatar/);
+		expect(out).toMatch(/1\s+ada@example\.com\s+NULL/);
+		expect(out).toContain('BLOB 2.0 KB');
+		expect(out).toContain('9007199254740993');
+		// A cell stays on one line of the table.
+		expect(out).toContain('line one line two');
+		expect(out).toContain('Rows 1-3; more follow (--offset 3).');
+		expect(out).toContain('Ordered by rowid.');
+	});
+
+	it('says when nothing orders the rows, and when a window is past the end', async () => {
+		respondRows({ rows: [], hasMore: false, orderedBy: [], offset: 500 });
+		await sqliteRows(DB, 'active_users', { offset: '500' });
+		const out = logged();
+		expect(out).toContain('No rows past offset 500.');
+		expect(out).toContain('Not ordered: rows come back in the order SQLite scans them.');
+	});
+
+	it('prints the page merged with the path under --json', async () => {
+		respondRows();
+		await sqliteRows(DB, 'users', { json: true });
+		const json = JSON.parse(String(logSpy.mock.calls[0][0]));
+		expect(json).toMatchObject({ success: true, path: DB, name: 'users', hasMore: true });
+		expect(json.rows[1][2]).toEqual({ kind: 'blob', head: 'ffd8', bytes: 2048 });
+	});
+
+	it('refuses a bad --limit and a --desc with no --sort without contacting the app', async () => {
+		await expect(sqliteRows(DB, 'users', { limit: '-3' })).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('--limit must be a non-negative whole number');
+		await expect(sqliteRows(DB, 'users', { desc: true })).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('--desc needs --sort <column>');
+		expect(withMaestroClient).not.toHaveBeenCalled();
+	});
+
+	it('exits 1 with the app error when the sort column is unknown', async () => {
+		mockReply({
+			type: 'sqlite_rows_result',
+			success: false,
+			error: 'users has no column named zzz.',
+		});
+		await expect(sqliteRows(DB, 'users', { sort: 'zzz' })).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('no column named zzz');
 		expect(process.exit).toHaveBeenCalledWith(1);
 	});
 });

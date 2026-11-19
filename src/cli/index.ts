@@ -159,7 +159,7 @@ import {
 	dataviewIndexStatus,
 	dataviewQuery,
 } from './commands/dataview';
-import { sqliteSchema, sqliteTables } from './commands/sqlite';
+import { sqliteRows, sqliteSchema, sqliteTables } from './commands/sqlite';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -3868,6 +3868,21 @@ sqliteCmd
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, object, options) => sqliteSchema(file, object, options));
+
+sqliteCmd
+	.command('rows <path> <object>')
+	.description(
+		"Show one window of a table's or view's rows, paged with LIMIT/OFFSET and optionally sorted by a column in SQLite"
+	)
+	.option('--offset <n>', 'Rows to skip', '0')
+	.option('--limit <n>', 'Rows to show (at most 1000)', '50')
+	.option(
+		'--sort <column>',
+		'Sort by this column (server side, ties broken by rowid or primary key)'
+	)
+	.option('--desc', 'Sort descending (needs --sort)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, options) => sqliteRows(file, object, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

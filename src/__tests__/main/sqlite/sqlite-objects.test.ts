@@ -83,6 +83,7 @@ vi.mock('../../../main/sqlite/sqlite-database', () => ({
 }));
 
 import {
+	findSqliteObject,
 	SQLITE_ROW_COUNT_CAP,
 	SQLITE_SIZE_SCAN_MAX_BYTES,
 	listSqliteObjects,
@@ -365,5 +366,33 @@ describe('readAllSqliteObjectStats', () => {
 		const all = await readAllSqliteObjectStats('h1', ['users', 'kv', 'docs']);
 		expect(all.map((entry) => entry.name)).toEqual(['users', 'kv', 'docs']);
 		expect(all.map((entry) => entry.rowCount)).toEqual([42, 3, 7]);
+	});
+});
+
+describe('findSqliteObject', () => {
+	const objects = [
+		{ name: 'audit', kind: 'trigger' },
+		{ name: 'audit', kind: 'table' },
+		{ name: 'users', kind: 'table' },
+	].map((entry) => ({
+		...entry,
+		tableName: entry.name,
+		internal: false,
+		countable: entry.kind === 'table',
+		hasStorage: entry.kind === 'table',
+	})) as Parameters<typeof findSqliteObject>[0];
+
+	it('picks the object of the asked kind when a trigger shares a table name', () => {
+		expect(findSqliteObject(objects, 'audit', 'trigger')?.kind).toBe('trigger');
+		expect(findSqliteObject(objects, 'audit', 'table')?.kind).toBe('table');
+	});
+
+	it('falls back to rail order without a kind', () => {
+		expect(findSqliteObject(objects, 'audit')?.kind).toBe('table');
+	});
+
+	it('answers undefined for an unknown name or a kind the name does not have', () => {
+		expect(findSqliteObject(objects, 'nope')).toBeUndefined();
+		expect(findSqliteObject(objects, 'users', 'view')).toBeUndefined();
 	});
 });

@@ -141,6 +141,24 @@ export function readSqliteObjectSummaries(db: Database.Database): SqliteObjectSu
 	});
 }
 
+/** Rail order, used to pick one object when a name is shared (a trigger and a table can be). */
+const KIND_ORDER: readonly SqliteObjectKind[] = ['table', 'view', 'index', 'trigger'];
+
+/**
+ * The object a caller named. `kind` picks between objects that share a name,
+ * which a trigger and a table may; without it, the first in rail order wins.
+ * Shared by the schema and row readers so a name resolves the same way in both.
+ */
+export function findSqliteObject(
+	objects: readonly SqliteObjectSummary[],
+	name: string,
+	kind?: SqliteObjectKind
+): SqliteObjectSummary | undefined {
+	const named = objects.filter((object) => object.name === name);
+	if (kind) return named.find((object) => object.kind === kind);
+	return named.sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind))[0];
+}
+
 /** Whether this SQLite build has the `dbstat` table sizes are measured with. */
 function hasDbstat(db: Database.Database): boolean {
 	try {

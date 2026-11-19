@@ -173,3 +173,73 @@ export interface SqliteObjectSchema {
 	 */
 	error?: string;
 }
+
+/** A server-side sort for the table view: one column, one direction. */
+export interface SqliteSortSpec {
+	column: string;
+	direction: 'asc' | 'desc';
+}
+
+/** One window of a table's or view's rows, asked for by the table view. */
+export interface SqliteRowsRequest {
+	handle: string;
+	/** The table or view to read. */
+	name: string;
+	/** Rows to skip (`OFFSET`). */
+	offset: number;
+	/** Rows to return (`LIMIT`), clamped to `SQLITE_ROWS_MAX_LIMIT` by the reader. */
+	limit: number;
+	/** `ORDER BY` this column, or null for the table's own order. */
+	sort?: SqliteSortSpec | null;
+}
+
+/** A result column, as the statement reports it. */
+export interface SqliteResultColumn {
+	name: string;
+	/**
+	 * The declared type of the table column behind it, or null for an
+	 * expression (a view's `count(*)`).
+	 */
+	declaredType: string | null;
+}
+
+/**
+ * One cell of a row window.
+ *
+ * Small values travel as themselves. Three kinds do not, because shipping them
+ * whole would either lose information or move megabytes per page:
+ *
+ *  - `integer`: an INTEGER outside JavaScript's safe range, as decimal text,
+ *    so `9007199254740993` is not silently rounded.
+ *  - `text`: a TEXT value longer than `SQLITE_CELL_TEXT_LIMIT` characters,
+ *    cut to that many, with its full length.
+ *  - `blob`: a BLOB, as its first `SQLITE_CELL_BLOB_HEAD_BYTES` bytes in hex,
+ *    with its full size.
+ */
+export type SqliteCellValue =
+	| null
+	| number
+	| string
+	| { kind: 'integer'; text: string }
+	| { kind: 'text'; head: string; length: number }
+	| { kind: 'blob'; head: string; bytes: number };
+
+/** What `readSqliteRows()` returns: the requested window and whether more follow. */
+export interface SqliteRowsPage {
+	name: string;
+	columns: SqliteResultColumn[];
+	/** Cells in `columns` order. */
+	rows: SqliteCellValue[][];
+	/** The offset the window starts at. */
+	offset: number;
+	/** At least one row exists past this window. */
+	hasMore: boolean;
+	/**
+	 * What makes the order stable from page to page: the sort column (if any)
+	 * then `rowid` or the primary key. Empty when nothing does, as for a view
+	 * with no sort, whose rows come back in whatever order SQLite scans them.
+	 */
+	orderedBy: string[];
+	/** Time SQLite spent on the window, in milliseconds. */
+	elapsedMs: number;
+}

@@ -15,8 +15,10 @@
  *    process is synchronous while SQLite runs), and the rail fills in as each
  *    batch lands. Visible objects are measured before internal ones.
  *
- * The content pane shows the selected object: its counts, then its schema
- * (SqliteSchemaPanel), read on selection.
+ * The content pane shows the selected object: its counts, then either its
+ * rows (SqliteTableView, for a table or view) or its schema
+ * (SqliteSchemaPanel), chosen by a Data / Schema switch the viewer remembers.
+ * An index or trigger has no rows of its own, so it always shows its schema.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -38,11 +40,22 @@ import {
 } from '../../../shared/sqlite/objects';
 import { formatCount, formatSize } from '../../../shared/formatters';
 import type { Theme } from '../../types';
+import { usePersistedChoice } from '../../hooks/ui/usePersistedChoice';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { MiniBadge } from '../ui/MiniBadge';
+import { SegmentedControl } from '../ui/SegmentedControl';
 import { Spinner } from '../ui/Spinner';
 import { SqliteObjectRail } from './SqliteObjectRail';
 import { SqliteSchemaPanel } from './SqliteSchemaPanel';
+import { SqliteTableView } from './SqliteTableView';
+
+/** What the content pane shows for a table or view. */
+type ObjectView = 'data' | 'schema';
+const OBJECT_VIEWS: readonly ObjectView[] = ['data', 'schema'];
+const OBJECT_VIEW_OPTIONS = [
+	{ value: 'data' as const, label: 'Data', title: 'Browse the rows' },
+	{ value: 'schema' as const, label: 'Schema', title: 'Columns, keys, and the CREATE statement' },
+];
 
 interface SqliteViewerProps {
 	filePath: string;
@@ -68,6 +81,7 @@ export function SqliteViewer({ filePath, fileName, theme }: SqliteViewerProps) {
 	const [statsError, setStatsError] = useState<string | null>(null);
 	const [selectedName, setSelectedName] = useState<string | null>(null);
 	const showInternal = usePersistedToggle('sqlite-show-internal', false);
+	const objectView = usePersistedChoice<ObjectView>('sqlite-object-view', OBJECT_VIEWS, 'data');
 
 	// -- Open the database and read its object list -------------------------
 
@@ -187,6 +201,8 @@ export function SqliteViewer({ filePath, fileName, theme }: SqliteViewerProps) {
 
 	const selectedStats = selected ? stats.get(selected.name) : undefined;
 	const selectedRows = formatSqliteRowCount(selectedStats);
+	const hasRows = selected?.kind === 'table' || selected?.kind === 'view';
+	const showData = hasRows && objectView.value === 'data';
 
 	return (
 		<div className="flex flex-col h-full min-h-0" data-testid="sqlite-viewer">
@@ -231,10 +247,10 @@ export function SqliteViewer({ filePath, fileName, theme }: SqliteViewerProps) {
 					theme={theme}
 				/>
 
-				<div className="flex-1 min-w-0 overflow-y-auto p-4" data-testid="sqlite-object-pane">
+				<div className="flex-1 min-w-0 flex flex-col min-h-0" data-testid="sqlite-object-pane">
 					{selected ? (
-						<div className="flex flex-col gap-4 select-text">
-							<div className="flex flex-col gap-2">
+						<>
+							<div className="shrink-0 flex flex-col gap-2 px-4 pt-4 pb-3 select-text">
 								<div className="flex items-center gap-2 flex-wrap">
 									<span
 										className="text-sm font-mono font-semibold"
@@ -248,6 +264,18 @@ export function SqliteViewer({ filePath, fileName, theme }: SqliteViewerProps) {
 									))}
 									{selected.internal && (
 										<MiniBadge label="internal" theme={theme} color={theme.colors.textDim} />
+									)}
+									{hasRows && (
+										<div className="ml-auto select-none">
+											<SegmentedControl
+												value={objectView.value}
+												onChange={objectView.setValue}
+												options={OBJECT_VIEW_OPTIONS}
+												theme={theme}
+												ariaLabel="Show the rows or the schema"
+												testId="sqlite-object-view"
+											/>
+										</div>
 									)}
 								</div>
 								<div
@@ -268,10 +296,28 @@ export function SqliteViewer({ filePath, fileName, theme }: SqliteViewerProps) {
 									</div>
 								)}
 							</div>
-							<SqliteSchemaPanel handle={info.handle} object={selected} theme={theme} />
-						</div>
+							{showData ? (
+								<div
+									className="flex-1 min-h-0"
+									style={{ borderTop: `1px solid ${theme.colors.border}` }}
+								>
+									<SqliteTableView
+										// One mount per object, so a selection change never
+										// shows the previous object's rows or sort.
+										key={`${selected.kind}:${selected.name}`}
+										handle={info.handle}
+										object={selected}
+										theme={theme}
+									/>
+								</div>
+							) : (
+								<div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 select-text">
+									<SqliteSchemaPanel handle={info.handle} object={selected} theme={theme} />
+								</div>
+							)}
+						</>
 					) : (
-						<div className="text-sm" style={{ color: theme.colors.textDim }}>
+						<div className="p-4 text-sm" style={{ color: theme.colors.textDim }}>
 							This database has no tables, views, indexes, or triggers.
 						</div>
 					)}
