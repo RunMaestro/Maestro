@@ -159,6 +159,7 @@ import {
 	dataviewIndexStatus,
 	dataviewQuery,
 } from './commands/dataview';
+import { sqliteTables } from './commands/sqlite';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -3836,6 +3837,25 @@ dataviewCmd
 	.description('List the vault roots whose DataviewJS blocks run without asking')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => dataviewTrusted(options));
+
+// SQLite commands - read a database the way the file preview's SQLite viewer
+// shows it. The app opens the file read-only and answers with the viewer's own
+// functions, so the app must be running.
+const sqliteCmd = program
+	.command('sqlite')
+	.description('SQLite: inspect a database the way the file preview shows it (read-only)');
+
+sqliteCmd
+	.command('tables <path>')
+	.description(
+		'List the tables, views, indexes, and triggers in a SQLite database, with row counts and sizes'
+	)
+	.option(
+		'--internal',
+		'Also list internal objects (sqlite_sequence, autoindexes, FTS shadow tables)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteTables(file, options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

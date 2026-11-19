@@ -130,6 +130,7 @@ import { handleLiveCommand } from './live';
 import { handleFederationCommand } from './federation';
 import { handleMaestroRunCommand } from './maestroRun';
 import { handleDataviewCommand } from './dataview';
+import { handleSqliteListObjects } from './sqlite';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleDiffReviewCommand } from './diffReview';
 import { handlePromptLinkCommand } from './promptLinks';
@@ -439,6 +440,10 @@ export class WebSocketMessageHandler {
 
 			case 'dataview_command':
 				void handleDataviewCommand(this.ctx, client, message);
+				break;
+
+			case 'sqlite_list_objects':
+				void handleSqliteListObjects(this.ctx, client, message);
 				break;
 
 			case 'auto_run_steering_command':

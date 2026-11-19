@@ -165,8 +165,8 @@ export interface FontScaleTargetView {
 	isMermaid: boolean;
 	/** CSV / TSV table view. */
 	isCsv: boolean;
-	/** Parquet grid, which owns its own row height and column widths. */
-	isParquet: boolean;
+	/** Parquet or SQLite viewer, which owns its own row height and column widths. */
+	isDataViewer: boolean;
 	/** JSONL viewer, including JSON under a jq filter. */
 	isJsonlView: boolean;
 	/** HTML being rendered in the sandboxed iframe (not shown as source). */
@@ -178,7 +178,7 @@ export interface FontScaleTargetView {
  *
  * Only where zoom actually moves type. The views that own their own layout -
  * images, the binary card, rendered HTML inside a sandboxed iframe we cannot
- * style, Mermaid diagrams, and the CSV / JSONL / parquet table viewers - are
+ * style, Mermaid diagrams, and the CSV / JSONL / parquet / SQLite table viewers - are
  * excluded: a
  * control that changes nothing reads as broken, which is exactly why Rich Mode
  * lost its copy of these buttons in Director's Notes.
@@ -189,7 +189,7 @@ export function canScaleFontForView(view: FontScaleTargetView): boolean {
 		!view.isImage &&
 		!view.isBinary &&
 		!view.isCsv &&
-		!view.isParquet &&
+		!view.isDataViewer &&
 		!view.isJsonlView &&
 		!view.isMermaid &&
 		!view.isRenderedHtml

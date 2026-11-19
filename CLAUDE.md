@@ -139,6 +139,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a SQLite error means the database file is damaged:** `isSqliteCorruptionError()` in `src/shared/sqliteErrors.ts`
 - **Whether a file is really a SQLite database:** `hasSqliteHeader()`, `isSqliteCandidateFile()`, `isSqlitePreviewMarker()` in `src/shared/sqlite/preview.ts`; `isSqliteDatabaseFile()` in `src/main/sqlite/sqlite-detect.ts`
 - **Opening a user's SQLite database to read it:** `openSqliteDatabase()`, `getSqliteDatabase()`, `closeAllSqliteDatabases()` in `src/main/sqlite/sqlite-database.ts`
+- **Listing a SQLite database's tables, views, indexes, and triggers:** `listSqliteObjects()`, `readSqliteObjectStats()`, `readAllSqliteObjectStats()` in `src/main/sqlite/sqlite-objects.ts`; `groupSqliteObjects()`, `formatSqliteRowCount()` in `src/shared/sqlite/objects.ts`
+- **Putting a table or column name into SQLite SQL text:** `quoteSqliteIdentifier()` in `src/shared/sqlite/sql.ts`
 - **A main-process resource the renderer addresses by handle, closed when idle:** `createIdleHandleRegistry()` in `src/main/utils/idle-handle-registry.ts`
 - **Parsing a session transcript in the main process:** `runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`, task bodies in `transcript-parse-tasks.ts`
 - **Reading a page of a transcript's messages:** `forEachJsonlLine()`, `readFirstJsonlLine()` in `src/main/utils/jsonl-stream.ts`, feeding `MessagePageCollector` in `src/main/storage/base-session-storage.ts`

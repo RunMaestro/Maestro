@@ -156,9 +156,10 @@ describe('filePreviewUtils', () => {
 			expect(isBinaryExtension('events.pq')).toBe(false);
 		});
 
-		it('still treats database files as binary - Maestro has no SQLite viewer', () => {
-			// If a SQLite viewer ever lands, this is the assertion that will fail
-			// and point at the classifier that needs to learn about it.
+		it('still treats database extensions as binary - only a proven SQLite marker reaches the viewer', () => {
+			// A `.db` that fails the header sniff (Berkeley DB, LevelDB) keeps its
+			// raw content and must stay on the binary card. Real SQLite arrives as a
+			// marker, which FilePreview routes to the viewer ahead of this check.
 			expect(isBinaryExtension('app.db')).toBe(true);
 			expect(isBinaryExtension('app.sqlite')).toBe(true);
 			expect(isBinaryExtension('app.sqlite3')).toBe(true);
@@ -530,6 +531,7 @@ describe('filePreviewUtils', () => {
 			isBinary: false,
 			isMermaid: false,
 			isCsv: false,
+			isDataViewer: false,
 			isJsonlView: false,
 			isRenderedHtml: false,
 			...overrides,
@@ -555,6 +557,7 @@ describe('filePreviewUtils', () => {
 				'isBinary',
 				'isMermaid',
 				'isCsv',
+				'isDataViewer',
 				'isJsonlView',
 				'isRenderedHtml',
 			] as const) {

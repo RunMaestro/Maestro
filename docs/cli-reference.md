@@ -3362,6 +3362,19 @@ List the vault roots whose DataviewJS blocks run without asking
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli sqlite`
+
+SQLite: inspect a database the way the file preview shows it (read-only)
+
+## `maestro-cli sqlite tables <path>`
+
+List the tables, views, indexes, and triggers in a SQLite database, with row counts and sizes
+
+| Option       | Description                                                                  | Default |
+| ------------ | ---------------------------------------------------------------------------- | ------- |
+| `--internal` | Also list internal objects (sqlite_sequence, autoindexes, FTS shadow tables) | -       |
+| `--json`     | Output as JSON (for scripting)                                               | -       |
+
 ## `maestro-cli quick-chat`
 
 Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey

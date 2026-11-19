@@ -79,6 +79,7 @@ const READ_ONLY_CHANNELS = new Set([
 	'feedback:issues:list',
 	'feedback:search-issues',
 	'parquet:open',
+	'sqlite:open',
 	'ssh-remote:test',
 	'cue:validateYaml',
 	'cue:loadPipelineLayout',

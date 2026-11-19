@@ -241,6 +241,11 @@ import type {
 	ParquetSortSpec,
 } from '../shared/parquet/types';
 import type {
+	SqliteDatabaseInfo,
+	SqliteObjectList,
+	SqliteObjectStats,
+} from '../shared/sqlite/types';
+import type {
 	GitWorktreeSetupResult,
 	GitWorktreeCheckoutResult,
 	GitWorktreeRunSetupResult,
@@ -1960,6 +1965,17 @@ interface MaestroAPI {
 		}) => Promise<{ path: string; rows: number; truncated: boolean }>;
 		close: (handle: string) => Promise<void>;
 		onFetchProgress: (callback: (progress: ParquetFetchProgress) => void) => () => void;
+	};
+	/**
+	 * SQLite preview. The database stays open read-only in the main process
+	 * and only names and numbers cross this bridge - see
+	 * src/shared/sqlite/preview.ts for why a SQLite read returns a marker.
+	 */
+	sqlite: {
+		open: (filePath: string) => Promise<SqliteDatabaseInfo>;
+		listObjects: (handle: string) => Promise<SqliteObjectList>;
+		readObjectStats: (handle: string, names: string[]) => Promise<SqliteObjectStats[]>;
+		close: (handle: string) => Promise<void>;
 	};
 	fs: {
 		homeDir: () => Promise<string>;
