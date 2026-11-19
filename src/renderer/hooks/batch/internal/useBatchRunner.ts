@@ -13,6 +13,7 @@ import { gitService } from '../../../services/git';
 import { finishRunEvidenceCapture, startRunEvidenceCapture } from '../../../services/runEvidence';
 import type { RunEvidenceSnapshot } from '../../../../shared/runEvidence';
 import { withoutReportDocument } from '../../../../shared/playbookRun';
+import { playbookFailureKindForAgentError } from '../../../../shared/playbookFailureCore';
 import {
 	buildPlaybookRunReportParameters,
 	type PlaybookReportSynopsis,
@@ -761,7 +762,14 @@ export function useBatchRunner({
 			const notePausedAgentError = (document: string, taskIndex: number) => {
 				const pausedError = useBatchStore.getState().batchRunStates[sessionId]?.error;
 				if (pausedError && pausedError.type !== 'hitl_gate') {
-					lastRunError = { kind: 'error', document, taskIndex, message: pausedError.message };
+					const failureKind = playbookFailureKindForAgentError(pausedError);
+					lastRunError = {
+						kind: 'error',
+						document,
+						taskIndex,
+						message: pausedError.message,
+						...(failureKind !== 'error' && { failureKind }),
+					};
 				}
 			};
 
@@ -2001,6 +2009,15 @@ export function useBatchRunner({
 				report = buildPlaybookRunReport({
 					playbookName: config.playbook.name || 'Playbook',
 					playbookId: config.playbook.id,
+					...(config.playbook.marketplaceId && {
+						source: {
+							marketplaceId: config.playbook.marketplaceId,
+							...(config.playbook.sourceVersion && {
+								sourceVersion: config.playbook.sourceVersion,
+							}),
+						},
+					}),
+					autoRunFolderPath: folderPath,
 					facts: finalFacts,
 					halted,
 					failures: runFailures,

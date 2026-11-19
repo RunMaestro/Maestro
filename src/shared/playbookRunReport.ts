@@ -20,6 +20,7 @@
 import { formatElapsedTime, humanizeDuration } from './duration';
 import { formatCost, formatCount } from './formatters';
 import { narrativeToMarkdown, type DirectorNotesNarrative } from './directorNotesNarrative';
+import type { PlaybookFailureKind } from './playbookFailureCore';
 import type { PlaybookParamProvenance } from './playbookParams';
 import { RUN_EVIDENCE_MTIME_MAX_DEPTH, RUN_EVIDENCE_MTIME_MAX_ENTRIES } from './runEvidence';
 import type { AutoRunFailureKind } from './stats-types';
@@ -222,11 +223,35 @@ export interface PlaybookRunReportProblem {
 	taskIndex?: number;
 	/** The stall reason, the agent error's message, or the halt reason. */
 	message: string;
+	/**
+	 * The failure class a report of this problem files under, when the agent
+	 * error says more than `kind` does (a watchdog, auth, or spawn failure is
+	 * the app's, not the playbook's). Absent means `kind`.
+	 */
+	failureKind?: PlaybookFailureKind;
+}
+
+/**
+ * The Playbook Exchange entry a run's playbook was imported from: what a
+ * failure report names. Public facts only (a slug and a published version).
+ */
+export interface PlaybookRunReportSource {
+	/** `provenance.marketplaceId`. */
+	marketplaceId: string;
+	/** `provenance.sourceVersion`. */
+	sourceVersion?: string;
 }
 
 export interface PlaybookRunReport {
 	playbookName: string;
 	playbookId?: string;
+	/** Present when the playbook was imported from the Exchange. */
+	source?: PlaybookRunReportSource;
+	/**
+	 * The Auto Run folder the run listed its documents from: problem documents
+	 * are relative to it, so it is where their pristine copies are read.
+	 */
+	autoRunFolderPath?: string;
 	status: PlaybookRunReportStatus;
 	facts: FinalSummaryFacts;
 	/**
@@ -351,6 +376,8 @@ export function buildPlaybookRunReportProblems(params: {
 export interface BuildPlaybookRunReportParams {
 	playbookName: string;
 	playbookId?: string;
+	source?: PlaybookRunReportSource;
+	autoRunFolderPath?: string;
 	/** The facts from the reconciled totals (the same ones the final History row shows). */
 	facts: FinalSummaryFacts;
 	/** The agent wrote a halt marker (or the run refused to start a task): a failure. */
@@ -383,6 +410,10 @@ export function buildPlaybookRunReport(params: BuildPlaybookRunReportParams): Pl
 	return {
 		playbookName: params.playbookName,
 		...(params.playbookId !== undefined && { playbookId: params.playbookId }),
+		...(params.source && { source: params.source }),
+		...(params.autoRunFolderPath !== undefined && {
+			autoRunFolderPath: params.autoRunFolderPath,
+		}),
 		status: playbookRunReportStatus(params.facts, params.halted ?? false),
 		facts: params.facts,
 		...(problems.length > 0 && { problems }),

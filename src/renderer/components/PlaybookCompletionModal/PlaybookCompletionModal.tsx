@@ -8,6 +8,10 @@
  * first, with "1 of N" in the header; Done (or Escape, or the X) drops the one
  * on screen and the next appears (D21).
  *
+ * "Report a problem" (failed and partial runs of an Exchange playbook) swaps
+ * the report for a consent step that shows the exact issue it would file
+ * (`PlaybookFailureReportStep`); Back or Escape returns to the report.
+ *
  * Ways in: a finished playbook run, "Open Last Playbook Report" in the command
  * palette, and `maestro-cli open playbook-report` (all but the first through
  * `openPlaybookReport`). Ways out: Done, Escape, and the header X.
@@ -21,6 +25,10 @@
  */
 
 import { useCallback, useState } from 'react';
+import type {
+	PlaybookFailureIssuePreview,
+	PlaybookFailurePreviewPayload,
+} from '../../../shared/feedback';
 import { playbookRunReportStatusLabel } from '../../../shared/playbookRunReport';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import {
@@ -28,6 +36,12 @@ import {
 	openPlaybookCompletionFile,
 	savePlaybookCompletionToProject,
 } from '../../services/playbookCompletion';
+import {
+	canReportPlaybookFailure,
+	loadPlaybookFailurePayload,
+	previewPlaybookFailure,
+	submitPlaybookFailureReport,
+} from '../../services/playbookFailureReport';
 import { selectModalOpen, useModalStore } from '../../stores/modalStore';
 import {
 	selectCurrentPlaybookCompletion,
@@ -37,6 +51,7 @@ import {
 } from '../../stores/playbookCompletionStore';
 import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
 import type { Theme } from '../../types';
+import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
 import { MiniBadge } from '../ui/MiniBadge';
 import { Modal, MODAL_BUTTON_BASE_CLASS, MODAL_BUTTON_SECONDARY_CLASS } from '../ui/Modal';
@@ -45,6 +60,14 @@ import {
 	PlaybookReportStatusIcon,
 	playbookReportStatusColor,
 } from './PlaybookReportBody';
+import { PlaybookFailureReportStep } from './PlaybookFailureReportStep';
+
+/** The "Report a problem" consent step, while it is open. */
+interface FailureReportState {
+	payload: PlaybookFailurePreviewPayload | null;
+	preview: PlaybookFailureIssuePreview | null;
+	error: string | null;
+}
 
 export interface PlaybookCompletionModalProps {
 	theme: Theme;
@@ -86,7 +109,11 @@ function PlaybookCompletionModalBody({
 	const sshRemoteId = useSessionStore((s) =>
 		getSessionSshRemoteId(selectSessionById(sessionId)(s))
 	);
+	const agentProvider = useSessionStore((s) => selectSessionById(sessionId)(s)?.toolType);
 	const [saving, setSaving] = useState(false);
+	const [failureReport, setFailureReport] = useState<FailureReportState | null>(null);
+	const [includeDebugPackage, setIncludeDebugPackage] = useState(false);
+	const [sendingReport, setSendingReport] = useState(false);
 
 	const cwd = report.cwd ?? agentCwd;
 	// The agent's file tree indexes the agent's cwd; a worktree run's paths are
@@ -108,6 +135,48 @@ function PlaybookCompletionModalBody({
 		}
 	}, [completion]);
 
+	const reportable =
+		(report.status === 'failed' || report.status === 'partial') && canReportPlaybookFailure(report);
+
+	const openFailureReport = useCallback(async () => {
+		setFailureReport({ payload: null, preview: null, error: null });
+		try {
+			const payload = await loadPlaybookFailurePayload(
+				report,
+				agentProvider ?? 'unknown',
+				sshRemoteId
+			);
+			if (!payload) {
+				setFailureReport({
+					payload: null,
+					preview: null,
+					error: 'This run has no failure to report.',
+				});
+				return;
+			}
+			const preview = await previewPlaybookFailure(payload);
+			setFailureReport({ payload, preview, error: null });
+		} catch (error) {
+			setFailureReport({ payload: null, preview: null, error: ipcErrorMessage(error) });
+		}
+	}, [report, agentProvider, sshRemoteId]);
+
+	const closeFailureReport = useCallback(() => setFailureReport(null), []);
+
+	const sendFailureReport = useCallback(async () => {
+		if (!failureReport?.payload) return;
+		setSendingReport(true);
+		try {
+			const result = await submitPlaybookFailureReport(failureReport.payload, {
+				includeDebugPackage,
+			});
+			// Filed, added to an existing issue, or handed to the browser: done here.
+			if (result && (result.success || result.browserFallback)) setFailureReport(null);
+		} finally {
+			setSendingReport(false);
+		}
+	}, [failureReport, includeDebugPackage]);
+
 	const subtitle = (
 		<span className="flex items-center gap-2">
 			<MiniBadge
@@ -124,15 +193,51 @@ function PlaybookCompletionModalBody({
 		</span>
 	);
 
+	const reportFooter = (
+		<>
+			<button
+				type="button"
+				onClick={closeFailureReport}
+				disabled={sendingReport}
+				className={`${MODAL_BUTTON_SECONDARY_CLASS} mr-auto disabled:opacity-50 disabled:cursor-not-allowed`}
+				style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+				data-testid="playbook-failure-back"
+			>
+				Back
+			</button>
+			<button
+				type="button"
+				onClick={() => void sendFailureReport()}
+				disabled={!failureReport?.preview || sendingReport}
+				className={`${MODAL_BUTTON_BASE_CLASS} disabled:opacity-50 disabled:cursor-not-allowed`}
+				style={{
+					backgroundColor: theme.colors.accent,
+					color: theme.colors.accentForeground,
+				}}
+				data-testid="playbook-failure-send"
+			>
+				{sendingReport ? 'Sending...' : 'Send report'}
+			</button>
+		</>
+	);
+
 	const footer = (
 		<>
 			{report.status !== 'completed' && (
 				<button
 					type="button"
-					disabled
-					title="Not available yet"
+					onClick={() => void openFailureReport()}
+					disabled={!reportable}
+					title={
+						reportable
+							? 'File this failure for the playbook author, after you see exactly what is sent'
+							: 'Only failed or partial runs of a Playbook Exchange playbook can be reported'
+					}
 					className={`${MODAL_BUTTON_SECONDARY_CLASS} mr-auto disabled:opacity-50 disabled:cursor-not-allowed`}
-					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+					style={{
+						borderColor: theme.colors.border,
+						color: reportable ? theme.colors.textMain : theme.colors.textDim,
+					}}
 					data-testid="playbook-completion-report-problem"
 				>
 					Report a problem
@@ -180,23 +285,33 @@ function PlaybookCompletionModalBody({
 			subtitle={subtitle}
 			headerIcon={<PlaybookReportStatusIcon status={report.status} color={color} />}
 			priority={MODAL_PRIORITIES.PLAYBOOK_COMPLETION}
-			onClose={dismissCurrent}
+			onClose={failureReport ? closeFailureReport : dismissCurrent}
 			width={720}
 			resizeKey="modal-playbook-completion"
 			defaultSize={{ width: 720, height: 640 }}
 			minSize={{ width: 480, height: 360 }}
-			footer={footer}
+			footer={failureReport ? reportFooter : footer}
 			testId="playbook-completion-modal"
 			contentClassName="flex-1 min-h-0 overflow-y-auto px-6 py-4 select-none"
 		>
-			<PlaybookReportBody
-				theme={theme}
-				report={report}
-				fileTree={fileTree}
-				cwd={cwd}
-				sshRemoteId={sshRemoteId}
-				onFileClick={handleFileClick}
-			/>
+			{failureReport ? (
+				<PlaybookFailureReportStep
+					theme={theme}
+					preview={failureReport.preview}
+					error={failureReport.error}
+					includeDebugPackage={includeDebugPackage}
+					onIncludeDebugPackageChange={setIncludeDebugPackage}
+				/>
+			) : (
+				<PlaybookReportBody
+					theme={theme}
+					report={report}
+					fileTree={fileTree}
+					cwd={cwd}
+					sshRemoteId={sshRemoteId}
+					onFileClick={handleFileClick}
+				/>
+			)}
 		</Modal>
 	);
 }

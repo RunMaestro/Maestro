@@ -1232,6 +1232,8 @@ describe('useBatchProcessor hook', () => {
 					report: expect.objectContaining({
 						playbookName: 'Refactor Pass',
 						playbookId: 'pb-1',
+						// Problem documents are relative to it: where pristine copies are read.
+						autoRunFolderPath: '/test/folder',
 						status: 'completed',
 						evidence,
 						reportPath: expect.stringMatching(

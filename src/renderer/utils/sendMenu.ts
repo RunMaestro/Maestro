@@ -16,6 +16,7 @@ import type { Session } from '../types';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { resolveCodexTransport } from '../../shared/codexTransport';
+import { githubNewIssueUrl } from '../../shared/feedback';
 import { describeSteerBlocked, getSteerEligibility } from './executionQueue';
 import { isSessionRemote } from './sessionHelpers';
 
@@ -117,7 +118,7 @@ export function steerFeatureRequestUrl(toolType: Session['toolType']): string {
 	const name = getAgentDisplayName(toolType);
 	const title = `Steering support for ${name}`;
 	const body = `Steer Running Turn is unavailable for ${name}.\n\nDoes the ${name} CLI accept input while a turn is running? If so, how (stdin, a socket, an RPC method)?\n`;
-	return `https://github.com/RunMaestro/Maestro/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+	return githubNewIssueUrl('RunMaestro/Maestro', title, body);
 }
 
 /** Whether any tab of this agent is mid-turn. */

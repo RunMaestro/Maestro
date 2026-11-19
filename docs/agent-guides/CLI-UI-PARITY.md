@@ -562,6 +562,16 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
    "Open report" on an older run has no verb either: `open playbook-report`
    shows only the newest report, and an older one is read from its
    `.maestro-reports/` file or the History entry's `playbookReport` field.
+6. **Playbook completion report: Report a problem.** The modal's consent step
+   calls `feedback:preview-playbook-failure` and
+   `feedback:submit-playbook-failure` (`previewPlaybookFailureIssue()` /
+   `submitPlaybookFailure()` in `src/main/feedback/index.ts`). No WS bridge
+   message or verb reaches them yet. The input is already on disk: the run's
+   `.maestro-reports/<slug>-<timestamp>.json` (its `source`, `problems`, and
+   `autoRunFolderPath`) plus the pristine copy under
+   `.maestro-playbook/source/`, so a `feedback playbook-failure <report.json>
+[--dry-run] [--debug-package]` verb would build its payload with
+   `playbookFailureFromRunReport()` and call the same two functions.
 
 ### Federation: remaining gaps
 

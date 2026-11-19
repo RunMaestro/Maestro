@@ -1445,6 +1445,12 @@ interface MaestroAPI {
 			issueNumber: number,
 			comment?: string
 		) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
+		previewPlaybookFailure: (
+			payload: import('../shared/feedback').PlaybookFailurePreviewPayload
+		) => Promise<import('../shared/feedback').PlaybookFailureIssuePreview>;
+		submitPlaybookFailure: (
+			payload: import('../shared/feedback').PlaybookFailureSubmitPayload
+		) => Promise<import('../shared/feedback').PlaybookFailureSubmitResponse>;
 		listAccounts: () => Promise<import('../shared/feedbackAccounts').FeedbackAccountsResponse>;
 		rememberAccount: (key: string | null) => Promise<void>;
 		drafts: {

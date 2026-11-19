@@ -94,7 +94,12 @@ import {
 	saveImageToTempFile,
 } from '../../../../main/process-manager/utils/imageUtils';
 import { registerFeedbackHandlers } from '../../../../main/ipc/handlers/feedback';
-import { clearFeedbackRepoVerdicts, resetFeedbackSubmissionGuard } from '../../../../main/feedback';
+import {
+	clearFeedbackRepoVerdicts,
+	resetFeedbackSubmissionGuard,
+	resetPlaybookFailureSubmissionGuard,
+} from '../../../../main/feedback';
+import { playbookFailureFingerprint } from '../../../../shared/playbookFailure';
 import { feedbackReportFingerprint } from '../../../../shared/feedback';
 
 /** `gh auth status` for a signed-in account, in gh 2.40+ wording. */
@@ -174,6 +179,7 @@ describe('feedback handlers', () => {
 	beforeEach(() => {
 		clearFeedbackRepoVerdicts();
 		resetFeedbackSubmissionGuard();
+		resetPlaybookFailureSubmissionGuard();
 		vi.clearAllMocks();
 		registeredHandlers.clear();
 		mockProcessManager.write.mockReset();
@@ -1228,6 +1234,247 @@ describe('feedback handlers', () => {
 		expect(getSettingsStore).not.toHaveBeenCalled();
 		expect(isGhInstalled).toHaveBeenCalled();
 		expect(result).toEqual({ authenticated: true });
+	});
+
+	describe('playbook failure reports', () => {
+		const CONTENT_REPO = 'RunMaestro/Maestro-Playbooks';
+		const failurePayload = (report: Record<string, unknown> = {}) => ({
+			report: {
+				playbookId: 'research-market',
+				sourceVersion: '2026-08-14',
+				documentFilename: '3_EVALUATE',
+				taskIndex: 1,
+				kind: 'stall',
+				agentProvider: 'claude-code',
+				parameters: [
+					{ name: 'PR_URL', value: 'https://github.com/acme/secret/pull/1', provenance: 'you' },
+					{ name: 'GH_TOKEN', value: 'ghp_live', provenance: 'you' },
+				],
+				...report,
+			},
+			pristineSource: '- [x] Read the PR.\n- [ ] Review [PR_URL] now.\n',
+		});
+		const fingerprint = playbookFailureFingerprint({
+			playbookId: 'research-market',
+			sourceVersion: '2026-08-14',
+			documentFilename: '3_EVALUATE',
+			taskIndex: 1,
+			kind: 'stall',
+		});
+		const preview = (payload: unknown) =>
+			registeredHandlers.get('feedback:preview-playbook-failure')!({}, payload);
+		const submit = (payload: unknown) =>
+			registeredHandlers.get('feedback:submit-playbook-failure')!({}, payload);
+		const ghCalls = () => vi.mocked(execFileNoThrow).mock.calls.map((call) => call[1] as string[]);
+		const writtenBody = () =>
+			vi
+				.mocked(fs.writeFile)
+				.mock.calls.find(([file]) => String(file).includes('maestro-playbook-failure'))?.[1] as
+				| string
+				| undefined;
+
+		interface MockPlaybookGhOptions {
+			searchResults?: Array<{ number: number; state: string; url: string }>;
+			labelFails?: boolean;
+			issueUrl?: string;
+		}
+
+		/** A signed-in gh that may file, with each playbook-failure call routed. */
+		function mockPlaybookGh(options: MockPlaybookGhOptions = {}): void {
+			vi.mocked(getCachedGhStatus).mockReturnValue({ installed: true, authenticated: true });
+			vi.mocked(execFileNoThrow).mockImplementation(async (_command, args) => {
+				const argv = (args ?? []) as string[];
+				const joined = argv.join(' ');
+				if (joined === 'auth status') return statusOk() as any;
+				if (joined.startsWith('api repos/RunMaestro/Maestro/issues --method POST')) {
+					return probeAllowed() as any;
+				}
+				if (argv[0] === 'search') {
+					const issues = (options.searchResults ?? []).map((issue) => ({
+						...issue,
+						title: 'Playbook research-market: stalled',
+						labels: [{ name: 'playbook-failure' }],
+						createdAt: '2026-11-01T00:00:00Z',
+						author: { login: 'someone' },
+					}));
+					return { exitCode: 0, stdout: JSON.stringify(issues), stderr: '' } as any;
+				}
+				if (joined.includes('/labels/playbook-failure')) {
+					return options.labelFails
+						? ({ exitCode: 1, stdout: '', stderr: 'HTTP 404' } as any)
+						: ({ exitCode: 0, stdout: '', stderr: '' } as any);
+				}
+				if (argv[0] === 'label' && argv[1] === 'create') {
+					return options.labelFails
+						? ({ exitCode: 1, stdout: '', stderr: 'HTTP 403: no permission' } as any)
+						: ({ exitCode: 0, stdout: '', stderr: '' } as any);
+				}
+				if (argv[0] === 'issue' && argv[1] === 'create') {
+					return {
+						exitCode: 0,
+						stdout: `${options.issueUrl ?? `https://github.com/${CONTENT_REPO}/issues/12`}\n`,
+						stderr: '',
+					} as any;
+				}
+				return { exitCode: 0, stdout: '', stderr: '' } as any;
+			});
+		}
+
+		it('registers the preview and submit channels', () => {
+			expect(ipcMain.handle).toHaveBeenCalledWith(
+				'feedback:preview-playbook-failure',
+				expect.any(Function)
+			);
+			expect(ipcMain.handle).toHaveBeenCalledWith(
+				'feedback:submit-playbook-failure',
+				expect.any(Function)
+			);
+		});
+
+		it('previews the exact body: app version stamped, task as shipped, shapes only', async () => {
+			const result = await preview(failurePayload());
+			expect(result.repo).toBe(CONTENT_REPO);
+			expect(result.fingerprint).toBe(fingerprint);
+			expect(result.body).toContain('| Maestro version | 0.15.3 |');
+			expect(result.body).toContain('- [ ] Review [PR_URL] now.');
+			expect(result.body).toContain('- `PR_URL`: set (url)');
+			for (const leak of ['acme', 'secret', 'GH_TOKEN', 'ghp_live']) {
+				expect(result.body).not.toContain(leak);
+			}
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('refuses a payload that names no task', async () => {
+			await expect(preview(failurePayload({ taskIndex: -1 }))).rejects.toThrow(
+				'does not name a task'
+			);
+			await expect(preview(failurePayload({ kind: 'stopped' }))).rejects.toThrow(
+				'unknown failure kind'
+			);
+		});
+
+		it('files a new labelled issue on the content repo when no open issue carries the fingerprint', async () => {
+			mockPlaybookGh();
+			const result = await submit(failurePayload());
+
+			expect(result).toEqual({
+				success: true,
+				repo: CONTENT_REPO,
+				issueUrl: `https://github.com/${CONTENT_REPO}/issues/12`,
+			});
+			const search = ghCalls().find((argv) => argv[0] === 'search');
+			expect(search).toEqual(expect.arrayContaining([fingerprint, '--repo', CONTENT_REPO]));
+			const create = ghCalls().find((argv) => argv[0] === 'issue' && argv[1] === 'create');
+			expect(create).toEqual(
+				expect.arrayContaining(['-R', CONTENT_REPO, '--label', 'playbook-failure'])
+			);
+			expect(create).toContain('Playbook research-market: stalled at 3_EVALUATE.md task 2');
+			const body = writtenBody();
+			expect(body).toBe((await preview(failurePayload())).body);
+			expect(body).toContain(`<!-- maestro:playbook-failure-fingerprint: ${fingerprint} -->`);
+		});
+
+		it('routes an app failure to the app repo', async () => {
+			mockPlaybookGh({ issueUrl: 'https://github.com/RunMaestro/Maestro/issues/5' });
+			const result = await submit(failurePayload({ kind: 'watchdog' }));
+			expect(result.repo).toBe('RunMaestro/Maestro');
+			const create = ghCalls().find((argv) => argv[0] === 'issue' && argv[1] === 'create');
+			expect(create).toEqual(expect.arrayContaining(['-R', 'RunMaestro/Maestro']));
+		});
+
+		it('adds a +1 and a recurrence comment to the open issue instead of filing a duplicate', async () => {
+			mockPlaybookGh({
+				searchResults: [
+					{ number: 77, state: 'OPEN', url: `https://github.com/${CONTENT_REPO}/issues/77` },
+				],
+			});
+			const result = await submit(failurePayload());
+
+			expect(result).toEqual({
+				success: true,
+				repo: CONTENT_REPO,
+				issueUrl: `https://github.com/${CONTENT_REPO}/issues/77`,
+				deduplicated: true,
+			});
+			const calls = ghCalls();
+			expect(calls).toContainEqual([
+				'api',
+				`repos/${CONTENT_REPO}/issues/77/reactions`,
+				'--method',
+				'POST',
+				'-f',
+				'content=+1',
+			]);
+			const comment = calls.find((argv) => argv[0] === 'issue' && argv[1] === 'comment');
+			expect(comment?.slice(0, 4)).toEqual(['issue', 'comment', '77', '-R']);
+			expect(comment?.[4]).toBe(CONTENT_REPO);
+			expect(comment?.[6]).toContain('Also hit on Maestro 0.15.3 with claude-code.');
+			expect(calls.some((argv) => argv[0] === 'issue' && argv[1] === 'create')).toBe(false);
+		});
+
+		it('ignores a closed match and files a new issue', async () => {
+			mockPlaybookGh({
+				searchResults: [
+					{ number: 3, state: 'CLOSED', url: `https://github.com/${CONTENT_REPO}/issues/3` },
+				],
+			});
+			const result = await submit(failurePayload());
+			expect(result.deduplicated).toBeUndefined();
+			expect(ghCalls().some((argv) => argv[0] === 'issue' && argv[1] === 'create')).toBe(true);
+		});
+
+		it('comments on the issue it just filed when the same failure is reported again', async () => {
+			mockPlaybookGh();
+			await submit(failurePayload());
+			vi.mocked(execFileNoThrow).mockClear();
+			const again = await submit(failurePayload());
+
+			expect(again).toMatchObject({ success: true, deduplicated: true });
+			expect(again.issueUrl).toBe(`https://github.com/${CONTENT_REPO}/issues/12`);
+			// Search lags a new issue, so the remembered one is used without asking it.
+			expect(ghCalls().some((argv) => argv[0] === 'search')).toBe(false);
+		});
+
+		it('files the issue unlabelled when the label cannot be made', async () => {
+			mockPlaybookGh({ labelFails: true });
+			const result = await submit(failurePayload());
+			expect(result.success).toBe(true);
+			const create = ghCalls().find((argv) => argv[0] === 'issue' && argv[1] === 'create');
+			expect(create).not.toContain('--label');
+		});
+
+		it('sends nothing without gh and returns a prefilled browser URL', async () => {
+			vi.mocked(getCachedGhStatus).mockReturnValue({ installed: false, authenticated: false });
+			const result = await submit(failurePayload());
+
+			expect(result.success).toBe(false);
+			expect(result.repo).toBe(CONTENT_REPO);
+			expect(result.error).toContain('GitHub CLI (gh) is not installed');
+			expect(result.browserFallback.overflow).toBeNull();
+			const url = new URL(result.browserFallback.url);
+			expect(`${url.origin}${url.pathname}`).toBe(`https://github.com/${CONTENT_REPO}/issues/new`);
+			expect(url.searchParams.get('title')).toBe(
+				'Playbook research-market: stalled at 3_EVALUATE.md task 2'
+			);
+			expect(url.searchParams.get('body')).toBe((await preview(failurePayload())).body);
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('falls back to the browser when gh is not signed in, and keeps the fingerprint in a capped URL', async () => {
+			vi.mocked(getCachedGhStatus).mockReturnValue({ installed: true, authenticated: false });
+			const result = await submit({
+				...failurePayload(),
+				pristineSource: `- [x] one\n- [ ] ${'Very long task. '.repeat(600)}\n`,
+			});
+
+			expect(result.browserFallback.url.length).toBeLessThanOrEqual(6 * 1024);
+			expect(result.browserFallback.overflow).toBeTruthy();
+			const body = new URL(result.browserFallback.url).searchParams.get('body')!;
+			expect(body.endsWith(`<!-- maestro:playbook-failure-fingerprint: ${fingerprint} -->`)).toBe(
+				true
+			);
+			expect(ghCalls().some((argv) => argv[0] === 'issue')).toBe(false);
+		});
 	});
 
 	describe('feedback:get-conversation-prompt', () => {

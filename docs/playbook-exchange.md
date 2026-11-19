@@ -108,6 +108,14 @@ A run that failed or was stopped gets no narrative, only the facts. A run that f
 
 When the run finishes, the report opens in a window on top of whatever you are doing. **Copy report** puts the markdown on the clipboard, **Save to project** writes it into the agent's working directory as `<playbook>-REPORT-<date>-<time>.md`, and file paths in the report open in the File Preview. If several runs finish together, their reports wait in line: the header shows "1 of 3", and **Done** (or <kbd>Esc</kbd>) moves to the next one. Closing a report loses nothing. To see the last one again, run **Open Last Playbook Report** from the command palette, or `maestro-cli open playbook-report`. Opening the run's entry in History shows the same report, with the classic Auto Run summary folded below it, and the entry's **Open report** button opens it in the report window again.
 
+#### Report a problem
+
+When a playbook from the Exchange fails or finishes with stalled documents, the report window offers **Report a problem**. It first shows the exact GitHub issue it would file, so you see every word before anything is sent. The issue names the playbook, its version, the document and task number, the task as it shipped (never your filled-in copy), the kind of failure, your agent's provider, and your Maestro version. Parameters appear by shape only, such as `PR_URL: set (url)` or `MAX_ITEMS: default`. Parameter values, paths, branch names, and repository names are never sent, and a parameter whose name looks like a secret is left out entirely.
+
+A failure in the playbook itself (a task that stalled, errored, or halted) goes to the playbook repository, `RunMaestro/Maestro-Playbooks`. A failure of Maestro or your provider (a turn the watchdog ended, a login failure, an agent that would not start) goes to `RunMaestro/Maestro`. If someone already reported the same failure, your report adds a +1 and a "also hit on" comment with your Maestro version and provider to their issue instead of opening a second one. **Attach a support package** is off unless you tick it.
+
+Reporting uses the GitHub CLI (`gh`), signed in to your account. Without it, Maestro opens a prefilled issue in your browser instead. When the report is too long for a link, the rest goes to your clipboard and a notice tells you to paste it at the end of the issue.
+
 A run from the command line (`maestro-cli playbook <id>`) writes the same two files and the same History entry, and prints the report when it ends. With `--json` the report arrives as a `report` event just before `complete`. The command line runs a `report` document the same way, but it writes no synopsis summary, so a playbook without a `report` document gets a report with the facts and no narrative. `maestro-cli run-doc` runs loose documents, not a playbook, so it writes no report.
 
 ### Use One as Reference

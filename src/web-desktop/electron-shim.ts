@@ -77,6 +77,7 @@ const READ_ONLY_CHANNELS = new Set([
 	'feedback:drafts:list',
 	'feedback:gh-login-command',
 	'feedback:issues:list',
+	'feedback:preview-playbook-failure',
 	'feedback:search-issues',
 	'parquet:open',
 	'ssh-remote:test',

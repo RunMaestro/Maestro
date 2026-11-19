@@ -197,7 +197,7 @@ describe('PlaybookCompletionModal', () => {
 		expect(screen.queryByTestId('playbook-report-not-done')).toBeNull();
 	});
 
-	it('offers "Report a problem" (disabled) only when the run did not complete', () => {
+	it('offers "Report a problem" only when the run did not complete, disabled for a local playbook', () => {
 		renderModal();
 		act(() => store().enqueue('agent-1', makeReport('Fine')));
 		expect(screen.queryByTestId('playbook-completion-report-problem')).toBeNull();
@@ -207,6 +207,166 @@ describe('PlaybookCompletionModal', () => {
 			store().enqueue('agent-1', makeReport('Broken', 'failed'));
 		});
 		expect(screen.getByTestId('playbook-completion-report-problem')).toBeDisabled();
+	});
+
+	describe('Report a problem', () => {
+		const PREVIEW = {
+			repo: 'RunMaestro/Maestro-Playbooks',
+			title: 'Playbook research-market: stalled at two.md task 3',
+			body: '## Playbook failure\n\n| Playbook | `research-market` |',
+			fingerprint: '0123456789abcdef',
+		};
+		const feedback = () =>
+			window.maestro.feedback as unknown as {
+				previewPlaybookFailure: ReturnType<typeof vi.fn>;
+				submitPlaybookFailure: ReturnType<typeof vi.fn>;
+			};
+		const readDoc = () =>
+			(window.maestro.autorun as unknown as { readDoc: ReturnType<typeof vi.fn> }).readDoc;
+		const openExternal = () =>
+			(window.maestro.shell as unknown as { openExternal: ReturnType<typeof vi.fn> }).openExternal;
+
+		const exchangeReport = (status: PlaybookRunReportStatus = 'partial') =>
+			makeReport('Research', status, {
+				source: { marketplaceId: 'research-market', sourceVersion: '2026-08-14' },
+				autoRunFolderPath: '/autorun',
+				problems: [{ kind: 'stall', document: 'pb/two', taskIndex: 2, message: 'No progress' }],
+			});
+
+		beforeEach(() => {
+			feedback().previewPlaybookFailure.mockReset().mockResolvedValue(PREVIEW);
+			feedback().submitPlaybookFailure.mockReset().mockResolvedValue({
+				success: true,
+				repo: PREVIEW.repo,
+				issueUrl: 'https://github.com/RunMaestro/Maestro-Playbooks/issues/12',
+			});
+			readDoc().mockReset().mockResolvedValue({ success: true, content: '- [ ] shipped task' });
+			openExternal().mockReset();
+		});
+
+		async function openReportStep() {
+			renderModal();
+			act(() => store().enqueue('agent-1', exchangeReport()));
+			const button = screen.getByTestId('playbook-completion-report-problem');
+			expect(button).not.toBeDisabled();
+			fireEvent.click(button);
+			await waitFor(() => screen.getByTestId('playbook-failure-preview-body'));
+		}
+
+		it('shows the exact issue body, read from the pristine copy, before sending anything', async () => {
+			await openReportStep();
+
+			expect(readDoc()).toHaveBeenCalledWith(
+				'/autorun',
+				'pb/.maestro-playbook/source/two.md',
+				undefined
+			);
+			expect(feedback().previewPlaybookFailure).toHaveBeenCalledWith({
+				report: expect.objectContaining({
+					playbookId: 'research-market',
+					sourceVersion: '2026-08-14',
+					documentFilename: 'two',
+					taskIndex: 2,
+					kind: 'stall',
+				}),
+				pristineSource: '- [ ] shipped task',
+			});
+			expect(screen.getByTestId('playbook-failure-preview-body').textContent).toBe(PREVIEW.body);
+			expect(screen.getByTestId('playbook-failure-preview-title').textContent).toBe(PREVIEW.title);
+			expect(screen.getByTestId('playbook-failure-include-debug-package')).not.toBeChecked();
+			expect(feedback().submitPlaybookFailure).not.toHaveBeenCalled();
+		});
+
+		it('files with the support package off by default, then returns to the report', async () => {
+			await openReportStep();
+			fireEvent.click(screen.getByTestId('playbook-failure-send'));
+
+			await waitFor(() => expect(feedback().submitPlaybookFailure).toHaveBeenCalled());
+			expect(feedback().submitPlaybookFailure).toHaveBeenCalledWith(
+				expect.objectContaining({
+					includeDebugPackage: false,
+					pristineSource: '- [ ] shipped task',
+				})
+			);
+			await waitFor(() => expect(screen.queryByTestId('playbook-failure-report-step')).toBeNull());
+			expect(toast).toHaveBeenCalledWith(
+				expect.objectContaining({ color: 'green', title: 'Problem reported' })
+			);
+		});
+
+		it('attaches the support package only when ticked', async () => {
+			await openReportStep();
+			fireEvent.click(screen.getByTestId('playbook-failure-include-debug-package'));
+			fireEvent.click(screen.getByTestId('playbook-failure-send'));
+
+			await waitFor(() =>
+				expect(feedback().submitPlaybookFailure).toHaveBeenCalledWith(
+					expect.objectContaining({ includeDebugPackage: true })
+				)
+			);
+		});
+
+		it('says so when the failure was already reported', async () => {
+			feedback().submitPlaybookFailure.mockResolvedValue({
+				success: true,
+				repo: PREVIEW.repo,
+				issueUrl: 'https://github.com/RunMaestro/Maestro-Playbooks/issues/77',
+				deduplicated: true,
+			});
+			await openReportStep();
+			fireEvent.click(screen.getByTestId('playbook-failure-send'));
+
+			await waitFor(() =>
+				expect(toast).toHaveBeenCalledWith(
+					expect.objectContaining({
+						title: 'Already reported',
+						clickAction: {
+							kind: 'open-url',
+							url: 'https://github.com/RunMaestro/Maestro-Playbooks/issues/77',
+						},
+					})
+				)
+			);
+		});
+
+		it('without gh, opens the prefilled issue and copies the overflow to the clipboard', async () => {
+			feedback().submitPlaybookFailure.mockResolvedValue({
+				success: false,
+				repo: PREVIEW.repo,
+				error: 'GitHub CLI (gh) is not installed.',
+				browserFallback: { url: 'https://github.com/x/y/issues/new?title=t', overflow: 'the rest' },
+			});
+			await openReportStep();
+			fireEvent.click(screen.getByTestId('playbook-failure-send'));
+
+			await waitFor(() =>
+				expect(openExternal()).toHaveBeenCalledWith('https://github.com/x/y/issues/new?title=t')
+			);
+			expect(clipboard.write).toHaveBeenCalledWith('the rest');
+			expect(toast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					color: 'yellow',
+					title: 'Finish the report in your browser',
+					message: expect.stringContaining('the rest is on your clipboard'),
+				})
+			);
+			await waitFor(() => expect(screen.queryByTestId('playbook-failure-report-step')).toBeNull());
+		});
+
+		it('Back returns to the report without sending', async () => {
+			await openReportStep();
+			fireEvent.click(screen.getByTestId('playbook-failure-back'));
+
+			expect(screen.queryByTestId('playbook-failure-report-step')).toBeNull();
+			expect(feedback().submitPlaybookFailure).not.toHaveBeenCalled();
+			expect(store().queue).toHaveLength(1);
+		});
+
+		it('keeps "Report a problem" disabled for a stopped Exchange run', () => {
+			renderModal();
+			act(() => store().enqueue('agent-1', exchangeReport('stopped')));
+			expect(screen.getByTestId('playbook-completion-report-problem')).toBeDisabled();
+		});
 	});
 
 	it('copies the rendered report and flashes the acknowledgement', async () => {

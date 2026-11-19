@@ -7,6 +7,8 @@
  * main process reject a payload the caller already spent an upload on.
  */
 
+import type { PlaybookFailureReportInput, PlaybookFailureRepo } from './playbookFailureCore';
+
 export type FeedbackCategory =
 	| 'bug_report'
 	| 'feature_request'
@@ -280,4 +282,104 @@ export interface SubmittedIssue {
 	submittedAt: number;
 	state: 'open' | 'closed';
 	lastCheckedAt: number;
+}
+
+// ============================================================================
+// Playbook failure reports ("Report a problem" on a finished playbook run)
+// ============================================================================
+
+/** What the completion modal sends to preview or file a playbook failure. */
+export interface PlaybookFailurePreviewPayload {
+	report: PlaybookFailureReportInput;
+	/** The pristine copy of the failing document; null when the import kept none. */
+	pristineSource?: string | null;
+}
+
+export interface PlaybookFailureSubmitPayload extends PlaybookFailurePreviewPayload {
+	/** Upload a support package and link it from the issue. Off unless the user ticks it. */
+	includeDebugPackage?: boolean;
+}
+
+/** The issue exactly as it would be filed: the consent surface. */
+export interface PlaybookFailureIssuePreview {
+	repo: PlaybookFailureRepo;
+	title: string;
+	body: string;
+	fingerprint: string;
+}
+
+/** A prefilled GitHub new-issue page, for when gh cannot file the issue. */
+export interface PrefilledIssueUrl {
+	url: string;
+	/**
+	 * The end of the body that did not fit in the URL, for the clipboard.
+	 * Null when the whole body fits.
+	 */
+	overflow: string | null;
+}
+
+export interface PlaybookFailureSubmitResponse extends FeedbackSubmitResponse {
+	repo?: PlaybookFailureRepo;
+	/**
+	 * An open issue already tracked this failure: a +1 and a recurrence comment
+	 * were added to it, and `issueUrl` is that issue.
+	 */
+	deduplicated?: boolean;
+	/** gh is missing or not signed in: file it in the browser instead. */
+	browserFallback?: PrefilledIssueUrl;
+}
+
+/** How long a prefilled new-issue URL may get before the body moves to the clipboard. */
+export const PREFILLED_ISSUE_URL_MAX_BYTES = 6 * 1024;
+
+/** GitHub's new-issue page for `owner/repo`, with the title and body filled in. */
+export function githubNewIssueUrl(repo: string, title: string, body: string): string {
+	return `https://github.com/${repo}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+}
+
+const CLIPBOARD_CONTINUATION_NOTE =
+	'_This report was too long for the link. The rest of it is on your clipboard: paste it below this line._';
+
+/**
+ * A prefilled new-issue URL no longer than `maxBytes`. A body that does not
+ * fit is cut at the last line break that fits (or mid-line when no line
+ * break does), a note says the rest is on the clipboard, and the rest is
+ * returned as `overflow`. `trailer` (a marker comment) is kept whole after the
+ * note, so a cut body still carries it.
+ */
+export function cappedNewIssueUrl(
+	repo: string,
+	title: string,
+	body: string,
+	options: { trailer?: string; maxBytes?: number } = {}
+): PrefilledIssueUrl {
+	const maxBytes = options.maxBytes ?? PREFILLED_ISSUE_URL_MAX_BYTES;
+	const trailer = options.trailer ? `\n\n${options.trailer}` : '';
+	const whole = githubNewIssueUrl(repo, title, `${body}${trailer}`);
+	if (whole.length <= maxBytes) return { url: whole, overflow: null };
+
+	// encodeURIComponent output is ASCII, so its length is its byte count.
+	const urlFor = (prefix: string) =>
+		githubNewIssueUrl(repo, title, `${prefix}\n\n${CLIPBOARD_CONTINUATION_NOTE}${trailer}`);
+	const fits = (end: number) => urlFor(body.slice(0, safeCut(body, end))).length <= maxBytes;
+
+	let low = 0;
+	let high = body.length;
+	while (low < high) {
+		const mid = Math.ceil((low + high) / 2);
+		if (fits(mid)) low = mid;
+		else high = mid - 1;
+	}
+	let cut = safeCut(body, low);
+	const lineBreak = body.lastIndexOf('\n', cut);
+	if (lineBreak > 0) cut = lineBreak;
+	const prefix = body.slice(0, cut).trimEnd();
+	return { url: urlFor(prefix), overflow: body.slice(cut).replace(/^\n+/, '') };
+}
+
+/** `end`, moved back one when it would split a surrogate pair (which cannot be URL-encoded). */
+function safeCut(text: string, end: number): number {
+	if (end <= 0 || end >= text.length) return Math.max(0, Math.min(end, text.length));
+	const code = text.charCodeAt(end - 1);
+	return code >= 0xd800 && code <= 0xdbff ? end - 1 : end;
 }

@@ -313,6 +313,13 @@ const mockMaestro = {
 		submitConversation: vi.fn().mockResolvedValue({ success: true }),
 		searchIssues: vi.fn().mockResolvedValue({ issues: [] }),
 		subscribeIssue: vi.fn().mockResolvedValue({ success: true }),
+		previewPlaybookFailure: vi.fn().mockResolvedValue({
+			repo: 'RunMaestro/Maestro-Playbooks',
+			title: 'Playbook test: stalled at DOC.md task 1',
+			body: '## Playbook failure',
+			fingerprint: '0123456789abcdef',
+		}),
+		submitPlaybookFailure: vi.fn().mockResolvedValue({ success: true }),
 		drafts: {
 			list: vi.fn().mockResolvedValue({ drafts: [] }),
 			save: vi.fn((draft: unknown) => Promise.resolve({ draft })),

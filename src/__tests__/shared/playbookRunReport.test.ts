@@ -389,6 +389,20 @@ describe('buildPlaybookRunReport', () => {
 		});
 	});
 
+	it('carries the Exchange source and the Auto Run folder a failure report needs', () => {
+		const report = buildPlaybookRunReport({
+			...base,
+			source: { marketplaceId: 'research-market', sourceVersion: '2026-08-14' },
+			autoRunFolderPath: '/autorun',
+			facts: buildFinalSummaryFacts(baseParams),
+		});
+		expect(report.source).toEqual({
+			marketplaceId: 'research-market',
+			sourceVersion: '2026-08-14',
+		});
+		expect(report.autoRunFolderPath).toBe('/autorun');
+	});
+
 	it('marks a halted run failed and leads its problems with the halt', () => {
 		const report = buildPlaybookRunReport({
 			...base,

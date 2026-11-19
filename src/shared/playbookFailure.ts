@@ -23,53 +23,19 @@ import {
 	CHECKED_TASK_COUNT_REGEX,
 	UNCHECKED_TASK_REGEX,
 } from './markdownTaskScan';
-import type { PlaybookParamProvenance } from './playbookParams';
-import type { AutoRunFailureKind } from './stats-types';
-import { PLAYBOOK_PRISTINE_SOURCE_DIR, type AgentError } from './types';
+import {
+	PLAYBOOK_FAILURE_FINGERPRINT_MARKER,
+	playbookDocumentBaseName as documentBaseName,
+	routePlaybookFailure,
+	type PlaybookFailureKind,
+	type PlaybookFailureParameter,
+	type PlaybookFailureReport,
+	type PlaybookFailureRepo,
+} from './playbookFailureCore';
 
-/**
- * What went wrong. The Auto Run failure kinds (the playbook content stalled,
- * errored, or halted), plus the three that are the app or the provider:
- * the host watchdog ended the turn, the provider's login failed, or the agent
- * could not start. The values are fingerprint input, so renaming one splits
- * every existing bucket for it.
- */
-export type PlaybookFailureKind = AutoRunFailureKind | 'watchdog' | 'auth' | 'spawn';
-
-/** The content repo: playbook documents and the manifest. */
-export const PLAYBOOK_CONTENT_REPO = 'RunMaestro/Maestro-Playbooks';
-/** The app repo: Maestro itself. */
-export const MAESTRO_APP_REPO = 'RunMaestro/Maestro';
-
-export type PlaybookFailureRepo = typeof PLAYBOOK_CONTENT_REPO | typeof MAESTRO_APP_REPO;
-
-/** The HTML comment key a filed issue carries its fingerprint under. Searched for dedup. */
-export const PLAYBOOK_FAILURE_FINGERPRINT_MARKER = 'maestro:playbook-failure-fingerprint';
-
-/** One parameter the failed run used. The value is read for its shape only. */
-export interface PlaybookFailureParameter {
-	name: string;
-	/** The resolved value. Never written to the issue. */
-	value?: string;
-	provenance: PlaybookParamProvenance;
-}
-
-/** Everything a failure report is built from. */
-export interface PlaybookFailureReport {
-	/** The manifest entry id (`provenance.marketplaceId`). Public. */
-	playbookId: string;
-	/** The manifest `lastUpdated` the playbook was imported at. Public. */
-	sourceVersion?: string;
-	/** The document's filename as shipped, with or without `.md`. */
-	documentFilename: string;
-	/** The 0-based task the run was on: the document's checked-task count at the time. */
-	taskIndex: number;
-	kind: PlaybookFailureKind;
-	/** The agent's provider id, e.g. `claude-code`. */
-	agentProvider: string;
-	appVersion: string;
-	parameters?: PlaybookFailureParameter[];
-}
+// The renderer-safe half lives in `playbookFailureCore.ts`; everything there is
+// part of this module's surface too.
+export * from './playbookFailureCore';
 
 export interface PlaybookFailureFingerprintInput {
 	playbookId: string;
@@ -102,47 +68,6 @@ export function playbookFailureFingerprint(input: PlaybookFailureFingerprintInpu
 			kind: input.kind,
 		})
 	).slice(0, 16);
-}
-
-const APP_FAILURE_KINDS: ReadonlySet<PlaybookFailureKind> = new Set(['watchdog', 'auth', 'spawn']);
-
-/**
- * The repo a failure is filed against. A watchdog, auth, or spawn failure is
- * the app or the provider, which the playbook author cannot fix; everything
- * else is the content (a task line that stalled, errored, or halted), whose
- * fix is an edit in the playbooks repo.
- */
-export function routePlaybookFailure(
-	report: Pick<PlaybookFailureReport, 'kind'>
-): PlaybookFailureRepo {
-	return APP_FAILURE_KINDS.has(report.kind) ? MAESTRO_APP_REPO : PLAYBOOK_CONTENT_REPO;
-}
-
-/**
- * The failure kind of an agent error that ended a playbook turn: the host
- * watchdog, a provider login failure, and a provider CLI that is not installed
- * are app failures; any other agent error is a plain `error`.
- */
-export function playbookFailureKindForAgentError(
-	error: Pick<AgentError, 'type' | 'source'>
-): PlaybookFailureKind {
-	if (error.source === 'host-supervision') return 'watchdog';
-	if (error.type === 'auth_expired') return 'auth';
-	if (error.type === 'agent_not_installed') return 'spawn';
-	return 'error';
-}
-
-function documentBaseName(filename: string): string {
-	return filename.replace(/\.md$/i, '');
-}
-
-/**
- * Where an imported playbook keeps the shipped copy of a document, relative to
- * its Auto Run folder. Read the failing task from here, never from the working
- * copy, which holds expanded parameter values.
- */
-export function pristineSourceRelativePath(documentFilename: string): string {
-	return `${PLAYBOOK_PRISTINE_SOURCE_DIR}/${documentBaseName(documentFilename)}.md`;
 }
 
 /**
@@ -269,6 +194,9 @@ export function buildPlaybookFailureIssue(
 		['Failure', kind.body],
 		['Agent provider', report.agentProvider || 'unknown'],
 		['Maestro version', report.appVersion || 'unknown'],
+		// Visible as well as in the trailing comment: issue search matches body
+		// text, and this row is what a later report of the same failure finds.
+		['Fingerprint', inlineCode(fingerprint)],
 	];
 	const sections: string[] = [
 		'## Playbook failure',
@@ -294,7 +222,33 @@ export function buildPlaybookFailureIssue(
 		sections.push('', '### Configured parameters', '', ...parameterLines);
 	}
 
-	sections.push('', `<!-- ${PLAYBOOK_FAILURE_FINGERPRINT_MARKER}: ${fingerprint} -->`);
+	sections.push('', playbookFailureFingerprintComment(fingerprint));
 
 	return { repo: routePlaybookFailure(report), title, body: sections.join('\n'), fingerprint };
+}
+
+/**
+ * The comment a repeat of an already-filed failure adds instead of a second
+ * issue: the build and provider it recurred on, nothing else. The fingerprint
+ * marker rides along so the thread stays searchable.
+ */
+export function buildPlaybookFailureRecurrenceComment(
+	report: Pick<PlaybookFailureReport, 'appVersion' | 'agentProvider'>,
+	fingerprint: string
+): string {
+	const version = report.appVersion || 'an unknown version';
+	const provider = report.agentProvider || 'an unknown provider';
+	return [
+		`Also hit on Maestro ${version} with ${provider}.`,
+		'',
+		playbookFailureFingerprintComment(fingerprint),
+	].join('\n');
+}
+
+/**
+ * The HTML comment that carries a fingerprint: the last line of every filed
+ * issue body and recurrence comment. Invisible on GitHub.
+ */
+export function playbookFailureFingerprintComment(fingerprint: string): string {
+	return `<!-- ${PLAYBOOK_FAILURE_FINGERPRINT_MARKER}: ${fingerprint} -->`;
 }

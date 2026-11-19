@@ -5,7 +5,11 @@ import {
 	PLAYBOOK_CONTENT_REPO,
 	PLAYBOOK_FAILURE_FINGERPRINT_MARKER,
 	buildPlaybookFailureIssue,
+	buildPlaybookFailureRecurrenceComment,
 	describePlaybookFailureParameters,
+	isPlaybookFailureKind,
+	playbookFailureFingerprintComment,
+	playbookFailureFromRunReport,
 	playbookFailureFingerprint,
 	playbookFailureKindForAgentError,
 	pristineSourceRelativePath,
@@ -14,6 +18,7 @@ import {
 	type PlaybookFailureKind,
 	type PlaybookFailureReport,
 } from '../../shared/playbookFailure';
+import type { PlaybookRunReport } from '../../shared/playbookRunReport';
 
 const coords = {
 	playbookId: 'research-market',
@@ -264,5 +269,130 @@ describe('buildPlaybookFailureIssue', () => {
 	it('marks a missing version as unknown', () => {
 		const { body } = buildPlaybookFailureIssue(report({ sourceVersion: undefined }));
 		expect(body).toContain('| Version | unknown |');
+	});
+});
+
+describe('fingerprint search surface', () => {
+	it('shows the fingerprint in the table, so issue search can find it', () => {
+		const issue = buildPlaybookFailureIssue(report());
+		expect(issue.body).toContain(`| Fingerprint | \`${issue.fingerprint}\` |`);
+	});
+
+	it('ends the body with the fingerprint comment', () => {
+		const issue = buildPlaybookFailureIssue(report());
+		expect(issue.body.endsWith(playbookFailureFingerprintComment(issue.fingerprint))).toBe(true);
+	});
+});
+
+describe('buildPlaybookFailureRecurrenceComment', () => {
+	it('names the version and provider, and carries the fingerprint', () => {
+		expect(
+			buildPlaybookFailureRecurrenceComment(
+				{ appVersion: '1.4.0', agentProvider: 'codex' },
+				'0123456789abcdef'
+			)
+		).toBe(
+			`Also hit on Maestro 1.4.0 with codex.\n\n<!-- ${PLAYBOOK_FAILURE_FINGERPRINT_MARKER}: 0123456789abcdef -->`
+		);
+	});
+
+	it('says unknown rather than leaving a blank', () => {
+		expect(
+			buildPlaybookFailureRecurrenceComment({ appVersion: '', agentProvider: '' }, 'ff')
+		).toContain('Also hit on Maestro an unknown version with an unknown provider.');
+	});
+});
+
+describe('isPlaybookFailureKind', () => {
+	it.each(['stall', 'error', 'halt', 'watchdog', 'auth', 'spawn'])('accepts %s', (kind) => {
+		expect(isPlaybookFailureKind(kind)).toBe(true);
+	});
+
+	it.each(['stopped', '', 3, null, undefined])('refuses %s', (kind) => {
+		expect(isPlaybookFailureKind(kind)).toBe(false);
+	});
+});
+
+describe('playbookFailureFromRunReport', () => {
+	type RunReportInput = Pick<PlaybookRunReport, 'status' | 'source' | 'problems' | 'parameters'>;
+	const runReport = (overrides: Partial<RunReportInput> = {}): RunReportInput => ({
+		status: 'partial',
+		source: { marketplaceId: 'research-market', sourceVersion: '2026-08-14' },
+		problems: [
+			{ kind: 'stall', document: 'research-market/3_EVALUATE', taskIndex: 2, message: 'stuck' },
+		],
+		parameters: [{ name: 'MAX_ITEMS', value: '10', source: 'default' }],
+		...overrides,
+	});
+
+	it('locates the failure by shipped filename and points at the pristine copy', () => {
+		expect(playbookFailureFromRunReport(runReport(), 'claude-code')).toEqual({
+			report: {
+				playbookId: 'research-market',
+				sourceVersion: '2026-08-14',
+				documentFilename: '3_EVALUATE',
+				taskIndex: 2,
+				kind: 'stall',
+				agentProvider: 'claude-code',
+				parameters: [{ name: 'MAX_ITEMS', value: '10', provenance: 'default' }],
+			},
+			pristineDocumentPath: 'research-market/.maestro-playbook/source/3_EVALUATE.md',
+		});
+	});
+
+	it('produces the same fingerprint as the runner coordinates', () => {
+		const draft = playbookFailureFromRunReport(runReport(), 'claude-code')!;
+		expect(playbookFailureFingerprint(draft.report)).toBe(playbookFailureFingerprint(coords));
+	});
+
+	it('handles a document at the top of the Auto Run folder', () => {
+		const draft = playbookFailureFromRunReport(
+			runReport({ problems: [{ kind: 'halt', document: 'PLAN.md', taskIndex: 0, message: 'x' }] }),
+			'codex'
+		);
+		expect(draft?.pristineDocumentPath).toBe('.maestro-playbook/source/PLAN.md');
+		expect(draft?.report.documentFilename).toBe('PLAN');
+	});
+
+	it('files the app failure class the agent error carried', () => {
+		const draft = playbookFailureFromRunReport(
+			runReport({
+				problems: [
+					{
+						kind: 'error',
+						document: 'research-market/3_EVALUATE',
+						taskIndex: 1,
+						message: 'login expired',
+						failureKind: 'auth',
+					},
+				],
+			}),
+			'claude-code'
+		);
+		expect(draft?.report.kind).toBe('auth');
+		expect(routePlaybookFailure(draft!.report)).toBe(MAESTRO_APP_REPO);
+	});
+
+	it('skips problems with no task and reports the first located one', () => {
+		const draft = playbookFailureFromRunReport(
+			runReport({
+				problems: [
+					{ kind: 'stall', document: 'research-market/1_PLAN', message: 'no task' },
+					{ kind: 'stall', document: 'research-market/2_RUN', taskIndex: 4, message: 'x' },
+				],
+			}),
+			'claude-code'
+		);
+		expect(draft?.report.documentFilename).toBe('2_RUN');
+		expect(draft?.report.taskIndex).toBe(4);
+	});
+
+	it.each([
+		['a completed run', { status: 'completed' as const }],
+		['a stopped run', { status: 'stopped' as const }],
+		['a local playbook', { source: undefined }],
+		['a run with no located problem', { problems: [] }],
+	])('returns null for %s', (_label, overrides) => {
+		expect(playbookFailureFromRunReport(runReport(overrides), 'claude-code')).toBeNull();
 	});
 });
