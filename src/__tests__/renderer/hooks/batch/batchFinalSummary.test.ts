@@ -4,8 +4,10 @@ import {
 	autoRunOutcomeStatus,
 	buildAutoRunEndOutcome,
 	buildFinalSummary,
+	buildFinalSummaryFacts,
 	mergeFinalSummaryTotals,
 } from '../../../../renderer/hooks/batch/internal/batchFinalSummary';
+import { renderFinalSummaryFactsMarkdown } from '../../../../shared/playbookRunReport';
 
 const docs = (...names: string[]) => names.map((filename) => ({ filename }));
 
@@ -558,5 +560,30 @@ describe('buildAutoRunEndOutcome', () => {
 			documentsStalled: 0,
 			failures: [],
 		});
+	});
+});
+
+describe('buildFinalSummary facts (shared tier A)', () => {
+	const params = {
+		wasStopped: false,
+		totalCompletedTasks: 2,
+		totalElapsedMs: 90_000,
+		stalledDocuments: new Map([['b.md', '3 consecutive runs']]),
+		documents: docs('a.md', 'b.md'),
+		loopEnabled: false,
+		loopIteration: 0,
+		totalInputTokens: 10,
+		totalOutputTokens: 5,
+		totalCost: 0.01,
+	};
+
+	it('returns the shared facts and builds details from them', () => {
+		const result = buildFinalSummary(params);
+		expect(result.facts).toEqual(buildFinalSummaryFacts(params));
+		expect(result.summary).toBe(result.facts.summary);
+		expect(result.statusText).toBe(result.facts.statusText);
+		expect(result.isSuccess).toBe(result.facts.isSuccess);
+		expect(result.details.startsWith(renderFinalSummaryFactsMarkdown(result.facts))).toBe(true);
+		expect(result.details).toContain('**Achievement Progress**');
 	});
 });
