@@ -1,23 +1,31 @@
-import { CheckCircle2 } from 'lucide-react';
+import { Check, CheckCircle2 } from 'lucide-react';
 import type { Playbook } from '../../../../shared/types';
 import type { Theme } from '../../../types';
+import { ParameterSheet } from '../../PlaybookLaunch/ParameterSheet';
 import { EscCloseButton } from '../../ui/EscCloseButton';
 
 export interface PlaybookConfigureStepProps {
 	theme: Theme;
 	/** The record Install and Run just stored, with its parameter answers and overlay. */
 	playbook: Playbook;
+	/** The agent whose playbook store holds the record. */
+	sessionId: string;
 	onClose: () => void;
 }
 
 /**
  * The step the Playbook Exchange moves to after Install and Run: the
- * playbook is installed and stored, and the run is configured here before it
- * starts on the current agent. There is no way back to the detail view from
- * here; the install already happened, so going back would only invite a
- * second copy.
+ * playbook is installed and stored, and its parameters are answered here
+ * (`ParameterSheet`, saved to the record as they are typed) before it runs on
+ * the current agent. There is no way back to the detail view from here; the
+ * install already happened, so going back would only invite a second copy.
  */
-export function PlaybookConfigureStep({ theme, playbook, onClose }: PlaybookConfigureStepProps) {
+export function PlaybookConfigureStep({
+	theme,
+	playbook,
+	sessionId,
+	onClose,
+}: PlaybookConfigureStepProps) {
 	const documentCount = playbook.documents.length;
 	const folderName = playbook.provenance?.targetFolderName;
 
@@ -38,24 +46,36 @@ export function PlaybookConfigureStep({ theme, playbook, onClose }: PlaybookConf
 				<EscCloseButton theme={theme} onClose={onClose} />
 			</div>
 
-			<div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-				<div className="flex items-start gap-2 text-sm" style={{ color: theme.colors.textMain }}>
-					<CheckCircle2
-						className="w-4 h-4 mt-0.5 shrink-0"
-						style={{ color: theme.colors.success }}
-						aria-hidden="true"
-					/>
-					<span className="select-text">
-						Installed {documentCount} {documentCount === 1 ? 'document' : 'documents'}
-						{folderName ? (
-							<>
-								{' '}
-								to <strong>{folderName}</strong>
-							</>
-						) : null}
-						.
-					</span>
-				</div>
+			<div
+				className="flex items-start gap-2 px-4 pt-3 text-sm shrink-0"
+				style={{ color: theme.colors.textMain }}
+			>
+				<CheckCircle2
+					className="w-4 h-4 mt-0.5 shrink-0"
+					style={{ color: theme.colors.success }}
+					aria-hidden="true"
+				/>
+				<span className="select-text">
+					Installed {documentCount} {documentCount === 1 ? 'document' : 'documents'}
+					{folderName ? (
+						<>
+							{' '}
+							to <strong>{folderName}</strong>
+						</>
+					) : null}
+					.
+				</span>
+			</div>
+
+			<div className="flex-1 min-h-0">
+				<ParameterSheet
+					theme={theme}
+					sessionId={sessionId}
+					playbook={playbook}
+					runLabel="Save and Close"
+					runIcon={<Check className="w-3.5 h-3.5" aria-hidden="true" />}
+					onRun={onClose}
+				/>
 			</div>
 		</div>
 	);

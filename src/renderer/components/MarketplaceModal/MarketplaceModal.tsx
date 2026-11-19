@@ -228,7 +228,12 @@ export function MarketplaceModal({
 				/>
 
 				{configuringPlaybook ? (
-					<PlaybookConfigureStep theme={theme} playbook={configuringPlaybook} onClose={onClose} />
+					<PlaybookConfigureStep
+						theme={theme}
+						playbook={configuringPlaybook}
+						sessionId={sessionId}
+						onClose={onClose}
+					/>
 				) : showDetailView && selectedPlaybook ? (
 					<PlaybookDetailView
 						theme={theme}

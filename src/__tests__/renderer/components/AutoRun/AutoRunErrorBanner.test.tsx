@@ -84,4 +84,20 @@ describe('AutoRunErrorBanner', () => {
 		expect(onResume).toHaveBeenCalledTimes(1);
 		expect(screen.queryByText('Resume')).not.toBeInTheDocument();
 	});
+
+	it('offers Configure only when onConfigure is passed', () => {
+		renderBanner();
+		expect(screen.queryByText('Configure')).not.toBeInTheDocument();
+
+		const onConfigure = vi.fn();
+		renderBanner({ onConfigure, isRecoverable: true, onResumeAfterError: vi.fn() });
+		fireEvent.click(screen.getByText('Configure'));
+		expect(onConfigure).toHaveBeenCalledTimes(1);
+		expect(screen.getByText('Resume')).toBeInTheDocument();
+	});
+
+	it('disables Configure on a mirrored run', () => {
+		renderBanner({ onConfigure: vi.fn(), disabledReason: 'Owned by another window' });
+		expect(screen.getByText('Configure').closest('button')).toBeDisabled();
+	});
 });

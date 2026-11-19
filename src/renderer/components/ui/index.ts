@@ -34,6 +34,8 @@ export { RadioGroup } from './RadioGroup';
 export type { RadioGroupProps, RadioOption } from './RadioGroup';
 export { SegmentedControl } from './SegmentedControl';
 export type { SegmentedControlProps, SegmentedOption } from './SegmentedControl';
+export { ToggleChipGroup } from './ToggleChipGroup';
+export type { ToggleChipGroupProps, ToggleChipOption } from './ToggleChipGroup';
 
 export { SortableTh } from './SortableTh';
 export type { SortableThProps } from './SortableTh';

@@ -293,6 +293,7 @@ describe('MarketplaceModal', () => {
 			id: 'record-1',
 			name: 'Alpha Playbook',
 			documents: [{ filename: 'phase-1', resetOnCompletion: false }],
+			prompt: '<!-- CONFIGURE: The pull request to review -->\n**PR_URL:** `<UNSET>`',
 			provenance: { kind: 'marketplace', targetFolderName: 'alpha-playbook' },
 		};
 		const importPlaybook = vi.fn().mockResolvedValue({ success: true, playbook: record });
@@ -307,6 +308,9 @@ describe('MarketplaceModal', () => {
 		expect(onClose).not.toHaveBeenCalled();
 		expect(screen.getByText('Configure run')).toBeTruthy();
 		expect(screen.queryByText('Install and Run')).toBeNull();
+		// The step hosts the parameter form, gated on the unresolved required answer.
+		expect(screen.getByTestId('parameter-row-PR_URL')).toBeTruthy();
+		expect(screen.getByTestId('parameter-sheet-run')).toHaveProperty('disabled', true);
 
 		act(() => mocks.escapeHandler?.());
 		expect(onClose).toHaveBeenCalledTimes(1);

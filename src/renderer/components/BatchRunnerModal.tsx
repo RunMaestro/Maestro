@@ -19,6 +19,7 @@ import {
 	Target,
 	LogOut,
 	Clock,
+	SlidersHorizontal,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import { ToggleSwitch } from './ui/ToggleSwitch';
@@ -43,6 +44,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useAvailableTemplateVariables } from '../hooks/input/useAvailableTemplateVariables';
 import { PlaybookDeleteConfirmModal } from './PlaybookDeleteConfirmModal';
 import { PlaybookNameModal } from './PlaybookNameModal';
+import { openPlaybookConfigure } from '../services/playbookConfigure';
 import { AgentPromptComposerModal } from './AgentPromptComposerModal';
 import { DocumentsPanel } from './DocumentsPanel';
 import { GoalConfigPanel } from './GoalConfigPanel';
@@ -958,6 +960,20 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 															>
 																{pb.documents.length} doc{pb.documents.length !== 1 ? 's' : ''}
 															</span>
+															<button
+																onClick={(e) => {
+																	e.stopPropagation();
+																	setShowPlaybookDropdown(false);
+																	openPlaybookConfigure({ sessionId, playbookId: pb.id });
+																}}
+																className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
+																style={{ color: theme.colors.textDim }}
+																title="Configure..."
+																aria-label={`Configure ${pb.name}`}
+																data-testid={`playbook-configure-${pb.id}`}
+															>
+																<SlidersHorizontal className="w-3 h-3" />
+															</button>
 															<button
 																onClick={(e) => {
 																	e.stopPropagation();

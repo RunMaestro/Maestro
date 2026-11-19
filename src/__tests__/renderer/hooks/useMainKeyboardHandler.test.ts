@@ -3650,6 +3650,39 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	describe('openPlaybookConfigure shortcut', () => {
+		afterEach(() => {
+			useModalStore.getState().closeModal('playbookConfigure');
+		});
+
+		it('opens Configure Playbook on the active agent on Opt+Cmd+Shift+P', () => {
+			useSessionStore.setState({ activeSessionId: 'agent-active' });
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'openPlaybookConfigure',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'P',
+						code: 'KeyP',
+						altKey: true,
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(useModalStore.getState().isOpen('playbookConfigure')).toBe(true);
+			expect(useModalStore.getState().getData('playbookConfigure')).toEqual({
+				sessionId: 'agent-active',
+			});
+		});
+	});
+
 	describe('openNotificationCenter shortcut', () => {
 		// Unbound by default, so the test binds it through isShortcut.
 		const press = () =>

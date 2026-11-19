@@ -5,12 +5,15 @@ import {
 	assertNoSurvivingParams,
 	buildResolvedConfigurationTable,
 	collectUnresolvedRequired,
+	compactPlaybookParamValues,
 	describeMissingRequiredParams,
+	describePlaybookParamProvenance,
 	describeSurvivingParams,
 	expandPlaybookParamTemplates,
 	isPlaceholderDefault,
 	isPlaybookParamType,
 	mergePlaybookParams,
+	mergeProposedParamValues,
 	parsePlaybookParameterForm,
 	readPlaybookParamOverlay,
 	readPlaybookParamValues,
@@ -867,5 +870,71 @@ describe('describeMissingRequiredParams', () => {
 	it('names every missing required parameter in spec order', () => {
 		const specs = resolvePlaybookParamSpecs('', [{ name: 'PR_URL' }, { name: 'TOPIC' }]);
 		expect(describeMissingRequiredParams(specs)).toBe('Missing required parameters: PR_URL, TOPIC');
+	});
+});
+
+describe('mergeProposedParamValues', () => {
+	it('fills only names the user has not answered, keeping a cleared answer', () => {
+		const merged = mergeProposedParamValues(
+			{ PR_URL: 'https://github.com/a/b/pull/1', BRANCH: '' },
+			{
+				PR_URL: { value: 'https://github.com/a/b/pull/9' },
+				BRANCH: { value: 'main' },
+				MAX_ITEMS: { value: '10', evidence: 'facts' },
+			}
+		);
+		expect(merged).toEqual({
+			PR_URL: 'https://github.com/a/b/pull/1',
+			BRANCH: '',
+			MAX_ITEMS: '10',
+		});
+	});
+
+	it('returns a copy of the answers when there are no proposals', () => {
+		const answers = { A_B: 'x' };
+		const merged = mergeProposedParamValues(answers, undefined);
+		expect(merged).toEqual(answers);
+		expect(merged).not.toBe(answers);
+	});
+});
+
+describe('describePlaybookParamProvenance', () => {
+	const withDefault = spec('MAX_ITEMS', { default: '25' });
+	const noDefault = spec('PR_URL', { required: true });
+
+	it('is "you" for a usable answer', () => {
+		expect(describePlaybookParamProvenance(withDefault, { MAX_ITEMS: '5' }, undefined)).toBe('you');
+	});
+
+	it('is "detected" for a proposal on an unanswered name', () => {
+		expect(
+			describePlaybookParamProvenance(noDefault, {}, { PR_URL: { value: 'https://x.dev/p/1' } })
+		).toBe('detected');
+	});
+
+	it('ignores a proposal once the user has answered, even with a blank', () => {
+		expect(
+			describePlaybookParamProvenance(withDefault, { MAX_ITEMS: '' }, { MAX_ITEMS: { value: '9' } })
+		).toBe('default');
+	});
+
+	it('falls back to "default", then "unresolved"', () => {
+		expect(describePlaybookParamProvenance(withDefault, {}, undefined)).toBe('default');
+		expect(describePlaybookParamProvenance(noDefault, {}, undefined)).toBe('unresolved');
+	});
+
+	it('treats a placeholder answer or proposal as no value', () => {
+		expect(
+			describePlaybookParamProvenance(noDefault, { PR_URL: PLACEHOLDER_PR_URL }, undefined)
+		).toBe('unresolved');
+		expect(
+			describePlaybookParamProvenance(noDefault, {}, { PR_URL: { value: PLACEHOLDER_PR_URL } })
+		).toBe('unresolved');
+	});
+});
+
+describe('compactPlaybookParamValues', () => {
+	it('drops blank answers and keeps the rest verbatim', () => {
+		expect(compactPlaybookParamValues({ A_A: ' x ', B_B: '', C_C: '   ' })).toEqual({ A_A: ' x ' });
 	});
 });

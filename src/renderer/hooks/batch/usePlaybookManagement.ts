@@ -162,6 +162,11 @@ export function usePlaybookManagement(
 				const result = await window.maestro.playbooks.list(sessionId);
 				if (!cancelled && result.success) {
 					setPlaybooks(result.playbooks);
+					// The loaded playbook follows its stored record, so answers saved
+					// from the Configure form (or the CLI) reach the next run.
+					setLoadedPlaybook((prev) =>
+						prev ? (result.playbooks.find((pb) => pb.id === prev.id) ?? prev) : prev
+					);
 				}
 			} catch (error) {
 				logger.error('Failed to load playbooks:', undefined, error);

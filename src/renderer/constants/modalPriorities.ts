@@ -229,6 +229,9 @@ export const MODAL_PRIORITIES = {
 	/** Playbook Exchange modal - browse and import community playbooks (opens from BatchRunner or AutoRunExpanded, so needs higher priority than both) */
 	MARKETPLACE: 735,
 
+	/** Playbook Configure modal - a playbook's parameter form (opens from BatchRunner and the Auto Run error banner, so above both and above the Exchange) */
+	PLAYBOOK_CONFIGURE: 737,
+
 	/** Symphony modal - browse and contribute to open source projects */
 	SYMPHONY: 710,
 

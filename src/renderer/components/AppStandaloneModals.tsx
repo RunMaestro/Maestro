@@ -17,6 +17,7 @@ import { DebugPackageModal } from './DebugPackageModal';
 import { DebugApplicationStatsModal } from './DebugApplicationStatsModal';
 import { DebugAgentProbeModal } from './DebugAgentProbeModal';
 import { WidgetGallery } from './widgets/WidgetGallery';
+import { PlaybookConfigureModal } from './PlaybookLaunch/PlaybookConfigureModal';
 import { ProfilingCaptureModal } from './ProfilingCaptureModal';
 import { useProfilingAutoStop } from '../hooks/ui/useProfilingAutoStop';
 import { WindowsWarningModal } from './WindowsWarningModal';
@@ -421,6 +422,9 @@ function AppStandaloneModalsInner({
 					/>
 				</Suspense>
 			)}
+
+			{/* --- PLAYBOOK CONFIGURE (self-subscribes to the playbookConfigure modal) --- */}
+			<PlaybookConfigureModal theme={theme} />
 
 			{/* --- SYMPHONY MODAL (lazy-loaded) --- */}
 			{encoreFeatures.symphony && symphonyModalOpen && (

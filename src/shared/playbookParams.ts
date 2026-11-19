@@ -526,6 +526,80 @@ export function collectUnresolvedRequired(
 }
 
 /**
+ * A value proposed for a parameter the user has not answered: found in the
+ * local facts pack or by the guided interviewer. `evidence` says where it
+ * came from ("open PR for branch feat/x").
+ */
+export interface PlaybookParamProposal {
+	value: string;
+	evidence?: string;
+}
+
+/** Proposals keyed by parameter name. */
+export type PlaybookParamProposals = Record<string, PlaybookParamProposal>;
+
+/**
+ * Where a parameter's value for this run comes from, as the configure form
+ * badges it: the user's own answer, a proposal, the author default, or
+ * nothing at all.
+ */
+export type PlaybookParamProvenance = 'you' | 'detected' | 'default' | 'unresolved';
+
+function hasOwnAnswer(values: PlaybookParamValues, name: string): boolean {
+	return Object.prototype.hasOwnProperty.call(values, name);
+}
+
+/**
+ * The answers a run uses: the user's answers, plus each proposal for a name
+ * the user has not answered at all. A name the user cleared (an empty answer)
+ * is an answer, so a proposal never refills it. Inputs are not mutated.
+ */
+export function mergeProposedParamValues(
+	answers: PlaybookParamValues,
+	proposals: PlaybookParamProposals | undefined
+): PlaybookParamValues {
+	const merged: PlaybookParamValues = { ...answers };
+	if (!proposals) return merged;
+	for (const [name, proposal] of Object.entries(proposals)) {
+		if (!hasOwnAnswer(answers, name)) merged[name] = proposal.value;
+	}
+	return merged;
+}
+
+/**
+ * The provenance of one spec's value, with the same precedence as
+ * {@link mergeProposedParamValues} and the resolve pass: a usable answer, then
+ * a proposal for an unanswered name, then the author default.
+ */
+export function describePlaybookParamProvenance(
+	spec: PlaybookParamSpec,
+	answers: PlaybookParamValues,
+	proposals: PlaybookParamProposals | undefined
+): PlaybookParamProvenance {
+	if (hasOwnAnswer(answers, spec.name)) {
+		const answer = answers[spec.name].trim();
+		if (answer !== '' && !isPlaceholderDefault(answer)) return 'you';
+	} else {
+		const proposal = proposals?.[spec.name]?.value.trim();
+		if (proposal && !isPlaceholderDefault(proposal)) return 'detected';
+	}
+	return resolvePlaybookParamValue(spec, {}) === undefined ? 'unresolved' : 'default';
+}
+
+/**
+ * Answers ready to store on the playbook record: blank answers dropped, so a
+ * cleared field falls back to its default (and to a proposal on the next
+ * open) instead of being saved as an empty string.
+ */
+export function compactPlaybookParamValues(values: PlaybookParamValues): PlaybookParamValues {
+	const compact: PlaybookParamValues = {};
+	for (const [name, value] of Object.entries(values)) {
+		if (value.trim() !== '') compact[name] = value;
+	}
+	return compact;
+}
+
+/**
  * The specs a playbook run resolves against: the prompt's prose form merged
  * with the manifest overlay. The one place both Auto Run engines derive them.
  */

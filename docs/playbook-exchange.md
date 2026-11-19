@@ -65,6 +65,19 @@ The import creates:
 
 After import, the playbook is immediately available in your **Load Playbook** dropdown in the Auto Run panel, even if the panel was already open.
 
+### Answering a Playbook's Parameters
+
+Many playbooks ask a few questions before they run, such as a pull request URL or how many items to process. After **Install and Run**, the Exchange shows a form with one row per parameter: its type, whether it is required, its help text, and where the current value comes from:
+
+- **You** - your own answer
+- **Detected** - a value Maestro found on this machine (hover the badge to see where)
+- **Default** - the playbook author's default
+- **Unresolved** - no value yet. A required parameter in this state blocks the run
+
+Answers are saved to the playbook as you type, so you can close the form and come back. To change them later, open **Configure Playbook** (`Opt+Cmd+Shift+P`, the command palette, or the Left Bar menu), or click the sliders icon next to a playbook in the **Load Playbook** dropdown. When a run pauses because a required parameter has no value, the pause banner offers **Configure** too: answer the parameters, then click **Resume**.
+
+From the command line, `maestro-cli playbook configure <id> --set NAME=VALUE` saves an answer, and `maestro-cli playbook configure <id>` reads the answers back.
+
 ### Use One as Reference
 
 A playbook does not have to be run as-is. Importing one pulls it down locally, so you can also treat it as reference material: tell your agent what you actually want, point it at the imported document, and let it adapt the structure to your project. Customize it to your desire.

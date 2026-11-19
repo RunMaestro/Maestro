@@ -15,6 +15,7 @@ import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { reopenDesktopTabIfNeeded } from '../../services/desktopTabClose';
 import { isPromptLinksEnabled, openPromptLinks } from '../../services/promptLinks';
+import { openPlaybookConfigure } from '../../services/playbookConfigure';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
@@ -1132,6 +1133,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				openPromptLinks();
 				trackShortcut('openPromptLinks');
+			} else if (ctx.isShortcut(e, 'openPlaybookConfigure')) {
+				e.preventDefault();
+				openPlaybookConfigure();
+				trackShortcut('openPlaybookConfigure');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();

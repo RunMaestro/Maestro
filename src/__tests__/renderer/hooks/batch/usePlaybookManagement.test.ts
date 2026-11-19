@@ -67,4 +67,34 @@ describe('usePlaybookManagement playbook list', () => {
 		unmount();
 		expect(unsubscribe).toHaveBeenCalledTimes(1);
 	});
+
+	it('keeps the loaded playbook in step with its stored record, so new answers reach the run', async () => {
+		const stored = {
+			id: 'pb-1',
+			name: 'Review',
+			createdAt: 0,
+			updatedAt: 0,
+			documents: [],
+			loopEnabled: false,
+			prompt: '',
+			parameterValues: { MAX_ITEMS: '5' },
+		};
+		vi.mocked(window.maestro.playbooks.list)
+			.mockResolvedValueOnce({ success: true, playbooks: [stored] })
+			.mockResolvedValueOnce({
+				success: true,
+				playbooks: [{ ...stored, parameterValues: { MAX_ITEMS: '9' } }],
+			});
+
+		const { result } = renderHook(() => usePlaybookManagement(deps()));
+		await waitFor(() => expect(result.current.playbooks).toHaveLength(1));
+		act(() => result.current.handleLoadPlaybook(result.current.playbooks[0]));
+		expect(result.current.loadedPlaybook?.parameterValues).toEqual({ MAX_ITEMS: '5' });
+
+		act(() => changedHandler?.('session-1'));
+
+		await waitFor(() =>
+			expect(result.current.loadedPlaybook?.parameterValues).toEqual({ MAX_ITEMS: '9' })
+		);
+	});
 });

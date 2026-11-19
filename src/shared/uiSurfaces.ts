@@ -250,6 +250,17 @@ export const UI_SURFACES: UiSurface[] = [
 		click: 'the Auto Run tab in the Right Bar, then the marketplace icon',
 	},
 	{
+		id: 'playbook-configure',
+		label: 'Configure Playbook',
+		aliases: ['playbook-parameters', 'configure-playbook'],
+		modal: 'playbookConfigure',
+		description: "Answer a saved playbook's parameters for the active agent.",
+		shortcutId: 'openPlaybookConfigure',
+		commandPalette: 'Configure Playbook',
+		click:
+			'Configure Playbook in the Left Bar hamburger menu, or the sliders icon on a playbook in the Auto Run playbook list',
+	},
+	{
 		id: 'process-monitor',
 		label: 'Process Monitor',
 		aliases: ['processes'],

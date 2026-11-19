@@ -954,6 +954,15 @@ export interface BatchRunConfig {
 }
 
 /**
+ * Which saved playbook a run came from, and the agent whose playbook store
+ * holds the record (the launching agent, not a worktree the run executes in).
+ */
+export interface BatchRunPlaybookRef {
+	id: string;
+	ownerSessionId: string;
+}
+
+/**
  * The parts of a saved playbook an Auto Run needs to resolve its parameters
  * and to name the playbook in its stats row.
  */

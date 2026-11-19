@@ -22,7 +22,9 @@ import { buildThroughputGaugeCommands } from './commands/throughputGaugeCommands
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { applyThroughputGaugeSettingsPatch } from '../../../shared/throughputGauge';
 import { buildPromptLinksCommands } from './commands/promptLinksCommands';
+import { buildPlaybookConfigureCommands } from './commands/playbookConfigureCommands';
 import { openPromptLinks, promptLinksAvailable } from '../../services/promptLinks';
+import { openPlaybookConfigure } from '../../services/playbookConfigure';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
@@ -678,6 +680,13 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			openPromptLinks,
 			setQuickActionOpen,
 			shortcuts: { openPromptLinks: shortcuts.openPromptLinks },
+		}),
+		...buildPlaybookConfigureCommands({
+			activeAgentId:
+				activeSession && activeSession.toolType !== 'terminal' ? activeSession.id : undefined,
+			openPlaybookConfigure,
+			setQuickActionOpen,
+			shortcuts: { openPlaybookConfigure: shortcuts.openPlaybookConfigure },
 		}),
 		...buildConcertoCommands({
 			concertoEnabled,

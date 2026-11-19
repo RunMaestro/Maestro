@@ -460,6 +460,12 @@ export function useBatchRunner({
 						// Resolved once, here, so the run keeps the auto-resume terms it was
 						// launched under even if the user edits the defaults mid-run.
 						autoResumePolicy: resolveAutoResumePolicy(config),
+						...(config.playbook && {
+							playbookRef: {
+								id: config.playbook.id,
+								ownerSessionId: config.playbook.ownerSessionId ?? sessionId,
+							},
+						}),
 						startTime: batchStartTime,
 						// Time tracking
 						cumulativeTaskTimeMs: 0, // Sum of actual task durations (most accurate)
