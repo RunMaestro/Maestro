@@ -420,8 +420,15 @@ export class VoiceSessionService {
 	private readonly listeners = new Set<VoiceEventListener>();
 
 	private state: VoiceSessionState = 'idle';
-	/** A teardown is in flight. Guards the await inside `stopSession`. */
-	private stopping = false;
+	/** An in-flight teardown, awaited by later `stopSession` / `startSession` callers. */
+	private stopPromise: Promise<void> | null = null;
+	/** An in-flight `startSession`, awaited by `dispose` so no recognizer starts after shutdown. */
+	private startPromise: Promise<VoiceSessionSnapshot> | null = null;
+	private disposed = false;
+
+	private get stopping(): boolean {
+		return this.stopPromise !== null;
+	}
 	/**
 	 * The microphone is gated shut while the session stays alive. See
 	 * {@link setListening}. Announced as `listen-gate`, never inferred from state:
@@ -707,11 +714,30 @@ export class VoiceSessionService {
 		 */
 		paused?: boolean;
 	}): Promise<VoiceSessionSnapshot> {
-		if (this.state !== 'idle') {
+		if (this.disposed) return this.getSnapshot();
+		const promise = this.runStartSession(params).finally(() => {
+			if (this.startPromise === promise) {
+				this.startPromise = null;
+			}
+		});
+		this.startPromise = promise;
+		return promise;
+	}
+
+	private async runStartSession(params: {
+		scope: VoiceScope;
+		source?: WakeSource;
+		origin?: VoiceOrigin;
+		windowId?: VoiceWindowId;
+		paused?: boolean;
+	}): Promise<VoiceSessionSnapshot> {
+		while (!this.disposed && (this.stopPromise || this.state !== 'idle')) {
 			await this.stopSession('replaced');
 		}
+		if (this.disposed) return this.getSnapshot();
 
-		this.sessionId = generateUUID();
+		const mySessionId = generateUUID();
+		this.sessionId = mySessionId;
 		this.scope = params.scope;
 		this.origin = params.origin ?? { kind: 'local' };
 		this.windowId = params.windowId ?? null;
@@ -741,6 +767,9 @@ export class VoiceSessionService {
 		// then discovered it has nowhere to send the audio has already cost the user
 		// a recording light and an OS permission prompt for nothing.
 		const readiness = await this.checkReadiness?.();
+		if (this.disposed || this.sessionId !== mySessionId || this.state !== 'arming') {
+			return this.getSnapshot();
+		}
 		if (readiness && !readiness.canStartSession) {
 			const blocked = readiness.blocking[0];
 			this.fail(
@@ -754,6 +783,9 @@ export class VoiceSessionService {
 		try {
 			await this.providers.stt.start(this.sttCallbacks());
 		} catch (error) {
+			if (this.disposed || this.sessionId !== mySessionId || this.state !== 'arming') {
+				return this.getSnapshot();
+			}
 			if (isVoiceProviderError(error)) {
 				this.failFromProvider(error, this.providers.stt.id);
 			} else {
@@ -762,6 +794,17 @@ export class VoiceSessionService {
 					`Speech provider '${this.providers.stt.id}' could not start: ${(error as Error).message}`,
 					this.providers.stt.id
 				);
+			}
+			return this.getSnapshot();
+		}
+
+		if (this.disposed || this.sessionId !== mySessionId || this.state !== 'arming') {
+			// Teardown ran while stt.start() was in flight; stop the recognizer
+			// that just finished starting so it is not left open.
+			try {
+				await this.providers.stt.stop();
+			} catch {
+				// Best-effort cleanup on an aborted start.
 			}
 			return this.getSnapshot();
 		}
@@ -793,33 +836,26 @@ export class VoiceSessionService {
 	/** End the session and release the floor. Safe to call when already idle. */
 	async stopSession(reason: VoiceStopReason): Promise<void> {
 		// Re-entrant by construction: this awaits the recogniser's own teardown, and
-		// a second caller arriving inside that window (two hotkeys, a stop word and a
-		// window close) would find the state still non-idle and tear the same session
-		// down twice.
-		if (this.state === 'idle' || this.stopping) return;
-		this.stopping = true;
-		try {
-			await this.runStopSession(reason);
-		} finally {
-			this.stopping = false;
+		// a second caller arriving inside that window (two hotkeys, a stop word, a
+		// window close, or a restart) waits for the in-flight teardown rather than
+		// starting a second teardown or overlapping a new session.
+		if (this.stopPromise) {
+			await this.stopPromise;
+			return;
 		}
+		if (this.state === 'idle') return;
+		const promise = this.runStopSession(reason).finally(() => {
+			if (this.stopPromise === promise) {
+				this.stopPromise = null;
+			}
+		});
+		this.stopPromise = promise;
+		await promise;
 	}
 
 	private async runStopSession(reason: VoiceStopReason): Promise<void> {
-		if (this.busyGateTimer) clearInterval(this.busyGateTimer);
-		this.busyGateTimer = null;
+		this.haltSessionActivity();
 		this.manualListenPaused = false;
-		this.routeAbort?.abort();
-		this.routeAbort = null;
-		this.turn += 1;
-		this.pendingSendQueue.clear({ resetForceSend: true });
-		this.partialInFlight = false;
-		this.speechActive = false;
-		this.dispatchReadyForInput = false;
-		this.cancelSpeech();
-		// A half-collected thought belongs to the session that is ending. Letting it
-		// settle afterwards would dispatch a fragment into a session nobody is in.
-		this.composer.cancel();
 		// So does an unfinished discussion: the next session starts a new one.
 		this.conversation.clear();
 
@@ -1092,7 +1128,9 @@ export class VoiceSessionService {
 
 	/** Stop the session and drop every subscriber. Called on app shutdown. */
 	async dispose(): Promise<void> {
+		this.disposed = true;
 		await this.stopSession('shutdown');
+		await this.startPromise;
 		this.listeners.clear();
 	}
 
@@ -1910,13 +1948,34 @@ export class VoiceSessionService {
 		this.speechOutput.cancel();
 	}
 
+	/**
+	 * Cancel active turn work, timers, speech playback, composer fragments, and
+	 * queued sends. Shared by `transition('error')` and `runStopSession()` so
+	 * neither path can leave background work running.
+	 */
+	private haltSessionActivity(): void {
+		if (this.busyGateTimer) clearInterval(this.busyGateTimer);
+		this.busyGateTimer = null;
+		this.routeAbort?.abort();
+		this.routeAbort = null;
+		this.turn += 1;
+		this.timer = null;
+		this.pendingSendQueue.clear({ resetForceSend: true });
+		this.partialInFlight = false;
+		this.speechActive = false;
+		this.dispatchReadyForInput = false;
+		this.cancelSpeech();
+		// A half-collected thought belongs to the turn that is ending. Letting it
+		// settle afterwards would dispatch a fragment into a session that is no
+		// longer listening.
+		this.composer.cancel();
+	}
+
 	private transition(to: VoiceSessionState): void {
 		assertVoiceStateTransition(this.state, to);
 		this.state = to;
 		if (to === 'error' || to === 'idle') {
-			if (this.busyGateTimer) clearInterval(this.busyGateTimer);
-			this.busyGateTimer = null;
-			this.routeAbort?.abort();
+			this.haltSessionActivity();
 		} else this.refreshListeningGate();
 	}
 

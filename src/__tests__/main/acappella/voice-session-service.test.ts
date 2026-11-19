@@ -2783,3 +2783,176 @@ describe('VoiceSessionService busy hold', () => {
 		await h.service.stopSession();
 	});
 });
+
+describe('VoiceSessionService error cleanup and stop/start lifecycle races', () => {
+	afterEach(() => vi.useRealTimers());
+
+	it('cancels composer and pending sends on error without closing the microphone', async () => {
+		vi.useFakeTimers();
+		let calls = 0;
+		const execute = vi.fn<VoiceRouteExecutor>(async () => {
+			calls += 1;
+			if (calls === 1) throw new VoiceDispatchBusyError('agent busy');
+			return { accepted: true, message: 'ok', agentSessionId: 'agent-backend' };
+		});
+		const h = makeHarness({ executeRoute: execute, getForceSendAllowed: () => true });
+		await start(h);
+
+		// Enqueue a pending send with its retry timer.
+		h.service.submitUtterance('first request');
+		await vi.advanceTimersByTimeAsync(0);
+		expect(h.service.getSendState().pending).toHaveLength(1);
+
+		// Leave a partial utterance in the composer.
+		h.stt.callbacks?.onFinal('half finished thought', 0.9);
+
+		// Trigger a recoverable provider error.
+		h.stt.callbacks?.onError(new Error('temporary glitch'));
+
+		expect(h.service.getState()).toBe('error');
+		expect(h.service.getSendState().pending).toEqual([]);
+		expect(h.service.getSendState().forceSend).toBe(false);
+		expect(h.stt.stopped).toBe(false);
+
+		// Advancing timers must not flush the composer fragment or retry the cleared send.
+		await vi.advanceTimersByTimeAsync(5000);
+		expect(execute).toHaveBeenCalledTimes(1);
+
+		// A recoverable error can still be restarted cleanly.
+		await h.service.startSession({ scope: { kind: 'conductor' } });
+		expect(h.service.getState()).toBe('listening');
+		await h.service.stopSession('user');
+	});
+
+	it('cancels active speech playback when a session moves to error', async () => {
+		const h = makeHarness();
+		await start(h);
+
+		h.stt.injectUtterance('tell me what happened.');
+		await vi.waitFor(() => expect(h.types()).toContain('dispatch'));
+
+		h.tts.onChunk = () => {
+			h.stt.callbacks?.onError(new Error('tts interrupted by stt error'));
+		};
+		await h.service.submitAgentReply({
+			agentSessionId: 'agent-backend',
+			tabId: 'tab-1',
+			text: AGENT_REPLY,
+		});
+
+		expect(h.service.getState()).toBe('error');
+		expect(h.types()).toContain('speak-start');
+		expect(h.tts.cancelled).toBe(true);
+		expect(h.events.filter((event) => event.type === 'speak-sentence').length).toBeLessThan(2);
+		await h.service.stopSession('user');
+	});
+
+	it('ignores late provider callbacks from a failed turn after error', async () => {
+		const routeGate = deferred();
+		const h = makeHarness();
+		h.brain.routeGate = routeGate.promise;
+		await start(h);
+
+		h.stt.injectUtterance('open the logs.');
+		await vi.waitFor(() => expect(h.brain.contexts).toHaveLength(1));
+
+		h.stt.callbacks?.onError(new Error('connection lost'));
+		expect(h.service.getState()).toBe('error');
+
+		routeGate.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(h.executor).not.toHaveBeenCalled();
+		expect(h.service.getState()).toBe('error');
+		await h.service.stopSession('user');
+	});
+
+	it('waits for an in-flight stopSession before starting a new session', async () => {
+		const h = makeHarness();
+		const order: string[] = [];
+		const stopGate = deferred();
+		const origStart = h.stt.start.bind(h.stt);
+		const origStop = h.stt.stop.bind(h.stt);
+		h.stt.start = vi.fn(async (cb) => {
+			order.push('stt.start');
+			return origStart(cb);
+		});
+		h.stt.stop = vi.fn(async () => {
+			order.push('stt.stop:begin');
+			await stopGate.promise;
+			order.push('stt.stop:end');
+			return origStop();
+		});
+
+		await start(h);
+		const stopping = h.service.stopSession('user');
+		const restarting = h.service.startSession({ scope: { kind: 'conductor' } });
+
+		await vi.waitFor(() => expect(h.stt.stop).toHaveBeenCalledTimes(1));
+		expect(h.stt.start).toHaveBeenCalledTimes(1);
+
+		stopGate.resolve();
+		await Promise.all([stopping, restarting]);
+
+		expect(h.stt.start).toHaveBeenCalledTimes(2);
+		expect(order).toEqual(['stt.start', 'stt.stop:begin', 'stt.stop:end', 'stt.start']);
+		expect(h.service.getState()).toBe('listening');
+		stopGate.resolve();
+	});
+
+	it('deduplicates concurrent stopSession calls and awaits the same teardown', async () => {
+		const h = makeHarness();
+		const stopGate = deferred();
+		let stopFinished = false;
+		const origStop = h.stt.stop.bind(h.stt);
+		h.stt.stop = vi.fn(async () => {
+			await stopGate.promise;
+			stopFinished = true;
+			return origStop();
+		});
+
+		await start(h);
+		const firstStop = h.service.stopSession('user');
+		const secondStop = h.service.stopSession('stop-word');
+
+		await vi.waitFor(() => expect(h.stt.stop).toHaveBeenCalledTimes(1));
+		let secondResolved = false;
+		void secondStop.then(() => {
+			secondResolved = true;
+		});
+		await Promise.resolve();
+		expect(secondResolved).toBe(false);
+
+		stopGate.resolve();
+		await Promise.all([firstStop, secondStop]);
+
+		expect(stopFinished).toBe(true);
+		expect(h.stt.stop).toHaveBeenCalledTimes(1);
+		expect(h.service.getState()).toBe('idle');
+	});
+
+	it('leaves no live recognizer or timers when dispose runs during an in-flight startSession', async () => {
+		vi.useFakeTimers();
+		const h = makeHarness();
+		const startGate = deferred();
+		const origStart = h.stt.start.bind(h.stt);
+		const origStop = h.stt.stop.bind(h.stt);
+		h.stt.start = vi.fn(async (cb) => {
+			await startGate.promise;
+			return origStart(cb);
+		});
+		h.stt.stop = vi.fn(async () => origStop());
+
+		const starting = h.service.startSession({ scope: { kind: 'conductor' } });
+		await vi.waitFor(() => expect(h.stt.start).toHaveBeenCalledTimes(1));
+
+		const disposing = h.service.dispose();
+		startGate.resolve();
+		await Promise.all([starting, disposing]);
+
+		expect(h.service.getState()).toBe('idle');
+		expect(h.stt.stopped).toBe(true);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+});
