@@ -11,7 +11,11 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { failCommand, failFromError, resolveAgentOrFail } from '../services/session-command';
 import { generateDefaultFolderName } from '../../shared/marketplaceFolderName';
-import type { MarketplaceManifest, MarketplacePlaybook } from '../../shared/marketplace-types';
+import type {
+	MarketplaceImportPlaybookResult,
+	MarketplaceManifest,
+	MarketplacePlaybook,
+} from '../../shared/marketplace-types';
 
 /** A cold catalog fetch goes to GitHub; an import downloads every document. */
 const FETCH_TIMEOUT_MS = 60_000;
@@ -128,12 +132,7 @@ export async function marketplaceShow(id: string, options: JsonOption): Promise<
 
 export async function marketplaceImport(id: string, options: ImportOptions): Promise<void> {
 	const sessionId = resolveAgentOrFail(options.agent, options.json);
-	let reply: {
-		success: boolean;
-		error?: string;
-		importedDocs?: string[];
-		importedAssets?: string[];
-	};
+	let reply: MarketplaceImportPlaybookResult;
 	let targetFolderName = options.folder?.trim();
 	try {
 		if (!targetFolderName) {

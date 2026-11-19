@@ -1,5 +1,8 @@
 import { useCallback } from 'react';
-import type { MarketplacePlaybook } from '../../../../shared/marketplace-types';
+import type {
+	MarketplaceImportPlaybookResult,
+	MarketplacePlaybook,
+} from '../../../../shared/marketplace-types';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
 
@@ -16,7 +19,7 @@ export interface UsePlaybookImportActionsParams {
 		autoRunFolderPath: string,
 		sessionId: string,
 		sshRemoteId?: string
-	) => Promise<{ success: boolean; error?: string }>;
+	) => Promise<MarketplaceImportPlaybookResult>;
 	onImportComplete: (folderName: string) => void;
 	onClose: () => void;
 	setTargetFolderName: (folderName: string) => void;

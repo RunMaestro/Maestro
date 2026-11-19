@@ -46,12 +46,17 @@ vi.mock('fs/promises', () => ({
 	},
 }));
 
-// Mock crypto
-vi.mock('crypto', () => ({
-	default: {
-		randomUUID: vi.fn(),
-	},
-}));
+// Mock crypto: randomUUID is pinned per test, createHash stays real so the
+// provenance document hashes can be checked against a real sha256.
+vi.mock('crypto', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('crypto')>();
+	return {
+		default: {
+			randomUUID: vi.fn(),
+			createHash: actual.createHash,
+		},
+	};
+});
 
 // Mock electron-store
 vi.mock('electron-store', () => {
@@ -1913,6 +1918,218 @@ describe('marketplace IPC handlers', () => {
 					expect.any(Buffer)
 				);
 				expect(mockFetch).not.toHaveBeenCalled();
+			});
+		});
+	});
+
+	describe('import provenance and Exchange fields', () => {
+		const sha256 = (text: string) => crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+
+		const exchangePlaybook = {
+			...sampleManifest.playbooks[0],
+			id: 'exchange-playbook',
+			lastUpdated: '2026-09-01',
+			parameters: [
+				{ name: 'PR_URL', type: 'url', required: true },
+				{ name: 'bad name', type: 'url' },
+			],
+			interaction: 'guided',
+			scope: 'repo',
+			report: 'Final-Report.md',
+		} as unknown as MarketplaceManifest['playbooks'][number];
+
+		const rawPhase1 = '# Phase 1\n\nSee {{AUTORUN_FOLDER}}/assets/config.yaml';
+		const rawPhase2 = '# Phase 2';
+
+		/** Run one import of `entry` from a cached official manifest. */
+		async function importEntry(
+			entry: MarketplaceManifest['playbooks'][number],
+			options: { autoRunFolderPath?: string; sshRemoteId?: string; failPristine?: boolean } = {}
+		) {
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(
+					JSON.stringify({
+						fetchedAt: Date.now(),
+						manifest: { ...sampleManifest, playbooks: [entry] },
+					})
+				)
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // local manifest
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // playbooks file
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockImplementation(async (file) => {
+				if (options.failPristine && String(file).includes('.maestro-playbook')) {
+					throw new Error('EACCES');
+				}
+			});
+			mockFetch
+				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(rawPhase1) })
+				.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(rawPhase2) });
+			const handler = handlers.get('marketplace:importPlaybook');
+			return handler!(
+				{} as any,
+				entry.id,
+				'My Test Playbook',
+				options.autoRunFolderPath ?? '/autorun/folder',
+				'session-123',
+				options.sshRemoteId
+			);
+		}
+
+		function savedRecord() {
+			const written = vi
+				.mocked(fs.writeFile)
+				.mock.calls.find(([file]) => String(file).endsWith('session-123.json'));
+			return JSON.parse(String(written![1])).playbooks[0];
+		}
+
+		it('stamps marketplace provenance with sha256 hashes of the documents as fetched', async () => {
+			const before = Date.now();
+			const result = await importEntry(exchangePlaybook);
+
+			expect(result.success).toBe(true);
+			expect(result.playbook.provenance).toEqual({
+				kind: 'marketplace',
+				marketplaceId: 'exchange-playbook',
+				sourceVersion: '2026-09-01',
+				sourceChannel: 'official',
+				targetFolderName: 'My Test Playbook',
+				importedAt: expect.any(Number),
+				documentHashes: { 'phase-1': sha256(rawPhase1), 'phase-2': sha256(rawPhase2) },
+			});
+			expect(result.playbook.provenance.importedAt).toBeGreaterThanOrEqual(before);
+			// The user's copy is rebased; the hash is of what shipped.
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join('/autorun/folder', 'My Test Playbook', 'phase-1.md'),
+				'# Phase 1\n\nSee {{AUTORUN_FOLDER}}/My Test Playbook/assets/config.yaml',
+				'utf-8'
+			);
+			expect(savedRecord().provenance).toEqual(result.playbook.provenance);
+		});
+
+		it('copies parameters, interaction, scope, and report from the manifest entry', async () => {
+			const result = await importEntry(exchangePlaybook);
+
+			expect(result.playbook.parameterOverlay).toEqual([
+				{ name: 'PR_URL', type: 'url', required: true },
+			]);
+			expect(result.playbook.interaction).toBe('guided');
+			expect(result.playbook.scope).toBe('repo');
+			expect(result.playbook.report).toBe('Final-Report');
+			const saved = savedRecord();
+			expect(saved.parameterOverlay).toEqual(result.playbook.parameterOverlay);
+			expect(saved.interaction).toBe('guided');
+			expect(saved.scope).toBe('repo');
+			expect(saved.report).toBe('Final-Report');
+		});
+
+		it('leaves malformed Exchange fields off the record', async () => {
+			const result = await importEntry({
+				...exchangePlaybook,
+				parameters: 'not-a-list',
+				interaction: 'wizard',
+				scope: 'galaxy',
+				report: '   ',
+			} as unknown as MarketplaceManifest['playbooks'][number]);
+
+			expect(result.success).toBe(true);
+			for (const field of ['parameterOverlay', 'interaction', 'scope', 'report']) {
+				expect(field in result.playbook).toBe(false);
+			}
+		});
+
+		it('writes a pristine copy of every fetched document under .maestro-playbook/source', async () => {
+			await importEntry(exchangePlaybook);
+
+			const sourceDir = path.join(
+				'/autorun/folder',
+				'My Test Playbook',
+				'.maestro-playbook',
+				'source'
+			);
+			expect(fs.mkdir).toHaveBeenCalledWith(sourceDir, { recursive: true });
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join(sourceDir, 'phase-1.md'),
+				rawPhase1,
+				'utf-8'
+			);
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				path.join(sourceDir, 'phase-2.md'),
+				rawPhase2,
+				'utf-8'
+			);
+		});
+
+		it('writes the pristine copies on the remote host for an SSH import', async () => {
+			mockMkdirRemote.mockResolvedValue({ success: true });
+			mockWriteFileRemote.mockResolvedValue({ success: true });
+
+			const result = await importEntry(exchangePlaybook, {
+				autoRunFolderPath: '/remote/autorun',
+				sshRemoteId: 'ssh-remote-1',
+			});
+
+			expect(result.success).toBe(true);
+			const sourceDir = '/remote/autorun/My Test Playbook/.maestro-playbook/source';
+			expect(mockMkdirRemote).toHaveBeenCalledWith(sourceDir, sampleSshRemote, true);
+			expect(mockWriteFileRemote).toHaveBeenCalledWith(
+				`${sourceDir}/phase-1.md`,
+				rawPhase1,
+				sampleSshRemote
+			);
+			expect(mockWriteFileRemote).toHaveBeenCalledWith(
+				`${sourceDir}/phase-2.md`,
+				rawPhase2,
+				sampleSshRemote
+			);
+			const pristineLocalWrites = vi
+				.mocked(fs.writeFile)
+				.mock.calls.filter(([file]) => String(file).includes('.maestro-playbook'));
+			expect(pristineLocalWrites).toHaveLength(0);
+		});
+
+		it('still imports when a pristine copy cannot be written', async () => {
+			const result = await importEntry(exchangePlaybook, { failPristine: true });
+
+			expect(result.success).toBe(true);
+			expect(result.importedDocs).toEqual(['phase-1', 'phase-2']);
+			expect(Object.keys(result.playbook.provenance.documentHashes)).toEqual([
+				'phase-1',
+				'phase-2',
+			]);
+		});
+
+		it('records the local manifest folder as the source path of a local playbook', async () => {
+			const localEntry = {
+				...exchangePlaybook,
+				id: 'local-exchange',
+				path: '/Users/test/custom-playbooks/my-playbook',
+			};
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify({ fetchedAt: Date.now(), manifest: sampleManifest }))
+				.mockResolvedValueOnce(
+					JSON.stringify({ lastUpdated: '2026-09-01', playbooks: [localEntry] })
+				)
+				.mockResolvedValueOnce(rawPhase1)
+				.mockResolvedValueOnce(rawPhase2)
+				.mockRejectedValueOnce({ code: 'ENOENT' });
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'local-exchange',
+				'My Test Playbook',
+				'/autorun/folder',
+				'session-123'
+			);
+
+			expect(result.playbook.provenance).toMatchObject({
+				kind: 'marketplace',
+				marketplaceId: 'local-exchange',
+				sourceChannel: 'local',
+				sourcePath: '/Users/test/custom-playbooks/my-playbook',
+				documentHashes: { 'phase-1': sha256(rawPhase1), 'phase-2': sha256(rawPhase2) },
 			});
 		});
 	});

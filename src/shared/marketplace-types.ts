@@ -7,7 +7,7 @@
  */
 
 import type { PlaybookParamOverlay } from './playbookParams';
-import type { PlaybookInteraction, PlaybookScope, TaskSelectionMode } from './types';
+import type { Playbook, PlaybookInteraction, PlaybookScope, TaskSelectionMode } from './types';
 
 // ============================================================================
 // Marketplace Manifest Types (fetched from GitHub)
@@ -237,22 +237,23 @@ export interface GetReadmeResponse {
  * Response from marketplace:importPlaybook handler.
  */
 export interface ImportPlaybookResponse {
-	/** The created playbook entry */
-	playbook: {
-		id: string;
-		name: string;
-		createdAt: number;
-		updatedAt: number;
-		documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-		loopEnabled: boolean;
-		maxLoops?: number | null;
-		prompt: string;
-	};
+	/** The created playbook record, with its provenance and Exchange fields */
+	playbook: Playbook;
 	/** List of imported document filenames */
 	importedDocs: string[];
 	/** List of imported asset filenames (from assets/ subfolder) */
-	importedAssets?: string[];
+	importedAssets: string[];
 }
+
+/**
+ * What a marketplace import returns across a process boundary (IPC, the web
+ * bridge, the CLI): the full {@link ImportPlaybookResponse} on success, or an
+ * error message. One shape, so no layer drops the record on the way out.
+ */
+export type MarketplaceImportPlaybookResult = {
+	success: boolean;
+	error?: string;
+} & Partial<ImportPlaybookResponse>;
 
 /**
  * Standard error response format for marketplace handlers.

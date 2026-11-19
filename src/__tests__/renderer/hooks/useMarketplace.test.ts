@@ -561,6 +561,54 @@ describe('useMarketplace', () => {
 			expect(importResult!.success).toBe(true);
 		});
 
+		it('passes the saved record, documents, and assets through to the caller', async () => {
+			const saved = {
+				id: 'pb-1',
+				name: 'Test',
+				createdAt: 1,
+				updatedAt: 1,
+				documents: [{ filename: 'folder/phase-1', resetOnCompletion: false }],
+				loopEnabled: false,
+				prompt: '',
+				provenance: {
+					kind: 'marketplace' as const,
+					marketplaceId: 'test-playbook',
+					targetFolderName: 'folder',
+					importedAt: 1,
+					documentHashes: { 'phase-1': 'abc' },
+				},
+			};
+			vi.mocked(window.maestro.marketplace.importPlaybook).mockResolvedValue({
+				success: true,
+				playbook: saved,
+				importedDocs: ['phase-1'],
+				importedAssets: ['config.yaml'],
+			});
+
+			const { result } = renderHook(() => useMarketplace());
+
+			await waitFor(() => {
+				expect(result.current.isLoading).toBe(false);
+			});
+
+			let importResult: Awaited<ReturnType<typeof result.current.importPlaybook>> | undefined;
+			await act(async () => {
+				importResult = await result.current.importPlaybook(
+					createPlaybook(),
+					'folder',
+					'/path',
+					'session'
+				);
+			});
+
+			expect(importResult).toEqual({
+				success: true,
+				playbook: saved,
+				importedDocs: ['phase-1'],
+				importedAssets: ['config.yaml'],
+			});
+		});
+
 		it('returns error result when import fails', async () => {
 			vi.mocked(window.maestro.marketplace.importPlaybook).mockResolvedValue({
 				success: false,

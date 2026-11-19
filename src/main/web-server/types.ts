@@ -1698,7 +1698,11 @@ export type GenerateDirectorNotesSynopsisCallback = (
 // Marketplace (Playbook Exchange) Types
 // =============================================================================
 
-import type { MarketplaceManifest, MarketplacePlaybook } from '../../shared/marketplace-types';
+import type {
+	MarketplaceImportPlaybookResult,
+	MarketplaceManifest,
+	MarketplacePlaybook,
+} from '../../shared/marketplace-types';
 
 /** Re-export for convenience so handlers don't pull from two places. */
 export type { MarketplaceManifest, MarketplacePlaybook };
@@ -1710,23 +1714,8 @@ export interface MarketplaceManifestResult {
 	cacheAge?: number;
 }
 
-/** Result from the marketplace import callback. */
-export interface MarketplaceImportResult {
-	success: boolean;
-	error?: string;
-	playbook?: {
-		id: string;
-		name: string;
-		createdAt: number;
-		updatedAt: number;
-		documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-		loopEnabled: boolean;
-		maxLoops?: number | null;
-		prompt: string;
-	};
-	importedDocs?: string[];
-	importedAssets?: string[];
-}
+/** Result from the marketplace import callback: the shared IPC shape, record included. */
+export type MarketplaceImportResult = MarketplaceImportPlaybookResult;
 
 export type GetMarketplaceManifestCallback = (options?: {
 	refresh?: boolean;

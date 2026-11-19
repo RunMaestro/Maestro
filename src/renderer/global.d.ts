@@ -224,6 +224,7 @@ import type {
 import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { LiveModeSetResult, LiveModeStateEvent, LiveModeStatus } from '../shared/liveMode';
+import type { MarketplaceImportPlaybookResult } from '../shared/marketplace-types';
 import type {
 	CotAgentConfig,
 	CotAgentStatus,
@@ -3348,21 +3349,7 @@ interface MaestroAPI {
 			autoRunFolderPath: string,
 			sessionId: string,
 			sshRemoteId?: string
-		) => Promise<{
-			success: boolean;
-			playbook?: {
-				id: string;
-				name: string;
-				createdAt: number;
-				updatedAt: number;
-				documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-				loopEnabled: boolean;
-				maxLoops?: number | null;
-				prompt: string;
-			};
-			importedDocs?: string[];
-			error?: string;
-		}>;
+		) => Promise<MarketplaceImportPlaybookResult>;
 		onManifestChanged: (handler: () => void) => () => void;
 	};
 	// Updates API

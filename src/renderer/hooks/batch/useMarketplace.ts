@@ -16,7 +16,11 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import type { MarketplaceManifest, MarketplacePlaybook } from '../../../shared/marketplace-types';
+import type {
+	MarketplaceImportPlaybookResult,
+	MarketplaceManifest,
+	MarketplacePlaybook,
+} from '../../../shared/marketplace-types';
 import { logger } from '../../utils/logger';
 
 /**
@@ -64,14 +68,18 @@ export interface UseMarketplaceReturn {
 	setSearchQuery: (query: string) => void;
 	/** Force refresh manifest from GitHub (bypasses cache) */
 	refresh: () => Promise<void>;
-	/** Import a playbook to the Auto Run folder (supports SSH remote via sshRemoteId) */
+	/**
+	 * Import a playbook to the Auto Run folder (supports SSH remote via sshRemoteId).
+	 * Resolves to the full result: the saved record, with its provenance, and the
+	 * documents and assets that landed.
+	 */
 	importPlaybook: (
 		playbook: MarketplacePlaybook,
 		targetFolderName: string,
 		autoRunFolderPath: string,
 		sessionId: string,
 		sshRemoteId?: string
-	) => Promise<{ success: boolean; error?: string }>;
+	) => Promise<MarketplaceImportPlaybookResult>;
 
 	// Document preview
 	/** Fetch the README.md content for a playbook */
@@ -234,7 +242,7 @@ export function useMarketplace(): UseMarketplaceReturn {
 			autoRunFolderPath: string,
 			sessionId: string,
 			sshRemoteId?: string
-		): Promise<{ success: boolean; error?: string }> => {
+		): Promise<MarketplaceImportPlaybookResult> => {
 			setIsImporting(true);
 			try {
 				const result = await window.maestro.marketplace.importPlaybook(

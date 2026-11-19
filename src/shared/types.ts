@@ -739,6 +739,13 @@ export function isPlaybookScope(value: unknown): value is PlaybookScope {
 	return value === 'machine' || value === 'repo';
 }
 
+/** Which manifest a marketplace entry came from: the official repository or the local manifest. */
+export type PlaybookSourceChannel = 'official' | 'local';
+
+export function isPlaybookSourceChannel(value: unknown): value is PlaybookSourceChannel {
+	return value === 'official' || value === 'local';
+}
+
 /**
  * Where an imported playbook came from. Without it a saved playbook has no
  * link back to its marketplace entry, so update detection, failure reports,
@@ -752,7 +759,7 @@ export interface PlaybookSourceProvenance {
 	marketplaceId?: string;
 	/** The manifest entry `lastUpdated` at import time. */
 	sourceVersion?: string;
-	sourceChannel?: 'official' | 'local';
+	sourceChannel?: PlaybookSourceChannel;
 	/** A local manifest folder or the imported ZIP file. */
 	sourcePath?: string;
 	targetFolderName: string;
@@ -789,6 +796,34 @@ export interface Playbook {
 
 /** The fields a `playbooks:update` call may change. */
 export type PlaybookUpdate = Partial<Omit<Playbook, 'id' | 'createdAt'>>;
+
+/**
+ * Where an import keeps a pristine copy of each document, relative to the
+ * playbook's Auto Run folder: `<folder>/.maestro-playbook/source/<doc>.md`.
+ * It is the text that shipped, so a later run can diff the user's copy
+ * against it. Auto Run skips dot folders, so these copies never list as
+ * documents.
+ */
+export const PLAYBOOK_PRISTINE_SOURCE_DIR = '.maestro-playbook/source';
+
+/**
+ * Read `interaction`, `scope`, and `report` out of untrusted JSON (a
+ * marketplace manifest entry or a ZIP `manifest.json`). A value with the
+ * wrong shape is dropped. `report` is a document name, so a trailing `.md`
+ * is stripped the same way a manifest document filename is.
+ */
+export function readPlaybookExchangeHints(
+	raw: Record<string, unknown>
+): Pick<Playbook, 'interaction' | 'scope' | 'report'> {
+	const hints: Pick<Playbook, 'interaction' | 'scope' | 'report'> = {};
+	if (isPlaybookInteraction(raw.interaction)) hints.interaction = raw.interaction;
+	if (isPlaybookScope(raw.scope)) hints.scope = raw.scope;
+	if (typeof raw.report === 'string') {
+		const report = raw.report.trim().replace(/\.md$/i, '');
+		if (report !== '') hints.report = report;
+	}
+	return hints;
+}
 
 /**
  * Playbook status file contract (`.maestro/STATUS.json`).
@@ -1159,6 +1194,7 @@ export type {
 	GetDocumentResponse,
 	GetReadmeResponse,
 	ImportPlaybookResponse,
+	MarketplaceImportPlaybookResult,
 	MarketplaceErrorResponse,
 } from './marketplace-types';
 

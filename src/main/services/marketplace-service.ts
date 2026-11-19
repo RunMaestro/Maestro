@@ -20,15 +20,26 @@ import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import type {
+	ImportPlaybookResponse,
 	MarketplaceManifest,
 	MarketplaceCache,
 	MarketplacePlaybook,
 } from '../../shared/marketplace-types';
 import { MarketplaceFetchError, MarketplaceImportError } from '../../shared/marketplace-types';
 import { isCompatible } from '../../shared/marketplace-compatibility';
-import { isTaskSelectionMode, SshRemoteConfig, type TaskSelectionMode } from '../../shared/types';
+import {
+	isPlaybookSourceChannel,
+	isTaskSelectionMode,
+	PLAYBOOK_PRISTINE_SOURCE_DIR,
+	readPlaybookExchangeHints,
+	SshRemoteConfig,
+	type Playbook,
+	type PlaybookSourceProvenance,
+} from '../../shared/types';
+import { readPlaybookParamOverlay } from '../../shared/playbookParams';
 import { writeFileRemote, mkdirRemote } from '../utils/remote-fs';
 import { captureException } from '../utils/sentry';
+import { hashPlaybookDocument } from '../utils/playbook-document-hash';
 
 const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main';
 const MANIFEST_URL = `${GITHUB_RAW_BASE}/manifest.json`;
@@ -469,21 +480,8 @@ export interface ImportPlaybookOptions {
 	sshConfig?: SshRemoteConfig;
 }
 
-export interface ImportPlaybookServiceResult {
-	playbook: {
-		id: string;
-		name: string;
-		createdAt: number;
-		updatedAt: number;
-		documents: Array<{ filename: string; resetOnCompletion: boolean }>;
-		loopEnabled: boolean;
-		maxLoops?: number | null;
-		prompt: string;
-		taskSelectionMode?: TaskSelectionMode;
-	};
-	importedDocs: string[];
-	importedAssets: string[];
-}
+/** The saved record, with provenance, plus the documents and assets that landed. */
+export type ImportPlaybookServiceResult = ImportPlaybookResponse;
 
 /**
  * Import a playbook to the Auto Run folder (local or remote via SSH).
@@ -559,38 +557,75 @@ export async function importMarketplacePlaybook(
 			: `${autoRunFolderPath}/${targetFolderName}`
 		: path.join(autoRunFolderPath, targetFolderName);
 
-	if (isRemote) {
-		const mkdirResult = await mkdirRemote(targetPath, sshConfig!, true);
-		if (!mkdirResult.success) {
-			throw new MarketplaceImportError(`Failed to create remote directory: ${mkdirResult.error}`);
+	// Every path below lives under the target folder, on whichever host owns it.
+	const joinTarget = (...parts: string[]): string =>
+		isRemote ? parts.join('/') : path.join(...parts);
+	const makeTargetDir = async (dirPath: string): Promise<void> => {
+		if (isRemote) {
+			const mkdirResult = await mkdirRemote(dirPath, sshConfig!, true);
+			if (!mkdirResult.success) {
+				throw new MarketplaceImportError(`Failed to create remote directory: ${mkdirResult.error}`);
+			}
+		} else {
+			await fs.mkdir(dirPath, { recursive: true });
 		}
-	} else {
-		await fs.mkdir(targetPath, { recursive: true });
-	}
+	};
+	const writeTargetFile = async (filePath: string, content: string | Buffer): Promise<void> => {
+		if (isRemote) {
+			const writeResult = await writeFileRemote(filePath, content, sshConfig!);
+			if (!writeResult.success) {
+				throw new Error(writeResult.error || 'Failed to write remote file');
+			}
+		} else if (typeof content === 'string') {
+			await fs.writeFile(filePath, content, 'utf-8');
+		} else {
+			await fs.writeFile(filePath, content);
+		}
+	};
+
+	await makeTargetDir(targetPath);
+
+	// A pristine copy of each document as fetched, so a later run can diff the
+	// user's copy against what shipped. Losing it costs only that diff, never
+	// the import, so a failure is reported and the import goes on.
+	const pristineDir = joinTarget(targetPath, ...PLAYBOOK_PRISTINE_SOURCE_DIR.split('/'));
+	let pristineDirState: 'pending' | 'ready' | 'failed' = 'pending';
+	const writePristineCopy = async (filename: string, fetched: string): Promise<void> => {
+		try {
+			if (pristineDirState === 'pending') {
+				pristineDirState = 'failed';
+				await makeTargetDir(pristineDir);
+				pristineDirState = 'ready';
+			}
+			if (pristineDirState === 'failed') return;
+			await writeTargetFile(joinTarget(pristineDir, `${filename}.md`), fetched);
+		} catch (error) {
+			void captureException(error, { operation: 'marketplace:writePristineSource' });
+			logger.warn(`Failed to write the pristine source copy of ${filename}`, LOG_CONTEXT, {
+				error,
+			});
+		}
+	};
 
 	const importedDocs: string[] = [];
+	const documentHashes: Record<string, string> = {};
 	for (const doc of marketplacePlaybook.documents) {
+		let fetched: string;
 		try {
-			const content = rebaseAssetReferences(
-				await fetchDocument(marketplacePlaybook.path, doc.filename),
-				targetFolderName
+			fetched = await fetchDocument(marketplacePlaybook.path, doc.filename);
+			await writeTargetFile(
+				joinTarget(targetPath, `${doc.filename}.md`),
+				rebaseAssetReferences(fetched, targetFolderName)
 			);
-			const docPath = isRemote
-				? `${targetPath}/${doc.filename}.md`
-				: path.join(targetPath, `${doc.filename}.md`);
-			if (isRemote) {
-				const writeResult = await writeFileRemote(docPath, content, sshConfig!);
-				if (!writeResult.success) {
-					throw new Error(writeResult.error || 'Failed to write remote file');
-				}
-			} else {
-				await fs.writeFile(docPath, content, 'utf-8');
-			}
 			importedDocs.push(doc.filename);
+			// Hashed as fetched, before the asset rebase, so the hash names what shipped.
+			documentHashes[doc.filename] = hashPlaybookDocument(fetched);
 		} catch (error) {
 			void captureException(error);
 			logger.warn(`Failed to import document ${doc.filename}`, LOG_CONTEXT, { error });
+			continue;
 		}
+		await writePristineCopy(doc.filename, fetched);
 	}
 
 	// Refuse to persist a playbook whose documents all failed to write -
@@ -634,30 +669,20 @@ export async function importMarketplacePlaybook(
 
 	const importedAssets: string[] = [];
 	if (effectiveAssets.length > 0) {
-		const assetsPath = isRemote ? `${targetPath}/assets` : path.join(targetPath, 'assets');
-		if (isRemote) {
-			const mkdirResult = await mkdirRemote(assetsPath, sshConfig!, true);
-			if (!mkdirResult.success) {
-				logger.warn(`Failed to create remote assets directory: ${mkdirResult.error}`, LOG_CONTEXT);
-			}
-		} else {
-			await fs.mkdir(assetsPath, { recursive: true });
+		const assetsPath = joinTarget(targetPath, 'assets');
+		try {
+			await makeTargetDir(assetsPath);
+		} catch (error) {
+			// A remote assets folder that will not create is warned about, as it always
+			// was; each asset write below then fails and is reported on its own.
+			if (!isRemote) throw error;
+			logger.warn(String(error instanceof Error ? error.message : error), LOG_CONTEXT);
 		}
 
 		for (const assetFilename of effectiveAssets) {
 			try {
 				const content = await fetchAsset(marketplacePlaybook.path, assetFilename);
-				const assetPath = isRemote
-					? `${assetsPath}/${assetFilename}`
-					: path.join(assetsPath, assetFilename);
-				if (isRemote) {
-					const writeResult = await writeFileRemote(assetPath, content, sshConfig!);
-					if (!writeResult.success) {
-						throw new Error(writeResult.error || 'Failed to write remote asset file');
-					}
-				} else {
-					await fs.writeFile(assetPath, content);
-				}
+				await writeTargetFile(joinTarget(assetsPath, assetFilename), content);
 				importedAssets.push(assetFilename);
 			} catch (error) {
 				void captureException(error);
@@ -671,7 +696,25 @@ export async function importMarketplacePlaybook(
 	// importedDocs success set.
 	const importedDocSet = new Set(importedDocs);
 	const now = Date.now();
-	const newPlaybook = {
+	// The manifest is someone else's JSON, typed or not: every field read here
+	// is checked for shape, and a malformed one is left off the record.
+	const manifestEntry = marketplacePlaybook as unknown as Record<string, unknown>;
+	const parameterOverlay = readPlaybookParamOverlay(manifestEntry.parameters);
+	const provenance: PlaybookSourceProvenance = {
+		kind: 'marketplace',
+		marketplaceId: marketplacePlaybook.id,
+		...(typeof manifestEntry.lastUpdated === 'string' && {
+			sourceVersion: manifestEntry.lastUpdated,
+		}),
+		...(isPlaybookSourceChannel(manifestEntry.source) && { sourceChannel: manifestEntry.source }),
+		...(isLocalPath(marketplacePlaybook.path) && {
+			sourcePath: resolveTildePath(marketplacePlaybook.path),
+		}),
+		targetFolderName,
+		importedAt: now,
+		documentHashes,
+	};
+	const newPlaybook: Playbook = {
 		id: crypto.randomUUID(),
 		name: marketplacePlaybook.title,
 		createdAt: now,
@@ -690,6 +733,9 @@ export async function importMarketplacePlaybook(
 		...(isTaskSelectionMode(marketplacePlaybook.taskSelectionMode) && {
 			taskSelectionMode: marketplacePlaybook.taskSelectionMode,
 		}),
+		...(parameterOverlay && { parameterOverlay }),
+		...readPlaybookExchangeHints(manifestEntry),
+		provenance,
 	};
 
 	const playbooksDir = path.join(app.getPath('userData'), 'playbooks');

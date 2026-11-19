@@ -8,13 +8,14 @@ import { readZipArchive } from '../../utils/zip-archive';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import {
-	isPlaybookInteraction,
-	isPlaybookScope,
+	isPlaybookSourceChannel,
+	readPlaybookExchangeHints,
 	type Playbook,
 	type PlaybookSourceProvenance,
 	type PlaybookUpdate,
 } from '../../../shared/types';
 import { readPlaybookParamOverlay, readPlaybookParamValues } from '../../../shared/playbookParams';
+import { hashPlaybookDocument } from '../../utils/playbook-document-hash';
 
 const LOG_CONTEXT = '[Playbooks]';
 
@@ -42,12 +43,7 @@ function readPlaybookExchangeFields(manifest: Record<string, unknown>): Playbook
 	if (parameterValues) fields.parameterValues = parameterValues;
 	const parameterOverlay = readPlaybookParamOverlay(manifest.parameterOverlay);
 	if (parameterOverlay) fields.parameterOverlay = parameterOverlay;
-	if (isPlaybookInteraction(manifest.interaction)) fields.interaction = manifest.interaction;
-	if (isPlaybookScope(manifest.scope)) fields.scope = manifest.scope;
-	if (typeof manifest.report === 'string' && manifest.report.trim() !== '') {
-		fields.report = manifest.report.trim().replace(/\.md$/i, '');
-	}
-	return fields;
+	return { ...fields, ...readPlaybookExchangeHints(manifest) };
 }
 
 /**
@@ -90,16 +86,9 @@ function zipImportProvenance(
 		const link = carried as Record<string, unknown>;
 		if (typeof link.marketplaceId === 'string') provenance.marketplaceId = link.marketplaceId;
 		if (typeof link.sourceVersion === 'string') provenance.sourceVersion = link.sourceVersion;
-		if (link.sourceChannel === 'official' || link.sourceChannel === 'local') {
-			provenance.sourceChannel = link.sourceChannel;
-		}
+		if (isPlaybookSourceChannel(link.sourceChannel)) provenance.sourceChannel = link.sourceChannel;
 	}
 	return provenance;
-}
-
-/** sha256 hex of a document's text, as written to disk. */
-function hashDocumentContent(content: string): string {
-	return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
 // Helper to create handler options with consistent context
@@ -493,7 +482,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 						await fs.writeFile(destPath, content, 'utf-8');
 						const docName = filename.replace('.md', '');
 						importedDocs.push(docName);
-						documentHashes[docName] = hashDocumentContent(content);
+						documentHashes[docName] = hashPlaybookDocument(content);
 					}
 				}
 
