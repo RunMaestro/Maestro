@@ -284,7 +284,10 @@ function changeCounts(db: Database.Database): { changes: number; total: number }
  * connection that ran other statements first (an open transaction) it is
  * capped at what this statement moved in total.
  */
-function changesSince(db: Database.Database, before: number): Omit<SqliteQueryWrite, 'backup'> {
+function changesSince(
+	db: Database.Database,
+	before: number
+): Pick<SqliteQueryWrite, 'changes' | 'otherChanges'> {
 	const { changes, total } = changeCounts(db);
 	const moved = Math.max(0, total - before);
 	const own = Math.min(changes, moved);
@@ -341,10 +344,12 @@ function readSchemaEntries(db: Database.Database): SqliteSchemaEntry[] {
  *     so stopping early never stops the write.
  *
  * The result carries `write`: rows the statement changed (`changes()`, 0 for
- * a schema change) and rows its triggers and foreign-key actions changed
+ * a schema change), rows its triggers and foreign-key actions changed
  * (`total_changes()` beyond that), counted on this connection, which is the
- * run's alone. SQLite's own errors (a constraint, a missing table) pass
- * through verbatim.
+ * run's alone, and the schema objects it created, dropped, or altered
+ * (`sqlite_schema` read before and after it, inside its transaction), so the
+ * viewer knows to read its object list again. SQLite's own errors (a
+ * constraint, a missing table) pass through verbatim.
  *
  * With `task.dryRun` (main passed the gate without the backup,
  * `beginSqliteWorkerTrial()`), the same run is a TRIAL: a statement SQLite
@@ -380,9 +385,10 @@ export function runSqliteWriteTask(
 		const started = performance.now();
 		if (transaction) db.exec('BEGIN IMMEDIATE');
 		try {
-			const schemaBefore = dryRun ? readSchemaEntries(db) : [];
+			const schemaBefore = readSchemaEntries(db);
 			const output = runPrepared(statement, binding.args, 0, limit);
 			const { changes, otherChanges } = changesSince(db, before);
+			const schemaChanges = sqliteSchemaChanges(schemaBefore, readSchemaEntries(db));
 			const base = {
 				statement: keyword,
 				...output,
@@ -390,7 +396,6 @@ export function runSqliteWriteTask(
 				returnsRows: statement.reader,
 			};
 			if (dryRun) {
-				const schemaChanges = sqliteSchemaChanges(schemaBefore, readSchemaEntries(db));
 				db.exec('ROLLBACK');
 				return {
 					...base,
@@ -407,7 +412,7 @@ export function runSqliteWriteTask(
 			return {
 				...base,
 				elapsedMs: Math.round(performance.now() - started),
-				write: { changes, otherChanges },
+				write: { changes, otherChanges, schemaChanges },
 			};
 		} catch (error) {
 			if (transaction && db.inTransaction) db.exec('ROLLBACK');

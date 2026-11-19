@@ -2846,6 +2846,7 @@ describe('SqliteViewer query with editing enabled', () => {
 		write: {
 			changes: 3,
 			otherChanges: 2,
+			schemaChanges: [],
 			backup: { path: '/data/app.maestro-backup-1.db', bytes: 8192, createdAt: 1 },
 		},
 	};
@@ -2930,7 +2931,7 @@ describe('SqliteViewer query with editing enabled', () => {
 			...queryWindow({ handle: 'h1', sql: '' }),
 			statement: 'INSERT',
 			hasMore: true,
-			write: { changes: 9, otherChanges: 0 },
+			write: { changes: 9, otherChanges: 0, schemaChanges: [] },
 		});
 		await openQuery("INSERT INTO users(email) SELECT 'x' FROM users RETURNING id, id");
 		await unlock();
@@ -3144,5 +3145,164 @@ describe('SqliteViewer query in an explicit transaction', () => {
 		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-browse'));
 		fireEvent.click(await screen.findByTestId('sqlite-transaction-pill'));
 		expect(await screen.findByTestId('sqlite-transaction-summary')).toBeInTheDocument();
+	});
+});
+
+describe('SqliteViewer after a schema change', () => {
+	const LOGS = object({ name: 'logs', tableName: 'logs' });
+	const WITH_LOGS: SqliteObjectList = { ...LIST, objects: [...LIST.objects, LOGS] };
+	/** events renamed to event_log: the rename drops one table and creates another. */
+	const RENAMED: SqliteObjectList = {
+		...LIST,
+		objects: LIST.objects.map((entry) =>
+			entry.name === 'events' ? { ...entry, name: 'event_log', tableName: 'event_log' } : entry
+		),
+	};
+
+	function schemaWrite(
+		statement: string,
+		schemaChanges: NonNullable<SqliteQueryResult['write']>['schemaChanges']
+	): SqliteQueryResult {
+		return {
+			statement,
+			columns: [],
+			rows: [],
+			offset: 0,
+			hasMore: false,
+			returnsRows: false,
+			elapsedMs: 3,
+			write: { changes: 0, otherChanges: 0, schemaChanges },
+		};
+	}
+
+	async function openUnlockedQuery(sql: string) {
+		localStorage.setItem('sqlite-viewer-mode', 'query');
+		renderViewer();
+		const editor = await screen.findByRole('textbox');
+		fireEvent.change(editor, { target: { value: sql } });
+		fireEvent.click(await screen.findByTestId('sqlite-editing-enable'));
+		await screen.findByTestId('sqlite-editing-disable');
+	}
+
+	beforeEach(() => {
+		// A table created by a test has no entry in STATS: measure it as empty.
+		readObjectStats.mockImplementation(async (_handle: string, names: string[]) => [
+			STATS[names[0]] ?? { name: names[0], rowCount: 0, rowCountCapped: false, sizeBytes: 4096 },
+		]);
+	});
+
+	it('reads the object list again, shows the new table, re-reads completion, and measures only it', async () => {
+		listObjects.mockResolvedValueOnce(LIST).mockResolvedValue(WITH_LOGS);
+		runQuery.mockResolvedValue(
+			schemaWrite('CREATE', [{ change: 'created', type: 'table', name: 'logs' }])
+		);
+		await openUnlockedQuery('CREATE TABLE logs(at)');
+		await waitFor(() =>
+			expect(readObjectStats).toHaveBeenCalledTimes(sqliteMeasurementOrder(LIST.objects).length)
+		);
+		readObjectStats.mockClear();
+		expect(screen.queryByTestId('sqlite-rail-object-logs')).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-query-write')).toHaveTextContent(
+			'CREATE created table logs'
+		);
+		expect(await screen.findByTestId('sqlite-rail-object-logs')).toBeInTheDocument();
+		expect(listObjects).toHaveBeenCalledTimes(2);
+		await waitFor(() => expect(readColumns).toHaveBeenCalledTimes(2));
+		await waitFor(() => expect(readObjectStats).toHaveBeenCalledWith('h1', ['logs']));
+		expect(readObjectStats).toHaveBeenCalledTimes(1);
+		// The tables it did not touch keep their counts.
+		expect(screen.getByTestId('sqlite-rail-rows-users')).toHaveTextContent('1,204');
+	});
+
+	it('follows a renamed selection, and Browse shows it under its new name', async () => {
+		listObjects.mockResolvedValueOnce(LIST).mockResolvedValue(RENAMED);
+		runQuery.mockResolvedValue(
+			schemaWrite('ALTER', [
+				{ change: 'created', type: 'table', name: 'event_log' },
+				{ change: 'dropped', type: 'table', name: 'events' },
+			])
+		);
+		await openUnlockedQuery('ALTER TABLE events RENAME TO event_log');
+		expect(screen.getByTestId('sqlite-rail-object-events')).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		const renamed = await screen.findByTestId('sqlite-rail-object-event_log');
+		expect(renamed).toHaveAttribute('aria-selected', 'true');
+		expect(screen.queryByTestId('sqlite-rail-object-events')).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-browse'));
+		expect(await screen.findByTestId('sqlite-object-pane')).toHaveTextContent('event_log');
+		await waitFor(() =>
+			expect(readRows).toHaveBeenLastCalledWith(expect.objectContaining({ name: 'event_log' }))
+		);
+	});
+
+	it('moves a dropped selection to the first table', async () => {
+		listObjects.mockResolvedValueOnce(LIST).mockResolvedValue({
+			...LIST,
+			objects: LIST.objects.filter((entry) => entry.name !== 'events'),
+		});
+		runQuery.mockResolvedValue(
+			schemaWrite('DROP', [{ change: 'dropped', type: 'table', name: 'events' }])
+		);
+		await openUnlockedQuery('DROP TABLE events');
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		await waitFor(() =>
+			expect(screen.queryByTestId('sqlite-rail-object-events')).not.toBeInTheDocument()
+		);
+		expect(screen.getByTestId('sqlite-rail-object-users')).toHaveAttribute('aria-selected', 'true');
+	});
+
+	it('reads the object list again after a Commit whose transaction changed the schema', async () => {
+		listObjects.mockResolvedValueOnce(LIST).mockResolvedValue(WITH_LOGS);
+		endTransaction.mockResolvedValue({
+			transactionId: 'x1',
+			outcome: 'committed',
+			reason: 'Committed 1 statement: created table logs. These changes are now in the file.',
+			transaction: transactionState({
+				statements: 1,
+				schemaChanges: [{ change: 'created', type: 'table', name: 'logs' }],
+			}),
+			endedAt: 3,
+		});
+		await openUnlockedQuery('CREATE TABLE logs(at)');
+		fireEvent.click(screen.getByTestId('sqlite-transaction-begin'));
+		fireEvent.click(await screen.findByTestId('sqlite-transaction-commit'));
+		expect(await screen.findByTestId('sqlite-rail-object-logs')).toBeInTheDocument();
+		expect(listObjects).toHaveBeenCalledTimes(2);
+	});
+
+	it('leaves the object list alone after a write that changed rows only', async () => {
+		runQuery.mockResolvedValue({
+			...schemaWrite('DELETE', []),
+			write: { changes: 2, otherChanges: 0, schemaChanges: [] },
+		});
+		await openUnlockedQuery('DELETE FROM users');
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-query-write')).toHaveTextContent(
+			'DELETE changed 2 rows'
+		);
+		expect(listObjects).toHaveBeenCalledTimes(1);
+		expect(readColumns).toHaveBeenCalledTimes(1);
+	});
+
+	it('says so when the object list could not be read again, and keeps the rail', async () => {
+		listObjects
+			.mockResolvedValueOnce(LIST)
+			.mockRejectedValue(new Error('SQLite database handle is no longer open.'));
+		runQuery.mockResolvedValue(
+			schemaWrite('CREATE', [{ change: 'created', type: 'table', name: 'logs' }])
+		);
+		await openUnlockedQuery('CREATE TABLE logs(at)');
+		fireEvent.click(screen.getByTestId('sqlite-query-run'));
+		expect(await screen.findByTestId('sqlite-list-error')).toHaveTextContent(
+			'The schema changed, but the object list could not be read again'
+		);
+		expect(screen.getByTestId('sqlite-rail-object-users')).toBeInTheDocument();
 	});
 });

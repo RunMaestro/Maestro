@@ -987,6 +987,7 @@ describe('sqlite query', () => {
 			write: {
 				changes: 3,
 				otherChanges: 2,
+				schemaChanges: [],
 				backup: { path: '/data/app.maestro-backup-1.db', bytes: 8192, createdAt: 1 },
 			},
 		});
@@ -1007,11 +1008,30 @@ describe('sqlite query', () => {
 		expect(out).not.toContain('returns no rows');
 	});
 
+	it('--enable-editing says what a schema change created, dropped, or altered', async () => {
+		respondQuery({
+			statement: 'CREATE',
+			columns: [],
+			rows: [],
+			hasMore: false,
+			returnsRows: false,
+			write: {
+				changes: 0,
+				otherChanges: 0,
+				schemaChanges: [{ change: 'created', type: 'table', name: 'logs' }],
+			},
+		});
+		await sqliteQuery(DB, 'CREATE TABLE logs(at)', { enableEditing: true });
+		const out = logged();
+		expect(out).toContain('Created table logs.');
+		expect(out).not.toContain('Changed 0 rows');
+	});
+
 	it('--enable-editing says RETURNING rows past the window are not read again', async () => {
 		respondQuery({
 			statement: 'INSERT',
 			hasMore: true,
-			write: { changes: 9, otherChanges: 0 },
+			write: { changes: 9, otherChanges: 0, schemaChanges: [] },
 		});
 		await sqliteQuery(DB, "INSERT INTO users(email) SELECT 'x' FROM users RETURNING id, email", {
 			enableEditing: true,

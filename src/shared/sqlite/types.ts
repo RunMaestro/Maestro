@@ -876,6 +876,12 @@ export interface SqliteQueryWrite {
 	changes: number;
 	/** Rows the database's triggers and foreign-key actions changed beside those. */
 	otherChanges: number;
+	/**
+	 * Schema objects the statement created, dropped, or altered, read from
+	 * `sqlite_schema` before and after it ran; empty when it changed rows only.
+	 * The viewer re-reads its object list, schema, and completion when any are.
+	 */
+	schemaChanges: SqliteSchemaChange[];
 	/** This session's backup of the file, present only on the write that took it. */
 	backup?: SqliteBackup;
 }

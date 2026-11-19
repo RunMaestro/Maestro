@@ -7,7 +7,8 @@
  * dialect and completion built from the open database: keywords, table and
  * view names, `table.` and `alias.` columns, and the bare columns of the
  * tables a statement names (see `sqliteSqlLanguage.ts`). The column catalog
- * is read once per open database over `sqlite:readColumns`; the grammar
+ * is read once per open database over `sqlite:readColumns`, and again when a
+ * write changes the schema (the viewer bumps `schemaEpoch`); the grammar
  * module is loaded with `import()` so lang-sql stays out of the main bundle.
  * Until both arrive the editor runs on the plain SQL grammar, so typing never
  * waits on them; a catalog that fails to load leaves keyword completion and
@@ -104,7 +105,11 @@ import {
 	sqliteQueryRefusal,
 } from '../../../shared/sqlite/query';
 import { sqliteQueryPlanSteps } from '../../../shared/sqlite/plan';
-import { formatSqliteDryRun, sqliteDryRunRefusal } from '../../../shared/sqlite/dryRun';
+import {
+	formatSqliteDryRun,
+	sqliteDryRunRefusal,
+	sqliteWriteChangesText,
+} from '../../../shared/sqlite/dryRun';
 import {
 	SQLITE_TRANSACTION_IDLE_MS,
 	formatSqliteTransaction,
@@ -203,6 +208,11 @@ interface SqliteQueryPanelProps {
 	onWrite: (write: SqliteQueryWrite) => void;
 	/** The tab's explicit transaction (kept by the viewer): Begin, its state, Commit, Roll back. */
 	transaction: SqliteTransactionControl;
+	/**
+	 * Bumped by the viewer when a write changed the file's schema: completion
+	 * reads the table and column names again.
+	 */
+	schemaEpoch?: number;
 	theme: Theme;
 }
 
@@ -219,13 +229,21 @@ const RESULT_MODES = [
 
 const BLOB_HINT = 'Open the table in Browse to save a BLOB to a file';
 
-/** "DELETE changed 3 rows; the database's triggers ... changed 2 other rows". */
+/**
+ * "DELETE changed 3 rows; the database's triggers ... changed 2 other rows",
+ * "CREATE created table logs". A step inside a transaction has no schema
+ * changes of its own: the transaction strip says what the schema holds.
+ */
 function sqliteWriteSummary(
 	statement: string,
-	write: Pick<SqliteQueryWrite, 'changes' | 'otherChanges'>
+	write: Pick<SqliteQueryWrite, 'changes' | 'otherChanges'> &
+		Partial<Pick<SqliteQueryWrite, 'schemaChanges'>>
 ): string {
-	const rows = `${formatCount(write.changes)} ${write.changes === 1 ? 'row' : 'rows'}`;
-	return `${statement} changed ${rows}${sqliteOtherChangesText(write.otherChanges)}`;
+	const changed = sqliteWriteChangesText({
+		changes: write.changes,
+		schemaChanges: write.schemaChanges ?? [],
+	});
+	return `${statement} ${changed}${sqliteOtherChangesText(write.otherChanges)}`;
 }
 
 /** "It would return 3 rows." / "...at least 501 rows.": a dry run's RETURNING rows, first window only. */
@@ -249,6 +267,7 @@ export function SqliteQueryPanel({
 	editToken,
 	onWrite,
 	transaction,
+	schemaEpoch = 0,
 	theme,
 }: SqliteQueryPanelProps) {
 	const editing = editToken !== null;
@@ -261,13 +280,15 @@ export function SqliteQueryPanel({
 	const [exportState, setExportState] = useState<SqliteQueryExportState | null>(null);
 	const editorRef = useRef<MarkdownEditorHandle | null>(null);
 
+	// Read again when a write changed the schema; the completion in use stays
+	// until the new one is built, so the editor never drops to keywords only.
 	useEffect(() => {
 		let cancelled = false;
-		setLanguage(undefined);
-		setCatalogError(null);
 		Promise.all([window.maestro.sqlite.readColumns(handle), import('./sqliteSqlLanguage')])
 			.then(([catalog, grammar]) => {
-				if (!cancelled) setLanguage(grammar.buildSqliteSqlLanguage(catalog));
+				if (cancelled) return;
+				setLanguage(grammar.buildSqliteSqlLanguage(catalog));
+				setCatalogError(null);
 			})
 			.catch((error: unknown) => {
 				if (!cancelled) setCatalogError(error instanceof Error ? error.message : String(error));
@@ -275,7 +296,7 @@ export function SqliteQueryPanel({
 		return () => {
 			cancelled = true;
 		};
-	}, [handle]);
+	}, [handle, schemaEpoch]);
 
 	// Re-read on every edit: one linear pass, cheaper than the editor's own parse.
 	const scan = useMemo(() => sqliteQueryParameters(value), [value]);

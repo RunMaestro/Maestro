@@ -447,7 +447,7 @@ function runInWriteChild(
 		try {
 			const result = await tracked(queryId, run, SQLITE_WRITE_STOPPED_MESSAGE);
 			if (dryRun) return result;
-			const write = result.write ?? { changes: 0, otherChanges: 0 };
+			const write = result.write ?? { changes: 0, otherChanges: 0, schemaChanges: [] };
 			return { ...result, write: opened.backup ? { ...write, backup: opened.backup } : write };
 		} finally {
 			unhook();

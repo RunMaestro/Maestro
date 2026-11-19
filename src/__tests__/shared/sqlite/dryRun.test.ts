@@ -14,6 +14,7 @@ import {
 	sqliteSchemaChanges,
 	sqliteSchemaChangesText,
 	sqliteStatementKindLabel,
+	sqliteWriteChangesText,
 } from '../../../shared/sqlite/dryRun';
 
 describe('classifySqliteStatement', () => {
@@ -130,6 +131,35 @@ describe('sqliteSchemaChangesText', () => {
 			'dropped view v',
 		]);
 		expect(sqliteSchemaChangesText([], true)).toEqual([]);
+	});
+});
+
+describe('sqliteWriteChangesText', () => {
+	it('says the rows a write changed when it changed no schema, even none', () => {
+		expect(sqliteWriteChangesText({ changes: 3, schemaChanges: [] })).toBe('changed 3 rows');
+		expect(sqliteWriteChangesText({ changes: 1, schemaChanges: [] })).toBe('changed 1 row');
+		expect(sqliteWriteChangesText({ changes: 0, schemaChanges: [] })).toBe('changed 0 rows');
+	});
+
+	it('says what a schema change did, in the past tense, without a zero row count', () => {
+		expect(
+			sqliteWriteChangesText({
+				changes: 0,
+				schemaChanges: [
+					{ change: 'created', type: 'table', name: 'logs' },
+					{ change: 'created', type: 'index', name: 'logs_at' },
+				],
+			})
+		).toBe('created table logs, index logs_at');
+	});
+
+	it('keeps the row count beside a schema change that also changed rows', () => {
+		expect(
+			sqliteWriteChangesText({
+				changes: 2,
+				schemaChanges: [{ change: 'dropped', type: 'trigger', name: 'audit' }],
+			})
+		).toBe('changed 2 rows; dropped trigger audit');
 	});
 });
 

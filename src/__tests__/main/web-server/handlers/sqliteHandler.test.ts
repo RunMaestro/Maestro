@@ -841,7 +841,7 @@ describe('sqlite_run_query handler with --enable-editing', () => {
 		hasMore: false,
 		returnsRows: false,
 		elapsedMs: 2,
-		write: { changes: 3, otherChanges: 0 },
+		write: { changes: 3, otherChanges: 0, schemaChanges: [] },
 	};
 
 	beforeEach(() => {

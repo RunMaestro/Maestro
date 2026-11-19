@@ -844,6 +844,7 @@ describe('runSqliteQuery with editing on', () => {
 		driver.prepareFails = null;
 		driver.changeCounts = [];
 		driver.runError = null;
+		driver.schemaReads = [];
 		handleDb.readonly = false;
 		handleDb.prepareError = null;
 		handleDb.prepared = [];
@@ -912,7 +913,44 @@ describe('runSqliteQuery with editing on', () => {
 			sql: 'DELETE FROM parents WHERE id = 1',
 			editToken: 'tok',
 		});
-		expect(result.write).toEqual({ changes: 1, otherChanges: 3 });
+		expect(result.write).toEqual({ changes: 1, otherChanges: 3, schemaChanges: [] });
+	});
+
+	it('reports the schema objects a write created, dropped, or altered, read inside its transaction', async () => {
+		driver.schemaReads = [
+			[
+				{ type: 'table', name: 'users', sql: 'CREATE TABLE users(id INTEGER PRIMARY KEY)' },
+				{ type: 'table', name: 'old', sql: 'CREATE TABLE old(x)' },
+			],
+			[
+				{
+					type: 'table',
+					name: 'users',
+					sql: 'CREATE TABLE users(id INTEGER PRIMARY KEY, email TEXT)',
+				},
+				{ type: 'table', name: 'logs', sql: 'CREATE TABLE logs(at)' },
+			],
+		];
+		driver.changeCounts = [
+			[0, 0],
+			[0, 0],
+		];
+		const result = await runSqliteQuery({
+			handle: 'h1',
+			sql: 'ALTER TABLE users ADD COLUMN email TEXT',
+			editToken: 'tok',
+		});
+		expect(driver.schemaReads).toEqual([]);
+		expect(driver.instances[0].execs).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
+		expect(result.write).toMatchObject({
+			changes: 0,
+			otherChanges: 0,
+			schemaChanges: [
+				{ change: 'created', type: 'table', name: 'logs' },
+				{ change: 'dropped', type: 'table', name: 'old' },
+				{ change: 'altered', type: 'table', name: 'users' },
+			],
+		});
 	});
 
 	it('returns the first window of RETURNING rows and never reads a later one', async () => {

@@ -103,7 +103,7 @@ import {
 	sqliteReadOnlyRefusal,
 } from '../../shared/sqlite/query';
 import { formatSqliteQueryHistoryOutcome } from '../../shared/sqlite/history';
-import { formatSqliteDryRun } from '../../shared/sqlite/dryRun';
+import { formatSqliteDryRun, sqliteWriteChangesText } from '../../shared/sqlite/dryRun';
 import { formatSqliteTransactionChanges } from '../../shared/sqlite/transaction';
 import {
 	formatSqliteQueryErrorExcerpt,
@@ -996,9 +996,11 @@ export async function sqliteQuery(
 	const lines: string[] = [`${result.statement} on ${database.displayPath}`];
 	const { write } = result;
 	if (write) {
+		// "Changed 3 rows.", "Created table logs, index logs_at."
+		const changed = sqliteWriteChangesText(write);
 		lines.push(
 			'',
-			`Changed ${formatCount(write.changes)} ${write.changes === 1 ? 'row' : 'rows'}.`,
+			`${changed.charAt(0).toUpperCase()}${changed.slice(1)}.`,
 			...writeNoteLines(database, write),
 			SQLITE_QUERY_WRITE_UNDO_MESSAGE
 		);

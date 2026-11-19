@@ -30,7 +30,12 @@
 import { formatCount } from '../formatters';
 import { sqliteLeadingKeyword } from './query';
 import { sqliteTokenName, sqliteTokens, type SqliteToken } from './tokens';
-import type { SqliteDryRun, SqliteSchemaChange, SqliteStatementKind } from './types';
+import type {
+	SqliteDryRun,
+	SqliteQueryWrite,
+	SqliteSchemaChange,
+	SqliteStatementKind,
+} from './types';
 
 /** A statement's kind, verb, and the object it names: what a dry run says before any count. */
 export interface SqliteStatementClassification {
@@ -317,6 +322,23 @@ export function sqliteSchemaChangesText(
 		);
 	}
 	return parts;
+}
+
+/**
+ * What one Query-mode write did, without its other changes: "changed 3
+ * rows", "created table logs, index logs_at", "changed 2 rows; dropped
+ * trigger audit". The row count shows whenever rows changed or the schema
+ * did not. Shared by the Query panel's status line and the CLI.
+ */
+export function sqliteWriteChangesText(
+	write: Pick<SqliteQueryWrite, 'changes' | 'schemaChanges'>
+): string {
+	const parts =
+		write.changes > 0 || write.schemaChanges.length === 0
+			? [`changed ${rowsText(write.changes)}`]
+			: [];
+	parts.push(...sqliteSchemaChangesText(write.schemaChanges, true));
+	return parts.join('; ');
 }
 
 /**

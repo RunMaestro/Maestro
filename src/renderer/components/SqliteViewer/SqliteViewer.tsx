@@ -65,6 +65,18 @@
  * since it holds the file's write lock and every edit in Browse is refused
  * until it ends. A Commit counts as a Query-mode write: no undo, and the
  * table on screen reads again.
+ *
+ * A write that changed the schema (a Query-mode CREATE, DROP, or ALTER, or a
+ * Commit whose transaction made one) reports its `schemaChanges`, and the
+ * viewer reads the object list again: a new object shows in the rail, a
+ * dropped one leaves it, and a dropped selection moves to the renamed object
+ * when the change was a rename, else to the first table. Counts and sizes
+ * are measured again only for the objects that changed, and Query completion
+ * reads the table and column names again. Browse's table view and schema
+ * panel are unmounted while Query mode is up, so going back reads the object
+ * afresh, its editability (derived in main on every read) included. A schema
+ * change made inside an open transaction shows only once it is committed:
+ * until then it is not in the file the viewer reads.
  */
 
 import {
@@ -87,6 +99,7 @@ import type {
 	SqliteObjectSummary,
 	SqliteParameterValues,
 	SqliteQueryWrite,
+	SqliteSchemaChange,
 	SqliteTransactionEnd,
 } from '../../../shared/sqlite/types';
 import {
@@ -163,6 +176,29 @@ function defaultSelection(objects: readonly SqliteObjectSummary[]): string | nul
 	return visible[0]?.name ?? objects[0]?.name ?? null;
 }
 
+/**
+ * The object selected after a schema change: the same one while it exists;
+ * the new name when it was renamed (the change dropped exactly it and created
+ * exactly one object of its kind); else the first table.
+ */
+function selectionAfterSchemaChange(
+	previous: string | null,
+	objects: readonly SqliteObjectSummary[],
+	changes: readonly SqliteSchemaChange[]
+): string | null {
+	if (previous !== null && objects.some((object) => object.name === previous)) return previous;
+	const dropped = changes.filter((change) => change.change === 'dropped');
+	if (dropped.length === 1 && dropped[0].name === previous) {
+		const created = changes.filter(
+			(change) => change.change === 'created' && change.type === dropped[0].type
+		);
+		if (created.length === 1 && objects.some((object) => object.name === created[0].name)) {
+			return created[0].name;
+		}
+	}
+	return defaultSelection(objects);
+}
+
 export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(function SqliteViewer(
 	{ filePath, fileName, theme },
 	ref
@@ -193,6 +229,17 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 	const [undoStatus, setUndoStatus] = useState<SqliteUndoStatus | null>(null);
 	/** Bumped when an undo changed the table on screen, so it reads its rows again. */
 	const [tableReload, setTableReload] = useState(0);
+	/** Bumped when a write changed the schema: Query completion reads the names again. */
+	const [schemaEpoch, setSchemaEpoch] = useState(0);
+	/** Reading the object list again after a schema change failed; the rail is as it was. */
+	const [listError, setListError] = useState<string | null>(null);
+	/** Bumped on each object-list read; a reply for an older one (or another file) is dropped. */
+	const listRequest = useRef(0);
+	/**
+	 * Names whose counts and sizes have landed. A schema change forgets the
+	 * objects it touched, so only those are measured again.
+	 */
+	const measuredNames = useRef(new Set<string>());
 	/**
 	 * Bumped whenever an enable request in flight stops being wanted (another
 	 * file, Lock, unmount), so its grant is released instead of applied.
@@ -212,6 +259,9 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 		setList(null);
 		setStats(new Map());
 		settledCounts.current = new Map();
+		measuredNames.current = new Set();
+		listRequest.current += 1;
+		setListError(null);
 		setOpenError(null);
 		setStatsError(null);
 		setSelectedName(null);
@@ -311,17 +361,65 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 		setUndoStatus(null);
 	}, []);
 
+	// -- Schema changes -----------------------------------------------------
+
+	/**
+	 * A write changed the schema: read the object list again, forget the
+	 * counts of what changed so they are measured again, and keep or move the
+	 * selection. Completion reads the names again at once.
+	 */
+	const refreshObjectList = useCallback(
+		(changes: readonly SqliteSchemaChange[]) => {
+			if (!handle) return;
+			const request = ++listRequest.current;
+			setSchemaEpoch((epoch) => epoch + 1);
+			window.maestro.sqlite
+				.listObjects(handle)
+				.then((objects) => {
+					if (request !== listRequest.current) return;
+					const changed = new Set(changes.map((change) => change.name));
+					const present = new Set(objects.objects.map((object) => object.name));
+					const stale = (name: string) => changed.has(name) || !present.has(name);
+					for (const name of [...measuredNames.current]) {
+						if (stale(name)) measuredNames.current.delete(name);
+					}
+					for (const name of [...settledCounts.current.keys()]) {
+						if (stale(name)) settledCounts.current.delete(name);
+					}
+					setStats((previous) => {
+						const next = new Map<string, SqliteObjectStats>();
+						for (const [name, entry] of previous) if (!stale(name)) next.set(name, entry);
+						return next;
+					});
+					setListError(null);
+					setList(objects);
+					setSelectedName((previous) =>
+						selectionAfterSchemaChange(previous, objects.objects, changes)
+					);
+				})
+				.catch((error: unknown) => {
+					if (request === listRequest.current) setListError(ipcErrorMessage(error));
+				});
+		},
+		[handle]
+	);
+
 	// A statement run from Query mode with editing on. It has no undo step,
-	// and it may have changed any table, so the one on screen reads again.
-	const handleQueryWrite = useCallback((write: SqliteQueryWrite) => {
-		setLastWrite({
-			undo: null,
-			otherChanges: write.otherChanges,
-			unavailable: SQLITE_QUERY_WRITE_UNDO_MESSAGE,
-		});
-		setUndoStatus(null);
-		setTableReload((count) => count + 1);
-	}, []);
+	// and it may have changed any table, so the one on screen reads again;
+	// one that changed the schema reads the object list again too.
+	const handleQueryWrite = useCallback(
+		(write: SqliteQueryWrite) => {
+			setLastWrite({
+				undo: null,
+				otherChanges: write.otherChanges,
+				unavailable: SQLITE_QUERY_WRITE_UNDO_MESSAGE,
+			});
+			setUndoStatus(null);
+			setTableReload((count) => count + 1);
+			if (write.schemaChanges.length > 0) refreshObjectList(write.schemaChanges);
+		},
+		[refreshObjectList]
+	);
 
 	// A Commit wrote everything the transaction held, as one Query-mode write.
 	const handleTransactionCommitted = useCallback(
@@ -329,6 +427,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 			handleQueryWrite({
 				changes: end.transaction.changes,
 				otherChanges: end.transaction.otherChanges,
+				schemaChanges: end.transaction.schemaChanges,
 			}),
 		[handleQueryWrite]
 	);
@@ -372,7 +471,10 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 	useEffect(() => {
 		if (!handle || !list) return;
 		let cancelled = false;
-		let remaining = sqliteMeasurementOrder(list.objects);
+		// After a schema change, only what it touched (or created) is unmeasured.
+		let remaining = sqliteMeasurementOrder(list.objects).filter(
+			(name) => !measuredNames.current.has(name)
+		);
 
 		const measure = async () => {
 			while (remaining.length > 0 && !cancelled) {
@@ -382,6 +484,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 				// reply would loop forever, so treat it as the end.
 				if (batch.length === 0) return;
 				remaining = remaining.slice(batch.length);
+				for (const entry of batch) measuredNames.current.add(entry.name);
 				setStats((previous) => {
 					const next = new Map(previous);
 					for (const entry of batch) {
@@ -563,6 +666,15 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 					fileBytes={info.fileBytes}
 					theme={theme}
 				/>
+				{listError && (
+					<span
+						className="text-xs-plus"
+						style={{ color: theme.colors.warning }}
+						data-testid="sqlite-list-error"
+					>
+						The schema changed, but the object list could not be read again: {listError}
+					</span>
+				)}
 				{statsError && (
 					<span
 						className="text-xs-plus"
@@ -613,6 +725,7 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 							editToken={editGrant?.editToken ?? null}
 							onWrite={handleQueryWrite}
 							transaction={transaction}
+							schemaEpoch={schemaEpoch}
 							theme={theme}
 						/>
 					</div>
