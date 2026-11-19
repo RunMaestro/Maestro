@@ -363,7 +363,12 @@ export function SqliteTableView({
 		(rowPosition: number, columnPosition: number): DataGridCell => {
 			const value = rows[rowPosition]?.[columnPosition] ?? null;
 			const cell = formatSqliteCell(value);
-			if (value !== null && typeof value === 'object' && value.kind === 'text') {
+			// A NULL and an empty string differ in the cell itself (a dimmed
+			// `NULL` against a blank), and the tooltip names which one the user
+			// is pointing at, since a blank can also be whitespace.
+			if (value === null) return { ...cell, title: 'NULL (no value)' };
+			if (value === '') return { ...cell, title: 'Empty string' };
+			if (typeof value === 'object' && value.kind === 'text') {
 				return {
 					...cell,
 					title: `${cell.text}\n(${formatCount(value.length)} characters; the grid shows the first ${formatCount(value.head.length)})`,
@@ -382,10 +387,10 @@ export function SqliteTableView({
 	const detailFields = useMemo<RecordDetailField[]>(() => {
 		const row = detailIndex >= 0 ? rows[detailIndex] : undefined;
 		if (!row || !columns) return [];
-		return columns.map((column, position) => ({
-			key: column.name || `(column ${position + 1})`,
-			value: formatSqliteRecordValue(row[position] ?? null),
-		}));
+		return columns.map((column, position) => {
+			const { text, placeholder } = formatSqliteRecordValue(row[position] ?? null);
+			return { key: column.name || `(column ${position + 1})`, value: text, placeholder };
+		});
 	}, [detailIndex, rows, columns]);
 
 	const handleRecordNavigate = useCallback(

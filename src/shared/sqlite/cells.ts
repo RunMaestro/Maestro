@@ -49,20 +49,28 @@ export function formatSqliteCell(value: SqliteCellValue): SqliteCellText {
  * names its full length and how much of it arrived, and a BLOB shows the bytes
  * that arrived as spaced hex under its size. Anything the grid shows whole is
  * the same text here.
+ *
+ * Only `NULL` is a placeholder here. The record view draws it apart from both
+ * data and an empty string, so a TEXT value `'NULL'` never reads as a NULL.
+ * A BLOB is not one: its hex is the value's own bytes, and copying it is the
+ * point of opening the row.
  */
-export function formatSqliteRecordValue(value: SqliteCellValue): string {
-	if (value === null || typeof value !== 'object') return formatSqliteCell(value).text;
+export function formatSqliteRecordValue(value: SqliteCellValue): SqliteCellText {
+	if (value === null || typeof value !== 'object') return formatSqliteCell(value);
 	switch (value.kind) {
 		case 'integer':
-			return value.text;
+			return { text: value.text, placeholder: false };
 		case 'text':
-			return `${value.head}…\n\n(${formatCount(value.length)} characters; the first ${formatCount(value.head.length)} are shown)`;
+			return {
+				text: `${value.head}…\n\n(${formatCount(value.length)} characters; the first ${formatCount(value.head.length)} are shown)`,
+				placeholder: false,
+			};
 		case 'blob': {
 			const shownBytes = Math.floor(value.head.length / 2);
 			const hex = value.head.match(/../g)?.join(' ') ?? '';
 			const summary = `BLOB ${formatSize(value.bytes)}`;
-			if (!hex) return summary;
-			return `${summary}\n${hex}${value.bytes > shownBytes ? ' …' : ''}`;
+			const text = hex ? `${summary}\n${hex}${value.bytes > shownBytes ? ' …' : ''}` : summary;
+			return { text, placeholder: false };
 		}
 	}
 }

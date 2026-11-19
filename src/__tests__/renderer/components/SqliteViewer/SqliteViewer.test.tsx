@@ -1,6 +1,6 @@
 import { createRef } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 
 import {
 	SqliteViewer,
@@ -468,6 +468,9 @@ describe('SqliteViewer table view', () => {
 		renderViewer();
 		const first = await screen.findByTestId('sqlite-row-0');
 		expect(first).toHaveTextContent('NULL');
+		// The tooltip names which one a cell is: a blank could be whitespace.
+		expect(within(first).getByTitle('NULL (no value)')).toHaveStyle({ fontStyle: 'italic' });
+		expect(within(first).getByTitle('Empty string')).toHaveTextContent(/^$/);
 		const second = screen.getByTestId('sqlite-row-1');
 		expect(second).toHaveTextContent('click');
 		expect(second).toHaveTextContent('BLOB 2.0 KB');
@@ -690,6 +693,25 @@ describe('SqliteViewer record view', () => {
 		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-0'));
 		await screen.findByTestId('sqlite-row-detail-modal');
 		expect(recordRows()).toEqual(['id 1', 'kind empty', 'payload NULL']);
+		expect(screen.getByTestId('sqlite-row-detail-placeholder')).toHaveTextContent('NULL');
+		expect(screen.getByTestId('sqlite-row-detail-empty')).toHaveTextContent('empty');
+	});
+
+	it('draws a real NULL apart from the TEXT value "NULL"', async () => {
+		readRows.mockImplementation(async (request: SqliteRowsRequest) => ({
+			...eventsPage(request, 1),
+			rows: [[1, 'NULL', null]],
+		}));
+		renderWithLayers();
+		fireEvent.doubleClick(await screen.findByTestId('sqlite-row-0'));
+		await screen.findByTestId('sqlite-row-detail-modal');
+		expect(recordRows()).toEqual(['id 1', 'kind NULL', 'payload NULL']);
+		// Only the real NULL is a placeholder, and only data offers a copy.
+		const placeholders = screen.getAllByTestId('sqlite-row-detail-placeholder');
+		expect(placeholders).toHaveLength(1);
+		expect(placeholders[0].closest('tr')).toHaveTextContent('payload');
+		expect(screen.getByRole('button', { name: 'Copy kind' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Copy payload' })).not.toBeInTheDocument();
 	});
 
 	it('steps through the loaded rows with Left and Right', async () => {

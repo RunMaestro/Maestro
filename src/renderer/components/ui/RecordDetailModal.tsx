@@ -45,6 +45,13 @@ export interface RecordDetailField {
 	key: string;
 	/** Display text. Multi-line values keep their newlines. */
 	value: string;
+	/**
+	 * `value` stands in for a missing value (a database NULL) instead of being
+	 * data. It is drawn dimmed and italic and is never offered for copy, so a
+	 * real NULL cannot read like the text "NULL" or like an empty string (which
+	 * shows `empty`). It still matches the filter, so typing "null" finds it.
+	 */
+	placeholder?: boolean;
 }
 
 interface RecordDetailModalProps {
@@ -304,7 +311,10 @@ export function RecordDetailModal({
 												padding: '8px 12px',
 												verticalAlign: 'top',
 												borderBottom: `1px solid ${theme.colors.border}40`,
-												color: field.value ? theme.colors.textMain : theme.colors.textDim,
+												color:
+													field.value && !field.placeholder
+														? theme.colors.textMain
+														: theme.colors.textDim,
 												fontFamily:
 													'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
 												whiteSpace: 'pre-wrap',
@@ -313,13 +323,22 @@ export function RecordDetailModal({
 										>
 											<div className="flex items-start gap-2">
 												<div className="flex-1 min-w-0">
-													{field.value ? (
+													{field.placeholder ? (
+														<span
+															style={{ fontStyle: 'italic', opacity: 0.7 }}
+															data-testid={`${testIdPrefix}-placeholder`}
+														>
+															{highlightMatches(field.value, query, theme.colors.accent)}
+														</span>
+													) : field.value ? (
 														highlightMatches(field.value, query, theme.colors.accent)
 													) : (
-														<span style={{ opacity: 0.5 }}>empty</span>
+														<span style={{ opacity: 0.5 }} data-testid={`${testIdPrefix}-empty`}>
+															empty
+														</span>
 													)}
 												</div>
-												{field.value && (
+												{field.value && !field.placeholder && (
 													<GhostIconButton
 														onClick={() => copyValue(field.value)}
 														title="Copy value"

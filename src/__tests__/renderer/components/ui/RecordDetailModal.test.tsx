@@ -118,4 +118,36 @@ describe('RecordDetailModal', () => {
 		expect(screen.getByText('notes')).toBeInTheDocument();
 		expect(screen.getByText('empty')).toBeInTheDocument();
 	});
+
+	it('draws a placeholder value apart from data and from an empty value, with no copy', () => {
+		renderModal({
+			fields: [
+				{ key: 'missing', value: 'NULL', placeholder: true },
+				{ key: 'literal', value: 'NULL' },
+				{ key: 'blank', value: '' },
+			],
+		});
+
+		const placeholder = screen.getByTestId('test-record-placeholder');
+		expect(placeholder).toHaveTextContent('NULL');
+		expect(placeholder).toHaveStyle({ fontStyle: 'italic' });
+		expect(placeholder.closest('tr')).toHaveTextContent('missing');
+		expect(screen.getByTestId('test-record-empty').closest('tr')).toHaveTextContent('blank');
+		expect(screen.getByRole('button', { name: 'Copy literal' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Copy missing' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Copy blank' })).not.toBeInTheDocument();
+	});
+
+	it('still finds a placeholder value through the filter', () => {
+		renderModal({
+			fields: [
+				{ key: 'missing', value: 'NULL', placeholder: true },
+				{ key: 'name', value: 'Ada' },
+			],
+		});
+
+		fireEvent.change(screen.getByTestId('test-record-search'), { target: { value: 'null' } });
+		expect(screen.getByTestId('test-record-fields')).toHaveTextContent('missing');
+		expect(screen.getByTestId('test-record-fields')).not.toHaveTextContent('Ada');
+	});
 });

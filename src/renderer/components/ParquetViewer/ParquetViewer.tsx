@@ -368,11 +368,11 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 			const row = data.rows[detailRow];
 			if (!row) return [];
 			return data.columns.map((name, index) => {
+				const value = row[index] ?? null;
+				// The grid's dimmed `null`, kept apart from an empty string here too.
+				if (value === null) return { key: name, value: 'null', placeholder: true };
 				const column = info.columns.find((candidate) => candidate.name === name);
-				return {
-					key: name,
-					value: formatCellExact(row[index] ?? null, column?.kind ?? 'string'),
-				};
+				return { key: name, value: formatCellExact(value, column?.kind ?? 'string') };
 			});
 		}, [detailRow, data, info]);
 
