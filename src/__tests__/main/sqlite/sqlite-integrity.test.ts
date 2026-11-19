@@ -138,9 +138,11 @@ describe('checkSqliteIntegrity', () => {
 		expect(result.problems[0]).toContain('is not a readable SQLite database');
 	});
 
-	it('rejects on an error that says nothing about the file (a lock)', async () => {
+	it('rejects, saying another process has the database open, on a lock', async () => {
 		driver.checkError = sqliteError('SQLITE_BUSY', 'database is locked');
-		await expect(checkSqliteIntegrity('h1', 'quick')).rejects.toThrow('database is locked');
+		await expect(checkSqliteIntegrity('h1', 'quick')).rejects.toThrow(
+			'Another process has this database open and kept it locked past the 1 s wait, so it could not be read just now.'
+		);
 		expect(driver.instances[0].closed).toBe(true);
 	});
 

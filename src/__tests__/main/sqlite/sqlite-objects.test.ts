@@ -322,6 +322,14 @@ describe('readSqliteObjectStats', () => {
 		expect(users).toMatchObject({ rowCount: 42 });
 	});
 
+	it('says another process has the database open when a count finds it busy', () => {
+		state.schema!.rows.docs = Object.assign(new Error('database is locked'), {
+			code: 'SQLITE_BUSY',
+		});
+		const [docs] = readSqliteObjectStats('h1', ['docs'], Number.POSITIVE_INFINITY);
+		expect(docs.error).toMatch(/^Another process has this database open .* could not be read/);
+	});
+
 	it('answers a name that is not in the schema with an error, never running SQL on it', () => {
 		const [missing] = readSqliteObjectStats('h1', ['nope']);
 		expect(missing).toMatchObject({ name: 'nope', rowCount: null, sizeBytes: null });

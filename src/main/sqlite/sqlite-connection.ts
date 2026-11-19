@@ -22,6 +22,7 @@
 
 import Database from 'better-sqlite3';
 
+import { isSqliteBusyError } from '../../shared/sqliteErrors';
 import { registerSqliteRowVersion } from './sqlite-row-version';
 
 /**
@@ -30,6 +31,70 @@ import { registerSqliteRowVersion } from './sqlite-row-version';
  * that a stuck writer costs the main process a beat rather than a freeze.
  */
 export const SQLITE_BUSY_TIMEOUT_MS = 1000;
+
+/** What was being done when SQLite reported the database busy. */
+export type SqliteBusyAction = 'open' | 'read' | 'write' | 'backup';
+
+/**
+ * The sentence a person sees when another process kept the database busy past
+ * `SQLITE_BUSY_TIMEOUT_MS`, in place of SQLite's bare "database is locked".
+ * Names the cause (another process), what did or did not happen, and what to
+ * do. `subject` names the file where no tab shows it (an open).
+ */
+export function sqliteBusyMessage(action: SqliteBusyAction, subject = 'this database'): string {
+	const busy = `Another process has ${subject} open and kept it locked past the ${SQLITE_BUSY_TIMEOUT_MS / 1000} s wait`;
+	switch (action) {
+		case 'open':
+			return `${busy}, so it could not be opened. Try again once that process finishes writing.`;
+		case 'read':
+			return `${busy}, so it could not be read just now. Try again in a moment.`;
+		case 'backup':
+			return `${busy}, so it could not be backed up before the first change and nothing was written. Try again once that process finishes, or close it.`;
+		case 'write':
+			return `${busy}, so nothing was changed. Try again once that process finishes, or close it.`;
+	}
+}
+
+/** Marks an error `describeSqliteBusy()` already restated, so an outer layer keeps the inner words. */
+const BUSY_DESCRIBED = Symbol('sqliteBusyDescribed');
+
+/**
+ * `error` restated with `sqliteBusyMessage(action)` when it is SQLite
+ * reporting the database busy (`isSqliteBusyError()`); any other error comes
+ * back untouched, so SQLite's own words for a constraint or a syntax error
+ * still reach the reader. SQLite's code stays on `code`. An error already
+ * restated is returned as is: a write whose backup was refused says so.
+ */
+export function describeSqliteBusy(error: unknown, action: SqliteBusyAction): unknown {
+	if (!isSqliteBusyError(error) || (error as { [BUSY_DESCRIBED]?: true })[BUSY_DESCRIBED]) {
+		return error;
+	}
+	return Object.assign(new Error(sqliteBusyMessage(action)), {
+		code: (error as { code: string }).code,
+		[BUSY_DESCRIBED]: true as const,
+	});
+}
+
+/**
+ * Run `work`, restating a busy failure for `action` (`describeSqliteBusy()`),
+ * whether `work` throws or returns a promise that rejects. Every read and
+ * write of a user's database goes through this, so the viewer, the CLI, and
+ * any later caller say the same thing.
+ */
+export function reportSqliteBusy<T>(action: SqliteBusyAction, work: () => T): T {
+	let result: T;
+	try {
+		result = work();
+	} catch (error) {
+		throw describeSqliteBusy(error, action);
+	}
+	if (result instanceof Promise) {
+		return result.catch((error: unknown) => {
+			throw describeSqliteBusy(error, action);
+		}) as T;
+	}
+	return result;
+}
 
 /**
  * Turn a driver failure into a message a person can act on. SQLite's result
@@ -44,15 +109,16 @@ export function describeSqliteOpenFailure(error: unknown, filePath: string): Err
 		case 'SQLITE_NOTADB':
 			message = `${filePath} is not a readable SQLite database. It may be encrypted (SQLCipher) or damaged.`;
 			break;
-		case 'SQLITE_BUSY':
 		case 'SQLITE_LOCKED':
-			message = `Another process has ${filePath} locked. Try again once it finishes writing.`;
+			message = sqliteBusyMessage('open', filePath);
 			break;
 		case 'SQLITE_CANTOPEN':
 			message = `Could not open ${filePath}: ${detail}`;
 			break;
 		default:
-			if (typeof code === 'string' && code.startsWith('SQLITE_CORRUPT')) {
+			if (isSqliteBusyError(error)) {
+				message = sqliteBusyMessage('open', filePath);
+			} else if (typeof code === 'string' && code.startsWith('SQLITE_CORRUPT')) {
 				message = `${filePath} is damaged: ${detail}`;
 			} else {
 				// Not SQLite's verdict on the file (a native addon that failed to

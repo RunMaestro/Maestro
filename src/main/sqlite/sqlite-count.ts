@@ -40,6 +40,7 @@ import type {
 } from '../../shared/sqlite/types';
 import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
 import { yieldToEventLoop } from '../utils/concurrency';
+import { reportSqliteBusy } from './sqlite-connection';
 import { getSqliteDatabase } from './sqlite-database';
 import { reachableRowidAlias } from './sqlite-identity';
 import { resolveSqliteRowSource } from './sqlite-rows';
@@ -92,6 +93,11 @@ export function countSqliteRows(
 	request: SqliteCountRequest,
 	budgetMs: number = SQLITE_COUNT_BUDGET_MS
 ): SqliteRowCount {
+	return reportSqliteBusy('read', () => countRows(request, budgetMs));
+}
+
+/** `countSqliteRows()`'s work; a busy database is restated by the caller. */
+function countRows(request: SqliteCountRequest, budgetMs: number): SqliteRowCount {
 	const { db } = getSqliteDatabase(request.handle);
 	let cursor = validCursor(request.cursor);
 	const { object, source, columns, filter } = resolveSqliteRowSource(

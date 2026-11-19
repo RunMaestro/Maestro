@@ -554,6 +554,19 @@ describe('runSqliteQuery history', () => {
 		expect(history.record).not.toHaveBeenCalled();
 	});
 
+	it('records, and rejects with, a busy database in plain words', async () => {
+		driver.statement.prepareError = Object.assign(new Error('database is locked'), {
+			code: 'SQLITE_BUSY',
+		});
+		const busy =
+			'Another process has this database open and kept it locked past the 1 s wait, so it could not be read just now. Try again in a moment.';
+		const failure = await runSqliteQuery({ handle: 'h1', sql: 'SELECT * FROM t' }).catch(
+			(error: unknown) => error
+		);
+		expect(failure).toMatchObject({ message: busy, code: 'SQLITE_BUSY' });
+		expect(history.record.mock.calls[0][1]).toMatchObject({ outcome: { ok: false, error: busy } });
+	});
+
 	it('still answers when the history cannot be written', async () => {
 		history.record.mockImplementation(async () => {
 			throw new Error('disk full');

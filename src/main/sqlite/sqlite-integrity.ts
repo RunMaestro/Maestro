@@ -17,6 +17,7 @@
  */
 
 import type { SqliteIntegrityMode, SqliteIntegrityResult } from '../../shared/sqlite/types';
+import { reportSqliteBusy } from './sqlite-connection';
 import { getSqliteDatabase } from './sqlite-database';
 import { startSqliteWorkerTask } from './sqlite-worker-runner';
 
@@ -44,7 +45,7 @@ export function checkSqliteIntegrity(
 		{ kind: 'integrity', task: { filePath: database.displayPath, mode } },
 		{ closedMessage: SQLITE_INTEGRITY_STOPPED_MESSAGE, label: 'Integrity check' }
 	);
-	const tracked = result.finally(() => inFlight.delete(key));
+	const tracked = reportSqliteBusy('read', () => result).finally(() => inFlight.delete(key));
 	inFlight.set(key, tracked);
 	return tracked;
 }

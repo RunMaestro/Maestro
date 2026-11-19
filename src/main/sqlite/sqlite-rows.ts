@@ -54,6 +54,7 @@ import type {
 	SqliteSortSpec,
 } from '../../shared/sqlite/types';
 import { sqliteCellFromHead, sqliteKeyValue } from './sqlite-cell';
+import { reportSqliteBusy } from './sqlite-connection';
 import { getSqliteDatabase } from './sqlite-database';
 import {
 	reachableRowidAlias,
@@ -267,6 +268,11 @@ export function sqliteSelectedRow(
  * table whose module this build lacks), with SQLite's own message.
  */
 export function readSqliteRows(request: SqliteRowsRequest): SqliteRowsPage {
+	return reportSqliteBusy('read', () => readRows(request));
+}
+
+/** `readSqliteRows()`'s work; a busy database is restated by the caller. */
+function readRows(request: SqliteRowsRequest): SqliteRowsPage {
 	const { db } = getSqliteDatabase(request.handle);
 	const offset = windowBound(request.offset, 'offset');
 	const limit = Math.min(windowBound(request.limit, 'limit'), SQLITE_ROWS_MAX_LIMIT);

@@ -28,6 +28,7 @@ import type {
 	SqliteObjectKind,
 	SqliteObjectSchema,
 } from '../../shared/sqlite/types';
+import { reportSqliteBusy } from './sqlite-connection';
 import { getSqliteDatabase } from './sqlite-database';
 import { resolveSqliteEditability } from './sqlite-identity';
 import { findSqliteObject, readSqliteObjectSummaries } from './sqlite-objects';
@@ -187,6 +188,11 @@ const SCHEMA_TABLE = 'sqlite_master';
  * its name completes, and one broken view never empties the whole catalog.
  */
 export function readSqliteColumnCatalog(handle: string): SqliteColumnCatalog {
+	return reportSqliteBusy('read', () => readColumnCatalog(handle));
+}
+
+/** `readSqliteColumnCatalog()`'s work; a busy database is restated by the caller. */
+function readColumnCatalog(handle: string): SqliteColumnCatalog {
 	const { db } = getSqliteDatabase(handle);
 	const columnsOf = db.prepare('SELECT name, type FROM pragma_table_xinfo(?, ?) ORDER BY cid');
 	const readColumnNames = (name: string): SqliteCatalogColumn[] => {
@@ -229,6 +235,15 @@ export function readSqliteColumnCatalog(handle: string): SqliteColumnCatalog {
  * may; without it, the first in rail order wins.
  */
 export function readSqliteObjectSchema(
+	handle: string,
+	name: string,
+	kind?: SqliteObjectKind
+): SqliteObjectSchema {
+	return reportSqliteBusy('read', () => readObjectSchema(handle, name, kind));
+}
+
+/** `readSqliteObjectSchema()`'s work; a busy database is restated by the caller. */
+function readObjectSchema(
 	handle: string,
 	name: string,
 	kind?: SqliteObjectKind

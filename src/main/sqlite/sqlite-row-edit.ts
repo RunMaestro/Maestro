@@ -65,8 +65,12 @@
  *     leave the row's key holding NULL is rolled back, since no later edit
  *     could name it.
  *
- * SQLite's own failures (a constraint, a STRICT type, a busy database) reach
- * the caller with SQLite's message.
+ * SQLite's own failures (a constraint, a STRICT type) reach the caller with
+ * SQLite's message. A busy database (another process held the lock past the
+ * busy timeout) is the one exception: SQLite's bare "database is locked" is
+ * restated as another process having the file open and nothing changed
+ * (`reportSqliteBusy()` in sqlite-connection.ts), whichever step it hit: the
+ * backup, opening the writable connection, or the statement itself.
  */
 
 import { sqliteRowidValueProblem, sqliteStoredValueProblem } from '../../shared/sqlite/affinity';
@@ -93,6 +97,7 @@ import type {
 import type Database from 'better-sqlite3';
 
 import { sqliteKeyValue } from './sqlite-cell';
+import { reportSqliteBusy } from './sqlite-connection';
 import { beginSqliteWrite, requireSqliteEditing } from './sqlite-editing';
 import {
 	resolveSqliteEditability,
@@ -302,9 +307,14 @@ function planCellEdit(
  * changed since the `version` the caller sent, the value does not bind, or
  * SQLite refuses the change (its message, verbatim).
  */
-export async function updateSqliteCell(
+export function updateSqliteCell(
 	request: SqliteCellUpdateRequest
 ): Promise<SqliteCellUpdateResult> {
+	return reportSqliteBusy('write', () => updateCell(request));
+}
+
+/** `updateSqliteCell()`'s work; a busy database is restated by the caller. */
+async function updateCell(request: SqliteCellUpdateRequest): Promise<SqliteCellUpdateResult> {
 	const name = requireText(request?.name, 'table name');
 	const column = requireText(request?.column, 'column name');
 	const given = sqliteWriteBindValue(column, request.value);
@@ -427,9 +437,12 @@ function planInsert(
  * key would hold NULL (no edit could name it), or SQLite refuses the row: a
  * NOT NULL, UNIQUE, CHECK, or FOREIGN KEY constraint, in SQLite's own words.
  */
-export async function insertSqliteRow(
-	request: SqliteRowInsertRequest
-): Promise<SqliteRowInsertResult> {
+export function insertSqliteRow(request: SqliteRowInsertRequest): Promise<SqliteRowInsertResult> {
+	return reportSqliteBusy('write', () => insertRow(request));
+}
+
+/** `insertSqliteRow()`'s work; a busy database is restated by the caller. */
+async function insertRow(request: SqliteRowInsertRequest): Promise<SqliteRowInsertResult> {
 	const name = requireText(request?.name, 'table name', 'An insert');
 	const values = request.values ?? {};
 	if (typeof values !== 'object' || Array.isArray(values)) {
@@ -524,9 +537,12 @@ export async function insertSqliteRow(
  * database's foreign-key actions or triggers change as a result are counted
  * in `otherChanges`.
  */
-export async function deleteSqliteRow(
-	request: SqliteRowDeleteRequest
-): Promise<SqliteRowDeleteResult> {
+export function deleteSqliteRow(request: SqliteRowDeleteRequest): Promise<SqliteRowDeleteResult> {
+	return reportSqliteBusy('write', () => deleteRow(request));
+}
+
+/** `deleteSqliteRow()`'s work; a busy database is restated by the caller. */
+async function deleteRow(request: SqliteRowDeleteRequest): Promise<SqliteRowDeleteResult> {
 	const name = requireText(request?.name, 'table name', 'A delete');
 	const version = sqliteRowVersionParam(request.version);
 	const plan = (db: Database.Database) => {

@@ -10,10 +10,16 @@
  */
 
 import type { SqliteDatabaseSummary } from '../../shared/sqlite/types';
+import { reportSqliteBusy } from './sqlite-connection';
 import { getSqliteDatabase } from './sqlite-database';
 
 /** Read the summary of an open database. Pure header reads: nothing is scanned or written. */
 export function readSqliteDatabaseSummary(handle: string): SqliteDatabaseSummary {
+	return reportSqliteBusy('read', () => readSummary(handle));
+}
+
+/** `readSqliteDatabaseSummary()`'s work; a busy database is restated by the caller. */
+function readSummary(handle: string): SqliteDatabaseSummary {
 	const { db } = getSqliteDatabase(handle);
 	const number = (pragma: string): number => Number(db.pragma(pragma, { simple: true }));
 	return {

@@ -37,6 +37,8 @@ const state = vi.hoisted(() => ({
 	backupCreated: false,
 	locked: false,
 	beginCalls: 0,
+	/** What `beginSqliteWrite()` rejects with (the backup or the writable open failing), if anything. */
+	beginError: null as unknown,
 	connections: {} as Record<'readOnly' | 'writable', FakeConnection>,
 }));
 
@@ -95,6 +97,7 @@ vi.mock('../../../main/sqlite/sqlite-editing', () => ({
 	},
 	beginSqliteWrite: async () => {
 		state.beginCalls++;
+		if (state.beginError) throw state.beginError;
 		return {
 			database: { displayPath: '/data/app.db' },
 			db: fakeDb('writable'),
@@ -115,6 +118,7 @@ vi.mock('../../../main/sqlite/sqlite-identity', async (importOriginal) => ({
 		state.editability[object.name],
 }));
 
+import { describeSqliteBusy } from '../../../main/sqlite/sqlite-connection';
 import {
 	deleteSqliteRow,
 	insertSqliteRow,
@@ -201,6 +205,7 @@ beforeEach(() => {
 	state.backupCreated = false;
 	state.locked = false;
 	state.beginCalls = 0;
+	state.beginError = null;
 	state.connections = { readOnly: connection(), writable: connection() };
 });
 
@@ -441,6 +446,36 @@ describe('updateSqliteCell', () => {
 		expect(state.connections.writable.committed).toBe(0);
 	});
 
+	it('says another process has the database open when SQLite reports it busy', async () => {
+		state.returning = Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+		const failure = updateSqliteCell(request());
+		await expect(failure).rejects.toThrow(
+			'Another process has this database open and kept it locked past the 1 s wait, so nothing was changed.'
+		);
+		await expect(failure).rejects.toMatchObject({ code: 'SQLITE_BUSY' });
+		expect(state.connections.writable.committed).toBe(0);
+	});
+
+	it('says the same when the writable connection could not open for the lock', async () => {
+		state.beginError = Object.assign(new Error('Another process has /data/app.db open'), {
+			code: 'SQLITE_BUSY',
+		});
+		await expect(updateSqliteCell(request())).rejects.toThrow(
+			'Another process has this database open and kept it locked past the 1 s wait, so nothing was changed.'
+		);
+		expect(state.connections.writable.updates).toEqual([]);
+	});
+
+	it("keeps the backup's words when the backup was the step the lock refused", async () => {
+		state.beginError = describeSqliteBusy(
+			Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' }),
+			'backup'
+		);
+		await expect(updateSqliteCell(request())).rejects.toThrow(
+			'so it could not be backed up before the first change and nothing was written.'
+		);
+	});
+
 	it('refuses before the backup what it would refuse anyway', async () => {
 		await expect(updateSqliteCell(request({ name: 'active' }))).rejects.toThrow(
 			'active is a view.'
@@ -674,6 +709,16 @@ describe('insertSqliteRow', () => {
 		expect(state.connections.writable.committed).toBe(0);
 	});
 
+	it('says another process has the database open when SQLite reports it busy', async () => {
+		state.returning = Object.assign(new Error('database is locked'), {
+			code: 'SQLITE_BUSY_SNAPSHOT',
+		});
+		await expect(insertSqliteRow(insertRequest())).rejects.toThrow(
+			'Another process has this database open'
+		);
+		expect(state.connections.writable.committed).toBe(0);
+	});
+
 	it('refuses before the backup what it would refuse anyway', async () => {
 		await expect(insertSqliteRow(insertRequest({ name: 'active' }))).rejects.toThrow(
 			'active is a view.'
@@ -793,6 +838,14 @@ describe('deleteSqliteRow', () => {
 	it("passes SQLite's FOREIGN KEY refusal through verbatim, with nothing committed", async () => {
 		state.returning = new Error('FOREIGN KEY constraint failed');
 		await expect(deleteSqliteRow(deleteRequest())).rejects.toThrow('FOREIGN KEY constraint failed');
+		expect(state.connections.writable.committed).toBe(0);
+	});
+
+	it('says another process has the database open when SQLite reports it busy', async () => {
+		state.returning = Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+		await expect(deleteSqliteRow(deleteRequest())).rejects.toThrow(
+			'Another process has this database open and kept it locked past the 1 s wait, so nothing was changed.'
+		);
 		expect(state.connections.writable.committed).toBe(0);
 	});
 

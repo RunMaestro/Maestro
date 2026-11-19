@@ -168,6 +168,11 @@ beforeEach(() => {
 		},
 		docs: { columns: [{ name: 'body', type: '' }], rows: [] },
 		broken: { columns: [], rows: [], error: new Error('no such table: main.gone') },
+		held: {
+			columns: [{ name: 'id', type: 'INTEGER' }],
+			rows: [],
+			error: Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' }),
+		},
 		'we"ird': { columns: [{ name: 'c"ol', type: 'TEXT' }], rows: [] },
 	};
 	state.objects = [
@@ -178,6 +183,7 @@ beforeEach(() => {
 		summary('active', 'view'),
 		summary('docs', 'table', { tableType: 'virtual' }),
 		summary('broken', 'view'),
+		summary('held', 'table'),
 		summary('we"ird', 'table'),
 		summary('users_name', 'index'),
 	];
@@ -364,6 +370,12 @@ describe('readSqliteRows', () => {
 	it("passes SQLite's own error through for an object it cannot read", () => {
 		expect(() => readSqliteRows({ handle: 'h1', name: 'broken', offset: 0, limit: 5 })).toThrow(
 			'no such table: main.gone'
+		);
+	});
+
+	it('says another process has the database open when SQLite reports it busy', () => {
+		expect(() => readSqliteRows({ handle: 'h1', name: 'held', offset: 0, limit: 5 })).toThrow(
+			'Another process has this database open and kept it locked past the 1 s wait, so it could not be read just now.'
 		);
 	});
 

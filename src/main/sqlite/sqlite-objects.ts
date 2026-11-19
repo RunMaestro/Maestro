@@ -34,6 +34,7 @@ import type {
 	SqliteTableType,
 } from '../../shared/sqlite/types';
 import { yieldToEventLoop } from '../utils/concurrency';
+import { describeSqliteBusy, reportSqliteBusy } from './sqlite-connection';
 import { getSqliteDatabase } from './sqlite-database';
 
 /** Rows counted before a count is reported as a lower bound. */
@@ -171,6 +172,11 @@ function hasDbstat(db: Database.Database): boolean {
 
 /** List the tables, views, indexes, and triggers of an open database. */
 export function listSqliteObjects(handle: string): SqliteObjectList {
+	return reportSqliteBusy('read', () => listObjects(handle));
+}
+
+/** `listSqliteObjects()`'s work; a busy database is restated by the caller. */
+function listObjects(handle: string): SqliteObjectList {
 	const { db, info } = getSqliteDatabase(handle);
 	const objects = readSqliteObjectSummaries(db);
 	if (info.fileBytes > SQLITE_SIZE_SCAN_MAX_BYTES) {
@@ -191,8 +197,10 @@ export function listSqliteObjects(handle: string): SqliteObjectList {
 	return { objects, sizesAvailable: true };
 }
 
+/** A per-object failure as the rail shows it; a busy database in plain words. */
 function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	const described = describeSqliteBusy(error, 'read');
+	return described instanceof Error ? described.message : String(described);
 }
 
 /** Count rows up to the cap. A count that reaches it is a lower bound. */
@@ -262,6 +270,15 @@ export function readSqliteObjectStats(
 	handle: string,
 	names: readonly string[],
 	budgetMs: number = SQLITE_STATS_BUDGET_MS
+): SqliteObjectStats[] {
+	return reportSqliteBusy('read', () => readObjectStats(handle, names, budgetMs));
+}
+
+/** `readSqliteObjectStats()`'s work; a busy database is restated by the caller. */
+function readObjectStats(
+	handle: string,
+	names: readonly string[],
+	budgetMs: number
 ): SqliteObjectStats[] {
 	const { db, info } = getSqliteDatabase(handle);
 	const byName = new Map(readSqliteObjectSummaries(db).map((object) => [object.name, object]));

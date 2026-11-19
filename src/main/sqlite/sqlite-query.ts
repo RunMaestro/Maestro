@@ -52,6 +52,7 @@ import type {
 import { isTabularExportFormat, tabularExportFormatForPath } from '../../shared/tabularExport';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { reportSqliteBusy } from './sqlite-connection';
 import { getSqliteDatabase } from './sqlite-database';
 import { getSqliteQueryHistory } from './sqlite-query-history';
 import { SQLITE_QUERY_REFUSED } from './sqlite-query-task';
@@ -188,7 +189,10 @@ export function runSqliteQuery(request: SqliteQueryRequest): Promise<SqliteQuery
 			label: 'The query',
 		}
 	);
-	const result = tracked(queryId, run, SQLITE_QUERY_STOPPED_MESSAGE);
+	// Restated before the history records it, so the rail says the same.
+	const result = reportSqliteBusy('read', () =>
+		tracked(queryId, run, SQLITE_QUERY_STOPPED_MESSAGE)
+	);
 	return offset === 0 ? recordedRun(database.displayPath, request, result) : result;
 }
 
@@ -242,7 +246,9 @@ export async function exportSqliteQuery(
 		}
 	);
 	try {
-		const exported = await tracked(queryId, run, SQLITE_EXPORT_STOPPED_MESSAGE);
+		const exported = await reportSqliteBusy('read', () =>
+			tracked(queryId, run, SQLITE_EXPORT_STOPPED_MESSAGE)
+		);
 		await fs.rename(partPath, destPath);
 		return { ...exported, path: destPath };
 	} catch (error) {

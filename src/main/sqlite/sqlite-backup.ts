@@ -33,7 +33,9 @@ import { fileTimestampSlug } from '../../shared/formatters';
 import { getFileExtension } from '../../shared/fileCategories';
 import { isSqliteCandidateFile } from '../../shared/sqlite/preview';
 import type { SqliteBackup } from '../../shared/sqlite/types';
+import { isSqliteBusyError } from '../../shared/sqliteErrors';
 import { logger } from '../utils/logger';
+import { describeSqliteBusy } from './sqlite-connection';
 import type { OpenSqliteDatabase } from './sqlite-database';
 import { startSqliteWorkerTask } from './sqlite-worker-runner';
 
@@ -138,6 +140,8 @@ async function takeSqliteBackup(database: OpenSqliteDatabase): Promise<SqliteBac
 		return { path: backupPath, bytes, createdAt };
 	} catch (error) {
 		if (partPath) await removePart(partPath);
+		// Another process holding the file is not a failed backup: say so plainly.
+		if (isSqliteBusyError(error)) throw describeSqliteBusy(error, 'backup');
 		const detail = error instanceof Error ? error.message : String(error);
 		const code = (error as { code?: unknown } | null)?.code;
 		throw Object.assign(

@@ -137,6 +137,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Keeping an agent's file-tree scan out of storage and off the wire:** `withoutFileTreeCache()`, `holdsFileTreeCache()`, `unloadedFileTreeState()` in `src/shared/fileTreeCache.ts`
 - **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()` in `src/main/stores/corrupt-store-recovery.ts` (never `clearInvalidConfig`)
 - **Whether a SQLite error means the database file is damaged:** `isSqliteCorruptionError()` in `src/shared/sqliteErrors.ts`
+- **Telling a person SQLite found the database busy:** `isSqliteBusyError()` in `src/shared/sqliteErrors.ts`; `reportSqliteBusy()`, `describeSqliteBusy()`, `sqliteBusyMessage()` in `src/main/sqlite/sqlite-connection.ts`
 - **Whether a file is really a SQLite database:** `hasSqliteHeader()`, `isSqliteCandidateFile()`, `isSqlitePreviewMarker()` in `src/shared/sqlite/preview.ts`; `isSqliteDatabaseFile()` in `src/main/sqlite/sqlite-detect.ts`
 - **Opening a user's SQLite database to read it:** `openSqliteDatabase()`, `getSqliteDatabase()`, `closeAllSqliteDatabases()` in `src/main/sqlite/sqlite-database.ts`; a second connection via `openReadOnlySqliteConnection()` in `src/main/sqlite/sqlite-connection.ts`
 - **A SQLite database's header facts and integrity check:** `readSqliteDatabaseSummary()` in `src/main/sqlite/sqlite-summary.ts`; `checkSqliteIntegrity()` in `src/main/sqlite/sqlite-integrity.ts`; `sqliteSummaryFacts()`, `formatSqliteIntegrity()` in `src/shared/sqlite/summary.ts`

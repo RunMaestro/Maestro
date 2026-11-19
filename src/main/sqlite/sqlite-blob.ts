@@ -30,6 +30,7 @@ import * as path from 'path';
 
 import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
 import type { SqliteBlobRequest, SqliteBlobSaved } from '../../shared/sqlite/types';
+import { reportSqliteBusy } from './sqlite-connection';
 import { getSqliteDatabase } from './sqlite-database';
 import { SQLITE_ROWID_TEXT, reachableRowidAlias } from './sqlite-identity';
 import { resolveSqliteRowSource, sqliteRowOrder, windowBound } from './sqlite-rows';
@@ -46,6 +47,11 @@ export interface SqliteBlobValue {
  * it no longer matches `expected`.
  */
 export function readSqliteBlob(request: Omit<SqliteBlobRequest, 'destPath'>): SqliteBlobValue {
+	return reportSqliteBusy('read', () => readBlob(request));
+}
+
+/** `readSqliteBlob()`'s work; a busy database is restated by the caller. */
+function readBlob(request: Omit<SqliteBlobRequest, 'destPath'>): SqliteBlobValue {
 	const { db } = getSqliteDatabase(request.handle);
 	const hasRowid = request.rowid !== undefined && request.rowid !== null;
 	// A rowid names the row on its own, so its filter is not compiled: text

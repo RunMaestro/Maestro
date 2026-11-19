@@ -265,6 +265,28 @@ describe('ensureSqliteBackup', () => {
 		expect(await fs.readdir(folder)).toEqual(['bad-copy.db']);
 	});
 
+	it('says another process has the database open when the copy finds it busy', async () => {
+		const folder = await fs.mkdtemp(path.join(dir, 'busy-'));
+		const file = path.join(folder, 'busy.db');
+		await fs.writeFile(file, Buffer.concat([MAGIC, Buffer.from('busy')]));
+		const stat = await fs.stat(file);
+		const database = {
+			id: 'h',
+			displayPath: file,
+			dev: stat.dev,
+			ino: stat.ino,
+			releaseHooks: new Set(),
+		} as unknown as OpenSqliteDatabase;
+		driver.vacuumError = Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+
+		const failure = await ensureSqliteBackup(database).catch((error: unknown) => error);
+		expect((failure as Error).message).toBe(
+			'Another process has this database open and kept it locked past the 1 s wait, so it could not be backed up before the first change and nothing was written. Try again once that process finishes, or close it.'
+		);
+		expect((failure as { code?: string }).code).toBe('SQLITE_BUSY');
+		expect(await fs.readdir(folder)).toEqual(['busy.db']);
+	});
+
 	it('names the copy, not the database, when the backup file cannot be created', async () => {
 		const database = await fixture('cantopen.db');
 		driver.vacuumError = Object.assign(new Error('unable to open database: /x'), {
