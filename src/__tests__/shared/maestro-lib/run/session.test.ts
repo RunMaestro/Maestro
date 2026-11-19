@@ -396,13 +396,25 @@ describe('planSessionTurn on Windows with an npm .cmd shim', () => {
 	});
 
 	it('escapes an argument the shim gets on its command line', async () => {
-		// Antigravity reads no prompt from stdin, so its prompt stays in argv.
-		const { spec } = await plan({ agentId: 'antigravity', command: shim, prompt: 'fix the bug' });
+		// omp reads no prompt from stdin, so its prompt stays in argv.
+		const { spec } = await plan({ agentId: 'omp', command: shim, prompt: 'fix the bug' });
 
 		expect(spec.shell).toBe(true);
 		expect(spec.stdin).toBeUndefined();
 		expect(spec.args).toContain('"fix the bug"');
 		expect(spec.args).not.toContain('fix the bug');
+	});
+
+	it('hands an Antigravity shim its prompt as one stream-json stdin line (MAESTRO-16E)', async () => {
+		const { spec } = await plan({ agentId: 'antigravity', command: shim, prompt: HOSTILE_PROMPT });
+
+		expect(spec.shell).toBe(true);
+		expect(spec.stdin).toBe(
+			JSON.stringify({ event: 'user', message: { content: HOSTILE_PROMPT } }) + '\n'
+		);
+		expect(spec.args).toEqual(expect.arrayContaining(['--input-format', 'stream-json']));
+		expect(spec.args).not.toContain('-p');
+		expect(spec.args.join(' ')).not.toContain('second line');
 	});
 
 	it.each([
@@ -412,9 +424,7 @@ describe('planSessionTurn on Windows with an npm .cmd shim', () => {
 	])(
 		'refuses a command-line prompt with %s rather than pass it altered',
 		async (_label, prompt, named) => {
-			const planned = await planSessionTurn(
-				request({ agentId: 'antigravity', command: shim, prompt })
-			);
+			const planned = await planSessionTurn(request({ agentId: 'omp', command: shim, prompt }));
 
 			expect(planned.ok).toBe(false);
 			if (planned.ok) return;
@@ -426,7 +436,7 @@ describe('planSessionTurn on Windows with an npm .cmd shim', () => {
 
 	it('passes a command-line prompt with a lone %, which cmd.exe leaves alone', async () => {
 		const prompt = 'cut 50% off';
-		const { spec } = await plan({ agentId: 'antigravity', command: shim, prompt });
+		const { spec } = await plan({ agentId: 'omp', command: shim, prompt });
 
 		expect(spec.args).toContain(escapeCmdArg(prompt));
 	});

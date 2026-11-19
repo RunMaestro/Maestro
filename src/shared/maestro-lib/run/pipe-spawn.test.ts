@@ -126,6 +126,30 @@ describe('planPipeSpawn', () => {
 			expect(plan.spec.args.slice(-hermes.stdinPromptArgs!.length)).toEqual(hermes.stdinPromptArgs);
 		});
 
+		it('sends an Antigravity prompt as its stream-json stdin line, with no -p', () => {
+			const agy = getAgentDefinition('antigravity')!;
+			const plan = planPipeSpawn(
+				base({
+					toolType: 'antigravity',
+					command: 'agy',
+					args: [...agy.jsonOutputArgs!],
+					promptArgs: agy.promptArgs,
+					prompt: 'long prompt',
+					sendPromptViaStdinRaw: true,
+				})
+			);
+
+			expect(plan.spec.args).toEqual([
+				'--output-format',
+				'stream-json',
+				'--input-format',
+				'stream-json',
+			]);
+			expect(plan.spec.stdin).toBe(
+				JSON.stringify({ event: 'user', message: { content: 'long prompt' } }) + '\n'
+			);
+		});
+
 		it('sends an SSH script as the whole of stdin, with no local prompt flags', () => {
 			const plan = planPipeSpawn(
 				base({

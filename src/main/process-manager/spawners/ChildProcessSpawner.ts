@@ -6,7 +6,7 @@ import * as os from 'os';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
-import { getAgentDefinition } from '../../agents/definitions';
+import { getAgentDefinition, type AgentDefinition } from '../../agents/definitions';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
@@ -16,6 +16,7 @@ import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder
 import {
 	buildPromptArgv,
 	promptExceedsArgvLimit,
+	stdinPromptText,
 } from '../../../shared/maestro-lib/launch/prompt-delivery';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { readClaudeTurnBaseline } from '../../../shared/claudeCostTracker';
@@ -317,15 +318,18 @@ export class ChildProcessSpawner {
 			finalArgs = args;
 		}
 
-		// Some CLIs need an explicit query source to avoid opening their interactive UI.
+		// Some CLIs need an explicit query source to avoid opening their interactive UI,
+		// or an input-format flag whose line shape stdinPromptMessage then writes.
 		// SSH scripts own their remote arguments and must not receive local stdin flags.
+		let stdinPromptAgent: AgentDefinition | undefined;
 		if (
 			sendPromptViaStdinRaw &&
 			effectivePrompt &&
 			!config.sshStdinScript &&
 			!config.promptAlreadyInArgs
 		) {
-			const stdinPromptArgs = getAgentDefinition(toolType)?.stdinPromptArgs;
+			stdinPromptAgent = getAgentDefinition(toolType);
+			const stdinPromptArgs = stdinPromptAgent?.stdinPromptArgs;
 			if (stdinPromptArgs) finalArgs = [...finalArgs, ...stdinPromptArgs];
 		}
 
@@ -528,10 +532,11 @@ export class ChildProcessSpawner {
 					scriptLength: config.sshStdinScript.length,
 				});
 			} else if (sendPromptViaStdinRaw && effectivePrompt) {
-				stdinText = effectivePrompt;
+				stdinText = stdinPromptText(stdinPromptAgent, effectivePrompt);
 				logger.debug('[ProcessManager] Sending raw prompt via stdin', 'ProcessManager', {
 					sessionId,
 					promptLength: effectivePrompt.length,
+					agentFormatted: !!stdinPromptAgent?.stdinPromptMessage,
 				});
 			} else if (isStreamJsonMode && effectivePrompt && !promptAddedToArgs) {
 				const streamJsonMessage = buildStreamJsonMessage(effectivePrompt, images || []);

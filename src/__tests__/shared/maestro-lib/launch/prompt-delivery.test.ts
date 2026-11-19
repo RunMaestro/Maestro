@@ -6,6 +6,7 @@ import {
 	promptExceedsArgvLimit,
 	resolvePromptDelivery,
 	resolveSystemPromptDelivery,
+	stdinPromptText,
 	WINDOWS_PROMPT_ARGV_MAX_CHARS,
 	windowsCommandLineLength,
 	windowsQuotedArgLength,
@@ -26,6 +27,21 @@ import {
 function provider(id: string): PromptDeliveryAgent {
 	return { ...getAgentDefinition(id), capabilities: getAgentCapabilities(id) };
 }
+
+describe('stdinPromptText', () => {
+	it('writes the Antigravity stream-json user line, one line per prompt', () => {
+		const prompt = 'line one\nline "two"';
+		const text = stdinPromptText(provider('antigravity'), prompt);
+		expect(text).toBe(JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n');
+		expect(text.indexOf('\n')).toBe(text.length - 1);
+	});
+
+	it('writes the prompt as-is for a provider with no stdin line format', () => {
+		expect(stdinPromptText(provider('hermes'), 'hi')).toBe('hi');
+		expect(stdinPromptText(provider('codex'), 'hi')).toBe('hi');
+		expect(stdinPromptText(undefined, 'hi')).toBe('hi');
+	});
+});
 
 describe('buildPromptArgv', () => {
 	it('uses the provider flag when it has one (Copilot: -p)', () => {
@@ -131,6 +147,16 @@ describe('resolvePromptDelivery', () => {
 			via: 'stdin',
 			format: 'raw',
 			args: ['--query-file', '-'],
+		});
+	});
+
+	it('adds the Antigravity stream-json input flag on Windows, and no -p (MAESTRO-16E)', () => {
+		expect(
+			resolvePromptDelivery({ agent: provider('antigravity'), prompt: 'hi', ...windows })
+		).toEqual({
+			via: 'stdin',
+			format: 'raw',
+			args: ['--input-format', 'stream-json'],
 		});
 	});
 

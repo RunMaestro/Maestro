@@ -32,6 +32,8 @@ export interface PromptDeliveryAgent {
 	noPromptSeparator?: boolean;
 	/** Args that make the CLI read its query from stdin (Hermes: `--query-file -`). */
 	stdinPromptArgs?: string[];
+	/** Wraps the stdin prompt in the line format those args select (Antigravity's stream-json). */
+	stdinPromptMessage?: (prompt: string) => string;
 	capabilities?: Pick<AgentCapabilities, 'supportsPromptViaStdin' | 'supportsStreamJsonInput'>;
 }
 
@@ -47,6 +49,17 @@ export function buildPromptArgv(
 	if (agent?.promptArgs) return agent.promptArgs(prompt);
 	if (agent?.noPromptSeparator) return [prompt];
 	return ['--', prompt];
+}
+
+/**
+ * The text a raw stdin delivery writes: the prompt as-is, or wrapped in the
+ * line format the provider's `stdinPromptArgs` switch it to.
+ */
+export function stdinPromptText(
+	agent: Pick<PromptDeliveryAgent, 'stdinPromptMessage'> | null | undefined,
+	prompt: string
+): string {
+	return agent?.stdinPromptMessage ? agent.stdinPromptMessage(prompt) : prompt;
 }
 
 /**
@@ -169,7 +182,8 @@ export type PromptDelivery =
 	| { via: 'argv'; args: string[] }
 	/**
 	 * Write the prompt to the child's stdin and close it. `raw` writes the text
-	 * as-is (append `args`, the provider's stdin flags, to the command line);
+	 * as-is, or in the provider's own line format (`stdinPromptText`), and
+	 * appends `args`, the provider's stdin flags, to the command line;
 	 * `stream-json` writes one stream-json user message, which is how images
 	 * travel with it.
 	 */
