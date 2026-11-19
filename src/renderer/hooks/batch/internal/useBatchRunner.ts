@@ -12,6 +12,19 @@ import type {
 import { gitService } from '../../../services/git';
 import { finishRunEvidenceCapture, startRunEvidenceCapture } from '../../../services/runEvidence';
 import type { RunEvidenceSnapshot } from '../../../../shared/runEvidence';
+import { withoutReportDocument } from '../../../../shared/playbookRun';
+import {
+	buildPlaybookRunReportParameters,
+	type PlaybookReportSynopsis,
+} from '../../../../shared/playbookReportAuthoring';
+import {
+	buildFinalSummaryFacts,
+	playbookRunReportStatus,
+	renderPlaybookReportMarkdown,
+	type PlaybookRunReport,
+} from '../../../../shared/playbookRunReport';
+import { savePlaybookRunReport } from '../../../services/playbookRunReport';
+import { authorRunReport, type AuthoredRunReport } from './batchRunReport';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
 import { useBatchStore, isMirroredBatchRun } from '../../../stores/batchStore';
@@ -240,7 +253,11 @@ export function useBatchRunner({
 				return;
 			}
 
-			const { documents, prompt, loopEnabled, maxLoops, taskSelectionMode, worktree } = config;
+			const { prompt, loopEnabled, maxLoops, taskSelectionMode, worktree } = config;
+			// The playbook's report document runs once after every other document
+			// (see authorRunReport), so the task loop never works through it.
+			const reportDocument = config.playbook?.reportDocument;
+			const documents = withoutReportDocument(config.documents, reportDocument);
 
 			// Run-scoped model/effort override, built only when the run picked one so
 			// default runs pass no spawn options at all. An absent override means the
@@ -368,8 +385,11 @@ export function useBatchRunner({
 				}
 
 				// Snapshot the folder the tasks will work in (the worktree, when the
-				// run uses one) so the end of the run can say what changed on disk.
-				evidenceSnapshot = await startRunEvidenceCapture(effectiveCwd, sshRemoteId);
+				// run uses one) so the run report can say what changed on disk. Only a
+				// saved playbook's run has a report.
+				if (config.playbook) {
+					evidenceSnapshot = await startRunEvidenceCapture(effectiveCwd, sshRemoteId);
+				}
 
 				// Calculate initial total tasks across all documents (checked + unchecked),
 				// and find any halt marker an earlier run left behind in the same pass.
@@ -658,6 +678,9 @@ export function useBatchRunner({
 
 			// Collect Claude session IDs and track completion
 			const agentSessionIds: string[] = [];
+			// Each task's synopsis, for the run report's narrative when the playbook
+			// has no report document of its own.
+			const reportSynopses: PlaybookReportSynopsis[] = [];
 			let totalCompletedTasks = 0;
 			// Agent invocations recorded to auto_run_tasks, productive or not.
 			let agentTurnIndex = 0;
@@ -1137,6 +1160,13 @@ export function useBatchRunner({
 							// Track agent session IDs
 							if (taskResult.agentSessionId) {
 								agentSessionIds.push(taskResult.agentSessionId);
+							}
+							if (taskResult.shortSummary?.trim()) {
+								reportSynopses.push({
+									document: docEntry.filename,
+									summary: taskResult.shortSummary,
+									success: taskResult.success,
+								});
 							}
 
 							anyTasksProcessedThisIteration = true;
@@ -1844,6 +1874,49 @@ export function useBatchRunner({
 				? await finishRunEvidenceCapture(effectiveCwd, evidenceSnapshot, sshRemoteId, createdPrUrl)
 				: null;
 
+			// Tier C of the playbook run report: the report document's pass, or a
+			// synthesis over the task synopses. Runs before the totals are read so
+			// its tokens and cost count toward the run. Only for a saved playbook.
+			const halted = haltRequest !== null;
+			let authoredReport: AuthoredRunReport | null = null;
+			if (config.playbook) {
+				const runFacts = buildFinalSummaryFacts({
+					wasStopped,
+					totalCompletedTasks,
+					totalElapsedMs: timeTracking.getElapsedTime(sessionId),
+					stalledDocuments,
+					documents,
+					loopEnabled,
+					loopIteration,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCost,
+				});
+				authoredReport = await authorRunReport({
+					session,
+					folderPath,
+					effectiveCwd,
+					sshRemoteId,
+					gitBranch,
+					groupName,
+					playbookName: config.playbook.name || 'Playbook',
+					reportDocument,
+					status: playbookRunReportStatus(runFacts, halted),
+					facts: runFacts,
+					...(evidence && { evidence }),
+					synopses: reportSynopses,
+					playbookParams,
+					runModel: config.model,
+					runEffort: config.effort,
+					onSpawnAgent,
+				});
+			}
+			if (authoredReport?.usageStats) {
+				totalInputTokens += authoredReport.usageStats.inputTokens || 0;
+				totalOutputTokens += authoredReport.usageStats.outputTokens || 0;
+				totalCost += authoredReport.usageStats.totalCostUsd || 0;
+			}
+
 			// Add final Auto Run summary entry
 			// Calculate visibility-aware elapsed time using the extracted time tracking hook
 			// (excludes time when laptop was sleeping/suspended)
@@ -1874,6 +1947,7 @@ export function useBatchRunner({
 				details: finalDetails,
 				isSuccess,
 				statusText: finalStatusText,
+				facts: finalFacts,
 			} = buildFinalSummary({
 				wasStopped,
 				totalCompletedTasks: finalTotals.totalCompletedTasks,
@@ -1888,6 +1962,27 @@ export function useBatchRunner({
 				autoRunStats,
 			});
 
+			// The playbook run report, saved under <autoRunFolder>/.maestro-reports/
+			// so nothing is lost if the completion modal is dismissed. Only a run of a
+			// saved playbook has one.
+			let report: PlaybookRunReport | undefined;
+			if (config.playbook) {
+				const { usageStats: _reportUsage, ...authored } = authoredReport ?? {};
+				report = {
+					playbookName: config.playbook.name || 'Playbook',
+					playbookId: config.playbook.id,
+					status: playbookRunReportStatus(finalFacts, halted),
+					facts: finalFacts,
+					...(evidence && { evidence }),
+					...authored,
+					parameters: buildPlaybookRunReportParameters(playbookParams),
+					startedAt: batchStartTime,
+					finishedAt: Date.now(),
+				};
+				const saved = await savePlaybookRunReport(report, folderPath, sshRemoteId);
+				if (saved) report = { ...report, reportPath: saved.markdownPath };
+			}
+
 			// Claim the flush state: if killBatchRun already flushed, skip the history + stats
 			// writes here to avoid clobbering recorded duration with a stale/zero value.
 			const alreadyFlushed = claimFlushState(autoRunFlushStateRefs, sessionId) === null;
@@ -1898,7 +1993,12 @@ export function useBatchRunner({
 						type: 'AUTO',
 						timestamp: Date.now(),
 						summary: finalSummary,
-						fullResponse: finalDetails,
+						// A playbook run leads with its report, so History shows what the
+						// run did and how to use it, with every path a clickable link.
+						fullResponse: report
+							? `${renderPlaybookReportMarkdown(report).trimEnd()}\n\n${finalDetails}`
+							: finalDetails,
+						...(report && { playbookReport: report }),
 						projectPath: session.cwd,
 						sessionId, // Include sessionId so the summary appears in session's history
 						success: isSuccess,
@@ -1981,7 +2081,7 @@ export function useBatchRunner({
 					totalCostUsd: finalTotals.totalCost,
 					documentsProcessed: documents.length,
 					kind: 'spec-driven',
-					...(evidence ? { evidence } : {}),
+					...(report && { report }),
 				});
 			}
 

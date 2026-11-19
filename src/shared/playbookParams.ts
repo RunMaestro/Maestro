@@ -408,7 +408,7 @@ export function validatePlaybookParamValue(spec: PlaybookParamSpec, value: strin
  * answer. Never an empty string, because an empty answer silently widens a
  * safety scope instead of narrowing it.
  */
-function resolvePlaybookParamValue(
+export function resolvePlaybookParamValue(
 	spec: PlaybookParamSpec,
 	values: PlaybookParamValues
 ): string | undefined {

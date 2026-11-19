@@ -4,6 +4,8 @@ import {
 	clampImportedMaxLoops,
 	isUnboundedLoop,
 	toBatchRunPlaybook,
+	resolvePlaybookReportDocument,
+	withoutReportDocument,
 } from '../../shared/playbookRun';
 import type { Playbook } from '../../shared/types';
 
@@ -72,6 +74,7 @@ describe('toBatchRunPlaybook', () => {
 		});
 		expect(toBatchRunPlaybook(playbook, 'agent-1')).toEqual({
 			id: 'pb-1',
+			name: 'Refactor',
 			ownerSessionId: 'agent-1',
 			marketplaceId: 'development-refactor',
 			sourceVersion: '2026-10-01',
@@ -90,7 +93,68 @@ describe('toBatchRunPlaybook', () => {
 	it('omits what the record does not have', () => {
 		expect(toBatchRunPlaybook(makePlaybook(), 'agent-1')).toEqual({
 			id: 'pb-1',
+			name: 'Refactor',
 			ownerSessionId: 'agent-1',
 		});
+	});
+
+	it('carries the report document as a run-list filename', () => {
+		const playbook = makePlaybook({
+			report: 'REPORT',
+			provenance: {
+				kind: 'marketplace',
+				targetFolderName: 'refactor',
+				importedAt: 0,
+				documentHashes: {},
+			},
+		});
+		expect(toBatchRunPlaybook(playbook, 'agent-1').reportDocument).toBe('refactor/REPORT');
+	});
+});
+
+describe('resolvePlaybookReportDocument', () => {
+	it('is undefined without a report', () => {
+		expect(resolvePlaybookReportDocument(makePlaybook())).toBeUndefined();
+		expect(resolvePlaybookReportDocument(makePlaybook({ report: '  ' }))).toBeUndefined();
+	});
+
+	it('prefers a listed document with the report name', () => {
+		const playbook = makePlaybook({
+			report: 'REPORT.md',
+			documents: [
+				{ filename: 'refactor/one', resetOnCompletion: false },
+				{ filename: 'refactor/REPORT', resetOnCompletion: false },
+			],
+		});
+		expect(resolvePlaybookReportDocument(playbook)).toBe('refactor/REPORT');
+	});
+
+	it('places an unlisted report in the import folder', () => {
+		const playbook = makePlaybook({
+			report: 'REPORT',
+			provenance: { kind: 'zip', targetFolderName: 'refactor', importedAt: 0, documentHashes: {} },
+		});
+		expect(resolvePlaybookReportDocument(playbook)).toBe('refactor/REPORT');
+	});
+
+	it('uses the bare name when the record has no import folder', () => {
+		expect(resolvePlaybookReportDocument(makePlaybook({ report: 'REPORT' }))).toBe('REPORT');
+	});
+});
+
+describe('withoutReportDocument', () => {
+	const docs = [{ filename: 'a/one' }, { filename: 'a/REPORT' }, { filename: 'a/two' }];
+
+	it('drops the report document and keeps the order', () => {
+		expect(withoutReportDocument(docs, 'a/REPORT')).toEqual([
+			{ filename: 'a/one' },
+			{ filename: 'a/two' },
+		]);
+	});
+
+	it('returns a copy of every document without a report', () => {
+		const result = withoutReportDocument(docs, undefined);
+		expect(result).toEqual(docs);
+		expect(result).not.toBe(docs);
 	});
 });

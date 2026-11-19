@@ -43,6 +43,38 @@ export function isUnboundedLoop(
 }
 
 /**
+ * The run-list filename of a playbook's `report` document, or undefined when
+ * it has none. `report` is the manifest's name for it (no folder, no `.md`),
+ * while the record's documents carry the import folder (`<folder>/REPORT`).
+ * A listed document with that name wins; otherwise the name is placed in the
+ * import folder, where the import wrote it.
+ */
+export function resolvePlaybookReportDocument(
+	playbook: Pick<Playbook, 'report' | 'documents' | 'provenance'>
+): string | undefined {
+	const report = playbook.report?.trim().replace(/\.md$/i, '');
+	if (!report) return undefined;
+	const listed = playbook.documents.find(
+		(doc) => doc.filename === report || doc.filename.endsWith(`/${report}`)
+	);
+	if (listed) return listed.filename;
+	const folder = playbook.provenance?.targetFolderName?.trim();
+	return folder ? `${folder}/${report}` : report;
+}
+
+/**
+ * The documents the task loop works through: every run-list entry except the
+ * report document, which runs once after the others. Order is kept.
+ */
+export function withoutReportDocument<T extends { filename: string }>(
+	documents: readonly T[],
+	reportDocument: string | undefined
+): T[] {
+	if (!reportDocument) return [...documents];
+	return documents.filter((doc) => doc.filename !== reportDocument);
+}
+
+/**
  * The `playbook` block of a `BatchRunConfig` for a saved record.
  *
  * @param ownerSessionId The agent whose playbook store holds the record.
@@ -55,8 +87,11 @@ export function toBatchRunPlaybook(
 	ownerSessionId: string,
 	parameterValues: PlaybookParamValues | undefined = playbook.parameterValues
 ): BatchRunPlaybook {
+	const reportDocument = resolvePlaybookReportDocument(playbook);
 	return {
 		id: playbook.id,
+		name: playbook.name,
+		...(reportDocument && { reportDocument }),
 		ownerSessionId,
 		...(playbook.provenance?.marketplaceId && {
 			marketplaceId: playbook.provenance.marketplaceId,

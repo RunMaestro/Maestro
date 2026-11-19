@@ -91,6 +91,17 @@ A looping playbook whose manifest asks for unlimited loops is capped at 10 when 
 
 **Run** saves your answers (including the **Detected** ones) and the loop cap to the playbook, then starts it exactly as **Go** in the Auto Run panel would. The Exchange closes once the run has started, and the Auto Run panel opens on its running state. **Run** is disabled while another Auto Run is going on the same agent, or when Auto Run is turned off in Settings.
 
+### The Run Report
+
+When a playbook run finishes, Maestro writes a report: what the run did, how to use the result, what to do next, which files changed, and the parameter values it used. The report leads the run's final entry in History, and it is saved in the Auto Run folder as `.maestro-reports/<playbook>-<date>-<time>.md`, with a `.json` copy beside it.
+
+The "what was done" part comes from one of two places:
+
+- A playbook with a `report` document runs that document once, after every other document is done. It writes the narrative plus a **How to use it** and a **Next steps** section.
+- A playbook without one gets a short summary of its task synopses, written on the agent's cheapest model.
+
+A run that failed or was stopped gets no narrative, only the facts. A run that stalled on some documents lists them in **What did not happen**, above the narrative.
+
 ### Use One as Reference
 
 A playbook does not have to be run as-is. Importing one pulls it down locally, so you can also treat it as reference material: tell your agent what you actually want, point it at the imported document, and let it adapt the structure to your project. Customize it to your desire.
@@ -125,6 +136,7 @@ These manifest fields decide how an imported playbook runs:
 | `maxLoops`          | number or `null`        | `null`   | Most loops to run. `null` is unlimited.                                                                                                                |
 | `prompt`            | string or `null`        | -        | Prompt for each task session. `null` uses Maestro's default Auto Run prompt.                                                                           |
 | `taskSelectionMode` | `"task"` / `"document"` | `"task"` | One fresh agent session per unchecked task, or one per document that works every task in it. Use `"document"` for many small tasks that share context. |
+| `report`            | document name           | -        | A document run once, after the others, to write the run report's narrative, **How to use it**, and **Next steps**. It is never run as a task document. |
 
 A custom `prompt` adds to the default prompt's task plumbing. It does not replace it. If the prompt never names `{{DOCUMENT_PATH}}`, Maestro appends the task-selection instructions (unless the prompt has its own `{{TASK_SELECTION_BLOCK}}`) and the block that names the task document and asks the agent to check tasks off. Name `{{DOCUMENT_PATH}}` yourself only when the prompt takes full control of how the agent finds and checks off its tasks.
 

@@ -665,6 +665,12 @@ export interface HistoryEntry {
 	 * run" is a worse row than the run itself.
 	 */
 	cueGroup?: CueHistoryGroupSummary;
+	/**
+	 * The playbook run report, on the final summary entry of a saved playbook's
+	 * Auto Run. `fullResponse` already leads with its rendered markdown; this is
+	 * the data, for surfaces that draw the report's sections themselves.
+	 */
+	playbookReport?: import('./playbookRunReport').PlaybookRunReport;
 }
 
 /**
@@ -968,6 +974,14 @@ export interface BatchRunPlaybookRef {
  */
 export interface BatchRunPlaybook {
 	id: string;
+	/** The playbook's name, the title of its run report. */
+	name?: string;
+	/**
+	 * The `report` document as a run-list filename (Auto Run folder relative,
+	 * without `.md`). It is left out of the task loop and run once at the end
+	 * to author the run report.
+	 */
+	reportDocument?: string;
 	/** `provenance.marketplaceId`: the Playbook Exchange entry it was imported from. */
 	marketplaceId?: string;
 	/** `provenance.sourceVersion`: the entry version it was imported at. */

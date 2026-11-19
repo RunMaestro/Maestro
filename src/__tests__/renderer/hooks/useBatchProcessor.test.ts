@@ -1176,7 +1176,7 @@ describe('useBatchProcessor hook', () => {
 			);
 		});
 
-		it('snapshots the folder at run start and hands the diff to onComplete as evidence', async () => {
+		it('snapshots the folder at run start and hands the diff to onComplete in the playbook report', async () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
 			const snapshot = { source: 'git', takenAt: 1, base: 'abc', changes: {} };
@@ -1215,6 +1215,7 @@ describe('useBatchProcessor hook', () => {
 						documents: [{ filename: 'tasks', resetOnCompletion: false }],
 						prompt: 'Complete the next task',
 						loopEnabled: false,
+						playbook: { id: 'pb-1', name: 'Refactor Pass' },
 					},
 					'/test/folder'
 				);
@@ -1226,10 +1227,39 @@ describe('useBatchProcessor hook', () => {
 				mockOnSpawnAgent.mock.invocationCallOrder[0]
 			);
 			expect(mockEvidenceEnd).toHaveBeenCalledWith(cwd, snapshot, undefined);
-			expect(mockOnComplete).toHaveBeenCalledWith(expect.objectContaining({ evidence }));
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({
+					report: expect.objectContaining({
+						playbookName: 'Refactor Pass',
+						playbookId: 'pb-1',
+						status: 'completed',
+						evidence,
+						reportPath: expect.stringMatching(
+							/^\/test\/folder\/\.maestro-reports\/refactor-pass-\d{8}-\d{6}\.md$/
+						),
+					}),
+				})
+			);
+
+			// Both report files land under the Auto Run folder's .maestro-reports/.
+			const writes = vi.mocked(window.maestro.fs.writeFile).mock.calls.map((call) => call[0]);
+			expect(writes).toEqual(
+				expect.arrayContaining([
+					expect.stringMatching(/\/\.maestro-reports\/refactor-pass-.*\.md$/),
+					expect.stringMatching(/\/\.maestro-reports\/refactor-pass-.*\.json$/),
+				])
+			);
+
+			// The final summary entry leads with the rendered report and carries its data.
+			const summaryEntry = mockOnAddHistoryEntry.mock.calls
+				.map((call) => call[0])
+				.find((entry) => entry.playbookReport);
+			expect(summaryEntry?.fullResponse).toMatch(/^# Refactor Pass\n/);
+			expect(summaryEntry?.fullResponse).toContain('`src/a.ts`');
+			expect(summaryEntry?.fullResponse).toContain('**Auto Run Summary**');
 		});
 
-		it('completes without evidence when the start snapshot has nothing to compare', async () => {
+		it('takes no evidence and builds no report for an ad-hoc run', async () => {
 			const sessions = [createMockSession()];
 			const groups = [createMockGroup()];
 			let callCount = 0;
@@ -1263,9 +1293,60 @@ describe('useBatchProcessor hook', () => {
 				);
 			});
 
+			expect(mockEvidenceStart).not.toHaveBeenCalled();
 			expect(mockEvidenceEnd).not.toHaveBeenCalled();
 			expect(mockOnComplete).toHaveBeenCalledWith(
-				expect.not.objectContaining({ evidence: expect.anything() })
+				expect.not.objectContaining({ report: expect.anything() })
+			);
+		});
+
+		it('leaves the report document out of the task loop', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+			let callCount = 0;
+			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
+				if (filename === 'pb/REPORT.md') {
+					return { success: true, content: '# Report\n- [ ] Describe the run' };
+				}
+				callCount++;
+				return callCount <= 2
+					? { success: true, content: '# Tasks\n- [ ] Task 1' }
+					: { success: true, content: '# Tasks\n- [x] Task 1' };
+			});
+
+			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [
+							{ filename: 'pb/tasks', resetOnCompletion: false },
+							{ filename: 'pb/REPORT', resetOnCompletion: false },
+						],
+						prompt: 'Complete the next task',
+						loopEnabled: false,
+						playbook: { id: 'pb-1', name: 'Refactor', reportDocument: 'pb/REPORT' },
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnComplete).toHaveBeenCalledWith(
+				expect.objectContaining({
+					report: expect.objectContaining({
+						facts: expect.objectContaining({ documents: ['pb/tasks'] }),
+					}),
+				})
 			);
 		});
 

@@ -82,6 +82,20 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'Guided interview that fills the parameters of a playbook before it runs (Playbook Exchange configure step)',
 		category: 'playbooks',
 	},
+	{
+		id: 'playbook-report-document',
+		filename: 'playbook-report-document.md',
+		description:
+			"Runs a playbook's report document once after its other documents finish, to write the run report's narrative, How to use it, and Next steps",
+		category: 'playbooks',
+	},
+	{
+		id: 'playbook-report-synthesis',
+		filename: 'playbook-report-synthesis.md',
+		description:
+			'Writes the run report narrative from the task synopses when a playbook has no report document (one cheap turn)',
+		category: 'playbooks',
+	},
 	// AutoRun
 	{
 		id: 'autorun-default',
@@ -432,6 +446,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Tells a wizard to draw mockups and diagrams inside its JSON `message`',
 		category: 'includes',
 	},
+	{
+		id: '_playbook-report-narrative',
+		filename: '_playbook-report-narrative.md',
+		description:
+			"The narrative JSON contract both playbook run report prompts answer in (Director's Notes narrative v1)",
+		category: 'includes',
+	},
 ];
 
 /**
@@ -458,6 +479,8 @@ export const PROMPT_IDS = {
 	WIZARD_INLINE_ITERATE_GENERATION: 'wizard-inline-iterate-generation',
 	// Playbooks
 	PLAYBOOK_CONCIERGE: 'playbook-concierge',
+	PLAYBOOK_REPORT_DOCUMENT: 'playbook-report-document',
+	PLAYBOOK_REPORT_SYNTHESIS: 'playbook-report-synthesis',
 	// AutoRun
 	AUTORUN_DEFAULT: 'autorun-default',
 	AUTORUN_GOAL: 'autorun-goal',
