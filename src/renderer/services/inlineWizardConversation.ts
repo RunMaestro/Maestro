@@ -549,6 +549,24 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 }
 
 /**
+ * Providers whose wizard read-only restriction travels as spawn intent
+ * (`permissionMode: 'readonly'`) instead of renderer-built args. For these,
+ * main's buildAgentArgs() must know the turn is read-only, because their
+ * batch-mode args grant write access (Codex bypasses its sandbox) and only
+ * buildAgentArgs() can drop them before appending `readOnlyArgs`.
+ */
+const WIZARD_READ_ONLY_SPAWN_AGENTS: ReadonlySet<string> = new Set(['codex', 'grok']);
+
+/** Spawn-config fields that make a wizard discovery turn read-only. */
+function wizardReadOnlySpawnFields(
+	agentType: string
+): Pick<ProcessConfig, 'permissionMode' | 'readOnlyMode'> {
+	return WIZARD_READ_ONLY_SPAWN_AGENTS.has(agentType)
+		? { permissionMode: 'readonly', readOnlyMode: true }
+		: {};
+}
+
+/**
  * Build CLI args for the agent based on its type and capabilities.
  * For wizard conversations, we restrict tool usage to read-only operations
  * to prevent the agent from making changes during the discovery phase.
@@ -581,6 +599,11 @@ function buildArgsForAgent(agent: any): string[] {
 			// batchModePrefix, batchModeArgs, jsonOutputArgs, and workingDirArgs
 			// automatically when a prompt is present. Adding them here would
 			// duplicate flags and cause "unexpected argument" exit code 2.
+			// Read-only is NOT appended here either: it travels as spawn intent
+			// (see wizardReadOnlySpawnFields), so buildAgentArgs() drops the
+			// sandbox-bypassing batchModeArgs and appends readOnlyArgs itself.
+			// Appending `--sandbox read-only` here would be nullified by the
+			// `--dangerously-bypass-approvals-and-sandbox` batch arg.
 			return [...(agent.args || [])];
 		}
 
@@ -926,9 +949,7 @@ export async function sendWizardMessage(
 					command: commandToUse,
 					args: argsForSpawn,
 					prompt: fullPrompt,
-					...(session.agentType === 'grok'
-						? { permissionMode: 'readonly', readOnlyMode: true }
-						: {}),
+					...wizardReadOnlySpawnFields(session.agentType),
 					// Pass SSH config for remote execution
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					// Pass session-level overrides

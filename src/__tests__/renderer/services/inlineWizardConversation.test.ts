@@ -31,6 +31,11 @@ import {
 	endInlineWizardConversation,
 	sendWizardMessage,
 } from '../../../renderer/services/inlineWizardConversation';
+import {
+	getAgentDefinition,
+	type AgentConfig,
+} from '../../../shared/maestro-lib/providers/definitions';
+import { buildAgentArgs } from '../../../shared/maestro-lib/launch/agent-args';
 
 describe('inlineWizardConversation', () => {
 	beforeEach(() => {
@@ -342,6 +347,47 @@ describe('inlineWizardConversation', () => {
 					}),
 				})
 			);
+		});
+
+		it('should spawn Codex read-only so the sandbox is enforced, not bypassed', async () => {
+			const codexDefinition = getAgentDefinition('codex');
+			expect(codexDefinition?.readOnlyArgs).toEqual(
+				expect.arrayContaining(['--sandbox', 'read-only'])
+			);
+			const mockAgent = { ...codexDefinition, available: true, command: 'codex' };
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue({ pid: 123, success: true });
+
+			const session = await startInlineWizardConversation({
+				agentType: 'codex',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'new',
+			});
+
+			sendWizardMessage(session, 'Hello', []);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+			// The renderer sends base args only; read-only travels as intent.
+			expect(spawnCall.args).toEqual(codexDefinition?.args);
+			expect(spawnCall).toMatchObject({ permissionMode: 'readonly', readOnlyMode: true });
+
+			// The arg list main builds from that config enforces the sandbox once
+			// and drops the batch arg that would nullify it.
+			const finalArgs = buildAgentArgs(mockAgent as AgentConfig, {
+				baseArgs: spawnCall.args,
+				prompt: spawnCall.prompt,
+				cwd: spawnCall.cwd,
+				readOnlyMode: spawnCall.readOnlyMode,
+				permissionMode: spawnCall.permissionMode,
+			});
+			const sandboxIndex = finalArgs.indexOf('--sandbox');
+			expect(sandboxIndex).toBeGreaterThanOrEqual(0);
+			expect(finalArgs[sandboxIndex + 1]).toBe('read-only');
+			expect(finalArgs.filter((arg) => arg === '--sandbox')).toHaveLength(1);
+			expect(finalArgs.filter((arg) => arg === '--skip-git-repo-check')).toHaveLength(1);
+			expect(finalArgs).not.toContain('--dangerously-bypass-approvals-and-sandbox');
 		});
 
 		it('should apply Grok discovery-safe args and join text deltas for structured replies', async () => {
