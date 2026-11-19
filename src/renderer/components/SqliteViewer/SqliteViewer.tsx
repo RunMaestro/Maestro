@@ -66,6 +66,13 @@
  * until it ends. A Commit counts as a Query-mode write: no undo, and the
  * table on screen reads again.
  *
+ * The strip's Log toggle (remembered) opens a rail on the right, in Browse
+ * and Query mode alike, of every write made to this file, newest first
+ * (SqliteStatementLogRail): this tab's edits, Undo, Query writes, and
+ * transactions, and those of other tabs and `maestro-cli`. Main keeps the
+ * log and announces each write, so the rail needs nothing from the viewer's
+ * write handlers.
+ *
  * A write that changed the schema (a Query-mode CREATE, DROP, or ALTER, or a
  * Commit whose transaction made one) reports its `schemaChanges`, and the
  * viewer reads the object list again: a new object shows in the rail, a
@@ -89,7 +96,7 @@ import {
 	useState,
 	type KeyboardEvent,
 } from 'react';
-import { AlertTriangle, Database } from 'lucide-react';
+import { AlertTriangle, Database, ScrollText } from 'lucide-react';
 
 import type {
 	SqliteDatabaseInfo,
@@ -125,6 +132,7 @@ import { SqliteEditingSwitch } from './SqliteEditingSwitch';
 import { SqliteObjectRail } from './SqliteObjectRail';
 import { SqliteQueryPanel, type SqliteQueryRunState } from './SqliteQueryPanel';
 import { SqliteSchemaPanel } from './SqliteSchemaPanel';
+import { SqliteStatementLogRail } from './SqliteStatementLogRail';
 import { SqliteTableView } from './SqliteTableView';
 import { SqliteUndoControl, type SqliteUndoStatus } from './SqliteUndoControl';
 import { useSqliteTransaction } from './useSqliteTransaction';
@@ -212,6 +220,8 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 	const showInternal = usePersistedToggle('sqlite-show-internal', false);
 	const objectView = usePersistedChoice<ObjectView>('sqlite-object-view', OBJECT_VIEWS, 'data');
 	const viewerMode = usePersistedChoice<ViewerMode>('sqlite-viewer-mode', VIEWER_MODES, 'browse');
+	/** The Log rail (every write made to the file), remembered across files. */
+	const showLog = usePersistedToggle('sqlite-statement-log', false);
 	const [query, setQuery] = useState('');
 	const [queryParams, setQueryParams] = useState<SqliteParameterValues>({});
 	const [queryRun, setQueryRun] = useState<SqliteQueryRunState | null>(null);
@@ -684,7 +694,22 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 						Counting stopped: {statsError}
 					</span>
 				)}
-				<div className="ml-auto select-none">
+				<div className="ml-auto flex items-center gap-2 select-none">
+					<button
+						type="button"
+						onClick={showLog.toggle}
+						className="flex items-center gap-1 px-2 py-1 rounded text-xs-plus"
+						style={{
+							color: showLog.value ? theme.colors.accentText : theme.colors.textDim,
+							backgroundColor: showLog.value ? `${theme.colors.accent}22` : 'transparent',
+						}}
+						title="Show every change made to this database through Maestro, newest first"
+						aria-pressed={showLog.value}
+						data-testid="sqlite-toggle-statement-log"
+					>
+						<ScrollText className="w-3.5 h-3.5" />
+						Log
+					</button>
 					<SegmentedControl
 						value={viewerMode.value}
 						onChange={viewerMode.setValue}
@@ -814,6 +839,16 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 							</div>
 						)}
 					</div>
+				)}
+
+				{showLog.value && (
+					<SqliteStatementLogRail
+						// One mount per open database, so a log never carries over.
+						key={info.handle}
+						handle={info.handle}
+						databasePath={info.displayPath}
+						theme={theme}
+					/>
 				)}
 			</div>
 		</div>

@@ -117,6 +117,17 @@ vi.mock('../../../main/sqlite/sqlite-editing', () => ({
 	},
 }));
 
+/** Every write recorded in the statement log, in order. */
+const statementLog = vi.hoisted(() => ({
+	records: [] as Array<{ path: string; record: Record<string, unknown> }>,
+}));
+vi.mock('../../../main/sqlite/sqlite-statement-log', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/sqlite/sqlite-statement-log')>()),
+	logSqliteStatement: async (path: string, record: Record<string, unknown>) => {
+		statementLog.records.push({ path, record });
+	},
+}));
+
 vi.mock('../../../main/sqlite/sqlite-objects', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../main/sqlite/sqlite-objects')>()),
 	readSqliteObjectSummaries: () => state.objects,
@@ -228,6 +239,7 @@ beforeEach(() => {
 	state.beginCalls = 0;
 	state.beginError = null;
 	state.connections = { readOnly: connection(), writable: connection() };
+	statementLog.records = [];
 });
 
 describe('updateSqliteCell', () => {
@@ -1143,5 +1155,85 @@ describe('undoSqliteEdit', () => {
 			'Editing is not enabled.'
 		);
 		expect(state.beginCalls).toBe(0);
+	});
+});
+
+describe('the statement log', () => {
+	it('logs a cell edit as the UPDATE a person would type, with what it changed', async () => {
+		await updateSqliteCell(request());
+		expect(statementLog.records).toEqual([
+			{
+				path: '/data/app.db',
+				record: {
+					kind: 'cell',
+					table: 'users',
+					sql: "UPDATE users SET email = 'new@example.com' WHERE rowid = 7",
+					params: {},
+					transactionId: null,
+					at: expect.any(Number),
+					outcome: { ok: true, changes: 1, otherChanges: 0, schemaChanges: [] },
+				},
+			},
+		]);
+	});
+
+	it('carries the backup on the write that took it, and the rows triggers changed', async () => {
+		state.backupCreated = true;
+		state.totalChanges = [2, 5];
+		await updateSqliteCell(request());
+		expect(statementLog.records[0].record).toMatchObject({
+			backupPath: '/data/app.maestro-backup-x.db',
+			outcome: { ok: true, changes: 1, otherChanges: 2 },
+		});
+	});
+
+	it('logs an insert and a delete', async () => {
+		state.returning = [[12n, 'text', 'new@example.com']];
+		state.readBack = [12n, null, 'new@example.com', 15n, 'example.com', 11n];
+		await insertSqliteRow(insertRequest());
+		state.returning = [[7n, 7n, 'a@b.c']];
+		await deleteSqliteRow(deleteRequest());
+		expect(statementLog.records.map(({ record }) => [record.kind, record.sql])).toEqual([
+			['insert', "INSERT INTO users (email) VALUES ('new@example.com')"],
+			['delete', 'DELETE FROM users WHERE rowid = 7'],
+		]);
+	});
+
+	it('logs an undo as an undo, spelled as the write it made', async () => {
+		await undoSqliteEdit(
+			undoRequest({
+				kind: 'restore-cell',
+				name: 'users',
+				column: 'email',
+				row: { kind: 'rowid', rowid: '7' },
+				version: VERSION_SEEN,
+				value: { type: 'text', text: 'old@example.com' },
+			})
+		);
+		expect(statementLog.records[0].record).toMatchObject({
+			kind: 'undo',
+			sql: "UPDATE users SET email = 'old@example.com' WHERE rowid = 7",
+		});
+	});
+
+	it('logs a write SQLite refused once it ran, in the words the caller gets', async () => {
+		state.returning = Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+		await expect(updateSqliteCell(request())).rejects.toThrow(/Another process/);
+		expect(statementLog.records).toHaveLength(1);
+		expect(statementLog.records[0].record.outcome).toEqual({
+			ok: false,
+			error:
+				'Another process has this database open and kept it locked past the 1 s wait, so nothing was changed.',
+		});
+	});
+
+	it('logs nothing for a write refused before it reached the file', async () => {
+		await expect(updateSqliteCell(request({ name: 'active' }))).rejects.toThrow();
+		state.locked = true;
+		await expect(deleteSqliteRow(deleteRequest())).rejects.toThrow('Editing is not enabled.');
+		state.locked = false;
+		state.beginError = new Error('The backup failed.');
+		await expect(insertSqliteRow(insertRequest())).rejects.toThrow('The backup failed.');
+		expect(statementLog.records).toEqual([]);
 	});
 });

@@ -1129,3 +1129,75 @@ export interface SqliteQueryHistory {
 	path: string;
 	entries: SqliteQueryHistoryEntry[];
 }
+
+/**
+ * What one statement-log entry is: a write the viewer or the CLI made to the
+ * file. `cell`, `insert`, `delete`, and `undo` are the table view's single-row
+ * writes (`maestro-cli sqlite set` / `insert` / `delete` / `undo`); `query` is
+ * a statement run from Query mode with editing on (`sqlite query
+ * --enable-editing`); `begin`, `commit`, and `rollback` bound an explicit
+ * transaction, whose statements carry its `transactionId`.
+ */
+export type SqliteStatementLogKind =
+	| 'cell'
+	| 'insert'
+	| 'delete'
+	| 'undo'
+	| 'query'
+	| 'begin'
+	| 'commit'
+	| 'rollback';
+
+/** How a logged write ended. */
+export type SqliteStatementLogOutcome =
+	| {
+			ok: true;
+			/** Rows the statement itself changed (for a transaction's end, what the transaction held). */
+			changes: number;
+			/** Rows its triggers and foreign-key actions changed beside those. */
+			otherChanges: number;
+			/** Schema objects it created, dropped, or altered. */
+			schemaChanges: SqliteSchemaChange[];
+	  }
+	| {
+			ok: false;
+			/** SQLite's message, the stop, or the timeout, cut to a readable length. */
+			error: string;
+	  };
+
+/**
+ * One write in a database's statement log: what was run against the file,
+ * when, and what it did. Kept in order, never merged: the log answers "what
+ * did I just do to this database", so a statement run twice is two entries.
+ */
+export interface SqliteStatementLogEntry {
+	id: string;
+	kind: SqliteStatementLogKind;
+	/**
+	 * The statement. A Query write's text as it ran; a row write's single-row
+	 * statement with its values written in (`sqliteRowWriteStatement()`), as a
+	 * person would type it; a transaction's `BEGIN IMMEDIATE`, `COMMIT`, or
+	 * `ROLLBACK`.
+	 */
+	sql: string;
+	/** A Query write's parameter values, keyed by label; empty for the rest. */
+	params: SqliteParameterValues;
+	/** The table a row write changed; null for a Query write and a transaction's bounds. */
+	table: string | null;
+	/** The explicit transaction it ran in (and, on `begin` / `commit` / `rollback`, the one it bounds). */
+	transactionId: string | null;
+	/** When it finished, epoch milliseconds. */
+	at: number;
+	outcome: SqliteStatementLogOutcome;
+	/** A transaction's end: why and how it ended (`sqliteTransactionEndReason()`). */
+	note?: string;
+	/** The session's backup of the file, on the one write that took it. */
+	backupPath?: string;
+}
+
+/** One database's statement log, newest first. */
+export interface SqliteStatementLog {
+	/** The database's path, which the log is kept under. */
+	path: string;
+	entries: SqliteStatementLogEntry[];
+}

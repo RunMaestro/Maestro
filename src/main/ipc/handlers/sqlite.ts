@@ -15,11 +15,13 @@
  * sends that token back with one single-row UPDATE (sqlite-row-edit.ts), an
  * insert or a delete with one single-row INSERT or DELETE (same file), the
  * transaction calls begin, read, and end Query mode's explicit transaction
- * (sqlite-transaction.ts), and
+ * (sqlite-transaction.ts), the statement-log calls read and clear every write
+ * made to the file (sqlite-statement-log.ts, announced to every window on
+ * `sqlite:statementLogged` as each lands), and
  * the connections stay in this process (see src/main/sqlite/sqlite-database.ts).
  */
 
-import { ipcMain } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 
 import type {
 	SqliteBlobRequest,
@@ -49,6 +51,7 @@ import type {
 	SqliteRowInsertResult,
 	SqliteRowsPage,
 	SqliteRowsRequest,
+	SqliteStatementLog,
 	SqliteTransactionEnd,
 	SqliteTransactionEndRequest,
 	SqliteTransactionRequest,
@@ -58,6 +61,7 @@ import type {
 	SqliteUndoResult,
 } from '../../../shared/sqlite/types';
 import { withSqliteErrorOffset } from '../../../shared/sqlite/queryError';
+import { SQLITE_STATEMENT_LOGGED_CHANNEL } from '../../../shared/sqlite/statementLog';
 import { saveSqliteBlob } from '../../sqlite/sqlite-blob';
 import { countSqliteRows } from '../../sqlite/sqlite-count';
 import { closeSqliteDatabase, openSqliteDatabase } from '../../sqlite/sqlite-database';
@@ -81,8 +85,14 @@ import {
 	updateSqliteCell,
 } from '../../sqlite/sqlite-row-edit';
 import { readSqliteRows } from '../../sqlite/sqlite-rows';
+import {
+	clearSqliteStatementLog,
+	onSqliteStatementLogged,
+	readSqliteStatementLog,
+} from '../../sqlite/sqlite-statement-log';
 import { readSqliteColumnCatalog, readSqliteObjectSchema } from '../../sqlite/sqlite-schema';
 import { readSqliteDatabaseSummary } from '../../sqlite/sqlite-summary';
+import { createSafeSend } from '../../utils/safe-send';
 
 export function registerSqliteHandlers(): void {
 	// Open a local database read-only. Reuses the connection already open on
@@ -204,6 +214,22 @@ export function registerSqliteHandlers(): void {
 		'sqlite:forgetQueryHistory',
 		async (_event, handle: string, entryId: string | null): Promise<SqliteQueryHistory> =>
 			forgetSqliteQueryHistory(handle, entryId ?? null)
+	);
+
+	// The viewer's Log: every write made to this file, newest first, from
+	// any tab or the CLI. Each write is recorded by its own write path.
+	ipcMain.handle(
+		'sqlite:readStatementLog',
+		async (_event, handle: string): Promise<SqliteStatementLog> => readSqliteStatementLog(handle)
+	);
+	ipcMain.handle(
+		'sqlite:clearStatementLog',
+		async (_event, handle: string): Promise<SqliteStatementLog> => clearSqliteStatementLog(handle)
+	);
+	// A write landed in some database's log: every window's Log on that file reads again.
+	const broadcast = createSafeSend(() => BrowserWindow.getAllWindows());
+	onSqliteStatementLogged((databasePath) =>
+		broadcast(SQLITE_STATEMENT_LOGGED_CHANNEL, databasePath)
 	);
 
 	// Save one BLOB cell to a file, whole. The value is read and written in

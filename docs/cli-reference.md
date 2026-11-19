@@ -3457,6 +3457,16 @@ List the statements run against a database, newest first, as the viewer's Query 
 | `--clear`       | Forget the database's whole query history                        | -       |
 | `--json`        | Output as JSON (for scripting)                                   | -       |
 
+## `maestro-cli sqlite log <path>`
+
+List every write made to a database through Maestro, newest first, as the viewer's Log shows it: cell edits, inserts, deletes, Undo, Query-mode writes, and transactions, from the viewer and from this CLI alike. Answers "what did I just do to this database"
+
+| Option        | Description                               | Default |
+| ------------- | ----------------------------------------- | ------- |
+| `--limit <n>` | Writes to show, newest first              | `20`    |
+| `--clear`     | Forget the database's whole statement log | -       |
+| `--json`      | Output as JSON (for scripting)            | -       |
+
 ## `maestro-cli sqlite set <path> <table> <column>`
 
 Change one cell the way the viewer's table view does: one parameterised UPDATE of the row named by its rowid or primary key. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first

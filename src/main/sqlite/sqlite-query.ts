@@ -36,6 +36,11 @@
  * sqlite-transaction.ts): nothing it changes is committed until Commit, and
  * stopping it rolls the whole transaction back.
  *
+ * A write that reached the file (not a dry run, not one refused or stopped
+ * before its child started) is recorded in the database's statement log
+ * (sqlite-statement-log.ts) before it answers, done or failed; a write in an
+ * explicit transaction is logged by sqlite-transaction.ts.
+ *
  * A run of the first window is recorded in the database's query history
  * (sqlite-query-history.ts) before it answers, so the History rail read
  * right after it already lists it, whoever ran it. Recording never fails a
@@ -80,7 +85,10 @@ import {
 	sqliteStatementToRun,
 	sqliteWriteTimeoutMessage,
 } from '../../shared/sqlite/query';
-import type { SqliteQueryHistoryRun } from '../../shared/sqlite/history';
+import {
+	sqliteStatementParameterValues,
+	type SqliteQueryHistoryRun,
+} from '../../shared/sqlite/history';
 import { SQLITE_TRANSACTION_STOPPED_MESSAGE } from '../../shared/sqlite/transaction';
 import type {
 	SqliteQueryExported,
@@ -88,11 +96,12 @@ import type {
 	SqliteQueryRequest,
 	SqliteQueryResult,
 	SqliteQueryWrite,
+	SqliteStatementLogOutcome,
 } from '../../shared/sqlite/types';
 import { isTabularExportFormat, tabularExportFormatForPath } from '../../shared/tabularExport';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
-import { reportSqliteBusy } from './sqlite-connection';
+import { describeSqliteBusy, reportSqliteBusy } from './sqlite-connection';
 import { getSqliteDatabase, type OpenSqliteDatabase } from './sqlite-database';
 import {
 	beginSqliteWorkerTrial,
@@ -102,6 +111,12 @@ import {
 } from './sqlite-editing';
 import type { SqliteWriteTarget } from './sqlite-connection';
 import { getSqliteQueryHistory } from './sqlite-query-history';
+import {
+	logSqliteStatement,
+	sqliteLoggedBackup,
+	sqliteLoggedChanges,
+	sqliteLoggedFailure,
+} from './sqlite-statement-log';
 import { runInSqliteTransaction } from './sqlite-transaction';
 import { SQLITE_QUERY_REFUSED, type SqliteQueryTask } from './sqlite-query-task';
 import { windowBound } from './sqlite-rows';
@@ -444,11 +459,31 @@ function runInWriteChild(
 		const unhook = onSqliteEditingRevoked(handle, editToken, (reason) =>
 			run.stop(reason === 'closed' ? SQLITE_WRITE_CLOSED_MESSAGE : SQLITE_WRITE_LOCKED_MESSAGE)
 		);
+		// From here the statement reaches the file: a write is logged, done or failed.
+		const logWrite = (outcome: SqliteStatementLogOutcome) =>
+			logSqliteStatement(database.displayPath, {
+				kind: 'query',
+				sql: task.sql,
+				params: sqliteStatementParameterValues(task.sql, task.params),
+				table: null,
+				transactionId: null,
+				at: Date.now(),
+				outcome,
+				...sqliteLoggedBackup(opened.backup),
+			});
 		try {
 			const result = await tracked(queryId, run, SQLITE_WRITE_STOPPED_MESSAGE);
 			if (dryRun) return result;
 			const write = result.write ?? { changes: 0, otherChanges: 0, schemaChanges: [] };
+			await logWrite(sqliteLoggedChanges(write.changes, write.otherChanges, write.schemaChanges));
 			return { ...result, write: opened.backup ? { ...write, backup: opened.backup } : write };
+		} catch (error) {
+			// A dry run changed nothing, and a refusal never ran: neither is logged.
+			const refusedRun = (error as { code?: unknown } | null)?.code === SQLITE_QUERY_REFUSED;
+			if (!dryRun && !refusedRun) {
+				await logWrite(sqliteLoggedFailure(describeSqliteBusy(error, 'write')));
+			}
+			throw error;
 		} finally {
 			unhook();
 		}

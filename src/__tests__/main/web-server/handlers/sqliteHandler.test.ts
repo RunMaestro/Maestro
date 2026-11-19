@@ -1,6 +1,6 @@
 // Covers the sqlite_read_summary, sqlite_list_objects, sqlite_read_schema,
 // sqlite_read_rows, sqlite_count_rows, sqlite_save_blob, sqlite_run_query,
-// sqlite_export_query, sqlite_query_history, sqlite_update_cell, sqlite_insert_row, and sqlite_delete_row
+// sqlite_export_query, sqlite_query_history, sqlite_statement_log, sqlite_update_cell, sqlite_insert_row, and sqlite_delete_row
 // WebSocket messages that back `maestro-cli sqlite info`, `sqlite tables`,
 // `sqlite schema`, `sqlite rows`, `sqlite count`, `sqlite blob`, `sqlite query`
 // (with and without `--output`), `sqlite history`, and `sqlite set`. It opens the database through the viewer's own open path,
@@ -51,6 +51,11 @@ const histories = vi.hoisted(() => ({
 	forgetSqliteQueryHistory: vi.fn(),
 }));
 vi.mock('../../../../main/sqlite/sqlite-query-history', () => histories);
+const statementLogs = vi.hoisted(() => ({
+	readSqliteStatementLog: vi.fn(),
+	clearSqliteStatementLog: vi.fn(),
+}));
+vi.mock('../../../../main/sqlite/sqlite-statement-log', () => statementLogs);
 const editing = vi.hoisted(() => ({
 	enableSqliteEditing: vi.fn(),
 	disableSqliteEditing: vi.fn(),
@@ -1163,6 +1168,94 @@ describe('sqlite_query_history handler', () => {
 		await flush();
 		expect(lastResponse(client)).toMatchObject({ requestId: 'h7', success: false });
 		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+	});
+});
+
+describe('sqlite_statement_log handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+	const write = {
+		id: 'w1',
+		kind: 'cell',
+		sql: "UPDATE users SET email = 'a@b.c' WHERE rowid = 7",
+		params: {},
+		table: 'users',
+		transactionId: null,
+		at: 1,
+		outcome: { ok: true, changes: 1, otherChanges: 0, schemaChanges: [] },
+	};
+	const full = { path: '/data/app.db', entries: [write] };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+		statementLogs.readSqliteStatementLog.mockResolvedValue(full);
+		statementLogs.clearSqliteStatementLog.mockResolvedValue({ path: '/data/app.db', entries: [] });
+	});
+
+	it('answers with the log, reading only', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_statement_log',
+			requestId: 'l1',
+			path: '/data/app.db',
+		});
+		await flush();
+		expect(statementLogs.readSqliteStatementLog).toHaveBeenCalledWith('h1');
+		expect(statementLogs.clearSqliteStatementLog).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toEqual({
+			type: 'sqlite_log_result',
+			requestId: 'l1',
+			success: true,
+			database: info,
+			log: full,
+			removed: 0,
+		});
+	});
+
+	it('clears the log and says how many writes went', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_statement_log',
+			requestId: 'l2',
+			path: '/data/app.db',
+			clear: true,
+		});
+		await flush();
+		expect(statementLogs.clearSqliteStatementLog).toHaveBeenCalledWith('h1');
+		expect(lastResponse(client)).toMatchObject({ requestId: 'l2', success: true, removed: 1 });
+	});
+
+	it('refuses a missing path and a clear that is not a flag', async () => {
+		handler.handleMessage(client, { type: 'sqlite_statement_log', requestId: 'l3' });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 'l3', success: false });
+		handler.handleMessage(client, {
+			type: 'sqlite_statement_log',
+			requestId: 'l4',
+			path: '/data/app.db',
+			clear: 'yes',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 'l4', success: false });
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+	});
+
+	it('answers a failure with its message, keeping the request id', async () => {
+		statementLogs.readSqliteStatementLog.mockRejectedValue(new Error('disk on fire'));
+		handler.handleMessage(client, {
+			type: 'sqlite_statement_log',
+			requestId: 'l5',
+			path: '/data/app.db',
+		});
+		await flush();
+		expect(lastResponse(client)).toEqual({
+			type: 'sqlite_log_result',
+			requestId: 'l5',
+			success: false,
+			error: 'disk on fire',
+		});
 	});
 });
 

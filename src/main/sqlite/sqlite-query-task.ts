@@ -462,6 +462,8 @@ export interface SqliteTransactionReply {
 	/** For a run: rows it changed itself, and beside it. */
 	changes?: number;
 	otherChanges?: number;
+	/** For a run that writes: schema objects this statement alone created, dropped, or altered (the statement log's entry). */
+	schemaChanges?: SqliteSchemaChange[];
 }
 
 /**
@@ -545,6 +547,7 @@ export function openSqliteTransactionTask(task: SqliteTransactionTask): {
 		if (writes && runTask.offset !== 0) throw refuse(SQLITE_WRITE_RERUN_MESSAGE);
 		const limit = Math.min(runTask.limit, SQLITE_QUERY_MAX_LIMIT);
 		const before = changeCounts(db).total;
+		const schemaBefore = writes ? readSchemaEntries(db) : null;
 		const started = performance.now();
 		let output: Pick<SqliteQueryResult, 'columns' | 'rows' | 'hasMore'>;
 		try {
@@ -559,7 +562,8 @@ export function openSqliteTransactionTask(task: SqliteTransactionTask): {
 		totals.statements += 1;
 		totals.changes += changes;
 		totals.otherChanges += otherChanges;
-		if (writes) totals.schemaChanges = sqliteSchemaChanges(schemaAtBegin, readSchemaEntries(db));
+		const schemaAfter = writes ? readSchemaEntries(db) : null;
+		if (schemaAfter) totals.schemaChanges = sqliteSchemaChanges(schemaAtBegin, schemaAfter);
 		return {
 			totals: snapshot(),
 			result: {
@@ -573,6 +577,9 @@ export function openSqliteTransactionTask(task: SqliteTransactionTask): {
 			writes,
 			changes,
 			otherChanges,
+			...(schemaBefore && schemaAfter
+				? { schemaChanges: sqliteSchemaChanges(schemaBefore, schemaAfter) }
+				: {}),
 		};
 	};
 

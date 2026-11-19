@@ -34,6 +34,10 @@
 //   maestro-cli sqlite history <path> [--forget <id>] [--clear] [--json]
 //       -> Query mode's History rail: the statements run against the file,
 //          newest first; --forget drops one, --clear drops them all
+//   maestro-cli sqlite log <path> [--limit <n>] [--clear] [--json]
+//       -> the viewer's Log: every write made to the file (the viewer's edits,
+//          Undo, Query-mode writes, transactions, and this CLI's own writes),
+//          newest first; --clear forgets it
 //   maestro-cli sqlite set <path> <table> <column> (--rowid <id> | --key <col=value>...)
 //                          (--value <text> | --value-number <n> | --null)
 //                          [--if-version <v>] --enable-editing [--json]
@@ -59,7 +63,7 @@
 // The CLI links no native modules, so it cannot open a database itself. Each
 // verb rides a WS message (`sqlite_read_summary`, `sqlite_list_objects`, `sqlite_read_schema`,
 // `sqlite_read_rows`, `sqlite_count_rows`, `sqlite_save_blob`, `sqlite_run_query`,
-// `sqlite_export_query`, `sqlite_query_history`, `sqlite_update_cell`,
+// `sqlite_export_query`, `sqlite_query_history`, `sqlite_statement_log`, `sqlite_update_cell`,
 // `sqlite_insert_row`, `sqlite_delete_row`, `sqlite_undo_edit`, `sqlite_run_transaction`) to the running
 // app, which answers with the same functions the viewer's `sqlite:*` IPC calls.
 // The app must be running, and the database is opened read-only there (only
@@ -103,6 +107,14 @@ import {
 	sqliteReadOnlyRefusal,
 } from '../../shared/sqlite/query';
 import { formatSqliteQueryHistoryOutcome } from '../../shared/sqlite/history';
+import {
+	SQLITE_STATEMENT_LOG_KIND_LABELS,
+	formatSqliteParameterValue,
+	formatSqliteStatementLogOutcome,
+	sqliteStatementLogStanding,
+	sqliteStatementLogStandingText,
+	sqliteStatementLogTransactionEnds,
+} from '../../shared/sqlite/statementLog';
 import { formatSqliteDryRun, sqliteWriteChangesText } from '../../shared/sqlite/dryRun';
 import { formatSqliteTransactionChanges } from '../../shared/sqlite/transaction';
 import {
@@ -149,6 +161,8 @@ import type {
 	SqliteCellValue,
 	SqliteKeyValue,
 	SqliteRowKey,
+	SqliteStatementLog,
+	SqliteStatementLogEntry,
 	SqliteTransactionScript,
 	SqliteUndoResult,
 	SqliteUndoStep,
@@ -1183,13 +1197,17 @@ function historyEntryLines(entry: SqliteQueryHistoryEntry): string[] {
 		...(entry.plan ? ['plan'] : []),
 		...(entry.runs > 1 ? [`ran ${entry.runs} times`] : []),
 	];
-	const lines = [facts.join('  '), ...entry.sql.split('\n').map((line) => `    ${line}`)];
-	for (const [label, value] of Object.entries(entry.params)) {
-		lines.push(
-			`    ${label} = ${value.type === 'null' ? 'NULL' : `${JSON.stringify(value.text)}${value.type === 'number' ? ' (number)' : ''}`}`
-		);
-	}
+	const lines = [facts.join('  '), ...statementLines(entry.sql, entry.params)];
 	if (!entry.outcome.ok) lines.push(`    ${entry.outcome.error}`);
+	return lines;
+}
+
+/** A statement and its parameter values, indented under an entry's facts line. */
+function statementLines(sql: string, params: SqliteParameterValues): string[] {
+	const lines = sql.split('\n').map((line) => `    ${line}`);
+	for (const [label, value] of Object.entries(params)) {
+		lines.push(`    ${label} = ${formatSqliteParameterValue(value)}`);
+	}
 	return lines;
 }
 
@@ -1255,6 +1273,113 @@ export async function sqliteHistory(file: string, options: SqliteHistoryOptions)
 			`Query history of ${database.displayPath}: ${count} ${count === 1 ? 'statement' : 'statements'}, newest first.`
 		);
 		for (const entry of history.entries) lines.push('', ...historyEntryLines(entry));
+	}
+	console.log(lines.join('\n'));
+}
+
+interface SqliteLogOptions {
+	/** Entries to print, newest first. */
+	limit?: string;
+	/** Forget the whole log. */
+	clear?: boolean;
+	json?: boolean;
+}
+
+interface SqliteLogReply {
+	type: string;
+	success: boolean;
+	error?: string;
+	database?: SqliteDatabaseInfo;
+	log?: SqliteStatementLog;
+	removed?: number;
+}
+
+/** Entries `sqlite log` prints when `--limit` is not given: the recent ones, which is the question. */
+const SQLITE_LOG_DEFAULT_LIMIT = 20;
+
+/** One logged write as the text listing shows it: age, kind, what it did, where it stands, then the statement. */
+function logEntryLines(
+	entry: SqliteStatementLogEntry,
+	ends: ReadonlyMap<string, 'commit' | 'rollback'>
+): string[] {
+	const standing = sqliteStatementLogStandingText(sqliteStatementLogStanding(entry, ends));
+	const facts = [
+		formatRelativeTime(entry.at),
+		SQLITE_STATEMENT_LOG_KIND_LABELS[entry.kind],
+		formatSqliteStatementLogOutcome(entry),
+		...(standing ? [`(${standing})`] : []),
+		...(entry.transactionId
+			? [`transaction ${entry.transactionId.slice(0, HISTORY_ID_CHARS)}`]
+			: []),
+	];
+	const lines = [facts.join('  '), ...statementLines(entry.sql, entry.params)];
+	if (entry.note) lines.push(`    ${entry.note}`);
+	if (!entry.outcome.ok) lines.push(`    ${entry.outcome.error}`);
+	if (entry.backupPath) lines.push(`    Backed the file up first to ${entry.backupPath}`);
+	return lines;
+}
+
+/**
+ * `maestro-cli sqlite log <path>` - every write made to a database through
+ * Maestro (the viewer's edits, Undo, Query-mode writes, transactions, and
+ * the CLI's own `set` / `insert` / `delete` / `undo` / `query
+ * --enable-editing` / `transaction`), newest first, as the viewer's Log shows
+ * it: "what did I just do to this database". `--clear` forgets it.
+ */
+export async function sqliteLog(file: string, options: SqliteLogOptions): Promise<void> {
+	const filePath = resolveCliPath(file);
+	const limit = parseCount(options.limit, '--limit', SQLITE_LOG_DEFAULT_LIMIT, options.json);
+
+	let reply: SqliteLogReply;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<SqliteLogReply>(
+				{
+					type: 'sqlite_statement_log',
+					path: filePath,
+					...(options.clear ? { clear: true } : {}),
+				},
+				'sqlite_log_result',
+				SQLITE_TIMEOUT_MS
+			)
+		);
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+	if (!reply.success || !reply.database || !reply.log) {
+		fail(reply.error || `Could not read the statement log of ${filePath}`, options.json);
+	}
+
+	const { database, log } = reply;
+	const removed = reply.removed ?? 0;
+	const shown = log.entries.slice(0, limit);
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				path: database.displayPath,
+				...(options.clear ? { removed } : {}),
+				total: log.entries.length,
+				entries: shown,
+			})
+		);
+		return;
+	}
+
+	const lines: string[] = [];
+	if (options.clear) {
+		lines.push(`Forgot ${removed} logged ${removed === 1 ? 'write' : 'writes'}.`, '');
+	}
+	if (log.entries.length === 0) {
+		lines.push(`No writes to ${database.displayPath} are logged.`);
+	} else {
+		const total = log.entries.length;
+		const more = total > shown.length ? ` (the newest ${shown.length}; --limit shows more)` : '';
+		lines.push(
+			`Statement log of ${database.displayPath}: ${total} ${total === 1 ? 'write' : 'writes'}, newest first${more}.`
+		);
+		const ends = sqliteStatementLogTransactionEnds(log.entries);
+		for (const entry of shown) lines.push('', ...logEntryLines(entry, ends));
 	}
 	console.log(lines.join('\n'));
 }

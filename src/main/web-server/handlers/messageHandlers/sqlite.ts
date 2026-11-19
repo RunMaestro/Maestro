@@ -25,6 +25,9 @@
  *   - `sqlite_query_history`: Query mode's History rail, read, one entry
  *     forgotten (by id or a unique start of one), or cleared
  *     (`maestro-cli sqlite history`).
+ *   - `sqlite_statement_log`: the viewer's Log, every write made to the file
+ *     (any tab, any CLI verb), newest first; or cleared with `clear: true`
+ *     (`maestro-cli sqlite log`). Read only: each write path records itself.
  *   - `sqlite_update_cell`: the table view's cell edit, one single-row UPDATE
  *     (`maestro-cli sqlite set`). The CLI has no tab and so no editing grant:
  *     the message must say `enableEditing: true` (the verb's per-call unlock
@@ -53,7 +56,8 @@
  * for the record view's Save to file, `runSqliteQuery()` for Query mode's
  * Run (which records it in the same history the rail shows),
  * `exportSqliteQuery()` for its Export, and `readSqliteQueryHistory()` /
- * `forgetSqliteQueryHistory()` for its History rail, so the CLI prints what
+ * `forgetSqliteQueryHistory()` for its History rail, `readSqliteStatementLog()`
+ * / `clearSqliteStatementLog()` for the Log, so the CLI prints what
  * the viewer shows; `enableSqliteEditing()`, `updateSqliteCell()`, and
  * `disableSqliteEditing()` make the cell edit.
  * The BLOB and an export are written by the app, to the absolute path the
@@ -88,6 +92,10 @@ import {
 	updateSqliteCell,
 } from '../../../sqlite/sqlite-row-edit';
 import { readSqliteRows } from '../../../sqlite/sqlite-rows';
+import {
+	clearSqliteStatementLog,
+	readSqliteStatementLog,
+} from '../../../sqlite/sqlite-statement-log';
 import { readSqliteObjectSchema } from '../../../sqlite/sqlite-schema';
 import { readSqliteDatabaseSummary } from '../../../sqlite/sqlite-summary';
 import type {
@@ -584,6 +592,40 @@ export async function handleSqliteQueryHistory(
 			database,
 			history,
 			removed: before.entries.length - history.entries.length,
+		});
+	} catch (error) {
+		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
+	}
+}
+
+export async function handleSqliteStatementLog(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (payload: Record<string, unknown>) => {
+		ctx.send(client, { type: 'sqlite_log_result', ...payload, requestId: message.requestId });
+	};
+
+	const filePath = typeof message.path === 'string' ? message.path : '';
+	if (!filePath) {
+		reply({ success: false, error: 'Missing required "path" for sqlite_statement_log' });
+		return;
+	}
+	if (message.clear !== undefined && typeof message.clear !== 'boolean') {
+		reply({ success: false, error: 'clear must be true or false' });
+		return;
+	}
+
+	try {
+		const database = await openSqliteDatabase(filePath);
+		const before = await readSqliteStatementLog(database.handle);
+		const log = message.clear === true ? await clearSqliteStatementLog(database.handle) : before;
+		reply({
+			success: true,
+			database,
+			log,
+			removed: before.entries.length - log.entries.length,
 		});
 	} catch (error) {
 		reply({ success: false, error: error instanceof Error ? error.message : String(error) });

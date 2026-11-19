@@ -7,11 +7,13 @@
  * read every table's column names for SQL completion,
  * read a window of a table's rows, count its rows, run a read-only statement
  * (and stop it), export a statement's result to a file, read and forget the
- * file's query history, save a BLOB to a file, turn this tab's editing on
- * and off, change one cell, insert or delete one row, close the handle.
+ * file's query history, read and clear its statement log (and hear it
+ * change), save a BLOB to a file, turn this tab's editing on and off, change
+ * one cell, insert or delete one row, close the handle.
  */
 
 import { ipcRenderer } from 'electron';
+import { SQLITE_STATEMENT_LOGGED_CHANNEL } from '../../shared/sqlite/statementLog';
 import type {
 	SqliteBlobRequest,
 	SqliteBlobSaved,
@@ -40,6 +42,7 @@ import type {
 	SqliteRowInsertResult,
 	SqliteRowsPage,
 	SqliteRowsRequest,
+	SqliteStatementLog,
 	SqliteTransactionEnd,
 	SqliteTransactionEndRequest,
 	SqliteTransactionRequest,
@@ -151,6 +154,24 @@ export function createSqliteApi() {
 		/** Forget one history entry, or all of them with `entryId` null. Resolves the history left. */
 		forgetQueryHistory: (handle: string, entryId: string | null): Promise<SqliteQueryHistory> =>
 			ipcRenderer.invoke('sqlite:forgetQueryHistory', handle, entryId),
+
+		/** Every write made to this database (any tab, the CLI), newest first. */
+		readStatementLog: (handle: string): Promise<SqliteStatementLog> =>
+			ipcRenderer.invoke('sqlite:readStatementLog', handle),
+
+		/** Forget this database's whole statement log. Resolves the (empty) log left. */
+		clearStatementLog: (handle: string): Promise<SqliteStatementLog> =>
+			ipcRenderer.invoke('sqlite:clearStatementLog', handle),
+
+		/**
+		 * Hear each database whose statement log changed, by path (the one
+		 * `open` reported as `displayPath`). Returns the unsubscribe.
+		 */
+		onStatementLogged: (callback: (databasePath: string) => void): (() => void) => {
+			const handler = (_event: unknown, databasePath: string) => callback(databasePath);
+			ipcRenderer.on(SQLITE_STATEMENT_LOGGED_CHANNEL, handler);
+			return () => ipcRenderer.removeListener(SQLITE_STATEMENT_LOGGED_CHANNEL, handler);
+		},
 
 		/**
 		 * Write one BLOB cell to `destPath`, whole. The row is named by its rowid

@@ -136,6 +136,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Rewriting a large `{ key: [...] }` JSON store file:** `serializeWithMemoizedArray(data, memoKey)`, `encodeWithMemoizedArray(data, memoKey)` in `src/shared/memoizedJsonSerialize.ts`
 - **Keeping an agent's file-tree scan out of storage and off the wire:** `withoutFileTreeCache()`, `holdsFileTreeCache()`, `unloadedFileTreeState()` in `src/shared/fileTreeCache.ts`
 - **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()` in `src/main/stores/corrupt-store-recovery.ts` (never `clearInvalidConfig`)
+- **A JSON store file only the main process writes (read once, one queue, atomic replace):** `createJsonStoreFile()` in `src/main/utils/json-store-file.ts`
 - **Whether a SQLite error means the database file is damaged:** `isSqliteCorruptionError()` in `src/shared/sqliteErrors.ts`
 - **Telling a person SQLite found the database busy:** `isSqliteBusyError()` in `src/shared/sqliteErrors.ts`; `reportSqliteBusy()`, `describeSqliteBusy()`, `sqliteBusyMessage()` in `src/main/sqlite/sqlite-connection.ts`
 - **Whether a file is really a SQLite database:** `hasSqliteHeader()`, `isSqliteCandidateFile()`, `isSqlitePreviewMarker()` in `src/shared/sqlite/preview.ts`; `isSqliteDatabaseFile()` in `src/main/sqlite/sqlite-detect.ts`
@@ -162,6 +163,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Where a SQLite query error points in the statement:** `sqliteQueryErrorLocation()`, `sqliteSyntaxErrorOffset()`, `withSqliteErrorOffset()`, `splitSqliteErrorOffset()` in `src/shared/sqlite/queryError.ts`; `sqliteTokens()` in `src/shared/sqlite/tokens.ts`
 - **Reading a SQLite query plan (`EXPLAIN QUERY PLAN` as a tree):** `sqliteQueryPlanSteps()`, `formatSqliteQueryPlan()`, `sqliteQueryPlanStepKind()` in `src/shared/sqlite/plan.ts`
 - **A SQLite database's query history:** `readSqliteQueryHistory()`, `forgetSqliteQueryHistory()`, `getSqliteQueryHistory()` in `src/main/sqlite/sqlite-query-history.ts`; `addSqliteQueryHistoryRun()`, `formatSqliteQueryHistoryOutcome()` in `src/shared/sqlite/history.ts`
+- **A SQLite database's statement log (every write):** `logSqliteStatement()`, `readSqliteStatementLog()`, `onSqliteStatementLogged()` in `src/main/sqlite/sqlite-statement-log.ts`; `sqliteRowWriteStatement()`, `sqliteStatementLogStanding()` in `src/shared/sqlite/statementLog.ts`
 - **Writing rows to CSV or JSON Lines (a data viewer's Export):** `createTabularRowEncoder()`, `csvField()`, `tabularExportFormatForPath()`, `TABULAR_EXPORT_FILE_FILTERS` in `src/shared/tabularExport.ts`; a SQLite result via `exportSqliteQuery()` in `src/main/sqlite/sqlite-query.ts`
 - **A main-process resource the renderer addresses by handle, closed when idle:** `createIdleHandleRegistry()` in `src/main/utils/idle-handle-registry.ts`
 - **Parsing a session transcript in the main process:** `runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`, task bodies in `transcript-parse-tasks.ts`

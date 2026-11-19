@@ -164,6 +164,7 @@ import {
 	sqliteCount,
 	sqliteDelete,
 	sqliteHistory,
+	sqliteLog,
 	sqliteInfo,
 	sqliteInsert,
 	sqliteQuery,
@@ -3997,6 +3998,16 @@ sqliteCmd
 	.option('--clear', "Forget the database's whole query history")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((file, options) => sqliteHistory(file, options));
+
+sqliteCmd
+	.command('log <path>')
+	.description(
+		'List every write made to a database through Maestro, newest first, as the viewer\'s Log shows it: cell edits, inserts, deletes, Undo, Query-mode writes, and transactions, from the viewer and from this CLI alike. Answers "what did I just do to this database"'
+	)
+	.option('--limit <n>', 'Writes to show, newest first', '20')
+	.option('--clear', "Forget the database's whole statement log")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteLog(file, options));
 
 sqliteCmd
 	.command('set <path> <table> <column>')

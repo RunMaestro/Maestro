@@ -25,6 +25,8 @@ import type {
 	SqliteObjectSummary,
 	SqliteQueryExportRequest,
 	SqliteQueryHistory,
+	SqliteStatementLog,
+	SqliteStatementLogEntry,
 	SqliteQueryHistoryEntry,
 	SqliteQueryRequest,
 	SqliteQueryResult,
@@ -132,6 +134,10 @@ let cancelQuery: ReturnType<typeof vi.fn>;
 let exportQuery: ReturnType<typeof vi.fn>;
 let readQueryHistory: ReturnType<typeof vi.fn>;
 let forgetQueryHistory: ReturnType<typeof vi.fn>;
+let readStatementLog: ReturnType<typeof vi.fn>;
+let clearStatementLog: ReturnType<typeof vi.fn>;
+/** What the viewer subscribed to hear statement-log changes with. */
+let statementLogListeners: Array<(databasePath: string) => void>;
 let enableEditing: ReturnType<typeof vi.fn>;
 let disableEditing: ReturnType<typeof vi.fn>;
 let updateCell: ReturnType<typeof vi.fn>;
@@ -375,6 +381,13 @@ beforeEach(() => {
 	forgetQueryHistory = vi.fn(
 		async (): Promise<SqliteQueryHistory> => ({ path: '/data/app.db', entries: [] })
 	);
+	readStatementLog = vi.fn(
+		async (): Promise<SqliteStatementLog> => ({ path: '/data/app.db', entries: [] })
+	);
+	clearStatementLog = vi.fn(
+		async (): Promise<SqliteStatementLog> => ({ path: '/data/app.db', entries: [] })
+	);
+	statementLogListeners = [];
 	enableEditing = vi.fn(async (handle: string) => ({ handle, editToken: 'token-1' }));
 	disableEditing = vi.fn().mockResolvedValue(true);
 	// Echo the edit back as stored: the edited cell takes the new value.
@@ -471,6 +484,14 @@ beforeEach(() => {
 			exportQuery,
 			readQueryHistory,
 			forgetQueryHistory,
+			readStatementLog,
+			clearStatementLog,
+			onStatementLogged: (listener: (databasePath: string) => void) => {
+				statementLogListeners.push(listener);
+				return () => {
+					statementLogListeners = statementLogListeners.filter((entry) => entry !== listener);
+				};
+			},
 			enableEditing,
 			disableEditing,
 			updateCell,
@@ -3304,5 +3325,149 @@ describe('SqliteViewer after a schema change', () => {
 			'The schema changed, but the object list could not be read again'
 		);
 		expect(screen.getByTestId('sqlite-rail-object-users')).toBeInTheDocument();
+	});
+});
+
+describe('SqliteViewer statement log', () => {
+	const ok = { ok: true as const, changes: 1, otherChanges: 0, schemaChanges: [] };
+	const ROLLBACK: SqliteStatementLogEntry = {
+		id: 'w-rollback',
+		kind: 'rollback',
+		sql: 'ROLLBACK',
+		params: {},
+		table: null,
+		transactionId: 'tx1',
+		at: Date.now() - 5_000,
+		outcome: ok,
+		note: 'Rolled back. Nothing it held was kept (1 statement: 1 row changed).',
+	};
+	const IN_ROLLED_BACK: SqliteStatementLogEntry = {
+		id: 'w-tx',
+		kind: 'query',
+		sql: 'DELETE FROM logs WHERE id = :id',
+		params: { ':id': { type: 'number', text: '3' } },
+		table: null,
+		transactionId: 'tx1',
+		at: Date.now() - 10_000,
+		outcome: ok,
+	};
+	const CELL: SqliteStatementLogEntry = {
+		id: 'w-cell',
+		kind: 'cell',
+		sql: "UPDATE users SET email = 'a@b.c' WHERE rowid = 7",
+		params: {},
+		table: 'users',
+		transactionId: null,
+		at: Date.now() - 60_000,
+		outcome: ok,
+		backupPath: '/data/app.maestro-backup-1.db',
+	};
+	const FAILED: SqliteStatementLogEntry = {
+		...CELL,
+		id: 'w-failed',
+		kind: 'insert',
+		sql: 'INSERT INTO users (id) VALUES (1)',
+		backupPath: undefined,
+		outcome: { ok: false, error: 'UNIQUE constraint failed: users.id' },
+	};
+
+	async function openLog() {
+		renderViewer();
+		fireEvent.click(await screen.findByTestId('sqlite-toggle-statement-log'));
+		return screen.findByTestId('sqlite-statement-log');
+	}
+
+	it('is off by default; the toggle opens it in Browse and Query mode alike, and is remembered', async () => {
+		renderViewer();
+		await screen.findByTestId('sqlite-object-pane');
+		expect(screen.queryByTestId('sqlite-statement-log')).not.toBeInTheDocument();
+		expect(readStatementLog).not.toHaveBeenCalled();
+
+		fireEvent.click(screen.getByTestId('sqlite-toggle-statement-log'));
+		expect(await screen.findByTestId('sqlite-statement-log-empty')).toBeInTheDocument();
+		expect(readStatementLog).toHaveBeenCalledWith('h1');
+		expect(localStorage.getItem('sqlite-statement-log')).toBe('true');
+
+		fireEvent.click(screen.getByTestId('sqlite-viewer-mode-query'));
+		await screen.findByTestId('sqlite-query-panel');
+		expect(screen.getByTestId('sqlite-statement-log')).toBeInTheDocument();
+	});
+
+	it('lists every write newest first, saying which are not in the file', async () => {
+		readStatementLog.mockResolvedValue({
+			path: '/data/app.db',
+			entries: [ROLLBACK, IN_ROLLED_BACK, CELL, FAILED],
+		});
+		await openLog();
+		const entries = await screen.findAllByTestId('sqlite-statement-log-entry');
+		expect(entries).toHaveLength(4);
+		expect(entries[0]).toHaveTextContent('rolled back');
+		expect(entries[1]).toHaveTextContent('DELETE FROM logs WHERE id = :id');
+		expect(entries[1]).toHaveTextContent('rolled back, not in the file');
+		expect(entries[1]).toHaveAttribute('data-standing', 'rolled-back');
+		expect(entries[2]).toHaveTextContent("UPDATE users SET email = 'a@b.c' WHERE rowid = 7");
+		expect(entries[2]).toHaveTextContent('changed 1 row');
+		expect(entries[2]).toHaveAttribute('data-standing', 'in-file');
+		expect(entries[3]).toHaveTextContent('failed');
+	});
+
+	it('opens a write to show its whole statement, values, error, end, and backup', async () => {
+		readStatementLog.mockResolvedValue({
+			path: '/data/app.db',
+			entries: [ROLLBACK, IN_ROLLED_BACK, CELL, FAILED],
+		});
+		await openLog();
+		const toggles = await screen.findAllByTestId('sqlite-statement-log-toggle');
+		fireEvent.click(toggles[1]);
+		const detail = screen.getByTestId('sqlite-statement-log-detail');
+		expect(detail).toHaveTextContent(':id = "3" (number)');
+
+		fireEvent.click(toggles[2]);
+		expect(screen.getByTestId('sqlite-statement-log-detail')).toHaveTextContent(
+			'Backed the file up first to /data/app.maestro-backup-1.db'
+		);
+		fireEvent.click(toggles[3]);
+		expect(screen.getByTestId('sqlite-statement-log-detail')).toHaveTextContent(
+			'UNIQUE constraint failed: users.id'
+		);
+		fireEvent.click(toggles[0]);
+		expect(screen.getByTestId('sqlite-statement-log-detail')).toHaveTextContent(
+			'Rolled back. Nothing it held was kept'
+		);
+	});
+
+	it('reads the log again when main says this file changed, and not for another file', async () => {
+		await openLog();
+		await waitFor(() => expect(readStatementLog).toHaveBeenCalledTimes(1));
+		readStatementLog.mockResolvedValue({ path: '/data/app.db', entries: [CELL] });
+		act(() => {
+			for (const listener of statementLogListeners) listener('/data/other.db');
+		});
+		expect(readStatementLog).toHaveBeenCalledTimes(1);
+		act(() => {
+			for (const listener of statementLogListeners) listener('/data/app.db');
+		});
+		expect(await screen.findAllByTestId('sqlite-statement-log-entry')).toHaveLength(1);
+		expect(readStatementLog).toHaveBeenCalledTimes(2);
+	});
+
+	it('clears the log, and stops listening once closed', async () => {
+		readStatementLog.mockResolvedValue({ path: '/data/app.db', entries: [CELL] });
+		await openLog();
+		fireEvent.click(await screen.findByTestId('sqlite-statement-log-clear'));
+		expect(await screen.findByTestId('sqlite-statement-log-empty')).toBeInTheDocument();
+		expect(clearStatementLog).toHaveBeenCalledWith('h1');
+
+		fireEvent.click(screen.getByTestId('sqlite-toggle-statement-log'));
+		expect(screen.queryByTestId('sqlite-statement-log')).not.toBeInTheDocument();
+		expect(statementLogListeners).toHaveLength(0);
+	});
+
+	it('says so when the log cannot be read', async () => {
+		readStatementLog.mockRejectedValue(new Error('disk on fire'));
+		await openLog();
+		expect(await screen.findByTestId('sqlite-statement-log-error')).toHaveTextContent(
+			'disk on fire'
+		);
 	});
 });

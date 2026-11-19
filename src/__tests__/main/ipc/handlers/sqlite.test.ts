@@ -13,6 +13,16 @@ vi.mock('electron', () => ({
 			handlers.set(channel, handler);
 		},
 	},
+	BrowserWindow: { getAllWindows: () => [] },
+}));
+
+// What the handlers push to every window.
+const sent = vi.hoisted(() => [] as Array<[string, ...unknown[]]>);
+vi.mock('../../../../main/utils/safe-send', () => ({
+	createSafeSend:
+		() =>
+		(channel: string, ...args: unknown[]) =>
+			sent.push([channel, ...args]),
 }));
 
 const database = vi.hoisted(() => ({
@@ -47,6 +57,12 @@ const history = vi.hoisted(() => ({
 	readSqliteQueryHistory: vi.fn(),
 	forgetSqliteQueryHistory: vi.fn(),
 }));
+const statementLog = vi.hoisted(() => ({
+	readSqliteStatementLog: vi.fn(),
+	clearSqliteStatementLog: vi.fn(),
+	listeners: [] as Array<(databasePath: string) => void>,
+	onSqliteStatementLogged: vi.fn(),
+}));
 const rowEdit = vi.hoisted(() => ({
 	updateSqliteCell: vi.fn(),
 	insertSqliteRow: vi.fn(),
@@ -65,6 +81,7 @@ vi.mock('../../../../main/sqlite/sqlite-query', () => query);
 vi.mock('../../../../main/sqlite/sqlite-query-history', () => history);
 vi.mock('../../../../main/sqlite/sqlite-editing', () => editing);
 vi.mock('../../../../main/sqlite/sqlite-row-edit', () => rowEdit);
+vi.mock('../../../../main/sqlite/sqlite-statement-log', () => statementLog);
 const transaction = vi.hoisted(() => ({
 	beginSqliteTransaction: vi.fn(),
 	readSqliteTransaction: vi.fn(),
@@ -81,6 +98,14 @@ describe('SQLite IPC handlers', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		handlers.clear();
+		sent.length = 0;
+		statementLog.listeners = [];
+		statementLog.onSqliteStatementLogged.mockImplementation(
+			(listener: (databasePath: string) => void) => {
+				statementLog.listeners.push(listener);
+				return () => undefined;
+			}
+		);
 		registerSqliteHandlers();
 	});
 
@@ -89,6 +114,7 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:beginTransaction',
 			'sqlite:cancelQuery',
 			'sqlite:checkIntegrity',
+			'sqlite:clearStatementLog',
 			'sqlite:close',
 			'sqlite:countRows',
 			'sqlite:deleteRow',
@@ -105,6 +131,7 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:readQueryHistory',
 			'sqlite:readRows',
 			'sqlite:readSchema',
+			'sqlite:readStatementLog',
 			'sqlite:readSummary',
 			'sqlite:readTransaction',
 			'sqlite:runQuery',
@@ -275,6 +302,22 @@ describe('SQLite IPC handlers', () => {
 		expect(history.forgetSqliteQueryHistory).toHaveBeenCalledWith('h1', 'id-1');
 		await invoke('sqlite:forgetQueryHistory', 'h1', undefined);
 		expect(history.forgetSqliteQueryHistory).toHaveBeenLastCalledWith('h1', null);
+	});
+
+	it('reads and clears the statement log by handle', async () => {
+		const log = { path: '/data/app.db', entries: [] };
+		statementLog.readSqliteStatementLog.mockResolvedValue(log);
+		statementLog.clearSqliteStatementLog.mockResolvedValue(log);
+		await expect(invoke('sqlite:readStatementLog', 'h1')).resolves.toEqual(log);
+		expect(statementLog.readSqliteStatementLog).toHaveBeenCalledWith('h1');
+		await expect(invoke('sqlite:clearStatementLog', 'h1')).resolves.toEqual(log);
+		expect(statementLog.clearSqliteStatementLog).toHaveBeenCalledWith('h1');
+	});
+
+	it('pushes each change to a statement log to every window, with the database path', () => {
+		expect(statementLog.listeners).toHaveLength(1);
+		statementLog.listeners[0]('/data/app.db');
+		expect(sent).toEqual([['sqlite:statementLogged', '/data/app.db']]);
 	});
 
 	it("turns a tab's editing on by handle and off by its token", async () => {

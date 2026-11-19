@@ -36,10 +36,18 @@
  *
  * The end of the tab's last transaction is kept for `readSqliteTransaction()`,
  * so a panel that finds its transaction gone can say how it ended.
+ *
+ * The database's statement log (sqlite-statement-log.ts) records the Begin,
+ * every write run in it (under its id), and the end, however it came:
+ * `finish()` is the one place an end is recorded, and an end call answers
+ * only once it is logged. A statement that fails in it changed nothing and
+ * is not logged; when SQLite rolled the transaction back for it, the logged
+ * end says so. A Commit SQLite refused but kept open is logged as failed.
  */
 
 import { randomUUID } from 'crypto';
 
+import { sqliteStatementParameterValues } from '../../shared/sqlite/history';
 import { SQLITE_QUERY_TIMEOUT_MS } from '../../shared/sqlite/query';
 import {
 	SQLITE_TRANSACTION_ALREADY_OPEN_MESSAGE,
@@ -72,6 +80,12 @@ import {
 	type SqliteTransactionRunTask,
 	type SqliteTransactionTotals,
 } from './sqlite-query-task';
+import {
+	logSqliteStatement,
+	sqliteLoggedBackup,
+	sqliteLoggedChanges,
+	sqliteLoggedFailure,
+} from './sqlite-statement-log';
 import { startSqliteWorkerSession, type SqliteWorkerSession } from './sqlite-worker-runner';
 import type { SqliteWorkerSessionReply } from './sqlite-worker-task';
 
@@ -84,6 +98,8 @@ const MAX_KEPT_ENDS = 64;
 interface OpenTransaction {
 	handle: string;
 	editToken: string;
+	/** The database's path, which its statement log is kept under. */
+	databasePath: string;
 	transactionId: string;
 	startedAt: number;
 	expiresAt: number;
@@ -97,6 +113,8 @@ interface OpenTransaction {
 	cause: SqliteTransactionRollbackCause | null;
 	/** How it ended, once it has. */
 	end: SqliteTransactionEnd | null;
+	/** Settles once its end is in the statement log, so an end call answers after it. */
+	endLogged: Promise<void>;
 	idleTimer: ReturnType<typeof setTimeout> | null;
 	requestTimer: ReturnType<typeof setTimeout> | null;
 	releaseHold: () => void;
@@ -231,6 +249,16 @@ function finish(
 		endedAt: Date.now(),
 	};
 	entry.end = end;
+	entry.endLogged = logSqliteStatement(entry.databasePath, {
+		kind: committed ? 'commit' : 'rollback',
+		sql: committed ? 'COMMIT' : 'ROLLBACK',
+		params: {},
+		table: null,
+		transactionId: entry.transactionId,
+		at: end.endedAt,
+		outcome: sqliteLoggedChanges(state.changes, state.otherChanges, state.schemaChanges),
+		note: end.reason,
+	});
 	lastEnds.delete(entry.editToken);
 	lastEnds.set(entry.editToken, end);
 	if (lastEnds.size > MAX_KEPT_ENDS) {
@@ -273,6 +301,7 @@ export async function beginSqliteTransaction(
 		const entry = {
 			handle,
 			editToken,
+			databasePath: database.displayPath,
 			transactionId: randomUUID(),
 			startedAt,
 			expiresAt: startedAt + SQLITE_TRANSACTION_IDLE_MS,
@@ -281,6 +310,7 @@ export async function beginSqliteTransaction(
 			pendingOp: null,
 			cause: null,
 			end: null,
+			endLogged: Promise.resolve(),
 			idleTimer: null,
 			requestTimer: null,
 			releaseHold,
@@ -306,6 +336,16 @@ export async function beginSqliteTransaction(
 		entry.totals = await entry.session.opened;
 		entry.began = true;
 		armIdle(entry);
+		await logSqliteStatement(entry.databasePath, {
+			kind: 'begin',
+			sql: 'BEGIN IMMEDIATE',
+			params: {},
+			table: null,
+			transactionId: entry.transactionId,
+			at: Date.now(),
+			outcome: sqliteLoggedChanges(0, 0),
+			...sqliteLoggedBackup(write.backupCreated ? write.backup : undefined),
+		});
 		return { ...stateOf(entry), ...(write.backupCreated ? { backup: write.backup } : {}) };
 	});
 }
@@ -336,8 +376,25 @@ export function runInSqliteTransaction(
 	}
 
 	const result = reportSqliteBusy('write', () => send(entry, { op: 'run', task })).then(
-		(reply): SqliteQueryResult => {
+		async (reply): Promise<SqliteQueryResult> => {
 			if (!reply.result) throw new Error('The transaction answered a statement with no result.');
+			// A write is logged under the transaction; whether it reaches the
+			// file is its end's to say. A read changed nothing and is not.
+			if (reply.writes) {
+				await logSqliteStatement(entry.databasePath, {
+					kind: 'query',
+					sql: task.sql,
+					params: sqliteStatementParameterValues(task.sql, task.params),
+					table: null,
+					transactionId: entry.transactionId,
+					at: Date.now(),
+					outcome: sqliteLoggedChanges(
+						reply.changes ?? 0,
+						reply.otherChanges ?? 0,
+						reply.schemaChanges ?? []
+					),
+				});
+			}
 			return {
 				...reply.result,
 				inTransaction: {
@@ -381,10 +438,27 @@ export async function endSqliteTransaction(
 		await reportSqliteBusy('write', () => send(entry, { op: action }));
 	} catch (error) {
 		// A failed ROLLBACK still closed the connection, which rolls back.
-		if (action === 'rollback' && entry.end) return entry.end;
+		if (action === 'rollback' && entry.end) {
+			await entry.endLogged;
+			return entry.end;
+		}
+		// A COMMIT SQLite refused but kept open was tried: the log says so.
+		if (action === 'commit' && !entry.end) {
+			await logSqliteStatement(entry.databasePath, {
+				kind: 'commit',
+				sql: 'COMMIT',
+				params: {},
+				table: null,
+				transactionId: entry.transactionId,
+				at: Date.now(),
+				outcome: sqliteLoggedFailure(error),
+			});
+		}
+		await entry.endLogged;
 		throw error;
 	}
 	if (!entry.end) throw new Error(`The transaction did not end on ${action}.`);
+	await entry.endLogged;
 	return entry.end;
 }
 

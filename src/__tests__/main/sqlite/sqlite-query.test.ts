@@ -227,6 +227,16 @@ const history = vi.hoisted(() => ({ record: vi.fn(async (..._args: unknown[]) =>
 vi.mock('../../../main/sqlite/sqlite-query-history', () => ({
 	getSqliteQueryHistory: () => history,
 }));
+// The statement log lives in the app's data directory; here it is a recorder.
+const statementLog = vi.hoisted(() => ({
+	records: [] as Array<{ path: string; record: Record<string, unknown> }>,
+}));
+vi.mock('../../../main/sqlite/sqlite-statement-log', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/sqlite/sqlite-statement-log')>()),
+	logSqliteStatement: async (path: string, record: Record<string, unknown>) => {
+		statementLog.records.push({ path, record });
+	},
+}));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
@@ -265,6 +275,10 @@ import {
 	SQLITE_DRY_RUN_READ_MESSAGE,
 	sqliteDryRunUntransactedMessage,
 } from '../../../shared/sqlite/dryRun';
+
+beforeEach(() => {
+	statementLog.records = [];
+});
 
 function numbered(count: number): unknown[][] {
 	return Array.from({ length: count }, (_, index) => [BigInt(index + 1)]);
@@ -1031,6 +1045,69 @@ describe('runSqliteQuery with editing on', () => {
 		);
 	});
 
+	it('logs a write with its text, its own parameter values, what it changed, and the backup', async () => {
+		driver.changeCounts = [
+			[0, 0],
+			[2, 3],
+		];
+		await runSqliteQuery({
+			handle: 'h1',
+			sql: '  UPDATE users SET name = :name  ',
+			params: { ':name': { type: 'text', text: 'x' }, ':stale': { type: 'text', text: 'y' } },
+			editToken: 'tok',
+		});
+		expect(statementLog.records).toEqual([
+			{
+				path: '/data/app.db',
+				record: {
+					kind: 'query',
+					sql: '  UPDATE users SET name = :name  ',
+					params: { ':name': { type: 'text', text: 'x' } },
+					table: null,
+					transactionId: null,
+					at: expect.any(Number),
+					outcome: { ok: true, changes: 2, otherChanges: 1, schemaChanges: [] },
+					backupPath: '/data/app.maestro-backup-1.db',
+				},
+			},
+		]);
+	});
+
+	it('logs a write SQLite refused once it ran, as failed', async () => {
+		driver.runError = Object.assign(new Error('NOT NULL constraint failed: users.email'), {
+			code: 'SQLITE_CONSTRAINT_NOTNULL',
+		});
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'UPDATE users SET email = NULL', editToken: 'tok' })
+		).rejects.toThrow('NOT NULL constraint failed: users.email');
+		expect(statementLog.records.map(({ record }) => record.outcome)).toEqual([
+			{ ok: false, error: 'NOT NULL constraint failed: users.email' },
+		]);
+	});
+
+	it('logs nothing for a refusal, a read, or a write stopped before it started', async () => {
+		await expect(
+			runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM t', editToken: 'gone' })
+		).rejects.toThrow(/Editing is not enabled/);
+		handleDb.readonly = true;
+		driver.statement = { ...driver.statement, readonly: true, reader: true };
+		await runSqliteQuery({ handle: 'h1', sql: 'SELECT 1', editToken: 'tok' });
+		handleDb.readonly = false;
+		let finishBackup!: () => void;
+		editing.begin = new Promise<void>((resolve) => (finishBackup = resolve));
+		const run = runSqliteQuery({
+			handle: 'h1',
+			sql: 'DELETE FROM t',
+			editToken: 'tok',
+			queryId: 'w0',
+		});
+		await vi.waitFor(() => expect(editing.begun).toBe(1));
+		cancelSqliteQuery('w0');
+		finishBackup();
+		await expect(run).rejects.toThrow(SQLITE_WRITE_STOPPED_MESSAGE);
+		expect(statementLog.records).toEqual([]);
+	});
+
 	it('refuses a stale grant before anything runs, and does not record it', async () => {
 		await expect(
 			runSqliteQuery({ handle: 'h1', sql: 'DELETE FROM t', editToken: 'gone' })
@@ -1208,8 +1285,9 @@ describe('runSqliteQuery dry run', () => {
 			dryRun: true,
 		});
 
-		// The trial gate, never the write gate with its backup.
+		// The trial gate, never the write gate with its backup; a dry run is never logged.
 		expect(editing.trials).toBe(1);
+		expect(statementLog.records).toEqual([]);
 		expect(editing.begun).toBe(0);
 		expect(targets).toEqual([{ filePath: '/data/app.db', dev: 1, ino: 2 }]);
 		const [connection] = driver.instances;

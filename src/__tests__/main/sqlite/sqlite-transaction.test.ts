@@ -190,6 +190,16 @@ const history = vi.hoisted(() => ({ record: vi.fn(async (..._args: unknown[]) =>
 vi.mock('../../../main/sqlite/sqlite-query-history', () => ({
 	getSqliteQueryHistory: () => history,
 }));
+// The statement log lives in the app's data directory; here it is a recorder.
+const statementLog = vi.hoisted(() => ({
+	records: [] as Array<{ path: string; record: Record<string, unknown> }>,
+}));
+vi.mock('../../../main/sqlite/sqlite-statement-log', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/sqlite/sqlite-statement-log')>()),
+	logSqliteStatement: async (path: string, record: Record<string, unknown>) => {
+		statementLog.records.push({ path, record });
+	},
+}));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
@@ -264,6 +274,7 @@ beforeEach(() => {
 	editing.revoked = [];
 	history.record.mockClear();
 	releaseHooks.clear();
+	statementLog.records = [];
 });
 
 afterEach(async () => {
@@ -554,5 +565,108 @@ describe('a transaction ending on its own', () => {
 		expect(hasOpenSqliteTransaction('tok')).toBe(false);
 		expect(driver.connections[0].closed).toBe(true);
 		expect(editing.released).toBe(1);
+	});
+});
+
+describe('the statement log', () => {
+	const logged = () =>
+		statementLog.records.map(({ record }) => ({
+			kind: record.kind,
+			sql: record.sql,
+			transactionId: record.transactionId,
+			outcome: record.outcome,
+		}));
+
+	it('logs the Begin with its backup, each write under the transaction, and the Commit', async () => {
+		const { transactionId } = await beginSqliteTransaction(grant);
+		await runSqliteQuery({ ...grant, sql: 'UPDATE users SET age = age + 1', transactionId });
+		// A read changed nothing: not logged.
+		await runSqliteQuery({ ...grant, sql: 'SELECT id FROM users', transactionId });
+		await runSqliteQuery({ ...grant, sql: 'CREATE INDEX users_age ON users(age)', transactionId });
+		const end = await endSqliteTransaction({ ...grant, transactionId, action: 'commit' });
+
+		expect(statementLog.records.every(({ path }) => path === '/data/app.db')).toBe(true);
+		expect(statementLog.records[0].record.backupPath).toBe('/data/app.maestro-backup-1.db');
+		expect(logged()).toEqual([
+			{
+				kind: 'begin',
+				sql: 'BEGIN IMMEDIATE',
+				transactionId,
+				outcome: { ok: true, changes: 0, otherChanges: 0, schemaChanges: [] },
+			},
+			{
+				kind: 'query',
+				sql: 'UPDATE users SET age = age + 1',
+				transactionId,
+				outcome: { ok: true, changes: 3, otherChanges: 2, schemaChanges: [] },
+			},
+			{
+				kind: 'query',
+				sql: 'CREATE INDEX users_age ON users(age)',
+				transactionId,
+				outcome: {
+					ok: true,
+					changes: 0,
+					otherChanges: 0,
+					// This statement's own schema change, not the transaction's running total.
+					schemaChanges: [{ change: 'created', type: 'index', name: 'users_age' }],
+				},
+			},
+			{
+				kind: 'commit',
+				sql: 'COMMIT',
+				transactionId,
+				outcome: {
+					ok: true,
+					changes: 3,
+					otherChanges: 2,
+					schemaChanges: [{ change: 'created', type: 'index', name: 'users_age' }],
+				},
+			},
+		]);
+		expect(statementLog.records[3].record.note).toBe(end.reason);
+	});
+
+	it('logs a Roll back, and an end that came on its own, with the reason', async () => {
+		const first = await beginSqliteTransaction(grant);
+		await endSqliteTransaction({
+			...grant,
+			transactionId: first.transactionId,
+			action: 'rollback',
+		});
+		const second = await beginSqliteTransaction(grant);
+		for (const hook of [...editing.revoked]) hook('locked');
+		await vi.waitFor(() => expect(hasOpenSqliteTransaction('tok')).toBe(false));
+		await settle();
+
+		const ends = statementLog.records.filter(({ record }) => record.kind === 'rollback');
+		expect(ends.map(({ record }) => [record.transactionId, record.sql])).toEqual([
+			[first.transactionId, 'ROLLBACK'],
+			[second.transactionId, 'ROLLBACK'],
+		]);
+		expect(ends[0].record.note).toMatch(/^Rolled back\./);
+		expect(ends[1].record.note).toMatch(/^Rolled back because editing was locked/);
+	});
+
+	it('logs a Commit SQLite refused but kept as failed, and no failed statement', async () => {
+		const { transactionId } = await beginSqliteTransaction(grant);
+		await expect(
+			runSqliteQuery({ ...grant, sql: 'INSERT INTO users(id) VALUES (1)', transactionId })
+		).rejects.toThrow('UNIQUE constraint failed');
+		driver.commitError = Object.assign(new Error('FOREIGN KEY constraint failed'), {
+			code: 'SQLITE_CONSTRAINT_FOREIGNKEY',
+		});
+		await expect(
+			endSqliteTransaction({ ...grant, transactionId, action: 'commit' })
+		).rejects.toThrow('FOREIGN KEY constraint failed');
+		expect(logged().slice(1)).toEqual([
+			{
+				kind: 'commit',
+				sql: 'COMMIT',
+				transactionId,
+				outcome: { ok: false, error: 'FOREIGN KEY constraint failed' },
+			},
+		]);
+		driver.commitError = null;
 	});
 });

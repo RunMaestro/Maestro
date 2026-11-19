@@ -68,8 +68,15 @@ export function isRecordableSqliteQuery(sql: string): boolean {
 	return text.length > 0 && text.length <= SQLITE_QUERY_HISTORY_MAX_SQL_CHARS;
 }
 
-/** The values of the parameters `sql` holds, and no others. */
-function paramsForStatement(sql: string, params: SqliteParameterValues): SqliteParameterValues {
+/**
+ * The values of the parameters `sql` holds, and no others: what a history
+ * entry or a statement-log entry keeps of a run's values.
+ */
+export function sqliteStatementParameterValues(
+	sql: string,
+	params: SqliteParameterValues | null | undefined
+): SqliteParameterValues {
+	if (!params) return {};
 	const kept: SqliteParameterValues = {};
 	for (const { label } of sqliteQueryParameters(sql).parameters) {
 		const value = Object.prototype.hasOwnProperty.call(params, label) ? params[label] : undefined;
@@ -100,7 +107,7 @@ export function addSqliteQueryHistoryRun(
 		id: earlier?.id ?? newId(),
 		sql,
 		plan: run.plan,
-		params: paramsForStatement(sql, run.params),
+		params: sqliteStatementParameterValues(sql, run.params),
 		ranAt: run.ranAt,
 		runs: (earlier?.runs ?? 0) + 1,
 		outcome: keptOutcome(run.outcome),
@@ -127,7 +134,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseParams(value: unknown): SqliteParameterValues | null {
+/**
+ * Stored parameter values, checked: every label a sigil-led name and every
+ * value a typed text, or null when anything does not fit. Shared with the
+ * statement log's store (statementLog.ts).
+ */
+export function parseSqliteParameterValues(value: unknown): SqliteParameterValues | null {
 	if (!isRecord(value)) return null;
 	const params: SqliteParameterValues = {};
 	for (const [label, raw] of Object.entries(value)) {
@@ -166,7 +178,7 @@ function parseOutcome(value: unknown): SqliteQueryHistoryOutcome | null {
 
 function parseEntry(value: unknown): SqliteQueryHistoryEntry | null {
 	if (!isRecord(value)) return null;
-	const params = parseParams(value.params);
+	const params = parseSqliteParameterValues(value.params);
 	const outcome = parseOutcome(value.outcome);
 	if (
 		typeof value.id !== 'string' ||

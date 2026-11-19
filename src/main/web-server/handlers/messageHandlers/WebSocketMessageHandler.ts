@@ -137,6 +137,7 @@ import {
 	handleSqliteInsertRow,
 	handleSqliteListObjects,
 	handleSqliteQueryHistory,
+	handleSqliteStatementLog,
 	handleSqliteReadRows,
 	handleSqliteReadSchema,
 	handleSqliteReadSummary,
@@ -491,6 +492,9 @@ export class WebSocketMessageHandler {
 
 			case 'sqlite_query_history':
 				void handleSqliteQueryHistory(this.ctx, client, message);
+				break;
+			case 'sqlite_statement_log':
+				void handleSqliteStatementLog(this.ctx, client, message);
 				break;
 
 			case 'sqlite_update_cell':

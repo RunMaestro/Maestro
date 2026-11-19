@@ -77,6 +77,12 @@
  *     returns no step, since its own row alone cannot be put back honestly.
  *     Main keeps no undo state: the step travels with the result, so the
  *     viewer and the CLI undo the same way.
+ *   - **Logged.** Once its transaction has run, each write (an undo too) is
+ *     recorded in the database's statement log (`loggedWrite()`, over
+ *     sqlite-statement-log.ts): the single-row statement as a person would
+ *     type it, values written in, and what it changed or why it failed. A
+ *     write refused before its transaction (no grant, a table that cannot be
+ *     edited, the backup) never reached the file and is not logged.
  *
  * SQLite's own failures (a constraint, a STRICT type) reach the caller with
  * SQLite's message. A busy database (another process held the lock past the
@@ -91,6 +97,11 @@ import type { SqliteBindValue } from '../../shared/sqlite/filter';
 import { sqliteParameterBindValue } from '../../shared/sqlite/query';
 import { sqliteColumnAffinity, sqliteStaleRowMessage } from '../../shared/sqlite/schema';
 import { quoteSqliteIdentifier } from '../../shared/sqlite/sql';
+import {
+	sqliteRowWriteStatement,
+	type SqliteLogValue,
+	type SqliteRowWrite,
+} from '../../shared/sqlite/statementLog';
 import type {
 	SqliteAffinity,
 	SqliteBackup,
@@ -108,6 +119,7 @@ import type {
 	SqliteRowInsertRequest,
 	SqliteRowInsertResult,
 	SqliteRowKey,
+	SqliteStatementLogKind,
 	SqliteUndoRequest,
 	SqliteUndoResult,
 	SqliteUndoStep,
@@ -115,7 +127,7 @@ import type {
 import type Database from 'better-sqlite3';
 
 import { sqliteKeyValue } from './sqlite-cell';
-import { reportSqliteBusy } from './sqlite-connection';
+import { describeSqliteBusy, reportSqliteBusy } from './sqlite-connection';
 import { beginSqliteWrite, requireSqliteEditing, type SqliteWriteSession } from './sqlite-editing';
 import {
 	resolveSqliteEditability,
@@ -127,6 +139,12 @@ import {
 import { findSqliteObject, readSqliteObjectSummaries } from './sqlite-objects';
 import { sqliteRowVersionExpression, sqliteRowVersionParam } from './sqlite-row-version';
 import { sqliteRowSelectList, sqliteSelectedRow } from './sqlite-rows';
+import {
+	logSqliteStatement,
+	sqliteLoggedBackup,
+	sqliteLoggedChanges,
+	sqliteLoggedFailure,
+} from './sqlite-statement-log';
 
 function requireText(value: unknown, label: string, what = 'A cell edit'): string {
 	if (typeof value !== 'string' || value === '') {
@@ -300,6 +318,8 @@ interface SqliteValueWrite {
 	/** The value as the rowid column's check reads it. */
 	asParameter: SqliteParameterValue;
 	given: SqliteWriteValue;
+	/** The value as the statement log writes it in (a restored BLOB stays a BLOB). */
+	logged: SqliteLogValue;
 	/**
 	 * Why the value as stored (`typeof` and the value, from `RETURNING`) is not
 	 * the one meant, or null when it is.
@@ -321,6 +341,7 @@ function givenValueWrite(
 		column,
 		asParameter: value,
 		given,
+		logged: value,
 		storedProblem: (affinity, storedType, stored) => {
 			const problem = sqliteStoredValueProblem(column, affinity, given, storedType, stored);
 			return problem && nothing === 'inserted'
@@ -358,6 +379,7 @@ function restoredValueWrite(column: string, value: SqliteKeyValue): SqliteValueW
 					? { type: 'number', text: value.text }
 					: { type: 'text', text: value.text },
 		given,
+		logged: value,
 		storedProblem: (_affinity, _storedType, stored) =>
 			sameKeyValue(sqliteKeyValue(stored), value)
 				? null
@@ -368,6 +390,50 @@ function restoredValueWrite(column: string, value: SqliteKeyValue): SqliteValueW
 /** The backup a write took, on its result only when this write took it. */
 function backupField(session: SqliteWriteSession): { backup?: SqliteBackup } {
 	return session.backupCreated ? { backup: session.backup } : {};
+}
+
+/**
+ * Run a write's transaction, synchronously and at once (the grant is live
+ * until the caller's next await), and record it in the database's statement
+ * log once it has reached the file: the single-row statement and what it did,
+ * or why it failed. A busy failure is restated (`describeSqliteBusy()`)
+ * before it is logged and thrown, so the log and the caller say the same.
+ */
+async function loggedWrite<T>(
+	session: SqliteWriteSession,
+	kind: SqliteStatementLogKind,
+	statement: SqliteRowWrite,
+	run: () => T,
+	changed: (done: T) => number
+): Promise<{ done: T; elapsedMs: number }> {
+	const started = performance.now();
+	const record = {
+		kind,
+		table: statement.table,
+		sql: sqliteRowWriteStatement(statement),
+		params: {},
+		transactionId: null,
+		...sqliteLoggedBackup(session.backupCreated ? session.backup : undefined),
+	};
+	let done: T;
+	try {
+		done = run();
+	} catch (error) {
+		const described = describeSqliteBusy(error, 'write');
+		await logSqliteStatement(session.database.displayPath, {
+			...record,
+			at: Date.now(),
+			outcome: sqliteLoggedFailure(described),
+		});
+		throw described;
+	}
+	const elapsedMs = Math.round(performance.now() - started);
+	await logSqliteStatement(session.database.displayPath, {
+		...record,
+		at: Date.now(),
+		outcome: sqliteLoggedChanges(1, changed(done)),
+	});
+	return { done, elapsedMs };
 }
 
 /** Everything an edit needs to know about its table, checked. */
@@ -426,7 +492,8 @@ async function writeCell(
 	name: string,
 	row: SqliteRowKey,
 	version: string | null,
-	write: SqliteValueWrite
+	write: SqliteValueWrite,
+	kind: 'cell' | 'undo'
 ): Promise<SqliteCellWriteDone> {
 	const { column, given } = write;
 
@@ -457,48 +524,54 @@ async function writeCell(
 		.raw(true)
 		.safeIntegers(true);
 
-	const started = performance.now();
-	const done = db.transaction(() => {
-		const changesBefore = totalChanges(db);
-		const old = readBefore.get(...target.params) as unknown[] | undefined;
-		if (!old) throw staleRowError(db, plan, condition, version, 'changed');
-		const changed = update.all(given, ...target.params) as unknown[][];
-		if (changed.length === 0) throw staleRowError(db, plan, condition, version, 'changed');
-		if (changed.length > 1) {
-			// The key is unique, so this cannot happen; refuse rather than trust it.
-			throw new Error(
-				`${condition.label} matched ${changed.length} rows of ${object.name}, so nothing was changed.`
-			);
-		}
-		const storedProblem = write.storedProblem(
-			affinity,
-			changed[0][keyColumns.length],
-			changed[0][keyColumns.length + 1]
-		);
-		if (storedProblem) throw new Error(storedProblem);
+	const { done, elapsedMs } = await loggedWrite(
+		session,
+		kind,
+		{ kind: 'cell', table: object.name, column, row, value: write.logged },
+		() =>
+			db.transaction(() => {
+				const changesBefore = totalChanges(db);
+				const old = readBefore.get(...target.params) as unknown[] | undefined;
+				if (!old) throw staleRowError(db, plan, condition, version, 'changed');
+				const changed = update.all(given, ...target.params) as unknown[][];
+				if (changed.length === 0) throw staleRowError(db, plan, condition, version, 'changed');
+				if (changed.length > 1) {
+					// The key is unique, so this cannot happen; refuse rather than trust it.
+					throw new Error(
+						`${condition.label} matched ${changed.length} rows of ${object.name}, so nothing was changed.`
+					);
+				}
+				const storedProblem = write.storedProblem(
+					affinity,
+					changed[0][keyColumns.length],
+					changed[0][keyColumns.length + 1]
+				);
+				if (storedProblem) throw new Error(storedProblem);
 
-		const key = returnedRowKey(identity, changed[0]);
-		let after: SqliteRowKeyCondition;
-		try {
-			after = sqliteRowKeyCondition(identity, key, object.name);
-		} catch (error) {
-			throw new Error(
-				`Setting ${column} this way would leave the row with no key to name it by, so nothing was changed. ${error instanceof Error ? error.message : String(error)}`
-			);
-		}
-		const read = readRowByKey(db, plan, after);
-		if (!read) {
-			throw new Error(
-				`${object.name} has no row with ${after.label} after the change (a trigger may have removed it), so nothing was changed.`
-			);
-		}
-		return {
-			key,
-			...read,
-			before: sqliteKeyValue(old[0]),
-			otherChanges: Math.max(0, totalChanges(db) - changesBefore - 1),
-		};
-	})();
+				const key = returnedRowKey(identity, changed[0]);
+				let after: SqliteRowKeyCondition;
+				try {
+					after = sqliteRowKeyCondition(identity, key, object.name);
+				} catch (error) {
+					throw new Error(
+						`Setting ${column} this way would leave the row with no key to name it by, so nothing was changed. ${error instanceof Error ? error.message : String(error)}`
+					);
+				}
+				const read = readRowByKey(db, plan, after);
+				if (!read) {
+					throw new Error(
+						`${object.name} has no row with ${after.label} after the change (a trigger may have removed it), so nothing was changed.`
+					);
+				}
+				return {
+					key,
+					...read,
+					before: sqliteKeyValue(old[0]),
+					otherChanges: Math.max(0, totalChanges(db) - changesBefore - 1),
+				};
+			})(),
+		(edited) => edited.otherChanges
+	);
 
 	return {
 		plan,
@@ -508,7 +581,7 @@ async function writeCell(
 		before: done.before,
 		otherChanges: done.otherChanges,
 		...backupField(session),
-		elapsedMs: Math.round(performance.now() - started),
+		elapsedMs,
 	};
 }
 
@@ -540,7 +613,8 @@ async function updateCell(request: SqliteCellUpdateRequest): Promise<SqliteCellU
 		name,
 		request.row,
 		version,
-		write
+		write,
+		'cell'
 	);
 	const { object, columns } = done.plan;
 	return {
@@ -638,7 +712,8 @@ async function writeRow(
 	editToken: string,
 	name: string,
 	fields: SqliteValueWrite[],
-	rowid: string | null
+	rowid: string | null,
+	kind: 'insert' | 'undo'
 ): Promise<SqliteRowWriteDone> {
 	// Refuse what would be refused anyway before the backup is taken.
 	planInsert(requireSqliteEditing(handle, editToken).db, name, fields, rowid);
@@ -670,42 +745,53 @@ async function writeRow(
 		.safeIntegers(true);
 	const params = [...(keepRowid ? [keepRowid.given] : []), ...entries.map(({ given }) => given)];
 
-	const started = performance.now();
-	const added = db.transaction(() => {
-		const before = totalChanges(db);
-		const returned = insert.all(...params) as unknown[][];
-		if (returned.length !== 1) {
-			// INSERT adds one row or fails; none means a trigger's RAISE(IGNORE).
-			throw new Error(
-				returned.length === 0
-					? `A trigger on ${object.name} dropped the new row (RAISE(IGNORE)), so nothing was inserted.`
-					: `An insert into ${object.name} returned ${returned.length} rows, so nothing was inserted.`
-			);
-		}
-		const [first] = returned;
-		entries.forEach((entry, index) => {
-			const at = keyColumns.length + index * 2;
-			const problem = entry.storedProblem(entry.affinity, first[at], first[at + 1]);
-			if (problem) throw new Error(problem);
-		});
+	const { done: added, elapsedMs } = await loggedWrite(
+		session,
+		kind,
+		{
+			kind: 'insert',
+			table: object.name,
+			values: Object.fromEntries(entries.map((entry) => [entry.column, entry.logged])),
+			rowid: keepRowid ? rowid : null,
+		},
+		() =>
+			db.transaction(() => {
+				const before = totalChanges(db);
+				const returned = insert.all(...params) as unknown[][];
+				if (returned.length !== 1) {
+					// INSERT adds one row or fails; none means a trigger's RAISE(IGNORE).
+					throw new Error(
+						returned.length === 0
+							? `A trigger on ${object.name} dropped the new row (RAISE(IGNORE)), so nothing was inserted.`
+							: `An insert into ${object.name} returned ${returned.length} rows, so nothing was inserted.`
+					);
+				}
+				const [first] = returned;
+				entries.forEach((entry, index) => {
+					const at = keyColumns.length + index * 2;
+					const problem = entry.storedProblem(entry.affinity, first[at], first[at + 1]);
+					if (problem) throw new Error(problem);
+				});
 
-		const key = returnedRowKey(identity, first);
-		let condition: SqliteRowKeyCondition;
-		try {
-			condition = sqliteRowKeyCondition(identity, key, object.name);
-		} catch (error) {
-			throw new Error(
-				`The new row would have no key to name it by, so nothing was inserted; give every key column a value. ${error instanceof Error ? error.message : String(error)}`
-			);
-		}
-		const read = readRowByKey(db, plan, condition);
-		if (!read) {
-			throw new Error(
-				`${object.name} has no row with ${condition.label} after the insert (a trigger may have removed it), so nothing was inserted.`
-			);
-		}
-		return { key, ...read, otherChanges: Math.max(0, totalChanges(db) - before - 1) };
-	})();
+				const key = returnedRowKey(identity, first);
+				let condition: SqliteRowKeyCondition;
+				try {
+					condition = sqliteRowKeyCondition(identity, key, object.name);
+				} catch (error) {
+					throw new Error(
+						`The new row would have no key to name it by, so nothing was inserted; give every key column a value. ${error instanceof Error ? error.message : String(error)}`
+					);
+				}
+				const read = readRowByKey(db, plan, condition);
+				if (!read) {
+					throw new Error(
+						`${object.name} has no row with ${condition.label} after the insert (a trigger may have removed it), so nothing was inserted.`
+					);
+				}
+				return { key, ...read, otherChanges: Math.max(0, totalChanges(db) - before - 1) };
+			})(),
+		(inserted) => inserted.otherChanges
+	);
 
 	return {
 		table: plan,
@@ -714,7 +800,7 @@ async function writeRow(
 		version: added.version,
 		otherChanges: added.otherChanges,
 		...backupField(session),
-		elapsedMs: Math.round(performance.now() - started),
+		elapsedMs,
 	};
 }
 
@@ -743,7 +829,7 @@ async function insertRow(request: SqliteRowInsertRequest): Promise<SqliteRowInse
 		givenValueWrite(column, value, 'inserted')
 	);
 
-	const done = await writeRow(request.handle, request.editToken, name, fields, null);
+	const done = await writeRow(request.handle, request.editToken, name, fields, null, 'insert');
 	const { object, columns } = done.table;
 	return {
 		name: object.name,
@@ -784,7 +870,8 @@ async function removeRow(
 	editToken: string,
 	name: string,
 	row: SqliteRowKey,
-	version: string | null
+	version: string | null,
+	kind: 'delete' | 'undo'
 ): Promise<SqliteRowRemoveDone> {
 	const plan = (db: Database.Database) => {
 		const table = findEditableTable(db, name);
@@ -813,29 +900,35 @@ async function removeRow(
 		.raw(true)
 		.safeIntegers(true);
 
-	const started = performance.now();
-	const removed = db.transaction(() => {
-		const before = totalChanges(db);
-		const deleted = remove.all(...target.params) as unknown[][];
-		if (deleted.length === 0) throw staleRowError(db, table, condition, version, 'deleted');
-		if (deleted.length > 1) {
-			// The key is unique, so this cannot happen; refuse rather than trust it.
-			throw new Error(
-				`${condition.label} matched ${deleted.length} rows of ${object.name}, so nothing was deleted.`
-			);
-		}
-		const [first] = deleted;
-		return {
-			key: returnedRowKey(identity, first),
-			values: Object.fromEntries(
-				restorable.map((column, index) => [
-					column,
-					sqliteKeyValue(first[keyColumns.length + index]),
-				])
-			),
-			otherChanges: Math.max(0, totalChanges(db) - before - 1),
-		};
-	})();
+	const { done: removed, elapsedMs } = await loggedWrite(
+		session,
+		kind,
+		{ kind: 'delete', table: object.name, row },
+		() =>
+			db.transaction(() => {
+				const before = totalChanges(db);
+				const deleted = remove.all(...target.params) as unknown[][];
+				if (deleted.length === 0) throw staleRowError(db, table, condition, version, 'deleted');
+				if (deleted.length > 1) {
+					// The key is unique, so this cannot happen; refuse rather than trust it.
+					throw new Error(
+						`${condition.label} matched ${deleted.length} rows of ${object.name}, so nothing was deleted.`
+					);
+				}
+				const [first] = deleted;
+				return {
+					key: returnedRowKey(identity, first),
+					values: Object.fromEntries(
+						restorable.map((column, index) => [
+							column,
+							sqliteKeyValue(first[keyColumns.length + index]),
+						])
+					),
+					otherChanges: Math.max(0, totalChanges(db) - before - 1),
+				};
+			})(),
+		(deleted) => deleted.otherChanges
+	);
 
 	return {
 		table,
@@ -844,7 +937,7 @@ async function removeRow(
 		values: removed.values,
 		otherChanges: removed.otherChanges,
 		...backupField(session),
-		elapsedMs: Math.round(performance.now() - started),
+		elapsedMs,
 	};
 }
 
@@ -867,7 +960,14 @@ export function deleteSqliteRow(request: SqliteRowDeleteRequest): Promise<Sqlite
 async function deleteRow(request: SqliteRowDeleteRequest): Promise<SqliteRowDeleteResult> {
 	const name = requireText(request?.name, 'table name', 'A delete');
 	const version = sqliteRowVersionParam(request.version);
-	const done = await removeRow(request.handle, request.editToken, name, request.row, version);
+	const done = await removeRow(
+		request.handle,
+		request.editToken,
+		name,
+		request.row,
+		version,
+		'delete'
+	);
 	return {
 		name: done.table.object.name,
 		key: done.key,
@@ -935,12 +1035,12 @@ async function undoEdit(request: SqliteUndoRequest): Promise<SqliteUndoResult> {
 			const column = requireText(step.column, 'column name', 'An undo');
 			const write = restoredValueWrite(column, step.value);
 			const version = undoStepVersion(step.version);
-			const done = await writeCell(handle, editToken, name, step.row, version, write);
+			const done = await writeCell(handle, editToken, name, step.row, version, write, 'undo');
 			return result(done, done.plan.object.name);
 		}
 		case 'remove-row': {
 			const version = undoStepVersion(step.version);
-			const done = await removeRow(handle, editToken, name, step.row, version);
+			const done = await removeRow(handle, editToken, name, step.row, version, 'undo');
 			return result(done, done.table.object.name);
 		}
 		case 'restore-row': {
@@ -954,7 +1054,7 @@ async function undoEdit(request: SqliteUndoRequest): Promise<SqliteUndoResult> {
 			const fields = Object.entries(values).map(([column, value]) =>
 				restoredValueWrite(column, value)
 			);
-			const done = await writeRow(handle, editToken, name, fields, step.rowid ?? null);
+			const done = await writeRow(handle, editToken, name, fields, step.rowid ?? null, 'undo');
 			return result(done, done.table.object.name);
 		}
 		default:

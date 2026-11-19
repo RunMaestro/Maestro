@@ -268,6 +268,7 @@ import type {
 	SqliteRowInsertResult,
 	SqliteRowsPage,
 	SqliteRowsRequest,
+	SqliteStatementLog,
 	SqliteTransactionEnd,
 	SqliteTransactionEndRequest,
 	SqliteTransactionRequest,
@@ -2021,6 +2022,9 @@ interface MaestroAPI {
 		exportQuery: (request: SqliteQueryExportRequest) => Promise<SqliteQueryExported>;
 		readQueryHistory: (handle: string) => Promise<SqliteQueryHistory>;
 		forgetQueryHistory: (handle: string, entryId: string | null) => Promise<SqliteQueryHistory>;
+		readStatementLog: (handle: string) => Promise<SqliteStatementLog>;
+		clearStatementLog: (handle: string) => Promise<SqliteStatementLog>;
+		onStatementLogged: (callback: (databasePath: string) => void) => () => void;
 		saveBlob: (request: SqliteBlobRequest) => Promise<SqliteBlobSaved>;
 		enableEditing: (handle: string) => Promise<SqliteEditingGrant>;
 		disableEditing: (handle: string, editToken: string) => Promise<boolean>;

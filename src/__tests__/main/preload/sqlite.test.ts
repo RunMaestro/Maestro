@@ -5,10 +5,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockInvoke = vi.fn();
+const mockOn = vi.fn();
+const mockRemoveListener = vi.fn();
 
 vi.mock('electron', () => ({
 	ipcRenderer: {
 		invoke: (...args: unknown[]) => mockInvoke(...args),
+		on: (...args: unknown[]) => mockOn(...args),
+		removeListener: (...args: unknown[]) => mockRemoveListener(...args),
 	},
 }));
 
@@ -205,6 +209,23 @@ describe('SQLite Preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('sqlite:forgetQueryHistory', 'h1', 'id-1');
 		await api.forgetQueryHistory('h1', null);
 		expect(mockInvoke).toHaveBeenCalledWith('sqlite:forgetQueryHistory', 'h1', null);
+	});
+
+	it('reads and clears the statement log, and hears it change', async () => {
+		mockInvoke.mockResolvedValue({ path: '/data/app.db', entries: [] });
+		await api.readStatementLog('h1');
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:readStatementLog', 'h1');
+		await api.clearStatementLog('h1');
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:clearStatementLog', 'h1');
+
+		const heard = vi.fn();
+		const stop = api.onStatementLogged(heard);
+		expect(mockOn).toHaveBeenCalledWith('sqlite:statementLogged', expect.any(Function));
+		const handler = mockOn.mock.calls[0][1] as (event: unknown, path: string) => void;
+		handler({}, '/data/app.db');
+		expect(heard).toHaveBeenCalledWith('/data/app.db');
+		stop();
+		expect(mockRemoveListener).toHaveBeenCalledWith('sqlite:statementLogged', handler);
 	});
 
 	it('closes a handle', async () => {

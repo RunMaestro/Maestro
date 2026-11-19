@@ -39,6 +39,7 @@ import {
 	sqliteDelete,
 	sqliteHistory,
 	sqliteInfo,
+	sqliteLog,
 	sqliteInsert,
 	sqliteInsertValuesFromFlags,
 	sqliteQuery,
@@ -1463,6 +1464,149 @@ describe('sqlite history', () => {
 		mockReply({ type: 'sqlite_history_result', success: false, error: 'No history entry zz' });
 		await expect(sqliteHistory(DB, { forget: 'zz' })).rejects.toThrow('__exit__');
 		expect(errorSpy.mock.calls.join('\n')).toContain('No history entry zz');
+	});
+});
+
+describe('sqlite log', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const logged = () => logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+	const ok = (changes: number, otherChanges = 0) => ({
+		ok: true,
+		changes,
+		otherChanges,
+		schemaChanges: [],
+	});
+	const ENTRIES = [
+		{
+			id: 'r1',
+			kind: 'rollback',
+			sql: 'ROLLBACK',
+			params: {},
+			table: null,
+			transactionId: 'tx000001-0000',
+			at: Date.now() - 10_000,
+			outcome: ok(2),
+			note: 'Rolled back. Nothing it held was kept (1 statement: 2 rows changed).',
+		},
+		{
+			id: 'q1',
+			kind: 'query',
+			sql: 'DELETE FROM logs WHERE id > :id',
+			params: { ':id': { type: 'number', text: '3' } },
+			table: null,
+			transactionId: 'tx000001-0000',
+			at: Date.now() - 20_000,
+			outcome: ok(2),
+		},
+		{
+			id: 'c1',
+			kind: 'cell',
+			sql: "UPDATE users SET email = 'a@b.c' WHERE rowid = 7",
+			params: {},
+			table: 'users',
+			transactionId: null,
+			at: Date.now() - 60_000,
+			outcome: ok(1, 2),
+			backupPath: '/data/app.maestro-backup-1.db',
+		},
+		{
+			id: 'f1',
+			kind: 'insert',
+			sql: 'INSERT INTO users (id) VALUES (1)',
+			params: {},
+			table: 'users',
+			transactionId: null,
+			at: Date.now() - 120_000,
+			outcome: { ok: false, error: 'UNIQUE constraint failed: users.id' },
+		},
+	];
+
+	function respondLog(entries: unknown[] = ENTRIES, removed?: number) {
+		return mockReply({
+			type: 'sqlite_log_result',
+			success: true,
+			database: { handle: 'h1', displayPath: DB, fileBytes: 4096 },
+			log: { path: DB, entries },
+			...(removed !== undefined ? { removed } : {}),
+		});
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('lists every write newest first: what it did, where it stands, its statement', async () => {
+		const sent = respondLog();
+		await sqliteLog(DB, {});
+		expect(sent[0]).toEqual({
+			type: 'sqlite_statement_log',
+			path: DB,
+			responseType: 'sqlite_log_result',
+		});
+		const out = logged();
+		expect(out).toContain(`Statement log of ${DB}: 4 writes, newest first.`);
+		expect(out).toMatch(/ {2}rollback {2}rolled back {2}transaction tx000001/);
+		expect(out).toContain('    Rolled back. Nothing it held was kept');
+		// A write inside the rolled-back transaction is in the log, not the file.
+		expect(out).toMatch(/query {2}changed 2 rows {2}\(rolled back, not in the file\)/);
+		expect(out).toContain('    :id = "3" (number)');
+		expect(out).toMatch(/cell edit {2}changed 1 row \(\+2 by triggers\)/);
+		expect(out).toContain("    UPDATE users SET email = 'a@b.c' WHERE rowid = 7");
+		expect(out).toContain('    Backed the file up first to /data/app.maestro-backup-1.db');
+		expect(out).toMatch(/insert {2}failed/);
+		expect(out).toContain('    UNIQUE constraint failed: users.id');
+	});
+
+	it('shows the newest --limit writes, and says there are more', async () => {
+		respondLog();
+		await sqliteLog(DB, { limit: '1' });
+		const out = logged();
+		expect(out).toContain('4 writes, newest first (the newest 1; --limit shows more).');
+		expect(out).not.toContain('UPDATE users');
+	});
+
+	it('says when nothing is logged, and clears the log', async () => {
+		respondLog([]);
+		await sqliteLog(DB, {});
+		expect(logged()).toContain(`No writes to ${DB} are logged.`);
+
+		const sent = respondLog([], 4);
+		await sqliteLog(DB, { clear: true, json: true });
+		expect(sent[0]).toMatchObject({ clear: true });
+		expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0]))).toEqual({
+			success: true,
+			path: DB,
+			removed: 4,
+			total: 0,
+			entries: [],
+		});
+	});
+
+	it('prints the entries whole as JSON, cut to --limit', async () => {
+		respondLog();
+		await sqliteLog(DB, { json: true, limit: '2' });
+		expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0]))).toEqual({
+			success: true,
+			path: DB,
+			total: 4,
+			entries: ENTRIES.slice(0, 2),
+		});
+	});
+
+	it('refuses a bad --limit before asking the app, and exits 1 on the app error', async () => {
+		const sent = respondLog();
+		await expect(sqliteLog(DB, { limit: 'many' })).rejects.toThrow('__exit__');
+		expect(sent).toHaveLength(0);
+
+		mockReply({ type: 'sqlite_log_result', success: false, error: 'not open' });
+		await expect(sqliteLog(DB, {})).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('not open');
 	});
 });
 
