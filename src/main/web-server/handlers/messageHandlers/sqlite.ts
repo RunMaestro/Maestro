@@ -1,6 +1,7 @@
 /**
  * SQLite WebSocket handlers, the CLI half of the SQLite viewer:
  *
+ *   - `sqlite_read_summary`: the summary strip and integrity flag (`maestro-cli sqlite info`).
  *   - `sqlite_list_objects`: the table-list rail (`maestro-cli sqlite tables`).
  *   - `sqlite_read_schema`: one object's schema pane (`maestro-cli sqlite schema`).
  *   - `sqlite_read_rows`: one window of the table view (`maestro-cli sqlite rows`).
@@ -10,7 +11,8 @@
  * The CLI cannot link better-sqlite3 (it is a plain-Node bundle with no native
  * modules), so it asks the running app. The answer comes from the SAME
  * functions the `sqlite:*` IPC handlers call: `openSqliteDatabase()` for the
- * read-only connection, `listSqliteObjects()` for the rail, the budgeted
+ * read-only connection, `readSqliteDatabaseSummary()` and
+ * `checkSqliteIntegrity()` for the summary strip, `listSqliteObjects()` for the rail, the budgeted
  * stats reader for the row counts and sizes, `readSqliteObjectSchema()` for
  * the schema pane, `readSqliteRows()` for the table view, and the budgeted
  * row counter run to the end for the footer's count, and `saveSqliteBlob()`
@@ -26,10 +28,16 @@
 import { saveSqliteBlob } from '../../../sqlite/sqlite-blob';
 import { countAllSqliteRows } from '../../../sqlite/sqlite-count';
 import { openSqliteDatabase } from '../../../sqlite/sqlite-database';
+import { checkSqliteIntegrity } from '../../../sqlite/sqlite-integrity';
 import { listSqliteObjects, readAllSqliteObjectStats } from '../../../sqlite/sqlite-objects';
 import { readSqliteRows } from '../../../sqlite/sqlite-rows';
 import { readSqliteObjectSchema } from '../../../sqlite/sqlite-schema';
-import type { SqliteObjectKind, SqliteSortSpec } from '../../../../shared/sqlite/types';
+import { readSqliteDatabaseSummary } from '../../../sqlite/sqlite-summary';
+import type {
+	SqliteIntegrityMode,
+	SqliteObjectKind,
+	SqliteSortSpec,
+} from '../../../../shared/sqlite/types';
 import { SQLITE_OBJECT_KINDS } from '../../../../shared/sqlite/objects';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -49,6 +57,38 @@ function parseSort(value: unknown): SqliteSortSpec | null | undefined {
 function parseFilter(value: unknown): string | null | undefined {
 	if (value === undefined || value === null) return null;
 	return typeof value === 'string' ? value : undefined;
+}
+
+export async function handleSqliteReadSummary(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (payload: Record<string, unknown>) => {
+		ctx.send(client, { type: 'sqlite_summary_result', ...payload, requestId: message.requestId });
+	};
+
+	const filePath = typeof message.path === 'string' ? message.path : '';
+	if (!filePath) {
+		reply({ success: false, error: 'Missing required "path" for sqlite_read_summary' });
+		return;
+	}
+	// Optional: without it the reply carries the header facts only.
+	const integrity: SqliteIntegrityMode | null =
+		message.integrity === 'quick' || message.integrity === 'full' ? message.integrity : null;
+	if (integrity === null && message.integrity !== undefined && message.integrity !== null) {
+		reply({ success: false, error: 'integrity must be "quick" or "full"' });
+		return;
+	}
+
+	try {
+		const database = await openSqliteDatabase(filePath);
+		const summary = readSqliteDatabaseSummary(database.handle);
+		const result = integrity ? await checkSqliteIntegrity(database.handle, integrity) : null;
+		reply({ success: true, database, summary, integrity: result });
+	} catch (error) {
+		reply({ success: false, error: error instanceof Error ? error.message : String(error) });
+	}
 }
 
 export async function handleSqliteListObjects(

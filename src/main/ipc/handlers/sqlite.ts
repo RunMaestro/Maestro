@@ -3,7 +3,8 @@
  *
  * The renderer's view of a SQLite database goes through these calls. As with
  * parquet, no database bytes cross IPC: `open` returns a summary and a handle,
- * the table-list and schema calls return names, numbers, and schema text,
+ * the summary and integrity calls return header facts and a verdict, the
+ * table-list and schema calls return names, numbers, and schema text,
  * the row calls return one bounded window of cells, a BLOB save writes the
  * value to disk here rather than shipping it, and the read-only
  * connection stays in this process (see src/main/sqlite/sqlite-database.ts).
@@ -16,6 +17,9 @@ import type {
 	SqliteBlobSaved,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
+	SqliteDatabaseSummary,
+	SqliteIntegrityMode,
+	SqliteIntegrityResult,
 	SqliteObjectKind,
 	SqliteObjectList,
 	SqliteObjectSchema,
@@ -27,9 +31,11 @@ import type {
 import { saveSqliteBlob } from '../../sqlite/sqlite-blob';
 import { countSqliteRows } from '../../sqlite/sqlite-count';
 import { closeSqliteDatabase, openSqliteDatabase } from '../../sqlite/sqlite-database';
+import { checkSqliteIntegrity } from '../../sqlite/sqlite-integrity';
 import { listSqliteObjects, readSqliteObjectStats } from '../../sqlite/sqlite-objects';
 import { readSqliteRows } from '../../sqlite/sqlite-rows';
 import { readSqliteObjectSchema } from '../../sqlite/sqlite-schema';
+import { readSqliteDatabaseSummary } from '../../sqlite/sqlite-summary';
 
 export function registerSqliteHandlers(): void {
 	// Open a local database read-only. Reuses the connection already open on
@@ -37,6 +43,22 @@ export function registerSqliteHandlers(): void {
 	ipcMain.handle(
 		'sqlite:open',
 		async (_event, filePath: string): Promise<SqliteDatabaseInfo> => openSqliteDatabase(filePath)
+	);
+
+	// The summary strip: page size and count, encoding, journal mode,
+	// user_version, application_id. Header pragmas only, so instant.
+	ipcMain.handle(
+		'sqlite:readSummary',
+		async (_event, handle: string): Promise<SqliteDatabaseSummary> =>
+			readSqliteDatabaseSummary(handle)
+	);
+
+	// The integrity flag. Reads every page, so it runs on a worker thread with
+	// its own read-only connection; this call only waits for the verdict.
+	ipcMain.handle(
+		'sqlite:checkIntegrity',
+		async (_event, handle: string, mode: SqliteIntegrityMode): Promise<SqliteIntegrityResult> =>
+			checkSqliteIntegrity(handle, mode === 'full' ? 'full' : 'quick')
 	);
 
 	// The table-list rail: every table, view, index, and trigger. Reads only

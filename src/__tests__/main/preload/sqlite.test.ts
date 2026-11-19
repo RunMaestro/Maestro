@@ -28,6 +28,18 @@ describe('SQLite Preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('sqlite:open', '/data/app.db');
 	});
 
+	it('reads the database summary by handle', async () => {
+		mockInvoke.mockResolvedValue({ pageSize: 4096 });
+		await api.readSummary('h1');
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:readSummary', 'h1');
+	});
+
+	it('checks integrity by handle and mode', async () => {
+		mockInvoke.mockResolvedValue({ mode: 'full', ok: true, problems: [] });
+		await api.checkIntegrity('h1', 'full');
+		expect(mockInvoke).toHaveBeenCalledWith('sqlite:checkIntegrity', 'h1', 'full');
+	});
+
 	it('lists objects by handle', async () => {
 		mockInvoke.mockResolvedValue({ objects: [], sizesAvailable: true });
 		await api.listObjects('h1');

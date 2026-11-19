@@ -3366,6 +3366,15 @@ List the vault roots whose DataviewJS blocks run without asking
 
 SQLite: inspect a database the way the file preview shows it (read-only)
 
+## `maestro-cli sqlite info <path>`
+
+Show a SQLite database's page size and count, free pages, encoding, journal mode, user_version, and application_id, and optionally check its integrity
+
+| Option           | Description                                                                                                                | Default |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--check <mode>` | Also check integrity: quick (PRAGMA quick_check) or full (PRAGMA integrity_check, slower); exits 1 when problems are found | -       |
+| `--json`         | Output as JSON (for scripting)                                                                                             | -       |
+
 ## `maestro-cli sqlite tables <path>`
 
 List the tables, views, indexes, and triggers in a SQLite database, with row counts and sizes

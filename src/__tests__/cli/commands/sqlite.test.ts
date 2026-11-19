@@ -8,7 +8,8 @@
  * LIMIT/OFFSET window, sorted in SQLite, over `sqlite_read_rows`. And
  * `maestro-cli sqlite count`: the settled row count, over `sqlite_count_rows`.
  * And `maestro-cli sqlite blob`: one BLOB cell written to `--output` by the
- * app, over `sqlite_save_blob`.
+ * app, over `sqlite_save_blob`. And `maestro-cli sqlite info`: the header facts
+ * and, with `--check`, the integrity verdict, over `sqlite_read_summary`.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -22,6 +23,7 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => ({
 import {
 	sqliteBlob,
 	sqliteCount,
+	sqliteInfo,
 	sqliteRows,
 	sqliteSchema,
 	sqliteTables,
@@ -669,5 +671,120 @@ describe('sqlite blob', () => {
 		);
 		expect(errorSpy.mock.calls.join('\n')).toContain('data holds NULL in rowid 7, not a BLOB.');
 		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+});
+
+const SUMMARY = {
+	pageSize: 4096,
+	pageCount: 195,
+	freelistCount: 49,
+	encoding: 'UTF-8',
+	journalMode: 'wal',
+	userVersion: 7,
+	applicationId: 1598903374,
+	sqliteVersion: '3.53.2',
+};
+
+function respondSummary(overrides: Record<string, unknown> = {}) {
+	return mockReply({
+		type: 'sqlite_summary_result',
+		success: true,
+		database: { handle: 'h1', displayPath: DB, fileBytes: 798_720 },
+		summary: SUMMARY,
+		integrity: null,
+		...overrides,
+	});
+}
+
+describe('sqlite info', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const logged = () => logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('__exit__');
+		});
+	});
+
+	it('sends the resolved path on sqlite_read_summary, with no check by default', async () => {
+		const sent = respondSummary();
+		await sqliteInfo(DB, {});
+		expect(sent[0]).toEqual({
+			type: 'sqlite_read_summary',
+			path: DB,
+			responseType: 'sqlite_summary_result',
+		});
+	});
+
+	it('prints each header fact, the library version, and that integrity was not checked', async () => {
+		respondSummary();
+		await sqliteInfo(DB, {});
+		const out = logged();
+		expect(out).toMatch(/Pages\s+195 x 4\.0 KB/);
+		expect(out).toMatch(/Free\s+196\.0 KB/);
+		expect(out).toMatch(/Encoding\s+UTF-8/);
+		expect(out).toMatch(/Journal\s+WAL/);
+		expect(out).toMatch(/user_version\s+7/);
+		expect(out).toMatch(/application_id\s+0x5F4D544E/);
+		expect(out).toMatch(/SQLite\s+3\.53\.2/);
+		expect(out).toContain('not checked (pass --check quick)');
+	});
+
+	it('passes --check through and prints a sound verdict', async () => {
+		const sent = respondSummary({
+			integrity: { mode: 'full', ok: true, problems: [], truncated: false, elapsedMs: 4 },
+		});
+		await sqliteInfo(DB, { check: 'full' });
+		expect(sent[0]).toMatchObject({ integrity: 'full' });
+		expect(logged()).toMatch(/Integrity\s+ok \(full check, 4 ms\)/);
+		expect(process.exit).not.toHaveBeenCalled();
+	});
+
+	it('lists the problems and exits 1 when the check finds any', async () => {
+		respondSummary({
+			integrity: {
+				mode: 'quick',
+				ok: false,
+				problems: ['wrong # of entries in index tv'],
+				truncated: true,
+				elapsedMs: 2,
+			},
+		});
+		await expect(sqliteInfo(DB, { check: 'quick' })).rejects.toThrow('__exit__');
+		const out = logged();
+		expect(out).toContain('1+ problems (quick check, 2 ms)');
+		expect(out).toContain('  wrong # of entries in index tv');
+		expect(out).toContain('(more problems not listed)');
+		expect(process.exit).toHaveBeenCalledWith(1);
+	});
+
+	it('prints the summary and verdict under --json, still exiting 1 on problems', async () => {
+		const verdict = { mode: 'quick', ok: false, problems: ['bad'], truncated: false, elapsedMs: 2 };
+		respondSummary({ integrity: verdict });
+		await expect(sqliteInfo(DB, { check: 'quick', json: true })).rejects.toThrow('__exit__');
+		const json = JSON.parse(String(logSpy.mock.calls[0][0]));
+		expect(json).toEqual({
+			success: true,
+			path: DB,
+			fileBytes: 798_720,
+			...SUMMARY,
+			integrity: verdict,
+		});
+	});
+
+	it('refuses an unknown --check mode before asking the app', async () => {
+		await expect(sqliteInfo(DB, { check: 'deep' })).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('--check must be quick or full');
+		expect(withMaestroClient).not.toHaveBeenCalled();
+	});
+
+	it('exits 1 with the app error when the database cannot be read', async () => {
+		mockReply({ type: 'sqlite_summary_result', success: false, error: 'Not a SQLite database: x' });
+		await expect(sqliteInfo(DB, {})).rejects.toThrow('__exit__');
+		expect(errorSpy.mock.calls.join('\n')).toContain('Not a SQLite database: x');
 	});
 });

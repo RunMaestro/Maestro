@@ -8,10 +8,13 @@ import {
 } from '../../../../renderer/components/SqliteViewer';
 import { AUTO_COUNT_PASSES } from '../../../../renderer/components/SqliteViewer/SqliteTableView';
 import { sqliteMeasurementOrder } from '../../../../shared/sqlite/objects';
+import { SQLITE_AUTO_INTEGRITY_MAX_BYTES } from '../../../../shared/sqlite/summary';
 import type {
 	SqliteBlobRequest,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
+	SqliteDatabaseSummary,
+	SqliteIntegrityResult,
 	SqliteObjectList,
 	SqliteObjectSchema,
 	SqliteObjectStats,
@@ -105,6 +108,23 @@ let readRows: ReturnType<typeof vi.fn>;
 let countRows: ReturnType<typeof vi.fn>;
 let saveBlob: ReturnType<typeof vi.fn>;
 let saveFile: ReturnType<typeof vi.fn>;
+let readSummary: ReturnType<typeof vi.fn>;
+let checkIntegrity: ReturnType<typeof vi.fn>;
+
+const SUMMARY: SqliteDatabaseSummary = {
+	pageSize: 4096,
+	pageCount: 16,
+	freelistCount: 0,
+	encoding: 'UTF-8',
+	journalMode: 'wal',
+	userVersion: 3,
+	applicationId: 0,
+	sqliteVersion: '3.53.2',
+};
+
+function integrityResult(overrides: Partial<SqliteIntegrityResult> = {}): SqliteIntegrityResult {
+	return { mode: 'quick', ok: true, problems: [], truncated: false, elapsedMs: 5, ...overrides };
+}
 
 /** A count reply: settled at `matched` unless `complete` says otherwise. */
 function countReply(request: SqliteCountRequest, matched: number, complete = true): SqliteRowCount {
@@ -230,10 +250,15 @@ beforeEach(() => {
 		rowid: request.rowid ?? null,
 	}));
 	saveFile = vi.fn().mockResolvedValue('/tmp/payload.bin');
+	readSummary = vi.fn().mockResolvedValue(SUMMARY);
+	// The check never answers unless a test says so, like the row count.
+	checkIntegrity = vi.fn(() => new Promise<SqliteIntegrityResult>(() => {}));
 	notifyToastMock.mockReset();
 	(window as unknown as { maestro: unknown }).maestro = {
 		sqlite: {
 			open,
+			readSummary,
+			checkIntegrity,
 			listObjects,
 			readObjectStats,
 			readSchema,
@@ -1035,5 +1060,90 @@ describe('SqliteViewer converging row count', () => {
 			'Counting stopped: database is locked'
 		);
 		expect(total()).toHaveTextContent('300+ rows');
+	});
+});
+
+describe('SqliteViewer database summary', () => {
+	it('shows the header facts of the database in the summary strip', async () => {
+		renderViewer();
+		expect(await screen.findByTestId('sqlite-fact-pages')).toHaveTextContent('Pages 16 x 4.0 KB');
+		expect(screen.getByTestId('sqlite-fact-encoding')).toHaveTextContent('UTF-8');
+		expect(screen.getByTestId('sqlite-fact-journal')).toHaveTextContent('Journal WAL');
+		expect(screen.getByTestId('sqlite-fact-user-version')).toHaveTextContent('user_version 3');
+		// Unset header fields stay out of the strip.
+		expect(screen.queryByTestId('sqlite-fact-application-id')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('sqlite-fact-freelist')).not.toBeInTheDocument();
+		expect(readSummary).toHaveBeenCalledWith('h1');
+	});
+
+	it('shows a summary read failure without blocking the viewer', async () => {
+		readSummary.mockRejectedValue(new Error('database is locked'));
+		renderViewer();
+		expect(await screen.findByTestId('sqlite-summary-error')).toHaveTextContent(
+			'database is locked'
+		);
+		expect(screen.getByTestId('sqlite-object-rail')).toBeInTheDocument();
+	});
+
+	it('runs a quick check on open for a small database, then offers a full one', async () => {
+		checkIntegrity.mockResolvedValueOnce(integrityResult());
+		renderViewer();
+		expect(await screen.findByTestId('sqlite-integrity-ok')).toHaveTextContent('Integrity ok');
+		expect(checkIntegrity).toHaveBeenCalledWith('h1', 'quick');
+
+		checkIntegrity.mockResolvedValueOnce(integrityResult({ mode: 'full' }));
+		fireEvent.click(screen.getByTestId('sqlite-integrity-full'));
+		await waitFor(() => expect(checkIntegrity).toHaveBeenLastCalledWith('h1', 'full'));
+		// A full check leaves nothing further to offer.
+		await waitFor(() =>
+			expect(screen.queryByTestId('sqlite-integrity-full')).not.toBeInTheDocument()
+		);
+		expect(screen.getByTestId('sqlite-integrity-ok')).toBeInTheDocument();
+	});
+
+	it('shows the check in progress', async () => {
+		renderViewer();
+		expect(await screen.findByTestId('sqlite-integrity')).toHaveTextContent(
+			'Running quick check...'
+		);
+	});
+
+	it('waits to be asked for a database over the auto-check size', async () => {
+		open.mockResolvedValue({ ...INFO, fileBytes: SQLITE_AUTO_INTEGRITY_MAX_BYTES + 1 });
+		renderViewer();
+		const button = await screen.findByTestId('sqlite-integrity-check');
+		expect(checkIntegrity).not.toHaveBeenCalled();
+		fireEvent.click(button);
+		expect(checkIntegrity).toHaveBeenCalledWith('h1', 'quick');
+	});
+
+	it('lists the problems a failed check found, and folds them away on click', async () => {
+		checkIntegrity.mockResolvedValueOnce(
+			integrityResult({ ok: false, problems: ['wrong # of entries in index tv', 'page 5 bad'] })
+		);
+		renderViewer();
+		const flag = await screen.findByTestId('sqlite-integrity-failed');
+		expect(flag).toHaveTextContent('Integrity: 2 problems (quick check, 5 ms)');
+		const problems = screen.getByTestId('sqlite-integrity-problems');
+		expect(
+			within(problems)
+				.getAllByRole('listitem')
+				.map((item) => item.textContent)
+		).toEqual(['wrong # of entries in index tv', 'page 5 bad']);
+		fireEvent.click(flag);
+		expect(screen.queryByTestId('sqlite-integrity-problems')).not.toBeInTheDocument();
+	});
+
+	it('reports a check that could not run, and runs it again on Retry', async () => {
+		checkIntegrity.mockRejectedValueOnce(new Error('database is locked'));
+		renderViewer();
+		expect(await screen.findByTestId('sqlite-integrity-error')).toHaveTextContent(
+			'database is locked'
+		);
+		checkIntegrity.mockResolvedValueOnce(integrityResult());
+		fireEvent.click(screen.getByTestId('sqlite-integrity-retry'));
+		expect(await screen.findByTestId('sqlite-integrity-ok')).toBeInTheDocument();
+		expect(checkIntegrity).toHaveBeenCalledTimes(2);
+		expect(checkIntegrity).toHaveBeenLastCalledWith('h1', 'quick');
 	});
 });

@@ -159,7 +159,14 @@ import {
 	dataviewIndexStatus,
 	dataviewQuery,
 } from './commands/dataview';
-import { sqliteBlob, sqliteCount, sqliteRows, sqliteSchema, sqliteTables } from './commands/sqlite';
+import {
+	sqliteBlob,
+	sqliteCount,
+	sqliteInfo,
+	sqliteRows,
+	sqliteSchema,
+	sqliteTables,
+} from './commands/sqlite';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -3844,6 +3851,18 @@ dataviewCmd
 const sqliteCmd = program
 	.command('sqlite')
 	.description('SQLite: inspect a database the way the file preview shows it (read-only)');
+
+sqliteCmd
+	.command('info <path>')
+	.description(
+		"Show a SQLite database's page size and count, free pages, encoding, journal mode, user_version, and application_id, and optionally check its integrity"
+	)
+	.option(
+		'--check <mode>',
+		'Also check integrity: quick (PRAGMA quick_check) or full (PRAGMA integrity_check, slower); exits 1 when problems are found'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteInfo(file, options));
 
 sqliteCmd
 	.command('tables <path>')

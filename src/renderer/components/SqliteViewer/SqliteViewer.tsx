@@ -17,6 +17,9 @@
  *    whose rail count stopped at the cap (`100,000+`) gets its exact count
  *    once the table view's converging count settles.
  *
+ * The strip above both shows the database as a whole: object counts, file
+ * size, and the header facts and integrity flag (SqliteDatabaseFacts).
+ *
  * The content pane shows the selected object: its counts, then either its
  * rows (SqliteTableView, for a table or view) or its schema
  * (SqliteSchemaPanel), chosen by a Data / Schema switch the viewer remembers.
@@ -59,6 +62,7 @@ import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { MiniBadge } from '../ui/MiniBadge';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { Spinner } from '../ui/Spinner';
+import { SqliteDatabaseFacts } from './SqliteDatabaseFacts';
 import { SqliteObjectRail } from './SqliteObjectRail';
 import { SqliteSchemaPanel } from './SqliteSchemaPanel';
 import { SqliteTableView } from './SqliteTableView';
@@ -303,6 +307,14 @@ export const SqliteViewer = forwardRef<SqliteViewerHandle, SqliteViewerProps>(fu
 				<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 					{formatSize(info.fileBytes)} - read-only
 				</span>
+				<SqliteDatabaseFacts
+					// One mount per open database, so the auto-check rule and the
+					// verdict never carry over from another file.
+					key={info.handle}
+					handle={info.handle}
+					fileBytes={info.fileBytes}
+					theme={theme}
+				/>
 				{statsError && (
 					<span
 						className="text-xs-plus"

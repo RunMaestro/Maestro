@@ -354,3 +354,51 @@ export interface SqliteBlobSaved {
 	/** The rowid of the row it came from, when the object has one. */
 	rowid: string | null;
 }
+
+/**
+ * Database-wide facts for the viewer's summary strip, read from the file
+ * header through pragmas. Every value is a header field, so reading them
+ * costs nothing whatever the database's size.
+ */
+export interface SqliteDatabaseSummary {
+	/** Bytes per page (`PRAGMA page_size`). */
+	pageSize: number;
+	/** Pages in the main file (`PRAGMA page_count`), so `pageSize * pageCount` is its size. */
+	pageCount: number;
+	/** Unused pages on the free list (`PRAGMA freelist_count`): space a `VACUUM` would return. */
+	freelistCount: number;
+	/** Text encoding: `UTF-8`, `UTF-16le`, or `UTF-16be`. */
+	encoding: string;
+	/**
+	 * Journal mode as the read-only connection sees it, lower case (`wal`,
+	 * `delete`, ...). `wal` is recorded in the file itself; the rollback modes
+	 * are per connection, so any of them reads as `delete` here.
+	 */
+	journalMode: string;
+	/** `PRAGMA user_version`: the schema version an application keeps, 0 when unused. */
+	userVersion: number;
+	/** `PRAGMA application_id`: the file format an application stamped, 0 when unused. */
+	applicationId: number;
+	/** Version of the SQLite library reading the file (`sqlite_version()`). */
+	sqliteVersion: string;
+}
+
+/**
+ * Which integrity check to run. `quick` (`PRAGMA quick_check`) verifies every
+ * page and record in linear time; `full` (`PRAGMA integrity_check`) also
+ * checks that every index matches its table and UNIQUE holds, which is slower.
+ */
+export type SqliteIntegrityMode = 'quick' | 'full';
+
+/** The verdict of one integrity check. */
+export interface SqliteIntegrityResult {
+	mode: SqliteIntegrityMode;
+	/** SQLite answered `ok`: no problem found. */
+	ok: boolean;
+	/** Each problem SQLite reported, verbatim; empty when `ok`. */
+	problems: string[];
+	/** More problems exist than `problems` holds (the check stops at a cap). */
+	truncated: boolean;
+	/** Wall time of the check, in milliseconds. */
+	elapsedMs: number;
+}

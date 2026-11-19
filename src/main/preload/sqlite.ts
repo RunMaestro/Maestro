@@ -1,7 +1,8 @@
 /**
  * Preload API for SQLite previews
  *
- * Exposes window.maestro.sqlite: open a database read-only, list its schema
+ * Exposes window.maestro.sqlite: open a database read-only, read its summary,
+ * check its integrity, list its schema
  * objects, measure their row counts and sizes, read one object's structure,
  * read a window of a table's rows, count its rows, save a BLOB to a file,
  * close the handle.
@@ -13,6 +14,9 @@ import type {
 	SqliteBlobSaved,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
+	SqliteDatabaseSummary,
+	SqliteIntegrityMode,
+	SqliteIntegrityResult,
 	SqliteObjectKind,
 	SqliteObjectList,
 	SqliteObjectSchema,
@@ -31,6 +35,21 @@ export function createSqliteApi() {
 		 */
 		open: (filePath: string): Promise<SqliteDatabaseInfo> =>
 			ipcRenderer.invoke('sqlite:open', filePath),
+
+		/**
+		 * Database-wide facts from the header: page size and count, free pages,
+		 * encoding, journal mode, user_version, application_id.
+		 */
+		readSummary: (handle: string): Promise<SqliteDatabaseSummary> =>
+			ipcRenderer.invoke('sqlite:readSummary', handle),
+
+		/**
+		 * Run `PRAGMA quick_check` (`quick`) or `PRAGMA integrity_check`
+		 * (`full`) on a worker thread. Resolves with the verdict; rejects when
+		 * the check could not run or the database closed first.
+		 */
+		checkIntegrity: (handle: string, mode: SqliteIntegrityMode): Promise<SqliteIntegrityResult> =>
+			ipcRenderer.invoke('sqlite:checkIntegrity', handle, mode),
 
 		/** Every table, view, index, and trigger in the main schema. */
 		listObjects: (handle: string): Promise<SqliteObjectList> =>

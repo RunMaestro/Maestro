@@ -259,8 +259,15 @@ function alertsOnRejection(channel: string, args: readonly unknown[], error: str
 	);
 }
 function requestTimeoutMs(channel: string): number {
-	// Repository transfers and recursive filesystem reads legitimately outlast ordinary UI requests.
-	if (channel.startsWith('git:') || channel === 'fs:directorySize') return 600_000;
+	// Repository transfers, recursive filesystem reads, and a SQLite integrity
+	// check (every page of the file) legitimately outlast ordinary UI requests.
+	if (
+		channel.startsWith('git:') ||
+		channel === 'fs:directorySize' ||
+		channel === 'sqlite:checkIntegrity'
+	) {
+		return 600_000;
+	}
 	return isSubmissionChannel(channel) ? BRIDGE_MUTATION_TIMEOUT_MS : BRIDGE_READ_TIMEOUT_MS;
 }
 

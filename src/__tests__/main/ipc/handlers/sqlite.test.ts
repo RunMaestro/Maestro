@@ -29,12 +29,16 @@ const schema = vi.hoisted(() => ({ readSqliteObjectSchema: vi.fn() }));
 const rows = vi.hoisted(() => ({ readSqliteRows: vi.fn() }));
 const count = vi.hoisted(() => ({ countSqliteRows: vi.fn() }));
 const blob = vi.hoisted(() => ({ saveSqliteBlob: vi.fn() }));
+const summary = vi.hoisted(() => ({ readSqliteDatabaseSummary: vi.fn() }));
+const integrity = vi.hoisted(() => ({ checkSqliteIntegrity: vi.fn() }));
 
 vi.mock('../../../../main/sqlite/sqlite-objects', () => objects);
 vi.mock('../../../../main/sqlite/sqlite-schema', () => schema);
 vi.mock('../../../../main/sqlite/sqlite-rows', () => rows);
 vi.mock('../../../../main/sqlite/sqlite-count', () => count);
 vi.mock('../../../../main/sqlite/sqlite-blob', () => blob);
+vi.mock('../../../../main/sqlite/sqlite-summary', () => summary);
+vi.mock('../../../../main/sqlite/sqlite-integrity', () => integrity);
 
 import { registerSqliteHandlers } from '../../../../main/ipc/handlers/sqlite';
 
@@ -49,6 +53,7 @@ describe('SQLite IPC handlers', () => {
 
 	it('registers the channels the viewer uses', () => {
 		expect([...handlers.keys()].sort()).toEqual([
+			'sqlite:checkIntegrity',
 			'sqlite:close',
 			'sqlite:countRows',
 			'sqlite:listObjects',
@@ -56,8 +61,23 @@ describe('SQLite IPC handlers', () => {
 			'sqlite:readObjectStats',
 			'sqlite:readRows',
 			'sqlite:readSchema',
+			'sqlite:readSummary',
 			'sqlite:saveBlob',
 		]);
+	});
+
+	it('reads the database summary by handle', async () => {
+		summary.readSqliteDatabaseSummary.mockReturnValue({ pageSize: 4096 });
+		await expect(invoke('sqlite:readSummary', 'h1')).resolves.toEqual({ pageSize: 4096 });
+		expect(summary.readSqliteDatabaseSummary).toHaveBeenCalledWith('h1');
+	});
+
+	it('checks integrity by handle and mode, treating anything but full as quick', async () => {
+		integrity.checkSqliteIntegrity.mockResolvedValue({ ok: true });
+		await expect(invoke('sqlite:checkIntegrity', 'h1', 'full')).resolves.toEqual({ ok: true });
+		await invoke('sqlite:checkIntegrity', 'h1', 'bogus');
+		expect(integrity.checkSqliteIntegrity).toHaveBeenNthCalledWith(1, 'h1', 'full');
+		expect(integrity.checkSqliteIntegrity).toHaveBeenNthCalledWith(2, 'h1', 'quick');
 	});
 
 	it('opens by path', async () => {

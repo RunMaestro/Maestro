@@ -1,5 +1,8 @@
 // SQLite commands - `maestro-cli sqlite ...`, the CLI half of the SQLite viewer.
 //
+//   maestro-cli sqlite info <path> [--check <quick|full>] [--json]
+//       -> the summary strip: page size and count, free pages, encoding,
+//          journal mode, user_version, application_id, and the integrity flag
 //   maestro-cli sqlite tables <path> [--internal] [--json]
 //       -> the table-list rail: tables, views, indexes, and triggers, with row
 //          counts and on-disk sizes
@@ -19,7 +22,7 @@
 //       -> the record view's Save to file: one BLOB cell written whole
 //
 // The CLI links no native modules, so it cannot open a database itself. Each
-// verb rides a WS message (`sqlite_list_objects`, `sqlite_read_schema`,
+// verb rides a WS message (`sqlite_read_summary`, `sqlite_list_objects`, `sqlite_read_schema`,
 // `sqlite_read_rows`, `sqlite_count_rows`, `sqlite_save_blob`) to the running
 // app, which answers with the same functions the viewer's `sqlite:*` IPC calls.
 // The app must be running, and the database is opened read-only there; a
@@ -47,10 +50,14 @@ import {
 	sqliteMissingSqlNote,
 } from '../../shared/sqlite/schema';
 import { formatSqliteCell } from '../../shared/sqlite/cells';
+import { formatSqliteIntegrity, sqliteSummaryFacts } from '../../shared/sqlite/summary';
 import type {
 	SqliteBlobSaved,
 	SqliteDatabaseInfo,
+	SqliteDatabaseSummary,
 	SqliteFilterProblem,
+	SqliteIntegrityMode,
+	SqliteIntegrityResult,
 	SqliteObjectKind,
 	SqliteObjectList,
 	SqliteObjectSchema,
@@ -81,6 +88,89 @@ function fail(message: string, json: boolean | undefined): never {
 	if (json) console.log(JSON.stringify({ success: false, error: message }));
 	else console.error(`Error: ${message}`);
 	return exitWith(ExitCode.GeneralError);
+}
+
+interface SqliteInfoOptions {
+	check?: string;
+	json?: boolean;
+}
+
+interface SqliteSummaryReply {
+	type: string;
+	success: boolean;
+	error?: string;
+	database?: SqliteDatabaseInfo;
+	summary?: SqliteDatabaseSummary;
+	integrity?: SqliteIntegrityResult | null;
+}
+
+/** A full integrity check of a big file takes a while; give it room. */
+const SQLITE_INTEGRITY_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * `maestro-cli sqlite info <path>` - the database-wide facts the viewer's
+ * summary strip shows, plus the integrity flag when `--check` asks for it.
+ */
+export async function sqliteInfo(file: string, options: SqliteInfoOptions): Promise<void> {
+	const filePath = resolveCliPath(file);
+	let check: SqliteIntegrityMode | null = null;
+	if (options.check !== undefined) {
+		if (options.check !== 'quick' && options.check !== 'full') {
+			fail(`--check must be quick or full (got "${options.check}")`, options.json);
+		}
+		check = options.check;
+	}
+
+	let reply: SqliteSummaryReply;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<SqliteSummaryReply>(
+				{ type: 'sqlite_read_summary', path: filePath, ...(check ? { integrity: check } : {}) },
+				'sqlite_summary_result',
+				check ? SQLITE_INTEGRITY_TIMEOUT_MS : SQLITE_TIMEOUT_MS
+			)
+		);
+	} catch (error) {
+		failFromError(error, options.json);
+	}
+	if (!reply.success || !reply.database || !reply.summary) {
+		fail(reply.error || `Could not read ${filePath}`, options.json);
+	}
+
+	const { database, summary } = reply;
+	const integrity = reply.integrity ?? null;
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				path: database.displayPath,
+				fileBytes: database.fileBytes,
+				...summary,
+				integrity,
+			})
+		);
+		// A damaged file is a finding, not a failed call: the reply still
+		// printed, and the exit code lets a script branch on it.
+		if (integrity && !integrity.ok) exitWith(ExitCode.GeneralError);
+		return;
+	}
+
+	const rows = sqliteSummaryFacts(summary).map((fact) => [fact.label, fact.value]);
+	rows.push(['SQLite', summary.sqliteVersion]);
+	rows.push([
+		'Integrity',
+		integrity ? formatSqliteIntegrity(integrity) : 'not checked (pass --check quick)',
+	]);
+	const lines = [`${database.displayPath} (${formatSize(database.fileBytes)})`, ''];
+	const width = Math.max(...rows.map(([label]) => label.length));
+	lines.push(...rows.map(([label, value]) => `  ${label.padEnd(width)}  ${value}`));
+	if (integrity && !integrity.ok) {
+		lines.push('', 'Problems');
+		lines.push(...integrity.problems.map((problem) => `  ${problem}`));
+		if (integrity.truncated) lines.push('  (more problems not listed)');
+	}
+	console.log(lines.join('\n'));
+	if (integrity && !integrity.ok) exitWith(ExitCode.GeneralError);
 }
 
 /** One rail row as a text-table row: name, rows, size, and the detail column. */

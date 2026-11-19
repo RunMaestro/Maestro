@@ -193,6 +193,19 @@ describe('handles', () => {
 		await expect(closeSqliteDatabase(handle)).resolves.toBeUndefined();
 	});
 
+	it('runs release hooks before closing, so work tied to the handle stops with it', async () => {
+		const file = await writeFixture('hooks.db');
+		const { handle } = await openSqliteDatabase(file);
+		const order: string[] = [];
+		getSqliteDatabase(handle).releaseHooks.add(() =>
+			order.push(driver.instances[0].closed ? 'after close' : 'before close')
+		);
+
+		await closeSqliteDatabase(handle);
+		expect(order).toEqual(['before close']);
+		expect(driver.instances[0].closed).toBe(true);
+	});
+
 	it('closeAll closes every connection', async () => {
 		await openSqliteDatabase(await writeFixture('one.db'));
 		await openSqliteDatabase(await writeFixture('two.db'));

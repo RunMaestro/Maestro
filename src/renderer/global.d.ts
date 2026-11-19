@@ -245,6 +245,9 @@ import type {
 	SqliteBlobSaved,
 	SqliteCountRequest,
 	SqliteDatabaseInfo,
+	SqliteDatabaseSummary,
+	SqliteIntegrityMode,
+	SqliteIntegrityResult,
 	SqliteObjectKind,
 	SqliteObjectList,
 	SqliteObjectSchema,
@@ -1981,6 +1984,8 @@ interface MaestroAPI {
 	 */
 	sqlite: {
 		open: (filePath: string) => Promise<SqliteDatabaseInfo>;
+		readSummary: (handle: string) => Promise<SqliteDatabaseSummary>;
+		checkIntegrity: (handle: string, mode: SqliteIntegrityMode) => Promise<SqliteIntegrityResult>;
 		listObjects: (handle: string) => Promise<SqliteObjectList>;
 		readObjectStats: (handle: string, names: string[]) => Promise<SqliteObjectStats[]>;
 		readSchema: (

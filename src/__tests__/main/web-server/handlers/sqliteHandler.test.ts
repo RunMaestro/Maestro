@@ -1,6 +1,6 @@
-// Covers the sqlite_list_objects, sqlite_read_schema, sqlite_read_rows,
-// sqlite_count_rows, and sqlite_save_blob WebSocket messages that back
-// `maestro-cli sqlite tables`, `sqlite schema`, `sqlite rows`, `sqlite count`,
+// Covers the sqlite_read_summary, sqlite_list_objects, sqlite_read_schema,
+// sqlite_read_rows, sqlite_count_rows, and sqlite_save_blob WebSocket messages
+// that back `maestro-cli sqlite info`, `sqlite tables`, `sqlite schema`, `sqlite rows`, `sqlite count`,
 // and `sqlite blob`. It opens the database through the viewer's own open path,
 // answers with the rail's listing and measurements, never closes the shared
 // connection, and always echoes the request id so the CLI never hangs.
@@ -38,6 +38,10 @@ const counts = vi.hoisted(() => ({ countAllSqliteRows: vi.fn() }));
 vi.mock('../../../../main/sqlite/sqlite-count', () => counts);
 const blobs = vi.hoisted(() => ({ saveSqliteBlob: vi.fn() }));
 vi.mock('../../../../main/sqlite/sqlite-blob', () => blobs);
+const summaries = vi.hoisted(() => ({ readSqliteDatabaseSummary: vi.fn() }));
+vi.mock('../../../../main/sqlite/sqlite-summary', () => summaries);
+const integrity = vi.hoisted(() => ({ checkSqliteIntegrity: vi.fn() }));
+vi.mock('../../../../main/sqlite/sqlite-integrity', () => integrity);
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
@@ -57,6 +61,95 @@ function lastResponse(client: WebClient): Record<string, unknown> {
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+describe('sqlite_read_summary handler', () => {
+	let handler: WebSocketMessageHandler;
+	let client: WebClient;
+	const info = { handle: 'h1', displayPath: '/data/app.db', fileBytes: 4096 };
+	const summary = { pageSize: 4096, pageCount: 1, journalMode: 'wal' };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		handler = new WebSocketMessageHandler();
+		client = createMockClient();
+		database.openSqliteDatabase.mockResolvedValue(info);
+		summaries.readSqliteDatabaseSummary.mockReturnValue(summary);
+	});
+
+	it('answers with the header facts and no check unless one is asked for', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_read_summary',
+			requestId: 'r1',
+			path: '/data/app.db',
+		});
+		await flush();
+
+		expect(summaries.readSqliteDatabaseSummary).toHaveBeenCalledWith('h1');
+		expect(integrity.checkSqliteIntegrity).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toEqual({
+			type: 'sqlite_summary_result',
+			requestId: 'r1',
+			success: true,
+			database: info,
+			summary,
+			integrity: null,
+		});
+		expect(database.closeSqliteDatabase).not.toHaveBeenCalled();
+	});
+
+	it('runs the asked-for integrity check and includes its verdict', async () => {
+		const verdict = { mode: 'full', ok: false, problems: ['bad'], truncated: false, elapsedMs: 3 };
+		integrity.checkSqliteIntegrity.mockResolvedValue(verdict);
+
+		handler.handleMessage(client, {
+			type: 'sqlite_read_summary',
+			requestId: 'r2',
+			path: '/data/app.db',
+			integrity: 'full',
+		});
+		await flush();
+
+		expect(integrity.checkSqliteIntegrity).toHaveBeenCalledWith('h1', 'full');
+		expect(lastResponse(client)).toMatchObject({ success: true, integrity: verdict });
+	});
+
+	it('refuses an unknown integrity mode and a missing path', async () => {
+		handler.handleMessage(client, {
+			type: 'sqlite_read_summary',
+			requestId: 'r3',
+			path: '/data/app.db',
+			integrity: 'deep',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			requestId: 'r3',
+			success: false,
+			error: 'integrity must be "quick" or "full"',
+		});
+
+		handler.handleMessage(client, { type: 'sqlite_read_summary', requestId: 'r4' });
+		await flush();
+		expect(lastResponse(client)).toMatchObject({ requestId: 'r4', success: false });
+		expect(database.openSqliteDatabase).not.toHaveBeenCalled();
+	});
+
+	it('reports a failed check with the request id', async () => {
+		integrity.checkSqliteIntegrity.mockRejectedValue(new Error('database is locked'));
+		handler.handleMessage(client, {
+			type: 'sqlite_read_summary',
+			requestId: 'r5',
+			path: '/data/app.db',
+			integrity: 'quick',
+		});
+		await flush();
+		expect(lastResponse(client)).toMatchObject({
+			type: 'sqlite_summary_result',
+			requestId: 'r5',
+			success: false,
+			error: 'database is locked',
+		});
+	});
+});
 
 describe('sqlite_list_objects handler', () => {
 	let handler: WebSocketMessageHandler;
